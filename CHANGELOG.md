@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.
 - Steer / interrupt follow-up modes remain planned. Mid-turn messages stay in the host-side queue.
 
+## [1.2.0] - 2026-09-10
+
+### Added
+
+- IntelliJ IDEA plugin (2026.1 and later). The same conversation UI, sessions, accounts and settings as the extension, hosted in a tool window and in editor tabs, with the agent CLIs driven by a Node.js sidecar. Terminal logins and installs open an IDE terminal, `@` file search uses the project index, the theme follows the IDE live, and settings persist in the IDE. Distributed as one zip per OS and CPU (`acpira-<version>-<os>-<arch>.zip`, six variants) with a bundled Node.js 22 runtime; `ACPIRA_NODE` or a Node ≥ 22 on the shell `PATH` is used when no bundled runtime fits.
+- Stable GitHub Releases also build the plugin zips, attach them to the Release and upload them to the JetBrains Marketplace.
+
+### Changed
+
+- The taglines describe the agent CLIs as harnesses and no longer present Acpira as a VS Code product.
+- The session list no longer shows session-scope chips; the scope is set on the General settings page (`acpira.sessionScope`) only.
+- Scrollable regions inside a message (thoughts, plans, diffs, terminal output, questions) hand the wheel back to the conversation once they reach their end instead of trapping it.
+
+### Fixed
+
+- Switching accounts or retrying keeps the agent's native session: the replacement CLI is re-authenticated and resumes the same session instead of replaying the transcript into a new one, so Devin's compacted context is not lost and the old process exiting no longer marks the session as failed.
+- VS Code, Cursor and IntelliJ sidecars that share `~/.acpira` edit `accounts.json`, `secrets.json` and `sessions/prefs.json` under a file lock, so an account removed in one window is not resurrected by another and a preference write only replaces its own agent's entry.
+- The context usage card stays closed after being dismissed; a process fold opened by hand stays open when the message is rebuilt during streaming.
+
 ## [1.1.2] - 2026-09-09
 
 ### Fixed
