@@ -3,10 +3,22 @@
     <name>Acpira</name>
     <vendor url="https://github.com/hotic/acpira">hotic</vendor>
     <description><![CDATA[
-        Chat shell for official agent CLIs (Grok Build, Kimi Code, Devin) over ACP.
+        Chat shell for official agent CLIs (Grok Build, Kimi Code, Devin) over ACP. The conversation UI and session logic are the same
+        as the VS Code extension; this plugin hosts them in a tool window and drives the CLIs through a Node sidecar.
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
     <!-- 2026.2 moved JCEF out of the core platform into the bundled Web Browser (JCEF) plugin; the alias exists since 2025.3.1 -->
     <depends>com.intellij.modules.jcef</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Acpira" anchor="right" secondary="false" icon="AllIcons.Toolwindows.WebToolWindow"
+                    factoryClass="com.github.hotic.acpira.ui.AcpiraToolWindowFactory"/>
+        <notificationGroup id="Acpira" displayType="BALLOON"/>
+        <postStartupActivity implementation="com.github.hotic.acpira.DevAutoOpen"/>
+    </extensions>
+
+    <applicationListeners>
+        <listener class="com.github.hotic.acpira.WindowFocusRelay" topic="com.intellij.openapi.application.ApplicationActivationListener"/>
+    </applicationListeners>
 </idea-plugin>

@@ -1,0 +1,69 @@
+package com.github.hotic.acpira.sidecar
+
+import com.github.hotic.acpira.Acpira
+import com.intellij.util.EnvironmentUtil
+import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
+import java.util.concurrent.TimeUnit
+
+const val MIN_NODE_MAJOR = 22
+
+class SidecarSetupException(message: String) : Exception(message)
+
+// Where the sidecar comes from. Node: ACPIRA_NODE, then the IDE's login-shell PATH (EnvironmentUtil, never System.getenv alone: a Dock
+// launch has no shell PATH), later a runtime bundled per platform. Script: ACPIRA_HOST_SERVER for development against a repository
+// build, otherwise the host-server.cjs packaged next to the plugin
+object NodeLocator {
+    fun shellEnv(): Map<String, String> = EnvironmentUtil.getEnvironmentMap()
+
+    fun node(): Path {
+        val override = env("ACPIRA_NODE")
+        val path = when {
+            override != null -> Paths.get(override)
+            else -> findInPath("node") ?: throw SidecarSetupException(
+                "Node.js $MIN_NODE_MAJOR+ was not found on the shell PATH. Install it (https://nodejs.org) or set ACPIRA_NODE to the executable.",
+            )
+        }
+        if (!Files.isExecutable(path)) throw SidecarSetupException("Node.js executable is not runnable: $path")
+        val version = version(path)
+        val major = version.removePrefix("v").substringBefore('.').toIntOrNull() ?: 0
+        if (major < MIN_NODE_MAJOR) throw SidecarSetupException("Node.js $MIN_NODE_MAJOR+ is required, found $version at $path")
+        Acpira.LOG.info("sidecar node: $path ($version)")
+        return path
+    }
+
+    fun script(): Path {
+        env("ACPIRA_HOST_SERVER")?.let { override ->
+            val p = Paths.get(override)
+            if (!Files.isRegularFile(p)) throw SidecarSetupException("ACPIRA_HOST_SERVER points to a missing file: $p")
+            return p
+        }
+        val bundled = Acpira.descriptor?.pluginPath?.resolve("sidecar/host-server.cjs")
+        if (bundled == null || !Files.isRegularFile(bundled)) throw SidecarSetupException(
+            "The plugin's sidecar (sidecar/host-server.cjs) is missing; reinstall the plugin or set ACPIRA_HOST_SERVER to a repository build.",
+        )
+        return bundled
+    }
+
+    // First executable of that name on the shell PATH (PathEnvironmentVariableUtil.findInPath is scheduled for removal)
+    fun findInPath(name: String): Path? {
+        val names = if (System.getProperty("os.name").lowercase().contains("win")) listOf("$name.exe", "$name.cmd", name) else listOf(name)
+        return (shellEnv()["PATH"] ?: "").split(File.pathSeparator).asSequence()
+            .filter { it.isNotBlank() }
+            .flatMap { dir -> names.asSequence().map { Paths.get(dir, it) } }
+            .firstOrNull { Files.isRegularFile(it) && Files.isExecutable(it) }
+    }
+
+    private fun env(name: String): String? = (System.getenv(name) ?: shellEnv()[name])?.trim()?.takeIf { it.isNotEmpty() }
+
+    private fun version(node: Path): String {
+        val pb = ProcessBuilder(node.toString(), "--version").redirectErrorStream(true)
+        pb.environment().putAll(shellEnv())
+        val p = pb.start()
+        val out = p.inputStream.bufferedReader().readText().trim()
+        if (!p.waitFor(10, TimeUnit.SECONDS)) { p.destroyForcibly(); throw SidecarSetupException("node --version did not answer") }
+        return out.lines().lastOrNull { it.startsWith("v") } ?: throw SidecarSetupException("node --version answered '$out'")
+    }
+}
