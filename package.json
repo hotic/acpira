@@ -1,7 +1,7 @@
 {
   "name": "acpira",
   "displayName": "Acpira",
-  "description": "Native agents, one considered interface: Grok Build, Kimi Code, Devin and any ACP agent CLI with execution history, inline approvals and shared sessions",
+  "description": "Native harnesses, one considered interface: Grok Build, Kimi Code, Devin and any ACP agent CLI with execution history, inline approvals and shared sessions",
   "version": "1.1.2",
   "publisher": "hotic",
   "icon": "media/icon.png",

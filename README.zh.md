@@ -1,6 +1,6 @@
 # Acpira
 
-**原生的编程 Agent，讲究的交互体验。**
+**原生的 Agent Harness，讲究的交互体验。**
 
 在 VS Code、Cursor 与 IntelliJ IDEA 中使用 Grok、Devin、Kimi Code 及其他 ACP Agent。保留各自的执行引擎，清晰查看执行过程、审批操作，在任务进行时继续安排下一步。
 

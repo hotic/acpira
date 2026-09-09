@@ -1,6 +1,6 @@
 # Acpira
 
-**Native agents. One considered interface.**
+**Native harnesses. One considered interface.**
 
 Bring Grok, Devin, Kimi Code, and other ACP agents into VS Code, Cursor, and IntelliJ IDEA. Keep their execution engines, with clear execution history, inline approvals, and follow-ups that keep work moving.
 

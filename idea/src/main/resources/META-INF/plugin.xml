@@ -3,7 +3,7 @@
     <name>Acpira</name>
     <vendor url="https://github.com/hotic/acpira">hotic</vendor>
     <description><![CDATA[
-        <p><b>Native agents. One considered interface.</b></p>
+        <p><b>Native harnesses. One considered interface.</b></p>
         <p>Bring Grok Build, Kimi Code, Devin and any other <a href="https://agentclientprotocol.com">ACP</a> agent CLI into a tool window
         or an editor tab. The agents keep their own execution engines; Acpira adds a clear execution history, inline approvals,
         queued follow-ups, session and account management, and a context budget.</p>
