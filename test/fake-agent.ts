@@ -257,6 +257,20 @@ const app = acp.agent({ name: 'fake-agent' })
       return { stopReason: 'end_turn', _meta: { usage: { totalTokens: 9_999_999, inputTokens: 9_000_000, modelCalls: 20 } } };
     }
 
+    // A 700-block turn streamed as fast as the wire takes it (350 tool calls, each with a completion, interleaved with prose):
+    // the load profile of scripts/probe-ipc-perf.ts, where every push carries the whole growing SessionView across the sidecar IPC
+    if (text.includes('flood')) {
+      for (let i = 0; i < 350; i++) {
+        if (cancelled.has(sid)) return { stopReason: 'cancelled' };
+        const id = `flood-${i}`;
+        await send({ sessionUpdate: 'tool_call', toolCallId: id, title: `read_file src/module${i}.ts`, kind: 'read', status: 'in_progress', locations: [{ path: `/repo/src/module${i}.ts` }] });
+        await send({ sessionUpdate: 'tool_call_update', toolCallId: id, status: 'completed', content: [{ type: 'content', content: { type: 'text', text: `export const value${i} = ${i};\n`.repeat(20) } }] });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `Looked at module ${i}. ` } });
+        await new Promise(r => setTimeout(r, 5));
+      }
+      return { stopReason: 'end_turn' };
+    }
+
     if (text.includes('slow')) {
       for (let i = 0; i < 50; i++) {
         if (cancelled.has(sid)) return { stopReason: 'cancelled' };

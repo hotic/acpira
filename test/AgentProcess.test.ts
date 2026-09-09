@@ -4,9 +4,13 @@ import type { AgentDef } from '../src/host/acp/AgentRegistry';
 import { AgentProcess, type ClientHandlers } from '../src/host/acp/AgentProcess';
 
 const FAKE = fileURLToPath(new URL('./fake-agent.ts', import.meta.url));
-const TSX = fileURLToPath(new URL('../node_modules/.bin/tsx', import.meta.url));
+// Node with tsx's loader flags rather than the `tsx` wrapper: the wrapper is a parent that relays signals to the real node, so a SIGKILL
+// aimed at it left the stubborn fixture behind as an orphan (150+ of them accumulated across suite runs); the other suites end their
+// agents with SIGTERM, which the wrapper relays, and keep the wrapper
+const LOADER = fileURLToPath(new URL('../node_modules/tsx/dist/loader.mjs', import.meta.url));
+const NODE = process.execPath;
 
-const DEF: AgentDef = { id: 'fake', name: 'Fake', command: TSX, args: [FAKE], env: {}, candidates: [] };
+const DEF: AgentDef = { id: 'fake', name: 'Fake', command: NODE, args: ['--import', LOADER, FAKE], env: {}, candidates: [] };
 
 // Resolves with the exit signal / code the child reports; the handlers otherwise ignore everything
 function handlers() {
@@ -23,14 +27,14 @@ function handlers() {
 describe('AgentProcess', () => {
   it('kills the child when initialize fails instead of leaving an orphan behind the error', async () => {
     const { h, exited } = handlers();
-    await expect(AgentProcess.spawn(DEF, TSX, '/tmp', h, { FAKE_INIT_FAIL: '1', FAKE_STUBBORN: '1' })).rejects.toThrow(/initialize refused/);
+    await expect(AgentProcess.spawn(DEF, NODE, '/tmp', h, { FAKE_INIT_FAIL: '1', FAKE_STUBBORN: '1' })).rejects.toThrow(/initialize refused/);
     const r = await exited;
     expect(r.signal === 'SIGTERM' || r.signal === 'SIGKILL' || r.code !== null).toBe(true);
   });
 
   it('escalates to SIGKILL when the CLI ignores the polite signal', async () => {
     const { h, exited } = handlers();
-    const proc = await AgentProcess.spawn(DEF, TSX, '/tmp', h, { FAKE_STUBBORN: '1' });
+    const proc = await AgentProcess.spawn(DEF, NODE, '/tmp', h, { FAKE_STUBBORN: '1' });
     expect(proc.alive).toBe(true);
     const t0 = Date.now();
     await proc.kill();
@@ -42,7 +46,7 @@ describe('AgentProcess', () => {
 
   it('reports the extension version as clientInfo', async () => {
     const { h } = handlers();
-    const proc = await AgentProcess.spawn(DEF, TSX, '/tmp', h);
+    const proc = await AgentProcess.spawn(DEF, NODE, '/tmp', h);
     try {
       const { CLIENT_INFO } = await import('../src/host/acp/AgentProcess');
       const { version } = await import('../package.json');

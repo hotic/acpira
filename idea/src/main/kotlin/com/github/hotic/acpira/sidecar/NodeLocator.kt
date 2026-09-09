@@ -12,27 +12,47 @@ const val MIN_NODE_MAJOR = 22
 
 class SidecarSetupException(message: String) : Exception(message)
 
-// Where the sidecar comes from. Node: ACPIRA_NODE, then the IDE's login-shell PATH (EnvironmentUtil, never System.getenv alone: a Dock
-// launch has no shell PATH), later a runtime bundled per platform. Script: ACPIRA_HOST_SERVER for development against a repository
-// build, otherwise the host-server.cjs packaged next to the plugin
+// Where the sidecar comes from. Node: ACPIRA_NODE, then the runtime a per-platform plugin distribution carries at <plugin>/node/node,
+// then the IDE's login-shell PATH (EnvironmentUtil, never System.getenv alone: a Dock launch has no shell PATH). Script:
+// ACPIRA_HOST_SERVER for development against a repository build, otherwise the host-server.cjs packaged next to the plugin
 object NodeLocator {
     fun shellEnv(): Map<String, String> = EnvironmentUtil.getEnvironmentMap()
 
     fun node(): Path {
-        val override = env("ACPIRA_NODE")
-        val path = when {
-            override != null -> Paths.get(override)
-            else -> findInPath("node") ?: throw SidecarSetupException(
-                "Node.js $MIN_NODE_MAJOR+ was not found on the shell PATH. Install it (https://nodejs.org) or set ACPIRA_NODE to the executable.",
-            )
+        env("ACPIRA_NODE")?.let { return checked(Paths.get(it), "ACPIRA_NODE") }
+        bundledNode()?.let { bundled ->
+            // A runtime that does not start on this machine (wrong arch in a hand-copied plugin dir, blocked binary) must not take the
+            // sidecar down when a system Node would do
+            runCatching { checked(bundled, "bundled") }.onFailure { Acpira.LOG.warn("bundled node unusable, trying the shell PATH: ${it.message}") }
+                .getOrNull()?.let { return it }
         }
+        val onPath = findInPath("node") ?: throw SidecarSetupException(
+            "Node.js $MIN_NODE_MAJOR+ was not found on the shell PATH. Install it (https://nodejs.org) or set ACPIRA_NODE to the executable.",
+        )
+        return checked(onPath, "PATH")
+    }
+
+    // The runtime of a -<os>-<arch> distribution; the plain zip has none. The IDE's plugin installer keeps zip permissions, but a copy
+    // that lost the bit (a manual unpack) gets it back rather than an error
+    private fun bundledNode(): Path? {
+        val dir = Acpira.descriptor?.pluginPath?.resolve("node") ?: return null
+        val exe = if (isWindows) "node.exe" else "node"
+        val path = dir.resolve(exe)
+        if (!Files.isRegularFile(path)) return null
+        if (!Files.isExecutable(path)) runCatching { path.toFile().setExecutable(true, false) }
+        return path
+    }
+
+    private fun checked(path: Path, source: String): Path {
         if (!Files.isExecutable(path)) throw SidecarSetupException("Node.js executable is not runnable: $path")
         val version = version(path)
         val major = version.removePrefix("v").substringBefore('.').toIntOrNull() ?: 0
         if (major < MIN_NODE_MAJOR) throw SidecarSetupException("Node.js $MIN_NODE_MAJOR+ is required, found $version at $path")
-        Acpira.LOG.info("sidecar node: $path ($version)")
+        Acpira.LOG.info("sidecar node ($source): $path ($version)")
         return path
     }
+
+    private val isWindows get() = System.getProperty("os.name").lowercase().contains("win")
 
     fun script(): Path {
         env("ACPIRA_HOST_SERVER")?.let { override ->
@@ -49,7 +69,7 @@ object NodeLocator {
 
     // First executable of that name on the shell PATH (PathEnvironmentVariableUtil.findInPath is scheduled for removal)
     fun findInPath(name: String): Path? {
-        val names = if (System.getProperty("os.name").lowercase().contains("win")) listOf("$name.exe", "$name.cmd", name) else listOf(name)
+        val names = if (isWindows) listOf("$name.exe", "$name.cmd", name) else listOf(name)
         return (shellEnv()["PATH"] ?: "").split(File.pathSeparator).asSequence()
             .filter { it.isNotBlank() }
             .flatMap { dir -> names.asSequence().map { Paths.get(dir, it) } }
