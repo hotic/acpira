@@ -3,8 +3,12 @@
     <name>Acpira</name>
     <vendor url="https://github.com/hotic/acpira">hotic</vendor>
     <description><![CDATA[
-        Chat shell for official agent CLIs (Grok Build, Kimi Code, Devin) over ACP. The conversation UI and session logic are the same
-        as the VS Code extension; this plugin hosts them in a tool window and drives the CLIs through a Node sidecar.
+        <p><b>Native agents. One considered interface.</b></p>
+        <p>Bring Grok Build, Kimi Code, Devin and any other <a href="https://agentclientprotocol.com">ACP</a> agent CLI into a tool window
+        or an editor tab. The agents keep their own execution engines; Acpira adds a clear execution history, inline approvals,
+        queued follow-ups, session and account management, and a context budget.</p>
+        <p>Sessions, accounts and settings live in <code>~/.acpira</code>, shared with the Acpira extension for VS Code and Cursor.
+        Requires an IDE from 2026.1 on; the per-platform distributions carry their own Node.js runtime.</p>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
@@ -14,7 +18,7 @@
     <depends optional="true" config-file="acpira-terminal.xml">org.jetbrains.plugins.terminal</depends>
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow id="Acpira" anchor="right" secondary="false" icon="AllIcons.Toolwindows.WebToolWindow"
+        <toolWindow id="Acpira" anchor="right" secondary="false" icon="/icons/toolWindow.svg"
                     factoryClass="com.github.hotic.acpira.ui.AcpiraToolWindowFactory"/>
         <fileEditorProvider implementation="com.github.hotic.acpira.ui.AcpiraEditorProvider"/>
         <editorTabTitleProvider implementation="com.github.hotic.acpira.ui.AcpiraTabTitle"/>

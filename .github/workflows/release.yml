@@ -83,8 +83,55 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  release-asset:
+  # The IntelliJ plugin: the same version (build.gradle.kts reads package.json), one zip per OS / CPU with its Node.js runtime.
+  build-idea:
     needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.ref }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: pnpm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: ${{ github.event_name == 'release' }}
+      - run: pnpm install --frozen-lockfile
+      - name: Build the webview and sidecar bundles
+        run: pnpm build
+      - name: Build, verify and package the plugin
+        working-directory: idea
+        run: ./gradlew test buildPlugin verifyPlugin buildPluginVariants checksums --no-daemon
+      - name: Check the plugin version against the release
+        env:
+          VSIX_FILE: ${{ needs.build.outputs.file }}
+        run: |
+          version="${VSIX_FILE#acpira-}"; version="${version%.vsix}"
+          ls idea/build/distributions
+          for target in mac-arm64 mac-x86_64 linux-arm64 linux-x86_64 windows-arm64 windows-x86_64; do
+            test -f "idea/build/distributions/acpira-$version-$target.zip"
+          done
+          cat idea/build/distributions/SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: intellij-plugin
+          path: |
+            idea/build/distributions/acpira-*-*.zip
+            idea/build/distributions/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+  release-asset:
+    needs: [build, build-idea]
     if: github.event_name == 'release' || inputs.publish
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -94,7 +141,11 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: extension-vsix
-      - name: Attach package to GitHub Release
+      - uses: actions/download-artifact@v8
+        with:
+          name: intellij-plugin
+          path: idea
+      - name: Attach packages to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -102,12 +153,51 @@ jobs:
           VSIX_FILE: ${{ needs.build.outputs.file }}
         run: |
           sha256sum --check "$VSIX_FILE.sha256"
+          (cd idea && sha256sum --check SHA256SUMS --ignore-missing)
           # Keep original release assets on retries instead of replacing a published package.
           gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' > assets.txt
-          for file in "$VSIX_FILE" "$VSIX_FILE.sha256"; do
-            if ! grep -Fxq "$file" assets.txt; then
+          for file in "$VSIX_FILE" "$VSIX_FILE.sha256" idea/*.zip idea/SHA256SUMS; do
+            if ! grep -Fxq "$(basename "$file")" assets.txt; then
               gh release upload "$RELEASE_TAG" "$file"
             fi
+          done
+
+  jetbrains-marketplace:
+    needs: [build, build-idea]
+    if: github.event_name == 'release' || inputs.publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check publishing credential
+        env:
+          PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
+        run: |
+          if [ -z "$PUBLISH_TOKEN" ]; then
+            echo '::error::Add the JETBRAINS_MARKETPLACE_TOKEN repository secret (a Marketplace permanent token of the plugin owner).'
+            exit 1
+          fi
+      - uses: actions/download-artifact@v8
+        with:
+          name: intellij-plugin
+      - name: Publish the per-platform distributions
+        env:
+          PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
+          VSIX_FILE: ${{ needs.build.outputs.file }}
+        run: |
+          sha256sum --check SHA256SUMS --ignore-missing
+          version="${VSIX_FILE#acpira-}"; version="${version%.vsix}"
+          # With the os / arch dependencies in each plugin.xml the Marketplace serves every IDE the zip built for its machine; the
+          # runtime-free base zip is not uploaded. The Marketplace refuses a version it already has, so a retry only uploads the
+          # variants still missing from the public listing.
+          curl -fsS "https://plugins.jetbrains.com/plugins/list?pluginId=com.github.hotic.acpira" > published.xml
+          for target in mac-arm64 mac-x86_64 linux-arm64 linux-x86_64 windows-arm64 windows-x86_64; do
+            if grep -Fq "<version>$version-$target</version>" published.xml; then
+              echo "$version-$target is already on the Marketplace"
+              continue
+            fi
+            curl -fsS --header "Authorization: Bearer $PUBLISH_TOKEN" -F xmlId=com.github.hotic.acpira \
+              -F "file=@acpira-$version-$target.zip" https://plugins.jetbrains.com/api/updates/upload
+            echo "uploaded $version-$target"
           done
 
   vscode-marketplace:

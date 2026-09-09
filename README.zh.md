@@ -2,7 +2,7 @@
 
 **原生的编程 Agent，讲究的交互体验。**
 
-在 VS Code 与 Cursor 中使用 Grok、Devin、Kimi Code 及其他 ACP Agent。保留各自的执行引擎，清晰查看执行过程、审批操作，在任务进行时继续安排下一步。
+在 VS Code、Cursor 与 IntelliJ IDEA 中使用 Grok、Devin、Kimi Code 及其他 ACP Agent。保留各自的执行引擎，清晰查看执行过程、审批操作，在任务进行时继续安排下一步。
 
 [English](README.md) · **简体中文**
 
@@ -81,12 +81,12 @@ Acpira 位于活动栏，通过 [ACP](https://agentclientprotocol.com)（JSON-RP
 
 ## 安装
 
-1. 用 `.vsix` 安装扩展（**从 VSIX 安装…**），或在上架后从 Marketplace 安装。
+1. 用 `.vsix` 安装扩展（**从 VSIX 安装…**），或在上架后从 Marketplace 安装。IntelliJ IDEA 2026.1 及以上可从 JetBrains Marketplace 安装插件，或选与本机匹配的 `acpira-<version>-<os>-<arch>.zip`（**Settings → Plugins → ⚙ → Install Plugin from Disk…**）；每个 zip 自带 Node.js 运行时。
 2. 至少安装一家 Agent CLI，并保证它在 `PATH` 上：
    - [Grok](https://x.ai) — `grok`（`grok agent stdio`）
    - [Devin](https://devin.ai) — `devin`（`devin acp`）
    - [Kimi Code](https://www.kimi.com) — `kimi`（`kimi acp`）
-3. 点击**活动栏**（左侧）的 Acpira 图标。若未显示，在活动栏空白处右键勾选 **Acpira**。也可把视图拖到副侧栏。
+3. 点击**活动栏**（左侧）的 Acpira 图标。若未显示，在活动栏空白处右键勾选 **Acpira**。也可把视图拖到副侧栏。IntelliJ IDEA 中打开右侧的 **Acpira** 工具窗，标题栏按钮可把对话开成编辑器标签。
 
 ## 开始使用
 
@@ -118,7 +118,6 @@ Acpira 可为每个 Agent 保存多份登录，并在创建会话时注入凭据
 - 统一模型配置入口，自动同步到不同 Agent。
 - 统一管理 Skills 与 MCP。
 - 跨 Harness 共享提示词与项目指令。
-- IntelliJ IDEA 插件。
 - 长期方向：独立桌面端。
 
 具体方向见 [ROADMAP.md](ROADMAP.md#简体中文)。

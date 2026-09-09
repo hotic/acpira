@@ -2,7 +2,7 @@
 
 **Native agents. One considered interface.**
 
-Bring Grok, Devin, Kimi Code, and other ACP agents into VS Code and Cursor. Keep their execution engines, with clear execution history, inline approvals, and follow-ups that keep work moving.
+Bring Grok, Devin, Kimi Code, and other ACP agents into VS Code, Cursor, and IntelliJ IDEA. Keep their execution engines, with clear execution history, inline approvals, and follow-ups that keep work moving.
 
 **English** · [简体中文](README.zh.md)
 
@@ -81,14 +81,14 @@ Store multiple accounts per agent, paste or drop images, and attach workspace fi
 
 ## Install
 
-1. Install the extension from a `.vsix` (**Extensions: Install from VSIX…**) or from the Marketplace once it is published.
+1. Install the extension from a `.vsix` (**Extensions: Install from VSIX…**) or from the Marketplace once it is published. For IntelliJ IDEA 2026.1 and later, install the plugin from the JetBrains Marketplace or from the `acpira-<version>-<os>-<arch>.zip` matching the machine (**Settings → Plugins → ⚙ → Install Plugin from Disk…**); each zip carries its own Node.js runtime.
 2. Install at least one agent CLI and keep it on `PATH`:
    - [Grok](https://x.ai) — `grok` (`grok agent stdio`)
    - [Devin](https://devin.ai) — `devin` (`devin acp`)
    - [Kimi Code](https://www.kimi.com) — `kimi` (`kimi acp`)
 
    An agent without a CLI is greyed out in the menus; its settings page shows the vendor's install command (copy it, or run it in a terminal from there). Acpira notices a newly installed CLI on its own — no reload needed.
-3. Click the Acpira icon in the **Activity Bar** (left). If it is hidden, right-click the Activity Bar and enable **Acpira**. The view can be dragged to the secondary sidebar.
+3. Click the Acpira icon in the **Activity Bar** (left). If it is hidden, right-click the Activity Bar and enable **Acpira**. The view can be dragged to the secondary sidebar. In IntelliJ IDEA, open the **Acpira** tool window on the right; its title bar action opens a conversation as an editor tab.
 
 ## Get started
 
@@ -120,7 +120,6 @@ Agents without an account list still use their own CLI login.
 - One place to configure models and sync settings to different agents.
 - Shared Skills and MCP management.
 - Shared prompts and project instructions across harnesses.
-- An IntelliJ IDEA plugin.
 - Longer term: a standalone desktop app.
 
 See [ROADMAP.md](ROADMAP.md) for the planned directions.
@@ -134,11 +133,12 @@ pnpm probe grok     # run initialize + session/new against a CLI directly
 pnpm probe devin --import-local "Reply pong"   # via the account layer: import local login → authenticate → one turn
 pnpm typecheck && pnpm test
 pnpm package        # build a .vsix
+cd idea && ./gradlew test buildPlugin verifyPlugin   # IntelliJ plugin; buildPluginVariants for the per-platform zips
 ```
 
 Press F5 to launch an Extension Development Host. Logs are in Output → Acpira. See [AGENTS.md](AGENTS.md) for the architecture map and protocol notes.
 
-Stable GitHub Releases can publish the same VSIX to Visual Studio Marketplace and Open VSX automatically. See [Publishing Acpira](RELEASING.md) for the one-time credentials and release steps.
+Stable GitHub Releases can publish the same VSIX to Visual Studio Marketplace and Open VSX, and the IntelliJ plugin to the JetBrains Marketplace, automatically. See [Publishing Acpira](RELEASING.md) for the one-time credentials and release steps.
 
 ## License
 

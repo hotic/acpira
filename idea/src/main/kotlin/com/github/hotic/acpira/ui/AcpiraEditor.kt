@@ -3,7 +3,6 @@ package com.github.hotic.acpira.ui
 import com.github.hotic.acpira.sidecar.SidecarService
 import com.github.hotic.acpira.web.AcpiraBrowser
 import com.google.gson.JsonPrimitive
-import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorManager
@@ -33,7 +32,7 @@ object AcpiraSessionFileType : FileType {
     override fun getName() = "Acpira Session"
     override fun getDescription() = "Acpira conversation"
     override fun getDefaultExtension() = ""
-    override fun getIcon(): Icon = AllIcons.Toolwindows.WebToolWindow
+    override fun getIcon(): Icon = AcpiraIcons.ToolWindow
     override fun isBinary() = true
     override fun isReadOnly() = true
 }

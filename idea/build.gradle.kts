@@ -9,7 +9,9 @@ plugins {
 }
 
 group = "com.github.hotic.acpira"
-version = providers.gradleProperty("pluginVersion").getOrElse("0.0.1")
+// One version for both shells: the plugin carries the extension's package.json version (the release workflow tags that)
+val packageJson = providers.fileContents(layout.projectDirectory.file("../package.json")).asText
+version = packageJson.map { Regex("\"version\"\\s*:\\s*\"([^\"]+)\"").find(it)?.groupValues?.get(1) ?: error("no version in package.json") }.get()
 
 kotlin {
     jvmToolchain(21)
@@ -142,10 +144,33 @@ tasks {
     }
 }
 
+// "What's New" on the Marketplace: the CHANGELOG.md section of this version, Keep a Changelog markdown rendered to the HTML subset
+// the listing accepts (h3 / ul / p, inline code and links)
+val releaseNotes = providers.fileContents(layout.projectDirectory.file("../CHANGELOG.md")).asText.zip(provider { version.toString() }) { text, v ->
+    val section = text.split(Regex("(?m)^## ")).firstOrNull { it.startsWith("[$v]") } ?: return@zip ""
+    fun inline(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        .replace(Regex("`([^`]+)`"), "<code>$1</code>")
+        .replace(Regex("\\[([^]]+)]\\(([^)]+)\\)"), "<a href=\"$2\">$1</a>")
+    val out = StringBuilder()
+    var inList = false
+    for (line in section.lines().drop(1)) {
+        val item = line.startsWith("- ")
+        if (inList && !item && line.isNotBlank()) { out.append("</ul>\n"); inList = false }
+        when {
+            line.startsWith("### ") -> out.append("<h3>${inline(line.removePrefix("### "))}</h3>\n")
+            item -> { if (!inList) { out.append("<ul>\n"); inList = true }; out.append("<li>${inline(line.removePrefix("- "))}</li>\n") }
+            line.isNotBlank() -> out.append("<p>${inline(line)}</p>\n")
+        }
+    }
+    if (inList) out.append("</ul>\n")
+    out.toString()
+}
+
 intellijPlatform {
     pluginConfiguration {
         id = "com.github.hotic.acpira"
         name = "Acpira"
+        changeNotes = releaseNotes
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
             // No untilBuild: open-ended compatibility (the recommended default since 2024.3)
@@ -212,11 +237,12 @@ val checksums by tasks.registering {
     description = "Writes SHA256SUMS for the plugin distributions"
     val dir = layout.buildDirectory.dir("distributions")
     dependsOn(tasks.buildPlugin, buildPluginVariants)
-    inputs.files(dir.map { it.asFileTree.matching { include("*.zip") } })
+    val prefix = "${pluginName.get()}-$version"
+    inputs.files(dir.map { it.asFileTree.matching { include("$prefix*.zip") } })
     outputs.file(dir.map { it.file("SHA256SUMS") })
     doLast {
         val d = dir.get().asFile
-        val zips = d.listFiles { f -> f.extension == "zip" }!!.sortedBy { it.name }
+        val zips = d.listFiles { f -> f.extension == "zip" && f.name.startsWith(prefix) }!!.sortedBy { it.name }
         d.resolve("SHA256SUMS").writeText(zips.joinToString("") { f ->
             MessageDigest.getInstance("SHA-256").digest(f.readBytes()).joinToString("") { "%02x".format(it) } + "  ${f.name}\n"
         })
