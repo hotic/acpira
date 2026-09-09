@@ -42,6 +42,11 @@ export class AccountManager {
 
   defaultFor(agent: AgentId): AccountInfo | undefined { return this.deps.store.defaultFor(agent); }
 
+  // Pick up accounts another host (a VS Code window, an IDEA sidecar) added or removed in the shared ~/.acpira; viewers are told only when the list changed
+  async reload() {
+    if (await this.deps.store.reload()) this.emit();
+  }
+
   private withQuota(a: AccountInfo): AccountInfo {
     const quota = this.quotas.get(a.id);
     return quota ? { ...a, quota } : a;

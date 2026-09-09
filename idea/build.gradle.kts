@@ -25,6 +25,8 @@ dependencies {
         // IntelliJ IDEA is one unified distribution since 2025.3 (no more IC / IU). The installer form is required:
         // the SDK archive (useInstaller = false) ships without the JCEF native components
         intellijIdea(providers.gradleProperty("platformVersion"))
+        // Optional at runtime (plugin.xml), needed at compile time for runInTerminal
+        bundledPlugin("org.jetbrains.plugins.terminal")
         testFramework(TestFrameworkType.Platform)
     }
     testImplementation("junit:junit:4.13.2")

@@ -162,19 +162,20 @@ export class SessionManager {
 
   private remember(s: AcpSession) {
     this.prefs.lastSettings[s.agent] = captureTurnSettings(s.view().controls);
-    this.savePrefs();
+    this.savePrefs(s.agent);
   }
 
   private rememberMode(agent: AgentId, modeId: string) {
     const cur = this.prefs.lastSettings[agent];
     if (cur?.modeId === modeId) return;
     this.prefs.lastSettings[agent] = { config: {}, ...cur, modeId };
-    this.savePrefs();
+    this.savePrefs(agent);
   }
 
-  // Fire-and-forget disk writes surface their failures in the log rather than as unhandled rejections
-  private savePrefs() {
-    this.deps.store.savePrefs(this.prefs).catch(e => this.deps.log(`prefs save failed: ${msg(e)}`));
+  // Fire-and-forget disk writes surface their failures in the log rather than as unhandled rejections. Only this agent's entry goes to
+  // the file (merged with what other windows remembered for theirs); memory stays this window's own choices
+  private savePrefs(agent: AgentId) {
+    this.deps.store.savePrefs(this.prefs, [agent]).catch(e => this.deps.log(`prefs save failed: ${msg(e)}`));
   }
 
   // The in-memory list changed: bring the disk index along shortly (debounced, since streaming touches it constantly)

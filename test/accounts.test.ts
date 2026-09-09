@@ -71,6 +71,41 @@ describe('AccountStore', () => {
     expect(store2.list().map(x => x.id)).toEqual([b.id]);
   });
 
+  it('two hosts on one accounts.json: an account added in one is not erased by a touch or add in the other, a removal is not resurrected, reload picks up the difference', async () => {
+    const dir = tmp();
+    const file = join(dir, 'accounts.json');
+    const vaultA = new FileVault(join(dir, 'secrets.json'));
+    const vaultB = new FileVault(join(dir, 'secrets.json'));
+    const a = new AccountStore(file, vaultA);
+    const b = new AccountStore(file, vaultB);
+    await a.load();
+    await b.load();
+    const one = await a.add('devin', { label: 'one@x.io', secret: 's1' });
+    // b never saw `one`; its own add must land next to it, not over it
+    const two = await b.add('devin', { label: 'two@x.io', secret: 's2' });
+    expect(JSON.parse(readFileSync(file, 'utf8')).map((x: { id: string }) => x.id).sort()).toEqual([one.id, two.id].sort());
+    expect(JSON.parse(readFileSync(join(dir, 'secrets.json'), 'utf8'))).toEqual({ [accountSecretKey(one.id)]: 's1', [accountSecretKey(two.id)]: 's2' });
+    // a's cache still lists only `one`; a touch writes through what is on disk
+    expect(a.list().map(x => x.id)).toEqual([one.id]);
+    await a.touch(one.id);
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toHaveLength(2);
+    expect(a.list().map(x => x.id).sort()).toEqual([one.id, two.id].sort());
+    expect(await a.reload()).toBe(false);
+    // b removes `two`; a still knows it but must not put it back when it touches `one`
+    await b.remove(two.id);
+    await a.touch(one.id);
+    expect(JSON.parse(readFileSync(file, 'utf8')).map((x: { id: string }) => x.id)).toEqual([one.id]);
+    expect(await b.credential(two.id)).toBeUndefined();
+    // the other host's secret is readable without a restart
+    expect((await vaultB.get(accountSecretKey(one.id)))).toBe('s1');
+    // concurrent adds from both hosts all survive
+    await Promise.all([a.add('devin', { label: 'p@x.io', secret: 'p' }), b.add('devin', { label: 'q@x.io', secret: 'q' }), a.add('devin', { label: 'r@x.io', secret: 'r' })]);
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toHaveLength(4);
+    expect(Object.keys(JSON.parse(readFileSync(join(dir, 'secrets.json'), 'utf8')))).toHaveLength(4);
+    expect(await b.reload()).toBe(true);
+    expect(b.list()).toHaveLength(4);
+  });
+
   it('load drops the legacy "· name" tail from stored details and rewrites the file', async () => {
     const dir = tmp();
     const { mkdir, writeFile } = await import('node:fs/promises');

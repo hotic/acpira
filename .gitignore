@@ -30,3 +30,6 @@ vite.lab.config.ts
 # Playwright scratch output
 .playwright-cli/
 output/
+
+# JetBrains project files (the plugin source lives in idea/, its own .idea is ignored there)
+.idea/

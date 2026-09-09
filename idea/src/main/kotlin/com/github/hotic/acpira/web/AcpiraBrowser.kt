@@ -5,8 +5,11 @@ import com.github.hotic.acpira.sidecar.SidecarService
 import com.google.gson.JsonElement
 import com.google.gson.JsonParser
 import com.intellij.DynamicBundle
+import com.intellij.ide.ui.LafManagerListener
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.editor.colors.EditorColorsListener
+import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.ui.jcef.JBCefBrowser
@@ -35,6 +38,8 @@ class AcpiraBrowser(
     override val initial: JsonElement?,
     parent: Disposable,
     private val onState: (SidecarService.State, String?) -> Unit,
+    // The session this view shows changed or was renamed (id, title); an editor tab names itself after it
+    private val onSession: ((String, String) -> Unit)? = null,
 ) : SidecarService.View, Disposable {
     private val token = UUID.randomUUID().toString()
     override val viewId = "view-$token"
@@ -68,7 +73,17 @@ class AcpiraBrowser(
             };
         """.trimIndent()
         val nonce = ByteArray(16).also { SecureRandom().nextBytes(it) }.let { Base64.getUrlEncoder().withoutPadding().encodeToString(it) }
-        AcpiraScheme.register(token, ViewPage(host, bridge, nonce, ThemeVars.current(), DynamicBundle.getLocale().toLanguageTag()))
+        val locale = DynamicBundle.getLocale().toLanguageTag()
+        AcpiraScheme.register(token, ViewPage(host, bridge, nonce, ThemeVars.current(), locale))
+        // A LaF or editor scheme change repaints the live page and re-registers it so a later reload renders the new theme too
+        val onTheme = {
+            val theme = ThemeVars.current()
+            AcpiraScheme.register(token, ViewPage(host, bridge, nonce, theme, locale))
+            if (pageLoaded) browser.cefBrowser.executeJavaScript(PageTemplate.themeUpdateJs(theme), browser.cefBrowser.url, 0)
+        }
+        val bus = ApplicationManager.getApplication().messageBus.connect(this)
+        bus.subscribe(LafManagerListener.TOPIC, LafManagerListener { onTheme() })
+        bus.subscribe(EditorColorsManager.TOPIC, EditorColorsListener { onTheme() })
 
         val client = browser.jbCefClient
         client.addRequestHandler(object : CefRequestHandlerAdapter() {
@@ -107,9 +122,14 @@ class AcpiraBrowser(
     override fun onHostMessage(message: JsonElement) {
         if (message.isJsonObject) {
             val o = message.asJsonObject
-            when (o.get("type")?.asString) {
-                "session" -> o.getAsJsonObject("session")?.get("id")?.asString?.let { lastSessionId = it }
-                "init" -> o.getAsJsonObject("state")?.getAsJsonObject("active")?.get("id")?.asString?.let { lastSessionId = it }
+            val session = when (o.get("type")?.asString) {
+                "session" -> o.getAsJsonObject("session")
+                "init" -> o.getAsJsonObject("state")?.getAsJsonObject("active")
+                else -> null
+            }
+            session?.get("id")?.takeIf { it.isJsonPrimitive }?.asString?.let { id ->
+                lastSessionId = id
+                onSession?.invoke(id, session.get("title")?.takeIf { it.isJsonPrimitive }?.asString ?: "Acpira")
             }
         }
         val b64 = Base64.getEncoder().encodeToString(message.toString().toByteArray())

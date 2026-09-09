@@ -73,8 +73,12 @@ export class HostRuntime {
     this.unsubscribe.push(
       platform.onSettingsChanged(affects => this.settingsChanged(affects)),
       // Coming back from an external terminal where a CLI was installed or removed: re-check the executables right away; coming back from
-      // another window (VS Code or Cursor, same ~/.acpira): pick up the sessions it created or deleted
-      platform.onWindowFocus(() => { void this.manager.reprobe(); void this.manager.refreshIndex(); }),
+      // another window (VS Code, Cursor or IDEA, same ~/.acpira): pick up the sessions and accounts it created or deleted
+      platform.onWindowFocus(() => {
+        void this.manager.reprobe();
+        void this.manager.refreshIndex();
+        accounts.reload().catch(e => log(`account reload failed: ${msg(e)}`));
+      }),
     );
   }
 

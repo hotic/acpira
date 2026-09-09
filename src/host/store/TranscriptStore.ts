@@ -6,6 +6,7 @@ import type { SessionRecord } from '../acp/AcpSession';
 import type { BlobStore } from '../acp/attachments';
 import { msg } from '../errors';
 import { t } from '../i18n';
+import { withFileLock, writeAtomic } from './fileLock';
 
 // Cross-session memory that is not a setting: the mode / config values last chosen per agent, replayed onto new sessions
 export interface SessionPrefs {
@@ -50,9 +51,20 @@ export class TranscriptStore implements BlobStore {
     catch { return { lastSettings: {} }; }
   }
 
-  async savePrefs(prefs: SessionPrefs) {
+  // prefs.json is shared by every host: the file is re-read under its lock and only the given agents' entries are replaced, so a
+  // window that just remembered Kimi's mode does not undo what another window remembered for Grok. Returns the merged result
+  async savePrefs(prefs: SessionPrefs, agents: AgentId[] = Object.keys(prefs.lastSettings)): Promise<SessionPrefs> {
     await this.ensure();
-    await this.writeAtomic(join(this.dir, 'prefs.json'), JSON.stringify(prefs, null, 2));
+    const file = join(this.dir, 'prefs.json');
+    return withFileLock(file, async () => {
+      const disk = await this.loadPrefs();
+      for (const agent of agents) {
+        const v = prefs.lastSettings[agent];
+        if (v) disk.lastSettings[agent] = v; else delete disk.lastSettings[agent];
+      }
+      await writeAtomic(file, JSON.stringify(disk, null, 2));
+      return disk;
+    });
   }
 
   // Merge this host's view of the list with what is on disk, write the result, and return it.
@@ -77,7 +89,7 @@ export class TranscriptStore implements BlobStore {
       out.push(s);
     }
     sortIndex(out);
-    await this.writeAtomic(join(this.dir, 'index.json'), JSON.stringify(out, null, 2));
+    await writeAtomic(join(this.dir, 'index.json'), JSON.stringify(out, null, 2));
     return out;
   }
 
@@ -221,15 +233,8 @@ export class TranscriptStore implements BlobStore {
       this.log(`session ${record.id}: deleted by another window, not written back`);
       return;
     }
-    await this.writeAtomic(path, JSON.stringify(record));
+    await writeAtomic(path, JSON.stringify(record));
     this.known.add(record.id);
-  }
-
-  // Write next to the target and rename over it: readers in other windows see the old file or the new one, never a torn one
-  private async writeAtomic(path: string, data: string) {
-    const tmp = `${path}.${process.pid}.tmp`;
-    await writeFile(tmp, data);
-    await rename(tmp, path);
   }
 
   // Blob names are content hashes, so pasting the same image twice yields one file. The session id names the directory, so it must be a plain token

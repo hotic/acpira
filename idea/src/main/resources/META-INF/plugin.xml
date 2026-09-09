@@ -10,10 +10,14 @@
     <depends>com.intellij.modules.platform</depends>
     <!-- 2026.2 moved JCEF out of the core platform into the bundled Web Browser (JCEF) plugin; the alias exists since 2025.3.1 -->
     <depends>com.intellij.modules.jcef</depends>
+    <!-- Terminal logins and installs open an IDE terminal; without the Terminal plugin the sidecar shows the command in a notification instead -->
+    <depends optional="true" config-file="acpira-terminal.xml">org.jetbrains.plugins.terminal</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="Acpira" anchor="right" secondary="false" icon="AllIcons.Toolwindows.WebToolWindow"
                     factoryClass="com.github.hotic.acpira.ui.AcpiraToolWindowFactory"/>
+        <fileEditorProvider implementation="com.github.hotic.acpira.ui.AcpiraEditorProvider"/>
+        <editorTabTitleProvider implementation="com.github.hotic.acpira.ui.AcpiraTabTitle"/>
         <notificationGroup id="Acpira" displayType="BALLOON"/>
         <postStartupActivity implementation="com.github.hotic.acpira.DevAutoOpen"/>
     </extensions>

@@ -1,0 +1,3 @@
+<!-- Loaded only when the Terminal plugin is enabled; the runInTerminal capability is declared by checking for its classes at runtime -->
+<idea-plugin>
+</idea-plugin>
