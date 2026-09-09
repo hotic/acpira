@@ -33,7 +33,8 @@ describe('AgentProcess', () => {
     const proc = await AgentProcess.spawn(DEF, TSX, '/tmp', h, { FAKE_STUBBORN: '1' });
     expect(proc.alive).toBe(true);
     const t0 = Date.now();
-    proc.kill();
+    await proc.kill();
+    expect(proc.child.signalCode).toBe('SIGKILL');
     const r = await exited;
     expect(r.signal).toBe('SIGKILL');
     expect(Date.now() - t0).toBeGreaterThanOrEqual(1_500);

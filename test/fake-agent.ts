@@ -1,4 +1,7 @@
 import { Readable, Writable } from 'node:stream';
+import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import * as acp from '@agentclientprotocol/sdk';
 
 // Fake ACP agent: runs in a child process, plays different scripts based on the prompt text, feeding events to the AcpSession tests
@@ -21,6 +24,26 @@ if (process.env.FAKE_STUBBORN) {
 
 const sessions = new Set<string>();
 const modes = new Map<string, string>();
+// Optional native store for account-switch tests: context belongs to the session,
+// survives process replacement, and is never reconstructed from the UI transcript.
+const sessionDir = process.env.FAKE_SESSION_DIR;
+type SavedSession = { prompts: acp.ContentBlock[][]; mode: string; config: Record<string, string> };
+function readSession(id: string): SavedSession | undefined {
+  const file = sessionDir && join(sessionDir, `${id}.json`);
+  return file && existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : undefined;
+}
+function saveSession(id: string, prompts = readSession(id)?.prompts ?? []) {
+  if (sessionDir) writeFileSync(join(sessionDir, `${id}.json`), JSON.stringify({ prompts, mode: modes.get(id) ?? 'agent', config }));
+}
+function restoreSession(id: string): acp.LoadSessionResponse {
+  if (!authed) throw acp.RequestError.authRequired();
+  const saved = readSession(id);
+  if (!saved) throw new acp.RequestError(-32016, 'Session not found', { 'cognition.ai/errorKind': 'session_not_found' });
+  sessions.add(id);
+  modes.set(id, saved.mode);
+  Object.assign(config, saved.config);
+  return { modes: { currentModeId: saved.mode, availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }] }, configOptions: configOptions() };
+}
 let seq = 0;
 let usedTokens = 1234;
 let compactions = 0;
@@ -41,7 +64,7 @@ const app = acp.agent({ name: 'fake-agent' })
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
       agentInfo: { name: 'fake', version: '0.0.0' },
-      agentCapabilities: { loadSession: true, sessionCapabilities: { resume: {} } },
+      agentCapabilities: { loadSession: true, sessionCapabilities: process.env.FAKE_LOAD_ONLY ? {} : { resume: {} } },
       authMethods: [{ id: 'fake.login', name: 'Fake login', description: 'run fake login' }],
     };
   })
@@ -57,8 +80,9 @@ const app = acp.agent({ name: 'fake-agent' })
       process.stderr.write('2026-01-01T00:00:00Z WARN run_acp_server: agent_client_protocol::jsonrpc::outgoing_actor: Sending error response id=Number(1) method=session/new error=Error { code: -32000: Authentication required, message: "ACP host has not authenticated." }\n');
       throw acp.RequestError.authRequired();
     }
-    const sessionId = `s${++seq}`;
+    const sessionId = sessionDir ? randomUUID() : `s${++seq}`;
     sessions.add(sessionId);
+    saveSession(sessionId, []);
     return {
       sessionId,
       // when cwd contains no-modes, mimic Grok: omit modes, forcing the client to use the registry's synthesized modes
@@ -67,12 +91,21 @@ const app = acp.agent({ name: 'fake-agent' })
     };
   })
   .onRequest(acp.methods.agent.session.resume, ({ params }) => {
+    if (sessionDir) return restoreSession(params.sessionId);
     if (!sessions.has(params.sessionId)) {
       // when cwd contains gone, mimic Devin: empty sessions get swept once the process exits, report session_not_found
       if (params.cwd.includes('gone')) throw new acp.RequestError(-32016, 'Session not found', { 'cognition.ai/errorKind': 'session_not_found', 'cognition.ai/retryable': false });
       throw acp.RequestError.invalidParams({ sessionId: params.sessionId }, 'unknown session');
     }
     return { modes: { currentModeId: 'plan', availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }] } };
+  })
+  .onRequest(acp.methods.agent.session.load, async ({ params, client }) => {
+    if (!sessionDir) throw acp.RequestError.methodNotFound(acp.methods.agent.session.load);
+    const restored = restoreSession(params.sessionId);
+    // Native load replays content; an existing local transcript must not duplicate it.
+    await client.notify(acp.methods.client.session.update, { sessionId: params.sessionId,
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'NATIVE_REPLAY' } } });
+    return restored;
   })
   .onRequest(acp.methods.agent.authenticate, ({ params }) => {
     // FAKE_AUTH_REJECT: a CLI whose ACP authenticate never succeeds, so the host has to fall back to the registry's terminal login
@@ -82,7 +115,7 @@ const app = acp.agent({ name: 'fake-agent' })
     authed = true;
     return {};
   })
-  .onRequest(acp.methods.agent.session.setMode, ({ params }) => { modes.set(params.sessionId, params.modeId); return {}; })
+  .onRequest(acp.methods.agent.session.setMode, ({ params }) => { modes.set(params.sessionId, params.modeId); saveSession(params.sessionId); return {}; })
   .onRequest(acp.methods.agent.session.setConfigOption, async ({ params }) => {
     if (params.value === 'unavailable') throw acp.RequestError.invalidParams(undefined, 'Model unavailable');
     if (background && params.configId === 'effort') {
@@ -90,6 +123,7 @@ const app = acp.agent({ name: 'fake-agent' })
       if (params.value !== 'low') background = undefined;
     }
     config[params.configId] = String(params.value);
+    saveSession(params.sessionId);
     return { configOptions: configOptions() };
   })
   .onNotification(acp.methods.agent.session.cancel, async ({ params }) => {
@@ -104,6 +138,15 @@ const app = acp.agent({ name: 'fake-agent' })
     const text = params.prompt.map(p => (p.type === 'text' ? p.text : '')).join('');
     const send = (update: acp.SessionUpdate) => client.notify(acp.methods.client.session.update, { sessionId: sid, update });
     cancelled.delete(sid);
+    if (sessionDir) {
+      const saved = readSession(sid);
+      if (!saved) throw acp.RequestError.invalidParams(undefined, 'unknown native session');
+      saveSession(sid, [...saved.prompts, params.prompt]);
+    }
+    if (text === 'inspect-native-history') {
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(readSession(sid)) } });
+      return { stopReason: 'end_turn' };
+    }
     if (text.endsWith('inspect-history')) {
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify({ sessionId: sid, mode: modes.get(sid), config, prompt: params.prompt }) } });
       return { stopReason: 'end_turn' };
@@ -145,8 +188,8 @@ const app = acp.agent({ name: 'fake-agent' })
     }
 
     // Typed upstream failure, once per distinct prompt text, before anything is streamed — the retry of the same prompt then runs the normal script
-    if (text.includes('fail') && !failed.has(text)) {
-      failed.add(text);
+    if (text.includes('fail') && (failed.get(text) ?? 0) < (text.includes('fail-twice') ? 2 : 1)) {
+      failed.set(text, (failed.get(text) ?? 0) + 1);
       throw new acp.RequestError(-32603, 'Upstream error', { 'cognition.ai/errorKind': 'upstream_error', 'cognition.ai/retryable': true, detail: 'quota exhausted' });
     }
 
@@ -290,7 +333,7 @@ async function ask(text: string, sid: string, send: (u: acp.SessionUpdate) => Pr
 let authed = false;
 const cancelled = new Set<string>();
 // Prompts that have already failed once, so a retry of the same text goes through
-const failed = new Set<string>();
+const failed = new Map<string, number>();
 
 // two select-type configOptions: reasoning level intentionally listed before model, verifying the client sorts by category
 const config: Record<string, string> = { model: 'm1', effort: 'high' };

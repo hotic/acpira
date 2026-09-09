@@ -186,7 +186,7 @@ describe('Devin credentials file and auth status parsing', () => {
   });
 });
 
-function setup() {
+function setup(loadOnly = false) {
   const dir = tmp();
   const cwd = join(dir, 'needs-auth');
   mkdirSync(cwd);
@@ -195,7 +195,7 @@ function setup() {
   const store = new AccountStore(join(dir, 'accounts.json'), vault);
   const toasts: string[] = [];
   const accounts = new AccountManager({ store, providers: [provider], log: () => {}, runInTerminal: () => {}, toast: (_l, t) => toasts.push(t) });
-  const registry = new AgentRegistry({ fake: { name: 'Fake', command: TSX, args: [FAKE] } });
+  const registry = new AgentRegistry({ fake: { name: 'Fake', command: TSX, args: [FAKE], env: { FAKE_SESSION_DIR: dir, ...(loadOnly ? { FAKE_LOAD_ONLY: '1' } : {}) } } });
   const m = new SessionManager({
     registry, store: new TranscriptStore(join(dir, 'sessions')), log: () => {}, cwd: () => cwd, defaultAgent: () => 'fake',
     runInTerminal: () => {}, toast: (_l, t) => toasts.push(t), accounts,
@@ -274,8 +274,8 @@ describe('account layer wired into sessions', () => {
     } finally { s.dispose(); }
   });
 
-  it('no account → auth_required and the agent flagged accounts; after import a reopened session is ready and bound to the account; switching accounts opens a new session and changes the default', async () => {
-    const { m, accounts, store } = setup();
+  it.each([false, true])('account switching preserves native history through resume/load (load only: %s)', async loadOnly => {
+    const { m, accounts, store, dir } = setup(loadOnly);
     await m.init();
     expect(m.agents().find(a => a.id === 'fake')?.accounts).toBe(true);
     await m.newSession();
@@ -285,22 +285,64 @@ describe('account layer wired into sessions', () => {
     await m.handle({ type: 'addAccount', agent: 'fake', via: 'import' });
     const [one] = accounts.list();
     expect(one).toMatchObject({ agent: 'fake', label: 'one@example.com' });
-    // the empty session stuck on login is replaced; the new session is bound to the account and ready
-    expect(m.activeId).not.toBe(empty);
-    expect(m.sessions().map(s => s.id)).toEqual([m.activeId]);
+    // the empty session stuck on login is rebound, not replaced
+    expect(m.activeId).toBe(empty);
+    expect(m.sessions().map(s => s.id)).toEqual([empty]);
     expect(m.active()).toMatchObject({ status: 'ready', accountId: one!.id });
     await m.handle({ type: 'send', text: 'hi' });
+    await m.handle({ type: 'setConfig', configId: 'model', value: 'm2' });
+    await m.handle({ type: 'setMode', id: 'plan' });
+    const before = m.active()!;
+    const transcripts = new TranscriptStore(join(dir, 'sessions'));
+    // Flush through disposal below as well; the manager's debounced save must
+    // retain the same native ID after every account change.
+    await vi.waitFor(async () => expect((await transcripts.load(before.id))?.acpSessionId).toBeTruthy());
+    const nativeId = (await transcripts.load(before.id))!.acpSessionId;
+    const history = structuredClone(before.turns);
 
-    // second account: switching to it = a new session bound to it; the default account switches too
+    // second account: same session, new credential; the default account switches too
     const two = await store.add('fake', { label: 'two@example.com', secret: 'good-key' });
     const first = m.activeId!;
+    const turns = m.active()!.turns.length;
     await m.handle({ type: 'selectAccount', id: two.id });
-    expect(m.activeId).not.toBe(first);
+    expect(m.activeId).toBe(first);
+    expect(m.sessions()).toHaveLength(1);
     expect(m.active()).toMatchObject({ status: 'ready', accountId: two.id });
+    expect(m.active()!.turns).toHaveLength(turns);
+    expect(m.active()!.turns).toEqual(history);
+    expect(m.active()!.controls.modeId).toBe('plan');
+    expect(m.active()!.controls.options.find(o => o.id === 'model')?.value).toBe('m2');
     expect(accounts.defaultFor('fake')?.id).toBe(two.id);
-    expect(m.sessions().find(s => s.id === first)?.accountId).toBe(one!.id);
+
+    await m.handle({ type: 'send', text: 'inspect-native-history' });
+    const reply = m.active()!.turns.at(-1);
+    if (reply?.role !== 'agent' || reply.blocks[0]?.type !== 'text') throw new Error('Missing reply');
+    expect(JSON.parse(reply.blocks[0].markdown).prompts).toEqual([
+      [{ type: 'text', text: 'hi' }], [{ type: 'text', text: 'inspect-native-history' }],
+    ]);
+    await m.handle({ type: 'selectAccount', id: one!.id });
+    expect(m.active()).toMatchObject({ id: first, status: 'ready', accountId: one!.id });
     await m.dispose();
+    expect((await transcripts.load(first))?.acpSessionId).toBe(nativeId);
   }, 20_000);
+
+  it('switching during a running turn leaves the session and default account unchanged', async () => {
+    const { m, accounts, store } = setup();
+    try {
+      await m.init();
+      await m.newSession();
+      await m.handle({ type: 'addAccount', agent: 'fake', via: 'import' });
+      const one = m.active()!.accountId;
+      const two = await store.add('fake', { label: 'two@example.com', secret: 'good-key' });
+      const sending = m.handle({ type: 'send', text: 'slow' });
+      await vi.waitFor(() => expect(m.active()?.running).toBe(true));
+      await m.handle({ type: 'selectAccount', id: two.id });
+      expect(m.active()?.accountId).toBe(one);
+      expect(accounts.defaultFor('fake')?.id).toBe(one);
+      await m.handle({ type: 'stop' });
+      await sending;
+    } finally { await m.dispose(); }
+  });
 
   it('quota: fetched after the hand-off and again when a turn ends, served from memory when asked again soon after, dropped with the account; a bad key only logs', async () => {
     const { m, accounts, store, provider } = setup();

@@ -110,9 +110,13 @@ export class AgentProcess {
   }
 
   kill() {
+    const exited = this.child.exitCode !== null || this.child.signalCode !== null
+      ? Promise.resolve()
+      : new Promise<void>(resolve => { this.child.once('exit', () => resolve()); });
     this.stderr.close();
     this.conn.close();
     terminate(this.child);
+    return exited;
   }
 }
 

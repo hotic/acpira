@@ -792,6 +792,31 @@ function historyEdit(s: AcpSession, turnIndex: number, text = 'inspect-history')
 }
 
 describe('historical message editing', () => {
+  it.each([1, 2])('resending an unchanged message after %i empty failures keeps native compacted context', async attempts => {
+    const { session } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('earlier-context');
+      // The UI retains old tool output even after native compaction. It must
+      // never be injected into an unchanged failed-message retry.
+      const earlier = s.toRecord().turns[1]!;
+      if (earlier.role !== 'agent') throw new Error('Missing history');
+      earlier.blocks.push({ type: 'text', markdown: 'archived output '.repeat(250_000) });
+      const text = attempts === 2 ? 'fail-twice' : 'please fail';
+      for (let i = 0; i < attempts; i++) await s.prompt(text);
+      expect(s.view().turns.at(-1)).toMatchObject({ stop: 'error', blocks: [] });
+      const nativeId = s.toRecord().acpSessionId;
+      await s.editTurn(historyEdit(s, 2, text));
+      await until(() => !s.isRunning);
+      expect(s.toRecord().acpSessionId).toBe(nativeId);
+      expect(s.view().turns).toHaveLength(4);
+      expect(s.view().turns[1]).toBe(earlier);
+      expect(s.view().turns[2]).not.toHaveProperty('edited');
+      expect(s.view().turns[3]).toMatchObject({ stop: 'end_turn' });
+    } finally { s.dispose(); }
+  });
+
   it('starts a fresh peer with only earlier context and applies mode/effort before resending', async () => {
     const { session } = deps();
     const s = session();

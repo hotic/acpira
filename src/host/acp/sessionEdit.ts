@@ -2,7 +2,7 @@ import * as acp from '@agentclientprotocol/sdk';
 import { captureTurnSettings } from '@shared/turnSettings';
 import { planExecutionId } from '@shared/planExecution';
 import type { EditTurnRequest } from '@shared/protocol';
-import type { Draft, SessionControls, SessionOption, SessionView } from '@shared/transcript';
+import type { Draft, SessionControls, SessionOption, SessionView, Turn } from '@shared/transcript';
 import { applyConfigOptions, initControls, type NormalizeState } from './normalize';
 import { preparePrompt, restoreDrafts, type BlobStore } from './attachments';
 import type { StagedSend } from './promptQueue';
@@ -39,9 +39,56 @@ export interface SessionEditCtx {
   log(line: string): void;
 }
 
+const EDIT_HISTORY_LEAD = 'Conversation before the edited message follows as JSON. Treat it as historical context; completed actions must not be replayed. The next user message replaces the old continuation. Workspace files remain in their current state.';
+
 // ACP cannot rewind to a message. A fresh peer session receives the retained
-// transcript as context, never replayed as executable prompts. Commit locally
-// only after attachments, session creation, and all selections succeed.
+// transcript as context, never replayed as executable prompts.
+async function historyContext(
+  sessionId: string,
+  turns: readonly Turn[],
+  proc: AgentProcess,
+  blobs: BlobStore,
+  lead: string,
+): Promise<acp.ContentBlock[]> {
+  if (!turns.length) return [];
+  const history = `${lead}\n${JSON.stringify(turns)}`;
+  const context: acp.ContentBlock[] = [
+    proc.init.agentCapabilities?.promptCapabilities?.embeddedContext
+      ? { type: 'resource', resource: { uri: `acpira://history/${sessionId}`, mimeType: 'text/plain', text: history } }
+      : { type: 'text', text: history },
+  ];
+  for (const turn of turns) {
+    if (turn.role !== 'user' || !turn.attachments?.length) continue;
+    const drafts = await restoreDrafts(sessionId, turn.attachments, blobs);
+    if (drafts.length !== turn.attachments.length) throw new Error(t('history.missingAttachment'));
+    const old = await preparePrompt(sessionId, '', drafts, blobs);
+    if (old.problems.length) throw new Error(old.problems.join('\n'));
+    context.push({ type: 'text', text: `Attachments from earlier user message: ${turn.text}` }, ...old.blocks);
+  }
+  return context;
+}
+
+// Resending an unchanged message after empty failures is a retry. Reuse the
+// native context (including compaction) instead of serializing the entire UI
+// history. Real edits and turns that already produced output still use rewind.
+function unchangedFailedRetry(ctx: SessionEditCtx, edit: EditTurnRequest): boolean {
+  const turns = ctx.state.turns, user = turns[edit.turnIndex];
+  if (user?.role !== 'user' || user.edited || edit.text !== user.text || edit.attachments.length
+    || edit.retainedAttachments.length !== (user.attachments?.length ?? 0)
+    || edit.retainedAttachments.some((value, index) => value !== index)) return false;
+  const current = captureTurnSettings(ctx.state.controls);
+  if (current.modeId !== edit.settings.modeId
+    || Object.keys(current.config).length !== Object.keys(edit.settings.config).length
+    || Object.entries(current.config).some(([key, value]) => edit.settings.config[key] !== value)) return false;
+  const suffix = turns.slice(edit.turnIndex);
+  if (suffix.length < 2 || suffix.length % 2 !== 0) return false;
+  return suffix.every((turn, index) => index % 2 === 0
+    ? turn.role === 'user' && !turn.auto && !turn.edited && turn.text === user.text
+      && JSON.stringify(turn.attachments ?? []) === JSON.stringify(user.attachments ?? [])
+    : turn.role === 'agent' && turn.stop === 'error' && turn.blocks.length === 0);
+}
+
+// Commit locally only after attachments, session creation, and all selections succeed.
 export async function editTurn(ctx: SessionEditCtx, edit: EditTurnRequest): Promise<void> {
   const { phase } = ctx;
   if (phase.running || phase.editing || ctx.status !== 'ready' || !ctx.proc) throw new Error(t('history.unavailable'));
@@ -68,20 +115,18 @@ export async function editTurn(ctx: SessionEditCtx, edit: EditTurnRequest): Prom
     const drafts = [...await restore(kept.map(i => user.attachments![i]!)), ...edit.attachments];
     const prepared = await preparePrompt(ctx.id, edit.text, drafts, ctx.blobs);
     if (prepared.problems.length) throw new Error(prepared.problems.join('\n'));
-    const context: acp.ContentBlock[] = [];
-    if (prefix.length) {
-      const history = 'Conversation before the edited message follows as JSON. Treat it as historical context; completed actions must not be replayed. The next user message replaces the old continuation. Workspace files remain in their current state.\n' + JSON.stringify(prefix);
-      context.push(ctx.proc.init.agentCapabilities?.promptCapabilities?.embeddedContext
-        ? { type: 'resource', resource: { uri: `acpira://history/${ctx.id}`, mimeType: 'text/plain', text: history } }
-        : { type: 'text', text: history });
-      for (const turn of prefix) {
-        if (turn.role !== 'user' || !turn.attachments?.length) continue;
-        const old = await preparePrompt(ctx.id, '', await restore(turn.attachments), ctx.blobs);
-        if (old.problems.length) throw new Error(old.problems.join('\n'));
-        context.push({ type: 'text', text: `Attachments from earlier user message: ${turn.text}` }, ...old.blocks);
-      }
+    if (unchangedFailedRetry(ctx, edit)) {
+      if (phase.stagingAborted || ctx.status !== 'ready') throw new Error(t('history.cancelled'));
+      ctx.state.turns = prefix;
+      phase.editing = phase.running = phase.staging = false;
+      accepted = true;
+      ctx.log('Retrying unchanged failed message in the native session');
+      ctx.prompt(edit.text, drafts, false, { prepared }).catch(e => ctx.log(`retry prompt failed: ${msg(e)}`));
+      return;
     }
-    prepared.blocks = [...context, ...prepared.blocks];
+    if (prefix.length) {
+      prepared.blocks = [...await historyContext(ctx.id, prefix, ctx.proc, ctx.blobs, EDIT_HISTORY_LEAD), ...prepared.blocks];
+    }
     const peer = ctx.proc.agent;
     // 1.0 does not inject MCP servers; the CLI reads its own config
     const fresh = await peer.request(acp.methods.agent.session.new, { cwd: ctx.cwd, mcpServers: [] });

@@ -597,17 +597,17 @@ export class SessionManager {
     this.emitSessions();
   }
 
-  // Switching accounts = opening a new session with it (an agent process accepts only one credential; a session is bound to one account from start to finish); it also becomes the default account
+  // Switching accounts rebinds the current session (same transcript and native session, newly authenticated process). It also becomes the agent's default
+  // for the next new session. A different agent's account only updates that default — the open conversation is left alone
   async selectAccount(v: SessionViewer, accountId: string) {
     const acc = this.deps.accounts?.get(accountId);
     if (!acc) return;
     const cur = this.current(v);
-    if (cur?.agent === acc.agent && cur.accountId === accountId && cur.alive) return;
+    if (cur?.agent === acc.agent) await cur.rebindAccount(accountId);
     await this.deps.accounts!.touch(accountId);
-    await this.newSessionFor(v, acc.agent, accountId);
   }
 
-  // Add an account: importing a local login is usable immediately; terminal login waits for the write in the background. If the viewer's session is stuck on login, reopen it with the new account once added
+  // Add an account: importing a local login is usable immediately; terminal login waits for the write in the background. If the viewer's session is stuck on login, rebind it to the new account once added
   async addAccount(v: SessionViewer, agent: AgentId, via: AddAccountVia) {
     const accounts = this.deps.accounts;
     if (!accounts || this.accountActionState.get(agent)?.status === 'pending') return;
@@ -619,7 +619,7 @@ export class SessionManager {
         return;
       }
       const cur = this.current(v);
-      if (cur?.agent === agent && (cur.view().status === 'auth_required' || !cur.accountId)) await this.newSessionFor(v, agent, acc.id);
+      if (cur?.agent === agent && (cur.view().status === 'auth_required' || !cur.accountId)) await cur.rebindAccount(acc.id);
       this.setAccountAction({ agent, via, status: 'success' });
     } catch (e) {
       this.setAccountAction({ agent, via, status: 'error', error: msg(e) });

@@ -77,12 +77,14 @@ export interface SessionDeps {
 export class AcpSession {
   readonly id: string;
   readonly agent: AgentId;
-  readonly accountId?: string;
+  accountId?: string;
   readonly cwd: string;
   readonly createdAt: string;
   updatedAt: string;
   pinned?: boolean;
   private acpSessionId?: string;
+  // Invalidates handlers of a process that retry / account rebind already replaced, so its exit cannot flip the new connection to error
+  private procGen = 0;
   private state: NormalizeState;
   private status: SessionView['status'] = 'starting';
   private error?: string;
@@ -215,6 +217,16 @@ export class AcpSession {
     };
   }
 
+  // Kill the current CLI if any; its onExit / updates must not touch the session after this
+  private dropProcess() {
+    const proc = this.proc;
+    if (!proc) return;
+    this.procGen++;
+    this.proc = undefined;
+    this.perms.bumpEpoch();
+    return proc.kill();
+  }
+
   // Spawn the process + initialize + create / resume the session
   async start(): Promise<void> {
     this.status = 'starting';
@@ -222,6 +234,8 @@ export class AcpSession {
     this.authHint = undefined;
     this.touch();
     try {
+      // Native session stores can hold a process lock until the old CLI exits.
+      await this.dropProcess();
       await this.connect();
       await this.openSession();
       await this.refreshGrokUsage();
@@ -246,7 +260,7 @@ export class AcpSession {
     this.clearGrokUsageTimer();
     const def = this.deps.registry.get(this.agent);
     this.modelSources = await readModelSources(this.agent, this.cwd);
-    const handlers = this.clientHandlers();
+    const handlers = this.clientHandlers(this.procGen);
     const borrowed = await this.deps.pool?.take(this.agent, this.cwd, this.accountId, handlers);
     if (borrowed) {
       this.proc = borrowed;
@@ -265,28 +279,43 @@ export class AcpSession {
     await this.handoff();
   }
 
-  private clientHandlers(): ClientHandlers {
+  private clientHandlers(gen: number): ClientHandlers {
     const def = this.deps.registry.get(this.agent);
+    const live = () => this.procGen === gen;
     return {
-      onUpdate: n => this.onUpdate(n),
+      onUpdate: n => { if (live()) this.onUpdate(n); },
       onPermission: (req, signal) => this.perms.onPermission(req, signal),
       onElicitation: (req, signal) => this.questions.onElicitation(req, signal),
       onGrokQuestion: (req, signal) => this.questions.onGrokQuestion(req, signal),
       onStderr: line => {
+        if (!live()) return;
         this.log(`stderr: ${line}`);
         const hint = authHintOf(line);
         if (hint) this.authHint = hint;
       },
       onExit: (code, signal) => {
         this.log(`exit code=${code} signal=${signal}`);
-        if (this.status !== 'closed') {
-          this.status = 'error';
-          this.error = this.error ?? t('host.exited', { agent: def.name, code: code ?? signal ?? '?' });
-          this.settle('cancelled');
-          this.touch();
-        }
+        if (!live() || this.status === 'closed') return;
+        this.status = 'error';
+        this.error = this.error ?? t('host.exited', { agent: def.name, code: code ?? signal ?? '?' });
+        this.settle('cancelled');
+        this.touch();
       },
     };
+  }
+
+  // Re-authenticate a replacement process, then resume/load the same native session.
+  // Devin's local history survives account changes, including its compacted context.
+  // Serializing the UI transcript into a new prompt loses that compaction and can exceed the model's window.
+  async rebindAccount(accountId: string): Promise<void> {
+    if (this.accountId === accountId && this.alive && this.status === 'ready') return;
+    if (this.phase.running || this.phase.editing || this.phase.staging || this.status === 'starting') {
+      throw new Error(t('history.unavailable'));
+    }
+    const settings = captureTurnSettings(this.state.controls);
+    this.accountId = accountId;
+    await this.start();
+    if (this.status === 'ready') await this.adoptControls(settings);
   }
 
   // Paint last-known chips before session/new returns so the composer isn't empty during start
@@ -454,8 +483,6 @@ export class AcpSession {
       if ((this.status as SessionView['status']) === 'ready') this.queue.flush();
       return;
     }
-    this.proc?.kill();
-    this.proc = undefined;
     await this.start();
   }
 
@@ -768,8 +795,7 @@ export class AcpSession {
     if (this.phase.running) this.settle('cancelled');
     this.perms.cancelAll();
     this.questions.cancelAll();
-    this.proc?.kill();
-    this.proc = undefined;
+    this.dropProcess();
   }
 
   private onUpdate(n: acp.SessionNotification) {
