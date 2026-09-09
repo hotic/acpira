@@ -7,7 +7,9 @@ import { IconButton } from '../ui/Button';
 import { Popover } from '../ui/Popover';
 import { compactBudget, estimateUsage, liveUsage, overCompactBudget, usageWindow, type UsageSegment } from './usageBreakdown';
 
-// Context usage: a --icon-sized ring inside a --ctl-square button; hovering shows the breakdown card (Cursor-style), and agents with /compact can be compacted from its title row
+// Context usage: a --icon-sized ring inside a --ctl-square button; hovering shows the breakdown card (Cursor-style), and agents with /compact can be compacted from its title row.
+// Focus opens the card only when it arrives from another element (Tab / Shift+Tab). Focus the popup hands back after closing — outside click, Escape, the compact
+// button — has no relatedTarget (the card is already gone), and opening on it would reopen the card the user just dismissed
 export function ContextRing({ usage, turns, canCompact, compactAt, running, onCompact, onOpenChange }: {
   usage: Usage; turns: Turn[]; canCompact: boolean; compactAt?: number; running?: boolean;
   onCompact: () => void; onOpenChange: (open: boolean) => void;
@@ -22,7 +24,7 @@ export function ContextRing({ usage, turns, canCompact, compactAt, running, onCo
   const r = 6, c = 2 * Math.PI * r;
   return (
     <Popover.Root open={open} onOpenChange={setOpen} onOpenLifecycle={onOpenChange}>
-      <Popover.Trigger openOnHover delay={120} closeDelay={250} onFocus={() => setOpen(true)}
+      <Popover.Trigger openOnHover delay={120} closeDelay={250} onFocus={e => { if (e.relatedTarget) setOpen(true); }}
         render={<button type="button" data-open={open || undefined}
           aria-label={t('usage.usedPct', { pct: Math.round(pct * 100) })}
           className="inline-flex size-ctl shrink-0 items-center justify-center rounded-md text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1 data-[open]:bg-active data-[open]:text-fg-1"
