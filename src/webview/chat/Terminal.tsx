@@ -29,7 +29,7 @@ export function TerminalOutput({ block }: { block: ToolCallBlock }) {
         tabIndex={0}
         aria-label={t('code.commandOutput')}
         onScroll={e => { const el = e.currentTarget; pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24; }}
-        className="terminal-scroll scroll-fade scroll-thin m-0 max-h-code-output overflow-auto overscroll-contain whitespace-pre p-pad font-mono text-mono leading-code-output text-fg-2 [overflow-anchor:none]"
+        className="terminal-scroll scroll-fade scroll-thin m-0 max-h-code-output overflow-auto whitespace-pre p-pad font-mono text-mono leading-code-output text-fg-2 [overflow-anchor:none]"
       >
         {text.trimEnd().split('\n').map((line, index, lines) => <span key={index} className={/^(?:> |Done in )/.test(line) ? 'text-fg-3' : undefined}>
           {line.startsWith('✓') ? <><span className="text-ok">✓</span>{line.slice(1)}</> : line}{index < lines.length - 1 ? '\n' : ''}

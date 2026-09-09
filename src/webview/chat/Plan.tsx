@@ -34,7 +34,7 @@ export function PlanCard({ entries, live }: { entries: PlanEntry[]; live?: boole
       >
         <RowLabel className={cn(live && current && 'shimmer')}>{t('plan.todoTitle')}</RowLabel>
       </Row>
-      <div ref={fade} className="scroll-fade scroll-thin scroll-stable max-h-plan overflow-y-auto overscroll-y-contain [--scroll-fade-size:var(--gap)] [overflow-anchor:none]">
+      <div ref={fade} className="scroll-fade scroll-thin scroll-stable max-h-plan overflow-y-auto [--scroll-fade-size:var(--gap)] [overflow-anchor:none]">
         <Collapsible.Root open={!open && !current}><Collapsible.Panel>
           <Row className={cn('items-start lead-top', dockEntryClass)} dense lead={toolLine === 'text' ? undefined : <PlanDot status="completed" />}>
             <span className="text-fg-2">{t('plan.completed', { n: entries.length })}</span>

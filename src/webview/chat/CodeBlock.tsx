@@ -71,7 +71,7 @@ export function DiffBlock({ lines, source, path = '' }: { lines: DiffLine[]; sou
 
   return <div ref={root} className="group/code-output code-output diff-surface" data-language={language ?? 'plain'}>
     <OutputCopy text={copyText} label={source !== undefined ? t('code.copySource') : t('code.copyVisible')} />
-    <div className="diff-scroll scroll-thin max-h-code-output overflow-auto overscroll-contain py-gap-half" tabIndex={0} role="region" aria-label={t('code.diff')}>
+    <div className="diff-scroll scroll-thin max-h-code-output overflow-auto py-gap-half" tabIndex={0} role="region" aria-label={t('code.diff')}>
       <div className="diff-table min-w-full w-max font-mono text-mono leading-code-output">
         {rows.map((row, index) => row.kind === 'hunk' && index === rows.length - 1 ? null : row.kind === 'hunk'
           ? <div className="diff-hunk relative h-diff-hunk border-y border-line my-gap-half text-fg-3 select-none [&[data-omission]:first-child]:hidden" key={index} title={row.text} aria-label={row.text}

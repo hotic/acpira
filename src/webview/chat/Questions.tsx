@@ -119,7 +119,7 @@ export function Questions({ block, onAnswer }: { block: QuestionBlock; onAnswer:
   return (
     <div className="px-page">
       <Card ref={root} tabIndex={-1} role="form" aria-label={t('question.title')} onKeyDown={onKeyDown} className="flex min-w-0 flex-col overflow-hidden">
-        <div key={current.id} ref={fade} className="scroll-fade scroll-thin flex max-h-question-body flex-col gap-(--question-section-gap) overflow-y-auto overscroll-y-contain px-pad pt-(--question-top-pad) pb-(--question-section-gap) [--scroll-fade-size:var(--question-section-gap)] [&>*]:shrink-0">
+        <div key={current.id} ref={fade} className="scroll-fade scroll-thin flex max-h-question-body flex-col gap-(--question-section-gap) overflow-y-auto px-pad pt-(--question-top-pad) pb-(--question-section-gap) [--scroll-fade-size:var(--question-section-gap)] [&>*]:shrink-0">
           {/* The question itself labels the card; a separate title row adds no context. */}
           <Row dense className="items-start lead-top" lead={<MessageCircleQuestion className="size-icon" strokeWidth={1.5} />}
             trailing={<span aria-live="polite">{t('question.of', { n: page + 1, total })}</span>}>

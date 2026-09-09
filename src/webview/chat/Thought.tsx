@@ -17,7 +17,7 @@ export const Thought = memo(function Thought({ block }: { block: ThoughtBlock })
   const fade = useScrollFade<HTMLParagraphElement>();
   const lead = toolLine === 'text' ? undefined : <Brain className="size-icon" strokeWidth={1.5} />;
   return (
-    <Disclosure className="action-details" tone="action" lead={lead} body={<p ref={fade} className="max-h-(--thought-body-max) overflow-y-auto overscroll-y-contain scroll-fade scroll-thin m-0 text-2 text-fg-2 whitespace-pre-wrap [overflow-wrap:anywhere]"><StreamText text={block.text.trimEnd()} streaming={block.streaming} /></p>}>
+    <Disclosure className="action-details" tone="action" lead={lead} body={<p ref={fade} className="max-h-(--thought-body-max) overflow-y-auto scroll-fade scroll-thin m-0 text-2 text-fg-2 whitespace-pre-wrap [overflow-wrap:anywhere]"><StreamText text={block.text.trimEnd()} streaming={block.streaming} /></p>}>
       <span className={cn(block.streaming && 'shimmer')}>
         {block.streaming ? t('host.thinking') : t('thought.label')}
       </span>
