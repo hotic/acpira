@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { FolderInput, LoaderCircle, Pencil, Pin, PinOff, Search, Trash2 } from 'lucide-react';
 import type { AgentInfo, SessionSummary } from '@shared/transcript';
-import { SESSION_SCOPES, inWorkspace, type SessionScope } from '@shared/settings';
+import { inWorkspace, type SessionScope } from '@shared/settings';
 import { cn } from '../ui/cn';
 import { t, useLocale } from '../i18n';
 import { AgentMark } from './AgentMark';
@@ -26,7 +26,6 @@ export interface SessionListProps {
   // sessions from elsewhere offer "move here". Without it (LAB) every session shows
   workspace?: string;
   scope?: SessionScope;
-  onScope?: (scope: SessionScope) => void;
   // When opened in an overlay the search box auto-focuses; the drawer is permanent and doesn't steal focus
   autoFocus?: boolean;
   onSelect: (id: string) => void;
@@ -38,9 +37,9 @@ export interface SessionListProps {
 
 // Session list: search and agent filters stay visible even without history; pinned sessions get their own section, the rest is one flat list.
 // Each item: vendor mark · title · time; on hover those swap for the actions — pin / rename / delete, plus "move here" for a session from another project.
-// Deletion applies immediately, undo lives on the Toast at the shell's bottom. The scope chips (this project / all) write the setting, so every window follows;
+// Deletion applies immediately, undo lives on the Toast at the shell's bottom. Scope comes from acpira.sessionScope (settings);
 // under "all" each row from another project carries that project's folder name before the time
-export function SessionList({ sessions, agents, activeId, workspace, scope = 'all', onScope, autoFocus, onSelect, onRename, onDelete, onPin, onMove }: SessionListProps) {
+export function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, onSelect, onRename, onDelete, onPin, onMove }: SessionListProps) {
   const locale = useLocale();
   const [query, setQuery] = useState('');
   const [agentFilter, setAgentFilter] = useState<string>();
@@ -99,14 +98,6 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
             <AgentMark id={a.id} name={a.name} />{a.name}
           </FilterChip>
         ))}
-        {/* Scope sits apart from the agent filters at the row's end: it is a persisted setting, not a view filter */}
-        {workspace && onScope && (
-          <div className="ml-auto flex items-center gap-0.5" role="group" aria-label={t('session.scope.aria')}>
-            {SESSION_SCOPES.map(s => (
-              <FilterChip key={s} active={scope === s} onClick={() => onScope(s)}>{t(`session.scope.${s}` as const)}</FilterChip>
-            ))}
-          </div>
-        )}
       </div>
       <div className="mt-1 flex min-h-0 flex-col overflow-y-auto border-t border-line pb-1" role="listbox" aria-label={t('session.listAria')}>
         {/* Empty state takes exactly one item row (pt-1 + min-h-row) so the popover keeps its height whether the filter matches 0 or 1 session */}

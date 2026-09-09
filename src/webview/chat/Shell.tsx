@@ -49,10 +49,9 @@ export interface ShellHandlers {
   deleteSession: (id: string) => void;
   restoreSession: (id: string) => void;
   pinSession: (id: string, pinned: boolean) => void;
-  // Project scoping of the list: re-home a session into this window's workspace folder; switch the acpira.sessionScope setting
+  // Project scoping of the list: re-home a session into this window's workspace folder
   moveSession?: (id: string) => void;
-  setSessionScope?: (scope: SessionScope) => void;
-  // Account layer: selecting an account starts a new session with it; adding an account goes through import / terminal login; removing only deletes the locally saved credential
+  // Account layer: selecting an account rebinds the current session; adding an account goes through import / terminal login; removing only deletes the locally saved credential
   selectAccount: (id: string) => void;
   addAccount: (agent: AgentInfo['id'], via: AddAccountVia) => void;
   removeAccount: (id: string) => void;
@@ -164,7 +163,6 @@ export function Shell(p: ShellProps) {
       activeId={p.activeSessionId}
       workspace={p.workspace}
       scope={p.sessionScope}
-      onScope={on.setSessionScope}
       onSelect={id => { on.selectSession(id); setDrawerOpen(false); }}
       onRename={on.renameSession}
       onDelete={handlers.deleteSession}

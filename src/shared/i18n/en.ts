@@ -68,9 +68,6 @@ export const en = {
   'queue.gone': 'That message has already been sent.',
   'session.noneAgent': '{name} has no sessions yet',
   'session.noneWorkspace': 'No sessions in this project yet',
-  'session.scope.workspace': 'This project',
-  'session.scope.all': 'All projects',
-  'session.scope.aria': 'Sessions shown',
   'session.move': 'Move to this project',
   'session.moved': 'Moved “{title}” to this project',
 

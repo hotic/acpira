@@ -26,7 +26,7 @@ export interface HeaderProps {
   // This window's workspace folder and the list scope, handed on to the session list (see SessionListProps)
   workspace?: string;
   sessionScope?: SessionScope;
-  on: Pick<ShellHandlers, 'selectSession' | 'newSession' | 'renameSession' | 'deleteSession' | 'pinSession' | 'moveSession' | 'setSessionScope' | 'selectAgent' | 'selectAccount' | 'addAccount' | 'removeAccount' | 'refreshQuota'>;
+  on: Pick<ShellHandlers, 'selectSession' | 'newSession' | 'renameSession' | 'deleteSession' | 'pinSession' | 'moveSession' | 'selectAgent' | 'selectAccount' | 'addAccount' | 'removeAccount' | 'refreshQuota'>;
   onToggleDrawer?: () => void;
   drawerOpen?: boolean;
   // Swaps the chat for the settings page (webview-local view state)
@@ -88,7 +88,7 @@ export function Header({ title, sessions, agent, agents, accounts, accountId, ac
               <Popover.Root open={historyOpen} onOpenChange={setHistoryOpen}>
                 <Popover.Trigger render={<IconButton title={t('session.history')} aria-label={t('session.history')}><History strokeWidth={1.5} /></IconButton>} />
                 <Popover.Portal><Popover.Positioner side="bottom" align="end" width="xl"><Popover.Popup initialFocus={interaction => interaction === 'keyboard'}>
-                  <SessionList sessions={sessions} agents={agents} activeId={activeSessionId} workspace={workspace} scope={sessionScope} onScope={on.setSessionScope}
+                  <SessionList sessions={sessions} agents={agents} activeId={activeSessionId} workspace={workspace} scope={sessionScope}
                     onSelect={id => { on.selectSession(id); setHistoryOpen(false); }}
                     onRename={on.renameSession} onDelete={on.deleteSession} onPin={on.pinSession} onMove={on.moveSession} />
                 </Popover.Popup></Popover.Positioner></Popover.Portal>

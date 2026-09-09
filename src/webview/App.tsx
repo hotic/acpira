@@ -132,7 +132,6 @@ export function App() {
     restoreSession: id => post({ type: 'restoreSession', id }),
     pinSession: (id, pinned) => post({ type: 'pinSession', id, pinned }),
     moveSession: id => post({ type: 'moveSession', id }),
-    setSessionScope: scope => post({ type: 'setSetting', key: 'sessionScope', value: scope }),
     selectAccount: id => post({ type: 'selectAccount', id }),
     addAccount: (agent, via) => post({ type: 'addAccount', agent, via }),
     removeAccount: id => post({ type: 'removeAccount', id }),

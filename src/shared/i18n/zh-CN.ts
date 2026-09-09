@@ -73,9 +73,6 @@ export const zhCN = {
   'queue.gone': '这条消息已经发出去了。',
   'session.noneAgent': '{name} 还没有会话',
   'session.noneWorkspace': '这个项目还没有会话',
-  'session.scope.workspace': '本项目',
-  'session.scope.all': '全部项目',
-  'session.scope.aria': '会话范围',
   'session.move': '移到当前项目',
   'session.moved': '已把「{title}」移到当前项目',
 
