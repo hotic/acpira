@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { captureTurnSettings } from '@shared/turnSettings';
+import { commandChanges, commandName, namedCommand, restoreCommandReceipts } from '@shared/slashCommands';
 import type { EditTurnRequest } from '@shared/protocol';
 import * as acp from '@agentclientprotocol/sdk';
-import type { AgentId, AuthMethodInfo, ConfigControl, Draft, QuestionAnswers, SessionControls, SessionView, SlashCommand, Turn, TurnError, TurnSettings, Usage } from '@shared/transcript';
+import type { AgentId, AgentTurn, AuthMethodInfo, ConfigControl, Draft, QuestionAnswers, SessionControls, SessionView, SlashCommand, Turn, TurnError, TurnSettings, Usage } from '@shared/transcript';
 import type { AgentRuntimeInfo } from '@shared/inventory';
 import type { AgentRegistry } from './AgentRegistry';
 import { AgentProcess, type ClientHandlers } from './AgentProcess';
@@ -122,7 +123,7 @@ export class AcpSession {
     this.acpSessionId = record.acpSessionId;
     // Old records (persisted before the contract changed) may lack the options field
     const c = record.controls as Partial<SessionControls> | undefined;
-    this.state = { turns: restorePlanSnapshots(record.turns), controls: { modes: c?.modes ?? [], modeId: c?.modeId, modeConfigId: c?.modeConfigId, options: c?.options ?? [] }, usage: record.usage, commands: record.commands, title: record.title };
+    this.state = { turns: restoreCommandReceipts(restorePlanSnapshots(record.turns)), controls: { modes: c?.modes ?? [], modeId: c?.modeId, modeConfigId: c?.modeConfigId, options: c?.options ?? [] }, usage: record.usage, commands: record.commands, title: record.title };
     this.perms = new PermissionGate({ state: () => this.state, touch: () => this.touch() });
     this.questions = new QuestionGate({ state: () => this.state, touch: () => this.touch() });
     this.queue = new PromptQueue({
@@ -547,12 +548,17 @@ export class AcpSession {
     const completion = new CompactionCompletion(compacting ? this.agent : undefined);
     this.compactionCompletion = completion;
     if (prepared.attachments.length) this.log(`attachments: ${prepared.blocks.slice(text ? 1 : 0).map(b => b.type).join(' ')}`);
+    const before = captureTurnSettings(this.state.controls);
+    const command = namedCommand(this.state.commands, text);
+    const name = commandName(text);
     this.state.turns.push(auto ? { role: 'user', text, auto: true } : { role: 'user', id: randomUUID(), text,
-      settings: captureTurnSettings(this.state.controls), ...(staged?.edited ? { edited: true as const } : {}),
+      settings: before, ...(command ? { command: command.name } : {}), ...(staged?.edited ? { edited: true as const } : {}),
       ...(planId ? { planId } : {}),
       ...(prepared.attachments.length ? { attachments: prepared.attachments } : {}) });
     if (!auto && !planId && (!this.state.title || this.state.title === t('session.untitled'))) this.state.title = summarizePrompt(text, prepared.attachments).slice(0, TITLE_MAX);
-    this.state.turns.push({ role: 'agent', blocks: [], startedAt: Date.now(), activity: activityOf(this.state.turns) });
+    const agentTurn: AgentTurn = { role: 'agent', blocks: [], startedAt: Date.now(), activity: activityOf(this.state.turns),
+      ...(name ? { command: { name } } : {}) };
+    this.state.turns.push(agentTurn);
     this.touch();
     let stop: acp.StopReason = 'cancelled';
     try {
@@ -567,6 +573,7 @@ export class AcpSession {
         if (this.status !== 'ready') { this.queue.flush(); return; }
       }
       await this.refreshGrokUsage();
+      if (agentTurn.command && stop === 'end_turn') Object.assign(agentTurn.command, commandChanges(before, this.state.controls));
       this.settle(stop);
     } catch (e) {
       // The error stays on the turn (the webview shows it as a card, history keeps the row); the session itself is still usable, so status stays ready —

@@ -47,6 +47,28 @@ async function until(pred: () => boolean, ms = 5000) {
 }
 
 describe('AcpSession', () => {
+  it('keeps empty slash receipts and observed settings across persistence without inventing assistant prose', async () => {
+    const { session, d } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('/silent');
+      expect(s.view().turns.at(-1)).toMatchObject({ blocks: [], stop: 'end_turn', command: { name: 'silent' } });
+      await s.prompt('/silent-plan');
+      expect(s.view().turns.at(-1)).toMatchObject({ blocks: [], stop: 'end_turn', command: { name: 'silent-plan', mode: 'Plan' } });
+      await s.prompt('/silent-plan');
+      expect(s.view().turns.at(-1)).toMatchObject({ command: { name: 'silent-plan' } });
+      expect(s.view().turns.at(-1)).not.toHaveProperty('command.mode');
+      await s.prompt('/slash-error');
+      expect(s.view().turns.at(-1)).toMatchObject({ stop: 'error', error: { message: expect.stringContaining('Unknown command') } });
+      await s.prompt('ordinary message');
+      expect(s.view().turns.at(-1)).not.toHaveProperty('command');
+      const restored = new AcpSession(s.toRecord(), d);
+      expect(restored.view().turns).toEqual(s.view().turns);
+      restored.dispose();
+    } finally { s.dispose(); }
+  });
+
   it('opening an older session filters repeated completed plan snapshots from follow-up replies', () => {
     const { session, d } = deps();
     const original = session();

@@ -285,6 +285,8 @@ export interface UserTurn {
   role: 'user';
   id?: string;
   text: string;
+  // Advertised command selected at send time; retained for historical highlighting.
+  command?: string;
   attachments?: Attachment[];
   // The exact ACP selections used when this message was sent; older records omit it.
   settings?: TurnSettings;
@@ -325,6 +327,9 @@ export interface AgentTurn {
   // How the turn ended; absent while it runs (and on turns persisted before this field existed)
   stop?: TurnStop;
   error?: TurnError;
+  // A slash request can finish without prose. Keep the receipt separate from
+  // agent-authored blocks, with only observed ACP setting changes.
+  command?: { name: string; mode?: string; options?: { name: string; value: string }[] };
 }
 
 export type Turn = UserTurn | AgentTurn;

@@ -143,6 +143,12 @@ const app = acp.agent({ name: 'fake-agent' })
       if (!saved) throw acp.RequestError.invalidParams(undefined, 'unknown native session');
       saveSession(sid, [...saved.prompts, params.prompt]);
     }
+    // Slash receipts: no prose, a state-only change, and a native rejection.
+    if (text === '/silent' || text === '/silent-plan') {
+      if (text === '/silent-plan') await send({ sessionUpdate: 'current_mode_update', currentModeId: 'plan' });
+      return { stopReason: 'end_turn' };
+    }
+    if (text === '/slash-error') throw acp.RequestError.invalidParams(undefined, 'Unknown command');
     if (text === 'inspect-native-history') {
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(readSession(sid)) } });
       return { stopReason: 'end_turn' };

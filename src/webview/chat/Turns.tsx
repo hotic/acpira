@@ -2,7 +2,9 @@ import { Fragment, memo, useCallback, useLayoutEffect, useRef, useState, type CS
 import { Check, ChevronRight, Compass, Hand, MessageCircleQuestion, TriangleAlert, X } from 'lucide-react';
 import type { AgentBlock, AgentTurn, CompactionBlock, PermissionBlock, ToolCallBlock, ToolKind, UserTurn } from '@shared/transcript';
 import { useAppearance, type Appearance } from '../appearance';
-import { t } from '../i18n';
+import { getLocale, t } from '../i18n';
+import { COMMAND_MARK } from './PromptInput';
+import { turnOutcome } from './turnOutcome';
 import { Row, RowLabel, RowTarget, RowEntranceContext } from '../ui/Row';
 import { Disclosure, DisclosureObserverContext } from '../ui/Disclosure';
 import { Collapsible } from '../ui/Collapsible';
@@ -67,7 +69,8 @@ export function UserMessage({ turn, index, blobUrl, onEdit, compact }: { turn: U
           'scroll-fade scroll-thin min-h-0 whitespace-pre-wrap transition-[max-height] duration-(--dur-open) ease-out [--scroll-fade-size:var(--text-1-lh)] [overflow-anchor:none]',
           // Folded text does not take the wheel: scrolling over a stuck card keeps moving the conversation.
           compact ? 'max-h-(--user-message-stuck-max) overflow-hidden' : 'max-h-(--user-message-max) overflow-y-auto',
-        )}>{turn.text}</div>}
+        )}>{turn.command && turn.text.startsWith(`/${turn.command}`)
+          ? <><mark className={COMMAND_MARK}>/{turn.command}</mark>{turn.text.slice(turn.command.length + 1)}</> : turn.text}</div>}
       </div>
     </div>
   );
@@ -88,7 +91,7 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
       // Only the continuation owns live activity and the turn outcome. Earlier
       // sections have no independent timing; repeating the full duration lies.
       const content = { ...turn, blocks: section.blocks,
-        ...(!last ? { stop: undefined, error: undefined } : {}),
+        ...(!last ? { stop: undefined, error: undefined, command: undefined } : {}),
         ...(sections.length > 1 ? { startedAt: undefined, endedAt: undefined } : {}),
       };
       return <Fragment key={section.key}>
@@ -129,14 +132,7 @@ function AgentContent({ turn, index, running, onPermission, memoryKey }: { turn:
 // How the turn ended, when that is worth a line: it stopped short (error / refusal / a limit / stopped by hand), or it ended normally with nothing to show.
 // Nothing for a normal end with content, nor for turns persisted before `stop` existed
 function outcomeOf(turn: AgentTurn): string | undefined {
-  switch (turn.stop) {
-    case 'error': return t('turns.stop.error');
-    case 'refusal': return t('turns.stop.refusal');
-    case 'max_tokens': return t('turns.stop.maxTokens');
-    case 'max_turn_requests': return t('turns.stop.maxTurns');
-    case 'cancelled': return t('turns.stop.cancelled');
-    default: return turn.stop === 'end_turn' && turn.blocks.length === 0 ? t('turns.stop.empty') : undefined;
-  }
+  return turnOutcome(turn, getLocale());
 }
 
 // One faint row closing the message: a warning glyph for the short stops, none for "stopped" / "no reply"; the error's own words ride along as the target
