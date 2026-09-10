@@ -29,4 +29,25 @@ class TerminalCommandTest {
         )
         assertEquals("& 'powershell' '-Command' 'irm https://x | iex'", TerminalCommand.build("powershell", listOf("-Command", "irm https://x | iex"), emptyMap(), windows = true))
     }
+
+    @Test fun `Windows shell path picks cmd, bash, or PowerShell instead of assuming PowerShell`() {
+        assertEquals(TerminalCommand.ShellKind.Cmd, TerminalCommand.kind(true, "C:\\Windows\\System32\\cmd.exe"))
+        assertEquals(TerminalCommand.ShellKind.Posix, TerminalCommand.kind(true, "C:\\Program Files\\Git\\bin\\bash.exe"))
+        assertEquals(TerminalCommand.ShellKind.Posix, TerminalCommand.kind(true, "wsl.exe"))
+        assertEquals(TerminalCommand.ShellKind.PowerShell, TerminalCommand.kind(true, "pwsh"))
+        assertEquals(TerminalCommand.ShellKind.PowerShell, TerminalCommand.kind(true, null))
+        assertEquals(TerminalCommand.ShellKind.Posix, TerminalCommand.kind(false, "C:\\Windows\\System32\\cmd.exe"))
+    }
+
+    @Test fun `cmd exe gets set assignments chained with the command`() {
+        val env = linkedMapOf<String, String?>("ACP_BACKEND" to null, "XDG_DATA_HOME" to "C:\\Users\\it's")
+        assertEquals(
+            "set \"ACP_BACKEND=\" & set \"XDG_DATA_HOME=C:\\Users\\it's\" & devin auth login",
+            TerminalCommand.build("devin", listOf("auth", "login"), env, TerminalCommand.ShellKind.Cmd),
+        )
+        assertEquals(
+            "env -u ACP_BACKEND XDG_DATA_HOME='/tmp/acpira x' bash -c 'echo hi'",
+            TerminalCommand.build("bash", listOf("-c", "echo hi"), linkedMapOf("ACP_BACKEND" to null, "XDG_DATA_HOME" to "/tmp/acpira x"), TerminalCommand.ShellKind.Posix),
+        )
+    }
 }

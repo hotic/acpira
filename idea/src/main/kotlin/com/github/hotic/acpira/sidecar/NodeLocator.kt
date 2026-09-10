@@ -6,6 +6,7 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 const val MIN_NODE_MAJOR = 22
@@ -81,9 +82,32 @@ object NodeLocator {
     private fun version(node: Path): String {
         val pb = ProcessBuilder(node.toString(), "--version").redirectErrorStream(true)
         pb.environment().putAll(shellEnv())
-        val p = pb.start()
-        val out = p.inputStream.bufferedReader().readText().trim()
-        if (!p.waitFor(10, TimeUnit.SECONDS)) { p.destroyForcibly(); throw SidecarSetupException("node --version did not answer") }
+        val out = waitForOutput(pb.start(), 10, TimeUnit.SECONDS)
         return out.lines().lastOrNull { it.startsWith("v") } ?: throw SidecarSetupException("node --version answered '$out'")
+    }
+
+    // Read stdout in parallel with waitFor: a hung process that never closes stdout used to block in readText() and never hit the timeout
+    internal fun waitForOutput(process: Process, timeout: Long, unit: TimeUnit): String {
+        val out = StringBuilder()
+        val done = CountDownLatch(1)
+        Thread({
+            try {
+                process.inputStream.bufferedReader().use { br ->
+                    var line: String? = br.readLine()
+                    while (line != null) {
+                        if (out.isNotEmpty()) out.append('\n')
+                        out.append(line)
+                        line = br.readLine()
+                    }
+                }
+            } finally { done.countDown() }
+        }, "acpira-node-version").apply { isDaemon = true; start() }
+        if (!process.waitFor(timeout, unit)) {
+            process.destroyForcibly()
+            done.await(1, TimeUnit.SECONDS)
+            throw SidecarSetupException("node --version did not answer")
+        }
+        done.await(1, TimeUnit.SECONDS)
+        return out.toString().trim()
     }
 }

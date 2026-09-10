@@ -8,7 +8,7 @@ import { AgentRegistry } from '../src/host/acp/AgentRegistry';
 import { AcpSession } from '../src/host/acp/AcpSession';
 import type { AgentProcess } from '../src/host/acp/AgentProcess';
 import { AccountManager } from '../src/host/accounts/AccountManager';
-import { AccountStore, FileVault, MemoryVault, accountSecretKey } from '../src/host/accounts/AccountStore';
+import { AccountStore, FileVault, MemoryVault, accountSecretKey, type SecretVault } from '../src/host/accounts/AccountStore';
 import type { AccountCredential, AccountDraft, AccountProvider, LoginFlow } from '../src/host/accounts/types';
 import { DevinAccountProvider, parseStatus, parseUserStatus, readCredentials, tomlOf } from '../src/host/accounts/devin';
 import { SessionManager } from '../src/host/SessionManager';
@@ -106,6 +106,48 @@ describe('AccountStore', () => {
     expect(b.list()).toHaveLength(4);
   });
 
+  it('reload cannot wipe an add or restore a remove that is waiting on the vault', async () => {
+    const dir = tmp();
+    const file = join(dir, 'accounts.json');
+    const inner = new MemoryVault();
+    let block!: () => void;
+    const blocked = new Promise<void>(r => { block = r; });
+    let entered!: () => void;
+    const inVault = new Promise<void>(r => { entered = r; });
+    const vault: SecretVault = {
+      get: k => inner.get(k),
+      async store(k, v) { entered(); await blocked; return inner.store(k, v); },
+      async delete(k) { entered(); await blocked; return inner.delete(k); },
+    };
+    const store = new AccountStore(file, vault);
+    await store.load();
+    const adding = store.add('devin', { label: 'a@x.io', secret: 's1' });
+    await inVault;
+    const reloadingAdd = store.reload();
+    block();
+    const added = await adding;
+    await reloadingAdd;
+    expect(JSON.parse(readFileSync(file, 'utf8')).map((x: { id: string }) => x.id)).toEqual([added.id]);
+    expect(store.list().map(x => x.id)).toEqual([added.id]);
+    expect(await inner.get(accountSecretKey(added.id))).toBe('s1');
+
+    let blockRemove!: () => void;
+    const blockedRemove = new Promise<void>(r => { blockRemove = r; });
+    let enteredRemove!: () => void;
+    const inDelete = new Promise<void>(r => { enteredRemove = r; });
+    vault.store = (k, v) => inner.store(k, v);
+    vault.delete = async k => { enteredRemove(); await blockedRemove; return inner.delete(k); };
+    const removing = store.remove(added.id);
+    await inDelete;
+    const reloadingRemove = store.reload();
+    blockRemove();
+    await removing;
+    await reloadingRemove;
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual([]);
+    expect(store.list()).toEqual([]);
+    expect(await inner.get(accountSecretKey(added.id))).toBeUndefined();
+  });
+
   it('load drops the legacy "· name" tail from stored details and rewrites the file', async () => {
     const dir = tmp();
     const { mkdir, writeFile } = await import('node:fs/promises');
@@ -166,6 +208,16 @@ describe('FileVault', () => {
     expect(await b.get('k')).toBe('v2');
     await a.delete('k');
     expect(await b.get('k')).toBeUndefined();
+  });
+
+  it('get sees a rotated secret for a key this vault already cached', async () => {
+    const file = join(tmp(), 'secrets.json');
+    const a = new FileVault(file);
+    const b = new FileVault(file);
+    await a.store(accountSecretKey('same'), 'old-key');
+    expect(await b.get(accountSecretKey('same'))).toBe('old-key');
+    await a.store(accountSecretKey('same'), 'new-key');
+    expect(await b.get(accountSecretKey('same'))).toBe('new-key');
   });
 });
 

@@ -43,7 +43,7 @@ class AcpiraToolWindowFactory : ToolWindowFactory, DumbAware {
             ApplicationManager.getApplication().invokeLater {
                 if (project.isDisposed) return@invokeLater
                 when (state) {
-                    SidecarService.State.FAILED -> show(StatusPanel.message("Acpira could not start its Node sidecar.", detail ?: "See the IDE log.") { SidecarService.getInstance(project).start() })
+                    SidecarService.State.FAILED -> show(StatusPanel.message("Acpira could not start its Node sidecar.", detail ?: "See the IDE log.") { SidecarService.getInstance(project).retry() })
                     else -> if (browser.component.parent !== root) show(browser.component)
                 }
             }

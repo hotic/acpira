@@ -18,7 +18,6 @@ import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.Paths
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -90,12 +89,20 @@ object AcpiraScheme {
         return Resolution.Status(404)
     }
 
-    // Normalize and keep inside the resources root: `..`, `%2e%2e`, `%2f` all end up rejected
-    private fun confine(rel: String): String? {
-        if (rel.isEmpty()) return null
-        val normalized = Paths.get("/$rel").normalize()
-        if (normalized.nameCount == 0 || normalized.toString() == "/") return null
-        return normalized.toString().removePrefix("/")
+    // Slash-separated, independent of the host FileSystem: Paths.get().toString() would turn main.js into \main.js on Windows and
+    // classLoader.getResourceAsStream("webview/\\main.js") would miss. `..`, `%2e%2e`, `%2f` all end up rejected
+    internal fun confine(rel: String): String? {
+        if (rel.isEmpty() || rel.contains('\u0000')) return null
+        val parts = ArrayList<String>()
+        for (segment in rel.replace('\\', '/').split('/')) {
+            when (segment) {
+                "", "." -> continue
+                ".." -> if (parts.isEmpty()) return null else parts.removeAt(parts.lastIndex)
+                else -> parts += segment
+            }
+        }
+        if (parts.isEmpty()) return null
+        return parts.joinToString("/")
     }
 
     fun mime(name: String) = when (name.substringAfterLast('.', "").lowercase()) {

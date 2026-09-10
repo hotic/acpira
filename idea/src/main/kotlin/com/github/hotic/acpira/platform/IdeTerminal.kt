@@ -2,6 +2,7 @@ package com.github.hotic.acpira.platform
 
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.SystemInfo
+import org.jetbrains.plugins.terminal.TerminalProjectOptionsProvider
 import org.jetbrains.plugins.terminal.TerminalToolWindowManager
 
 // runInTerminal on the Terminal plugin, an optional dependency: `available` is checked before anything here is touched, so a disabled
@@ -12,7 +13,8 @@ object IdeTerminal {
     }
 
     fun run(project: Project, title: String, command: String, args: List<String>, env: Map<String, String?>) {
+        val shellPath = runCatching { TerminalProjectOptionsProvider.getInstance(project).shellPath }.getOrNull()
         val widget = TerminalToolWindowManager.getInstance(project).createShellWidget(project.basePath, title, true, true)
-        widget.sendCommandToExecute(TerminalCommand.build(command, args, env, SystemInfo.isWindows))
+        widget.sendCommandToExecute(TerminalCommand.build(command, args, env, TerminalCommand.kind(SystemInfo.isWindows, shellPath)))
     }
 }

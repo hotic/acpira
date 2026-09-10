@@ -81,7 +81,7 @@ class AcpiraEditor(private val project: Project, private val file: AcpiraSession
             if (project.isDisposed) return@invokeLater
             val b = browser ?: return@invokeLater
             val next: JComponent = when (state) {
-                SidecarService.State.FAILED -> StatusPanel.message("Acpira could not start its Node sidecar.", detail ?: "See the IDE log.") { SidecarService.getInstance(project).start() }
+                SidecarService.State.FAILED -> StatusPanel.message("Acpira could not start its Node sidecar.", detail ?: "See the IDE log.") { SidecarService.getInstance(project).retry() }
                 else -> b.component
             }
             if (root.componentCount == 1 && root.getComponent(0) === next) return@invokeLater

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, stat } from 'node:fs/promises';
+import { chmod, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { AccountInfo, AgentId } from '@shared/transcript';
 import type { AccountCredential, AccountDraft } from './types';
@@ -24,17 +24,16 @@ export class MemoryVault implements SecretVault {
 // whole table back, so a secret another host stored meanwhile survives. A corrupt file is logged and never overwritten
 export class FileVault implements SecretVault {
   private data = new Map<string, string>();
-  private loaded = false;
   private frozen = false;
-  private mtime = 0;
 
   constructor(private file: string, private log: (line: string) => void = () => {}) {}
 
+  // Always re-read under the lock: another host can replace the secret for a key this process already cached
   async get(key: string) {
-    const mtime = await stat(this.file).then(s => s.mtimeMs, () => 0);
-    // Another host may have rotated this key; mtime is the cheap cross-process invalidation
-    if (!this.loaded || mtime !== this.mtime || !this.data.has(key)) await this.read();
-    return this.data.get(key);
+    return withFileLock(this.file, async () => {
+      await this.read();
+      return this.data.get(key);
+    });
   }
 
   store(key: string, value: string) { return this.mutate(d => { d.set(key, value); }); }
@@ -45,17 +44,16 @@ export class FileVault implements SecretVault {
     return withFileLock(this.file, async () => {
       await this.read();
       if (this.frozen) return;
-      fn(this.data);
+      const data = new Map(this.data);
+      fn(data);
       await mkdir(dirname(this.file), { recursive: true });
-      await writeAtomic(this.file, JSON.stringify(Object.fromEntries(this.data), null, 2), 0o600);
+      await writeAtomic(this.file, JSON.stringify(Object.fromEntries(data), null, 2), 0o600);
       try { await chmod(this.file, 0o600); } catch { /* Windows */ }
-      this.mtime = await stat(this.file).then(s => s.mtimeMs, () => 0);
+      this.data = data;
     });
   }
 
   private async read() {
-    this.loaded = true;
-    this.mtime = await stat(this.file).then(s => s.mtimeMs, () => 0);
     let raw: string;
     try { raw = await readFile(this.file, 'utf8'); }
     catch { this.data = new Map(); return; }
@@ -90,21 +88,31 @@ export function accountSecretKey(id: string): string {
 // re-reads the file under its lock, applies itself to what is there and writes the result, and `reload` picks up what other hosts did
 export class AccountStore {
   private items: StoredAccount[] = [];
+  private tail: Promise<unknown> = Promise.resolve();
 
   constructor(private file: string, private vault: SecretVault, private log: (line: string) => void = () => {}) {}
 
+  // Reload and mutate share this queue so a focus-driven refresh cannot replace `items` while add/remove awaits the vault
+  private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.tail.then(fn, fn);
+    this.tail = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
   // No file yet is the normal first run; a file that will not parse is worth a log line, since the UI then shows no accounts while the secrets still exist
   async load() {
-    await this.read();
+    await this.enqueue(() => this.read());
     // Older drafts stored detail as '{tier} · {name}'; the name says nothing the label doesn't — keep the leading segment
     if (this.items.some(a => a.detail !== legacyDetail(a.detail))) await this.mutate(items => { for (const a of items) a.detail = legacyDetail(a.detail); });
   }
 
   // Re-read what other hosts wrote; true when the list differs from what this store had
   async reload(): Promise<boolean> {
-    const before = JSON.stringify(this.items);
-    await this.read();
-    return JSON.stringify(this.items) !== before;
+    return this.enqueue(async () => {
+      const before = JSON.stringify(this.items);
+      await this.read();
+      return JSON.stringify(this.items) !== before;
+    });
   }
 
   private async read() {
@@ -121,14 +129,16 @@ export class AccountStore {
     }
   }
 
-  // Read → change → write under the file lock; `fn` sees the list as it is on disk right now, not as this store last saw it
+  // Read → change → write under the file lock; `fn` sees a private snapshot of the disk list, published to `items` only after the write
   private mutate(fn: (items: StoredAccount[]) => void | Promise<void>) {
-    return withFileLock(this.file, async () => {
+    return this.enqueue(() => withFileLock(this.file, async () => {
       await this.read();
-      await fn(this.items);
+      const items = this.items.map(copyAccount);
+      await fn(items);
       await mkdir(dirname(this.file), { recursive: true });
-      await writeAtomic(this.file, JSON.stringify(this.items, null, 2), 0o600);
-    });
+      await writeAtomic(this.file, JSON.stringify(items, null, 2), 0o600);
+      this.items = items;
+    }));
   }
 
   list(agent?: AgentId): AccountInfo[] {
@@ -187,6 +197,10 @@ export class AccountStore {
       if (a) a.lastUsedAt = new Date().toISOString();
     });
   }
+}
+
+function copyAccount(a: StoredAccount): StoredAccount {
+  return { ...a, meta: a.meta ? { ...a.meta } : undefined };
 }
 
 function legacyDetail(detail: string | undefined): string | undefined {

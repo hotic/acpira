@@ -54,6 +54,21 @@ describe('withFileLock', () => {
     expect(Number(readFileSync(file, 'utf8'))).toBe(100);
     expect(() => readFileSync(`${file}.lock`)).toThrow();
   }, 30_000);
+
+  it('two processes reclaiming the same dead lock both run, neither increment is lost', async () => {
+    const file = join(tmp(), 'counter');
+    const lock = `${file}.lock`;
+    const token = 'ab'.repeat(16);
+    writeFileSync(lock, `2147483000\n${token}`);
+    writeFileSync(`${lock}.${token}`, `2147483000\n${token}`);
+    const old = (Date.now() - 60_000) / 1000;
+    utimesSync(lock, old, old);
+    utimesSync(`${lock}.${token}`, old, old);
+    const run = () => new Promise<void>((resolve, reject) => execFile(TSX, [WORKER, file, '1'], (err, _out, stderr) => (err ? reject(new Error(`${err.message}\n${stderr}`)) : resolve())));
+    await Promise.all([run(), run()]);
+    expect(Number(readFileSync(file, 'utf8'))).toBe(2);
+    expect(() => readFileSync(lock)).toThrow();
+  }, 30_000);
 });
 
 describe('prefs.json shared by two windows', () => {

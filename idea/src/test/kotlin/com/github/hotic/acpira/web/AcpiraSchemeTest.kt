@@ -57,10 +57,30 @@ class AcpiraSchemeTest {
     }
 
     @Test fun `serves webview resources only from within the bundle`() {
-        assertEquals(404, status("https://acpira.local/webview/../META-INF/plugin.xml"))
-        assertEquals(404, status("https://acpira.local/webview/%2e%2e/META-INF/plugin.xml"))
+        assertEquals(403, status("https://acpira.local/webview/../META-INF/plugin.xml"))
+        assertEquals(403, status("https://acpira.local/webview/%2e%2e/META-INF/plugin.xml"))
         assertEquals(403, status("https://acpira.local/webview/"))
         assertEquals(404, status("https://acpira.local/webview/not-there.js"))
+    }
+
+    @Test fun `resource paths stay slash-separated so Windows cannot turn main js into a backslash lookup`() {
+        assertEquals("main.js", AcpiraScheme.confine("main.js"))
+        assertEquals("assets/app.js", AcpiraScheme.confine("assets/app.js"))
+        assertEquals("assets/app.js", AcpiraScheme.confine("foo/../assets/app.js"))
+        assertEquals("assets/app.js", AcpiraScheme.confine("foo\\..\\assets\\app.js"))
+        assertEquals(null, AcpiraScheme.confine("../main.js"))
+        assertEquals(null, AcpiraScheme.confine("..\\main.js"))
+        assertEquals(null, AcpiraScheme.confine(""))
+        assertEquals(null, AcpiraScheme.confine("."))
+    }
+
+    @Test fun `an existing main js is served with a javascript mime type`() {
+        val js = AcpiraScheme.resolve("https://acpira.local/webview/main.js") as Resolution.Bytes
+        assertEquals("text/javascript", js.mime)
+        assertTrue(js.bytes.isNotEmpty())
+        val css = AcpiraScheme.resolve("https://acpira.local/webview/main.css") as Resolution.Bytes
+        assertEquals("text/css", css.mime)
+        assertTrue(css.bytes.isNotEmpty())
     }
 
     @Test fun `the page needs a registered view token and carries the bridge and nonce`() {
