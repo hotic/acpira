@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef, type Ref, type TextareaHTMLAttributes } from '
 import { useMergedRefs } from '../ui/mergeRefs';
 import { cn } from '../ui/cn';
 
-export const COMMAND_MARK = 'rounded -mx-0.5 px-0.5 py-0.5 bg-accent/15 text-accent [box-decoration-break:clone]';
+export const COMMAND_MARK = 'rounded-sm -mx-1 px-1 py-0.5 bg-accent/15 text-accent [box-decoration-break:clone]';
 
 // Keep the native textarea for selection, IME, undo, paste, and accessibility.
 // Its mirror paints a command token without changing any character's geometry.

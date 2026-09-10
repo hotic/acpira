@@ -67,6 +67,8 @@ export function UserMessage({ turn, index, blobUrl, onEdit, compact }: { turn: U
         {turn.attachments?.length ? <TurnAttachments attachments={turn.attachments} blobUrl={blobUrl} /> : null}
         {turn.text && <div ref={textRef} className={cn(
           'scroll-fade scroll-thin min-h-0 whitespace-pre-wrap transition-[max-height] duration-(--dur-open) ease-out [--scroll-fade-size:var(--text-1-lh)] [overflow-anchor:none]',
+          // The command mark's background overhangs its line box; without room inside the padding box the scrollport shaves its top / left / bottom edges.
+          turn.command && turn.text.startsWith(`/${turn.command}`) && 'py-0.5 pl-1',
           // Folded text does not take the wheel: scrolling over a stuck card keeps moving the conversation.
           compact ? 'max-h-(--user-message-stuck-max) overflow-hidden' : 'max-h-(--user-message-max) overflow-y-auto',
         )}>{turn.command && turn.text.startsWith(`/${turn.command}`)
