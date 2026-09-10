@@ -117,7 +117,7 @@ export function Questions({ block, onAnswer }: { block: QuestionBlock; onAnswer:
   };
   if (!current) return null;
   return (
-    <div className="px-page">
+    <div className="px-page pt-2">
       <Card ref={root} tabIndex={-1} role="form" aria-label={t('question.title')} onKeyDown={onKeyDown} className="flex min-w-0 flex-col overflow-hidden">
         <div key={current.id} ref={fade} className="scroll-fade scroll-thin flex max-h-question-body flex-col gap-(--question-section-gap) overflow-y-auto px-pad pt-(--question-top-pad) pb-(--question-section-gap) [--scroll-fade-size:var(--question-section-gap)] [&>*]:shrink-0">
           {/* The question itself labels the card; a separate title row adds no context. */}
