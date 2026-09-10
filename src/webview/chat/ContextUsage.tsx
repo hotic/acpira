@@ -81,10 +81,8 @@ function UsagePanel({ usage, pct, segments, budget, overAt, pending, onCompact }
         <span className="text-fg-2">{t('usage.usedPctShort', { pct: Math.round(pct * 100) })}</span>
         <span className="text-fg-3">{t('usage.about', { n: fmtTokens(usage.used) })} / {fmtTokens(usage.size)}{usage.cost !== undefined ? t('usage.cost', { n: usage.cost.toFixed(2) }) : ''}</span>
       </div>
-      {(overAt || pending) && (
+      {pending && (
         <div className="px-2 text-3 text-fg-2">
-          {overAt ? t('usage.overBudget', { n: fmtTokens(overAt) }) : null}
-          {overAt && pending ? ' · ' : ''}
           {pending}
         </div>
       )}

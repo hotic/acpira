@@ -126,7 +126,6 @@ export const zhCN = {
   'usage.cost': ' · 费用 ${n}',
   'usage.limit': '上限 {n}',
   'usage.budget': '预算 {n}',
-  'usage.overBudget': '已过 {n} 预算',
   'usage.pendingAfterTurn': '本轮结束后、下一条消息前会压缩',
   'usage.pendingBeforeSend': '下一条消息前会压缩',
   'usage.seg.user': '用户消息',

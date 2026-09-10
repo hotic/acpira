@@ -118,7 +118,6 @@ export const en = {
   'usage.cost': ' · Cost ${n}',
   'usage.limit': 'Limit {n}',
   'usage.budget': 'Budget {n}',
-  'usage.overBudget': 'Over {n} budget',
   'usage.pendingAfterTurn': 'Compacts after this turn, before the next message',
   'usage.pendingBeforeSend': 'Compacts before the next message',
   'usage.seg.user': 'User messages',
