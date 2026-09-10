@@ -34,14 +34,28 @@ export function capturePlan(turns: Turn[], u: ToolUpdate): PlanDocumentBlock | u
   const path = str(meta['cognition.ai/planFilePath']) ?? str(ready.plan_file_path)
     ?? saved?.[1] ?? str(raw.file_path) ?? str(raw.path) ?? diff?.path ?? u.locations?.[0]?.path;
   const exit = isPlanApproval(u) || plans.some(p => p.approvalToolCallId === u.toolCallId);
+  const write = meta['cognition.ai/isPlanFileEdit'] === true || meta['cognition.ai/inferenceToolName'] === 'write_plan';
   const knownPath = path && /\/(?:\.grok\/sessions\/.*\/plan\.md|\.kimi-code\/sessions\/.*\/plans\/[^/]+\.md)$/.test(path);
   let p = plans.find(p => p.toolCallId === u.toolCallId || p.approvalToolCallId === u.toolCallId || (path && p.path === path));
-  if (!p && !exit && !knownPath && meta['cognition.ai/isPlanFileEdit'] !== true && meta['cognition.ai/inferenceToolName'] !== 'write_plan') return;
+  if (!p && !exit && !knownPath && !write) return;
+  // Devin can announce exit_plan_mode with rawInput.plan before write_plan's
+  // packets arrive. Attach that first file to the single unbound approval in
+  // this turn, preserving the decision already made on its inline preview.
+  let fillsApproval = false;
+  const last = turns.at(-1);
+  if (!p && !exit && write && last?.role === 'agent') {
+    const unbound = last.blocks.filter((b): b is PlanDocumentBlock => b.type === 'plan_document'
+      && !b.path && !!b.approvalToolCallId && b.toolCallId === b.approvalToolCallId);
+    if (unbound.length === 1) {
+      p = unbound[0]!;
+      p.toolCallId = u.toolCallId;
+      fillsApproval = true;
+    }
+  }
   if (!p && exit && !path) p = plans.at(-1);
   const markdown = str(raw.planContent) ?? str(ready.plan_content) ?? saved?.[2]
-    ?? diff?.newText ?? str(raw.content);
+    ?? diff?.newText ?? str(raw.content) ?? (exit && !p?.markdown ? str(raw.plan) : undefined);
   if (!p) {
-    const last = turns.at(-1);
     if (last?.role !== 'agent') return;
     p = { type: 'plan_document', id: `plan-${u.toolCallId}`, title: 'Plan', markdown: '', path, toolCallId: u.toolCallId, status: 'draft' };
     last.blocks.push(p);
@@ -50,7 +64,7 @@ export function capturePlan(turns: Turn[], u: ToolUpdate): PlanDocumentBlock | u
   if (markdown !== undefined) {
     const before = p.markdown;
     setPlanContent(p, markdown);
-    if (!exit && p.markdown !== before) { p.status = 'draft'; p.toolCallId = u.toolCallId; }
+    if (!exit && !fillsApproval && p.markdown !== before) { p.status = 'draft'; p.toolCallId = u.toolCallId; }
   }
   if (exit) {
     p.approvalToolCallId = u.toolCallId;

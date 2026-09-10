@@ -47,7 +47,7 @@ async function until(pred: () => boolean, ms = 5000) {
 }
 
 describe('AcpSession', () => {
-  it.each(['plan-grok', 'plan-devin'])('plan approval %s: show full plan and change execution model before approval', async prompt => {
+  it.each(['plan-grok', 'plan-devin', 'plan-devin-early'])('plan approval %s: show full plan and change execution model before approval', async prompt => {
     const { session } = deps();
     const s = session();
     try {
@@ -61,13 +61,15 @@ describe('AcpSession', () => {
       if (permission.type !== 'permission' || plan.type !== 'plan_document') throw new Error('Missing plan');
       expect(permission.planId).toBe(plan.id);
       expect(plan.markdown).toBe('# Demo plan\n\nCreate hello.txt.');
-      expect(plan.path).toBe('/Users/test/.devin/plans/demo.md');
+      expect(plan.path).toBe(prompt === 'plan-devin-early' ? undefined : '/Users/test/.devin/plans/demo.md');
       const allow = permission.options.find(o => o.kind === 'allow_once')!;
       s.resolvePermission(permission.id, 'invented');
       expect(s.view().running).toBe(true);
       await s.buildPlan(plan.id, { configId: 'model', value: 'm2' }, allow.id);
       await pending;
       expect(plan.status).toBe('approved');
+      expect(plan.path).toBe('/Users/test/.devin/plans/demo.md');
+      expect(s.view().turns.flatMap(t => t.role === 'agent' ? t.blocks.filter(b => b.type === 'plan_document') : [])).toEqual([plan]);
       expect(s.view().controls.modeId).toBe('agent');
       expect(JSON.stringify(s.view().turns)).toContain('APPROVED model=m2');
       expect(s.toRecord().turns.flatMap(t => t.role === 'agent' ? t.blocks : []).some(b => b.type === 'plan_document')).toBe(true);

@@ -1,4 +1,4 @@
-import { memo, useCallback, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, memo, useCallback, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Check, ChevronRight, Compass, Hand, MessageCircleQuestion, TriangleAlert, X } from 'lucide-react';
 import type { AgentBlock, AgentTurn, CompactionBlock, PermissionBlock, ToolCallBlock, ToolKind, UserTurn } from '@shared/transcript';
 import { useAppearance, type Appearance } from '../appearance';
@@ -24,6 +24,7 @@ import { elapsedLabel, splitCodexBlocks } from './folding';
 import { rememberFold, rememberedFold } from './foldMemory';
 import { ProcessHistory } from './ProcessHistory';
 import { compactionForDisplay } from './compactionDisplay';
+import { splitPlanSections } from './planSections';
 
 // User message: color block / right-aligned bubble / plain text; ones Acpira sends automatically (/compact) render as a note line, not a bubble.
 // Attachments (image thumbnails / file pills) sit above the text inside the same bubble.
@@ -80,16 +81,24 @@ type OnPermission = (blockId: string, optionId: string) => void;
 // `memoryKey` names the turn for fold memory (session + turn); without one the fold state lives only in the component.
 export const AgentMessage = memo(function AgentMessage({ turn, index, running, onPermission, compacting, memoryKey }: { turn: AgentTurn; index: number; running: boolean; onPermission: OnPermission; compacting?: boolean; memoryKey?: string }) {
   if (compacting) turn = compactionForDisplay(turn, running);
-  const plans = turn.blocks.filter(b => b.type === 'plan_document');
-  // Keep pending approvals in the activity input even when their controls live
-  // on the plan card; removing them makes the process heading report thinking.
-  // Older persisted sessions can contain empty thought blocks from ACP deltas.
-  // Filter before grouping so they leave neither a disclosure nor a rail/spacing slot.
-  const content = { ...turn, blocks: turn.blocks.filter(b => b.type !== 'plan_document' && (b.type !== 'thought' || !!b.text.trim())) };
+  const sections = splitPlanSections(turn.blocks);
   return <RowEntranceContext.Provider value={running}><div className="flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]">
-    <AgentContent turn={content} index={index} running={running} onPermission={onPermission} memoryKey={memoryKey} />
-    {plans.map(plan => <PlanDocument key={plan.id} block={plan}
-      permission={turn.blocks.find((b): b is PermissionBlock => b.type === 'permission' && b.planId === plan.id)} onChoose={onPermission} />)}
+    {sections.map((section, i) => {
+      const last = i === sections.length - 1;
+      // Only the continuation owns live activity and the turn outcome. Earlier
+      // sections have no independent timing; repeating the full duration lies.
+      const content = { ...turn, blocks: section.blocks,
+        ...(!last ? { stop: undefined, error: undefined } : {}),
+        ...(sections.length > 1 ? { startedAt: undefined, endedAt: undefined } : {}),
+      };
+      return <Fragment key={section.key}>
+        {(section.blocks.length > 0 || (last && (running || outcomeOf(turn)))) && <AgentContent turn={content} index={index}
+          running={last && running} onPermission={onPermission}
+          memoryKey={memoryKey && (i === 0 ? memoryKey : `${memoryKey}:after-plan:${section.key}`)} />}
+        {section.plan && <PlanDocument block={section.plan}
+          permission={turn.blocks.find((b): b is PermissionBlock => b.type === 'permission' && b.planId === section.plan!.id)} onChoose={onPermission} />}
+      </Fragment>;
+    })}
   </div></RowEntranceContext.Provider>;
 });
 

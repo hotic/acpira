@@ -1,14 +1,15 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AcpSession } from '../src/host/acp/AcpSession';
 import { AgentRegistry } from '../src/host/acp/AgentRegistry';
 import { dataHome, DevinAccountProvider, readCredentials } from '../src/host/accounts/devin';
 
-// Usage: pnpm tsx --tsconfig tsconfig.host.json scripts/probe-modes.ts <grok|devin|kimi> [--plan] [--reject|--cancel] [--model=ACP_OPTION_ID]
+// Usage: pnpm tsx --tsconfig tsconfig.host.json scripts/probe-modes.ts <grok|devin|kimi> [--plan] [--execute|--reject|--cancel] [--model=ACP_OPTION_ID]
 // Real host path, isolated workspace, synthetic prompts only. Credentials never enter the report.
 const agent = process.argv[2] ?? 'grok';
 const plan = process.argv.includes('--plan');
+const execute = process.argv.includes('--execute');
 const decision = process.argv.includes('--cancel') ? 'cancel' : process.argv.includes('--reject') ? 'reject' : 'approve';
 const executionModel = process.argv.find(a => a.startsWith('--model='))?.slice('--model='.length);
 const registry = new AgentRegistry();
@@ -62,7 +63,9 @@ try {
     log('switched', { requested: mode.id, actual: session.view().controls.modeId });
     if (session.view().controls.modeId !== mode.id) throw new Error('Mode selection did not apply');
     await session.prompt(plan
-      ? 'Create a tiny demonstration plan for adding hello.txt containing hello. Write the plan file if your planning workflow requires one, then call your plan approval / exit plan mode tool. Do not implement the plan, even after approval. Do not run commands. After the approval decision, end this turn without asking follow-up questions or requesting approval again.'
+      ? execute
+        ? 'Create a tiny plan for adding hello.txt containing hello in the current directory. Use your native plan approval / exit plan mode tool and wait for approval. After approval, say IMPLEMENTATION_STARTED, create hello.txt, then say IMPLEMENTATION_DONE. Continue in this same turn. Do not request plan approval again.'
+        : 'Create a tiny demonstration plan for adding hello.txt containing hello. Write the plan file if your planning workflow requires one, then call your plan approval / exit plan mode tool. Do not implement the plan, even after approval. Do not run commands. After the approval decision, end this turn without asking follow-up questions or requesting approval again.'
       : 'Reply exactly MODE_OK. Do not use any tools, create plans, or change files.');
     const last = session.view().turns.at(-1);
     log('result', { phase, actualMode: session.view().controls.modeId, executionModel: session.view().controls.options.find(c => c.category === 'model')?.value, turn: last });
@@ -74,6 +77,16 @@ try {
       if (session.view().controls.modeId === 'plan') process.exitCode = 1;
       if (executionModel && session.view().controls.options.find(c => c.category === 'model')?.value !== executionModel) process.exitCode = 1;
       if (last?.role !== 'agent' || !last.blocks.some(b => b.type === 'plan_document' && b.markdown && b.status === 'approved')) process.exitCode = 1;
+      if (execute) {
+        const content = await readFile(join(cwd, 'hello.txt'), 'utf8');
+        const blocks = last?.role === 'agent' ? last.blocks : [];
+        const planIndex = blocks.findIndex(b => b.type === 'plan_document');
+        const continuation = blocks.slice(planIndex + 1);
+        const verified = content.trim() === 'hello' && planIndex >= 0
+          && continuation.some(b => b.type === 'text' && b.markdown.includes('IMPLEMENTATION_DONE'));
+        log('implementation', { verified, planIndex, continuation: continuation.map(b => b.type) });
+        if (!verified) process.exitCode = 1;
+      }
     }
   }
   if (plan && !seen.size) { log('unverified_approval', { reason: 'No approval card received' }); process.exitCode = 1; }

@@ -160,10 +160,16 @@ const app = acp.agent({ name: 'fake-agent' })
     if (text.startsWith('plan-')) {
       const path = '/Users/test/.devin/plans/demo.md';
       const markdown = '# Demo plan\n\nCreate hello.txt.';
-      await send({ sessionUpdate: 'tool_call', toolCallId: 'write-plan', title: 'Updated plan: Demo plan', kind: 'edit', rawInput: { file_path: path, content: markdown }, _meta: { 'cognition.ai/isPlanFileEdit': true } });
-      await send({ sessionUpdate: 'tool_call_update', toolCallId: 'write-plan', status: 'completed' });
+      const early = text === 'plan-devin-early';
+      const writePlan = async () => {
+        await send({ sessionUpdate: 'tool_call', toolCallId: 'write-plan', title: 'Updated plan: Demo plan', kind: 'edit', rawInput: { file_path: path, content: markdown }, _meta: { 'cognition.ai/isPlanFileEdit': true } });
+        await send({ sessionUpdate: 'tool_call_update', toolCallId: 'write-plan', status: 'completed' });
+      };
+      if (!early) await writePlan();
       if (text === 'plan-file') return { stopReason: 'end_turn' };
-      await send({ sessionUpdate: 'tool_call', toolCallId: 'exit-plan', title: 'Exit plan mode', kind: 'switch_mode', _meta: { 'cognition.ai/isExitPlan': true, 'cognition.ai/planFilePath': path } });
+      await send({ sessionUpdate: 'tool_call', toolCallId: 'exit-plan', title: 'Exit plan mode', kind: 'switch_mode',
+        rawInput: early ? { plan: markdown } : undefined,
+        _meta: { 'cognition.ai/isExitPlan': true, ...(!early ? { 'cognition.ai/planFilePath': path } : {}) } });
       let approved = false;
       if (text === 'plan-grok') {
         const r = await client.request<{ outcome: string }>('_x.ai/exit_plan_mode', { sessionId: sid, toolCallId: 'exit-plan', planContent: markdown });
@@ -175,6 +181,7 @@ const app = acp.agent({ name: 'fake-agent' })
         });
         approved = r.outcome.outcome === 'selected' && r.outcome.optionId === 'plan_accept_edits';
       }
+      if (early) await writePlan();
       await send({ sessionUpdate: 'tool_call_update', toolCallId: 'exit-plan', status: 'completed' });
       if (approved) await send({ sessionUpdate: 'current_mode_update', currentModeId: 'agent' });
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `${approved ? 'APPROVED' : 'REJECTED'} model=${config.model}` } });

@@ -6,6 +6,24 @@ import { parseGrokExitPlan } from '../src/host/acp/grokPlan';
 const turns = (): Turn[] => [{ role: 'agent', blocks: [] }];
 
 describe('plan documents from observed ACP packets', () => {
+  it.each(['ready', 'approved', 'rejected'] as const)('Devin: a late plan write fills the inline exit preview and preserves %s', status => {
+    const t = turns();
+    const p = capturePlan(t, { toolCallId: 'exit', title: 'Exit plan mode',
+      _meta: { 'cognition.ai/isExitPlan': true }, rawInput: { plan: 'Create hello.txt.' } })!;
+    expect(p.markdown).toBe('Create hello.txt.');
+    expect(capturePlan(t, { toolCallId: 'exit' })).toBe(p);
+    p.status = status;
+    const update = { toolCallId: 'write', _meta: { 'cognition.ai/isPlanFileEdit': true },
+      rawInput: { file_path: '/plans/demo.md', content: '# Demo\n\nCreate hello.txt.' } };
+    expect(capturePlan(t, update)).toBe(p);
+    capturePlan(t, { ...update, status: 'completed' });
+    expect(p).toMatchObject({ status, toolCallId: 'write', approvalToolCallId: 'exit', path: '/plans/demo.md', markdown: '# Demo\n\nCreate hello.txt.' });
+    expect(planDocuments(t)).toEqual([p]);
+    // A later exit summary must not replace the complete saved document.
+    capturePlan(t, { toolCallId: 'exit', rawInput: { plan: 'Summary only.' } });
+    expect(p.markdown).toBe('# Demo\n\nCreate hello.txt.');
+  });
+
   it('Devin: preserves plan content/path, strips frontmatter and attaches title-only permission updates', () => {
     const t = turns();
     const p = capturePlan(t, { toolCallId: 'write', title: 'Updated plan: Demo', _meta: { 'cognition.ai/isPlanFileEdit': true }, content: [{ type: 'diff', path: '/plans/demo.md', newText: '---\nagent: devin\n---\n# Demo\n\nFull plan.' }] })!;
