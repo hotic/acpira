@@ -311,8 +311,8 @@ function CodexMessage({ turn, running, onPermission, memoryKey }: { turn: AgentT
   );
 }
 
-// The fold latches its initial state the moment it becomes foldable: closed unless a nested row is open by hand,
-// which keeps that row on screen. Afterwards only the user's toggle moves it; new chunks never reset it.
+// A turn first opened with tools starts collapsed. During streaming, content already shown before the first
+// tool stays visible when the process becomes foldable. Afterwards only a manual toggle moves it.
 // The toggle is also written to fold memory under `memoryKey`, so a rebuilt message (or a reloaded webview) reopens
 // what the reader had opened instead of snapping shut mid-turn.
 function CodexFold({ turn, blocks, running, foldable, memoryKey }: { turn: AgentTurn; blocks: AgentBlock[]; running: boolean; foldable: boolean; memoryKey?: string }) {
@@ -322,9 +322,16 @@ function CodexFold({ turn, blocks, running, foldable, memoryKey }: { turn: Agent
   if (choice.key !== memoryKey) setChoice(recall(memoryKey));
   const manual = choice.key === memoryKey ? choice.manual : undefined;
   const openedInside = useRef(0);
+  const visibleBeforeTools = useRef(false);
+  // Remember committed content, including commentary that moves from the reply into the process on the
+  // first tool call. The pre-tool Working row is not a disclosure, so it cannot record a manual choice.
+  useLayoutEffect(() => {
+    if (!foldable) visibleBeforeTools.current = blocks.length > 0
+      || turn.blocks.some(block => block.type === 'text' && !!block.markdown.trim());
+  }, [foldable, blocks, turn.blocks]);
   const latched = useRef<boolean | undefined>(undefined);
   if (!foldable) latched.current = undefined;
-  else latched.current ??= openedInside.current > 0;
+  else latched.current ??= visibleBeforeTools.current || openedInside.current > 0;
   const observe = useCallback((next: boolean) => { openedInside.current += next ? 1 : -1; }, []);
   const toggle = useCallback((next: boolean) => { setChoice({ key: memoryKey, manual: next }); if (memoryKey) rememberFold(memoryKey, next); }, [memoryKey]);
   const open = !foldable || (manual ?? latched.current);
