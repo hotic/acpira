@@ -132,7 +132,7 @@ function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
   }, [onClose, pending]);
   return <div className="flex min-w-0 flex-col gap-gap" onPointerDownCapture={() => { insidePointer.current = true; }}>
     <Composer {...composer} running={false} disabled={pending || composer.disabled || composer.running}
-      controls={controls} usage={undefined} canCompact={false}
+      controls={controls} usage={undefined}
       onNotice={setError}
       onSetMode={modeId => setControls(c => ({ ...c, modeId }))}
       onSetConfig={(id, value) => setControls(c => ({ ...c, options: c.options.map(o => o.id === id ? { ...o, value } : o) }))}

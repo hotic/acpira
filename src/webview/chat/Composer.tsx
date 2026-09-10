@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { X } from 'lucide-react';
-import type { Draft, SessionControls, Turn, Usage } from '@shared/transcript';
+import type { Draft, SessionControls, SlashCommand, Turn, Usage } from '@shared/transcript';
 import type { FileHit } from '@shared/protocol';
 import type { HiddenMap } from '@shared/settings';
 import { composerControls } from '@shared/composerControls';
@@ -15,6 +15,7 @@ import { SendButton } from '../effects/SendButton';
 import { DraftChips } from './Attachments';
 import { collectDrafts, hasPayload } from './drafts';
 import { MentionList, mentionAt, useMentionHits } from './Mention';
+import { SlashList, commandAt, commandHint, useSlashHits } from './Slash';
 import { modeIcon } from './modeIcons';
 import { ModelControl, OptionControl, ReasoningControl } from './ModelPicker';
 import { ContextRing } from './ContextUsage';
@@ -32,7 +33,8 @@ export interface ComposerProps {
   // Option families hidden for the current agent (settings page): configOption id → family names
   hidden?: HiddenMap[string];
   usage?: Usage;
-  canCompact?: boolean;
+  // Slash commands the agent advertised for this session: the / completion list, and `compact` among them enables the context panel's button
+  commands?: SlashCommand[];
   // Auto-compact threshold: the ring fills against this budget when it is smaller than the agent's window
   compactAt?: number;
   // Workspace root: dropped and mentioned files are labeled relative to it
@@ -70,6 +72,7 @@ export function Composer(p: ComposerProps) {
   const ModeIcon = mode ? modeIcon(mode) : undefined;
   const dim = p.running || p.disabled;
   const { models, reasoning, other } = composerControls(p.controls.options);
+  const canCompact = !!p.commands?.some(c => c.name === 'compact');
   // Files are read asynchronously after a paste / drop; sending is held until every read has landed, so a message never leaves without its attachments
   const [reading, setReading] = useState(0);
   const [sending, setSending] = useState(false);
@@ -82,6 +85,7 @@ export function Composer(p: ComposerProps) {
       setText('');
       setDrafts([]);
       setDismissed(undefined);
+      setSlashDismissed(false);
     } catch (e) {
       p.onNotice(e instanceof Error ? e.message : String(e));
     } finally {
@@ -141,8 +145,32 @@ export function Composer(p: ComposerProps) {
     setDrafts(d => (d.some(x => x.kind === 'file' && x.uri === hit.uri) ? d : [...d, { kind: 'file', uri: hit.uri, name: hit.path }]));
     requestAnimationFrame(() => textarea.current?.setSelectionRange(span.start, span.start));
   };
+  // / command: a leading slash with the caret in its token lists the commands the agent advertised for this session. Picking only completes
+  // the text (`/name `) — the command goes out through the ordinary send path and the agent runs it; the list is discovery, never a whitelist,
+  // so with no match the slash stays plain text. Mutually exclusive with @ (a text starting with `/` has no @ at its start)
+  const [slashDismissed, setSlashDismissed] = useState(false);
+  const slashSpan = collapsed && !slashDismissed && !p.disabled ? commandAt(text, caret) : undefined;
+  const slash = useSlashHits(p.commands, slashSpan?.query);
+  const slashOpen = !!slashSpan && slash.hits.length > 0;
+  const pickCommand = (c: SlashCommand) => {
+    // Whatever follows the caret inside the token goes too; text after the token is kept as the arguments
+    const tail = text.slice(caret).replace(/^\S*/, '').trimStart();
+    const head = `/${c.name} `;
+    setText(head + tail);
+    setCaret(head.length);
+    requestAnimationFrame(() => textarea.current?.setSelectionRange(head.length, head.length));
+  };
+  // The input hint of the command the text names, while its arguments are still empty (the open list already shows it in the row)
+  const hint = !slashOpen && p.commands ? commandHint(p.commands, text) : undefined;
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return;
+    if (slashOpen) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); slash.move(e.key === 'ArrowDown' ? 1 : -1); return; }
+      if (e.key === 'Escape') { e.preventDefault(); setSlashDismissed(true); return; }
+      // Tab completes; Enter completes too unless the token already is the active command — then it sends, so `/compact⏎` is one keystroke
+      const hit = slash.hits[slash.active];
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && hit && hit.name !== slashSpan!.query)) { e.preventDefault(); if (hit) pickCommand(hit); return; }
+    }
     if (mentionOpen) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); move(e.key === 'ArrowDown' ? 1 : -1); return; }
       if (e.key === 'Escape') { e.preventDefault(); setDismissed(span!.start); return; }
@@ -159,6 +187,7 @@ export function Composer(p: ComposerProps) {
     setCaret(el.selectionStart);
     setCollapsed(el.selectionStart === el.selectionEnd);
     if (dismissed !== undefined && !mentionAt(el.value, el.selectionStart)) setDismissed(undefined);
+    if (slashDismissed && !commandAt(el.value, el.selectionStart)) setSlashDismissed(false);
   };
 
   const field = (
@@ -199,6 +228,9 @@ export function Composer(p: ComposerProps) {
           p.disabled ? 'text-fg-3/60 placeholder:text-fg-3/60' : 'text-fg-strong',
         )}
       />
+      {/* The hint sits under the text like a second, faint line: the agent's own wording for what to type after the command */}
+      {hint && <div className="truncate px-pad pb-1 font-mono text-mono text-fg-3">{hint}</div>}
+      {slashOpen && <SlashList anchor={fieldRef} hits={slash.hits} active={slash.active} onHover={slash.setActive} onPick={pickCommand} />}
       {mentionOpen && <MentionList anchor={fieldRef} hits={hits} active={active} empty={span!.query.length > 0} onHover={setActive} onPick={pick} />}
       {/* The row is a container: below the sm tier (a 380 sidebar leaves ~324 here) the mode chip collapses to icon + caret so the option chips keep their room —
           the same move Cursor makes in a narrow sidebar; the editor panel is wide enough for the names */}
@@ -230,7 +262,7 @@ export function Composer(p: ComposerProps) {
           {other.map(c => (
             <OptionControl key={c.id} end control={c} hidden={p.hidden?.[c.id]} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
           ))}
-          {p.usage && <ContextRing usage={p.usage} turns={p.turns} canCompact={!!p.canCompact && !dim} compactAt={p.compactAt} running={p.running} onCompact={p.onCompact} onOpenChange={onOpenChange} />}
+          {p.usage && <ContextRing usage={p.usage} turns={p.turns} canCompact={canCompact && !dim} compactAt={p.compactAt} running={p.running} onCompact={p.onCompact} onOpenChange={onOpenChange} />}
           {models.map((c, i) => (
             <ModelControl key={c.id} control={c} hidden={p.hidden?.[c.id]} reasoning={i === 0 ? reasoning : undefined}
               onSetReasoning={p.onSetConfig} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />

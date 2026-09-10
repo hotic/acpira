@@ -142,7 +142,8 @@ export function applyUpdate(s: NormalizeState, u: acp.SessionUpdate): boolean {
       s.usage = { used: u.used, size: u.size, cost: u.cost?.amount ?? undefined };
       return true;
     case 'available_commands_update':
-      s.commands = u.availableCommands.map(c => ({ name: c.name, description: c.description }));
+      // The list replaces the previous one wholesale: an empty update clears the menu
+      s.commands = u.availableCommands.map(c => ({ name: c.name, description: c.description, ...(c.input?.hint ? { input: { hint: c.input.hint } } : {}) }));
       return true;
     case 'current_mode_update':
       s.controls.modeId = u.currentModeId;

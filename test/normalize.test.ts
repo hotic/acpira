@@ -212,6 +212,24 @@ describe('applyUpdate', () => {
     expect(t.blocks[0]).toEqual({ type: 'plan', changed: true, entries: [{ title: 'a', status: 'completed', priority: 'high' }, { title: 'b', status: 'in_progress', priority: 'low' }] });
   });
 
+  it('available_commands_update: keeps the input hint, drops _meta, and a later (even empty) list replaces the previous one', () => {
+    const s = emptyState();
+    applyUpdate(s, { sessionUpdate: 'available_commands_update', availableCommands: [
+      { name: 'compact', description: 'Compact', _meta: { x: 1 } },
+      { name: 'review', description: 'Review', input: { hint: 'files to review', _meta: { y: 2 } } },
+      { name: 'plain', description: 'No hint', input: null },
+    ] });
+    expect(s.commands).toEqual([
+      { name: 'compact', description: 'Compact' },
+      { name: 'review', description: 'Review', input: { hint: 'files to review' } },
+      { name: 'plain', description: 'No hint' },
+    ]);
+    applyUpdate(s, { sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'review', description: 'Review' }] });
+    expect(s.commands.map(c => c.name)).toEqual(['review']);
+    applyUpdate(s, { sessionUpdate: 'available_commands_update', availableCommands: [] });
+    expect(s.commands).toEqual([]);
+  });
+
   it('configOptions: every select becomes a control, groups flattened, sorted by category, boolean hidden, category=mode promoted to modes', () => {
     const s = emptyState();
     applyUpdate(s, {

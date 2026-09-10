@@ -399,7 +399,7 @@
     "dev": "pnpm build && (pnpm watch:host & pnpm watch:webview & wait)",
     "typecheck": "tsc -p tsconfig.webview.json --noEmit && tsc -p tsconfig.host.json --noEmit",
     "test": "vitest run",
-    "probe": "tsx scripts/acp-probe.ts",
+    "probe": "tsx --tsconfig tsconfig.host.json scripts/acp-probe.ts",
     "harness": "node dist/host-server.cjs --ws",
     "package": "pnpm build && vsce package --no-dependencies",
     "vscode:prepublish": "pnpm build"

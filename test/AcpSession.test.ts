@@ -683,6 +683,8 @@ describe('AcpSession', () => {
     await s2.start();
     expect(s2.view().status).toBe('readonly');
     expect(s2.view().turns).toHaveLength(2);
+    // No fresh native session was opened, so the persisted command list stays until a peer replaces it
+    expect(s2.view().commands).toEqual([{ name: 'compact', description: 'compact it' }]);
     s2.dispose();
   });
 
@@ -696,11 +698,14 @@ describe('AcpSession', () => {
     s.dispose();
     // new process resume reports session_not_found → degrade to session/new: status ready, local history untouched
     // (the fake agent resets seq to zero per process, so the new session is still named s1; only logs tell new from resume)
+    expect(record.commands).toEqual([{ name: 'compact', description: 'compact it' }]);
     const s2 = new AcpSession(record, d);
     await s2.start();
     expect(s2.view().status).toBe('ready');
     expect(s2.view().turns).toHaveLength(2);
     expect(logs.filter(l => l.includes('session/new ok')).length).toBe(2);
+    // The replacement native session advertised nothing: the old connection's slash commands do not carry over
+    expect(s2.view().commands).toEqual([]);
     s2.dispose();
   });
 

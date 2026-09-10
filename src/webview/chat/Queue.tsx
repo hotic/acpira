@@ -72,7 +72,7 @@ function QueuedEditor({ item, composer, blobUrl, onSave, onClose }: {
   const [retained, setRetained] = useState(() => item.attachments.map((_, i) => i));
   return (
     <div className="fade-in min-w-0">
-      <Composer {...composer} running={false} disabled={false} controls={NO_CONTROLS} hidden={undefined} usage={undefined} canCompact={false} turns={[]}
+      <Composer {...composer} running={false} disabled={false} controls={NO_CONTROLS} hidden={undefined} usage={undefined} turns={[]}
         onSetMode={noop} onSetConfig={noop}
         edit={{ text: item.text, hasAttachments: retained.length > 0, onCancel: onClose,
           attachments: <EditAttachments attachments={item.attachments} retained={retained} blobUrl={blobUrl} onRemove={i => setRetained(r => r.filter(n => n !== i))} /> }}

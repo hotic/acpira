@@ -2,9 +2,8 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import { FileText, Image as ImageIcon } from 'lucide-react';
 import type { FileHit } from '@shared/protocol';
 import { imageMimeOf } from '@shared/attachments';
-import { Popover } from '../ui/Popover';
-import { cn } from '../ui/cn';
 import { t } from '../i18n';
+import { CompletionList } from './Completion';
 
 // An @ token under the caret: where it starts in the text and what has been typed after it
 export interface MentionSpan {
@@ -48,54 +47,17 @@ interface MentionListProps {
   onPick: (hit: FileHit) => void;
 }
 
-// The file list floating over the composer: as wide as the field, one --row per hit (name bright, directory faint). Keyboard handling stays in the textarea;
-// the list only reflects the active row. Portals to the shell root like every overlay, since the composer's beam wrapper clips overflow
+// The file list floating over the composer: one row per hit (name bright, directory faint) in the shared completion shell
 export function MentionList({ anchor, hits, active, empty, onHover, onPick }: MentionListProps) {
-  const panel = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const list = panel.current, item = list?.querySelector<HTMLElement>('[data-active]');
-    if (!list || !item) return;
-    const lr = list.getBoundingClientRect(), ir = item.getBoundingClientRect();
-    if (ir.top < lr.top) list.scrollTop += ir.top - lr.top;
-    else if (ir.bottom > lr.bottom) list.scrollTop += ir.bottom - lr.bottom;
-  }, [active]);
-
-  if (!hits.length && !empty) return null;
-  return <Popover.Root open>
-    <Popover.Portal><Popover.Positioner anchor={anchor} width="anchor" side="top"
-      // Base UI measures at temporary coordinates with opacity zero. Those rows
-      // must not receive hover and change the keyboard selection before placement.
-      render={attributes => <div {...attributes} style={{ ...attributes.style,
-        pointerEvents: attributes.style?.opacity === 0 ? 'none' : attributes.style?.pointerEvents,
-      }} />}>
-      {/* The popup is the list itself: cap at min(8 rows, available height) so the two max-height rules don't collide. */}
-      <Popover.Popup finalFocus={false} ref={panel} role="listbox" className="scroll-thin flex max-h-[min(var(--spacing-pop),var(--available-height))] flex-col overflow-y-auto">
-      {!hits.length && <div className="flex min-h-row items-center px-2 text-3 text-fg-3">{t('mention.noFiles')}</div>}
-      {hits.map((h, i) => {
-        const cut = h.path.lastIndexOf('/');
-        const Icon = imageMimeOf(h.path) ? ImageIcon : FileText;
-        return (
-          <button
-            key={h.uri}
-            type="button"
-            role="option"
-            aria-selected={i === active}
-            data-active={i === active || undefined}
-            // Layout can dispatch enter events under a stationary pointer. Only
-            // deliberate mouse movement changes the keyboard's active result.
-            onMouseMove={() => onHover(i)}
-            // mousedown would blur the textarea before click fires; preventing it keeps the caret where the @ is
-            onMouseDown={e => e.preventDefault()}
-            onClick={() => onPick(h)}
-            className={cn('flex min-h-row w-full shrink-0 items-center gap-2 rounded-md px-2 text-left text-2 text-fg-1 outline-none transition-colors', i === active && 'bg-hover')}
-          >
-            <Icon className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} />
-            <span className="truncate font-mono text-mono">{cut >= 0 ? h.path.slice(cut + 1) : h.path}</span>
-            {cut >= 0 && <span className="truncate text-3 text-fg-3">{h.path.slice(0, cut)}</span>}
-          </button>
-        );
-      })}
-      </Popover.Popup>
-    </Popover.Positioner></Popover.Portal>
-  </Popover.Root>;
+  return <CompletionList anchor={anchor} items={hits} active={active} keyOf={h => h.uri} empty={empty ? t('mention.noFiles') : undefined} onHover={onHover} onPick={onPick}>
+    {h => {
+      const cut = h.path.lastIndexOf('/');
+      const Icon = imageMimeOf(h.path) ? ImageIcon : FileText;
+      return <>
+        <Icon className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} />
+        <span className="truncate font-mono text-mono">{cut >= 0 ? h.path.slice(cut + 1) : h.path}</span>
+        {cut >= 0 && <span className="truncate text-3 text-fg-3">{h.path.slice(0, cut)}</span>}
+      </>;
+    }}
+  </CompletionList>;
 }

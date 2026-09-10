@@ -208,7 +208,7 @@ export function App() {
       queued={session?.queued}
       controls={session?.controls ?? { modes: [], options: [] }}
       usage={session?.usage}
-      canCompact={session?.commands.some(c => c.name === 'compact')}
+      commands={session?.commands}
       compactAt={settings.autoCompact ? settings.compactAtTokens : undefined}
       sessions={sessions}
       activeSessionId={session?.id}

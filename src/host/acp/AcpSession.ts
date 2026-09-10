@@ -399,6 +399,11 @@ export class AcpSession {
       this.log('Peer no longer has this session; starting a new one');
       this.acpSessionId = undefined;
     }
+    // A fresh native session starts with no command inventory: whatever a previous connection advertised does not carry over.
+    // Cleared before the request, not after — peers advertise available_commands_update while session/new is still in flight
+    // (acpSessionId is unset here, so those notifications pass onUpdate's session gate). resume / load keep the persisted list
+    // until the peer replaces it
+    this.state.commands = [];
     // 1.0 does not inject MCP servers; the CLI reads its own config
     const r = await agent.request(acp.methods.agent.session.new, { cwd: this.cwd, mcpServers: [] });
     this.acpSessionId = r.sessionId;

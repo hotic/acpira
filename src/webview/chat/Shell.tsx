@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Paperclip } from 'lucide-react';
-import type { AccountInfo, AgentInfo, AuthMethodInfo, Draft, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionControls, SessionStatus, SessionSummary, Turn, Usage } from '@shared/transcript';
+import type { AccountInfo, AgentInfo, AuthMethodInfo, Draft, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionControls, SessionStatus, SessionSummary, SlashCommand, Turn, Usage } from '@shared/transcript';
 import type { HiddenMap, SessionScope } from '@shared/settings';
 import type { AccountAction, AddAccountVia, EditTurnRequest, FileHit } from '@shared/protocol';
 import { AppearanceContext, appearanceDataAttrs, type Appearance } from '../appearance';
@@ -92,8 +92,9 @@ export interface ShellProps {
   queued?: QueuedPrompt[];
   controls: SessionControls;
   usage?: Usage;
-  // The context panel only gets a compact button when the agent has a /compact command
-  canCompact?: boolean;
+  // The slash commands the agent advertised for this session (available_commands_update): the composer's / menu,
+  // and the context panel only gets a compact button when `compact` is among them
+  commands?: SlashCommand[];
   compactAt?: number;
   sessions: SessionSummary[];
   activeSessionId?: string;
@@ -175,10 +176,10 @@ export function Shell(p: ShellProps) {
     running: p.running, disabled: p.status !== 'ready' && p.status !== 'starting',
     controlsLocked: p.status !== 'ready',
     theme: p.theme, turns: p.turns, controls: p.controls, hidden: p.hidden?.[p.agent.id],
-    usage: p.usage, canCompact: p.canCompact, compactAt: p.compactAt, cwd: p.cwd ?? '',
+    usage: p.usage, commands: p.commands, compactAt: p.compactAt, cwd: p.cwd ?? '',
     onSend: on.send, onSearchFiles: on.searchFiles, onNotice: notice, onStop: on.stop,
     onSetMode: on.setMode, onSetConfig: on.setConfig, onCompact: on.compact,
-  }), [p.running, p.status, p.theme, p.turns, p.controls, p.hidden, p.agent.id, p.usage, p.canCompact, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact]);
+  }), [p.running, p.status, p.theme, p.turns, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact]);
   // Context values above the transcript must not change on every stream push: React walks the whole memoized tree for consumers each time
   const permissions = useStableList(useMemo(() => p.turns.flatMap(t => t.role === 'agent' ? t.blocks.filter((b): b is PermissionBlock => b.type === 'permission') : []), [p.turns]));
   const planDoc = useMemo(() => ({

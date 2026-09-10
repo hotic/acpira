@@ -8,7 +8,7 @@ import { AgentProcess } from '../src/host/acp/AgentProcess';
 import { DevinAccountProvider } from '../src/host/accounts/devin';
 import type { AccountProvider } from '../src/host/accounts/types';
 
-// Usage: pnpm probe grok [--auth] [--api-key-env VAR] [--import-local] [--image PATH] [prompt]
+// Usage: pnpm probe grok [--auth] [--api-key-env VAR] [--import-local] [--image PATH] [--wait MS] [prompt]
 // Runs initialize + session/new against any agent, printing capabilities / authMethods / modes / configOptions; if a prompt is given, sends one turn and prints every update.
 // --auth: when session/new fails with -32000, call authenticate with the first authMethod (browser login will pop up) and retry; Devin's browser flow only authenticates this process, nothing is persisted
 // --api-key-env VAR: during authenticate, put the value of env var VAR into `_meta.api_key` (the field Devin recognizes), keeping the key off the command line
@@ -17,6 +17,8 @@ import type { AccountProvider } from '../src/host/accounts/types';
 // --link PATH: attach the file as a `resource_link` block (does the agent read it by itself?); --embed PATH: attach as an embedded text `resource` block
 // --elicit: advertise form elicitation and print every elicitation/create the agent sends (Devin's ask_user_question goes this way), answering with the first
 //   enum option of each property (or an empty string), so the turn can finish; without the flag the request is answered method-not-found, which shows what an agent does then
+// --wait MS: keep the process alive that long after session/new (and after the prompt) before killing it, to catch notifications that arrive
+//   after the response — available_commands_update lands there for every CLI, and Kimi's usage_update is asynchronous too
 const argv = process.argv.slice(2);
 const doAuth = argv.includes('--auth');
 const importLocal = argv.includes('--import-local');
@@ -27,7 +29,8 @@ const apiKey = keyEnv ? process.env[keyEnv.value ?? ''] : undefined;
 const imagePath = valued('--image')?.value;
 const linkPath = valued('--link')?.value;
 const embedPath = valued('--embed')?.value;
-const valueIdx = new Set([keyEnv, valued('--image'), valued('--link'), valued('--embed')].flatMap(v => (v ? [v.idx] : [])));
+const waitMs = Number(valued('--wait')?.value ?? 0);
+const valueIdx = new Set([keyEnv, valued('--image'), valued('--link'), valued('--embed'), valued('--wait')].flatMap(v => (v ? [v.idx] : [])));
 const positional = argv.filter((a, i) => !a.startsWith('--') && !valueIdx.has(i));
 const [agentId = 'grok', ...rest] = positional;
 const promptText = rest.join(' ');
@@ -47,7 +50,7 @@ const proc = await AgentProcess.spawn(def, bin, process.cwd(), {
     const u = n.update;
     if (u.sessionUpdate === 'agent_message_chunk' && u.content.type === 'text') process.stdout.write(u.content.text);
     else if (u.sessionUpdate === 'agent_thought_chunk' && u.content.type === 'text') process.stdout.write(`\x1b[2m${u.content.text}\x1b[0m`);
-    else if (u.sessionUpdate === 'available_commands_update') console.log(`\n[available_commands_update] ${u.availableCommands.map(c => `/${c.name}`).join(' ')}`);
+    else if (u.sessionUpdate === 'available_commands_update') console.log(`\n[available_commands_update] ${u.availableCommands.map(c => `/${c.name}${c.input?.hint ? ` <${c.input.hint}>` : ''}`).join(' ')}`);
     else console.log(`\n[${u.sessionUpdate}]`, JSON.stringify(u, null, 0).slice(0, 600));
   },
   onPermission: async req => {
@@ -129,6 +132,7 @@ try {
     const r = await proc.agent.request(acp.methods.agent.session.prompt, { sessionId: s.sessionId, prompt });
     console.log('\nstop →', r.stopReason);
   }
+  if (waitMs > 0) { console.log(`\nwaiting ${waitMs} ms for late notifications…`); await new Promise(r => setTimeout(r, waitMs)); }
 } catch (e) {
   console.error('session/new failed:', e instanceof acp.RequestError ? `${e.code} ${e.message} ${JSON.stringify(e.data)}` : e);
 }

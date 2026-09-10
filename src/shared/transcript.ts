@@ -86,10 +86,12 @@ export interface SessionControls {
   options: ConfigControl[];
 }
 
-// Slash commands from available_commands_update
+// Slash commands from available_commands_update. `input.hint` is the agent's unstructured hint for the text
+// typed after the command name — a display hint, never a schema to validate against
 export interface SlashCommand {
   name: string;
   description: string;
+  input?: { hint: string };
 }
 
 export interface AuthMethodInfo {
