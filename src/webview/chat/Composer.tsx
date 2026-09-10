@@ -240,11 +240,13 @@ export function Composer(p: ComposerProps) {
       {mentionOpen && <MentionList anchor={fieldRef} hits={hits} active={active} empty={span!.query.length > 0} onHover={setActive} onPick={pick} />}
       {/* The row is a container: below the sm tier (a 380 sidebar leaves ~324 here) the mode chip collapses to icon + caret so the option chips keep their room —
           the same move Cursor makes in a narrow sidebar; the editor panel is wide enough for the names */}
-      <div className="@container flex min-w-0 items-center gap-1 px-2 pt-1 pb-2">
-        {/* The row is always --ctl tall: the context ring is the one --ctl control among --ctl-sm chips, and it comes and goes with
-            the agent's usage knowledge (Grok reports none until the first model round, none again right after a model switch) —
-            without the floor the whole composer jumped by the difference every time */}
-        <fieldset disabled={p.disabled || p.controlsLocked || sending} className="m-0 flex min-h-ctl min-w-0 flex-1 items-center gap-1 border-0 p-0">
+      {/* The row is always --ctl tall: the context ring is the one --ctl control among --ctl-sm chips, and it comes and goes with
+          the agent's usage knowledge (Grok reports none until the first model round, none again right after a model switch) —
+          without the floor the whole composer jumped by the difference every time. The floor lives on the row, not the fieldset:
+          a fieldset lays children out in an anonymous inner box that ignores the fieldset's min-height, so items-center there
+          only centered the chips within their own --ctl-sm height and they rode a few px above the row-centered send button */}
+      <div className="@container flex min-h-ctl min-w-0 items-center gap-1 px-2 pt-1 pb-2">
+        <fieldset disabled={p.disabled || p.controlsLocked || sending} className="m-0 flex min-w-0 flex-1 items-center gap-1 border-0 p-0">
           <div className="flex shrink-0 items-center gap-1">
             {/* Mode is the one solid chip and never truncates; single-line rows with a glyph each, the description rides along as a tooltip */}
             {p.controls.modes.length > 0 && (
