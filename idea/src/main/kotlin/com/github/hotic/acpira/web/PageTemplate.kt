@@ -44,6 +44,7 @@ object PageTemplate {
             "font-src 'self' data:",
             "connect-src 'self'",
             "script-src 'self' 'nonce-${page.nonce}' 'wasm-unsafe-eval'",
+            "worker-src blob:",
         ).joinToString("; ")
         return """<!doctype html>
 <html lang="${page.locale}">

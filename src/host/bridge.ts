@@ -42,6 +42,7 @@ export class WebviewBridge implements vscode.Disposable {
       `style-src ${this.webview.cspSource} 'unsafe-inline'`,
       `font-src ${this.webview.cspSource}`,
       `script-src 'nonce-${nonce}' 'wasm-unsafe-eval'`,
+      "worker-src blob:",
     ].join('; ');
     return `<!doctype html>
 <html lang="${this.runtime.settings.locale()}">

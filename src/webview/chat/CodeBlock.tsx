@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { DiffLine, DiffSource } from '@shared/transcript';
 import { cn } from '../ui/cn';
-import { diffCopyText, highlightDiff, plainDiffRows, type CodeDiffRow } from './codeDiff';
+import { diffCopyText, plainDiffRows, type CodeDiffRow } from './codeDiff';
+import { requestDiffHighlight } from './diffHighlight';
 import { codeLanguage } from './codeSyntax';
 import { OutputCopy } from './OutputCopy';
 import { t } from '../i18n';
@@ -64,7 +65,7 @@ export function DiffBlock({ lines, source, path = '' }: { lines: DiffLine[]; sou
   useEffect(() => {
     if (!visible || !language) return;
     let current = true;
-    highlightDiff(lines, source, path).then(rows => { if (current) setColored({ lines, source, path, rows }); })
+    requestDiffHighlight(lines, source, path).then(rows => { if (current) setColored({ lines, source, path, rows }); })
       .catch(() => { /* Plain source remains available if a grammar cannot load. */ });
     return () => { current = false; };
   }, [visible, lines, source, path, language]);
@@ -73,9 +74,9 @@ export function DiffBlock({ lines, source, path = '' }: { lines: DiffLine[]; sou
     <OutputCopy text={copyText} label={source !== undefined ? t('code.copySource') : t('code.copyVisible')} />
     <div className="diff-scroll scroll-thin max-h-code-output overflow-auto py-gap-half" tabIndex={0} role="region" aria-label={t('code.diff')}>
       <div className="diff-table min-w-full w-max font-mono text-mono leading-code-output">
-        {rows.map((row, index) => row.kind === 'hunk' && index === rows.length - 1 ? null : row.kind === 'hunk'
-          ? <div className="diff-hunk relative h-diff-hunk border-y border-line my-gap-half text-fg-3 select-none [&[data-omission]:first-child]:hidden" key={index} title={row.text} aria-label={row.text}
-              data-omission={/unchanged lines|行未变/.test(row.text) || undefined}><span className="block sticky left-0 w-diff-gutter text-center text-3 leading-gap" aria-hidden="true">···</span></div>
+        {rows.map((row, index) => row.kind === 'hunk' && (index === 0 || index === rows.length - 1) ? null : row.kind === 'hunk'
+          ? <div className="diff-hunk relative h-diff-hunk border-y border-line my-gap-half text-fg-3 select-none" key={index} title={row.text} aria-label={row.text}>
+              <span className="block sticky left-0 w-diff-gutter text-center text-3 leading-gap" aria-hidden="true">···</span></div>
           : <div className="diff-row relative flex min-h-code-line bg-(--diff-row-bg)" data-kind={row.kind} key={index}>
             <span className="diff-gutter sticky left-0 z-1 flex shrink-0 self-stretch text-fg-3 bg-(--diff-row-bg) select-none tabular-nums" aria-hidden="true">
               <span className="diff-number min-w-diff-number text-right">{row.kind === 'del' ? row.oldLine : row.newLine}</span>
