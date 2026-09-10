@@ -4,6 +4,8 @@ import type { Draft, SessionControls, SlashCommand, Turn, Usage } from '@shared/
 import type { FileHit } from '@shared/protocol';
 import type { HiddenMap } from '@shared/settings';
 import { composerControls } from '@shared/composerControls';
+import { MAX_TEXT_BYTES } from '@shared/attachments';
+import { collectPastedText } from '@shared/pastedText';
 import { commandName, namedCommand } from '@shared/slashCommands';
 import { useAppearance } from '../appearance';
 import { getLocale, t } from '../i18n';
@@ -124,11 +126,20 @@ export function Composer(p: ComposerProps) {
     e.preventDefault();
     void addFrom(e.dataTransfer);
   };
-  // Likewise plain text pastes fall through; only pastes carrying files are taken over
+  // Files take precedence over clipboard text. Large text bypasses textarea layout entirely.
   const onPaste = (e: ClipboardEvent) => {
-    if (!hasPayload(e.clipboardData) || !e.clipboardData.files.length) return;
+    if (p.disabled) return;
+    if (hasPayload(e.clipboardData) && e.clipboardData.files.length) {
+      e.preventDefault();
+      void addFrom(e.clipboardData);
+      return;
+    }
+    const name = t('attach.pastedText');
+    const { draft, tooBig } = collectPastedText(e.clipboardData.getData('text/plain'), name);
+    if (!draft && !tooBig) return;
     e.preventDefault();
-    void addFrom(e.clipboardData);
+    if (tooBig) p.onNotice(t('attach.tooBigText', { name, kb: MAX_TEXT_BYTES >> 10 }));
+    if (draft) setDrafts(current => [...current, draft]);
   };
 
   // @ mention: the span under the caret drives the file list (only with a collapsed selection); Esc parks it for that @ until the caret leaves or the message is sent

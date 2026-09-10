@@ -266,6 +266,7 @@ export const zhCN = {
   'attach.tooBigImage': '{name}：图片超过 {mb} MB',
   'attach.tooBigText': '{name}：文件超过 {kb} KB，从资源管理器拖入或用 @ 引用',
   'attach.binary': '{name}：二进制文件放不进对话',
+  'attach.pastedText': '粘贴的文本.txt',
   'mention.noFiles': '没有匹配的文件',
 
   // Host-side, user-visible (toasts / error texts / titles); log lines are not translated

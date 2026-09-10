@@ -252,6 +252,7 @@ export const en = {
   'attach.tooBigImage': '{name}: image exceeds {mb} MB',
   'attach.tooBigText': '{name}: file exceeds {kb} KB — drag it from the Explorer or use @',
   'attach.binary': '{name}: binary files can’t go into the conversation',
+  'attach.pastedText': 'Pasted text.txt',
   'mention.noFiles': 'No matching files',
 
   'host.notFound': '{command} not found — install the {agent} CLI first',
