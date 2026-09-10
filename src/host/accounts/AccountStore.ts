@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { AccountInfo, AgentId } from '@shared/transcript';
 import type { AccountCredential, AccountDraft } from './types';
@@ -26,12 +26,14 @@ export class FileVault implements SecretVault {
   private data = new Map<string, string>();
   private loaded = false;
   private frozen = false;
+  private mtime = 0;
 
   constructor(private file: string, private log: (line: string) => void = () => {}) {}
 
   async get(key: string) {
-    // Another host may have logged in since the last read; a miss is rare enough that the extra read costs nothing
-    if (!this.loaded || !this.data.has(key)) await this.read();
+    const mtime = await stat(this.file).then(s => s.mtimeMs, () => 0);
+    // Another host may have rotated this key; mtime is the cheap cross-process invalidation
+    if (!this.loaded || mtime !== this.mtime || !this.data.has(key)) await this.read();
     return this.data.get(key);
   }
 
@@ -47,11 +49,13 @@ export class FileVault implements SecretVault {
       await mkdir(dirname(this.file), { recursive: true });
       await writeAtomic(this.file, JSON.stringify(Object.fromEntries(this.data), null, 2), 0o600);
       try { await chmod(this.file, 0o600); } catch { /* Windows */ }
+      this.mtime = await stat(this.file).then(s => s.mtimeMs, () => 0);
     });
   }
 
   private async read() {
     this.loaded = true;
+    this.mtime = await stat(this.file).then(s => s.mtimeMs, () => 0);
     let raw: string;
     try { raw = await readFile(this.file, 'utf8'); }
     catch { this.data = new Map(); return; }

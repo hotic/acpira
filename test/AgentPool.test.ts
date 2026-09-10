@@ -32,6 +32,22 @@ describe('AgentPool', () => {
     } finally { pool.dispose(); }
   }, 20_000);
 
+  it('invalidate drops a ready process so the next take misses', async () => {
+    const logs: string[] = [];
+    const registry = new AgentRegistry({ fake: { name: 'Fake', command: TSX, args: [FAKE] } });
+    const pool = new AgentPool({ registry: () => registry, log: line => logs.push(line) });
+    try {
+      pool.ensure('fake', '/tmp');
+      const t0 = Date.now();
+      while (!logs.some(l => l.includes('initialize ok'))) {
+        if (Date.now() - t0 > 10_000) throw new Error('warm timed out');
+        await new Promise(r => setTimeout(r, 20));
+      }
+      pool.invalidate();
+      expect(await pool.take('fake', '/tmp', undefined, handlers())).toBeUndefined();
+    } finally { pool.dispose(); }
+  }, 20_000);
+
   it('dispose of a warming slot leaves nothing to take', async () => {
     const registry = new AgentRegistry({ fake: { name: 'Fake', command: TSX, args: [FAKE] } });
     const pool = new AgentPool({ registry: () => registry, log: () => {} });

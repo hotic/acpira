@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import type { Duplex } from 'node:stream';
 import type { Wire } from './SidecarServer';
@@ -15,6 +16,8 @@ export interface HarnessOpts {
   sessionsDir: () => string | undefined;
   onWire: (wire: Wire) => void;
   log: (line: string) => void;
+  // Required on /ws?token=; printed in the listen URL. Absent in unit tests that do not exercise auth
+  token?: string;
 }
 
 const MIME: Record<string, string> = {
@@ -23,24 +26,46 @@ const MIME: Record<string, string> = {
   '.woff2': 'font/woff2', '.woff': 'font/woff', '.txt': 'text/plain; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.wasm': 'application/wasm',
 };
 
+export function harnessOriginAllowed(origin: string | undefined, port: number): boolean {
+  if (!origin) return false;
+  let u: URL;
+  try { u = new URL(origin); } catch { return false; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  if (u.hostname !== '127.0.0.1' && u.hostname !== 'localhost') return false;
+  const p = u.port ? Number(u.port) : (u.protocol === 'https:' ? 443 : 80);
+  return p === port;
+}
+
 export function startHarness(opts: HarnessOpts): Server {
   const server = createServer((req, res) => serve(req, res, opts));
+  const listenPort = () => {
+    const addr = server.address();
+    return addr && typeof addr === 'object' ? (addr as AddressInfo).port : opts.port;
+  };
   server.on('upgrade', (req, socket) => {
-    if (req.url !== '/ws') { socket.destroy(); return; }
+    let url: URL;
+    try { url = new URL(req.url ?? '/', 'http://127.0.0.1'); } catch { socket.destroy(); return; }
+    if (url.pathname !== '/ws') { socket.destroy(); return; }
+    if (opts.token && url.searchParams.get('token') !== opts.token) { socket.destroy(); return; }
+    if (opts.token && !harnessOriginAllowed(req.headers.origin, listenPort())) { socket.destroy(); return; }
     const key = req.headers['sec-websocket-key'];
     if (typeof key !== 'string') { socket.destroy(); return; }
     const accept = createHash('sha1').update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
     opts.onWire(wsWire(socket));
   });
-  server.listen(opts.port, '127.0.0.1', () => opts.log(`harness listening on http://127.0.0.1:${opts.port}/`));
+  server.listen(opts.port, '127.0.0.1', () => {
+    const q = opts.token ? `/?token=${opts.token}` : '/';
+    opts.log(`harness listening on http://127.0.0.1:${listenPort()}${q}`);
+  });
   return server;
 }
 
 // Static files under a root, confined to it; directories are refused
 function serve(req: IncomingMessage, res: ServerResponse, opts: HarnessOpts) {
   const url = new URL(req.url ?? '/', 'http://localhost');
-  const path = decodeURIComponent(url.pathname);
+  let path: string;
+  try { path = decodeURIComponent(url.pathname); } catch { res.writeHead(400); res.end(); return; }
   let base: string | undefined;
   let rel: string;
   if (path === '/' || path === '/index.html') { base = join(opts.root, 'test', 'host-preview'); rel = 'index.html'; }

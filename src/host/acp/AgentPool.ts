@@ -51,7 +51,8 @@ export class AgentPool {
     catch { return undefined; }
   }
 
-  dispose() {
+  // Drop idle / still-warming processes so a registry or credential change cannot hand out a stale spawn
+  invalidate() {
     const ready: AgentProcess[] = [];
     for (const slot of this.slots.values()) {
       if (slot.state === 'ready') { clearTimeout(slot.timer); ready.push(slot.proc); }
@@ -62,6 +63,8 @@ export class AgentPool {
     for (const proc of ready) proc.kill();
     for (const p of pending) void p.then(proc => proc.kill()).catch(() => {});
   }
+
+  dispose() { this.invalidate(); }
 
   private async spawnWarm(agent: AgentId, cwd: string, accountId: string | undefined, key: string, slot: Warming): Promise<AgentProcess> {
     try {

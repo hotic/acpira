@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Paperclip } from 'lucide-react';
-import type { AccountInfo, AgentInfo, AuthMethodInfo, Draft, PermissionBlock, QuestionBlock, QueuedPrompt, SessionControls, SessionStatus, SessionSummary, Turn, Usage } from '@shared/transcript';
+import type { AccountInfo, AgentInfo, AuthMethodInfo, Draft, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionControls, SessionStatus, SessionSummary, Turn, Usage } from '@shared/transcript';
 import type { HiddenMap, SessionScope } from '@shared/settings';
 import type { AccountAction, AddAccountVia, EditTurnRequest, FileHit } from '@shared/protocol';
 import { AppearanceContext, appearanceDataAttrs, type Appearance } from '../appearance';
@@ -33,9 +33,9 @@ export interface ShellHandlers {
   // @ mention lookup over workspace files
   searchFiles: (query: string) => Promise<FileHit[]>;
   stop: () => void;
-  permission: (blockId: string, optionId: string) => void;
+  permission: (sessionId: string, blockId: string, optionId: string) => void;
   // The question card was closed: answers keyed by question id, or skip
-  answer?: OnAnswer;
+  answer?: (sessionId: string, blockId: string, answers: QuestionAnswers, skip?: boolean) => void;
   buildPlan?: (sessionId: string, planId: string, model?: { configId: string; value: string }, optionId?: string) => void;
   openPlan?: (sessionId: string, planId: string) => void;
   openFile?: (sessionId: string, path: string, line?: number) => void;
@@ -241,7 +241,7 @@ export function Shell(p: ShellProps) {
                 <HistoryContext.Provider value={history}>
                 <HistoryComposerContext.Provider value={history?.editing !== undefined ? composerProps : undefined}>
                   <OpenToolFileContext.Provider value={openToolFile}>
-                    <Thread key={p.activeSessionId} turns={p.turns} running={p.running} wide={wide} replayKey={p.replayKey} blobUrl={blobUrl} onPermission={on.permission} />
+                    <Thread key={p.activeSessionId} turns={p.turns} running={p.running} wide={wide} replayKey={p.replayKey} blobUrl={blobUrl} onPermission={(blockId, optionId) => { if (p.activeSessionId) on.permission(p.activeSessionId, blockId, optionId); }} />
                   </OpenToolFileContext.Provider>
                 </HistoryComposerContext.Provider>
                 </HistoryContext.Provider>
@@ -254,7 +254,7 @@ export function Shell(p: ShellProps) {
             </div>
             <div className={cn('shrink-0', wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--content-w)+2*var(--pad))]')}>
               <PlanBar key={`plan:${p.activeSessionId}`} turns={p.turns} running={p.running} />
-              {question && on.answer && <Questions key={question.id} block={question} onAnswer={on.answer} />}
+              {question && on.answer && p.activeSessionId && <Questions key={question.id} block={question} onAnswer={(blockId, answers, skip) => on.answer!(p.activeSessionId!, blockId, answers, skip)} />}
               {alertTurn && (
                 <Alert
                   turn={alertTurn}
@@ -295,7 +295,7 @@ interface ThreadProps {
   wide: boolean;
   replayKey?: number | string;
   blobUrl?: (blob: string) => string;
-  onPermission: ShellHandlers['permission'];
+  onPermission: (blockId: string, optionId: string) => void;
 }
 
 // Entrance stagger caps out at the 12th block, so long sessions don't take seconds

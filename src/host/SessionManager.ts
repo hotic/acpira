@@ -8,7 +8,7 @@ import { AgentPool } from './acp/AgentPool';
 import { AcpSession, type CompactionPolicy, type SessionRecord } from './acp/AcpSession';
 import type { AccountManager } from './accounts/AccountManager';
 import type { LocalAccounts } from './accounts/local';
-import { TranscriptStore, sortIndex, summarize, type SessionPrefs } from './store/TranscriptStore';
+import { TranscriptStore, isSessionId, sortIndex, summarize, type SessionPrefs } from './store/TranscriptStore';
 import { cloneJson } from './clone';
 import { msg } from './errors';
 import { t } from './i18n';
@@ -46,8 +46,10 @@ export type ManagerEvent =
 const TRASH_TTL = 30_000;
 // While some agent has no executable, look again this often (a handful of stat calls) so a CLI installed in a terminal lights up without a reload
 const PROBE_INTERVAL = 10_000;
-// Streamed updates change the in-memory list every few milliseconds; the disk index (a readdir + merge) follows at this pace
+// Streamed updates change the in-memory list every few milliseconds; the disk index (a readdir + merge) follows at this pace,
+// capped so a continuous stream still reconciles
 const INDEX_DEBOUNCE = 400;
+const INDEX_MAX_WAIT = 2_000;
 
 // One viewer per webview (sidebar, each editor tab): its own active session over the shared process pool and session list, so several
 // tabs can each show a different conversation. Global events (list, agents, accounts) reach every viewer; `session` events only the viewers showing that session
@@ -99,6 +101,7 @@ export class SessionManager {
   // Disk index reconciliation (see syncIndex): one debounced run at a time, re-run once more if something changed meanwhile.
   // `touched` holds the ids of records this host patched on disk without loading them, so its summaries beat the disk index for them
   private syncTimer?: NodeJS.Timeout;
+  private syncFirstAt?: number;
   private syncing?: Promise<void>;
   private syncAgain = false;
   private touched = new Set<string>();
@@ -180,8 +183,11 @@ export class SessionManager {
 
   // The in-memory list changed: bring the disk index along shortly (debounced, since streaming touches it constantly)
   private saveIndex() {
+    const now = Date.now();
+    this.syncFirstAt ??= now;
+    const wait = Math.min(INDEX_DEBOUNCE, Math.max(0, this.syncFirstAt + INDEX_MAX_WAIT - now));
     clearTimeout(this.syncTimer);
-    this.syncTimer = setTimeout(() => { this.syncTimer = undefined; void this.syncIndex(); }, INDEX_DEBOUNCE);
+    this.syncTimer = setTimeout(() => { this.syncTimer = undefined; this.syncFirstAt = undefined; void this.syncIndex(); }, wait);
     this.syncTimer.unref?.();
   }
 
@@ -190,6 +196,7 @@ export class SessionManager {
   async refreshIndex(): Promise<void> {
     clearTimeout(this.syncTimer);
     this.syncTimer = undefined;
+    this.syncFirstAt = undefined;
     await this.syncIndex();
   }
 
@@ -228,9 +235,10 @@ export class SessionManager {
 
   get registry(): AgentRegistry { return this.deps.registry; }
 
-  // Swap the registry (acpira.agents changed): re-probe the binaries, then push the new list out
+  // Swap the registry (acpira.agents changed): drop warm processes started with the old command, re-probe, then push the new list out
   setRegistry(r: AgentRegistry) {
     this.deps.registry = r;
+    this.pool.invalidate();
     this.watchRegistry(r);
     this.reprobe().then(() => this.emit({ type: 'agents', agents: this.agents() })).catch(e => this.deps.log(`agent probe failed: ${msg(e)}`));
   }
@@ -422,6 +430,7 @@ export class SessionManager {
   }
 
   async selectSessionFor(v: SessionViewer, id: string): Promise<void> {
+    if (!isSessionId(id)) return;
     if (v.activeId === id && this.live.has(id)) return;
     v.activeId = id;
     const live = this.live.get(id);
@@ -455,9 +464,9 @@ export class SessionManager {
       switch (m.type) {
         case 'send': await s?.prompt(m.text, m.attachments); break;
         case 'stop': await s?.cancel(); break;
-        case 'permission': s?.resolvePermission(m.blockId, m.optionId); break;
-        case 'answer': s?.answerQuestions(m.blockId, m.answers, m.skip); break;
-        case 'buildPlan': await this.live.get(m.sessionId)?.buildPlan(m.planId, m.model, m.optionId); break;
+        case 'permission': if (isSessionId(m.sessionId)) this.live.get(m.sessionId)?.resolvePermission(m.blockId, m.optionId); break;
+        case 'answer': if (isSessionId(m.sessionId)) this.live.get(m.sessionId)?.answerQuestions(m.blockId, m.answers, m.skip); break;
+        case 'buildPlan': if (isSessionId(m.sessionId)) await this.live.get(m.sessionId)?.buildPlan(m.planId, m.model, m.optionId); break;
         case 'setMode': if (s) { await s.setMode(m.id); this.remember(s); } break;
         case 'setConfig': if (s) { await s.setConfig(m.configId, m.value); this.remember(s); } break;
         case 'selectAgent': if (s?.agent !== m.id) await this.newSessionFor(v, m.id); break;
@@ -470,16 +479,16 @@ export class SessionManager {
         case 'moveSession': await this.moveSession(m.id); break;
         case 'selectAccount': await this.selectAccount(v, m.id); break;
         case 'addAccount': await this.addAccount(v, m.agent, m.via); break;
-        case 'removeAccount': await this.deps.accounts?.remove(m.id); break;
+        case 'removeAccount': await this.deps.accounts?.remove(m.id); this.pool.invalidate(); break;
         case 'refreshQuota':
           await Promise.all([this.deps.accounts?.refreshQuotas(m.agent), this.deps.localAccounts?.refresh(m.agent)]);
           break;
         case 'compact': await s?.compact(); break;
         case 'retry': await s?.retry(); break;
         case 'retryTurn': await s?.retryTurn(); break;
-        case 'dequeue': this.live.get(m.sessionId)?.dequeue(m.id); break;
-        case 'sendQueued': await this.live.get(m.sessionId)?.sendQueued(m.id); break;
-        case 'editQueued': await this.live.get(m.sessionId)?.editQueued(m.id, m.text, m.retainedAttachments, m.attachments); break;
+        case 'dequeue': if (isSessionId(m.sessionId)) this.live.get(m.sessionId)?.dequeue(m.id); break;
+        case 'sendQueued': if (isSessionId(m.sessionId)) await this.live.get(m.sessionId)?.sendQueued(m.id); break;
+        case 'editQueued': if (isSessionId(m.sessionId)) await this.live.get(m.sessionId)?.editQueued(m.id, m.text, m.retainedAttachments, m.attachments); break;
         case 'login': await this.login(s, m.methodId); break;
         case 'installAgent': this.install(m.agent); break;
         default: break;
@@ -493,6 +502,7 @@ export class SessionManager {
 
   // Rename / pin: for a live session, mutate the object (onChange syncs the index and the disk); for one not loaded, patch the on-disk record directly
   async renameSession(id: string, title: string) {
+    if (!isSessionId(id)) return;
     const t = title.trim().slice(0, RENAME_MAX);
     if (!t) return;
     const live = this.live.get(id);
@@ -501,6 +511,7 @@ export class SessionManager {
   }
 
   async pinSession(id: string, pinned: boolean) {
+    if (!isSessionId(id)) return;
     const live = this.live.get(id);
     if (live) { live.setPinned(pinned); return; }
     await this.patchRecord(id, r => { r.pinned = pinned || undefined; });
@@ -517,6 +528,7 @@ export class SessionManager {
   // Deletion is soft: kill the process, drop it from the list, move the record into the store's trash with a 30-second undo window; the files are really
   // deleted only after that. Every viewer showing the deleted one switches to the first in the list; if none, the first of them opens a new one and the rest follow onto it
   async deleteSession(id: string) {
+    if (!isSessionId(id)) return;
     const live = this.live.get(id);
     if (live) await this.deps.store.flush(live.toRecord());
     this.forget(id);
@@ -558,6 +570,7 @@ export class SessionManager {
   // carried, so a live session is closed and reopened in the new folder (its viewers follow through selectSessionFor); one with a turn in
   // flight cannot move. A stored record is patched in place and picks the folder up when it is next opened
   async moveSession(id: string) {
+    if (!isSessionId(id)) return;
     const cwd = this.deps.cwd();
     const live = this.live.get(id);
     if (live) {
@@ -586,6 +599,7 @@ export class SessionManager {
 
   // Undo deletion: move it back out of the trash into the list; the record stayed on disk the whole time and restores as usual when opened
   async restoreSession(id: string) {
+    if (!isSessionId(id)) return;
     const t = this.trash.get(id);
     if (!t) return;
     clearTimeout(t.timer);
@@ -621,6 +635,7 @@ export class SessionManager {
       }
       const cur = this.current(v);
       if (cur?.agent === agent && (cur.view().status === 'auth_required' || !cur.accountId)) await cur.rebindAccount(acc.id);
+      this.pool.invalidate();
       this.setAccountAction({ agent, via, status: 'success' });
     } catch (e) {
       this.setAccountAction({ agent, via, status: 'error', error: msg(e) });

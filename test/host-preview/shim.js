@@ -65,8 +65,13 @@
     }
   };
 
+  const token = params.get('token');
   const connect = () => {
-    ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+    if (!token) {
+      toast('error', 'Missing harness token — open the URL printed by pnpm harness');
+      return;
+    }
+    ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?token=${encodeURIComponent(token)}`);
     ws.onopen = () => {
       send({
         type: 'hello', protocolVersion: 1, requestId: 'hello-1',

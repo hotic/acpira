@@ -9,7 +9,7 @@ import { DevinAccountProvider } from './accounts/devin';
 import { LocalAccounts } from './accounts/local';
 import { BridgeCore, type BridgeCoreOpts } from './bridgeCore';
 import { msg } from './errors';
-import { setHostLocale } from './i18n';
+import { setHostLocale, t } from './i18n';
 import type { HostPlatform, SettingsAffects } from './platform';
 import { SessionManager } from './SessionManager';
 import { SettingsCenter } from './settings';
@@ -47,7 +47,7 @@ export class HostRuntime {
     this.sessionsDir = join(root, 'sessions');
     this.manager = new SessionManager({
       registry: this.activeRegistry,
-      store: new TranscriptStore(this.sessionsDir, log),
+      store: new TranscriptStore(this.sessionsDir, log, { onSaveError: (_id, error) => toast('error', t('host.saveFailed', { error })) }),
       log,
       cwd: () => platform.cwd(),
       defaultAgent: () => this.read<string>('defaultAgent') ?? 'grok',

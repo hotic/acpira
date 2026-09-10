@@ -23,7 +23,12 @@ export class SidecarPlatform implements HostPlatform {
   private seq = 0;
   private closed?: string;
 
-  constructor(private send: (m: SidecarMsg) => void, hello: Hello, private stderr: (line: string) => void) {
+  constructor(
+    private send: (m: SidecarMsg) => void,
+    hello: Hello,
+    private stderr: (line: string) => void,
+    private flags: { ignoreAgents?: boolean } = {},
+  ) {
     this.settings = { ...hello.settings };
     this.env = { ...hello.env };
     this.caps = new Set(hello.client.capabilities);
@@ -36,7 +41,10 @@ export class SidecarPlatform implements HostPlatform {
   home() { return homedir(); }
   cwd() { return this.env.cwd ?? homedir(); }
 
-  readSetting(key: string): unknown { return this.settings[key]; }
+  readSetting(key: string): unknown {
+    if (this.flags.ignoreAgents && key === 'agents') return undefined;
+    return this.settings[key];
+  }
 
   // The snapshot changes at once so SettingsCenter's emit right after the write already shows the new value; the shell persists and
   // echoes a settingsChanged event (a second, identical push, like VS Code's onDidChangeConfiguration)

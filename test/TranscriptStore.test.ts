@@ -1,9 +1,9 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { SessionRecord } from '../src/host/acp/AcpSession';
-import { TranscriptStore, summarize } from '../src/host/store/TranscriptStore';
+import { TranscriptStore, isSessionId, summarize } from '../src/host/store/TranscriptStore';
 
 function record(id: string, title = 'T'): SessionRecord {
   const now = '2026-01-01T00:00:00.000Z';
@@ -181,5 +181,77 @@ describe('TranscriptStore', () => {
     await store.dispose();
     // No temp files are left behind by the atomic writes
     expect(readdirSync(dir).filter(f => f.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('rejects path-like ids and does not touch files outside the store', async () => {
+    const { dir, logs, store } = fixture();
+    const marker = join(dirname(dir), `keep-${Date.now()}`);
+    writeFileSync(marker, 'keep');
+    const outside = record('..');
+    (outside as { id: string }).id = '..';
+    store.save(outside as SessionRecord, 0);
+    await store.flush(record('/tmp/x'));
+    await store.trash('..');
+    await store.remove('..');
+    await store.remove('/etc/passwd');
+    expect(await store.load('..')).toBeNull();
+    expect(await store.load('/tmp/x')).toBeNull();
+    expect(existsSync(marker)).toBe(true);
+    expect(existsSync(dir)).toBe(true);
+    expect(logs.some(l => l.includes('illegal id'))).toBe(true);
+    rmSync(marker, { force: true });
+  });
+
+  it('a record whose inner id does not match the filename is missing', async () => {
+    const { dir, store } = fixture();
+    writeFileSync(join(dir, 'good.json'), JSON.stringify(record('other')));
+    expect(await store.load('good')).toBeNull();
+  });
+
+  it('refuses to follow a session directory that is a symlink out of the store', async () => {
+    const { dir, store } = fixture();
+    const outside = mkdtempSync(join(tmpdir(), 'acpira-out-'));
+    writeFileSync(join(outside, 'secret.txt'), 'secret');
+    try { symlinkSync(outside, join(dir, 'link')); }
+    catch { rmSync(outside, { recursive: true, force: true }); return; }
+    await store.remove('link');
+    expect(existsSync(join(outside, 'secret.txt'))).toBe(true);
+    await expect(store.saveBlob('link', '.txt', new Uint8Array([1]))).rejects.toThrow();
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  it('a stream of saves still flushes within the max wait', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acpira-store-'));
+    const store = new TranscriptStore(dir, () => {}, { saveDebounceMs: 10_000, saveMaxWaitMs: 80 });
+    store.save(record('a', 'v1'));
+    await new Promise(r => setTimeout(r, 25));
+    store.save(record('a', 'v2'));
+    await new Promise(r => setTimeout(r, 25));
+    store.save(record('a', 'v3'));
+    await new Promise(r => setTimeout(r, 80));
+    expect(JSON.parse(readFileSync(join(dir, 'a.json'), 'utf8')).title).toBe('v3');
+    await store.dispose();
+  });
+
+  it('a failed save notifies onSaveError', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acpira-store-'));
+    writeFileSync(join(dir, 'x.json'), '');
+    const errors: string[] = [];
+    const broken = new TranscriptStore(join(dir, 'x.json'), () => {}, { onSaveError: (id, error) => errors.push(`${id}:${error}`) });
+    broken.save(record('x'), 0);
+    await new Promise(r => setTimeout(r, 50));
+    expect(errors.some(e => e.startsWith('x:'))).toBe(true);
+  });
+});
+
+describe('isSessionId', () => {
+  it('accepts uuid-like tokens and rejects path components', () => {
+    expect(isSessionId('a1b2')).toBe(true);
+    expect(isSessionId('550e8400-e29b-41d4-a716-446655440000')).toBe(true);
+    expect(isSessionId('..')).toBe(false);
+    expect(isSessionId('../secrets')).toBe(false);
+    expect(isSessionId('/tmp/x')).toBe(false);
+    expect(isSessionId('index')).toBe(false);
+    expect(isSessionId('trash')).toBe(false);
   });
 });

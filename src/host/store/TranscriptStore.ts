@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { access, mkdir, readFile, readdir, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { access, mkdir, readFile, readdir, realpath, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { basename, dirname, join, sep } from 'node:path';
 import type { AgentId, SessionSummary, TurnSettings } from '@shared/transcript';
 import type { SessionRecord } from '../acp/AcpSession';
 import type { BlobStore } from '../acp/attachments';
@@ -15,13 +15,30 @@ export interface SessionPrefs {
 
 const META_FILES = new Set(['index.json', 'prefs.json']);
 const TRASH_DIR = 'trash';
+const RESERVED_IDS = new Set(['index', 'prefs', TRASH_DIR]);
 
-// Streamed updates call save() every few milliseconds; one write per session this often is plenty
+// Streamed updates call save() every few milliseconds; one write per session this often is plenty.
+// Trailing debounce is capped so a continuous stream still lands within SAVE_MAX_WAIT_MS.
 const SAVE_DEBOUNCE_MS = 400;
+const SAVE_MAX_WAIT_MS = 2_000;
+
+// Session ids name files and directories under the store root. Anything that is not a plain token
+// (UUID-shaped, same as blob dirs) must not reach path.join / rm
+export function isSessionId(id: string): boolean {
+  return /^[\w-]+$/.test(id) && !RESERVED_IDS.has(id);
+}
+
+export interface TranscriptStoreOpts {
+  saveDebounceMs?: number;
+  saveMaxWaitMs?: number;
+  onSaveError?: (id: string, error: string) => void;
+}
 
 interface PendingWrite {
   timer: NodeJS.Timeout;
   record: SessionRecord;
+  // First save() in this burst; later calls cannot push the write past this + saveMaxWaitMs
+  deadline: number;
 }
 
 // Session persistence: <dir>/index.json caches the summary list, <dir>/prefs.json the per-agent memory, <dir>/<id>.json the full record,
@@ -38,8 +55,15 @@ export class TranscriptStore implements BlobStore {
   private inflight = new Map<string, Promise<void>>();
   // Ids whose record this store has read from or written to the live directory
   private known = new Set<string>();
+  private readonly saveDebounceMs: number;
+  private readonly saveMaxWaitMs: number;
+  private readonly onSaveError?: (id: string, error: string) => void;
 
-  constructor(private dir: string, private log: (line: string) => void = () => {}) {}
+  constructor(private dir: string, private log: (line: string) => void = () => {}, opts: TranscriptStoreOpts = {}) {
+    this.saveDebounceMs = opts.saveDebounceMs ?? SAVE_DEBOUNCE_MS;
+    this.saveMaxWaitMs = opts.saveMaxWaitMs ?? SAVE_MAX_WAIT_MS;
+    this.onSaveError = opts.onSaveError;
+  }
 
   private async ensure() { await mkdir(this.dir, { recursive: true }); }
 
@@ -102,19 +126,22 @@ export class TranscriptStore implements BlobStore {
 
   // Ids with a record file in the live directory (not the trash)
   private async recordIds(): Promise<string[]> {
-    return (await readdir(this.dir)).filter(f => f.endsWith('.json') && !META_FILES.has(f)).map(f => f.slice(0, -5));
+    return (await readdir(this.dir)).filter(f => f.endsWith('.json') && !META_FILES.has(f)).map(f => f.slice(0, -5)).filter(isSessionId);
   }
 
   // A record that fails to parse, or lacks the fields every reader relies on, counts as missing: better an empty entry than a crash mid-restore
   async load(id: string): Promise<SessionRecord | null> {
+    if (!isSessionId(id)) return null;
     const pending = this.pending.get(id);
     if (pending) return pending.record;
+    const path = await this.confined(this.dir, `${id}.json`);
+    if (!path) return null;
     let raw: string;
-    try { raw = await readFile(join(this.dir, `${id}.json`), 'utf8'); }
+    try { raw = await readFile(path, 'utf8'); }
     catch { return null; }
     try {
       const r = JSON.parse(raw) as unknown;
-      if (!isRecord(r)) throw new Error('not a session record');
+      if (!isRecord(r) || r.id !== id) throw new Error('not a session record');
       this.known.add(id);
       return r;
     } catch (e) {
@@ -123,16 +150,27 @@ export class TranscriptStore implements BlobStore {
     }
   }
 
-  save(record: SessionRecord, delay = SAVE_DEBOUNCE_MS) {
-    this.cancelPending(record.id);
-    const timer = setTimeout(() => {
-      this.pending.delete(record.id);
-      this.write(record).catch(e => this.log(`session ${record.id}: save failed (${msg(e)})`));
-    }, delay);
-    this.pending.set(record.id, { timer, record });
+  save(record: SessionRecord, delay = this.saveDebounceMs) {
+    if (!isSessionId(record.id)) {
+      this.log(`session ${record.id}: illegal id, not saved`);
+      return;
+    }
+    const now = Date.now();
+    const prev = this.pending.get(record.id);
+    if (prev) {
+      clearTimeout(prev.timer);
+      const wait = Math.min(delay, Math.max(0, prev.deadline - now));
+      prev.record = record;
+      prev.timer = setTimeout(() => this.flushPendingId(record.id), wait);
+      return;
+    }
+    const deadline = now + this.saveMaxWaitMs;
+    const timer = setTimeout(() => this.flushPendingId(record.id), Math.min(delay, this.saveMaxWaitMs));
+    this.pending.set(record.id, { timer, record, deadline });
   }
 
   async flush(record: SessionRecord) {
+    if (!isSessionId(record.id)) return;
     this.cancelPending(record.id);
     await this.write(record);
   }
@@ -143,18 +181,20 @@ export class TranscriptStore implements BlobStore {
 
   // Removes the record and its blob directory for good, wherever they are (live or trash)
   async remove(id: string) {
+    if (!isSessionId(id)) return;
     this.cancelPending(id);
     await this.settleInflight(id);
     this.known.delete(id);
     for (const dir of [this.dir, join(this.dir, TRASH_DIR)]) {
-      await rm(join(dir, `${id}.json`), { force: true });
-      await rm(join(dir, id), { recursive: true, force: true });
+      await this.rmConfined(dir, `${id}.json`);
+      await this.rmConfined(dir, id, true);
     }
   }
 
   // Soft deletion: move the record and its blobs into trash/ so the live directory (what syncIndex trusts) no longer lists it, while an
   // undo can still bring it back. Unlike an in-memory trash, this survives a crash: sweepTrash cleans up whatever is left on the next start
   async trash(id: string) {
+    if (!isSessionId(id)) return;
     this.cancelPending(id);
     await this.settleInflight(id);
     const trash = join(this.dir, TRASH_DIR);
@@ -162,10 +202,12 @@ export class TranscriptStore implements BlobStore {
     await this.move(this.dir, trash, id);
     // rename keeps the record's mtime; stamp the moment it was trashed so sweepTrash can tell a fresh undo window from a leftover
     const now = new Date();
-    await utimes(join(trash, `${id}.json`), now, now).catch(() => {});
+    const stamped = await this.confined(trash, `${id}.json`);
+    if (stamped) await utimes(stamped, now, now).catch(() => {});
   }
 
   async restore(id: string) {
+    if (!isSessionId(id)) return;
     await this.move(join(this.dir, TRASH_DIR), this.dir, id);
   }
 
@@ -179,16 +221,22 @@ export class TranscriptStore implements BlobStore {
     for (const f of files) {
       if (!f.endsWith('.json')) continue;
       const id = f.slice(0, -5);
+      if (!isSessionId(id)) continue;
       const mtime = await stat(join(trash, f)).then(s => s.mtimeMs).catch(() => 0);
       if (mtime > cutoff) continue;
-      await rm(join(trash, f), { force: true });
-      await rm(join(trash, id), { recursive: true, force: true });
+      await this.rmConfined(trash, f);
+      await this.rmConfined(trash, id, true);
     }
   }
 
   private async move(from: string, to: string, id: string) {
-    await rename(join(from, `${id}.json`), join(to, `${id}.json`)).catch(() => {});
-    await rename(join(from, id), join(to, id)).catch(() => {});
+    if (!isSessionId(id)) return;
+    const fileFrom = await this.confined(from, `${id}.json`);
+    const fileTo = await this.confined(to, `${id}.json`);
+    if (fileFrom && fileTo) await rename(fileFrom, fileTo).catch(() => {});
+    const dirFrom = await this.confined(from, id);
+    const dirTo = await this.confined(to, id);
+    if (dirFrom && dirTo) await rename(dirFrom, dirTo).catch(() => {});
   }
 
   // Writes whatever is still debounced; called when the extension host goes down so the last few seconds of a transcript are not lost
@@ -196,10 +244,17 @@ export class TranscriptStore implements BlobStore {
 
   // Every debounced record is on its way and every write already on its way has landed (or failed, logged) when this resolves
   private async flushPending() {
-    const writes = [...this.pending.values()].map(p => { clearTimeout(p.timer); return this.write(p.record); });
+    const queued = [...this.pending.values()];
     this.pending.clear();
-    const results = await Promise.allSettled(writes);
-    for (const r of results) if (r.status === 'rejected') this.log(`save failed (${msg(r.reason)})`);
+    const results = await Promise.allSettled(queued.map(p => { clearTimeout(p.timer); return this.write(p.record); }));
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i]!;
+      if (r.status !== 'rejected') continue;
+      const err = msg(r.reason);
+      const id = queued[i]!.record.id;
+      this.log(`session ${id}: save failed (${err})`);
+      this.onSaveError?.(id, err);
+    }
     await Promise.allSettled([...this.inflight.values()]);
   }
 
@@ -226,9 +281,22 @@ export class TranscriptStore implements BlobStore {
     return run;
   }
 
+  private flushPendingId(id: string) {
+    const p = this.pending.get(id);
+    if (!p) return;
+    this.pending.delete(id);
+    this.write(p.record).catch(e => {
+      const err = msg(e);
+      this.log(`session ${id}: save failed (${err})`);
+      this.onSaveError?.(id, err);
+    });
+  }
+
   private async writeNow(record: SessionRecord) {
+    if (!isSessionId(record.id)) return;
     await this.ensure();
-    const path = join(this.dir, `${record.id}.json`);
+    const path = await this.confined(this.dir, `${record.id}.json`);
+    if (!path) return;
     if (this.known.has(record.id) && !(await exists(path))) {
       this.log(`session ${record.id}: deleted by another window, not written back`);
       return;
@@ -237,21 +305,47 @@ export class TranscriptStore implements BlobStore {
     this.known.add(record.id);
   }
 
+  // Resolves `root/name` and refuses anything that is not still under `root` after following symlinks.
+  // Missing targets are allowed when the parent stays inside the root (create / force-rm).
+  private async confined(root: string, name: string): Promise<string | undefined> {
+    let base: string;
+    try { base = await realpath(root); } catch { return undefined; }
+    const target = join(root, name);
+    let resolved: string;
+    try { resolved = await realpath(target); }
+    catch {
+      let parent: string;
+      try { parent = await realpath(dirname(target)); } catch { return undefined; }
+      resolved = join(parent, basename(target));
+    }
+    if (resolved !== base && !resolved.startsWith(base + sep)) return undefined;
+    return resolved;
+  }
+
+  private async rmConfined(root: string, name: string, recursive = false) {
+    const path = await this.confined(root, name);
+    if (path) await rm(path, { recursive, force: true });
+  }
+
   // Blob names are content hashes, so pasting the same image twice yields one file. The session id names the directory, so it must be a plain token
   // (fresh ids are UUIDs; a hand-edited record could hold anything)
   async saveBlob(sessionId: string, ext: string, bytes: Uint8Array): Promise<{ name: string; path: string }> {
-    if (!/^[\w-]+$/.test(sessionId) || !/^\.\w+$/.test(ext)) throw new Error(t('host.blobIllegal', { path: `${sessionId}/*${ext}` }));
+    if (!isSessionId(sessionId) || !/^\.\w+$/.test(ext)) throw new Error(t('host.blobIllegal', { path: `${sessionId}/*${ext}` }));
     const name = `${createHash('sha256').update(bytes).digest('hex').slice(0, 16)}${ext}`;
-    const dir = join(this.dir, sessionId);
-    await mkdir(dir, { recursive: true });
+    await mkdir(join(this.dir, sessionId), { recursive: true });
+    const dir = await this.confined(this.dir, sessionId);
+    if (!dir) throw new Error(t('host.blobIllegal', { path: `${sessionId}/*${ext}` }));
     const path = join(dir, name);
     await writeFile(path, bytes);
     return { name, path };
   }
 
   async readBlob(sessionId: string, name: string): Promise<Uint8Array> {
-    if (!/^[\w-]+$/.test(sessionId) || !/^[\w-]+\.\w+$/.test(name)) throw new Error(t('host.blobIllegal', { path: `${sessionId}/${name}` }));
-    return readFile(join(this.dir, sessionId, name));
+    if (!isSessionId(sessionId) || !/^[\w-]+\.\w+$/.test(name)) throw new Error(t('host.blobIllegal', { path: `${sessionId}/${name}` }));
+    const dir = await this.confined(this.dir, sessionId);
+    const file = dir ? await this.confined(dir, name) : undefined;
+    if (!file) throw new Error(t('host.blobIllegal', { path: `${sessionId}/${name}` }));
+    return readFile(file);
   }
 }
 
@@ -270,6 +364,6 @@ function exists(path: string) { return access(path).then(() => true, () => false
 function isRecord(v: unknown): v is SessionRecord {
   if (typeof v !== 'object' || v === null) return false;
   const r = v as Record<string, unknown>;
-  return typeof r.id === 'string' && typeof r.agent === 'string' && typeof r.cwd === 'string'
+  return typeof r.id === 'string' && isSessionId(r.id) && typeof r.agent === 'string' && typeof r.cwd === 'string'
     && typeof r.updatedAt === 'string' && Array.isArray(r.turns);
 }

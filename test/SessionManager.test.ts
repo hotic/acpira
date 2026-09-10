@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import type { HiddenMap } from '../src/shared/settings';
@@ -454,4 +454,50 @@ describe('SessionManager', () => {
     expect(m.active()?.status).toBe('ready');
     await m.dispose();
   }, 20_000);
+
+  it('deleteSession ignores path-like ids', async () => {
+    const { m, dir } = manager();
+    await m.init();
+    await m.newSession();
+    const id = m.activeId!;
+    const marker = join(dirname(dir), `keep-${Date.now()}`);
+    writeFileSync(marker, 'x');
+    await m.handle({ type: 'deleteSession', id: '..' });
+    await m.handle({ type: 'deleteSession', id: '/etc/passwd' });
+    expect(m.activeId).toBe(id);
+    expect(existsSync(marker)).toBe(true);
+    rmSync(marker, { force: true });
+    await m.dispose();
+  }, 20_000);
+
+  it('permission answers address the named session, not whichever the viewer is showing', async () => {
+    const { m } = manager();
+    await m.init();
+    await m.newSession();
+    const until = async (pred: () => boolean, ms = 8_000) => {
+      const t0 = Date.now();
+      while (!pred()) {
+        if (Date.now() - t0 > ms) throw new Error('timeout');
+        await new Promise(r => setTimeout(r, 20));
+      }
+    };
+    const permOf = (id: string) => m.viewOf(id)?.turns.flatMap(t => t.role === 'agent' ? t.blocks : []).find(b => b.type === 'permission');
+    // handle(send) waits for the whole turn, including the permission gate — do not await it
+    const sendA = m.handle({ type: 'send', text: 'use tool' });
+    await until(() => !!permOf(m.activeId!));
+    const a = m.activeId!;
+    const permA = permOf(a)!;
+    await m.newSession();
+    const sendB = m.handle({ type: 'send', text: 'use tool' });
+    await until(() => m.activeId !== a && !!permOf(m.activeId!));
+    const b = m.activeId!;
+    expect(permOf(b)).toBeTruthy();
+    await m.handle({ type: 'permission', sessionId: a, blockId: permA.id, optionId: 'allow' });
+    await until(() => !permOf(a) && !!m.viewOf(a)?.turns.some(t => t.role === 'agent' && t.blocks.some(x => x.type === 'tool_call' && x.status === 'completed')));
+    expect(permOf(b)).toBeTruthy();
+    expect(m.activeId).toBe(b);
+    await sendA;
+    sendB.catch(() => {});
+    await m.dispose();
+  }, 30_000);
 });

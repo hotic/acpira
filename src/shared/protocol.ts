@@ -91,9 +91,9 @@ export type WebviewMsg =
   | { type: 'stop' }
   // @ mention: fuzzy search over workspace files, answered with a `files` message
   | { type: 'searchFiles'; query: string; seq: number }
-  | { type: 'permission'; blockId: string; optionId: string }
+  | { type: 'permission'; sessionId: string; blockId: string; optionId: string }
   // The question card was closed: `answers` holds the answered questions only (option ids / free text); skip tells the agent to go on with what it has
-  | { type: 'answer'; blockId: string; answers: QuestionAnswers; skip?: boolean }
+  | { type: 'answer'; sessionId: string; blockId: string; answers: QuestionAnswers; skip?: boolean }
   | { type: 'buildPlan'; sessionId: string; planId: string; optionId?: string; model?: { configId: string; value: string } }
   | { type: 'openPlan'; sessionId: string; planId: string }
   | { type: 'setMode'; id: string }

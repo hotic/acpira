@@ -155,6 +155,18 @@ describe('FileVault', () => {
     expect(await vault.get('k')).toBeUndefined();
     expect(logs.some(l => l.includes('unreadable'))).toBe(true);
   });
+
+  it('get sees a secret another vault wrote to the same file', async () => {
+    const file = join(tmp(), 'secrets.json');
+    const a = new FileVault(file);
+    const b = new FileVault(file);
+    await a.store('k', 'v1');
+    expect(await b.get('k')).toBe('v1');
+    await a.store('k', 'v2');
+    expect(await b.get('k')).toBe('v2');
+    await a.delete('k');
+    expect(await b.get('k')).toBeUndefined();
+  });
 });
 
 describe('Devin terminal login flow', () => {

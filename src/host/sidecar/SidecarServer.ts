@@ -19,6 +19,8 @@ export interface SidecarServerOpts {
   log: (line: string) => void;
   // Called once the server is done: after shutdownOk was written, or when the wire closed. Exit code 2 = protocol rejected
   onExit: (code: number) => void;
+  // Browser harness: the connecting page must not supply executable command lines
+  ignoreClientAgents?: boolean;
 }
 
 // The sidecar's state machine over one wire: hello (version-checked) → runtime → views. Control messages (hello / attach / detach /
@@ -99,7 +101,7 @@ export class SidecarServer {
       this.send({ type: 'helloOk', requestId: m.requestId, protocolVersion: SIDECAR_PROTOCOL_VERSION, sidecar: { version: this.opts.version, pid: process.pid }, sessionsDir: this.runtime.sessionsDir });
       return;
     }
-    const platform = new SidecarPlatform(msg => this.send(msg), m, line => this.opts.log(line));
+    const platform = new SidecarPlatform(msg => this.send(msg), m, line => this.opts.log(line), { ignoreAgents: this.opts.ignoreClientAgents });
     this.platform = platform;
     try {
       this.runtime = await createHostRuntime(platform, { home: this.opts.home });
