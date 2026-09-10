@@ -28,7 +28,7 @@ describe('todo tool presentation', () => {
       { title: 'Verify result', status: 'pending', priority: 'medium' },
     ]);
     expect(turn.blocks).toHaveLength(2);
-    expect(turn.blocks[1]).toEqual({ type: 'plan', entries: tool.todoEntries });
+    expect(turn.blocks[1]).toEqual({ type: 'plan', entries: tool.todoEntries, changed: true });
   });
 
   it('recognizes a sparse Grok update from its tool metadata', () => {

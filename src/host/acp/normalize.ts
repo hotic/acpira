@@ -8,6 +8,7 @@ import type {
 } from '@shared/transcript';
 import { diffLines } from './diff';
 import { isTodoTool, todoEntries } from '@shared/todoTools';
+import { lastPlanSnapshot, samePlanEntries } from './planSnapshots';
 
 export { diffLines };
 
@@ -121,12 +122,17 @@ export function applyUpdate(s: NormalizeState, u: acp.SessionUpdate): boolean {
       return true;
     }
     case 'plan': {
+      const entries = u.entries.map(e => ({ title: e.content, status: e.status as PlanStatus, priority: e.priority as PlanPriority }));
+      // Legacy ACP plan notifications are session snapshots. Grok repeats the
+      // completed list after ordinary replies; a repeat must not open a history
+      // row, seal streaming prose, or resurrect the completed composer dock.
+      const previous = lastPlanSnapshot(s.turns);
+      if (previous && samePlanEntries(previous.entries, entries)) return false;
       closeUserTurn(s);
       const t = currentAgentTurn(s);
-      const entries = u.entries.map(e => ({ title: e.content, status: e.status as PlanStatus, priority: e.priority as PlanPriority }));
       const plan = t.blocks.find(b => b.type === 'plan');
-      if (plan) plan.entries = entries;
-      else { sealStreaming(s, t); t.blocks.push({ type: 'plan', entries }); }
+      if (plan) { plan.entries = entries; plan.changed = true; }
+      else { sealStreaming(s, t); t.blocks.push({ type: 'plan', entries, changed: true }); }
       return true;
     }
     case 'plan_update':

@@ -209,7 +209,7 @@ describe('applyUpdate', () => {
     const t = s.turns[0];
     if (t?.role !== 'agent') throw new Error();
     expect(t.blocks).toHaveLength(1);
-    expect(t.blocks[0]).toEqual({ type: 'plan', entries: [{ title: 'a', status: 'completed', priority: 'high' }, { title: 'b', status: 'in_progress', priority: 'low' }] });
+    expect(t.blocks[0]).toEqual({ type: 'plan', changed: true, entries: [{ title: 'a', status: 'completed', priority: 'high' }, { title: 'b', status: 'in_progress', priority: 'low' }] });
   });
 
   it('configOptions: every select becomes a control, groups flattened, sorted by category, boolean hidden, category=mode promoted to modes', () => {

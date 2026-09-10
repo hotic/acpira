@@ -9,6 +9,7 @@ import { AgentProcess, type ClientHandlers } from './AgentProcess';
 import type { AgentPool } from './AgentPool';
 import { capturePlan, planDocuments } from './plans';
 import { planExecutionPrompt } from '@shared/planExecution';
+import { restorePlanSnapshots } from './planSnapshots';
 import { CompactionCompletion, isCompactCommand } from './compaction';
 import { applyModelSources, type ModelSources } from '@shared/modelSources';
 import { thoughtCorrection } from '@shared/composerControls';
@@ -121,7 +122,7 @@ export class AcpSession {
     this.acpSessionId = record.acpSessionId;
     // Old records (persisted before the contract changed) may lack the options field
     const c = record.controls as Partial<SessionControls> | undefined;
-    this.state = { turns: record.turns, controls: { modes: c?.modes ?? [], modeId: c?.modeId, modeConfigId: c?.modeConfigId, options: c?.options ?? [] }, usage: record.usage, commands: record.commands, title: record.title };
+    this.state = { turns: restorePlanSnapshots(record.turns), controls: { modes: c?.modes ?? [], modeId: c?.modeId, modeConfigId: c?.modeConfigId, options: c?.options ?? [] }, usage: record.usage, commands: record.commands, title: record.title };
     this.perms = new PermissionGate({ state: () => this.state, touch: () => this.touch() });
     this.questions = new QuestionGate({ state: () => this.state, touch: () => this.touch() });
     this.queue = new PromptQueue({

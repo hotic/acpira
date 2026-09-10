@@ -47,6 +47,23 @@ async function until(pred: () => boolean, ms = 5000) {
 }
 
 describe('AcpSession', () => {
+  it('opening an older session filters repeated completed plan snapshots from follow-up replies', () => {
+    const { session, d } = deps();
+    const original = session();
+    const record = original.toRecord();
+    record.turns = [
+      { role: 'agent', blocks: [{ type: 'plan', entries: [{ title: 'Done', status: 'completed' }] }] },
+      { role: 'user', text: 'Follow-up' },
+      { role: 'agent', blocks: [{ type: 'text', markdown: 'Answer' }, { type: 'plan', entries: [{ title: 'Done', status: 'completed' }] }] },
+    ];
+    const restored = new AcpSession(record, d);
+    expect(restored.view().turns[2]).toMatchObject({ blocks: [{ type: 'text', markdown: 'Answer' }] });
+    expect(restored.toRecord().turns).toHaveLength(3);
+    expect(record.turns[2]).toMatchObject({ blocks: [{ type: 'text' }, { type: 'plan' }] });
+    restored.dispose();
+    original.dispose();
+  });
+
   it.each(['plan-grok', 'plan-devin', 'plan-devin-early'])('plan approval %s: show full plan and change execution model before approval', async prompt => {
     const { session } = deps();
     const s = session();

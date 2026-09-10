@@ -175,6 +175,9 @@ export interface PlanEntry {
 export interface PlanBlock {
   type: 'plan';
   entries: PlanEntry[];
+  // This turn contained a real list change, even if it ended at an earlier state.
+  // Absent on legacy records that also stored unchanged session snapshots.
+  changed?: true;
 }
 
 export interface TextBlock {
