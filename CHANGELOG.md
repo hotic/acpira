@@ -10,6 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.
 - Steer / interrupt follow-up modes remain planned. Mid-turn messages stay in the host-side queue.
 
+## [1.2.1] - 2026-09-10
+
+This release includes the IntelliJ support prepared in 1.2.0 and the following updates since the last stable GitHub Release, 1.1.2. JetBrains Marketplace availability remains subject to review.
+
+### Added
+
+- IntelliJ IDEA support for 2026.1 and later, with the shared conversation UI in a tool window and editor tabs, IDE terminal logins and installs, project-indexed `@` file search, persistent settings, and live theme updates. Six macOS, Windows, and Linux packages cover ARM64 and x86-64, each with a bundled Node.js 22 runtime.
+- Stable GitHub Releases build and attach the IntelliJ packages with SHA-256 checksums and submit all six variants to JetBrains Marketplace, alongside VS Code Marketplace and Open VSX publication.
+- Agent-provided slash commands and skills appear in the composer with keyboard completion and argument hints, including history and queued-message editors. Known CLI descriptions and hints support Chinese search; custom descriptions and command names remain unchanged.
+
+### Changed
+
+- Recognized slash-command tokens are highlighted in the composer and sent prompts. Empty command responses explain that the CLI returned no text; mode and option changes are shown only when observed in the agent's state updates.
+- Session scope is configured on the General settings page instead of chips in the session list. Inner thought, plan, diff, terminal, and question regions continue scrolling the conversation when they reach an edge.
+
+### Fixed
+
+- Switching accounts, reconnecting, and resending unchanged messages after empty failures preserve the native session and its compacted context. A replaced CLI process can no longer mark the new connection as failed.
+- Concurrent VS Code, Cursor, and IntelliJ windows preserve each other's shared accounts, rotated secrets, and per-agent preferences. Continuous streaming periodically saves the transcript and reconciles the session list instead of postponing writes until streaming stops.
+- Plan approvals and subsequent replies stay below their plan card. Out-of-order plan-file updates retain the existing approval, and unchanged completed to-do snapshots no longer reappear in follow-up replies or restored history.
+- First-time diff expansion moves syntax highlighting off the UI thread and omits leading and trailing omission rows. Restored sticky prompts fold before the first paint, and the composer toolbar keeps its height as context usage appears or disappears.
+- Dismissed context cards stay closed, and manually opened process folds stay open while messages stream.
+- Permission and question answers remain attached to their originating session when the active view changes. Session and attachment paths reject invalid IDs and symlinks outside their storage roots; the browser harness requires its handshake token and a local origin.
+- IntelliJ sidecar startup serializes view attachment and message delivery, rejects stale process callbacks, and stops repeated restart failures. Windows resource paths remain slash-separated, and IDE settings survive an application restart.
+
 ## [1.2.0] - 2026-09-10
 
 ### Added
