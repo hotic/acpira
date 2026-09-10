@@ -1,4 +1,5 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import type { EditTurnRequest } from '@shared/protocol';
 import type { UserTurn } from '@shared/transcript';
 import { captureTurnSettings, controlsForTurn } from '@shared/turnSettings';
@@ -6,7 +7,7 @@ import { useAppearance } from '../appearance';
 import { Composer, type ComposerProps } from './Composer';
 import { EditAttachments } from './Attachments';
 import { UserMessage } from './Turns';
-import { promptIsStuck, scrollerUsable } from './promptStuck';
+import { promptIsStuck, promptIsStuckAt, scrollerUsable } from './promptStuck';
 import { cn } from '../ui/cn';
 
 // Every prompt card reads this, so it must stay stable across stream pushes: editability is a flag,
@@ -44,14 +45,29 @@ export const HistoryMessage = memo(function HistoryMessage(p: { turn: UserTurn; 
   const sentinel = useCallback((el: HTMLDivElement | null) => {
     if (!el || typeof IntersectionObserver === 'undefined') return;
     const thread = el.closest('[data-thread]');
-    const apply = (entry: IntersectionObserverEntry) => {
-      const below = promptIsStuck(entry);
-      if (below === undefined) return;
+    const settle = (below: boolean) => {
       const target = frame.current;
       // Measure before React applies the fold, while the frame still has its natural height.
       if (target) target.style.minHeight = below ? `${target.offsetHeight}px` : '';
       setStuck(below);
     };
+    const apply = (entry: IntersectionObserverEntry) => {
+      const below = promptIsStuck(entry);
+      if (below !== undefined) settle(below);
+    };
+    // The observer's first record arrives after the first paint, so a session opened at its bottom showed every prompt at full
+    // height for a frame and then folded it with the max-height transition. A microtask still runs before that paint but after the
+    // whole commit — including the Thread's layout effect that scrolls to the bottom — so the geometry is final here: fold
+    // synchronously, with the transition zeroed for this one style change, and the first frame already shows the folded card
+    queueMicrotask(() => {
+      if (!(thread instanceof HTMLElement) || !scrollerUsable(thread)) return;
+      if (!promptIsStuckAt(el.getBoundingClientRect(), thread.getBoundingClientRect())) return;
+      const target = frame.current;
+      target?.style.setProperty('--dur-open', '0s');
+      flushSync(() => settle(true));
+      void target?.offsetHeight;
+      target?.style.removeProperty('--dur-open');
+    });
     const observer = new IntersectionObserver(([entry]) => { if (entry) apply(entry); }, { root: thread, threshold: 0 });
     observer.observe(el);
     if (!(thread instanceof HTMLElement)) return () => observer.disconnect();

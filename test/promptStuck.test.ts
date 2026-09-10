@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { promptIsStuck, scrollerUsable } from '../src/webview/chat/promptStuck';
+import { promptIsStuck, promptIsStuckAt, scrollerUsable } from '../src/webview/chat/promptStuck';
 
 const entry = (p: { intersecting: boolean; top: number; rootTop: number; rootHeight: number; rootWidth?: number; root?: null }) => ({
   isIntersecting: p.intersecting,
@@ -21,6 +21,17 @@ describe('promptIsStuck', () => {
   it('is not stuck while the exchange top is in view, or still below it', () => {
     expect(promptIsStuck(entry({ intersecting: true, top: 12, rootTop: 0, rootHeight: 400 }))).toBe(false);
     expect(promptIsStuck(entry({ intersecting: false, top: 480, rootTop: 0, rootHeight: 400 }))).toBe(false);
+  });
+});
+
+describe('promptIsStuckAt', () => {
+  it('reads the same verdict from geometry, for the synchronous check before the first paint', () => {
+    const root = { top: 100, height: 400, width: 320 };
+    expect(promptIsStuckAt({ bottom: 92 }, root)).toBe(true);
+    expect(promptIsStuckAt({ bottom: 100 }, root)).toBe(true);
+    expect(promptIsStuckAt({ bottom: 101 }, root)).toBe(false);
+    expect(promptIsStuckAt({ bottom: 520 }, root)).toBe(false);
+    expect(promptIsStuckAt({ bottom: 0 }, { top: 0, height: 0, width: 320 })).toBeUndefined();
   });
 });
 

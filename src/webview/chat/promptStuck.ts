@@ -7,6 +7,12 @@ export function scrollerUsable(el: { clientHeight: number; clientWidth: number }
   return el.clientHeight >= 1 && el.clientWidth >= 1;
 }
 
+// The same verdict from plain geometry, for a synchronous check before the first paint: the sentinel has left through the top edge
+export function promptIsStuckAt(sentinel: { bottom: number }, root: { top: number; height: number; width: number }): boolean | undefined {
+  if (root.height < 1 || root.width < 1) return undefined;
+  return sentinel.bottom <= root.top;
+}
+
 export function promptIsStuck(entry: {
   isIntersecting: boolean;
   boundingClientRect: { top: number };
