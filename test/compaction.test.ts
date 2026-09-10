@@ -58,6 +58,28 @@ describe('compaction completion signals', () => {
     expect(c.wait()).toBeUndefined();
   });
 
+  it('captures the self-reported post-compaction token count, even past the latch release', async () => {
+    const c = new CompactionCompletion('kimi');
+    const waiting = c.wait();
+    for (const character of 'Compaction completed.\n- Messages compacted: 3\n- Tokens after: 24,898') c.update(text(character));
+    await waiting;
+    expect(c.tokensAfter).toBe(24898);
+  });
+
+  it('reports no token count for cancellations, failures, or prose without a result line', () => {
+    for (const message of ['Compaction cancelled.', '/compact failed: No messages to compact in current history.', 'Context compacted']) {
+      const c = new CompactionCompletion('kimi');
+      for (const character of message) c.update(text(character));
+      expect(c.tokensAfter).toBeUndefined();
+    }
+  });
+
+  it('never mines token counts from ordinary prose on a non-compact turn', () => {
+    const c = new CompactionCompletion(undefined);
+    for (const character of 'Compaction completed.\n- Tokens after: 42') c.update(text(character));
+    expect(c.tokensAfter).toBeUndefined();
+  });
+
   it('recognizes compact instructions without matching unrelated slash commands', () => {
     expect(isCompactCommand(' /compact focus on the tests ')).toBe(true);
     expect(isCompactCommand('/compact')).toBe(true);

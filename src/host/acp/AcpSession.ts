@@ -571,6 +571,12 @@ export class AcpSession {
         const pending = completion.wait();
         if (pending) { this.log('waiting for compaction completion'); await pending; }
         if (this.status !== 'ready') { this.queue.flush(); return; }
+        // A background compaction ends without a fresh usage_update (Kimi pushes the next
+        // reading only after the following turn): adopt the count the agent reported in its
+        // completion prose so the ring leaves the pre-compaction snapshot right away
+        if ((auto || compacting) && completion.tokensAfter !== undefined && this.state.usage) {
+          this.state.usage = { ...this.state.usage, used: completion.tokensAfter };
+        }
       }
       await this.refreshGrokUsage();
       if (agentTurn.command && stop === 'end_turn') Object.assign(agentTurn.command, commandChanges(before, this.state.controls));

@@ -214,15 +214,16 @@ const app = acp.agent({ name: 'fake-agent' })
           if (backgroundStyle === 'structured') {
             await send({ sessionUpdate: 'compaction_update', compactionId: id, status: status === 'start' ? 'in_progress' : status });
           } else {
+            // Kimi reports the result only as prose ("- Tokens after: N") and pushes no usage_update until the next turn
             const value = status === 'start'
               ? backgroundStyle === 'devin' ? 'Compacting context…' : 'Context compaction started — it runs in the background and the compacted context applies once it finishes.'
-              : status === 'completed' ? backgroundStyle === 'devin' ? 'Context compacted' : 'Compaction completed.\n- Messages compacted: 3'
+              : status === 'completed' ? backgroundStyle === 'devin' ? 'Context compacted' : `Compaction completed.\n- Messages compacted: 3\n- Tokens after: ${Math.round(usedTokens * 0.2)}`
                 : backgroundStyle === 'devin' ? 'Compaction canceled.' : 'Compaction cancelled.';
             await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: value } });
           }
           if (status === 'completed') {
             usedTokens = Math.round(usedTokens * 0.2);
-            await send({ sessionUpdate: 'usage_update', used: usedTokens, size: 1_000_000 });
+            if (backgroundStyle !== 'kimi') await send({ sessionUpdate: 'usage_update', used: usedTokens, size: 1_000_000 });
           }
         };
         // Structured agents must announce the work before returning; Devin's

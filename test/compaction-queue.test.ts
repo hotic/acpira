@@ -59,11 +59,15 @@ describe('background compaction queue', () => {
       await until(() => logs.filter(l => l.includes('prompt done:')).length === 2);
       expect(s.isRunning).toBe(true);
       expect(s.view().turns[2]).toEqual({ role: 'user', text: '/compact', auto: true });
+      // 401234 from the "big" prompt; the fake compaction drops it to a fifth
+      const before = s.view().usage!.used;
+      expect(before).toBe(401234);
       await s.prompt('follow-up');
       await s.setConfig('effort', 'high');
       await until(() => !s.isRunning);
       expect(s.view().turns).toHaveLength(6);
-      expect(s.view().usage?.used).toBeLessThan(300_000);
+      // Kimi pushes no usage_update here: the reading is adopted from its completion prose
+      expect(s.view().usage?.used).toBe(Math.round(before * 0.2));
     } finally { s.dispose(); }
   });
 
