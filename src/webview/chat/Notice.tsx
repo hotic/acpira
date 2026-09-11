@@ -79,7 +79,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
             ? authMethods.map((m, i) => <Button key={m.id} variant={i === 0 ? 'primary' : 'secondary'} title={m.description} onClick={() => onLogin(m.id)}>{methodName(m)}</Button>)
             : <Button variant="primary" onClick={() => onLogin()}>{t('notice.goLogin')}</Button>)}
           {status === 'readonly' || status === 'closed'
-            ? <Button variant="primary" onClick={onNewSession}>{t('notice.continueNew')}</Button>
+            ? <Button variant="primary" onClick={() => onNewSession()}>{t('notice.continueNew')}</Button>
             : <Button variant={status === 'auth_required' ? 'secondary' : 'primary'} onClick={onRetry}>{t('common.retry')}</Button>}
         </fieldset>
       </Card>

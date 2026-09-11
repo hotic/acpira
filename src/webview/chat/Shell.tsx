@@ -268,7 +268,7 @@ export function Shell(p: ShellProps) {
                 status={p.status} error={p.error} agent={p.agent} authMethods={p.authMethods}
                 accounts={p.accounts?.filter(x => x.agent === p.agent.id)} accountId={p.accountId}
                 accountAction={p.accountAction}
-                onLogin={on.login} onRetry={on.retry} onNewSession={on.newSession}
+                onLogin={on.login} onRetry={on.retry} onNewSession={() => on.newSession(p.agent.id)}
                 onSelectAccount={on.selectAccount} onAddAccount={via => on.addAccount(p.agent.id, via)}
               />
               {p.queued?.length && p.activeSessionId
