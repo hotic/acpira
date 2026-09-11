@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -700,17 +700,58 @@ describe('AcpSession', () => {
     await s.prompt('hi');
     const record = s.toRecord();
     s.dispose();
-    // new process doesn't know the old sessionId → resume fails → loadSession unimplemented → readonly
+    // new process answers invalidParams "unknown session" — the peer doesn't know the id, the same conclusion as session_not_found:
+    // the transcript already ran, so it stays read-only instead of silently continuing on a fresh native context
     const s2 = new AcpSession(record, d);
     await s2.start();
     expect(s2.view().status).toBe('readonly');
     expect(s2.view().turns).toHaveLength(2);
+    expect(s2.toRecord().acpSessionId).toBe(record.acpSessionId);
     // No fresh native session was opened, so the persisted command list stays until a peer replaces it
     expect(s2.view().commands).toEqual([{ name: 'compact', description: 'compact it' }]);
     s2.dispose();
   });
 
-  it('resume: peer reports session_not_found (Devin sweeps empty sessions) → fall back to a new session, history kept', async () => {
+  it('resume: a failed restore attempt (not gone, not unsupported) lands on the error state and retry reconnects', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acpira-flaky-resume-'));
+    writeFileSync(join(dir, 'resume.lock'), '');
+    const { d, session } = deps(dir);
+    const s = session();
+    await s.start();
+    await s.prompt('hi');
+    const record = s.toRecord();
+    s.dispose();
+    // resume answers -32603 while resume.lock exists: an internal error is not "can't resume" — the session goes to
+    // the error Notice (Retry = full reconnect + resume), not to read-only
+    const s2 = new AcpSession(record, d);
+    await s2.start();
+    expect(s2.view().status).toBe('error');
+    expect(s2.view().error).toContain('transient restore failure');
+    rmSync(join(dir, 'resume.lock'));
+    await s2.retry();
+    expect(s2.view().status).toBe('ready');
+    expect(s2.view().turns).toHaveLength(2);
+    expect(s2.toRecord().acpSessionId).toBe(record.acpSessionId);
+    s2.dispose();
+  });
+
+  it('resume: a typed session_locked is reported as held elsewhere, retryable through the error Notice', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acpira-locked-'));
+    const { d, session } = deps(dir);
+    const s = session();
+    await s.start();
+    await s.prompt('hi');
+    const record = s.toRecord();
+    s.dispose();
+    const s2 = new AcpSession(record, d);
+    await s2.start();
+    expect(s2.view().status).toBe('error');
+    expect(s2.view().error).toContain('held by another');
+    expect(s2.view().turns).toHaveLength(2);
+    s2.dispose();
+  });
+
+  it('resume: peer reports session_not_found — a session that never talked is replaced transparently, one with history stays read-only', async () => {
     mkdirSync('/tmp/acpira-gone', { recursive: true });
     const { d, logs, session } = deps('/tmp/acpira-gone');
     const s = session();
@@ -718,17 +759,44 @@ describe('AcpSession', () => {
     await s.prompt('hi');
     const record = s.toRecord();
     s.dispose();
-    // new process resume reports session_not_found → degrade to session/new: status ready, local history untouched
-    // (the fake agent resets seq to zero per process, so the new session is still named s1; only logs tell new from resume)
-    expect(record.commands).toEqual([{ name: 'compact', description: 'compact it' }]);
+    // The transcript already ran: swapping in a fresh native session would keep the old conversation on an empty
+    // context (compaction included). Read-only, history kept, the native id retained so a later open can retry
     const s2 = new AcpSession(record, d);
     await s2.start();
-    expect(s2.view().status).toBe('ready');
+    expect(s2.view().status).toBe('readonly');
     expect(s2.view().turns).toHaveLength(2);
-    expect(logs.filter(l => l.includes('session/new ok')).length).toBe(2);
-    // The replacement native session advertised nothing: the old connection's slash commands do not carry over
-    expect(s2.view().commands).toEqual([]);
+    expect(s2.toRecord().acpSessionId).toBe(record.acpSessionId);
+    expect(logs.filter(l => l.includes('session/new ok')).length).toBe(1);
     s2.dispose();
+    // An empty session (Devin sweeps exactly those when its process exits) is replaced transparently — nothing visible lost its context
+    const empty = session();
+    await empty.start();
+    const emptyRecord = empty.toRecord();
+    empty.dispose();
+    const s3 = new AcpSession(emptyRecord, d);
+    await s3.start();
+    expect(s3.view().status).toBe('ready');
+    expect(s3.view().turns).toHaveLength(0);
+    expect(logs.filter(l => l.includes('session/new ok')).length).toBe(3);
+    // The replacement native session advertised nothing: the old connection's slash commands do not carry over
+    expect(s3.view().commands).toEqual([]);
+    s3.dispose();
+  });
+
+  it('a prompt answered session_not_found leaves ready: the error Notice reconnects instead of resending into the dead session', async () => {
+    const { session } = deps();
+    const s = session();
+    await s.start();
+    await s.prompt('hi');
+    await s.prompt('prompt-session-gone');
+    expect(s.view().turns.at(-1)).toMatchObject({ role: 'agent', stop: 'error' });
+    // the native session is gone — resending over this connection could only fail the same way
+    expect(s.view().status).toBe('error');
+    // Retry = reconnect + resume; the fresh process doesn't know the id either → read-only history, still no silent context swap
+    await s.retry();
+    expect(s.view().status).toBe('readonly');
+    expect(s.view().turns).toHaveLength(4);
+    s.dispose();
   });
 
   it('auto compaction: usage over threshold at turn end and /compact available → auto-send an auto turn, compaction row in_progress→completed, usage drops; no resend if usage did not grow back', async () => {

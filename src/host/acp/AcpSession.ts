@@ -22,7 +22,7 @@ import { PermissionGate } from './permissions';
 import { QuestionGate } from './questions';
 import { PromptQueue, type StagedSend } from './promptQueue';
 import { editTurn, retryTurn, type SessionEditCtx, type TurnPhase } from './sessionEdit';
-import { AccountAuthError, authHintOf, isAuth, isSessionGone, summarizePrompt, turnErrorOf } from './sessionErrors';
+import { AccountAuthError, authHintOf, isAuth, isMethodMissing, isSessionGone, isSessionLocked, isUnknownSession, summarizePrompt, turnErrorOf } from './sessionErrors';
 import { msg } from '../errors';
 import { cloneJson } from '../clone';
 import { t, tOr } from '../i18n';
@@ -369,9 +369,12 @@ export class AcpSession {
     if (this.acpSessionId) {
       // 1.0 does not inject MCP servers; the CLI reads its own config
       const req: acp.LoadSessionRequest = { sessionId: this.acpSessionId, cwd: this.cwd, mcpServers: [] };
-      // If the peer forgot this session (e.g. Devin sweeps empty sessions that never got a message when the process exits), open a new one to take its place;
-      // the history lives in the local transcript anyway, so the UI continues seamlessly
+      // A restore attempt ends one of three ways, kept apart: the peer offers no restore path at all (read-only history), it answered
+      // that the session is gone (handled below), or it tried and failed — the last is a connection problem, not a missing capability,
+      // so it lands on the error Notice whose Retry reconnects and tries again
       let gone = false;
+      let failed: unknown;
+      let locked = false;
       if (caps?.sessionCapabilities?.resume) {
         try {
           const r: acp.ResumeSessionResponse = await agent.request(acp.methods.agent.session.resume, req);
@@ -379,7 +382,12 @@ export class AcpSession {
           this.status = 'ready';
           this.log('session/resume ok');
           return;
-        } catch (e) { this.log(`session/resume failed: ${msg(e)}`); if (isAuth(e)) throw e; gone = isSessionGone(e); }
+        } catch (e) {
+          this.log(`session/resume failed: ${msg(e)}`);
+          if (isAuth(e)) throw e;
+          if (isSessionGone(e) || isUnknownSession(e)) gone = true;
+          else if (!isMethodMissing(e)) { failed = e; locked = isSessionLocked(e); }
+        }
       }
       if (!gone && caps?.loadSession) {
         try {
@@ -390,14 +398,30 @@ export class AcpSession {
           this.status = 'ready';
           this.log('session/load ok');
           return;
-        } catch (e) { this.replaying = false; this.log(`session/load failed: ${msg(e)}`); if (isAuth(e)) throw e; gone = isSessionGone(e); }
+        } catch (e) {
+          this.replaying = false;
+          this.log(`session/load failed: ${msg(e)}`);
+          if (isAuth(e)) throw e;
+          if (isSessionGone(e) || isUnknownSession(e)) gone = true;
+          else if (!isMethodMissing(e)) { failed = e; locked = isSessionLocked(e); }
+        }
       }
       if (!gone) {
+        if (failed !== undefined) throw new Error(t(locked ? 'host.sessionLocked' : 'host.resumeFailed', { error: msg(failed) }));
         this.status = 'readonly';
         this.error = t('host.cannotResume');
         return;
       }
-      this.log('Peer no longer has this session; starting a new one');
+      // The peer forgot (or never had) this native session. Swapping a fresh one in under a transcript that already ran would
+      // continue the visible conversation on an empty context — compaction state included — so only a session that never
+      // said anything may be replaced transparently (Devin sweeps exactly those when its process exits)
+      if (this.state.turns.length) {
+        this.status = 'readonly';
+        this.error = t('host.sessionGone');
+        this.log('peer no longer has this session; history kept read-only');
+        return;
+      }
+      this.log('Peer swept this empty session; starting a new one');
       this.acpSessionId = undefined;
     }
     // A fresh native session starts with no command inventory: whatever a previous connection advertised does not carry over.
@@ -588,6 +612,12 @@ export class AcpSession {
       await this.refreshGrokUsage();
       this.settle('cancelled', turnErrorOf(e));
       if (isAuth(e)) this.status = 'auth_required';
+      // The peer forgot the native session, or the process carrying it died: resending over this connection can only fail
+      // the same way. Leave 'ready' so the Notice's Retry does a full reconnect + resume instead of reusing a dead channel
+      else if (isSessionGone(e) || !this.proc?.alive) {
+        this.status = 'error';
+        this.error = msg(e);
+      }
     }
     // A hand-typed /compact counts as a compaction too; likewise record the usage right after it
     if (auto || compacting) this.compactedAt = this.state.usage?.used ?? 0;

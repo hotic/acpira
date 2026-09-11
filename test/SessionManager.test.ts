@@ -419,20 +419,25 @@ describe('SessionManager', () => {
     expect(m.sessions().find(s => s.id === a1)?.cwd).toBe(proj('b'));
     expect((await new TranscriptStore(join(dir, 'sessions')).load(a1))?.cwd).toBe(proj('b'));
 
-    // Move a live idle session: it is reopened in the new folder (a fresh process; "gone" makes the fake report the old id swept, so it falls back to
-    // session/new with the local history kept) and its viewer stays on it; a running one refuses
+    // Move a live idle session: it is reopened in the new folder (a fresh process; "gone" makes the fake report the old id swept —
+    // the transcript already ran, so it stays read-only with its history rather than silently continuing on an empty native context);
+    // a running one refuses
     cwd = proj('c-gone');
     await m.handle({ type: 'moveSession', id: b1 });
     expect(m.activeId).toBe(b1);
     expect(m.active()?.cwd).toBe(proj('c-gone'));
-    expect(m.active()?.status).toBe('ready');
+    expect(m.active()?.status).toBe('readonly');
     expect(m.active()?.turns.length).toBe(2);
+    // A session mid-turn refuses the move; use a fresh one, since the moved b1 is read-only now
     cwd = proj('d');
+    await m.newSession();
+    const d1 = m.activeId!;
     const sending = m.handle({ type: 'send', text: 'slow' });
-    await m.handle({ type: 'moveSession', id: b1 });
+    cwd = proj('e');
+    await m.handle({ type: 'moveSession', id: d1 });
     expect(toasts.some(t => t.includes('moving') || t.includes('移动'))).toBe(true);
     await sending;
-    expect(m.active()?.cwd).toBe(proj('c-gone'));
+    expect(m.active()?.cwd).toBe(proj('d'));
     await m.dispose();
   }, 30_000);
 

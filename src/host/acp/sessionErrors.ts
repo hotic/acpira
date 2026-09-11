@@ -72,3 +72,21 @@ export function isSessionGone(e: unknown): boolean {
   }
   return /session not found/i.test(msg(e));
 }
+
+// On session/resume and session/load the only thing invalidParams can be about is the sessionId —
+// the peer answered "I don't know this session", the same conclusion as session_not_found
+export function isUnknownSession(e: unknown): boolean {
+  return e instanceof acp.RequestError && e.code === -32602;
+}
+
+// Devin's typed "another process holds this session" (-32015, retryable): real evidence of occupation,
+// shown to the user as such instead of a generic restore failure
+export function isSessionLocked(e: unknown): boolean {
+  return e instanceof acp.RequestError
+    && (e.data as Record<string, unknown> | undefined)?.['cognition.ai/errorKind'] === 'session_locked';
+}
+
+// The capabilities advertised the feature but the process doesn't actually implement the method
+export function isMethodMissing(e: unknown): boolean {
+  return e instanceof acp.RequestError && e.code === -32601;
+}

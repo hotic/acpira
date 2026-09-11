@@ -92,9 +92,18 @@ const app = acp.agent({ name: 'fake-agent' })
   })
   .onRequest(acp.methods.agent.session.resume, ({ params }) => {
     if (sessionDir) return restoreSession(params.sessionId);
+    // cwd containing "flaky-resume": while a resume.lock file sits in it, restores fail with a transport-level
+    // internal error — a transient restore failure, not a missing session; removing the file makes them succeed
+    if (params.cwd.includes('flaky-resume')) {
+      if (existsSync(join(params.cwd, 'resume.lock'))) throw acp.RequestError.internalError(undefined, 'transient restore failure');
+      sessions.add(params.sessionId);
+      return { modes: { currentModeId: 'agent', availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }] } };
+    }
     if (!sessions.has(params.sessionId)) {
       // when cwd contains gone, mimic Devin: empty sessions get swept once the process exits, report session_not_found
       if (params.cwd.includes('gone')) throw new acp.RequestError(-32016, 'Session not found', { 'cognition.ai/errorKind': 'session_not_found', 'cognition.ai/retryable': false });
+      // cwd containing "locked": Devin's session_locked — another process holds the session
+      if (params.cwd.includes('locked')) throw new acp.RequestError(-32015, 'Session is locked', { 'cognition.ai/errorKind': 'session_locked', 'cognition.ai/retryable': true });
       throw acp.RequestError.invalidParams({ sessionId: params.sessionId }, 'unknown session');
     }
     return { modes: { currentModeId: 'plan', availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }] } };
@@ -143,6 +152,8 @@ const app = acp.agent({ name: 'fake-agent' })
       if (!saved) throw acp.RequestError.invalidParams(undefined, 'unknown native session');
       saveSession(sid, [...saved.prompts, params.prompt]);
     }
+    // The peer forgot this session mid-conversation (the way a swept Devin session answers a prompt)
+    if (text === 'prompt-session-gone') throw new acp.RequestError(-32016, 'Session not found', { 'cognition.ai/errorKind': 'session_not_found' });
     // Slash receipts: no prose, a state-only change, and a native rejection.
     if (text === '/silent' || text === '/silent-plan') {
       if (text === '/silent-plan') await send({ sessionUpdate: 'current_mode_update', currentModeId: 'plan' });
