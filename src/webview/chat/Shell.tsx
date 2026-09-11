@@ -125,7 +125,19 @@ export function Shell(p: ShellProps) {
   const { appearance: a, on } = p;
   const wide = p.host === 'editor';
   const root = useRef<HTMLDivElement>(null);
+  const threadArea = useRef<HTMLDivElement>(null);
+  const planDock = useRef<HTMLDivElement>(null);
   useScrollReveal(root);
+  useLayoutEffect(() => {
+    const area = threadArea.current;
+    const dock = planDock.current;
+    if (!area || !dock) return;
+    const sync = () => area.style.setProperty('--thread-dock-height', `${dock.offsetHeight}px`);
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(dock);
+    return () => observer.disconnect();
+  }, []);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<{ sessionId: string; index: number }>();
   useEffect(() => setEditing(undefined), [p.activeSessionId]);
@@ -237,7 +249,7 @@ export function Shell(p: ShellProps) {
               drawerOpen={drawerOpen}
               onOpenSettings={p.onOpenSettings}
             />
-            <div className="relative flex min-h-0 flex-1 flex-col">
+            <div ref={threadArea} className="relative flex min-h-0 flex-1 flex-col [--thread-dock-height:var(--gap)]">
               <PlanDocumentContext.Provider value={planDoc}>
                 <HistoryContext.Provider value={history}>
                 <HistoryComposerContext.Provider value={history?.editing !== undefined ? composerProps : undefined}>
@@ -247,14 +259,20 @@ export function Shell(p: ShellProps) {
                 </HistoryComposerContext.Provider>
                 </HistoryContext.Provider>
               </PlanDocumentContext.Provider>
+              <div
+                ref={planDock}
+                data-plan-dock
+                className={cn('pointer-events-none absolute inset-x-0 bottom-0 z-10', wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--content-w)+2*var(--pad))]')}
+              >
+                <PlanBar key={`plan:${p.activeSessionId}`} turns={p.turns} running={p.running} />
+              </div>
               {toasts.length > 0 && (
-                <div className="pointer-events-none absolute inset-x-0 bottom-2 z-10 flex flex-col items-center gap-1 px-page">
+                <div className="pointer-events-none absolute inset-x-0 bottom-[calc(var(--gap)+var(--thread-dock-height))] z-10 flex flex-col items-center gap-1 px-page">
                   {toasts.map(t => <Toast key={t.key} text={t.text} icon={t.icon} onUndo={t.undo} onClose={() => dropToast(t.key)} />)}
                 </div>
               )}
             </div>
             <div className={cn('shrink-0', wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--content-w)+2*var(--pad))]')}>
-              <PlanBar key={`plan:${p.activeSessionId}`} turns={p.turns} running={p.running} />
               {question && on.answer && p.activeSessionId && <Questions key={question.id} block={question} onAnswer={(blockId, answers, skip) => on.answer!(p.activeSessionId!, blockId, answers, skip)} />}
               {alertTurn && (
                 <Alert
@@ -347,7 +365,7 @@ function Thread({ turns, running, wide, replayKey, blobUrl, onPermission }: Thre
   });
   return (
     <div ref={ref} data-thread className="scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto px-page [container-type:size] [overflow-anchor:none]">
-      <div key={replayKey} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-gap', wide && 'max-w-(--content-w)')}>
+      <div key={replayKey} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-[max(var(--gap),var(--thread-dock-height))]', wide && 'max-w-(--content-w)')}>
         {exchanges.map(exchange => (
           // Positioned so the prompt's stuck-state sentinel can sit at the exchange's top edge. Paint containment gives each exchange
           // its own paint offset, so a fold opening mid-thread no longer re-walks every later exchange each frame (see AGENTS.md,
