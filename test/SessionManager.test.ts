@@ -278,6 +278,34 @@ describe('SessionManager', () => {
     await m2.dispose();
   }, 30_000);
 
+  // Two viewers landing on the same stored session at once used to build one AcpSession each: two processes, the second
+  // shadowing the first in the live map. The shared load hands both the same session
+  it('concurrent selects of the same stored session share one load — a single process is spawned', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acpira-mgr-'));
+    const logs: string[] = [];
+    const mk = () => new SessionManager({
+      registry: new AgentRegistry({ fake: { name: 'Fake', command: TSX, args: [FAKE] } }),
+      store: new TranscriptStore(dir), log: l => logs.push(l), cwd: () => '/tmp', defaultAgent: () => 'fake', runInTerminal: () => {}, toast: () => {},
+    });
+    const a = mk();
+    await a.init();
+    await a.newSession();
+    await a.handle({ type: 'send', text: 'hi' });
+    const id = a.activeId!;
+    await a.dispose();
+    const b = mk();
+    await b.init();
+    const v1 = b.attach();
+    const v2 = b.attach();
+    logs.length = 0;
+    await Promise.all([v1.selectSession(id), v2.selectSession(id)]);
+    expect(logs.filter(l => l.includes('spawn') || l.includes('reuse warm')).length).toBe(1);
+    expect(v1.activeId).toBe(id);
+    expect(v2.activeId).toBe(id);
+    expect(b.viewOf(id)?.turns.length).toBe(2);
+    await b.dispose();
+  }, 30_000);
+
   it('newSession on an empty starting/ready session keeps the process instead of respawning', async () => {
     const { m } = manager();
     await m.init();

@@ -85,6 +85,8 @@ export class SessionManager {
   private trash = new Map<string, { summary: SessionSummary; timer: NodeJS.Timeout }>();
   private listeners = new Set<(ev: ManagerEvent) => void>();
   private viewers = new Set<SessionViewer>();
+  // Records being loaded + started right now: two viewers landing on the same stored session must share the one load, not each spawn a process
+  private loading = new Map<string, Promise<void>>();
   private accountActionState = new Map<AgentId, AccountAction>();
   private readonly pool: AgentPool;
   // Sessions seen running at the last onChange; a running → idle edge is the moment to re-read the account's quota
@@ -423,8 +425,24 @@ export class SessionManager {
     v.activeId = id;
     const live = this.live.get(id);
     if (live) { v.emit({ type: 'session', session: live.view() }); this.emitSessions(); return; }
+    // A load is already running for this record (another viewer picked it first): wait for it instead of building a second
+    // AcpSession on the same id — a duplicate would spawn its own process and shadow the live one in the map
+    const pending = this.loading.get(id);
+    if (pending) {
+      await pending;
+      const s = this.live.get(id);
+      if (s && v.activeId === id) { v.emit({ type: 'session', session: s.view() }); this.emitSessions(); }
+      return;
+    }
+    const load = this.loadSession(id);
+    this.loading.set(id, load);
+    try { await load; } finally { this.loading.delete(id); }
+  }
+
+  private async loadSession(id: string): Promise<void> {
     const record = await this.deps.store.load(id);
     if (!record) { this.deps.toast('error', t('host.recordLost')); this.index = this.index.filter(s => s.id !== id); this.emitSessions(); this.saveIndex(); return; }
+    if (this.live.has(id)) return;
     const s = new AcpSession(record, this.sessionDeps());
     this.live.set(id, s);
     this.emitSession(s);
