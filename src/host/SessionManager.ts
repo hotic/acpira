@@ -447,6 +447,15 @@ export class SessionManager {
     return v.activeId ? this.live.get(v.activeId) : undefined;
   }
 
+  // Session-targeted messages carry the id of the session the webview was showing; with one, only that session may take the
+  // action — falling back to whatever happens to be current would apply it to the wrong conversation
+  private target(v: SessionViewer, sessionId?: string): AcpSession | undefined {
+    if (!sessionId) return this.current(v);
+    const s = this.live.get(sessionId);
+    if (!s) this.deps.log(`action on session ${sessionId.slice(0, 8)} dropped: not live`);
+    return s;
+  }
+
   async editTurn(edit: EditTurnRequest): Promise<void> {
     const session = this.live.get(edit.sessionId);
     if (!session) throw new Error(t('history.unavailable'));
@@ -459,17 +468,16 @@ export class SessionManager {
   }
 
   async handleFor(v: SessionViewer, m: WebviewMsg): Promise<void> {
-    const s = this.current(v);
     try {
       switch (m.type) {
-        case 'send': await s?.prompt(m.text, m.attachments); break;
-        case 'stop': await s?.cancel(); break;
+        case 'send': await this.target(v, m.sessionId)?.prompt(m.text, m.attachments); break;
+        case 'stop': await this.target(v, m.sessionId)?.cancel(); break;
         case 'permission': if (isSessionId(m.sessionId)) this.live.get(m.sessionId)?.resolvePermission(m.blockId, m.optionId); break;
         case 'answer': if (isSessionId(m.sessionId)) this.live.get(m.sessionId)?.answerQuestions(m.blockId, m.answers, m.skip); break;
         case 'buildPlan': if (isSessionId(m.sessionId)) await this.live.get(m.sessionId)?.buildPlan(m.planId, m.model, m.optionId); break;
-        case 'setMode': if (s) { await s.setMode(m.id); this.remember(s); } break;
-        case 'setConfig': if (s) { await s.setConfig(m.configId, m.value); this.remember(s); } break;
-        case 'selectAgent': if (s?.agent !== m.id) await this.newSessionFor(v, m.id); break;
+        case 'setMode': await this.target(v, m.sessionId)?.setMode(m.id); break;
+        case 'setConfig': { const s = this.target(v, m.sessionId); if (s) { await s.setConfig(m.configId, m.value); this.remember(s); } break; }
+        case 'selectAgent': if (this.current(v)?.agent !== m.id) await this.newSessionFor(v, m.id); break;
         case 'selectSession': await this.selectSessionFor(v, m.id); break;
         case 'newSession': await this.newSessionFor(v, m.agent); break;
         case 'renameSession': await this.renameSession(m.id, m.title); break;
@@ -477,19 +485,19 @@ export class SessionManager {
         case 'restoreSession': await this.restoreSession(m.id); break;
         case 'pinSession': await this.pinSession(m.id, m.pinned); break;
         case 'moveSession': await this.moveSession(m.id); break;
-        case 'selectAccount': await this.selectAccount(v, m.id); break;
+        case 'selectAccount': await this.selectAccount(v, m.id, m.sessionId); break;
         case 'addAccount': await this.addAccount(v, m.agent, m.via); break;
         case 'removeAccount': await this.deps.accounts?.remove(m.id); this.pool.invalidate(); break;
         case 'refreshQuota':
           await Promise.all([this.deps.accounts?.refreshQuotas(m.agent), this.deps.localAccounts?.refresh(m.agent)]);
           break;
-        case 'compact': await s?.compact(); break;
-        case 'retry': await s?.retry(); break;
-        case 'retryTurn': await s?.retryTurn(); break;
+        case 'compact': await this.target(v, m.sessionId)?.compact(); break;
+        case 'retry': await this.target(v, m.sessionId)?.retry(); break;
+        case 'retryTurn': await this.target(v, m.sessionId)?.retryTurn(); break;
         case 'dequeue': if (isSessionId(m.sessionId)) this.live.get(m.sessionId)?.dequeue(m.id); break;
         case 'sendQueued': if (isSessionId(m.sessionId)) await this.live.get(m.sessionId)?.sendQueued(m.id); break;
         case 'editQueued': if (isSessionId(m.sessionId)) await this.live.get(m.sessionId)?.editQueued(m.id, m.text, m.retainedAttachments, m.attachments); break;
-        case 'login': await this.login(s, m.methodId); break;
+        case 'login': await this.login(this.target(v, m.sessionId), m.methodId); break;
         case 'installAgent': this.install(m.agent); break;
         default: break;
       }
@@ -614,10 +622,10 @@ export class SessionManager {
 
   // Switching accounts rebinds the current session (same transcript and native session, newly authenticated process). It also becomes the agent's default
   // for the next new session. A different agent's account only updates that default — the open conversation is left alone
-  async selectAccount(v: SessionViewer, accountId: string) {
+  async selectAccount(v: SessionViewer, accountId: string, sessionId?: string) {
     const acc = this.deps.accounts?.get(accountId);
     if (!acc) return;
-    const cur = this.current(v);
+    const cur = this.target(v, sessionId);
     if (cur?.agent === acc.agent) await cur.rebindAccount(accountId);
     await this.deps.accounts!.touch(accountId);
   }

@@ -84,11 +84,13 @@ export interface AccountAction {
   error?: string;
 }
 
+// Session actions carry the id of the session the view was showing; the host refuses to apply one to a different
+// session — a late message must never land on whatever happens to be active. Absent (tests / scripts): the viewer's current
 export type WebviewMsg =
   | { type: 'editTurn'; requestId: string; edit: EditTurnRequest }
   | { type: 'ready' }
-  | { type: 'send'; text: string; attachments?: Draft[] }
-  | { type: 'stop' }
+  | { type: 'send'; sessionId?: string; text: string; attachments?: Draft[] }
+  | { type: 'stop'; sessionId?: string }
   // @ mention: fuzzy search over workspace files, answered with a `files` message
   | { type: 'searchFiles'; query: string; seq: number }
   | { type: 'permission'; sessionId: string; blockId: string; optionId: string }
@@ -96,8 +98,8 @@ export type WebviewMsg =
   | { type: 'answer'; sessionId: string; blockId: string; answers: QuestionAnswers; skip?: boolean }
   | { type: 'buildPlan'; sessionId: string; planId: string; optionId?: string; model?: { configId: string; value: string } }
   | { type: 'openPlan'; sessionId: string; planId: string }
-  | { type: 'setMode'; id: string }
-  | { type: 'setConfig'; configId: string; value: string }
+  | { type: 'setMode'; sessionId?: string; id: string }
+  | { type: 'setConfig'; sessionId?: string; configId: string; value: string }
   | { type: 'selectAgent'; id: AgentId }
   | { type: 'selectSession'; id: string }
   | { type: 'newSession'; agent?: AgentId }
@@ -107,19 +109,19 @@ export type WebviewMsg =
   | { type: 'pinSession'; id: string; pinned: boolean }
   // Re-home a session into this window's workspace folder: its cwd becomes the folder (the agent works there from the next open on)
   | { type: 'moveSession'; id: string }
-  // Rebind the current session to this account (also becomes the agent's default account)
-  | { type: 'selectAccount'; id: string }
+  // Rebind the session to this account (also becomes the agent's default account)
+  | { type: 'selectAccount'; sessionId?: string; id: string }
   | { type: 'addAccount'; agent: AgentId; via: AddAccountVia }
   | { type: 'removeAccount'; id: string }
   // An account list came into view: refresh the quotas of that agent's accounts (recent ones are served from memory)
   | { type: 'refreshQuota'; agent: AgentId }
-  | { type: 'compact' }
-  | { type: 'login'; methodId?: string }
+  | { type: 'compact'; sessionId?: string }
+  | { type: 'login'; sessionId?: string; methodId?: string }
   // Settings page of an agent without an executable: run its vendor install line (AgentInfo.install) in a host terminal
   | { type: 'installAgent'; agent: AgentId }
-  | { type: 'retry' }
+  | { type: 'retry'; sessionId?: string }
   // Send the last user turn again after its agent turn ended in error / a short stop; both turns are dropped from the transcript first
-  | { type: 'retryTurn' }
+  | { type: 'retryTurn'; sessionId?: string }
   // Queued prompts (waiting for the running turn): drop one, or replace one in place — kept attachments by index, new drafts alongside
   | { type: 'dequeue'; sessionId: string; id: string }
   | { type: 'sendQueued'; sessionId: string; id: string }

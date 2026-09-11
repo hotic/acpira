@@ -54,6 +54,10 @@ export function App() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [hidden, setHidden] = useState<HiddenMap>({});
   const [session, setSession] = useState<SessionView>();
+  // The session the view is showing right now, readable inside the stable handler object: every session action
+  // carries it so a click rendered for one conversation can never be applied to another after a fast switch
+  const activeId = useRef<string | undefined>(undefined);
+  activeId.current = session?.id;
   const [view, setView] = useState<'chat' | 'settings'>('chat');
   const [settings, setSettings] = useState<SettingsView>();
   const [locale, setLoc] = useState<Locale>('en');
@@ -114,16 +118,16 @@ export function App() {
 
   const on = useMemo<ShellHandlers>(() => ({
     editTurn,
-    send: (text, attachments) => post({ type: 'send', text, ...(attachments.length ? { attachments } : {}) }),
+    send: (text, attachments) => post({ type: 'send', sessionId: activeId.current, text, ...(attachments.length ? { attachments } : {}) }),
     searchFiles,
-    stop: () => post({ type: 'stop' }),
+    stop: () => post({ type: 'stop', sessionId: activeId.current }),
     permission: (sessionId, blockId, optionId) => post({ type: 'permission', sessionId, blockId, optionId }),
     answer: (sessionId, blockId, answers, skip) => post({ type: 'answer', sessionId, blockId, answers, ...(skip ? { skip } : {}) }),
     buildPlan: (sessionId, planId, model, optionId) => post({ type: 'buildPlan', sessionId, planId, model, optionId }),
     openPlan: (sessionId, planId) => post({ type: 'openPlan', sessionId, planId }),
     openFile: (sessionId, path, line) => post({ type: 'openFile', sessionId, path, line }),
-    setMode: id => post({ type: 'setMode', id }),
-    setConfig: (configId, value) => post({ type: 'setConfig', configId, value }),
+    setMode: id => post({ type: 'setMode', sessionId: activeId.current, id }),
+    setConfig: (configId, value) => post({ type: 'setConfig', sessionId: activeId.current, configId, value }),
     selectAgent: id => post({ type: 'selectAgent', id }),
     selectSession: id => post({ type: 'selectSession', id }),
     newSession: agent => post({ type: 'newSession', ...(agent ? { agent } : {}) }),
@@ -132,14 +136,14 @@ export function App() {
     restoreSession: id => post({ type: 'restoreSession', id }),
     pinSession: (id, pinned) => post({ type: 'pinSession', id, pinned }),
     moveSession: id => post({ type: 'moveSession', id }),
-    selectAccount: id => post({ type: 'selectAccount', id }),
+    selectAccount: id => post({ type: 'selectAccount', sessionId: activeId.current, id }),
     addAccount: (agent, via) => post({ type: 'addAccount', agent, via }),
     removeAccount: id => post({ type: 'removeAccount', id }),
     refreshQuota: agent => post({ type: 'refreshQuota', agent }),
-    compact: () => post({ type: 'compact' }),
-    login: methodId => post({ type: 'login', methodId }),
-    retry: () => post({ type: 'retry' }),
-    retryTurn: () => post({ type: 'retryTurn' }),
+    compact: () => post({ type: 'compact', sessionId: activeId.current }),
+    login: methodId => post({ type: 'login', sessionId: activeId.current, methodId }),
+    retry: () => post({ type: 'retry', sessionId: activeId.current }),
+    retryTurn: () => post({ type: 'retryTurn', sessionId: activeId.current }),
     dequeue: (sessionId, id) => post({ type: 'dequeue', sessionId, id }),
     sendQueued: (sessionId, id) => post({ type: 'sendQueued', sessionId, id }),
     editQueued: (sessionId, id, text, retainedAttachments, attachments) => post({ type: 'editQueued', sessionId, id, text, retainedAttachments, attachments }),
