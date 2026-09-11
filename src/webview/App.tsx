@@ -144,6 +144,7 @@ export function App() {
     login: methodId => post({ type: 'login', sessionId: activeId.current, methodId }),
     retry: () => post({ type: 'retry', sessionId: activeId.current }),
     retryTurn: () => post({ type: 'retryTurn', sessionId: activeId.current }),
+    reconnect: () => post({ type: 'reconnect', sessionId: activeId.current }),
     dequeue: (sessionId, id) => post({ type: 'dequeue', sessionId, id }),
     sendQueued: (sessionId, id) => post({ type: 'sendQueued', sessionId, id }),
     editQueued: (sessionId, id, text, retainedAttachments, attachments) => post({ type: 'editQueued', sessionId, id, text, retainedAttachments, attachments }),

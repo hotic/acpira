@@ -62,6 +62,8 @@ export interface ShellHandlers {
   retry: () => void;
   // Send the last user turn again after its agent turn ended in error
   retryTurn: () => void;
+  // Drop the agent process and resume the same native session (a live connection whose prompts keep failing)
+  reconnect: () => void;
   // Queued prompts: drop one / replace one in place (kept attachments by index plus new drafts)
   dequeue?: (sessionId: string, id: string) => void;
   sendQueued?: (sessionId: string, id: string) => void;
@@ -125,14 +127,33 @@ export function Shell(p: ShellProps) {
   const { appearance: a, on } = p;
   const wide = p.host === 'editor';
   const root = useRef<HTMLDivElement>(null);
-  const threadArea = useRef<HTMLDivElement>(null);
   const planDock = useRef<HTMLDivElement>(null);
+  const dockHeight = useRef(0);
+  const threadContent = useRef<HTMLDivElement | null>(null);
+  const toastLayer = useRef<HTMLDivElement | null>(null);
   useScrollReveal(root);
+  // The dock height becomes the transcript's scroll clearance and the toast offset. Both are written
+  // onto the consumers themselves: a custom property on their shared ancestor is inherited, so every
+  // dock resize — each frame of the fold animation — would restyle the whole transcript.
+  const contentRef = useCallback((el: HTMLDivElement | null) => {
+    threadContent.current = el;
+    if (el) el.style.paddingBottom = dockHeight.current ? `${dockHeight.current}px` : '';
+  }, []);
+  const toastRef = useCallback((el: HTMLDivElement | null) => {
+    toastLayer.current = el;
+    if (el) el.style.setProperty('--thread-dock-height', `${dockHeight.current}px`);
+  }, []);
   useLayoutEffect(() => {
-    const area = threadArea.current;
     const dock = planDock.current;
-    if (!area || !dock) return;
-    const sync = () => area.style.setProperty('--thread-dock-height', `${dock.offsetHeight}px`);
+    if (!dock) return;
+    const sync = () => {
+      const height = dock.offsetHeight;
+      if (height === dockHeight.current) return;
+      dockHeight.current = height;
+      const content = threadContent.current;
+      if (content) content.style.paddingBottom = height ? `${height}px` : '';
+      toastLayer.current?.style.setProperty('--thread-dock-height', `${height}px`);
+    };
     sync();
     const observer = new ResizeObserver(sync);
     observer.observe(dock);
@@ -249,12 +270,12 @@ export function Shell(p: ShellProps) {
               drawerOpen={drawerOpen}
               onOpenSettings={p.onOpenSettings}
             />
-            <div ref={threadArea} className="relative flex min-h-0 flex-1 flex-col [--thread-dock-height:var(--gap)]">
+            <div className="relative flex min-h-0 flex-1 flex-col">
               <PlanDocumentContext.Provider value={planDoc}>
                 <HistoryContext.Provider value={history}>
                 <HistoryComposerContext.Provider value={history?.editing !== undefined ? composerProps : undefined}>
                   <OpenToolFileContext.Provider value={openToolFile}>
-                    <Thread key={p.activeSessionId} turns={p.turns} running={p.running} wide={wide} replayKey={p.replayKey} blobUrl={blobUrl} onPermission={(blockId, optionId) => { if (p.activeSessionId) on.permission(p.activeSessionId, blockId, optionId); }} />
+                    <Thread key={p.activeSessionId} turns={p.turns} running={p.running} wide={wide} replayKey={p.replayKey} blobUrl={blobUrl} contentRef={contentRef} onPermission={(blockId, optionId) => { if (p.activeSessionId) on.permission(p.activeSessionId, blockId, optionId); }} />
                   </OpenToolFileContext.Provider>
                 </HistoryComposerContext.Provider>
                 </HistoryContext.Provider>
@@ -267,7 +288,7 @@ export function Shell(p: ShellProps) {
                 <PlanBar key={`plan:${p.activeSessionId}`} turns={p.turns} running={p.running} />
               </div>
               {toasts.length > 0 && (
-                <div className="pointer-events-none absolute inset-x-0 bottom-[calc(var(--gap)+var(--thread-dock-height))] z-10 flex flex-col items-center gap-1 px-page">
+                <div ref={toastRef} className="pointer-events-none absolute inset-x-0 bottom-[calc(var(--gap)+var(--thread-dock-height,0px))] z-10 flex flex-col items-center gap-1 px-page">
                   {toasts.map(t => <Toast key={t.key} text={t.text} icon={t.icon} onUndo={t.undo} onClose={() => dropToast(t.key)} />)}
                 </div>
               )}
@@ -278,6 +299,7 @@ export function Shell(p: ShellProps) {
                 <Alert
                   turn={alertTurn}
                   onRetry={on.retryTurn}
+                  onReconnect={on.reconnect}
                   onContinue={() => on.send(t('alert.continueText'), [])}
                   onDismiss={() => setDismissedAlert(alertKey)}
                 />
@@ -314,6 +336,7 @@ interface ThreadProps {
   wide: boolean;
   replayKey?: number | string;
   blobUrl?: (blob: string) => string;
+  contentRef?: (el: HTMLDivElement | null) => void;
   onPermission: (blockId: string, optionId: string) => void;
 }
 
@@ -322,7 +345,7 @@ const STAGGER_CAP = 12;
 
 // Conversation flow: stick-to-bottom following only happens on transcript changes (new content / streaming growth); user actions like expand / collapse never touch the scroll position —
 // the toggle under the mouse stays put while the content below it moves. Scrolling away from the bottom releases the follow; scrolling back to the bottom restores it
-function Thread({ turns, running, wide, replayKey, blobUrl, onPermission }: ThreadProps) {
+function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, onPermission }: ThreadProps) {
   const ref = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   useEffect(() => {
@@ -365,7 +388,7 @@ function Thread({ turns, running, wide, replayKey, blobUrl, onPermission }: Thre
   });
   return (
     <div ref={ref} data-thread className="scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto px-page [container-type:size] [overflow-anchor:none]">
-      <div key={replayKey} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-[max(var(--gap),var(--thread-dock-height))]', wide && 'max-w-(--content-w)')}>
+      <div key={replayKey} ref={contentRef} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-gap', wide && 'max-w-(--content-w)')}>
         {exchanges.map(exchange => (
           // Positioned so the prompt's stuck-state sentinel can sit at the exchange's top edge. Paint containment gives each exchange
           // its own paint offset, so a fold opening mid-thread no longer re-walks every later exchange each frame (see AGENTS.md,

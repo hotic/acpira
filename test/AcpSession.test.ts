@@ -520,6 +520,46 @@ describe('AcpSession', () => {
     s.dispose();
   });
 
+  it('reconnect: replaces the process and resumes the same native session; the failed turn and the chosen controls stay, the next prompt runs on the new connection', async () => {
+    // A cwd containing "flaky-resume" makes the fake agent resume any known-or-not sessionId while no resume.lock sits in it
+    const { session, logs } = deps(mkdtempSync(join(tmpdir(), 'acpira-flaky-resume-')));
+    const s = session();
+    await s.start();
+    await s.setConfig('model', 'm2');
+    await s.prompt('please fail');
+    const record = s.toRecord();
+    expect(s.view().status).toBe('ready');
+    expect(s.view().turns[1]).toMatchObject({ role: 'agent', stop: 'error' });
+    await s.reconnect();
+    const v = s.view();
+    expect(v.status).toBe('ready');
+    expect(s.toRecord().acpSessionId).toBe(record.acpSessionId);
+    expect(logs.filter(l => l.includes('spawn ')).length).toBe(2);
+    expect(logs.some(l => l.includes('session/resume ok'))).toBe(true);
+    expect(v.turns).toHaveLength(2);
+    expect(v.turns[1]).toMatchObject({ role: 'agent', stop: 'error' });
+    expect(v.controls.options.find(o => o.id === 'model')?.value).toBe('m2');
+    // Not retryTurn: the fake's per-process "fail once" map resets on the respawn, so resending 'please fail' would fail again
+    await s.prompt('hi');
+    expect(s.view().turns).toHaveLength(4);
+    expect(s.view().turns[3]).toMatchObject({ role: 'agent', stop: 'end_turn' });
+    s.dispose();
+  });
+
+  it('reconnect: refused while a turn runs, the process is kept', async () => {
+    const { session, logs } = deps();
+    const s = session();
+    await s.start();
+    const p = s.prompt('slow');
+    await until(() => s.view().running);
+    await expect(s.reconnect()).rejects.toThrow();
+    expect(logs.filter(l => l.includes('spawn ')).length).toBe(1);
+    expect(s.view().running).toBe(true);
+    await s.cancel();
+    await p;
+    s.dispose();
+  });
+
   it('short stops: refusal leaves an empty turn with stop=refusal, max_tokens keeps the text and stop=max_tokens; a normal turn records end_turn', async () => {
     const { session } = deps();
     const s = session();

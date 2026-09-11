@@ -500,6 +500,7 @@ export class SessionManager {
         case 'compact': await this.target(v, m.sessionId)?.compact(); break;
         case 'retry': await this.target(v, m.sessionId)?.retry(); break;
         case 'retryTurn': await this.target(v, m.sessionId)?.retryTurn(); break;
+        case 'reconnect': await this.target(v, m.sessionId)?.reconnect(); break;
         case 'dequeue': if (isSessionId(m.sessionId)) this.live.get(m.sessionId)?.dequeue(m.id); break;
         case 'sendQueued': if (isSessionId(m.sessionId)) await this.live.get(m.sessionId)?.sendQueued(m.id); break;
         case 'editQueued': if (isSessionId(m.sessionId)) await this.live.get(m.sessionId)?.editQueued(m.id, m.text, m.retainedAttachments, m.attachments); break;

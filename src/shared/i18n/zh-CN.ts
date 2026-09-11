@@ -236,6 +236,8 @@ export const zhCN = {
   'alert.maxTurns.text': '这一轮的工具调用次数到顶了，让它继续即可',
   'alert.continue': '继续',
   'alert.continueText': '继续',
+  'alert.reconnect': '重新连接',
+  'alert.reconnectHint': '重启 agent 进程并恢复这个会话，再重试',
   'alert.copy': '复制详情',
   'alert.copyWith': '复制详情（{detail}）',
   'alert.copied': '已复制',

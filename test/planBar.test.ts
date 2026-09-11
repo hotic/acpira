@@ -64,14 +64,18 @@ describe('PlanBar dock visibility', () => {
   });
 
   it('renders the live plan over the thread without shrinking its scroll viewport', () => {
-    const thread = shellSource.indexOf('ref={threadArea}');
+    const thread = shellSource.indexOf('<Thread key=');
     const dock = shellSource.indexOf('data-plan-dock');
     const composer = shellSource.indexOf("<div className={cn('shrink-0'", dock);
     expect(thread).toBeGreaterThan(-1);
     expect(dock).toBeGreaterThan(thread);
     expect(composer).toBeGreaterThan(dock);
     expect(shellSource).toContain("'pointer-events-none absolute inset-x-0 bottom-0 z-10'");
-    expect(shellSource).toContain('pb-[max(var(--gap),var(--thread-dock-height))]');
+    // Dock height reaches the transcript as a direct padding write on the content element. An
+    // inherited custom property on the shared ancestor would restyle the whole transcript on
+    // every resize frame, so no ancestor channel may exist.
+    expect(shellSource).toContain('content.style.paddingBottom');
+    expect(shellSource).not.toContain('threadArea');
     expect(planBarSource).toContain('pointer-events-none px-page pt-gap');
     expect(planBarSource).toContain('pointer-events-auto');
   });

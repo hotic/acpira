@@ -122,6 +122,8 @@ export type WebviewMsg =
   | { type: 'retry'; sessionId?: string }
   // Send the last user turn again after its agent turn ended in error / a short stop; both turns are dropped from the transcript first
   | { type: 'retryTurn'; sessionId?: string }
+  // Drop the agent process and resume the same native session instead (prompts keep failing on the live connection)
+  | { type: 'reconnect'; sessionId?: string }
   // Queued prompts (waiting for the running turn): drop one, or replace one in place — kept attachments by index, new drafts alongside
   | { type: 'dequeue'; sessionId: string; id: string }
   | { type: 'sendQueued'; sessionId: string; id: string }

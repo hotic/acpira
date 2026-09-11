@@ -224,6 +224,8 @@ export const en = {
   'alert.maxTurns.text': 'This turn used up its tool-call budget; let it continue',
   'alert.continue': 'Continue',
   'alert.continueText': 'Continue',
+  'alert.reconnect': 'Reconnect',
+  'alert.reconnectHint': 'Restart the agent process and resume this session, then retry',
   'alert.copy': 'Copy details',
   'alert.copyWith': 'Copy details ({detail})',
   'alert.copied': 'Copied',

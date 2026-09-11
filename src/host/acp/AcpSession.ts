@@ -314,8 +314,25 @@ export class AcpSession {
     if (this.phase.running || this.phase.editing || this.phase.staging || this.status === 'starting') {
       throw new Error(t('history.unavailable'));
     }
-    const settings = captureTurnSettings(this.state.controls);
     this.accountId = accountId;
+    await this.reopen();
+  }
+
+  // Rebuild the connection under a session whose prompts keep failing on a live process (Grok answering -32603 on an old
+  // session): the process is dropped and the same native session resumed. The failed turn stays in the transcript, so the
+  // Alert's Retry can send it over the new connection
+  async reconnect(): Promise<void> {
+    if (this.status === 'closed') return;
+    if (this.phase.running || this.phase.editing || this.phase.staging || this.status === 'starting') {
+      throw new Error(t('history.unavailable'));
+    }
+    await this.reopen();
+  }
+
+  // Tear the process down and start again on the same native session, then re-adopt this session's own settings:
+  // a fresh process opens on its defaults, and the resumed session must keep what was chosen in it
+  private async reopen(): Promise<void> {
+    const settings = captureTurnSettings(this.state.controls);
     await this.start();
     if (this.status === 'ready') await this.adoptControls(settings);
   }
@@ -613,7 +630,7 @@ export class AcpSession {
       this.settle('cancelled', turnErrorOf(e));
       if (isAuth(e)) this.status = 'auth_required';
       // The peer forgot the native session, or the process carrying it died: resending over this connection can only fail
-      // the same way. Leave 'ready' so the Notice's Retry does a full reconnect + resume instead of reusing a dead channel
+      // the same way. Leave ready for the error state, whose Notice Retry does a full reconnect + resume instead of reusing a dead channel
       else if (isSessionGone(e) || !this.proc?.alive) {
         this.status = 'error';
         this.error = msg(e);

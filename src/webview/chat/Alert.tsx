@@ -8,16 +8,17 @@ import { t } from '../i18n';
 
 export interface AlertProps {
   turn: AgentTurn;
-  // Send the same prompt again (error) / ask the agent to carry on (limits)
+  // Send the same prompt again (error) / rebuild the connection and resume the session (error) / ask the agent to carry on (limits)
   onRetry: () => void;
+  onReconnect: () => void;
   onContinue: () => void;
   onDismiss: () => void;
 }
 
 // A turn stopped short (the same card Cursor pins above its composer, in our own tones): one row holds a colorless glyph, what happened,
-// the copyable detail, and the action — send it again for an error, carry on for a limit, nothing for a refusal — with ✕ hiding the card
-// (the transcript keeps the row); the agent's words sit below in small type when there are any
-export function Alert({ turn, onRetry, onContinue, onDismiss }: AlertProps) {
+// the copyable detail, and the action — send it again or reconnect and resume for an error, carry on for a limit, nothing for a refusal —
+// with ✕ hiding the card (the transcript keeps the row); the agent's words sit below in small type when there are any
+export function Alert({ turn, onRetry, onReconnect, onContinue, onDismiss }: AlertProps) {
   const stop = turn.stop as ShortStop;
   const err = turn.error;
   const detail = [err?.code !== undefined ? String(err.code) : '', err?.kind ?? ''].filter(Boolean).join(' · ');
@@ -31,6 +32,7 @@ export function Alert({ turn, onRetry, onContinue, onDismiss }: AlertProps) {
           <span className="shrink-0 text-2 font-medium text-fg-1">{t(TITLE[stop])}</span>
           {copyable && <CopyDetail text={copyable} label={detail} />}
           <span className="flex-1" />
+          {stop === 'error' && <Button variant="secondary" title={t('alert.reconnectHint')} onClick={onReconnect}>{t('alert.reconnect')}</Button>}
           {stop === 'error' && <Button variant="primary" onClick={onRetry}>{t('common.retry')}</Button>}
           {(stop === 'max_tokens' || stop === 'max_turn_requests') && <Button variant="primary" onClick={onContinue}>{t('alert.continue')}</Button>}
           <IconButton aria-label={t('common.close')} onClick={onDismiss} className="-my-1 -mr-1.5"><X strokeWidth={1.5} /></IconButton>
