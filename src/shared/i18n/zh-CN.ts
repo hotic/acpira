@@ -191,7 +191,6 @@ export const zhCN = {
   'turns.command.empty': '请求已结束，CLI 未返回文字反馈',
   'turns.command.mode': '已切换至 {mode} 模式',
   'turns.command.option': '{name}：{value}',
-  'composer.commandUnknown': '未在命令列表中找到，将原样发送给 CLI',
   'turns.elapsed.ms': '{m} 分钟 {s} 秒',
   'turns.elapsed.m': '{m} 分钟',
   'turns.elapsed.s': '{s} 秒',

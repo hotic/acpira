@@ -6,7 +6,7 @@ import type { HiddenMap } from '@shared/settings';
 import { composerControls } from '@shared/composerControls';
 import { MAX_TEXT_BYTES } from '@shared/attachments';
 import { collectPastedText } from '@shared/pastedText';
-import { commandName, namedCommand } from '@shared/slashCommands';
+import { namedCommand } from '@shared/slashCommands';
 import { useAppearance } from '../appearance';
 import { getLocale, t } from '../i18n';
 import { cn } from '../ui/cn';
@@ -176,7 +176,6 @@ export function Composer(p: ComposerProps) {
   // The input hint of the command the text names, while its arguments are still empty (the open list already shows it in the row)
   const hint = !slashOpen && p.commands ? commandHint(p.commands, text, getLocale()) : undefined;
   const command = namedCommand(p.commands ?? [], text);
-  const unknownCommand = !slashOpen && !command && commandName(text);
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return;
     if (slashOpen) {
@@ -246,7 +245,6 @@ export function Composer(p: ComposerProps) {
       />
       {/* The hint sits under the text like a second, faint line: the agent's own wording for what to type after the command */}
       {hint && <div className="truncate px-pad pb-1 font-mono text-mono text-fg-3">{hint}</div>}
-      {unknownCommand && <div className="px-pad pb-1 text-3 text-fg-3">{t('composer.commandUnknown')}</div>}
       {slashOpen && <SlashList anchor={fieldRef} hits={slash.hits} active={slash.active} onHover={slash.setActive} onPick={pickCommand} />}
       {mentionOpen && <MentionList anchor={fieldRef} hits={hits} active={active} empty={span!.query.length > 0} onHover={setActive} onPick={pick} />}
       {/* The row is a container: below the sm tier (a 380 sidebar leaves ~324 here) the mode chip collapses to icon + caret so the option chips keep their room —

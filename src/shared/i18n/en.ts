@@ -179,7 +179,6 @@ export const en = {
   'turns.command.empty': 'Request finished; the CLI returned no text feedback',
   'turns.command.mode': 'Mode changed to {mode}',
   'turns.command.option': '{name}: {value}',
-  'composer.commandUnknown': 'Not in the command list; this text will be sent to the CLI unchanged',
   'turns.elapsed.ms': '{m}m {s}s',
   'turns.elapsed.m': '{m}m',
   'turns.elapsed.s': '{s}s',
