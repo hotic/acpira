@@ -4,9 +4,8 @@ import { t } from '../i18n';
 import { Field, NumberField, Section, Segmented, Switch } from './controls';
 import type { SettingsHandlers } from './SettingsShell';
 
-// Motion is the one appearance axis surfaced as a user setting (it is an accessibility preference); the other axes stay LAB design decisions
-const MOTION: Appearance['motion'][] = ['subtle', 'none', 'full'];
-
+// Motion is the one appearance axis surfaced as a user setting (it is an accessibility preference), a plain on / off switch;
+// the other axes stay LAB design decisions
 // Appearance: how the panels render — scheme, motion, diff markers, then the type sizes. Every edit previews in place, this shell included
 export function AppearancePage({ settings, appearance, on }: { settings: SettingsView; appearance: Appearance; on: SettingsHandlers }) {
   return (
@@ -16,7 +15,7 @@ export function AppearancePage({ settings, appearance, on }: { settings: Setting
           <Segmented options={THEMES.map(v => ({ value: v, label: t(`settings.theme.${v}` as const) }))} value={settings.theme} onChange={v => on.setSetting('theme', v)} label={t('settings.theme')} />
         </Field>
         <Field label={t('settings.motion')} desc={t('settings.motion.desc')}>
-          <Segmented options={MOTION.map(v => ({ value: v, label: t(`settings.motion.${v}` as const) }))} value={appearance.motion} onChange={v => on.setAppearance('motion', v)} label={t('settings.motion')} />
+          <Switch checked={appearance.motion !== 'none'} onChange={v => on.setAppearance('motion', v ? 'on' : 'none')} label={t('settings.motion')} />
         </Field>
         <Field label={t('settings.diffMarkers')} desc={t('settings.diffMarkers.desc')}>
           <Segmented options={DIFF_MARKERS.map(v => ({ value: v, label: t(`settings.diffMarkers.${v}` as const) }))} value={settings.diffMarkers} onChange={v => on.setSetting('diffMarkers', v)} label={t('settings.diffMarkers')} />

@@ -1,12 +1,24 @@
 /* Animation: shimmer / enter utilities, streamed graphemes, row entrance, the ConnectedRail growth, keyframes and the reduced-motion kill switch. */
+/* ui/Shimmer: muted label + a strong copy inside a masked window; the window and the copy translate in opposite directions,
+   so the highlight sweeps the text with compositor-only work (a background-position gradient repainted the document each frame). */
 @utility shimmer {
-  background: linear-gradient(90deg, #9a9a9a 0%, var(--fg-strong) 50%, #9a9a9a 100%);
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: acp-shimmer 2s linear infinite;
+  position: relative;
+  display: inline-block;
+  color: var(--shimmer-base);
 }
+.shimmer-sweep {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--fg-strong);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 50%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 50%, transparent);
+  animation: acp-shimmer-window var(--shimmer-cycle) linear infinite;
+}
+.shimmer-sweep > span { display: inline-block; white-space: nowrap; animation: acp-shimmer-copy var(--shimmer-cycle) linear infinite; }
+@keyframes acp-shimmer-window { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+@keyframes acp-shimmer-copy { from { transform: translateX(100%); } to { transform: translateX(-100%); } }
 /* Content that replaces something in place (a prompt card ↔ its inline editor): a plain fade, the container animates its own height */
 @utility fade-in { animation: acp-fade-in var(--dur-open) ease both; }
 @utility enter {
@@ -35,7 +47,6 @@
 .process-row-enter > .row-content > * { --row-part-delay: calc(var(--row-enter-delay) + var(--row-enter-part)); animation: acp-row-part-in var(--row-enter-duration) var(--row-part-delay) ease-out both; }
 .process-row-enter > .row-content > :nth-child(n + 2), .process-row-enter > .row-trailing { --row-part-delay: calc(var(--row-enter-delay) + var(--row-enter-part) * 2); }
 .process-row-enter > .row-trailing { animation: acp-row-part-in var(--row-enter-duration) var(--row-part-delay) ease-out both; }
-.process-row-enter > .row-content > .shimmer { animation: acp-row-part-in var(--row-enter-duration) var(--row-part-delay) ease-out both, acp-shimmer 2s linear infinite; }
 @keyframes acp-row-part-in { from { opacity: 0; } to { opacity: 1; } }
 
 /* One measured path from the icon to a short solid-dot endpoint. The segment's own
@@ -48,15 +59,17 @@
 .rail-segment[data-terminal]::after { content: ''; position: absolute; left: 50%; bottom: 0; width: var(--rail-dot-size); height: var(--rail-dot-size); border-radius: 50%; background: var(--rail-color); transform: translate(-50%, 50%); }
 .connected-rail:has(> .process-row-enter) > .rail-segment { animation: acp-row-part-in var(--row-enter-duration) var(--row-enter-file) ease-out both; }
 
-@keyframes acp-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 @keyframes acp-enter { from { opacity: 0; transform: translateY(var(--enter-y)); } }
 @keyframes acp-pulse { 50% { opacity: 0.3; } }
 @keyframes acp-fade-in { from { opacity: 0; } }
 
-/* acpira.appearance.motion = none: the same kill switch as the OS preference. */
+/* acpira.appearance.motion = none: the same kill switch as the OS preference. The Orb is a canvas and keeps turning. */
 [data-motion="none"] * { transition: none !important; animation: none !important; }
 [data-motion="none"] *::before, [data-motion="none"] *::after { transition: none !important; animation: none !important; }
+[data-motion="none"] .shimmer { color: var(--fg-2); }
+[data-motion="none"] .shimmer-sweep { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .acp-shell *, .acp-shell *::before, .acp-shell *::after { animation: none !important; transition: none !important; }
-  .acp-shell .shimmer { background: none; color: var(--fg-2); }
+  .acp-shell .shimmer { color: var(--fg-2); }
+  .acp-shell .shimmer-sweep { display: none; }
 }

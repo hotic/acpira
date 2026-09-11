@@ -6,6 +6,7 @@ import { getLocale, t } from '../i18n';
 import { COMMAND_MARK } from './PromptInput';
 import { turnOutcome } from './turnOutcome';
 import { Row, RowLabel, RowTarget, RowEntranceContext } from '../ui/Row';
+import { Shimmer } from '../ui/Shimmer';
 import { Disclosure, DisclosureObserverContext } from '../ui/Disclosure';
 import { Collapsible } from '../ui/Collapsible';
 import { Orb } from '../effects/Orb';
@@ -202,7 +203,7 @@ function Activity({ turn, running }: { turn: AgentTurn; running: boolean }) {
     )}>
       <div className="min-h-0 overflow-hidden">
         <Row lead={activity.lead} className="font-medium">
-          <RowLabel className={activity.active ? 'shimmer' : undefined}>{activity.label}</RowLabel>
+          <RowLabel shimmer={activity.active}>{activity.label}</RowLabel>
         </Row>
       </div>
     </div>
@@ -345,7 +346,7 @@ function CodexFold({ turn, blocks, running, foldable, memoryKey }: { turn: Agent
     <Collapsible.Root open={open} onOpenChange={toggle} className="group flex min-w-0 flex-col" data-open={open || undefined}>
       {foldable && (
         <Collapsible.Trigger render={<Row as="button" interactive lead={lead} title={label} />}>
-          <RowLabel className={running && activity.active ? 'shimmer' : undefined}>{label}</RowLabel>
+          <RowLabel shimmer={running && activity.active}>{label}</RowLabel>
           {elapsed && <span className="min-w-0 truncate text-fg-3" title={elapsed}>{elapsed}</span>}
           <ChevronRight className={cn('size-3 shrink-0 self-center transition-transform', open && 'rotate-90')} strokeWidth={1.75} />
         </Collapsible.Trigger>
@@ -395,7 +396,7 @@ function Compaction({ block }: { block: CompactionBlock }) {
   const label = running ? t('turns.compacting') : block.status === 'completed' ? t('turns.compacted') : block.status === 'failed' ? t('turns.compactFailed') : t('turns.compactCancelled');
   return (
     <Row className="text-fg-3">
-      <span className={running ? 'shimmer' : undefined}>{label}</span>
+      <Shimmer active={running}>{label}</Shimmer>
     </Row>
   );
 }

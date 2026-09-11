@@ -30,6 +30,6 @@
   "acpira.conf.appearance.beamColor": "Beam color",
   "acpira.conf.appearance.send": "Send button",
   "acpira.conf.appearance.accent": "Accent color source",
-  "acpira.conf.appearance.motion": "Motion intensity",
+  "acpira.conf.appearance.motion": "Interface animation (transitions, entrances, shimmer): on / none. The working indicator keeps turning either way",
   "acpira.conf.appearance.fold": "Process-line folding: keep the whole turn in one fold showing the current action while running and the elapsed time when done, click to expand / fold read-only actions only (edits and commands stay visible)"
 }

@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, type HTMLAttributes, type ReactNode, type Ref } from 'react';
 import { cn } from './cn';
 import { cva } from 'class-variance-authority';
+import { Shimmer } from './Shimmer';
 
 // Scope entrance effects to live transcript rows; menus and restored history stay still.
 export const RowEntranceContext = createContext(false);
@@ -49,9 +50,9 @@ export function Row({ lead, trailing, children, interactive, as = 'div', classNa
   );
 }
 
-// Keep short labels intact; the adjacent target gives up space and truncates first.
-export function RowLabel({ children, className }: { children: ReactNode; className?: string }) {
-  return <span className={cn('shrink-0 whitespace-nowrap', className)}>{children}</span>;
+// Keep short labels intact; the adjacent target gives up space and truncates first. `shimmer` marks the running verb.
+export function RowLabel({ children, className, shimmer }: { children: ReactNode; className?: string; shimmer?: boolean }) {
+  return <Shimmer active={!!shimmer} className={cn('shrink-0 whitespace-nowrap', className)}>{children}</Shimmer>;
 }
 
 // Target text within a row (file name / command), one step brighter than the verb

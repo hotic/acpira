@@ -168,6 +168,9 @@
   --enter-dur: 300ms;
   --enter-stagger: 40ms;
   --enter-y: 4px;
+  /* Running-verb shimmer (ui/Shimmer): resting text colour and one full sweep */
+  --shimmer-base: #9a9a9a;
+  --shimmer-cycle: 2s;
 }
 
 /* Type scale: body 13/20 · line 13/18 · caption 12/16 · mono 12/18 at the default sizes; line heights keep their offset as the base grows.
@@ -279,8 +282,6 @@
 [data-accent="vscode"] { --accent: var(--focus); --accent-fg: #ffffff; }
 [data-accent="agent"][data-agent="devin"] { --accent: var(--agent-devin); --accent-fg: var(--agent-devin-fg); }
 [data-accent="agent"][data-agent="grok"]  { --accent: var(--agent-grok); --accent-fg: var(--agent-grok-fg); }
-
-[data-motion="full"] { --dur: 200ms; --dur-open: 300ms; --enter-dur: 480ms; --enter-stagger: 80ms; --enter-y: 10px; }
 
 /* Settings surface (SettingsShell): a second type scale (heading, 20px body leading) and its layout measures.
    Everything else comes from the tokens above; the shell itself is the @container the navigation collapses against. */

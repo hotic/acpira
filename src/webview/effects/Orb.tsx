@@ -1,13 +1,13 @@
 import { ThinkingOrb } from 'thinking-orbs';
-import { useAppearance } from '../appearance';
-import { ORB_SIZE, ORB_SPEED, ORB_STATE, type OrbKind } from './presets';
+import { ORB_SIZE, ORB_STATE, type OrbKind } from './presets';
 
-// 20px inline Orb, exactly filling the lead slot; theme follows the ancestor data-theme (the library reads it itself)
+// 20px inline Orb, exactly filling the lead slot; theme follows the ancestor data-theme (the library reads it itself).
+// Deliberately outside the motion switch: it is the one "still working" signal, a 20px canvas on its own layer, and
+// the library already draws a single static frame under the OS reduced-motion preference
 export function Orb({ kind, paused }: { kind: OrbKind; paused?: boolean }) {
-  const { motion } = useAppearance();
   return (
     <span className="flex size-lead items-center justify-center">
-      <ThinkingOrb state={ORB_STATE[kind]} size={ORB_SIZE} speed={ORB_SPEED[motion]} paused={paused || motion === 'none'} />
+      <ThinkingOrb state={ORB_STATE[kind]} size={ORB_SIZE} paused={paused} />
     </span>
   );
 }

@@ -371,11 +371,10 @@
         "acpira.appearance.motion": {
           "type": "string",
           "enum": [
-            "subtle",
-            "none",
-            "full"
+            "on",
+            "none"
           ],
-          "default": "subtle",
+          "default": "on",
           "description": "%acpira.conf.appearance.motion%"
         },
         "acpira.appearance.fold": {

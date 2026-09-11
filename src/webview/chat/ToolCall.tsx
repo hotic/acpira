@@ -48,7 +48,7 @@ export const ToolCall = memo(function ToolCall({ block, grouped = false }: { blo
     : stat || undefined;
 
   const label = <>
-    <RowLabel className={cn('tabular-nums', running && 'shimmer')}>
+    <RowLabel className="tabular-nums" shimmer={running}>
       {seconds !== undefined && block.status === 'in_progress' ? t('tool.runningSeconds', { s: seconds })
         : seconds !== undefined && seconds > 0 && block.status === 'completed' ? t('tool.completedSeconds', { s: seconds })
           : toolVerb(block)}

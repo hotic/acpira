@@ -30,6 +30,6 @@
   "acpira.conf.appearance.beamColor": "Beam 配色",
   "acpira.conf.appearance.send": "发送钮",
   "acpira.conf.appearance.accent": "强调色来源",
-  "acpira.conf.appearance.motion": "动效强度",
+  "acpira.conf.appearance.motion": "界面动画（过渡、入场与流光）：on 开启 / none 关闭。「正在处理」的指示环始终转动",
   "acpira.conf.appearance.fold": "过程行的折叠：整轮过程收在一栏，运行时显示当前动作，结束后显示用时，点击展开 / 只收只读动作（编辑与命令保持可见）"
 }

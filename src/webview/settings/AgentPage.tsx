@@ -9,6 +9,7 @@ import { IconButton } from '../ui/Button';
 import { QuotaBars } from '../ui/QuotaBars';
 import { AccountLabel } from '../ui/AccountLabel';
 import { LocalAccountQuota } from '../ui/LocalAccountQuota';
+import { Shimmer } from '../ui/Shimmer';
 import { t } from '../i18n';
 import { ModelMark } from '../chat/ModelMark';
 import { Dot, FactRow, Group, ItemRow, Note, PathText, Section, SectionAction, SectionDescription, SectionHead, SourceLink, Switch, shortPath } from './controls';
@@ -114,7 +115,7 @@ function AgentFacts({ agent, inventory, env }: { agent: AgentInfo; inventory?: A
     <Group>
       <FactRow label={t('settings.fact.binary')}>
         {inventory === undefined
-          ? <span className="shimmer font-sans text-2">{t('settings.agent.probing')}</span>
+          ? <Shimmer className="font-sans text-2">{t('settings.agent.probing')}</Shimmer>
           : inventory.binary
             ? <><Dot ok /><PathText path={inventory.binary} env={env} /></>
             : <><Dot ok={false} /><span className="truncate font-sans text-2 text-fg-2">{t('settings.agent.notInstalled', { command: agent.id })}</span></>}

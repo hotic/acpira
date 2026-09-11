@@ -5,6 +5,7 @@ import { Card } from '../ui/Card';
 import { Chip, IconButton } from '../ui/Button';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
+import { Shimmer } from '../ui/Shimmer';
 import { Switch as SwitchPrimitive } from '../ui/Switch';
 import { t } from '../i18n';
 
@@ -135,7 +136,7 @@ export function FactRow({ label, children }: { label: ReactNode; children: React
 
 // A faint single-line row inside a Group (empty states, notes)
 export function Note({ children, shimmer }: { children: ReactNode; shimmer?: boolean }) {
-  return <div className={cn(useSettingRow(), 'flex items-center text-fg-2', shimmer && 'shimmer')}>{children}</div>;
+  return <div className={cn(useSettingRow(), 'flex items-center text-fg-2')}><Shimmer active={!!shimmer}>{children}</Shimmer></div>;
 }
 
 export interface Option<V extends string> { value: V; label: string; icon?: ReactNode; hint?: string; disabled?: boolean }

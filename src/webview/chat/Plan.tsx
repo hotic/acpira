@@ -32,7 +32,7 @@ export function PlanCard({ entries, live }: { entries: PlanEntry[]; live?: boole
           <PlanCaret open={open} />
         </>}
       >
-        <RowLabel className={cn(live && current && 'shimmer')}>{t('plan.todoTitle')}</RowLabel>
+        <RowLabel shimmer={live && !!current}>{t('plan.todoTitle')}</RowLabel>
       </Row>
       <div ref={fade} className="scroll-fade scroll-thin scroll-stable max-h-plan overflow-y-auto [--scroll-fade-size:var(--gap)] [overflow-anchor:none]">
         <Collapsible.Root open={!open && !current}><Collapsible.Panel>

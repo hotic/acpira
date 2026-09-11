@@ -13,7 +13,8 @@ export interface Appearance {
   beamColor: 'mono' | 'ocean' | 'colorful';
   send: 'accent' | 'icon' | 'metal';
   accent: 'brand' | 'agent' | 'vscode';
-  motion: 'subtle' | 'none' | 'full';
+  // One switch: `none` kills transitions, entrances and the shimmer; the Orb (a canvas) keeps turning either way
+  motion: 'on' | 'none';
   // Codex keeps one manual process fold per turn: current activity while running, elapsed time when done;
   // cursor only folds runs of read-only actions, edits and commands stay visible
   fold: 'codex' | 'cursor';
@@ -43,7 +44,7 @@ export const AXES: AxisDef[] = [
   { key: 'beamColor', label: 'Beam color', group: 'Composer', options: [{ value: 'mono', label: 'mono' }, { value: 'ocean', label: 'ocean' }, { value: 'colorful', label: 'colorful' }] },
   { key: 'send', label: 'Send button', group: 'Composer', options: [{ value: 'accent', label: 'Accent' }, { value: 'icon', label: 'Icon only' }, { value: 'metal', label: 'MetalFx' }] },
   { key: 'accent', label: 'Accent', group: 'Ambience', options: [{ value: 'brand', label: 'Amber' }, { value: 'agent', label: 'Per-agent' }, { value: 'vscode', label: 'Follow VS Code' }] },
-  { key: 'motion', label: 'Motion', group: 'Ambience', options: [{ value: 'subtle', label: 'Subtle' }, { value: 'none', label: 'None' }, { value: 'full', label: 'Full' }] },
+  { key: 'motion', label: 'Motion', group: 'Ambience', options: [{ value: 'on', label: 'On' }, { value: 'none', label: 'None' }] },
   { key: 'fold', label: 'Folding', group: 'Conversation', options: [{ value: 'codex', label: 'Whole process' }, { value: 'cursor', label: 'Read-only only' }] },
 ];
 
@@ -66,7 +67,7 @@ export const BASE_APPEARANCE: Appearance = decodeAppearance('201110200302100', {
   density: 'airy', radius: '12', surface: 'tonal', font: 'inter',
   userMessage: 'block', toolLine: 'icon', thought: 'orb', sessions: 'dropdown',
   composer: 'island', beam: 'full', beamColor: 'mono', send: 'metal',
-  accent: 'agent', motion: 'subtle', fold: 'codex',
+  accent: 'agent', motion: 'on', fold: 'codex',
 });
 
 // Builds an Appearance from a bag of setting values (acpira.appearance.<axis>); invalid values fall back to the baseline

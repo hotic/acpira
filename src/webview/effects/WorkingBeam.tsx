@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { BorderBeam } from 'border-beam';
 import { useAppearance } from '../appearance';
-import { BEAM_BRIGHTNESS, BEAM_SIZE, BEAM_STRENGTH } from './presets';
+import { BEAM_SIZE, BEAM_STRENGTH } from './presets';
 
 export interface WorkingBeamProps {
   active: boolean;
@@ -38,7 +38,6 @@ export function WorkingBeam({ active, theme, children }: WorkingBeamProps) {
       borderRadius={radius}
       active={beam !== 'none' && active && motion !== 'none'}
       strength={BEAM_STRENGTH[motion]}
-      brightness={BEAM_BRIGHTNESS[motion]}
     >
       <div ref={hostRef}>{children}</div>
     </BorderBeam>

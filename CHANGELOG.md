@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.
 - Steer / interrupt follow-up modes remain planned. Mid-turn messages stay in the host-side queue.
 
+### Changed
+
+- The animation setting is a single on / off switch; the working indicator keeps turning either way. Stored `subtle` / `full` values fall back to on.
+
+### Fixed
+
+- Long sessions no longer drop frames while a verb shimmers or a process fold opens: the shimmer runs on the compositor instead of repainting the whole conversation every frame, and each exchange is paint-contained so a fold opening mid-thread does not re-walk the exchanges below it.
+
 ## [1.2.1] - 2026-09-10
 
 This release includes the IntelliJ support prepared in 1.2.0 and the following updates since the last stable GitHub Release, 1.1.2. JetBrains Marketplace availability remains subject to review.

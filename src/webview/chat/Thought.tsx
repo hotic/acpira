@@ -4,7 +4,7 @@ import type { ThoughtBlock } from '@shared/transcript';
 import { useAppearance } from '../appearance';
 import { t } from '../i18n';
 import { Disclosure } from '../ui/Disclosure';
-import { cn } from '../ui/cn';
+import { Shimmer } from '../ui/Shimmer';
 import { useScrollFade } from '../ui/useScrollFade';
 import { StreamText } from './StreamText';
 
@@ -18,9 +18,9 @@ export const Thought = memo(function Thought({ block }: { block: ThoughtBlock })
   const lead = toolLine === 'text' ? undefined : <Brain className="size-icon" strokeWidth={1.5} />;
   return (
     <Disclosure className="action-details" tone="action" lead={lead} body={<p ref={fade} className="max-h-(--thought-body-max) overflow-y-auto scroll-fade scroll-thin m-0 text-2 text-fg-2 whitespace-pre-wrap [overflow-wrap:anywhere]"><StreamText text={block.text.trimEnd()} streaming={block.streaming} /></p>}>
-      <span className={cn(block.streaming && 'shimmer')}>
+      <Shimmer active={!!block.streaming}>
         {block.streaming ? t('host.thinking') : t('thought.label')}
-      </span>
+      </Shimmer>
     </Disclosure>
   );
 });

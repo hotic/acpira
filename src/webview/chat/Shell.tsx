@@ -349,8 +349,11 @@ function Thread({ turns, running, wide, replayKey, blobUrl, onPermission }: Thre
     <div ref={ref} data-thread className="scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto px-page [container-type:size] [overflow-anchor:none]">
       <div key={replayKey} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-gap', wide && 'max-w-(--content-w)')}>
         {exchanges.map(exchange => (
-          // Positioned so the prompt's stuck-state sentinel can sit at the exchange's top edge.
-          <section key={exchange.key} className="relative flex min-w-0 flex-col gap-msg">
+          // Positioned so the prompt's stuck-state sentinel can sit at the exchange's top edge. Paint containment gives each exchange
+          // its own paint offset, so a fold opening mid-thread no longer re-walks every later exchange each frame (see AGENTS.md,
+          // transcript render budget); the clip it brings is pushed out by --hit on the sides and bottom, where row hit areas and
+          // card shadows reach past the column, and the top edge stays put for the sentinel.
+          <section key={exchange.key} className="relative -mx-hit -mb-hit flex min-w-0 flex-col gap-msg px-hit pb-hit contain-paint">
             {exchange.messages}
           </section>
         ))}
