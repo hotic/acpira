@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeFileHref, encodeFileHref, parseFileLink, rewriteFileHrefs, toFileHref } from '../src/webview/chat/fileLinks';
+import { decodeFileHref, encodeFileHref, parseFileLink, parseWrappedLink, rewriteFileHrefs, toFileHref } from '../src/webview/chat/fileLinks';
 
 describe('parseFileLink', () => {
   it.each([
@@ -34,6 +34,30 @@ describe('parseFileLink', () => {
     '',
   ])('rejects %s', text => {
     expect(parseFileLink(text)).toBeUndefined();
+  });
+});
+
+// GPT wraps whole Markdown links in backticks: `[Shell.tsx](file:///repo/src/Shell.tsx)`
+describe('parseWrappedLink', () => {
+  it.each([
+    ['[Shell.tsx](file:///repo/src/Shell.tsx)', { label: 'Shell.tsx', file: { path: '/repo/src/Shell.tsx' } }],
+    ['[Shell.tsx:240-284](file:///repo/src/Shell.tsx)', { label: 'Shell.tsx:240-284', file: { path: '/repo/src/Shell.tsx', line: 240 } }],
+    ['[a.ts:3](file:///repo/a.ts#L9)', { label: 'a.ts:3', file: { path: '/repo/a.ts', line: 9 } }],
+    ['[config](src/config.ts)', { label: 'config', file: { path: 'src/config.ts' } }],
+    ['[my file](<file:///repo/my%20file.ts>)', { label: 'my file', file: { path: '/repo/my file.ts' } }],
+  ])('unwraps %s', (text, expected) => {
+    expect(parseWrappedLink(text)).toEqual(expected);
+  });
+
+  it.each([
+    '[docs](https://example.com/a.ts)',
+    '[Shell.tsx](file:///repo/src/Shell.tsx',
+    '[](file:///repo/a.ts)',
+    'Shell.tsx',
+    'arr[0](x)',
+    '[a](not a path)',
+  ])('leaves %s alone', text => {
+    expect(parseWrappedLink(text)).toBeUndefined();
   });
 });
 

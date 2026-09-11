@@ -2,7 +2,7 @@ import { isValidElement, useContext, type ComponentProps, type KeyboardEvent, ty
 import type { ExtraProps } from 'streamdown';
 import { vscodeApi } from '../vscodeApi';
 import { cn } from '../ui/cn';
-import { OpenToolFileContext, decodeFileHref, parseFileLink } from './fileLinks';
+import { OpenToolFileContext, decodeFileHref, parseFileLink, parseWrappedLink } from './fileLinks';
 
 // Links in agent output: the webview cannot navigate, so clicks are forwarded to the host.
 // Workspace paths go through openFile; http(s)/mailto stay on openExternal.
@@ -46,7 +46,10 @@ export function Link({ href, children, node: _node, ...rest }: ComponentProps<'a
 
 export function InlineFileCode({ children, className, node: _node, ...rest }: ComponentProps<'code'> & ExtraProps) {
   const openFile = useContext(OpenToolFileContext);
-  const file = openFile ? parseFileLink(textOf(children)) : undefined;
+  const text = openFile ? textOf(children) : '';
+  // Some models wrap the whole `[label](file:///…)` link in backticks; show the label, open the target.
+  const wrapped = openFile ? parseWrappedLink(text) : undefined;
+  const file = wrapped?.file ?? (openFile ? parseFileLink(text) : undefined);
   if (!openFile || !file) return <code className={className} {...rest}>{children}</code>;
   const open = () => openFile(file.path, file.line);
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
@@ -57,7 +60,7 @@ export function InlineFileCode({ children, className, node: _node, ...rest }: Co
   };
   return (
     <code role="link" tabIndex={0} title={file.path} className={cn('cursor-pointer hover:underline focus-visible:underline', className)}
-      onClick={open} onKeyDown={onKeyDown} {...rest}>{children}</code>
+      onClick={open} onKeyDown={onKeyDown} {...rest}>{wrapped ? wrapped.label : children}</code>
   );
 }
 

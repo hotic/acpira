@@ -40,6 +40,22 @@ export function parseFileLink(text: string): FileLink | undefined {
   return parsePathAndLine(raw);
 }
 
+// A whole Markdown link inside inline code (`[Shell.tsx:12](file:///repo/Shell.tsx)`): the target is the file, the label is what was
+// meant to show. A line number comes from the target first, then from the label.
+export type WrappedLink = { label: string; file: FileLink };
+
+const WRAPPED_LINK = /^\[([^[\]]+)\]\(<?([^\s()<>]+)>?\)$/;
+
+export function parseWrappedLink(text: string): WrappedLink | undefined {
+  const hit = WRAPPED_LINK.exec(text.trim());
+  if (!hit) return;
+  const label = hit[1]!.trim();
+  const target = parseFileLink(hit[2]!);
+  if (!label || !target) return;
+  const line = target.line ?? parsePathAndLine(label)?.line;
+  return { label, file: line != null ? { path: target.path, line } : { path: target.path } };
+}
+
 export function toFileHref(url: string): string {
   const file = parseFileLink(url);
   return file ? encodeFileHref(file.path, file.line) : url;
