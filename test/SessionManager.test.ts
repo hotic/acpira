@@ -234,8 +234,9 @@ describe('SessionManager', () => {
     expect(await m2.knownControls('ghost')).toEqual([]);
   }, 20_000);
 
-  // The fake agent's process starts every session on model m1 / effort high / mode agent; what the user picked last must come back on the next new session
-  it('last chosen mode / config values are remembered per agent, replayed onto new sessions (also after a reload), and values the agent no longer offers are skipped', async () => {
+  // The fake agent's process starts every session on model m1 / effort high / mode agent; the option values picked last come back
+  // on the next new session. The mode does not: plan belongs to the conversation it was chosen in, not to every future one
+  it('last chosen config values are remembered per agent and replayed onto new sessions; the mode is never inherited', async () => {
     const { m, dir } = manager();
     await m.init();
     await m.newSession();
@@ -244,22 +245,25 @@ describe('SessionManager', () => {
     await m.handle({ type: 'setConfig', configId: 'model', value: 'm2' });
     await m.handle({ type: 'setConfig', configId: 'effort', value: 'low' });
     await m.handle({ type: 'setMode', id: 'plan' });
-    expect(m.lastSettings('fake')).toEqual({ modeId: 'plan', config: { model: 'm2', effort: 'low' } });
-    // a mode the agent switches by itself (Devin's "switch to bypass mode" permission answer arrives as current_mode_update) counts as the choice in effect
+    expect(m.lastSettings('fake')).toEqual({ config: { model: 'm2', effort: 'low' } });
+    // a mode the agent switches by itself is that session's business too — nothing lands in the shared defaults
     await m.handle({ type: 'send', text: 'mode:agent' });
-    expect(m.lastSettings('fake')).toEqual({ modeId: 'agent', config: { model: 'm2', effort: 'low' } });
+    expect(m.lastSettings('fake')).toEqual({ config: { model: 'm2', effort: 'low' } });
     await m.handle({ type: 'setMode', id: 'plan' });
     // (a session must have said something, or the next newSession replaces it instead of adding one — done above)
     await m.newSession();
     expect(controls().options.map(c => c.value)).toEqual(['m2', 'low']);
-    expect(controls().modeId).toBe('plan');
-    // the choices themselves are what a turn records, so the new session's first turn carries them
+    expect(controls().modeId).toBe('agent');
+    // the applied option values are what the turn records; the mode stays the agent default
     await m.handle({ type: 'send', text: 'inspect-history' });
     const reply = m.active()!.turns.at(-1)!;
-    expect(reply.role === 'agent' && reply.blocks.some(b => b.type === 'text' && b.markdown.includes('"model":"m2"') && b.markdown.includes('"mode":"plan"'))).toBe(true);
+    const markdown = reply.role === 'agent' ? reply.blocks.map(b => b.type === 'text' ? b.markdown : '').join('') : '';
+    expect(markdown).toContain('"model":"m2"');
+    expect(markdown).not.toContain('"mode":"plan"');
     await m.dispose();
 
-    // reload: the memory is on disk; a stale value (no longer in the agent's list) is passed over while the others still apply
+    // reload: the memory is on disk; a stale value (no longer in the agent's list) is passed over while the others still apply,
+    // and a modeId written by an older version is ignored rather than replayed
     const store = new TranscriptStore(dir);
     const prefs = await store.loadPrefs();
     prefs.lastSettings.fake = { modeId: 'plan', config: { model: 'gone', effort: 'low' } };
@@ -270,7 +274,7 @@ describe('SessionManager', () => {
     await m2.init();
     await m2.newSession();
     expect(m2.active()!.controls.options.map(c => c.value)).toEqual(['m1', 'low']);
-    expect(m2.active()!.controls.modeId).toBe('plan');
+    expect(m2.active()!.controls.modeId).toBe('agent');
     await m2.dispose();
   }, 30_000);
 

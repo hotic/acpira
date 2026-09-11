@@ -1,4 +1,4 @@
-import type { AccountInfo, AgentId, AgentInfo, ConfigControl, SessionSummary, SessionView } from '@shared/transcript';
+import type { AccountInfo, AgentId, AgentInfo, ConfigControl, SessionSummary, SessionView, TurnSettings } from '@shared/transcript';
 import type { AccountAction, AddAccountVia, EditTurnRequest, WebviewMsg } from '@shared/protocol';
 import { inWorkspace, type HiddenMap, type SessionScope } from '@shared/settings';
 import type { AgentRuntimeInfo } from '@shared/inventory';
@@ -89,9 +89,6 @@ export class SessionManager {
   private readonly pool: AgentPool;
   // Sessions seen running at the last onChange; a running → idle edge is the moment to re-read the account's quota
   private wasRunning = new Set<string>();
-  // Mode of each live session at the last onChange: a change that did not come through setMode (a permission answer like Devin's
-  // "switch to bypass mode", Kimi leaving plan after approval) is still the mode in effect, so it is remembered too
-  private modeSeen = new Map<string, string>();
   private prefs: SessionPrefs = { lastSettings: {} };
   // The default viewer: what the single-view API (activeId / active / handle / newSession …) operates on, e.g. in tests and scripts
   private mainViewer?: SessionViewer;
@@ -160,19 +157,17 @@ export class SessionManager {
     this.pool.ensure(agent, this.deps.cwd(), acc);
   }
 
-  // The mode / config values last chosen for an agent, replayed onto its next new session
-  lastSettings(agent: AgentId) { return this.prefs.lastSettings[agent]; }
-
-  private remember(s: AcpSession) {
-    this.prefs.lastSettings[s.agent] = captureTurnSettings(s.view().controls);
-    this.savePrefs(s.agent);
+  // The config values last chosen for an agent, replayed onto its next new session. The mode is deliberately not part of this:
+  // plan / yolo belong to the session they were picked in — an unrelated new session opens on the agent's default, and a
+  // modeId left in the prefs file by an older version is ignored here
+  lastSettings(agent: AgentId): TurnSettings | undefined {
+    const s = this.prefs.lastSettings[agent];
+    return s ? { config: s.config } : undefined;
   }
 
-  private rememberMode(agent: AgentId, modeId: string) {
-    const cur = this.prefs.lastSettings[agent];
-    if (cur?.modeId === modeId) return;
-    this.prefs.lastSettings[agent] = { config: {}, ...cur, modeId };
-    this.savePrefs(agent);
+  private remember(s: AcpSession) {
+    this.prefs.lastSettings[s.agent] = { config: captureTurnSettings(s.view().controls).config };
+    this.savePrefs(s.agent);
   }
 
   // Fire-and-forget disk writes surface their failures in the log rather than as unhandled rejections. Only this agent's entry goes to
@@ -365,16 +360,7 @@ export class SessionManager {
       if (s.accountId) this.deps.accounts?.refreshQuota(s.accountId, true).catch(e => this.deps.log(`quota refresh failed: ${msg(e)}`));
       else void this.deps.localAccounts?.refresh(s.agent, true);
     }
-    // Only ready sessions count, and the first ready sighting only records: the mode a session opens with (agent default, or a restored
-    // session's own) is not a new choice; a change after that is
-    const view = s.view();
-    if (view.status === 'ready') {
-      this.pool.ensure(s.agent, s.cwd, s.accountId);
-      const prev = this.modeSeen.get(s.id);
-      const mode = view.controls.modeId ?? '';
-      this.modeSeen.set(s.id, mode);
-      if (prev !== undefined && mode && mode !== prev) this.rememberMode(s.agent, mode);
-    }
+    if (s.view().status === 'ready') this.pool.ensure(s.agent, s.cwd, s.accountId);
   };
 
   private sessionDeps() {
@@ -400,13 +386,15 @@ export class SessionManager {
     const cur = this.current(v);
     if (cur && this.keepEmpty(cur, id, acc, cwd)) return;
     await this.dropEmptyCurrent(v);
+    // Inheritable settings are snapped before the session starts spawning: a choice made in another session while this one
+    // is still coming up must not land on it
+    const last = this.lastSettings(id);
     const s = AcpSession.fresh(id, cwd, this.sessionDeps(), acc);
-    s.previewControls(await this.knownControls(id), this.lastSettings(id));
+    s.previewControls(await this.knownControls(id), last);
     this.live.set(s.id, s);
     v.activeId = s.id;
     this.onChange(s);
     await s.start();
-    const last = this.lastSettings(id);
     if (last) await s.adoptControls(last);
   }
 
@@ -561,7 +549,6 @@ export class SessionManager {
     this.live.delete(id);
     live?.dispose();
     this.wasRunning.delete(id);
-    this.modeSeen.delete(id);
   }
 
   // Viewers left on a session that is gone move to the newest one in scope; with none, the first opens a new session and the rest follow onto it
