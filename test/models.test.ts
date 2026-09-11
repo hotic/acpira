@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyModelSources } from '../src/shared/modelSources';
 import type { SessionOption } from '../src/shared/transcript';
-import { familyHidden, findVariant, groupModels, modelBrand, optionBrand, parseModelName, setFamilyVisible, variantLabel, visibleOptions } from '../src/shared/models';
+import { familyHidden, findFusionVariant, findVariant, fusionLabel, groupModels, modelBrand, optionBrand, parseFusionName, parseModelName, setFamilyVisible, variantLabel, visibleOptions } from '../src/shared/models';
 
 // Real name samples issued by Devin (measured via pnpm probe devin), covering all suffix combinations
 const DEVIN = [
@@ -127,6 +127,72 @@ describe('model name parsing', () => {
     expect(visibleOptions(all, ['Claude Opus 5'], 'claude-opus-5-max').filter(o => o.name.startsWith('Claude Opus 5 ')).map(o => o.name)).toEqual(['Claude Opus 5 Max']);
     expect(visibleOptions(all, groupModels(all).map(f => f.name))).toBe(all);
     expect(visibleOptions(all, undefined)).toBe(all);
+  });
+});
+
+// Real Fusion samples from Devin 3000.10.21 (210 pairs on the wire): Fast is one pair-level switch — `-fast-` after the lead,
+// `-priority` on the sidekick — and the name marks it on whichever side supports it (a Fable lead never says Fast itself)
+const FUSION: SessionOption[] = [
+  ['fusion-claude-fable-5-1-high-sidekick-swe-2-medium', 'Fusion (Claude Fable 5.1 High + SWE-2 Medium)'],
+  ['fusion-claude-fable-5-1-high-sidekick-gpt-5-6-luna-high', 'Fusion (Claude Fable 5.1 High + GPT-5.6 Luna High Thinking)'],
+  ['fusion-claude-fable-5-1-high-fast-sidekick-gpt-5-6-luna-high-priority', 'Fusion (Claude Fable 5.1 High + GPT-5.6 Luna High Thinking Fast)'],
+  ['fusion-claude-fable-5-1-max-sidekick-swe-2-high', 'Fusion (Claude Fable 5.1 Max + SWE-2 High)'],
+  ['fusion-gpt-6-astra-high-sidekick-swe-2-medium', 'Fusion (GPT-6 Astra High Thinking + SWE-2 Medium)'],
+  ['fusion-gpt-6-astra-high-fast-sidekick-swe-2-medium', 'Fusion (GPT-6 Astra High Thinking Fast + SWE-2 Medium)'],
+  ['fusion-gpt-6-astra-high-sidekick-gpt-5-6-luna-high', 'Fusion (GPT-6 Astra High Thinking + GPT-5.6 Luna High Thinking)'],
+  ['fusion-gpt-6-astra-high-fast-sidekick-gpt-5-6-luna-high-priority', 'Fusion (GPT-6 Astra High Thinking Fast + GPT-5.6 Luna High Thinking Fast)'],
+  ['fusion-gpt-6-astra-low-sidekick-swe-2-medium', 'Fusion (GPT-6 Astra Low Thinking + SWE-2 Medium)'],
+  ['fusion-claude-opus-5-medium-sidekick-glm-5-2-high', 'Fusion (Claude Opus 5 Medium + GLM-5.2 High)'],
+].map(([id, name]) => ({ id: id!, name: name!, description: 'Pairs frontier intelligence with cost-efficient execution' }));
+
+describe('fusion pairs', () => {
+  it('parses the pair: lead family + effort, sidekick label without Thinking / Fast, Fast from either side', () => {
+    expect(parseFusionName('Fusion (GPT-6 Astra High Thinking Fast + GPT-5.6 Luna High Thinking Fast)'))
+      .toEqual({ family: 'Fusion', effort: 'High', fast: true, long: false, lead: 'GPT-6 Astra', sidekick: 'GPT-5.6 Luna High' });
+    expect(parseFusionName('Fusion (Claude Fable 5.1 High + GPT-5.6 Luna High Thinking Fast)')).toMatchObject({ lead: 'Claude Fable 5.1', effort: 'High', fast: true, sidekick: 'GPT-5.6 Luna High' });
+    expect(parseFusionName('Fusion (Claude Opus 5 Medium + GLM-5.2 High)')).toMatchObject({ lead: 'Claude Opus 5', effort: 'Medium', fast: false, sidekick: 'GLM-5.2 High' });
+    expect(parseFusionName('Claude Opus 5 Medium')).toBeUndefined();
+    // Not a pair: a plain model that happens to be called Fusion stays an ordinary name
+    expect(parseModelName('Fusion')).toEqual({ family: 'Fusion', effort: '', fast: false, long: false });
+  });
+
+  it('collapses every pair into one Fusion family with Devin as brand and the blurb as description', () => {
+    const fams = groupModels([...opts(DEVIN), ...FUSION]);
+    const fusion = fams.filter(f => f.fusion);
+    expect(fusion).toHaveLength(1);
+    const f = fusion[0]!;
+    expect(f).toMatchObject({ name: 'Fusion', brand: 'devin', description: 'Pairs frontier intelligence with cost-efficient execution', hasFast: true, hasLong: false });
+    expect(f.variants).toHaveLength(FUSION.length);
+    expect(f.efforts).toEqual(['Low', 'Medium', 'High', 'Max']);
+    expect(f.fusion).toEqual({ leads: ['Claude Fable 5.1', 'GPT-6 Astra', 'Claude Opus 5'], sidekicks: ['SWE-2 Medium', 'GPT-5.6 Luna High', 'SWE-2 High', 'GLM-5.2 High'] });
+    // Variants are lead-major, so a lead's pairs sit together in effort order
+    expect(f.variants.slice(0, 4).map(v => v.id)).toEqual(FUSION.slice(0, 4).map(o => o.id));
+    // Other families are untouched and a family with differing blurbs carries none
+    expect(fams.find(f => f.name === 'Claude Opus 5')!.variants).toHaveLength(5);
+    expect(fams.find(f => f.name === 'Claude Opus 5')!.description).toBeUndefined();
+  });
+
+  it('findFusionVariant: exact pair, then drop Fast, then the lead\'s first sidekick, then the nearest effort', () => {
+    const f = groupModels(FUSION)[0]!;
+    expect(findFusionVariant(f, { lead: 'GPT-6 Astra', effort: 'High', sidekick: 'GPT-5.6 Luna High', fast: true })?.id).toBe('fusion-gpt-6-astra-high-fast-sidekick-gpt-5-6-luna-high-priority');
+    // Fable + SWE-2 Medium has no Fast pair → the same pair without Fast
+    expect(findFusionVariant(f, { lead: 'Claude Fable 5.1', effort: 'High', sidekick: 'SWE-2 Medium', fast: true })?.id).toBe('fusion-claude-fable-5-1-high-sidekick-swe-2-medium');
+    // Switching the lead keeps effort, takes the first sidekick that lead offers at that effort
+    expect(findFusionVariant(f, { lead: 'GPT-6 Astra', effort: 'High', sidekick: 'SWE-2 High', fast: false })?.id).toBe('fusion-gpt-6-astra-high-sidekick-swe-2-medium');
+    // Opus has no High → nearest effort (Medium)
+    expect(findFusionVariant(f, { lead: 'Claude Opus 5', effort: 'High', sidekick: 'SWE-2 Medium', fast: false })?.id).toBe('fusion-claude-opus-5-medium-sidekick-glm-5-2-high');
+    // A model that is not a lead (SWE-2 → Fusion) lands on the first lead at that effort
+    expect(findFusionVariant(f, { lead: 'SWE-2', effort: 'Max', fast: false })?.id).toBe('fusion-claude-fable-5-1-max-sidekick-swe-2-high');
+  });
+
+  it('labels the pair with Fast trailing, and the one settings row hides all pairs at once', () => {
+    const f = groupModels(FUSION)[0]!;
+    expect(fusionLabel(f.variants.find(v => v.id === 'fusion-claude-fable-5-1-high-fast-sidekick-gpt-5-6-luna-high-priority')!)).toBe('Claude Fable 5.1 High + GPT-5.6 Luna High Fast');
+    expect(variantLabel(f.variants[0]!, f)).toBe('Claude Fable 5.1 High + SWE-2 Medium');
+    const all = [...opts(DEVIN), ...FUSION];
+    const shown = visibleOptions(all, ['Fusion'], 'claude-opus-5-max');
+    expect(shown).toHaveLength(all.length - FUSION.length);
+    expect(visibleOptions(all, ['Fusion'], FUSION[3]!.id).filter(o => o.id.startsWith('fusion-'))).toEqual([FUSION[3]]);
   });
 });
 

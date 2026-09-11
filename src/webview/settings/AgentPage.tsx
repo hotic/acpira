@@ -186,7 +186,9 @@ function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; co
   // Second line: what the family spans — its effort levels, Fast / 1M — so the row says which switch is being flipped
   const summary = (f: ModelFamily) => {
     if (f.variants.length === 1) return f.variants[0]!.name === f.name ? undefined : variantLabel(f.variants[0]!, f, { standard: t('composer.standard') });
-    const parts = [f.efforts.filter(Boolean).join(' / '), f.hasFast && 'Fast', f.hasLong && '1M'].filter(Boolean);
+    // Fusion is one row for all 210 pairs: the switch hides the whole feature, so the line says what it spans
+    const fusion = f.fusion && t('composer.fusionSummary', { leads: f.fusion.leads.length, sidekicks: f.fusion.sidekicks.length });
+    const parts = [fusion, f.efforts.filter(Boolean).join(' / '), f.hasFast && 'Fast', f.hasLong && '1M'].filter(Boolean);
     return parts.join(' · ');
   };
   if (!controls?.length) return <Section desc={t('settings.models.desc', { agent: agent.name })}><Note>{t('settings.models.none', { agent: agent.name })}</Note></Section>;

@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
 import type { ConfigControl } from '@shared/transcript';
-import { findVariant, groupModels, optionBrand, variantLabel, visibleOptions, type ModelFamily, type ModelVariant } from '@shared/models';
+import { findFusionVariant, findVariant, fusionLabel, groupModels, optionBrand, variantLabel, visibleOptions, type ModelFamily, type ModelVariant } from '@shared/models';
 import { presentReasoning, reasoningChip, reasoningVisible } from '@shared/composerControls';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
 import { Chip } from '../ui/Button';
-import { RadioPills, SwitchRow } from '../ui/Field';
+import { RadioPills, SelectRow, SwitchRow } from '../ui/Field';
 import { Popover } from '../ui/Popover';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { Command } from '../ui/Command';
@@ -56,14 +56,16 @@ export function ModelControl({ control, hidden, reasoning = [], onSetReasoning, 
   const families = useMemo(() => groupModels(c.options), [c.options]);
   const cur = families.find(f => f.variants.some(v => v.id === c.value));
   const curVar = cur?.variants.find(v => v.id === c.value);
-  const params = cur && curVar && (cur.efforts.length > 1 || curVar.effort || curVar.fast || curVar.long) ? variantLabel(curVar, cur, { standard: t('composer.standard') }) : undefined;
+  // A Fusion pair is too long for the chip: it reads "Fusion" and keeps the pair in the tooltip and the panel
+  const params = cur && curVar && !curVar.lead && (cur.efforts.length > 1 || curVar.effort || curVar.fast || curVar.long) ? variantLabel(curVar, cur, { standard: t('composer.standard') }) : undefined;
   const levels = reasoning.map(reasoningChip);
   // Provider identity stays in the expanded list; the chip reads as one model name.
   const meta = [params, ...levels].filter(Boolean).join(' ') || undefined;
+  const title = [cur?.name ?? c.name, curVar?.lead ? fusionLabel(curVar) : meta].filter(Boolean).join(' ');
   return (
     <Popover.Root open={open} onOpenChange={setOpen} onOpenLifecycle={onOpenChange}>
       <Popover.Trigger render={
-        <Chip narrow="text" title={[cur?.name ?? c.name, meta].filter(Boolean).join(' ')} meta={meta} icon={<ModelMark family={cur?.name ?? c.name} brand={cur?.brand} />}>
+        <Chip narrow="text" title={title} meta={meta} icon={<ModelMark family={cur?.name ?? c.name} brand={cur?.brand} />}>
           {cur?.name ?? c.options.find(o => o.id === c.value)?.name ?? c.name}
         </Chip>
       } />
@@ -101,11 +103,17 @@ interface ModelPanelProps {
 function ModelPanel({ families, cur, curVar, onSelect, close, reasoning = [], onSetReasoning }: ModelPanelProps) {
   const pickFamily = (key: string) => {
     const f = families.find(x => x.key === key);
-    if (f) onSelect(((curVar && findVariant(f, curVar.effort, curVar.fast, curVar.long)) ?? f.variants[0]!).id);
+    if (!f) return;
+    // Into Fusion: the model in use becomes the lead when it is one (Claude Opus 5 High → Fusion (Claude Opus 5 High + …)); out of it: the lead's effort carries over
+    const next = f.fusion
+      ? findFusionVariant(f, { lead: curVar?.lead ?? cur?.name ?? '', effort: curVar?.effort ?? '', sidekick: curVar?.sidekick, fast: curVar?.fast ?? false })
+      : curVar && findVariant(f, curVar.effort, curVar.fast, curVar.long);
+    onSelect((next ?? f.variants[0]!).id);
     close();
   };
   const shown = reasoning.filter(reasoningVisible);
   const showParams = !!(cur && curVar && cur.variants.length > 1);
+  const twoLine = families.some(f => f.source);
   return (
     <>
       <Command.Root items={families} value={cur ?? null} itemToStringLabel={f => [f.name, f.source].filter(Boolean).join(' ')}
@@ -113,17 +121,40 @@ function ModelPanel({ families, cur, curVar, onSelect, close, reasoning = [], on
         <Command.Input visible={families.length >= SEARCH_FROM} />
         <Command.Empty />
         <Command.List searchable={families.length >= SEARCH_FROM}>
-          {(f: ModelFamily) => <Command.Item key={f.key} value={f} onClick={() => pickFamily(f.key)}
-            className={families.some(family => family.source) ? 'min-h-0 py-1.5' : undefined}>
+          {(f: ModelFamily) => <Command.Item key={f.key} value={f} title={f.description} onClick={() => pickFamily(f.key)} className={twoLine ? 'min-h-0 py-1.5' : undefined}>
             <OptionContent icon={<ModelMark family={f.name} brand={f.brand} />} description={f.source} checked={f === cur} checkSlot={!!cur}>{f.name}</OptionContent>
           </Command.Item>}
         </Command.List>
       </Command.Root>
       {(showParams || shown.length > 0) && <div className="mt-1 flex flex-col border-t border-line pt-1">
-        {showParams && <ModelParams family={cur!} variant={curVar!} onSelect={onSelect} />}
+        {showParams && (cur!.fusion ? <FusionParams family={cur!} variant={curVar!} onSelect={onSelect} /> : <ModelParams family={cur!} variant={curVar!} onSelect={onSelect} />)}
         {shown.map(c => <ReasoningParams key={c.id} control={c} onChange={value => onSetReasoning?.(c.id, value)} />)}
       </div>}
     </>
+  );
+}
+
+// Devin's Fusion pair as the four controls its own picker has: Lead (menu), Effort (pills of what that lead offers), Sidekick (menu),
+// Fast (switch). Every change resolves to a real option through findFusionVariant, so a combination the agent doesn't offer lands on
+// the nearest one instead of failing; a sidekick or Fast the current lead cannot take is disabled rather than hidden
+function FusionParams({ family: f, variant: v, onSelect }: { family: ModelFamily; variant: ModelVariant; onSelect: (id: string) => void }) {
+  const { leads, sidekicks } = f.fusion!;
+  const lead = v.lead ?? leads[0] ?? '';
+  const ofLead = f.variants.filter(x => x.lead === lead);
+  const efforts = f.efforts.filter(e => ofLead.some(x => x.effort === e));
+  const pick = (want: Partial<{ lead: string; effort: string; sidekick: string; fast: boolean }>) => {
+    const hit = findFusionVariant(f, { lead, effort: v.effort, sidekick: v.sidekick, fast: v.fast, ...want });
+    if (hit) onSelect(hit.id);
+  };
+  const offers = (sidekick: string) => ofLead.some(x => x.effort === v.effort && x.sidekick === sidekick);
+  const canFast = ofLead.some(x => x.effort === v.effort && x.sidekick === v.sidekick && x.fast === !v.fast);
+  return (
+    <div className="flex flex-col">
+      <SelectRow label={t('composer.lead')} options={leads.map(l => ({ value: l, label: l }))} value={lead} onChange={l => pick({ lead: l })} />
+      {efforts.length > 1 && <EffortField options={efforts.map(e => ({ value: e, label: e || t('composer.standard') }))} value={v.effort} onChange={e => pick({ effort: e })} />}
+      <SelectRow label={t('composer.sidekick')} options={sidekicks.map(s => ({ value: s, label: s, disabled: !offers(s) }))} value={v.sidekick ?? ''} onChange={s => pick({ sidekick: s })} />
+      {f.hasFast && <SwitchRow label="Fast" checked={v.fast} disabled={!canFast} onChange={on => pick({ fast: on })} />}
+    </div>
   );
 }
 
