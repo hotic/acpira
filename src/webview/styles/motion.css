@@ -63,9 +63,12 @@
 @keyframes acp-pulse { 50% { opacity: 0.3; } }
 @keyframes acp-fade-in { from { opacity: 0; } }
 
-/* acpira.appearance.motion = none: the same kill switch as the OS preference. The Orb is a canvas and keeps turning. */
+/* acpira.appearance.motion = none: the same kill switch as the OS preference. Two live-status signals
+   survive it: the Orb (a canvas, simply unaffected) and the session list's working ring below. */
 [data-motion="none"] * { transition: none !important; animation: none !important; }
 [data-motion="none"] *::before, [data-motion="none"] *::after { transition: none !important; animation: none !important; }
+/* The working ring is the list's only "still running" signal (a list item has no verb to shimmer), so it keeps turning. */
+[data-motion="none"] .live-spin { animation: var(--animate-spin) !important; }
 [data-motion="none"] .shimmer { color: var(--fg-2); }
 [data-motion="none"] .shimmer-sweep { display: none; }
 @media (prefers-reduced-motion: reduce) {

@@ -364,7 +364,7 @@ export const en = {
   'settings.theme.light': 'Light',
   'settings.theme.dark': 'Dark',
   'settings.motion': 'Animation',
-  'settings.motion.desc': 'Transitions, entrances and the running-verb shimmer. The working indicator keeps turning; always off while the system asks to reduce motion.',
+  'settings.motion.desc': 'Transitions, entrances and the running-verb shimmer.',
   'settings.diffMarkers': 'Diff markers',
   'settings.diffMarkers.desc': 'Show changed lines with color or with +/− signs alone.',
   'settings.diffMarkers.color': 'Color',

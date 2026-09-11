@@ -14,7 +14,7 @@ const STATE_DOT: Record<Exclude<NonNullable<SessionSummary['state']>, 'working'>
 };
 
 function StateMark({ state }: { state: NonNullable<SessionSummary['state']> }) {
-  if (state === 'working') return <LoaderCircle className="size-3 animate-spin text-fg-2" strokeWidth={2} aria-label={t('session.state.working')} />;
+  if (state === 'working') return <LoaderCircle className="size-3 animate-spin live-spin text-fg-2" strokeWidth={2} aria-label={t('session.state.working')} />;
   return <span className={cn('size-1.5 rounded-full', STATE_DOT[state])} />;
 }
 
