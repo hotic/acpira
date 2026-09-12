@@ -1,6 +1,6 @@
 # Publishing Acpira
 
-Publishing a stable GitHub Release triggers `.github/workflows/release.yml`. The workflow checks the tag against `package.json`, installs locked dependencies, runs type checks and tests, and builds one VSIX. It then builds the IntelliJ plugin at the same version (`idea/build.gradle.kts` reads `package.json`): tests, plugin verifier the universal Marketplace zip and six per-platform zips (`acpira-<version>-<os>-<arch>.zip`, each with its Node.js runtime). Separate jobs publish the VSIX to Visual Studio Marketplace and Open VSX, upload the universal zip to the JetBrains Marketplace, and attach everything, with SHA-256 checksums, to the GitHub Release.
+Publishing a stable GitHub Release triggers `.github/workflows/release.yml`. The workflow checks the tag against `package.json`, installs locked dependencies, runs type checks and tests, and builds one VSIX. It then builds the IntelliJ plugin at the same version (`idea/build.gradle.kts` reads `package.json`): tests, Plugin Verifier, the universal Marketplace zip and six per-platform zips (`acpira-<version>-<os>-<arch>.zip`, each with its Node.js runtime). Separate jobs publish the VSIX to Visual Studio Marketplace and Open VSX, upload the universal zip to the JetBrains Marketplace, and attach everything, with SHA-256 checksums, to the GitHub Release.
 
 ## One-time credentials
 
@@ -35,6 +35,6 @@ Drafts, standalone tag pushes, and prereleases do not publish to the marketplace
 
 Use **Run workflow** with `ref: main` and publishing unchecked to run checks and download the resulting `extension-vsix` and `intellij-plugin` artifacts without publishing. This requires no marketplace secrets.
 
-If one marketplace fails, fix its credential or the reported error and choose **Re-run failed jobs**. The VS Code publishers use `--skip-duplicate` and the JetBrains job skips variants already listed, so an already-published version is not uploaded again. Existing GitHub Release assets are also retained. These retries do not replace an existing version; package changes require a new version and tag.
+If one marketplace fails, fix its credential or the reported error and choose **Re-run failed jobs**. The VS Code publishers use `--skip-duplicate` and the JetBrains job skips the universal version when it is already listed, so an already-published version is not uploaded again. Existing GitHub Release assets are also retained. These retries do not replace an existing version; package changes require a new version and tag.
 
 To publish an existing stable Release manually, use **Run workflow**, set `ref` to its exact tag, and check the publishing option. The Release must already exist and its tag must match the version at that commit. This also supports a Release created before the workflow was installed.

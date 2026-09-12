@@ -284,7 +284,7 @@ val buildPluginVariants by tasks.registering {
 val buildMarketplacePlugin by tasks.registering(Zip::class) {
     group = "build"
     description = "Builds the cross-platform Marketplace package with all six Node.js runtimes"
-    from(tasks.buildPlugin.flatMap { it.archiveFile }.map { zipTree(it) })
+    from(zipTree(tasks.buildPlugin.flatMap { it.archiveFile }))
     for ((variant, runtime) in fetchNode) {
         from(runtime.flatMap { it.out }.map { it.dir("node") }) {
             into(pluginName.map { "$it/node/${variant.replaceFirst("_", "-")}" })

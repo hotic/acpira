@@ -10,13 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.
 - Steer / interrupt follow-up modes remain planned. Mid-turn messages stay in the host-side queue.
 
+## [1.3.0] - 2026-09-12
+
+### Added
+
+- IntelliJ Remote Development support: the conversation UI runs in JetBrains Client while the sidecar, agent CLIs, settings and project access run on the remote host. File links open remote files at the requested line; directory links select the directory in the project tree.
+- Text attachment previews for drafts and conversation history. Large pasted text becomes an attachment, and file attachments in messages open in the editor.
+- Devin Fusion model controls group lead model, reasoning effort, sidekick and Fast options into one model picker.
+- Reconnect action for requests that repeatedly fail over a live agent connection, preserving the native session and its selected settings.
+
 ### Changed
 
-- The animation setting is a single on / off switch; the working indicator keeps turning either way. Stored `subtle` / `full` values fall back to on.
+- JetBrains Marketplace uses one universal plugin package with Node.js runtimes for all six supported OS and CPU combinations. Each backend selects its own runtime, including when the client runs on another platform. Smaller platform-specific archives remain available on GitHub.
+- Context usage consistently reflects the agent-reported model window; retained history estimates and the automatic-compaction threshold are shown separately.
+- The live plan overlays the conversation without shrinking its scroll area. Animation is a single on/off setting; working indicators continue rotating in both modes.
 
 ### Fixed
 
-- Long sessions no longer drop frames while a verb shimmers or a process fold opens: the shimmer runs on the compositor instead of repainting the whole conversation every frame, and each exchange is paint-contained so a fold opening mid-thread does not re-walk the exchanges below it.
+- JCEF loads correctly in 2026.2 and later Clients while retaining 2026.1 compatibility through separate browser adapters.
+- Grok context polling continues through quiet streaming intervals; Kimi's delayed usage update is considered before queued prompts and automatic compaction. Context usage refreshes after background compaction completes.
+- Session actions remain targeted to their original conversation, concurrent views share one session load, and new sessions use the agent's default mode. Restore failures retain actionable error states, and continuing in a new session keeps the selected agent.
+- Long conversations avoid continuous shimmer repainting and excessive repaint work when process folds open. Pre-tool content remains visible during folding, streaming thoughts follow their own scroll tail, and file links wrapped in inline code remain clickable.
 
 ## [1.2.1] - 2026-09-10
 
