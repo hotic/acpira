@@ -26,6 +26,48 @@ async function until(predicate: () => boolean) {
 }
 
 describe('background compaction queue', () => {
+  it('kimi: cancellation releases a pending usage refresh without triggering late compaction', async () => {
+    const { session, logs } = fixture('kimi', true);
+    try {
+      await session.start();
+      const prompt = session.prompt('delayed-usage');
+      await until(() => logs.some(line => line.includes('prompt done:')));
+      await session.cancel();
+      await prompt;
+      expect(session.isRunning).toBe(false);
+      await until(() => session.view().usage?.used === 350_000);
+      expect(session.view().turns.some(turn => turn.role === 'user' && turn.auto)).toBe(false);
+      expect(session.view().turns.at(-1)).toMatchObject({ role: 'agent', stop: 'cancelled' });
+    } finally { session.dispose(); }
+  });
+  it('kimi: waits for the post-response usage before dispatching a queued follow-up', async () => {
+    const { session, logs } = fixture('kimi', true);
+    try {
+      await session.start();
+      const prompt = session.prompt('delayed-usage');
+      await until(() => logs.some(line => line.includes('prompt done:')));
+      await session.prompt('follow-up');
+      expect(session.view().turns.filter(turn => turn.role === 'user').map(turn => turn.text)).toEqual(['delayed-usage']);
+      await until(() => logs.filter(line => line.includes('prompt done:')).length === 2);
+      await session.setConfig('effort', 'high');
+      await prompt;
+      await until(() => !session.isRunning);
+      expect(session.view().turns.filter(turn => turn.role === 'user').map(turn => turn.text)).toEqual(['delayed-usage', '/compact', 'follow-up']);
+    } finally { session.dispose(); }
+  });
+  it.each(['devin', 'kimi'])('%s: evaluates usage arriving after the prompt acknowledgement', async agent => {
+    const { session, logs } = fixture(agent, true);
+    try {
+      await session.start();
+      await session.prompt('delayed-usage');
+      if (agent === 'devin') expect(session.isRunning).toBe(false);
+      await until(() => logs.some(line => line.includes('auto /compact')));
+      expect(session.view().turns.filter(turn => turn.role === 'user' && turn.auto)).toHaveLength(1);
+      await until(() => logs.filter(line => line.includes('prompt done:')).length === 2);
+      await session.setConfig('effort', 'high');
+      await until(() => !session.isRunning);
+    } finally { session.dispose(); }
+  });
   it.each(['devin', 'kimi', 'structured'])('%s: holds a follow-up after the compact RPC returns until compaction completes', async agent => {
     const { session: s, logs } = fixture(agent);
     try {

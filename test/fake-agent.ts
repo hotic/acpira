@@ -296,6 +296,20 @@ const app = acp.agent({ name: 'fake-agent' })
       return { stopReason: 'end_turn' };
     }
 
+    if (text === 'delayed-usage') {
+      await send({ sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'compact', description: 'compact it' }] });
+      setTimeout(() => { usedTokens = 350_000; void send({ sessionUpdate: 'usage_update', used: usedTokens, size: 1_000_000 }); }, 150);
+      return { stopReason: 'end_turn' };
+    }
+
+    if (text === 'quiet-context') {
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Working' } });
+      await new Promise(resolve => setTimeout(resolve, 1_300));
+      usedTokens = 42_000;
+      await new Promise(resolve => setTimeout(resolve, 1_500));
+      return { stopReason: 'end_turn' };
+    }
+
     if (text.includes('slow')) {
       for (let i = 0; i < 50; i++) {
         if (cancelled.has(sid)) return { stopReason: 'cancelled' };
@@ -331,6 +345,7 @@ const app = acp.agent({ name: 'fake-agent' })
     await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'world' } });
     await send({ sessionUpdate: 'session_info_update', title: 'Fake title' });
     await send({ sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'compact', description: 'compact it' }] });
+    if (backgroundStyle === 'kimi') await send({ sessionUpdate: 'usage_update', used: usedTokens, size: 1_000_000 });
     return { stopReason: 'end_turn' };
   });
 

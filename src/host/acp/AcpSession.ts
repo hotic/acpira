@@ -107,8 +107,11 @@ export class AcpSession {
   private modelSources: ModelSources = {};
   private usageRevision = 0;
   private usageNotifications = false;
+  private autoCompactEligible = false;
   private grokUsageUnavailable = false;
   private grokUsageTimer?: ReturnType<typeof setTimeout>;
+  private grokUsageRequest?: Promise<void>;
+  private finishUsageRefresh?: (cancelled?: boolean) => void;
   private syncingThought = false;
   private rev = 0;
 
@@ -258,6 +261,7 @@ export class AcpSession {
 
   private async connect() {
     this.usageNotifications = false;
+    this.autoCompactEligible = false;
     this.grokUsageUnavailable = false;
     this.clearGrokUsageTimer();
     const def = this.deps.registry.get(this.agent);
@@ -460,6 +464,15 @@ export class AcpSession {
   // on the wire so the ring is not stuck on the session-start snapshot.
   private async refreshGrokUsage() {
     this.clearGrokUsageTimer();
+    // Serialize polling with the final refresh so slow replies cannot continually
+    // invalidate one another or replace a newer snapshot after the turn settles.
+    const request = (this.grokUsageRequest ?? Promise.resolve()).then(() => this.readGrokUsage());
+    this.grokUsageRequest = request;
+    try { await request; }
+    finally { if (this.grokUsageRequest === request) this.grokUsageRequest = undefined; }
+  }
+
+  private async readGrokUsage() {
     if (this.agent !== 'grok' || !this.proc || !this.acpSessionId || this.status !== 'ready'
       || this.usageNotifications || this.grokUsageUnavailable) return;
     const proc = this.proc, sessionId = this.acpSessionId, state = this.state;
@@ -479,10 +492,10 @@ export class AcpSession {
   }
 
   private scheduleGrokUsage() {
-    if (this.agent !== 'grok' || this.usageNotifications || this.grokUsageUnavailable || this.grokUsageTimer) return;
+    if (this.agent !== 'grok' || !this.phase.running || this.usageNotifications || this.grokUsageUnavailable || this.grokUsageTimer || this.grokUsageRequest) return;
     this.grokUsageTimer = setTimeout(() => {
       this.grokUsageTimer = undefined;
-      void this.refreshGrokUsage();
+      void this.refreshGrokUsage().finally(() => this.scheduleGrokUsage());
     }, GROK_USAGE_INTERVAL_MS);
   }
 
@@ -490,6 +503,21 @@ export class AcpSession {
     if (!this.grokUsageTimer) return;
     clearTimeout(this.grokUsageTimer);
     this.grokUsageTimer = undefined;
+  }
+
+  private waitForKimiUsage(revision: number): Promise<boolean> | undefined {
+    if (this.agent !== 'kimi' || !this.deps.compaction?.().auto || this.usageRevision !== revision) return;
+    // Kimi emits its context snapshot asynchronously after end_turn. Keep the
+    // queue parked until that event, with a bound for models absent from its catalog.
+    return new Promise(resolve => {
+      const finish = (cancelled = false) => {
+        clearTimeout(timer);
+        if (this.finishUsageRefresh === finish) this.finishUsageRefresh = undefined;
+        resolve(cancelled);
+      };
+      const timer = setTimeout(() => { this.log('context refresh unavailable after prompt'); finish(); }, 5_000);
+      this.finishUsageRefresh = finish;
+    });
   }
 
   private fail(e: unknown) {
@@ -553,6 +581,7 @@ export class AcpSession {
       }
     }
     this.phase.running = true;
+    this.autoCompactEligible = false;
     this.phase.staging = true;
     this.phase.stagingAborted = false;
     // An automatic /compact is not a user message and must not reorder the list
@@ -601,6 +630,8 @@ export class AcpSession {
       ...(name ? { command: { name } } : {}) };
     this.state.turns.push(agentTurn);
     this.touch();
+    this.scheduleGrokUsage();
+    const usageBeforePrompt = this.usageRevision;
     let stop: acp.StopReason = 'cancelled';
     try {
       const r = await this.proc!.agent.request(acp.methods.agent.session.prompt, { sessionId: this.acpSessionId!, prompt: prepared.blocks });
@@ -618,11 +649,14 @@ export class AcpSession {
         if ((auto || compacting) && completion.tokensAfter !== undefined && this.state.usage) {
           this.state.usage = { ...this.state.usage, used: completion.tokensAfter };
         }
+        if (!auto && !name && await this.waitForKimiUsage(usageBeforePrompt)) stop = 'cancelled';
+        if (this.status !== 'ready') return;
       }
       await this.refreshGrokUsage();
       if (agentTurn.command && stop === 'end_turn') Object.assign(agentTurn.command, commandChanges(before, this.state.controls));
       this.settle(stop);
     } catch (e) {
+      stop = 'cancelled';
       // The error stays on the turn (the webview shows it as a card, history keeps the row); the session itself is still usable, so status stays ready —
       // except when the peer says the credential is gone, which is the Notice's business
       this.log(`prompt failed: ${msg(e)}`);
@@ -638,6 +672,7 @@ export class AcpSession {
     }
     // A hand-typed /compact counts as a compaction too; likewise record the usage right after it
     if (auto || compacting) this.compactedAt = this.state.usage?.used ?? 0;
+    this.autoCompactEligible = !auto && !compacting && stop === 'end_turn';
     this.touch();
     this.afterPrompt(auto, stop);
   }
@@ -689,6 +724,8 @@ export class AcpSession {
   }
 
   private settle(stop: acp.StopReason, error?: TurnError) {
+    this.finishUsageRefresh?.();
+    this.clearGrokUsageTimer();
     this.perms.bumpEpoch();
     this.compactionCompletion?.close();
     this.compactionCompletion = undefined;
@@ -708,6 +745,7 @@ export class AcpSession {
 
   async cancel(): Promise<void> {
     if (!this.phase.running || !this.proc) return;
+    this.finishUsageRefresh?.(true);
     this.perms.bumpEpoch();
     this.log('cancel');
     // Nothing is on the wire yet: just make sure the prompt being staged never goes out
@@ -881,6 +919,7 @@ export class AcpSession {
     if (u.sessionUpdate === 'usage_update') {
       this.usageNotifications = true;
       this.usageRevision++;
+      this.finishUsageRefresh?.();
       this.clearGrokUsageTimer();
     } else if (this.phase.running) {
       this.scheduleGrokUsage();
@@ -898,5 +937,11 @@ export class AcpSession {
     const last = this.state.turns[this.state.turns.length - 1];
     if (this.phase.running && last?.role === 'agent') last.activity = activityOf(this.state.turns);
     this.touch();
+    // Kimi reports usage after the prompt response. Re-evaluate only the live,
+    // successfully completed user turn, never replayed history or compact output.
+    if (!this.replaying && !this.phase.running && this.autoCompactEligible
+      && (u.sessionUpdate === 'usage_update' || u.sessionUpdate === 'available_commands_update')) {
+      this.afterPrompt(false, 'end_turn');
+    }
   }
 }

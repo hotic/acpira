@@ -148,6 +148,26 @@ describe('HostRuntime + BridgeCore', () => {
     runtime.detachView(other);
   });
 
+  it('uses live platform compaction settings and publishes identical usage to sidebar and editor', async () => {
+    const { core, posted, runtime, init } = await setup();
+    const second: HostMsg[] = [];
+    const other = runtime.attachView({ host: 'editor', post: message => second.push(message) });
+    await other.handle({ type: 'ready' });
+    const sessionId = init.state.active!.id;
+    await other.handle({ type: 'selectSession', id: sessionId });
+    await core.handle({ type: 'setSetting', key: 'compactAtTokens', value: 500_000 });
+    await core.handle({ type: 'send', sessionId, text: 'big' });
+    const latest = (messages: HostMsg[]) => messages.filter((message): message is Extract<HostMsg, { type: 'session' }> => message.type === 'session' && message.session.id === sessionId).at(-1)?.session;
+    await until(() => latest(posted)?.usage?.used === 401234 && latest(second)?.usage?.used === 401234);
+    expect(latest(posted)?.turns.some(turn => turn.role === 'user' && turn.auto)).toBe(false);
+    await other.handle({ type: 'setSetting', key: 'compactAtTokens', value: 300_000 });
+    await other.handle({ type: 'send', sessionId, text: 'hi' });
+    await until(() => latest(posted)?.usage?.used === 80247 && latest(second)?.usage?.used === 80247);
+    expect(latest(posted)?.turns.filter(turn => turn.role === 'user' && turn.auto)).toHaveLength(1);
+    expect(latest(second)?.usage).toEqual(latest(posted)?.usage);
+    runtime.detachView(other);
+  });
+
   it('follows the platform\'s settings change events: appearance pushes, agents swap the registry, other keys re-emit settings', async () => {
     const { core, posted, settings, change, runtime } = await setup();
     settings.set('appearance.motion', 'none');
