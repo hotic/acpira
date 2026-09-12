@@ -39,6 +39,8 @@ export class WebviewBridge implements vscode.Disposable {
     const csp = [
       "default-src 'none'",
       `img-src ${this.webview.cspSource} https: data:`,
+      // Attachment text blobs are fetched for the peek card from the same source the <img> tags already load them from
+      `connect-src ${this.webview.cspSource}`,
       `style-src ${this.webview.cspSource} 'unsafe-inline'`,
       `font-src ${this.webview.cspSource}`,
       `script-src 'nonce-${nonce}' 'wasm-unsafe-eval'`,

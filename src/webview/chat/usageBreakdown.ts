@@ -23,11 +23,9 @@ export function estTokens(text: string): number {
   return Math.ceil(cjk * 0.7 + (text.length - cjk) / 4);
 }
 
-// Visible context window: auto-compact's threshold is the budget the user set, so it caps the
-// agent-reported size; a smaller model window still wins
-export function usageWindow(size: number, compactAt?: number): number {
-  if (!compactAt || compactAt <= 0) return size;
-  return Math.min(size, compactAt);
+// The compaction policy does not change the model's context window.
+export function usageWindow(size: number): number {
+  return size;
 }
 
 // A budget strictly inside the agent window, shown as a marker — not a replacement for `size`
@@ -93,13 +91,10 @@ export function conversationTokens(turns: Turn[]): number {
   return n;
 }
 
-// While a turn is in flight the transcript estimate is a live floor, so a stale agent snapshot
-// cannot pin the ring. Idle and compacted turns keep the agent total.
-export function liveUsage(usage: Usage, turns: Turn[], running?: boolean): Usage {
-  if (!running) return usage;
-  const local = conversationTokens(turns);
-  if (local <= usage.used) return usage;
-  return { ...usage, used: local };
+// Retained UI history includes compacted messages and unbounded tool output.
+// It cannot measure the native context, even while the agent is running.
+export function liveUsage(usage: Usage, _turns: Turn[], _running?: boolean): Usage {
+  return usage;
 }
 
 // Buckets the transcript into four conversation usage categories by block type, with the remainder derived as "system & other";

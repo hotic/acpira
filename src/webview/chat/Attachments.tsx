@@ -1,10 +1,12 @@
-import { useState, type ReactNode } from 'react';
+import { useContext, useState, type ReactNode } from 'react';
 import { FileText, Image as ImageIcon, X } from 'lucide-react';
 import type { Attachment, Draft } from '@shared/transcript';
 import { imageMimeOf } from '@shared/attachments';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
 import { Lightbox } from './Lightbox';
+import { TextPeek } from './TextPeek';
+import { OpenToolFileContext, parseFileLink } from './fileLinks';
 
 // An image open in the Lightbox: the source to show and the name for labels
 interface Preview {
@@ -12,10 +14,67 @@ interface Preview {
   name?: string;
 }
 
+// A text chip opened for reading; `url` doubles as the race token — a blob answer lands only while its peek is still the one on screen
+interface Peek {
+  name: string;
+  url?: string;
+  text?: string;
+  failed?: boolean;
+}
+
+// Blob names are content hashes, so a fetched text never changes: reads are cached, failures are not
+const blobTexts = new Map<string, Promise<string>>();
+function readBlobText(url: string): Promise<string> {
+  let pending = blobTexts.get(url);
+  if (!pending) {
+    pending = fetch(url).then(r => { if (!r.ok) throw new Error(String(r.status)); return r.text(); });
+    pending.catch(() => blobTexts.delete(url));
+    blobTexts.set(url, pending);
+  }
+  return pending;
+}
+
+// Shared open-a-text-attachment state for the chip rows below: `open` takes a draft's in-memory text, `openBlob` fetches a staged one
+function useTextPeek() {
+  const [peek, setPeek] = useState<Peek | null>(null);
+  const open = (name: string, text: string) => setPeek({ name, text });
+  const openBlob = (name: string, url: string) => {
+    setPeek({ name, url });
+    readBlobText(url).then(
+      text => setPeek(p => (p?.url === url ? { name, url, text } : p)),
+      () => setPeek(p => (p?.url === url ? { name, url, failed: true } : p)),
+    );
+  };
+  const card = peek && <TextPeek name={peek.name} text={peek.text} failed={peek.failed} onClose={() => setPeek(null)} />;
+  return { open, openBlob, card };
+}
+
+// What a chip click does, by kind: a text draft shows its in-memory text, a staged text blob is fetched into the peek,
+// a file opens in the editor (`openFile` only exists inside the thread context, so composer's file chips stay inert on their own).
+// Images never come through here — they keep the Lightbox on `onPreview`
+function openFor(a: Draft | Attachment, ctx: {
+  blobUrl?: (blob: string) => string;
+  openFile?: (path: string, line?: number) => void;
+  peek: { open: (name: string, text: string) => void; openBlob: (name: string, url: string) => void };
+}): (() => void) | undefined {
+  if (a.kind === 'text') {
+    if ('text' in a) return () => ctx.peek.open(a.name, a.text);
+    const url = a.blob && ctx.blobUrl ? ctx.blobUrl(a.blob) : undefined;
+    return url ? () => ctx.peek.openBlob(a.name, url) : undefined;
+  }
+  if (a.kind === 'file' && ctx.openFile) {
+    const file = parseFileLink(a.uri);
+    const open = ctx.openFile;
+    if (file) return () => open(file.path, file.line);
+  }
+}
+
 // Composer images use individual thumbnails; other attachments keep compact file labels.
 // An inline editor's retained attachments (`before`) share this one wrapping row, so a newly pasted image lands beside them instead of on a second row.
 export function DraftChips({ drafts, before, onRemove }: { drafts: Draft[]; before?: ReactNode; onRemove?: (index: number) => void }) {
   const [preview, setPreview] = useState<Preview | null>(null);
+  const peek = useTextPeek();
+  const openFile = useContext(OpenToolFileContext);
   if (!drafts.length && !before) return null;
   return (
     <div className="flex flex-wrap items-start gap-gap px-pad pt-gap">
@@ -28,10 +87,12 @@ export function DraftChips({ drafts, before, onRemove }: { drafts: Draft[]; befo
             image={d.kind === 'image' || (d.kind === 'file' && !!imageMimeOf(d.name))}
             src={d.kind === 'image' ? `data:${d.mimeType};base64,${d.data}` : undefined}
             onPreview={src => setPreview({ src, name: d.name })}
+            onOpen={openFor(d, { openFile, peek })}
           />
         </Removable>
       ))}
       {preview && <Lightbox src={preview.src} name={preview.name} onClose={() => setPreview(null)} />}
+      {peek.card}
     </div>
   );
 }
@@ -40,6 +101,8 @@ export function DraftChips({ drafts, before, onRemove }: { drafts: Draft[]; befo
 // Names remain in tooltips; non-image attachments keep their file labels.
 export function TurnAttachments({ attachments, blobUrl }: { attachments: Attachment[]; blobUrl?: (blob: string) => string }) {
   const [preview, setPreview] = useState<Preview | null>(null);
+  const peek = useTextPeek();
+  const openFile = useContext(OpenToolFileContext);
   return (
     <div className="flex shrink-0 flex-wrap items-start gap-gap">
       {attachments.map((a, i) => (
@@ -51,9 +114,11 @@ export function TurnAttachments({ attachments, blobUrl }: { attachments: Attachm
           src={a.kind === 'image' && blobUrl && a.blob ? blobUrl(a.blob) : undefined}
           title={a.kind === 'file' ? a.uri : undefined}
           onPreview={src => setPreview({ src, name: a.name })}
+          onOpen={openFor(a, { blobUrl, openFile, peek })}
         />
       ))}
       {preview && <Lightbox src={preview.src} name={preview.name} onClose={() => setPreview(null)} />}
+      {peek.card}
     </div>
   );
 }
@@ -61,6 +126,7 @@ export function TurnAttachments({ attachments, blobUrl }: { attachments: Attachm
 // Attachments of a queued prompt, inline before its text: images as square tiles (the "little grid" Cursor shows), the rest as the usual pill
 export function AttachmentTiles({ attachments, blobUrl }: { attachments: Attachment[]; blobUrl?: (blob: string) => string }) {
   const [preview, setPreview] = useState<Preview | null>(null);
+  const peek = useTextPeek();
   return (
     <span className="flex shrink-0 self-center items-center gap-1">
       {attachments.map((a, i) => {
@@ -71,9 +137,11 @@ export function AttachmentTiles({ attachments, blobUrl }: { attachments: Attachm
               className="flex size-lead shrink-0 cursor-zoom-in overflow-hidden rounded-xs outline-none hover:ring-1 hover:ring-fg-3 focus-visible:ring-1 focus-visible:ring-focus">
               <img src={src} alt="" className="size-full object-cover" />
             </button>
-          : <AttachmentTag key={key} name={a.name} image={a.kind === 'image' || (a.kind === 'file' && !!imageMimeOf(a.name))} title={a.kind === 'file' ? a.uri : undefined} onPreview={() => undefined} />;
+          : <AttachmentTag key={key} name={a.name} image={a.kind === 'image' || (a.kind === 'file' && !!imageMimeOf(a.name))} title={a.kind === 'file' ? a.uri : undefined}
+              onOpen={openFor(a, { blobUrl, peek })} />;
       })}
       {preview && <Lightbox src={preview.src} name={preview.name} onClose={() => setPreview(null)} />}
+      {peek.card}
     </span>
   );
 }
@@ -84,6 +152,8 @@ export function EditAttachments({ attachments, retained, blobUrl, disabled, onRe
   attachments: Attachment[]; retained: number[]; blobUrl?: (blob: string) => string; disabled?: boolean; onRemove: (index: number) => void;
 }) {
   const [preview, setPreview] = useState<Preview | null>(null);
+  const peek = useTextPeek();
+  const openFile = useContext(OpenToolFileContext);
   if (!retained.length) return null;
   return (
     <>
@@ -94,33 +164,38 @@ export function EditAttachments({ attachments, retained, blobUrl, disabled, onRe
           <AttachmentTag thumbnail name={attachment.name} src={src}
             image={attachment.kind === 'image' || (attachment.kind === 'file' && !!imageMimeOf(attachment.name))}
             title={attachment.kind === 'file' ? attachment.uri : undefined}
-            onPreview={src => setPreview({ src, name: attachment.name })} />
+            onPreview={src => setPreview({ src, name: attachment.name })}
+            onOpen={openFor(attachment, { blobUrl, openFile, peek })} />
         </Removable>;
       })}
       {preview && <Lightbox src={preview.src} name={preview.name} onClose={() => setPreview(null)} />}
+      {peek.card}
     </>
   );
 }
 
-function AttachmentTag({ name = 'image.png', src, image, title, thumbnail, onPreview }: {
+function AttachmentTag({ name = 'image.png', src, image, title, thumbnail, onPreview, onOpen }: {
   name?: string;
   src?: string;
   image: boolean;
   title?: string;
   thumbnail?: boolean;
-  onPreview: (src: string) => void;
+  onPreview?: (src: string) => void;
+  onOpen?: () => void;
 }) {
-  const Tag = src ? 'button' : 'span';
+  const click = src && onPreview ? () => onPreview(src) : onOpen;
+  const Tag = click ? 'button' : 'span';
   return (
     <Tag
-      type={src ? 'button' : undefined}
+      type={click ? 'button' : undefined}
       title={title ?? name}
-      aria-label={src ? t('common.previewImage', { name }) : undefined}
-      onClick={src ? () => onPreview(src) : undefined}
+      aria-label={src ? t('common.previewImage', { name }) : click ? t('attach.view', { name }) : undefined}
+      onClick={click}
       className={cn(
         'inline-flex max-w-full min-w-0 shrink-0 items-center rounded-sm bg-chip text-fg-2 [&_svg]:size-icon [&_svg]:shrink-0 [&_svg]:text-fg-3',
         thumbnail && image ? 'size-thumb justify-center overflow-hidden' : 'h-ctl-sm gap-1 px-2 text-3 font-medium',
-        src && 'cursor-zoom-in outline-none hover:bg-chip-hover focus-visible:ring-1 focus-visible:ring-focus active:bg-active',
+        click && 'outline-none hover:bg-chip-hover focus-visible:ring-1 focus-visible:ring-focus active:bg-active',
+        src ? 'cursor-zoom-in' : click && 'cursor-pointer',
       )}
     >
       {src
@@ -131,7 +206,8 @@ function AttachmentTag({ name = 'image.png', src, image, title, thumbnail, onPre
   );
 }
 
-// Wraps a chip with a remove button in its top-right corner, shown on hover / focus
+// Wraps a chip with a remove button riding its top-right corner — a badge over the edge, so it never lands on the
+// label (and keeps the thumbnail's corner visible too). Shown on hover / focus, inert while hidden.
 function Removable({ label, onRemove, disabled, children }: { label: string; onRemove?: () => void; disabled?: boolean; children: ReactNode }) {
   return (
     <span className="group/chip relative inline-flex max-w-full min-w-0">
@@ -143,8 +219,9 @@ function Removable({ label, onRemove, disabled, children }: { label: string; onR
         title={t('common.remove')}
         onClick={onRemove}
         className={cn(
-          'absolute top-0 right-0 flex size-icon-ctl items-center justify-center rounded-xs bg-bg-2 text-fg-2 opacity-0 transition-opacity',
-          'hover:text-fg-1 focus-visible:opacity-100 group-hover/chip:opacity-100 group-focus-within/chip:opacity-100',
+          'pointer-events-none absolute -top-2 -right-2 flex size-icon-ctl items-center justify-center rounded-full border border-line-strong bg-bg-2 text-fg-2 opacity-0 transition-opacity',
+          'group-hover/chip:pointer-events-auto group-hover/chip:opacity-100 group-focus-within/chip:pointer-events-auto group-focus-within/chip:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100',
+          'hover:bg-bg-1 hover:text-fg-1',
         )}
       >
         <X className="size-3" strokeWidth={2} />

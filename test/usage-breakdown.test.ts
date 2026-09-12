@@ -20,18 +20,9 @@ describe('estTokens', () => {
 });
 
 describe('usageWindow', () => {
-  it('caps the agent-reported window at the compact threshold', () => {
-    expect(usageWindow(1_000_000, 300_000)).toBe(300_000);
-  });
-
-  it('keeps a smaller model window', () => {
-    expect(usageWindow(200_000, 300_000)).toBe(200_000);
-  });
-
-  it('ignores a missing or non-positive threshold', () => {
+  it('uses the reported model window, independently of the compact budget', () => {
     expect(usageWindow(1_000_000)).toBe(1_000_000);
-    expect(usageWindow(1_000_000, 0)).toBe(1_000_000);
-    expect(usageWindow(1_000_000, -1)).toBe(1_000_000);
+    expect(usageWindow(200_000)).toBe(200_000);
   });
 });
 
@@ -112,9 +103,16 @@ describe('liveUsage', () => {
     expect(liveUsage(usage, turns, false)).toBe(usage);
   });
 
-  it('raises used to the transcript estimate while a turn is running', () => {
-    const local = conversationTokens(turns);
-    expect(liveUsage(usage, turns, true)).toEqual({ used: local, size: 10_000 });
+  it('never substitutes retained history for the live window while running', () => {
+    expect(liveUsage(usage, turns, true)).toBe(usage);
+  });
+
+  it('does not resurrect nearly a million tokens of retained tools after compaction', () => {
+    const compacted = { used: 24_000, size: 200_000 };
+    const history: Turn[] = [{ role: 'agent', blocks: [{ type: 'tool_call', id: 'large', kind: 'read', verb: 'Read', status: 'completed',
+      content: { type: 'text', text: latin(3_984_000) } }] }];
+    expect(conversationTokens(history)).toBeGreaterThan(996_000);
+    expect(liveUsage(compacted, history, true)).toBe(compacted);
   });
 
   it('does not drop below the agent snapshot', () => {

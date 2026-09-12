@@ -99,4 +99,15 @@ describe('Grok context snapshots', () => {
       expect(s.view().usage).toEqual({ used: 1234, size: 100000, cost: 0.01 });
     } finally { s.dispose(); }
   });
+
+  it('continues polling during quiet model work without text events', async () => {
+    const { session } = fixture();
+    try {
+      await session.start();
+      const prompt = session.prompt('quiet-context');
+      await expect.poll(() => session.view().usage?.used, { timeout: 2_650 }).toBe(42_000);
+      expect(session.isRunning).toBe(true);
+      await prompt;
+    } finally { session.dispose(); }
+  });
 });
