@@ -2,7 +2,7 @@
 
 package com.github.hotic.acpira.backend
 
-import com.intellij.ide.vfs.VirtualFileId
+import com.github.hotic.acpira.rpc.ResolvedPath
 import com.intellij.ide.vfs.rpcId
 import com.intellij.openapi.vfs.LocalFileSystem
 import kotlinx.coroutines.Dispatchers
@@ -85,11 +85,10 @@ class AcpiraBackendApiImpl : AcpiraBackendApi {
 
     // RPC carries the requesting ClientId. Serializing on the sidecar reader thread instead binds to the local backend session,
     // which cannot produce a file handle for the remote client.
-    override suspend fun resolveFile(projectId: ProjectId, path: String): VirtualFileId? = withContext(Dispatchers.IO) {
+    override suspend fun resolveFile(projectId: ProjectId, path: String): ResolvedPath? = withContext(Dispatchers.IO) {
         if (projectId.findProjectOrNull() == null) return@withContext null
         val file = LocalFileSystem.getInstance().refreshAndFindFileByPath(path)
-        val id = file?.rpcId()
-        id
+        file?.let { ResolvedPath(it.rpcId(), it.isDirectory) }
     }
 
     private fun service(projectId: ProjectId): SidecarService {

@@ -34,6 +34,10 @@ sealed interface ViewEvent {
     data class State(val state: SidecarState, val detail: String?) : ViewEvent
 }
 
+// Remote VFS handles do not preserve directory metadata on every Client implementation.
+@Serializable
+data class ResolvedPath(val id: VirtualFileId, val directory: Boolean)
+
 @Rpc
 interface AcpiraBackendApi : RemoteApi<Unit> {
     suspend fun attach(projectId: ProjectId, view: ViewAttach): Flow<ViewEvent>
@@ -42,7 +46,7 @@ interface AcpiraBackendApi : RemoteApi<Unit> {
     suspend fun windowFocus(projectId: ProjectId)
     suspend fun blob(projectId: ProjectId, sessionId: String, name: String): Blob?
     suspend fun uiRequests(projectId: ProjectId): Flow<UiRequest>
-    suspend fun resolveFile(projectId: ProjectId, path: String): VirtualFileId?
+    suspend fun resolveFile(projectId: ProjectId, path: String): ResolvedPath?
 
     companion object {
         suspend fun getInstance(): AcpiraBackendApi = RemoteApiProviderService.resolve(remoteApiDescriptor<AcpiraBackendApi>())
