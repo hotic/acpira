@@ -8,25 +8,15 @@
         or an editor tab. The agents keep their own execution engines; Acpira adds a clear execution history, inline approvals,
         queued follow-ups, session and account management, and a context budget.</p>
         <p>Sessions, accounts and settings live in <code>~/.acpira</code>, shared with the Acpira extension for VS Code and Cursor.
-        Requires an IDE from 2026.1 on; the per-platform distributions carry their own Node.js runtime.</p>
+        Requires an IDE from 2026.1 on; the Marketplace package carries a Node.js runtime for each supported OS and CPU.</p>
     ]]></description>
 
-    <depends>com.intellij.modules.platform</depends>
-    <!-- 2026.2 moved JCEF out of the core platform into the bundled Web Browser (JCEF) plugin; the alias exists since 2025.3.1 -->
-    <depends>com.intellij.modules.jcef</depends>
-    <!-- Terminal logins and installs open an IDE terminal; without the Terminal plugin the sidecar shows the command in a notification instead -->
-    <depends optional="true" config-file="acpira-terminal.xml">org.jetbrains.plugins.terminal</depends>
-
-    <extensions defaultExtensionNs="com.intellij">
-        <toolWindow id="Acpira" anchor="right" secondary="false" icon="/icons/toolWindow.svg"
-                    factoryClass="com.github.hotic.acpira.ui.AcpiraToolWindowFactory"/>
-        <fileEditorProvider implementation="com.github.hotic.acpira.ui.AcpiraEditorProvider"/>
-        <editorTabTitleProvider implementation="com.github.hotic.acpira.ui.AcpiraTabTitle"/>
-        <notificationGroup id="Acpira" displayType="BALLOON"/>
-        <postStartupActivity implementation="com.github.hotic.acpira.DevAutoOpen"/>
-    </extensions>
-
-    <applicationListeners>
-        <listener class="com.github.hotic.acpira.WindowFocusRelay" topic="com.intellij.openapi.application.ApplicationActivationListener"/>
-    </applicationListeners>
+    <content>
+        <module name="acpira.shared" loading="required"/>
+        <module name="acpira.frontend"/>
+        <module name="acpira.browser.legacy"/>
+        <module name="acpira.browser.modular"/>
+        <module name="acpira.backend"/>
+        <module name="acpira.backend.terminal"/>
+    </content>
 </idea-plugin>

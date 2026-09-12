@@ -81,7 +81,7 @@ Store multiple accounts per agent, paste or drop images, and attach workspace fi
 
 ## Install
 
-1. Install the extension from a `.vsix` (**Extensions: Install from VSIX…**) or from the Marketplace once it is published. For IntelliJ IDEA 2026.1 and later, install the plugin from the JetBrains Marketplace or from the `acpira-<version>-<os>-<arch>.zip` matching the machine (**Settings → Plugins → ⚙ → Install Plugin from Disk…**); each zip carries its own Node.js runtime.
+1. Install the extension from a `.vsix` (**Extensions: Install from VSIX…**) or from the Marketplace once it is published. For IntelliJ IDEA 2026.1 and later, install the plugin from the JetBrains Marketplace or from `acpira-<version>-universal.zip` (**Settings → Plugins → ⚙ → Install Plugin from Disk…**); the universal package carries Node.js for all supported platforms and supports remote development with different client and backend operating systems. Smaller platform-specific packages remain available on GitHub.
 2. Install at least one agent CLI and keep it on `PATH`:
    - [Grok](https://x.ai) — `grok` (`grok agent stdio`)
    - [Devin](https://devin.ai) — `devin` (`devin acp`)
@@ -133,7 +133,7 @@ pnpm probe grok     # run initialize + session/new against a CLI directly
 pnpm probe devin --import-local "Reply pong"   # via the account layer: import local login → authenticate → one turn
 pnpm typecheck && pnpm test
 pnpm package        # build a .vsix
-cd idea && ./gradlew test buildPlugin verifyPlugin   # IntelliJ plugin; buildPluginVariants for the per-platform zips
+cd idea && ./gradlew test buildPlugin verifyPlugin   # IntelliJ plugin; buildMarketplacePlugin for the universal ZIP; buildPluginVariants for manual platform ZIPs
 ```
 
 Press F5 to launch an Extension Development Host. Logs are in Output → Acpira. See [AGENTS.md](AGENTS.md) for the architecture map and protocol notes.

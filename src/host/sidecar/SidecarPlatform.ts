@@ -137,7 +137,15 @@ export class SidecarPlatform implements HostPlatform {
         for (const fn of this.settingsListeners) fn(affects);
         break;
       }
-      case 'envChanged': this.env = { ...this.env, ...ev.env }; break;
+      case 'envChanged': {
+        const languageChanged = ev.env.hostLanguage !== undefined && ev.env.hostLanguage !== this.env.hostLanguage;
+        this.env = { ...this.env, ...ev.env };
+        if (languageChanged) {
+          const affects: SettingsAffects = section => section === undefined || section === 'language';
+          for (const fn of this.settingsListeners) fn(affects);
+        }
+        break;
+      }
     }
   }
 

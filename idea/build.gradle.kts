@@ -1,10 +1,16 @@
-import org.jetbrains.intellij.platform.gradle.TestFrameworkType
+import org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension
+import org.jetbrains.intellij.platform.gradle.tasks.ComposedJarTask
+import org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask
+import org.jetbrains.intellij.platform.gradle.tasks.RunIdeTask
+import org.jetbrains.intellij.platform.gradle.tasks.aware.SplitModeAware
 import java.net.URI
 import java.security.MessageDigest
 
 plugins {
     id("java")
     id("org.jetbrains.kotlin.jvm")
+    id("rpc") apply false
+    id("org.jetbrains.kotlin.plugin.serialization") apply false
     id("org.jetbrains.intellij.platform")
 }
 
@@ -15,6 +21,14 @@ version = packageJson.map { Regex("\"version\"\\s*:\\s*\"([^\"]+)\"").find(it)?.
 
 kotlin {
     jvmToolchain(21)
+}
+
+subprojects {
+    apply(plugin = "org.jetbrains.intellij.platform.module")
+    apply(plugin = "org.jetbrains.kotlin.jvm")
+    apply(plugin = "org.jetbrains.kotlin.plugin.serialization")
+    apply(plugin = "rpc")
+    extensions.configure<KotlinJvmProjectExtension> { jvmToolchain(21) }
 }
 
 repositories {
@@ -29,16 +43,16 @@ dependencies {
         // IntelliJ IDEA is one unified distribution since 2025.3 (no more IC / IU). The installer form is required:
         // the SDK archive (useInstaller = false) ships without the JCEF native components
         intellijIdea(providers.gradleProperty("platformVersion"))
-        // Optional at runtime (plugin.xml), needed at compile time for runInTerminal
-        bundledPlugin("org.jetbrains.plugins.terminal")
-        testFramework(TestFrameworkType.Platform)
+        pluginModule(implementation(project(":shared")))
+        pluginModule(implementation(project(":frontend")))
+        pluginModule(implementation(project(":browser-legacy")))
+        pluginModule(implementation(project(":browser-modular")))
+        pluginModule(implementation(project(":backend")))
+        pluginModule(implementation(project(":backend-terminal")))
     }
-    testImplementation("junit:junit:4.13.2")
 }
 
-// The webview bundle and the Node sidecar come from the repository build one level up (`pnpm build`): main.{js,css} go into the jar as
-// resources the https://acpira.local handler serves, host-server.cjs is packaged next to the plugin so Node can run it as a file
-val webviewDist: File = file("../dist/webview")
+// The Node sidecar comes from the repository build one level up (`pnpm build`) and is packaged next to the plugin so Node can run it as a file
 val sidecarBundle: File = file("../dist/host-server.cjs")
 
 // A task action may only capture plain values (configuration cache): copy the files into locals first
@@ -109,12 +123,27 @@ val hostVariant: String = run {
     (if (os.contains("mac")) "mac" else if (os.contains("win")) "windows" else "linux") + "_" + (if (arch == "aarch64" || arch == "arm64") "arm64" else "x86_64")
 }
 
-tasks {
-    processResources {
-        doFirst(requireBuilt(webviewDist.resolve("main.js"), "the webview bundle"))
-        from(webviewDist) { into("webview") }
+// A sandbox launched from the terminal opens the project given as -PrunIdeProject (or none); trusting it up front keeps startup
+// activities from waiting behind the trust dialog. -PautoOpen shows the tool window at once, -PjcefDebug exposes CDP on 9222,
+// -PhostServer=/abs/path/host-server.cjs points the sandbox at a different sidecar build without repackaging
+fun RunIdeTask.acpiraDevIde() {
+    systemProperty("idea.trust.all.projects", "true")
+    // argumentProviders, not args=: split-mode runIde tasks reject direct arguments (they are routed to the backend process)
+    providers.gradleProperty("runIdeProject").orNull?.let { p -> argumentProviders.add { listOf(p) } }
+    if (providers.gradleProperty("autoOpen").isPresent) systemProperty("acpira.dev.autoOpen", "true")
+    if (providers.gradleProperty("jcefDebug").isPresent) {
+        systemProperty("ide.browser.jcef.debug.port", "9222")
+        systemProperty("ide.browser.jcef.debug.port.random.enabled", "false")
     }
-    prepareSandbox {
+    providers.gradleProperty("hostServer").orNull?.let { environment("ACPIRA_HOST_SERVER", it) }
+}
+
+tasks {
+    named("test") {
+        dependsOn(subprojects.map { "${it.path}:test" })
+    }
+    // Every runIde task has its own sandbox (prepareSandbox_<name>); they all need the sidecar script and the bundled runtime
+    withType<PrepareSandboxTask>().configureEach {
         doFirst(requireBuilt(sidecarBundle, "the sidecar bundle"))
         from(sidecarBundle) { into(intellijPlatform.projectName.map { "$it/sidecar" }) }
         // The sandbox runs on the bundled runtime like an installed variant would; -PsystemNode leaves it out to exercise the PATH fallback
@@ -125,23 +154,31 @@ tasks {
         exclude("node/**")
     }
     runIde {
-        // A sandbox launched from the terminal opens the project given as -PrunIdeProject (or none); trusting it up front keeps startup
-        // activities from waiting behind the trust dialog. -PautoOpen shows the tool window at once, -PjcefDebug exposes CDP on 9222
-        systemProperty("idea.trust.all.projects", "true")
-        providers.gradleProperty("runIdeProject").orNull?.let { args = listOf(it) }
-        if (providers.gradleProperty("autoOpen").isPresent) systemProperty("acpira.dev.autoOpen", "true")
-        if (providers.gradleProperty("jcefDebug").isPresent) {
-            systemProperty("ide.browser.jcef.debug.port", "9222")
-            systemProperty("ide.browser.jcef.debug.port.random.enabled", "false")
-        }
-        // Point the sandbox at a different sidecar build without repackaging: -PhostServer=/abs/path/host-server.cjs
-        providers.gradleProperty("hostServer").orNull?.let { environment("ACPIRA_HOST_SERVER", it) }
+        acpiraDevIde()
     }
     verifyPlugin {
         // The verifier caches IDEs and their bundled plugins (gigabytes) under ~/.pluginVerifier; -PpluginVerifierHome (or the same key in
         // ~/.gradle/gradle.properties) moves that to a disk with room
         providers.gradleProperty("pluginVerifierHome").orNull?.let { systemProperty("plugin.verifier.home.dir", it) }
     }
+}
+
+// Split-mode development: separate frontend / backend processes locally, plugin installed on BOTH / FRONTEND / BACKEND.
+// Registered per target instead of the global intellijPlatform.splitMode so plain `runIde` keeps its monolith behaviour
+val runIdeSplitBoth by intellijPlatformTesting.runIde.registering {
+    splitMode = true
+    pluginInstallationTarget = SplitModeAware.PluginInstallationTarget.BOTH
+    task { acpiraDevIde() }
+}
+val runIdeSplitFrontend by intellijPlatformTesting.runIde.registering {
+    splitMode = true
+    pluginInstallationTarget = SplitModeAware.PluginInstallationTarget.FRONTEND
+    task { acpiraDevIde() }
+}
+val runIdeSplitBackend by intellijPlatformTesting.runIde.registering {
+    splitMode = true
+    pluginInstallationTarget = SplitModeAware.PluginInstallationTarget.BACKEND
+    task { acpiraDevIde() }
 }
 
 // "What's New" on the Marketplace: the CHANGELOG.md section of this version, Keep a Changelog markdown rendered to the HTML subset
@@ -185,36 +222,47 @@ intellijPlatform {
     }
 }
 
-// Six per-platform distributions, the shape the IntelliJ Platform Gradle Plugin's `nativeVariants` will produce once it ships (in its
-// [next] changelog at 2.18.1): the buildPlugin zip plus <plugin>/node/node, a version suffixed -<os>-<arch>, and dependencies on the
-// os / arch module aliases the platform registers from IdeaPluginOsRequirement / PluginCpuArchRequirement, so an IDE only loads its own.
-// The plain `buildPlugin` zip stays runtime-free and falls back to the shell PATH
+// Six per-platform distributions: the root plugin version is suffixed -<os>-<arch>, while the corresponding os / arch plugin
+// dependencies live in the backend module descriptor. The plain `buildPlugin` zip stays runtime-free and falls back to the shell PATH
 val pluginName = intellijPlatform.projectName
+val backendComposedJar = project(":backend").tasks.named<ComposedJarTask>("composedJar").flatMap { it.archiveFile }
 val buildPluginVariant = nodePlatforms.keys.associateWith { variant ->
     val (os, arch) = variant.split('_', limit = 2)
-    val jar = tasks.register<Jar>("pluginVariantJar_$variant") {
+    val variantRootJar = tasks.register<Jar>("pluginVariantJar_$variant") {
         val composed = tasks.composedJar.flatMap { it.archiveFile }
         from(zipTree(composed)) { exclude("META-INF/plugin.xml") }
         from(zipTree(composed)) {
             include("META-INF/plugin.xml")
             filter { line ->
-                when {
-                    line.trim().startsWith("<version>") -> line.replace("</version>", "-$os-$arch</version>")
-                    line.trim() == "<depends>com.intellij.modules.platform</depends>" ->
-                        "$line\n  <depends>com.intellij.modules.os.$os</depends>\n  <depends>com.intellij.modules.arch.$arch</depends>"
-                    else -> line
-                }
+                if (line.trim().startsWith("<version>")) line.replace("</version>", "-$os-$arch</version>") else line
             }
         }
-        archiveClassifier = "$os-$arch"
-        destinationDirectory = layout.buildDirectory.dir("variant-jars")
+        archiveFileName = "${pluginName.get()}-$version.jar"
+        destinationDirectory = layout.buildDirectory.dir("variant-jars/$variant/root")
+    }
+    val variantBackendJar = tasks.register<Jar>("pluginVariantBackendJar_$variant") {
+        from(zipTree(backendComposedJar)) { exclude("acpira.backend.xml") }
+        from(zipTree(backendComposedJar)) {
+            include("acpira.backend.xml")
+            filter { line ->
+                if (line.trim() == "</dependencies>") {
+                    "        <plugin id=\"com.intellij.modules.os.$os\"/>\n        <plugin id=\"com.intellij.modules.arch.$arch\"/>\n$line"
+                } else line
+            }
+        }
+        archiveFileName = "acpira.backend.jar"
+        destinationDirectory = layout.buildDirectory.dir("variant-jars/$variant/backend")
     }
     tasks.register<Zip>("buildPluginVariant_$variant") {
         group = "build"
         description = "Builds the plugin distribution for $os $arch with its Node.js runtime"
         val base = tasks.buildPlugin.flatMap { it.archiveFile }
-        from(zipTree(base)) { exclude("*/lib/${pluginName.get()}-*.jar") }
-        from(jar) { into(pluginName.map { "$it/lib" }) }
+        from(zipTree(base)) {
+            exclude("*/lib/${pluginName.get()}-*.jar")
+            exclude("*/lib/modules/acpira.backend.jar")
+        }
+        from(variantRootJar) { into(pluginName.map { "$it/lib" }) }
+        from(variantBackendJar) { into(pluginName.map { "$it/lib/modules" }) }
         // Zip does not keep source modes; the IDE's installer restores what the entry says, so the runtime must be marked here
         from(fetchNode[variant]!!) {
             into(pluginName)
@@ -231,12 +279,29 @@ val buildPluginVariants by tasks.registering {
     dependsOn(buildPluginVariant.values)
 }
 
+// Optional content-module constraints do not constrain the whole plugin. Marketplace receives one universal package so
+// a macOS client and a Linux backend can install the same version without competing OS-specific updates.
+val buildMarketplacePlugin by tasks.registering(Zip::class) {
+    group = "build"
+    description = "Builds the cross-platform Marketplace package with all six Node.js runtimes"
+    from(tasks.buildPlugin.flatMap { it.archiveFile }.map { zipTree(it) })
+    for ((variant, runtime) in fetchNode) {
+        from(runtime.flatMap { it.out }.map { it.dir("node") }) {
+            into(pluginName.map { "$it/node/${variant.replaceFirst("_", "-")}" })
+            filesMatching("**/node") { permissions { unix("rwxr-xr-x") } }
+        }
+    }
+    archiveBaseName = pluginName
+    archiveClassifier = "universal"
+    destinationDirectory = layout.buildDirectory.dir("distributions")
+}
+
 // SHA-256 of every distribution zip, next to them, for the release notes
 val checksums by tasks.registering {
     group = "build"
     description = "Writes SHA256SUMS for the plugin distributions"
     val dir = layout.buildDirectory.dir("distributions")
-    dependsOn(tasks.buildPlugin, buildPluginVariants)
+    dependsOn(tasks.buildPlugin, buildPluginVariants, buildMarketplacePlugin)
     val prefix = "${pluginName.get()}-$version"
     inputs.files(dir.map { it.asFileTree.matching { include("$prefix*.zip") } })
     outputs.file(dir.map { it.file("SHA256SUMS") })

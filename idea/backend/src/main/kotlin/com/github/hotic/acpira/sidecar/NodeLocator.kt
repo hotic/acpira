@@ -1,0 +1,127 @@
+package com.github.hotic.acpira.sidecar
+
+import com.github.hotic.acpira.Acpira
+import com.intellij.util.EnvironmentUtil
+import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+
+const val MIN_NODE_MAJOR = 22
+
+class SidecarSetupException(message: String) : Exception(message)
+
+// Where the sidecar comes from. Node: ACPIRA_NODE, then the runtime the plugin carries for the current backend OS and architecture,
+// then the IDE's login-shell PATH (EnvironmentUtil, never System.getenv alone: a Dock launch has no shell PATH). Script:
+// ACPIRA_HOST_SERVER for development against a repository build, otherwise the host-server.cjs packaged next to the plugin
+object NodeLocator {
+    fun shellEnv(): Map<String, String> = EnvironmentUtil.getEnvironmentMap()
+
+    fun node(): Path {
+        env("ACPIRA_NODE")?.let { return checked(Paths.get(it), "ACPIRA_NODE") }
+        bundledNode()?.let { bundled ->
+            // A runtime that does not start on this machine (wrong arch in a hand-copied plugin dir, blocked binary) must not take the
+            // sidecar down when a system Node would do
+            runCatching { checked(bundled, "bundled") }.onFailure { Acpira.LOG.warn("bundled node unusable, trying the shell PATH: ${it.message}") }
+                .getOrNull()?.let { return it }
+        }
+        val onPath = findInPath("node") ?: throw SidecarSetupException(
+            "Node.js $MIN_NODE_MAJOR+ was not found on the shell PATH. Install it (https://nodejs.org) or set ACPIRA_NODE to the executable.",
+        )
+        return checked(onPath, "PATH")
+    }
+
+    // The Marketplace package contains all six runtimes: the backend selects its own, independently of the client's OS.
+    // Small per-platform archives retain node/node. The IDE installer restores executable permissions; manual copies may need repair.
+    private fun bundledNode(): Path? {
+        val dir = Acpira.descriptor?.pluginPath?.resolve("node") ?: return null
+        val path = bundledPath(dir, System.getProperty("os.name"), System.getProperty("os.arch")) ?: return null
+        if (!Files.isExecutable(path)) runCatching { path.toFile().setExecutable(true, false) }
+        return path
+    }
+
+    internal fun bundledPath(dir: Path, osName: String, archName: String): Path? {
+        val os = when {
+            osName.startsWith("Mac", ignoreCase = true) -> "mac"
+            osName.startsWith("Windows", ignoreCase = true) -> "windows"
+            osName.startsWith("Linux", ignoreCase = true) -> "linux"
+            else -> return null
+        }
+        val arch = when (archName.lowercase()) {
+            "aarch64", "arm64" -> "arm64"
+            "amd64", "x86_64" -> "x86_64"
+            else -> return null
+        }
+        val exe = if (os == "windows") "node.exe" else "node"
+        return listOf(dir.resolve("$os-$arch").resolve(exe), dir.resolve(exe)).firstOrNull { Files.isRegularFile(it) }
+    }
+
+    private fun checked(path: Path, source: String): Path {
+        if (!Files.isExecutable(path)) throw SidecarSetupException("Node.js executable is not runnable: $path")
+        val version = version(path)
+        val major = version.removePrefix("v").substringBefore('.').toIntOrNull() ?: 0
+        if (major < MIN_NODE_MAJOR) throw SidecarSetupException("Node.js $MIN_NODE_MAJOR+ is required, found $version at $path")
+        Acpira.LOG.info("sidecar node ($source): $path ($version)")
+        return path
+    }
+
+    private val isWindows get() = System.getProperty("os.name").lowercase().contains("win")
+
+    fun script(): Path {
+        env("ACPIRA_HOST_SERVER")?.let { override ->
+            val p = Paths.get(override)
+            if (!Files.isRegularFile(p)) throw SidecarSetupException("ACPIRA_HOST_SERVER points to a missing file: $p")
+            return p
+        }
+        val bundled = Acpira.descriptor?.pluginPath?.resolve("sidecar/host-server.cjs")
+        if (bundled == null || !Files.isRegularFile(bundled)) throw SidecarSetupException(
+            "The plugin's sidecar (sidecar/host-server.cjs) is missing; reinstall the plugin or set ACPIRA_HOST_SERVER to a repository build.",
+        )
+        return bundled
+    }
+
+    // First executable of that name on the shell PATH (PathEnvironmentVariableUtil.findInPath is scheduled for removal)
+    fun findInPath(name: String): Path? {
+        val names = if (isWindows) listOf("$name.exe", "$name.cmd", name) else listOf(name)
+        return (shellEnv()["PATH"] ?: "").split(File.pathSeparator).asSequence()
+            .filter { it.isNotBlank() }
+            .flatMap { dir -> names.asSequence().map { Paths.get(dir, it) } }
+            .firstOrNull { Files.isRegularFile(it) && Files.isExecutable(it) }
+    }
+
+    private fun env(name: String): String? = (System.getenv(name) ?: shellEnv()[name])?.trim()?.takeIf { it.isNotEmpty() }
+
+    private fun version(node: Path): String {
+        val pb = ProcessBuilder(node.toString(), "--version").redirectErrorStream(true)
+        pb.environment().putAll(shellEnv())
+        val out = waitForOutput(pb.start(), 10, TimeUnit.SECONDS)
+        return out.lines().lastOrNull { it.startsWith("v") } ?: throw SidecarSetupException("node --version answered '$out'")
+    }
+
+    // Read stdout in parallel with waitFor: a hung process that never closes stdout used to block in readText() and never hit the timeout
+    internal fun waitForOutput(process: Process, timeout: Long, unit: TimeUnit): String {
+        val out = StringBuilder()
+        val done = CountDownLatch(1)
+        Thread({
+            try {
+                process.inputStream.bufferedReader().use { br ->
+                    var line: String? = br.readLine()
+                    while (line != null) {
+                        if (out.isNotEmpty()) out.append('\n')
+                        out.append(line)
+                        line = br.readLine()
+                    }
+                }
+            } finally { done.countDown() }
+        }, "acpira-node-version").apply { isDaemon = true; start() }
+        if (!process.waitFor(timeout, unit)) {
+            process.destroyForcibly()
+            done.await(1, TimeUnit.SECONDS)
+            throw SidecarSetupException("node --version did not answer")
+        }
+        done.await(1, TimeUnit.SECONDS)
+        return out.toString().trim()
+    }
+}

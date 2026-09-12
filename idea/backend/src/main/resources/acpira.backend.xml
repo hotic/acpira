@@ -1,0 +1,12 @@
+<!-- Loaded on the remote host and in monolith products; owns project work, sidecar lifecycle, and RPC implementation. -->
+<idea-plugin>
+    <dependencies>
+        <module name="intellij.platform.backend"/>
+        <module name="intellij.platform.kernel.backend"/>
+        <module name="acpira.shared"/>
+    </dependencies>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <platform.rpc.backend.remoteApiProvider implementation="com.github.hotic.acpira.backend.AcpiraRpcProvider"/>
+    </extensions>
+</idea-plugin>

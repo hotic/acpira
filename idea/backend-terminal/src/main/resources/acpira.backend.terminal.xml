@@ -1,0 +1,12 @@
+<!-- Loaded on the backend only when the Terminal plugin is present; contributes the optional runner service. -->
+<idea-plugin>
+    <dependencies>
+        <module name="acpira.backend"/>
+        <plugin id="org.jetbrains.plugins.terminal"/>
+    </dependencies>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <applicationService serviceInterface="com.github.hotic.acpira.platform.TerminalRunner"
+                            serviceImplementation="com.github.hotic.acpira.platform.IdeTerminalRunner"/>
+    </extensions>
+</idea-plugin>

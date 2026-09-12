@@ -16,6 +16,24 @@ describe('harnessOriginAllowed', () => {
   });
 });
 
+describe('SidecarPlatform environment', () => {
+  it('updates the host language and notifies language settings listeners', () => {
+    const hello: Hello = {
+      type: 'hello', protocolVersion: SIDECAR_PROTOCOL_VERSION, requestId: 'h',
+      client: { name: 't', version: '0', capabilities: [] },
+      env: { hostLanguage: 'en' }, settings: {},
+    };
+    const platform = new SidecarPlatform(() => {}, hello, () => {});
+    const changed: Array<{ language: boolean; appearance: boolean }> = [];
+    platform.onSettingsChanged(affects => changed.push({ language: affects('language'), appearance: affects('appearance') }));
+
+    platform.onEvent({ type: 'envChanged', env: { hostLanguage: 'zh-CN' } });
+
+    expect(platform.hostLanguage()).toBe('zh-CN');
+    expect(changed).toEqual([{ language: true, appearance: false }]);
+  });
+});
+
 describe('SidecarPlatform ignoreAgents', () => {
   it('hides hello.settings.agents so the page cannot supply a command', () => {
     const hello: Hello = {

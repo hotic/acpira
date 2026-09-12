@@ -1,0 +1,10 @@
+<idea-plugin>
+    <dependencies>
+        <module name="acpira.frontend"/>
+        <module name="acpira.shared"/>
+        <plugin id="com.intellij.modules.jcef"/>
+    </dependencies>
+    <extensions defaultExtensionNs="com.github.hotic.acpira">
+        <browserProvider implementation="com.github.hotic.acpira.web.LegacyJcefBrowserProvider"/>
+    </extensions>
+</idea-plugin>

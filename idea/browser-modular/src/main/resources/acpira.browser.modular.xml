@@ -1,0 +1,11 @@
+<idea-plugin>
+    <dependencies>
+        <module name="acpira.frontend"/>
+        <module name="acpira.shared"/>
+        <module name="intellij.platform.ui.jcef"/>
+        <module name="intellij.libraries.jcef"/>
+    </dependencies>
+    <extensions defaultExtensionNs="com.github.hotic.acpira">
+        <browserProvider implementation="com.github.hotic.acpira.web.ModularJcefBrowserProvider"/>
+    </extensions>
+</idea-plugin>
