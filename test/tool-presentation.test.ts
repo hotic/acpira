@@ -3,7 +3,7 @@ import { applyUpdate, emptyState } from '../src/host/acp/normalize';
 import { setLocale } from '../src/webview/i18n';
 import { foldActivity, toolVerb } from '../src/webview/chat/folding';
 import type { AgentTurn, ToolCallBlock } from '../src/shared/transcript';
-import { fileReference, groupReadCalls, isFileListing, isLineCount, toolFiles } from '../src/webview/chat/toolDetails';
+import { fileReference, groupReadCalls, isLineCount, toolFiles } from '../src/webview/chat/toolDetails';
 
 afterEach(() => setLocale('en'));
 
@@ -56,13 +56,10 @@ describe('ACP tool presentation', () => {
     expect(turn.blocks[0]).toMatchObject({ locations: [{ path: '/repo/a.ts', line: 12 }, { path: '/repo/b.ts' }] });
   });
 
-  it('renders file URI search results as compact paths without a duplicate raw card', () => {
+  it('normalizes file URI search results to editor paths', () => {
     const search: ToolCallBlock = { type: 'tool_call', id: 's', kind: 'search', verb: 'Search', status: 'completed',
       content: { type: 'text', text: 'file:///repo/AcpSession.ts\nfile:///repo/my%20file.ts\n' } };
     expect(toolFiles(search)).toEqual(['/repo/AcpSession.ts', '/repo/my file.ts']);
-    expect(isFileListing(search)).toBe(true);
-    expect(isFileListing({ ...search, content: { type: 'text', text: 'src/a.ts:12:const x = 1;' } })).toBe(false);
-    expect(isFileListing({ ...search, content: { type: 'text', text: 'src/a.ts:12:  const x = 1;' } })).toBe(false);
   });
 
   it.each([

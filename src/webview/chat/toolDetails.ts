@@ -19,7 +19,7 @@ export function groupReadCalls(blocks: AgentBlock[]): (AgentBlock | ToolCallBloc
   return result;
 }
 
-// Only explicit paths become file rows; prose and search patterns remain output.
+// Only explicit paths become file rows; prose and search patterns are not references.
 function fileHit(text: string): string | undefined {
   // ACP resource links commonly return file URIs rather than plain paths.
   if (text.startsWith('file://')) {
@@ -55,19 +55,6 @@ export function toolFiles(block: ToolCallBlock): string[] {
     if (hit) files.push(hit);
   }
   return [...new Set(files)];
-}
-
-// A pure file listing already has a compact presentation; no duplicate raw-output card is needed.
-export function isFileListing(block: ToolCallBlock): boolean {
-  if (block.kind !== 'search' || !block.content) return false;
-  const lines = block.content.type === 'list' ? block.content.items
-    : block.content.type === 'text' ? block.content.text.split('\n') : [];
-  const nonempty = lines.map(line => line.trim()).filter(Boolean);
-  return nonempty.length > 0 && nonempty.every(line => {
-    if (fileHit(line) === undefined) return false;
-    // Match text after a line/column is useful output, even when it starts with whitespace.
-    return !/^.+?:\d+:(?!\d+$)/.test(line) && !/^.+?:\d+:\d+:/.test(line);
-  });
 }
 
 export function isLineCount(block: ToolCallBlock): boolean {

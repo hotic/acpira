@@ -339,7 +339,6 @@ export const zhCN = {
   'host.working': '正在处理',
   'tool.output': '输出',
   'turns.processHistory': '过程记录',
-  'tool.toggleOutput': '展开或收起工具输出',
   'tool.runningSeconds': '命令已运行 {s} 秒',
   'tool.completedSeconds': '已在 {s} 秒内运行',
   'host.doing': '正在{verb} {target}',

@@ -1,13 +1,11 @@
-import { Check, ChevronRight, FileText, Globe, X } from 'lucide-react';
-import { memo, useContext, useState, type ReactNode } from 'react';
+import { Check, FileText, Globe, X } from 'lucide-react';
+import { memo, useContext, type ReactNode } from 'react';
 import type { ToolCallBlock } from '@shared/transcript';
 import { toolTodoEntries } from '@shared/todoTools';
 import { useAppearance } from '../appearance';
 import { Disclosure } from '../ui/Disclosure';
 import { Row, RowLabel, RowTarget } from '../ui/Row';
 import { cn } from '../ui/cn';
-import { IconButton } from '../ui/Button';
-import { Collapsible } from '../ui/Collapsible';
 import { ConnectedRail } from '../ui/ConnectedRail';
 import { t } from '../i18n';
 import { toolIcon } from './icons';
@@ -16,7 +14,7 @@ import { CodeSurface, DiffBlock } from './CodeBlock';
 import { TerminalOutput } from './Terminal';
 import { toolVerb } from './folding';
 import { OpenToolFileContext } from './fileLinks';
-import { fileReference, isFileListing, toolFiles } from './toolDetails';
+import { fileReference, toolFiles } from './toolDetails';
 import { useToolSeconds } from './useToolSeconds';
 
 export { OpenToolFileContext } from './fileLinks';
@@ -59,19 +57,19 @@ export const ToolCall = memo(function ToolCall({ block, grouped = false }: { blo
   // Search hits open on demand; read references remain visible inside the process.
   if (files.length && block.kind === 'search') return (
     <Disclosure className="action-details" tone="action" lead={lead} trailing={trailing} indent={false} rail="rows"
-      body={<ResultList items={files} kind={block.kind} detail={block} />}>
+      body={<ResultList items={files} kind={block.kind} />}>
       {label}
     </Disclosure>
   );
-  // A count-only read response has no content to inspect beyond its references.
+  // Read and search responses expose references only, including failures and empty results.
   if (files.length) return (
     <ConnectedRail enabled={toolLine !== 'text'} endAtLastRow className="action-details flex flex-col">
       <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>
-      <ResultList items={files} kind={block.kind} detail={block} />
+      <ResultList items={files} kind={block.kind} />
     </ConnectedRail>
   );
-  // A history row without details has no second disclosure to open.
-  if (grouped && !block.content) return <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
+  // File-less responses must not fall through to the generic raw-output disclosure.
+  if (block.kind === 'read' || block.kind === 'search' || (grouped && !block.content)) return <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
 
   // Opening a process fold reveals action rows; outputs only expand on an explicit click.
   return (
@@ -81,7 +79,7 @@ export const ToolCall = memo(function ToolCall({ block, grouped = false }: { blo
   );
 });
 
-// Several ACP read calls form one visible list, retaining each call's full output.
+// Several ACP read calls form one visible list of file references.
 // The grouping array is rebuilt on every render, so compare its members rather than the array itself.
 export const ReadGroup = memo(function ReadGroup({ blocks }: { blocks: ToolCallBlock[] }) {
   const { toolLine } = useAppearance();
@@ -91,7 +89,7 @@ export const ReadGroup = memo(function ReadGroup({ blocks }: { blocks: ToolCallB
       <RowLabel>{toolVerb(first)}</RowLabel>
     </Row>
     <div className="tool-results flex flex-col">
-      {blocks.map(block => <ResultList key={block.id} items={toolFiles(block)} kind="read" rail={false} detail={block} />)}
+      {blocks.map(block => <ResultList key={block.id} items={toolFiles(block)} kind="read" rail={false} />)}
     </div>
   </ConnectedRail>;
 }, (a, b) => a.blocks.length === b.blocks.length && a.blocks.every((block, i) => block === b.blocks[i]));
@@ -106,21 +104,17 @@ function ToolBody({ block }: { block: ToolCallBlock }) {
 }
 
 // Result rows share the parent's connected icon rail, with a faint line/host suffix.
-function ResultList({ items, kind, rail = true, detail }: { items: string[]; kind: ToolCallBlock['kind']; rail?: boolean; detail?: ToolCallBlock }) {
+function ResultList({ items, kind, rail = true }: { items: string[]; kind: ToolCallBlock['kind']; rail?: boolean }) {
   const { toolLine } = useAppearance();
   const Icon = kind === 'fetch' ? Globe : FileText;
   return (
     <div className={cn('flex flex-col', rail && 'tool-results')}>
-      {items.map((it, index) => {
+      {items.map(it => {
         const { main, aside } = splitHit(it);
         const lead = toolLine === 'text' ? undefined : <Icon className="size-icon" strokeWidth={1.5} />;
         const target = <RowTarget mono={kind !== 'fetch'} className="text-fg-2">{main}</RowTarget>;
         if (kind === 'read' || kind === 'search') {
-          // Search output belongs to the call; expose it once on its first file row. A read's output is the file itself (often just a
-          // line count or a truncation note), so its rows only open the file and carry no disclosure
-          const body = kind === 'search' && index === 0 && detail?.content && detail.content.type !== 'list' && !isFileListing(detail)
-            ? <ToolBody block={detail} /> : undefined;
-          return <FileResultRow key={it} hit={it} lead={lead} aside={aside} body={body}>{target}</FileResultRow>;
+          return <FileResultRow key={it} hit={it} lead={lead} aside={aside}>{target}</FileResultRow>;
         }
         return (
           <Row tone="action" key={it} dense lead={lead} trailing={aside} title={it}>
@@ -132,26 +126,19 @@ function ResultList({ items, kind, rail = true, detail }: { items: string[]; kin
   );
 }
 
-// File navigation and output disclosure are separate buttons, including keyboard focus.
-function FileResultRow({ hit, lead, aside, body, children }: { hit: string; lead: ReactNode; aside?: string; body?: ReactNode; children: ReactNode }) {
+// File rows have one interaction: open the reference in the editor.
+function FileResultRow({ hit, lead, aside, children }: { hit: string; lead: ReactNode; aside?: string; children: ReactNode }) {
   const openFile = useContext(OpenToolFileContext);
-  const [open, setOpen] = useState(false);
   const file = fileReference(hit);
   const asideEl = aside && <span className="shrink-0 whitespace-nowrap text-3 text-fg-3/70 tabular-nums">{aside}</span>;
-  return <Collapsible.Root open={open} onOpenChange={setOpen} className="flex min-w-0 flex-col">
-    <Row tone="action" dense lead={lead} title={hit} className="group/file">
-      {openFile ? <button type="button" title={hit} className="group/ref flex min-w-0 max-w-full items-baseline gap-1 cursor-pointer text-left"
-        onClick={() => openFile(file.path, file.line)}>
-        {/* Only the file name underlines on hover / focus; the line range beside it stays plain */}
-        <span className="flex min-w-0 group-hover/ref:underline group-focus-visible/ref:underline">{children}</span>{asideEl}
-      </button>
-        : <span className="flex min-w-0 items-baseline gap-1">{children}{asideEl}</span>}
-      {body && <Collapsible.Trigger render={<IconButton size="sm" className="self-center text-fg-3 group-hover/file:text-fg-1 group-focus-within/file:text-fg-1" title={t('tool.toggleOutput')} aria-label={t('tool.toggleOutput')}>
-        <ChevronRight className={cn('transition-transform', open && 'rotate-90')} strokeWidth={1.5} />
-      </IconButton>} />}
-    </Row>
-    {body && <Collapsible.Panel className="-mx-hit [&>div]:px-hit"><div className="pt-1 pb-1.5">{body}</div></Collapsible.Panel>}
-  </Collapsible.Root>;
+  return <Row tone="action" dense lead={lead} title={hit}>
+    {openFile ? <button type="button" title={hit} className="group/ref flex min-w-0 max-w-full items-baseline gap-1 cursor-pointer text-left"
+      onClick={() => openFile(file.path, file.line)}>
+      {/* Only the file name underlines on hover / focus; the line range beside it stays plain */}
+      <span className="flex min-w-0 group-hover/ref:underline group-focus-visible/ref:underline">{children}</span>{asideEl}
+    </button>
+      : <span className="flex min-w-0 items-baseline gap-1">{children}{asideEl}</span>}
+  </Row>;
 }
 
 function splitHit(hit: string): { main: string; aside?: string } {
