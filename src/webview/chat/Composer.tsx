@@ -18,7 +18,7 @@ import { SendButton } from '../effects/SendButton';
 import { DraftChips } from './Attachments';
 import { collectDrafts, hasPayload } from './drafts';
 import { MentionList, mentionAt, useMentionHits } from './Mention';
-import { SlashList, commandAt, commandHint, useSlashHits } from './Slash';
+import { SlashList, commandAt, commandHint, completeCommand, useSlashHits } from './Slash';
 import { modeIcon } from './modeIcons';
 import { ModelControl, OptionControl, ReasoningControl } from './ModelPicker';
 import { ContextRing } from './ContextUsage';
@@ -89,7 +89,7 @@ export function Composer(p: ComposerProps) {
       setText('');
       setDrafts([]);
       setDismissed(undefined);
-      setSlashDismissed(false);
+      setSlashDismissed(undefined);
     } catch (e) {
       p.onNotice(e instanceof Error ? e.message : String(e));
     } finally {
@@ -158,20 +158,21 @@ export function Composer(p: ComposerProps) {
     setDrafts(d => (d.some(x => x.kind === 'file' && x.uri === hit.uri) ? d : [...d, { kind: 'file', uri: hit.uri, name: hit.path }]));
     requestAnimationFrame(() => textarea.current?.setSelectionRange(span.start, span.start));
   };
-  // / command: a leading slash with the caret in its token lists the commands the agent advertised for this session. Picking only completes
-  // the text (`/name `) — the command goes out through the ordinary send path and the agent runs it; the list is discovery, never a whitelist,
-  // so with no match the slash stays plain text. Mutually exclusive with @ (a text starting with `/` has no @ at its start)
-  const [slashDismissed, setSlashDismissed] = useState(false);
-  const slashSpan = collapsed && !slashDismissed && !p.disabled ? commandAt(text, caret) : undefined;
-  const slash = useSlashHits(p.commands, slashSpan?.query);
-  const slashOpen = !!slashSpan && slash.hits.length > 0;
+  // / command: a slash at the start or after whitespace with the caret in its token lists the commands the agent advertised for
+  // this session, so a skill can also be called up mid-sentence like an @ mention. Picking completes the token in place (`/name `)
+  // — the command goes out through the ordinary send path and the agent runs it; the list is discovery, never a whitelist, so with
+  // no match the slash stays plain text. The two lists stay mutually exclusive: the token under the caret starts with @ or /, never both
+  const [slashDismissed, setSlashDismissed] = useState<number>();
+  const slashSpan = collapsed && !p.disabled ? commandAt(text, caret) : undefined;
+  const slashLive = slashSpan && slashSpan.start !== slashDismissed ? slashSpan : undefined;
+  const slash = useSlashHits(p.commands, slashLive?.query);
+  const slashOpen = !!slashLive && slash.hits.length > 0;
   const pickCommand = (c: SlashCommand) => {
-    // Whatever follows the caret inside the token goes too; text after the token is kept as the arguments
-    const tail = text.slice(caret).replace(/^\S*/, '').trimStart();
-    const head = `/${c.name} `;
-    setText(head + tail);
-    setCaret(head.length);
-    requestAnimationFrame(() => textarea.current?.setSelectionRange(head.length, head.length));
+    if (!slashSpan) return;
+    const next = completeCommand(text, slashSpan, caret, c.name);
+    setText(next.text);
+    setCaret(next.caret);
+    requestAnimationFrame(() => textarea.current?.setSelectionRange(next.caret, next.caret));
   };
   // The input hint of the command the text names, while its arguments are still empty (the open list already shows it in the row)
   const hint = !slashOpen && p.commands ? commandHint(p.commands, text, getLocale()) : undefined;
@@ -180,7 +181,7 @@ export function Composer(p: ComposerProps) {
     if (e.nativeEvent.isComposing) return;
     if (slashOpen) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); slash.move(e.key === 'ArrowDown' ? 1 : -1); return; }
-      if (e.key === 'Escape') { e.preventDefault(); setSlashDismissed(true); return; }
+      if (e.key === 'Escape') { e.preventDefault(); setSlashDismissed(slashSpan!.start); return; }
       // Tab completes; Enter completes too unless the token already is the active command — then it sends, so `/compact⏎` is one keystroke
       const hit = slash.hits[slash.active];
       if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && hit && hit.name !== slashSpan!.query)) { e.preventDefault(); if (hit) pickCommand(hit); return; }
@@ -201,7 +202,7 @@ export function Composer(p: ComposerProps) {
     setCaret(el.selectionStart);
     setCollapsed(el.selectionStart === el.selectionEnd);
     if (dismissed !== undefined && !mentionAt(el.value, el.selectionStart)) setDismissed(undefined);
-    if (slashDismissed && !commandAt(el.value, el.selectionStart)) setSlashDismissed(false);
+    if (slashDismissed !== undefined && !commandAt(el.value, el.selectionStart)) setSlashDismissed(undefined);
   };
 
   const field = (
