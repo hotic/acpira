@@ -11,6 +11,7 @@ import type { AgentPool } from './AgentPool';
 import { capturePlan, planDocuments } from './plans';
 import { planExecutionPrompt } from '@shared/planExecution';
 import { restorePlanSnapshots } from './planSnapshots';
+import { restoreInterruptedTurns } from './restoreTurns';
 import { CompactionCompletion, isCompactCommand } from './compaction';
 import { applyModelSources, type ModelSources } from '@shared/modelSources';
 import { thoughtCorrection } from '@shared/composerControls';
@@ -126,7 +127,7 @@ export class AcpSession {
     this.acpSessionId = record.acpSessionId;
     // Old records (persisted before the contract changed) may lack the options field
     const c = record.controls as Partial<SessionControls> | undefined;
-    this.state = { turns: restoreCommandReceipts(restorePlanSnapshots(record.turns)), controls: { modes: c?.modes ?? [], modeId: c?.modeId, modeConfigId: c?.modeConfigId, options: c?.options ?? [] }, usage: record.usage, commands: record.commands, title: record.title };
+    this.state = { turns: restoreInterruptedTurns(restoreCommandReceipts(restorePlanSnapshots(record.turns)), record.updatedAt), controls: { modes: c?.modes ?? [], modeId: c?.modeId, modeConfigId: c?.modeConfigId, options: c?.options ?? [] }, usage: record.usage, commands: record.commands, title: record.title };
     this.perms = new PermissionGate({ state: () => this.state, touch: () => this.touch() });
     this.questions = new QuestionGate({ state: () => this.state, touch: () => this.touch() });
     this.queue = new PromptQueue({
@@ -632,9 +633,12 @@ export class AcpSession {
     this.touch();
     this.scheduleGrokUsage();
     const usageBeforePrompt = this.usageRevision;
+    const promptGeneration = this.procGen;
+    const livePrompt = () => this.procGen === promptGeneration && this.status !== 'closed';
     let stop: acp.StopReason = 'cancelled';
     try {
       const r = await this.proc!.agent.request(acp.methods.agent.session.prompt, { sessionId: this.acpSessionId!, prompt: prepared.blocks });
+      if (!livePrompt()) return;
       this.log(`prompt done: ${r.stopReason}`);
       stop = r.stopReason;
       // Keep running and the queue intact until the background operation ends.
@@ -653,14 +657,19 @@ export class AcpSession {
         if (this.status !== 'ready') return;
       }
       await this.refreshGrokUsage();
+      if (!livePrompt()) return;
       if (agentTurn.command && stop === 'end_turn') Object.assign(agentTurn.command, commandChanges(before, this.state.controls));
       this.settle(stop);
     } catch (e) {
+      // Disposal already settled and persisted the interrupted turn. The old
+      // channel's rejection must not overwrite it or publish into a new process.
+      if (!livePrompt()) return;
       stop = 'cancelled';
       // The error stays on the turn (the webview shows it as a card, history keeps the row); the session itself is still usable, so status stays ready —
       // except when the peer says the credential is gone, which is the Notice's business
       this.log(`prompt failed: ${msg(e)}`);
       await this.refreshGrokUsage();
+      if (!livePrompt()) return;
       this.settle('cancelled', turnErrorOf(e));
       if (isAuth(e)) this.status = 'auth_required';
       // The peer forgot the native session, or the process carrying it died: resending over this connection can only fail

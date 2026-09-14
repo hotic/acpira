@@ -47,6 +47,37 @@ async function until(pred: () => boolean, ms = 5000) {
 }
 
 describe('AcpSession', () => {
+  it('restores interrupted turns and old background tools as stopped without mutating the saved record', () => {
+    const { session, d } = deps();
+    const original = session();
+    const record = original.toRecord();
+    record.updatedAt = new Date(5000).toISOString();
+    record.turns = [
+      { role: 'user', text: 'work' },
+      { role: 'agent', startedAt: 1000, blocks: [
+        { type: 'text', markdown: 'partial', streaming: true },
+        { type: 'tool_call', id: 'server', kind: 'execute', verb: 'Run', status: 'in_progress', startedAt: 2000, background: true },
+        { type: 'tool_call', id: 'wait', kind: 'other', verb: 'Wait', status: 'pending' },
+        { type: 'compaction', id: 'compact', status: 'in_progress' },
+      ] },
+      { role: 'user', text: 'continue' },
+      { role: 'agent', startedAt: 4000, endedAt: 5000, blocks: [], stop: 'error', error: { message: 'failed' } },
+    ];
+    const before = JSON.stringify(record);
+    const restored = new AcpSession(record, d);
+    try {
+      expect(restored.isRunning).toBe(false);
+      expect(restored.view().turns[1]).toMatchObject({ stop: 'cancelled', endedAt: 5000, blocks: [
+        { streaming: false }, { status: 'cancelled', endedAt: 5000 }, { status: 'cancelled' }, { status: 'cancelled' },
+      ] });
+      expect(restored.view().turns[3]).toEqual(record.turns[3]);
+      expect(JSON.stringify(record)).toBe(before);
+      const again = new AcpSession(restored.toRecord(), d);
+      expect(again.view().turns).toEqual(restored.view().turns);
+      again.dispose();
+    } finally { restored.dispose(); original.dispose(); }
+  });
+
   it('keeps empty slash receipts and observed settings across persistence without inventing assistant prose', async () => {
     const { session, d } = deps();
     const s = session();
