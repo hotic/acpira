@@ -2,6 +2,7 @@
   "acpira.cmd.openView": "打开聊天",
   "acpira.cmd.newSession": "新建会话",
   "acpira.cmd.openInEditor": "在编辑区打开",
+  "acpira.cmd.openInNewWindow": "在新窗口打开",
   "acpira.cmd.showLog": "查看日志",
   "acpira.conf.defaultAgent": "新会话默认用哪个 agent",
   "acpira.conf.language": "界面语言；auto 跟随 VS Code",

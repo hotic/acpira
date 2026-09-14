@@ -77,6 +77,12 @@
         "icon": "$(open-preview)"
       },
       {
+        "command": "acpira.openInNewWindow",
+        "title": "%acpira.cmd.openInNewWindow%",
+        "category": "Acpira",
+        "icon": "$(multiple-windows)"
+      },
+      {
         "command": "acpira.showLog",
         "title": "%acpira.cmd.showLog%",
         "category": "Acpira"
@@ -93,6 +99,11 @@
           "command": "acpira.openInEditor",
           "when": "view == acpira.chat",
           "group": "navigation@2"
+        },
+        {
+          "command": "acpira.openInNewWindow",
+          "when": "view == acpira.chat",
+          "group": "navigation@3"
         },
         {
           "command": "acpira.showLog",
