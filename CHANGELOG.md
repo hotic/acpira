@@ -7,10 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- `Acpira: Open in New Window` command and view title action open a chat editor tab straight into a new VS Code window; each invocation makes another floating window.
-- The mode picked in the composer (Code / Plan / Bypass Permissions, …) is remembered per agent like the model and comes back on the agent's next new session. Only manual picks count: a mode the agent switches by itself stays with that conversation.
 - MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.
 - Steer / interrupt follow-up modes remain planned. Mid-turn messages stay in the host-side queue.
+
+## [1.3.1] - 2026-09-15
+
+### Added
+
+- `Acpira: Open in New Window` command and view title action open a chat editor tab straight into a new VS Code window; each invocation makes another floating window.
+- The session list can dock beside the conversation (`acpira.sessionListPosition`, collapsed by default); narrow panels open it as a drawer on the selected side, and its agent filter is a searchable channel picker instead of a chip row.
+- The account quota display shows Devin's reported on-demand USD balance under the quota windows, including explicit zero and negative balances.
+
+### Changed
+
+- The mode picked in the composer (Code / Plan / Bypass Permissions, …) is remembered per agent like the model and comes back on the agent's next new session. Only manual picks count: a mode the agent switches by itself stays with that conversation.
+- Slash commands complete and highlight mid-sentence like `@` mentions: a `/` at the start or after whitespace opens the list, and every advertised `/name` token keeps its accent pill in the composer and in the sent prompt, not just a leading one.
+- Editing or resending a prompt keeps the live native session when the conversation allows it: an unchanged resend after turns that only failed or cancelled empty, and an edit whose rebuilt history would exceed the context budget, continue on the same peer with changed model / mode / config picks applied, instead of replaying the transcript into a fresh session.
+- Read and search file result rows no longer carry a raw-output toggle; the file list is the whole presentation.
+
+### Fixed
+
+- A context-length error parks the queued prompts and its alert offers Compact context instead of a blind retry; when the agent has not advertised `/compact`, it suggests shortening the message or starting a new conversation.
+- Reloading the window settles persisted in-flight turns as cancelled instead of reviving them: streams, background tools and approvals no longer appear live, and a late prompt result from a disposed process cannot overwrite the settled turn.
 
 ## [1.3.0] - 2026-09-12
 
