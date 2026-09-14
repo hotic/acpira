@@ -4,15 +4,24 @@ import type { SlashCommand } from '@shared/transcript';
 
 // Pure helpers behind the / command completion (Slash.tsx renders them; a lowercase `slash.ts` would clash with it on a case-insensitive disk); kept DOM-free so the host tsconfig can type-check their tests
 
-// A / command token under the caret: the prompt starts with `/` and the caret is still inside that first token.
-// `query` is what has been typed after the slash. A `/` anywhere else (paths, `a/b`) is plain text
+// A / command token under the caret: the `/` sits at the start or after whitespace and the query runs up to the caret without
+// whitespace (the same shape as the `@` mention). `query` is what has been typed after the slash, `start` the index of the `/`.
+// A `/` inside a word (`a/b`, `https://`) is plain text
 export interface SlashSpan {
+  start: number;
   query: string;
 }
 
 export function commandAt(text: string, caret: number): SlashSpan | undefined {
-  const m = /^\/(\S*)$/.exec(text.slice(0, caret));
-  return m ? { query: m[1]! } : undefined;
+  const m = /(^|\s)\/(\S*)$/.exec(text.slice(0, caret));
+  return m ? { start: caret - m[2]!.length - 1, query: m[2]! } : undefined;
+}
+
+// The prompt after picking `name` for the span under the caret: the token becomes `/name ` (whatever follows the caret inside
+// it goes too) and the text after it is kept as the arguments
+export function completeCommand(text: string, span: SlashSpan, caret: number, name: string): { text: string; caret: number } {
+  const head = `${text.slice(0, span.start)}/${name} `;
+  return { text: head + text.slice(caret).replace(/^\S*/, '').trimStart(), caret: head.length };
 }
 
 // Commands matching the typed query: name prefixes first, then names containing it or descriptions with a word starting with it; each tier keeps
@@ -27,10 +36,10 @@ export function matchCommands(commands: readonly SlashCommand[], query: string, 
   return [...prefix, ...rest];
 }
 
-// The command the prompt names when it is exactly `/name` (optionally followed by whitespace), for showing its input hint
-// while the arguments are still empty. Anything typed after the name means the user is past the hint
+// The command the prompt names when its last token is `/name` (optionally followed by whitespace), wherever that token sits,
+// for showing its input hint while the arguments are still empty. Anything typed after the name means the user is past the hint
 export function commandHint(commands: readonly SlashCommand[], text: string, locale: Locale = 'en'): string | undefined {
-  const m = /^\/(\S+)\s*$/.exec(text);
-  const command = m ? commands.find(c => c.name === m[1]) : undefined;
+  const m = /(^|\s)\/(\S+)\s*$/.exec(text);
+  const command = m ? commands.find(c => c.name === m[2]) : undefined;
   return command ? presentCommand(command, locale).input?.hint : undefined;
 }

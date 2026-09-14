@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SlashCommand, Turn } from '@shared/transcript';
-import { commandAt, commandHint, matchCommands } from '../src/webview/chat/slashCommands';
+import { commandAt, commandHint, completeCommand, matchCommands } from '../src/webview/chat/slashCommands';
 
 import { presentCommand } from '../src/shared/commandPresentation';
 import { commandName, namedCommand, restoreCommandReceipts } from '../src/shared/slashCommands';
@@ -15,19 +15,42 @@ const COMMANDS: SlashCommand[] = [
 
 describe('commandAt', () => {
   it('opens on a leading slash while the caret is inside the first token', () => {
-    expect(commandAt('/', 1)).toEqual({ query: '' });
-    expect(commandAt('/rev', 4)).toEqual({ query: 'rev' });
-    expect(commandAt('/review files', 3)).toEqual({ query: 're' });
+    expect(commandAt('/', 1)).toEqual({ start: 0, query: '' });
+    expect(commandAt('/rev', 4)).toEqual({ start: 0, query: 'rev' });
+    expect(commandAt('/review files', 3)).toEqual({ start: 0, query: 're' });
   });
 
-  it('is plain text once the caret leaves the token, for slashes elsewhere, and for paths', () => {
+  it('opens mid-text on a slash after whitespace, like the @ mention', () => {
+    expect(commandAt('拆分一下提交 /', 8)).toEqual({ start: 7, query: '' });
+    expect(commandAt('foo /rev bar', 8)).toEqual({ start: 4, query: 'rev' });
+    expect(commandAt(' /review', 8)).toEqual({ start: 1, query: 'review' });
+    expect(commandAt('line\n/rev', 9)).toEqual({ start: 5, query: 'rev' });
+  });
+
+  it('is plain text once the caret leaves the token and for slashes inside words', () => {
     expect(commandAt('/review ', 8)).toBeUndefined();
     expect(commandAt('/review files', 13)).toBeUndefined();
-    expect(commandAt('look at /tmp/file.ts', 20)).toBeUndefined();
-    expect(commandAt(' /review', 8)).toBeUndefined();
+    expect(commandAt('foo /rev bar', 12)).toBeUndefined();
+    expect(commandAt('a/b', 3)).toBeUndefined();
+    expect(commandAt('https://x', 9)).toBeUndefined();
     expect(commandAt('', 0)).toBeUndefined();
-    // /tmp/file.ts typed at the start still yields a span; the list simply has no hit for it and stays closed
+    // A mid-text path still yields a span; the list simply has no hit for it and stays closed
+    expect(commandAt('look at /tmp/file.ts', 20)).toEqual({ start: 8, query: 'tmp/file.ts' });
     expect(matchCommands(COMMANDS, 'tmp/file.ts')).toEqual([]);
+  });
+});
+
+describe('completeCommand', () => {
+  it('turns the token under the caret into `/name ` and keeps the arguments after it', () => {
+    expect(completeCommand('/rev', { start: 0, query: 'rev' }, 4, 'review')).toEqual({ text: '/review ', caret: 8 });
+    expect(completeCommand('/rev files', { start: 0, query: 'rev' }, 4, 'review')).toEqual({ text: '/review files', caret: 8 });
+    // Whatever follows the caret inside the token goes too
+    expect(completeCommand('/reviewer files', { start: 0, query: 're' }, 3, 'review')).toEqual({ text: '/review files', caret: 8 });
+  });
+
+  it('completes a mid-text token in place', () => {
+    expect(completeCommand('拆分一下提交 /rel 按规范', { start: 7, query: 'rel' }, 11, 'agents:release'))
+      .toEqual({ text: '拆分一下提交 /agents:release 按规范', caret: 23 });
   });
 });
 
@@ -50,9 +73,13 @@ describe('matchCommands', () => {
 });
 
 describe('commandHint', () => {
-  it('shows the hint only while the text is exactly the command with empty arguments', () => {
+  it('shows the hint only while the text ends with the command and empty arguments', () => {
     expect(commandHint(COMMANDS, '/review')).toBe('files or scope');
     expect(commandHint(COMMANDS, '/review ')).toBe('files or scope');
+    expect(commandHint(COMMANDS, 'foo /review')).toBe('files or scope');
+    expect(commandHint(COMMANDS, 'foo /review ')).toBe('files or scope');
+    expect(commandHint(COMMANDS, 'foo /review src')).toBeUndefined();
+    expect(commandHint(COMMANDS, 'a/review')).toBeUndefined();
     expect(commandHint(COMMANDS, '/review src')).toBeUndefined();
     expect(commandHint(COMMANDS, '/compact')).toBeUndefined();
     expect(commandHint(COMMANDS, '/rev')).toBeUndefined();
