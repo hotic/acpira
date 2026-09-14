@@ -694,8 +694,8 @@ export class SessionManager {
     this.unwatchRegistry?.();
     this.unwatchRegistry = undefined;
     for (const s of this.live.values()) {
-      await this.deps.store.flush(s.toRecord());
       s.dispose();
+      await this.deps.store.flush(s.toRecord());
     }
     this.live.clear();
     this.pool.dispose();

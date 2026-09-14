@@ -28,6 +28,23 @@ function manager() {
 }
 
 describe('SessionManager', () => {
+  it('persists a stopped turn before shutdown releases the session', async () => {
+    const { m, dir } = manager();
+    try {
+      await m.init();
+      await m.newSession();
+      const id = m.activeId!;
+      const prompt = m.handle({ type: 'send', text: 'slow' });
+      await vi.waitFor(() => expect(m.active()?.turns.at(-1)).toMatchObject({ role: 'agent', blocks: expect.arrayContaining([expect.objectContaining({ streaming: true })]) }), { timeout: 5000 });
+      await m.dispose();
+      await prompt;
+      const store = new TranscriptStore(dir);
+      const record = await store.load(id);
+      expect(record?.turns.at(-1)).toMatchObject({ stop: 'cancelled', endedAt: expect.any(Number), blocks: expect.arrayContaining([expect.objectContaining({ streaming: false })]) });
+      await store.dispose();
+    } finally { await m.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it('publishes local quota updates and refreshes after a turn without binding an imported account', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'acpira-local-manager-'));
     const local = new LocalAccounts({ home: dir, env: () => ({ KIMI_CODE_API_KEY: 'test-code-key' }),
