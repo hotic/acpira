@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- The mode picked in the composer (Code / Plan / Bypass Permissions, …) is remembered per agent like the model and comes back on the agent's next new session. Only manual picks count: a mode the agent switches by itself stays with that conversation.
 - MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.
 - Steer / interrupt follow-up modes remain planned. Mid-turn messages stay in the host-side queue.
 
