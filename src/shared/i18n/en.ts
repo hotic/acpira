@@ -112,6 +112,10 @@ export const en = {
   'quota.time.minutes': '{n} min',
   'quota.time.hours': '{n} h',
   'quota.time.days': '{n} d',
+  'quota.time.short.minutes': '{n}m',
+  'quota.time.short.hours': '{n}h',
+  'quota.time.short.days': '{n}d',
+  'quota.onDemandBalance': 'On-demand balance',
 
   'usage.title': 'Context',
   'usage.compact': 'Compact context',

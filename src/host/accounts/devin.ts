@@ -109,7 +109,15 @@ export function parseUserStatus(json: unknown): AccountQuota | undefined {
   };
   add('daily', info.hideDailyQuota, status.dailyQuotaRemainingPercent, status.dailyQuotaResetAtUnix);
   add('weekly', info.hideWeeklyQuota, status.weeklyQuotaRemainingPercent, status.weeklyQuotaResetAtUnix);
-  return windows.length ? { windows, fetchedAt: new Date().toISOString() } : undefined;
+  // GetUserStatus reports USD millionths as a signed int64 string. Keep negative balances
+  // and explicit zero; an omitted balance provides no evidence of available credit.
+  const rawBalance = status.overageBalanceMicros;
+  const micros = typeof rawBalance === 'number' ? rawBalance
+    : typeof rawBalance === 'string' && /^-?\d+$/.test(rawBalance) ? Number(rawBalance) : NaN;
+  const onDemandBalanceUsd = Number.isSafeInteger(micros) ? micros / 1_000_000 : undefined;
+  return windows.length || onDemandBalanceUsd !== undefined
+    ? { windows, ...(onDemandBalanceUsd !== undefined && { onDemandBalanceUsd }), fetchedAt: new Date().toISOString() }
+    : undefined;
 }
 
 export function dataHome(): string {

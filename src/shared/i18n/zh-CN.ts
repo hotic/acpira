@@ -119,6 +119,10 @@ export const zhCN = {
   'quota.time.minutes': '{n} 分钟',
   'quota.time.hours': '{n} 小时',
   'quota.time.days': '{n} 天',
+  'quota.time.short.minutes': '{n}分',
+  'quota.time.short.hours': '{n}时',
+  'quota.time.short.days': '{n}天',
+  'quota.onDemandBalance': '按需余额',
 
   // Context usage panel
   'usage.title': '上下文',

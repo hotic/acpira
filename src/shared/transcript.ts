@@ -34,6 +34,8 @@ export interface QuotaWindow {
 // Usage allowance of an account, fetched from the vendor by the account provider; in memory only, refreshed after turns and on demand
 export interface AccountQuota {
   windows: QuotaWindow[];
+  // Optional vendor-reported on-demand balance in USD; absence means unavailable, not zero.
+  onDemandBalanceUsd?: number;
   fetchedAt: string;
 }
 
