@@ -315,7 +315,7 @@ export function Shell(p: ShellProps) {
                 <HistoryContext.Provider value={history}>
                 <HistoryComposerContext.Provider value={history?.editing !== undefined ? composerProps : undefined}>
                   <OpenToolFileContext.Provider value={openToolFile}>
-                    <Thread key={p.activeSessionId} turns={p.turns} running={p.running} wide={wide} replayKey={p.replayKey} blobUrl={blobUrl} contentRef={contentRef} onPermission={(blockId, optionId) => { if (p.activeSessionId) on.permission(p.activeSessionId, blockId, optionId); }} />
+                    <Thread key={p.activeSessionId} turns={p.turns} running={p.running} wide={wide} replayKey={p.replayKey} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands} onPermission={(blockId, optionId) => { if (p.activeSessionId) on.permission(p.activeSessionId, blockId, optionId); }} />
                   </OpenToolFileContext.Provider>
                 </HistoryComposerContext.Provider>
                 </HistoryContext.Provider>
@@ -378,6 +378,8 @@ interface ThreadProps {
   replayKey?: number | string;
   blobUrl?: (blob: string) => string;
   contentRef?: (el: HTMLDivElement | null) => void;
+  // Advertised slash commands: sent user messages paint their `/name` tokens like the composer does
+  commands?: SlashCommand[];
   onPermission: (blockId: string, optionId: string) => void;
 }
 
@@ -386,7 +388,7 @@ const STAGGER_CAP = 12;
 
 // Conversation flow: stick-to-bottom following only happens on transcript changes (new content / streaming growth); user actions like expand / collapse never touch the scroll position —
 // the toggle under the mouse stays put while the content below it moves. Scrolling away from the bottom releases the follow; scrolling back to the bottom restores it
-function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, onPermission }: ThreadProps) {
+function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands, onPermission }: ThreadProps) {
   const ref = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   useEffect(() => {
@@ -424,7 +426,7 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, onPermis
     // Fold memory key: the session plus the turn's position and start time, so an edited-away turn at the same index does not inherit a choice
     const memoryKey = replayKey !== undefined ? `${replayKey}:${ti}:${turn.role === 'agent' ? turn.startedAt ?? '' : ''}` : undefined;
     exchanges[exchanges.length - 1]!.messages.push(turn.role === 'user'
-      ? <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} />
+      ? <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} />
       : <AgentMessage key={ti} turn={turn} index={index} compacting={compacting} running={running && ti === turns.length - 1 && !turn.stop} onPermission={onPermission} memoryKey={memoryKey} />);
   });
   return (

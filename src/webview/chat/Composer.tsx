@@ -6,7 +6,6 @@ import type { HiddenMap } from '@shared/settings';
 import { composerControls } from '@shared/composerControls';
 import { MAX_TEXT_BYTES } from '@shared/attachments';
 import { collectPastedText } from '@shared/pastedText';
-import { namedCommand } from '@shared/slashCommands';
 import { useAppearance } from '../appearance';
 import { getLocale, t } from '../i18n';
 import { cn } from '../ui/cn';
@@ -18,7 +17,7 @@ import { SendButton } from '../effects/SendButton';
 import { DraftChips } from './Attachments';
 import { collectDrafts, hasPayload } from './drafts';
 import { MentionList, mentionAt, useMentionHits } from './Mention';
-import { SlashList, commandAt, commandHint, completeCommand, useSlashHits } from './Slash';
+import { SlashList, commandAt, commandHint, commandMarks, completeCommand, useSlashHits } from './Slash';
 import { modeIcon } from './modeIcons';
 import { ModelControl, OptionControl, ReasoningControl } from './ModelPicker';
 import { ContextRing } from './ContextUsage';
@@ -176,7 +175,8 @@ export function Composer(p: ComposerProps) {
   };
   // The input hint of the command the text names, while its arguments are still empty (the open list already shows it in the row)
   const hint = !slashOpen && p.commands ? commandHint(p.commands, text, getLocale()) : undefined;
-  const command = namedCommand(p.commands ?? [], text);
+  // Every advertised `/name` token paints the accent mark — leading or mid-sentence alike (Cursor / Codex do the same)
+  const marks = commandMarks(p.commands ?? [], text);
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return;
     if (slashOpen) {
@@ -222,7 +222,7 @@ export function Composer(p: ComposerProps) {
       {/* Kept attachments of an edited prompt lead the same wrapping row as freshly pasted ones */}
       <DraftChips drafts={drafts} before={p.edit?.hasAttachments ? p.edit.attachments : undefined} onRemove={i => setDrafts(d => d.filter((_, j) => j !== i))} />
       <PromptInput
-        command={command?.name}
+        marks={marks}
         ref={textarea}
         rows={1}
         value={text}

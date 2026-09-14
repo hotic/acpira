@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SlashCommand, Turn } from '@shared/transcript';
-import { commandAt, commandHint, completeCommand, matchCommands } from '../src/webview/chat/slashCommands';
+import { commandAt, commandHint, commandMarks, completeCommand, matchCommands } from '../src/webview/chat/slashCommands';
 
 import { presentCommand } from '../src/shared/commandPresentation';
 import { commandName, namedCommand, restoreCommandReceipts } from '../src/shared/slashCommands';
@@ -69,6 +69,25 @@ describe('matchCommands', () => {
     expect(matchCommands(COMMANDS, 'he')).toEqual([]);
     expect(matchCommands(COMMANDS, 'ion')).toEqual([]);
     expect(matchCommands(COMMANDS, 'zzz')).toEqual([]);
+  });
+});
+
+describe('commandMarks', () => {
+  it('marks every advertised token wherever it sits, not just leading', () => {
+    expect(commandMarks(COMMANDS, '/review files')).toEqual([{ start: 0, name: 'review' }]);
+    expect(commandMarks(COMMANDS, '拆分一下提交 /review 按规范')).toEqual([{ start: 7, name: 'review' }]);
+    expect(commandMarks(COMMANDS, '/compact 然后 /review')).toEqual([{ start: 0, name: 'compact' }, { start: 12, name: 'review' }]);
+    expect(commandMarks(COMMANDS, 'line\n/review')).toEqual([{ start: 5, name: 'review' }]);
+  });
+
+  it('leaves partial names, paths, in-word slashes and punctuated tails plain', () => {
+    expect(commandMarks(COMMANDS, 'foo /rev bar')).toEqual([]);
+    expect(commandMarks(COMMANDS, 'a/review')).toEqual([]);
+    expect(commandMarks(COMMANDS, 'look at /tmp/review.ts')).toEqual([]);
+    expect(commandMarks(COMMANDS, 'foo /review.')).toEqual([]);
+    expect(commandMarks(COMMANDS, '/unknown /review')).toEqual([{ start: 9, name: 'review' }]);
+    expect(commandMarks([], '/review')).toEqual([]);
+    expect(commandMarks(COMMANDS, 'no slash here')).toEqual([]);
   });
 });
 

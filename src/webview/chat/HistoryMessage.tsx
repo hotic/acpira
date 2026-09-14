@@ -1,7 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { EditTurnRequest } from '@shared/protocol';
-import type { UserTurn } from '@shared/transcript';
+import type { SlashCommand, UserTurn } from '@shared/transcript';
 import { captureTurnSettings, controlsForTurn } from '@shared/turnSettings';
 import { useAppearance } from '../appearance';
 import { Composer, type ComposerProps } from './Composer';
@@ -32,7 +32,7 @@ export const HistoryComposerContext = createContext<ComposerProps | undefined>(u
 // keeps its natural flow height meanwhile so the fold never moves the conversation under the reader; the freed area is transparent
 // and lets pointer events through to the reply scrolling beneath it. A hidden sidebar webview collapses the thread to no box —
 // those IntersectionObserver records are ignored, then re-checked when the thread is visible again.
-export const HistoryMessage = memo(function HistoryMessage(p: { turn: UserTurn; index: number; turnIndex: number; blobUrl?: (blob: string) => string }) {
+export const HistoryMessage = memo(function HistoryMessage(p: { turn: UserTurn; index: number; turnIndex: number; blobUrl?: (blob: string) => string; commands?: readonly SlashCommand[] }) {
   const context = useContext(HistoryContext);
   const { motion } = useAppearance();
   const frame = useRef<HTMLDivElement>(null);
