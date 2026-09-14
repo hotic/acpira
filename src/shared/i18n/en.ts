@@ -324,7 +324,6 @@ export const en = {
   'host.working': 'Working',
   'tool.output': 'Output',
   'turns.processHistory': 'Process history',
-  'tool.toggleOutput': 'Toggle tool output',
   'tool.runningSeconds': 'Command running for {s}s',
   'tool.completedSeconds': 'Ran in {s}s',
   'host.doing': '{verb} {target}',
