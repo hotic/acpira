@@ -251,6 +251,22 @@ describe('Devin terminal login flow', () => {
 });
 
 describe('Devin credentials file and auth status parsing', () => {
+  it('preserves reported on-demand USD balances without inventing missing or malformed amounts', () => {
+    const parseBalance = (overageBalanceMicros: unknown) => parseUserStatus({ userStatus: { planStatus: { overageBalanceMicros } } });
+    // Live Free-seat response matches the billing page's $68.37 display.
+    expect(parseBalance('68373043')).toMatchObject({ windows: [], onDemandBalanceUsd: 68.373043 });
+    expect(parseBalance('0')).toMatchObject({ onDemandBalanceUsd: 0 });
+    expect(parseBalance(0)).toMatchObject({ onDemandBalanceUsd: 0 });
+    expect(parseBalance('-503099')).toMatchObject({ onDemandBalanceUsd: -0.503099 });
+    for (const value of [undefined, null, '', 'bad', '1.5', 1.5, Infinity, '9007199254740992']) {
+      expect(parseBalance(value)).toBeUndefined();
+    }
+    expect(parseUserStatus({ userStatus: { planStatus: {
+      planInfo: { billingStrategy: 'BILLING_STRATEGY_QUOTA', hideDailyQuota: true },
+      weeklyQuotaRemainingPercent: 87, overageBalanceMicros: '68373043',
+    } } })).toMatchObject({ windows: [{ id: 'weekly', remaining: 0.87 }], onDemandBalanceUsd: 68.373043 });
+  });
+
   it('toml write/read round-trip; status output yields the email label and the tier detail', async () => {
     const dir = tmp();
     const cred: AccountCredential = { secret: 'devin-abc', meta: { api_server_url: 'https://server.codeium.com', devin_webapp_host: 'app.devin.ai', devin_api_url: 'https://api.devin.ai' } };
