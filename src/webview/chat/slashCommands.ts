@@ -43,3 +43,19 @@ export function commandHint(commands: readonly SlashCommand[], text: string, loc
   const command = m ? commands.find(c => c.name === m[2]) : undefined;
   return command ? presentCommand(command, locale).input?.hint : undefined;
 }
+
+export interface CommandMark {
+  start: number;
+  name: string;
+}
+
+// Every token in the text that names an advertised command, for the composer mirror to paint: `/` at the start or after
+// whitespace, the name running to whitespace or the end — the same boundary rules as `commandName`, so `a/b`, `/tmp/x`
+// and partial names stay plain. A mid-sentence command gets the same pill as a leading one, like Cursor's composer
+export function commandMarks(commands: readonly SlashCommand[], text: string): CommandMark[] {
+  if (!commands.length || !text.includes('/')) return [];
+  const marks: CommandMark[] = [];
+  for (const m of text.matchAll(/(^|\s)\/([\p{L}\p{N}][\p{L}\p{N}_.:-]*)(?=\s|$)/gu))
+    if (commands.some(c => c.name === m[2])) marks.push({ start: m.index + m[1]!.length, name: m[2]! });
+  return marks;
+}

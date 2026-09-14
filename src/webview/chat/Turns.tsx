@@ -1,9 +1,10 @@
 import { Fragment, memo, useCallback, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Check, ChevronRight, Compass, Hand, MessageCircleQuestion, TriangleAlert, X } from 'lucide-react';
-import type { AgentBlock, AgentTurn, CompactionBlock, PermissionBlock, ToolCallBlock, ToolKind, UserTurn } from '@shared/transcript';
+import type { AgentBlock, AgentTurn, CompactionBlock, PermissionBlock, SlashCommand, ToolCallBlock, ToolKind, UserTurn } from '@shared/transcript';
 import { useAppearance, type Appearance } from '../appearance';
 import { getLocale, t } from '../i18n';
-import { COMMAND_MARK } from './PromptInput';
+import { commandSegments } from './PromptInput';
+import { commandMarks } from './slashCommands';
 import { turnOutcome } from './turnOutcome';
 import { Row, RowLabel, RowTarget, RowEntranceContext } from '../ui/Row';
 import { Shimmer } from '../ui/Shimmer';
@@ -34,7 +35,7 @@ import { splitPlanSections } from './planSections';
 // Clicking the card opens its inline editor, which also gives the full text for copying; no separate hover actions.
 // Sticking within the exchange is the caller's job (`HistoryMessage` wraps it), so the editor can take the card's place without a layout jump;
 // `compact` is its stuck state: the text folds to a few lines with a fading edge so a long prompt does not wall off the reply.
-export function UserMessage({ turn, index, blobUrl, onEdit, compact }: { turn: UserTurn; index: number; blobUrl?: (blob: string) => string; onEdit?: () => void; compact?: boolean }) {
+export function UserMessage({ turn, index, blobUrl, onEdit, compact, commands }: { turn: UserTurn; index: number; blobUrl?: (blob: string) => string; onEdit?: () => void; compact?: boolean; commands?: readonly SlashCommand[] }) {
   const { userMessage } = useAppearance();
   const fade = useScrollFade<HTMLDivElement>();
   const text = useRef<HTMLDivElement>(null);
@@ -47,6 +48,11 @@ export function UserMessage({ turn, index, blobUrl, onEdit, compact }: { turn: U
       </div>
     );
   }
+  // The same marks the composer painted while this was being typed; a recorded command keeps its pill
+  // even after the agent stops advertising it
+  const marks = commandMarks(commands ?? [], turn.text);
+  if (turn.command && turn.text.startsWith(`/${turn.command}`) && marks[0]?.start !== 0)
+    marks.unshift({ start: 0, name: turn.command });
   return (
     <div className={cn('flex w-full min-w-0 flex-col', userMessage === 'bubble' && 'self-end max-w-[88%]')}>
       <div
@@ -68,12 +74,11 @@ export function UserMessage({ turn, index, blobUrl, onEdit, compact }: { turn: U
         {turn.attachments?.length ? <TurnAttachments attachments={turn.attachments} blobUrl={blobUrl} /> : null}
         {turn.text && <div ref={textRef} className={cn(
           'scroll-fade scroll-thin min-h-0 whitespace-pre-wrap transition-[max-height] duration-(--dur-open) ease-out [--scroll-fade-size:var(--text-1-lh)] [overflow-anchor:none]',
-          // The command mark's background overhangs its line box; without room inside the padding box the scrollport shaves its top / left / bottom edges.
-          turn.command && turn.text.startsWith(`/${turn.command}`) && 'py-0.5 pl-1',
+          // A command mark's background overhangs its line box on any side; without room inside the padding box the scrollport shaves it.
+          marks.length > 0 && 'py-0.5 px-1',
           // Folded text does not take the wheel: scrolling over a stuck card keeps moving the conversation.
           compact ? 'max-h-(--user-message-stuck-max) overflow-hidden' : 'max-h-(--user-message-max) overflow-y-auto',
-        )}>{turn.command && turn.text.startsWith(`/${turn.command}`)
-          ? <><mark className={COMMAND_MARK}>/{turn.command}</mark>{turn.text.slice(turn.command.length + 1)}</> : turn.text}</div>}
+        )}>{marks.length ? commandSegments(turn.text, marks) : turn.text}</div>}
       </div>
     </div>
   );

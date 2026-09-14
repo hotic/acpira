@@ -6,7 +6,7 @@ import { getLocale } from '../i18n';
 import { CompletionList } from './Completion';
 import { matchCommands } from './slashCommands';
 
-export { commandAt, commandHint, completeCommand, matchCommands, type SlashSpan } from './slashCommands';
+export { commandAt, commandHint, commandMarks, completeCommand, matchCommands, type CommandMark, type SlashSpan } from './slashCommands';
 
 // Filters synchronously (the list is already in the session view) and keeps the active row in range; the row resets whenever the query changes
 export function useSlashHits(commands: readonly SlashCommand[] | undefined, query: string | undefined) {
