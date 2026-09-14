@@ -18,6 +18,7 @@ export interface EditTurnRequest {
   retainedAttachments: number[];
   attachments: Draft[];
   settings: TurnSettings;
+  intent?: 'replace' | 'continue';
 }
 
 export interface InitState {
