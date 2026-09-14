@@ -18,7 +18,6 @@ export const en = {
   'history.missingAttachment': 'A historical attachment is unavailable. The conversation was not replaced.',
   'history.optionUnavailable': 'Selection unavailable: {name}. Reopen the editor and choose again.',
   'history.cancelled': 'Resend cancelled. The conversation was not replaced.',
-  'history.tooLarge': 'This history is too large to rebuild for editing. The original session was kept. Send a new message in this session, or start a new conversation.',
   'common.back': 'Back',
   'common.close': 'Close',
   'common.undo': 'Undo',

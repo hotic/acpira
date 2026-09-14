@@ -22,7 +22,6 @@ export const zhCN = {
   'history.missingAttachment': '历史附件不可用，对话尚未替换。',
   'history.optionUnavailable': '选项不可用：{name}。请重新打开编辑框并选择。',
   'history.cancelled': '已取消重新发送，对话尚未替换。',
-  'history.tooLarge': '历史记录过大，无法完整重建以编辑消息。已保留原会话，请在当前会话发送新消息，或新建会话。',
   'common.back': '返回',
   'common.close': '关闭',
   'common.undo': '撤销',

@@ -80,8 +80,10 @@ export function Composer(p: ComposerProps) {
   const [reading, setReading] = useState(0);
   const [sending, setSending] = useState(false);
   const canSend = !p.disabled && !sending && reading === 0 && (text.trim().length > 0 || drafts.length > 0 || !!p.edit?.hasAttachments);
+  const sendingRef = useRef(false);
   const send = async () => {
-    if (!canSend) return;
+    if (!canSend || sendingRef.current) return;
+    sendingRef.current = true;
     setSending(true);
     try {
       await p.onSend(text, drafts);
@@ -92,6 +94,7 @@ export function Composer(p: ComposerProps) {
     } catch (e) {
       p.onNotice(e instanceof Error ? e.message : String(e));
     } finally {
+      sendingRef.current = false;
       setSending(false);
     }
   };
@@ -196,7 +199,7 @@ export function Composer(p: ComposerProps) {
       }
     }
     if (e.key === 'Escape' && p.edit && !sending) { e.preventDefault(); p.edit.onCancel(); return; }
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); }
   };
   const syncCaret = (el: HTMLTextAreaElement) => {
     setCaret(el.selectionStart);
@@ -293,7 +296,7 @@ export function Composer(p: ComposerProps) {
           ))}
         </fieldset>
         {p.edit && !p.edit.dismissOnOutside && <IconButton title={t('history.cancel')} aria-label={t('history.cancel')} onClick={p.edit.onCancel}><X /></IconButton>}
-        <SendButton running={p.running} filled={canSend} theme={p.theme} onClick={p.running ? p.onStop : send} />
+        <SendButton running={p.running} filled={canSend} theme={p.theme} onClick={p.running ? p.onStop : () => { void send(); }} />
       </div>
     </div>
   );

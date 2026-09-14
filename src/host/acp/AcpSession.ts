@@ -917,7 +917,7 @@ export class AcpSession {
 
   private onUpdate(n: acp.SessionNotification) {
     if (this.phase.editing) {
-      if (n.update.sessionUpdate === 'available_commands_update') this.phase.editNotifications.push(n);
+      if (n.update.sessionUpdate === 'available_commands_update' || n.update.sessionUpdate === 'usage_update') this.phase.editNotifications.push(n);
       return;
     }
     if (n.sessionId !== this.acpSessionId && this.acpSessionId) return;

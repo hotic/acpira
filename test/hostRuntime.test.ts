@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { HostMsg } from '../src/shared/protocol';
+import type { EditTurnRequest, HostMsg } from '../src/shared/protocol';
+import { captureTurnSettings } from '../src/shared/turnSettings';
 import type { HostPlatform, SettingsAffects } from '../src/host/platform';
 import { createHostRuntime, type HostRuntime } from '../src/host/runtime';
 
@@ -205,5 +206,29 @@ describe('HostRuntime + BridgeCore', () => {
     expect(posted.length).toBe(n);
     await runtime.dispose();
     await runtime.dispose();
+  });
+
+  it('routes a continue editTurn over the bridge: acknowledged, appended natively, stale repeat rejected', async () => {
+    const { core, posted, init } = await setup();
+    const sessionId = init.state.active!.id;
+    const latest = () => posted.filter((m): m is Extract<HostMsg, { type: 'session' }> => m.type === 'session' && m.session.id === sessionId).at(-1)?.session;
+    const lastStop = () => { const last = latest()?.turns.at(-1); return last?.role === 'agent' ? last.stop : undefined; };
+    await core.handle({ type: 'send', sessionId, text: 'original' });
+    await until(() => latest()?.turns.length === 2 && lastStop() === 'end_turn');
+    const view = latest()!;
+    const turn = view.turns[0]!;
+    if (turn.role !== 'user') throw new Error('Missing user turn');
+    const edit: EditTurnRequest = { sessionId, turnIndex: 0, turnCount: view.turns.length, originalText: turn.text, turnId: turn.id,
+      text: 'inspect-history', retainedAttachments: [], attachments: [], settings: captureTurnSettings(view.controls), intent: 'continue' };
+    await core.handle({ type: 'editTurn', requestId: 'continue-request', edit });
+    expect(posted.find(m => m.type === 'editTurnResult')).toEqual({ type: 'editTurnResult', requestId: 'continue-request' });
+    await until(() => latest()?.turns.length === 4 && lastStop() === 'end_turn');
+    const after = latest()!;
+    expect(after.turns.slice(0, 2)).toEqual(view.turns);
+    expect(after.turns[2]).toMatchObject({ role: 'user', text: 'inspect-history' });
+    expect(after.turns[2]).not.toHaveProperty('edited');
+    await core.handle({ type: 'editTurn', requestId: 'stale-repeat', edit });
+    expect(posted.at(-1)).toMatchObject({ type: 'editTurnResult', requestId: 'stale-repeat', error: expect.any(String) });
+    expect(latest()!.turns).toHaveLength(4);
   });
 });

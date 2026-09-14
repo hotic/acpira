@@ -1021,7 +1021,7 @@ describe('historical message editing', () => {
     } finally { s.dispose(); }
   });
 
-  it('rejects an oversized historical rebuild before replacing the native session or visible history', async () => {
+  it('automatically continues an oversized historical edit without replacing the native session or history', async () => {
     const { session } = deps();
     const s = session();
     try {
@@ -1032,10 +1032,18 @@ describe('historical message editing', () => {
       earlier.blocks.push({ type: 'text', markdown: 'archived output '.repeat(300_000) });
       await s.prompt('original');
       const before = JSON.stringify(s.view().turns), peer = s.toRecord().acpSessionId;
-      await expect(s.editTurn(historyEdit(s, 2))).rejects.toThrow(/histor|历史/i);
+      await s.editTurn(historyEdit(s, 2));
+      await until(() => !s.isRunning);
       expect(s.toRecord().acpSessionId).toBe(peer);
-      expect(JSON.stringify(s.view().turns)).toBe(before);
-      expect(s.isRunning).toBe(false);
+      expect(JSON.stringify(s.view().turns.slice(0, -2))).toBe(before);
+      expect(s.view().turns).toHaveLength(6);
+      const continued = s.view().turns.at(-2)!;
+      if (continued.role !== 'user') throw new Error('Missing continued turn');
+      expect(continued).not.toHaveProperty('edited');
+      const reply = s.view().turns.at(-1)!;
+      if (reply.role !== 'agent') throw new Error('Missing reply');
+      const wire = JSON.parse(reply.blocks.filter(b => b.type === 'text').map(b => b.markdown).join(''));
+      expect(wire.prompt).toEqual([{ type: 'text', text: 'inspect-history' }]);
       await s.prompt('ordinary follow-up');
       expect(s.view().turns.at(-1)).toMatchObject({ stop: 'end_turn' });
       expect(s.toRecord().acpSessionId).toBe(peer);
@@ -1196,5 +1204,316 @@ describe('historical message editing', () => {
       expect(JSON.stringify(s.view().turns)).toBe(before);
       expect(s.isRunning).toBe(false);
     } finally { s.dispose(); }
+  });
+
+  it('sends an oversized edit directly after compaction with one request', async () => {
+    const { session } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('big');
+      const earlier = s.toRecord().turns[1]!;
+      if (earlier.role !== 'agent') throw new Error('Missing history');
+      earlier.blocks.push({ type: 'text', markdown: 'archived output '.repeat(300_000) });
+      await s.compact();
+      await s.prompt('cancel-empty-once');
+      const before = JSON.stringify(s.view().turns), peer = s.toRecord().acpSessionId;
+      await s.editTurn(historyEdit(s, 4, 'inspect-history'));
+      await until(() => !s.isRunning);
+      expect(s.toRecord().acpSessionId).toBe(peer);
+      expect(JSON.stringify(s.view().turns.slice(0, -2))).toBe(before);
+      const reply = s.view().turns.at(-1)!;
+      if (reply.role !== 'agent') throw new Error('Missing reply');
+      const wire = JSON.parse(reply.blocks.filter(b => b.type === 'text').map(b => b.markdown).join(''));
+      expect(wire.prompt).toEqual([{ type: 'text', text: 'inspect-history' }]);
+      expect(s.view().turns.at(-2)).not.toHaveProperty('edited');
+    } finally { s.dispose(); }
+  });
+
+  it.each([false, true])('falls back to one native prompt when the expanded payload exceeds the cap (historical image: %s)', async historical => {
+    const { session } = deps();
+    const s = session();
+    const image = { kind: 'image' as const, name: 'large.png', mimeType: 'image/png', data: 'a'.repeat(400_000) };
+    try {
+      await s.start();
+      await s.prompt('earlier', historical ? [image] : []);
+      await s.prompt('original');
+      const before = JSON.stringify(s.view().turns), peer = s.toRecord().acpSessionId;
+      const edit = historyEdit(s, 2, 'inspect-history');
+      if (!historical) edit.attachments = [image];
+      await s.editTurn(edit);
+      await until(() => !s.isRunning);
+      expect(s.toRecord().acpSessionId).toBe(peer);
+      expect(JSON.stringify(s.view().turns.slice(0, -2))).toBe(before);
+      expect(s.view().turns).toHaveLength(6);
+      const continued = s.view().turns.at(-2)!;
+      if (continued.role !== 'user') throw new Error('Missing continued turn');
+      expect(continued).not.toHaveProperty('edited');
+      const reply = s.view().turns.at(-1)!;
+      if (reply.role !== 'agent') throw new Error('Missing reply');
+      const wire = JSON.parse(reply.blocks.filter(b => b.type === 'text').map(b => b.markdown).join(''));
+      expect(wire.prompt).toEqual(historical
+        ? [{ type: 'text', text: 'inspect-history' }]
+        : [{ type: 'text', text: 'inspect-history' }, { type: 'image', mimeType: 'image/png', data: 'a'.repeat(400_000) }]);
+    } finally { s.dispose(); }
+  });
+
+  it('retries an unchanged failed message natively even when the edit changed settings', async () => {
+    const { session } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('big');
+      const earlier = s.toRecord().turns[1]!;
+      if (earlier.role !== 'agent') throw new Error('Missing history');
+      earlier.blocks.push({ type: 'text', markdown: 'archived output '.repeat(300_000) });
+      await s.compact();
+      await s.prompt('cancel-empty-once');
+      const peer = s.toRecord().acpSessionId;
+      const edit = historyEdit(s, 4, 'cancel-empty-once');
+      edit.settings.modeId = 'plan';
+      edit.settings.config.model = 'm2';
+      edit.settings.config.effort = 'low';
+      await s.editTurn(edit);
+      await until(() => !s.isRunning);
+      expect(s.toRecord().acpSessionId).toBe(peer);
+      expect(s.view().turns).toHaveLength(6);
+      expect(s.view().turns[4]).toMatchObject({ text: 'cancel-empty-once' });
+      expect(s.view().turns[4]).not.toHaveProperty('edited');
+      expect(s.view().controls.modeId).toBe('plan');
+      expect(s.view().controls.options.find(c => c.id === 'model')?.value).toBe('m2');
+      expect(s.view().controls.options.find(c => c.id === 'effort')?.value).toBe('low');
+      await s.prompt('inspect-history');
+      await until(() => !s.isRunning);
+      const reply = s.view().turns.at(-1)!;
+      if (reply.role !== 'agent') throw new Error('Missing reply');
+      const wire = JSON.parse(reply.blocks.filter(b => b.type === 'text').map(b => b.markdown).join(''));
+      expect(wire.mode).toBe('plan');
+      expect(wire.config).toMatchObject({ model: 'm2', effort: 'low' });
+    } finally { s.dispose(); }
+  });
+
+  it('continues from an earlier turn with kept and new attachments, leaving later history intact', async () => {
+    const { session, blobs } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('original', [
+        { kind: 'image', name: 'old.png', mimeType: 'image/png', data: 'aGVsbG8=' },
+        { kind: 'text', name: 'remove.txt', text: 'removed attachment content' },
+      ]);
+      await s.prompt('later', [{ kind: 'text', name: 'unrelated.txt', text: 'unrelated payload' }]);
+      const lost = s.view().turns[2];
+      const lostBlob = lost?.role === 'user' && lost.attachments?.[0]?.kind !== 'file' ? lost.attachments?.[0]?.blob : undefined;
+      if (!lostBlob) throw new Error('Missing unrelated attachment');
+      blobs.delete(lostBlob);
+      const before = JSON.stringify(s.view().turns), peer = s.toRecord().acpSessionId;
+      const edit = historyEdit(s, 0, 'inspect-history');
+      edit.retainedAttachments = [0];
+      edit.attachments = [{ kind: 'text', name: 'new.txt', text: 'new attachment content' }];
+      edit.settings.modeId = 'plan';
+      edit.settings.config.model = 'm2';
+      edit.settings.config.effort = 'low';
+      await s.editTurn({ ...edit, intent: 'continue' });
+      await until(() => !s.isRunning);
+      expect(s.toRecord().acpSessionId).toBe(peer);
+      expect(JSON.stringify(s.view().turns.slice(0, -2))).toBe(before);
+      const continued = s.view().turns.at(-2)!;
+      if (continued.role !== 'user') throw new Error('Missing continued turn');
+      expect(continued).not.toHaveProperty('edited');
+      expect(continued.attachments).toMatchObject([{ kind: 'image', name: 'old.png' }, { kind: 'text', name: 'new.txt' }]);
+      const reply = s.view().turns.at(-1)!;
+      if (reply.role !== 'agent') throw new Error('Missing reply');
+      const wire = JSON.parse(reply.blocks.filter(b => b.type === 'text').map(b => b.markdown).join(''));
+      expect(wire.prompt).toHaveLength(3);
+      expect(wire.prompt[0]).toEqual({ type: 'text', text: 'inspect-history' });
+      expect(wire.prompt[1]).toMatchObject({ type: 'image', mimeType: 'image/png', data: 'aGVsbG8=' });
+      expect(wire.prompt[2]).toMatchObject({ type: 'resource', resource: { text: 'new attachment content' } });
+      const wireText = JSON.stringify(wire.prompt);
+      expect(wireText).not.toContain('removed attachment content');
+      expect(wireText).not.toContain('Conversation before');
+      expect(wireText).not.toContain('unrelated payload');
+      expect(wire.mode).toBe('plan');
+      expect(wire.config).toMatchObject({ model: 'm2', effort: 'low' });
+    } finally { s.dispose(); }
+  });
+
+  it.each([false, true])('still refuses a native retry over a context-length failure (changed settings: %s)', async changed => {
+    const { session } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('context-too-long');
+      expect(s.view().turns.at(-1)).toMatchObject({ stop: 'error' });
+      const before = JSON.stringify(s.view().turns), peer = s.toRecord().acpSessionId;
+      const edit = historyEdit(s, 0, 'context-too-long');
+      if (changed) {
+        edit.settings.modeId = 'plan';
+        edit.settings.config.model = 'm2';
+      }
+      await expect(s.editTurn(edit)).rejects.toThrow(/compact|压缩/i);
+      expect(JSON.stringify(s.view().turns)).toBe(before);
+      expect(s.toRecord().acpSessionId).toBe(peer);
+      expect(s.isRunning).toBe(false);
+    } finally { s.dispose(); }
+  });
+
+  it('rejects a continue with an unavailable selection without touching the native session or controls', async () => {
+    const { session } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('original');
+      const before = JSON.stringify(s.view().turns), peer = s.toRecord().acpSessionId;
+      const edit = historyEdit(s, 0);
+      edit.settings.config.model = 'unavailable';
+      await expect(s.editTurn({ ...edit, intent: 'continue' })).rejects.toThrow();
+      expect(JSON.stringify(s.view().turns)).toBe(before);
+      expect(s.toRecord().acpSessionId).toBe(peer);
+      expect(s.view().controls.options.find(c => c.id === 'model')?.value).toBe('m1');
+      expect(s.isRunning).toBe(false);
+    } finally { s.dispose(); }
+  });
+
+  it('rejects a continue whose retained blob is missing, plus stale or malformed requests', async () => {
+    const { session, blobs } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('original', [{ kind: 'text', name: 'lost.txt', text: 'payload' }]);
+      const before = JSON.stringify(s.view().turns), peer = s.toRecord().acpSessionId;
+      const first = s.view().turns[0];
+      const lostBlob = first?.role === 'user' && first.attachments?.[0]?.kind !== 'file' ? first.attachments?.[0]?.blob : undefined;
+      if (!lostBlob) throw new Error('Missing attachment');
+      blobs.delete(lostBlob);
+      await expect(s.editTurn({ ...historyEdit(s, 0), intent: 'continue' })).rejects.toThrow();
+      blobs.set(lostBlob, new TextEncoder().encode('payload'));
+      const stale = historyEdit(s, 0);
+      stale.turnCount += 2;
+      await expect(s.editTurn({ ...stale, intent: 'continue' })).rejects.toThrow();
+      const wrongSession = { ...historyEdit(s, 0), sessionId: 'other', intent: 'continue' as const };
+      await expect(s.editTurn(wrongSession)).rejects.toThrow();
+      const wrongTurn = { ...historyEdit(s, 0), turnId: 'other', intent: 'continue' as const };
+      await expect(s.editTurn(wrongTurn)).rejects.toThrow();
+      const dup = { ...historyEdit(s, 0), retainedAttachments: [0, 0], intent: 'continue' as const };
+      await expect(s.editTurn(dup)).rejects.toThrow();
+      const bogus = { ...historyEdit(s, 0), intent: 'bogus' as 'continue' };
+      await expect(s.editTurn(bogus)).rejects.toThrow();
+      expect(JSON.stringify(s.view().turns)).toBe(before);
+      expect(s.toRecord().acpSessionId).toBe(peer);
+      expect(s.isRunning).toBe(false);
+    } finally { s.dispose(); }
+  });
+
+  it('cancels a continue while attachments are still staging, then accepts a normal prompt', async () => {
+    const { session, d } = deps();
+    const s = session();
+    let release!: () => void;
+    try {
+      await s.start();
+      await s.prompt('original', [{ kind: 'text', name: 'wait.txt', text: 'payload' }]);
+      const before = JSON.stringify(s.view().turns), peer = s.toRecord().acpSessionId;
+      const read = d.blobs.readBlob;
+      d.blobs.readBlob = async (...args) => { await new Promise<void>(r => { release = r; }); return read(...args); };
+      const edit = historyEdit(s, 0);
+      const pending = s.editTurn({ ...edit, intent: 'continue' });
+      await expect(s.editTurn({ ...edit, intent: 'continue' })).rejects.toThrow();
+      await s.cancel();
+      release();
+      await expect(pending).rejects.toThrow();
+      expect(JSON.stringify(s.view().turns)).toBe(before);
+      expect(s.toRecord().acpSessionId).toBe(peer);
+      expect(s.isRunning).toBe(false);
+      await s.prompt('ordinary follow-up');
+      expect(s.view().turns.at(-1)).toMatchObject({ stop: 'end_turn' });
+    } finally { s.dispose(); }
+  });
+
+  it.each([false, true])('retains native usage reported while applying editor settings (later selection rejected: %s)', async rejected => {
+    const { session, d } = deps();
+    d.registry.get('fake').env = { FAKE_CONFIG_USAGE: '1' };
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('big');
+      const peer = s.toRecord().acpSessionId;
+      const before = JSON.stringify(s.view().turns);
+      const edit = historyEdit(s, 0, 'inspect-history');
+      edit.intent = 'continue';
+      edit.settings.config.model = 'm2';
+      if (rejected) edit.settings.config.effort = 'unavailable';
+      if (rejected) await expect(s.editTurn(edit)).rejects.toThrow();
+      else { await s.editTurn(edit); await until(() => !s.isRunning); }
+      expect(s.view().usage).toMatchObject({ used: 24_000, size: 200_000 });
+      expect(s.view().controls.options.find(c => c.id === 'model')?.value).toBe('m2');
+      expect(s.toRecord().acpSessionId).toBe(peer);
+      if (rejected) expect(JSON.stringify(s.view().turns)).toBe(before);
+    } finally { s.dispose(); }
+  });
+
+  it('ignores usage reported on the fresh peer during a rebuild', async () => {
+    const { session, d } = deps();
+    d.registry.get('fake').env = { FAKE_CONFIG_USAGE: '1' };
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('original');
+      const peer = s.toRecord().acpSessionId;
+      const edit = historyEdit(s, 0, 'inspect-history');
+      edit.settings.config.model = 'm2';
+      await s.editTurn(edit);
+      await until(() => !s.isRunning);
+      expect(s.toRecord().acpSessionId).not.toBe(peer);
+      expect(s.view().usage).toBeUndefined();
+    } finally { s.dispose(); }
+  });
+
+  it.each([
+    ['grok', 'plan'], ['grok', 'yolo'], ['kimi', 'plan'],
+  ] as const)('%s: oversized edit after native-style compaction keeps context and applies %s mode', async (agent, modeId) => {
+    const cwd = mkdtempSync(join(tmpdir(), agent === 'grok' ? 'acpira-grok-no-modes-' : 'acpira-kimi-edit-'));
+    const { d, logs } = deps();
+    const registry = new AgentRegistry({ [agent]: { command: TSX, args: [FAKE], modes: agent === 'grok' ? SYN_MODES : undefined,
+      env: agent === 'grok' ? { FAKE_GROK_USAGE: 'context' } : { FAKE_COMPACTION: 'kimi' } } });
+    const s = AcpSession.fresh(agent, cwd, { ...d, registry });
+    try {
+      await s.start();
+      await s.prompt('big');
+      await until(() => s.canCompact);
+      const compact = s.compact();
+      if (agent === 'kimi') {
+        await until(() => logs.some(line => line.includes('waiting for compaction completion')));
+        expect(s.isRunning).toBe(true);
+        await s.setConfig('effort', 'high');
+      }
+      await compact;
+      expect(s.isRunning).toBe(false);
+      const earlier = s.toRecord().turns[1]!;
+      if (earlier.role !== 'agent') throw new Error('Missing history');
+      earlier.blocks.push({ type: 'text', markdown: 'archived output '.repeat(100_000) });
+      await s.prompt('original', [{ kind: 'image', name: 'kept.png', mimeType: 'image/png', data: 'aGVsbG8=' }]);
+      const before = JSON.stringify(s.view().turns), peer = s.toRecord().acpSessionId;
+      const edit = historyEdit(s, 4, 'inspect-history');
+      edit.settings.modeId = modeId;
+      edit.settings.config.model = 'm2';
+      edit.settings.config.effort = 'low';
+      edit.attachments = [{ kind: 'text', name: 'new.txt', text: 'new attachment content' }];
+      await s.editTurn(edit);
+      await until(() => !s.isRunning);
+      expect(s.toRecord().acpSessionId).toBe(peer);
+      expect(JSON.stringify(s.view().turns.slice(0, -2))).toBe(before);
+      expect(s.view().turns).toHaveLength(8);
+      expect(s.view().controls.modeId).toBe(modeId);
+      const reply = s.view().turns.at(-1)!;
+      if (reply.role !== 'agent') throw new Error('Missing reply');
+      const wire = JSON.parse(reply.blocks.filter(b => b.type === 'text').map(b => b.markdown).join(''));
+      expect(wire.mode).toBe(modeId === 'yolo' ? 'default' : modeId);
+      expect(wire.config).toMatchObject({ model: 'm2', effort: 'low' });
+      expect(wire.prompt).toHaveLength(3);
+      expect(wire.prompt[0]).toEqual({ type: 'text', text: 'inspect-history' });
+      expect(wire.prompt[1]).toMatchObject({ type: 'image', data: 'aGVsbG8=' });
+      expect(wire.prompt[2]).toMatchObject({ type: 'resource', resource: { text: 'new attachment content' } });
+      expect(s.view().turns.at(-2)).not.toHaveProperty('edited');
+    } finally { s.dispose(); rmSync(cwd, { recursive: true, force: true }); }
   });
 });

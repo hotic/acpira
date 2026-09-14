@@ -1,7 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { EditTurnRequest } from '@shared/protocol';
-import type { SlashCommand, UserTurn } from '@shared/transcript';
+import type { Draft, SlashCommand, UserTurn } from '@shared/transcript';
 import { captureTurnSettings, controlsForTurn } from '@shared/turnSettings';
 import { useAppearance } from '../appearance';
 import { Composer, type ComposerProps } from './Composer';
@@ -146,24 +146,25 @@ function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
     document.addEventListener('pointerdown', outside);
     return () => document.removeEventListener('pointerdown', outside);
   }, [onClose, pending]);
+  const send = async (text: string, attachments: Draft[]) => {
+    setError(undefined);
+    setPending(true);
+    try {
+      await c.edit({ sessionId: c.sessionId, turnIndex, turnCount, originalText: turn.text, turnId: turn.id,
+        text, attachments, retainedAttachments: retained, settings: captureTurnSettings(controls) });
+      onClose();
+    } finally { setPending(false); }
+  };
   return <div className="flex min-w-0 flex-col gap-gap" onPointerDownCapture={() => { insidePointer.current = true; }}>
     <Composer {...composer} running={false} disabled={pending || composer.disabled || composer.running}
-      controls={controls} usage={undefined}
+      controls={controls} usage={undefined} draftKey={undefined}
       onNotice={setError}
       onSetMode={modeId => setControls(c => ({ ...c, modeId }))}
       onSetConfig={(id, value) => setControls(c => ({ ...c, options: c.options.map(o => o.id === id ? { ...o, value } : o) }))}
       edit={{ text: turn.text, hasAttachments: retained.length > 0, onCancel: onClose, dismissOnOutside: true,
         attachments: <EditAttachments attachments={turn.attachments ?? []} retained={retained} blobUrl={blobUrl} disabled={pending} onRemove={i => setRetained(r => r.filter(n => n !== i))} />,
       }}
-      onSend={async (text, attachments) => {
-        setError(undefined);
-        setPending(true);
-        try {
-          await c.edit({ sessionId: c.sessionId, turnIndex, turnCount, originalText: turn.text, turnId: turn.id,
-            text, attachments, retainedAttachments: retained, settings: captureTurnSettings(controls) });
-          onClose();
-        } finally { setPending(false); }
-      }}
+      onSend={send}
     />
     {error && <p role="alert" className="px-pad text-2 text-danger">{error}</p>}
   </div>;

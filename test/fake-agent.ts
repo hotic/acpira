@@ -125,7 +125,7 @@ const app = acp.agent({ name: 'fake-agent' })
     return {};
   })
   .onRequest(acp.methods.agent.session.setMode, ({ params }) => { modes.set(params.sessionId, params.modeId); saveSession(params.sessionId); return {}; })
-  .onRequest(acp.methods.agent.session.setConfigOption, async ({ params }) => {
+  .onRequest(acp.methods.agent.session.setConfigOption, async ({ params, client }) => {
     if (params.value === 'unavailable') throw acp.RequestError.invalidParams(undefined, 'Model unavailable');
     if (background && params.configId === 'effort') {
       await background(params.value === 'low' ? 'start' : 'completed');
@@ -133,6 +133,8 @@ const app = acp.agent({ name: 'fake-agent' })
     }
     config[params.configId] = String(params.value);
     saveSession(params.sessionId);
+    if (process.env.FAKE_CONFIG_USAGE) await client.notify(acp.methods.client.session.update, { sessionId: params.sessionId,
+      update: { sessionUpdate: 'usage_update', used: 24_000, size: 200_000 } });
     return { configOptions: configOptions() };
   })
   .onNotification(acp.methods.agent.session.cancel, async ({ params }) => {

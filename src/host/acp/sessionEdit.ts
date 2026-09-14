@@ -55,10 +55,10 @@ async function historyContext(
   proc: AgentProcess,
   blobs: BlobStore,
   lead: string,
-): Promise<acp.ContentBlock[]> {
+): Promise<acp.ContentBlock[] | undefined> {
   if (!turns.length) return [];
   const history = `${lead}\n${JSON.stringify(turns)}`;
-  if (Buffer.byteLength(history, 'utf8') > EDIT_CONTEXT_MAX_BYTES) throw new Error(t('history.tooLarge'));
+  if (Buffer.byteLength(history, 'utf8') > EDIT_CONTEXT_MAX_BYTES) return undefined;
   const context: acp.ContentBlock[] = [
     proc.init.agentCapabilities?.promptCapabilities?.embeddedContext
       ? { type: 'resource', resource: { uri: `acpira://history/${sessionId}`, mimeType: 'text/plain', text: history } }
@@ -83,10 +83,6 @@ function unchangedFailedRetry(ctx: SessionEditCtx, edit: EditTurnRequest): boole
   if (user?.role !== 'user' || user.edited || edit.text !== user.text || edit.attachments.length
     || edit.retainedAttachments.length !== (user.attachments?.length ?? 0)
     || edit.retainedAttachments.some((value, index) => value !== index)) return false;
-  const current = captureTurnSettings(ctx.state.controls);
-  if (current.modeId !== edit.settings.modeId
-    || Object.keys(current.config).length !== Object.keys(edit.settings.config).length
-    || Object.entries(current.config).some(([key, value]) => edit.settings.config[key] !== value)) return false;
   const suffix = turns.slice(edit.turnIndex);
   if (suffix.length < 2 || suffix.length % 2 !== 0) return false;
   return suffix.every((turn, index) => index % 2 === 0
@@ -95,12 +91,54 @@ function unchangedFailedRetry(ctx: SessionEditCtx, edit: EditTurnRequest): boole
     : turn.role === 'agent' && (turn.stop === 'error' || turn.stop === 'cancelled') && turn.blocks.length === 0);
 }
 
+function checkEditActive(ctx: SessionEditCtx): void {
+  if (ctx.phase.stagingAborted || ctx.status !== 'ready') throw new Error(t('history.cancelled'));
+}
+
+async function applyEditSettings(ctx: SessionEditCtx, sessionId: string, controls: SessionControls, settings: EditTurnRequest['settings']): Promise<void> {
+  const peer = ctx.proc!.agent;
+  const live = sessionId === ctx.acpSessionId;
+  const modeId = settings.modeId;
+  if (modeId && !controls.modes.some(m => m.id === modeId)) throw new Error(t('history.optionUnavailable', { name: modeId }));
+  // Model changes can replace the available effort options, so apply them first.
+  const selections = Object.entries(settings.config).sort(([a], [b]) => Number(controls.options.find(c => c.id === b)?.category === 'model') - Number(controls.options.find(c => c.id === a)?.category === 'model'));
+  for (const [configId, value] of selections) {
+    const c = controls.options.find(c => c.id === configId);
+    if (!c?.options.some(o => o.id === value)) throw new Error(t('history.optionUnavailable', { name: configId }));
+    if (c.value === value) continue;
+    checkEditActive(ctx);
+    const r = await peer.request(acp.methods.agent.session.setConfigOption, { sessionId, configId, value });
+    applyConfigOptions(controls, r.configOptions);
+    if (controls.options.find(c => c.id === configId)?.value !== value) throw new Error(t('history.optionUnavailable', { name: configId }));
+  }
+  if (modeId) {
+    if (controls.modeConfigId) {
+      if (controls.modeId !== modeId) {
+        checkEditActive(ctx);
+        const r = await peer.request(acp.methods.agent.session.setConfigOption, { sessionId, configId: controls.modeConfigId, value: modeId });
+        applyConfigOptions(controls, r.configOptions);
+        if (controls.modeId !== modeId) throw new Error(t('history.optionUnavailable', { name: modeId }));
+      }
+    } else if (controls.modeId !== modeId) {
+      checkEditActive(ctx);
+      await peer.request(acp.methods.agent.session.setMode, { sessionId, modeId: ctx.syntheticModes() && modeId === 'yolo' ? 'default' : modeId });
+    }
+    controls.modeId = modeId;
+    if (live && ctx.syntheticModes()) ctx.autoApprove = modeId === 'yolo';
+  }
+  for (const [id, value] of selections) {
+    if (controls.options.find(c => c.id === id)?.value !== value) throw new Error(t('history.optionUnavailable', { name: id }));
+  }
+  checkEditActive(ctx);
+}
+
 // Commit locally only after attachments, session creation, and all selections succeed.
 export async function editTurn(ctx: SessionEditCtx, edit: EditTurnRequest): Promise<void> {
   const { phase } = ctx;
   if (phase.running || phase.editing || ctx.status !== 'ready' || !ctx.proc) throw new Error(t('history.unavailable'));
   const user = ctx.state.turns[edit.turnIndex];
-  if (edit.sessionId !== ctx.id || !Number.isInteger(edit.turnIndex) || edit.turnIndex < 0
+  if ((edit.intent !== undefined && edit.intent !== 'replace' && edit.intent !== 'continue')
+    || edit.sessionId !== ctx.id || !Number.isInteger(edit.turnIndex) || edit.turnIndex < 0
     || edit.turnCount !== ctx.state.turns.length || user?.role !== 'user' || user.auto
     || planExecutionId(user, ctx.state.turns[edit.turnIndex - 1])
     || user.text !== edit.originalText || user.id !== edit.turnId) throw new Error(t('history.stale'));
@@ -122,22 +160,32 @@ export async function editTurn(ctx: SessionEditCtx, edit: EditTurnRequest): Prom
     const drafts = [...await restore(kept.map(i => user.attachments![i]!)), ...edit.attachments];
     const prepared = await preparePrompt(ctx.id, edit.text, drafts, ctx.blobs);
     if (prepared.problems.length) throw new Error(prepared.problems.join('\n'));
-    if (unchangedFailedRetry(ctx, edit)) {
+    const retry = unchangedFailedRetry(ctx, edit);
+    let continuing = edit.intent === 'continue';
+    let rebuilt: acp.ContentBlock[] | undefined;
+    if (!continuing && !retry && prefix.length) {
+      const history = await historyContext(ctx.id, prefix, ctx.proc, ctx.blobs, EDIT_HISTORY_LEAD);
+      const blocks = history && [...history, ...prepared.blocks];
+      // Include expanded historical attachments and the replacement message.
+      continuing = !blocks || Buffer.byteLength(JSON.stringify(blocks), 'utf8') > EDIT_CONTEXT_MAX_BYTES;
+      if (!continuing) rebuilt = blocks;
+    }
+    if (continuing || retry) {
       const last = ctx.state.turns.at(-1);
-      if (last?.role === 'agent' && isContextLengthError(last.error)) throw new Error(contextLengthHint(ctx));
-      if (phase.stagingAborted || ctx.status !== 'ready') throw new Error(t('history.cancelled'));
-      ctx.state.turns = prefix;
+      if (!continuing && last?.role === 'agent' && isContextLengthError(last.error)) throw new Error(contextLengthHint(ctx));
+      await applyEditSettings(ctx, ctx.acpSessionId!, ctx.state.controls, edit.settings);
+      checkEditActive(ctx);
+      if (!continuing) ctx.state.turns = prefix;
       phase.editing = phase.running = phase.staging = false;
+      for (const n of phase.editNotifications) {
+        if (n.sessionId === ctx.acpSessionId && (n.update.sessionUpdate === 'available_commands_update' || n.update.sessionUpdate === 'usage_update')) ctx.onUpdate(n);
+      }
       accepted = true;
-      ctx.log('Retrying unchanged failed or cancelled message in the native session');
-      ctx.prompt(edit.text, drafts, false, { prepared }).catch(e => ctx.log(`retry prompt failed: ${msg(e)}`));
+      ctx.log(continuing ? 'Continuing in the native session without rebuilding history' : 'Retrying unchanged failed or cancelled message in the native session');
+      ctx.prompt(edit.text, drafts, false, { prepared }).catch(e => ctx.log(`native prompt failed: ${msg(e)}`));
       return;
     }
-    if (prefix.length) {
-      prepared.blocks = [...await historyContext(ctx.id, prefix, ctx.proc, ctx.blobs, EDIT_HISTORY_LEAD), ...prepared.blocks];
-      // Include expanded historical attachments and the replacement message.
-      if (Buffer.byteLength(JSON.stringify(prepared.blocks), 'utf8') > EDIT_CONTEXT_MAX_BYTES) throw new Error(t('history.tooLarge'));
-    }
+    if (rebuilt) prepared.blocks = rebuilt;
     const peer = ctx.proc.agent;
     // 1.0 does not inject MCP servers; the CLI reads its own config
     const fresh = await peer.request(acp.methods.agent.session.new, { cwd: ctx.cwd, mcpServers: [] });
@@ -147,32 +195,8 @@ export async function editTurn(ctx: SessionEditCtx, edit: EditTurnRequest): Prom
       controls.modes = ctx.syntheticModes()!;
       controls.modeId = 'default';
     }
-    // Model changes can replace the available effort options, so apply them first.
-    const selections = Object.entries(edit.settings.config).sort(([a], [b]) => Number(controls.options.find(c => c.id === b)?.category === 'model') - Number(controls.options.find(c => c.id === a)?.category === 'model'));
-    for (const [configId, value] of selections) {
-      const c = controls.options.find(c => c.id === configId);
-      if (!c?.options.some(o => o.id === value)) throw new Error(t('history.optionUnavailable', { name: configId }));
-      if (c.value === value) continue;
-      const r = await peer.request(acp.methods.agent.session.setConfigOption, { sessionId: fresh.sessionId, configId, value });
-      applyConfigOptions(controls, r.configOptions);
-      if (controls.options.find(c => c.id === configId)?.value !== value) throw new Error(t('history.optionUnavailable', { name: configId }));
-    }
     const modeId = edit.settings.modeId;
-    if (modeId) {
-      if (!controls.modes.some(m => m.id === modeId)) throw new Error(t('history.optionUnavailable', { name: modeId }));
-      if (controls.modeConfigId) {
-        const r = await peer.request(acp.methods.agent.session.setConfigOption, { sessionId: fresh.sessionId, configId: controls.modeConfigId, value: modeId });
-        applyConfigOptions(controls, r.configOptions);
-        if (controls.modeId !== modeId) throw new Error(t('history.optionUnavailable', { name: modeId }));
-      } else if (controls.modeId !== modeId) {
-        await peer.request(acp.methods.agent.session.setMode, { sessionId: fresh.sessionId, modeId: ctx.syntheticModes() && modeId === 'yolo' ? 'default' : modeId });
-      }
-      controls.modeId = modeId;
-    }
-    for (const [id, value] of selections) {
-      if (controls.options.find(c => c.id === id)?.value !== value) throw new Error(t('history.optionUnavailable', { name: id }));
-    }
-    if (phase.stagingAborted || ctx.status !== 'ready') throw new Error(t('history.cancelled'));
+    await applyEditSettings(ctx, fresh.sessionId, controls, edit.settings);
     ctx.acpSessionId = fresh.sessionId;
     ctx.state.controls = controls;
     ctx.state.turns = prefix;
@@ -189,12 +213,15 @@ export async function editTurn(ctx: SessionEditCtx, edit: EditTurnRequest): Prom
     accepted = true;
     ctx.prompt(edit.text, drafts, false, { prepared, edited: true }).catch(e => ctx.log(`edited prompt failed: ${msg(e)}`));
   } finally {
-    phase.editNotifications = [];
     if (!accepted) {
       phase.editing = phase.running = phase.staging = false;
+      for (const n of phase.editNotifications) {
+        if (n.sessionId === ctx.acpSessionId && (n.update.sessionUpdate === 'available_commands_update' || n.update.sessionUpdate === 'usage_update')) ctx.onUpdate(n);
+      }
       ctx.touch();
       ctx.flushQueued();
     }
+    phase.editNotifications = [];
   }
 }
 
