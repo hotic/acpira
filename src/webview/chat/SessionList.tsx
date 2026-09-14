@@ -1,8 +1,11 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { FolderInput, LoaderCircle, Pencil, Pin, PinOff, Search, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { ChevronDown, FolderInput, ListFilter, LoaderCircle, Pencil, Pin, PinOff, Search, Trash2 } from 'lucide-react';
 import type { AgentInfo, SessionSummary } from '@shared/transcript';
 import { inWorkspace, type SessionScope } from '@shared/settings';
 import { cn } from '../ui/cn';
+import { Command } from '../ui/Command';
+import { OptionContent } from '../ui/Panel';
+import { Popover } from '../ui/Popover';
 import { t, useLocale } from '../i18n';
 import { AgentMark } from './AgentMark';
 
@@ -91,15 +94,10 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
           />
         </label>
       </div>
-      <div className="flex flex-wrap items-center gap-1 px-1 pt-1">
-        <FilterChip active={!agentFilter} onClick={() => setAgentFilter(undefined)}>{t('common.all')}</FilterChip>
-        {agents.map(a => (
-          <FilterChip key={a.id} active={agentFilter === a.id} onClick={() => setAgentFilter(a.id)}>
-            <AgentMark id={a.id} name={a.name} />{a.name}
-          </FilterChip>
-        ))}
+      <div className="flex min-w-0 shrink-0 items-center px-1 pt-1">
+        <ChannelFilter agents={agents} value={agentFilter} onChange={setAgentFilter} />
       </div>
-      <div className="mt-1 flex min-h-0 flex-col overflow-y-auto border-t border-line pb-1" role="listbox" aria-label={t('session.listAria')}>
+      <div className="scroll-thin mt-1 flex min-h-0 flex-col overflow-y-auto border-t border-line pb-1" role="listbox" aria-label={t('session.listAria')}>
         {/* Empty state takes exactly one item row (pt-1 + min-h-row) so the popover keeps its height whether the filter matches 0 or 1 session */}
         {!shown.length && <div className="mt-1 flex min-h-row items-center justify-center px-2 text-2 text-fg-3">{empty}</div>}
         {pinned.length > 0 && (
@@ -121,17 +119,44 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
   );
 }
 
-function FilterChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={onClick}
-      className={cn('inline-flex h-[calc(var(--ctl)-4px)] items-center gap-1 rounded-md px-2 text-3 transition-colors', active ? 'bg-active text-fg-1' : 'text-fg-2 hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1')}
-    >
-      {children}
-    </button>
-  );
+// Only the channel filter uses a picker; the session rows retain their own search,
+// rename, pin and selection behavior. Adding ACPs never adds rows to the toolbar.
+function ChannelFilter({ agents, value, onChange }: { agents: AgentInfo[]; value?: string; onChange: (id: string | undefined) => void }) {
+  const [open, setOpen] = useState(false);
+  const options = [{ id: '', name: t('session.channels') }, ...agents];
+  const current = options.find(a => a.id === (value ?? '')) ?? { id: value!, name: value! };
+  const searchable = agents.length >= 12;
+  const select = (id: string) => { onChange(id || undefined); setOpen(false); };
+  const mark = (a: { id: string; name: string }) => a.id
+    ? <AgentMark id={a.id} name={a.name} />
+    : <ListFilter className="size-icon" strokeWidth={1.5} />;
+  const trigger = <button type="button" aria-label={`${t('session.filterChannel')}: ${current.name}`} title={current.name}
+    className={cn('inline-flex h-[calc(var(--ctl)-4px)] min-w-0 max-w-full items-center gap-1.5 rounded-md px-2 text-3 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1 data-[open]:bg-hover data-[popup-open]:bg-hover', value ? 'text-fg-1' : 'text-fg-2')}>
+    <span className="flex size-icon shrink-0 items-center justify-center">{mark(current)}</span>
+    <span className="min-w-0 truncate">{current.name}</span>
+    <ChevronDown className="size-3 shrink-0 text-fg-3" strokeWidth={1.5} />
+  </button>;
+  const content = (a: { id: string; name: string }) => <OptionContent icon={mark(a)} checked={a.id === current.id} checkSlot>{a.name}</OptionContent>;
+
+  return <div className="min-w-0 max-w-full" onKeyDownCapture={e => {
+    // The filter may sit in a history popup or drawer. Consume its first Escape
+    // before either the enclosing overlay or the drawer handles the same key.
+    if (open && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(false); }
+  }}>
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger render={trigger} />
+      <Popover.Portal><Popover.Positioner width="md"><Popover.Popup aria-label={t('session.filterChannel')}>
+        <Command.Root items={options} value={current} itemToStringValue={a => a.id}
+          itemToStringLabel={a => a.name} isItemEqualToValue={(a, b) => a.id === b.id}>
+          <Command.Input visible={searchable} placeholder={t('session.searchChannels')} aria-label={t('session.searchChannels')} />
+          <Command.Empty />
+          <Command.List searchable={searchable} aria-label={t('session.filterChannel')}>
+            {(a: { id: string; name: string }) => <Command.Item key={a.id} value={a} title={a.name} onClick={() => select(a.id)}>{content(a)}</Command.Item>}
+          </Command.List>
+        </Command.Root>
+      </Popover.Popup></Popover.Positioner></Popover.Portal>
+    </Popover.Root>
+  </div>;
 }
 
 interface ItemProps {
