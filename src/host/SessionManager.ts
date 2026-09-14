@@ -159,17 +159,22 @@ export class SessionManager {
     this.pool.ensure(agent, this.deps.cwd(), acc);
   }
 
-  // The config values last chosen for an agent, replayed onto its next new session. The mode is deliberately not part of this:
-  // plan / yolo belong to the session they were picked in — an unrelated new session opens on the agent's default, and a
-  // modeId left in the prefs file by an older version is ignored here
-  lastSettings(agent: AgentId): TurnSettings | undefined {
-    const s = this.prefs.lastSettings[agent];
-    return s ? { config: s.config } : undefined;
-  }
+  // The mode / config values last chosen for an agent, replayed onto its next new session. Only the user's own picks land here:
+  // a mode the agent switches by itself (Devin's "switch to bypass mode" permission answer, Kimi leaving plan after approval)
+  // belongs to that session, so a config pick keeps the remembered mode rather than capturing the session's current one
+  lastSettings(agent: AgentId): TurnSettings | undefined { return this.prefs.lastSettings[agent]; }
 
   private remember(s: AcpSession) {
-    this.prefs.lastSettings[s.agent] = { config: captureTurnSettings(s.view().controls).config };
+    const cur = this.prefs.lastSettings[s.agent];
+    this.prefs.lastSettings[s.agent] = { ...cur, config: captureTurnSettings(s.view().controls).config };
     this.savePrefs(s.agent);
+  }
+
+  private rememberMode(agent: AgentId, modeId: string) {
+    const cur = this.prefs.lastSettings[agent];
+    if (cur?.modeId === modeId) return;
+    this.prefs.lastSettings[agent] = { config: {}, ...cur, modeId };
+    this.savePrefs(agent);
   }
 
   // Fire-and-forget disk writes surface their failures in the log rather than as unhandled rejections. Only this agent's entry goes to
@@ -481,7 +486,8 @@ export class SessionManager {
         case 'permission': if (isSessionId(m.sessionId)) this.live.get(m.sessionId)?.resolvePermission(m.blockId, m.optionId); break;
         case 'answer': if (isSessionId(m.sessionId)) this.live.get(m.sessionId)?.answerQuestions(m.blockId, m.answers, m.skip); break;
         case 'buildPlan': if (isSessionId(m.sessionId)) await this.live.get(m.sessionId)?.buildPlan(m.planId, m.model, m.optionId); break;
-        case 'setMode': await this.target(v, m.sessionId)?.setMode(m.id); break;
+        // Remembered only once the session actually shows the mode: setMode is a no-op on a session that is not ready
+        case 'setMode': { const s = this.target(v, m.sessionId); if (s) { await s.setMode(m.id); if (s.view().controls.modeId === m.id) this.rememberMode(s.agent, m.id); } break; }
         case 'setConfig': { const s = this.target(v, m.sessionId); if (s) { await s.setConfig(m.configId, m.value); this.remember(s); } break; }
         case 'selectAgent': if (this.current(v)?.agent !== m.id) await this.newSessionFor(v, m.id); break;
         case 'selectSession': await this.selectSessionFor(v, m.id); break;
