@@ -12,6 +12,7 @@ import { capturePlan, planDocuments } from './plans';
 import { planExecutionPrompt } from '@shared/planExecution';
 import { restorePlanSnapshots } from './planSnapshots';
 import { restoreInterruptedTurns } from './restoreTurns';
+import { isContextLengthError } from '@shared/turnErrors';
 import { CompactionCompletion, isCompactCommand } from './compaction';
 import { applyModelSources, type ModelSources } from '@shared/modelSources';
 import { thoughtCorrection } from '@shared/composerControls';
@@ -683,6 +684,9 @@ export class AcpSession {
     if (auto || compacting) this.compactedAt = this.state.usage?.used ?? 0;
     this.autoCompactEligible = !auto && !compacting && stop === 'end_turn';
     this.touch();
+    // Leave queued messages parked until the context is compacted or the input
+    // is changed. Releasing them here repeats the same oversized request path.
+    if (isContextLengthError(agentTurn.error)) return;
     this.afterPrompt(auto, stop);
   }
 

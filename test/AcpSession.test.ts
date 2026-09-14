@@ -78,6 +78,30 @@ describe('AcpSession', () => {
     } finally { restored.dispose(); original.dispose(); }
   });
 
+  it('keeps the native session on context overflow and requires compaction before retrying', async () => {
+    const { session } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('seed-context');
+      const peer = s.toRecord().acpSessionId;
+      const rejected = s.prompt('context-too-long');
+      await s.prompt('queued-follow-up');
+      await rejected;
+      expect(s.view().queued?.map(q => q.text)).toEqual(['queued-follow-up']);
+      const before = JSON.stringify(s.view().turns);
+      await expect(s.retryTurn()).rejects.toThrow(/compact|压缩/i);
+      expect(JSON.stringify(s.view().turns)).toBe(before);
+      expect(s.toRecord().acpSessionId).toBe(peer);
+      await s.compact();
+      await until(() => !s.isRunning && !s.view().queued?.length);
+      expect(s.view().turns.at(-2)).toMatchObject({ role: 'user', text: 'queued-follow-up' });
+      await s.prompt('context-too-long');
+      expect(s.view().turns.at(-1)).toMatchObject({ stop: 'end_turn' });
+      expect(s.toRecord().acpSessionId).toBe(peer);
+    } finally { s.dispose(); }
+  });
+
   it('keeps empty slash receipts and observed settings across persistence without inventing assistant prose', async () => {
     const { session, d } = deps();
     const s = session();
@@ -977,6 +1001,47 @@ function historyEdit(s: AcpSession, turnIndex: number, text = 'inspect-history')
 }
 
 describe('historical message editing', () => {
+  it('resends an unchanged empty cancelled turn natively even with multi-megabyte history', async () => {
+    const { session } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('earlier-context');
+      const earlier = s.toRecord().turns[1]!;
+      if (earlier.role !== 'agent') throw new Error('Missing history');
+      earlier.blocks.push({ type: 'text', markdown: 'old output '.repeat(400_000) });
+      await s.prompt('cancel-empty-once');
+      expect(s.view().turns.at(-1)).toMatchObject({ stop: 'cancelled', blocks: [] });
+      const peer = s.toRecord().acpSessionId;
+      await s.editTurn(historyEdit(s, 2, 'cancel-empty-once'));
+      await until(() => !s.isRunning);
+      expect(s.toRecord().acpSessionId).toBe(peer);
+      expect(s.view().turns[2]).not.toHaveProperty('edited');
+      expect(s.view().turns.at(-1)).toMatchObject({ stop: 'end_turn' });
+    } finally { s.dispose(); }
+  });
+
+  it('rejects an oversized historical rebuild before replacing the native session or visible history', async () => {
+    const { session } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('earlier-context');
+      const earlier = s.toRecord().turns[1]!;
+      if (earlier.role !== 'agent') throw new Error('Missing history');
+      earlier.blocks.push({ type: 'text', markdown: 'archived output '.repeat(300_000) });
+      await s.prompt('original');
+      const before = JSON.stringify(s.view().turns), peer = s.toRecord().acpSessionId;
+      await expect(s.editTurn(historyEdit(s, 2))).rejects.toThrow(/histor|历史/i);
+      expect(s.toRecord().acpSessionId).toBe(peer);
+      expect(JSON.stringify(s.view().turns)).toBe(before);
+      expect(s.isRunning).toBe(false);
+      await s.prompt('ordinary follow-up');
+      expect(s.view().turns.at(-1)).toMatchObject({ stop: 'end_turn' });
+      expect(s.toRecord().acpSessionId).toBe(peer);
+    } finally { s.dispose(); }
+  });
+
   it.each([1, 2])('resending an unchanged message after %i empty failures keeps native compacted context', async attempts => {
     const { session } = deps();
     const s = session();

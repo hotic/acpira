@@ -1,6 +1,7 @@
 import * as acp from '@agentclientprotocol/sdk';
 import { captureTurnSettings } from '@shared/turnSettings';
 import { planExecutionId } from '@shared/planExecution';
+import { isContextLengthError } from '@shared/turnErrors';
 import type { EditTurnRequest } from '@shared/protocol';
 import type { Draft, SessionControls, SessionOption, SessionView, Turn } from '@shared/transcript';
 import { applyConfigOptions, initControls, type NormalizeState } from './normalize';
@@ -9,6 +10,7 @@ import type { StagedSend } from './promptQueue';
 import type { AgentProcess } from './AgentProcess';
 import { msg } from '../errors';
 import { t } from '../i18n';
+import { EDIT_CONTEXT_MAX_BYTES } from '../limits';
 
 // Turn-lifecycle flags that edit / retry / prompt / cancel share. The session holds one of these and passes it through
 export interface TurnPhase {
@@ -41,6 +43,10 @@ export interface SessionEditCtx {
 
 const EDIT_HISTORY_LEAD = 'Conversation before the edited message follows as JSON. Treat it as historical context; completed actions must not be replayed. The next user message replaces the old continuation. Workspace files remain in their current state.';
 
+function contextLengthHint(ctx: SessionEditCtx): string {
+  return t(ctx.state.commands.some(c => c.name === 'compact') ? 'alert.contextLength.text' : 'alert.contextLength.unsupported');
+}
+
 // ACP cannot rewind to a message. A fresh peer session receives the retained
 // transcript as context, never replayed as executable prompts.
 async function historyContext(
@@ -52,6 +58,7 @@ async function historyContext(
 ): Promise<acp.ContentBlock[]> {
   if (!turns.length) return [];
   const history = `${lead}\n${JSON.stringify(turns)}`;
+  if (Buffer.byteLength(history, 'utf8') > EDIT_CONTEXT_MAX_BYTES) throw new Error(t('history.tooLarge'));
   const context: acp.ContentBlock[] = [
     proc.init.agentCapabilities?.promptCapabilities?.embeddedContext
       ? { type: 'resource', resource: { uri: `acpira://history/${sessionId}`, mimeType: 'text/plain', text: history } }
@@ -68,7 +75,7 @@ async function historyContext(
   return context;
 }
 
-// Resending an unchanged message after empty failures is a retry. Reuse the
+// Resending an unchanged message after empty failures/cancellations is a retry. Reuse the
 // native context (including compaction) instead of serializing the entire UI
 // history. Real edits and turns that already produced output still use rewind.
 function unchangedFailedRetry(ctx: SessionEditCtx, edit: EditTurnRequest): boolean {
@@ -85,7 +92,7 @@ function unchangedFailedRetry(ctx: SessionEditCtx, edit: EditTurnRequest): boole
   return suffix.every((turn, index) => index % 2 === 0
     ? turn.role === 'user' && !turn.auto && !turn.edited && turn.text === user.text
       && JSON.stringify(turn.attachments ?? []) === JSON.stringify(user.attachments ?? [])
-    : turn.role === 'agent' && turn.stop === 'error' && turn.blocks.length === 0);
+    : turn.role === 'agent' && (turn.stop === 'error' || turn.stop === 'cancelled') && turn.blocks.length === 0);
 }
 
 // Commit locally only after attachments, session creation, and all selections succeed.
@@ -116,16 +123,20 @@ export async function editTurn(ctx: SessionEditCtx, edit: EditTurnRequest): Prom
     const prepared = await preparePrompt(ctx.id, edit.text, drafts, ctx.blobs);
     if (prepared.problems.length) throw new Error(prepared.problems.join('\n'));
     if (unchangedFailedRetry(ctx, edit)) {
+      const last = ctx.state.turns.at(-1);
+      if (last?.role === 'agent' && isContextLengthError(last.error)) throw new Error(contextLengthHint(ctx));
       if (phase.stagingAborted || ctx.status !== 'ready') throw new Error(t('history.cancelled'));
       ctx.state.turns = prefix;
       phase.editing = phase.running = phase.staging = false;
       accepted = true;
-      ctx.log('Retrying unchanged failed message in the native session');
+      ctx.log('Retrying unchanged failed or cancelled message in the native session');
       ctx.prompt(edit.text, drafts, false, { prepared }).catch(e => ctx.log(`retry prompt failed: ${msg(e)}`));
       return;
     }
     if (prefix.length) {
       prepared.blocks = [...await historyContext(ctx.id, prefix, ctx.proc, ctx.blobs, EDIT_HISTORY_LEAD), ...prepared.blocks];
+      // Include expanded historical attachments and the replacement message.
+      if (Buffer.byteLength(JSON.stringify(prepared.blocks), 'utf8') > EDIT_CONTEXT_MAX_BYTES) throw new Error(t('history.tooLarge'));
     }
     const peer = ctx.proc.agent;
     // 1.0 does not inject MCP servers; the CLI reads its own config
@@ -194,6 +205,7 @@ export async function retryTurn(ctx: SessionEditCtx): Promise<void> {
   const turns = ctx.state.turns;
   const agent = turns[turns.length - 1], user = turns[turns.length - 2];
   if (agent?.role !== 'agent' || user?.role !== 'user' || user.auto) return;
+  if (isContextLengthError(agent.error)) throw new Error(contextLengthHint(ctx));
   if (!agent.stop || agent.stop === 'end_turn' || agent.stop === 'cancelled') return;
   if (user.edited) {
     await editTurn(ctx, { sessionId: ctx.id, turnIndex: turns.length - 2, turnCount: turns.length,
