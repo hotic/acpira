@@ -211,6 +211,13 @@ const app = acp.agent({ name: 'fake-agent' })
       else return { stopReason: 'end_turn' };
     }
 
+    if (text === 'cancel-empty-once' && !failed.has(text)) {
+      failed.set(text, 1);
+      return { stopReason: 'cancelled' };
+    }
+    if (text === 'context-too-long' && compactions === 0) {
+      throw new acp.RequestError(-32013, 'The prompt to the model was too long. Try reducing the size of your context (including any rules, skills, etc.).', { 'cognition.ai/errorKind': 'internal', 'cognition.ai/retryable': true });
+    }
     // Typed upstream failure, once per distinct prompt text, before anything is streamed — the retry of the same prompt then runs the normal script
     if (text.includes('fail') && (failed.get(text) ?? 0) < (text.includes('fail-twice') ? 2 : 1)) {
       failed.set(text, (failed.get(text) ?? 0) + 1);

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { TriangleAlert, X } from 'lucide-react';
 import type { AgentTurn, TurnStop } from '@shared/transcript';
 import type { MsgKey } from '@shared/i18n';
+import { isContextLengthError } from '@shared/turnErrors';
 import { Card } from '../ui/Card';
 import { Button, IconButton } from '../ui/Button';
 import { t } from '../i18n';
@@ -13,31 +14,35 @@ export interface AlertProps {
   onReconnect: () => void;
   onContinue: () => void;
   onDismiss: () => void;
+  onCompact?: () => void;
 }
 
 // A turn stopped short (the same card Cursor pins above its composer, in our own tones): one row holds a colorless glyph, what happened,
 // the copyable detail, and the action — send it again or reconnect and resume for an error, carry on for a limit, nothing for a refusal —
 // with ✕ hiding the card (the transcript keeps the row); the agent's words sit below in small type when there are any
-export function Alert({ turn, onRetry, onReconnect, onContinue, onDismiss }: AlertProps) {
+export function Alert({ turn, onRetry, onReconnect, onContinue, onDismiss, onCompact }: AlertProps) {
   const stop = turn.stop as ShortStop;
   const err = turn.error;
+  const contextTooLong = stop === 'error' && isContextLengthError(err);
   const detail = [err?.code !== undefined ? String(err.code) : '', err?.kind ?? ''].filter(Boolean).join(' · ');
   const copyable = [err?.message, detail].filter(Boolean).join('\n');
-  const message = stop === 'error' ? err?.message || t('alert.error.unknown') : TEXT[stop] && t(TEXT[stop]);
+  const message = contextTooLong ? t(onCompact ? 'alert.contextLength.text' : 'alert.contextLength.unsupported')
+    : stop === 'error' ? err?.message || t('alert.error.unknown') : TEXT[stop] && t(TEXT[stop]);
   return (
     <div className="px-page pt-2">
       <Card role="alert" className="flex flex-col gap-1.5 px-pad py-2.5">
         <div className="flex items-center gap-2">
           <TriangleAlert className="size-icon shrink-0 text-fg-3" strokeWidth={1.75} />
-          <span className="shrink-0 text-2 font-medium text-fg-1">{t(TITLE[stop])}</span>
+          <span className="shrink-0 text-2 font-medium text-fg-1">{t(contextTooLong ? 'alert.contextLength.title' : TITLE[stop])}</span>
           {copyable && <CopyDetail text={copyable} label={detail} />}
           <span className="flex-1" />
-          {stop === 'error' && <Button variant="secondary" title={t('alert.reconnectHint')} onClick={onReconnect}>{t('alert.reconnect')}</Button>}
-          {stop === 'error' && <Button variant="primary" onClick={onRetry}>{t('common.retry')}</Button>}
+          {stop === 'error' && !contextTooLong && <Button variant="secondary" title={t('alert.reconnectHint')} onClick={onReconnect}>{t('alert.reconnect')}</Button>}
+          {stop === 'error' && !contextTooLong && <Button variant="primary" onClick={onRetry}>{t('common.retry')}</Button>}
           {(stop === 'max_tokens' || stop === 'max_turn_requests') && <Button variant="primary" onClick={onContinue}>{t('alert.continue')}</Button>}
           <IconButton aria-label={t('common.close')} onClick={onDismiss} className="-my-1 -mr-1.5"><X strokeWidth={1.5} /></IconButton>
         </div>
         {message && <p className="m-0 whitespace-pre-wrap text-3 text-fg-2 [overflow-wrap:anywhere]">{message}</p>}
+        {contextTooLong && onCompact && <div className="flex justify-end pt-1"><Button variant="primary" onClick={onCompact}>{t('alert.contextLength.compact')}</Button></div>}
       </Card>
     </div>
   );

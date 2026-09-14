@@ -300,6 +300,7 @@ export function Shell(p: ShellProps) {
                   turn={alertTurn}
                   onRetry={on.retryTurn}
                   onReconnect={on.reconnect}
+                  onCompact={p.commands?.some(c => c.name === 'compact') ? on.compact : undefined}
                   onContinue={() => on.send(t('alert.continueText'), [])}
                   onDismiss={() => setDismissedAlert(alertKey)}
                 />

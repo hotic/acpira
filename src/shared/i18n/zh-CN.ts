@@ -22,6 +22,7 @@ export const zhCN = {
   'history.missingAttachment': '历史附件不可用，对话尚未替换。',
   'history.optionUnavailable': '选项不可用：{name}。请重新打开编辑框并选择。',
   'history.cancelled': '已取消重新发送，对话尚未替换。',
+  'history.tooLarge': '历史记录过大，无法完整重建以编辑消息。已保留原会话，请在当前会话发送新消息，或新建会话。',
   'common.back': '返回',
   'common.close': '关闭',
   'common.undo': '撤销',
@@ -234,6 +235,10 @@ export const zhCN = {
 
   // The card above the composer for a turn that stopped short
   'alert.error.title': '请求失败',
+  'alert.contextLength.title': '上下文过长',
+  'alert.contextLength.text': '请先压缩上下文再重新发送；消息本身过长时，请先缩短消息。',
+  'alert.contextLength.unsupported': '请缩短消息或新建会话。当前代理未提供 /compact。',
+  'alert.contextLength.compact': '压缩上下文',
   'alert.error.unknown': 'agent 没有说明原因，日志里可能有更多信息',
   'alert.refusal.title': '模型拒绝了这次请求',
   'alert.refusal.text': 'agent 判定不能处理这条消息；换个说法，或者拆小一点再试',

@@ -18,6 +18,7 @@ export const en = {
   'history.missingAttachment': 'A historical attachment is unavailable. The conversation was not replaced.',
   'history.optionUnavailable': 'Selection unavailable: {name}. Reopen the editor and choose again.',
   'history.cancelled': 'Resend cancelled. The conversation was not replaced.',
+  'history.tooLarge': 'This history is too large to rebuild for editing. The original session was kept. Send a new message in this session, or start a new conversation.',
   'common.back': 'Back',
   'common.close': 'Close',
   'common.undo': 'Undo',
@@ -222,6 +223,10 @@ export const en = {
   'fold.cancelled': '{verb} cancelled',
 
   'alert.error.title': 'Request failed',
+  'alert.contextLength.title': 'Context too long',
+  'alert.contextLength.text': 'Compact the context before resending. If the message itself is too large, shorten it first.',
+  'alert.contextLength.unsupported': 'Shorten the message or start a new conversation. This agent has not advertised /compact.',
+  'alert.contextLength.compact': 'Compact context',
   'alert.error.unknown': 'The agent gave no reason; the log may have more',
   'alert.refusal.title': 'The model refused this request',
   'alert.refusal.text': 'The agent decided it can’t handle this message; rephrase it or break it into smaller pieces',
