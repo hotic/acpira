@@ -55,6 +55,17 @@ function center(overrides: Partial<SettingsDeps> = {}) {
 }
 
 describe('SettingsCenter', () => {
+  it('round-trips session list placement through host settings and rejects unknown positions', async () => {
+    const store: Record<string, unknown> = {};
+    const { center: c } = center({ read: key => store[key], write: async (key, value) => { store[key] = value; } });
+    const positions: string[] = [];
+    c.subscribe(ev => positions.push(ev.settings.sessionListPosition));
+    for (const value of ['left', 'right', 'hidden', 'outside']) await c.set('sessionListPosition', value);
+    expect(positions).toEqual(['left', 'right', 'hidden', 'hidden']);
+    await c.set('sessionListPosition', 'right');
+    expect(center({ read: key => store[key] }).center.view().sessionListPosition).toBe('right');
+  });
+
   it('view carries the appearance settings with defaults when nothing is configured', () => {
     const { center: c } = center();
     const v = c.view();

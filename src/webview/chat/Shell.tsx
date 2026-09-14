@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Paperclip } from 'lucide-react';
+import { Paperclip, X } from 'lucide-react';
 import type { AccountInfo, AgentInfo, AuthMethodInfo, Draft, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionControls, SessionStatus, SessionSummary, SlashCommand, Turn, Usage } from '@shared/transcript';
 import type { HiddenMap, SessionScope } from '@shared/settings';
 import type { AccountAction, AddAccountVia, EditTurnRequest, FileHit } from '@shared/protocol';
@@ -8,6 +8,7 @@ import { lookAttrs, ThemeContext, type ShellLook, type Theme } from '../look';
 import { t } from '../i18n';
 import { ShellLayerContext } from '../ui/Popover';
 import { cn } from '../ui/cn';
+import { IconButton } from '../ui/Button';
 import { useScrollReveal } from '../ui/useScrollReveal';
 import { useStableList } from '../ui/useStableList';
 import { scrollerUsable } from './promptStuck';
@@ -122,11 +123,25 @@ interface ToastState {
   undo?: () => void;
 }
 
-// Chat shell: header / conversation flow / composer stacked vertically; the drawer axis adds a column on the left. The shell root doubles as the overlay mount point
+// Chat and optional session column share one webview. Width determines docking in both host surfaces.
 export function Shell(p: ShellProps) {
   const { appearance: a, on } = p;
   const wide = p.host === 'editor';
   const root = useRef<HTMLDivElement>(null);
+  const sessionPanel = useRef<HTMLElement>(null);
+  const position = p.look?.sessionListPosition ?? (a.sessions === 'drawer' ? 'left' : 'hidden');
+  const [canDock, setCanDock] = useState(false);
+  // Observe the actual panel, not the browser window: IDE sidebars and split editor tabs resize independently.
+  useLayoutEffect(() => {
+    const element = root.current;
+    if (!element) return;
+    const minWidth = Number.parseFloat(getComputedStyle(element).getPropertyValue('--session-dock-min'));
+    const update = () => setCanDock(element.clientWidth >= minWidth);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
   const planDock = useRef<HTMLDivElement>(null);
   const dockHeight = useRef(0);
   const threadContent = useRef<HTMLDivElement | null>(null);
@@ -160,6 +175,16 @@ export function Shell(p: ShellProps) {
     return () => observer.disconnect();
   }, []);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const closeDrawer = useCallback(() => {
+    if (sessionPanel.current?.contains(document.activeElement)) {
+      root.current?.querySelector<HTMLButtonElement>('[data-session-toggle]')?.focus();
+    }
+    setDrawerOpen(false);
+  }, []);
+  useEffect(closeDrawer, [position, canDock, closeDrawer]);
+  useEffect(() => {
+    if (drawerOpen && !canDock) sessionPanel.current?.querySelector<HTMLInputElement>('input')?.focus();
+  }, [drawerOpen, canDock]);
   const [editing, setEditing] = useState<{ sessionId: string; index: number }>();
   useEffect(() => setEditing(undefined), [p.activeSessionId]);
   // Deletion applies immediately, with an undoable toast floating at the bottom (modeled on Codex's archive), no confirmation dialog; refused attachments show up the same way
@@ -192,12 +217,13 @@ export function Shell(p: ShellProps) {
   const question = p.running && lastTurn?.role === 'agent' ? lastTurn.blocks.find((b): b is QuestionBlock => b.type === 'question' && !b.outcome) : undefined;
   const sessionsPanel = (
     <SessionList
+      fill
       sessions={p.sessions}
       agents={p.agents}
       activeId={p.activeSessionId}
       workspace={p.workspace}
       scope={p.sessionScope}
-      onSelect={id => { on.selectSession(id); setDrawerOpen(false); }}
+      onSelect={id => { on.selectSession(id); closeDrawer(); }}
       onRename={on.renameSession}
       onDelete={handlers.deleteSession}
       onPin={on.pinSession}
@@ -245,14 +271,26 @@ export function Shell(p: ShellProps) {
           {...appearanceDataAttrs(a)}
           {...lookAttrs(p.look)}
         >
-          {a.sessions === 'drawer' && (
-            <aside className={cn(
-              'shrink-0 overflow-auto border-r border-line p-2',
-              wide ? 'w-56 bg-bg-0' : 'absolute inset-y-0 left-0 z-20 w-64 bg-bg-1 shadow-pop transition-transform',
-              !wide && !drawerOpen && '-translate-x-[102%]',
-            )}>
-              {sessionsPanel}
-            </aside>
+          {position !== 'hidden' && (
+            <>
+              {!canDock && drawerOpen && <div aria-hidden="true" className="absolute inset-0 z-10 bg-black/20" onClick={closeDrawer} />}
+              <aside ref={sessionPanel} aria-label={t('session.listAria')} inert={!canDock && !drawerOpen}
+                data-session-panel={position} data-docked={canDock}
+                onKeyDown={e => { if (e.key === 'Escape' && !e.defaultPrevented && !canDock) { e.stopPropagation(); closeDrawer(); } }}
+                className={cn(
+                  'flex min-h-0 shrink-0 flex-col bg-bg-0',
+                  position === 'right' ? 'order-last border-l border-line' : 'border-r border-line',
+                  canDock ? 'w-pop-md' : 'absolute inset-y-0 z-20 w-pop-lg max-w-[calc(100%-var(--ctl))] shadow-pop',
+                  !canDock && (position === 'right' ? 'right-0' : 'left-0'),
+                  !canDock && !drawerOpen && 'hidden',
+                )}>
+                <div className="flex h-hdr shrink-0 items-center justify-between gap-gap-half border-b border-line px-pad">
+                  <span className="text-2 font-medium text-fg-strong">{t('session.history')}</span>
+                  {!canDock && <IconButton onClick={closeDrawer} aria-label={t('common.close')} title={t('common.close')}><X strokeWidth={1.5} /></IconButton>}
+                </div>
+                <div className="flex min-h-0 flex-1 flex-col p-gap-half">{sessionsPanel}</div>
+              </aside>
+            </>
           )}
           <div className="relative flex min-w-0 flex-1 flex-col">
             <Header
@@ -268,6 +306,8 @@ export function Shell(p: ShellProps) {
               on={handlers}
               onToggleDrawer={() => setDrawerOpen(o => !o)}
               drawerOpen={drawerOpen}
+              sessionPanel={position}
+              sessionPanelDocked={canDock}
               onOpenSettings={p.onOpenSettings}
             />
             <div className="relative flex min-h-0 flex-1 flex-col">

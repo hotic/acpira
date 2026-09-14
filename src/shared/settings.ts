@@ -21,6 +21,10 @@ export const CODE_FONT_SIZE = { min: 9, max: 20, default: 12 } as const;
 export type SessionScope = 'workspace' | 'all';
 export const SESSION_SCOPES: SessionScope[] = ['workspace', 'all'];
 
+// Navigation stays inside the webview; narrow panels open a drawer on the selected side.
+export type SessionListPosition = 'hidden' | 'left' | 'right';
+export const SESSION_LIST_POSITIONS: SessionListPosition[] = ['hidden', 'left', 'right'];
+
 // Whether a session belongs to the workspace shown: its cwd is that folder (sessions opened without a folder carry the home directory)
 export function inWorkspace(session: { cwd: string }, workspace: string): boolean {
   return session.cwd === workspace;
@@ -33,6 +37,7 @@ export interface SettingsView {
   locale: Locale;
   defaultAgent: AgentId;
   sessionScope: SessionScope;
+  sessionListPosition: SessionListPosition;
   autoCompact: boolean;
   compactAtTokens: number;
   hiddenOptions: HiddenMap;
@@ -45,8 +50,8 @@ export interface SettingsView {
 }
 
 // Keys the webview may write back; the host maps them onto acpira.<key> at user scope
-export type SettingKey = 'language' | 'defaultAgent' | 'sessionScope' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing';
-export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'sessionScope', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing'];
+export type SettingKey = 'language' | 'defaultAgent' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing';
+export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing'];
 
 export const MIN_COMPACT_AT_TOKENS = 10_000;
 
@@ -55,6 +60,7 @@ export const DEFAULT_SETTINGS: SettingsView = {
   locale: 'en',
   defaultAgent: 'grok',
   sessionScope: 'workspace',
+  sessionListPosition: 'hidden',
   autoCompact: true,
   compactAtTokens: 300_000,
   hiddenOptions: {},
@@ -90,6 +96,8 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
       return (oneOf(value, DIFF_MARKERS) ?? fallback) as SettingsView[K];
     case 'sessionScope':
       return (oneOf(value, SESSION_SCOPES) ?? fallback) as SettingsView[K];
+    case 'sessionListPosition':
+      return (oneOf(value, SESSION_LIST_POSITIONS) ?? fallback) as SettingsView[K];
     case 'hiddenOptions':
       return (isHiddenMap(value) ? value : fallback) as SettingsView[K];
   }

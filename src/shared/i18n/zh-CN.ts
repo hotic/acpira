@@ -397,6 +397,11 @@ export const zhCN = {
   'settings.compactAt.desc': 'Acpira 在回合边界按 agent 上报的上下文检查，以千 token 为单位。不会改变模型窗口或 CLI 自身的压缩策略。',
   'settings.compactAt.unit': 'k',
   // Appearance page
+  'settings.sessionListPosition': '会话列表',
+  'settings.sessionListPosition.desc': '在聊天旁常驻显示会话；面板较窄时，从所选方向打开抽屉。',
+  'settings.sessionListPosition.hidden': '收起',
+  'settings.sessionListPosition.left': '左侧',
+  'settings.sessionListPosition.right': '右侧',
   'settings.theme': '主题',
   'settings.theme.desc': 'Acpira 面板的配色。',
   'settings.theme.auto': '跟随 VS Code',

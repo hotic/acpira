@@ -1,4 +1,4 @@
-import { CODE_FONT_SIZE, DIFF_MARKERS, THEMES, UI_FONT_SIZE, type SettingsView } from '@shared/settings';
+import { CODE_FONT_SIZE, DIFF_MARKERS, SESSION_LIST_POSITIONS, THEMES, UI_FONT_SIZE, type SettingsView } from '@shared/settings';
 import type { Appearance } from '../appearance';
 import { t } from '../i18n';
 import { Field, NumberField, Section, Segmented, Switch } from './controls';
@@ -11,6 +11,9 @@ export function AppearancePage({ settings, appearance, on }: { settings: Setting
   return (
     <>
       <Section>
+        <Field label={t('settings.sessionListPosition')} desc={t('settings.sessionListPosition.desc')}>
+          <Segmented options={SESSION_LIST_POSITIONS.map(v => ({ value: v, label: t(`settings.sessionListPosition.${v}` as const) }))} value={settings.sessionListPosition} onChange={v => on.setSetting('sessionListPosition', v)} label={t('settings.sessionListPosition')} />
+        </Field>
         <Field label={t('settings.theme')} desc={t('settings.theme.desc')}>
           <Segmented options={THEMES.map(v => ({ value: v, label: t(`settings.theme.${v}` as const) }))} value={settings.theme} onChange={v => on.setSetting('theme', v)} label={t('settings.theme')} />
         </Field>

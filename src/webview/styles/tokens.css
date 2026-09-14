@@ -140,6 +140,8 @@
   --pop-w-md: 260px;
   --pop-w-lg: 300px;
   --pop-w-xl: 360px;
+  /* A 260px session column leaves at least 500px for the conversation. */
+  --session-dock-min: 760px;
   /* The faint project name a session row from another project carries before its time, kept short so the title keeps the room */
   --session-project-w: 10ch;
 

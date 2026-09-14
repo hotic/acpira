@@ -211,6 +211,12 @@
           "default": "auto",
           "description": "%acpira.conf.theme%"
         },
+        "acpira.sessionListPosition": {
+          "type": "string",
+          "enum": ["hidden", "left", "right"],
+          "default": "hidden",
+          "description": "%acpira.conf.sessionListPosition%"
+        },
         "acpira.uiFontSize": {
           "type": "number",
           "default": 13,

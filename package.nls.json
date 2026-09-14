@@ -13,6 +13,7 @@
   "acpira.conf.autoCompact": "Send /compact automatically before the next message once over the threshold (turn off to compact by hand from the context panel only)",
   "acpira.conf.hiddenOptions": "Option families hidden from the menus (models / reasoning levels…): `{ \"<agent>\": { \"<configOption id>\": [\"<family name>\", ...] } }`. Toggle them on the agent page in Acpira settings; hand-editing is rarely needed",
   "acpira.conf.theme": "Color scheme of the Acpira panels: auto follows the VS Code theme, light / dark ignore it",
+  "acpira.conf.sessionListPosition": "Session list position inside Acpira: collapsed, left, or right. Narrow panels use a drawer.",
   "acpira.conf.uiFontSize": "Base font size of the interface in px (10–20)",
   "acpira.conf.codeFontSize": "Base font size of code blocks, tool output and diffs in px (9–20)",
   "acpira.conf.diffMarkers": "Diff markers: color tints changed lines, signs relies on the +/- prefixes alone",
