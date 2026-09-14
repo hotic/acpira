@@ -20,10 +20,11 @@ export interface ShellLook {
   codeFontSize: number;
   diffMarkers: DiffMarkers;
   fontSmoothing: boolean;
+  sessionListPosition: SettingsView['sessionListPosition'];
 }
 
 export function lookFromSettings(s: SettingsView): ShellLook {
-  return { fixedTheme: s.theme !== 'auto', uiFontSize: s.uiFontSize, codeFontSize: s.codeFontSize, diffMarkers: s.diffMarkers, fontSmoothing: s.fontSmoothing };
+  return { fixedTheme: s.theme !== 'auto', uiFontSize: s.uiFontSize, codeFontSize: s.codeFontSize, diffMarkers: s.diffMarkers, fontSmoothing: s.fontSmoothing, sessionListPosition: s.sessionListPosition };
 }
 
 export function lookAttrs(look?: ShellLook) {

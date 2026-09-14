@@ -380,6 +380,11 @@ export const en = {
   'settings.compactAt.desc': 'Acpira threshold in thousands of tokens, checked at turn boundaries using agent-reported context. Does not change the model window or the CLI’s own compaction policy.',
   'settings.compactAt.unit': 'k',
   // Appearance page
+  'settings.sessionListPosition': 'Session list',
+  'settings.sessionListPosition.desc': 'Keep sessions beside the chat. Narrow panels open a drawer on the selected side.',
+  'settings.sessionListPosition.hidden': 'Collapsed',
+  'settings.sessionListPosition.left': 'Left',
+  'settings.sessionListPosition.right': 'Right',
   'settings.theme': 'Theme',
   'settings.theme.desc': 'Color scheme of the Acpira panels.',
   'settings.theme.auto': 'Follow VS Code',

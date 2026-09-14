@@ -13,6 +13,7 @@
   "acpira.conf.autoCompact": "超阈值后，在下一条消息发出前自动发送 /compact（关掉就只能在上下文面板里手动压）",
   "acpira.conf.hiddenOptions": "从菜单里隐藏的选项家族（模型 / 推理层级…）：`{ \"<agent>\": { \"<configOption id>\": [\"<家族名>\", ...] } }`。在 Acpira 设置页的 agent 页里开关即可，一般不用手编",
   "acpira.conf.theme": "Acpira 面板配色：auto 跟随 VS Code 主题，light / dark 固定不跟",
+  "acpira.conf.sessionListPosition": "Acpira 内的会话列表位置：收起、左侧或右侧。面板较窄时使用抽屉。",
   "acpira.conf.uiFontSize": "界面基准字号，px（10–20）",
   "acpira.conf.codeFontSize": "代码块、工具输出与差异视图的基准字号，px（9–20）",
   "acpira.conf.diffMarkers": "差异标记：color 给改动行上底色，signs 只靠 +/- 前缀",

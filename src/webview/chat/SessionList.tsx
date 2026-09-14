@@ -31,6 +31,8 @@ export interface SessionListProps {
   scope?: SessionScope;
   // When opened in an overlay the search box auto-focuses; the drawer is permanent and doesn't steal focus
   autoFocus?: boolean;
+  // Docked lists fill the available column; history popovers keep their bounded height.
+  fill?: boolean;
   onSelect: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
@@ -42,7 +44,7 @@ export interface SessionListProps {
 // Each item: vendor mark · title · time; on hover those swap for the actions — pin / rename / delete, plus "move here" for a session from another project.
 // Deletion applies immediately, undo lives on the Toast at the shell's bottom. Scope comes from acpira.sessionScope (settings);
 // under "all" each row from another project carries that project's folder name before the time
-export function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, onSelect, onRename, onDelete, onPin, onMove }: SessionListProps) {
+export function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, onSelect, onRename, onDelete, onPin, onMove }: SessionListProps) {
   const locale = useLocale();
   const [query, setQuery] = useState('');
   const [agentFilter, setAgentFilter] = useState<string>();
@@ -80,7 +82,7 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
   const empty = q ? t('session.noMatch') : agentFilter ? t('session.noneAgent', { name: nameOf(agentFilter) }) : scope === 'workspace' && workspace ? t('session.noneWorkspace') : t('session.none');
 
   return (
-    <div className="flex max-h-[60vh] flex-col" onKeyDown={e => { if (e.key === 'Escape' && editing) { e.stopPropagation(); setEditing(undefined); } }}>
+    <div className={cn('flex flex-col', fill ? 'min-h-0 flex-1' : 'max-h-[60vh]')} onKeyDown={e => { if (e.key === 'Escape' && editing) { e.stopPropagation(); setEditing(undefined); } }}>
       <div className="flex items-center gap-1 px-1 pt-1">
         <label className="flex h-ctl min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-fg-3 focus-within:bg-hover">
           <Search className="size-icon shrink-0" strokeWidth={1.5} />
