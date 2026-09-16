@@ -86,6 +86,11 @@
         "command": "acpira.showLog",
         "title": "%acpira.cmd.showLog%",
         "category": "Acpira"
+      },
+      {
+        "command": "acpira.connectChatgpt",
+        "title": "%acpira.cmd.connectChatgpt%",
+        "category": "Acpira"
       }
     ],
     "menus": {

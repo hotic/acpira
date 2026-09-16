@@ -68,6 +68,7 @@ export class BridgeCore {
       });
       return;
     }
+    if (m.type === 'chatgptStatus') { this.post({ type: 'chatgptStatus', status: await manager.chatgptStatus() }); return; }
     if (m.type === 'openInEditor') { platform.openInEditor(m.sessionId ?? this.viewer.activeId); return; }
     if (m.type === 'openFile') {
       // Tool references are relative to the session they came from; a view showing another session ignores them

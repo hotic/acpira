@@ -8,6 +8,8 @@ export type AgentId = string;
 export interface AgentInfo {
   id: AgentId;
   name: string;
+  // An externally driven conversation, not an ACP executable.
+  external?: boolean;
   // Goes through the account layer (multiple logins can be stored and switched); agents without it rely on their own CLI's login
   accounts?: boolean;
   // Read-only official CLI account; independent of the selected model's provider.
@@ -131,6 +133,8 @@ export interface DiffLine {
 
 export interface ToolCallBlock {
   type: 'tool_call';
+  // Observation lost; not a receipt that the remote process stopped.
+  observation?: 'unknown';
   id: string;
   kind: ToolKind;
   verb: string;
@@ -186,6 +190,9 @@ export interface PlanBlock {
 
 export interface TextBlock {
   type: 'text';
+  // Stable externally supplied identity and visible message phase, when provided.
+  id?: string;
+  phase?: 'commentary' | 'final';
   markdown: string;
   streaming?: boolean;
 }
@@ -320,6 +327,8 @@ export interface TurnError {
 
 export interface AgentTurn {
   role: 'agent';
+  // External execution state cannot currently be established.
+  observation?: 'unknown';
   blocks: AgentBlock[];
   // Wall-clock prompt duration, including tools and permission waits. Absent on older transcripts.
   startedAt?: number;
@@ -338,6 +347,7 @@ export type Turn = UserTurn | AgentTurn;
 
 export interface SessionSummary {
   id: string;
+  external?: boolean;
   title: string;
   agent: AgentId;
   accountId?: string;
@@ -365,8 +375,18 @@ export interface QueuedPrompt {
 }
 
 // Everything a session looks like to the webview: the host pushes the whole thing on every change (the transcript is small, not worth diffing)
+export interface ExternalSessionInfo {
+  source: 'chatgpt';
+  sourceKey: string;
+  connectionPrompt?: string;
+  state: 'unbound' | 'receiving' | 'idle' | 'stale';
+  activeTurnId?: string;
+  lastEventAt: string;
+}
+
 export interface SessionView {
   id: string;
+  external?: ExternalSessionInfo;
   agent: AgentId;
   // Bound account (only agents on the account layer have one); a session uses a single account from start to finish
   accountId?: string;

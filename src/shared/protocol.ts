@@ -1,3 +1,4 @@
+import type { ChatGptIntegrationStatus } from './chatgptIntegration';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl, Draft, QuestionAnswers, SessionSummary, SessionView, TurnSettings } from './transcript';
 import type { Appearance, AxisKey } from './appearance';
 import type { HiddenMap, SettingKey, SettingsView } from './settings';
@@ -56,6 +57,7 @@ export function isSafeExternalUrl(url: string): boolean {
 }
 
 export type HostMsg =
+  | { type: 'chatgptStatus'; status: ChatGptIntegrationStatus }
   | { type: 'editTurnResult'; requestId: string; error?: string }
   | { type: 'init'; state: InitState }
   | { type: 'appearance'; appearance: Appearance }
@@ -88,6 +90,8 @@ export interface AccountAction {
 // Session actions carry the id of the session the view was showing; the host refuses to apply one to a different
 // session — a late message must never land on whatever happens to be active. Absent (tests / scripts): the viewer's current
 export type WebviewMsg =
+  | { type: 'chatgptStatus' }
+  | { type: 'connectChatgpt' }
   | { type: 'editTurn'; requestId: string; edit: EditTurnRequest }
   | { type: 'ready' }
   | { type: 'send'; sessionId?: string; text: string; attachments?: Draft[] }
