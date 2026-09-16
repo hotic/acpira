@@ -72,7 +72,7 @@ export function Header({ title, sessions, agent, agents, accounts, accountId, ac
           <DropdownMenu.Trigger render={<IconButton title={t('session.new')} aria-label={t('session.new')}><Plus strokeWidth={1.5} /></IconButton>} />
           <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="end" width="md"><DropdownMenu.Popup>
             <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
-              {agents.map(a => <DropdownMenu.Item key={a.id} disabled={a.available === false} title={a.available === false ? t('agent.notInstalled') : undefined} onClick={() => on.newSession(a.id)}>
+              {agents.filter(a => !a.external).map(a => <DropdownMenu.Item key={a.id} disabled={a.available === false} title={a.available === false ? t('agent.notInstalled') : undefined} onClick={() => on.newSession(a.id)}>
                 <OptionContent icon={<AgentMark id={a.id} name={a.name} />}>{a.name}</OptionContent>
               </DropdownMenu.Item>)}
             </div>
