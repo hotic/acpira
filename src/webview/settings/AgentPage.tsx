@@ -189,7 +189,7 @@ function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; co
     // Fusion is one row for all 210 pairs: the switch hides the whole feature, so the line says what it spans
     const fusion = f.fusion && t('composer.fusionSummary', { leads: f.fusion.leads.length, sidekicks: f.fusion.sidekicks.length });
     const parts = [fusion, f.efforts.filter(Boolean).join(' / '), f.hasFast && 'Fast', f.hasLong && '1M'].filter(Boolean);
-    return parts.join(' · ');
+    return parts.join(t('common.metaSep'));
   };
   if (controls === undefined) return <Section desc={t('settings.models.desc', { agent: agent.name })}><Note shimmer>{t('settings.loading')}</Note></Section>;
   if (!controls.length) return <Section desc={t('settings.models.desc', { agent: agent.name })}><Note>{t('settings.models.none', { agent: agent.name })}</Note></Section>;
@@ -222,9 +222,9 @@ function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; co
                   key={f.key}
                   lead={<ModelMark family={name} brand={f.brand} />}
                   title={name}
-                  desc={[f.source, summary(f)].filter(Boolean).join(' · ') || undefined}
+                  desc={[f.source, summary(f)].filter(Boolean).join(t('common.metaSep')) || undefined}
                   dim={!shown}
-                  trailing={<Switch checked={shown} onChange={v => toggle(c, f, v)} label={`${name} · ${f.source ?? c.name}`} />}
+                  trailing={<Switch checked={shown} onChange={v => toggle(c, f, v)} label={`${name}${t('common.metaSep')}${f.source ?? c.name}`} />}
                 />
               );
             })}
@@ -266,7 +266,7 @@ function McpSection({ agent, inventory, env, on }: { agent: AgentInfo; inventory
       key={`${m.source}:${m.name}`}
       lead={TRANSPORT_ICON[m.transport]}
       title={m.name}
-      desc={`${m.enabled ? '' : `${t('settings.mcp.disabled')} · `}${m.transport} · ${m.target}`}
+      desc={[m.enabled ? '' : t('settings.mcp.disabled'), m.transport, m.target].filter(Boolean).join(t('common.metaSep'))}
       dim={!m.enabled}
     />
   );

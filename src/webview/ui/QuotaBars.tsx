@@ -19,7 +19,7 @@ export function QuotaBars({ quota, className }: { quota: AccountQuota; className
   return (
     <span
       role="img"
-      aria-label={[...quota.windows.map(w => `${t('quota.aria', { window: windowLabel(w.id), pct: Math.round(w.remaining * 100) })} · ${resetLabel(w, now)}`), balance].filter(Boolean).join(t('common.listSep'))}
+      aria-label={[...quota.windows.map(w => `${t('quota.aria', { window: windowLabel(w.id), pct: Math.round(w.remaining * 100) })}${t('common.metaSep')}${resetLabel(w, now)}`), balance].filter(Boolean).join(t('common.listSep'))}
       className={cn('@container/quota block w-full min-w-0 pt-2 text-3 text-fg-2 tabular-nums', className)}
     >
       <span className={cn('grid grid-cols-1 gap-gap', quota.windows.length > 1 && '@quota/quota:grid-cols-2')}>
@@ -55,9 +55,9 @@ function QuotaBar({ window: w, now }: { window: QuotaWindow; now: number }) {
   );
 }
 
-// Compact one-line summary for tooltips ("Weekly 94%"); several windows joined with a middle dot
+// Compact one-line summary for tooltips ("Weekly 94%"); several windows joined with a comma
 export function quotaSummary(quota: AccountQuota): string {
-  return [...quota.windows.map(w => `${windowLabel(w.id)} ${Math.round(w.remaining * 100)}%`), balanceLabel(quota)].filter(Boolean).join(' · ');
+  return [...quota.windows.map(w => `${windowLabel(w.id)} ${Math.round(w.remaining * 100)}%`), balanceLabel(quota)].filter(Boolean).join(t('common.metaSep'));
 }
 
 function formatBalance(amount: number): string {

@@ -70,7 +70,7 @@ function UsagePanel({ usage, pct, segments, budget, compactAt, canCompact, overA
   budget?: number; compactAt?: number; canCompact: boolean; overAt?: number; pending?: string; onCompact?: () => void;
 }) {
   const [hov, setHov] = useState<UsageSegment['id']>();
-  const mark = overAt ? `${t('usage.used', { n: fmtTokens(usage.used) })} · ${t('usage.limit', { n: fmtTokens(usage.size) })} · ${t('usage.budget', { n: fmtTokens(overAt) })}` : `${t('usage.used', { n: fmtTokens(usage.used) })} · ${t('usage.limit', { n: fmtTokens(usage.size) })}`;
+  const mark = [t('usage.used', { n: fmtTokens(usage.used) }), t('usage.limit', { n: fmtTokens(usage.size) }), overAt && t('usage.budget', { n: fmtTokens(overAt) })].filter(Boolean).join(t('common.metaSep'));
   const limited = !!compactAt && compactAt >= usage.size;
   const status = !canCompact ? t('usage.unsupportedShort') : limited ? t('usage.windowLimited') : pending;
   const policyHint = !canCompact ? t('usage.unsupported') : limited ? t('usage.budgetExceedsWindow') : undefined;
@@ -90,7 +90,7 @@ function UsagePanel({ usage, pct, segments, budget, compactAt, canCompact, overA
       </div>
       {compactAt && (
         <div className="px-2 text-3 text-fg-3" title={policyHint}>
-          {t('usage.budget', { n: fmtTokens(compactAt) })}{status && ` · ${status}`}
+          {t('usage.budget', { n: fmtTokens(compactAt) })}{status && `${t('common.metaSep')}${status}`}
         </div>
       )}
       <div className="relative mx-2 mb-1 flex h-1.5 overflow-hidden rounded-full bg-active">

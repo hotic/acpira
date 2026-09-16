@@ -265,7 +265,7 @@ export function Composer(p: ComposerProps) {
             {p.controls.modes.length > 0 && (
               <DropdownMenu.Root onOpenLifecycle={onOpenChange}>
                 <DropdownMenu.Trigger render={<Chip variant="solid" className="ml-0.5 shrink-0" narrow="icon"
-                  title={mode ? [mode.name, mode.description].filter(Boolean).join(' · ') : t('composer.mode')}
+                  title={mode ? [mode.name, mode.description].filter(Boolean).join(t('common.metaSep')) : t('composer.mode')}
                   icon={ModeIcon && <ModeIcon strokeWidth={1.75} />}>
                   {mode?.name ?? t('composer.mode')}
                 </Chip>} />
