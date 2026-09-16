@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import type { HiddenMap } from '../src/shared/settings';
+import type { ConfigControl } from '../src/shared/transcript';
 import { AgentRegistry } from '../src/host/acp/AgentRegistry';
 import { SessionManager } from '../src/host/SessionManager';
 import { TranscriptStore } from '../src/host/store/TranscriptStore';
@@ -250,6 +251,42 @@ describe('SessionManager', () => {
     expect((await m2.knownControls('fake')).map(c => c.id)).toEqual(['model', 'effort']);
     expect(await m2.knownControls('ghost')).toEqual([]);
   }, 20_000);
+
+  // The refresh button: a throwaway spawn runs initialize + session/new so a CLI config change (FAKE_MODELS here) shows up without a
+  // real session; knownControls prefers the probed list until the next real session reads its own
+  it('probeControls: a throwaway spawn reads the CLI’s current configOptions; knownControls prefers it until the next session starts', async () => {
+    const { m, dir } = manager();
+    const model = (cs: ConfigControl[] | undefined) => cs?.find(c => c.id === 'model')?.options.map(o => o.id);
+    try {
+      await m.init();
+      await m.newSession();
+      expect(model(await m.knownControls('fake'))).toEqual(['m1', 'm2']);
+
+      process.env.FAKE_MODELS = 'm3';
+      const probed = await m.probeControls('fake');
+      expect(model(probed)).toEqual(['m1', 'm2', 'm3']);
+      expect(model(await m.knownControls('fake'))).toEqual(['m1', 'm2', 'm3']);
+      // The probe's initialize fills the facts card while no session of this agent is live… but this one is live; still resolves
+      expect(m.runtimeInfo('fake')).toMatchObject({ name: 'fake' });
+
+      // Fill the current session so newSession cannot reuse it (keepEmpty), then a real session reads m3 itself and retires the probe
+      await m.handle({ type: 'send', text: 'hi' });
+      await m.newSession();
+      expect(model(m.active()!.controls.options)).toEqual(['m1', 'm2', 'm3']);
+    } finally { delete process.env.FAKE_MODELS; await m.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  }, 20_000);
+
+  it('probeControls: an agent without a binary answers empty instead of throwing', async () => {
+    const m = new SessionManager({
+      registry: new AgentRegistry({ ghost: { name: 'Ghost', command: '/nonexistent/ghost-cli' } }),
+      store: new TranscriptStore(mkdtempSync(join(tmpdir(), 'acpira-mgr-'))),
+      log: () => {}, cwd: () => '/tmp', defaultAgent: () => 'ghost', runInTerminal: () => {}, toast: () => {},
+    });
+    try {
+      await m.init();
+      expect(await m.probeControls('ghost')).toEqual([]);
+    } finally { await m.dispose(); }
+  });
 
   // The fake agent's process starts every session on model m1 / effort high / mode agent; the option values and the mode picked last
   // come back on the next new session. Only the user's own picks count: a mode the agent switches by itself is not a choice

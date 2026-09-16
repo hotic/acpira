@@ -9,8 +9,15 @@ import type {
 import { diffLines } from './diff';
 import { isTodoTool, todoEntries } from '@shared/todoTools';
 import { lastPlanSnapshot, samePlanEntries } from './planSnapshots';
+import type { AgentRuntimeInfo } from '@shared/inventory';
 
 export { diffLines };
+
+// What the agent told us in initialize: name / version and the MCP transports it can take (the settings page's facts card)
+export function runtimeInfoOf(init: acp.InitializeResponse): AgentRuntimeInfo {
+  const mcp = init.agentCapabilities?.mcpCapabilities;
+  return { name: init.agentInfo?.name, version: init.agentInfo?.version, mcp: mcp ? { http: !!mcp.http, sse: !!mcp.sse } : undefined };
+}
 
 // Normalize ACP session/update into transcript blocks. Pure functions + in-place mutation of the Turn array; AcpSession pushes to the webview
 

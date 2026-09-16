@@ -19,7 +19,7 @@ import { thoughtCorrection } from '@shared/composerControls';
 import { readModelSources } from './modelSources';
 import { fetchGrokUsage } from './grokUsage';
 import { preparePrompt, type BlobStore } from './attachments';
-import { activityOf, applyUpdate, endTurn, failTurn, initControls, applyConfigOptions, type NormalizeState } from './normalize';
+import { activityOf, applyUpdate, endTurn, failTurn, initControls, applyConfigOptions, runtimeInfoOf, type NormalizeState } from './normalize';
 import { PermissionGate } from './permissions';
 import { QuestionGate } from './questions';
 import { PromptQueue, type StagedSend } from './promptQueue';
@@ -155,12 +155,9 @@ export class AcpSession {
   get alive(): boolean { return !!this.proc?.alive; }
   get canCompact(): boolean { return this.state.commands.some(c => c.name === 'compact'); }
 
-  // What the agent told us in initialize: name / version and the MCP transports it can take (the settings page's facts card)
   runtimeInfo(): AgentRuntimeInfo | undefined {
     const init = this.proc?.init;
-    if (!init) return undefined;
-    const mcp = init.agentCapabilities?.mcpCapabilities;
-    return { name: init.agentInfo?.name, version: init.agentInfo?.version, mcp: mcp ? { http: !!mcp.http, sse: !!mcp.sse } : undefined };
+    return init ? runtimeInfoOf(init) : undefined;
   }
 
   view(): SessionView {

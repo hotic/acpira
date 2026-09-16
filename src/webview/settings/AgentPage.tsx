@@ -191,7 +191,8 @@ function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; co
     const parts = [fusion, f.efforts.filter(Boolean).join(' / '), f.hasFast && 'Fast', f.hasLong && '1M'].filter(Boolean);
     return parts.join(' · ');
   };
-  if (!controls?.length) return <Section desc={t('settings.models.desc', { agent: agent.name })}><Note>{t('settings.models.none', { agent: agent.name })}</Note></Section>;
+  if (controls === undefined) return <Section desc={t('settings.models.desc', { agent: agent.name })}><Note shimmer>{t('settings.loading')}</Note></Section>;
+  if (!controls.length) return <Section desc={t('settings.models.desc', { agent: agent.name })}><Note>{t('settings.models.none', { agent: agent.name })}</Note></Section>;
   return (
     <>
       <SectionDescription>{t('settings.models.desc', { agent: agent.name })}</SectionDescription>

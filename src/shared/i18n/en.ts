@@ -422,7 +422,7 @@ export const en = {
   'settings.models.official': 'Official models',
   'settings.models.custom': 'Custom configuration',
   'settings.models.thinking': 'Thinking settings',
-  'settings.models.none': 'Start a {agent} session to see available options.',
+  'settings.models.none': 'Start a {agent} session or refresh this page to see available options.',
   'settings.tab.mcp': 'MCP',
   'settings.tab.skills': 'Skills',
   'settings.tab.rules': 'Rules',

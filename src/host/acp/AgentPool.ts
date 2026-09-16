@@ -10,6 +10,19 @@ type Warming = { state: 'warming'; promise: Promise<AgentProcess> };
 type Ready = { state: 'ready'; proc: AgentProcess; timer: ReturnType<typeof setTimeout> };
 type Slot = Warming | Ready;
 
+// Client handlers for a process that only ever answers initialize / session metadata: updates ignored,
+// anything interactive declined. `log` receives each stderr line already prefixed by the caller.
+export function idleHandlers(log: (line: string) => void, onExit?: () => void): ClientHandlers {
+  return {
+    onUpdate: () => {},
+    onPermission: async () => ({ outcome: { outcome: 'cancelled' } }),
+    onElicitation: async () => ({ action: 'cancel' }),
+    onGrokQuestion: async () => ({ outcome: 'skip_interview' }),
+    onStderr: log,
+    onExit: () => onExit?.(),
+  };
+}
+
 export interface AgentPoolDeps {
   registry: () => AgentRegistry;
   log: (line: string) => void;
@@ -51,15 +64,20 @@ export class AgentPool {
     catch { return undefined; }
   }
 
-  // Drop idle / still-warming processes so a registry or credential change cannot hand out a stale spawn
-  invalidate() {
+  // Drop idle / still-warming processes so a registry or credential change cannot hand out a stale spawn.
+  // With an agent, only that agent's slots go (a config change on one CLI must not kill the others' warm processes)
+  invalidate(agent?: AgentId) {
+    const prefix = agent === undefined ? undefined : `${agent}\0`;
     const ready: AgentProcess[] = [];
-    for (const slot of this.slots.values()) {
+    const pending: Promise<AgentProcess>[] = [];
+    for (const [key, slot] of this.slots) {
+      if (prefix && !key.startsWith(prefix)) continue;
       if (slot.state === 'ready') { clearTimeout(slot.timer); ready.push(slot.proc); }
+      else pending.push(slot.promise);
+      this.slots.delete(key);
     }
-    const pending = [...this.inflight];
-    this.slots.clear();
-    this.inflight.clear();
+    if (prefix) for (const p of pending) this.inflight.delete(p);
+    else { for (const p of this.inflight) if (!pending.includes(p)) pending.push(p); this.inflight.clear(); }
     for (const proc of ready) proc.kill();
     for (const p of pending) void p.then(proc => proc.kill()).catch(() => {});
   }
@@ -73,7 +91,7 @@ export class AgentPool {
       const bin = await registry.resolveBinary(agent);
       if (!bin) throw new Error(`no binary for ${agent}`);
       const extraEnv = accountId && this.deps.spawnEnv ? await this.deps.spawnEnv(agent, accountId) : undefined;
-      const proc = await AgentProcess.spawn(def, bin, cwd, this.idleHandlers(key), extraEnv);
+      const proc = await AgentProcess.spawn(def, bin, cwd, this.warmHandlers(key), extraEnv);
       this.deps.log(`warm ${agent}: initialize ok`);
       if (this.slots.get(key) === slot) this.slots.set(key, { state: 'ready', proc, timer: this.arm(key, proc) });
       return proc;
@@ -102,18 +120,11 @@ export class AgentPool {
     return timer;
   }
 
-  private idleHandlers(key: string): ClientHandlers {
-    return {
-      onUpdate: () => {},
-      onPermission: async () => ({ outcome: { outcome: 'cancelled' } }),
-      onElicitation: async () => ({ action: 'cancel' }),
-      onGrokQuestion: async () => ({ outcome: 'skip_interview' }),
-      onStderr: line => this.deps.log(`warm stderr: ${line}`),
-      onExit: () => {
-        const cur = this.slots.get(key);
-        if (cur?.state === 'ready') { clearTimeout(cur.timer); this.slots.delete(key); }
-        else if (cur?.state === 'warming') this.slots.delete(key);
-      },
-    };
+  private warmHandlers(key: string): ClientHandlers {
+    return idleHandlers(line => this.deps.log(`warm stderr: ${line}`), () => {
+      const cur = this.slots.get(key);
+      if (cur?.state === 'ready') { clearTimeout(cur.timer); this.slots.delete(key); }
+      else if (cur?.state === 'warming') this.slots.delete(key);
+    });
   }
 }

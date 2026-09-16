@@ -15,7 +15,8 @@ import * as acp from '@agentclientprotocol/sdk';
 // Login: when cwd contains "needs-auth", session/new requires authenticate first; authenticate validates _meta.api_key the way Devin does (only accepts good-key)
 // Process lifecycle knobs (env): FAKE_INIT_FAIL → initialize answers an error while the process stays up (an orphan unless the client kills it);
 // FAKE_STUBBORN → ignores SIGTERM and keeps the event loop busy, so only SIGKILL ends it; FAKE_SILENT_CANCEL → a cancel during background
-// compaction drops the work without the usual "Compaction canceled." prose; FAKE_AUTH_REJECT → authenticate always fails (terminal login only)
+// compaction drops the work without the usual "Compaction canceled." prose; FAKE_AUTH_REJECT → authenticate always fails (terminal login only);
+// FAKE_MODELS → comma-separated extra model options appended to the model configOption (read at spawn, so a second spawn sees new values)
 
 if (process.env.FAKE_STUBBORN) {
   process.on('SIGTERM', () => {});
@@ -403,7 +404,11 @@ const config: Record<string, string> = { model: 'm1', effort: 'high' };
 function configOptions(): acp.SessionConfigOption[] {
   return [
     { id: 'effort', name: 'Reasoning', category: 'thought_level', type: 'select', currentValue: config.effort!, options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }] },
-    { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: config.model!, options: [{ value: 'm1', name: 'Model 1' }, { value: 'm2', name: 'Model 2' }] },
+    { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: config.model!, options: [
+      { value: 'm1', name: 'Model 1' }, { value: 'm2', name: 'Model 2' },
+      // A "config file" the test edits between spawns: each listed value shows up as a model option
+      ...(process.env.FAKE_MODELS ?? '').split(',').map(s => s.trim()).filter(Boolean).map(value => ({ value, name: value })),
+    ] },
   ];
 }
 

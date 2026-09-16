@@ -440,7 +440,7 @@ export const zhCN = {
   'settings.models.official': '官方模型',
   'settings.models.custom': '自定义配置',
   'settings.models.thinking': '思考设置',
-  'settings.models.none': '新建 {agent} 会话后显示可用选项。',
+  'settings.models.none': '新建 {agent} 会话或点击右上角刷新后显示可用选项。',
   'settings.tab.mcp': 'MCP',
   'settings.tab.skills': '技能',
   'settings.tab.rules': '规则',
