@@ -7,6 +7,8 @@ import type { EditTurnRequest, HostMsg } from '../src/shared/protocol';
 import { captureTurnSettings } from '../src/shared/turnSettings';
 import type { HostPlatform, SettingsAffects } from '../src/host/platform';
 import { createHostRuntime, type HostRuntime } from '../src/host/runtime';
+import { AcpSession } from '../src/host/acp/AcpSession';
+import { ChatGptBridgeStore } from '../src/host/external/ChatGptBridgeStore';
 
 const FAKE = fileURLToPath(new URL('./fake-agent.ts', import.meta.url));
 const TSX = fileURLToPath(new URL('../node_modules/.bin/tsx', import.meta.url));
@@ -68,6 +70,49 @@ describe('HostRuntime + BridgeCore', () => {
     if (init?.type !== 'init') throw new Error('no init');
     return { runtime, core, posted, init, cwd, home, ...fake };
   }
+
+  it('shows ChatGPT as an external conversation and forwards live events without spawning another agent', async () => {
+    const { runtime, core, posted, home, platform, init } = await setup();
+    const nativeId = init.state.active!.id;
+    const start = vi.spyOn(AcpSession.prototype, 'start');
+    try {
+      const mirror = await runtime.manager.connectChatgpt('runtime-test-source', 'ChatGPT runtime test');
+      await core.handle({ type: 'selectSession', id: mirror.id });
+      expect(core.viewer.active()).toMatchObject({ id: mirror.id, agent: 'chatgpt', status: 'readonly' });
+      expect(runtime.manager.agents()).toContainEqual({ id: 'chatgpt', name: 'ChatGPT', available: true, external: true });
+      const writer = new ChatGptBridgeStore(join(home, 'bridges', 'chatgpt'));
+      try {
+        await writer.accept(mirror.id, { id: 'prompt', turnId: 'test-turn', type: 'turn_start', text: 'Visible test prompt' });
+        await writer.accept(mirror.id, { id: 'reply', turnId: 'test-turn', type: 'message', messageId: 'm', phase: 'commentary', text: 'Visible test progress' });
+        await runtime.manager.refreshIndex();
+        await until(() => posted.some(m => m.type === 'session' && m.session.id === mirror.id && m.session.turns.length === 2));
+        await core.handle({ type: 'send', sessionId: mirror.id, text: 'must not be sent to an ACP' });
+        expect(platform.toast).toHaveBeenCalledWith('error', expect.stringContaining('ChatGPT'));
+        expect(core.viewer.active()?.turns).toHaveLength(2);
+        await runtime.manager.renameSession(mirror.id, 'Renamed mirror');
+        await runtime.manager.pinSession(mirror.id, true);
+        expect(runtime.manager.sessions().find(s => s.id === mirror.id)).toMatchObject({ title: 'Renamed mirror', pinned: true, external: true });
+        await core.handle({ type: 'selectSession', id: nativeId });
+        expect(core.viewer.active()?.agent).toBe('fake');
+        expect(start).not.toHaveBeenCalled();
+      } finally { await writer.dispose(); }
+    } finally { start.mockRestore(); }
+  });
+
+  it('reports project mirror receipts separately from unverifiable cloud pairing', async () => {
+    const { runtime, core, posted, home } = await setup();
+    const mirror = await runtime.manager.connectChatgpt('status-fixture');
+    const writer = new ChatGptBridgeStore(join(home, 'bridges', 'chatgpt'));
+    try {
+      await writer.accept(mirror.id, { id: 'status-prompt', turnId: 't', type: 'turn_start', text: 'Status fixture' });
+      await core.handle({ type: 'chatgptStatus' });
+      const result = posted.filter(m => m.type === 'chatgptStatus').at(-1);
+      expect(result).toMatchObject({ type: 'chatgptStatus', status: {
+        desktopCommander: { pairing: 'unknown' },
+        project: { mirrors: 1, observedMirrors: 1, latestSessionId: mirror.id },
+      } });
+    } finally { await writer.dispose(); }
+  });
 
   it('builds the runtime from the platform and answers ready with the full init state', async () => {
     const { init, cwd, runtime, home } = await setup();

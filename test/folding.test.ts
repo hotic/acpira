@@ -10,6 +10,16 @@ const run: ToolCallBlock = { type: 'tool_call', id: 'run', kind: 'execute', verb
 afterEach(() => setLocale('en'));
 
 describe('Codex process folding', () => {
+  it('honors explicit external message phases without changing legacy ACP tails', () => {
+    const progress = { type: 'text' as const, phase: 'commentary' as const, markdown: 'Checking.' };
+    const final = { type: 'text' as const, phase: 'final' as const, markdown: 'Done.' };
+    expect(splitCodexBlocks([progress, run, final, progress])).toEqual({
+      process: [progress, run, progress], reply: [final], permissions: [],
+    });
+    expect(splitCodexBlocks([progress])).toEqual({ process: [progress], reply: [], permissions: [] });
+    expect(splitCodexBlocks([final, read])).toEqual({ process: [read], reply: [final], permissions: [] });
+  });
+
   it('keeps one process history across commentary and leaves the trailing reply outside', () => {
     const intro = { type: 'text' as const, markdown: '先检查项目。' };
     const progress = { type: 'text' as const, markdown: '继续验证。' };
