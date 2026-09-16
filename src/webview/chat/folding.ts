@@ -19,8 +19,11 @@ export function splitCodexBlocks(blocks: AgentBlock[]) {
   while (end > 0 && (content[end - 1]!.type === 'text' || (foldable && TAIL_PROCESS.has(content[end - 1]!.type)))) end--;
   const tail = content.slice(end);
   return {
-    process: [...content.slice(0, end), ...tail.filter(b => b.type !== 'text')],
-    reply: tail.filter((b): b is TextBlock => b.type === 'text'),
+    // Explicit source phases win; unannotated ACP text keeps the trailing-text heuristic.
+    process: [...content.slice(0, end).filter(b => b.type !== 'text' || b.phase !== 'final'),
+      ...tail.filter(b => b.type !== 'text' || b.phase === 'commentary')],
+    reply: content.filter((b, i): b is TextBlock => b.type === 'text' &&
+      (b.phase === 'final' || (i >= end && b.phase !== 'commentary'))),
     permissions,
   };
 }
@@ -34,6 +37,7 @@ const FOLD_KEY: Record<ToolCallBlock['status'], MsgKey> = {
 };
 
 export function toolVerb(block: ToolCallBlock): string {
+  if (block.observation === 'unknown') return t('chatgpt.unknownTool');
   // Stored verbs use the host locale at creation time; render from semantic kind, or from verbKey when the verb came from the tool's identity
   return t(FOLD_KEY[block.status], { verb: t(block.verbKey ?? `verb.${block.kind}`) });
 }
@@ -47,6 +51,7 @@ export interface FoldActivity {
 }
 
 export function foldActivity(turn: AgentTurn): FoldActivity {
+  if (turn.observation === 'unknown') return { kind: 'other', label: t('chatgpt.unknownTurn') };
   if (turn.blocks.some(b => b.type === 'permission')) return { kind: 'other', label: t('host.awaitingApproval') };
   if (turn.blocks.some(b => b.type === 'question' && !b.outcome)) return { kind: 'other', label: t('host.awaitingAnswers') };
   // Concurrent calls can finish out of order; a newer completed call must not hide an active one.

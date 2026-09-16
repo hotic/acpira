@@ -77,7 +77,7 @@ export function AgentPanel(p: AgentPanelProps) {
   </div>;
   return <div className="flex flex-col">
     <RadioGroup.Root ref={list} aria-label={t('common.agent')} value={p.agent.id} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
-      {p.agents.map(a => <RadioGroup.Item key={a.id} value={a.id} disabled={a.available === false} title={a.available === false ? t('agent.notInstalled') : undefined} onClick={() => { p.onSelectAgent(a.id); p.close(); }}>
+      {p.agents.filter(a => !a.external).map(a => <RadioGroup.Item key={a.id} value={a.id} disabled={a.available === false} title={a.available === false ? t('agent.notInstalled') : undefined} onClick={() => { p.onSelectAgent(a.id); p.close(); }}>
         <OptionContent icon={<AgentMark id={a.id} name={a.name} />} checked={a.id === p.agent.id} checkSlot>{a.name}</OptionContent>
       </RadioGroup.Item>)}
     </RadioGroup.Root>

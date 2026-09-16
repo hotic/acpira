@@ -86,7 +86,7 @@ export function Header({ title, sessions, agent, agents, accounts, accountId, ac
               onRename={on.renameSession} onDelete={on.deleteSession} onPin={on.pinSession} onMove={on.moveSession} />
           </Popover.Popup></Popover.Positioner></Popover.Portal>
         </Popover.Root>}
-        {accountButton}
+        {!agent.external && accountButton}
         {settingsButton}
       </div>
     </div>
