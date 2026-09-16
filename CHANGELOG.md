@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.
 - Steer / interrupt follow-up modes remain planned. Mid-turn messages stay in the host-side queue.
 
+## [1.3.3] - 2026-09-16
+
+### Changed
+
+- ChatGPT is configured as an external integration in settings, with a Desktop Commander section, not listed as a launchable agent in the plus menu or default-agent picker. Historical ChatGPT sessions remain filterable.
+- Local component/process detection is kept separate from cloud pairing and project message receipts. Unknown pairing is never reported as paired or unpaired from configuration artifacts alone.
+- Follow-ups can explicitly supersede an unfinished observation without inventing a completion. Transport retries are idempotent by turn ID, late tool receipts stay with their original turn, and resuming observation never re-executes commands.
+- Empty mirrors report awaiting their first message. Unobserved turns/tools show unknown state without continued execution timers or a success receipt. Stopping source generation does not claim termination of local processes.
+
+## [1.3.2] - 2026-09-16
+
+### Added
+
+- Opt-in **ChatGPT** session mirrors: a separate external channel reuses the existing conversation history, tool cards, output/diff display, pinning and project scope without starting Codex or an ACP process.
+- `Acpira: Connect ChatGPT Session` opens a project-bound mirror and copies connection instructions. The VSIX includes a local `chatgpt-bridge.cjs` CLI for visible messages, streaming command execution, guarded file edits and explicit completion receipts.
+- Cross-host mirror persistence, idempotent event replay and stale-connection indicators. Unobserved completion, hidden reasoning and unsupported remote controls are not synthesized. See `docs/chatgpt-bridge.md` for the explicit-binding boundary and limits.
+
 ## [1.3.1] - 2026-09-15
 
 ### Added
