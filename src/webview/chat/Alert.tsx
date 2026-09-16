@@ -24,7 +24,7 @@ export function Alert({ turn, onRetry, onReconnect, onContinue, onDismiss, onCom
   const stop = turn.stop as ShortStop;
   const err = turn.error;
   const contextTooLong = stop === 'error' && isContextLengthError(err);
-  const detail = [err?.code !== undefined ? String(err.code) : '', err?.kind ?? ''].filter(Boolean).join(' · ');
+  const detail = [err?.code !== undefined ? String(err.code) : '', err?.kind ?? ''].filter(Boolean).join(t('common.metaSep'));
   const copyable = [err?.message, detail].filter(Boolean).join('\n');
   const message = contextTooLong ? t(onCompact ? 'alert.contextLength.text' : 'alert.contextLength.unsupported')
     : stop === 'error' ? err?.message || t('alert.error.unknown') : TEXT[stop] && t(TEXT[stop]);
