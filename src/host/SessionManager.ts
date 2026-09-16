@@ -1,3 +1,9 @@
+import { randomUUID } from 'node:crypto';
+import { realpath } from 'node:fs/promises';
+import type { ChatGptIntegrationStatus } from '@shared/chatgptIntegration';
+import { desktopCommanderStatus } from './external/desktopCommanderStatus';
+import type { ChatGptBridgeStore } from './external/ChatGptBridgeStore';
+import { CHATGPT_ID } from './external/chatgptEvents';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl, SessionSummary, SessionView, TurnSettings } from '@shared/transcript';
 import type { AccountAction, AddAccountVia, EditTurnRequest, WebviewMsg } from '@shared/protocol';
 import { inWorkspace, type HiddenMap, type SessionScope } from '@shared/settings';
@@ -18,6 +24,7 @@ import { RENAME_MAX } from './limits';
 export interface ManagerDeps {
   registry: AgentRegistry;
   store: TranscriptStore;
+  chatgpt?: ChatGptBridgeStore;
   log: (line: string) => void;
   cwd: () => string;
   defaultAgent: () => AgentId;
@@ -108,6 +115,7 @@ export class SessionManager {
   private syncAgain = false;
   private touched = new Set<string>();
   private disposed = false;
+  private unwatchChatgpt?: () => void;
 
   constructor(private deps: ManagerDeps) {
     deps.accounts?.subscribe(accounts => this.emit({ type: 'accounts', accounts }));
@@ -118,9 +126,18 @@ export class SessionManager {
       spawnEnv: (agent, accountId) => this.deps.accounts?.spawnEnv(agent, accountId) ?? Promise.resolve(undefined),
     });
     this.watchRegistry(deps.registry);
+    this.unwatchChatgpt = deps.chatgpt?.subscribe(ids => {
+      this.emitSessions();
+      for (const id of ids) {
+        const view = deps.chatgpt?.view(id);
+        if (view) for (const v of this.viewersOn(id)) v.emit({ type: 'session', session: view });
+        else void this.rehome(id).catch(e => deps.log(`ChatGPT rehome: ${msg(e)}`));
+      }
+    });
   }
 
   async init() {
+    await this.deps.chatgpt?.init();
     // Whatever a crashed host left in the trash had its undo window closed with it (a window still open in another host keeps its entries)
     await this.deps.store.sweepTrash(TRASH_TTL).catch(e => this.deps.log(`trash sweep failed: ${msg(e)}`));
     this.index = await this.deps.store.loadIndex();
@@ -158,6 +175,7 @@ export class SessionManager {
   }
 
   private warm(agent: AgentId, accountId?: string) {
+    if (agent === CHATGPT_ID) return;
     const acc = accountId ?? (this.deps.accounts?.supports(agent) ? this.deps.accounts.defaultFor(agent)?.id : undefined);
     this.pool.ensure(agent, this.deps.cwd(), acc);
   }
@@ -203,6 +221,7 @@ export class SessionManager {
     this.syncTimer = undefined;
     this.syncFirstAt = undefined;
     await this.syncIndex();
+    await this.deps.chatgpt?.refresh();
   }
 
   // One run at a time; a request arriving mid-run schedules exactly one more. The result is corrected for what changed during the await:
@@ -249,9 +268,10 @@ export class SessionManager {
   }
 
   agents(): AgentInfo[] {
-    return this.deps.registry.list().map(a => this.deps.accounts?.supports(a.id)
+    const native = this.deps.registry.list().filter(a => !this.deps.chatgpt || a.id !== CHATGPT_ID).map(a => this.deps.accounts?.supports(a.id)
       ? { ...a, accounts: true }
       : { ...a, localAccount: this.deps.localAccounts?.get(a.id) });
+    return this.deps.chatgpt ? [...native, { id: CHATGPT_ID, name: 'ChatGPT', external: true, available: true }] : native;
   }
 
   accounts(): AccountInfo[] { return this.deps.accounts?.list() ?? []; }
@@ -296,6 +316,7 @@ export class SessionManager {
   // change (a model added by hand) without opening a real session. On failure the last known list stands. The agent's warm processes
   // are dropped too, so the next new session never borrows a process spawned before the change
   async probeControls(agent: AgentId): Promise<ConfigControl[]> {
+    if (agent === CHATGPT_ID) return this.knownControls(agent);
     this.pool.invalidate(agent);
     const def = this.deps.registry.get(agent);
     const bin = await this.deps.registry.resolveBinary(agent);
@@ -318,7 +339,7 @@ export class SessionManager {
   }
 
   sessions(): SessionSummary[] {
-    return this.index.map(s => {
+    const native: SessionSummary[] = this.index.map(s => {
       const live = this.live.get(s.id);
       const turns = live?.view().turns ?? [];
       const last = turns[turns.length - 1];
@@ -327,17 +348,20 @@ export class SessionManager {
           : last?.role === 'agent' && last.stop === 'error' ? 'error' : undefined;
       return { ...s, state };
     });
+    const merged = [...native, ...(this.deps.chatgpt?.summaries() ?? [])];
+    sortIndex(merged);
+    return merged;
   }
 
   viewOf(id: string | undefined): SessionView | undefined {
-    return id ? this.live.get(id)?.view() : undefined;
+    return id ? this.live.get(id)?.view() ?? this.deps.chatgpt?.view(id) : undefined;
   }
 
   // The newest session a viewer may fall onto by itself: under the workspace scope one of this folder's, otherwise any
   private mostRecent(): string | undefined {
     const scope = this.deps.scope?.() ?? 'all';
     const cwd = this.deps.cwd();
-    return this.index.find(s => scope === 'all' || inWorkspace(s, cwd))?.id;
+    return this.sessions().find(s => scope === 'all' || inWorkspace(s, cwd))?.id;
   }
 
   // Attach a viewer (one per webview). `initial` is the session it opens on; `mostRecent` starts it on the newest listed session, like the sidebar
@@ -411,7 +435,7 @@ export class SessionManager {
 
   // On activation, if the viewer has no session or its session is gone, start a new one; otherwise bring its session live (no replay)
   async ensureActiveFor(v: SessionViewer): Promise<void> {
-    if (v.activeId && this.live.has(v.activeId)) return;
+    if (v.activeId && this.viewOf(v.activeId)) return;
     if (v.activeId) { await this.selectSessionFor(v, v.activeId); return; }
     await this.newSessionFor(v);
   }
@@ -419,6 +443,13 @@ export class SessionManager {
   // Agents on the account layer: with no account specified, use that agent's default account (most recently used); if there is none, leave it unbound and let the Notice guide login
   async newSessionFor(v: SessionViewer, agent?: AgentId, accountId?: string): Promise<void> {
     const id = agent ?? this.deps.defaultAgent();
+    if (id === CHATGPT_ID) {
+      const view = await this.connectChatgpt();
+      await this.dropEmptyCurrent(v);
+      v.activeId = view.id;
+      v.emit({ type: 'session', session: view });
+      return;
+    }
     const acc = this.deps.accounts?.supports(id) ? accountId ?? this.deps.accounts.defaultFor(id)?.id : undefined;
     const cwd = this.deps.cwd();
     const cur = this.current(v);
@@ -436,6 +467,24 @@ export class SessionManager {
     // A real session just read the current configOptions itself; the probe snapshot retires
     this.probed.delete(id);
     if (last) await s.adoptControls(last);
+  }
+
+  async chatgptStatus(): Promise<ChatGptIntegrationStatus> {
+    await this.deps.chatgpt?.refresh();
+    const cwd = await realpath(this.deps.cwd()).catch(() => this.deps.cwd());
+    const views = (this.deps.chatgpt?.summaries() ?? []).filter(s => inWorkspace(s, cwd))
+      .map(s => this.deps.chatgpt!.view(s.id)!).filter(Boolean);
+    const observed = views.filter(v => v.turns.length > 0);
+    const latest = observed[0] ?? views[0];
+    return { checkedAt: new Date().toISOString(), bridgeAvailable: this.deps.chatgpt?.available() ?? false,
+      desktopCommander: await desktopCommanderStatus(),
+      project: { mirrors: views.length, observedMirrors: observed.length, latestSessionId: latest?.id,
+        lastEventAt: observed[0]?.external?.lastEventAt } };
+  }
+
+  async connectChatgpt(sourceKey: string = randomUUID(), title = 'ChatGPT'): Promise<SessionView> {
+    if (!this.deps.chatgpt) throw new Error('ChatGPT bridge is unavailable in this host');
+    return this.deps.chatgpt.open(sourceKey, this.deps.cwd(), title);
   }
 
   // Same agent / account / cwd and still empty: keep the process instead of killing it to spawn another
@@ -459,6 +508,13 @@ export class SessionManager {
 
   async selectSessionFor(v: SessionViewer, id: string): Promise<void> {
     if (!isSessionId(id)) return;
+    if (this.deps.chatgpt?.owns(id)) {
+      await this.deps.chatgpt.refresh();
+      const view = this.deps.chatgpt.view(id);
+      if (!view) { this.deps.toast('error', t('host.recordLost')); return; }
+      v.activeId = id; v.emit({ type: 'session', session: view }); this.emitSessions();
+      return;
+    }
     if (v.activeId === id && this.live.has(id)) return;
     v.activeId = id;
     const live = this.live.get(id);
@@ -507,13 +563,17 @@ export class SessionManager {
   }
 
   planDocument(sessionId: string, planId: string) {
-    return this.live.get(sessionId)?.view().turns.flatMap(t => t.role === 'agent' ? t.blocks : [])
+    return this.viewOf(sessionId)?.turns.flatMap(t => t.role === 'agent' ? t.blocks : [])
       .find(b => b.type === 'plan_document' && b.id === planId);
   }
 
   async handleFor(v: SessionViewer, m: WebviewMsg): Promise<void> {
     try {
+      const targetId = 'sessionId' in m && typeof m.sessionId === 'string' ? m.sessionId : v.activeId;
+      const execution = new Set(['send', 'stop', 'permission', 'answer', 'buildPlan', 'setMode', 'setConfig', 'selectAccount', 'compact', 'retry', 'retryTurn', 'reconnect', 'dequeue', 'sendQueued', 'editQueued', 'login']);
+      if (targetId && this.deps.chatgpt?.owns(targetId) && execution.has(m.type)) throw new Error(t('chatgpt.externalOnly'));
       switch (m.type) {
+        case 'connectChatgpt': await this.newSessionFor(v, CHATGPT_ID); break;
         case 'send': await this.target(v, m.sessionId)?.prompt(m.text, m.attachments); break;
         case 'stop': await this.target(v, m.sessionId)?.cancel(); break;
         case 'permission': if (isSessionId(m.sessionId)) this.live.get(m.sessionId)?.resolvePermission(m.blockId, m.optionId); break;
@@ -522,7 +582,7 @@ export class SessionManager {
         // Remembered only once the session actually shows the mode: setMode is a no-op on a session that is not ready
         case 'setMode': { const s = this.target(v, m.sessionId); if (s) { await s.setMode(m.id); if (s.view().controls.modeId === m.id) this.rememberMode(s.agent, m.id); } break; }
         case 'setConfig': { const s = this.target(v, m.sessionId); if (s) { await s.setConfig(m.configId, m.value); this.remember(s); } break; }
-        case 'selectAgent': if (this.current(v)?.agent !== m.id) await this.newSessionFor(v, m.id); break;
+        case 'selectAgent': if (this.viewOf(v.activeId)?.agent !== m.id) await this.newSessionFor(v, m.id); break;
         case 'selectSession': await this.selectSessionFor(v, m.id); break;
         case 'newSession': await this.newSessionFor(v, m.agent); break;
         case 'renameSession': await this.renameSession(m.id, m.title); break;
@@ -557,6 +617,7 @@ export class SessionManager {
   // Rename / pin: for a live session, mutate the object (onChange syncs the index and the disk); for one not loaded, patch the on-disk record directly
   async renameSession(id: string, title: string) {
     if (!isSessionId(id)) return;
+    if (this.deps.chatgpt?.owns(id)) { await this.deps.chatgpt.rename(id, title); return; }
     const t = title.trim().slice(0, RENAME_MAX);
     if (!t) return;
     const live = this.live.get(id);
@@ -566,6 +627,7 @@ export class SessionManager {
 
   async pinSession(id: string, pinned: boolean) {
     if (!isSessionId(id)) return;
+    if (this.deps.chatgpt?.owns(id)) { await this.deps.chatgpt.pin(id, pinned); return; }
     const live = this.live.get(id);
     if (live) { live.setPinned(pinned); return; }
     await this.patchRecord(id, r => { r.pinned = pinned || undefined; });
@@ -583,6 +645,7 @@ export class SessionManager {
   // deleted only after that. Every viewer showing the deleted one switches to the first in the list; if none, the first of them opens a new one and the rest follow onto it
   async deleteSession(id: string) {
     if (!isSessionId(id)) return;
+    if (this.deps.chatgpt?.owns(id)) { await this.deps.chatgpt.delete(id); await this.rehome(id); return; }
     const live = this.live.get(id);
     if (live) await this.deps.store.flush(live.toRecord());
     this.forget(id);
@@ -624,6 +687,7 @@ export class SessionManager {
   // flight cannot move. A stored record is patched in place and picks the folder up when it is next opened
   async moveSession(id: string) {
     if (!isSessionId(id)) return;
+    if (this.deps.chatgpt?.owns(id)) throw new Error(t('chatgpt.projectBound'));
     const cwd = this.deps.cwd();
     const live = this.live.get(id);
     if (live) {
@@ -653,6 +717,7 @@ export class SessionManager {
   // Undo deletion: move it back out of the trash into the list; the record stayed on disk the whole time and restores as usual when opened
   async restoreSession(id: string) {
     if (!isSessionId(id)) return;
+    if (this.deps.chatgpt?.owns(id)) { await this.deps.chatgpt.restore(id); return; }
     const t = this.trash.get(id);
     if (!t) return;
     clearTimeout(t.timer);
@@ -726,6 +791,9 @@ export class SessionManager {
   }
 
   async dispose() {
+    this.disposed = true;
+    this.unwatchChatgpt?.(); this.unwatchChatgpt = undefined;
+    await this.deps.chatgpt?.dispose();
     this.unwatchLocalAccounts?.();
     this.disposed = true;
     clearTimeout(this.probeTimer);

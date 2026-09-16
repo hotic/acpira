@@ -1,5 +1,7 @@
 **
 !dist/extension.cjs
+!dist/chatgpt-bridge.cjs
+!docs/chatgpt-bridge.md
 !dist/webview/main.js
 !dist/webview/main.css
 !dist/webview/assets/**

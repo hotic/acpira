@@ -19,6 +19,7 @@ const common = {
 const contexts = await Promise.all([
   context({ ...common, entryPoints: ['src/host/extension.ts'], outfile: 'dist/extension.cjs', external: ['vscode'] }),
   context({ ...common, entryPoints: ['src/host/server.ts'], outfile: 'dist/host-server.cjs' }),
+  context({ ...common, entryPoints: ['src/host/external/chatgptCli.ts'], outfile: 'dist/chatgpt-bridge.cjs' }),
 ]);
 
 if (watch) await Promise.all(contexts.map(c => c.watch()));

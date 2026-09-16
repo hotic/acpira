@@ -1,4 +1,6 @@
 import { join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { ChatGptBridgeStore } from './external/ChatGptBridgeStore';
 import { appearanceFromSettings, type Appearance, type AxisKey } from '@shared/appearance';
 import { SETTING_KEYS, sanitizeSetting, type HiddenMap } from '@shared/settings';
 import type { WebviewHost } from '@shared/protocol';
@@ -19,6 +21,7 @@ import { TranscriptStore } from './store/TranscriptStore';
 export interface HostRuntimeOpts {
   // ACPIRA_HOME / ~/.acpira by default; tests point it at a temp directory
   home?: string;
+  chatgptBridgePath?: string;
 }
 
 // The one composition root: every host (the VS Code extension, the sidecar) builds the same registry, vault, account layer, session
@@ -32,7 +35,7 @@ export class HostRuntime {
   private activeRegistry: AgentRegistry;
   private unsubscribe: (() => void)[] = [];
 
-  private constructor(private platform: HostPlatform, root: string, vault: FileVault, accountStore: AccountStore) {
+  private constructor(private platform: HostPlatform, root: string, vault: FileVault, accountStore: AccountStore, opts: HostRuntimeOpts) {
     const log = (line: string) => platform.log(line);
     const registry = () => new AgentRegistry(this.read<Record<string, CustomAgentSetting>>('agents') ?? {});
     const runInTerminal = platform.runInTerminal.bind(platform);
@@ -45,8 +48,10 @@ export class HostRuntime {
     });
 
     this.sessionsDir = join(root, 'sessions');
+    const bridgePath = opts.chatgptBridgePath ?? join(typeof __dirname === 'string' ? __dirname : join(process.cwd(), 'dist'), 'chatgpt-bridge.cjs');
     this.manager = new SessionManager({
       registry: this.activeRegistry,
+      chatgpt: new ChatGptBridgeStore(join(root, 'bridges', 'chatgpt'), log, Date.now, existsSync(bridgePath) ? bridgePath : undefined),
       store: new TranscriptStore(this.sessionsDir, log, { onSaveError: (_id, error) => toast('error', t('host.saveFailed', { error })) }),
       log,
       cwd: () => platform.cwd(),
@@ -90,7 +95,7 @@ export class HostRuntime {
     if (platform.legacy) await migrateOnce({ from: platform.legacy.from, to: root, oldVault: platform.legacy.vault, newVault: vault, log });
     const accountStore = new AccountStore(join(root, 'accounts.json'), vault, log);
     await accountStore.load();
-    const runtime = new HostRuntime(platform, root, vault, accountStore);
+    const runtime = new HostRuntime(platform, root, vault, accountStore, opts);
     await runtime.manager.init();
     setHostLocale(runtime.settings.locale());
     return runtime;
