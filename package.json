@@ -2,7 +2,7 @@
   "name": "acpira",
   "displayName": "Acpira",
   "description": "Native harnesses, one considered interface: Grok Build, Kimi Code, Devin and any ACP agent CLI with execution history, inline approvals and shared sessions",
-  "version": "1.3.1",
+  "version": "1.3.3",
   "publisher": "hotic",
   "icon": "media/icon.png",
   "license": "MIT",
@@ -229,7 +229,11 @@
         },
         "acpira.sessionListPosition": {
           "type": "string",
-          "enum": ["hidden", "left", "right"],
+          "enum": [
+            "hidden",
+            "left",
+            "right"
+          ],
           "default": "hidden",
           "description": "%acpira.conf.sessionListPosition%"
         },
