@@ -6,6 +6,7 @@ import { captureTurnSettings } from '@shared/turnSettings';
 import { AgentRegistry } from './acp/AgentRegistry';
 import { AgentPool } from './acp/AgentPool';
 import { AcpSession, type CompactionPolicy, type SessionRecord } from './acp/AcpSession';
+import { probeAgentControls, type ProbeResult } from './acp/probeControls';
 import type { AccountManager } from './accounts/AccountManager';
 import type { LocalAccounts } from './accounts/local';
 import { TranscriptStore, isSessionId, sortIndex, summarize, type SessionPrefs } from './store/TranscriptStore';
@@ -89,6 +90,8 @@ export class SessionManager {
   private loading = new Map<string, Promise<void>>();
   private accountActionState = new Map<AgentId, AccountAction>();
   private readonly pool: AgentPool;
+  // Options a throwaway probe process just read (the refresh button); newer than any stored session, preferred until a real session starts
+  private probed = new Map<AgentId, ProbeResult>();
   // Sessions seen running at the last onChange; a running → idle edge is the moment to re-read the account's quota
   private wasRunning = new Set<string>();
   private prefs: SessionPrefs = { lastSettings: {} };
@@ -267,7 +270,8 @@ export class SessionManager {
       const info = s.runtimeInfo();
       if (info) return info;
     }
-    return undefined;
+    // A fresh probe answered initialize too, so the facts card still shows a version when nothing of this agent is running
+    return this.probed.get(agent)?.runtime;
   }
 
   hidden(): HiddenMap { return cloneJson(this.deps.hidden?.() ?? {}); }
@@ -278,12 +282,39 @@ export class SessionManager {
   // The configOptions an agent offered most recently: from a live session when there is one, else from the newest stored record of that agent.
   // This is what the settings page lists when it lets families be hidden, since options only ever come over ACP
   async knownControls(agent: AgentId): Promise<ConfigControl[]> {
+    const p = this.probed.get(agent);
+    if (p?.options.length) return p.options;
     for (const s of this.index) {
       if (s.agent !== agent) continue;
       const options = this.live.get(s.id)?.view().controls.options ?? (await this.deps.store.load(s.id))?.controls?.options;
       if (options?.length) return options;
     }
     return [];
+  }
+
+  // The settings page's refresh button: a throwaway spawn reads the CLI's current configOptions — the only way to see a config-file
+  // change (a model added by hand) without opening a real session. On failure the last known list stands. The agent's warm processes
+  // are dropped too, so the next new session never borrows a process spawned before the change
+  async probeControls(agent: AgentId): Promise<ConfigControl[]> {
+    this.pool.invalidate(agent);
+    const def = this.deps.registry.get(agent);
+    const bin = await this.deps.registry.resolveBinary(agent);
+    if (!bin) {
+      this.deps.log(`probe ${agent}: no binary`);
+      return this.knownControls(agent);
+    }
+    const acc = this.deps.accounts?.supports(agent) ? this.deps.accounts.defaultFor(agent)?.id : undefined;
+    const extraEnv = acc ? await this.deps.accounts?.spawnEnv(agent, acc) : undefined;
+    try {
+      const r = await probeAgentControls({ def, binary: bin, cwd: this.deps.cwd(), extraEnv, log: line => this.deps.log(line) });
+      this.probed.set(agent, r);
+      // The dropped warm process is replaced by one that has read the current config
+      this.warm(agent, acc);
+      return r.options;
+    } catch (e) {
+      this.deps.log(`probe ${agent} failed: ${msg(e)}`);
+      return this.knownControls(agent);
+    }
   }
 
   sessions(): SessionSummary[] {
@@ -402,6 +433,8 @@ export class SessionManager {
     v.activeId = s.id;
     this.onChange(s);
     await s.start();
+    // A real session just read the current configOptions itself; the probe snapshot retires
+    this.probed.delete(id);
     if (last) await s.adoptControls(last);
   }
 

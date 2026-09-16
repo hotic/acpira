@@ -23,6 +23,8 @@ export interface SettingsHandlers {
   setAppearance: <K extends AxisKey>(axis: K, value: Appearance[K]) => void;
   openPath: (path: string) => void;
   refreshInventory: (agent: AgentId) => void;
+  // The refresh button on an agent page: re-reads the inventory and the option lists, the latter from a throwaway probe process
+  refreshAgent: (agent: AgentId) => void;
   selectAccount: (id: string) => void;
   addAccount: (agent: AgentId) => void;
   removeAccount: (id: string) => void;
@@ -69,7 +71,7 @@ export function SettingsShell(p: SettingsShellProps) {
   const agent = page.kind === 'agent' ? p.agents.find(a => a.id === page.id) : undefined;
   const title = agent ? t('settings.agent.title', { agent: agent.name }) : page.kind === 'appearance' ? t('settings.appearance.title') : t('settings.general.title');
   const action = agent && (
-    <IconButton title={t('common.refresh')} aria-label={t('common.refresh')} onClick={() => p.on.refreshInventory(agent.id)}>
+    <IconButton title={t('common.refresh')} aria-label={t('common.refresh')} onClick={() => p.on.refreshAgent(agent.id)}>
       <RefreshCw strokeWidth={1.5} />
     </IconButton>
   );

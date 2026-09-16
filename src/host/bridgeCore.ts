@@ -129,7 +129,13 @@ export class BridgeCore {
           return true;
         }
         case 'inventory': this.post({ type: 'inventory', agent: m.agent, inventory: await settings.inventory(m.agent) }); return true;
-        case 'controls': this.post({ type: 'controls', agent: m.agent, controls: await manager.knownControls(m.agent) }); return true;
+        case 'controls': {
+          if (!m.fresh) { this.post({ type: 'controls', agent: m.agent, controls: await manager.knownControls(m.agent) }); return true; }
+          // The probe's initialize brings the version back too; a fresh inventory after the list keeps the facts card in step
+          this.post({ type: 'controls', agent: m.agent, controls: await manager.probeControls(m.agent) });
+          this.post({ type: 'inventory', agent: m.agent, inventory: await settings.inventory(m.agent) });
+          return true;
+        }
         default: return false;
       }
     } catch (e) {

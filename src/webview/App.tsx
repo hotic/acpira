@@ -64,6 +64,8 @@ export function App() {
   const [inventories, setInventories] = useState<Partial<Record<AgentId, AgentInventory>>>({});
   const [controls, setControls] = useState<Partial<Record<AgentId, ConfigControl[]>>>({});
   const [page, setPage] = useState<SettingsPage>({ kind: 'general' });
+  // Agents whose next controls request is a refresh: the flag rides the effect's request so a re-render can't double-spawn the probe
+  const freshControls = useRef(new Set<AgentId>());
   // The agents list as last received, for spotting availability flips inside the message handler
   const lastAgents = useRef<AgentInfo[]>([]);
   const hostTheme = useVsCodeTheme();
@@ -113,7 +115,7 @@ export function App() {
 
   // The model lists of an agent page come from the configOptions of its latest session; ask for them on first visit
   useEffect(() => {
-    if (view === 'settings' && page.kind === 'agent' && controls[page.id] === undefined) post({ type: 'controls', agent: page.id });
+    if (view === 'settings' && page.kind === 'agent' && controls[page.id] === undefined) post({ type: 'controls', agent: page.id, fresh: freshControls.current.delete(page.id) || undefined });
   }, [view, page, controls]);
 
   const on = useMemo<ShellHandlers>(() => ({
@@ -156,6 +158,12 @@ export function App() {
     openPath: path => post({ type: 'openPath', path }),
     // Drop the cached copy first so the page shows the scanning shimmer until the reply lands
     refreshInventory: agent => { setInventories(inv => { const { [agent]: _drop, ...rest } = inv; return rest; }); post({ type: 'inventory', agent }); },
+    // The refresh button: only drop the caches — the controls effect re-requests with fresh (probe process), the inventory one as usual
+    refreshAgent: agent => {
+      freshControls.current.add(agent);
+      setControls(c => { const { [agent]: _drop, ...rest } = c; return rest; });
+      setInventories(inv => { const { [agent]: _drop, ...rest } = inv; return rest; });
+    },
     selectAccount: id => post({ type: 'selectAccount', id }),
     addAccount: agent => post({ type: 'addAccount', agent, via: 'auto' }),
     removeAccount: id => post({ type: 'removeAccount', id }),

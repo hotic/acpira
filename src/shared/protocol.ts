@@ -142,4 +142,5 @@ export type WebviewMsg =
   // Tool references resolve relative to the originating session and retain their line.
   | { type: 'openFile'; sessionId: string; path: string; line?: number }
   | { type: 'inventory'; agent: AgentId }
-  | { type: 'controls'; agent: AgentId };
+  // fresh: the refresh button — host spawns a throwaway process to re-read the current configOptions; without it, the latest session's list
+  | { type: 'controls'; agent: AgentId; fresh?: boolean };
