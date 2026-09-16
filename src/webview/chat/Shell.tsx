@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Paperclip, X } from 'lucide-react';
-import type { AccountInfo, AgentInfo, AuthMethodInfo, Draft, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionControls, SessionStatus, SessionSummary, SlashCommand, Turn, Usage } from '@shared/transcript';
+import type { ExternalSessionInfo, AccountInfo, AgentInfo, AuthMethodInfo, Draft, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionControls, SessionStatus, SessionSummary, SlashCommand, Turn, Usage } from '@shared/transcript';
 import type { HiddenMap, SessionScope } from '@shared/settings';
 import type { AccountAction, AddAccountVia, EditTurnRequest, FileHit } from '@shared/protocol';
 import { AppearanceContext, appearanceDataAttrs, type Appearance } from '../appearance';
@@ -18,6 +18,7 @@ import { AgentMessage } from './Turns';
 import { HistoryComposerContext, HistoryContext, HistoryMessage } from './HistoryMessage';
 import { Composer, type ComposerProps } from './Composer';
 import { Notice } from './Notice';
+import { ExternalSessionNotice } from './ExternalSessionNotice';
 import { Toast } from '../ui/Toast';
 import { Alert, isShortStop } from './Alert';
 import { Questions, type OnAnswer } from './Questions';
@@ -88,6 +89,7 @@ export interface ShellProps {
   hidden?: HiddenMap;
   title: string;
   status: SessionStatus;
+  external?: ExternalSessionInfo;
   error?: string;
   authMethods?: AuthMethodInfo[];
   turns: Turn[];
@@ -345,13 +347,13 @@ export function Shell(p: ShellProps) {
                   onDismiss={() => setDismissedAlert(alertKey)}
                 />
               )}
-              <Notice
+              {p.external ? <ExternalSessionNotice info={p.external} /> : <Notice
                 status={p.status} error={p.error} agent={p.agent} authMethods={p.authMethods}
                 accounts={p.accounts?.filter(x => x.agent === p.agent.id)} accountId={p.accountId}
                 accountAction={p.accountAction}
                 onLogin={on.login} onRetry={on.retry} onNewSession={() => on.newSession(p.agent.id)}
                 onSelectAccount={on.selectAccount} onAddAccount={via => on.addAccount(p.agent.id, via)}
-              />
+              />}
               {p.queued?.length && p.activeSessionId
                 ? <Queue key={`queue:${p.activeSessionId}`} items={p.queued} composer={composerProps} blobUrl={blobUrl}
                     on={on.dequeue && on.editQueued ? {
@@ -361,7 +363,7 @@ export function Shell(p: ShellProps) {
                     } : undefined} />
                 : null}
               {/* Sibling keys include the component role; duplicate session-only keys leave stale queue rows after reconciliation. */}
-              <Composer key={`composer:${p.activeSessionId}`} {...composerProps} draftKey={p.activeSessionId} />
+              {!p.external && <Composer key={`composer:${p.activeSessionId}`} {...composerProps} draftKey={p.activeSessionId} />}
             </div>
           </div>
         </div>

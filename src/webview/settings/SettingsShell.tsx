@@ -1,3 +1,5 @@
+import type { ChatGptIntegrationStatus } from '@shared/chatgptIntegration';
+import { ChatGptPage } from './ChatGptPage';
 import { useRef } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl } from '@shared/transcript';
@@ -18,6 +20,9 @@ import { Page, PageHeader } from './controls';
 
 // Every action the settings page sends to the host; the LAB implements these with a fake host, the real page with postMessage
 export interface SettingsHandlers {
+  refreshChatgpt?: () => void;
+  connectChatgpt?: () => void;
+  openChatgpt?: (id: string) => void;
   setSetting: <K extends SettingKey>(key: K, value: SettingsView[K]) => void;
   // The one appearance axis the page exposes (motion); the rest stay LAB design decisions
   setAppearance: <K extends AxisKey>(axis: K, value: Appearance[K]) => void;
@@ -52,6 +57,7 @@ export interface SettingsShellProps {
   agents: AgentInfo[];
   accounts: AccountInfo[];
   inventories: Partial<Record<AgentId, AgentInventory>>;
+  chatgptStatus?: ChatGptIntegrationStatus;
   // Per agent, the configOptions of its latest session (the hide lists are built from these)
   controls: Partial<Record<AgentId, ConfigControl[]>>;
   env: SettingsEnv;
@@ -69,9 +75,9 @@ export function SettingsShell(p: SettingsShellProps) {
   useScrollReveal(root);
   const page = p.page;
   const agent = page.kind === 'agent' ? p.agents.find(a => a.id === page.id) : undefined;
-  const title = agent ? t('settings.agent.title', { agent: agent.name }) : page.kind === 'appearance' ? t('settings.appearance.title') : t('settings.general.title');
-  const action = agent && (
-    <IconButton title={t('common.refresh')} aria-label={t('common.refresh')} onClick={() => p.on.refreshAgent(agent.id)}>
+  const title = page.kind === 'chatgpt' ? 'ChatGPT' : agent ? t('settings.agent.title', { agent: agent.name }) : page.kind === 'appearance' ? t('settings.appearance.title') : t('settings.general.title');
+  const action = (agent || page.kind === 'chatgpt') && (
+    <IconButton title={t('common.refresh')} aria-label={t('common.refresh')} onClick={() => page.kind === 'chatgpt' ? p.on.refreshChatgpt?.() : agent && p.on.refreshAgent(agent.id)}>
       <RefreshCw strokeWidth={1.5} />
     </IconButton>
   );
@@ -94,6 +100,7 @@ export function SettingsShell(p: SettingsShellProps) {
               <main key={page.kind === 'agent' ? page.id : page.kind} className="min-w-0 flex-1 overflow-y-auto scroll-stable">
                 <Page>
                   <PageHeader title={title} action={action} />
+                  {page.kind === 'chatgpt' && <ChatGptPage status={p.chatgptStatus} on={p.on} />}
                   {page.kind === 'general' && <General settings={p.settings} agents={p.agents} on={p.on} />}
                   {page.kind === 'appearance' && <AppearancePage settings={p.settings} appearance={p.appearance} on={p.on} />}
                   {agent && (

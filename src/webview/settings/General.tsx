@@ -13,7 +13,7 @@ const K = 1000;
 // The settings shell owns the page heading and content measure.
 export function General({ settings, agents, on }: { settings: SettingsView; agents: AgentInfo[]; on: SettingsHandlers }) {
   const languages = LANGUAGES.map(l => ({ value: l, label: t(`settings.language.${l}` as const) }));
-  const agentOptions = agents.map(a => ({ value: a.id, label: a.name, icon: <AgentMark id={a.id} name={a.name} />, disabled: a.available === false }));
+  const agentOptions = agents.filter(a => !a.external).map(a => ({ value: a.id, label: a.name, icon: <AgentMark id={a.id} name={a.name} />, disabled: a.available === false }));
   const scopes = SESSION_SCOPES.map(s => ({ value: s, label: t(`settings.sessionScope.${s}` as const) }));
   return (
     <>

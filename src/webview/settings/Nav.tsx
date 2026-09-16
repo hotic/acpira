@@ -5,10 +5,10 @@ import { cn } from '../ui/cn';
 import { AgentMark } from '../chat/AgentMark';
 import { t } from '../i18n';
 
-export type SettingsPage = { kind: 'general' } | { kind: 'appearance' } | { kind: 'agent'; id: AgentInfo['id'] };
+export type SettingsPage = { kind: 'chatgpt' } | { kind: 'general' } | { kind: 'appearance' } | { kind: 'agent'; id: AgentInfo['id'] };
 
 // Fixed pages first, then one page per agent; agent ids never collide with the fixed names
-const FIXED = ['general', 'appearance'] as const;
+const FIXED = ['general', 'appearance', 'chatgpt'] as const;
 type FixedId = (typeof FIXED)[number];
 type PageId = FixedId | AgentInfo['id'];
 const isFixed = (id: PageId): id is FixedId => (FIXED as readonly string[]).includes(id);
@@ -55,7 +55,8 @@ export function PageRail({ agents, page, onPage, onBack }: PageRailProps) {
       <nav aria-label={t('settings.title')} className="flex min-h-0 flex-col gap-1 overflow-y-auto">
         {item('general', t('settings.nav.general'), <Settings2 strokeWidth={1.5} />)}
         {item('appearance', t('settings.nav.appearance'), <Palette strokeWidth={1.5} />)}
-        {agents.map(a => item(a.id, a.name, <AgentMark id={a.id} name={a.name} />, a.available === false))}
+        {agents.filter(a => !a.external).map(a => item(a.id, a.name, <AgentMark id={a.id} name={a.name} />, a.available === false))}
+        {agents.some(a => a.id === 'chatgpt' && a.external) && item('chatgpt', 'ChatGPT', <AgentMark id="chatgpt" name="ChatGPT" />)}
       </nav>
     </aside>
   );

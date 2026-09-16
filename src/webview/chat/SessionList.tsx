@@ -76,7 +76,7 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
       onRename={t => { setEditing(undefined); if (t.trim() && t.trim() !== s.title) onRename(s.id, t); }}
       onDelete={() => { setEditing(undefined); onDelete(s.id); }}
       onPin={() => onPin(s.id, !s.pinned)}
-      onMove={onMove && workspace && !here(s) ? () => onMove(s.id) : undefined}
+      onMove={onMove && workspace && !s.external && !here(s) ? () => onMove(s.id) : undefined}
     />
   );
   const empty = q ? t('session.noMatch') : agentFilter ? t('session.noneAgent', { name: nameOf(agentFilter) }) : scope === 'workspace' && workspace ? t('session.noneWorkspace') : t('session.none');

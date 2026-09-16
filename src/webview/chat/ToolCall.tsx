@@ -26,7 +26,7 @@ export { OpenToolFileContext } from './fileLinks';
 export const ToolCall = memo(function ToolCall({ block, grouped = false }: { block: ToolCallBlock; grouped?: boolean }) {
   const { toolLine } = useAppearance();
   // Announced calls can wait behind another tool; only execution shimmers.
-  const running = block.status === 'in_progress';
+  const running = block.status === 'in_progress' && block.observation !== 'unknown';
   const execute = block.kind === 'execute';
   const seconds = useToolSeconds(block);
   const files = toolFiles(block);

@@ -1,3 +1,4 @@
+import type { ChatGptIntegrationStatus } from '@shared/chatgptIntegration';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountAction, EditTurnRequest, FileHit, HostMsg, InitState, WebviewMsg } from '@shared/protocol';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl, SessionSummary, SessionView } from '@shared/transcript';
@@ -61,6 +62,7 @@ export function App() {
   const [view, setView] = useState<'chat' | 'settings'>('chat');
   const [settings, setSettings] = useState<SettingsView>();
   const [locale, setLoc] = useState<Locale>('en');
+  const [chatgptStatus, setChatgptStatus] = useState<ChatGptIntegrationStatus>();
   const [inventories, setInventories] = useState<Partial<Record<AgentId, AgentInventory>>>({});
   const [controls, setControls] = useState<Partial<Record<AgentId, ConfigControl[]>>>({});
   const [page, setPage] = useState<SettingsPage>({ kind: 'general' });
@@ -105,6 +107,7 @@ export function App() {
         case 'settings': setSettings(m.settings); setLocale(m.locale); setLoc(m.locale); break;
         case 'inventory': setInventories(inv => ({ ...inv, [m.agent]: m.inventory })); break;
         case 'controls': setControls(c => ({ ...c, [m.agent]: m.controls })); break;
+        case 'chatgptStatus': setChatgptStatus(m.status); break;
         case 'files': settleFiles(m.seq, m.files); break;
       }
     };
@@ -117,6 +120,15 @@ export function App() {
   useEffect(() => {
     if (view === 'settings' && page.kind === 'agent' && controls[page.id] === undefined) post({ type: 'controls', agent: page.id, fresh: freshControls.current.delete(page.id) || undefined });
   }, [view, page, controls]);
+
+  useEffect(() => {
+    if (view !== 'settings' || page.kind !== 'chatgpt') return;
+    const refresh = () => { if (!document.hidden) post({ type: 'chatgptStatus' }); };
+    refresh();
+    const timer = setInterval(refresh, 10_000);
+    document.addEventListener('visibilitychange', refresh);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', refresh); };
+  }, [view, page.kind]);
 
   const on = useMemo<ShellHandlers>(() => ({
     editTurn,
@@ -153,6 +165,9 @@ export function App() {
   }), []);
 
   const settingsOn = useMemo<SettingsHandlers>(() => ({
+    refreshChatgpt: () => post({ type: 'chatgptStatus' }),
+    connectChatgpt: () => { post({ type: 'connectChatgpt' }); setView('chat'); },
+    openChatgpt: id => { post({ type: 'selectSession', id }); setView('chat'); },
     setSetting: (key, value) => post({ type: 'setSetting', key, value }),
     setAppearance: (axis, value) => post({ type: 'setAppearance', axis, value }),
     openPath: path => post({ type: 'openPath', path }),
@@ -188,6 +203,7 @@ export function App() {
         settings={settings}
         agents={agents}
         accounts={accounts}
+        chatgptStatus={chatgptStatus}
         inventories={inventories}
         controls={controls}
         env={{ home: init.home, cwd: session?.cwd ?? init.cwd }}
@@ -214,6 +230,7 @@ export function App() {
       hidden={hidden}
       title={session?.title ?? t('session.untitled')}
       status={session?.status ?? 'starting'}
+      external={session?.external}
       error={session?.error}
       authMethods={session?.authMethods}
       turns={session?.turns ?? []}

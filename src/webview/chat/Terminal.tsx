@@ -8,7 +8,7 @@ import { t } from '../i18n';
 // sticking to the bottom while running and stopping once the user scrolls up inside it. Height is capped by --code-output-max.
 export function TerminalOutput({ block }: { block: ToolCallBlock }) {
   const text = outputOf(block);
-  const follow = block.status === 'in_progress' || block.status === 'pending';
+  const follow = block.observation !== 'unknown' && (block.status === 'in_progress' || block.status === 'pending');
   const ref = useRef<HTMLPreElement>(null);
   const fade = useScrollFade<HTMLPreElement>();
   const setRef = useCallback((element: HTMLPreElement | null) => {
