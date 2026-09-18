@@ -325,11 +325,32 @@ export interface TurnError {
   retryable?: boolean;
 }
 
+// Token accounting the agent reported for one prompt (ACP PromptResponse.usage, Grok's _meta), plus the context snapshot the last
+// usage_update left after it. Every field is present only when the peer reported it: Kimi 0.41.0 reports no per-prompt tokens at all
+export interface TurnUsage {
+  input?: number;
+  output?: number;
+  cachedRead?: number;
+  cachedWrite?: number;
+  reasoning?: number;
+  total?: number;
+  // Model rounds the prompt took (Grok `_meta.usage.modelCalls`)
+  modelCalls?: number;
+  // The model the agent says answered (Grok `_meta.modelId`); the webview falls back to the user turn's settings otherwise
+  model?: string;
+  // The vendor's id for this request (Grok `_meta.requestId`, Devin `_meta['cognition.ai/userMessageId']`)
+  requestId?: string;
+  // Tokens in context / window after this turn, from the latest usage_update (or Grok's session info poll)
+  context?: { used: number; size: number };
+}
+
 export interface AgentTurn {
   role: 'agent';
   // External execution state cannot currently be established.
   observation?: 'unknown';
   blocks: AgentBlock[];
+  // Per-prompt token accounting the agent reported; absent when the peer reports none (Kimi)
+  usage?: TurnUsage;
   // Wall-clock prompt duration, including tools and permission waits. Absent on older transcripts.
   startedAt?: number;
   endedAt?: number;

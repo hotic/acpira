@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -33,7 +33,7 @@ function fakePlatform(cwd: string) {
     onWindowFocus: (fn: () => void) => { focusListener = fn; return () => { focusListener = undefined; }; },
     toast: vi.fn(),
     runInTerminal: vi.fn(),
-    openResolvedFile: vi.fn(async () => {}),
+    openResolvedFile: vi.fn(async (_path: string, _line?: number) => {}),
     openPlanDocument: vi.fn(async () => {}),
     openExternal: vi.fn(),
     revealInOS: vi.fn(async () => {}),
@@ -275,5 +275,21 @@ describe('HostRuntime + BridgeCore', () => {
     await core.handle({ type: 'editTurn', requestId: 'stale-repeat', edit });
     expect(posted.at(-1)).toMatchObject({ type: 'editTurnResult', requestId: 'stale-repeat', error: expect.any(String) });
     expect(latest()!.turns).toHaveLength(4);
+  });
+
+  it('exportSession writes the file under exports/ and opens it; an unknown id toasts the error', async () => {
+    const { core, posted, platform, init } = await setup();
+    const sessionId = init.state.active!.id;
+    const latest = () => posted.filter((m): m is Extract<HostMsg, { type: 'session' }> => m.type === 'session' && m.session.id === sessionId).at(-1)?.session;
+    await core.handle({ type: 'send', sessionId, text: 'hi' });
+    await until(() => latest()?.turns.length === 2);
+    await core.handle({ type: 'exportSession', id: sessionId, format: 'markdown' });
+    const opened = platform.openResolvedFile.mock.calls.at(-1)?.[0];
+    if (!opened) throw new Error('export did not open a file');
+    expect(opened).toMatch(/exports[/\\][^/\\]+\.md$/);
+    expect(readFileSync(opened, 'utf8')).toContain('hello world');
+    expect(platform.toast).toHaveBeenLastCalledWith('info', expect.stringContaining(opened));
+    await core.handle({ type: 'exportSession', id: 'no-such-session', format: 'json' });
+    expect(platform.toast).toHaveBeenLastCalledWith('error', expect.any(String));
   });
 });

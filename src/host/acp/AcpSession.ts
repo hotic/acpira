@@ -23,7 +23,8 @@ import { activityOf, applyUpdate, endTurn, failTurn, initControls, applyConfigOp
 import { PermissionGate } from './permissions';
 import { QuestionGate } from './questions';
 import { PromptQueue, type StagedSend } from './promptQueue';
-import { editTurn, retryTurn, type SessionEditCtx, type TurnPhase } from './sessionEdit';
+import { editTurn, retryTurn, historyContext, FORK_HISTORY_LEAD, type SessionEditCtx, type TurnPhase } from './sessionEdit';
+import { turnUsageOf } from './turnUsage';
 import { AccountAuthError, authHintOf, isAuth, isMethodMissing, isSessionGone, isSessionLocked, isUnknownSession, summarizePrompt, turnErrorOf } from './sessionErrors';
 import { msg } from '../errors';
 import { cloneJson } from '../clone';
@@ -47,6 +48,10 @@ export interface SessionRecord {
   usage?: Usage;
   commands: SlashCommand[];
   pinned?: boolean;
+  // The transcript was copied from another session and has not been handed to the native session yet; the first prompt carries it as context
+  historyPending?: true;
+  // Where the transcript came from (fork); a forked session also keeps agent-generated titles muted forever
+  forkedFrom?: { sessionId: string; turnIndex: number };
 }
 
 // The two hooks the account layer gives a session: environment variables before spawn, authenticate after initialize
@@ -116,6 +121,13 @@ export class AcpSession {
   private finishUsageRefresh?: (cancelled?: boolean) => void;
   private syncingThought = false;
   private rev = 0;
+  // See SessionRecord: a fork's copied transcript until its first prompt hands it to the native session as context
+  private historyPending?: true;
+  private forkedFrom?: SessionRecord['forkedFrom'];
+  // Agent-generated titles are ignored while a prompt that carries injected history context is in flight (fork first
+  // prompt, edit rebuild — Kimi titles from the first content block, which would be the history blob), and always for
+  // a forked session, whose `Fork: …` title is provenance the user can rename
+  private agentTitleMuted = false;
 
   constructor(record: SessionRecord, private deps: SessionDeps) {
     this.id = record.id;
@@ -126,6 +138,9 @@ export class AcpSession {
     this.updatedAt = record.updatedAt;
     this.pinned = record.pinned;
     this.acpSessionId = record.acpSessionId;
+    this.historyPending = record.historyPending;
+    this.forkedFrom = record.forkedFrom;
+    this.agentTitleMuted = !!record.forkedFrom;
     // Old records (persisted before the contract changed) may lack the options field
     const c = record.controls as Partial<SessionControls> | undefined;
     this.state = { turns: restoreInterruptedTurns(restoreCommandReceipts(restorePlanSnapshots(record.turns)), record.updatedAt), controls: { modes: c?.modes ?? [], modeId: c?.modeId, modeConfigId: c?.modeConfigId, options: c?.options ?? [] }, usage: record.usage, commands: record.commands, title: record.title };
@@ -176,6 +191,7 @@ export class AcpSession {
       id: this.id, agent: this.agent, accountId: this.accountId, acpSessionId: this.acpSessionId, cwd: this.cwd, title: this.title,
       createdAt: this.createdAt, updatedAt: this.updatedAt, turns: this.state.turns, controls: this.state.controls,
       usage: this.state.usage, commands: this.state.commands, pinned: this.pinned,
+      historyPending: this.historyPending, forkedFrom: this.forkedFrom,
     };
   }
 
@@ -487,6 +503,9 @@ export class AcpSession {
       || this.status !== 'ready' || this.usageRevision !== revision) return;
     const prev = this.state.usage;
     this.state.usage = usage;
+    // The snapshot also belongs on the turn it followed, the way usage_update stamps it for Devin / Kimi
+    const last = this.state.turns[this.state.turns.length - 1];
+    if (usage && last?.role === 'agent') last.usage = { ...last.usage, context: { used: usage.used, size: usage.size } };
     if (prev?.used !== usage?.used || prev?.size !== usage?.size || prev?.cost !== usage?.cost) this.touch();
   }
 
@@ -590,14 +609,6 @@ export class AcpSession {
       try { prepared = await preparePrompt(this.id, text, attachments, this.deps.blobs); }
       catch (e) { stagingError = msg(e); }
     }
-    this.phase.staging = false;
-    if (this.phase.stagingAborted || this.status !== 'ready') {
-      this.log('prompt dropped: cancelled or closed while staging');
-      this.phase.running = false;
-      this.touch();
-      this.queue.flush();
-      return;
-    }
     if (!prepared) {
       // Staging blew up as a whole (should not happen — a single draft degrades into `problems` instead): send the text alone when there is any, so nothing typed is lost
       this.log(`Attachment staging failed: ${stagingError}`);
@@ -606,12 +617,39 @@ export class AcpSession {
         prepared = { blocks: [{ type: 'text', text }], attachments: [], problems: [] };
       } else {
         this.deps.notify?.(t('host.promptDropped', { error: stagingError ?? t('notice.error.unknown') }));
+        this.phase.staging = false;
         this.phase.running = false;
         this.touch();
         this.queue.flush();
         return;
       }
     }
+    let edited = staged?.edited;
+    // A fork's copied transcript has never reached the peer: its first prompt carries it as retained context, like an
+    // edited message's prefix (native session/fork is whole-session, not turn-addressed, and is deliberately unused).
+    // The context is built while the flag is still set, but the flag only clears once the send can no longer be dropped —
+    // a cancel landing mid-staging keeps the copy for the next attempt instead of losing it for good
+    let forkHistory: acp.ContentBlock[] | undefined;
+    if (!auto && this.historyPending) {
+      try { forkHistory = await historyContext(this.id, this.state.turns, this.proc!, this.deps.blobs, FORK_HISTORY_LEAD); }
+      catch (e) { this.log(`fork context skipped: ${msg(e)}`); }
+    }
+    this.phase.staging = false;
+    if (this.phase.stagingAborted || this.status !== 'ready') {
+      this.log('prompt dropped: cancelled or closed while staging');
+      this.phase.running = false;
+      this.touch();
+      this.queue.flush();
+      return;
+    }
+    if (this.historyPending) {
+      // A failed first send retries through retryTurn → editTurn, which rebuilds the prefix in a fresh native session;
+      // that is exactly what the edited flag on the user turn is for
+      this.historyPending = undefined;
+      if (forkHistory) { prepared.blocks = [...forkHistory, ...prepared.blocks]; edited = true; }
+      else this.deps.notify?.(t('host.forkContextTooLarge'));
+    }
+    this.agentTitleMuted = !!this.forkedFrom || !!forkHistory || !!staged?.edited;
     for (const p of prepared.problems) { this.log(p); this.deps.notify?.(p); }
     const compacting = isCompactCommand(text);
     const completion = new CompactionCompletion(compacting ? this.agent : undefined);
@@ -621,7 +659,7 @@ export class AcpSession {
     const command = namedCommand(this.state.commands, text);
     const name = commandName(text);
     this.state.turns.push(auto ? { role: 'user', text, auto: true } : { role: 'user', id: randomUUID(), text,
-      settings: before, ...(command ? { command: command.name } : {}), ...(staged?.edited ? { edited: true as const } : {}),
+      settings: before, ...(command ? { command: command.name } : {}), ...(edited ? { edited: true as const } : {}),
       ...(planId ? { planId } : {}),
       ...(prepared.attachments.length ? { attachments: prepared.attachments } : {}) });
     if (!auto && !planId && (!this.state.title || this.state.title === t('session.untitled'))) this.state.title = summarizePrompt(text, prepared.attachments).slice(0, TITLE_MAX);
@@ -639,6 +677,9 @@ export class AcpSession {
       if (!livePrompt()) return;
       this.log(`prompt done: ${r.stopReason}`);
       stop = r.stopReason;
+      // Per-prompt token accounting (standard usage + vendor _meta); a context snapshot stamped earlier survives the spread
+      const usage = turnUsageOf(r);
+      if (usage) agentTurn.usage = { ...agentTurn.usage, ...usage };
       // Keep running and the queue intact until the background operation ends.
       // Never infer this from the presence of a streaming text block or a timer.
       if (stop === 'end_turn') {
@@ -925,6 +966,10 @@ export class AcpSession {
     if (!this.replaying) this.compactionCompletion?.update(u);
     // A user_message_chunk echoed by the agent mid-turn is the one we just sent; it's already in turns
     if (this.phase.running && u.sessionUpdate === 'user_message_chunk') return;
+    if (u.sessionUpdate === 'session_info_update' && this.agentTitleMuted && u.title) {
+      this.log(`agent title ignored: ${u.title.slice(0, 60)}`);
+      u.title = null;
+    }
     if (!applyUpdate(this.state, u)) return;
     if (u.sessionUpdate === 'usage_update') {
       this.usageNotifications = true;

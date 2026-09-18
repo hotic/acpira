@@ -989,6 +989,113 @@ describe('AcpSession', () => {
     expect(s.view().error).toBeUndefined();
     s.dispose();
   });
+
+  it('records per-prompt token usage on the agent turn (Devin standard usage, Grok _meta)', async () => {
+    const { session } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('usage-devin');
+      let last = s.view().turns.at(-1)!;
+      if (last.role !== 'agent') throw new Error('Missing agent turn');
+      expect(last.usage).toMatchObject({
+        input: 100, output: 20, cachedRead: 64, requestId: 'req-devin-1',
+        context: { used: 5000, size: 100_000 },
+      });
+      await s.prompt('usage-grok');
+      last = s.view().turns.at(-1)!;
+      if (last.role !== 'agent') throw new Error('Missing agent turn');
+      expect(last.usage).toMatchObject({
+        input: 38_140, output: 20, modelCalls: 2, model: 'grok-4.6', requestId: 'req-grok-1',
+      });
+    } finally { s.dispose(); }
+  });
+
+  it('hands a fork\'s copied transcript to the native session as retained context on the first prompt', async () => {
+    const { session, d } = deps();
+    const base = session();
+    const record = base.toRecord();
+    record.turns = [
+      { role: 'user', text: 'earlier' },
+      { role: 'agent', blocks: [{ type: 'text', markdown: 'before' }], stop: 'end_turn' },
+    ];
+    record.historyPending = true;
+    delete record.acpSessionId;
+    const s = new AcpSession(record, d);
+    try {
+      await s.start();
+      await s.prompt('now');
+      const turns = s.view().turns;
+      // The copied transcript stays put: nothing was dropped when the context went out
+      expect(turns).toHaveLength(4);
+      expect(turns[0]).toMatchObject({ role: 'user', text: 'earlier' });
+      expect(turns[1]).toMatchObject({ role: 'agent' });
+      expect(turns[2]).toMatchObject({ role: 'user', text: 'now', edited: true });
+      const reply = turns[3];
+      if (reply?.role !== 'agent') throw new Error('Missing reply');
+      // The fake agent echoes non-text blocks: the embedded history resource and the 'earlier' turn inside its JSON
+      const replyText = reply.blocks.filter(b => b.type === 'text').map(b => b.markdown).join('');
+      expect(replyText).toContain('resource:acpira://history/');
+      expect(replyText).toContain('earlier');
+      expect(s.toRecord().historyPending).toBeUndefined();
+    } finally { s.dispose(); base.dispose(); }
+  });
+
+  it('keeps the copied transcript when the fork\'s first prompt is cancelled while staging', async () => {
+    const { session, d } = deps();
+    const base = session();
+    const record = base.toRecord();
+    record.turns = [
+      { role: 'user', text: 'earlier' },
+      { role: 'agent', blocks: [{ type: 'text', markdown: 'before' }], stop: 'end_turn' },
+    ];
+    record.historyPending = true;
+    delete record.acpSessionId;
+    const s = new AcpSession(record, d);
+    try {
+      await s.start();
+      // prompt() claims staging synchronously and holds it across preparePrompt's first await, so this cancel
+      // deterministically lands mid-staging — the send is dropped before anything reaches the wire
+      const sending = s.prompt('now');
+      await s.cancel();
+      await sending;
+      expect(s.view().turns).toHaveLength(2);
+      expect(s.toRecord().historyPending).toBe(true);
+      // The copy survived the cancel: the next attempt still hands it to the native session
+      await s.prompt('now');
+      const turns = s.view().turns;
+      expect(turns).toHaveLength(4);
+      expect(turns[2]).toMatchObject({ role: 'user', text: 'now', edited: true });
+      const reply = turns[3];
+      if (reply?.role !== 'agent') throw new Error('Missing reply');
+      expect(reply.blocks.filter(b => b.type === 'text').map(b => b.markdown).join('')).toContain('resource:acpira://history/');
+      expect(s.toRecord().historyPending).toBeUndefined();
+    } finally { s.dispose(); base.dispose(); }
+  });
+
+  it('ignores the agent\'s own title while a history-carrying prompt is in flight, and forever on a fork', async () => {
+    const { session, d } = deps();
+    const base = session();
+    const record = base.toRecord();
+    record.turns = [
+      { role: 'user', text: 'earlier' },
+      { role: 'agent', blocks: [{ type: 'text', markdown: 'before' }], stop: 'end_turn' },
+    ];
+    record.historyPending = true;
+    record.forkedFrom = { sessionId: 'source-session-id', turnIndex: 1 };
+    record.title = 'Fork: earlier';
+    delete record.acpSessionId;
+    const s = new AcpSession(record, d);
+    try {
+      await s.start();
+      // The fake agent answers every prompt with session_info_update 'Fake title'; a fork never adopts it —
+      // its 'Fork: …' title is provenance, not something the peer gets to re-derive from the injected blob
+      await s.prompt('now');
+      expect(s.view().title).toBe('Fork: earlier');
+      await s.prompt('again');
+      expect(s.view().title).toBe('Fork: earlier');
+    } finally { s.dispose(); base.dispose(); }
+  });
 });
 
 
@@ -1102,6 +1209,23 @@ describe('historical message editing', () => {
       expect(reply).toContain('low');
       expect(reply).toContain('m2');
       expect(reply).toContain('plan');
+    } finally { s.dispose(); }
+  });
+
+  it('ignores the rebuilt peer\'s title update so a renamed session keeps its title', async () => {
+    const { session } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('earlier-context');
+      await s.prompt('original');
+      s.rename('Kept title');
+      const oldPeer = s.toRecord().acpSessionId;
+      await s.editTurn(historyEdit(s, 2));
+      await until(() => !s.isRunning);
+      // The edit rebuilt the context through session/new (fresh peer), and its 'Fake title' update was ignored
+      expect(s.toRecord().acpSessionId).not.toBe(oldPeer);
+      expect(s.view().title).toBe('Kept title');
     } finally { s.dispose(); }
   });
 
@@ -1437,7 +1561,10 @@ describe('historical message editing', () => {
       await s.start();
       await s.prompt('big');
       const peer = s.toRecord().acpSessionId;
-      const before = JSON.stringify(s.view().turns);
+      // usage.context on the last agent turn tracks every usage_update, including ones the settings apply triggers — the
+      // equality check is about the rejected edit not rewriting the transcript, so usage snapshots are left out of it
+      const turnsSansUsage = () => JSON.stringify(s.view().turns, (k, v) => k === 'usage' ? undefined : v);
+      const before = turnsSansUsage();
       const edit = historyEdit(s, 0, 'inspect-history');
       edit.intent = 'continue';
       edit.settings.config.model = 'm2';
@@ -1447,7 +1574,7 @@ describe('historical message editing', () => {
       expect(s.view().usage).toMatchObject({ used: 24_000, size: 200_000 });
       expect(s.view().controls.options.find(c => c.id === 'model')?.value).toBe('m2');
       expect(s.toRecord().acpSessionId).toBe(peer);
-      if (rejected) expect(JSON.stringify(s.view().turns)).toBe(before);
+      if (rejected) expect(turnsSansUsage()).toBe(before);
     } finally { s.dispose(); }
   });
 

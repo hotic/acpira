@@ -65,7 +65,7 @@ const app = acp.agent({ name: 'fake-agent' })
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
       agentInfo: { name: 'fake', version: '0.0.0' },
-      agentCapabilities: { loadSession: true, sessionCapabilities: process.env.FAKE_LOAD_ONLY ? {} : { resume: {} } },
+      agentCapabilities: { loadSession: true, sessionCapabilities: process.env.FAKE_LOAD_ONLY ? {} : { resume: {} }, promptCapabilities: { embeddedContext: true } },
       authMethods: [{ id: 'fake.login', name: 'Fake login', description: 'run fake login' }],
     };
   })
@@ -318,6 +318,25 @@ const app = acp.agent({ name: 'fake-agent' })
       usedTokens = 42_000;
       await new Promise(resolve => setTimeout(resolve, 1_500));
       return { stopReason: 'end_turn' };
+    }
+
+    // Devin's prompt accounting: standard unstable usage plus the request id under _meta
+    if (text === 'usage-devin') {
+      await send({ sessionUpdate: 'usage_update', used: 5000, size: 100_000 });
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'devin reply' } });
+      return { stopReason: 'end_turn',
+        usage: { totalTokens: 120, inputTokens: 100, outputTokens: 20, cachedReadTokens: 64 },
+        _meta: { 'cognition.ai/userMessageId': 'req-devin-1' } };
+    }
+
+    // Grok's prompt accounting: everything lives under _meta, per prompt (not cumulative)
+    if (text === 'usage-grok') {
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'grok reply' } });
+      return { stopReason: 'end_turn', _meta: {
+        sessionId: sid, requestId: 'req-grok-1', promptId: 'p1', modelId: 'grok-4.6',
+        totalTokens: 38_167, inputTokens: 38_140, outputTokens: 20, cachedReadTokens: 37_888, reasoningTokens: 19,
+        usage: { inputTokens: 38_140, outputTokens: 20, totalTokens: 38_167, cachedReadTokens: 37_888, cacheCreationTokens: 0, reasoningTokens: 19, modelCalls: 2, apiDurationMs: 1_200, costUsdTicks: 42, modelUsage: {}, numTurns: 1 },
+      } };
     }
 
     if (text.includes('slow')) {
