@@ -7,6 +7,7 @@ import type { SessionManager, SessionViewer } from './SessionManager';
 import type { SettingsCenter } from './settings';
 import type { HostPlatform } from './platform';
 import { msg } from './errors';
+import { t } from './i18n';
 import { freezeHostMsg, HostMsgBatch } from './msgBatch';
 
 export interface BridgeCoreDeps {
@@ -101,6 +102,14 @@ export class BridgeCore {
       let files: FileHit[] = [];
       try { files = await platform.searchFiles(m.query); } catch (e) { platform.log(`searchFiles failed: ${msg(e)}`); }
       this.post({ type: 'files', seq: m.seq, files });
+      return;
+    }
+    if (m.type === 'exportSession') {
+      try {
+        const path = await manager.exportSession(m.id, m.format);
+        await platform.openResolvedFile(path);
+        platform.toast('info', t('host.exported', { path }));
+      } catch (e) { platform.toast('error', msg(e)); }
       return;
     }
     if (m.type === 'editTurn') {

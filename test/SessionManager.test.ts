@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -603,5 +603,83 @@ describe('SessionManager', () => {
     await sendA;
     sendB.catch(() => {});
     await m.dispose();
+  }, 30_000);
+
+  it('forks from an agent turn: copied prefix, forkedFrom, blob re-homed, retained context on first prompt', async () => {
+    const { m, dir } = manager();
+    try {
+      await m.init();
+      await m.newSession();
+      const src = m.activeId!;
+      await m.handle({ type: 'send', text: 'hi', attachments: [{ kind: 'image', mimeType: 'image/png', data: 'aGVsbG8=', name: 'a.png' }] });
+      await m.handle({ type: 'send', text: 'hi' });
+      expect(m.active()?.turns).toHaveLength(4);
+
+      await m.handle({ type: 'forkSession', sessionId: src, turnIndex: 1 });
+      const forkId = m.activeId!;
+      expect(forkId).not.toBe(src);
+      expect(m.active()?.turns).toHaveLength(2);
+      expect(m.active()?.title).toMatch(/^Fork: /);
+      expect(m.viewOf(src)?.turns).toHaveLength(4);
+
+      const store = new TranscriptStore(dir);
+      const forkRecord = await store.load(forkId);
+      expect(forkRecord).toMatchObject({ historyPending: true, forkedFrom: { sessionId: src, turnIndex: 1 } });
+      const first = forkRecord?.turns[0];
+      if (first?.role !== 'user') throw new Error('Missing copied user turn');
+      const blob = first.attachments?.filter(a => a.kind !== 'file').map(a => a.blob).find(Boolean);
+      expect(blob).toBeTruthy();
+      expect(existsSync(join(dir, forkId, blob!))).toBe(true);
+      await store.dispose();
+
+      await m.handle({ type: 'send', text: 'again' });
+      const reply = m.active()?.turns.at(-1);
+      if (reply?.role !== 'agent') throw new Error('Missing reply');
+      expect(reply.blocks.filter(b => b.type === 'text').map(b => b.markdown).join('')).toContain('resource:acpira://history/');
+      await m.refreshIndex();
+      expect((await new TranscriptStore(dir).load(forkId))?.historyPending).toBeUndefined();
+    } finally { await m.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  }, 30_000);
+
+  it('rejects forking a non-agent turn or the running last turn', async () => {
+    const { m, dir, toasts } = manager();
+    try {
+      await m.init();
+      await m.newSession();
+      const src = m.activeId!;
+      await m.handle({ type: 'send', text: 'hi' });
+      await m.handle({ type: 'forkSession', sessionId: src, turnIndex: 0 });
+      expect(toasts).toContain('That reply is no longer there to fork from.');
+      expect(m.activeId).toBe(src);
+
+      const sending = m.handle({ type: 'send', text: 'slow' });
+      await vi.waitFor(() => expect(m.active()?.running).toBe(true));
+      await m.handle({ type: 'forkSession', sessionId: src, turnIndex: (m.active()?.turns.length ?? 0) - 1 });
+      expect(toasts).toContain('Wait for this reply to finish before forking from it.');
+      expect(m.activeId).toBe(src);
+      await sending;
+    } finally { await m.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  }, 30_000);
+
+  it('exports a session as markdown and json under the sibling exports dir', async () => {
+    const { m, dir } = manager();
+    try {
+      await m.init();
+      await m.newSession();
+      const id = m.activeId!;
+      await m.handle({ type: 'send', text: 'hi' });
+      const title = m.active()!.title;
+      const mdPath = await m.exportSession(id, 'markdown');
+      // writeExport returns the realpath'd target (confined()), so resolve the expectation the same way
+      expect(mdPath.startsWith(realpathSync(join(dirname(dir), 'exports')))).toBe(true);
+      const md = readFileSync(mdPath, 'utf8');
+      expect(md).toContain(`# ${title}`);
+      expect(md).toContain('hello world');
+      const jsonPath = await m.exportSession(id, 'json');
+      expect(JSON.parse(readFileSync(jsonPath, 'utf8')).id).toBe(id);
+      await expect(m.exportSession('missing-id', 'json')).rejects.toThrow();
+      rmSync(mdPath, { force: true });
+      rmSync(jsonPath, { force: true });
+    } finally { await m.dispose(); rmSync(dir, { recursive: true, force: true }); }
   }, 30_000);
 });

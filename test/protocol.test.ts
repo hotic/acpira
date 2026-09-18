@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isSafeExternalUrl } from '../src/shared/protocol';
+import { isSafeExternalUrl, type WebviewMsg } from '../src/shared/protocol';
 
 // The host hands accepted URLs to vscode.env.openExternal, so the scheme whitelist is the whole security boundary
 describe('isSafeExternalUrl', () => {
@@ -20,5 +20,14 @@ describe('isSafeExternalUrl', () => {
     expect(isSafeExternalUrl('')).toBe(false);
     expect(isSafeExternalUrl('not a url')).toBe(false);
     expect(isSafeExternalUrl('/relative/path')).toBe(false);
+  });
+});
+
+describe('fork / export message variants', () => {
+  it('forkSession and exportSession are WebviewMsg shapes the host routes', () => {
+    const fork: WebviewMsg = { type: 'forkSession', sessionId: 's1', turnIndex: 1 };
+    const exp: WebviewMsg = { type: 'exportSession', id: 's1', format: 'markdown' };
+    expect(fork.type).toBe('forkSession');
+    expect(exp.type).toBe('exportSession');
   });
 });

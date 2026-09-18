@@ -145,9 +145,15 @@ export function applyUpdate(s: NormalizeState, u: acp.SessionUpdate): boolean {
     case 'plan_update':
     case 'plan_removed':
       return false;
-    case 'usage_update':
+    case 'usage_update': {
       s.usage = { used: u.used, size: u.size, cost: u.cost?.amount ?? undefined };
+      // The context snapshot belongs to the turn it followed: the agent turn that just ended or is still streaming.
+      // Devin sends one per model call mid-turn (the last overwrite is the end-of-turn snapshot); Kimi's late idle
+      // notification lands on the finished last turn, which is where it belongs
+      const last = s.turns[s.turns.length - 1];
+      if (last?.role === 'agent') last.usage = { ...last.usage, context: { used: u.used, size: u.size } };
       return true;
+    }
     case 'available_commands_update':
       // The list replaces the previous one wholesale: an empty update clears the menu
       s.commands = u.availableCommands.map(c => ({ name: c.name, description: c.description, ...(c.input?.hint ? { input: { hint: c.input.hint } } : {}) }));

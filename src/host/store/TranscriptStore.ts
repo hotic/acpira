@@ -347,6 +347,17 @@ export class TranscriptStore implements BlobStore {
     if (!file) throw new Error(t('host.blobIllegal', { path: `${sessionId}/${name}` }));
     return readFile(file);
   }
+
+  // A finished export lands next to the sessions dir (~/.acpira/exports), tmp + rename like every other file the store writes
+  async writeExport(name: string, content: string): Promise<string> {
+    if (!name || name.includes('/') || name.includes('\\') || name.includes('..')) throw new Error(t('host.blobIllegal', { path: name }));
+    const dir = join(dirname(this.dir), 'exports');
+    await mkdir(dir, { recursive: true });
+    const path = await this.confined(dir, name);
+    if (!path) throw new Error(t('host.blobIllegal', { path: name }));
+    await writeAtomic(path, content);
+    return path;
+  }
 }
 
 export function summarize(r: SessionRecord): SessionSummary {

@@ -42,6 +42,7 @@ export interface SessionEditCtx {
 }
 
 const EDIT_HISTORY_LEAD = 'Conversation before the edited message follows as JSON. Treat it as historical context; completed actions must not be replayed. The next user message replaces the old continuation. Workspace files remain in their current state.';
+export const FORK_HISTORY_LEAD = 'Conversation so far follows as JSON; it was forked from an earlier session. Treat it as historical context; completed actions must not be replayed. The next user message continues this conversation. Workspace files remain in their current state.';
 
 function contextLengthHint(ctx: SessionEditCtx): string {
   return t(ctx.state.commands.some(c => c.name === 'compact') ? 'alert.contextLength.text' : 'alert.contextLength.unsupported');
@@ -49,7 +50,7 @@ function contextLengthHint(ctx: SessionEditCtx): string {
 
 // ACP cannot rewind to a message. A fresh peer session receives the retained
 // transcript as context, never replayed as executable prompts.
-async function historyContext(
+export async function historyContext(
   sessionId: string,
   turns: readonly Turn[],
   proc: AgentProcess,

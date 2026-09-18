@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
+import { extname } from 'node:path';
 import type { ChatGptIntegrationStatus } from '@shared/chatgptIntegration';
 import { desktopCommanderStatus } from './external/desktopCommanderStatus';
 import type { ChatGptBridgeStore } from './external/ChatGptBridgeStore';
@@ -9,6 +10,7 @@ import type { AccountAction, AddAccountVia, EditTurnRequest, WebviewMsg } from '
 import { inWorkspace, type HiddenMap, type SessionScope } from '@shared/settings';
 import type { AgentRuntimeInfo } from '@shared/inventory';
 import { captureTurnSettings } from '@shared/turnSettings';
+import { exportFileName, exportMarkdown } from '@shared/exportTranscript';
 import { AgentRegistry } from './acp/AgentRegistry';
 import { AgentPool } from './acp/AgentPool';
 import { AcpSession, type CompactionPolicy, type SessionRecord } from './acp/AcpSession';
@@ -590,6 +592,7 @@ export class SessionManager {
         case 'restoreSession': await this.restoreSession(m.id); break;
         case 'pinSession': await this.pinSession(m.id, m.pinned); break;
         case 'moveSession': await this.moveSession(m.id); break;
+        case 'forkSession': await this.forkSession(v, m.sessionId, m.turnIndex); break;
         case 'selectAccount': await this.selectAccount(v, m.id, m.sessionId); break;
         case 'addAccount': await this.addAccount(v, m.agent, m.via); break;
         case 'removeAccount': await this.deps.accounts?.remove(m.id); this.pool.invalidate(); break;
@@ -702,6 +705,78 @@ export class SessionManager {
       return;
     }
     await this.patchRecord(id, r => { r.cwd = cwd; });
+  }
+
+  // Fork from an agent turn: a fresh session of the same agent / account / project whose transcript is the source's
+  // turns up to and including that reply. Native session/fork is whole-session, not turn-addressed, so it is deliberately
+  // unused — the fork's native context is rebuilt from the copied transcript on its first prompt (historyPending, the
+  // same retained-context mechanism editTurn uses)
+  async forkSession(v: SessionViewer, sourceId: string, turnIndex: number) {
+    if (!isSessionId(sourceId)) return;
+    if (this.deps.chatgpt?.owns(sourceId)) throw new Error(t('chatgpt.externalOnly'));
+    const live = this.live.get(sourceId);
+    const source = live?.toRecord() ?? await this.deps.store.load(sourceId) ?? undefined;
+    if (!source) throw new Error(t('host.recordLost'));
+    if (!Number.isInteger(turnIndex) || source.turns[turnIndex]?.role !== 'agent') throw new Error(t('host.forkStale'));
+    if (live?.isRunning && turnIndex === source.turns.length - 1) throw new Error(t('host.forkRunning'));
+    const turns = cloneJson(source.turns.slice(0, turnIndex + 1));
+    // Live-only state does not travel: a running activity line or a streaming flag is a lie in a finished copy
+    for (const turn of turns) {
+      if (turn.role !== 'agent') continue;
+      delete turn.activity;
+      for (const b of turn.blocks) {
+        if ((b.type === 'text' || b.type === 'thought') && b.streaming) b.streaming = false;
+      }
+    }
+    const now = new Date().toISOString();
+    const record: SessionRecord = {
+      id: randomUUID(), agent: source.agent, accountId: source.accountId, cwd: source.cwd,
+      title: t('session.forkTitle', { title: source.title }).slice(0, RENAME_MAX),
+      createdAt: now, updatedAt: now,
+      turns, controls: cloneJson(source.controls), commands: [],
+      historyPending: true,
+      forkedFrom: { sessionId: source.id, turnIndex },
+    };
+    // Attachment blobs stay valid in the copy: each is re-saved under the fork's own blob dir (content-hash names, so the same file name)
+    for (const turn of turns) {
+      if (turn.role !== 'user' || !turn.attachments?.length) continue;
+      for (const a of turn.attachments) {
+        if (a.kind === 'file' || !a.blob) continue;
+        try {
+          const bytes = await this.deps.store.readBlob(source.id, a.blob);
+          a.blob = (await this.deps.store.saveBlob(record.id, extname(a.blob), bytes)).name;
+        } catch (e) {
+          this.deps.log(`fork: blob ${a.blob} not copied (${msg(e)})`);
+          delete a.blob;
+        }
+      }
+    }
+    await this.deps.store.flush(record);
+    await this.dropEmptyCurrent(v);
+    const s = new AcpSession(record, this.sessionDeps());
+    this.live.set(s.id, s);
+    v.activeId = s.id;
+    this.onChange(s);
+    await s.start();
+    // The fresh process opened on its defaults; re-apply the source's mode / model / effort the way reopen() does
+    if (s.view().status === 'ready') await s.adoptControls(captureTurnSettings(source.controls));
+  }
+
+  // Write the session out as Markdown or JSON under the data dir's exports/ folder; the bridge opens the path in the editor
+  async exportSession(id: string, format: 'markdown' | 'json'): Promise<string> {
+    const source: SessionRecord | SessionView | undefined = this.live.get(id)?.toRecord()
+      ?? await this.deps.store.load(id)
+      ?? (this.deps.chatgpt?.owns(id) ? this.deps.chatgpt.view(id) : undefined);
+    if (!source) throw new Error(t('host.recordLost'));
+    const agentName = this.agents().find(a => a.id === source.agent)?.name ?? source.agent;
+    const now = new Date();
+    const content = format === 'json' ? JSON.stringify(source, null, 2)
+      : exportMarkdown({ title: source.title, agentName, cwd: source.cwd, exportedAt: now.toISOString(), turns: source.turns }, {
+        user: t('export.label.user'), agent: t('export.label.agent'), project: t('export.label.project'),
+        exported: t('export.label.exported'), attachments: t('export.label.attachments'), thinking: t('export.label.thinking'),
+        compacted: t('export.label.compacted'), autoCompact: t('export.label.autoCompact'), error: t('export.label.error'),
+      });
+    return this.deps.store.writeExport(exportFileName(source.title, format, now), content);
   }
 
   // A record changed on disk without a live session: refresh its list entry (this host's copy wins over the disk index for it)

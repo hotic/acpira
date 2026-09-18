@@ -269,4 +269,22 @@ describe('applyUpdate', () => {
     expect(s.controls.modeId).toBe('default');
     expect(s.controls.modeConfigId).toBeUndefined();
   });
+
+  it('usage_update stamps the context snapshot on the trailing agent turn, and only there', () => {
+    const s = emptyState();
+    s.turns.push({ role: 'user', text: 'hi' }, { role: 'agent', blocks: [] });
+    applyUpdate(s, { sessionUpdate: 'usage_update', used: 5000, size: 100_000 });
+    expect(s.usage).toEqual({ used: 5000, size: 100_000 });
+    expect(s.turns[1]).toMatchObject({ usage: { context: { used: 5000, size: 100_000 } } });
+    // Per-call updates keep overwriting: the last one before end_turn is the end-of-turn snapshot
+    applyUpdate(s, { sessionUpdate: 'usage_update', used: 7000, size: 100_000 });
+    expect(s.turns[1]).toMatchObject({ usage: { context: { used: 7000, size: 100_000 } } });
+
+    // A trailing user turn is left alone: the snapshot never reaches back across it
+    const t = emptyState();
+    t.turns.push({ role: 'agent', blocks: [] }, { role: 'user', text: 'next' });
+    applyUpdate(t, { sessionUpdate: 'usage_update', used: 1, size: 2 });
+    expect(t.turns[0]).not.toHaveProperty('usage');
+    expect(t.turns[1]).not.toHaveProperty('usage');
+  });
 });
