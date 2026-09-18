@@ -162,6 +162,9 @@ export function App() {
     dequeue: (sessionId, id) => post({ type: 'dequeue', sessionId, id }),
     sendQueued: (sessionId, id) => post({ type: 'sendQueued', sessionId, id }),
     editQueued: (sessionId, id, text, retainedAttachments, attachments) => post({ type: 'editQueued', sessionId, id, text, retainedAttachments, attachments }),
+    forkSession: (sessionId, turnIndex) => post({ type: 'forkSession', sessionId, turnIndex }),
+    exportSession: (id, format) => post({ type: 'exportSession', id, format }),
+    openInEditor: sessionId => post({ type: 'openInEditor', sessionId }),
   }), []);
 
   const settingsOn = useMemo<SettingsHandlers>(() => ({

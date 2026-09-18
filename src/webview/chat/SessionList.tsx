@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ChevronDown, FolderInput, ListFilter, LoaderCircle, Pencil, Pin, PinOff, Search, Trash2 } from 'lucide-react';
+import { ChevronDown, Ellipsis, FolderInput, ListFilter, LoaderCircle, Pin, PinOff, Search } from 'lucide-react';
 import type { AgentInfo, SessionSummary } from '@shared/transcript';
 import { inWorkspace, type SessionScope } from '@shared/settings';
 import { cn } from '../ui/cn';
@@ -8,6 +8,7 @@ import { OptionContent } from '../ui/Panel';
 import { Popover } from '../ui/Popover';
 import { t, useLocale } from '../i18n';
 import { AgentMark } from './AgentMark';
+import { SessionMenu } from './SessionMenu';
 
 // A running session shows a spinning ring (the one place a spinner is allowed: a list has no verb to shimmer); the other states are plain dots
 const STATE_DOT: Record<Exclude<NonNullable<SessionSummary['state']>, 'working'>, string> = {
@@ -38,13 +39,15 @@ export interface SessionListProps {
   onDelete: (id: string) => void;
   onPin: (id: string, pinned: boolean) => void;
   onMove?: (id: string) => void;
+  // Writes the session as Markdown or JSON under exports/ (absent only where the host does not offer it)
+  onExport?: (id: string, format: 'markdown' | 'json') => void;
 }
 
 // Session list: search and agent filters stay visible even without history; pinned sessions get their own section, the rest is one flat list.
-// Each item: vendor mark · title · time; on hover those swap for the actions — pin / rename / delete, plus "move here" for a session from another project.
+// Each item: vendor mark · title · time; on hover those swap for the actions — pin, a "…" menu (rename / export / delete), plus "move here" for a session from another project.
 // Deletion applies immediately, undo lives on the Toast at the shell's bottom. Scope comes from acpira.sessionScope (settings);
 // under "all" each row from another project carries that project's folder name before the time
-export function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, onSelect, onRename, onDelete, onPin, onMove }: SessionListProps) {
+export function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, onSelect, onRename, onDelete, onPin, onMove, onExport }: SessionListProps) {
   const locale = useLocale();
   const [query, setQuery] = useState('');
   const [agentFilter, setAgentFilter] = useState<string>();
@@ -77,6 +80,7 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
       onDelete={() => { setEditing(undefined); onDelete(s.id); }}
       onPin={() => onPin(s.id, !s.pinned)}
       onMove={onMove && workspace && !s.external && !here(s) ? () => onMove(s.id) : undefined}
+      onExport={onExport ? format => onExport(s.id, format) : undefined}
     />
   );
   const empty = q ? t('session.noMatch') : agentFilter ? t('session.noneAgent', { name: nameOf(agentFilter) }) : scope === 'workspace' && workspace ? t('session.noneWorkspace') : t('session.none');
@@ -176,10 +180,14 @@ interface ItemProps {
   onPin: () => void;
   // Present only for a session from another project: re-home it into this window's workspace
   onMove?: () => void;
+  onExport?: (format: 'markdown' | 'json') => void;
 }
 
-// One item: the whole row is clickable to select; the tail shows a status dot + time by default, swapping to actions on hover / keyboard focus. Action buttons can't nest inside a button, so the whole row is a div[role=option]
-function Item({ session: s, agentName, active, time, project, editing, onSelect, onEdit, onRename, onDelete, onPin, onMove }: ItemProps) {
+// One item: the whole row is clickable to select; the tail shows a status dot + time by default, swapping to actions on hover / keyboard focus. Action buttons can't nest inside a button, so the whole row is a div[role=option].
+// The hover cluster keeps the two quick toggles (move / pin); rename, export and delete live in the "…" menu, which keeps
+// the cluster alive while open — the row tracks menuOpen because a pointer inside the portaled popup is no longer a hover
+function Item({ session: s, agentName, active, time, project, editing, onSelect, onEdit, onRename, onDelete, onPin, onMove, onExport }: ItemProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget) return;
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(); }
@@ -190,6 +198,7 @@ function Item({ session: s, agentName, active, time, project, editing, onSelect,
       role="option"
       aria-selected={active}
       tabIndex={0}
+      data-menu-open={menuOpen || undefined}
       onClick={() => { if (!editing) onSelect(); }}
       onKeyDown={onKey}
       className={cn(
@@ -203,12 +212,12 @@ function Item({ session: s, agentName, active, time, project, editing, onSelect,
         : <span className="min-w-0 flex-1 truncate">{s.title}</span>}
       {!editing && (
         <span className="ml-auto flex shrink-0 items-center text-3 text-fg-3 tabular-nums">
-          <span className="flex items-center gap-2 group-hover:hidden group-focus-within:hidden">
+          <span className="flex items-center gap-2 group-hover:hidden group-focus-within:hidden group-data-[menu-open]:hidden">
             {project && <span className="max-w-project truncate text-fg-3/70" title={s.cwd}>{project}</span>}
             {s.state && <StateMark state={s.state} />}
             <span>{time}</span>
           </span>
-          <span className="hidden items-center gap-0.5 group-hover:flex group-focus-within:flex">
+          <span className="hidden items-center gap-0.5 group-hover:flex group-focus-within:flex group-data-[menu-open]:flex">
             {onMove && (
               <button type="button" title={t('session.move')} aria-label={t('session.move')} onClick={e => { e.stopPropagation(); onMove(); }} className={act}>
                 <FolderInput className="size-3" strokeWidth={1.5} />
@@ -217,12 +226,22 @@ function Item({ session: s, agentName, active, time, project, editing, onSelect,
             <button type="button" title={s.pinned ? t('common.unpin') : t('common.pin')} aria-label={s.pinned ? t('common.unpin') : t('common.pin')} onClick={e => { e.stopPropagation(); onPin(); }} className={act}>
               {s.pinned ? <PinOff className="size-3" strokeWidth={1.5} /> : <Pin className="size-3" strokeWidth={1.5} />}
             </button>
-            <button type="button" title={t('common.rename')} aria-label={t('common.rename')} onClick={e => { e.stopPropagation(); onEdit(); }} className={act}>
-              <Pencil className="size-3" strokeWidth={1.5} />
-            </button>
-            <button type="button" title={t('common.delete')} aria-label={t('common.delete')} onClick={e => { e.stopPropagation(); onDelete(); }} className={act}>
-              <Trash2 className="size-3" strokeWidth={1.5} />
-            </button>
+            {/* The row selects on click and synthetic events bubble through the menu's portal; keep both from reaching the option */}
+            <span onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
+              <SessionMenu
+                session={s}
+                align="end"
+                onOpenChange={setMenuOpen}
+                trigger={<button type="button" title={t('session.more')} aria-label={t('session.more')} className={act}>
+                  <Ellipsis className="size-3" strokeWidth={1.5} />
+                </button>}
+                onRename={onEdit}
+                onPin={onPin}
+                onMove={onMove}
+                onExport={onExport}
+                onDelete={onDelete}
+              />
+            </span>
           </span>
         </span>
       )}

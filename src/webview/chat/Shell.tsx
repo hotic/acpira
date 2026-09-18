@@ -27,6 +27,7 @@ import { PlanDocumentContext } from './PlanDocument';
 import { planExecutionId } from '@shared/planExecution';
 import { Queue } from './Queue';
 import { OpenToolFileContext } from './ToolCall';
+import { TurnActionsContext } from './TurnActions';
 
 // Every action the webview sends to the host; in the LAB a fake host implements these, the real build swaps in postMessage
 export interface ShellHandlers {
@@ -70,6 +71,12 @@ export interface ShellHandlers {
   dequeue?: (sessionId: string, id: string) => void;
   sendQueued?: (sessionId: string, id: string) => void;
   editQueued?: (sessionId: string, id: string, text: string, retainedAttachments: number[], attachments: Draft[]) => void;
+  // Start a new session whose transcript is this session's turns through the given agent turn
+  forkSession?: (sessionId: string, turnIndex: number) => void;
+  // Write the session as Markdown or JSON under the data dir's exports/ and open it in the editor
+  exportSession?: (id: string, format: 'markdown' | 'json') => void;
+  // Open the session in an editor tab
+  openInEditor?: (sessionId: string) => void;
 }
 
 export interface ShellProps {
@@ -230,6 +237,7 @@ export function Shell(p: ShellProps) {
       onDelete={handlers.deleteSession}
       onPin={on.pinSession}
       onMove={handlers.moveSession}
+      onExport={on.exportSession}
     />
   );
 
@@ -259,6 +267,12 @@ export function Shell(p: ShellProps) {
   } : undefined, [on.editTurn, p.activeSessionId, editable, editing]);
   const openToolFile = useMemo(() => p.activeSessionId && on.openFile
     ? (path: string, line?: number) => on.openFile!(p.activeSessionId!, path, line) : undefined, [p.activeSessionId, on.openFile]);
+  // Per-turn actions (copy / fork / stats): memoized like the other contexts so a stream push does not re-render consumers;
+  // external conversations have no ACP transcript to fork
+  const turnActions = useMemo(() => p.activeSessionId ? {
+    sessionId: p.activeSessionId, controls: p.controls,
+    fork: on.forkSession && !p.external ? (turnIndex: number) => on.forkSession!(p.activeSessionId!, turnIndex) : undefined,
+  } : undefined, [p.activeSessionId, p.controls, on.forkSession, p.external]);
 
   return (
     <AppearanceContext.Provider value={a}>
@@ -317,7 +331,9 @@ export function Shell(p: ShellProps) {
                 <HistoryContext.Provider value={history}>
                 <HistoryComposerContext.Provider value={history?.editing !== undefined ? composerProps : undefined}>
                   <OpenToolFileContext.Provider value={openToolFile}>
-                    <Thread key={p.activeSessionId} turns={p.turns} running={p.running} wide={wide} replayKey={p.replayKey} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands} onPermission={(blockId, optionId) => { if (p.activeSessionId) on.permission(p.activeSessionId, blockId, optionId); }} />
+                    <TurnActionsContext.Provider value={turnActions}>
+                      <Thread key={p.activeSessionId} turns={p.turns} running={p.running} wide={wide} replayKey={p.replayKey} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands} onPermission={(blockId, optionId) => { if (p.activeSessionId) on.permission(p.activeSessionId, blockId, optionId); }} />
+                    </TurnActionsContext.Provider>
                   </OpenToolFileContext.Provider>
                 </HistoryComposerContext.Provider>
                 </HistoryContext.Provider>
@@ -429,7 +445,8 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
     const memoryKey = replayKey !== undefined ? `${replayKey}:${ti}:${turn.role === 'agent' ? turn.startedAt ?? '' : ''}` : undefined;
     exchanges[exchanges.length - 1]!.messages.push(turn.role === 'user'
       ? <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} />
-      : <AgentMessage key={ti} turn={turn} index={index} compacting={compacting} running={running && ti === turns.length - 1 && !turn.stop} onPermission={onPermission} memoryKey={memoryKey} />);
+      : <AgentMessage key={ti} turn={turn} index={index} compacting={compacting} running={running && ti === turns.length - 1 && !turn.stop} onPermission={onPermission} memoryKey={memoryKey}
+          turnIndex={ti} last={ti === turns.length - 1} settings={previous?.role === 'user' ? previous.settings : undefined} />);
   });
   return (
     <div ref={ref} data-thread className="scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto px-page [container-type:size] [overflow-anchor:none]">

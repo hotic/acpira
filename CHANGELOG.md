@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Reply action row under every finished agent reply: copy the reply as Markdown, fork the session from that reply, and a response statistics card (model, duration, tool calls, model rounds, input / output / cached / reasoning tokens, context after the reply, copy request ID). Statistics show what each CLI reports over ACP: Grok's `_meta` token counts and request id, Devin's `usage` and `cognition.ai/userMessageId`, Kimi only the context snapshot.
+- Fork from a reply: a new session of the same agent, account and project with the transcript up to that reply; the earlier conversation is handed to the agent as retained context on the fork's first prompt (ACP has no turn-addressed fork), so the feature works for every ACP agent.
+- Session "…" menu on list rows and in the header: rename, pin, move, open in editor tab, export as Markdown or JSON (written to `~/.acpira/exports/` and opened in the editor), delete.
+
 - MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.
 - Steer / interrupt follow-up modes remain planned. Mid-turn messages stay in the host-side queue.
 

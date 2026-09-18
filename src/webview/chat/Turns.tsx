@@ -1,6 +1,6 @@
 import { Fragment, memo, useCallback, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Check, ChevronRight, Compass, Hand, MessageCircleQuestion, TriangleAlert, X } from 'lucide-react';
-import type { AgentBlock, AgentTurn, CompactionBlock, PermissionBlock, SlashCommand, ToolCallBlock, ToolKind, UserTurn } from '@shared/transcript';
+import type { AgentBlock, AgentTurn, CompactionBlock, PermissionBlock, SlashCommand, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@shared/transcript';
 import { useAppearance, type Appearance } from '../appearance';
 import { getLocale, t } from '../i18n';
 import { commandSegments } from './PromptInput';
@@ -29,6 +29,7 @@ import { rememberFold, rememberedFold } from './foldMemory';
 import { ProcessHistory } from './ProcessHistory';
 import { compactionForDisplay } from './compactionDisplay';
 import { splitPlanSections } from './planSections';
+import { TurnActions } from './TurnActions';
 
 // User message: color block / right-aligned bubble / plain text; ones Acpira sends automatically (/compact) render as a note line, not a bubble.
 // Attachments (image thumbnails / file pills) sit above the text inside the same bubble.
@@ -90,26 +91,27 @@ type OnPermission = (blockId: string, optionId: string) => void;
 // The top-level activity owns the only Orb; detailed rows show their own verbs with static icons.
 // Memoized: the host pushes the whole view on every stream chunk and `reuse` keeps finished turns by reference, so only the live turn renders.
 // `memoryKey` names the turn for fold memory (session + turn); without one the fold state lives only in the component.
-export const AgentMessage = memo(function AgentMessage({ turn, index, running, onPermission, compacting, memoryKey }: { turn: AgentTurn; index: number; running: boolean; onPermission: OnPermission; compacting?: boolean; memoryKey?: string }) {
-  if (compacting) turn = compactionForDisplay(turn, running);
-  const sections = splitPlanSections(turn.blocks);
-  return <RowEntranceContext.Provider value={running}><div className="flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]">
+export const AgentMessage = memo(function AgentMessage({ turn, index, running, onPermission, compacting, memoryKey, turnIndex, last, settings }: { turn: AgentTurn; index: number; running: boolean; onPermission: OnPermission; compacting?: boolean; memoryKey?: string; turnIndex: number; last: boolean; settings?: TurnSettings }) {
+  const shown = compacting ? compactionForDisplay(turn, running) : turn;
+  const sections = splitPlanSections(shown.blocks);
+  return <RowEntranceContext.Provider value={running}><div className="group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]">
     {sections.map((section, i) => {
-      const last = i === sections.length - 1;
+      const lastSection = i === sections.length - 1;
       // Only the continuation owns live activity and the turn outcome. Earlier
       // sections have no independent timing; repeating the full duration lies.
-      const content = { ...turn, blocks: section.blocks,
-        ...(!last ? { stop: undefined, error: undefined, command: undefined } : {}),
+      const content = { ...shown, blocks: section.blocks,
+        ...(!lastSection ? { stop: undefined, error: undefined, command: undefined } : {}),
         ...(sections.length > 1 ? { startedAt: undefined, endedAt: undefined } : {}),
       };
       return <Fragment key={section.key}>
-        {(section.blocks.length > 0 || (last && (running || outcomeOf(turn)))) && <AgentContent turn={content} index={index}
-          running={last && running} onPermission={onPermission}
+        {(section.blocks.length > 0 || (lastSection && (running || outcomeOf(shown)))) && <AgentContent turn={content} index={index}
+          running={lastSection && running} onPermission={onPermission}
           memoryKey={memoryKey && (i === 0 ? memoryKey : `${memoryKey}:after-plan:${section.key}`)} />}
         {section.plan && <PlanDocument block={section.plan}
-          permission={turn.blocks.find((b): b is PermissionBlock => b.type === 'permission' && b.planId === section.plan!.id)} onChoose={onPermission} />}
+          permission={shown.blocks.find((b): b is PermissionBlock => b.type === 'permission' && b.planId === section.plan!.id)} onChoose={onPermission} />}
       </Fragment>;
     })}
+    {!running && !compacting && turn.blocks.length > 0 && <TurnActions turn={turn} turnIndex={turnIndex} last={last} settings={settings} />}
   </div></RowEntranceContext.Provider>;
 });
 
