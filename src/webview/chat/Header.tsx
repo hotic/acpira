@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { History, PanelLeft, PanelRight, Plus, Settings2, UserRound } from 'lucide-react';
+import { Ellipsis, History, PanelLeft, PanelRight, Plus, Settings2, UserRound } from 'lucide-react';
 import type { AccountInfo, AgentInfo, SessionSummary } from '@shared/transcript';
 import type { SessionScope } from '@shared/settings';
 import { t } from '../i18n';
@@ -11,6 +11,7 @@ import { quotaSummary } from '../ui/QuotaBars';
 import { AgentMark } from './AgentMark';
 import { AgentPanel } from './AgentPanel';
 import { SessionList } from './SessionList';
+import { SessionMenu } from './SessionMenu';
 import type { ShellHandlers } from './Shell';
 
 export interface HeaderProps {
@@ -25,7 +26,7 @@ export interface HeaderProps {
   // This window's workspace folder and the list scope, handed on to the session list (see SessionListProps)
   workspace?: string;
   sessionScope?: SessionScope;
-  on: Pick<ShellHandlers, 'selectSession' | 'newSession' | 'renameSession' | 'deleteSession' | 'pinSession' | 'moveSession' | 'selectAgent' | 'selectAccount' | 'addAccount' | 'removeAccount' | 'refreshQuota'>;
+  on: Pick<ShellHandlers, 'selectSession' | 'newSession' | 'renameSession' | 'deleteSession' | 'pinSession' | 'moveSession' | 'exportSession' | 'openInEditor' | 'selectAgent' | 'selectAccount' | 'addAccount' | 'removeAccount' | 'refreshQuota'>;
   onToggleDrawer?: () => void;
   drawerOpen?: boolean;
   sessionPanel?: 'hidden' | 'left' | 'right';
@@ -83,10 +84,22 @@ export function Header({ title, sessions, agent, agents, accounts, accountId, ac
           <Popover.Portal><Popover.Positioner side="bottom" align="end" width="xl"><Popover.Popup initialFocus={interaction => interaction === 'keyboard'}>
             <SessionList sessions={sessions} agents={agents} activeId={activeSessionId} workspace={workspace} scope={sessionScope}
               onSelect={id => { on.selectSession(id); setHistoryOpen(false); }}
-              onRename={on.renameSession} onDelete={on.deleteSession} onPin={on.pinSession} onMove={on.moveSession} />
+              onRename={on.renameSession} onDelete={on.deleteSession} onPin={on.pinSession} onMove={on.moveSession} onExport={on.exportSession} />
           </Popover.Popup></Popover.Positioner></Popover.Portal>
         </Popover.Root>}
         {!agent.external && accountButton}
+        {/* The active session's "…" menu: the row summary when the list knows it, a stub built from the header facts otherwise */}
+        {activeSessionId && (
+          <SessionMenu
+            session={sessions.find(s => s.id === activeSessionId) ?? { id: activeSessionId, title, agent: agent.id, cwd: '', updatedAt: '' }}
+            align="end"
+            trigger={<IconButton title={t('session.more')} aria-label={t('session.more')}><Ellipsis strokeWidth={1.5} /></IconButton>}
+            onOpenInEditor={on.openInEditor ? () => on.openInEditor!(activeSessionId) : undefined}
+            onPin={() => on.pinSession(activeSessionId, !(sessions.find(s => s.id === activeSessionId)?.pinned))}
+            onExport={on.exportSession ? format => on.exportSession!(activeSessionId, format) : undefined}
+            onDelete={() => on.deleteSession(activeSessionId)}
+          />
+        )}
         {settingsButton}
       </div>
     </div>
