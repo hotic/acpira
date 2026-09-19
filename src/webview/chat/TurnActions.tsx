@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, Fragment, useContext, useState, type ReactNode } from 'react';
 import { ChartNoAxesColumn, Check, Copy, GitBranch } from 'lucide-react';
 import type { AgentTurn, SessionControls, TurnSettings } from '@shared/transcript';
 import { t, useLocale } from '../i18n';
@@ -7,7 +7,7 @@ import { IconButton } from '../ui/Button';
 import { Popover } from '../ui/Popover';
 import { PanelFooter } from '../ui/Panel';
 import { useCopied } from '../ui/useCopied';
-import { elapsedLabel } from './folding';
+import { elapsedDuration } from './folding';
 import { modelLabel, replyMarkdown, toolCallCount } from './turnActionHelpers';
 
 // What the turn action row needs from the shell: the session it belongs to, the control list for resolving the model
@@ -55,28 +55,18 @@ export function TurnActions({ turn, turnIndex, last, settings }: { turn: AgentTu
   );
 }
 
-// One caption + rows pair; a row renders only when its value exists
-function Section({ caption, rows }: { caption: string; rows: ReactNode[] }) {
-  if (!rows.length) return null;
+function StatRow({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <>
-      <div className="px-2 text-3 text-fg-3">{caption}</div>
-      {rows}
-    </>
-  );
-}
-
-function StatRow({ label, value, faint }: { label: string; value: ReactNode; faint?: boolean }) {
-  return (
-    <div className="flex min-h-row items-center justify-between px-2 text-3">
-      <span className={faint ? 'text-fg-3' : 'text-fg-1'}>{label}</span>
+    <div className="flex items-center justify-between gap-3 px-2 py-0.5 text-3">
+      <span className="text-fg-1">{label}</span>
       <span className="min-w-0 truncate text-fg-2">{value}</span>
     </div>
   );
 }
 
-// Per-turn response statistics (UsagePanel's shape): only the rows the peer actually reported — Kimi shows no tokens at
-// all and gets the explanatory line instead of a column of dashes
+// Per-turn response statistics: dense label/value rows grouped by a thin divider — response facts, token accounting,
+// the post-turn context snapshot. Only the rows the peer actually reported — Kimi reports no tokens at all, so its
+// card is just the response group plus the context row
 function StatsCard({ turn, model }: { turn: AgentTurn; model?: string }) {
   const usage = turn.usage;
   const locale = useLocale();
@@ -86,7 +76,7 @@ function StatsCard({ turn, model }: { turn: AgentTurn; model?: string }) {
 
   const responseRows: ReactNode[] = [];
   if (model) responseRows.push(<StatRow key="model" label={t('stats.model')} value={model} />);
-  if (turn.startedAt !== undefined && turn.endedAt !== undefined) responseRows.push(<StatRow key="duration" label={t('stats.duration')} value={elapsedLabel(turn)} />);
+  if (turn.startedAt !== undefined && turn.endedAt !== undefined) responseRows.push(<StatRow key="duration" label={t('stats.duration')} value={elapsedDuration(turn)} />);
   const tools = toolCallCount(turn);
   if (tools > 0) responseRows.push(<StatRow key="tools" label={t('stats.toolCalls')} value={fmt(tools)} />);
   if (usage?.modelCalls !== undefined) responseRows.push(<StatRow key="modelCalls" label={t('stats.modelCalls')} value={fmt(usage.modelCalls)} />);
@@ -98,18 +88,27 @@ function StatsCard({ turn, model }: { turn: AgentTurn; model?: string }) {
   // input / output render whenever reported, 0 included; the optional cache / reasoning rows only when they carry a
   // non-zero count — Grok reports cacheCreationTokens: 0 on every turn, and a "0 tokens" row is noise
   const tokenRows = tokenFields.filter(([key]) => { const v = usage?.[key]; return v !== undefined && (key === 'input' || key === 'output' || v > 0); })
-    .map(([key, label]) => <StatRow key={key} label={label} value={t('stats.tokensN', { n: fmt(usage![key]!) })} />);
+    .map(([key, label]) => <StatRow key={key} label={label} value={fmt(usage![key]!)} />);
+
+  const groups = [
+    responseRows,
+    tokenRows,
+    usage?.context ? [<StatRow key="ctx" label={t('stats.context')} value={`${fmt(usage.context.used)} / ${fmt(usage.context.size)}`} />] : [],
+  ].filter(g => g.length);
 
   return (
     <div className="flex flex-col gap-1 p-1 tabular-nums">
       <div className="flex h-ctl items-center px-2">
         <span className="text-2 font-medium text-fg-1">{t('turn.stats')}</span>
       </div>
-      <Section caption={t('stats.response')} rows={responseRows} />
-      <Section caption={t('stats.tokens')} rows={tokenRows} />
-      {usage?.context && <StatRow label={t('stats.context')} value={`${fmt(usage.context.used)} / ${fmt(usage.context.size)}`} />}
-      {/* The note explains the missing token section; a context snapshot is session-level and does not replace it */}
-      {!tokenRows.length && <StatRow faint label={t('stats.none')} value="" />}
+      <div className="flex flex-col">
+        {groups.map((rows, i) => (
+          <Fragment key={i}>
+            {i > 0 && <div className="mx-2 my-1 border-t border-line" />}
+            {rows}
+          </Fragment>
+        ))}
+      </div>
       {requestId && (
         <>
           <PanelFooter action={{ label: copied.state === 'copied' ? t('stats.requestIdCopied') : t('stats.copyRequestId'), icon: copied.state === 'copied' ? <Check strokeWidth={1.5} /> : <Copy strokeWidth={1.5} />, onClick: () => void copied.copy() }}>

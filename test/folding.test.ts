@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AgentTurn, PermissionBlock, QuestionBlock, ToolCallBlock } from '../src/shared/transcript';
 import { setLocale } from '../src/webview/i18n';
-import { elapsedLabel, foldActivity, splitCodexBlocks, toolVerb } from '../src/webview/chat/folding';
+import { elapsedDuration, elapsedLabel, foldActivity, splitCodexBlocks, toolVerb } from '../src/webview/chat/folding';
 
 const read: ToolCallBlock = { type: 'tool_call', id: 'read', kind: 'read', verb: 'Read', target: 'README.md', status: 'completed' };
 const run: ToolCallBlock = { type: 'tool_call', id: 'run', kind: 'execute', verb: 'Run', target: 'pnpm test', targetMono: true, status: 'in_progress' };
@@ -108,6 +108,9 @@ describe('Codex process folding', () => {
     expect(elapsedLabel({ ...turn, endedAt: 61000 })).toBe('Took 1m');
     expect(elapsedLabel({ ...turn, endedAt: 6000 })).toBe('Took 5s');
     expect(elapsedLabel({ ...turn, startedAt: undefined, endedAt: undefined })).toBe('Done');
+    // The stats card uses the bare duration without the Took/用时 prefix
+    expect(elapsedDuration(turn)).toBe('4m 46s');
+    expect(elapsedDuration({ ...turn, startedAt: undefined })).toBe('');
   });
 
   it('follows the locale: zh-CN renders the same labels in Chinese', () => {
