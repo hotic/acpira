@@ -7,16 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- Reply action row under every finished agent reply: copy the reply as Markdown, fork the session from that reply, and a response statistics card (model, duration, tool calls, model rounds, input / output / cached / reasoning tokens, context after the reply, copy request ID). Statistics show what each CLI reports over ACP: Grok's `_meta` token counts and request id, Devin's `usage` and `cognition.ai/userMessageId`, Kimi only the context snapshot.
-- Fork from a reply: a new session of the same agent, account and project with the transcript up to that reply; the earlier conversation is handed to the agent as retained context on the fork's first prompt (ACP has no turn-addressed fork), so the feature works for every ACP agent.
-- Session "…" menu on list rows and in the header: rename, pin, move, open in editor tab, export as Markdown or JSON (written to `~/.acpira/exports/` and opened in the editor), delete.
+### Planned
 
 - MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.
 - Steer / interrupt follow-up modes remain planned. Mid-turn messages stay in the host-side queue.
 
+## [1.4.0] - 2026-09-20
+
+### Added
+
+- Finished agent replies offer Markdown copy, fork-from-reply and a response statistics card. Statistics include the model, duration, tool calls and the token counts, model rounds, context snapshot and request ID available from the CLI; unreported usage is omitted.
+- Fork an ACP conversation at a finished reply into a new session with the same agent, account and project. The copied transcript and attachments become retained context on the fork's first prompt; the original conversation stays unchanged, and the fork title remains available for manual renaming.
+- Session menus in the header and list group the applicable rename, pin, move, open-in-editor and delete actions. Native ACP sessions can export Markdown or JSON to `~/.acpira/exports/`, with the exported file opened in the editor.
+- Opt-in ChatGPT conversation mirrors through an explicit project-bound local bridge. The Connect ChatGPT Session command and Settings → ChatGPT → Desktop Commander provide connection instructions; the packaged bridge records explicitly forwarded visible messages, streaming command output, guarded file edits and completion receipts without starting an ACP agent. Calls outside the bridge are not captured automatically, and remote send, model-switch and stop controls are unavailable.
+
+### Changed
+
+- The context usage panel shows exact localized token counts and marks the auto-compaction threshold on the native window bar. Threshold state and limitations remain available in tooltips, with retained-history estimates kept separate from reported context usage.
+- ChatGPT setup stays in external-integration settings and out of the launchable-agent and default-agent menus. Existing mirrors remain available in session history and channel filtering; local component detection, cloud pairing and observed project activity are reported separately.
+- Metadata separators follow the interface language across tool details, account labels and composer controls.
+
+### Fixed
+
+- Refreshing an agent's settings re-reads model and reasoning options through a fresh ACP probe and renews its warm process. CLI configuration changes appear without creating a conversation; a failed probe preserves the last known options.
+- ChatGPT mirror replay deduplicates event retries, keeps late tool output on its original turn and resumes observation without re-executing commands. Empty or stale mirrors report awaiting messages or unknown remote state, and source cancellation does not claim to terminate local processes.
+- The published VSIX includes the ChatGPT bridge setup and limitations guide referenced by the integration.
+
 ## [1.3.3] - 2026-09-16
+
+Unpublished development snapshot; shipped as part of 1.4.0.
 
 ### Changed
 
@@ -26,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Empty mirrors report awaiting their first message. Unobserved turns/tools show unknown state without continued execution timers or a success receipt. Stopping source generation does not claim termination of local processes.
 
 ## [1.3.2] - 2026-09-16
+
+Unpublished development snapshot; shipped as part of 1.4.0.
 
 ### Added
 
