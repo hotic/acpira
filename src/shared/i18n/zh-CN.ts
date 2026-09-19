@@ -361,6 +361,7 @@ export const zhCN = {
   // Host-side, user-visible (toasts / error texts / titles); log lines are not translated
   'host.notFound': '找不到 {command}，请先安装 {agent} CLI',
   'host.exited': '{agent} 进程退出（{code}）',
+  'host.emptyResponse': 'CLI 已结束请求，但没有返回回复或错误详情（ACP: end_turn）。可重试或查看 CLI 日志。',
   'host.cannotResume': '这个 agent 恢复不了老会话，只能看历史',
   'host.resumeFailed': '恢复会话失败（{error}）',
   'host.sessionLocked': '这个会话正被另一个窗口或实例占用（{error}）',

@@ -346,6 +346,7 @@ export const en = {
 
   'host.notFound': '{command} not found — install the {agent} CLI first',
   'host.exited': '{agent} process exited ({code})',
+  'host.emptyResponse': 'The CLI ended the request with no reply or error details (ACP: end_turn). Retry or check the CLI logs.',
   'host.cannotResume': 'This agent can’t resume old sessions; history is read-only',
   'host.resumeFailed': 'Could not restore this session ({error})',
   'host.sessionLocked': 'This session is held by another window or instance ({error})',
