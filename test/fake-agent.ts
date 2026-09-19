@@ -150,6 +150,12 @@ const app = acp.agent({ name: 'fake-agent' })
     const text = params.prompt.map(p => (p.type === 'text' ? p.text : '')).join('');
     const send = (update: acp.SessionUpdate) => client.notify(acp.methods.client.session.update, { sessionId: sid, update });
     cancelled.delete(sid);
+    // Kimi's ACP adapter can acknowledge a failed provider turn as an empty end_turn.
+    if (text.startsWith('empty-response') && !failed.has(text)) {
+      failed.set(text, 1);
+      if (text.endsWith('whitespace')) await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' \n\t' } });
+      return { stopReason: 'end_turn' };
+    }
     if (sessionDir) {
       const saved = readSession(sid);
       if (!saved) throw acp.RequestError.invalidParams(undefined, 'unknown native session');

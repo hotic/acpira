@@ -615,6 +615,28 @@ describe('AcpSession', () => {
     s.dispose();
   });
 
+  it.each(['empty-response', 'empty-response-whitespace'])('empty completion: %s reports missing output and retries on the same native session', async text => {
+    const { session, logs } = deps();
+    const s = session();
+    try {
+      await s.start();
+      const nativeId = s.toRecord().acpSessionId;
+      await s.prompt(text);
+      expect(logs.some(line => line.includes('prompt done: end_turn'))).toBe(true);
+      expect(s.view()).toMatchObject({ status: 'ready', running: false });
+      expect(s.view().turns.at(-1)).toMatchObject({ stop: 'error', error: {
+        kind: 'empty_response', retryable: true, message: expect.stringContaining('no reply'),
+      } });
+      const turn = s.view().turns.at(-1);
+      expect(turn?.role === 'agent' ? turn.error?.code : undefined).toBeUndefined();
+      expect(s.toRecord().turns.at(-1)).toMatchObject({ stop: 'error' });
+      await s.retryTurn();
+      expect(s.toRecord().acpSessionId).toBe(nativeId);
+      expect(s.view().turns).toHaveLength(2);
+      expect(s.view().turns.at(-1)).toMatchObject({ stop: 'end_turn' });
+    } finally { s.dispose(); }
+  });
+
   it('short stops: refusal leaves an empty turn with stop=refusal, max_tokens keeps the text and stop=max_tokens; a normal turn records end_turn', async () => {
     const { session } = deps();
     const s = session();

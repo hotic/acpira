@@ -698,7 +698,17 @@ export class AcpSession {
       await this.refreshGrokUsage();
       if (!livePrompt()) return;
       if (agentTurn.command && stop === 'end_turn') Object.assign(agentTurn.command, commandChanges(before, this.state.controls));
-      this.settle(stop);
+      // Some CLIs acknowledge provider failures as empty end_turn responses. Record
+      // the missing output without inventing an upstream cause or JSON-RPC code.
+      // Slash commands may legitimately return only a receipt; tool/thought output
+      // also counts as activity, even when there is no final prose.
+      if (stop === 'end_turn' && !auto && !agentTurn.command
+        && agentTurn.blocks.every(block => block.type === 'text' && !block.markdown.trim())) {
+        const error: TurnError = { message: t('host.emptyResponse'), kind: 'empty_response', retryable: true };
+        this.log('prompt empty: end_turn without output or error details');
+        stop = 'cancelled';
+        this.settle(stop, error);
+      } else this.settle(stop);
     } catch (e) {
       // Disposal already settled and persisted the interrupted turn. The old
       // channel's rejection must not overwrite it or publish into a new process.
