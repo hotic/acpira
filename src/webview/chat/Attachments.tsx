@@ -45,7 +45,8 @@ function useTextPeek() {
       () => setPeek(p => (p?.url === url ? { name, url, failed: true } : p)),
     );
   };
-  const card = peek && <TextPeek name={peek.name} text={peek.text} failed={peek.failed} onClose={() => setPeek(null)} />;
+  // Keyed on the blob url / the draft text itself so view state (raw vs rendered) resets between attachments
+  const card = peek && <TextPeek key={peek.url ?? peek.text} name={peek.name} text={peek.text} failed={peek.failed} onClose={() => setPeek(null)} />;
   return { open, openBlob, card };
 }
 
