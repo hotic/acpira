@@ -113,7 +113,8 @@ if (mine) {
   check('replayed turns are sealed', iv.turns.every(t => t.role === 'user' || (t.stop !== undefined && t.blocks.every(b => !('streaming' in b) || !b.streaming))));
   const again = await m2.listNativeSessions('opencode');
   check('re-listing marks it imported', again.find(s => s.sessionId === nativeId)?.localId === iv.id);
-  await m2.handle({ type: 'send', sessionId: iv.id, text: 'What word did you reply with earlier? Answer with that single word.' });
+  // The latest native reply was "done", so the question must point at the first turn or a literal-minded model answers with that
+  await m2.handle({ type: 'send', sessionId: iv.id, text: 'In this conversation, what single word did you reply to the very first message with? Answer with that single word only.' });
   await until(() => !viewer.active()!.running && viewer.active()!.turns.length > turnsBefore, 240_000, 'follow-up on imported session');
   const fv = viewer.active()!;
   check('imported session continues the native context', /pong/i.test(text(fv)), text(fv).slice(0, 60));
