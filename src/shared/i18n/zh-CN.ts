@@ -356,6 +356,8 @@ export const zhCN = {
   'attach.view': '查看 {name}',
   'attach.loading': '读取中…',
   'attach.loadFailed': '读取 {name} 失败',
+  'attach.renderMarkdown': '渲染 Markdown',
+  'attach.viewSource': '查看原文',
   'mention.noFiles': '没有匹配的文件',
 
   // Host-side, user-visible (toasts / error texts / titles); log lines are not translated

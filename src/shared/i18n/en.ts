@@ -342,6 +342,8 @@ export const en = {
   'attach.view': 'View {name}',
   'attach.loading': 'Reading…',
   'attach.loadFailed': 'Could not read {name}',
+  'attach.renderMarkdown': 'Render Markdown',
+  'attach.viewSource': 'View source',
   'mention.noFiles': 'No matching files',
 
   'host.notFound': '{command} not found — install the {agent} CLI first',
