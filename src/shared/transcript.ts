@@ -16,6 +16,8 @@ export interface AgentInfo {
   localAccount?: LocalAccountInfo;
   // An executable was detected locally; false greys it out in the menu, undefined means not probed yet
   available?: boolean;
+  // Commands a probe looked for but did not find (the agent's own command and/or extra AgentDef.requires), for the install hint
+  missing?: string[];
   // How to get the CLI when none was found: the vendor's one-line install for this platform and its docs page
   install?: AgentInstall;
 }
@@ -158,6 +160,9 @@ export interface ToolCallBlock {
   // Confirmed todo-tool output, separate from the standard live plan update.
   todoEntries?: PlanEntry[];
   content?: ToolContent;
+  // Every renderable content item in wire order, present only when there is more than one; `content` stays the
+  // primary item so records written before this field render unchanged
+  contents?: ToolContent[];
 }
 
 export interface ThoughtBlock {
@@ -372,12 +377,24 @@ export interface SessionSummary {
   title: string;
   agent: AgentId;
   accountId?: string;
+  // The agent's own session id, so a native listing can tell which sessions are already imported
+  acpSessionId?: string;
   // The project the session belongs to: the workspace folder it was opened in (also the agent's working directory)
   cwd: string;
   // ISO timestamp; the webview formats it itself
   updatedAt: string;
   pinned?: boolean;
   state?: 'working' | 'waiting' | 'unread' | 'error';
+}
+
+// One entry of an agent's own session list (ACP session/list), for the history list's "Import from <agent>"
+export interface NativeSessionInfo {
+  sessionId: string;
+  cwd: string;
+  title?: string;
+  updatedAt?: string;
+  // The Acpira record that already holds this native session
+  localId?: string;
 }
 
 export interface Usage {

@@ -2,7 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import * as acp from '@agentclientprotocol/sdk';
 import type { PermissionBlock, ToolCallBlock } from '@shared/transcript';
 import { capturePlan, planDocuments, setPlanContent } from './plans';
-import { activityOf, applyUpdate, commandFromRaw, type NormalizeState } from './normalize';
+import { activityOf, applyUpdate, commandFromRaw, permissionToolUpdate, type NormalizeState } from './normalize';
 import { bestAllow } from './sessionErrors';
 import { t } from '../i18n';
 import { PLAN_PREVIEW_MAX_BYTES } from '../limits';
@@ -65,7 +65,11 @@ export class PermissionGate {
     if (signal.aborted) return Promise.resolve({ outcome: { outcome: 'cancelled' } });
     const epoch = this.epoch;
     const state = this.deps.state();
-    applyUpdate(state, { sessionUpdate: 'tool_call_update', ...req.toolCall });
+    const last = state.turns[state.turns.length - 1];
+    // The verb / command on the card is taken from the corresponding tool row; the permission request itself often carries only a title
+    const tool = last?.role === 'agent' ? last.blocks.find((b): b is ToolCallBlock => b.type === 'tool_call' && b.id === req.toolCall.toolCallId) : undefined;
+    // OpenCode embeds a low-fidelity copy of the call (kind 'other', the parent dir as title); it must not downgrade the block
+    applyUpdate(state, permissionToolUpdate(tool, req.toolCall));
     const plan = capturePlan(state.turns, req.toolCall);
     // A resumed Devin session may send only the plan path. Load that exact file
     // before presenting approval; missing files retain the normal permission UI.
@@ -86,9 +90,6 @@ export class PermissionGate {
     }
     const blockId = `perm-${++this.permSeq}`;
     const raw = req.toolCall.rawInput as Record<string, unknown> | undefined;
-    const last = state.turns[state.turns.length - 1];
-    // The verb / command on the card is taken from the corresponding tool row; the permission request itself often carries only a title
-    const tool = last?.role === 'agent' ? last.blocks.find((b): b is ToolCallBlock => b.type === 'tool_call' && b.id === req.toolCall.toolCallId) : undefined;
     const block: PermissionBlock = {
       type: 'permission', id: blockId,
       planId: plan?.markdown && plan.approvalToolCallId === req.toolCall.toolCallId ? plan.id : undefined,

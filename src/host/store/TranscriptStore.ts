@@ -361,7 +361,7 @@ export class TranscriptStore implements BlobStore {
 }
 
 export function summarize(r: SessionRecord): SessionSummary {
-  return { id: r.id, title: r.title, agent: r.agent, accountId: r.accountId, cwd: r.cwd, updatedAt: r.updatedAt, pinned: r.pinned };
+  return { id: r.id, title: r.title, agent: r.agent, accountId: r.accountId, acpSessionId: r.acpSessionId, cwd: r.cwd, updatedAt: r.updatedAt, pinned: r.pinned };
 }
 
 // Pinned first, then newest first: the order the list shows

@@ -135,7 +135,8 @@ function InstallSection({ agent, on }: { agent: AgentInfo; on: SettingsHandlers 
   return (
     <div className="flex flex-col gap-2">
       <SectionHead action={action}>{t('settings.install.title', { agent: agent.name })}</SectionHead>
-      <Section desc={t('settings.install.desc')}>
+      {/* The missing names ride on the description line: an agent like Pi can be installed yet still unavailable because a helper (pi-acp) is absent */}
+      <Section desc={t('settings.install.desc') + (agent.missing?.length ? `: ${agent.missing.join(', ')}` : '')}>
         {command && (
           <ItemRow
             lead={<SquareTerminal strokeWidth={1.5} />}

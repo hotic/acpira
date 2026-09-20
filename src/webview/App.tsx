@@ -1,6 +1,6 @@
 import type { ChatGptIntegrationStatus } from '@shared/chatgptIntegration';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AccountAction, EditTurnRequest, FileHit, HostMsg, InitState, WebviewMsg } from '@shared/protocol';
+import type { AccountAction, EditTurnRequest, FileHit, HostMsg, InitState, NativeSessionsState, WebviewMsg } from '@shared/protocol';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl, SessionSummary, SessionView } from '@shared/transcript';
 import type { HiddenMap, SettingsView } from '@shared/settings';
 import type { AgentInventory } from '@shared/inventory';
@@ -65,6 +65,8 @@ export function App() {
   const [chatgptStatus, setChatgptStatus] = useState<ChatGptIntegrationStatus>();
   const [inventories, setInventories] = useState<Partial<Record<AgentId, AgentInventory>>>({});
   const [controls, setControls] = useState<Partial<Record<AgentId, ConfigControl[]>>>({});
+  // The import popover's listing; `agent` ties it to the request it answers so a stale reply can't overwrite a newer request
+  const [nativeSessions, setNativeSessions] = useState<NativeSessionsState>();
   const [page, setPage] = useState<SettingsPage>({ kind: 'general' });
   // Agents whose next controls request is a refresh: the flag rides the effect's request so a re-render can't double-spawn the probe
   const freshControls = useRef(new Set<AgentId>());
@@ -107,6 +109,8 @@ export function App() {
         case 'settings': setSettings(m.settings); setLocale(m.locale); setLoc(m.locale); break;
         case 'inventory': setInventories(inv => ({ ...inv, [m.agent]: m.inventory })); break;
         case 'controls': setControls(c => ({ ...c, [m.agent]: m.controls })); break;
+        // A reply for an agent the popover has since moved away from is dropped; the effect re-requested the new one already
+        case 'nativeSessions': setNativeSessions(cur => cur?.agent === m.agent ? { agent: m.agent, sessions: m.sessions, error: m.error, loading: false } : cur); break;
         case 'chatgptStatus': setChatgptStatus(m.status); break;
         case 'files': settleFiles(m.seq, m.files); break;
       }
@@ -165,6 +169,8 @@ export function App() {
     forkSession: (sessionId, turnIndex) => post({ type: 'forkSession', sessionId, turnIndex }),
     exportSession: (id, format) => post({ type: 'exportSession', id, format }),
     openInEditor: sessionId => post({ type: 'openInEditor', sessionId }),
+    listNativeSessions: agent => { setNativeSessions({ agent, loading: true, sessions: [] }); post({ type: 'listNativeSessions', agent }); },
+    importNativeSession: (agent, s) => post({ type: 'importNativeSession', agent, sessionId: s.sessionId, cwd: s.cwd, title: s.title, updatedAt: s.updatedAt }),
   }), []);
 
   const settingsOn = useMemo<SettingsHandlers>(() => ({
@@ -248,6 +254,7 @@ export function App() {
       cwd={session?.cwd}
       workspace={init.cwd}
       sessionScope={settings.sessionScope}
+      nativeSessions={nativeSessions}
       blobBase={init.blobBase}
       on={on}
       replayKey={session?.id}

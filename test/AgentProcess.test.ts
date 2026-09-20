@@ -32,6 +32,13 @@ describe('AgentProcess', () => {
     expect(r.signal === 'SIGTERM' || r.signal === 'SIGKILL' || r.code !== null).toBe(true);
   });
 
+  it('times out an initialize the agent never answers, and still kills the child', async () => {
+    const { h, exited } = handlers();
+    await expect(AgentProcess.spawn(DEF, NODE, '/tmp', h, { FAKE_INIT_HANG: '1' }, { initTimeoutMs: 300 })).rejects.toThrow(/initialize/);
+    const r = await exited;
+    expect(r.signal === 'SIGTERM' || r.signal === 'SIGKILL' || r.code !== null).toBe(true);
+  });
+
   it('escalates to SIGKILL when the CLI ignores the polite signal', async () => {
     const { h, exited } = handlers();
     const proc = await AgentProcess.spawn(DEF, NODE, '/tmp', h, { FAKE_STUBBORN: '1' });

@@ -96,8 +96,19 @@ export const ReadGroup = memo(function ReadGroup({ blocks }: { blocks: ToolCallB
 
 function ToolBody({ block }: { block: ToolCallBlock }) {
   const c = block.content;
-  if (!c) return null;
   if (block.kind === 'execute') return <TerminalOutput block={block} />;
+  // Several content items in one update (e.g. two diffs with a receipt line between them) render stacked in wire order —
+  // each diff keeps its own file path, `content` alone would only ever show the first
+  if (block.contents && block.contents.length > 1) {
+    return <div className="flex flex-col gap-gap">
+      {block.contents.map((item, i) => {
+        if (item.type === 'diff') return <DiffBlock key={i} lines={item.lines} source={item.source} path={item.source?.path ?? block.locations?.[0]?.path ?? block.target} />;
+        if (item.type === 'list') return <ResultList key={i} items={item.items} kind={block.kind} />;
+        return <CodeSurface key={i} className="text-fg-2 whitespace-pre">{item.text}</CodeSurface>;
+      })}
+    </div>;
+  }
+  if (!c) return null;
   if (c.type === 'diff') return <DiffBlock lines={c.lines} source={c.source} path={block.locations?.[0]?.path ?? block.target} />;
   if (c.type === 'list') return <ResultList items={c.items} kind={block.kind} />;
   return <CodeSurface className="text-fg-2 whitespace-pre">{c.text}</CodeSurface>;

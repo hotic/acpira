@@ -43,3 +43,41 @@ describe('large text pastes', () => {
     expect(await restoreDrafts('session', result.attachments, blobs)).toEqual([draft]);
   });
 });
+
+describe('prompt capabilities', () => {
+  const blobs: BlobStore = {
+    async saveBlob() { return { name: 'blob', path: '/tmp/blob' }; },
+    async readBlob() { return new Uint8Array(); },
+  };
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+  it('embeddedContext: false sends dropped text as marked-up plain text, still staging the blob', async () => {
+    const result = await preparePrompt('session', 'hi', [{ kind: 'text', name: 'notes.txt', text: 'contents' }], blobs, { embeddedContext: false });
+    expect(result.problems).toEqual([]);
+    expect(result.blocks).toEqual([
+      { type: 'text', text: 'hi' },
+      { type: 'text', text: '[Attachment: notes.txt]\ncontents\n[End of attachment: notes.txt]' },
+    ]);
+    expect(result.attachments).toEqual([{ kind: 'text', blob: 'blob', name: 'notes.txt' }]);
+  });
+
+  it('image: false drops pasted images with a problem instead of a block', async () => {
+    const result = await preparePrompt('session', 'hi', [{ kind: 'image', name: 'shot.png', mimeType: 'image/png', data: png }], blobs, { image: false });
+    expect(result.blocks).toEqual([{ type: 'text', text: 'hi' }]);
+    expect(result.attachments).toEqual([]);
+    expect(result.problems).toHaveLength(1);
+    expect(result.problems[0]).toContain('shot.png');
+  });
+
+  it('imagesRegardless overrides a false image capability (Grok)', async () => {
+    const result = await preparePrompt('session', 'hi', [{ kind: 'image', name: 'shot.png', mimeType: 'image/png', data: png }], blobs, { image: false, imagesRegardless: true });
+    expect(result.problems).toEqual([]);
+    expect(result.blocks[1]).toEqual({ type: 'image', mimeType: 'image/png', data: png });
+    expect(result.attachments).toEqual([{ kind: 'image', blob: 'blob', mimeType: 'image/png', name: 'shot.png' }]);
+  });
+
+  it('no caps at all keeps the historical behaviour', async () => {
+    const result = await preparePrompt('session', '', [{ kind: 'image', name: 'shot.png', mimeType: 'image/png', data: png }], blobs);
+    expect(result.blocks[0]?.type).toBe('image');
+  });
+});

@@ -5,7 +5,7 @@ import { isContextLengthError } from '@shared/turnErrors';
 import type { EditTurnRequest } from '@shared/protocol';
 import type { Draft, SessionControls, SessionOption, SessionView, Turn } from '@shared/transcript';
 import { applyConfigOptions, initControls, type NormalizeState } from './normalize';
-import { preparePrompt, restoreDrafts, type BlobStore } from './attachments';
+import { preparePrompt, restoreDrafts, type BlobStore, type PromptCaps } from './attachments';
 import type { StagedSend } from './promptQueue';
 import type { AgentProcess } from './AgentProcess';
 import { msg } from '../errors';
@@ -33,6 +33,8 @@ export interface SessionEditCtx {
   compactedAt: number | undefined;
   autoApprove: boolean;
   syntheticModes(): SessionOption[] | undefined;
+  // The live process's prompt capabilities, for staging the replacement message's attachments
+  caps(): PromptCaps;
   onUpdate(n: acp.SessionNotification): void;
   prompt(text: string, attachments: Draft[], auto?: boolean, staged?: StagedSend, planId?: string): Promise<void>;
   bump(): void;
@@ -56,6 +58,7 @@ export async function historyContext(
   proc: AgentProcess,
   blobs: BlobStore,
   lead: string,
+  caps: PromptCaps,
 ): Promise<acp.ContentBlock[] | undefined> {
   if (!turns.length) return [];
   const history = `${lead}\n${JSON.stringify(turns)}`;
@@ -69,7 +72,7 @@ export async function historyContext(
     if (turn.role !== 'user' || !turn.attachments?.length) continue;
     const drafts = await restoreDrafts(sessionId, turn.attachments, blobs);
     if (drafts.length !== turn.attachments.length) throw new Error(t('history.missingAttachment'));
-    const old = await preparePrompt(sessionId, '', drafts, blobs);
+    const old = await preparePrompt(sessionId, '', drafts, blobs, caps);
     if (old.problems.length) throw new Error(old.problems.join('\n'));
     context.push({ type: 'text', text: `Attachments from earlier user message: ${turn.text}` }, ...old.blocks);
   }
@@ -159,13 +162,13 @@ export async function editTurn(ctx: SessionEditCtx, edit: EditTurnRequest): Prom
       return drafts;
     };
     const drafts = [...await restore(kept.map(i => user.attachments![i]!)), ...edit.attachments];
-    const prepared = await preparePrompt(ctx.id, edit.text, drafts, ctx.blobs);
+    const prepared = await preparePrompt(ctx.id, edit.text, drafts, ctx.blobs, ctx.caps());
     if (prepared.problems.length) throw new Error(prepared.problems.join('\n'));
     const retry = unchangedFailedRetry(ctx, edit);
     let continuing = edit.intent === 'continue';
     let rebuilt: acp.ContentBlock[] | undefined;
     if (!continuing && !retry && prefix.length) {
-      const history = await historyContext(ctx.id, prefix, ctx.proc, ctx.blobs, EDIT_HISTORY_LEAD);
+      const history = await historyContext(ctx.id, prefix, ctx.proc, ctx.blobs, EDIT_HISTORY_LEAD, ctx.caps());
       const blocks = history && [...history, ...prepared.blocks];
       // Include expanded historical attachments and the replacement message.
       continuing = !blocks || Buffer.byteLength(JSON.stringify(blocks), 'utf8') > EDIT_CONTEXT_MAX_BYTES;
@@ -226,8 +229,9 @@ export async function editTurn(ctx: SessionEditCtx, edit: EditTurnRequest): Prom
   }
 }
 
-// Failed edited turns rebuild the context in a fresh peer too; the first
-// failed RPC may not have retained any of the supplied historical context.
+// An empty edited failure may not have reached the peer, so rebuild its context.
+// Once output exists, keep the entire attempt and continue on the same native
+// session: completed tools and partial replies are history even if the RPC failed.
 export async function retryTurn(ctx: SessionEditCtx): Promise<void> {
   if (ctx.phase.running || ctx.status !== 'ready') return;
   const turns = ctx.state.turns;
@@ -235,7 +239,8 @@ export async function retryTurn(ctx: SessionEditCtx): Promise<void> {
   if (agent?.role !== 'agent' || user?.role !== 'user' || user.auto) return;
   if (isContextLengthError(agent.error)) throw new Error(contextLengthHint(ctx));
   if (!agent.stop || agent.stop === 'end_turn' || agent.stop === 'cancelled') return;
-  if (user.edited) {
+  const hasOutput = agent.blocks.some(block => block.type !== 'text' || !!block.markdown.trim());
+  if (user.edited && !hasOutput) {
     await editTurn(ctx, { sessionId: ctx.id, turnIndex: turns.length - 2, turnCount: turns.length,
       originalText: user.text, turnId: user.id, text: user.text, attachments: [],
       retainedAttachments: (user.attachments ?? []).map((_, i) => i),
@@ -243,7 +248,9 @@ export async function retryTurn(ctx: SessionEditCtx): Promise<void> {
     return;
   }
   const drafts = await restoreDrafts(ctx.id, user.attachments ?? [], ctx.blobs);
+  // Attachment reads yield; a second click or another send may have claimed the turn.
+  if (ctx.phase.running || ctx.status !== 'ready' || ctx.state.turns.at(-1) !== agent) return;
   const planId = planExecutionId(user, turns[turns.length - 3]);
-  turns.splice(-2, 2);
+  if (!hasOutput) turns.splice(-2, 2);
   await ctx.prompt(user.text, drafts, false, undefined, planId);
 }

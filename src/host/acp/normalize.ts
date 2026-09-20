@@ -31,6 +31,9 @@ export interface NormalizeState {
   thoughtStartedAt?: number;
   // Background shell id → command, so a later wait on that shell (Devin's get_output) can name the command it waits for
   shells?: Record<string, string>;
+  // Tool id → { path, content }: the file contents an edit tool reported in rawInput (OpenCode's write sends them there
+  // and its completion carries only a text receipt), kept so a new-file completion can render as an all-add diff
+  pendingWrites?: Record<string, { path: string; content: string }>;
 }
 
 export function emptyState(): NormalizeState {
@@ -228,6 +231,22 @@ export function failTurn(s: NormalizeState, error: TurnError) {
   t.error = error;
 }
 
+// A session/load replay (OpenCode streams the whole history as live-looking chunks, with no stop reasons and no usage) leaves
+// every block looking mid-stream: seal it — open user input closes, streaming flags come off, tools that never reported an
+// outcome are cancelled, turns end as end_turn. No timestamps are invented for replayed turns.
+export function sealReplay(s: NormalizeState) {
+  closeUserTurn(s);
+  for (const t of s.turns) {
+    if (t.role !== 'agent') { delete (t as { _open?: boolean })._open; continue; }
+    t.activity = undefined;
+    t.stop ??= 'end_turn';
+    for (const b of t.blocks) {
+      if (b.type === 'text' || b.type === 'thought') delete b.streaming;
+      else if (b.type === 'tool_call' && (b.status === 'pending' || b.status === 'in_progress')) b.status = 'cancelled';
+    }
+  }
+}
+
 // Build the controls from the session/new / resume response
 export function initControls(controls: SessionControls, modes?: acp.SessionModeState | null, configOptions?: acp.SessionConfigOption[] | null) {
   controls.modes = (modes?.availableModes ?? []).map(m => ({ id: m.id, name: m.name, description: m.description ?? undefined }));
@@ -365,23 +384,70 @@ function mergeTool(b: ToolCallBlock, u: acp.ToolCall | acp.ToolCallUpdate, s?: N
     const path = pathFromRaw(raw);
     if (path) b.locations = [{ path }];
   }
+  // OpenCode's write sends the file contents only inside rawInput.content; park them so a completion that proves the
+  // file is new (rawOutput.metadata.exists === false) can render the write as an all-add diff
+  if (s && b.kind === 'edit' && typeof raw?.content === 'string') {
+    const path = pathFromRaw(raw) ?? b.locations?.[0]?.path;
+    if (path) (s.pendingWrites ??= {})[b.id] = { path, content: raw.content };
+  }
   // A target inferred from the title is only a fallback while there is no target yet; don't overwrite what rawInput / locations provided.
   // A todo / ask / shell tool's title is just its own name — redundant next to the verb, so drop it (the question card carries the questions,
   // a shell tool names the background command it acts on, or its shell id until that command is known).
   const named = b.verbKey === 'verb.todo' || b.verbKey === 'verb.ask' || b.verbKey === 'verb.wait' || b.verbKey === 'verb.kill';
   const target = b.verbKey === 'verb.wait' || b.verbKey === 'verb.kill' ? shellTarget(raw, s) : pickTarget(u, b.kind);
   if (target && !(named && target.fromTitle) && (!target.fromTitle || !b.target)) { b.target = target.text; b.targetMono = target.mono; }
+  // OpenCode's write completes with a text receipt only: the parked rawInput content plus rawOutput.metadata.exists ===
+  // false prove the file is new, so render the write as an all-add diff with the receipt behind it. Without that
+  // evidence (an overwrite, or another agent's write tool) nothing is synthesized — a fabricated diff would lie
+  const pendingWrite = s && u.status === 'completed' && b.content?.type !== 'diff' ? s.pendingWrites?.[b.id] : undefined;
+  if (pendingWrite) {
+    delete s!.pendingWrites![b.id];
+    if ((u.rawOutput as { metadata?: { exists?: unknown } } | null | undefined)?.metadata?.exists === false) {
+      const diff: Extract<ToolContent, { type: 'diff' }> = {
+        type: 'diff', lines: diffLines('', pendingWrite.content),
+        source: { path: pendingWrite.path, oldText: '', newText: pendingWrite.content },
+      };
+      const receipts = (u.content?.length ? toolContents(u.content) : []).filter((x): x is Extract<ToolContent, { type: 'text' }> => x.type === 'text' && !!x.text);
+      b.content = diff;
+      if (receipts.length) b.contents = [diff, ...receipts]; else delete b.contents;
+      b.diffStat = { add: diff.lines.filter(l => l.kind === 'add').length, del: 0 };
+    }
+  }
   if (u.content?.length) {
-    const c = toolContent(u.content);
+    const list = toolContents(u.content);
+    // The primary item: a diff wins over plain text, otherwise the wire order's first
+    const c = list.find(x => x.type === 'diff') ?? list[0];
     // Kimi sends the edit diff before execution, then a plain success receipt.
     // Preserve the diff on success; failures must still expose their error output.
-    const keepDiff = b.kind === 'edit' && b.status === 'completed' && b.content?.type === 'diff' && c?.type === 'text';
+    const keepDiff = b.kind === 'edit' && b.status === 'completed' && b.content?.type === 'diff' && list.length === 1 && c?.type === 'text';
     if (c && !keepDiff) {
       b.content = c;
-      b.diffStat = c.type === 'diff'
-        ? { add: c.lines.filter(l => l.kind === 'add').length, del: c.lines.filter(l => l.kind === 'del').length }
+      if (list.length > 1) b.contents = list; else delete b.contents;
+      const diffs = list.filter((x): x is Extract<ToolContent, { type: 'diff' }> => x.type === 'diff');
+      b.diffStat = diffs.length
+        ? { add: diffs.reduce((n, d) => n + d.lines.filter(l => l.kind === 'add').length, 0), del: diffs.reduce((n, d) => n + d.lines.filter(l => l.kind === 'del').length, 0) }
         : undefined;
     }
+  }
+  // pi-acp manages terminals itself and streams output through _meta (terminal_output deltas, then terminal_exit)
+  const terminalOutput = (meta?.terminal_output as { data?: unknown } | undefined)?.data;
+  if (typeof terminalOutput === 'string' && terminalOutput) {
+    const prev = b.content?.type === 'text' ? b.content.text : '';
+    b.content = { type: 'text', text: (prev + terminalOutput).slice(0, TOOL_OUTPUT_MAX) };
+  }
+  const exitCode = (meta?.terminal_exit as { exit_code?: unknown } | undefined)?.exit_code;
+  if (typeof exitCode === 'number' && exitCode !== 0) {
+    const prev = b.content?.type === 'text' ? b.content.text : '';
+    if (!prev.endsWith(`exit code ${exitCode}`)) {
+      b.content = { type: 'text', text: (prev ? `${prev}\nexit code ${exitCode}` : `exit code ${exitCode}`).slice(0, TOOL_OUTPUT_MAX) };
+    }
+  }
+  // A terminal item the agent cannot stream through _meta expects a client-side terminal (which we don't provide):
+  // say so instead of leaving the body empty. terminal_info / terminal_output / terminal_exit mean the agent wired it up itself
+  const agentWiredTerminal = meta?.terminal_info !== undefined || meta?.terminal_output !== undefined || meta?.terminal_exit !== undefined;
+  if (!b.content && !agentWiredTerminal) {
+    const term = u.content?.find(c => c.type === 'terminal');
+    if (term?.type === 'terminal') b.content = { type: 'text', text: t('host.terminalNotWired', { id: term.terminalId }) };
   }
   if (!b.content && u.rawOutput !== undefined && u.rawOutput !== null) {
     const text = typeof u.rawOutput === 'string' ? u.rawOutput : JSON.stringify(u.rawOutput, null, 2);
@@ -394,9 +460,31 @@ function mergeTool(b: ToolCallBlock, u: acp.ToolCall | acp.ToolCallUpdate, s?: N
   }
 }
 
+// OpenCode's session/request_permission embeds a low-fidelity copy of the call — kind 'other', the parent dir as title,
+// file + parent dir as locations, rawInput { filepath, parentDir }. Merging it verbatim downgrades the block the
+// original tool_call established (kind → 'other', target → the dir; the card reads "Use tool"). AGENTS.md: "Permission
+// requests usually carry only toolCall.title" — with a block already there, take only what the request can improve:
+// the status, a specific kind onto an unclassified block, and the path fields only while the block has no file of its
+// own (rawInput preferred — pathFromRaw names the file — since the request's locations often list the directory too).
+// Without a block (Devin / Kimi plan approvals arrive with no preceding tool_call) the request's toolCall applies whole.
+export function permissionToolUpdate(existing: ToolCallBlock | undefined, tc: acp.ToolCallUpdate): acp.SessionUpdate {
+  if (!existing) return { sessionUpdate: 'tool_call_update', ...tc };
+  const u: acp.ToolCallUpdate = { toolCallId: tc.toolCallId };
+  if (tc.status) u.status = tc.status;
+  if (tc.kind && tc.kind !== 'other' && (existing.kind === 'other' || existing.kind === 'think')) u.kind = tc.kind;
+  const fileKind = existing.kind === 'read' || existing.kind === 'edit' || existing.kind === 'delete' || existing.kind === 'move';
+  // A file-kind block without locations only has a title-word for a target — the request may carry the real path
+  if (!existing.target || (fileKind && !existing.locations?.length)) {
+    if (tc.title !== undefined) u.title = tc.title;
+    if (tc.rawInput !== undefined) u.rawInput = tc.rawInput;
+  }
+  if (tc.locations?.length && !existing.locations?.length && !pathFromRaw((u.rawInput ?? tc.rawInput) as Record<string, unknown> | undefined)) u.locations = tc.locations;
+  return { sessionUpdate: 'tool_call_update', ...u };
+}
+
 // What the row shows: execute shows the command; with locations, the file name; otherwise the title
 export function pathFromRaw(raw: Record<string, unknown> | undefined): string | undefined {
-  return [raw?.path, raw?.file_path, raw?.filePath].find((v): v is string => typeof v === 'string' && !!v);
+  return [raw?.path, raw?.file_path, raw?.filePath, raw?.filepath].find((v): v is string => typeof v === 'string' && !!v);
 }
 
 // Read tools use either inclusive endpoints or a one-based offset plus a line count.
@@ -448,18 +536,28 @@ function stripVerb(title: string): string {
   return title.replace(/^(read(ing)?|edit(ing)?|write|writing|search(ing)?|run(ning)?|execute|executing|fetch(ing)?|delete|deleting|move|moving|list(ing)?)\s+(file|files|directory|command)?\s*/i, '').replace(/^`|`$/g, '').trim() || title;
 }
 
-function toolContent(items: acp.ToolCallContent[]): ToolContent | undefined {
-  const diff = items.find(c => c.type === 'diff');
-  if (diff && diff.type === 'diff') return {
-    type: 'diff', lines: diffLines(diff.oldText ?? '', diff.newText),
-    // Full sides preserve multiline syntax state and exact copy text after context folding.
-    source: { path: diff.path, oldText: diff.oldText ?? '', newText: diff.newText },
-  };
-  const texts = items.filter(c => c.type === 'content').map(c => c.type === 'content' ? textOf(c.content) : '').filter(Boolean);
-  if (texts.length) return { type: 'text', text: texts.join('\n').slice(0, TOOL_OUTPUT_MAX) };
-  const term = items.find(c => c.type === 'terminal');
-  if (term && term.type === 'terminal') return { type: 'text', text: t('host.terminalNotWired', { id: term.terminalId }) };
-  return undefined;
+// Every renderable content item, in wire order: a diff per `diff` item, one merged text per run of consecutive
+// `content` items. `terminal` items carry no body here — mergeTool fills it from the _meta stream (pi-acp) or the
+// not-wired note (agents expecting a client terminal)
+function toolContents(items: acp.ToolCallContent[]): ToolContent[] {
+  const out: ToolContent[] = [];
+  for (const item of items) {
+    if (item.type === 'diff') {
+      out.push({
+        type: 'diff', lines: diffLines(item.oldText ?? '', item.newText),
+        // Full sides preserve multiline syntax state and exact copy text after context folding.
+        source: { path: item.path, oldText: item.oldText ?? '', newText: item.newText },
+      });
+      continue;
+    }
+    if (item.type !== 'content') continue;
+    const text = textOf(item.content);
+    if (!text) continue;
+    const last = out[out.length - 1];
+    if (last?.type === 'text') last.text = (last.text + '\n' + text).slice(0, TOOL_OUTPUT_MAX);
+    else out.push({ type: 'text', text: text.slice(0, TOOL_OUTPUT_MAX) });
+  }
+  return out;
 }
 
 // What's happening right now: feeds the Activity line of Turns

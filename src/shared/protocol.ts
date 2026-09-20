@@ -1,5 +1,5 @@
 import type { ChatGptIntegrationStatus } from './chatgptIntegration';
-import type { AccountInfo, AgentId, AgentInfo, ConfigControl, Draft, QuestionAnswers, SessionSummary, SessionView, TurnSettings } from './transcript';
+import type { AccountInfo, AgentId, AgentInfo, ConfigControl, Draft, NativeSessionInfo, QuestionAnswers, SessionSummary, SessionView, TurnSettings } from './transcript';
 import type { Appearance, AxisKey } from './appearance';
 import type { HiddenMap, SettingKey, SettingsView } from './settings';
 import type { Locale } from './i18n';
@@ -73,7 +73,17 @@ export type HostMsg =
   | { type: 'inventory'; agent: AgentId; inventory: AgentInventory }
   | { type: 'controls'; agent: AgentId; controls: ConfigControl[] }
   // Reply to searchFiles; seq echoes the request so stale replies can be dropped
-  | { type: 'files'; seq: number; files: FileHit[] };
+  | { type: 'files'; seq: number; files: FileHit[] }
+  // Reply to listNativeSessions: the agent's own sessions in this workspace, with localId marking the ones already imported
+  | { type: 'nativeSessions'; agent: AgentId; sessions: NativeSessionInfo[]; error?: string };
+
+// What the import popover currently holds for the agent it asked about
+export interface NativeSessionsState {
+  agent: AgentId;
+  loading?: boolean;
+  sessions: NativeSessionInfo[];
+  error?: string;
+}
 
 // How an account comes in: import reads the CLI's own local login; login runs an isolated login in the terminal that leaves the local login untouched;
 // auto is the "+" in the menu: import the local login if it hasn't been imported yet, otherwise log in a new one in the terminal
@@ -152,4 +162,7 @@ export type WebviewMsg =
   | { type: 'openFile'; sessionId: string; path: string; line?: number }
   | { type: 'inventory'; agent: AgentId }
   // fresh: the refresh button — host spawns a throwaway process to re-read the current configOptions; without it, the latest session's list
-  | { type: 'controls'; agent: AgentId; fresh?: boolean };
+  | { type: 'controls'; agent: AgentId; fresh?: boolean }
+  // History list → "Import from <agent>": the host spawns a throwaway process, initialize + session/list for this workspace; no session is created
+  | { type: 'listNativeSessions'; agent: AgentId }
+  | { type: 'importNativeSession'; agent: AgentId; sessionId: string; cwd: string; title?: string; updatedAt?: string };

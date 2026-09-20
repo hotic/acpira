@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ChevronDown, Ellipsis, FolderInput, ListFilter, LoaderCircle, Pin, PinOff, Search } from 'lucide-react';
-import type { AgentInfo, SessionSummary } from '@shared/transcript';
+import { Check, ChevronDown, Ellipsis, FolderInput, Import, ListFilter, LoaderCircle, Pin, PinOff, Search } from 'lucide-react';
+import type { AgentId, AgentInfo, NativeSessionInfo, SessionSummary } from '@shared/transcript';
+import type { NativeSessionsState } from '@shared/protocol';
 import { inWorkspace, type SessionScope } from '@shared/settings';
 import { cn } from '../ui/cn';
 import { Command } from '../ui/Command';
-import { OptionContent } from '../ui/Panel';
+import { IconButton } from '../ui/Button';
+import { OptionContent, PanelHeader } from '../ui/Panel';
 import { Popover } from '../ui/Popover';
+import { Row } from '../ui/Row';
 import { t, useLocale } from '../i18n';
 import { AgentMark } from './AgentMark';
 import { SessionMenu } from './SessionMenu';
@@ -34,6 +37,13 @@ export interface SessionListProps {
   autoFocus?: boolean;
   // Docked lists fill the available column; history popovers keep their bounded height.
   fill?: boolean;
+  // The session the view is on, for the import popover's default agent
+  activeAgent?: AgentId;
+  // What the import popover shows: the last listing the host answered (keyed by the agent it belongs to)
+  nativeSessions?: NativeSessionsState;
+  // Present when the host can list an agent's own sessions: the filter row gets an "import" button
+  onListNative?: (agent: AgentId) => void;
+  onImportNative?: (agent: AgentId, s: NativeSessionInfo) => void;
   onSelect: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
@@ -47,7 +57,7 @@ export interface SessionListProps {
 // Each item: vendor mark · title · time; on hover those swap for the actions — pin, a "…" menu (rename / export / delete), plus "move here" for a session from another project.
 // Deletion applies immediately, undo lives on the Toast at the shell's bottom. Scope comes from acpira.sessionScope (settings);
 // under "all" each row from another project carries that project's folder name before the time
-export function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, onSelect, onRename, onDelete, onPin, onMove, onExport }: SessionListProps) {
+export function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onMove, onExport }: SessionListProps) {
   const locale = useLocale();
   const [query, setQuery] = useState('');
   const [agentFilter, setAgentFilter] = useState<string>();
@@ -100,8 +110,17 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
           />
         </label>
       </div>
-      <div className="flex min-w-0 shrink-0 items-center px-1 pt-1">
+      <div className="flex min-w-0 shrink-0 items-center gap-1 px-1 pt-1">
         <ChannelFilter agents={agents} value={agentFilter} onChange={setAgentFilter} />
+        {onListNative && onImportNative && (
+          <ImportSessions
+            agents={agents} agentFilter={agentFilter} activeAgent={activeAgent}
+            native={nativeSessions}
+            onList={onListNative}
+            onImport={onImportNative}
+            onSelect={onSelect}
+          />
+        )}
       </div>
       <div className="scroll-thin mt-1 flex min-h-0 flex-col overflow-y-auto border-t border-line pb-1" role="listbox" aria-label={t('session.listAria')}>
         {/* Empty state takes exactly one item row (pt-1 + min-h-row) so the popover keeps its height whether the filter matches 0 or 1 session */}
@@ -163,6 +182,77 @@ function ChannelFilter({ agents, value, onChange }: { agents: AgentInfo[]; value
       </Popover.Popup></Popover.Positioner></Popover.Portal>
     </Popover.Root>
   </div>;
+}
+
+// The filter row's import entry: lists the chosen agent's own sessions over ACP (the host spawns a throwaway process for
+// session/list — nothing is created on the agent's side). A session already imported is dimmed and jumps to its record;
+// the rest import on click. The agent switcher in the header re-requests the list for the agent it lands on
+function ImportSessions({ agents, agentFilter, activeAgent, native, onList, onImport, onSelect }: {
+  agents: AgentInfo[];
+  agentFilter?: AgentId;
+  activeAgent?: AgentId;
+  native?: NativeSessionsState;
+  onList: (agent: AgentId) => void;
+  onImport: (agent: AgentId, s: NativeSessionInfo) => void;
+  onSelect: (id: string) => void;
+}) {
+  const locale = useLocale();
+  const [open, setOpen] = useState(false);
+  // An explicit pick outlives the popover only while it is open; a fresh open follows the filter / active session again
+  const [picked, setPicked] = useState<AgentId>();
+  const candidates = agents.filter(a => !a.external);
+  const agent = picked ?? agentFilter ?? activeAgent ?? candidates.find(a => a.available !== false)?.id ?? candidates[0]?.id;
+  const name = agent ? (agents.find(a => a.id === agent)?.name ?? agent) : '';
+
+  // onList is a stable postMessage wrapper; the request fires when the popover opens and whenever the chosen agent changes
+  useEffect(() => { if (open && agent) onList(agent); }, [open, agent]);
+
+  if (!candidates.length) return null;
+  // Answers for another agent are stale the moment the switcher moved on; keep the loading row until this agent's list lands
+  const mine = native?.agent === agent ? native : undefined;
+  const now = new Date();
+  const dayOf = (iso: string) => Math.floor((startOfDay(now) - startOfDay(new Date(iso))) / 86_400_000);
+
+  return (
+    <span className="ml-auto shrink-0" onKeyDownCapture={e => {
+      // Nested inside the history popover / drawer: consume the first Escape like ChannelFilter does
+      if (open && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(false); }
+    }}>
+      <Popover.Root open={open} onOpenChange={o => { setOpen(o); if (!o) setPicked(undefined); }}>
+        <Popover.Trigger render={<IconButton title={t('session.import.action')} aria-label={t('session.import.action')}><Import strokeWidth={1.5} /></IconButton>} />
+        <Popover.Portal><Popover.Positioner width="xl"><Popover.Popup initialFocus={interaction => interaction === 'keyboard'} aria-label={t('session.import.action')}>
+          <PanelHeader tail={<ChannelFilter agents={candidates} value={agent} onChange={id => setPicked(id || undefined)} />}>
+            {t('session.import.title', { agent: name })}
+          </PanelHeader>
+          <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto" role="listbox" aria-label={t('session.import.title', { agent: name })}>
+            {(!mine || mine.loading) && <div className="flex min-h-row items-center justify-center px-2 text-2 text-fg-3">{t('session.import.loading')}</div>}
+            {mine && !mine.loading && mine.error && <div className="flex min-h-row items-center justify-center px-2 text-2 text-fg-3">{mine.error}</div>}
+            {mine && !mine.loading && !mine.error && !mine.sessions.length && <div className="flex min-h-row items-center justify-center px-2 text-2 text-fg-3">{t('session.import.none')}</div>}
+            {mine && !mine.loading && !mine.error && mine.sessions.map(s => (
+              <Row
+                key={s.sessionId}
+                as="button"
+                interactive
+                role="option"
+                className={s.localId ? 'text-fg-3' : undefined}
+                lead={<AgentMark id={agent!} name={name} />}
+                trailing={s.localId
+                  ? <span className="flex items-center gap-1"><Check className="size-3" strokeWidth={2} />{t('session.import.imported')}</span>
+                  : s.updatedAt ? fmtTime(s.updatedAt, dayOf(s.updatedAt), locale) : undefined}
+                onClick={() => {
+                  if (s.localId) onSelect(s.localId);
+                  else onImport(agent!, s);
+                  setOpen(false);
+                }}
+              >
+                <span className={cn('min-w-0 truncate', !s.title && 'font-mono text-fg-3')}>{s.title || s.sessionId.slice(0, 8)}</span>
+              </Row>
+            ))}
+          </div>
+        </Popover.Popup></Popover.Positioner></Popover.Portal>
+      </Popover.Root>
+    </span>
+  );
 }
 
 interface ItemProps {

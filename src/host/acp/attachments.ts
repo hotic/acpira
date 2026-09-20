@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import type * as acp from '@agentclientprotocol/sdk';
 import type { Attachment, Draft } from '@shared/transcript';
 import { MAX_IMAGE_BYTES, MAX_TEXT_BYTES, base64Bytes, extOfMime, imageMimeOf } from '@shared/attachments';
+import type { AgentDef } from './AgentRegistry';
 import { msg } from '../errors';
 import { t } from '../i18n';
 
@@ -21,18 +22,37 @@ export interface PreparedPrompt {
   problems: string[];
 }
 
+// What the agent says it can take in a prompt, plus the per-agent override for a capability that lies.
+// An absent capability (or no caps at all) means permitted — the historical behaviour
+export interface PromptCaps {
+  embeddedContext?: boolean;
+  image?: boolean;
+  // The agent advertises image: false yet accepts image blocks (Grok) — declared per agent as AgentDef.prompt.imagesRegardless
+  imagesRegardless?: boolean;
+}
+
+// The prompt capabilities to stage against: the advertised set, defaulting to permitted when the agent said nothing,
+// overridden by what the registry knows about the agent
+export function promptCapsOf(init: acp.InitializeResponse | undefined, def: AgentDef): PromptCaps {
+  const p = init?.agentCapabilities?.promptCapabilities;
+  return { embeddedContext: p?.embeddedContext ?? true, image: p?.image ?? true, imagesRegardless: def.prompt?.imagesRegardless };
+}
+
 // Turns the composer's text + drafts into the wire prompt and the transcript attachments. Text goes first, then one block per draft:
-// images inline as base64 (never gated on promptCapabilities.image — Grok advertises false yet accepts them), dropped text as an embedded resource
-// whose uri is the blob written to disk, files as resource_link so the agent reads them itself — except image files, which are read here and sent as pixels.
+// images inline as base64 (unless the agent says it takes none — the Grok exception is declared per agent, AgentDef.prompt.imagesRegardless),
+// dropped text as an embedded resource whose uri is the blob written to disk (plain marked-up text when embeddedContext is unsupported),
+// files as resource_link so the agent reads them itself — except image files, which are read here and sent as pixels.
 // Never throws for a single draft: a payload the disk refuses still goes over the wire (the preview is lost), an oversized image is dropped with a note
-export async function preparePrompt(sessionId: string, text: string, drafts: Draft[], blobs: BlobStore): Promise<PreparedPrompt> {
+export async function preparePrompt(sessionId: string, text: string, drafts: Draft[], blobs: BlobStore, caps?: PromptCaps): Promise<PreparedPrompt> {
   const out: PreparedPrompt = { blocks: text ? [{ type: 'text', text }] : [], attachments: [], problems: [] };
+  const noImages = caps?.image === false && !caps.imagesRegardless;
   const stage = async (ext: string, bytes: Uint8Array, label: string) => {
     try { return await blobs.saveBlob(sessionId, ext, bytes); }
     catch (e) { out.problems.push(t('host.attachStageFailed', { label, error: msg(e) })); return undefined; }
   };
   for (const d of drafts) {
     if (d.kind === 'image') {
+      if (noImages) { out.problems.push(t('host.imageUnsupported', { name: d.name ?? t('common.image') })); continue; }
       if (base64Bytes(d.data) > MAX_IMAGE_BYTES) { out.problems.push(t('host.imageTooBig', { name: d.name ?? t('common.image'), mb: MAX_IMAGE_BYTES >> 20 })); continue; }
       const saved = await stage(extOfMime(d.mimeType), Buffer.from(d.data, 'base64'), d.name ?? t('common.image'));
       out.blocks.push({ type: 'image', mimeType: d.mimeType, data: d.data });
@@ -43,12 +63,18 @@ export async function preparePrompt(sessionId: string, text: string, drafts: Dra
       if (bytes.byteLength > MAX_TEXT_BYTES) { out.problems.push(t('attach.tooBigText', { name: d.name, kb: MAX_TEXT_BYTES >> 10 })); continue; }
       // The embedded resource is addressed by the blob on disk, so an agent that insists on reading a real file finds one
       const saved = await stage('.txt', bytes, d.name);
-      const uri = saved ? pathToFileURL(saved.path).href : `attachment:///${encodeURIComponent(d.name)}`;
-      out.blocks.push({ type: 'resource', resource: { uri, mimeType: 'text/plain', text: d.text } });
+      if (caps?.embeddedContext === false) {
+        out.blocks.push({ type: 'text', text: `[Attachment: ${d.name}]\n${d.text}\n[End of attachment: ${d.name}]` });
+      } else {
+        const uri = saved ? pathToFileURL(saved.path).href : `attachment:///${encodeURIComponent(d.name)}`;
+        out.blocks.push({ type: 'resource', resource: { uri, mimeType: 'text/plain', text: d.text } });
+      }
       out.attachments.push({ kind: 'text', blob: saved?.name, name: d.name });
     } else {
       const image = await readImageFile(d.uri);
       if (image) {
+        // The agent said it takes no images — a resource_link is not a fallback, it reads the file as pixels anyway
+        if (noImages) { out.problems.push(t('host.imageUnsupported', { name: d.name })); continue; }
         const saved = await stage(extOfMime(image.mimeType), image.bytes, d.name);
         out.blocks.push({ type: 'image', mimeType: image.mimeType, data: image.bytes.toString('base64') });
         out.attachments.push({ kind: 'image', blob: saved?.name, mimeType: image.mimeType, name: d.name });

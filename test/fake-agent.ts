@@ -1,6 +1,6 @@
 import { Readable, Writable } from 'node:stream';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as acp from '@agentclientprotocol/sdk';
 
@@ -8,15 +8,26 @@ import * as acp from '@agentclientprotocol/sdk';
 // Scripts: default → thought + text; "tool" → tool call + permission request; "slow" → streams slowly, waits for cancel; "auth" → session/new fails with -32000;
 // "big" → reports a very large usage; "/compact" → compaction_update in_progress → completed, usage drops;
 // "fail" → session/prompt rejects with a typed upstream error the way Devin does (once: the same prompt succeeds when sent again);
-// "refuse" → stopReason refusal with no output; "truncate" → some text, then stopReason max_tokens; "mode:<id>" → current_mode_update to that mode
+// "refuse" → stopReason refusal with no output; "truncate" → some text, then stopReason max_tokens; "mode:<id>" → current_mode_update to that mode;
+// "tool-downgrade" / "tool-downgrade-late" → OpenCode's write: a permission request whose embedded toolCall is a low-fidelity copy
+// (kind 'other', dir title, file+dir locations, rawInput.filepath) racing the real in_progress update
 // "ask-devin" / "ask-kimi" → the ask_user_question tool call followed by an elicitation/create form shaped like that CLI's (Devin: no toolCallId, label in const,
 // description in title, allowOther; Kimi: toolCallId, question texts joined in message); "ask-grok" → the `_x.ai/ask_user_question` request; the reply echoes what came back
-// Resume: when resume doesn't know the sessionId, a cwd containing "gone" mimics Devin's session_not_found, otherwise reports unknown session
+// Resume: when resume doesn't know the sessionId, a cwd containing "gone" mimics Devin's session_not_found, otherwise reports unknown session;
+// "dsh-active" / "dsh-cwd" / "dsh-unresumable" / "dsh-mcp" mimic DeepSeek Harness answering bare invalidParams for an active session,
+// a cwd mismatch, an unresumable session and an MCP config error
 // Login: when cwd contains "needs-auth", session/new requires authenticate first; authenticate validates _meta.api_key the way Devin does (only accepts good-key)
 // Process lifecycle knobs (env): FAKE_INIT_FAIL → initialize answers an error while the process stays up (an orphan unless the client kills it);
-// FAKE_STUBBORN → ignores SIGTERM and keeps the event loop busy, so only SIGKILL ends it; FAKE_SILENT_CANCEL → a cancel during background
-// compaction drops the work without the usual "Compaction canceled." prose; FAKE_AUTH_REJECT → authenticate always fails (terminal login only);
-// FAKE_MODELS → comma-separated extra model options appended to the model configOption (read at spawn, so a second spawn sees new values)
+// FAKE_INIT_HANG → the initialize handler returns a promise that never settles; FAKE_STUBBORN → ignores SIGTERM and keeps the event loop busy,
+// so only SIGKILL ends it; FAKE_SILENT_CANCEL → a cancel during background compaction drops the work without the usual "Compaction canceled." prose;
+// FAKE_AUTH_REJECT → authenticate always fails (terminal login only); FAKE_CLOSE_LOG → advertise sessionCapabilities.close and append the
+// sessionId to that file on session/close; FAKE_PROMPT_CAPS=strict → advertise promptCapabilities { embeddedContext: false, image: false };
+// FAKE_STARTUP_BANNER → pi-acp's startup banner: the session/new response carries _meta.piAcp.startupInfo and the same
+// text is re-sent as one agent_message_chunk a tick later; =early instead sends it before session/new returns;
+// FAKE_MODELS → comma-separated extra model options appended to the model configOption (read at spawn, so a second spawn sees new values);
+// FAKE_SESSION_DIR → a native session store on disk: sessions persist as <id>.json, resume/load restore them (load replays a
+// "NATIVE_REPLAY" message), and the agent advertises sessionCapabilities.list, answering session/list with the dir's sessions
+// (title "Fake <id8>", updatedAt = file mtime, newest first; cursor is a numeric offset, page size 50)
 
 if (process.env.FAKE_STUBBORN) {
   process.on('SIGTERM', () => {});
@@ -36,8 +47,9 @@ function readSession(id: string): SavedSession | undefined {
 function saveSession(id: string, prompts = readSession(id)?.prompts ?? []) {
   if (sessionDir) writeFileSync(join(sessionDir, `${id}.json`), JSON.stringify({ prompts, mode: modes.get(id) ?? 'agent', config }));
 }
-function restoreSession(id: string): acp.LoadSessionResponse {
-  if (!authed) throw acp.RequestError.authRequired();
+function restoreSession(id: string, cwd: string): acp.LoadSessionResponse {
+  // Same gate as session/new: auth is a property of the session's cwd, not of restore in general
+  if (!authed && cwd.includes('needs-auth')) throw acp.RequestError.authRequired();
   const saved = readSession(id);
   if (!saved) throw new acp.RequestError(-32016, 'Session not found', { 'cognition.ai/errorKind': 'session_not_found' });
   sessions.add(id);
@@ -62,14 +74,27 @@ const app = acp.agent({ name: 'fake-agent' })
   })
   .onRequest(acp.methods.agent.initialize, () => {
     if (process.env.FAKE_INIT_FAIL) throw acp.RequestError.internalError(undefined, 'initialize refused by fixture');
+    if (process.env.FAKE_INIT_HANG) return new Promise<never>(() => {});
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
       agentInfo: { name: 'fake', version: '0.0.0' },
-      agentCapabilities: { loadSession: true, sessionCapabilities: process.env.FAKE_LOAD_ONLY ? {} : { resume: {} }, promptCapabilities: { embeddedContext: true } },
+      agentCapabilities: {
+        loadSession: true,
+        sessionCapabilities: process.env.FAKE_LOAD_ONLY ? {} : { resume: {}, ...(process.env.FAKE_CLOSE_LOG ? { close: {} } : {}), ...(sessionDir ? { list: {} } : {}) },
+        promptCapabilities: process.env.FAKE_PROMPT_CAPS === 'strict' ? { embeddedContext: false, image: false } : { embeddedContext: true },
+      },
       authMethods: [{ id: 'fake.login', name: 'Fake login', description: 'run fake login' }],
     };
   })
-  .onRequest(acp.methods.agent.session.new, ({ params }) => {
+  .onRequest(acp.methods.agent.session.new, async ({ params, client }) => {
+    // FAKE_STARTUP_BANNER: pi-acp's prelude — the response carries _meta.piAcp.startupInfo and the same text is re-sent
+    // as one agent_message_chunk a tick later; =early keeps the old pre-response timing (before any session exists)
+    const banner = process.env.FAKE_STARTUP_BANNER ? 'pi v0.0 banner' : undefined;
+    const lateBanner = banner && process.env.FAKE_STARTUP_BANNER !== 'early' ? banner : undefined;
+    if (banner && !lateBanner) {
+      await client.notify(acp.methods.client.session.update, { sessionId: 'pending-session',
+        update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: banner } } });
+    }
     if (params.cwd.includes('needs-auth') && !authed) {
       // Mimic Kimi: the reason goes to stderr as an ndjson log line, the -32000 itself carries nothing
       if (process.env.FAKE_AUTH_HINT === 'devin') {
@@ -84,15 +109,20 @@ const app = acp.agent({ name: 'fake-agent' })
     const sessionId = sessionDir ? randomUUID() : `s${++seq}`;
     sessions.add(sessionId);
     saveSession(sessionId, []);
+    if (lateBanner) {
+      setTimeout(() => { void client.notify(acp.methods.client.session.update, { sessionId,
+        update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: lateBanner } } }); }, 0);
+    }
     return {
       sessionId,
+      ...(lateBanner ? { _meta: { piAcp: { startupInfo: lateBanner } } } : {}),
       // when cwd contains no-modes, mimic Grok: omit modes, forcing the client to use the registry's synthesized modes
       ...(params.cwd.includes('no-modes') ? {} : { modes: { currentModeId: 'agent', availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }] } }),
       configOptions: configOptions(),
     };
   })
   .onRequest(acp.methods.agent.session.resume, ({ params }) => {
-    if (sessionDir) return restoreSession(params.sessionId);
+    if (sessionDir) return restoreSession(params.sessionId, params.cwd);
     // cwd containing "flaky-resume": while a resume.lock file sits in it, restores fail with a transport-level
     // internal error — a transient restore failure, not a missing session; removing the file makes them succeed
     if (params.cwd.includes('flaky-resume')) {
@@ -101,6 +131,11 @@ const app = acp.agent({ name: 'fake-agent' })
       return { modes: { currentModeId: 'agent', availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }] } };
     }
     if (!sessions.has(params.sessionId)) {
+      // DeepSeek Harness reports every restore problem as a bare invalidParams whose reason is only in the message
+      if (params.cwd.includes('dsh-active')) throw acp.RequestError.invalidParams(undefined, `session is already active: ${params.sessionId}`);
+      if (params.cwd.includes('dsh-cwd')) throw acp.RequestError.invalidParams(undefined, `session cwd does not match: ${params.cwd}`);
+      if (params.cwd.includes('dsh-unresumable')) throw acp.RequestError.invalidParams(undefined, `session is not resumable: ${params.sessionId}`);
+      if (params.cwd.includes('dsh-mcp')) throw acp.RequestError.invalidParams(undefined, 'mcp server "fs": command not found');
       // when cwd contains gone, mimic Devin: empty sessions get swept once the process exits, report session_not_found
       if (params.cwd.includes('gone')) throw new acp.RequestError(-32016, 'Session not found', { 'cognition.ai/errorKind': 'session_not_found', 'cognition.ai/retryable': false });
       // cwd containing "locked": Devin's session_locked — another process holds the session
@@ -109,9 +144,21 @@ const app = acp.agent({ name: 'fake-agent' })
     }
     return { modes: { currentModeId: 'plan', availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }] } };
   })
+  .onRequest(acp.methods.agent.session.list, ({ params }) => {
+    if (!sessionDir) throw acp.RequestError.methodNotFound(acp.methods.agent.session.list);
+    const all = readdirSync(sessionDir).filter(f => f.endsWith('.json'))
+      .map(f => ({ id: f.slice(0, -'.json'.length), mtime: statSync(join(sessionDir, f)).mtime }))
+      .sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+    const offset = Number(params.cursor) || 0;
+    const page = all.slice(offset, offset + 50);
+    return {
+      sessions: page.map(f => ({ sessionId: f.id, cwd: params.cwd ?? '', title: `Fake ${f.id.slice(0, 8)}`, updatedAt: f.mtime.toISOString() })),
+      ...(offset + page.length < all.length ? { nextCursor: String(offset + page.length) } : {}),
+    };
+  })
   .onRequest(acp.methods.agent.session.load, async ({ params, client }) => {
     if (!sessionDir) throw acp.RequestError.methodNotFound(acp.methods.agent.session.load);
-    const restored = restoreSession(params.sessionId);
+    const restored = restoreSession(params.sessionId, params.cwd);
     // Native load replays content; an existing local transcript must not duplicate it.
     await client.notify(acp.methods.client.session.update, { sessionId: params.sessionId,
       update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'NATIVE_REPLAY' } } });
@@ -123,6 +170,13 @@ const app = acp.agent({ name: 'fake-agent' })
     const key = params._meta?.api_key;
     if (key !== undefined && key !== 'good-key') throw acp.RequestError.authRequired({ reason: 'bad key' });
     authed = true;
+    return {};
+  })
+  .onRequest(acp.methods.agent.session.close, ({ params }) => {
+    // FAKE_CLOSE_LOG: the test watches this file to see session/close land before the process dies
+    const log = process.env.FAKE_CLOSE_LOG;
+    if (log) appendFileSync(log, `${params.sessionId}\n`);
+    sessions.delete(params.sessionId);
     return {};
   })
   .onRequest(acp.methods.agent.session.setMode, ({ params }) => { modes.set(params.sessionId, params.modeId); saveSession(params.sessionId); return {}; })
@@ -169,6 +223,11 @@ const app = acp.agent({ name: 'fake-agent' })
       return { stopReason: 'end_turn' };
     }
     if (text === '/slash-error') throw acp.RequestError.invalidParams(undefined, 'Unknown command');
+    // echo-blocks → reply with the wire block types, so tests can see what the prompt actually carried
+    if (text.startsWith('echo-blocks')) {
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: params.prompt.map(p => p.type).join(',') } });
+      return { stopReason: 'end_turn' };
+    }
     if (text === 'inspect-native-history') {
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(readSession(sid)) } });
       return { stopReason: 'end_turn' };
@@ -230,6 +289,14 @@ const app = acp.agent({ name: 'fake-agent' })
     // Typed upstream failure, once per distinct prompt text, before anything is streamed — the retry of the same prompt then runs the normal script
     if (text.includes('fail') && (failed.get(text) ?? 0) < (text.includes('fail-twice') ? 2 : 1)) {
       failed.set(text, (failed.get(text) ?? 0) + 1);
+      // A quota failure can arrive after useful output and completed workspace actions.
+      if (text.includes('fail-after-output')) {
+        await send({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'Checked the existing implementation.' } });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Completed part of the requested work.' } });
+        const toolCallId = `before-quota-${failed.get(text)}`;
+        await send({ sessionUpdate: 'tool_call', toolCallId, title: 'Write completed.txt', kind: 'edit', status: 'in_progress' });
+        await send({ sessionUpdate: 'tool_call_update', toolCallId, status: 'completed' });
+      }
       throw new acp.RequestError(-32603, 'Upstream error', { 'cognition.ai/errorKind': 'upstream_error', 'cognition.ai/retryable': true, detail: 'quota exhausted' });
     }
 
@@ -262,6 +329,35 @@ const app = acp.agent({ name: 'fake-agent' })
       if (compactions === 1) usedTokens = Math.round(usedTokens * 0.2);
       await send({ sessionUpdate: 'compaction_update', compactionId: id, status: 'completed' });
       if (!grokUsage) await send({ sessionUpdate: 'usage_update', used: usedTokens, size: 1_000_000 });
+      return { stopReason: 'end_turn' };
+    }
+
+    // OpenCode's write: the permission request embeds a low-fidelity copy of the call (kind 'other', the parent dir as
+    // title, file + dir locations, rawInput.filepath) while the real in_progress update arrives with kind 'edit' and
+    // rawInput.filePath + content — the order of the two varies (tool-downgrade-late sends the update first)
+    if (text === 'tool-downgrade' || text === 'tool-downgrade-late') {
+      await send({ sessionUpdate: 'tool_call', toolCallId: 'w1', title: 'write', kind: 'edit', status: 'pending', locations: [], rawInput: {} });
+      const askPermission = () => client.request(acp.methods.client.session.requestPermission, {
+        sessionId: sid,
+        toolCall: { toolCallId: 'w1', kind: 'other', status: 'pending', title: '/tmp/proj',
+          locations: [{ path: '/tmp/proj/a.txt' }, { path: '/tmp/proj' }],
+          rawInput: { filepath: '/tmp/proj/a.txt', parentDir: '/tmp/proj' } },
+        options: [
+          { optionId: 'once', name: 'Allow once', kind: 'allow_once' },
+          { optionId: 'always', name: 'Allow always', kind: 'allow_always' },
+          { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+        ],
+      });
+      const progress = () => send({ sessionUpdate: 'tool_call_update', toolCallId: 'w1', kind: 'edit', status: 'in_progress',
+        locations: [{ path: '/tmp/proj/a.txt' }], rawInput: { filePath: '/tmp/proj/a.txt', content: 'alpha\n' } });
+      const perm = text === 'tool-downgrade-late'
+        ? await progress().then(() => askPermission())
+        : await askPermission().then(async r => { await progress(); return r; });
+      const ok = perm.outcome.outcome === 'selected' && (perm.outcome.optionId === 'once' || perm.outcome.optionId === 'always');
+      await send({ sessionUpdate: 'tool_call_update', toolCallId: 'w1', status: ok ? 'completed' : 'failed',
+        title: 'tmp/proj/a.txt',
+        rawOutput: { output: 'Wrote file successfully.', metadata: { exists: false, filepath: '/tmp/proj/a.txt' } },
+        content: [{ type: 'content', content: { type: 'text', text: 'Wrote file successfully.' } }] });
       return { stopReason: 'end_turn' };
     }
 
