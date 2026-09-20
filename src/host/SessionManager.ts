@@ -5,7 +5,7 @@ import type { ChatGptIntegrationStatus } from '@shared/chatgptIntegration';
 import { desktopCommanderStatus } from './external/desktopCommanderStatus';
 import type { ChatGptBridgeStore } from './external/ChatGptBridgeStore';
 import { CHATGPT_ID } from './external/chatgptEvents';
-import type { AccountInfo, AgentId, AgentInfo, ConfigControl, SessionSummary, SessionView, TurnSettings } from '@shared/transcript';
+import type { AccountInfo, AgentId, AgentInfo, ConfigControl, NativeSessionInfo, SessionSummary, SessionView, TurnSettings } from '@shared/transcript';
 import type { AccountAction, AddAccountVia, EditTurnRequest, WebviewMsg } from '@shared/protocol';
 import { inWorkspace, type HiddenMap, type SessionScope } from '@shared/settings';
 import type { AgentRuntimeInfo } from '@shared/inventory';
@@ -15,6 +15,7 @@ import { AgentRegistry } from './acp/AgentRegistry';
 import { AgentPool } from './acp/AgentPool';
 import { AcpSession, type CompactionPolicy, type SessionRecord } from './acp/AcpSession';
 import { probeAgentControls, type ProbeResult } from './acp/probeControls';
+import { listNativeSessions } from './acp/nativeSessions';
 import type { AccountManager } from './accounts/AccountManager';
 import type { LocalAccounts } from './accounts/local';
 import { TranscriptStore, isSessionId, sortIndex, summarize, type SessionPrefs } from './store/TranscriptStore';
@@ -340,6 +341,78 @@ export class SessionManager {
     }
   }
 
+  // Which local record already holds a given native session id: live records first, then the index. Summaries written before
+  // acpSessionId existed have no field; their records are read once and the summary is patched so the next lookup is free
+  private async nativeOwners(agent: AgentId): Promise<Map<string, string>> {
+    const local = new Map<string, string>();
+    for (const s of this.live.values()) {
+      if (s.agent !== agent) continue;
+      const acpId = s.toRecord().acpSessionId;
+      if (acpId) local.set(acpId, s.id);
+    }
+    let patched = false;
+    for (const sum of this.index) {
+      if (sum.agent !== agent) continue;
+      if (sum.acpSessionId === undefined) {
+        const rec = await this.deps.store.load(sum.id).catch(() => undefined);
+        // `touched` marks the summary as this window's own, or the reconcile would prefer the stale disk entry and drop the patch
+        if (rec?.acpSessionId) { sum.acpSessionId = rec.acpSessionId; this.touched.add(sum.id); patched = true; }
+      }
+      if (sum.acpSessionId) local.set(sum.acpSessionId, sum.id);
+    }
+    // The debounced index write picks the patched field up, so the next listing does not re-read those records
+    if (patched) this.saveIndex();
+    return local;
+  }
+
+  // "Import from <agent>": the agent's own sessions in this workspace, each marked with the local record that already holds it.
+  // A throwaway process runs initialize + session/list — never session/new, which would persist a fresh session on the agent's side
+  async listNativeSessions(agent: AgentId): Promise<NativeSessionInfo[]> {
+    const def = this.deps.registry.get(agent);
+    const bin = await this.deps.registry.resolveBinary(agent);
+    if (!bin) throw new Error(t('host.notFound', { command: def.command, agent: def.name }));
+    const acc = this.deps.accounts?.supports(agent) ? this.deps.accounts.defaultFor(agent)?.id : undefined;
+    const extraEnv = acc ? await this.deps.accounts?.spawnEnv(agent, acc) : undefined;
+    const listed = await listNativeSessions({ def, binary: bin, cwd: this.deps.cwd(), extraEnv, log: line => this.deps.log(line) });
+    const local = await this.nativeOwners(agent);
+    const sessions: NativeSessionInfo[] = listed.map(s => ({
+      sessionId: s.sessionId, cwd: s.cwd,
+      title: s.title ?? undefined, updatedAt: s.updatedAt ?? undefined,
+      localId: local.get(s.sessionId),
+    }));
+    // Newest first when the agent reports timestamps; without any the order the agent sent (OpenCode's is already newest first) stands
+    sessions.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
+    return sessions;
+  }
+
+  // Bring one native session into Acpira: a record whose transcript is filled by the session/load replay on first open
+  // (importPending). Picking a session already imported just switches to the record that holds it
+  async importNativeSession(v: SessionViewer, agent: AgentId, native: { sessionId: string; cwd: string; title?: string; updatedAt?: string }): Promise<void> {
+    const existing = (await this.nativeOwners(agent)).get(native.sessionId);
+    if (existing) { await this.selectSessionFor(v, existing); return; }
+    const now = new Date().toISOString();
+    const record: SessionRecord = {
+      id: randomUUID(), agent,
+      accountId: this.deps.accounts?.supports(agent) ? this.deps.accounts.defaultFor(agent)?.id : undefined,
+      acpSessionId: native.sessionId,
+      cwd: native.cwd,
+      title: (native.title?.trim() || t('session.importedTitle')).slice(0, RENAME_MAX),
+      createdAt: now, updatedAt: native.updatedAt ?? now,
+      turns: [], controls: { modes: [], options: [] }, commands: [],
+      importPending: true, importedFrom: { sessionId: native.sessionId },
+    };
+    await this.deps.store.flush(record);
+    await this.dropEmptyCurrent(v);
+    const s = new AcpSession(record, this.sessionDeps());
+    this.live.set(s.id, s);
+    v.activeId = s.id;
+    this.onChange(s);
+    await s.start();
+    // The agent restored the native context but replayed no earlier messages (DSH's case): an empty ready transcript
+    // after an import looks like a failure, so say what happened
+    if (s.view().status === 'ready' && s.view().turns.length === 0) this.deps.toast('info', t('host.importNoHistory'));
+  }
+
   sessions(): SessionSummary[] {
     const native: SessionSummary[] = this.index.map(s => {
       const live = this.live.get(s.id);
@@ -593,6 +666,7 @@ export class SessionManager {
         case 'pinSession': await this.pinSession(m.id, m.pinned); break;
         case 'moveSession': await this.moveSession(m.id); break;
         case 'forkSession': await this.forkSession(v, m.sessionId, m.turnIndex); break;
+        case 'importNativeSession': await this.importNativeSession(v, m.agent, m); break;
         case 'selectAccount': await this.selectAccount(v, m.id, m.sessionId); break;
         case 'addAccount': await this.addAccount(v, m.agent, m.via); break;
         case 'removeAccount': await this.deps.accounts?.remove(m.id); this.pool.invalidate(); break;

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Paperclip, X } from 'lucide-react';
-import type { ExternalSessionInfo, AccountInfo, AgentInfo, AuthMethodInfo, Draft, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionControls, SessionStatus, SessionSummary, SlashCommand, Turn, Usage } from '@shared/transcript';
+import type { ExternalSessionInfo, AccountInfo, AgentInfo, AuthMethodInfo, Draft, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionControls, SessionStatus, SessionSummary, SlashCommand, Turn, Usage } from '@shared/transcript';
 import type { HiddenMap, SessionScope } from '@shared/settings';
-import type { AccountAction, AddAccountVia, EditTurnRequest, FileHit } from '@shared/protocol';
+import type { AccountAction, AddAccountVia, EditTurnRequest, FileHit, NativeSessionsState } from '@shared/protocol';
 import { AppearanceContext, appearanceDataAttrs, type Appearance } from '../appearance';
 import { lookAttrs, ThemeContext, type ShellLook, type Theme } from '../look';
 import { t } from '../i18n';
@@ -77,6 +77,9 @@ export interface ShellHandlers {
   exportSession?: (id: string, format: 'markdown' | 'json') => void;
   // Open the session in an editor tab
   openInEditor?: (sessionId: string) => void;
+  // History list's import popover: read the agent's own sessions / import one as a local record
+  listNativeSessions?: (agent: AgentInfo['id']) => void;
+  importNativeSession?: (agent: AgentInfo['id'], s: NativeSessionInfo) => void;
 }
 
 export interface ShellProps {
@@ -115,6 +118,8 @@ export interface ShellProps {
   // This window's workspace folder and the list scope setting: the session list filters by them (the LAB leaves both out and shows everything)
   workspace?: string;
   sessionScope?: SessionScope;
+  // The import popover's current listing (keyed by the agent it was requested for)
+  nativeSessions?: NativeSessionsState;
   // Where attachment blobs are served from (the host's sessions directory as a webview URI); absent in the LAB
   blobBase?: string;
   on: ShellHandlers;
@@ -238,6 +243,10 @@ export function Shell(p: ShellProps) {
       onPin={on.pinSession}
       onMove={handlers.moveSession}
       onExport={on.exportSession}
+      activeAgent={p.agent.id}
+      nativeSessions={p.nativeSessions}
+      onListNative={on.listNativeSessions}
+      onImportNative={on.importNativeSession}
     />
   );
 
@@ -319,6 +328,7 @@ export function Shell(p: ShellProps) {
               activeSessionId={p.activeSessionId}
               workspace={p.workspace}
               sessionScope={p.sessionScope}
+              nativeSessions={p.nativeSessions}
               on={handlers}
               onToggleDrawer={() => setDrawerOpen(o => !o)}
               drawerOpen={drawerOpen}

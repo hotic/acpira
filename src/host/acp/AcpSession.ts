@@ -18,20 +18,22 @@ import { applyModelSources, type ModelSources } from '@shared/modelSources';
 import { thoughtCorrection } from '@shared/composerControls';
 import { readModelSources } from './modelSources';
 import { fetchGrokUsage } from './grokUsage';
-import { preparePrompt, type BlobStore } from './attachments';
-import { activityOf, applyUpdate, endTurn, failTurn, initControls, applyConfigOptions, runtimeInfoOf, type NormalizeState } from './normalize';
+import { preparePrompt, promptCapsOf, type BlobStore } from './attachments';
+import { activityOf, applyUpdate, endTurn, failTurn, initControls, applyConfigOptions, runtimeInfoOf, sealReplay, type NormalizeState } from './normalize';
 import { PermissionGate } from './permissions';
 import { QuestionGate } from './questions';
 import { PromptQueue, type StagedSend } from './promptQueue';
 import { editTurn, retryTurn, historyContext, FORK_HISTORY_LEAD, type SessionEditCtx, type TurnPhase } from './sessionEdit';
 import { turnUsageOf } from './turnUsage';
-import { AccountAuthError, authHintOf, isAuth, isMethodMissing, isSessionGone, isSessionLocked, isUnknownSession, summarizePrompt, turnErrorOf } from './sessionErrors';
+import { AccountAuthError, authHintOf, classifyRestoreError, isAuth, isSessionGone, summarizePrompt, turnErrorOf } from './sessionErrors';
 import { msg } from '../errors';
 import { cloneJson } from '../clone';
 import { t, tOr } from '../i18n';
 import { RENAME_MAX, TITLE_MAX } from '../limits';
 
 const GROK_USAGE_INTERVAL_MS = 800;
+// How long dropProcess waits for session/close before killing the process anyway
+const CLOSE_GRACE_MS = 3_000;
 
 // The persisted session record: view fields plus the acpSessionId needed for resuming
 export interface SessionRecord {
@@ -52,6 +54,10 @@ export interface SessionRecord {
   historyPending?: true;
   // Where the transcript came from (fork); a forked session also keeps agent-generated titles muted forever
   forkedFrom?: { sessionId: string; turnIndex: number };
+  // Created from the agent's own session list; the first open prefers session/load so the native history is replayed into the empty transcript
+  importPending?: true;
+  // Which native session this record was imported from; provenance, kept forever
+  importedFrom?: { sessionId: string };
 }
 
 // The two hooks the account layer gives a session: environment variables before spawn, authenticate after initialize
@@ -100,6 +106,10 @@ export class AcpSession {
   private authMethods?: AuthMethodInfo[];
   private phase: TurnPhase = { running: false, staging: false, stagingAborted: false, editing: false, editNotifications: [] };
   private replaying = false;
+  // pi-acp echoes its startup prelude in _meta.piAcp.startupInfo and re-sends it as one agent_message_chunk a tick
+  // after the response (src/acp/agent.ts: setTimeout(() => session.sendStartupInfoIfPending(), 0)); pi's own
+  // quietStartup setting suppresses it at the source. In-memory only — the field is per connection, not persisted
+  private startupBanner?: string;
   private proc?: AgentProcess;
   private perms: PermissionGate;
   private questions: QuestionGate;
@@ -124,6 +134,8 @@ export class AcpSession {
   // See SessionRecord: a fork's copied transcript until its first prompt hands it to the native session as context
   private historyPending?: true;
   private forkedFrom?: SessionRecord['forkedFrom'];
+  private importPending?: true;
+  private importedFrom?: SessionRecord['importedFrom'];
   // Agent-generated titles are ignored while a prompt that carries injected history context is in flight (fork first
   // prompt, edit rebuild — Kimi titles from the first content block, which would be the history blob), and always for
   // a forked session, whose `Fork: …` title is provenance the user can rename
@@ -140,6 +152,8 @@ export class AcpSession {
     this.acpSessionId = record.acpSessionId;
     this.historyPending = record.historyPending;
     this.forkedFrom = record.forkedFrom;
+    this.importPending = record.importPending;
+    this.importedFrom = record.importedFrom;
     this.agentTitleMuted = !!record.forkedFrom;
     // Old records (persisted before the contract changed) may lack the options field
     const c = record.controls as Partial<SessionControls> | undefined;
@@ -156,6 +170,7 @@ export class AcpSession {
       isReady: () => this.status === 'ready',
       isRunning: () => this.phase.running,
       canEnqueue: () => this.status === 'ready' || this.status === 'starting',
+      caps: () => promptCapsOf(this.proc?.init, this.deps.registry.get(this.agent)),
       send: (text, prepared) => this.prompt(text, [], false, { prepared }),
     });
   }
@@ -192,6 +207,7 @@ export class AcpSession {
       createdAt: this.createdAt, updatedAt: this.updatedAt, turns: this.state.turns, controls: this.state.controls,
       usage: this.state.usage, commands: this.state.commands, pinned: this.pinned,
       historyPending: this.historyPending, forkedFrom: this.forkedFrom,
+      importPending: this.importPending, importedFrom: this.importedFrom,
     };
   }
 
@@ -228,6 +244,7 @@ export class AcpSession {
       get autoApprove() { return s.perms.autoApprove; },
       set autoApprove(v) { s.perms.autoApprove = v; },
       syntheticModes: () => s.syntheticModes(),
+      caps: () => promptCapsOf(s.proc?.init, s.deps.registry.get(s.agent)),
       onUpdate: n => s.onUpdate(n),
       prompt: (text, attachments, auto, staged, planId) => s.prompt(text, attachments, auto, staged, planId),
       bump: () => s.bump(),
@@ -237,14 +254,31 @@ export class AcpSession {
     };
   }
 
-  // Kill the current CLI if any; its onExit / updates must not touch the session after this
+  // Kill the current CLI if any; its onExit / updates must not touch the session after this. When the agent advertises
+  // sessionCapabilities.close, session/close goes out first — close is not delete (OpenCode / DSH keep the session
+  // listable): it just lets the agent flush state and release its lock before the process dies
   private dropProcess() {
     const proc = this.proc;
     if (!proc) return;
     this.procGen++;
     this.proc = undefined;
     this.perms.bumpEpoch();
-    return proc.kill();
+    const sessionId = this.acpSessionId;
+    const closing = (async () => {
+      if (!sessionId || !proc.alive || !proc.init.agentCapabilities?.sessionCapabilities?.close) return;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          proc.agent.request(acp.methods.agent.session.close, { sessionId }),
+          new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('session/close timed out')), CLOSE_GRACE_MS); timer.unref(); }),
+        ]);
+      } catch (e) {
+        this.log(`session/close before exit failed: ${msg(e)}`);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    })();
+    return closing.then(() => proc.kill());
   }
 
   // Spawn the process + initialize + create / resume the session
@@ -392,11 +426,25 @@ export class AcpSession {
   private applyControls(modes?: acp.SessionModeState | null, configOptions?: acp.SessionConfigOption[] | null) {
     const wanted = this.state.controls.modeId;
     initControls(this.state.controls, modes, configOptions);
+    // pi-acp 0.0.33 advertises its thinking levels both as modes ("Thinking: off…xhigh") and as the thought_level
+    // config option; the composer would show the same choice twice, so the agent's modes are dropped entirely
+    // (no synthetic backfill either — those exist for agents that send no modes at all)
+    if (this.deps.registry.get(this.agent).controls?.ignoreModes) {
+      this.state.controls.modes = [];
+      this.state.controls.modeId = undefined;
+      this.state.controls.modeConfigId = undefined;
+      return;
+    }
     const syn = this.syntheticModes();
     if (!syn || this.state.controls.modes.length > 0) return;
     this.state.controls.modes = syn;
     this.state.controls.modeId = wanted && syn.some(m => m.id === wanted) ? wanted : 'default';
     this.perms.autoApprove = this.state.controls.modeId === 'yolo';
+  }
+
+  private noteStartupBanner(meta: unknown) {
+    const v = (meta as { piAcp?: { startupInfo?: unknown } } | null | undefined)?.piAcp?.startupInfo;
+    if (typeof v === 'string' && v) this.startupBanner = v;
   }
 
   private async openSession() {
@@ -405,49 +453,83 @@ export class AcpSession {
     if (this.acpSessionId) {
       // 1.0 does not inject MCP servers; the CLI reads its own config
       const req: acp.LoadSessionRequest = { sessionId: this.acpSessionId, cwd: this.cwd, mcpServers: [] };
-      // A restore attempt ends one of three ways, kept apart: the peer offers no restore path at all (read-only history), it answered
-      // that the session is gone (handled below), or it tried and failed — the last is a connection problem, not a missing capability,
-      // so it lands on the error Notice whose Retry reconnects and tries again
+      // A restore attempt ends one of four ways, kept apart: the peer offers no restore path at all (read-only history), it answered
+      // that the session is gone (handled below), it knows the session but cannot resume it (read-only too, with the peer's reason),
+      // or it tried and failed — the last is a connection problem, not a missing capability, so it lands on the error Notice
+      // whose Retry reconnects and tries again
       let gone = false;
       let failed: unknown;
       let locked = false;
-      if (caps?.sessionCapabilities?.resume) {
-        try {
-          const r: acp.ResumeSessionResponse = await agent.request(acp.methods.agent.session.resume, req);
-          this.applyControls(r.modes, r.configOptions);
-          this.status = 'ready';
-          this.log('session/resume ok');
-          return;
-        } catch (e) {
-          this.log(`session/resume failed: ${msg(e)}`);
-          if (isAuth(e)) throw e;
-          if (isSessionGone(e) || isUnknownSession(e)) gone = true;
-          else if (!isMethodMissing(e)) { failed = e; locked = isSessionLocked(e); }
+      let unresumable = false;
+      const classify = (e: unknown) => {
+        if (isAuth(e)) throw e;
+        switch (classifyRestoreError(e)) {
+          case 'gone': gone = true; break;
+          case 'locked': failed = e; locked = true; break;
+          case 'unresumable': failed = e; unresumable = true; break;
+          case 'failed': failed = e; break;
+          case undefined: break;
         }
-      }
-      if (!gone && caps?.loadSession) {
-        try {
-          this.replaying = this.state.turns.length > 0;
-          const r: acp.LoadSessionResponse | void = await agent.request(acp.methods.agent.session.load, req);
-          this.replaying = false;
-          this.applyControls(r?.modes, r?.configOptions);
-          this.status = 'ready';
-          this.log('session/load ok');
-          return;
-        } catch (e) {
-          this.replaying = false;
-          this.log(`session/load failed: ${msg(e)}`);
-          if (isAuth(e)) throw e;
-          if (isSessionGone(e) || isUnknownSession(e)) gone = true;
-          else if (!isMethodMissing(e)) { failed = e; locked = isSessionLocked(e); }
+      };
+      // An imported record's transcript is empty: prefer load so the native history replays into it (OpenCode / pi-acp
+      // replay the whole conversation on session/load; resume would restore the context without replaying anything).
+      // A record with a transcript resumes first — a load replay would duplicate what is already shown.
+      const attempts: ('load' | 'resume')[] = this.importPending ? ['load', 'resume'] : ['resume', 'load'];
+      const importing = this.importPending;
+      try {
+        for (const attempt of attempts) {
+          if (gone) break;
+          if (attempt === 'resume' && caps?.sessionCapabilities?.resume) {
+            try {
+              const r: acp.ResumeSessionResponse = await agent.request(acp.methods.agent.session.resume, req);
+              this.noteStartupBanner(r._meta);
+              this.applyControls(r.modes, r.configOptions);
+              this.status = 'ready';
+              this.log('session/resume ok');
+              return;
+            } catch (e) {
+              this.log(`session/resume failed: ${msg(e)}`);
+              classify(e);
+            }
+          }
+          if (attempt === 'load' && caps?.loadSession) {
+            try {
+              this.replaying = this.state.turns.length > 0;
+              const r: acp.LoadSessionResponse | void = await agent.request(acp.methods.agent.session.load, req);
+              this.replaying = false;
+              this.noteStartupBanner(r?._meta);
+              // The import replay lands in the empty transcript (replaying stayed false): close whatever the stream left open
+              if (this.importPending) sealReplay(this.state);
+              this.applyControls(r?.modes, r?.configOptions);
+              this.status = 'ready';
+              this.log('session/load ok');
+              return;
+            } catch (e) {
+              this.replaying = false;
+              this.log(`session/load failed: ${msg(e)}`);
+              classify(e);
+            }
+          }
         }
+      } finally {
+        // One restore pass per import; afterwards the record behaves like any other session of this agent
+        if (this.importPending) { delete this.importPending; this.touch(); }
       }
       if (!gone) {
+        // The peer has the session but refuses to continue it (e.g. DSH's "session is not resumable") —
+        // like a missing restore path the history is read-only, except the agent's own reason explains why
+        if (unresumable) {
+          this.status = 'readonly';
+          this.error = t('host.notResumable', { error: msg(failed) });
+          return;
+        }
         if (failed !== undefined) throw new Error(t(locked ? 'host.sessionLocked' : 'host.resumeFailed', { error: msg(failed) }));
         this.status = 'readonly';
         this.error = t('host.cannotResume');
         return;
       }
+      // An import whose native session is gone must not silently open a fresh one — there is no transcript to keep either, so error with Retry
+      if (importing) throw new Error(t('host.importGone'));
       // The peer forgot (or never had) this native session. Swapping a fresh one in under a transcript that already ran would
       // continue the visible conversation on an empty context — compaction state included — so only a session that never
       // said anything may be replaced transparently (Devin sweeps exactly those when its process exits)
@@ -468,6 +550,7 @@ export class AcpSession {
     // 1.0 does not inject MCP servers; the CLI reads its own config
     const r = await agent.request(acp.methods.agent.session.new, { cwd: this.cwd, mcpServers: [] });
     this.acpSessionId = r.sessionId;
+    this.noteStartupBanner(r._meta);
     this.applyControls(r.modes, r.configOptions);
     this.status = 'ready';
     this.log(`session/new ok: ${r.sessionId} · modes ${this.state.controls.modes.length} · options ${this.state.controls.options.map(o => `${o.id}(${o.options.length})`).join(' ') || '-'}`);
@@ -606,7 +689,8 @@ export class AcpSession {
     if (auto) this.touch(); else this.bump();
     let prepared = staged?.prepared, stagingError: string | undefined;
     if (!prepared) {
-      try { prepared = await preparePrompt(this.id, text, attachments, this.deps.blobs); }
+      const caps = promptCapsOf(this.proc?.init, this.deps.registry.get(this.agent));
+      try { prepared = await preparePrompt(this.id, text, attachments, this.deps.blobs, caps); }
       catch (e) { stagingError = msg(e); }
     }
     if (!prepared) {
@@ -631,7 +715,7 @@ export class AcpSession {
     // a cancel landing mid-staging keeps the copy for the next attempt instead of losing it for good
     let forkHistory: acp.ContentBlock[] | undefined;
     if (!auto && this.historyPending) {
-      try { forkHistory = await historyContext(this.id, this.state.turns, this.proc!, this.deps.blobs, FORK_HISTORY_LEAD); }
+      try { forkHistory = await historyContext(this.id, this.state.turns, this.proc!, this.deps.blobs, FORK_HISTORY_LEAD, promptCapsOf(this.proc?.init, this.deps.registry.get(this.agent))); }
       catch (e) { this.log(`fork context skipped: ${msg(e)}`); }
     }
     this.phase.staging = false;
@@ -970,6 +1054,16 @@ export class AcpSession {
     }
     if (n.sessionId !== this.acpSessionId && this.acpSessionId) return;
     const u = n.update;
+    // Conversation content cannot belong to a session that does not exist yet — pi-acp streams its startup
+    // banner as agent_message_chunk while session/new is still in flight. Command/config announcements do
+    // keep flowing: peers advertise them during session/new
+    if (!this.acpSessionId && this.status === 'starting'
+      && ['agent_message_chunk', 'agent_thought_chunk', 'tool_call', 'tool_call_update', 'plan'].includes(u.sessionUpdate)) {
+      this.log(`startup ${u.sessionUpdate} ignored (no session yet)`);
+      return;
+    }
+    // An agent whose modes are hidden (pi-acp duplicates them as a config option) doesn't get to push mode changes either
+    if (u.sessionUpdate === 'current_mode_update' && this.deps.registry.get(this.agent).controls?.ignoreModes) return;
     // yolo is host-side state: a current_mode_update pushed by the CLI (e.g. the shot that pulled it back from plan to default) must not drag the UI back
     if (this.perms.autoApprove && u.sessionUpdate === 'current_mode_update') u.currentModeId = 'yolo';
     if (this.replaying && ['user_message_chunk', 'agent_message_chunk', 'agent_thought_chunk', 'tool_call', 'tool_call_update', 'plan'].includes(u.sessionUpdate)) return;
@@ -979,6 +1073,14 @@ export class AcpSession {
     if (u.sessionUpdate === 'session_info_update' && this.agentTitleMuted && u.title) {
       this.log(`agent title ignored: ${u.title.slice(0, 60)}`);
       u.title = null;
+    }
+    // pi-acp's startup prelude arrives a tick after session/new — past the "no session yet" guard above, and possibly
+    // as the first chunk of a prompt that was queued during start. The response's _meta gave the exact text; drop it once
+    if (u.sessionUpdate === 'agent_message_chunk' && this.startupBanner !== undefined
+      && u.content.type === 'text' && u.content.text === this.startupBanner) {
+      this.log('startup banner ignored');
+      this.startupBanner = undefined;
+      return;
     }
     if (!applyUpdate(this.state, u)) return;
     if (u.sessionUpdate === 'usage_update') {

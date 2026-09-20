@@ -1,9 +1,9 @@
-import { access, constants } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { delimiter, isAbsolute, join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import type { AgentId, AgentInfo, AgentInstall, SessionOption } from '@shared/transcript';
 import { t } from '../i18n';
 import { expandPath } from '../inventory';
+import { resolveExecutable } from './launch';
 
 // The vendor's documented one-line installs: a POSIX shell line (macOS / Linux / WSL) and, where published, the PowerShell counterpart
 export interface InstallDef {
@@ -25,6 +25,12 @@ export interface AgentDef {
   env?: Record<string, string>;
   // Modes the protocol doesn't advertise but the CLI actually supports (fills in when session/new returns empty modes); switching still goes through session/set_mode
   modes?: SessionOption[];
+  // Prompt-behavior overrides for agents whose advertised capabilities lie (see promptCapsOf in attachments.ts)
+  prompt?: { imagesRegardless?: boolean };
+  // Other commands that must also resolve for the agent to count as installed (the pi-acp adapter needs `pi` on PATH)
+  requires?: string[];
+  // Protocol quirks the host papers over
+  controls?: { ignoreModes?: boolean };
 }
 
 export const BUILTIN_AGENTS: AgentDef[] = [
@@ -34,6 +40,8 @@ export const BUILTIN_AGENTS: AgentDef[] = [
     candidates: ['~/.grok/bin/grok', '~/.local/bin/grok', '/opt/homebrew/bin/grok', '/usr/local/bin/grok'],
     login: { command: 'grok', args: ['login'] },
     install: { posix: 'curl -fsSL https://x.ai/cli/install.sh | bash', windows: 'irm https://x.ai/cli/install.ps1 | iex', docs: 'https://docs.x.ai/build/overview' },
+    // Grok advertises promptCapabilities.image: false yet accepts inline image blocks and the model sees the pixels (AGENTS.md, "Protocol gotchas")
+    prompt: { imagesRegardless: true },
     // Grok doesn't give modes in session/new, but CLI ≥ 0.2.117 accepts session/set_mode (verified in probe-set-mode.ts):
     // default / plan go through the protocol; yolo is host-side auto-approval of permission requests, and the CLI stays in default.
     // The descriptions are i18n keys, resolved against the host locale when the modes enter a session
@@ -65,6 +73,41 @@ export const BUILTIN_AGENTS: AgentDef[] = [
     login: { command: 'kimi', args: [] },
     install: { posix: 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash', windows: 'irm https://code.kimi.com/kimi-code/install.ps1 | iex', docs: 'https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html' },
   },
+  // Verified on a real machine (2026-09):
+  // OpenCode 1.18.15 — loadSession, session list/resume/fork/close, image + embeddedContext true, one auth method `opencode-login`
+  //   ("Run `opencode auth login`"), configOptions model / effort / mode (category mode → our modes), commands arrive ~5 ms after session/new
+  // DSH 0.1.5-rc.2 — agentInfo `deepseek-harness-acp 0.0.1`, list/resume/close (no loadSession), embeddedContext: false, authMethods: [],
+  //   no modes, a grouped model select whose values are JSON tuple strings, reasoning_effort with a "" "Provider default" option;
+  //   session/list items carry only sessionId + cwd; every session/new persists a session under ~/.dsh/sessions/<cwd>/
+  // pi-acp 0.0.33 — loadSession, list/delete (no resume), embeddedContext: false, image true, auth method `pi_terminal_login`,
+  //   thinking levels duplicated as modes and as the thought_level config option, a startup banner streamed during session/new
+  {
+    id: 'opencode', name: 'OpenCode',
+    command: 'opencode', args: ['acp'],
+    candidates: ['/opt/homebrew/bin/opencode', '/usr/local/bin/opencode', '~/.opencode/bin/opencode', '~/.local/bin/opencode'],
+    login: { command: 'opencode', args: ['auth', 'login'] },
+    install: { posix: 'curl -fsSL https://opencode.ai/install | bash', windows: 'npm install -g opencode-ai', docs: 'https://opencode.ai/docs/acp/' },
+  },
+  {
+    id: 'dsh', name: 'DeepSeek Harness',
+    command: 'dsh', args: ['--profile', 'acp'],
+    candidates: ['~/.local/bin/dsh', '/opt/homebrew/bin/dsh', '/usr/local/bin/dsh'],
+    // No login command: credentials are saved through the Web UI (`dsh web`), the ACP profile has no auth methods of its own
+    login: { command: 'dsh', args: ['web'] },
+    install: { posix: 'npm install -g @deepseek-ai/dsh', windows: 'npm install -g @deepseek-ai/dsh', docs: 'https://deepseekdocs.com/en/docs/guides/acp-automation-server' },
+  },
+  {
+    id: 'pi', name: 'Pi',
+    // pi-acp (svkozak/pi-acp) is the ACP adapter; it spawns `pi --mode rpc`, so both binaries must be present
+    command: 'pi-acp', args: [],
+    candidates: ['~/.local/bin/pi-acp', '/opt/homebrew/bin/pi-acp', '/usr/local/bin/pi-acp'],
+    requires: ['pi'],
+    // Pi's login is /login inside its TUI; launching pi in a terminal is enough
+    login: { command: 'pi', args: [] },
+    install: { posix: 'npm install -g --ignore-scripts @earendil-works/pi-coding-agent pi-acp', windows: 'npm install -g --ignore-scripts @earendil-works/pi-coding-agent pi-acp', docs: 'https://github.com/svkozak/pi-acp' },
+    // pi-acp 0.0.33 duplicates its thinking levels as modes and as the thought_level config option
+    controls: { ignoreModes: true },
+  },
 ];
 
 // Custom agents from the acpira.agents setting (id → definition fragment)
@@ -78,11 +121,19 @@ export interface CustomAgentSetting {
   env?: Record<string, string>;
   // Modes the protocol doesn't advertise but the CLI supports (same as AgentDef.modes)
   modes?: SessionOption[];
+  // Same as AgentDef.prompt (e.g. an adapter that takes images despite advertising image: false)
+  prompt?: { imagesRegardless?: boolean };
+  // Extra commands that must resolve for the agent to count as installed (same as AgentDef.requires)
+  requires?: string[];
+  // Drop the agent's protocol modes: they duplicate a config option it also advertises (pi-acp's thinking levels)
+  ignoreModes?: boolean;
 }
 
 export class AgentRegistry {
   private defs = new Map<AgentId, AgentDef>();
   private resolved = new Map<AgentId, string>();
+  // Commands the last probe looked for but did not find (the main command and/or AgentDef.requires)
+  private missingCmds = new Map<AgentId, string[]>();
   private probed = false;
   private listeners = new Set<() => void>();
 
@@ -96,6 +147,8 @@ export class AgentRegistry {
       const docs = c.install?.docs?.trim() || undefined;
       this.defs.set(id, {
         id, name: c.name ?? id, command: c.command, args: c.args ?? [], candidates: [], env: c.env, modes: c.modes,
+        prompt: c.prompt, requires: c.requires,
+        controls: c.ignoreModes ? { ignoreModes: true } : undefined,
         login: login?.length ? { command: login[0]!, args: login.slice(1) } : undefined,
         install: command || docs ? { posix: command, windows: command, docs } : undefined,
       });
@@ -106,7 +159,12 @@ export class AgentRegistry {
   list(): AgentInfo[] {
     return [...this.defs.values()].map(d => {
       const install = this.install(d.id);
-      return { id: d.id, name: d.name, ...(this.probed ? { available: this.resolved.has(d.id) } : {}), ...(install ? { install } : {}) };
+      const missing = this.missingCmds.get(d.id);
+      return {
+        id: d.id, name: d.name, ...(this.probed ? { available: this.resolved.has(d.id) } : {}),
+        ...(this.probed && !this.resolved.has(d.id) && missing?.length ? { missing } : {}),
+        ...(install ? { install } : {}),
+      };
     });
   }
 
@@ -155,14 +213,27 @@ export class AgentRegistry {
     return found;
   }
 
-  // A cached path is trusted only while it still exists and is executable; otherwise search again
+  // A cached path is trusted only while it still exists and is executable; otherwise search again. Every `requires` helper
+  // is resolved on each pass too — a helper removed after the main binary was found still makes the agent unavailable
   private async locate(id: AgentId): Promise<string | null> {
-    const cached = this.resolved.get(id);
-    if (cached && await executable(cached)) return cached;
     const def = this.get(id);
-    const found = await resolveCommand(def.command, def.candidates);
-    if (found) this.resolved.set(id, found); else this.resolved.delete(id);
-    return found;
+    const cached = this.resolved.get(id);
+    const found = cached && await resolveExecutable(cached, this.platform, process.env)
+      ? cached
+      : await resolveCommand(def.command, def.candidates, this.platform, process.env);
+    const missing: string[] = [];
+    if (!found) missing.push(def.command);
+    for (const req of def.requires ?? []) {
+      if (!await resolveCommand(req, [], this.platform, process.env)) missing.push(req);
+    }
+    if (found && !missing.length) {
+      this.resolved.set(id, found);
+      this.missingCmds.delete(id);
+      return found;
+    }
+    this.resolved.delete(id);
+    this.missingCmds.set(id, missing);
+    return null;
   }
 
   private snapshot(): string {
@@ -176,15 +247,16 @@ export class AgentRegistry {
   }
 }
 
-export async function resolveCommand(command: string, candidates: string[] = []): Promise<string | null> {
-  if (isAbsolute(command)) return (await executable(command)) ? command : null;
+export async function resolveCommand(command: string, candidates: string[] = [], platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+  if (isAbsolute(command)) return resolveExecutable(command, platform, env);
   for (const c of candidates) {
-    const p = expandHome(c);
-    if (await executable(p)) return p;
+    const hit = await resolveExecutable(expandHome(c), platform, env);
+    if (hit) return hit;
   }
-  for (const dir of (process.env.PATH ?? '').split(delimiter).filter(Boolean)) {
-    const p = join(dir, command);
-    if (await executable(p)) return p;
+  const sep = platform === 'win32' ? ';' : ':';
+  for (const dir of (env.PATH ?? '').split(sep).filter(Boolean)) {
+    const hit = await resolveExecutable(join(dir, command), platform, env);
+    if (hit) return hit;
   }
   return null;
 }
@@ -192,8 +264,4 @@ export async function resolveCommand(command: string, candidates: string[] = [])
 export function expandHome(p: string): string {
   // expandPath joins relative paths onto cwd; keep those as-is and only reuse the `~/` branch
   return p.startsWith('~/') ? expandPath(p, { home: homedir(), cwd: process.cwd() }) : p;
-}
-
-async function executable(p: string): Promise<boolean> {
-  try { await access(p, constants.X_OK); return true; } catch { return false; }
 }

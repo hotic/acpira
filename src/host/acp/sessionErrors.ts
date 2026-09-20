@@ -73,10 +73,28 @@ export function isSessionGone(e: unknown): boolean {
   return /session not found/i.test(msg(e));
 }
 
-// On session/resume and session/load the only thing invalidParams can be about is the sessionId —
-// the peer answered "I don't know this session", the same conclusion as session_not_found
-export function isUnknownSession(e: unknown): boolean {
-  return e instanceof acp.RequestError && e.code === -32602;
+// How a failed session/resume or session/load ended. `undefined` means the method isn't there at all (no restore path);
+// 'gone' the peer doesn't know the session; 'locked' another process holds it; 'unresumable' the peer knows it but can't
+// continue it; 'failed' any other error — a connection problem worth a retryable error state, not a missing capability
+export type RestoreFailure = 'gone' | 'locked' | 'unresumable' | 'failed';
+
+// DeepSeek Harness (packages/acp/acp/src/index.ts @ 0.1.6-alpha.2) reports every restore problem as a bare
+// invalidParams with the reason only in the message: `unknown session: <id>`, `session is already active: <id>`,
+// `session is not resumable: <id>`, `session cwd does not match: <cwd>`, and MCP config errors surfaced the same way.
+// Grok / Kimi also answer a bare invalidParams for an unknown session id, so an unrecognized -32602 keeps meaning "gone".
+export function classifyRestoreError(e: unknown): RestoreFailure | undefined {
+  if (isSessionGone(e)) return 'gone';
+  if (isSessionLocked(e)) return 'locked';
+  if (isMethodMissing(e)) return undefined;
+  if (e instanceof acp.RequestError && e.code === -32602) {
+    const data = (e.data && typeof e.data === 'object' ? e.data : {}) as Record<string, unknown>;
+    const text = `${e.message} ${[data.message, data.detail, data.reason].filter((v): v is string => typeof v === 'string').join(' ')}`;
+    if (/already active|in use|held by|locked/i.test(text)) return 'locked';
+    if (/not resumable|cannot be resumed/i.test(text)) return 'unresumable';
+    if (/\bcwd\b|working directory|absolute path|\bmcp\b/i.test(text)) return 'failed';
+    return 'gone';
+  }
+  return 'failed';
 }
 
 // Devin's typed "another process holds this session" (-32015, retryable): real evidence of occupation,

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Ellipsis, History, PanelLeft, PanelRight, Plus, Settings2, UserRound } from 'lucide-react';
 import type { AccountInfo, AgentInfo, SessionSummary } from '@shared/transcript';
+import type { NativeSessionsState } from '@shared/protocol';
 import type { SessionScope } from '@shared/settings';
 import { t } from '../i18n';
 import { IconButton } from '../ui/Button';
@@ -26,7 +27,9 @@ export interface HeaderProps {
   // This window's workspace folder and the list scope, handed on to the session list (see SessionListProps)
   workspace?: string;
   sessionScope?: SessionScope;
-  on: Pick<ShellHandlers, 'selectSession' | 'newSession' | 'renameSession' | 'deleteSession' | 'pinSession' | 'moveSession' | 'exportSession' | 'openInEditor' | 'selectAgent' | 'selectAccount' | 'addAccount' | 'removeAccount' | 'refreshQuota'>;
+  // The import popover's current listing, handed on to the session list
+  nativeSessions?: NativeSessionsState;
+  on: Pick<ShellHandlers, 'selectSession' | 'newSession' | 'renameSession' | 'deleteSession' | 'pinSession' | 'moveSession' | 'exportSession' | 'openInEditor' | 'selectAgent' | 'selectAccount' | 'addAccount' | 'removeAccount' | 'refreshQuota' | 'listNativeSessions' | 'importNativeSession'>;
   onToggleDrawer?: () => void;
   drawerOpen?: boolean;
   sessionPanel?: 'hidden' | 'left' | 'right';
@@ -38,7 +41,7 @@ export interface HeaderProps {
 // Header: a plain text title on the left (sharing the conversation flow's left edge), account / session history / new session icons on the right
 // A narrow session panel gets a drawer toggle; collapsed navigation uses the history popover.
 // The person icon is the account layer's home (login state, switching, adding): it opens the agent panel, whose footer leads to the accounts page
-export function Header({ title, sessions, agent, agents, accounts, accountId, activeSessionId, workspace, sessionScope, on, onToggleDrawer, onOpenSettings, drawerOpen, sessionPanel = 'hidden', sessionPanelDocked = false }: HeaderProps) {
+export function Header({ title, sessions, agent, agents, accounts, accountId, activeSessionId, workspace, sessionScope, nativeSessions, on, onToggleDrawer, onOpenSettings, drawerOpen, sessionPanel = 'hidden', sessionPanelDocked = false }: HeaderProps) {
   const [accountOpen, setAccountOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const account = accounts?.find(a => a.id === accountId);
@@ -84,7 +87,8 @@ export function Header({ title, sessions, agent, agents, accounts, accountId, ac
           <Popover.Portal><Popover.Positioner side="bottom" align="end" width="xl"><Popover.Popup initialFocus={interaction => interaction === 'keyboard'}>
             <SessionList sessions={sessions} agents={agents} activeId={activeSessionId} workspace={workspace} scope={sessionScope}
               onSelect={id => { on.selectSession(id); setHistoryOpen(false); }}
-              onRename={on.renameSession} onDelete={on.deleteSession} onPin={on.pinSession} onMove={on.moveSession} onExport={on.exportSession} />
+              onRename={on.renameSession} onDelete={on.deleteSession} onPin={on.pinSession} onMove={on.moveSession} onExport={on.exportSession}
+              activeAgent={agent.id} nativeSessions={nativeSessions} onListNative={on.listNativeSessions} onImportNative={on.importNativeSession} />
           </Popover.Popup></Popover.Positioner></Popover.Portal>
         </Popover.Root>}
         {!agent.external && accountButton}

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Attachment, Draft, QueuedPrompt } from '@shared/transcript';
-import { preparePrompt, restoreDrafts, type BlobStore, type PreparedPrompt } from './attachments';
+import { preparePrompt, restoreDrafts, type BlobStore, type PreparedPrompt, type PromptCaps } from './attachments';
 import { msg } from '../errors';
 import { t } from '../i18n';
 
@@ -29,6 +29,8 @@ export interface PromptQueueDeps {
   isRunning: () => boolean;
   // starting sessions accept a first prompt into the queue; flush waits for ready
   canEnqueue: () => boolean;
+  // The agent's prompt capabilities at staging time, read off the live proc so a queued entry sees them as late as possible
+  caps: () => PromptCaps | undefined;
   send: (text: string, prepared: PreparedPrompt) => Promise<void>;
 }
 
@@ -111,7 +113,7 @@ export class PromptQueue {
 
   private async stage(text: string, attachments: Draft[]): Promise<PreparedPrompt> {
     let prepared: PreparedPrompt;
-    try { prepared = await preparePrompt(this.deps.sessionId, text, attachments, this.deps.blobs); }
+    try { prepared = await preparePrompt(this.deps.sessionId, text, attachments, this.deps.blobs, this.deps.caps()); }
     catch (e) {
       this.deps.log(`Attachment staging failed: ${msg(e)}`);
       this.deps.notify?.(t('host.attachFailed', { error: msg(e) }));

@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -21,8 +22,8 @@ const SYN_MODES: SessionOption[] = [
   { id: 'yolo', name: 'Auto accept' },
 ];
 
-function deps(cwd = '/tmp', compaction?: () => CompactionPolicy, modes?: SessionOption[]) {
-  const registry = new AgentRegistry({ fake: { name: 'Fake', command: TSX, args: [FAKE], login: 'echo login', modes } });
+function deps(cwd = '/tmp', compaction?: () => CompactionPolicy, modes?: SessionOption[], extra?: { env?: Record<string, string>; ignoreModes?: boolean }) {
+  const registry = new AgentRegistry({ fake: { name: 'Fake', command: TSX, args: [FAKE], login: 'echo login', modes, env: extra?.env, ignoreModes: extra?.ignoreModes } });
   const logs: string[] = [];
   let changes = 0;
   // In-memory blob store: remembers what was written so tests can check the payload landed
@@ -441,6 +442,32 @@ describe('AcpSession', () => {
     s.dispose();
   });
 
+  // OpenCode's write: the permission request embeds a low-fidelity copy of the call (kind 'other', the parent dir as
+  // title, file + dir locations) that races the real in_progress update — neither order may downgrade the block
+  it.each(['tool-downgrade', 'tool-downgrade-late'])("permission's low-fidelity toolCall cannot downgrade the edit block (%s)", async script => {
+    const { session } = deps();
+    const s = session();
+    try {
+      await s.start();
+      const p = s.prompt(script);
+      await until(() => s.view().turns.some(t => t.role === 'agent' && t.blocks.some(b => b.type === 'permission')));
+      const agent = s.view().turns.at(-1)!;
+      if (agent.role !== 'agent') throw new Error();
+      const block = agent.blocks.find((b): b is ToolCallBlock => b.type === 'tool_call' && b.id === 'w1')!;
+      expect(block).toMatchObject({ kind: 'edit', target: 'a.txt', locations: [{ path: '/tmp/proj/a.txt' }] });
+      const perm = agent.blocks.find(b => b.type === 'permission') as PermissionBlock;
+      expect(perm.title).toContain('Edit');
+      expect(perm.title).toContain('a.txt');
+      expect(perm.title).not.toContain('Use tool');
+      expect(perm.options.map(o => o.id)).toEqual(['once', 'always', 'reject']);
+      s.resolvePermission(perm.id, 'once');
+      await p;
+      // The new-file write renders as the all-add diff parked from the in_progress update's rawInput.content
+      expect(block).toMatchObject({ kind: 'edit', status: 'completed' });
+      expect(block.content).toMatchObject({ type: 'diff', source: { path: '/tmp/proj/a.txt' } });
+    } finally { s.dispose(); }
+  });
+
   it('synthesized modes: when the protocol omits modes, backfill from the registry, default to the first one, setMode goes through session/set_mode', async () => {
     mkdirSync('/tmp/acpira-no-modes', { recursive: true });
     const { session } = deps('/tmp/acpira-no-modes', undefined, SYN_MODES);
@@ -550,6 +577,38 @@ describe('AcpSession', () => {
     expect(again.stop).toBe('end_turn');
     expect(again.blocks.some(b => b.type === 'text')).toBe(true);
     s.dispose();
+  });
+
+  it.each([false, true])('retry preserves output, completed tools and the native session after quota errors (edited: %s)', async edited => {
+    const { session, d } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('earlier-context');
+      const text = 'fail-after-output fail-twice';
+      if (edited) {
+        await s.prompt('original');
+        await s.editTurn(historyEdit(s, 2, text));
+        await until(() => !s.isRunning);
+      } else await s.prompt(text, [{ kind: 'text', name: 'plan.txt', text: 'Retain this plan on retry.' }]);
+      const peer = s.toRecord().acpSessionId;
+      for (const expectedStop of ['error', 'end_turn']) {
+        const before = structuredClone(s.toRecord().turns);
+        expect(before.at(-1)).toMatchObject({ stop: 'error', blocks: [
+          { type: 'thought' }, { type: 'text' }, { type: 'tool_call', status: 'completed' },
+        ] });
+        await Promise.all([s.retryTurn(), s.retryTurn()]);
+        await until(() => !s.isRunning);
+        expect(s.toRecord().acpSessionId).toBe(peer);
+        expect(s.view().turns.slice(0, before.length)).toEqual(before);
+        expect(s.view().turns).toHaveLength(before.length + 2);
+        expect(s.view().turns.at(-1)).toMatchObject({ stop: expectedStop });
+        if (!edited) expect(s.view().turns.at(-2)).toMatchObject({ attachments: [{ kind: 'text', name: 'plan.txt' }] });
+        const restored = new AcpSession(s.toRecord(), d);
+        try { expect(restored.view().turns.slice(0, before.length)).toEqual(before); }
+        finally { restored.dispose(); }
+      }
+    } finally { s.dispose(); }
   });
 
   it('retryTurn: attachments are rebuilt from their blobs; nothing happens after a normal end', async () => {
@@ -822,11 +881,142 @@ describe('AcpSession', () => {
     const s2 = new AcpSession(record, d);
     await s2.start();
     expect(s2.view().status).toBe('readonly');
+    expect(s2.view().error).toContain('no longer has this session');
     expect(s2.view().turns).toHaveLength(2);
     expect(s2.toRecord().acpSessionId).toBe(record.acpSessionId);
     // No fresh native session was opened, so the persisted command list stays until a peer replaces it
     expect(s2.view().commands).toEqual([{ name: 'compact', description: 'compact it' }]);
     s2.dispose();
+  });
+
+  // DeepSeek Harness reports every restore problem as a bare invalidParams; the reason only survives in the message text
+  it.each([
+    ['dsh-active', 'error', 'held by another'],
+    ['dsh-cwd', 'error', 'Could not restore'],
+    ['dsh-unresumable', 'readonly', 'cannot resume this session'],
+    ['dsh-mcp', 'error', 'Could not restore'],
+  ] as const)('resume: %s → %s (%s)', async (tag, status, errorMatch) => {
+    const dir = mkdtempSync(join(tmpdir(), `acpira-${tag}-`));
+    const { d, session } = deps(dir);
+    const s = session();
+    await s.start();
+    await s.prompt('hi');
+    const record = s.toRecord();
+    s.dispose();
+    const s2 = new AcpSession(record, d);
+    await s2.start();
+    expect(s2.view().status).toBe(status);
+    expect(s2.view().error).toContain(errorMatch);
+    expect(s2.view().turns).toHaveLength(2);
+    s2.dispose();
+  });
+
+  it('dispose sends session/close to an agent that advertises it before the process dies', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acpira-close-'));
+    const closeLog = join(dir, 'close.log');
+    const { session } = deps('/tmp', undefined, undefined, { env: { FAKE_CLOSE_LOG: closeLog } });
+    const s = session();
+    await s.start();
+    await s.prompt('hi');
+    const native = s.toRecord().acpSessionId!;
+    s.dispose();
+    await until(() => { try { return readFileSync(closeLog, 'utf8').includes(native); } catch { return false; } });
+  });
+
+  it('ignoreModes: protocol modes are dropped and a pushed current_mode_update is ignored', async () => {
+    const { session } = deps('/tmp', undefined, undefined, { ignoreModes: true });
+    const s = session();
+    try {
+      await s.start();
+      expect(s.view().controls.modes).toEqual([]);
+      expect(s.view().controls.modeId).toBeUndefined();
+      await s.prompt('mode:plan');
+      expect(s.view().controls.modeId).toBeUndefined();
+      expect(s.view().controls.modes).toEqual([]);
+    } finally { s.dispose(); }
+  });
+
+  it('a strict promptCapabilities agent receives dropped text as marked-up text blocks, not a resource', async () => {
+    const { session } = deps('/tmp', undefined, undefined, { env: { FAKE_PROMPT_CAPS: 'strict' } });
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('echo-blocks', [{ kind: 'text', name: 'notes.txt', text: 'payload' }]);
+      const turn = s.view().turns.at(-1);
+      if (turn?.role !== 'agent') throw new Error('no agent turn');
+      const block = turn.blocks.find(b => b.type === 'text');
+      if (block?.type !== 'text') throw new Error('no echo block');
+      expect(block.markdown).toBe('text,text');
+    } finally { s.dispose(); }
+  });
+
+  it('a startup banner chunk streamed before session/new returns is ignored; the fresh session then works normally', async () => {
+    const { session, logs } = deps('/tmp', undefined, undefined, { env: { FAKE_STARTUP_BANNER: 'early' } });
+    const s = session();
+    try {
+      await s.start();
+      // The banner carried no session id (none existed yet): it must not open a ghost agent turn
+      expect(s.view().turns).toHaveLength(0);
+      expect(logs.some(l => l.includes('startup agent_message_chunk ignored'))).toBe(true);
+      await s.prompt('hi');
+      expect(s.view().turns.at(-1)).toMatchObject({ role: 'agent', stop: 'end_turn' });
+    } finally { s.dispose(); }
+  });
+
+  // pi-acp's real timing: the prelude text rides session/new's _meta.piAcp.startupInfo and is re-sent as one
+  // agent_message_chunk a tick after the response — past the no-session guard, so the exact text does the match
+  it('a startup banner chunk sent right after session/new is matched against _meta.piAcp.startupInfo and dropped', async () => {
+    const { session, logs } = deps('/tmp', undefined, undefined, { env: { FAKE_STARTUP_BANNER: '1' } });
+    const s = session();
+    try {
+      await s.start();
+      await until(() => logs.some(l => l.includes('startup banner ignored')));
+      // The banner must not open a ghost agent turn
+      expect(s.view().turns).toHaveLength(0);
+      await s.prompt('hi');
+      expect(s.view().turns.at(-1)).toMatchObject({ role: 'agent', stop: 'end_turn' });
+    } finally { s.dispose(); }
+  });
+
+  it('a first prompt queued during start is not prefixed by the late startup banner', async () => {
+    const { session } = deps('/tmp', undefined, undefined, { env: { FAKE_STARTUP_BANNER: '1' } });
+    const s = session();
+    try {
+      const started = s.start();
+      // enqueue resolves once the prompt is parked — the turn runs after start flushes the queue
+      await s.prompt('hello');
+      await started;
+      await until(() => {
+        const last = s.view().turns.at(-1);
+        return last?.role === 'agent' && last.stop === 'end_turn';
+      });
+      const agent = s.view().turns.at(-1)!;
+      if (agent.role !== 'agent') throw new Error();
+      const text = agent.blocks.filter(b => b.type === 'text').map(b => b.markdown).join('');
+      // The observed wire shape was "pi v0.86.0 --- ## Skills …pong" — the banner prepended to the first reply chunk
+      expect(text).not.toContain('pi v0.0 banner');
+      expect(text).toContain('hello world');
+    } finally { s.dispose(); }
+  });
+
+  it('import: a native session the agent no longer has lands on the error state instead of silently opening a fresh one', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acpira-import-gone-'));
+    const { d, logs } = deps('/tmp', undefined, undefined, { env: { FAKE_SESSION_DIR: dir } });
+    const now = new Date().toISOString();
+    const s = new AcpSession({
+      id: randomUUID(), agent: 'fake', acpSessionId: 'native-gone', cwd: '/tmp', title: 'Imported session',
+      createdAt: now, updatedAt: now, turns: [], controls: { modes: [], options: [] }, commands: [],
+      importPending: true, importedFrom: { sessionId: 'native-gone' },
+    }, d);
+    try {
+      await s.start();
+      // session/load answered session_not_found; an import has no transcript to keep read-only, so it is the error Notice (Retry) — and no fresh native session was created
+      expect(s.view().status).toBe('error');
+      expect(s.view().error).toBe('The agent no longer has this session');
+      expect(logs.filter(l => l.includes('session/new ok'))).toHaveLength(0);
+      expect(s.toRecord()).toMatchObject({ acpSessionId: 'native-gone', importedFrom: { sessionId: 'native-gone' } });
+      expect(s.toRecord().importPending).toBeUndefined();
+    } finally { s.dispose(); rmSync(dir, { recursive: true, force: true }); }
   });
 
   it('resume: a failed restore attempt (not gone, not unsupported) lands on the error state and retry reconnects', async () => {
@@ -1291,6 +1481,24 @@ describe('historical message editing', () => {
       expect(reply).toContain('aGVsbG8=');
       expect(reply).toContain('new attachment content');
       expect(reply).not.toContain('removed attachment content');
+    } finally { s.dispose(); }
+  });
+
+  it('under strict prompt capabilities a kept text attachment re-sends inside the rebuilt history as text, never a resource', async () => {
+    const { session } = deps('/tmp', undefined, undefined, { env: { FAKE_PROMPT_CAPS: 'strict' } });
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('earlier-context', [{ kind: 'text', name: 'keep.txt', text: 'kept payload' }]);
+      await s.prompt('original');
+      // Editing turn 2 rebuilds the context through historyContext: turn 0's kept attachment must be re-encoded with the strict caps
+      await s.editTurn(historyEdit(s, 2));
+      await until(() => !s.isRunning);
+      const reply = s.view().turns.at(-1)!;
+      if (reply.role !== 'agent') throw new Error('Missing reply');
+      const wire = JSON.parse(reply.blocks.filter(b => b.type === 'text').map(b => b.markdown).join(''));
+      expect(wire.prompt.every((b: { type: string }) => b.type === 'text')).toBe(true);
+      expect(JSON.stringify(wire.prompt)).toContain('[Attachment: keep.txt]');
     } finally { s.dispose(); }
   });
 

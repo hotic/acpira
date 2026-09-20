@@ -30,4 +30,11 @@ describe('fork / export message variants', () => {
     expect(fork.type).toBe('forkSession');
     expect(exp.type).toBe('exportSession');
   });
+
+  it('native session listing / import are WebviewMsg shapes the host routes', () => {
+    const list: WebviewMsg = { type: 'listNativeSessions', agent: 'opencode' };
+    const imp: WebviewMsg = { type: 'importNativeSession', agent: 'opencode', sessionId: 'ses_1', cwd: '/repo', title: 'hello', updatedAt: '2026-01-01T00:00:00Z' };
+    expect(list.type).toBe('listNativeSessions');
+    expect(imp.type).toBe('importNativeSession');
+  });
 });

@@ -128,6 +128,13 @@ export const zhCN = {
   'session.export.markdown': '导出为 Markdown',
   'session.export.json': '导出为 JSON',
   'session.openInEditor': '在编辑器标签中打开',
+  'session.import.action': '导入会话',
+  'session.import.title': '从 {agent} 导入',
+  'session.import.loading': '正在读取会话…',
+  'session.import.none': '这个项目里没有会话',
+  'session.import.imported': '已导入',
+  'session.import.unsupported': '{agent} 不通过 ACP 提供会话列表',
+  'session.importedTitle': '导入的会话',
 
   // Composer
   'composer.placeholder': '有什么要改的？@ 引用文件',
@@ -236,6 +243,8 @@ export const zhCN = {
   'notice.method.devin:devin-browser': '浏览器登录',
   'notice.method.grok:grok.com': '登录 Grok 账号',
   'notice.method.grok:xai.api_key': '用 XAI_API_KEY',
+  'notice.method.opencode:opencode-login': '用 OpenCode 登录（终端）',
+  'notice.method.pi:pi_terminal_login': '用 Pi 登录（终端）',
 
   // Conversation flow
   'turns.autoCompact': '已达到上下文阈值，自动压缩',
@@ -367,7 +376,11 @@ export const zhCN = {
   'host.cannotResume': '这个 agent 恢复不了老会话，只能看历史',
   'host.resumeFailed': '恢复会话失败（{error}）',
   'host.sessionLocked': '这个会话正被另一个窗口或实例占用（{error}）',
+  'host.notResumable': '该 agent 无法恢复这个会话：{error}',
+  'host.initTimeout': '{command} 在 {seconds} 秒内没有响应 initialize',
   'host.sessionGone': '原生会话上下文已不在，本地历史保留；继续将开启新会话',
+  'host.importGone': 'agent 已没有这个会话',
+  'host.importNoHistory': '已恢复原生上下文，agent 没有回放此前的消息',
   'host.noAuthMethod': 'agent 没有给出登录方式',
   'host.noCompact': '这个 agent 没有 /compact',
   'host.needApproval': '需要批准',
@@ -382,6 +395,7 @@ export const zhCN = {
   'host.promptDropped': '附件处理失败（{error}），这条没发出去',
   'host.attachStageFailed': '{label} 没能存盘（{error}），本轮照常发出，历史里不会有预览',
   'host.imageTooBig': '{name} 超过 {mb} MB，已跳过',
+  'host.imageUnsupported': '未发送 {name}：该 agent 不接受图片',
   'host.recordLost': '会话记录丢了',
   'host.saveFailed': '会话没能存盘（{error}）',
   'host.deletedElsewhere': '这个会话已在另一个窗口被删除',

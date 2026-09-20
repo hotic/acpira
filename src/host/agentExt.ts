@@ -4,12 +4,16 @@ import type { AgentId } from '@shared/transcript';
 // Grok   — ~/.grok/README.md §Skills / §MCP Servers / §AGENTS.md; also reads Claude Code's ~/.claude/skills, ~/.claude.json, .mcp.json
 // Devin  — docs/reference/configuration/config-file.mdx, extensibility/skills/overview.mdx, extensibility/rules.mdx
 // Kimi   — kimi.com/code/docs: configuration/data-locations, customization/mcp, customization/skills
+// OpenCode — opencode.ai/docs/config, /skills, /rules; MCP servers are the `mcp` object in opencode.json(c)
+// DSH    — deepseekdocs skills page; DSH_HOME defaults to ~/.dsh, a flat <name>.md is a skill next to <name>/SKILL.md bundles
+// Pi     — github.com/svkozak/pi-acp + pi README (~/.pi/agent/settings.json, skills, AGENTS.md / AGENTS.override.md)
 // Path templates: `~/` = home, `$CONFIG/` = XDG config home (%APPDATA% on Windows), anything else is relative to the workspace root
 
 export interface McpSource {
   path: string;
-  // json: { "mcpServers": { name: {...} } } (Devin / Kimi / Claude-compatible .mcp.json); toml: [mcp_servers.name] tables (Grok config.toml)
-  format: 'json' | 'toml';
+  // json: { "mcpServers": { name: {...} } } (Devin / Kimi / Claude-compatible .mcp.json); toml: [mcp_servers.name] tables (Grok config.toml);
+  // opencode: { "mcp": { name: { type: 'local' | 'remote', command | url, enabled } } } (opencode.json / .jsonc)
+  format: 'json' | 'toml' | 'opencode';
 }
 
 export interface RuleSource {
@@ -66,6 +70,31 @@ export const AGENT_EXT: Record<string, AgentExt> = {
     ],
     skills: ['~/.kimi-code/skills', '~/.agents/skills', '.kimi-code/skills', '.agents/skills'],
     rules: [{ path: 'AGENTS.md' }, { path: '~/.kimi-code/AGENTS.md' }],
+    steer: false,
+  },
+  opencode: {
+    config: ['~/.config/opencode/opencode.json', '~/.config/opencode/opencode.jsonc', 'opencode.json', 'opencode.jsonc'],
+    mcp: [
+      { path: '~/.config/opencode/opencode.json', format: 'opencode' }, { path: '~/.config/opencode/opencode.jsonc', format: 'opencode' },
+      { path: 'opencode.json', format: 'opencode' }, { path: 'opencode.jsonc', format: 'opencode' },
+    ],
+    skills: ['~/.config/opencode/skills', '.opencode/skills', '~/.claude/skills', '.claude/skills', '~/.agents/skills', '.agents/skills'],
+    rules: [{ path: 'AGENTS.md' }, { path: 'CLAUDE.md' }, { path: '~/.config/opencode/AGENTS.md' }, { path: '~/.claude/CLAUDE.md' }],
+    steer: false,
+  },
+  dsh: {
+    // DSH_HOME defaults to ~/.dsh; the ACP profile's own patch file lives under profiles/acp
+    config: ['~/.dsh/settings.yaml', '~/.dsh/cordis.patch.yml', '~/.dsh/profiles/acp/cordis.patch.yml'],
+    mcp: [],
+    skills: ['~/.dsh/skills', '~/.agents/skills', '.dsh/skills', '.agents/skills'],
+    rules: [{ path: 'AGENTS.md' }],
+    steer: false,
+  },
+  pi: {
+    config: ['~/.pi/agent/settings.json', '.pi/settings.json', '~/.pi/agent/models.json'],
+    mcp: [],
+    skills: ['~/.pi/agent/skills', '~/.agents/skills', '.pi/skills', '.agents/skills'],
+    rules: [{ path: 'AGENTS.md' }, { path: 'CLAUDE.md' }, { path: 'AGENTS.override.md' }, { path: '~/.pi/agent/AGENTS.md' }],
     steer: false,
   },
 };

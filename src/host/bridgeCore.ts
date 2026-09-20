@@ -112,6 +112,15 @@ export class BridgeCore {
       } catch (e) { platform.toast('error', msg(e)); }
       return;
     }
+    if (m.type === 'listNativeSessions') {
+      // Always answer, even on failure: the popover is waiting on this agent's list
+      try {
+        this.post({ type: 'nativeSessions', agent: m.agent, sessions: await manager.listNativeSessions(m.agent) });
+      } catch (e) {
+        this.post({ type: 'nativeSessions', agent: m.agent, sessions: [], error: msg(e) });
+      }
+      return;
+    }
     if (m.type === 'editTurn') {
       try {
         await manager.editTurn(m.edit);

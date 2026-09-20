@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { AgentRegistry } from '../src/host/acp/AgentRegistry';
+import { AgentRegistry, resolveCommand } from '../src/host/acp/AgentRegistry';
 
 // A fresh directory with an optional executable, so a CLI can be "installed" and "removed" under the registry's nose
 function sandbox() {
@@ -59,6 +59,53 @@ describe('AgentRegistry', () => {
     expect(notified).toBe(1);
     expect(r.list().find(a => a.id === 'ghost')?.available).toBe(true);
     // Built-ins stay on the registry, so missing() still follows whether this machine has grok / kimi / devin
+  });
+
+  it('on Windows a PATH entry resolves through PATHEXT extensions; on POSIX a non-executable misses', async () => {
+    const { dir } = sandbox();
+    const cmd = join(dir, 'foo.CMD');
+    writeFileSync(cmd, '@echo off\r\n');
+    chmodSync(cmd, 0o755);
+    const env = { PATH: dir, PATHEXT: '.COM;.EXE;.BAT;.CMD' };
+    expect(await resolveCommand('foo', [], 'win32', env)).toBe(cmd);
+    expect(await resolveCommand('foo', [], 'linux', { PATH: dir })).toBeNull();
+  });
+
+  it('an agent whose required helper is missing counts as unavailable and reports what is missing', async () => {
+    const { bin, install } = sandbox();
+    install();
+    const r = new AgentRegistry({ pi: { name: 'Pi', command: bin, requires: ['acpira-definitely-missing-helper'] } });
+    await r.probeAll();
+    const info = r.list().find(a => a.id === 'pi');
+    expect(info?.available).toBe(false);
+    expect(info?.missing).toEqual(['acpira-definitely-missing-helper']);
+    expect(await r.resolveBinary('pi')).toBeNull();
+  });
+
+  it('OpenCode / DSH / Pi are built in, and a custom entry overrides the builtin of the same id', () => {
+    const ids = new AgentRegistry().list().map(a => a.id);
+    expect(ids).toEqual(expect.arrayContaining(['grok', 'devin', 'kimi', 'opencode', 'dsh', 'pi']));
+    const r = new AgentRegistry({ opencode: { name: 'OC Fork', command: '/x/oc-fork' } });
+    const info = r.list().find(a => a.id === 'opencode');
+    expect(info?.name).toBe('OC Fork');
+    expect(r.get('opencode').command).toBe('/x/oc-fork');
+  });
+
+  it('the pi builtin reports the missing pi helper when only pi-acp resolves', async () => {
+    const { dir } = sandbox();
+    const adapter = join(dir, 'pi-acp');
+    writeFileSync(adapter, '#!/bin/sh\nexit 0\n');
+    chmodSync(adapter, 0o755);
+    // locate() reads process.env.PATH — swap it so `pi` cannot resolve anywhere else on this machine
+    const realPath = process.env.PATH;
+    process.env.PATH = dir;
+    try {
+      const r = new AgentRegistry({}, 'darwin');
+      await r.probeAll();
+      const info = r.list().find(a => a.id === 'pi');
+      expect(info?.available).toBe(false);
+      expect(info?.missing).toEqual(['pi']);
+    } finally { process.env.PATH = realPath; }
   });
 
   it('install info follows the platform: POSIX line on darwin / linux, PowerShell line on win32, docs everywhere', () => {

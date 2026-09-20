@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { activityOf, applyUpdate, diffLines, emptyState, endTurn, failTurn } from '../src/host/acp/normalize';
+import type * as acp from '@agentclientprotocol/sdk';
+import type { ToolCallBlock } from '@shared/transcript';
+import { activityOf, applyUpdate, diffLines, emptyState, endTurn, failTurn, permissionToolUpdate, sealReplay } from '../src/host/acp/normalize';
 
 describe('diffLines', () => {
   it('LCS line-level diff, keeping only context near changes', () => {
@@ -49,6 +51,98 @@ describe('applyUpdate', () => {
     expect(turn.blocks[0]).toMatchObject(status === 'completed'
       ? { ...before, status }
       : { status, content: { type: 'text', text }, diffStat: undefined });
+  });
+
+  it('a tool_call_update with several content items keeps them all, in wire order, diff as the primary', () => {
+    const s = emptyState();
+    applyUpdate(s, { sessionUpdate: 'tool_call', toolCallId: 'edit', title: 'Edit', kind: 'edit', status: 'in_progress' });
+    applyUpdate(s, { sessionUpdate: 'tool_call_update', toolCallId: 'edit', status: 'completed',
+      content: [
+        { type: 'diff', path: 'a.ts', oldText: 'const n = 1;', newText: 'const n = 2;' },
+        { type: 'content', content: { type: 'text', text: 'ok' } },
+        { type: 'diff', path: 'b.ts', oldText: 'x\ny', newText: 'x\nY\nz' },
+      ] });
+    const t = s.turns[0];
+    if (t?.role !== 'agent') throw new Error();
+    const b = t.blocks[0];
+    if (b?.type !== 'tool_call') throw new Error();
+    expect(b.contents?.map(c => c.type)).toEqual(['diff', 'text', 'diff']);
+    expect(b.content?.type === 'diff' && b.content.source?.path).toBe('a.ts');
+    // The stat sums every diff, not just the primary
+    expect(b.diffStat).toEqual({ add: 3, del: 2 });
+  });
+
+  it('a single content item leaves contents unset', () => {
+    const s = emptyState();
+    applyUpdate(s, { sessionUpdate: 'tool_call', toolCallId: 'edit', title: 'Edit', kind: 'edit', status: 'in_progress' });
+    applyUpdate(s, { sessionUpdate: 'tool_call_update', toolCallId: 'edit', status: 'completed',
+      content: [{ type: 'diff', path: 'a.ts', oldText: 'const n = 1;', newText: 'const n = 2;' }] });
+    const t = s.turns[0];
+    if (t?.role !== 'agent') throw new Error();
+    expect(t.blocks[0]).toMatchObject({ content: { type: 'diff' } });
+    expect(t.blocks[0]).not.toHaveProperty('contents');
+  });
+
+  it('consecutive text content items merge into one', () => {
+    const s = emptyState();
+    applyUpdate(s, { sessionUpdate: 'tool_call', toolCallId: 'sh', title: 'bash', kind: 'execute', status: 'completed',
+      content: [
+        { type: 'content', content: { type: 'text', text: 'a' } },
+        { type: 'content', content: { type: 'text', text: 'b' } },
+        { type: 'content', content: { type: 'text', text: 'c' } },
+      ] });
+    const t = s.turns[0];
+    if (t?.role !== 'agent') throw new Error();
+    expect(t.blocks[0]).toMatchObject({ content: { type: 'text', text: 'a\nb\nc' } });
+    expect(t.blocks[0]).not.toHaveProperty('contents');
+  });
+
+  // pi-acp 0.0.33 shape: the tool_call carries a terminal placeholder, output and exit arrive in update _meta
+  it('terminal output in _meta deltas concatenates; exit 0 adds no suffix', () => {
+    const s = emptyState();
+    applyUpdate(s, { sessionUpdate: 'tool_call', toolCallId: 't', title: 'bash', kind: 'execute', status: 'in_progress',
+      content: [{ type: 'terminal', terminalId: 'term-1' }],
+      _meta: { terminal_info: { terminal_id: 'term-1', cwd: '/repo' } } });
+    applyUpdate(s, { sessionUpdate: 'tool_call_update', toolCallId: 't', _meta: { terminal_output: { terminal_id: 'term-1', data: 'hel' } } });
+    applyUpdate(s, { sessionUpdate: 'tool_call_update', toolCallId: 't', _meta: { terminal_output: { terminal_id: 'term-1', data: 'lo\n' } } });
+    applyUpdate(s, { sessionUpdate: 'tool_call_update', toolCallId: 't', status: 'completed',
+      _meta: { terminal_exit: { terminal_id: 'term-1', exit_code: 0, signal: null } } });
+    const t = s.turns[0];
+    if (t?.role !== 'agent') throw new Error();
+    expect(t.blocks[0]).toMatchObject({ status: 'completed', content: { type: 'text', text: 'hello\n' } });
+  });
+
+  it('a nonzero terminal exit appends the exit code once, without a leading blank line when there was no output', () => {
+    const s = emptyState();
+    applyUpdate(s, { sessionUpdate: 'tool_call', toolCallId: 't', title: 'bash', kind: 'execute', status: 'in_progress',
+      content: [{ type: 'terminal', terminalId: 'term-1' }] });
+    applyUpdate(s, { sessionUpdate: 'tool_call_update', toolCallId: 't', _meta: { terminal_output: { terminal_id: 'term-1', data: 'hi\n' } } });
+    applyUpdate(s, { sessionUpdate: 'tool_call_update', toolCallId: 't', status: 'completed',
+      _meta: { terminal_exit: { terminal_id: 'term-1', exit_code: 2, signal: null } } });
+    applyUpdate(s, { sessionUpdate: 'tool_call_update', toolCallId: 't', status: 'completed',
+      _meta: { terminal_exit: { terminal_id: 'term-1', exit_code: 2, signal: null } } });
+    applyUpdate(s, { sessionUpdate: 'tool_call', toolCallId: 't2', title: 'bash', kind: 'execute', status: 'in_progress',
+      content: [{ type: 'terminal', terminalId: 'term-2' }],
+      _meta: { terminal_info: { terminal_id: 'term-2', cwd: '/repo' } } });
+    applyUpdate(s, { sessionUpdate: 'tool_call_update', toolCallId: 't2', status: 'completed',
+      _meta: { terminal_exit: { terminal_id: 'term-2', exit_code: 2, signal: null } } });
+    const t = s.turns[0];
+    if (t?.role !== 'agent') throw new Error();
+    const b = t.blocks[0];
+    if (b?.type !== 'tool_call' || b.content?.type !== 'text') throw new Error();
+    expect(b.content.text.endsWith('exit code 2')).toBe(true);
+    expect(b.content.text.match(/exit code 2/g)).toHaveLength(1);
+    // No output deltas at all: the suffix stands alone instead of opening with a blank line
+    expect(t.blocks[1]).toMatchObject({ content: { type: 'text', text: 'exit code 2' } });
+  });
+
+  it('a bare terminal item with no _meta still shows the not-wired placeholder', () => {
+    const s = emptyState();
+    applyUpdate(s, { sessionUpdate: 'tool_call', toolCallId: 't', title: 'bash', kind: 'execute', status: 'in_progress',
+      content: [{ type: 'terminal', terminalId: 'term-9' }] });
+    const t = s.turns[0];
+    if (t?.role !== 'agent') throw new Error();
+    expect(t.blocks[0]).toMatchObject({ content: { type: 'text', text: 'Terminal term-9 (output not wired up)' } });
   });
 
   it('times observed execution across sparse updates, excluding pending approval and replay', () => {
@@ -286,5 +380,93 @@ describe('applyUpdate', () => {
     applyUpdate(t, { sessionUpdate: 'usage_update', used: 1, size: 2 });
     expect(t.turns[0]).not.toHaveProperty('usage');
     expect(t.turns[1]).not.toHaveProperty('usage');
+  });
+
+  // OpenCode's write reports the file contents in the in_progress update's rawInput.content and completes with a bare
+  // receipt; metadata.exists === false proves the file is new, so the write renders as an all-add diff
+  it('a new-file write completion renders as an all-add diff; an overwrite keeps the receipt text', () => {
+    const play = (exists: boolean) => {
+      const s = emptyState();
+      applyUpdate(s, { sessionUpdate: 'tool_call', toolCallId: 'w', title: 'write', kind: 'edit', status: 'pending', locations: [], rawInput: {} });
+      applyUpdate(s, { sessionUpdate: 'tool_call_update', toolCallId: 'w', kind: 'edit', status: 'in_progress',
+        locations: [{ path: '/tmp/proj/a.txt' }], rawInput: { filePath: '/tmp/proj/a.txt', content: 'alpha\n' } });
+      applyUpdate(s, { sessionUpdate: 'tool_call_update', toolCallId: 'w', status: 'completed',
+        rawOutput: { output: 'Wrote file successfully.', metadata: { exists, filepath: '/tmp/proj/a.txt' } },
+        content: [{ type: 'content', content: { type: 'text', text: 'Wrote file successfully.' } }] });
+      const t = s.turns[0];
+      if (t?.role !== 'agent') throw new Error();
+      return t.blocks[0];
+    };
+    const fresh = play(false);
+    if (fresh?.type !== 'tool_call') throw new Error();
+    expect(fresh.content).toMatchObject({ type: 'diff', source: { path: '/tmp/proj/a.txt', oldText: '', newText: 'alpha\n' } });
+    expect(fresh.diffStat).toEqual({ add: 1, del: 0 });
+    expect(fresh.contents?.map(c => c.type)).toEqual(['diff', 'text']);
+
+    const overwritten = play(true);
+    if (overwritten?.type !== 'tool_call') throw new Error();
+    expect(overwritten.content).toEqual({ type: 'text', text: 'Wrote file successfully.' });
+    expect(overwritten.contents).toBeUndefined();
+  });
+});
+
+describe('sealReplay', () => {
+  // OpenCode's session/load streams the whole history as live-looking chunks — no endTurn, no usage_update
+  it('seals a replayed history: streaming flags off, unfinished tools cancelled, open user input closed', () => {
+    const s = emptyState();
+    applyUpdate(s, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'first' } });
+    applyUpdate(s, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'thinking' } });
+    applyUpdate(s, { sessionUpdate: 'tool_call', toolCallId: 'run', title: 'Run', kind: 'execute', status: 'in_progress' });
+    applyUpdate(s, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'one' } });
+    applyUpdate(s, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'second' } });
+    applyUpdate(s, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'two' } });
+    const last = s.turns.at(-1)!;
+    if (last.role === 'agent') last.activity = { kind: 'think', label: 'Working' };
+    sealReplay(s);
+
+    expect(s.turns.map(t => t.role)).toEqual(['user', 'agent', 'user', 'agent']);
+    const [u1, a1, u2, a2] = s.turns;
+    for (const u of [u1, u2]) expect(u).not.toHaveProperty('_open');
+    for (const a of [a1, a2]) {
+      if (a?.role !== 'agent') throw new Error();
+      expect(a.stop).toBe('end_turn');
+      expect(a.activity).toBeUndefined();
+      for (const b of a.blocks) expect(b).not.toHaveProperty('streaming');
+    }
+    if (a1?.role !== 'agent') throw new Error();
+    expect(a1.blocks).toMatchObject([{ type: 'thought' }, { type: 'tool_call', status: 'cancelled' }, { type: 'text', markdown: 'one' }]);
+  });
+});
+
+describe('permissionToolUpdate', () => {
+  // OpenCode's embedded copy: kind 'other', the parent dir as title, file + dir locations, rawInput { filepath, parentDir }
+  const req: acp.ToolCallUpdate = {
+    toolCallId: 'w1', kind: 'other', status: 'pending', title: '/tmp/proj',
+    locations: [{ path: '/tmp/proj/a.txt' }, { path: '/tmp/proj' }],
+    rawInput: { filepath: '/tmp/proj/a.txt', parentDir: '/tmp/proj' },
+  };
+
+  it('no existing block → the request applies whole (Devin / Kimi plan approvals)', () => {
+    expect(permissionToolUpdate(undefined, req)).toMatchObject({ sessionUpdate: 'tool_call_update', ...req });
+  });
+
+  it('a title-only block takes rawInput for the real path; kind and the dir-laden locations are dropped', () => {
+    const block: ToolCallBlock = { type: 'tool_call', id: 'w1', kind: 'edit', verb: 'Edit', status: 'pending', locations: [], target: 'write' };
+    const u = permissionToolUpdate(block, req);
+    expect(u).toMatchObject({ sessionUpdate: 'tool_call_update', toolCallId: 'w1', status: 'pending', title: '/tmp/proj', rawInput: req.rawInput });
+    expect(u).not.toHaveProperty('kind');
+    expect(u).not.toHaveProperty('locations');
+    // Through mergeTool the forwarded rawInput becomes the single file location and the target
+    const s = emptyState();
+    s.turns.push({ role: 'agent', blocks: [block] });
+    applyUpdate(s, u);
+    expect(block).toMatchObject({ kind: 'edit', locations: [{ path: '/tmp/proj/a.txt' }], target: 'a.txt' });
+  });
+
+  it('a block that already knows its file only takes the status', () => {
+    const block: ToolCallBlock = { type: 'tool_call', id: 'w1', kind: 'edit', verb: 'Edit', status: 'in_progress', locations: [{ path: '/tmp/proj/a.txt' }], target: 'a.txt' };
+    const u = permissionToolUpdate(block, req);
+    expect(u).toMatchObject({ sessionUpdate: 'tool_call_update', toolCallId: 'w1', status: 'pending' });
+    for (const k of ['kind', 'title', 'locations', 'rawInput']) expect(u).not.toHaveProperty(k);
   });
 });

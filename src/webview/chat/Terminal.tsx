@@ -40,6 +40,11 @@ export function TerminalOutput({ block }: { block: ToolCallBlock }) {
 }
 
 function outputOf(b: ToolCallBlock): string {
+  // Several text items in wire order render as one output stream
+  if (b.contents?.length) {
+    const texts = b.contents.filter((c): c is Extract<typeof c, { type: 'text' }> => c.type === 'text');
+    if (texts.length) return texts.map(c => c.text).join('\n');
+  }
   const c = b.content;
   if (!c) return '';
   if (c.type === 'text') return c.text;

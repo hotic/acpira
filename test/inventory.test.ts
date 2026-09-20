@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AGENT_EXT } from '../src/host/agentExt';
-import { expandPath, parseFrontmatter, parseJsonLoose, parseJsonMcp, parseTomlMcp, scanInventory, scopeOf } from '../src/host/inventory';
+import { expandPath, parseFrontmatter, parseJsonLoose, parseJsonMcp, parseOpencodeMcp, parseTomlMcp, scanInventory, scopeOf } from '../src/host/inventory';
 
 // A fake home + workspace laid out the way the three CLIs expect, so the scan is checked against real file shapes without touching the machine
 let root: string;
@@ -38,6 +38,23 @@ beforeAll(async () => {
   // Kimi: mcp.json with a disabled entry
   await put(join(home, '.kimi-code/mcp.json'), JSON.stringify({ mcpServers: { legacy: { transport: 'sse', url: 'https://x/sse', enabled: false }, fs: { command: 'npx', args: ['-y', 'fs'] } } }));
   await put(join(home, '.kimi-code/AGENTS.md'), 'global\n');
+
+  // OpenCode: the `mcp` object lives in opencode.json (JSONC) next to the project
+  await put(join(cwd, 'opencode.json'), [
+    '{',
+    '  // project MCP servers',
+    '  "mcp": {',
+    '    "fs": { "type": "local", "command": ["npx", "-y", "@mcp/fs"], "environment": { "K": "v" } },',
+    '    "web": { "type": "remote", "url": "https://mcp.example.com/x", "enabled": false },',
+    '    "bare": { "url": "https://bare.example.com/mcp" },',
+    '  },',
+    '}',
+  ].join('\n'));
+
+  // DSH: a <name>/SKILL.md bundle, a flat <name>.md with a frontmatter name, and a flat file without one
+  await put(join(home, '.dsh/skills/bundled/SKILL.md'), '---\nname: bundled\ndescription: bundle\n---\n');
+  await put(join(home, '.dsh/skills/flat-file.md'), '---\nname: flat-skill\ndescription: flat\n---\n# Flat\n');
+  await put(join(home, '.dsh/skills/plain.md'), '# no frontmatter at all\n');
 });
 
 afterAll(async () => { await rm(root, { recursive: true, force: true }); });
@@ -75,6 +92,28 @@ describe('parsers', () => {
     expect(parseJsonLoose('{ /* c */ "a": [1, 2,], // tail\n "s": "// not a comment" }')).toEqual({ a: [1, 2], s: '// not a comment' });
     expect(parseJsonMcp('not json')).toEqual([]);
   });
+  it('opencode: local/remote entries, array and string commands, inferred transport, enabled flag, JSONC', () => {
+    const got = parseOpencodeMcp([
+      '{',
+      '  // a comment',
+      '  "mcp": {',
+      '    "arr": { "type": "local", "command": ["npx", "serve it"], "environment": { "K": "v" }, },',
+      '    "str": { "type": "local", "command": "tool run" },',
+      '    "rem": { "type": "remote", "url": "https://r/x", "enabled": false },',
+      '    "inf": { "url": "https://i/y" },',
+      '    "junk": "not an object",',
+      '  },',
+      '}',
+    ].join('\n'));
+    expect(got).toEqual([
+      { name: 'arr', transport: 'stdio', target: 'npx serve it', enabled: true },
+      { name: 'str', transport: 'stdio', target: 'tool run', enabled: true },
+      { name: 'rem', transport: 'http', target: 'https://r/x', enabled: false },
+      { name: 'inf', transport: 'http', target: 'https://i/y', enabled: true },
+    ]);
+    expect(parseOpencodeMcp('{"other": {}}')).toEqual([]);
+    expect(parseOpencodeMcp('not json')).toEqual([]);
+  });
   it('frontmatter: plain, quoted and folded values', () => {
     expect(parseFrontmatter('---\nname: x\ndescription: "quoted"\n---\nbody')).toEqual({ name: 'x', description: 'quoted' });
     expect(parseFrontmatter('---\ndescription: >-\n  one\n  two\n---\n')).toEqual({ name: undefined, description: 'one two' });
@@ -110,6 +149,18 @@ describe('scanInventory', () => {
     const inv = await scanInventory({ agent: 'kimi', ext: AGENT_EXT.kimi, binary: '/x/kimi' }, env());
     expect(inv.mcp.map(m => `${m.name}:${m.enabled}`)).toEqual(['legacy:false', 'fs:true', 'hilfa:true']);
     expect(inv.rules.find(r => r.scope === 'user')).toMatchObject({ exists: true });
+  });
+  it('opencode: the mcp object in project opencode.json parses as JSONC', async () => {
+    const inv = await scanInventory({ agent: 'opencode', ext: AGENT_EXT.opencode, binary: '/x/opencode' }, env());
+    expect(inv.mcp.map(m => `${m.name}:${m.transport}:${m.scope}:${m.enabled}`)).toEqual([
+      'fs:stdio:project:true', 'web:http:project:false', 'bare:http:project:true',
+    ]);
+  });
+  it('dsh: bundle directories and named flat <name>.md files are skills; frontmatter-less markdown is ignored', async () => {
+    const inv = await scanInventory({ agent: 'dsh', ext: AGENT_EXT.dsh, binary: null }, env());
+    const dsh = inv.skills.filter(s => s.path.includes('.dsh/skills'));
+    expect(dsh.map(s => s.name)).toEqual(['bundled', 'flat-skill']);
+    expect(dsh.find(s => s.name === 'flat-skill')?.path).toBe(join(home, '.dsh/skills/flat-file.md'));
   });
   it('unknown agent: binary status only', async () => {
     const inv = await scanInventory({ agent: 'custom', binary: '/opt/custom' }, env());

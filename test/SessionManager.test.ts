@@ -6,8 +6,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { HiddenMap } from '../src/shared/settings';
 import type { ConfigControl } from '../src/shared/transcript';
 import { AgentRegistry } from '../src/host/acp/AgentRegistry';
+import { AcpSession } from '../src/host/acp/AcpSession';
 import { SessionManager } from '../src/host/SessionManager';
-import { TranscriptStore } from '../src/host/store/TranscriptStore';
+import { TranscriptStore, summarize } from '../src/host/store/TranscriptStore';
 import { LocalAccounts } from '../src/host/accounts/local';
 
 const FAKE = fileURLToPath(new URL('./fake-agent.ts', import.meta.url));
@@ -681,5 +682,102 @@ describe('SessionManager', () => {
       rmSync(mdPath, { force: true });
       rmSync(jsonPath, { force: true });
     } finally { await m.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  }, 30_000);
+
+  // "Import from <agent>": session/list on a throwaway process marks the ids this window already holds; importing a
+  // foreign one opens a record whose transcript the session/load replay fills
+  it('native sessions: listing marks imported ones, import replays the transcript, re-import selects the existing record', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acpira-mgr-'));
+    const nativeDir = join(dir, 'native');
+    mkdirSync(nativeDir);
+    const registry = new AgentRegistry({ fake: { name: 'Fake', command: TSX, args: [FAKE], env: { FAKE_SESSION_DIR: nativeDir } } });
+    const store = new TranscriptStore(join(dir, 'sessions'));
+    const m = new SessionManager({
+      registry, store, log: () => {}, cwd: () => '/tmp', defaultAgent: () => 'fake', runInTerminal: () => {}, toast: () => {},
+    });
+    try {
+      await m.init();
+      // (a) a session this manager runs is listed with localId pointing back at its record
+      await m.newSession();
+      await m.handle({ type: 'send', text: 'hi' });
+      const ownId = m.activeId!;
+      const own = (await m.listNativeSessions('fake')).find(s => s.localId === ownId);
+      expect(own).toMatchObject({ cwd: '/tmp', title: expect.stringMatching(/^Fake /) });
+      expect(own?.updatedAt).toBeTruthy();
+
+      // (b) a native session another process owns is listed bare; importing it replays the native history
+      const other = AcpSession.fresh('fake', '/tmp', { registry, log: () => {}, onChange: () => {}, blobs: store });
+      await other.start();
+      await other.prompt('hi');
+      const nativeId = other.toRecord().acpSessionId!;
+      other.dispose();
+      const target = (await m.listNativeSessions('fake')).find(s => s.sessionId === nativeId)!;
+      expect(target.localId).toBeUndefined();
+
+      const count = m.sessions().length;
+      const v = m.attach();
+      await m.importNativeSession(v, 'fake', target);
+      expect(m.sessions()).toHaveLength(count + 1);
+      const importedId = v.activeId!;
+      const view = m.viewOf(importedId)!;
+      expect(view.status).toBe('ready');
+      const said = view.turns.flatMap(t => t.role === 'agent' ? t.blocks : []).map(b => b.type === 'text' ? b.markdown : '').join('');
+      expect(said).toContain('NATIVE_REPLAY');
+      expect(m.sessions().find(s => s.id === importedId)?.acpSessionId).toBe(nativeId);
+      const record = (await store.load(importedId))!;
+      expect(record.acpSessionId).toBe(nativeId);
+      expect(record.importedFrom).toEqual({ sessionId: nativeId });
+      expect(record.importPending).toBeUndefined();
+
+      // (c) importing the same native id again lands the viewer on the existing record instead of making a second one
+      await m.importNativeSession(v, 'fake', target);
+      expect(m.sessions()).toHaveLength(count + 1);
+      expect(v.activeId).toBe(importedId);
+    } finally { await m.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  }, 30_000);
+
+  it('listNativeSessions: an agent without the sessionCapabilities.list capability rejects as unsupported', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acpira-mgr-'));
+    const m = new SessionManager({
+      // no FAKE_SESSION_DIR: the fixture advertises no list capability
+      registry: new AgentRegistry({ fake: { name: 'Fake', command: TSX, args: [FAKE] } }),
+      store: new TranscriptStore(join(dir, 'sessions')), log: () => {}, cwd: () => '/tmp', defaultAgent: () => 'fake', runInTerminal: () => {}, toast: () => {},
+    });
+    try {
+      await m.init();
+      await expect(m.listNativeSessions('fake')).rejects.toThrow('does not list its sessions');
+    } finally { await m.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  }, 20_000);
+
+  // An index summary written before acpSessionId existed is patched once and the debounced index write persists it,
+  // so the next listing (or another window) does not re-read the record
+  it('native sessions: a stale index summary gains acpSessionId and the index file is updated', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acpira-mgr-'));
+    const nativeDir = join(dir, 'native');
+    mkdirSync(nativeDir);
+    const registry = new AgentRegistry({ fake: { name: 'Fake', command: TSX, args: [FAKE], env: { FAKE_SESSION_DIR: nativeDir } } });
+    const store = new TranscriptStore(join(dir, 'sessions'));
+    try {
+      const other = AcpSession.fresh('fake', '/tmp', { registry, log: () => {}, onChange: () => {}, blobs: store });
+      await other.start();
+      const rec = other.toRecord();
+      other.dispose();
+      await store.flush(rec);
+      // Rewrite the index the way a build without the field left it
+      const { acpSessionId, ...stale } = summarize(rec);
+      writeFileSync(join(dir, 'sessions', 'index.json'), JSON.stringify([stale]));
+
+      const m = new SessionManager({
+        registry, store, log: () => {}, cwd: () => '/tmp', defaultAgent: () => 'fake', runInTerminal: () => {}, toast: () => {},
+      });
+      try {
+        await m.init();
+        await m.listNativeSessions('fake');
+        await vi.waitFor(() => {
+          const entry = (JSON.parse(readFileSync(join(dir, 'sessions', 'index.json'), 'utf8')) as { id: string; acpSessionId?: string }[]).find(s => s.id === rec.id);
+          expect(entry?.acpSessionId).toBe(acpSessionId);
+        }, { timeout: 5000 });
+      } finally { await m.dispose(); }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   }, 30_000);
 });

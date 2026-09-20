@@ -7,6 +7,7 @@ import { t } from '../i18n';
 import { VERSION } from '../version';
 import { approveGrokPlan, GROK_EXIT_PLAN, parseGrokExitPlan } from './grokPlan';
 import { GROK_ASK_QUESTION, parseGrokQuestion, type GrokQuestionRequest, type GrokQuestionResponse } from './grokQuestions';
+import { spawnSpec } from './launch';
 
 // What the client side has to accept: updates / permission requests / file reads & writes / questions the agent sends on its own initiative.
 // The optional handlers double as capability switches: a handler present is advertised in initialize, an absent one answers method-not-found
@@ -25,8 +26,11 @@ export interface ClientHandlers {
 
 export const CLIENT_INFO = { name: 'acpira', version: VERSION };
 
-// A CLI that ignores the polite signal is force-killed after this long
-const KILL_GRACE_MS = 2_000;
+// A CLI that ignores the polite signal is force-killed after this long (DSH's own graceful-exit window is 5 s)
+const KILL_GRACE_MS = 5_000;
+
+// initialize has to answer within this long; a CLI that hangs the handshake would otherwise stall the session forever
+const INIT_TIMEOUT_MS = 30_000;
 
 // One agent subprocess = one long-lived ACP connection. stdio carries ndjson; stderr goes line by line to the Output Channel.
 // Handlers are rebindable so a warm (initialize-only) process can be handed to a session without a second spawn
@@ -45,13 +49,16 @@ export class AgentProcess {
 
   bind(h: ClientHandlers) { this.box.h = h; }
 
-  // extraEnv: variables injected by the account layer per identity, layered on top of the agent definition's env
-  static async spawn(def: AgentDef, binary: string, cwd: string, h: ClientHandlers, extraEnv?: Record<string, string>): Promise<AgentProcess> {
+  // extraEnv: variables injected by the account layer per identity, layered on top of the agent definition's env.
+  // opts.initTimeoutMs bounds the initialize handshake (default INIT_TIMEOUT_MS)
+  static async spawn(def: AgentDef, binary: string, cwd: string, h: ClientHandlers, extraEnv?: Record<string, string>, opts?: { initTimeoutMs?: number }): Promise<AgentProcess> {
     const box = { h };
-    const child = spawn(binary, def.args, {
+    const spec = spawnSpec(binary, def.args, process.platform, process.env);
+    const child = spawn(spec.command, spec.args, {
       cwd,
       env: { ...process.env, ...def.env, ...extraEnv },
       stdio: ['pipe', 'pipe', 'pipe'],
+      ...(spec.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
     });
     const stderr = createInterface({ input: child.stderr });
     stderr.on('line', line => box.h.onStderr?.(line));
@@ -97,15 +104,22 @@ export class AgentProcess {
         ...(h.onElicitation ? { elicitation: { form: {} } } : {}),
       },
     };
+    const initTimeoutMs = opts?.initTimeoutMs ?? INIT_TIMEOUT_MS;
+    let initTimer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<never>((_, reject) => {
+      initTimer = setTimeout(() => reject(new Error(t('host.initTimeout', { command: def.command, seconds: initTimeoutMs / 1000 }))), initTimeoutMs);
+    });
     // A CLI that answers initialize with an error is still running; without this it would sit there as an orphan behind the error notice
     try {
-      const init: acp.InitializeResponse = await Promise.race([conn.agent.request(acp.methods.agent.initialize, initReq), exited]);
+      const init: acp.InitializeResponse = await Promise.race([conn.agent.request(acp.methods.agent.initialize, initReq), exited, timedOut]);
       return new AgentProcess(def, child, conn, init, stderr, box);
     } catch (e) {
       stderr.close();
       conn.close();
       terminate(child);
       throw e;
+    } finally {
+      clearTimeout(initTimer);
     }
   }
 

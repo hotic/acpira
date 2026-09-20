@@ -29,12 +29,14 @@ export interface PanelBarProps {
   onClick?: MouseEventHandler<HTMLButtonElement>;
   // Square button at the right edge
   action?: FooterAction;
+  // A small control at the right edge when the action slot needs more than a button (e.g. a picker)
+  tail?: ReactNode;
 }
 
 // A --ctl-tall bar at either edge of a menu, one divider between it and the options area (modeled on Devin's agent menu).
 // Layout is [lead] [text …spacer…] [action]: the text takes its natural width, so an entry highlights as a small pill rather than the whole bar.
 // Text is row-sized (text-2), not caption-sized — the bar is part of the menu, not a footnote to it
-function PanelBar({ edge, lead, children, onClick, action }: PanelBarProps & { edge: 'top' | 'bottom' }) {
+function PanelBar({ edge, lead, children, onClick, action, tail }: PanelBarProps & { edge: 'top' | 'bottom' }) {
   const text = 'flex h-ctl min-w-0 items-center gap-1 px-2 text-left text-2';
   return (
     <div className={cn('flex items-center gap-1 border-line', edge === 'top' ? 'mb-1 border-b pb-1' : 'mt-1 border-t pt-1')}>
@@ -49,6 +51,7 @@ function PanelBar({ edge, lead, children, onClick, action }: PanelBarProps & { e
         : <div className={cn(text, 'text-fg-1')}><span className="truncate">{children}</span></div>)}
       <span className="min-w-0 flex-1" />
       {action && <BarButton {...action} />}
+      {tail}
     </div>
   );
 }

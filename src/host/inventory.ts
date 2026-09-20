@@ -75,7 +75,7 @@ async function readMcp(source: McpSource, env: ScanEnv): Promise<InventoryMcp[]>
   let text: string;
   try { text = await readFile(path, 'utf8'); } catch { return []; }
   const scope = scopeOf(source.path);
-  const entries = source.format === 'toml' ? parseTomlMcp(text) : parseJsonMcp(text);
+  const entries = source.format === 'toml' ? parseTomlMcp(text) : source.format === 'opencode' ? parseOpencodeMcp(text) : parseJsonMcp(text);
   return entries.map(e => ({ ...e, source: path, scope }));
 }
 
@@ -127,6 +127,22 @@ export function parseTomlMcp(text: string): McpEntry[] {
   return out;
 }
 
+// { "mcp": { name: { type: "local", command: [...] } | { type: "remote", url } } } — OpenCode's opencode.json(c).
+// `local` is a stdio child process; `remote` is streamable HTTP (our `http` bucket). A missing type is inferred from command / url
+export function parseOpencodeMcp(text: string): McpEntry[] {
+  const data = parseJsonLoose(text);
+  const servers = isRecord(data) && isRecord(data.mcp) ? data.mcp : undefined;
+  if (!servers) return [];
+  return Object.entries(servers).flatMap(([name, v]) => {
+    if (!isRecord(v)) return [];
+    const command = Array.isArray(v.command) ? v.command.filter((a): a is string => typeof a === 'string').join(' ') : str(v.command);
+    const url = str(v.url);
+    const kind = str(v.type);
+    const transport = kind === 'local' ? 'stdio' : kind === 'remote' ? 'http' : transportOf(undefined, command, url);
+    return [{ name, transport, target: command ?? url ?? '', enabled: v.enabled !== false }];
+  });
+}
+
 function tomlString(v: string): string {
   const m = /^"((?:[^"\\]|\\.)*)"|^'([^']*)'/.exec(v.trim());
   return m ? (m[1] ?? m[2] ?? '').replace(/\\"/g, '"') : v.trim();
@@ -167,15 +183,26 @@ export function parseJsonLoose(text: string): unknown {
 
 async function readSkills(template: string, env: ScanEnv): Promise<InventorySkill[]> {
   const dir = expandPath(template, env);
-  let names: string[];
-  try { names = (await readdir(dir, { withFileTypes: true })).filter(d => d.isDirectory() || d.isSymbolicLink()).map(d => d.name); } catch { return []; }
+  let entries: import('node:fs').Dirent[];
+  try { entries = await readdir(dir, { withFileTypes: true }); } catch { return []; }
   const scope = scopeOf(template);
-  const found = await Promise.all(names.map(async (name): Promise<InventorySkill | undefined> => {
-    const path = join(dir, name, 'SKILL.md');
-    try {
-      const fm = parseFrontmatter(await readFile(path, 'utf8'));
-      return { name: fm.name ?? name, description: fm.description, path, scope };
-    } catch { return undefined; }
+  const found = await Promise.all(entries.map(async (d): Promise<InventorySkill | undefined> => {
+    if (d.isDirectory() || d.isSymbolicLink()) {
+      const path = join(dir, d.name, 'SKILL.md');
+      try {
+        const fm = parseFrontmatter(await readFile(path, 'utf8'));
+        return { name: fm.name ?? d.name, description: fm.description, path, scope };
+      } catch { return undefined; }
+    }
+    // DSH also accepts a flat <name>.md next to the bundles; it needs a frontmatter name to count
+    if (d.isFile() && /\.md$/i.test(d.name)) {
+      const path = join(dir, d.name);
+      try {
+        const fm = parseFrontmatter(await readFile(path, 'utf8'));
+        return fm.name ? { name: fm.name, description: fm.description, path, scope } : undefined;
+      } catch { return undefined; }
+    }
+    return undefined;
   }));
   return found.filter((s): s is InventorySkill => s !== undefined).sort((a, b) => a.name.localeCompare(b.name));
 }
