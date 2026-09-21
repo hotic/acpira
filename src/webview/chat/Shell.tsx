@@ -441,6 +441,9 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
   // Each user message sticks only within its own exchange. Automatic commands belong
   // to the preceding exchange so compaction does not replace the user's context.
   let i = 0;
+  // A submitted prompt may already be visible below the active /compact turn.
+  let activeAgentIndex = turns.length - 1;
+  while (activeAgentIndex >= 0 && turns[activeAgentIndex]?.role !== 'agent') activeAgentIndex--;
   const exchanges: { key: number; messages: ReactNode[] }[] = [];
   turns.forEach((turn, ti) => {
     const previous = turns[ti - 1];
@@ -455,7 +458,7 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
     const memoryKey = replayKey !== undefined ? `${replayKey}:${ti}:${turn.role === 'agent' ? turn.startedAt ?? '' : ''}` : undefined;
     exchanges[exchanges.length - 1]!.messages.push(turn.role === 'user'
       ? <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} />
-      : <AgentMessage key={ti} turn={turn} index={index} compacting={compacting} running={running && ti === turns.length - 1 && !turn.stop} onPermission={onPermission} memoryKey={memoryKey}
+      : <AgentMessage key={ti} turn={turn} index={index} compacting={compacting} running={running && ti === activeAgentIndex && !turn.stop} onPermission={onPermission} memoryKey={memoryKey}
           turnIndex={ti} last={ti === turns.length - 1} settings={previous?.role === 'user' ? previous.settings : undefined} />);
   });
   return (

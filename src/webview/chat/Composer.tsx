@@ -79,7 +79,10 @@ export function Composer(p: ComposerProps) {
   // Files are read asynchronously after a paste / drop; sending is held until every read has landed, so a message never leaves without its attachments
   const [reading, setReading] = useState(0);
   const [sending, setSending] = useState(false);
-  const canSend = !p.disabled && !sending && reading === 0 && (text.trim().length > 0 || drafts.length > 0 || !!p.edit?.hasAttachments);
+  const hasContent = text.trim().length > 0 || drafts.length > 0 || !!p.edit?.hasAttachments;
+  const canSend = !p.disabled && !sending && reading === 0 && hasContent;
+  // A follow-up uses the same send path as Enter; pending attachment reads / sends keep it from becoming a stop action.
+  const showStop = p.running && !hasContent && reading === 0 && !sending;
   const sendingRef = useRef(false);
   const send = async () => {
     if (!canSend || sendingRef.current) return;
@@ -296,7 +299,7 @@ export function Composer(p: ComposerProps) {
           ))}
         </fieldset>
         {p.edit && !p.edit.dismissOnOutside && <IconButton title={t('history.cancel')} aria-label={t('history.cancel')} onClick={p.edit.onCancel}><X /></IconButton>}
-        <SendButton running={p.running} filled={canSend} theme={p.theme} onClick={p.running ? p.onStop : () => { void send(); }} />
+        <SendButton running={showStop} filled={canSend} theme={p.theme} onClick={showStop ? p.onStop : () => { void send(); }} />
       </div>
     </div>
   );
