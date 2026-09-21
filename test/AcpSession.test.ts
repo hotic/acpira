@@ -1172,6 +1172,30 @@ describe('AcpSession', () => {
     s.dispose();
   });
 
+  it('shows the submitted message below automatic compaction while the peer is still compacting', async () => {
+    let auto = false;
+    const { session, logs } = deps('/tmp', () => ({ atTokens: 300_000, auto }), undefined,
+      { env: { FAKE_COMPACTION: 'structured' } });
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('big');
+      auto = true;
+      const sent = s.prompt('visible follow-up', [{ kind: 'text', name: 'note.txt', text: 'attached note' }]);
+      await until(() => logs.some(l => l.includes('waiting for compaction completion')));
+      // The peer has not received the follow-up yet, but its bubble and staged attachment must already be visible.
+      expect(s.view().turns.at(-1)).toMatchObject({ role: 'user', text: 'visible follow-up', attachments: [{ name: 'note.txt' }] });
+      expect(s.toRecord().turns.at(-1)).toMatchObject({ role: 'user', text: 'visible follow-up' });
+      expect(s.view().turns.at(-2)).toMatchObject({ role: 'agent', blocks: [{ type: 'compaction', status: 'in_progress' }] });
+      await s.prompt('later queued message');
+      await s.setConfig('effort', 'high');
+      await sent;
+      await until(() => !s.isRunning && !s.view().queued?.length);
+      expect(s.view().turns.filter(t => t.role === 'user').map(t => t.text))
+        .toEqual(['big', '/compact', 'visible follow-up', 'later queued message']);
+    } finally { s.dispose(); }
+  });
+
   it('manual compaction: sends /compact when available; errors when not', async () => {
     const { session } = deps('/tmp', () => ({ atTokens: 300_000, auto: false }));
     const s = session();

@@ -6,13 +6,13 @@ import { AcpSession } from '../src/host/acp/AcpSession';
 const FAKE = fileURLToPath(new URL('./fake-agent.ts', import.meta.url));
 const TSX = fileURLToPath(new URL('../node_modules/.bin/tsx', import.meta.url));
 
-function fixture(agent: string, auto = false, env: Record<string, string> = {}) {
+function fixture(agent: string, auto: boolean | (() => boolean) = false, env: Record<string, string> = {}) {
   const logs: string[] = [];
   const session = AcpSession.fresh(agent, '/tmp', {
     registry: new AgentRegistry({ [agent]: { command: TSX, args: [FAKE], env: { FAKE_COMPACTION: agent, ...env } } }),
     log: line => logs.push(line), onChange: () => {},
     blobs: { saveBlob: async () => { throw new Error('No attachments'); }, readBlob: async () => { throw new Error('No attachments'); } },
-    compaction: () => ({ auto, atTokens: 300_000 }),
+    compaction: () => ({ auto: typeof auto === 'function' ? auto() : auto, atTokens: 300_000 }),
   });
   return { session, logs };
 }
@@ -26,6 +26,28 @@ async function until(predicate: () => boolean) {
 }
 
 describe('background compaction queue', () => {
+  it.each(['devin', 'kimi'])('%s: displays the accepted prompt below pre-send compaction without sending it early', async agent => {
+    let auto = false;
+    const { session: s, logs } = fixture(agent, () => auto);
+    try {
+      await s.start();
+      await s.prompt('big');
+      auto = true;
+      const sent = s.prompt('follow-up');
+      await until(() => logs.some(line => line.includes('waiting for compaction completion')));
+      await s.setConfig('effort', 'low');
+      const pending = s.view().turns.at(-1);
+      expect(pending).toMatchObject({ role: 'user', text: 'follow-up' });
+      expect(s.view().turns.at(-2)).toMatchObject({ role: 'agent', blocks: [{ type: 'text' }] });
+      expect(logs.filter(line => line.includes('prompt done:'))).toHaveLength(2);
+      await s.setConfig('effort', 'high');
+      await sent;
+      expect(s.view().turns.at(-2)).toEqual(pending);
+      expect(s.view().turns.at(-1)).toMatchObject({ role: 'agent', stop: 'end_turn' });
+      expect(logs.filter(line => line.includes('prompt done:'))).toHaveLength(3);
+    } finally { s.dispose(); }
+  });
+
   it('kimi: cancellation releases a pending usage refresh without triggering late compaction', async () => {
     const { session, logs } = fixture('kimi', true);
     try {

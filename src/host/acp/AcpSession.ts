@@ -3,7 +3,7 @@ import { captureTurnSettings } from '@shared/turnSettings';
 import { commandChanges, commandName, namedCommand, restoreCommandReceipts } from '@shared/slashCommands';
 import type { EditTurnRequest } from '@shared/protocol';
 import * as acp from '@agentclientprotocol/sdk';
-import type { AgentId, AgentTurn, AuthMethodInfo, ConfigControl, Draft, QuestionAnswers, SessionControls, SessionView, SlashCommand, Turn, TurnError, TurnSettings, Usage } from '@shared/transcript';
+import type { AgentId, AgentTurn, AuthMethodInfo, ConfigControl, Draft, QuestionAnswers, SessionControls, SessionView, SlashCommand, Turn, TurnError, TurnSettings, Usage, UserTurn } from '@shared/transcript';
 import type { AgentRuntimeInfo } from '@shared/inventory';
 import type { AgentRegistry } from './AgentRegistry';
 import { AgentProcess, type ClientHandlers } from './AgentProcess';
@@ -114,6 +114,9 @@ export class AcpSession {
   private perms: PermissionGate;
   private questions: QuestionGate;
   private queue: PromptQueue;
+  // Show the accepted message below pre-send compaction without making it the
+  // normalizer's last turn: background updates still belong to /compact.
+  private pendingPrompt?: UserTurn;
   private buildingPlan = false;
   // Usage at the end of the last auto-compaction: don't compact again until it has grown back a fair bit, so a "won't shrink" case doesn't fire every turn
   private compactedAt?: number;
@@ -168,7 +171,7 @@ export class AcpSession {
       bump: () => this.bump(),
       touch: () => this.touch(),
       isReady: () => this.status === 'ready',
-      isRunning: () => this.phase.running,
+      isRunning: () => this.phase.running || !!this.pendingPrompt,
       canEnqueue: () => this.status === 'ready' || this.status === 'starting',
       caps: () => promptCapsOf(this.proc?.init, this.deps.registry.get(this.agent)),
       send: (text, prepared) => this.prompt(text, [], false, { prepared }),
@@ -194,7 +197,7 @@ export class AcpSession {
     return {
       id: this.id, agent: this.agent, accountId: this.accountId, title: this.title, cwd: this.cwd,
       status: this.status, error: this.error, authMethods: this.authMethods,
-      turns: this.state.turns, running: this.phase.running, rev: this.rev, controls: this.state.controls,
+      turns: this.visibleTurns(), running: this.phase.running, rev: this.rev, controls: this.state.controls,
       usage: this.state.usage, commands: this.state.commands,
       queued: this.queue.snapshot(),
       createdAt: this.createdAt, updatedAt: this.updatedAt,
@@ -204,11 +207,15 @@ export class AcpSession {
   toRecord(): SessionRecord {
     return {
       id: this.id, agent: this.agent, accountId: this.accountId, acpSessionId: this.acpSessionId, cwd: this.cwd, title: this.title,
-      createdAt: this.createdAt, updatedAt: this.updatedAt, turns: this.state.turns, controls: this.state.controls,
+      createdAt: this.createdAt, updatedAt: this.updatedAt, turns: this.visibleTurns(), controls: this.state.controls,
       usage: this.state.usage, commands: this.state.commands, pinned: this.pinned,
       historyPending: this.historyPending, forkedFrom: this.forkedFrom,
       importPending: this.importPending, importedFrom: this.importedFrom,
     };
+  }
+
+  private visibleTurns(): Turn[] {
+    return this.pendingPrompt ? [...this.state.turns, this.pendingPrompt] : this.state.turns;
   }
 
   // touch: publish state, leaving updatedAt alone. Streamed chunks arrive every few ms, and the session list sorts by updatedAt,
@@ -670,17 +677,10 @@ export class AcpSession {
     if (this.status === 'starting') { await this.queue.enqueue(text, attachments, staged?.prepared); return; }
     if (this.status !== 'ready') return;
     if (!text.trim() && attachments.length === 0 && !staged?.prepared.blocks.length) return;
-    if (this.phase.running) { await this.queue.enqueue(text, attachments, staged?.prepared); return; }
+    if (this.phase.running || (!auto && this.pendingPrompt)) { await this.queue.enqueue(text, attachments, staged?.prepared); return; }
     // Mid-turn we cannot inject /compact: session/prompt is still on the wire. The next user-facing
     // ACP request (typed send or a queued follow-up) is the earliest slot; compact that first.
-    if (!auto && !isCompactCommand(text) && this.shouldAutoCompact()) {
-      this.log(`usage ${this.state.usage?.used} ≥ threshold, auto /compact before prompt`);
-      await this.compact(true);
-      if (this.status !== 'ready' || this.phase.running) {
-        if (this.status === 'ready') await this.queue.enqueue(text, attachments, staged?.prepared);
-        return;
-      }
-    }
+    const compactFirst = !auto && !isCompactCommand(text) && this.shouldAutoCompact();
     this.phase.running = true;
     this.autoCompactEligible = false;
     this.phase.staging = true;
@@ -733,19 +733,35 @@ export class AcpSession {
       if (forkHistory) { prepared.blocks = [...forkHistory, ...prepared.blocks]; edited = true; }
       else this.deps.notify?.(t('host.forkContextTooLarge'));
     }
-    this.agentTitleMuted = !!this.forkedFrom || !!forkHistory || !!staged?.edited;
     for (const p of prepared.problems) { this.log(p); this.deps.notify?.(p); }
-    const compacting = isCompactCommand(text);
-    const completion = new CompactionCompletion(compacting ? this.agent : undefined);
-    this.compactionCompletion = completion;
     if (prepared.attachments.length) this.log(`attachments: ${prepared.blocks.slice(text ? 1 : 0).map(b => b.type).join(' ')}`);
     const before = captureTurnSettings(this.state.controls);
     const command = namedCommand(this.state.commands, text);
     const name = commandName(text);
-    this.state.turns.push(auto ? { role: 'user', text, auto: true } : { role: 'user', id: randomUUID(), text,
+    const userTurn: UserTurn = auto ? { role: 'user', text, auto: true } : { role: 'user', id: randomUUID(), text,
       settings: before, ...(command ? { command: command.name } : {}), ...(edited ? { edited: true as const } : {}),
       ...(planId ? { planId } : {}),
-      ...(prepared.attachments.length ? { attachments: prepared.attachments } : {}) });
+      ...(prepared.attachments.length ? { attachments: prepared.attachments } : {}) };
+    if (compactFirst) {
+      this.log(`usage ${this.state.usage?.used} ≥ threshold, auto /compact before prompt`);
+      this.pendingPrompt = userTurn;
+      this.phase.running = false;
+      try { await this.compact(true); }
+      finally { this.pendingPrompt = undefined; }
+      // Keep the accepted bubble even if the peer disconnected during compaction.
+      // The pending message also participates in disk snapshots while it waits.
+      if (this.status !== 'ready') {
+        this.state.turns.push(userTurn);
+        this.touch();
+        return;
+      }
+      this.phase.running = true;
+    }
+    this.agentTitleMuted = !!this.forkedFrom || !!forkHistory || !!staged?.edited;
+    const compacting = isCompactCommand(text);
+    const completion = new CompactionCompletion(compacting ? this.agent : undefined);
+    this.compactionCompletion = completion;
+    this.state.turns.push(userTurn);
     if (!auto && !planId && (!this.state.title || this.state.title === t('session.untitled'))) this.state.title = summarizePrompt(text, prepared.attachments).slice(0, TITLE_MAX);
     const agentTurn: AgentTurn = { role: 'agent', blocks: [], startedAt: Date.now(), activity: activityOf(this.state.turns),
       ...(name ? { command: { name } } : {}) };
@@ -857,6 +873,9 @@ export class AcpSession {
 
   // Compact before flushing so a queued follow-up is not the request that runs over budget.
   private afterPrompt(auto: boolean, stop: acp.StopReason) {
+    // The submitted message owns the next wire slot; a later queued send must
+    // not overtake it when the nested /compact request settles.
+    if (this.pendingPrompt) return;
     if (!auto && stop === 'end_turn' && this.shouldAutoCompact()) {
       this.log(`usage ${this.state.usage?.used} ≥ threshold, auto /compact`);
       this.compact(true).catch(e => {
