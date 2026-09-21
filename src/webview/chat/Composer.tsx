@@ -302,7 +302,7 @@ export function Composer(p: ComposerProps) {
   );
 
   return (
-    <div className={cn(p.edit ? 'min-w-0' : flush ? 'pt-0' : 'px-page pb-page pt-2')}>
+    <div className={cn(p.edit ? 'min-w-0' : flush ? 'pt-0' : 'px-page pb-page')}>
       <WorkingBeam active={beamActive} theme={p.theme}>{field}</WorkingBeam>
     </div>
   );
