@@ -3,7 +3,7 @@ import { BookOpen, Check, Copy, FileText, Globe, KeyRound, Plus, Server, Sliders
 import type { AccountInfo, AgentInfo, ConfigControl } from '@shared/transcript';
 import type { AgentInventory, InventoryFile, InventoryMcp, InventorySkill, McpTransport } from '@shared/inventory';
 import type { SettingsView } from '@shared/settings';
-import { familyLabel } from '@shared/composerControls';
+import { familyLabel, isReasoningControl } from '@shared/composerControls';
 import { familyHidden, groupModels, setFamilyVisible, variantLabel, type ModelFamily } from '@shared/models';
 import { IconButton } from '../ui/Button';
 import { QuotaBars } from '../ui/QuotaBars';
@@ -45,15 +45,17 @@ export function AgentPage({ agent, accounts, inventory, controls, settings, env,
     return () => clearInterval(timer);
   }, [agent.id, hasQuota, accountKey, on]);
 
+  // Reasoning levels belong to the current model's picker, not agent-wide visibility settings.
+  const modelControls = controls?.filter(c => !isReasoningControl(c));
   const counts: Record<AgentSection, number> = {
-    models: controls?.reduce((n, c) => n + groupModels(c.options).length, 0) ?? 0,
+    models: modelControls?.reduce((n, c) => n + groupModels(c.options).length, 0) ?? 0,
     mcp: inventory?.mcp.length ?? 0,
     skills: inventory?.skills.length ?? 0,
     rules: inventory?.rules.filter(r => r.exists).length ?? 0,
     config: inventory?.config.filter(c => c.exists).length ?? 0,
   };
   const sections: Record<AgentSection, ReactNode> = {
-    models: <ModelsSection agent={agent} controls={controls} settings={settings} on={on} />,
+    models: <ModelsSection agent={agent} controls={modelControls} settings={settings} on={on} />,
     mcp: <McpSection agent={agent} inventory={inventory} env={env} on={on} />,
     skills: <SkillsSection agent={agent} inventory={inventory} env={env} on={on} />,
     rules: <FilesSection kind="rules" agent={agent} files={inventory?.rules} env={env} on={on} />,
@@ -170,7 +172,7 @@ function hostOf(url: string): string {
   try { return new URL(url).host; } catch { return url; }
 }
 
-// Option families of each configOption (model / reasoning level …) with a show / hide switch each; hidden families leave the composer menus.
+// Option families with a show / hide switch each; reasoning controls are excluded by the caller.
 // The lists only ever come over ACP, so before the first session there is nothing to show. The family in use can be switched off too —
 // the composer keeps the current value reachable on its own (visibleOptions)
 function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; controls?: ConfigControl[]; settings: SettingsView; on: SettingsHandlers }) {
@@ -203,8 +205,7 @@ function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; co
         // With a single configOption the section heading names it; several get one labelled group each
         const several = controls.length > 1;
         // Translate standard categories; preserve names supplied by custom controls.
-        const title = c.category === 'model' ? t('settings.models.selection')
-          : c.category === 'thought_level' ? t('settings.models.thinking') : c.name;
+        const title = c.category === 'model' ? t('settings.models.selection') : c.name;
         // Agent adapters classify model sources; unclassified ACP options retain their own group.
         const groups = c.category === 'model' && families.some(f => f.sourceKind)
           ? [
