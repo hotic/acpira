@@ -121,7 +121,7 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
         {(section.blocks.length > 0 || (lastSection && (running || outcomeOf(shown)))) && <AgentContent turn={content} index={index}
           running={lastSection && running} onPermission={onPermission}
           memoryKey={memoryKey && (i === 0 ? memoryKey : `${memoryKey}:after-plan:${section.key}`)}
-          subagents={subagents} allSubagents={allSubagents} onInspect={onInspect} lead={lead} />}
+          subagents={lastSection ? subagents : undefined} allSubagents={lastSection ? allSubagents : undefined} onInspect={onInspect} lead={lead} />}
         {section.plan && <PlanDocument block={section.plan}
           permission={shown.blocks.find((b): b is PermissionBlock => b.type === 'permission' && b.planId === section.plan!.id)} onChoose={onPermission} />}
       </Fragment>;

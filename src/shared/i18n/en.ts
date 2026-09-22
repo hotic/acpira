@@ -457,6 +457,7 @@ export const en = {
   'subagents.disconnected': '{n} unknown',
   'subagents.tree': 'Relations',
   'subagents.back': 'Back to conversation',
+  'subagents.breadcrumb': 'Breadcrumb',
   'subagents.root': 'Main session',
   'subagents.rootRole': 'Main agent',
   'subagents.tabs.session': 'Session',

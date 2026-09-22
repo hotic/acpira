@@ -14,6 +14,8 @@ import type { SubagentLifecycle } from './wire';
 export interface SubagentTreeDeps {
   log: (line: string) => void;
   now?: () => number;
+  // A node went terminal — agent-reported, or 'disconnected' from a local settle; pending cards close as cancelled
+  onTerminal?: (nodeId: string) => void;
 }
 
 export interface RootRouteCtx {
@@ -56,6 +58,10 @@ interface SubagentNode {
   state: NormalizeState;   // the child's own transcript
   rev: number;
   cached?: { rev: number; summary: SubagentSummary };
+  // Runtime-only markers, never persisted: `restored` = the node came back from a record (replay dedupe);
+  // `lateLogged` = one post-terminal drop was already logged for it
+  restored?: boolean;
+  lateLogged?: boolean;
 }
 
 function record(v: unknown): Record<string, unknown> | undefined {
@@ -101,7 +107,8 @@ export class SubagentTree {
         toolCount: r.toolCount,
         peer: { ...r.peer },
         state: { ...emptyState(), turns: restoreInterruptedTurns(r.turns, at) },
-        rev: 1,
+        rev: r.rev ?? 1,
+        restored: true,
       };
       if (r.parentId !== undefined) n.parentId = r.parentId;
       if (r.title !== undefined) n.title = r.title;
@@ -137,19 +144,39 @@ export class SubagentTree {
   }
 
   // The request/notification arrived under this peer session id → which transcript it belongs to; bump marks the
-  // summary dirty when a gate mutates the node's blocks (a permission card appearing or resolving)
+  // summary dirty when a gate mutates the node's blocks (a permission card appearing or resolving).
+  // A terminal node takes no new requests — the caller logs "unknown session" and answers cancelled.
   stateForPeer(peerSessionId: string): { state: NormalizeState; nodeId?: string; bump?: () => void } | undefined {
     const n = this.byPeerSession.get(peerSessionId);
-    return n === undefined ? undefined : { state: n.state, nodeId: n.id, bump: () => this.bump(n) };
+    return n === undefined || TERMINAL.has(n.status) ? undefined : { state: n.state, nodeId: n.id, bump: () => this.bump(n) };
   }
 
-  states(): { state: NormalizeState; bump?: () => void }[] {
-    return this.nodes.map(n => ({ state: n.state, bump: () => this.bump(n) }));
+  states(): { state: NormalizeState; nodeId: string; bump?: () => void }[] {
+    return this.nodes.map(n => ({ state: n.state, nodeId: n.id, bump: () => this.bump(n) }));
   }
 
-  // ---- lifecycle updates (RFD subagent_update / claude subagent_spawned + subagent_state_update) ----
+  // Every node id below this one, multi-level, cycle-safe — for cascading card cancellation
+  descendants(id: string): string[] {
+    const seen = new Set([id]);
+    const queue = [id];
+    const out: string[] = [];
+    while (queue.length) {
+      const cur = queue.shift()!;
+      for (const n of this.nodes) {
+        if (n.parentId === cur && !seen.has(n.id)) { seen.add(n.id); queue.push(n.id); out.push(n.id); }
+      }
+    }
+    return out;
+  }
+
+  // Lifecycle updates (RFD subagent_update / claude subagent_spawned + subagent_state_update)
 
   lifecycle(parentPeerSessionId: string, rootPeerSessionId: string | undefined, l: SubagentLifecycle, ctx: RootRouteCtx) {
+    // An announcement naming the stream's own session — or the root's — is noise, not a child
+    if (l.peerSessionId === rootPeerSessionId || l.peerSessionId === parentPeerSessionId) {
+      this.deps.log(`subagent lifecycle for own session ${l.peerSessionId} ignored`);
+      return;
+    }
     let parentId: string | undefined;
     if (parentPeerSessionId !== rootPeerSessionId) {
       const parent = this.byPeerSession.get(parentPeerSessionId);
@@ -159,7 +186,17 @@ export class SubagentTree {
       }
       parentId = parent.id;
     }
+    // The launch receipt may have preceded the spawn; the same delegation may already sit on the root
+    // call as a nested/receipt node — upgrade it in place rather than creating a second node
+    const launch = this.pendingLaunches.get(l.peerSessionId);
     let n = this.byPeerSession.get(l.peerSessionId);
+    if (n === undefined && launch !== undefined) {
+      const prior = this.byPeerTool.get(launch.toolCallId);
+      if (prior !== undefined && prior.visibility !== 'session' && prior.peer.sessionId === undefined) {
+        this.adoptCallNode(prior, l.peerSessionId);
+        n = prior;
+      }
+    }
     if (n === undefined) {
       n = {
         id: randomUUID(),
@@ -176,32 +213,29 @@ export class SubagentTree {
       };
       // The eager turn gives tool rows real startedAt/endedAt and endTurn something to seal
       n.state.turns.push({ role: 'agent', startedAt: n.announcedAt, blocks: [] });
-      if (parentId !== undefined) n.parentId = parentId;
       this.nodes.push(n);
       this.byPeerSession.set(l.peerSessionId, n);
-      // A claude async_launched receipt may have reached the root before the spawn
-      const launch = this.pendingLaunches.get(l.peerSessionId);
-      if (launch !== undefined) {
-        this.pendingLaunches.delete(l.peerSessionId);
+    }
+    if (launch !== undefined) {
+      this.pendingLaunches.delete(l.peerSessionId);
+      if (n.peer.toolCallId === undefined) {
         n.peer.toolCallId = launch.toolCallId;
         this.byPeerTool.set(launch.toolCallId, n);
-        n.model ??= launch.model;
-        n.title ??= launch.title;
-        const block = ctx.findRootTool(launch.toolCallId);
-        if (block !== undefined) block.subagentId = n.id;
       }
+      n.model ??= launch.model;
+      n.title ??= launch.title;
+      const block = ctx.findRootTool(launch.toolCallId);
+      if (block !== undefined) { block.subagentId = n.id; this.sealLaunchReceipt(block); }
     }
+    if (parentId !== undefined && n.parentId === undefined) n.parentId = parentId;
     if (l.title !== undefined) n.title = l.title;
     if (l.task !== undefined) n.task = l.task;
     if (l.capabilities?.cancel !== undefined) n.controls.cancel = l.capabilities.cancel;
     if (l.meta !== undefined) n.meta = l.meta;
+    // Content buffered before the announce is still the child's, even when this update already carries a terminal state
+    this.replayOrphans(l.peerSessionId, n, ctx);
     if (l.state !== undefined) this.transition(n, l.state);
     this.bump(n);
-    const buffered = this.orphans.get(l.peerSessionId);
-    if (buffered !== undefined) {
-      this.orphans.delete(l.peerSessionId);
-      for (const u of buffered) this.applyChild(n, u, ctx);
-    }
   }
 
   private transition(n: SubagentNode, state: SubagentState) {
@@ -220,7 +254,7 @@ export class SubagentTree {
     }
     n.status = state;
     n.stateSource = 'agent';
-    if (TERMINAL.has(state)) this.sealNode(n, state);
+    if (TERMINAL.has(state)) { this.sealNode(n, state); this.deps.onTerminal?.(n.id); }
     this.bump(n);
   }
 
@@ -244,9 +278,15 @@ export class SubagentTree {
     }
   }
 
-  // ---- child-stream updates ----
+  // Child-stream updates
 
   applyChild(n: SubagentNode, u: acp.SessionUpdate, ctx: RootRouteCtx) {
+    if (TERMINAL.has(n.status)) {
+      // After the terminal word only usage metadata still applies; content drops with one log per node
+      if (u.sessionUpdate === 'usage_update') { n.usage = { used: u.used, size: u.size }; this.bump(n); }
+      else if (!n.lateLogged) { n.lateLogged = true; this.deps.log(`subagent ${this.label(n)} is ${n.status}; ${u.sessionUpdate} dropped`); }
+      return;
+    }
     switch (u.sessionUpdate) {
       // A child session's own session-level noise never becomes transcript content
       case 'user_message_chunk':
@@ -262,16 +302,25 @@ export class SubagentTree {
     }
     // Claude native mirror link: when the root receipt lacked toolResponse, the child's own
     // updates still name the parent's Task call — take the link from whichever side arrives
-    if (n.visibility === 'session' && n.peer.toolCallId === undefined) {
+    if (n.visibility === 'session' && n.peer.toolCallId === undefined && n.peer.sessionId !== undefined) {
       const link = str(record(record(u._meta)?.claudeCode)?.parentToolUseId);
       if (link !== undefined) {
+        const prior = this.byPeerTool.get(link);
+        if (prior !== undefined && prior !== n && prior.visibility !== 'session' && prior.peer.sessionId === undefined) {
+          // The root call already made a nested/receipt node for this delegation — it keeps the id the block knows
+          this.adoptCallNode(prior, n.peer.sessionId);
+          n = prior;
+        }
         n.peer.toolCallId = link;
         this.byPeerTool.set(link, n);
         const block = ctx.findRootTool(link);
-        if (block !== undefined) block.subagentId = n.id;
+        if (block !== undefined) { block.subagentId = n.id; this.sealLaunchReceipt(block); }
+        this.replayOrphans(`tool:${link}`, n, ctx);
       }
     }
-    if (u.sessionUpdate === 'tool_call' || u.sessionUpdate === 'tool_call_update') this.toolOwner.set(u.toolCallId, n.id);
+    // Only nested/receipt children need toolOwner: a session node's updates arrive routed by its own
+    // session id, and registering them here would hijack a same-named root tool call
+    if (n.visibility !== 'session' && (u.sessionUpdate === 'tool_call' || u.sessionUpdate === 'tool_call_update')) this.toolOwner.set(u.toolCallId, n.id);
     applyUpdate(n.state, u);
     n.toolCount = toolBlocks(n.state.turns).length;
     this.bump(n);
@@ -294,17 +343,74 @@ export class SubagentTree {
     this.deps.log('subagent updates dropped: too many buffered for unannounced sessions');
   }
 
-  // ---- root-stream routing: the nested / receipt dialects ----
+  // Updates buffered before their node could be named (unknown session id, a parent link whose node
+  // did not exist yet) apply in order once it appears
+  private replayOrphans(key: string, n: SubagentNode, ctx: RootRouteCtx) {
+    const buffered = this.orphans.get(key);
+    if (buffered === undefined) return;
+    this.orphans.delete(key);
+    for (const u of buffered) this.applyChild(n, u, ctx);
+  }
+
+  // The launch receipt is the delegation call returning (async_launched); the adapter never sends a terminal
+  // status for it, so an unswept pending row would be marked failed at turn end. The child's own outcome is the node's.
+  private sealLaunchReceipt(block: ToolCallBlock) {
+    if (block.status === 'pending' || block.status === 'in_progress') {
+      block.status = 'completed';
+      if (block.startedAt !== undefined) block.endedAt ??= this.now();
+    }
+  }
+
+  // One delegation announced twice — a nested/receipt node on the root call and a native session — collapses
+  // into the node the root block already points at; the session node's transcript and reported fields merge across
+  private adoptCallNode(n: SubagentNode, peerSessionId: string) {
+    const stale = this.byPeerSession.get(peerSessionId);
+    n.visibility = 'session';
+    n.peer.sessionId = peerSessionId;
+    this.byPeerSession.set(peerSessionId, n);
+    if (stale !== undefined && stale !== n) {
+      if (stale.state.turns.length > 1 || stale.state.turns.some(t => t.role === 'agent' && t.blocks.length > 0)) {
+        n.state = stale.state;
+        n.toolCount = toolBlocks(n.state.turns).length;
+      }
+      n.status = stale.status;
+      n.stateSource = stale.stateSource;
+      n.controls = stale.controls;
+      n.title ??= stale.title;
+      n.task ??= stale.task;
+      n.role ??= stale.role;
+      n.model ??= stale.model;
+      n.usage ??= stale.usage;
+      n.result ??= stale.result;
+      n.meta ??= stale.meta;
+      if (stale.endedAt !== undefined) n.endedAt = stale.endedAt;
+      if (stale.parentId !== undefined && n.parentId === undefined) n.parentId = stale.parentId;
+      if (stale.cancelRequested) n.cancelRequested = true;
+      if (stale.background) n.background = true;
+      if (stale.lateLogged) n.lateLogged = true;
+      this.nodes = this.nodes.filter(x => x !== stale);
+    }
+    this.bump(n);
+  }
+
+  // Root-stream routing: the nested / receipt dialects
 
   routeRoot(u: acp.SessionUpdate, ctx: RootRouteCtx): 'consumed' | 'root' {
     const meta = record(u._meta);
+    // Devin lifecycle updates addressed to the agent id (toolCallId === agentId) are never child content —
+    // a nested child's own spawn carries its parent link on the same update, so they read before context routing
+    const started = record(meta?.['cognition.ai/subagent_started']);
+    if (started !== undefined) { this.devinStarted(started, meta, ctx); return 'consumed'; }
+    const completed = record(meta?.['cognition.ai/subagent_completed']);
+    if (completed !== undefined) { this.devinCompleted(completed); return 'consumed'; }
     // Devin: every child-side update carries the parent agent link
     const parentAgentId = str(record(meta?.['cognition.ai/subagent_context'])?.parentAgentId);
     if (parentAgentId !== undefined && parentAgentId !== 'root') {
       const n = this.byPeerAgent.get(parentAgentId);
       if (n === undefined) {
-        this.deps.log(`${u.sessionUpdate} for unknown subagent ${parentAgentId} left on the root`);
-        return 'root';
+        // The announcement may still be in flight; hold the update until the node exists
+        this.bufferOrphan(`agent:${parentAgentId}`, u);
+        return 'consumed';
       }
       this.applyChild(n, u, ctx);
       return 'consumed';
@@ -317,11 +423,6 @@ export class SubagentTree {
       if (n !== undefined) { this.applyChild(n, u, ctx); return 'consumed'; }
       this.toolOwner.delete(u.toolCallId);
     }
-    // Devin lifecycle updates addressed to the agent id (toolCallId === agentId)
-    const started = record(meta?.['cognition.ai/subagent_started']);
-    if (started !== undefined) { this.devinStarted(started, ctx); return 'consumed'; }
-    const completed = record(meta?.['cognition.ai/subagent_completed']);
-    if (completed !== undefined) { this.devinCompleted(completed); return 'consumed'; }
     const otherSubMeta = Object.keys(meta ?? {}).find(k => k.startsWith('cognition.ai/subagent_'));
     if (otherSubMeta !== undefined && this.byPeerAgent.has(u.toolCallId)) {
       this.deps.log(`unhandled ${otherSubMeta} on subagent ${u.toolCallId}`);
@@ -332,13 +433,20 @@ export class SubagentTree {
     const toolResponse = record(claude?.toolResponse);
     if (toolResponse?.isAsync === true && str(toolResponse.agentId) !== undefined) {
       const agentId = str(toolResponse.agentId)!;
-      const n = this.byPeerSession.get(agentId);
+      let n = this.byPeerSession.get(agentId);
+      const prior = this.byPeerTool.get(u.toolCallId);
+      if (prior !== undefined && prior !== n && prior.visibility !== 'session' && prior.peer.sessionId === undefined) {
+        // A nested/receipt node for the same delegation already sits on this call — it becomes the session node
+        this.adoptCallNode(prior, agentId);
+        n = prior;
+      }
       if (n !== undefined) {
         n.peer.toolCallId = u.toolCallId;
         this.byPeerTool.set(u.toolCallId, n);
         n.model ??= str(toolResponse.resolvedModel);
         n.title ??= str(toolResponse.description);
         this.bump(n);
+        this.replayOrphans(`tool:${u.toolCallId}`, n, ctx);
       } else {
         this.pendingLaunches.set(agentId, {
           toolCallId: u.toolCallId,
@@ -353,7 +461,9 @@ export class SubagentTree {
     if (parentToolUseId !== undefined) {
       const n = this.byPeerTool.get(parentToolUseId);
       if (n !== undefined) { this.applyChild(n, u, ctx); return 'consumed'; }
-      return 'root';
+      // The parent call may not have announced the node yet; keep the update for when it does
+      this.bufferOrphan(`tool:${parentToolUseId}`, u);
+      return 'consumed';
     }
     // Devin run_subagent delegation calls stay on the root but are remembered for the subagent_started link
     if (str(meta?.['cognition.ai/inferenceToolName']) === 'run_subagent') {
@@ -370,10 +480,11 @@ export class SubagentTree {
     return 'root';
   }
 
-  private devinStarted(started: Record<string, unknown>, ctx: RootRouteCtx) {
+  private devinStarted(started: Record<string, unknown>, meta: Record<string, unknown> | undefined, ctx: RootRouteCtx) {
     const agentId = str(started.agentId);
     if (agentId === undefined) { this.deps.log('subagent_started without agentId dropped'); return; }
     let n = this.byPeerAgent.get(agentId);
+    const isNew = n === undefined;
     if (n === undefined) {
       n = {
         id: randomUUID(),
@@ -392,6 +503,15 @@ export class SubagentTree {
       n.state.turns.push({ role: 'agent', startedAt: n.announcedAt, blocks: [] });
       this.nodes.push(n);
       this.byPeerAgent.set(agentId, n);
+    }
+    // A nested child's own spawn names its parent on the same update — the node hangs under it when known
+    if (n.parentId === undefined) {
+      const parentAgentId = str(record(meta?.['cognition.ai/subagent_context'])?.parentAgentId);
+      if (parentAgentId !== undefined && parentAgentId !== 'root') {
+        const parent = this.byPeerAgent.get(parentAgentId);
+        if (parent !== undefined) n.parentId = parent.id;
+        else this.deps.log(`subagent_started ${agentId} names unknown parent ${parentAgentId}; kept top-level`);
+      }
     }
     const title = str(started.title);
     const task = str(started.task);
@@ -415,6 +535,8 @@ export class SubagentTree {
       this.deps.log(`subagent ${agentId} has no matching run_subagent call`);
     }
     this.bump(n);
+    // Child updates that carried this agent's context link before the spawn arrived
+    if (isNew) this.replayOrphans(`agent:${agentId}`, n, ctx);
   }
 
   private devinCompleted(done: Record<string, unknown>) {
@@ -452,12 +574,7 @@ export class SubagentTree {
     if (n === undefined) return;
     block.subagentId = n.id;
     if (n.visibility === 'session') {
-      // The launch receipt is the delegation call returning (async_launched); the adapter never sends
-      // a terminal status for it, so an unswept pending row would be marked failed at turn end
-      if (block.status === 'pending' || block.status === 'in_progress') {
-        block.status = 'completed';
-        if (block.startedAt !== undefined) block.endedAt ??= this.now();
-      }
+      this.sealLaunchReceipt(block);
       this.bump(n);
       return;
     }
@@ -513,6 +630,8 @@ export class SubagentTree {
       n.state.turns.push({ role: 'agent', startedAt: n.announcedAt, blocks: [] });
       this.nodes.push(n);
       this.byPeerTool.set(toolCallId, n);
+      // Child updates that named this call before the node existed (claudeCode.parentToolUseId)
+      this.replayOrphans(`tool:${toolCallId}`, n, ctx);
     }
     return n;
   }
@@ -536,7 +655,7 @@ export class SubagentTree {
     return block.content?.type === 'text' ? block.content.text : undefined;
   }
 
-  // ---- end of the connection / turn ----
+  // End of the connection / turn
 
   settle(reason: 'prompt-returned' | 'connection-lost' | 'disposed') {
     for (const n of this.nodes) {
@@ -546,6 +665,7 @@ export class SubagentTree {
       n.stateSource = 'local';
       n.endedAt = this.now();
       endTurn(n.state, 'cancelled');
+      this.deps.onTerminal?.(n.id);
       this.bump(n);
     }
     const dropped = [...this.orphans.values()].reduce((a, l) => a + l.length, 0);
@@ -570,7 +690,7 @@ export class SubagentTree {
     this.reindex();
   }
 
-  // ---- views ----
+  // Views
 
   private activityLabel(n: SubagentNode): string | undefined {
     if (n.status !== 'running') return undefined;
@@ -647,6 +767,7 @@ export class SubagentTree {
         peer: { ...n.peer },
         toolCount: n.toolCount,
         turns: n.state.turns,
+        rev: n.rev,
       };
       if (n.parentId !== undefined) r.parentId = n.parentId;
       if (n.title !== undefined) r.title = n.title;

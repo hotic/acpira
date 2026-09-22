@@ -167,7 +167,11 @@ export class AcpSession {
     // Old records (persisted before the contract changed) may lack the options field
     const c = record.controls as Partial<SessionControls> | undefined;
     this.state = { turns: restoreInterruptedTurns(restoreCommandReceipts(restorePlanSnapshots(record.turns)), record.updatedAt), controls: { modes: c?.modes ?? [], modeId: c?.modeId, modeConfigId: c?.modeConfigId, options: c?.options ?? [] }, usage: record.usage, commands: record.commands, title: record.title };
-    this.tree = new SubagentTree({ log: line => this.log(line) }, record.subagents, record.updatedAt);
+    this.tree = new SubagentTree({
+      log: line => this.log(line),
+      // A child going terminal closes its pending permission / question cards as cancelled (RFD)
+      onTerminal: id => { this.perms.cancelFor(id); this.questions.cancelFor(id); },
+    }, record.subagents, record.updatedAt);
     const gateDeps = {
       stateFor: (sessionId: string | undefined) => this.stateForPeer(sessionId),
       states: () => [{ state: this.state }, ...this.tree.states()],
@@ -1032,11 +1036,15 @@ export class AcpSession {
   // can be — the webview's cancel affordance reads controls.cancel. The child's pending cards resolve as cancelled
   async cancelSubagent(id: string): Promise<void> {
     const c = this.tree.cancel(id);
-    if (!c || !this.proc) return;
-    await this.proc.agent.notify(acp.methods.agent.session.cancel, { sessionId: c.peerSessionId });
-    this.perms.cancelFor(id);
-    this.questions.cancelFor(id);
+    if (!c) return;
+    // Pending cards answer cancelled before the wire cancel goes out — and the cascade covers
+    // descendants too, since a cancelled parent's children are gone as far as the user is concerned
+    for (const nodeId of [id, ...this.tree.descendants(id)]) {
+      this.perms.cancelFor(nodeId);
+      this.questions.cancelFor(nodeId);
+    }
     this.touch();
+    if (this.proc) await this.proc.agent.notify(acp.methods.agent.session.cancel, { sessionId: c.peerSessionId });
   }
 
   subagentTranscript(id: string): { turns: Turn[]; rev: number; running: boolean } | undefined {
@@ -1145,8 +1153,9 @@ export class AcpSession {
     if (n.sessionId !== this.acpSessionId && this.acpSessionId) {
       const node = this.tree.byPeerSession.get(n.sessionId);
       if (node) {
-        // Replay content is dropped like the root's; lifecycle announcements above still apply (idempotent by peer id)
-        if (!this.replaying) this.tree.applyChild(node, n.update, this.routeCtx());
+        // Replay content is dropped for a node restored from the record (its transcript is already whole);
+        // a node announced during this replay is fresh and must collect what the stream repeats
+        if (!this.replaying || !node.restored) this.tree.applyChild(node, n.update, this.routeCtx());
         this.touch();
       } else {
         this.tree.bufferOrphan(n.sessionId, n.update);

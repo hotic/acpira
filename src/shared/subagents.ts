@@ -37,4 +37,5 @@ export interface SubagentSummary {
 
 export interface SubagentRecord extends Omit<SubagentSummary, 'permissions' | 'question'> {
   turns: Turn[];
+  rev?: number;   // the node's dirty counter at write time; absent on records written before it was persisted
 }

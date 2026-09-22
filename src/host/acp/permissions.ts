@@ -105,6 +105,8 @@ export class PermissionGate {
       } catch { /* The permission choices remain usable without a local preview. */ }
     }
     if (signal.aborted || epoch !== this.epoch) return { outcome: { outcome: 'cancelled' } };
+    // The owner may have gone terminal while the plan file was being read — a card for it must not appear
+    if (this.deps.stateFor(req.sessionId) === undefined) return { outcome: { outcome: 'cancelled' } };
     // yolo: approve directly without showing a card, preferring allow_always so the same tool doesn't keep coming back
     if (this.autoApprove) {
       if (plan?.approvalToolCallId === req.toolCall.toolCallId) plan.status = 'approved';

@@ -20,8 +20,10 @@ export interface QuestionGateDeps {
   // Which transcript a request belongs to: the root session id → the root state; a child peer session id → that node's
   // state; bump marks the owning node dirty when a card mutates its transcript
   stateFor: (sessionId: string | undefined) => { state: NormalizeState; nodeId?: string; bump?: () => void } | undefined;
-  // Every transcript that may hold cards (root + all child nodes): sweeps run over all of them
-  states: () => { state: NormalizeState; bump?: () => void }[];
+  // Every transcript that may hold cards (root + all child nodes): sweeps run over all of them;
+  // nodeId pins a card to its owner — undefined is the root — so a reopened child's fresh `q-1`
+  // can never settle the old `q-1` still sitting in the root history
+  states: () => { state: NormalizeState; nodeId?: string; bump?: () => void }[];
   touch: () => void;
   log: (line: string) => void;
 }
@@ -120,7 +122,7 @@ export class QuestionGate {
     const given = cleanAnswers(p.questions, answers);
     const empty = Object.keys(given).length === 0;
     this.pending.delete(blockId);
-    this.settle(blockId, skip || empty ? 'skipped' : 'answered', given);
+    this.settle(p, skip || empty ? 'skipped' : 'answered', given);
     if (p.kind === 'grok') {
       p.resolve(skip || empty ? { outcome: 'skip_interview', ...(empty ? {} : { partial_answers: given as GrokAnswers }) } : { outcome: 'accepted', answers: given as GrokAnswers });
     } else {
@@ -132,7 +134,7 @@ export class QuestionGate {
   // The turn is over (cancelled, failed, closed): every open card is withdrawn and the agent told so
   cancelAll() {
     for (const p of this.pending.values()) {
-      this.settle(p.blockId, 'cancelled');
+      this.settle(p, 'cancelled');
       if (p.kind === 'grok') p.resolve({ outcome: 'skip_interview' }); else p.resolve({ action: 'cancel' });
     }
     this.pending.clear();
@@ -143,7 +145,7 @@ export class QuestionGate {
     for (const p of [...this.pending.values()]) {
       if (p.nodeId !== nodeId) continue;
       this.pending.delete(p.blockId);
-      this.settle(p.blockId, 'cancelled');
+      this.settle(p, 'cancelled');
       if (p.kind === 'grok') p.resolve({ outcome: 'skip_interview' }); else p.resolve({ action: 'cancel' });
     }
   }
@@ -161,19 +163,20 @@ export class QuestionGate {
       const p = this.pending.get(block.id);
       if (!p) return;
       this.pending.delete(block.id);
-      this.settle(block.id, 'cancelled');
+      this.settle(p, 'cancelled');
       if (p.kind === 'grok') p.resolve({ outcome: 'skip_interview' }); else p.resolve({ action: 'cancel' });
       this.deps.touch();
     }, { once: true });
     this.deps.touch();
   }
 
-  private settle(blockId: string, outcome: QuestionBlock['outcome'], answers?: QuestionAnswers) {
+  private settle(p: Pending, outcome: QuestionBlock['outcome'], answers?: QuestionAnswers) {
     for (const e of this.deps.states()) {
+      if (e.nodeId !== p.nodeId) continue;
       for (let i = e.state.turns.length - 1; i >= 0; i--) {
         const turn = e.state.turns[i];
         if (turn?.role !== 'agent') continue;
-        const b = turn.blocks.find(b => b.type === 'question' && b.id === blockId);
+        const b = turn.blocks.find(b => b.type === 'question' && b.id === p.blockId);
         if (!b || b.type !== 'question') continue;
         b.outcome = outcome;
         if (answers && Object.keys(answers).length) b.answers = answers;

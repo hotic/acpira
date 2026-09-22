@@ -543,6 +543,139 @@ const app = acp.agent({ name: 'fake-agent' })
         return { stopReason: 'end_turn' };
       }
 
+      if (text === 'subagents-native-collision') {
+        await announce('c1', { name: 'Child', task: 'child task' });
+        await sendTo('c1', { sessionUpdate: 'tool_call', toolCallId: 'shared-id', title: 'child read', kind: 'read', status: 'in_progress' });
+        await sendTo('c1', { sessionUpdate: 'tool_call_update', toolCallId: 'shared-id', status: 'completed' });
+        // ACP only requires tool ids unique within a session — the root's own call can reuse the same id
+        await send({ sessionUpdate: 'tool_call', toolCallId: 'shared-id', title: 'root write', kind: 'edit', status: 'in_progress' });
+        await send({ sessionUpdate: 'tool_call_update', toolCallId: 'shared-id', status: 'completed' });
+        await announce('c1', { state: 'completed' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root done' } });
+        return { stopReason: 'end_turn' };
+      }
+
+      if (text === 'subagents-devin-deep') {
+        await sendTo(sid, { sessionUpdate: 'tool_call', toolCallId: 'run_subagent:0#a1', title: 'Ran explore subagent Outer', kind: 'other', status: 'in_progress',
+          rawInput: { title: 'Outer', task: 'outer task', profile: 'subagent_explore', is_background: true },
+          _meta: { 'cognition.ai/inferenceToolName': 'run_subagent' } });
+        await sendTo(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'd1', status: 'in_progress',
+          _meta: { 'cognition.ai/subagent_started': { agentId: 'd1', title: 'Outer', task: 'outer task', profile: 'Explore', depth: 1, isBackground: true } } });
+        await sendTo(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'run_subagent:0#a1', status: 'completed',
+          content: [{ type: 'content', content: { type: 'text', text: 'Background subagent started.' } }],
+          _meta: { 'cognition.ai/inferenceToolName': 'run_subagent' } });
+        // d2's own content races ahead of its announcement
+        await sendTo(sid, { sessionUpdate: 'tool_call', toolCallId: 'deep:1', title: 'deep read', kind: 'read', status: 'in_progress',
+          _meta: { 'cognition.ai/subagent_context': { parentAgentId: 'd2' } } });
+        // d1 spawning d2: the announcement itself carries the parent link — it is lifecycle, not d1 content
+        await sendTo(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'd2', status: 'in_progress',
+          _meta: { 'cognition.ai/subagent_started': { agentId: 'd2', title: 'Inner', task: 'inner task', depth: 2 },
+            'cognition.ai/subagent_context': { parentAgentId: 'd1' } } });
+        await sendTo(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'deep:1', status: 'completed',
+          _meta: { 'cognition.ai/subagent_context': { parentAgentId: 'd2' } } });
+        await sendTo(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'd2', status: 'completed',
+          _meta: { 'cognition.ai/subagent_completed': { agentId: 'd2', success: true, summary: 'inner done' },
+            'cognition.ai/subagent_context': { parentAgentId: 'd1' } } });
+        await sendTo(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'd1', status: 'completed',
+          _meta: { 'cognition.ai/subagent_completed': { agentId: 'd1', success: true, summary: 'outer done' } } });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root done' } });
+        return { stopReason: 'end_turn' };
+      }
+
+      if (text === 'subagents-late-drop') {
+        await announce('c1', { name: 'Fast', task: 'done quickly' });
+        await sendTo('c1', { sessionUpdate: 'tool_call', toolCallId: 'c1-t1', title: 'read', kind: 'read', status: 'completed' });
+        await announce('c1', { state: 'completed' });
+        // The adapter kept flushing the child's stream after its terminal word — all content is dropped
+        await sendTo('c1', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'late text' } });
+        await sendTo('c1', { sessionUpdate: 'tool_call', toolCallId: 'c1-late', title: 'late tool', kind: 'read', status: 'in_progress' });
+        await sendTo('c1', { sessionUpdate: 'usage_update', used: 42, size: 100 });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root done' } });
+        return { stopReason: 'end_turn' };
+      }
+
+      if (text === 'subagents-claude-rootfirst') {
+        // The launch receipt lands before the spawn announcement: the link resolves through pendingLaunches
+        await sendTo(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'call_k1', status: 'in_progress',
+          _meta: { claudeCode: { toolName: 'Agent', toolResponse: { isAsync: true, status: 'async_launched', agentId: 'k1', description: 'Explore shared', resolvedModel: 'x' } } } });
+        await sendExt({ sessionUpdate: 'subagent_spawned', subagentSessionId: 'k1', name: 'Explore shared', task: 'map src/shared', capabilities: {} });
+        await sendTo('k1', { sessionUpdate: 'tool_call', toolCallId: 'k1-t1', title: 'Glob', kind: 'search', status: 'completed' });
+        await sendExt({ sessionUpdate: 'subagent_state_update', subagentSessionId: 'k1', state: 'completed' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root done' } });
+        return { stopReason: 'end_turn' };
+      }
+
+      if (text === 'subagents-claude-upgrade') {
+        // Claude's legacy marker makes a nested node on the root call first…
+        await sendTo(sid, { sessionUpdate: 'tool_call', toolCallId: 'call_x', title: 'Agent', kind: 'other', status: 'in_progress',
+          rawInput: { prompt: 'map src/shared', description: 'Explore shared' },
+          _meta: { claudeCode: { subagent: true } } });
+        // …then the same delegation also arrives as a native session — the nested node upgrades in place
+        await sendExt({ sessionUpdate: 'subagent_spawned', subagentSessionId: 'k1', name: 'Explore shared', task: 'map src/shared', capabilities: {} });
+        await sendTo('k1', { sessionUpdate: 'tool_call', toolCallId: 'k1-t1', title: 'Glob', kind: 'search', status: 'completed' });
+        await sendTo(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'call_x', status: 'in_progress',
+          _meta: { claudeCode: { toolName: 'Agent', toolResponse: { isAsync: true, status: 'async_launched', agentId: 'k1', resolvedModel: 'x' } } } });
+        await sendExt({ sessionUpdate: 'subagent_state_update', subagentSessionId: 'k1', state: 'completed' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root done' } });
+        return { stopReason: 'end_turn' };
+      }
+
+      if (text === 'subagents-self') {
+        // An announcement naming the announcing session itself must be rejected, not adopted
+        await sendExt({ sessionUpdate: 'subagent_update', subagentSessionId: sid, name: 'Self', task: 'impersonate' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root done' } });
+        return { stopReason: 'end_turn' };
+      }
+
+      if (text === 'subagents-native-termperm') {
+        await announce('c1', { name: 'C1', task: 'asks then ends', capabilities: { cancel: true } });
+        await sendTo('c1', { sessionUpdate: 'tool_call', toolCallId: 'c1-t1', title: 'read', kind: 'read', status: 'in_progress' });
+        const perm = client.request(acp.methods.client.session.requestPermission, {
+          sessionId: 'c1',
+          toolCall: { toolCallId: 'c1-t1', title: 'Read /repo/a.ts' },
+          options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }, { optionId: 'deny', name: 'Deny', kind: 'reject_once' }],
+        });
+        // The child ends while its card is still up: the host answers the card cancelled (RFD)
+        await sendExt({ sessionUpdate: 'subagent_state_update', subagentSessionId: 'c1', state: 'completed' });
+        const r = await perm;
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `perm ${r.outcome.outcome}` } });
+        return { stopReason: 'end_turn' };
+      }
+
+      if (text === 'subagents-native-cascade') {
+        await announce('c1', { name: 'Outer', task: 'outer task', capabilities: { cancel: true } });
+        await sendTo('c1', { sessionUpdate: 'subagent_update', subagentSessionId: 'c1a', name: 'Inner', task: 'inner task' });
+        await sendTo('c1a', { sessionUpdate: 'tool_call', toolCallId: 'c1a-t1', title: 'read', kind: 'read', status: 'in_progress' });
+        const perm = client.request(acp.methods.client.session.requestPermission, {
+          sessionId: 'c1a',
+          toolCall: { toolCallId: 'c1a-t1', title: 'Read /repo/b.ts' },
+          options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }, { optionId: 'deny', name: 'Deny', kind: 'reject_once' }],
+        });
+        // Cancelling the parent answers the grandchild's pending card before session/cancel lands here
+        await waitCancelled('c1');
+        await announce('c1', { state: 'cancelled' });
+        await sendTo('c1', { sessionUpdate: 'subagent_update', subagentSessionId: 'c1a', state: 'cancelled' });
+        const r = await perm;
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `inner perm ${r.outcome.outcome}` } });
+        return { stopReason: 'cancelled' };
+      }
+
+      if (text === 'subagents-native-question') {
+        await announce('c1', { name: 'Asker', task: 'asks the user' });
+        await sendTo('c1', { sessionUpdate: 'tool_call', toolCallId: 'c1-t1', title: 'ask_user_question', kind: 'other', status: 'in_progress',
+          rawInput: { questions: [{ header: 'Name', question: 'Which name?', options: [{ label: 'a' }, { label: 'b' }] }] } });
+        const r = await client.request(acp.methods.client.elicitation.create, {
+          sessionId: 'c1', mode: 'form', toolCallId: 'c1-t1', message: 'Which name?',
+          requestedSchema: { type: 'object', required: ['q0'], properties: {
+            q0: { type: 'string', title: 'Name', description: 'Which name?', oneOf: [{ const: 'a', title: 'a' }, { const: 'b', title: 'b' }] },
+          } },
+        });
+        await sendTo('c1', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(r) } });
+        await announce('c1', { state: 'completed' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root done' } });
+        return { stopReason: 'end_turn' };
+      }
+
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `unknown subagent script ${text}` } });
       return { stopReason: 'end_turn' };
     }
