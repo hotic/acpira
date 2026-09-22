@@ -1,5 +1,5 @@
 import type { ChatGptIntegrationStatus } from './chatgptIntegration';
-import type { AccountInfo, AgentId, AgentInfo, ConfigControl, Draft, NativeSessionInfo, QuestionAnswers, SessionSummary, SessionView, TurnSettings } from './transcript';
+import type { AccountInfo, AgentId, AgentInfo, ConfigControl, Draft, NativeSessionInfo, QuestionAnswers, SessionSummary, SessionView, Turn, TurnSettings } from './transcript';
 import type { Appearance, AxisKey } from './appearance';
 import type { HiddenMap, SettingKey, SettingsView } from './settings';
 import type { Locale } from './i18n';
@@ -64,6 +64,8 @@ export type HostMsg =
   | { type: 'agents'; agents: AgentInfo[] }
   | { type: 'sessions'; sessions: SessionSummary[] }
   | { type: 'session'; session: SessionView }
+  // One observed subagent's transcript, pushed to the viewer that asked for it; rev grows with every change
+  | { type: 'subagent'; sessionId: string; subagentId: string; rev: number; running: boolean; turns: Turn[] }
   | { type: 'accounts'; accounts: AccountInfo[] }
   | { type: 'accountActions'; actions: AccountAction[] }
   | { type: 'hidden'; hidden: HiddenMap }
@@ -144,6 +146,11 @@ export type WebviewMsg =
   | { type: 'retryTurn'; sessionId?: string }
   // Drop the agent process and resume the same native session instead (prompts keep failing on the live connection)
   | { type: 'reconnect'; sessionId?: string }
+  // Follow / stop following one subagent's transcript (the `subagent` message stream); per viewer, one at a time
+  | { type: 'observeSubagent'; sessionId: string; subagentId: string }
+  | { type: 'unobserveSubagent'; sessionId: string; subagentId: string }
+  // Ask the agent to cancel one child (sent as session/cancel under its own session id)
+  | { type: 'cancelSubagent'; sessionId: string; subagentId: string }
   // Queued prompts (waiting for the running turn): drop one, or replace one in place — kept attachments by index, new drafts alongside
   | { type: 'dequeue'; sessionId: string; id: string }
   | { type: 'sendQueued'; sessionId: string; id: string }

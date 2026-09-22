@@ -3,7 +3,8 @@ import { captureTurnSettings } from '@shared/turnSettings';
 import { commandChanges, commandName, namedCommand, restoreCommandReceipts } from '@shared/slashCommands';
 import type { EditTurnRequest } from '@shared/protocol';
 import * as acp from '@agentclientprotocol/sdk';
-import type { AgentId, AgentTurn, AuthMethodInfo, ConfigControl, Draft, QuestionAnswers, SessionControls, SessionView, SlashCommand, Turn, TurnError, TurnSettings, Usage, UserTurn } from '@shared/transcript';
+import type { AgentId, AgentTurn, AuthMethodInfo, ConfigControl, Draft, QuestionAnswers, SessionControls, SessionView, SlashCommand, ToolCallBlock, Turn, TurnError, TurnSettings, Usage, UserTurn } from '@shared/transcript';
+import type { SubagentRecord } from '@shared/subagents';
 import type { AgentRuntimeInfo } from '@shared/inventory';
 import type { AgentRegistry } from './AgentRegistry';
 import { AgentProcess, type ClientHandlers } from './AgentProcess';
@@ -30,6 +31,8 @@ import { msg } from '../errors';
 import { cloneJson } from '../clone';
 import { t, tOr } from '../i18n';
 import { RENAME_MAX, TITLE_MAX } from '../limits';
+import { SubagentTree, type RootRouteCtx } from './subagents/SubagentTree';
+import { extensionOf } from './subagents/wire';
 
 const GROK_USAGE_INTERVAL_MS = 800;
 // How long dropProcess waits for session/close before killing the process anyway
@@ -58,6 +61,8 @@ export interface SessionRecord {
   importPending?: true;
   // Which native session this record was imported from; provenance, kept forever
   importedFrom?: { sessionId: string };
+  // Delegated child nodes with their own transcripts (absent on records written before subagent support)
+  subagents?: SubagentRecord[];
 }
 
 // The two hooks the account layer gives a session: environment variables before spawn, authenticate after initialize
@@ -113,6 +118,7 @@ export class AcpSession {
   private proc?: AgentProcess;
   private perms: PermissionGate;
   private questions: QuestionGate;
+  private tree: SubagentTree;
   private queue: PromptQueue;
   // Show the accepted message below pre-send compaction without making it the
   // normalizer's last turn: background updates still belong to /compact.
@@ -161,8 +167,15 @@ export class AcpSession {
     // Old records (persisted before the contract changed) may lack the options field
     const c = record.controls as Partial<SessionControls> | undefined;
     this.state = { turns: restoreInterruptedTurns(restoreCommandReceipts(restorePlanSnapshots(record.turns)), record.updatedAt), controls: { modes: c?.modes ?? [], modeId: c?.modeId, modeConfigId: c?.modeConfigId, options: c?.options ?? [] }, usage: record.usage, commands: record.commands, title: record.title };
-    this.perms = new PermissionGate({ state: () => this.state, touch: () => this.touch() });
-    this.questions = new QuestionGate({ state: () => this.state, touch: () => this.touch() });
+    this.tree = new SubagentTree({ log: line => this.log(line) }, record.subagents, record.updatedAt);
+    const gateDeps = {
+      stateFor: (sessionId: string | undefined) => this.stateForPeer(sessionId),
+      states: () => [{ state: this.state }, ...this.tree.states()],
+      touch: () => this.touch(),
+      log: (line: string) => this.log(line),
+    };
+    this.perms = new PermissionGate(gateDeps);
+    this.questions = new QuestionGate(gateDeps);
     this.queue = new PromptQueue({
       sessionId: this.id,
       blobs: this.deps.blobs,
@@ -200,6 +213,7 @@ export class AcpSession {
       turns: this.visibleTurns(), running: this.phase.running, rev: this.rev, controls: this.state.controls,
       usage: this.state.usage, commands: this.state.commands,
       queued: this.queue.snapshot(),
+      ...(this.tree.size > 0 ? { subagents: this.tree.summaries() } : {}),
       createdAt: this.createdAt, updatedAt: this.updatedAt,
     };
   }
@@ -211,6 +225,7 @@ export class AcpSession {
       usage: this.state.usage, commands: this.state.commands, pinned: this.pinned,
       historyPending: this.historyPending, forkedFrom: this.forkedFrom,
       importPending: this.importPending, importedFrom: this.importedFrom,
+      ...(this.tree.size > 0 ? { subagents: this.tree.toRecords() } : {}),
     };
   }
 
@@ -257,6 +272,7 @@ export class AcpSession {
       bump: () => s.bump(),
       touch: () => s.touch(),
       flushQueued: () => s.queue.flush(),
+      truncateSubagents: count => s.tree.truncate(count),
       log: line => s.log(line),
     };
   }
@@ -337,6 +353,7 @@ export class AcpSession {
     }
     const info = this.proc.init.agentInfo;
     this.log(`initialize ok: protocol ${this.proc.init.protocolVersion}${info ? ` · ${info.name} ${info.version}` : ''}`);
+    this.tree.reindex();
     this.authMethods = this.proc.init.authMethods?.map(m => ({ id: m.id, name: m.name, description: m.description ?? undefined }));
     await this.handoff();
   }
@@ -360,6 +377,7 @@ export class AcpSession {
         if (!live() || this.status === 'closed') return;
         this.status = 'error';
         this.error = this.error ?? t('host.exited', { agent: def.name, code: code ?? signal ?? '?' });
+        this.tree.settle('connection-lost');
         this.settle('cancelled');
         this.touch();
       },
@@ -893,6 +911,8 @@ export class AcpSession {
     this.perms.bumpEpoch();
     this.compactionCompletion?.close();
     this.compactionCompletion = undefined;
+    // The parent prompt returned: children still reported running are disconnected, never failed
+    this.tree.settle('prompt-returned');
     if (error) failTurn(this.state, error); else endTurn(this.state, stop);
     this.perms.cancelAll();
     this.questions.cancelAll();
@@ -1008,6 +1028,47 @@ export class AcpSession {
     this.perms.resolve(blockId, optionId);
   }
 
+  // Ask the agent to cancel one delegated child; only children the agent marked cancellable and that own a session id
+  // can be — the webview's cancel affordance reads controls.cancel. The child's pending cards resolve as cancelled
+  async cancelSubagent(id: string): Promise<void> {
+    const c = this.tree.cancel(id);
+    if (!c || !this.proc) return;
+    await this.proc.agent.notify(acp.methods.agent.session.cancel, { sessionId: c.peerSessionId });
+    this.perms.cancelFor(id);
+    this.questions.cancelFor(id);
+    this.touch();
+  }
+
+  subagentTranscript(id: string): { turns: Turn[]; rev: number; running: boolean } | undefined {
+    return this.tree.transcript(id);
+  }
+
+  // A permission / question request addresses a session id: root → root state, a child peer id → that node's transcript
+  private stateForPeer(sessionId: string | undefined): { state: NormalizeState; nodeId?: string } | undefined {
+    if (!sessionId || !this.acpSessionId || sessionId === this.acpSessionId) return { state: this.state };
+    return this.tree.stateForPeer(sessionId);
+  }
+
+  private routeCtx(): RootRouteCtx {
+    return { turnIndex: this.currentTurnIndex(), findRootTool: id => this.findTool(id) };
+  }
+
+  // The root agent turn a new subagent anchors to: the live one, or the index the next update is about to open
+  private currentTurnIndex(): number {
+    const last = this.state.turns[this.state.turns.length - 1];
+    return last?.role === 'agent' ? this.state.turns.length - 1 : this.state.turns.length;
+  }
+
+  private findTool(id: string): ToolCallBlock | undefined {
+    for (let i = this.state.turns.length - 1; i >= 0; i--) {
+      const turn = this.state.turns[i];
+      if (turn?.role !== 'agent') continue;
+      const b = turn.blocks.find((b): b is ToolCallBlock => b.type === 'tool_call' && b.id === id);
+      if (b) return b;
+    }
+    return undefined;
+  }
+
   // The question card was closed in the webview: answers keyed by question id; skip lets the agent go on with what it has
   answerQuestions(blockId: string, answers: QuestionAnswers, skip = false) {
     this.questions.resolve(blockId, answers, skip);
@@ -1060,6 +1121,7 @@ export class AcpSession {
     this.perms.bumpEpoch();
     this.status = 'closed';
     this.queue.clear();
+    this.tree.settle('disposed');
     if (this.phase.running) this.settle('cancelled');
     this.perms.cancelAll();
     this.questions.cancelAll();
@@ -1071,7 +1133,26 @@ export class AcpSession {
       if (n.update.sessionUpdate === 'available_commands_update' || n.update.sessionUpdate === 'usage_update') this.phase.editNotifications.push(n);
       return;
     }
-    if (n.sessionId !== this.acpSessionId && this.acpSessionId) return;
+    // Extension updates arrive as rewritten session_info_update (see AgentProcess): subagent lifecycle announcements
+    // travel on the parent's stream — for a nested child that is the child session's own id, not the root's
+    const ext = extensionOf(n.update, line => this.log(line));
+    if (ext) {
+      if (ext.kind === 'ignored') this.log(`${ext.sessionUpdate} ignored`);
+      else this.tree.lifecycle(n.sessionId, this.acpSessionId, ext, this.routeCtx());
+      this.touch();
+      return;
+    }
+    if (n.sessionId !== this.acpSessionId && this.acpSessionId) {
+      const node = this.tree.byPeerSession.get(n.sessionId);
+      if (node) {
+        // Replay content is dropped like the root's; lifecycle announcements above still apply (idempotent by peer id)
+        if (!this.replaying) this.tree.applyChild(node, n.update, this.routeCtx());
+        this.touch();
+      } else {
+        this.tree.bufferOrphan(n.sessionId, n.update);
+      }
+      return;
+    }
     const u = n.update;
     // Conversation content cannot belong to a session that does not exist yet — pi-acp streams its startup
     // banner as agent_message_chunk while session/new is still in flight. Command/config announcements do
@@ -1101,6 +1182,10 @@ export class AcpSession {
       this.startupBanner = undefined;
       return;
     }
+    // Nested / receipt dialects (Devin cognition.ai, Claude parentToolUseId, async receipts): the tree either consumes
+    // the update into a child's transcript or lets it fall through to the root's own normalization
+    const ctx = this.routeCtx();
+    if (this.tree.routeRoot(u, ctx) === 'consumed') { this.touch(); return; }
     if (!applyUpdate(this.state, u)) return;
     if (u.sessionUpdate === 'usage_update') {
       this.usageNotifications = true;
@@ -1111,6 +1196,7 @@ export class AcpSession {
       this.scheduleGrokUsage();
     }
     if (u.sessionUpdate === 'tool_call' || u.sessionUpdate === 'tool_call_update') {
+      this.tree.annotateRoot(this.findTool(u.toolCallId), u, ctx);
       this.questions.rememberToolInput(u);
       const plan = capturePlan(this.state.turns, u);
       // Kimi 0.41.0 confirms the exit in tool output but omits current_mode_update.

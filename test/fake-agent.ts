@@ -11,6 +11,15 @@ import * as acp from '@agentclientprotocol/sdk';
 // "refuse" → stopReason refusal with no output; "truncate" → some text, then stopReason max_tokens; "mode:<id>" → current_mode_update to that mode;
 // "tool-downgrade" / "tool-downgrade-late" → OpenCode's write: a permission request whose embedded toolCall is a low-fidelity copy
 // (kind 'other', dir title, file+dir locations, rawInput.filepath) racing the real in_progress update
+// "subagents-*" → first-class subagent dialects: =native sends RFD `subagent_update` announcements plus child updates under each
+//   child's own sessionId (c1 requests a permission, c2 cannot be cancelled); =nested announces a grandchild on c1's stream;
+//   =orphan returns end_turn while c1 still runs; =late-terminal arms a queue so the next two prompts report c1 completed
+//   then running (must be ignored); =lost has the agent itself report c1 disconnected; =early sends c9's updates before its announce (=early-flood over the buffer cap);
+//   =claude sends the legacy `subagent_spawned`/`subagent_state_update` pair plus an `async_launched` toolResponse receipt
+//   (=claude-async never reports a terminal state); =devin replays the Devin nested shape (run_subagent / subagent_started /
+//   subagent_context / read_subagent / subagent_completed, child usage_update); =receipt is Kimi's Agent tool.
+//   Extension kinds leave this process verbatim — the agent side does not validate outgoing params; the host's ndjson
+//   rewrite (subagents/wire.ts) is what parks them in session_info_update
 // "ask-devin" / "ask-kimi" → the ask_user_question tool call followed by an elicitation/create form shaped like that CLI's (Devin: no toolCallId, label in const,
 // description in title, allowOther; Kimi: toolCallId, question texts joined in message); "ask-grok" → the `_x.ai/ask_user_question` request; the reply echoes what came back
 // Resume: when resume doesn't know the sessionId, a cwd containing "gone" mimics Devin's session_not_found, otherwise reports unknown session;
@@ -194,6 +203,8 @@ const app = acp.agent({ name: 'fake-agent' })
   })
   .onNotification(acp.methods.agent.session.cancel, async ({ params }) => {
     cancelled.add(params.sessionId);
+    for (const w of cancelWaiters.get(params.sessionId) ?? []) w();
+    cancelWaiters.delete(params.sessionId);
     if (background) {
       if (!process.env.FAKE_SILENT_CANCEL) await background('cancelled');
       background = undefined;
@@ -204,6 +215,14 @@ const app = acp.agent({ name: 'fake-agent' })
     const text = params.prompt.map(p => (p.type === 'text' ? p.text : '')).join('');
     const send = (update: acp.SessionUpdate) => client.notify(acp.methods.client.session.update, { sessionId: sid, update });
     cancelled.delete(sid);
+    // A subagent that kept running past its parent's turn reports on the next prompt's stream — the only channel left
+    const late = lateTerminal.get(sid);
+    if (late?.length) {
+      const state = late.shift()!;
+      await client.notify(acp.methods.client.session.update, { sessionId: sid,
+        update: { sessionUpdate: 'subagent_update', subagentSessionId: 'c1', state } } as unknown as acp.SessionNotification);
+      if (!late.length) lateTerminal.delete(sid);
+    }
     // Kimi's ACP adapter can acknowledge a failed provider turn as an empty end_turn.
     if (text.startsWith('empty-response') && !failed.has(text)) {
       failed.set(text, 1);
@@ -358,6 +377,173 @@ const app = acp.agent({ name: 'fake-agent' })
         title: 'tmp/proj/a.txt',
         rawOutput: { output: 'Wrote file successfully.', metadata: { exists: false, filepath: '/tmp/proj/a.txt' } },
         content: [{ type: 'content', content: { type: 'text', text: 'Wrote file successfully.' } }] });
+      return { stopReason: 'end_turn' };
+    }
+
+    // First-class subagent dialects. sendExt parks a lifecycle announcement on a parent stream; sendTo addresses any
+    // session id. Child-session updates go through the same session/update notification — only the sessionId differs.
+    if (text.startsWith('subagents-')) {
+      const sendTo = (sessionId: string, update: Record<string, unknown>) =>
+        client.notify(acp.methods.client.session.update, { sessionId, update } as unknown as acp.SessionNotification);
+      const sendExt = (update: Record<string, unknown>) => sendTo(sid, update);
+      const announce = (subagentSessionId: string, extra: Record<string, unknown> = {}) =>
+        sendExt({ sessionUpdate: 'subagent_update', subagentSessionId, ...extra });
+      const waitCancelled = (id: string) => new Promise<'cancelled'>(resolve => {
+        cancelWaiters.set(id, [...(cancelWaiters.get(id) ?? []), () => resolve('cancelled')]);
+      });
+
+      if (text === 'subagents-native') {
+        await announce('c1', { name: 'Map ownership', task: 'Inspect src/shared', capabilities: { cancel: true } });
+        await announce('c2', { name: 'List store', task: 'Inspect src/host/store', capabilities: {} });
+        await sendTo('c1', { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'c1 thinking' } });
+        await sendTo('c2', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'c2 working' } });
+        await sendTo('c1', { sessionUpdate: 'tool_call', toolCallId: 'c1-t1', title: 'read_file', kind: 'read', status: 'in_progress', locations: [{ path: '/repo/a.ts' }] });
+        // A child permission is its own session/request_permission — the sessionId is the child's
+        const perm = client.request(acp.methods.client.session.requestPermission, {
+          sessionId: 'c1',
+          toolCall: { toolCallId: 'c1-t1', title: 'Read /repo/a.ts' },
+          options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }, { optionId: 'deny', name: 'Deny', kind: 'reject_once' }],
+        });
+        const answer = await Promise.race([perm, waitCancelled('c1')]);
+        // A host-side cancel lands two ways: session/cancel and a 'cancelled' answer to the pending card
+        const permCancelled = typeof answer === 'object' && answer.outcome.outcome === 'cancelled';
+        if (answer === 'cancelled' || cancelled.has('c1') || permCancelled) {
+          await announce('c1', { state: 'cancelled' });
+        } else {
+          await sendTo('c1', { sessionUpdate: 'tool_call_update', toolCallId: 'c1-t1', status: 'completed',
+            content: [{ type: 'content', content: { type: 'text', text: 'a.ts contents' } }] });
+          await sendTo('c1', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'c1 done' } });
+          await announce('c1', { state: 'completed' });
+        }
+        await sendTo('c2', { sessionUpdate: 'tool_call', toolCallId: 'c2-t1', title: 'list_dir', kind: 'search', status: 'in_progress', locations: [{ path: '/repo/src/host' }] });
+        await sendTo('c2', { sessionUpdate: 'tool_call_update', toolCallId: 'c2-t1', status: 'completed' });
+        await announce('c2', { state: 'completed' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root summary' } });
+        return { stopReason: 'end_turn' };
+      }
+
+      if (text === 'subagents-nested') {
+        await announce('c1', { name: 'Outer', task: 'outer task' });
+        await sendTo('c1', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'outer starting' } });
+        // A grandchild announces on its parent's stream, not the root's
+        await sendTo('c1', { sessionUpdate: 'subagent_update', subagentSessionId: 'c1a', name: 'Inner', task: 'inner task' });
+        await sendTo('c1a', { sessionUpdate: 'tool_call', toolCallId: 'c1a-t1', title: 'read_file', kind: 'read', status: 'in_progress' });
+        await sendTo('c1a', { sessionUpdate: 'tool_call_update', toolCallId: 'c1a-t1', status: 'completed' });
+        await sendTo('c1', { sessionUpdate: 'subagent_update', subagentSessionId: 'c1a', state: 'completed' });
+        await sendTo('c1', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'outer done' } });
+        await announce('c1', { state: 'completed' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root done' } });
+        return { stopReason: 'end_turn' };
+      }
+
+      if (text === 'subagents-orphan') {
+        await announce('c1', { name: 'Orphan', task: 'never reports back' });
+        await sendTo('c1', { sessionUpdate: 'tool_call', toolCallId: 'c1-t1', title: 'find', kind: 'search', status: 'in_progress' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root finished without the child' } });
+        return { stopReason: 'end_turn' };
+      }
+
+      if (text === 'subagents-late-terminal') {
+        await announce('c1', { name: 'Slow child', task: 'finishes after the turn' });
+        await sendTo('c1', { sessionUpdate: 'tool_call', toolCallId: 'c1-t1', title: 'find', kind: 'search', status: 'in_progress' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root finished without the child' } });
+        // The child's terminal update lands on the next prompt's stream; 'running' after it must be ignored
+        lateTerminal.set(sid, ['completed', 'running']);
+        return { stopReason: 'end_turn' };
+      }
+
+      if (text === 'subagents-lost') {
+        await announce('c1', { name: 'Lost child', task: 'the agent reports the disconnect' });
+        await announce('c1', { state: 'disconnected' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root done' } });
+        return { stopReason: 'end_turn' };
+      }
+
+      if (text === 'subagents-early') {
+        await sendTo('c9', { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'early thought' } });
+        await sendTo('c9', { sessionUpdate: 'tool_call', toolCallId: 'c9-t1', title: 'read_file', kind: 'read', status: 'in_progress' });
+        await announce('c9', { name: 'Late announcer', task: 'announced late' });
+        await sendTo('c9', { sessionUpdate: 'tool_call_update', toolCallId: 'c9-t1', status: 'completed' });
+        await announce('c9', { state: 'completed' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root done' } });
+        return { stopReason: 'end_turn' };
+      }
+
+      if (text === 'subagents-early-flood') {
+        for (let i = 0; i < 70; i++) await sendTo('c8', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `m${i} ` } });
+        await announce('c8', { name: 'Flooded' });
+        await announce('c8', { state: 'completed' });
+        return { stopReason: 'end_turn' };
+      }
+
+      if (text === 'subagents-claude' || text === 'subagents-claude-async') {
+        await sendExt({ sessionUpdate: 'subagent_spawned', subagentSessionId: 'k1', name: 'Explore shared', task: 'map src/shared', capabilities: {} });
+        // The async_launched receipt lands on the root stream with no prior tool_call
+        await sendTo(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'call_k1', status: 'in_progress',
+          _meta: { claudeCode: { toolName: 'Agent', toolResponse: { isAsync: true, status: 'async_launched', agentId: 'k1', description: 'Explore shared', resolvedModel: 'x' } } } });
+        await sendTo('k1', { sessionUpdate: 'tool_call', toolCallId: 'k1-t1', title: 'Glob', kind: 'search', status: 'in_progress' });
+        await sendTo('k1', { sessionUpdate: 'tool_call_update', toolCallId: 'k1-t1', status: 'completed' });
+        await sendTo('k1', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'k1 findings' } });
+        if (text === 'subagents-claude') await sendExt({ sessionUpdate: 'subagent_state_update', subagentSessionId: 'k1', state: 'completed' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root done' } });
+        return { stopReason: 'end_turn' };
+      }
+
+      if (text === 'subagents-claude-nolink') {
+        await sendExt({ sessionUpdate: 'subagent_spawned', subagentSessionId: 'k1', name: 'Explore shared', task: 'map src/shared', capabilities: {} });
+        // The child's own stream names the parent's Task call even though no toolResponse receipt ever arrives
+        await sendTo('k1', { sessionUpdate: 'tool_call', toolCallId: 'k1-t1', title: 'Glob', kind: 'search', status: 'in_progress',
+          _meta: { claudeCode: { parentToolUseId: 'call_k1' } } });
+        await sendTo('k1', { sessionUpdate: 'tool_call_update', toolCallId: 'k1-t1', status: 'completed' });
+        await send({ sessionUpdate: 'tool_call_update', toolCallId: 'call_k1', status: 'in_progress' });
+        await sendTo('k1', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'k1 findings' } });
+        await sendExt({ sessionUpdate: 'subagent_state_update', subagentSessionId: 'k1', state: 'completed' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root done' } });
+        return { stopReason: 'end_turn' };
+      }
+
+      if (text === 'subagents-devin') {
+        await sendTo(sid, { sessionUpdate: 'tool_call', toolCallId: 'run_subagent:0#a1', title: 'Ran explore subagent Count files in src/shared', kind: 'other', status: 'in_progress',
+          rawInput: { title: 'Count files in src/shared', task: 'Count the files under src/shared', profile: 'subagent_explore', is_background: true },
+          _meta: { 'cognition.ai/inferenceToolName': 'run_subagent' } });
+        await sendTo(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'd1', status: 'in_progress',
+          _meta: { 'cognition.ai/subagent_started': { agentId: 'd1', title: 'Count files in src/shared', task: 'Count the files under src/shared', profile: 'Explore', depth: 1, isBackground: true, model: 'SWE-2 High' } } });
+        await sendTo(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'run_subagent:0#a1', status: 'completed',
+          content: [{ type: 'content', content: { type: 'text', text: 'Background subagent started.' } }],
+          _meta: { 'cognition.ai/inferenceToolName': 'run_subagent' } });
+        await sendTo(sid, { sessionUpdate: 'tool_call', toolCallId: 'read_subagent:0#b1', title: 'Checked on subagent Count files in src/shared', kind: 'other', status: 'in_progress',
+          rawInput: { agent_id: 'd1', block: true, timeout: 120 }, _meta: { 'cognition.ai/inferenceToolName': 'read_subagent' } });
+        await sendTo(sid, { sessionUpdate: 'tool_call', toolCallId: 'find:0#c1', title: 'Find files matching `*`', kind: 'search', status: 'in_progress',
+          locations: [{ path: '/repo/src/shared' }], rawInput: { query: '*', path: '/repo/src/shared' },
+          _meta: { 'cognition.ai/inferenceToolName': 'find_file_by_name', 'cognition.ai/subagent_context': { parentAgentId: 'd1' } } });
+        await sendTo(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'find:0#c1', status: 'completed',
+          content: [{ type: 'content', content: { type: 'text', text: 'a.ts\nb.ts' } }],
+          _meta: { 'cognition.ai/subagent_context': { parentAgentId: 'd1' } } });
+        // A child's usage belongs to the child, never the root's context ring
+        await sendTo(sid, { sessionUpdate: 'usage_update', used: 4200, size: 100_000,
+          _meta: { 'cognition.ai/subagent_context': { parentAgentId: 'd1' } } });
+        await sendTo(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'read_subagent:0#b1', status: 'completed',
+          content: [{ type: 'content', content: { type: 'text', text: 'subagent finished' } }],
+          _meta: { 'cognition.ai/inferenceToolName': 'read_subagent' } });
+        await sendTo(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'd1', status: 'completed',
+          _meta: { 'cognition.ai/subagent_completed': { agentId: 'd1', success: true, summary: '2 files in src/shared', depth: 1 } } });
+        await sendTo(sid, { sessionUpdate: 'usage_update', used: 5000, size: 100_000 });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'src/shared has 2 files' } });
+        return { stopReason: 'end_turn' };
+      }
+
+      if (text === 'subagents-receipt') {
+        await send({ sessionUpdate: 'tool_call', toolCallId: '0:tool_01', title: 'Agent', kind: 'other', status: 'pending' });
+        await send({ sessionUpdate: 'tool_call_update', toolCallId: '0:tool_01', title: 'Launching explore agent: List src files', status: 'in_progress',
+          rawInput: { prompt: 'Read-only task: list every file under src/shared.', description: 'List src files', subagent_type: 'explore' } });
+        await send({ sessionUpdate: 'tool_call_update', toolCallId: '0:tool_01', status: 'completed',
+          content: [{ type: 'content', content: { type: 'text', text: 'agent_id: agent-0\nactual_subagent_type: explore\nstatus: completed\n\nfound 20 files' } }],
+          rawOutput: 'agent_id: agent-0\nactual_subagent_type: explore\nstatus: completed\n\nfound 20 files' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'the explore agent found 20 files' } });
+        return { stopReason: 'end_turn' };
+      }
+
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `unknown subagent script ${text}` } });
       return { stopReason: 'end_turn' };
     }
 
@@ -517,6 +703,10 @@ async function ask(text: string, sid: string, send: (u: acp.SessionUpdate) => Pr
 
 let authed = false;
 const cancelled = new Set<string>();
+// Subagent scripts block on a child permission; a session/cancel for that child's id unblocks them
+const cancelWaiters = new Map<string, (() => void)[]>();
+// subagents-late-terminal arms a per-session queue of child states reported on later prompts
+const lateTerminal = new Map<string, string[]>();
 // Prompts that have already failed once, so a retry of the same text goes through
 const failed = new Map<string, number>();
 

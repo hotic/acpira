@@ -1,6 +1,7 @@
 // Normalized shape of the transcript: host-side normalize.ts reduces ACP session/update into these blocks; the webview only understands these
 
 import type { MsgKey } from './i18n/keys';
+import type { SubagentSummary } from './subagents';
 
 // Built-in devin / grok; custom ids can be added in acpira.agents
 export type AgentId = string;
@@ -163,6 +164,8 @@ export interface ToolCallBlock {
   // Every renderable content item in wire order, present only when there is more than one; `content` stays the
   // primary item so records written before this field render unchanged
   contents?: ToolContent[];
+  // This row is the delegation call of a subagent node (run_subagent / Agent); the node carries the child's transcript
+  subagentId?: string;
 }
 
 export interface ThoughtBlock {
@@ -444,6 +447,8 @@ export interface SessionView {
   commands: SlashCommand[];
   // Prompts sent while a turn was in progress, in send order; the first goes out when the turn ends
   queued?: QueuedPrompt[];
+  // Delegated child nodes announced during this session; each carries its own transcript via the `subagent` message
+  subagents?: SubagentSummary[];
   createdAt: string;
   updatedAt: string;
 }

@@ -8,6 +8,7 @@ import { VERSION } from '../version';
 import { approveGrokPlan, GROK_EXIT_PLAN, parseGrokExitPlan } from './grokPlan';
 import { GROK_ASK_QUESTION, parseGrokQuestion, type GrokQuestionRequest, type GrokQuestionResponse } from './grokQuestions';
 import { spawnSpec } from './launch';
+import { rewriteExtension } from './subagents/wire';
 
 // What the client side has to accept: updates / permission requests / file reads & writes / questions the agent sends on its own initiative.
 // The optional handlers double as capability switches: a handler present is advertised in initialize, an absent one answers method-not-found
@@ -64,10 +65,17 @@ export class AgentProcess {
     stderr.on('line', line => box.h.onStderr?.(line));
     child.on('exit', (code, signal) => box.h.onExit?.(code, signal));
 
-    const stream = acp.ndJsonStream(
+    const raw = acp.ndJsonStream(
       Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
       Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
     );
+    // Extension session/update kinds are rewritten into session_info_update before the SDK's closed-union parse
+    const stream: acp.Stream = {
+      writable: raw.writable,
+      readable: raw.readable.pipeThrough(new TransformStream<acp.AnyMessage, acp.AnyMessage>({
+        transform(msg, controller) { controller.enqueue(rewriteExtension(msg) as acp.AnyMessage); },
+      })),
+    };
     const app = acp.client({ name: CLIENT_INFO.name })
       .onNotification(acp.methods.client.session.update, ctx => { box.h.onUpdate(ctx.params); })
       .onRequest(acp.methods.client.session.requestPermission, ctx => box.h.onPermission(ctx.params, ctx.signal))
@@ -95,15 +103,20 @@ export class AgentProcess {
       child.once('exit', (code, signal) => reject(new Error(t('host.spawnExited', { command: def.command, code: code ?? '-', signal: signal ?? '-' }))));
       child.once('error', reject);
     });
-    const initReq: acp.InitializeRequest = {
+    const initReq = {
       protocolVersion: acp.PROTOCOL_VERSION,
       clientInfo: CLIENT_INFO,
       clientCapabilities: {
         fs: { readTextFile: !!h.onReadFile, writeTextFile: !!h.onWriteFile },
         terminal: false,
         ...(h.onElicitation ? { elicitation: { form: {} } } : {}),
+        // RFD #1992 draft field plus claude-agent-acp's air-extension bridge for SDKs that strip it
+        ...(def.subagents === false ? {} : {
+          subagents: {},
+          _meta: { jetbrains: { air: { version: 1, capabilities: ['nativeSubagentSessions'] } } },
+        }),
       },
-    };
+    } as acp.InitializeRequest;
     const initTimeoutMs = opts?.initTimeoutMs ?? INIT_TIMEOUT_MS;
     let initTimer: ReturnType<typeof setTimeout> | undefined;
     const timedOut = new Promise<never>((_, reject) => {

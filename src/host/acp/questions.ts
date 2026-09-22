@@ -13,12 +13,17 @@ export interface RawQuestion {
 }
 
 type Pending =
-  | { kind: 'form'; blockId: string; schema: acp.ElicitationSchema; questions: Question[]; resolve: (r: acp.CreateElicitationResponse) => void }
-  | { kind: 'grok'; blockId: string; questions: Question[]; resolve: (r: GrokQuestionResponse) => void };
+  | { kind: 'form'; blockId: string; schema: acp.ElicitationSchema; questions: Question[]; nodeId?: string; resolve: (r: acp.CreateElicitationResponse) => void }
+  | { kind: 'grok'; blockId: string; questions: Question[]; nodeId?: string; resolve: (r: GrokQuestionResponse) => void };
 
 export interface QuestionGateDeps {
-  state: () => NormalizeState;
+  // Which transcript a request belongs to: the root session id → the root state; a child peer session id → that node's
+  // state; bump marks the owning node dirty when a card mutates its transcript
+  stateFor: (sessionId: string | undefined) => { state: NormalizeState; nodeId?: string; bump?: () => void } | undefined;
+  // Every transcript that may hold cards (root + all child nodes): sweeps run over all of them
+  states: () => { state: NormalizeState; bump?: () => void }[];
   touch: () => void;
+  log: (line: string) => void;
 }
 
 // Remembered tool inputs: enough for the questions in flight, a handful is plenty
@@ -69,13 +74,19 @@ export class QuestionGate {
   async onElicitation(req: acp.CreateElicitationRequest, signal: AbortSignal): Promise<acp.CreateElicitationResponse> {
     if (signal.aborted) return { action: 'cancel' };
     // The request union ends in a catch-all variant, so the form fields are read through a plain shape rather than narrowed on `mode`
-    const { requestedSchema: schema, toolCallId } = req as { requestedSchema?: acp.ElicitationSchema; toolCallId?: string | null };
+    const { requestedSchema: schema, toolCallId, sessionId } = req as { requestedSchema?: acp.ElicitationSchema; toolCallId?: string | null; sessionId?: string };
     if (req.mode !== 'form' || !schema) return { action: 'decline' };
+    const ref = this.deps.stateFor(sessionId);
+    if (!ref) {
+      this.deps.log(`elicitation request for unknown session ${sessionId ?? '(request scope)'}`);
+      return { action: 'cancel' };
+    }
     const questions = formQuestions(schema, req.message, req._meta, this.rawFor(toolCallId, Object.keys(schema.properties ?? {}).length));
     if (!questions.length) return { action: 'decline' };
-    const block = this.open(questions, toolCallId ?? undefined, spareMessage(req.message, questions));
+    const block = this.open(ref.state, questions, toolCallId ?? undefined, spareMessage(req.message, questions));
+    ref.bump?.();
     return new Promise(resolve => {
-      this.pending.set(block.id, { kind: 'form', blockId: block.id, schema, questions, resolve });
+      this.pending.set(block.id, { kind: 'form', blockId: block.id, schema, questions, nodeId: ref.nodeId, resolve });
       this.arm(block, signal);
     });
   }
@@ -88,9 +99,15 @@ export class QuestionGate {
       other: true,
     }));
     if (!questions.length) return { outcome: 'accepted', answers: {} };
-    const block = this.open(questions, req.toolCallId);
+    const ref = this.deps.stateFor(req.sessionId);
+    if (!ref) {
+      this.deps.log(`question request for unknown session ${req.sessionId}`);
+      return { outcome: 'skip_interview' };
+    }
+    const block = this.open(ref.state, questions, req.toolCallId);
+    ref.bump?.();
     return new Promise(resolve => {
-      this.pending.set(block.id, { kind: 'grok', blockId: block.id, questions, resolve });
+      this.pending.set(block.id, { kind: 'grok', blockId: block.id, questions, nodeId: ref.nodeId, resolve });
       this.arm(block, signal);
     });
   }
@@ -121,8 +138,17 @@ export class QuestionGate {
     this.pending.clear();
   }
 
-  private open(questions: Question[], toolCallId?: string, message?: string): QuestionBlock {
-    const state = this.deps.state();
+  // One subagent was cancelled: its open cards close as cancelled and the agent is told so
+  cancelFor(nodeId: string) {
+    for (const p of [...this.pending.values()]) {
+      if (p.nodeId !== nodeId) continue;
+      this.pending.delete(p.blockId);
+      this.settle(p.blockId, 'cancelled');
+      if (p.kind === 'grok') p.resolve({ outcome: 'skip_interview' }); else p.resolve({ action: 'cancel' });
+    }
+  }
+
+  private open(state: NormalizeState, questions: Question[], toolCallId?: string, message?: string): QuestionBlock {
     const block: QuestionBlock = { type: 'question', id: `q-${++this.seq}`, ...(toolCallId ? { toolCallId } : {}), ...(message ? { message } : {}), questions };
     const last = state.turns[state.turns.length - 1];
     if (last?.role === 'agent') { last.blocks.push(block); last.activity = activityOf(state.turns); }
@@ -143,16 +169,18 @@ export class QuestionGate {
   }
 
   private settle(blockId: string, outcome: QuestionBlock['outcome'], answers?: QuestionAnswers) {
-    const state = this.deps.state();
-    for (let i = state.turns.length - 1; i >= 0; i--) {
-      const turn = state.turns[i];
-      if (turn?.role !== 'agent') continue;
-      const b = turn.blocks.find(b => b.type === 'question' && b.id === blockId);
-      if (!b || b.type !== 'question') continue;
-      b.outcome = outcome;
-      if (answers && Object.keys(answers).length) b.answers = answers;
-      turn.activity = activityOf(state.turns);
-      return;
+    for (const e of this.deps.states()) {
+      for (let i = e.state.turns.length - 1; i >= 0; i--) {
+        const turn = e.state.turns[i];
+        if (turn?.role !== 'agent') continue;
+        const b = turn.blocks.find(b => b.type === 'question' && b.id === blockId);
+        if (!b || b.type !== 'question') continue;
+        b.outcome = outcome;
+        if (answers && Object.keys(answers).length) b.answers = answers;
+        turn.activity = activityOf(e.state.turns);
+        e.bump?.();
+        return;
+      }
     }
   }
 }

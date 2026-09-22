@@ -1,6 +1,7 @@
-import { Fragment, memo, useCallback, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { Check, ChevronRight, Compass, Hand, MessageCircleQuestion, TriangleAlert, X } from 'lucide-react';
+import { Fragment, memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Bot, Check, ChevronRight, Compass, Hand, MessageCircleQuestion, TriangleAlert, X } from 'lucide-react';
 import type { AgentBlock, AgentTurn, CompactionBlock, PermissionBlock, SlashCommand, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@shared/transcript';
+import type { SubagentSummary } from '@shared/subagents';
 import { useAppearance, type Appearance } from '../appearance';
 import { getLocale, t } from '../i18n';
 import { commandSegments } from './PromptInput';
@@ -30,6 +31,8 @@ import { ProcessHistory } from './ProcessHistory';
 import { compactionForDisplay } from './compactionDisplay';
 import { splitPlanSections } from './planSections';
 import { TurnActions } from './TurnActions';
+import { SubagentGroup } from './subagents/SubagentGroup';
+import { breadcrumb, nodesByTurn, subagentTitle, type SubagentTab } from './subagents/subagentState';
 
 // User message: color block / right-aligned bubble / plain text; ones Acpira sends automatically (/compact) render as a note line, not a bubble.
 // Attachments (image thumbnails / file pills) sit above the text inside the same bubble.
@@ -91,8 +94,19 @@ type OnPermission = (blockId: string, optionId: string) => void;
 // The top-level activity owns the only Orb; detailed rows show their own verbs with static icons.
 // Memoized: the host pushes the whole view on every stream chunk and `reuse` keeps finished turns by reference, so only the live turn renders.
 // `memoryKey` names the turn for fold memory (session + turn); without one the fold state lives only in the component.
-export const AgentMessage = memo(function AgentMessage({ turn, index, running, onPermission, compacting, memoryKey, turnIndex, last, settings }: { turn: AgentTurn; index: number; running: boolean; onPermission: OnPermission; compacting?: boolean; memoryKey?: string; turnIndex: number; last: boolean; settings?: TurnSettings }) {
-  const shown = compacting ? compactionForDisplay(turn, running) : turn;
+export const AgentMessage = memo(function AgentMessage({ turn, index, running, onPermission, compacting, memoryKey, turnIndex, last, settings, subagents, allSubagents, onInspect, actions = true, lead = 'orb' }: {
+  turn: AgentTurn; index: number; running: boolean; onPermission: OnPermission; compacting?: boolean; memoryKey?: string; turnIndex: number; last: boolean; settings?: TurnSettings;
+  // Nodes anchored to this turn plus the session-wide list (breadcrumbs/descendant counts may cross turns)
+  subagents?: SubagentSummary[]; allSubagents?: SubagentSummary[]; onInspect?: (id: string, tab: SubagentTab) => void;
+  // The subagent inspector renders turns without the copy/fork/stats row
+  actions?: boolean;
+  // Working-row lead: the Orb belongs to the root conversation; the inspector uses a static icon
+  lead?: 'orb' | 'static';
+}) {
+  const raw = compacting ? compactionForDisplay(turn, running) : turn;
+  // A delegation tool row is represented by its subagent group; filtered out before the fold sees it
+  const shown = useMemo(() => raw.blocks.some(b => b.type === 'tool_call' && b.subagentId !== undefined)
+    ? { ...raw, blocks: raw.blocks.filter(b => b.type !== 'tool_call' || b.subagentId === undefined) } : raw, [raw]);
   const sections = splitPlanSections(shown.blocks);
   return <RowEntranceContext.Provider value={running}><div className="group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]">
     {sections.map((section, i) => {
@@ -106,23 +120,31 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
       return <Fragment key={section.key}>
         {(section.blocks.length > 0 || (lastSection && (running || outcomeOf(shown)))) && <AgentContent turn={content} index={index}
           running={lastSection && running} onPermission={onPermission}
-          memoryKey={memoryKey && (i === 0 ? memoryKey : `${memoryKey}:after-plan:${section.key}`)} />}
+          memoryKey={memoryKey && (i === 0 ? memoryKey : `${memoryKey}:after-plan:${section.key}`)}
+          subagents={subagents} allSubagents={allSubagents} onInspect={onInspect} lead={lead} />}
         {section.plan && <PlanDocument block={section.plan}
           permission={shown.blocks.find((b): b is PermissionBlock => b.type === 'permission' && b.planId === section.plan!.id)} onChoose={onPermission} />}
       </Fragment>;
     })}
-    {!running && !compacting && turn.blocks.length > 0 && <TurnActions turn={turn} turnIndex={turnIndex} last={last} settings={settings} />}
+    {actions && !running && !compacting && turn.blocks.length > 0 && <TurnActions turn={turn} turnIndex={turnIndex} last={last} settings={settings} />}
   </div></RowEntranceContext.Provider>;
 });
 
-function AgentContent({ turn, index, running, onPermission, memoryKey }: { turn: AgentTurn; index: number; running: boolean; onPermission: OnPermission; memoryKey?: string }) {
+interface SubagentSlots {
+  subagents?: SubagentSummary[];
+  allSubagents?: SubagentSummary[];
+  onInspect?: (id: string, tab: SubagentTab) => void;
+  lead?: 'orb' | 'static';
+}
+
+function AgentContent({ turn, index, running, onPermission, memoryKey, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; index: number; running: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
   const { fold } = useAppearance();
-  if (fold === 'codex') return <CodexMessage turn={turn} running={running} onPermission={onPermission} memoryKey={memoryKey} />;
+  if (fold === 'codex') return <CodexMessage turn={turn} running={running} onPermission={onPermission} memoryKey={memoryKey} subagents={subagents} allSubagents={allSubagents} onInspect={onInspect} lead={lead} />;
   // Plan approvals live on the plan card and the open question card above the composer; neither takes a slot in the message
   const groups = groupBlocks(detailBlocks(turn, running).filter(b => (b.type !== 'permission' || !b.planId) && (b.type !== 'question' || !!b.outcome)));
   return (
     <div className="flex flex-col gap-gap">
-      <Activity turn={turn} running={running} />
+      <Activity turn={turn} running={running} leadKind={lead} />
       {groups.map((g, gi) => (
         <div key={g.kind === 'block' && 'id' in g.block && g.block.id ? g.block.id : `g${gi}`}>
           {g.kind === 'lines'
@@ -130,12 +152,36 @@ function AgentContent({ turn, index, running, onPermission, memoryKey }: { turn:
             : <Block block={g.block} onPermission={onPermission} />}
         </div>
       ))}
+      {subagents !== undefined && subagents.length > 0 && onInspect !== undefined && (
+        <>
+          <SubagentGroup nodes={subagents} all={allSubagents ?? subagents} onInspect={onInspect} />
+          <ChildPermissions nodes={subagents} all={allSubagents ?? subagents} onPermission={onPermission} />
+        </>
+      )}
       {!running && outcomeOf(turn) && (
         <div>
           <Outcome turn={turn} />
         </div>
       )}
     </div>
+  );
+}
+
+// A child's pending approval shows in the turn that delegated it, labeled with the chain it came from
+function ChildPermissions({ nodes, all, onPermission }: { nodes: SubagentSummary[]; all: SubagentSummary[]; onPermission: OnPermission }) {
+  const cards = nodes.flatMap(n => (n.permissions ?? []).map(b => ({ n, b })));
+  if (!cards.length) return null;
+  return (
+    <>
+      {cards.map(({ n, b }) => (
+        <Fragment key={b.id}>
+          <Row dense className="text-3 text-fg-3">
+            <span>{t('subagents.provenance', { path: breadcrumb(n.id, all).map(x => subagentTitle(x, t)).join(' › ') })}</span>
+          </Row>
+          <Permission block={b} onChoose={id => onPermission(b.id, id)} />
+        </Fragment>
+      ))}
+    </>
   );
 }
 
@@ -172,17 +218,18 @@ function detailBlocks(turn: AgentTurn, running: boolean) {
     : turn.blocks;
 }
 
-function liveActivity(turn: AgentTurn) {
+function liveActivity(turn: AgentTurn, leadKind: 'orb' | 'static' = 'orb') {
   if (turn.blocks.some(b => b.type === 'permission')) {
     return { label: t('host.awaitingApproval'), active: false, lead: <Hand className="size-icon" strokeWidth={1.5} /> };
   }
   if (turn.blocks.some(b => b.type === 'question' && !b.outcome)) {
     return { label: t('host.awaitingAnswers'), active: false, lead: <MessageCircleQuestion className="size-icon" strokeWidth={1.5} /> };
   }
-  return { label: t(compactionInActivity(turn) ? 'turns.compacting' : 'host.working'), active: true, lead: <Orb kind="think" /> };
+  // The Orb belongs to the root turn only; observed child transcripts get a static lead
+  return { label: t(compactionInActivity(turn) ? 'turns.compacting' : 'host.working'), active: true, lead: leadKind === 'static' ? <Bot className="size-icon" strokeWidth={1.5} /> : <Orb kind="think" /> };
 }
 
-function Activity({ turn, running }: { turn: AgentTurn; running: boolean }) {
+function Activity({ turn, running, leadKind = 'orb' }: { turn: AgentTurn; running: boolean; leadKind?: 'orb' | 'static' }) {
   const [present, setPresent] = useState(running);
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -198,7 +245,7 @@ function Activity({ turn, running }: { turn: AgentTurn; running: boolean }) {
     });
     return () => { disposed = true; };
   }, [running, present]);
-  const activity = liveActivity(turn);
+  const activity = liveActivity(turn, leadKind);
   if (!running && !present) return null;
   return (
     // Fade the complete label before collapsing its slot; clipping the row at the
@@ -305,13 +352,19 @@ function CursorFold({ blocks }: { blocks: ToolCallBlock[] }) {
 // One process area per turn. Thoughts keep their normal disclosure under the activity row until the
 // first tool call makes the area foldable; the same panel stays mounted across that change so a row
 // the user opened is never rebuilt. Permission cards stay outside; the latest reply remains visible while it streams.
-function CodexMessage({ turn, running, onPermission, memoryKey }: { turn: AgentTurn; running: boolean; onPermission: OnPermission; memoryKey?: string }) {
+function CodexMessage({ turn, running, onPermission, memoryKey, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; running: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
   const { process, reply, permissions } = splitCodexBlocks(detailBlocks(turn, running));
   const foldable = turn.blocks.some(block => block.type === 'tool_call');
   return (
     <div className="flex flex-col gap-gap">
-      {!foldable && <Activity turn={turn} running={running} />}
-      <CodexFold turn={turn} blocks={process} running={running} foldable={foldable} memoryKey={memoryKey} />
+      {!foldable && <Activity turn={turn} running={running} leadKind={lead} />}
+      <CodexFold turn={turn} blocks={process} running={running} foldable={foldable} memoryKey={memoryKey} lead={lead} />
+      {subagents !== undefined && subagents.length > 0 && onInspect !== undefined && (
+        <>
+          <SubagentGroup nodes={subagents} all={allSubagents ?? subagents} onInspect={onInspect} />
+          <ChildPermissions nodes={subagents} all={allSubagents ?? subagents} onPermission={onPermission} />
+        </>
+      )}
       {reply.map((block, i) => <Prose key={i} block={block} />)}
       {permissions.filter(block => !block.planId).map(block => <Permission key={block.id} block={block} onChoose={id => onPermission(block.id, id)} />)}
       {!running && outcomeOf(turn) && <Outcome turn={turn} />}
@@ -323,7 +376,7 @@ function CodexMessage({ turn, running, onPermission, memoryKey }: { turn: AgentT
 // tool stays visible when the process becomes foldable. Afterwards only a manual toggle moves it.
 // The toggle is also written to fold memory under `memoryKey`, so a rebuilt message (or a reloaded webview) reopens
 // what the reader had opened instead of snapping shut mid-turn.
-function CodexFold({ turn, blocks, running, foldable, memoryKey }: { turn: AgentTurn; blocks: AgentBlock[]; running: boolean; foldable: boolean; memoryKey?: string }) {
+function CodexFold({ turn, blocks, running, foldable, memoryKey, lead }: { turn: AgentTurn; blocks: AgentBlock[]; running: boolean; foldable: boolean; memoryKey?: string; lead?: 'orb' | 'static' }) {
   const recall = (key: string | undefined) => ({ key, manual: key ? rememberedFold(key) : undefined });
   const [choice, setChoice] = useState(() => recall(memoryKey));
   // A key that changes under a mounted fold (a turn that gains its start time) re-reads memory instead of keeping a stranger's choice
@@ -343,16 +396,16 @@ function CodexFold({ turn, blocks, running, foldable, memoryKey }: { turn: Agent
   const observe = useCallback((next: boolean) => { openedInside.current += next ? 1 : -1; }, []);
   const toggle = useCallback((next: boolean) => { setChoice({ key: memoryKey, manual: next }); if (memoryKey) rememberFold(memoryKey, next); }, [memoryKey]);
   const open = !foldable || (manual ?? latched.current);
-  const activity = liveActivity(turn);
+  const activity = liveActivity(turn, lead);
   const CompletionIcon = turn.stop === 'cancelled' ? X : outcomeOf(turn) ? TriangleAlert : Check;
-  const lead = running ? activity.lead : <CompletionIcon className="size-icon" strokeWidth={1.5} />;
+  const leadIcon = running ? activity.lead : <CompletionIcon className="size-icon" strokeWidth={1.5} />;
   const label = running ? activity.label : outcomeOf(turn) ?? t('turns.done');
   const elapsed = !running && turn.startedAt !== undefined && turn.endedAt !== undefined ? elapsedLabel(turn) : undefined;
   if (!foldable && blocks.length === 0) return null;
   return (
     <Collapsible.Root open={open} onOpenChange={toggle} className="group flex min-w-0 flex-col" data-open={open || undefined}>
       {foldable && (
-        <Collapsible.Trigger render={<Row as="button" interactive lead={lead} title={label} />}>
+        <Collapsible.Trigger render={<Row as="button" interactive lead={leadIcon} title={label} />}>
           <RowLabel shimmer={running && activity.active}>{label}</RowLabel>
           {elapsed && <span className="min-w-0 truncate text-fg-3" title={elapsed}>{elapsed}</span>}
           <ChevronRight className={cn('size-3 shrink-0 self-center transition-transform', open && 'rotate-90')} strokeWidth={1.75} />

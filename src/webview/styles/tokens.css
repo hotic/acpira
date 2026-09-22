@@ -142,6 +142,9 @@
   --pop-w-xl: 360px;
   /* A 260px session column leaves at least 500px for the conversation. */
   --session-dock-min: 760px;
+  /* The subagent inspector docks beside the conversation when the main column still has room, else it drills down as an overlay */
+  --subagent-dock-min: 900px;
+  --subagent-pane-w: 360px;
   /* The faint project name a session row from another project carries before its time, kept short so the title keeps the room */
   --session-project-w: 10ch;
 
@@ -414,4 +417,5 @@
   --spacing-pop-lg: var(--pop-w-lg);
   --spacing-pop-xl: var(--pop-w-xl);
   --spacing-project: var(--session-project-w);
+  --spacing-subagent-pane: var(--subagent-pane-w);
 }

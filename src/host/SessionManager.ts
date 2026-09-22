@@ -5,7 +5,7 @@ import type { ChatGptIntegrationStatus } from '@shared/chatgptIntegration';
 import { desktopCommanderStatus } from './external/desktopCommanderStatus';
 import type { ChatGptBridgeStore } from './external/ChatGptBridgeStore';
 import { CHATGPT_ID } from './external/chatgptEvents';
-import type { AccountInfo, AgentId, AgentInfo, ConfigControl, NativeSessionInfo, SessionSummary, SessionView, TurnSettings } from '@shared/transcript';
+import type { AccountInfo, AgentId, AgentInfo, ConfigControl, NativeSessionInfo, SessionSummary, SessionView, Turn, TurnSettings } from '@shared/transcript';
 import type { AccountAction, AddAccountVia, EditTurnRequest, WebviewMsg } from '@shared/protocol';
 import { inWorkspace, type HiddenMap, type SessionScope } from '@shared/settings';
 import type { AgentRuntimeInfo } from '@shared/inventory';
@@ -49,6 +49,7 @@ export type ManagerEvent =
   | { type: 'agents'; agents: AgentInfo[] }
   | { type: 'sessions'; sessions: SessionSummary[] }
   | { type: 'session'; session: SessionView }
+  | { type: 'subagent'; sessionId: string; subagentId: string; rev: number; running: boolean; turns: Turn[] }
   | { type: 'accounts'; accounts: AccountInfo[] }
   | { type: 'accountActions'; actions: AccountAction[] }
   | { type: 'hidden'; hidden: HiddenMap };
@@ -66,6 +67,10 @@ const INDEX_MAX_WAIT = 2_000;
 // tabs can each show a different conversation. Global events (list, agents, accounts) reach every viewer; `session` events only the viewers showing that session
 export class SessionViewer {
   activeId?: string;
+  // The subagent this webview is following (observeSubagent); switching sessions clears it, and each viewer's
+  // observation is its own — another viewer on the same session never sees these events
+  observing?: { sessionId: string; subagentId: string };
+  lastSubagentRev?: number;
   private listeners = new Set<(ev: ManagerEvent) => void>();
 
   constructor(private manager: SessionManager, initial?: string) {
@@ -405,7 +410,7 @@ export class SessionManager {
     await this.dropEmptyCurrent(v);
     const s = new AcpSession(record, this.sessionDeps());
     this.live.set(s.id, s);
-    v.activeId = s.id;
+    this.setActive(v, s.id);
     this.onChange(s);
     await s.start();
     // The agent restored the native context but replayed no earlier messages (DSH's case): an empty ready transcript
@@ -472,9 +477,25 @@ export class SessionManager {
   }
   private emitSession(s: AcpSession) {
     let view: SessionView | undefined;
-    for (const v of this.viewers) if (v.activeId === s.id) v.emit({ type: 'session', session: view ??= s.view() });
+    for (const v of this.viewers) {
+      if (v.activeId !== s.id) continue;
+      v.emit({ type: 'session', session: view ??= s.view() });
+      const obs = v.observing;
+      if (obs?.sessionId !== s.id) continue;
+      const t = s.subagentTranscript(obs.subagentId);
+      if (t && t.rev !== v.lastSubagentRev) {
+        v.lastSubagentRev = t.rev;
+        v.emit({ type: 'subagent', sessionId: s.id, subagentId: obs.subagentId, rev: t.rev, running: t.running, turns: t.turns });
+      }
+    }
   }
   private emitSessions() { this.emit({ type: 'sessions', sessions: this.sessions() }); }
+
+  // Moving a viewer onto another session also drops the subagent it was following — the stream is per selection
+  private setActive(v: SessionViewer, id: string | undefined) {
+    if (v.activeId !== id) { v.observing = undefined; v.lastSubagentRev = undefined; }
+    v.activeId = id;
+  }
 
   // Viewers other than `except` currently showing this session
   private viewersOn(id: string, except?: SessionViewer): SessionViewer[] {
@@ -521,7 +542,7 @@ export class SessionManager {
     if (id === CHATGPT_ID) {
       const view = await this.connectChatgpt();
       await this.dropEmptyCurrent(v);
-      v.activeId = view.id;
+      this.setActive(v, view.id);
       v.emit({ type: 'session', session: view });
       return;
     }
@@ -536,7 +557,7 @@ export class SessionManager {
     const s = AcpSession.fresh(id, cwd, this.sessionDeps(), acc);
     s.previewControls(await this.knownControls(id), last);
     this.live.set(s.id, s);
-    v.activeId = s.id;
+    this.setActive(v, s.id);
     this.onChange(s);
     await s.start();
     // A real session just read the current configOptions itself; the probe snapshot retires
@@ -587,11 +608,11 @@ export class SessionManager {
       await this.deps.chatgpt.refresh();
       const view = this.deps.chatgpt.view(id);
       if (!view) { this.deps.toast('error', t('host.recordLost')); return; }
-      v.activeId = id; v.emit({ type: 'session', session: view }); this.emitSessions();
+      this.setActive(v, id); v.emit({ type: 'session', session: view }); this.emitSessions();
       return;
     }
     if (v.activeId === id && this.live.has(id)) return;
-    v.activeId = id;
+    this.setActive(v, id);
     const live = this.live.get(id);
     if (live) { v.emit({ type: 'session', session: live.view() }); this.emitSessions(); return; }
     // A load is already running for this record (another viewer picked it first): wait for it instead of building a second
@@ -666,6 +687,19 @@ export class SessionManager {
         case 'pinSession': await this.pinSession(m.id, m.pinned); break;
         case 'moveSession': await this.moveSession(m.id); break;
         case 'forkSession': await this.forkSession(v, m.sessionId, m.turnIndex); break;
+        // Per-viewer subagent observation: the snapshot goes out at once, later revisions ride emitSession
+        case 'observeSubagent': {
+          v.observing = { sessionId: m.sessionId, subagentId: m.subagentId };
+          v.lastSubagentRev = undefined;
+          const t = this.live.get(m.sessionId)?.subagentTranscript(m.subagentId);
+          if (t) {
+            v.lastSubagentRev = t.rev;
+            v.emit({ type: 'subagent', sessionId: m.sessionId, subagentId: m.subagentId, rev: t.rev, running: t.running, turns: t.turns });
+          }
+          break;
+        }
+        case 'unobserveSubagent': if (v.observing?.sessionId === m.sessionId && v.observing.subagentId === m.subagentId) { v.observing = undefined; v.lastSubagentRev = undefined; } break;
+        case 'cancelSubagent': if (isSessionId(m.sessionId)) await this.live.get(m.sessionId)?.cancelSubagent(m.subagentId); break;
         case 'importNativeSession': await this.importNativeSession(v, m.agent, m); break;
         case 'selectAccount': await this.selectAccount(v, m.id, m.sessionId); break;
         case 'addAccount': await this.addAccount(v, m.agent, m.via); break;
@@ -753,7 +787,7 @@ export class SessionManager {
   private async rehome(id: string) {
     if (this.disposed) return;
     for (const v of this.viewersOn(id)) {
-      v.activeId = undefined;
+      this.setActive(v, undefined);
       const next = this.mostRecent();
       if (next) await this.selectSessionFor(v, next); else await this.newSessionFor(v);
     }
@@ -775,7 +809,7 @@ export class SessionManager {
       record.cwd = cwd;
       await this.deps.store.flush(record);
       this.replaceSummary(record);
-      for (const v of this.viewersOn(id)) { v.activeId = undefined; await this.selectSessionFor(v, id); }
+      for (const v of this.viewersOn(id)) { this.setActive(v, undefined); await this.selectSessionFor(v, id); }
       return;
     }
     await this.patchRecord(id, r => { r.cwd = cwd; });
@@ -803,6 +837,15 @@ export class SessionManager {
       }
     }
     const now = new Date().toISOString();
+    // Children anchored at or before the forked turn travel with it; a running one is only observed as disconnected —
+    // the fork's native side knows nothing about it yet, so nothing is left cancellable either
+    const subagents = source.subagents?.filter(n => n.turnIndex <= turnIndex).map(n => cloneJson({
+      ...n,
+      state: n.state === 'running' ? 'disconnected' : n.state,
+      stateSource: n.state === 'running' ? 'local' : n.stateSource,
+      endedAt: n.state === 'running' ? Date.parse(now) : n.endedAt,
+      cancelRequested: undefined,
+    }));
     const record: SessionRecord = {
       id: randomUUID(), agent: source.agent, accountId: source.accountId, cwd: source.cwd,
       title: t('session.forkTitle', { title: source.title }).slice(0, RENAME_MAX),
@@ -810,6 +853,7 @@ export class SessionManager {
       turns, controls: cloneJson(source.controls), commands: [],
       historyPending: true,
       forkedFrom: { sessionId: source.id, turnIndex },
+      ...(subagents?.length ? { subagents } : {}),
     };
     // Attachment blobs stay valid in the copy: each is re-saved under the fork's own blob dir (content-hash names, so the same file name)
     for (const turn of turns) {
@@ -829,7 +873,7 @@ export class SessionManager {
     await this.dropEmptyCurrent(v);
     const s = new AcpSession(record, this.sessionDeps());
     this.live.set(s.id, s);
-    v.activeId = s.id;
+    this.setActive(v, s.id);
     this.onChange(s);
     await s.start();
     // The fresh process opened on its defaults; re-apply the source's mode / model / effort the way reopen() does
