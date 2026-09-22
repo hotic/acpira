@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { translate, type MsgKey, type Params } from '../src/shared/i18n';
 import type { SubagentSummary } from '../src/shared/subagents';
 import type { PermissionBlock, QuestionBlock } from '../src/shared/transcript';
-import { breadcrumb, countsLabel, descendantCount, elapsedMs, elapsedText, flattenTree, nodesByTurn, rootRows, secondLine, stateLabel, subagentTitle } from '../src/webview/chat/subagents/subagentState';
+import { breadcrumb, countsLabel, descendantCount, elapsedMs, elapsedText, flattenTree, nodesByTurn, partitionRows, rootRows, secondLine, stateLabel, subagentTitle } from '../src/webview/chat/subagents/subagentState';
 
 const zh = (key: MsgKey, params?: Params) => translate('zh-CN', key, params);
 const en = (key: MsgKey, params?: Params) => translate('en', key, params);
@@ -76,6 +76,34 @@ describe('rootRows / descendantCount / flattenTree', () => {
     const x = node({ id: 'x', parentId: 'y' });
     const y = node({ id: 'y', parentId: 'x' });
     expect(flattenTree([x, y]).map(f => f.node.id).sort()).toEqual(['x', 'y']);
+  });
+});
+
+describe('partitionRows', () => {
+  it('expanding adds the folded rows exactly once — shown + hidden covers every row', () => {
+    const rows = [
+      node({ id: 'a', state: 'completed' }), node({ id: 'b', state: 'completed' }), node({ id: 'c', state: 'completed' }),
+      node({ id: 'd', state: 'completed' }), node({ id: 'e', state: 'completed' }),
+      node({ id: 'f', state: 'running' }), node({ id: 'g', state: 'running', permissions: [perm] }),
+    ];
+    const { shown, hidden } = partitionRows(rows);
+    // the two oldest finished rows fold away; running and waiting rows never do
+    expect(hidden.map(n => n.id)).toEqual(['a', 'b']);
+    expect(shown.map(n => n.id)).toEqual(['c', 'd', 'e', 'f', 'g']);
+    // the rendered total after expanding is exactly the row list — no duplicates, no drops
+    const all = [...shown, ...hidden];
+    expect(new Set(all.map(n => n.id)).size).toBe(rows.length);
+    expect([...all].sort((x, y) => rows.indexOf(x) - rows.indexOf(y))).toEqual(rows);
+  });
+
+  it('at five or fewer rows nothing folds, and a group of only finished rows keeps the newest three', () => {
+    const few = [node({ id: 'a', state: 'completed' }), node({ id: 'b', state: 'completed' }), node({ id: 'c', state: 'completed' }),
+      node({ id: 'd', state: 'completed' }), node({ id: 'e', state: 'completed' })];
+    expect(partitionRows(few)).toEqual({ shown: few, hidden: [] });
+    const six = [...few, node({ id: 'f', state: 'completed' })];
+    const { shown, hidden } = partitionRows(six);
+    expect(hidden.map(n => n.id)).toEqual(['a', 'b', 'c']);
+    expect(shown.map(n => n.id)).toEqual(['d', 'e', 'f']);
   });
 });
 

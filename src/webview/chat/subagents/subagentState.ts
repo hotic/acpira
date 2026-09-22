@@ -31,6 +31,16 @@ export function rootRows(turnNodes: SubagentSummary[]): SubagentSummary[] {
   return turnNodes.filter(n => n.parentId === undefined || !ids.has(n.parentId));
 }
 
+// Past five rows the group folds its older finished ones into the disclosure. The hidden set does not depend
+// on the open state, so expanding adds rows rather than re-shuffling which rows exist (shown + hidden = rows)
+export function partitionRows(rows: SubagentSummary[]): { shown: SubagentSummary[]; hidden: SubagentSummary[] } {
+  if (rows.length <= 5) return { shown: rows, hidden: [] };
+  const terminal = rows.filter(n => n.state !== 'running' && !isWaiting(n));
+  const hidden = terminal.slice(0, Math.max(0, terminal.length - 3));
+  const hide = new Set(hidden.map(n => n.id));
+  return { shown: rows.filter(n => !hide.has(n.id)), hidden };
+}
+
 // All descendants through parentId edges; the visited set keeps a malformed cycle from looping
 export function descendantCount(id: string, all: SubagentSummary[]): number {
   const seen = new Set([id]);

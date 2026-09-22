@@ -471,6 +471,7 @@ export const zhCN = {
   'subagents.disconnected': '{n} 结果未知',
   'subagents.tree': '关系',
   'subagents.back': '返回主会话',
+  'subagents.breadcrumb': '面包屑导航',
   'subagents.root': '主会话',
   'subagents.rootRole': '主代理',
   'subagents.tabs.session': '会话',

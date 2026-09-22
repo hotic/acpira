@@ -371,6 +371,168 @@ describe('subagents', () => {
       expect(s.view().subagents ?? []).toHaveLength(0);
     } finally { s.dispose(); }
   }, 30_000);
+
+  it('tool id collision: a root call reusing a native child\'s tool id stays on the root', async () => {
+    const { session } = deps();
+    const s = await session();
+    try {
+      await s.prompt('subagents-native-collision');
+      const c1 = sub(s, 'sessionId', 'c1')!;
+      // the child's own 'shared-id' lived in its transcript; the root's same-named call stayed put
+      const rootTool = rootBlocks(s).find(b => b.type === 'tool_call' && b.id === 'shared-id') as ToolCallBlock;
+      expect(rootTool).toMatchObject({ kind: 'edit', status: 'completed' });
+      expect(rootTool.subagentId).toBeUndefined();
+      const childTool = childBlocks(s, c1.id).find(b => b.type === 'tool_call' && b.id === 'shared-id') as ToolCallBlock;
+      expect(childTool).toMatchObject({ kind: 'read', status: 'completed' });
+      expect(c1.toolCount).toBe(1);
+      expect(rootBlocks(s).filter(b => b.type === 'tool_call' && b.id === 'shared-id')).toHaveLength(1);
+    } finally { s.dispose(); }
+  }, 30_000);
+
+  it('devin deep: a nested spawn announcement reads its parent link; early child content replays', async () => {
+    const { session } = deps();
+    const s = await session();
+    try {
+      await s.prompt('subagents-devin-deep');
+      const d1 = sub(s, 'agentId', 'd1')!;
+      const d2 = sub(s, 'agentId', 'd2')!;
+      // the spawn carried parentAgentId=d1 — lifecycle, not d1 content
+      expect(d2.parentId).toBe(d1.id);
+      expect(childBlocks(s, d1.id).some(b => b.type === 'tool_call')).toBe(false);
+      // d2's tool call was buffered before the spawn and replayed into d2, never the root
+      expect(childBlocks(s, d2.id).some(b => b.type === 'tool_call' && b.id === 'deep:1' && b.status === 'completed')).toBe(true);
+      expect(rootBlocks(s).some(b => b.type === 'tool_call' && (b.id === 'deep:1' || b.id === 'd2'))).toBe(false);
+      expect(d2).toMatchObject({ state: 'completed', result: 'inner done' });
+      expect(d1).toMatchObject({ state: 'completed', result: 'outer done' });
+    } finally { s.dispose(); }
+  }, 30_000);
+
+  it('late content after a terminal state drops with one log; usage still applies', async () => {
+    const { session, logs } = deps();
+    const s = await session();
+    try {
+      await s.prompt('subagents-late-drop');
+      const c1 = sub(s, 'sessionId', 'c1')!;
+      expect(c1.state).toBe('completed');
+      expect(childBlocks(s, c1.id).some(b => b.type === 'text' && b.markdown.includes('late text'))).toBe(false);
+      expect(childBlocks(s, c1.id).some(b => b.type === 'tool_call' && b.id === 'c1-late')).toBe(false);
+      expect(c1.toolCount).toBe(1);
+      expect(c1.usage).toEqual({ used: 42, size: 100 });
+      expect(logs.filter(l => l.includes('is completed;') && l.includes('dropped'))).toHaveLength(1);
+    } finally { s.dispose(); }
+  }, 30_000);
+
+  it('claude root-first: a receipt that precedes the spawn still links and seals as completed', async () => {
+    const { session } = deps();
+    const s = await session();
+    try {
+      await s.prompt('subagents-claude-rootfirst');
+      const k1 = sub(s, 'sessionId', 'k1')!;
+      expect(k1).toMatchObject({ visibility: 'session', title: 'Explore shared', model: 'x', state: 'completed' });
+      expect(k1.peer.toolCallId).toBe('call_k1');
+      const receipt = rootBlocks(s).find(b => b.type === 'tool_call' && b.id === 'call_k1') as ToolCallBlock;
+      expect(receipt.subagentId).toBe(k1.id);
+      expect(receipt.status).toBe('completed');
+    } finally { s.dispose(); }
+  }, 30_000);
+
+  it('claude upgrade: a nested node on the root call becomes the session node — one node, one link', async () => {
+    const { session } = deps();
+    const s = await session();
+    try {
+      await s.prompt('subagents-claude-upgrade');
+      expect(s.view().subagents).toHaveLength(1);
+      const n = s.view().subagents![0]!;
+      expect(n).toMatchObject({ visibility: 'session', title: 'Explore shared', model: 'x', state: 'completed' });
+      expect(n.peer).toMatchObject({ sessionId: 'k1', toolCallId: 'call_x' });
+      const block = rootBlocks(s).find(b => b.type === 'tool_call' && b.id === 'call_x') as ToolCallBlock;
+      expect(block.subagentId).toBe(n.id);
+      // the child's streamed tool call survived the in-place upgrade
+      expect(childBlocks(s, n.id).some(b => b.type === 'tool_call' && b.id === 'k1-t1')).toBe(true);
+    } finally { s.dispose(); }
+  }, 30_000);
+
+  it('an announcement naming the root session itself is rejected', async () => {
+    const { session, logs } = deps();
+    const s = await session();
+    try {
+      await s.prompt('subagents-self');
+      expect(s.view().subagents ?? []).toHaveLength(0);
+      expect(logs.some(l => l.includes('own session'))).toBe(true);
+      expect(rootBlocks(s).some(b => b.type === 'text' && b.markdown.includes('root done'))).toBe(true);
+    } finally { s.dispose(); }
+  }, 30_000);
+
+  it('a terminal child releases its pending card as cancelled; cancelling a parent cascades to descendants', async () => {
+    const { session } = deps();
+    const s = await session();
+    const s2 = await session();
+    try {
+      // the child ends while its permission card is up — the card leaves the transcript, the agent got 'cancelled'
+      await s.prompt('subagents-native-termperm');
+      const c1 = sub(s, 'sessionId', 'c1')!;
+      expect(c1.state).toBe('completed');
+      expect(childBlocks(s, c1.id).some(b => b.type === 'permission')).toBe(false);
+      expect(rootBlocks(s).some(b => b.type === 'text' && b.markdown.includes('perm cancelled'))).toBe(true);
+
+      // the grandchild's pending card answers cancelled when the parent is cancelled
+      const p = s2.prompt('subagents-native-cascade');
+      await until(() => (sub(s2, 'sessionId', 'c1a')?.permissions?.length ?? 0) > 0);
+      const outer = sub(s2, 'sessionId', 'c1')!;
+      const inner = sub(s2, 'sessionId', 'c1a')!;
+      await s2.cancelSubagent(outer.id);
+      await p;
+      expect(sub(s2, 'sessionId', 'c1')).toMatchObject({ state: 'cancelled' });
+      expect(sub(s2, 'sessionId', 'c1a')).toMatchObject({ state: 'cancelled' });
+      expect(childBlocks(s2, inner.id).some(b => b.type === 'permission')).toBe(false);
+      expect(rootBlocks(s2).some(b => b.type === 'text' && b.markdown.includes('inner perm cancelled'))).toBe(true);
+    } finally { s2.dispose(); s.dispose(); }
+  }, 30_000);
+
+  it('a reopened child\'s fresh q-1 cannot settle the old q-1 left in the root history', async () => {
+    const { session, d } = deps();
+    const s = await session();
+    let s2: AcpSession | undefined;
+    try {
+      // a root question resolved before the record was written — the gate's next card reuses q-1
+      const p = s.prompt('ask-devin');
+      await until(() => rootBlocks(s).some(b => b.type === 'question'));
+      const oldCard = rootBlocks(s).find(b => b.type === 'question')!;
+      s.answerQuestions(oldCard.id, { q0: 'report', q1: ['src'] });
+      await p;
+      const record = s.toRecord();
+      delete record.acpSessionId;   // reopen the record on a fresh native session: new gate, same history
+      s2 = new AcpSession(record, d);
+      await s2.start();
+      const p2 = s2.prompt('subagents-native-question');
+      await until(() => sub(s2!, 'sessionId', 'c1')?.question !== undefined);
+      const card = sub(s2, 'sessionId', 'c1')!.question!;
+      expect(card.id).toBe('q-1');
+      s2.answerQuestions(card.id, { q0: 'a' });
+      await p2;
+      const c1 = sub(s2, 'sessionId', 'c1')!;
+      const answered = childBlocks(s2, c1.id).find(b => b.type === 'question');
+      expect(answered).toMatchObject({ outcome: 'answered', answers: { q0: 'a' } });
+      // the root's historical card keeps its own answers — same id, different owner
+      const rootCard = rootBlocks(s2).find(b => b.type === 'question');
+      expect(rootCard).toMatchObject({ id: 'q-1', outcome: 'answered', answers: { q0: 'report', q1: ['src'] } });
+    } finally { s2?.dispose(); s.dispose(); }
+  }, 30_000);
+
+  it('records carry the node rev so a restore keeps transcript dedupe working', async () => {
+    const { session, d } = deps();
+    const s = await session();
+    let restored: AcpSession | undefined;
+    try {
+      await s.prompt('subagents-orphan');
+      const c1 = sub(s, 'sessionId', 'c1')!;
+      const record = s.toRecord();
+      const stored = record.subagents!.find(n => n.peer.sessionId === 'c1')!;
+      expect(stored.rev).toBeGreaterThan(1);
+      restored = new AcpSession(record, d);
+      expect(restored.subagentTranscript(c1.id)?.rev).toBe(stored.rev);
+    } finally { restored?.dispose(); s.dispose(); }
+  }, 30_000);
 });
 
 describe('subagents through AgentProcess', () => {

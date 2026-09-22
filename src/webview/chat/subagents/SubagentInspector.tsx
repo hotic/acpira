@@ -2,13 +2,14 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode 
 import { ArrowLeft, Eye, X } from 'lucide-react';
 import type { SubagentSummary } from '@shared/subagents';
 import type { MsgKey } from '@shared/i18n';
-import type { TextBlock, Turn } from '@shared/transcript';
+import type { QuestionBlock, TextBlock, Turn } from '@shared/transcript';
 import { t } from '../../i18n';
 import { cn } from '../../ui/cn';
 import { Button, IconButton } from '../../ui/Button';
 import { Row } from '../../ui/Row';
 import { Shimmer } from '../../ui/Shimmer';
 import { AgentMessage, UserMessage } from '../Turns';
+import { Questions, type OnAnswer } from '../Questions';
 import { Prose } from '../Prose';
 import { HistoryContext } from '../HistoryMessage';
 import { TurnActionsContext } from '../TurnActions';
@@ -29,6 +30,9 @@ interface InspectorProps {
   onClose: () => void;
   onCancel?: () => void;
   onPermission: (blockId: string, optionId: string) => void;
+  // The child's open question card — the overlay makes the main thread inert, so the card renders here too
+  question?: QuestionBlock;
+  onAnswer?: OnAnswer;
   mode: 'docked' | 'overlay';
   blobUrl?: (blob: string) => string;
 }
@@ -45,7 +49,15 @@ const TAB_KEY: Record<SubagentTab, 'subagents.tabs.session' | 'subagents.tabs.tr
 export function SubagentInspector(p: InspectorProps) {
   const { node, mode } = p;
   const root = useRef<HTMLDivElement>(null);
+  // Captured at render time: child effects (the question card) run before ours and steal focus,
+  // so by mount time activeElement is already inside this pane.
+  const opener = useRef<Element | null>(document.activeElement);
   useEffect(() => { root.current?.focus({ preventScroll: true }); }, [node.id]);
+  useEffect(() => () => {
+    const el = opener.current;
+    // The inert ancestor clears in the same commit — the next frame is the first moment focus can land
+    if (el instanceof HTMLElement && el.isConnected) requestAnimationFrame(() => el.focus({ preventScroll: true }));
+  }, []);
   const crumbs = breadcrumb(node.id, p.all);
   const elapsed = useElapsed(node);
   const meta = [stateLabel(node, t), node.role, elapsed, t('subagents.toolCount', { n: node.toolCount })].filter(Boolean);
@@ -62,7 +74,7 @@ export function SubagentInspector(p: InspectorProps) {
         <IconButton onClick={p.onClose} aria-label={t('subagents.back')} title={t('subagents.back')}>
           {mode === 'overlay' ? <ArrowLeft strokeWidth={1.5} /> : <X strokeWidth={1.5} />}
         </IconButton>
-        <nav aria-label="breadcrumb" className="flex min-w-0 flex-1 items-baseline gap-1 text-3 text-fg-3">
+        <nav aria-label={t('subagents.breadcrumb')} className="flex min-w-0 flex-1 items-baseline gap-1 text-3 text-fg-3">
           <button type="button" onClick={p.onClose} className="shrink-0 cursor-pointer transition-colors hover:text-fg-1">{t('subagents.root')}</button>
           {crumbs.map((c, i) => (
             <Fragment key={c.id}>
@@ -108,7 +120,7 @@ export function SubagentInspector(p: InspectorProps) {
   );
 }
 
-function SessionTab({ node, transcript, onPermission, onCancel, blobUrl }: InspectorProps) {
+function SessionTab({ node, transcript, onPermission, onCancel, question, onAnswer, blobUrl }: InspectorProps) {
   const scroll = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   // Stick to the bottom while the child streams, exactly like the main thread; scrolling up releases the follow
@@ -177,6 +189,7 @@ function SessionTab({ node, transcript, onPermission, onCancel, blobUrl }: Inspe
           )}
         </div>
       </div>
+      {question !== undefined && onAnswer !== undefined && <Questions block={question} onAnswer={onAnswer} />}
       <footer className="shrink-0 border-t border-line px-pad py-gap text-3 text-fg-3">
         <div className="flex items-center gap-2">
           <Eye className="size-icon shrink-0" strokeWidth={1.5} />
