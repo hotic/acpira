@@ -40,6 +40,8 @@ export interface SessionEditCtx {
   bump(): void;
   touch(): void;
   flushQueued(): boolean;
+  // Drop subagent nodes anchored to turns at or past this index (the transcript was rewritten there)
+  truncateSubagents(turnIndex: number): void;
   log(line: string): void;
 }
 
@@ -179,7 +181,7 @@ export async function editTurn(ctx: SessionEditCtx, edit: EditTurnRequest): Prom
       if (!continuing && last?.role === 'agent' && isContextLengthError(last.error)) throw new Error(contextLengthHint(ctx));
       await applyEditSettings(ctx, ctx.acpSessionId!, ctx.state.controls, edit.settings);
       checkEditActive(ctx);
-      if (!continuing) ctx.state.turns = prefix;
+      if (!continuing) { ctx.state.turns = prefix; ctx.truncateSubagents(prefix.length); }
       phase.editing = phase.running = phase.staging = false;
       for (const n of phase.editNotifications) {
         if (n.sessionId === ctx.acpSessionId && (n.update.sessionUpdate === 'available_commands_update' || n.update.sessionUpdate === 'usage_update')) ctx.onUpdate(n);
@@ -204,6 +206,7 @@ export async function editTurn(ctx: SessionEditCtx, edit: EditTurnRequest): Prom
     ctx.acpSessionId = fresh.sessionId;
     ctx.state.controls = controls;
     ctx.state.turns = prefix;
+    ctx.truncateSubagents(prefix.length);
     ctx.state.usage = undefined;
     ctx.state.commands = [];
     ctx.compactedAt = undefined;
@@ -251,6 +254,6 @@ export async function retryTurn(ctx: SessionEditCtx): Promise<void> {
   // Attachment reads yield; a second click or another send may have claimed the turn.
   if (ctx.phase.running || ctx.status !== 'ready' || ctx.state.turns.at(-1) !== agent) return;
   const planId = planExecutionId(user, turns[turns.length - 3]);
-  if (!hasOutput) turns.splice(-2, 2);
+  if (!hasOutput) { turns.splice(-2, 2); ctx.truncateSubagents(turns.length); }
   await ctx.prompt(user.text, drafts, false, undefined, planId);
 }

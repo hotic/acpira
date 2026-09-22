@@ -1,11 +1,11 @@
 import type { ChatGptIntegrationStatus } from '@shared/chatgptIntegration';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountAction, EditTurnRequest, FileHit, HostMsg, InitState, NativeSessionsState, WebviewMsg } from '@shared/protocol';
-import type { AccountInfo, AgentId, AgentInfo, ConfigControl, SessionSummary, SessionView } from '@shared/transcript';
+import type { AccountInfo, AgentId, AgentInfo, ConfigControl, SessionSummary, SessionView, Turn } from '@shared/transcript';
 import type { HiddenMap, SettingsView } from '@shared/settings';
 import type { AgentInventory } from '@shared/inventory';
 import type { Locale } from '@shared/i18n';
-import { applySession } from '@shared/reuse';
+import { applySession, reuse } from '@shared/reuse';
 import { BASE_APPEARANCE, type Appearance } from './appearance';
 import { LocaleContext, setLocale, t } from './i18n';
 import { Shell, type ShellHandlers } from './chat/Shell';
@@ -55,6 +55,8 @@ export function App() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [hidden, setHidden] = useState<HiddenMap>({});
   const [session, setSession] = useState<SessionView>();
+  // Observed subagent transcripts keyed `${sessionId}:${subagentId}`; the inspector subscribes to one at a time
+  const [subagentTranscripts, setSubagentTranscripts] = useState<Record<string, { rev: number; running: boolean; turns: Turn[] }>>({});
   // The session the view is showing right now, readable inside the stable handler object: every session action
   // carries it so a click rendered for one conversation can never be applied to another after a fast switch
   const activeId = useRef<string | undefined>(undefined);
@@ -106,6 +108,15 @@ export function App() {
         case 'hidden': setHidden(m.hidden); break;
         // Keep unchanged turns / blocks by reference so memoized history skips re-rendering during streaming
         case 'session': setSession(current => applySession(current, m.session)); break;
+        case 'subagent': {
+          const key = `${m.sessionId}:${m.subagentId}`;
+          setSubagentTranscripts(current => {
+            const prev = current[key];
+            if (prev !== undefined && m.rev <= prev.rev) return current;
+            return { ...current, [key]: { rev: m.rev, running: m.running, turns: prev !== undefined ? reuse(prev.turns, m.turns) : m.turns } };
+          });
+          break;
+        }
         case 'settings': setSettings(m.settings); setLocale(m.locale); setLoc(m.locale); break;
         case 'inventory': setInventories(inv => ({ ...inv, [m.agent]: m.inventory })); break;
         case 'controls': setControls(c => ({ ...c, [m.agent]: m.controls })); break;
@@ -119,6 +130,10 @@ export function App() {
     post({ type: 'ready' });
     return () => window.removeEventListener('message', onMsg);
   }, []);
+
+  // Observed transcripts belong to the session they streamed from
+  const sessionId = session?.id;
+  useEffect(() => setSubagentTranscripts({}), [sessionId]);
 
   // The model lists of an agent page come from the configOptions of its latest session; ask for them on first visit
   useEffect(() => {
@@ -171,6 +186,9 @@ export function App() {
     openInEditor: sessionId => post({ type: 'openInEditor', sessionId }),
     listNativeSessions: agent => { setNativeSessions({ agent, loading: true, sessions: [] }); post({ type: 'listNativeSessions', agent }); },
     importNativeSession: (agent, s) => post({ type: 'importNativeSession', agent, sessionId: s.sessionId, cwd: s.cwd, title: s.title, updatedAt: s.updatedAt }),
+    observeSubagent: (sessionId, subagentId) => post({ type: 'observeSubagent', sessionId, subagentId }),
+    unobserveSubagent: (sessionId, subagentId) => post({ type: 'unobserveSubagent', sessionId, subagentId }),
+    cancelSubagent: (sessionId, subagentId) => post({ type: 'cancelSubagent', sessionId, subagentId }),
   }), []);
 
   const settingsOn = useMemo<SettingsHandlers>(() => ({
@@ -256,6 +274,8 @@ export function App() {
       sessionScope={settings.sessionScope}
       nativeSessions={nativeSessions}
       blobBase={init.blobBase}
+      subagents={session?.subagents}
+      subagentTranscripts={subagentTranscripts}
       on={on}
       replayKey={session?.id}
       onOpenSettings={() => setView('settings')}

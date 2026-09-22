@@ -10,6 +10,7 @@
   "acpira.conf.sessionScope.workspace": "Sessions opened in the current workspace folder",
   "acpira.conf.sessionScope.all": "Every session on this machine, tagged with its project",
   "acpira.conf.agents": "Add custom ACP agents: `{ \"<id>\": { \"name\": \"display name\", \"command\": \"executable\", \"args\": [\"...\"], \"login\": \"login command\", \"install\": { \"command\": \"install line\", \"docs\": \"URL\" } } }`",
+  "acpira.conf.agents.subagents": "Advertise subagent support to this agent at initialize (default true); set false for an agent that rejects unknown client capabilities.",
   "acpira.conf.compactAtTokens": "When the agent's reported usage.used reaches this many tokens, /compact is sent automatically before the next message (a running turn cannot be interrupted). Only applies to agents that report usage and offer a /compact command; models with a smaller context window are the agent's own lookout",
   "acpira.conf.autoCompact": "Send /compact automatically before the next message once over the threshold (turn off to compact by hand from the context panel only)",
   "acpira.conf.hiddenOptions": "Option families hidden from the menus (models / reasoning levels…): `{ \"<agent>\": { \"<configOption id>\": [\"<family name>\", ...] } }`. Toggle them on the agent page in Acpira settings; hand-editing is rarely needed",

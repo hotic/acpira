@@ -31,6 +31,8 @@ export interface AgentDef {
   requires?: string[];
   // Protocol quirks the host papers over
   controls?: { ignoreModes?: boolean };
+  // false opts out of the subagent capability advertisement at initialize (default on)
+  subagents?: boolean;
 }
 
 export const BUILTIN_AGENTS: AgentDef[] = [
@@ -127,6 +129,8 @@ export interface CustomAgentSetting {
   requires?: string[];
   // Drop the agent's protocol modes: they duplicate a config option it also advertises (pi-acp's thinking levels)
   ignoreModes?: boolean;
+  // false opts out of the subagent capability advertisement at initialize (same as AgentDef.subagents)
+  subagents?: boolean;
 }
 
 export class AgentRegistry {
@@ -147,7 +151,7 @@ export class AgentRegistry {
       const docs = c.install?.docs?.trim() || undefined;
       this.defs.set(id, {
         id, name: c.name ?? id, command: c.command, args: c.args ?? [], candidates: [], env: c.env, modes: c.modes,
-        prompt: c.prompt, requires: c.requires,
+        prompt: c.prompt, requires: c.requires, subagents: c.subagents,
         controls: c.ignoreModes ? { ignoreModes: true } : undefined,
         login: login?.length ? { command: login[0]!, args: login.slice(1) } : undefined,
         install: command || docs ? { posix: command, windows: command, docs } : undefined,

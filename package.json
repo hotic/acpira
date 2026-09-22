@@ -185,6 +185,10 @@
                 "additionalProperties": {
                   "type": "string"
                 }
+              },
+              "subagents": {
+                "type": "boolean",
+                "markdownDescription": "%acpira.conf.agents.subagents%"
               }
             },
             "required": [

@@ -10,6 +10,7 @@
   "acpira.conf.sessionScope.workspace": "仅当前工作区文件夹里打开的会话",
   "acpira.conf.sessionScope.all": "本机全部会话，并标注所属项目",
   "acpira.conf.agents": "追加自定义 ACP agent：`{ \"<id>\": { \"name\": \"显示名\", \"command\": \"可执行文件\", \"args\": [\"...\"], \"login\": \"登录命令\", \"install\": { \"command\": \"安装命令\", \"docs\": \"文档 URL\" } } }`",
+  "acpira.conf.agents.subagents": "初始化时向该代理声明子代理支持（默认开启）；对拒绝未知客户端能力的代理设为 false。",
   "acpira.conf.compactAtTokens": "上下文用量（agent 报的 usage.used）达到这么多 token 后，下一条消息发出前自动发 /compact。进行中的回合无法插入。只对报 usage 且有 /compact 命令的 agent 生效；上下文窗口比这个数小的模型由 agent 自己兜底",
   "acpira.conf.autoCompact": "超阈值后，在下一条消息发出前自动发送 /compact（关掉就只能在上下文面板里手动压）",
   "acpira.conf.hiddenOptions": "从菜单里隐藏的选项家族（模型 / 推理层级…）：`{ \"<agent>\": { \"<configOption id>\": [\"<家族名>\", ...] } }`。在 Acpira 设置页的 agent 页里开关即可，一般不用手编",

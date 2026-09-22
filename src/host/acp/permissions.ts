@@ -12,11 +12,17 @@ interface PendingPermission {
   blockId: string;
   options: acp.PermissionOption[];
   planId?: string;
+  nodeId?: string;
 }
 
 export interface PermissionGateDeps {
-  state: () => NormalizeState;
+  // Which transcript a request belongs to: the root session id → the root state; a child peer session id → that node's
+  // state; bump marks the owning node dirty when a card mutates its transcript
+  stateFor: (sessionId: string | undefined) => { state: NormalizeState; nodeId?: string; bump?: () => void } | undefined;
+  // Every transcript that may hold cards (root + all child nodes): sweeps run over all of them
+  states: () => { state: NormalizeState; bump?: () => void }[];
   touch: () => void;
+  log: (line: string) => void;
 }
 
 // Holds in-flight permission cards and the yolo auto-approve flag. AcpSession owns orchestration (buildPlan / setMode)
@@ -47,12 +53,22 @@ export class PermissionGate {
     this.removeBlocks();
   }
 
+  // One subagent was cancelled: its pending cards resolve as cancelled (RFD: the client answers the child's pending requests)
+  cancelFor(nodeId: string) {
+    for (const p of [...this.pending.values()]) {
+      if (p.nodeId !== nodeId) continue;
+      this.pending.delete(p.blockId);
+      this.removeBlocks(p.blockId);
+      p.resolve({ outcome: { outcome: 'cancelled' } });
+    }
+  }
+
   resolve(blockId: string, optionId: string) {
     const p = this.pending.get(blockId);
     if (!p) return;
     const option = p.options.find(o => o.optionId === optionId);
     if (!option) return;
-    const plan = planDocuments(this.deps.state().turns).find(b => b.id === p.planId);
+    const plan = planDocuments(this.stateOfBlock(blockId)?.turns ?? []).find(b => b.id === p.planId);
     if (plan) plan.status = option.kind.startsWith('allow') ? 'approved' : 'rejected';
     this.pending.delete(blockId);
     this.removeBlocks(blockId);
@@ -60,11 +76,17 @@ export class PermissionGate {
     this.deps.touch();
   }
 
-  // Permission request → insert a card into the current assistant turn and wait for the webview's answer; if the agent cancels, withdraw the card
+  // Permission request → insert a card into the owning transcript's current assistant turn (root or the child's own)
+  // and wait for the webview's answer; if the agent cancels, withdraw the card
   async onPermission(req: acp.RequestPermissionRequest, signal: AbortSignal): Promise<acp.RequestPermissionResponse> {
     if (signal.aborted) return Promise.resolve({ outcome: { outcome: 'cancelled' } });
+    const ref = this.deps.stateFor(req.sessionId);
+    if (!ref) {
+      this.deps.log(`permission request for unknown session ${req.sessionId}`);
+      return { outcome: { outcome: 'cancelled' } };
+    }
     const epoch = this.epoch;
-    const state = this.deps.state();
+    const state = ref.state;
     const last = state.turns[state.turns.length - 1];
     // The verb / command on the card is taken from the corresponding tool row; the permission request itself often carries only a title
     const tool = last?.role === 'agent' ? last.blocks.find((b): b is ToolCallBlock => b.type === 'tool_call' && b.id === req.toolCall.toolCallId) : undefined;
@@ -98,9 +120,9 @@ export class PermissionGate {
       description: typeof raw?.description === 'string' ? raw.description : undefined,
       options: req.options.map(o => ({ id: o.optionId, label: o.name, kind: o.kind })),
     };
-    if (last?.role === 'agent') { last.blocks.push(block); last.activity = activityOf(state.turns); }
+    if (last?.role === 'agent') { last.blocks.push(block); last.activity = activityOf(state.turns); ref.bump?.(); }
     return new Promise(resolve => {
-      this.pending.set(blockId, { resolve, blockId, options: req.options, planId: block.planId });
+      this.pending.set(blockId, { resolve, blockId, options: req.options, planId: block.planId, nodeId: ref.nodeId });
       signal.addEventListener('abort', () => {
         if (!this.pending.delete(blockId)) return;
         this.removeBlocks(blockId);
@@ -111,10 +133,25 @@ export class PermissionGate {
     });
   }
 
+  private stateOfBlock(blockId: string): NormalizeState | undefined {
+    for (const e of this.deps.states()) {
+      for (const t of e.state.turns) {
+        if (t.role === 'agent' && t.blocks.some(b => b.type === 'permission' && b.id === blockId)) return e.state;
+      }
+    }
+    return undefined;
+  }
+
   removeBlocks(onlyId?: string) {
-    for (const t of this.deps.state().turns) {
-      if (t.role !== 'agent') continue;
-      t.blocks = t.blocks.filter(b => b.type !== 'permission' || (onlyId !== undefined && b.id !== onlyId));
+    for (const e of this.deps.states()) {
+      let removed = false;
+      for (const t of e.state.turns) {
+        if (t.role !== 'agent') continue;
+        const before = t.blocks.length;
+        t.blocks = t.blocks.filter(b => b.type !== 'permission' || (onlyId !== undefined && b.id !== onlyId));
+        removed ||= t.blocks.length !== before;
+      }
+      if (removed) e.bump?.();
     }
   }
 }

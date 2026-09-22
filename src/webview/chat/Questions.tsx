@@ -33,7 +33,8 @@ function answerOf(q: Question, p: Pick): QuestionAnswer | undefined {
 
 // A waiting question stays visible. One question per page gives the counter and
 // navigation a single meaning; selecting an answer never changes the page.
-export function Questions({ block, onAnswer }: { block: QuestionBlock; onAnswer: OnAnswer }) {
+// `subtitle` is a faint provenance line above the question (a subagent's card pinned at the root).
+export function Questions({ block, onAnswer, subtitle }: { block: QuestionBlock; onAnswer: OnAnswer; subtitle?: string }) {
   const root = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const [picks, setPicks] = useState<Record<string, Pick>>({});
@@ -121,6 +122,7 @@ export function Questions({ block, onAnswer }: { block: QuestionBlock; onAnswer:
       <Card ref={root} tabIndex={-1} role="form" aria-label={t('question.title')} onKeyDown={onKeyDown} className="flex min-w-0 flex-col overflow-hidden">
         <div key={current.id} ref={fade} className="scroll-fade scroll-thin flex max-h-question-body flex-col gap-(--question-section-gap) overflow-y-auto px-pad pt-(--question-top-pad) pb-(--question-section-gap) [--scroll-fade-size:var(--question-section-gap)] [&>*]:shrink-0">
           {/* The question itself labels the card; a separate title row adds no context. */}
+          {subtitle && <div className="text-3 text-fg-3">{subtitle}</div>}
           <Row dense className="items-start lead-top" lead={<MessageCircleQuestion className="size-icon" strokeWidth={1.5} />}
             trailing={<span aria-live="polite">{t('question.of', { n: page + 1, total })}</span>}>
             <h3 id={titleId} className="m-0 min-w-0 text-2 font-medium text-fg-strong [overflow-wrap:anywhere]">{current.text}</h3>
