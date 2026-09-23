@@ -159,6 +159,7 @@ export function App() {
     buildPlan: (sessionId, planId, model, optionId) => post({ type: 'buildPlan', sessionId, planId, model, optionId }),
     openPlan: (sessionId, planId) => post({ type: 'openPlan', sessionId, planId }),
     openFile: (sessionId, path, line) => post({ type: 'openFile', sessionId, path, line }),
+    openBlob: (sessionId, name) => post({ type: 'openBlob', sessionId, name }),
     setMode: id => post({ type: 'setMode', sessionId: activeId.current, id }),
     setConfig: (configId, value) => post({ type: 'setConfig', sessionId: activeId.current, configId, value }),
     selectSession: id => post({ type: 'selectSession', id }),

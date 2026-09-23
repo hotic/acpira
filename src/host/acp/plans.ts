@@ -18,7 +18,9 @@ export function setPlanContent(plan: PlanDocumentBlock, markdown: string) {
 export function isPlanApproval(u: ToolUpdate): boolean {
   return u._meta?.['acpira/planApproval'] === true || u._meta?.['cognition.ai/isExitPlan'] === true
     || u._meta?.['cognition.ai/inferenceToolName'] === 'exit_plan_mode'
-    || /^(exit_plan_mode|ExitPlanMode)$/.test(u.title ?? '');
+    || /^(exit_plan_mode|ExitPlanMode)$/.test(u.title ?? '')
+    // Generic ACP plan review (codex-acp): a mode switch gated on the written plan
+    || (u.kind === 'switch_mode' && typeof record(u.rawInput).plan === 'string');
 }
 
 // Keep full plan content before tool normalization reduces a diff to display lines.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { permissionOption } from '../src/webview/chat/permissionOptions';
+import { permissionOption, quickChoices } from '../src/webview/chat/permissionOptions';
 import type { PermissionBlock } from '../src/shared/transcript';
 
 type Option = PermissionBlock['options'][number];
@@ -23,5 +23,17 @@ describe('permission option presentation', () => {
     expect(display('Allow', 'allow_once')).toMatchObject({ id: 'wire-id', label: '允许一次', quick: true });
     expect(display('Reject', 'reject_once')).toMatchObject({ id: 'wire-id', label: '拒绝', quick: true });
     expect(permissionOption({ id: 'once', label: 'Allow', kind: 'allow_once' }, 'en').label).toBe('Allow once');
+  });
+  it('quickChoices picks the first allow_once and reject_once by kind, whatever the labels say', () => {
+    // Codex's vocabulary: two reject_once options ("No, continue without…" / "No, and tell Codex…"), no "Allow" label at all
+    const opts = [
+      { id: 'yes-always', kind: 'allow_always' as const },
+      { id: 'yes-proceed', kind: 'allow_once' as const },
+      { id: 'yes-once', kind: 'allow_once' as const },
+      { id: 'no-skip', kind: 'reject_once' as const },
+      { id: 'no-differently', kind: 'reject_once' as const },
+    ];
+    expect(quickChoices(opts)).toEqual({ allow: opts[1], reject: opts[3] });
+    expect(quickChoices([{ id: 'a', kind: 'allow_always' as const }])).toEqual({ allow: undefined, reject: undefined });
   });
 });

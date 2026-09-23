@@ -13,6 +13,9 @@ interface PendingPermission {
   options: acp.PermissionOption[];
   planId?: string;
   nodeId?: string;
+  // The adapter asked for a deny-by-default card (`_meta.permission.defaultToNo`); a buildPlan click without an
+  // explicit option then resolves the first reject option, not the first allow
+  defaultToNo?: boolean;
 }
 
 export interface PermissionGateDeps {
@@ -114,17 +117,29 @@ export class PermissionGate {
     }
     const blockId = `perm-${++this.permSeq}`;
     const raw = req.toolCall.rawInput as Record<string, unknown> | undefined;
+    // `_meta.permission` (version 1) carried by the claude / codex adapters: the adapter's own heading and reason
+    // beat the generic "needs approval" phrasing; strings only, anything else ignored
+    const meta = (req._meta as { permission?: unknown } | undefined)?.permission as Record<string, unknown> | undefined;
+    const metaStr = (v: unknown) => typeof v === 'string' && v.trim() ? v.trim() : undefined;
+    const metaTitle = meta && meta.version === 1 ? metaStr(meta.title) : undefined;
+    const metaDesc = meta && meta.version === 1 ? metaStr(meta.description) : undefined;
+    const defaultToNo = meta?.defaultToNo === true ? true : undefined;
     const block: PermissionBlock = {
       type: 'permission', id: blockId,
       planId: plan?.markdown && plan.approvalToolCallId === req.toolCall.toolCallId ? plan.id : undefined,
-      title: tool ? t('host.needApprovalFor', { what: `${tool.verb}${tool.kind !== 'execute' && tool.target ? ` ${tool.target}` : ''}` }) : req.toolCall.title ? t('host.needApprovalFor', { what: req.toolCall.title }) : t('host.needApproval'),
+      title: metaTitle ?? (tool ? t('host.needApprovalFor', { what: `${tool.verb}${tool.kind !== 'execute' && tool.target ? ` ${tool.target}` : ''}` }) : req.toolCall.title ? t('host.needApprovalFor', { what: req.toolCall.title }) : t('host.needApproval')),
       command: commandFromRaw(raw) ?? (tool?.kind === 'execute' ? tool.target : undefined),
-      description: typeof raw?.description === 'string' ? raw.description : undefined,
-      options: req.options.map(o => ({ id: o.optionId, label: o.name, kind: o.kind })),
+      description: metaDesc ?? (typeof raw?.description === 'string' ? raw.description : undefined),
+      defaultToNo,
+      options: req.options.map(o => ({
+        id: o.optionId, label: o.name, kind: o.kind,
+        // per-option `_meta.permission.description` (codex-acp annotates what each choice does)
+        detail: metaStr((o._meta as { permission?: Record<string, unknown> } | null | undefined)?.permission?.description),
+      })),
     };
     if (last?.role === 'agent') { last.blocks.push(block); last.activity = activityOf(state.turns); ref.bump?.(); }
     return new Promise(resolve => {
-      this.pending.set(blockId, { resolve, blockId, options: req.options, planId: block.planId, nodeId: ref.nodeId });
+      this.pending.set(blockId, { resolve, blockId, options: req.options, planId: block.planId, nodeId: ref.nodeId, defaultToNo });
       signal.addEventListener('abort', () => {
         if (!this.pending.delete(blockId)) return;
         this.removeBlocks(blockId);

@@ -921,8 +921,13 @@ export class SessionManager {
         user: t('export.label.user'), agent: t('export.label.agent'), project: t('export.label.project'),
         exported: t('export.label.exported'), attachments: t('export.label.attachments'), thinking: t('export.label.thinking'),
         compacted: t('export.label.compacted'), autoCompact: t('export.label.autoCompact'), error: t('export.label.error'),
-      });
+      }, name => this.deps.store.blobPath(id, name));
     return this.deps.store.writeExport(exportFileName(source.title, format, now), content);
+  }
+
+  // The absolute path of a session blob (agent image output / attachment), for opening it in the editor
+  blobPath(sessionId: string, name: string): string | undefined {
+    return this.deps.store.blobPath(sessionId, name);
   }
 
   // A record changed on disk without a live session: refresh its list entry (this host's copy wins over the disk index for it)

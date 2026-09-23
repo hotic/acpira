@@ -11,6 +11,8 @@ import * as acp from '@agentclientprotocol/sdk';
 // "refuse" → stopReason refusal with no output; "truncate" → some text, then stopReason max_tokens; "mode:<id>" → current_mode_update to that mode;
 // "tool-downgrade" / "tool-downgrade-late" → OpenCode's write: a permission request whose embedded toolCall is a low-fidelity copy
 // (kind 'other', dir title, file+dir locations, rawInput.filepath) racing the real in_progress update
+// "perm-meta" → permission request with the adapters' `_meta.permission` (title / description / defaultToNo, per-option details);
+// "image" → an image chunk splitting a text run plus a tool image content item;
 // "subagents-*" → first-class subagent dialects: =native sends RFD `subagent_update` announcements plus child updates under each
 //   child's own sessionId (c1 requests a permission, c2 cannot be cancelled); =nested announces a grandchild on c1's stream;
 //   =orphan returns end_turn while c1 still runs; =late-terminal arms a queue so the next two prompts report c1 completed
@@ -37,6 +39,8 @@ import * as acp from '@agentclientprotocol/sdk';
 // FAKE_STARTUP_BANNER → pi-acp's startup banner: the session/new response carries _meta.piAcp.startupInfo and the same
 // text is re-sent as one agent_message_chunk a tick later; =early instead sends it before session/new returns;
 // FAKE_MODELS → comma-separated extra model options appended to the model configOption (read at spawn, so a second spawn sees new values);
+// FAKE_BOOL → offer a `type: 'boolean'` model_config option, but only to clients advertising clientCapabilities.session.configOptions.boolean;
+// FAKE_CONFIG_LOG → append the raw session/set_config_option payload (configId / type / value) to that file;
 // FAKE_CONFIG_DELAY_MS → setConfigOption and setMode wait that long before answering (rejections too), so tests can watch in-flight picks;
 // FAKE_SESSION_DIR → a native session store on disk: sessions persist as <id>.json, resume/load restore them (load replays a
 // "NATIVE_REPLAY" message), and the agent advertises sessionCapabilities.list, answering session/list with the dir's sessions
@@ -49,6 +53,9 @@ if (process.env.FAKE_STUBBORN) {
 
 const sessions = new Set<string>();
 const modes = new Map<string, string>();
+// What the client's initialize declared: a boolean configOption is only offered to clients that advertised
+// clientCapabilities.session.configOptions.boolean (codex-acp degrades fast-mode to an on/off select otherwise)
+let booleanCap = false;
 // Optional native store for account-switch tests: context belongs to the session,
 // survives process replacement, and is never reconstructed from the UI transcript.
 const sessionDir = process.env.FAKE_SESSION_DIR;
@@ -91,6 +98,7 @@ const app = acp.agent({ name: 'fake-agent' })
   .onRequest(acp.methods.agent.initialize, ({ params }) => {
     if (process.env.FAKE_INIT_FAIL) throw acp.RequestError.internalError(undefined, 'initialize refused by fixture');
     if (process.env.FAKE_INIT_HANG) return new Promise<never>(() => {});
+    booleanCap = params.clientCapabilities?.session?.configOptions?.boolean != null;
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
       agentInfo: { name: 'fake', version: '0.0.0' },
@@ -214,6 +222,8 @@ const app = acp.agent({ name: 'fake-agent' })
   })
   .onRequest(acp.methods.agent.session.setConfigOption, async ({ params, client }) => {
     await configDelay();
+    // FAKE_CONFIG_LOG: the raw wire payload of every set call, so a test can assert a boolean value stayed boolean
+    if (process.env.FAKE_CONFIG_LOG) appendFileSync(process.env.FAKE_CONFIG_LOG, `${JSON.stringify({ configId: params.configId, type: (params as { type?: string }).type ?? null, value: params.value })}\n`);
     if (params.value === 'unavailable') throw acp.RequestError.invalidParams(undefined, 'Model unavailable');
     if (background && params.configId === 'effort') {
       await background(params.value === 'low' ? 'start' : 'completed');
@@ -308,6 +318,8 @@ const app = acp.agent({ name: 'fake-agent' })
         const r = await client.request(acp.methods.client.session.requestPermission, {
           sessionId: sid, toolCall: { toolCallId: 'exit-plan' },
           options: [{ optionId: 'plan_accept_edits', name: 'Build', kind: 'allow_once' }, { optionId: 'reject_once', name: 'Revise', kind: 'reject_once' }],
+          // "plan-veto" carries claude-agent-acp's defaultToNo card meta — Build must still answer allow_once
+          ...(text === 'plan-veto' ? { _meta: { permission: { version: 1, title: 'Implement this plan?', defaultToNo: true } } } : {}),
         });
         approved = r.outcome.outcome === 'selected' && r.outcome.optionId === 'plan_accept_edits';
       }
@@ -796,6 +808,42 @@ const app = acp.agent({ name: 'fake-agent' })
       return { stopReason: 'end_turn' };
     }
 
+    // "perm-meta" → the claude / codex adapters' `_meta.permission` (version 1): card title + reason + defaultToNo,
+    // and a per-option `_meta.permission.description`; the reply echoes which optionId was picked
+    if (text === 'perm-meta') {
+      await send({ sessionUpdate: 'tool_call', toolCallId: 'pm1', title: 'Bash', kind: 'execute', status: 'pending', rawInput: { command: 'rm -rf build' } });
+      const perm = await client.request(acp.methods.client.session.requestPermission, {
+        sessionId: sid,
+        toolCall: { toolCallId: 'pm1', title: 'Bash' },
+        options: [
+          { optionId: 'yes-proceed', name: 'Yes, proceed', kind: 'allow_once' },
+          { optionId: 'yes-session', name: 'Yes, and do not ask again for this command in this session', kind: 'allow_always',
+            _meta: { permission: { description: 'Remembered for this session' } } },
+          { optionId: 'no-diff', name: 'No, tell it what to do differently', kind: 'reject_once' },
+        ],
+        _meta: { permission: { version: 1, title: 'Run command?', description: 'Reason: cleans the tree', defaultToNo: true } },
+      });
+      const picked = perm.outcome.outcome === 'selected' ? perm.outcome.optionId : perm.outcome.outcome;
+      await send({ sessionUpdate: 'tool_call_update', toolCallId: 'pm1', status: picked === 'no-diff' ? 'failed' : 'completed' });
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `picked ${picked}` } });
+      return { stopReason: 'end_turn' };
+    }
+
+    // "image" → an image chunk between two text runs (it splits the text block) plus a tool whose content list ends
+    // with an image item — the shape claude-agent-acp emits for a base64 tool result
+    if (text === 'image') {
+      const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64').toString('base64');
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'here is ' } });
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'image', data: PNG, mimeType: 'image/png' } });
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'the red dot' } });
+      await send({ sessionUpdate: 'tool_call', toolCallId: 'im1', title: 'view_image', kind: 'other', status: 'completed',
+        content: [
+          { type: 'content', content: { type: 'text', text: 'Revised prompt: red dot' } },
+          { type: 'content', content: { type: 'image', data: PNG, mimeType: 'image/png', uri: '/repo/red.png' } },
+        ] });
+      return { stopReason: 'end_turn' };
+    }
+
     if (text.includes('tool')) {
       await send({ sessionUpdate: 'tool_call', toolCallId: 'tc1', title: 'run_command', kind: 'execute', status: 'pending', rawInput: { command: 'pnpm test' } });
       const perm = await client.request(acp.methods.client.session.requestPermission, {
@@ -881,6 +929,10 @@ function configOptions(): acp.SessionConfigOption[] {
       // A "config file" the test edits between spawns: each listed value shows up as a model option
       ...(process.env.FAKE_MODELS ?? '').split(',').map(s => s.trim()).filter(Boolean).map(value => ({ value, name: value })),
     ] },
+    // FAKE_BOOL: a model_config toggle offered only when the client declared the boolean capability
+    ...(process.env.FAKE_BOOL && booleanCap
+      ? [{ id: 'fast', name: 'Fast mode', category: 'model_config' as const, type: 'boolean' as const, currentValue: config.fast === 'true' }]
+      : []),
   ];
 }
 

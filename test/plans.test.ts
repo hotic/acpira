@@ -47,6 +47,15 @@ describe('plan documents from observed ACP packets', () => {
     expect(p).toMatchObject({ markdown: '# Grok plan\n\nSteps.', path: '/plans/plan.md', status: 'ready' });
   });
 
+  it('Codex: a switch_mode call carrying rawInput.plan is the plan-review approval', () => {
+    const t = turns();
+    const p = capturePlan(t, { toolCallId: 'plan-review:1', title: 'Implement this plan?', kind: 'switch_mode',
+      rawInput: { plan: '# Codex plan\n\nSteps.' } })!;
+    expect(p).toMatchObject({ markdown: '# Codex plan\n\nSteps.', status: 'ready', approvalToolCallId: 'plan-review:1' });
+    // A switch_mode without a plan body stays an ordinary tool call
+    expect(capturePlan(t, { toolCallId: 'mode', kind: 'switch_mode', rawInput: { mode: 'default' } })).toBeUndefined();
+  });
+
   it('does not promote arbitrary Markdown edits into implementation plans', () => {
     const t = turns();
     expect(capturePlan(t, { toolCallId: 'write', title: 'Write', rawInput: { path: '/repo/plan.md', content: '# Notes' } })).toBeUndefined();

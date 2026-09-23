@@ -4,6 +4,10 @@ export type FileLink = { path: string; line?: number };
 
 export const OpenToolFileContext = createContext<((path: string, line?: number) => void) | undefined>(undefined);
 
+// Agent-emitted images are blob-store files: the URL builds them for <img>, the opener hands the host the blob name
+export const BlobUrlContext = createContext<((blob: string) => string) | undefined>(undefined);
+export const OpenBlobContext = createContext<((blob: string) => void) | undefined>(undefined);
+
 // Hash form survives rehype-sanitize / rehype-harden: file: is a hard block and becomes ` [blocked]`.
 export const FILE_HREF_PREFIX = '#acpira-file:';
 

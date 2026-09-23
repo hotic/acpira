@@ -27,7 +27,7 @@ import { PlanBar } from './PlanBar';
 import { PlanDocumentContext } from './PlanDocument';
 import { planExecutionId } from '@shared/planExecution';
 import { Queue } from './Queue';
-import { OpenToolFileContext } from './ToolCall';
+import { OpenToolFileContext, BlobUrlContext, OpenBlobContext } from './fileLinks';
 import { TurnActionsContext } from './TurnActions';
 import { SubagentInspector } from './subagents/SubagentInspector';
 import { SubagentGraph } from './subagents/SubagentGraph';
@@ -46,6 +46,8 @@ export interface ShellHandlers {
   buildPlan?: (sessionId: string, planId: string, model?: { configId: string; value: string }, optionId?: string) => void;
   openPlan?: (sessionId: string, planId: string) => void;
   openFile?: (sessionId: string, path: string, line?: number) => void;
+  // An agent-emitted image's blob file opens in the editor by its store name (the host resolves the absolute path)
+  openBlob?: (sessionId: string, name: string) => void;
   setMode: (id: string) => void;
   setConfig: (configId: string, value: string) => void;
   selectSession: (id: string) => void;
@@ -262,6 +264,8 @@ export function Shell(p: ShellProps) {
     }),
   }), [on, p.sessions, pushToast, dropToast]);
   const blobUrl = useMemo(() => (p.blobBase && p.activeSessionId ? (blob: string) => `${p.blobBase}/${p.activeSessionId}/${blob}` : undefined), [p.blobBase, p.activeSessionId]);
+  // Child transcripts share the root session's blob store, so both contexts live above Thread and the inspector
+  const openBlob = useMemo(() => p.activeSessionId && on.openBlob ? (name: string) => on.openBlob!(p.activeSessionId!, name) : undefined, [p.activeSessionId, on.openBlob]);
   // The card for a turn that stopped short stands until dismissed or until the transcript moves on; the key ties the dismissal to that one turn.
   // While the session isn't ready the Notice has the floor (a login problem after a failed prompt is its business)
   const lastTurn = p.turns[p.turns.length - 1];
@@ -334,6 +338,8 @@ export function Shell(p: ShellProps) {
     <AppearanceContext.Provider value={a}>
       <ThemeContext.Provider value={p.theme}>
       <ShellLayerContext.Provider value={root}>
+      <BlobUrlContext.Provider value={blobUrl}>
+      <OpenBlobContext.Provider value={openBlob}>
         <div
           ref={root}
           className={cn('acp-shell relative flex h-full min-h-0 w-full overflow-hidden', wide && 'acp-wide')}
@@ -484,6 +490,8 @@ export function Shell(p: ShellProps) {
           )}
         </div>
         <SubagentGraph nodes={p.subagents ?? []} sessionTitle={p.title} open={graphOpen && !!p.subagents?.length} onOpenChange={setGraphOpen} onInspect={onInspect} selectedId={inspect?.id} />
+      </OpenBlobContext.Provider>
+      </BlobUrlContext.Provider>
       </ShellLayerContext.Provider>
       </ThemeContext.Provider>
     </AppearanceContext.Provider>

@@ -166,6 +166,8 @@ export type WebviewMsg =
   | { type: 'openPath'; path: string }
   // Tool references resolve relative to the originating session and retain their line.
   | { type: 'openFile'; sessionId: string; path: string; line?: number }
+  // A session blob (agent-produced image, parked attachment) by store name; the host resolves it under the session's blob dir
+  | { type: 'openBlob'; sessionId: string; name: string }
   | { type: 'inventory'; agent: AgentId }
   // fresh: the refresh button — host spawns a throwaway process to re-read the current configOptions; without it, the latest session's list
   | { type: 'controls'; agent: AgentId; fresh?: boolean }

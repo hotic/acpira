@@ -84,6 +84,15 @@ export class BridgeCore {
       }
       return;
     }
+    if (m.type === 'openBlob') {
+      try {
+        const path = manager.blobPath(m.sessionId, m.name);
+        if (path) await platform.openResolvedFile(path);
+      } catch (e) {
+        platform.toast('error', msg(e));
+      }
+      return;
+    }
     if (m.type === 'openPlan') {
       const plan = manager.planDocument(m.sessionId, m.planId);
       if (plan?.type === 'plan_document') {

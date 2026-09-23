@@ -142,6 +142,10 @@ function ModelPanel({ families, cur, curVar, onSelect, close, reasoning = [], mo
 // Category chooses placement; unfamiliar model parameters retain their advertised labels and wire values.
 function ModelConfigParams({ control, hidden, onChange }: { control: ConfigControl; hidden?: string[]; onChange: (value: string) => void }) {
   const options = visibleOptions(control.options, hidden, control.value);
+  // An ACP boolean arrives as a synthetic Off/On pair; the panel shows it as the switch it really is
+  if (control.type === 'boolean') {
+    return <SwitchRow label={control.name} checked={control.value === 'true'} onChange={on => onChange(on ? 'true' : 'false')} />;
+  }
   if (isFastControl(control)) {
     const next = control.value === 'fast' ? 'standard' : 'fast';
     return <SwitchRow label="Fast" checked={control.value === 'fast'} disabled={!options.some(option => option.id === next)} onChange={() => onChange(next)} />;

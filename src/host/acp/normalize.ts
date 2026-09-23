@@ -1,8 +1,10 @@
-import { basename } from 'node:path';
+import { basename, isAbsolute } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type * as acp from '@agentclientprotocol/sdk';
 import type { MsgKey } from '@shared/i18n';
 import { t } from '../i18n';
-import { TOOL_OUTPUT_MAX } from '../limits';
+import { MAX_OUT_IMAGE_BYTES, TOOL_OUTPUT_MAX } from '../limits';
+import { base64Bytes, imageMimeOf } from '@shared/attachments';
 import type {
   AgentBlock, AgentTurn, CompactionBlock, CompactionStatus, ConfigControl, PlanPriority, PlanStatus, SessionControls, SessionOption, SlashCommand, ToolCallBlock, ToolContent, ToolKind, Turn, TurnError, Usage,
 } from '@shared/transcript';
@@ -34,6 +36,13 @@ export interface NormalizeState {
   // Tool id → { path, content }: the file contents an edit tool reported in rawInput (OpenCode's write sends them there
   // and its completion carries only a text receipt), kept so a new-file completion can render as an all-add diff
   pendingWrites?: Record<string, { path: string; content: string }>;
+  // Parks an agent-emitted image payload in the session blob store and returns its blob name; absent on pure-normalization
+  // paths (tests, export replay) where image content degrades to a `[image]` note instead
+  saveImage?: (data: string, mimeType: string) => string | undefined;
+  // Same for an image the agent references by local path (codex-acp's view_image emits a resource_link to the file);
+  // a readable regular file becomes a blob, anything else falls back to the link's text rendering
+  saveImageFile?: (absPath: string) => string | undefined;
+  imageSeq?: number;
 }
 
 export function emptyState(): NormalizeState {
@@ -88,9 +97,18 @@ export function applyUpdate(s: NormalizeState, u: acp.SessionUpdate): boolean {
     case 'agent_message_chunk': {
       closeUserTurn(s);
       const t = currentAgentTurn(s);
+      // An image chunk is its own block: it closes the text run so later prose opens a fresh block
+      const img = imageContent(u.content, s);
+      if (img?.type === 'image') {
+        sealStreaming(s, t);
+        s.imageSeq = (s.imageSeq ?? 0) + 1;
+        t.blocks.push({ type: 'image', id: `img-${s.imageSeq}`, mimeType: img.mimeType, blob: img.blob, uri: img.uri });
+        return true;
+      }
+      const text = img?.type === 'text' ? img.text : textOf(u.content);
       const last = lastBlock(t);
-      if (last?.type === 'text' && last.streaming) last.markdown += textOf(u.content);
-      else { sealStreaming(s, t); t.blocks.push({ type: 'text', markdown: textOf(u.content), streaming: true }); }
+      if (last?.type === 'text' && last.streaming) last.markdown += text;
+      else { sealStreaming(s, t); t.blocks.push({ type: 'text', markdown: text, streaming: true }); }
       return true;
     }
     case 'agent_thought_chunk': {
@@ -249,14 +267,18 @@ export function sealReplay(s: NormalizeState) {
 
 // Build the controls from the session/new / resume response
 export function initControls(controls: SessionControls, modes?: acp.SessionModeState | null, configOptions?: acp.SessionConfigOption[] | null) {
-  controls.modes = (modes?.availableModes ?? []).map(m => ({ id: m.id, name: m.name, description: m.description ?? undefined }));
+  controls.modes = (modes?.availableModes ?? []).map(m => ({ id: m.id, name: m.name, description: m.description ?? undefined, kind: kindOf(m._meta) }));
   controls.modeId = modes?.currentModeId;
   if (configOptions) applyConfigOptions(controls, configOptions);
 }
 
 // configOptions: a select with category=mode is treated purely as modes — it fills in when modes is empty, and is a duplicate when modes is already present (Kimi sends both);
-// in neither case does it enter the control list. The remaining selects are ordered model → thought_level → model_config → others, preserving the agent's order within each class. boolean type is not shown for now
+// in neither case does it enter the control list. The remaining selects are ordered model → thought_level → model_config → others, preserving the agent's order within each class.
+// A boolean configOption (advertised via clientCapabilities.session.configOptions.boolean) becomes a control with a synthetic Off/On pair,
+// so the string-valued paths (chips, turn settings, hidden lists) keep working; only the wire request carries `type: 'boolean'`
 const CATEGORY_ORDER = ['model', 'thought_level', 'model_config'];
+
+const BOOL_OPTIONS: SessionOption[] = [{ id: 'false', name: 'Off' }, { id: 'true', name: 'On' }];
 
 export function applyConfigOptions(controls: SessionControls, options: acp.SessionConfigOption[]) {
   const mode = options.find(o => o.type === 'select' && o.category === 'mode');
@@ -267,20 +289,30 @@ export function applyConfigOptions(controls: SessionControls, options: acp.Sessi
   }
   const rank = (c: ConfigControl) => { const i = CATEGORY_ORDER.indexOf(c.category ?? ''); return i < 0 ? CATEGORY_ORDER.length : i; };
   controls.options = options
-    .filter(o => o.type === 'select' && o.category !== 'mode')
-    .map((o): ConfigControl => ({
-      id: o.id, name: o.name, category: o.category ?? undefined,
-      options: o.type === 'select' ? flattenSelect(o.options) : [],
-      value: o.type === 'select' ? o.currentValue : undefined,
-    }))
+    .filter(o => (o.type === 'select' || o.type === 'boolean') && o.category !== 'mode')
+    .map((o): ConfigControl => o.type === 'boolean'
+      ? { id: o.id, name: o.name, category: o.category ?? undefined, type: 'boolean', options: BOOL_OPTIONS, value: String(o.currentValue) }
+      : { id: o.id, name: o.name, category: o.category ?? undefined, options: flattenSelect(o.options), value: o.currentValue })
     .sort((a, b) => rank(a) - rank(b));
+}
+
+// A user pick → the session/set_config_option payload. Boolean controls take `type: 'boolean'` and a real boolean —
+// sending the string 'false' would be truthy to agents that parse it loosely
+export function configOptionSetValue(control: ConfigControl | undefined, value: string): { type: 'boolean'; value: boolean } | { value: string } {
+  return control?.type === 'boolean' ? { type: 'boolean', value: value === 'true' } : { value };
+}
+
+// `_meta.kind` on modes and select options (codex / claude: standard / plan / auto_review / full_access); display only
+function kindOf(meta: unknown): string | undefined {
+  const k = (meta as { kind?: unknown } | null | undefined)?.kind;
+  return typeof k === 'string' && k ? k : undefined;
 }
 
 function flattenSelect(opts: acp.SessionConfigSelectOptions): SessionOption[] {
   const out: SessionOption[] = [];
   for (const o of opts) {
-    if ('group' in o) for (const x of o.options) out.push({ id: x.value, name: x.name, description: x.description ?? o.name, group: { id: o.group, name: o.name } });
-    else out.push({ id: o.value, name: o.name, description: o.description ?? undefined });
+    if ('group' in o) for (const x of o.options) out.push({ id: x.value, name: x.name, description: x.description ?? o.name, group: { id: o.group, name: o.name }, kind: kindOf(x._meta) });
+    else out.push({ id: o.value, name: o.name, description: o.description ?? undefined, kind: kindOf(o._meta) });
   }
   return out;
 }
@@ -407,14 +439,14 @@ function mergeTool(b: ToolCallBlock, u: acp.ToolCall | acp.ToolCallUpdate, s?: N
         type: 'diff', lines: diffLines('', pendingWrite.content),
         source: { path: pendingWrite.path, oldText: '', newText: pendingWrite.content },
       };
-      const receipts = (u.content?.length ? toolContents(u.content) : []).filter((x): x is Extract<ToolContent, { type: 'text' }> => x.type === 'text' && !!x.text);
+      const receipts = (u.content?.length ? toolContents(u.content, s) : []).filter((x): x is Extract<ToolContent, { type: 'text' }> => x.type === 'text' && !!x.text);
       b.content = diff;
       if (receipts.length) b.contents = [diff, ...receipts]; else delete b.contents;
       b.diffStat = { add: diff.lines.filter(l => l.kind === 'add').length, del: 0 };
     }
   }
   if (u.content?.length) {
-    const list = toolContents(u.content);
+    const list = toolContents(u.content, s);
     // The primary item: a diff wins over plain text, otherwise the wire order's first
     const c = list.find(x => x.type === 'diff') ?? list[0];
     // Kimi sends the edit diff before execution, then a plain success receipt.
@@ -429,29 +461,41 @@ function mergeTool(b: ToolCallBlock, u: acp.ToolCall | acp.ToolCallUpdate, s?: N
         : undefined;
     }
   }
-  // pi-acp manages terminals itself and streams output through _meta (terminal_output deltas, then terminal_exit)
-  const terminalOutput = (meta?.terminal_output as { data?: unknown } | undefined)?.data;
-  if (typeof terminalOutput === 'string' && terminalOutput) {
+  // pi-acp and the claude/codex adapters manage terminals themselves and stream output through _meta
+  // (terminal_output / terminal_output_delta, then terminal_exit)
+  const termOut = (meta?.terminal_output ?? meta?.terminal_output_delta) as { data?: unknown; terminal_id?: unknown } | undefined;
+  const terminalOutput = typeof termOut?.data === 'string' ? termOut.data : undefined;
+  if (terminalOutput) {
     const prev = b.content?.type === 'text' ? b.content.text : '';
-    b.content = { type: 'text', text: (prev + terminalOutput).slice(0, TOOL_OUTPUT_MAX) };
+    // A terminal item created the not-wired note before the agent's stream proved it wrong — replace, don't append
+    const note = typeof termOut?.terminal_id === 'string' ? t('host.terminalNotWired', { id: termOut.terminal_id }) : undefined;
+    const base = note !== undefined && prev === note ? '' : prev;
+    b.content = { type: 'text', text: (base + terminalOutput).slice(0, TOOL_OUTPUT_MAX) };
   }
   const exitCode = (meta?.terminal_exit as { exit_code?: unknown } | undefined)?.exit_code;
   if (typeof exitCode === 'number' && exitCode !== 0) {
     const prev = b.content?.type === 'text' ? b.content.text : '';
     if (!prev.endsWith(`exit code ${exitCode}`)) {
-      b.content = { type: 'text', text: (prev ? `${prev}\nexit code ${exitCode}` : `exit code ${exitCode}`).slice(0, TOOL_OUTPUT_MAX) };
+      b.content = { type: 'text', text: appendExitCode(prev, exitCode).slice(0, TOOL_OUTPUT_MAX) };
     }
   }
   // A terminal item the agent cannot stream through _meta expects a client-side terminal (which we don't provide):
-  // say so instead of leaving the body empty. terminal_info / terminal_output / terminal_exit mean the agent wired it up itself
-  const agentWiredTerminal = meta?.terminal_info !== undefined || meta?.terminal_output !== undefined || meta?.terminal_exit !== undefined;
+  // say so instead of leaving the body empty. terminal_info / terminal_output(_delta) / terminal_exit mean the agent wired it up itself
+  const agentWiredTerminal = meta?.terminal_info !== undefined || meta?.terminal_output !== undefined || meta?.terminal_output_delta !== undefined || meta?.terminal_exit !== undefined;
   if (!b.content && !agentWiredTerminal) {
     const term = u.content?.find(c => c.type === 'terminal');
     if (term?.type === 'terminal') b.content = { type: 'text', text: t('host.terminalNotWired', { id: term.terminalId }) };
   }
   if (!b.content && u.rawOutput !== undefined && u.rawOutput !== null) {
-    const text = typeof u.rawOutput === 'string' ? u.rawOutput : JSON.stringify(u.rawOutput, null, 2);
-    if (text.trim()) b.content = { type: 'text', text: text.slice(0, TOOL_OUTPUT_MAX) };
+    // codex-acp's completion receipt { formatted_output, exit_code } renders as plain output, not pretty JSON
+    const formatted = formattedOutput(u.rawOutput);
+    if (formatted) {
+      const text = formatted.exitCode ? appendExitCode(formatted.text, formatted.exitCode) : formatted.text;
+      if (text.trim()) b.content = { type: 'text', text: text.slice(0, TOOL_OUTPUT_MAX) };
+    } else {
+      const text = typeof u.rawOutput === 'string' ? u.rawOutput : JSON.stringify(u.rawOutput, null, 2);
+      if (text.trim()) b.content = { type: 'text', text: text.slice(0, TOOL_OUTPUT_MAX) };
+    }
   }
   if (isTodoTool(b) && b.status === 'completed') {
     // Parse the full wire result before the generic output preview's size limit.
@@ -536,11 +580,73 @@ function stripVerb(title: string): string {
   return title.replace(/^(read(ing)?|edit(ing)?|write|writing|search(ing)?|run(ning)?|execute|executing|fetch(ing)?|delete|deleting|move|moving|list(ing)?)\s+(file|files|directory|command)?\s*/i, '').replace(/^`|`$/g, '').trim() || title;
 }
 
+// A non-zero exit lands on its own line; an output ending in a newline does not grow a blank line in between
+function appendExitCode(prev: string, exitCode: number): string {
+  const base = prev.replace(/\n+$/, '');
+  return base ? `${base}\nexit code ${exitCode}` : `exit code ${exitCode}`;
+}
+
+// A completed command's `rawOutput` shaped like codex-acp's { formatted_output, exit_code }; anything else stays generic
+function formattedOutput(rawOutput: unknown): { text: string; exitCode?: number } | undefined {
+  if (typeof rawOutput !== 'object' || rawOutput === null) return undefined;
+  const o = rawOutput as Record<string, unknown>;
+  if (typeof o.formatted_output !== 'string') return undefined;
+  return { text: o.formatted_output, exitCode: typeof o.exit_code === 'number' && o.exit_code !== 0 ? o.exit_code : undefined };
+}
+
+// MIME types the webview is asked to render inline; anything else degrades to a text note
+const SHOWABLE_IMAGE = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+// ACP image content (message chunk or a `content` tool item carrying an image block) → transcript image whose pixels
+// go to the blob store through saveImage; without a saver or a payload worth keeping it degrades to a text note so
+// the transcript never silently loses a block
+function imageContent(c: acp.ContentBlock, s?: NormalizeState): ToolContent | undefined {
+  if (c.type !== 'image') return undefined;
+  let mimeType = typeof c.mimeType === 'string' ? c.mimeType : 'image/png';
+  let uri = typeof c.uri === 'string' && c.uri ? c.uri : undefined;
+  let data = typeof c.data === 'string' && c.data ? c.data : undefined;
+  // A data URL carries its payload inline, whether it arrived in `data` or `uri`
+  const inline = (data ?? uri)?.match(/^data:([\w.+-]+\/[\w.+-]+)?;base64,(.+)$/s);
+  if (inline) {
+    data = inline[2];
+    if (inline[1]) mimeType = inline[1];
+    if (uri?.startsWith('data:')) uri = undefined;
+  }
+  const blob = data && s?.saveImage && SHOWABLE_IMAGE.has(mimeType) && base64Bytes(data) <= MAX_OUT_IMAGE_BYTES
+    ? s.saveImage(data, mimeType) : undefined;
+  if (blob || (uri && !data)) return { type: 'image', mimeType, ...(blob ? { blob } : {}), ...(uri ? { uri } : {}) };
+  return { type: 'text', text: s?.saveImage ? `[image: ${mimeType}, not shown]` : '[image]' };
+}
+
+// A local path behind a resource_link's uri (absolute path or file:// URL); anything remote or opaque stays a link
+function localPathOf(uri: string): string | undefined {
+  if (/^file:/i.test(uri)) {
+    try { return fileURLToPath(uri); } catch { return undefined; }
+  }
+  return isAbsolute(uri) ? uri : undefined;
+}
+
+// A `content` item holding a resource_link to a local image file (codex-acp's view_image preview) → image content
+// through saveImageFile; the link's uri stays as the caption. A missing saver or unreadable file renders as the link
+function fileImageContent(c: acp.ContentBlock, s?: NormalizeState): ToolContent | undefined {
+  if (c.type !== 'resource_link' || typeof c.uri !== 'string') return undefined;
+  const path = localPathOf(c.uri);
+  const mimeType = path ? imageMimeOf(path) : undefined;
+  const blob = mimeType && s?.saveImageFile ? s.saveImageFile(path!) : undefined;
+  return blob ? { type: 'image', mimeType: mimeType!, blob, uri: c.uri } : undefined;
+}
+
 // Every renderable content item, in wire order: a diff per `diff` item, one merged text per run of consecutive
-// `content` items. `terminal` items carry no body here — mergeTool fills it from the _meta stream (pi-acp) or the
-// not-wired note (agents expecting a client terminal)
-function toolContents(items: acp.ToolCallContent[]): ToolContent[] {
+// `content` items, an image per image item (it splits the text run). `terminal` items carry no body here — mergeTool
+// fills it from the _meta stream (pi-acp) or the not-wired note (agents expecting a client terminal)
+function toolContents(items: acp.ToolCallContent[], s?: NormalizeState): ToolContent[] {
   const out: ToolContent[] = [];
+  const pushText = (text: string) => {
+    if (!text) return;
+    const last = out[out.length - 1];
+    if (last?.type === 'text') last.text = (last.text + '\n' + text).slice(0, TOOL_OUTPUT_MAX);
+    else out.push({ type: 'text', text: text.slice(0, TOOL_OUTPUT_MAX) });
+  };
   for (const item of items) {
     if (item.type === 'diff') {
       out.push({
@@ -551,11 +657,13 @@ function toolContents(items: acp.ToolCallContent[]): ToolContent[] {
       continue;
     }
     if (item.type !== 'content') continue;
-    const text = textOf(item.content);
-    if (!text) continue;
-    const last = out[out.length - 1];
-    if (last?.type === 'text') last.text = (last.text + '\n' + text).slice(0, TOOL_OUTPUT_MAX);
-    else out.push({ type: 'text', text: text.slice(0, TOOL_OUTPUT_MAX) });
+    const img = imageContent(item.content, s) ?? fileImageContent(item.content, s);
+    if (img) {
+      if (img.type === 'text') pushText(img.text);
+      else out.push(img);
+      continue;
+    }
+    pushText(textOf(item.content));
   }
   return out;
 }

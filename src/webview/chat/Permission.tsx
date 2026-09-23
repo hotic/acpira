@@ -4,14 +4,15 @@ import { Button } from '../ui/Button';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { Row } from '../ui/Row';
 import { getLocale, t } from '../i18n';
-import { permissionOption } from './permissionOptions';
+import { permissionOption, quickChoices } from './permissionOptions';
 
 // Keep common decisions visible; the menu preserves every remaining wire option.
 export function Permission({ block, onChoose }: { block: PermissionBlock; onChoose?: (optionId: string) => void }) {
   const options = block.options.map(o => permissionOption(o, getLocale()));
-  const allow = options.find(o => o.quick && o.kind === 'allow_once');
-  const reject = options.find(o => o.quick && o.kind === 'reject_once');
-  const more = options.filter(o => o !== allow && o !== reject);
+  // Positional quick buttons: first allow_once / reject_once in wire order, whatever the label says
+  const { allow, reject } = quickChoices(options);
+  const more = options.filter(o => o.id !== allow?.id && o.id !== reject?.id);
+  // The adapter asked for a deny-by-default card: reject is the emphasized button, allow stays plain
   return (
     <div className="flex min-w-0 flex-col gap-gap rounded-lg border border-conversation-line bg-bg-1 p-pad">
       <Row dense lead={block.command ? <Terminal className="size-icon" strokeWidth={1.5} /> : undefined}>
@@ -29,8 +30,8 @@ export function Permission({ block, onChoose }: { block: PermissionBlock; onChoo
           </DropdownMenu.Root>
         )}
         <div className="ml-auto flex items-center gap-gap">
-          {reject && <Button onClick={() => onChoose?.(reject.id)}>{reject.label}</Button>}
-          {allow && <Button variant="primary" onClick={() => onChoose?.(allow.id)}>{allow.label}</Button>}
+          {reject && <Button variant={block.defaultToNo ? 'primary' : undefined} onClick={() => onChoose?.(reject.id)}>{reject.label}</Button>}
+          {allow && <Button variant={block.defaultToNo ? undefined : 'primary'} onClick={() => onChoose?.(allow.id)}>{allow.label}</Button>}
         </div>
       </div>
     </div>

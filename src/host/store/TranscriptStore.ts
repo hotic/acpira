@@ -1,9 +1,8 @@
-import { createHash } from 'node:crypto';
 import { access, mkdir, readFile, readdir, realpath, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 import type { AgentId, SessionSummary, TurnSettings } from '@shared/transcript';
 import type { SessionRecord } from '../acp/AcpSession';
-import type { BlobStore } from '../acp/attachments';
+import { blobName, type BlobStore } from '../acp/attachments';
 import { msg } from '../errors';
 import { t } from '../i18n';
 import { withFileLock, writeAtomic } from './fileLock';
@@ -331,13 +330,19 @@ export class TranscriptStore implements BlobStore {
   // (fresh ids are UUIDs; a hand-edited record could hold anything)
   async saveBlob(sessionId: string, ext: string, bytes: Uint8Array): Promise<{ name: string; path: string }> {
     if (!isSessionId(sessionId) || !/^\.\w+$/.test(ext)) throw new Error(t('host.blobIllegal', { path: `${sessionId}/*${ext}` }));
-    const name = `${createHash('sha256').update(bytes).digest('hex').slice(0, 16)}${ext}`;
+    const name = blobName(ext, bytes);
     await mkdir(join(this.dir, sessionId), { recursive: true });
     const dir = await this.confined(this.dir, sessionId);
     if (!dir) throw new Error(t('host.blobIllegal', { path: `${sessionId}/*${ext}` }));
     const path = join(dir, name);
     await writeFile(path, bytes);
     return { name, path };
+  }
+
+  // The path a saved blob lands at, for export links and open-in-editor. Same legality checks as saveBlob's parameters
+  blobPath(sessionId: string, name: string): string | undefined {
+    if (!isSessionId(sessionId) || !/^[\w-]+\.\w+$/.test(name)) return undefined;
+    return join(this.dir, sessionId, name);
   }
 
   async readBlob(sessionId: string, name: string): Promise<Uint8Array> {

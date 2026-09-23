@@ -75,6 +75,8 @@ export interface SessionOption {
   group?: { id: string; name: string };
   // Verified by an agent adapter, never inferred from a display name.
   source?: { id: string; name: string; kind: 'official' | 'custom' };
+  // The agent's own classification of a mode / option (`_meta.kind`, e.g. codex / claude `full_access`); display only, never parsed into ids
+  kind?: string;
 }
 
 export interface ConfigControl {
@@ -83,6 +85,9 @@ export interface ConfigControl {
   name: string;
   // ACP's semantic category: model / thought_level / model_config / custom; affects placement, ordering and icon, not wire values
   category?: string;
+  // ACP boolean configOption (RFD boolean-config-option). `options` carries the synthetic Off/On pair so every
+  // string-value path (turn settings, hidden lists, history replay) keeps working; the wire request still sends `type: 'boolean'` + a real boolean
+  type?: 'boolean';
   options: SessionOption[];
   value?: string;
 }
@@ -120,10 +125,19 @@ export type SessionStatus = 'starting' | 'ready' | 'auth_required' | 'readonly' 
 export type ToolKind = 'read' | 'edit' | 'delete' | 'move' | 'search' | 'execute' | 'think' | 'fetch' | 'switch_mode' | 'other';
 export type ToolStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
 
+// An image the agent produced (tool result or message chunk). The pixels live in the session's blob directory
+// under a content-hash name; `uri` keeps a path the agent saved itself (codex-acp writes generations to disk)
+export interface ImageRef {
+  blob?: string;
+  mimeType: string;
+  uri?: string;
+}
+
 export type ToolContent =
   | { type: 'text'; text: string }
   | { type: 'diff'; lines: DiffLine[]; source?: DiffSource }
-  | { type: 'list'; items: string[] };
+  | { type: 'list'; items: string[] }
+  | ({ type: 'image' } & ImageRef);
 
 export interface DiffSource {
   path: string;
@@ -219,7 +233,9 @@ export interface PermissionBlock {
   command?: string;
   description?: string;
   planId?: string;
-  options: { id: string; label: string; kind: PermissionKind }[];
+  // `_meta.permission.defaultToNo`: the adapter already ordered reject first; the card makes the reject button primary
+  defaultToNo?: boolean;
+  options: { id: string; label: string; kind: PermissionKind; detail?: string }[];
 }
 
 // A saved implementation plan, separate from the live to-do list.
@@ -287,7 +303,16 @@ export interface QuestionBlock {
   answers?: QuestionAnswers;
 }
 
-export type AgentBlock = ThoughtBlock | PlanBlock | ToolCallBlock | TextBlock | PermissionBlock | CompactionBlock | PlanDocumentBlock | QuestionBlock;
+// An image the agent streamed as a message chunk (image generation / view results); pixels are in the blob store, never base64 here
+export interface ImageBlock {
+  type: 'image';
+  id: string;
+  blob?: string;
+  mimeType: string;
+  uri?: string;
+}
+
+export type AgentBlock = ThoughtBlock | PlanBlock | ToolCallBlock | TextBlock | PermissionBlock | CompactionBlock | PlanDocumentBlock | QuestionBlock | ImageBlock;
 
 // What the composer attaches to a prompt before the host has seen it: images and dropped text carry their payload (base64 / text),
 // files carry a URI (Explorer drag / @ mention) that the host resolves — image files become `image`, everything else stays a link

@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Codex (`codex-acp`, the official `@agentclientprotocol/codex-acp` adapter) and Claude (`claude-agent-acp`, `@agentclientprotocol/claude-agent-acp`) are built-in agents with install, login and extension entries. A user-defined `acpira.agents.codex` / `.claude` entry still overrides the built-in.
 - The agent settings page shows the adapter package version and its bundled engine version (read off npm `package.json` files, the CLI is never launched), an active engine-override variable (`CODEX_PATH` / `CLAUDE_CODE_EXECUTABLE`) with its value, and the last launch stage — `spawn_failed` / `handshake_failed` / `auth_required` / `ready` — from probes and real session starts.
 - `type: 'terminal'` ACP auth methods are supported: the client advertises `clientCapabilities.auth.terminal` and runs the method's binary + args in a host terminal instead of calling `authenticate` (Claude's `claude-ai-login` / `console-login`, pi-acp's `pi_terminal_login`). An agent can opt out (`acpira.agents.<id>.terminalAuth`); the Devin built-in does — its ACP process ignores a locally written login.
+- Boolean ACP config options render as switches (Codex `fast-mode`) and send a real boolean to `session/set_config_option`.
+- Permission cards show the adapter's own title / reason from `_meta.permission` (Codex "Run command?", Claude's "Ready to code?"), offer quick Allow / Reject buttons picked by option kind, and emphasize the reject button when the adapter flags `defaultToNo`.
+- Agent-emitted images render inline in the transcript (click for the lightbox; the agent's saved path is an openable caption) and export as file links in Markdown exports.
+- Plan-mode approval is recognized for Codex (the `switch_mode` "Implement this plan?" review) and Claude (ExitPlanMode), linking the plan document to its permission card.
+
+### Changed
+
+- Agent-managed terminal output (Codex's `_meta.terminal_output_delta`, Claude's `_meta.terminal_*`) streams into the tool row as plain text; a completed command's `{ formatted_output, exit_code }` receipt no longer renders as raw JSON.
+- Modes tagged `full_access` by the adapter (Codex / Claude) keep their own name but carry the warning glyph in the mode picker.
 
 ### Planned
 

@@ -91,6 +91,24 @@ describe('exportMarkdown', () => {
     expect(fences.length).toBeGreaterThan(0);
     expect(fences.length % 2).toBe(0);
   });
+
+  it('agent images export as links to their absolute blob path; uri-only images keep the agent path', () => {
+    const withImages: Turn[] = [
+      { role: 'agent', startedAt: 1, endedAt: 2, stop: 'end_turn', blocks: [
+        { type: 'image', id: 'img-1', mimeType: 'image/png', blob: 'h9.png' },
+        { type: 'image', id: 'img-2', mimeType: 'image/png', uri: '/repo/red.png' },
+        { type: 'tool_call', id: 't5', kind: 'other', verb: 'View', status: 'completed',
+          contents: [{ type: 'text', text: 'Revised prompt' }, { type: 'image', mimeType: 'image/png', blob: 'h8.png' }] },
+        { type: 'image', id: 'img-3', mimeType: 'image/png', blob: 'gone.png' },
+      ] },
+    ];
+    const out = exportMarkdown({ title: 'x', agentName: 'Fake', cwd: '/repo', exportedAt: 't', turns: withImages },
+      undefined, blob => blob === 'gone.png' ? undefined : `/store/s1/${blob}`);
+    expect(out).toContain('![image](/store/s1/h9.png)');
+    expect(out).toContain('![image](/store/s1/h8.png)');
+    expect(out).toContain('[image](/repo/red.png)');
+    expect(out).toContain('[image: image/png]');
+  });
 });
 
 describe('exportFileName', () => {

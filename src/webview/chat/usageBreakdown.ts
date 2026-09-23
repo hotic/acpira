@@ -68,7 +68,8 @@ function turnTokens(turn: Turn): RawUsage {
           if (b.content) {
             if (b.content.type === 'text') raw.tool += estTokens(b.content.text);
             else if (b.content.type === 'list') raw.tool += b.content.items.reduce((n, i) => n + estTokens(i), 0);
-            else raw.tool += b.content.lines.reduce((n, l) => n + estTokens(l.text), 0);
+            else if (b.content.type === 'diff') raw.tool += b.content.lines.reduce((n, l) => n + estTokens(l.text), 0);
+            // image content is a blob reference; its bytes do not enter the model context
           }
           break;
         case 'permission':

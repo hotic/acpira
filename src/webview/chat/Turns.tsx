@@ -21,6 +21,7 @@ import { Plan } from './Plan';
 import { ReadGroup, ToolCall } from './ToolCall';
 import { groupReadCalls } from './toolDetails';
 import { Prose } from './Prose';
+import { AgentImage } from './AgentImage';
 import { Permission } from './Permission';
 import { QuestionRecord } from './Questions';
 import { PlanDocument } from './PlanDocument';
@@ -461,6 +462,7 @@ function LineBlock({ block }: { block: AgentBlock }) {
   if (block.type === 'plan') return <Plan block={block} />;
   if (block.type === 'tool_call') return <ToolCall block={block} />;
   if (block.type === 'compaction') return <Compaction block={block} />;
+  if (block.type === 'image') return <AgentImage image={block} />;
   // The open card is pinned above the composer by the shell; only a resolved one has a place in the message
   if (block.type === 'question') return block.outcome ? <QuestionRecord block={block} /> : null;
   return null;

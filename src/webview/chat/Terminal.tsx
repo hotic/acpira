@@ -49,5 +49,6 @@ function outputOf(b: ToolCallBlock): string {
   if (!c) return '';
   if (c.type === 'text') return c.text;
   if (c.type === 'list') return c.items.join('\n');
-  return c.lines.map(l => l.text).join('\n');
+  if (c.type === 'diff') return c.lines.map(l => l.text).join('\n');
+  return '';
 }

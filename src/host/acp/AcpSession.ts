@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync, statSync } from 'node:fs';
+import { extname } from 'node:path';
 import { captureTurnSettings } from '@shared/turnSettings';
 import { commandChanges, commandName, namedCommand, restoreCommandReceipts } from '@shared/slashCommands';
 import type { EditTurnRequest } from '@shared/protocol';
@@ -20,8 +22,9 @@ import { isReasoningControl, thoughtCorrection } from '@shared/composerControls'
 import { parseFusionName } from '@shared/models';
 import { readModelSources } from './modelSources';
 import { fetchGrokUsage } from './grokUsage';
-import { preparePrompt, promptCapsOf, type BlobStore } from './attachments';
-import { activityOf, applyUpdate, endTurn, failTurn, initControls, applyConfigOptions, runtimeInfoOf, sealReplay, type NormalizeState } from './normalize';
+import { blobName, preparePrompt, promptCapsOf, type BlobStore } from './attachments';
+import { extOfMime, imageMimeOf } from '@shared/attachments';
+import { activityOf, applyUpdate, configOptionSetValue, endTurn, failTurn, initControls, applyConfigOptions, runtimeInfoOf, sealReplay, type NormalizeState } from './normalize';
 import { PermissionGate } from './permissions';
 import { QuestionGate } from './questions';
 import { PromptQueue, type StagedSend } from './promptQueue';
@@ -31,7 +34,7 @@ import { AccountAuthError, authHintOf, classifyRestoreError, isAuth, isSessionGo
 import { msg } from '../errors';
 import { cloneJson } from '../clone';
 import { t, tOr } from '../i18n';
-import { RENAME_MAX, TITLE_MAX } from '../limits';
+import { MAX_OUT_IMAGE_BYTES, RENAME_MAX, TITLE_MAX } from '../limits';
 import { SubagentTree, type RootRouteCtx } from './subagents/SubagentTree';
 import { extensionOf } from './subagents/wire';
 
@@ -174,11 +177,13 @@ export class AcpSession {
     this.agentTitleMuted = !!record.forkedFrom;
     // Old records (persisted before the contract changed) may lack the options field
     const c = record.controls as Partial<SessionControls> | undefined;
-    this.state = { turns: restoreInterruptedTurns(restoreCommandReceipts(restorePlanSnapshots(record.turns)), record.updatedAt), controls: { modes: c?.modes ?? [], modeId: c?.modeId, modeConfigId: c?.modeConfigId, options: c?.options ?? [] }, usage: record.usage, commands: record.commands, title: record.title };
+    this.state = { turns: restoreInterruptedTurns(restoreCommandReceipts(restorePlanSnapshots(record.turns)), record.updatedAt), controls: { modes: c?.modes ?? [], modeId: c?.modeId, modeConfigId: c?.modeConfigId, options: c?.options ?? [] }, usage: record.usage, commands: record.commands, title: record.title, saveImage: this.saveImage, saveImageFile: this.saveImageFile };
     this.tree = new SubagentTree({
       log: line => this.log(line),
       // A child going terminal closes its pending permission / question cards as cancelled (RFD)
       onTerminal: id => { this.perms.cancelFor(id); this.questions.cancelFor(id); },
+      saveImage: this.saveImage,
+      saveImageFile: this.saveImageFile,
     }, record.subagents, record.updatedAt);
     const gateDeps = {
       stateFor: (sessionId: string | undefined) => this.stateForPeer(sessionId),
@@ -207,6 +212,39 @@ export class AcpSession {
     const now = new Date().toISOString();
     return new AcpSession({ id: randomUUID(), agent, accountId, cwd, title: t('session.untitled'), createdAt: now, updatedAt: now, turns: [], controls: { modes: [], options: [] }, commands: [] }, deps);
   }
+
+  // An agent-emitted image payload → the session blob store. The content-hash name is returned synchronously
+  // so the transcript block references a stable file while the write lands async; a store failure is logged, never thrown
+  private saveImage = (data: string, mimeType: string): string | undefined => {
+    try {
+      const bytes = Buffer.from(data, 'base64');
+      const ext = extOfMime(mimeType);
+      const name = blobName(ext, bytes);
+      void this.deps.blobs.saveBlob(this.id, ext, bytes).catch(e => this.log(`image blob ${name}: ${msg(e)}`));
+      return name;
+    } catch (e) {
+      this.log(`image payload rejected: ${msg(e)}`);
+      return undefined;
+    }
+  };
+
+  // A tool's resource_link points at a local image the agent wrote or opened (codex-acp's view_image). The file is
+  // read synchronously so the blob name is known before the block renders; anything unreadable stays a link
+  private saveImageFile = (absPath: string): string | undefined => {
+    try {
+      const st = statSync(absPath);
+      const mimeType = st.isFile() ? imageMimeOf(absPath) : undefined;
+      if (!mimeType || st.size > MAX_OUT_IMAGE_BYTES) return undefined;
+      const ext = extname(absPath).toLowerCase();
+      const bytes = readFileSync(absPath);
+      const name = blobName(ext, bytes);
+      void this.deps.blobs.saveBlob(this.id, ext, bytes).catch(e => this.log(`image blob ${name}: ${msg(e)}`));
+      return name;
+    } catch (e) {
+      this.log(`image file ${absPath}: ${msg(e)}`);
+      return undefined;
+    }
+  };
 
   get title(): string { return this.state.title || t('session.untitled'); }
   get isRunning(): boolean { return this.phase.running; }
@@ -1016,11 +1054,12 @@ export class AcpSession {
     this.touch();
   }
 
-  // Switching any select-type configOption (model / reasoning level / …); the response is the full configOptions set
+  // Switching any configOption (model / reasoning level / boolean toggles); the response is the full configOptions set
   async setConfig(configId: string, value: string): Promise<void> {
     if (this.phase.editing) throw new Error(t('history.unavailable'));
     const c = this.state.controls;
-    if (!this.proc || this.status !== 'ready' || !c.options.some(o => o.id === configId)) return;
+    const control = c.options.find(o => o.id === configId);
+    if (!this.proc || this.status !== 'ready' || !control) return;
     const model = c.options.find(o => o.id === configId && o.category === 'model');
     const before = parseFusionName(model?.options.find(o => o.id === model.value)?.name ?? '');
     const after = parseFusionName(model?.options.find(o => o.id === value)?.name ?? '');
@@ -1029,7 +1068,7 @@ export class AcpSession {
     const sidekickOnly = before && after && before.lead === after.lead && before.effort === after.effort
       && before.fast === after.fast && before.long === after.long && before.sidekick !== after.sidekick;
     const reasoning = sidekickOnly ? c.options.filter(isReasoningControl).map(o => ({ id: o.id, value: o.value })) : [];
-    const r = await this.proc.agent.request(acp.methods.agent.session.setConfigOption, { sessionId: this.acpSessionId!, configId, value });
+    const r = await this.proc.agent.request(acp.methods.agent.session.setConfigOption, { sessionId: this.acpSessionId!, configId, ...configOptionSetValue(control, value) });
     applyConfigOptions(c, r.configOptions);
     for (const previous of reasoning) {
       const current = c.options.find(o => o.id === previous.id);
@@ -1189,11 +1228,18 @@ export class AcpSession {
     if (this.phase.running && !permission) return;
     // An expired approval click must never become a fresh implementation prompt.
     if (optionId && !permission) return;
-    const option = permission?.options.find(o => o.optionId === optionId && o.kind.startsWith('allow'))
+    // No explicit option = the card's Build button: always approval, even when defaultToNo emphasizes reject
+    const option = permission?.options.find(o => o.optionId === optionId && (o.kind.startsWith('allow') || o.kind.startsWith('reject')))
       ?? (optionId ? undefined : permission?.options.find(o => o.kind === 'allow_once'));
     if (permission && !option) throw new Error(t('host.planOptionsStale'));
     this.buildingPlan = true;
     try {
+      // A reject option only resolves the card — no executor model to switch, nothing to implement
+      if (permission && option!.kind.startsWith('reject')) {
+        if (!this.perms.has(permission.blockId)) return;
+        this.perms.resolve(permission.blockId, option!.optionId);
+        return;
+      }
       if (model) {
         const c = this.state.controls.options.find(c => c.id === model.configId && c.category === 'model');
         if (!c?.options.some(o => o.id === model.value)) throw new Error(t('host.executorUnavailable'));
