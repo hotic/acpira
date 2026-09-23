@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type * as acp from '@agentclientprotocol/sdk';
 import type { ConfigControl, ToolCallBlock } from '@shared/transcript';
-import { activityOf, applyUpdate, configOptionSetValue, diffLines, emptyState, endTurn, failTurn, initControls, permissionToolUpdate, sealReplay } from '../src/host/acp/normalize';
+import { activityOf, applyAsyncTask, applyUpdate, configOptionSetValue, diffLines, emptyState, endTurn, failTurn, initControls, permissionToolUpdate, sealReplay } from '../src/host/acp/normalize';
 
 describe('diffLines', () => {
   it('LCS line-level diff, keeping only context near changes', () => {
@@ -639,5 +639,36 @@ describe('permissionToolUpdate', () => {
     const u = permissionToolUpdate(block, req);
     expect(u).toMatchObject({ sessionUpdate: 'tool_call_update', toolCallId: 'w1', status: 'pending' });
     for (const k of ['kind', 'title', 'locations', 'rawInput']) expect(u).not.toHaveProperty(k);
+  });
+});
+
+describe('applyAsyncTask terminal states', () => {
+  const shell = (s: ReturnType<typeof emptyState>) => {
+    applyUpdate(s, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'go' } });
+    applyUpdate(s, { sessionUpdate: 'tool_call', toolCallId: 'call-1', title: 'sleep 15', kind: 'execute', status: 'in_progress' });
+    applyAsyncTask(s, { kind: 'async_task', event: 'spawned', asyncTaskId: 't1', taskType: 'shell', canStop: true, toolCallId: 'call-1', meta: {} });
+  };
+  const row = (s: ReturnType<typeof emptyState>) => (s.turns.at(-1) as { blocks: ToolCallBlock[] }).blocks.find(b => b.id === 'call-1')!;
+
+  // claude-agent-acp 0.81.0 on the wire: a best-effort 'stopped' and the authoritative 'completed' in the same millisecond
+  it('lets the authoritative completed / failed edge correct a best-effort stopped', () => {
+    const s = emptyState();
+    shell(s);
+    applyAsyncTask(s, { kind: 'async_task', event: 'state', asyncTaskId: 't1', state: 'stopped', meta: {} });
+    applyAsyncTask(s, { kind: 'async_task', event: 'state', asyncTaskId: 't1', state: 'completed', meta: {} });
+    expect(row(s)).toMatchObject({ status: 'completed', asyncTask: { state: 'completed' } });
+  });
+
+  it('never moves a completed or failed task elsewhere, nor revives a stopped one', () => {
+    const s = emptyState();
+    shell(s);
+    applyAsyncTask(s, { kind: 'async_task', event: 'state', asyncTaskId: 't1', state: 'completed', meta: {} });
+    applyAsyncTask(s, { kind: 'async_task', event: 'state', asyncTaskId: 't1', state: 'stopped', meta: {} });
+    expect(row(s).asyncTask?.state).toBe('completed');
+    const s2 = emptyState();
+    shell(s2);
+    applyAsyncTask(s2, { kind: 'async_task', event: 'state', asyncTaskId: 't1', state: 'stopped', meta: {} });
+    applyAsyncTask(s2, { kind: 'async_task', event: 'state', asyncTaskId: 't1', state: 'running', meta: {} });
+    expect(row(s2)).toMatchObject({ status: 'cancelled', asyncTask: { state: 'stopped' } });
   });
 });

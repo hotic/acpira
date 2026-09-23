@@ -304,9 +304,13 @@ function findNotice(s: NormalizeState, id: string): NoticeBlock | undefined {
 
 // AIR asyncTasks: the task record lives on the owning session's state (tasks map); a tool row hosts it
 // once toolCallId resolves, and a row the adapter asked for without a toolCallId gets synthesized.
-// Terminal states are final — a stale 'running' must not resurrect a settled row
+// Terminal states are final — a stale 'running' must not resurrect a settled row — with one exception:
+// claude-agent-acp closes a task that left the SDK's background level as a best-effort 'stopped' and
+// corrects it when the authoritative edge follows (both arrive in the same millisecond on the wire)
 const ASYNC_TERMINAL: readonly AsyncTaskState[] = ['completed', 'failed', 'stopped'];
 const taskTerminal = (st: AsyncTaskState) => ASYNC_TERMINAL.includes(st);
+const taskStateMoves = (from: AsyncTaskState, to: AsyncTaskState) =>
+  !taskTerminal(from) || (from === 'stopped' && (to === 'completed' || to === 'failed'));
 const taskStatus = (st: AsyncTaskState): ToolStatus => st === 'completed' ? 'completed' : st === 'failed' ? 'failed' : st === 'stopped' ? 'cancelled' : 'in_progress';
 
 // The task is still observable and owns its row across turn ends; 'unknown' observation means the
@@ -373,7 +377,7 @@ export function applyAsyncTask(s: NormalizeState, e: AsyncTaskEvent): boolean {
   if (e.usage) info.usage = { ...info.usage, ...e.usage };
   if (e.canStop !== undefined) info.canStop = e.canStop;
   if (e.event === 'state' && e.state) {
-    if (!taskTerminal(info.state)) info.state = e.state;
+    if (taskStateMoves(info.state, e.state)) info.state = e.state;
     if (taskTerminal(info.state)) delete info.stopRequested;
   }
   const named = e.toolCallId ? findTool(s, e.toolCallId) : undefined;
