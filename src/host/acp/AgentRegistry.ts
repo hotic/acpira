@@ -91,7 +91,7 @@ export const BUILTIN_AGENTS: AgentDef[] = [
     install: { posix: 'curl -fsSL https://opencode.ai/install | bash', windows: 'npm install -g opencode-ai', docs: 'https://opencode.ai/docs/acp/' },
   },
   {
-    id: 'dsh', name: 'DeepSeek Harness',
+    id: 'dsh', name: 'DSH',
     command: 'dsh', args: ['--profile', 'acp'],
     candidates: ['~/.local/bin/dsh', '/opt/homebrew/bin/dsh', '/usr/local/bin/dsh'],
     // No login command: credentials are saved through the Web UI (`dsh web`), the ACP profile has no auth methods of its own
