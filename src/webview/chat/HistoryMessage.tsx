@@ -28,10 +28,10 @@ export const HistoryComposerContext = createContext<ComposerProps | undefined>(u
 // instant — a click should land in the text at once, like direct manipulation; only the way back (cancel / sent) animates: the
 // opaque base animates its own height while the returning card fades in. Automatic prompts are plain rows. Keep the base outside
 // the fade so replies cannot show through the editor or the swapping content.
-// A stuck card folds to a few lines: the sentinel at the exchange's top leaving the scroller marks the stuck state, and the frame
-// keeps its natural flow height meanwhile so the fold never moves the conversation under the reader; the freed area is transparent
-// and lets pointer events through to the reply scrolling beneath it. A hidden sidebar webview collapses the thread to no box —
-// those IntersectionObserver records are ignored, then re-checked when the thread is visible again.
+// A stuck card folds to a few lines: the sentinel at the exchange's top leaving the scroller marks the stuck state. The fold is a
+// max-height transition, so the frame shrinks with the card and the reply eases up underneath — holding the natural height would
+// trail an empty strip under the card while the next exchange pushes it out. A hidden sidebar webview collapses the thread to no
+// box — those IntersectionObserver records are ignored, then re-checked when the thread is visible again.
 export const HistoryMessage = memo(function HistoryMessage(p: { turn: UserTurn; index: number; turnIndex: number; blobUrl?: (blob: string) => string; commands?: readonly SlashCommand[] }) {
   const context = useContext(HistoryContext);
   const { motion } = useAppearance();
@@ -45,15 +45,9 @@ export const HistoryMessage = memo(function HistoryMessage(p: { turn: UserTurn; 
   const sentinel = useCallback((el: HTMLDivElement | null) => {
     if (!el || typeof IntersectionObserver === 'undefined') return;
     const thread = el.closest('[data-thread]');
-    const settle = (below: boolean) => {
-      const target = frame.current;
-      // Measure before React applies the fold, while the frame still has its natural height.
-      if (target) target.style.minHeight = below ? `${target.offsetHeight}px` : '';
-      setStuck(below);
-    };
     const apply = (entry: IntersectionObserverEntry) => {
       const below = promptIsStuck(entry);
-      if (below !== undefined) settle(below);
+      if (below !== undefined) setStuck(below);
     };
     // The observer's first record arrives after the first paint, so a session opened at its bottom showed every prompt at full
     // height for a frame and then folded it with the max-height transition. A microtask still runs before that paint but after the
@@ -64,7 +58,7 @@ export const HistoryMessage = memo(function HistoryMessage(p: { turn: UserTurn; 
       if (!promptIsStuckAt(el.getBoundingClientRect(), thread.getBoundingClientRect())) return;
       const target = frame.current;
       target?.style.setProperty('--dur-open', '0s');
-      flushSync(() => settle(true));
+      flushSync(() => setStuck(true));
       void target?.offsetHeight;
       target?.style.removeProperty('--dur-open');
     });
