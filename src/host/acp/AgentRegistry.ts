@@ -22,6 +22,8 @@ export interface AgentDef {
   candidates: string[];
   login?: { command: string; args: string[] };
   install?: InstallDef;
+  // npm-packaged ACP adapter: the host reads the adapter's and its bundled runtime's versions off disk for diagnostics
+  adapter?: { package: string; engine?: { package: string; name: string; overrideEnv: string } };
   env?: Record<string, string>;
   // Modes the protocol doesn't advertise but the CLI actually supports (fills in when session/new returns empty modes); switching still goes through session/set_mode
   modes?: SessionOption[];
@@ -33,6 +35,10 @@ export interface AgentDef {
   controls?: { ignoreModes?: boolean };
   // false opts out of the subagent capability advertisement at initialize (default on)
   subagents?: boolean;
+  // auth.terminal opts the agent out of the terminal-auth capability at initialize (default on): Devin's credentials
+  // come only from the account layer (ACP_BACKEND=windsurf ignores the local login), so a `devin acp --login` run
+  // would write a login the session never uses
+  auth?: { terminal?: boolean };
 }
 
 export const BUILTIN_AGENTS: AgentDef[] = [
@@ -66,6 +72,8 @@ export const BUILTIN_AGENTS: AgentDef[] = [
     // An ACP service with ACP_BACKEND set accepts only the credential the host hands over and ignores the local login (the Windsurf inside Devin.app launches it the same way),
     // so the account layer becomes the sole source of credentials, and it's obvious which account the usage is billed to
     env: { ACP_BACKEND: 'windsurf' },
+    // ...which is why a terminal login method (`devin acp --login`) must never be offered: it would write a local login the ACP process ignores
+    auth: { terminal: false },
   },
   {
     id: 'kimi', name: 'Kimi Code',
@@ -74,6 +82,32 @@ export const BUILTIN_AGENTS: AgentDef[] = [
     // Kimi's login is /login typed inside the TUI; launching kimi in a terminal is enough
     login: { command: 'kimi', args: [] },
     install: { posix: 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash', windows: 'irm https://code.kimi.com/kimi-code/install.ps1 | iex', docs: 'https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html' },
+  },
+  // Verified on a real machine (2026-09): the official ACP adapters, each npm-packaged with the vendor runtime bundled
+  // codex-acp 1.13.0 — bundles @openai/codex (CODEX_PATH overrides the bundled binary); authMethods api-key + chat-gpt;
+  //   loadSession, session list/resume/close/delete/fork, image + embeddedContext, modes + model / reasoning_effort selects.
+  //   `codex-acp login` shells out to a separately installed `codex`; `codex-acp cli login` uses the bundled one
+  // claude-agent-acp 0.81.0 — bundles @anthropic-ai/claude-agent-sdk (CLAUDE_CODE_EXECUTABLE overrides the native binary);
+  //   same session capabilities, image + embeddedContext, model / effort selects; authMethods are `type: 'terminal'` and
+  //   only advertised when the client sends clientCapabilities.auth.terminal (docs: agentclientprotocol/claude-agent-acp)
+  {
+    id: 'codex', name: 'Codex',
+    command: 'codex-acp', args: [],
+    candidates: ['~/.local/bin/codex-acp', '/opt/homebrew/bin/codex-acp', '/usr/local/bin/codex-acp'],
+    requires: ['node'],
+    install: { posix: 'npm install -g @agentclientprotocol/codex-acp@1.13.0', windows: 'npm install -g @agentclientprotocol/codex-acp@1.13.0', docs: 'https://github.com/agentclientprotocol/codex-acp' },
+    // `codex-acp login` resolves `codex` from PATH; `cli login` runs the bundled Codex binary
+    login: { command: 'codex-acp', args: ['cli', 'login'] },
+    adapter: { package: '@agentclientprotocol/codex-acp', engine: { package: '@openai/codex', name: 'Codex', overrideEnv: 'CODEX_PATH' } },
+  },
+  {
+    id: 'claude', name: 'Claude',
+    command: 'claude-agent-acp', args: [],
+    candidates: ['~/.local/bin/claude-agent-acp', '/opt/homebrew/bin/claude-agent-acp', '/usr/local/bin/claude-agent-acp'],
+    requires: ['node'],
+    login: { command: 'claude-agent-acp', args: ['--cli', 'auth', 'login'] },
+    install: { posix: 'npm install -g @agentclientprotocol/claude-agent-acp@0.81.0', windows: 'npm install -g @agentclientprotocol/claude-agent-acp@0.81.0', docs: 'https://github.com/agentclientprotocol/claude-agent-acp' },
+    adapter: { package: '@agentclientprotocol/claude-agent-acp', engine: { package: '@anthropic-ai/claude-agent-sdk', name: 'Claude Agent SDK', overrideEnv: 'CLAUDE_CODE_EXECUTABLE' } },
   },
   // Verified on a real machine (2026-09):
   // OpenCode 1.18.15 — loadSession, session list/resume/fork/close, image + embeddedContext true, one auth method `opencode-login`
@@ -131,6 +165,9 @@ export interface CustomAgentSetting {
   ignoreModes?: boolean;
   // false opts out of the subagent capability advertisement at initialize (same as AgentDef.subagents)
   subagents?: boolean;
+  // false opts out of the terminal-auth capability at initialize (same as AgentDef.auth.terminal): set it when the
+  // agent's ACP process would ignore a login the terminal method writes
+  terminalAuth?: boolean;
 }
 
 export class AgentRegistry {
@@ -152,6 +189,7 @@ export class AgentRegistry {
       this.defs.set(id, {
         id, name: c.name ?? id, command: c.command, args: c.args ?? [], candidates: [], env: c.env, modes: c.modes,
         prompt: c.prompt, requires: c.requires, subagents: c.subagents,
+        auth: c.terminalAuth === false ? { terminal: false } : undefined,
         controls: c.ignoreModes ? { ignoreModes: true } : undefined,
         login: login?.length ? { command: login[0]!, args: login.slice(1) } : undefined,
         install: command || docs ? { posix: command, windows: command, docs } : undefined,

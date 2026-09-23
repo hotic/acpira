@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Codex (`codex-acp`, the official `@agentclientprotocol/codex-acp` adapter) and Claude (`claude-agent-acp`, `@agentclientprotocol/claude-agent-acp`) are built-in agents with install, login and extension entries. A user-defined `acpira.agents.codex` / `.claude` entry still overrides the built-in.
+- The agent settings page shows the adapter package version and its bundled engine version (read off npm `package.json` files, the CLI is never launched), an active engine-override variable (`CODEX_PATH` / `CLAUDE_CODE_EXECUTABLE`) with its value, and the last launch stage — `spawn_failed` / `handshake_failed` / `auth_required` / `ready` — from probes and real session starts.
+- `type: 'terminal'` ACP auth methods are supported: the client advertises `clientCapabilities.auth.terminal` and runs the method's binary + args in a host terminal instead of calling `authenticate` (Claude's `claude-ai-login` / `console-login`, pi-acp's `pi_terminal_login`). An agent can opt out (`acpira.agents.<id>.terminalAuth`); the Devin built-in does — its ACP process ignores a locally written login.
+
 ### Planned
 
 - MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.

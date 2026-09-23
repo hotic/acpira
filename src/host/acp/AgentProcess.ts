@@ -27,6 +27,15 @@ export interface ClientHandlers {
 
 export const CLIENT_INFO = { name: 'acpira', version: VERSION };
 
+// The executable would not spawn at all (ENOENT, EACCES, a bad shim): the child 'error' event fires before any
+// output. Kept distinct from a process that started and then failed the handshake so health can name the stage
+export class AgentSpawnError extends Error {
+  constructor(readonly cause: Error) {
+    super(cause.message, { cause });
+    this.name = 'AgentSpawnError';
+  }
+}
+
 // A CLI that ignores the polite signal is force-killed after this long (DSH's own graceful-exit window is 5 s)
 const KILL_GRACE_MS = 5_000;
 
@@ -101,7 +110,7 @@ export class AgentProcess {
 
     const exited = new Promise<never>((_, reject) => {
       child.once('exit', (code, signal) => reject(new Error(t('host.spawnExited', { command: def.command, code: code ?? '-', signal: signal ?? '-' }))));
-      child.once('error', reject);
+      child.once('error', e => reject(new AgentSpawnError(e)));
     });
     const initReq = {
       protocolVersion: acp.PROTOCOL_VERSION,
@@ -109,6 +118,10 @@ export class AgentProcess {
       clientCapabilities: {
         fs: { readTextFile: !!h.onReadFile, writeTextFile: !!h.onWriteFile },
         terminal: false,
+        // The host can reproduce the agent's invocation in an interactive terminal, so `type: 'terminal'`
+        // authMethods may be offered (claude-agent-acp only advertises its logins to clients that declare this);
+        // an agent whose ACP process ignores the local login opts out (AgentDef.auth.terminal, Devin)
+        ...(def.auth?.terminal === false ? {} : { auth: { terminal: true } }),
         ...(h.onElicitation ? { elicitation: { form: {} } } : {}),
         // RFD #1992 draft field plus claude-agent-acp's air-extension bridge for SDKs that strip it
         ...(def.subagents === false ? {} : {

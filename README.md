@@ -73,6 +73,8 @@ Acpira lives in the Activity Bar and drives official agent CLIs over [ACP](https
 - `grok agent stdio`
 - `devin acp`
 - `kimi acp`
+- `codex-acp`
+- `claude-agent-acp`
 - any ACP-compatible command (added via the `acpira.agents` setting)
 
 The extension manages the UI, sessions, permission approvals, accounts, and context budget. Model calls, agent execution, and context compaction stay in the CLIs.
@@ -86,6 +88,8 @@ Store multiple accounts per agent, paste or drop images, and attach workspace fi
    - [Grok](https://x.ai) — `grok` (`grok agent stdio`)
    - [Devin](https://devin.ai) — `devin` (`devin acp`)
    - [Kimi Code](https://www.kimi.com) — `kimi` (`kimi acp`)
+   - [Codex](https://developers.openai.com/codex) — `codex-acp` (`npm install -g @agentclientprotocol/codex-acp`)
+   - [Claude](https://code.claude.com) — `claude-agent-acp` (`npm install -g @agentclientprotocol/claude-agent-acp`)
 
    An agent without a CLI is greyed out in the menus; its settings page shows the vendor's install command (copy it, or run it in a terminal from there). Acpira notices a newly installed CLI on its own — no reload needed.
 3. Click the Acpira icon in the **Activity Bar** (left). If it is hidden, right-click the Activity Bar and enable **Acpira**. The view can be dragged to the secondary sidebar. In IntelliJ IDEA, open the **Acpira** tool window on the right; its title bar action opens a conversation as an editor tab.

@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,6 +7,7 @@ import type { HiddenMap } from '../src/shared/settings';
 import type { ConfigControl } from '../src/shared/transcript';
 import { AgentRegistry } from '../src/host/acp/AgentRegistry';
 import { AcpSession } from '../src/host/acp/AcpSession';
+import { probeAgentControls } from '../src/host/acp/probeControls';
 import { SessionManager } from '../src/host/SessionManager';
 import { TranscriptStore, summarize } from '../src/host/store/TranscriptStore';
 import { LocalAccounts } from '../src/host/accounts/local';
@@ -311,6 +312,101 @@ describe('SessionManager', () => {
       await m.init();
       expect(await m.probeControls('ghost')).toEqual([]);
     } finally { await m.dispose(); }
+  });
+
+  // The agent page's status line: each launch stage records its own outcome — probe (spawn / handshake / session/new auth)
+  // and real sessions (ready / auth_required). Newest wins, a failed probe keeps the last known controls
+  it('health: a successful probe is ready, a real session start overwrites it with source session', async () => {
+    const { m, dir } = manager();
+    try {
+      await m.init();
+      await m.probeControls('fake');
+      expect(m.agentHealth('fake')).toMatchObject({ stage: 'ready', source: 'probe' });
+      await m.newSession();
+      await vi.waitFor(() => expect(m.active()?.status).toBe('ready'));
+      expect(m.agentHealth('fake')).toMatchObject({ stage: 'ready', source: 'session' });
+    } finally { await m.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('health: session/new asking for sign-in is auth_required, an initialize error is handshake_failed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acpira-health-'));
+    const authDir = join(dir, 'needs-auth');
+    mkdirSync(authDir, { recursive: true });
+    let cwd = authDir;
+    const m = new SessionManager({
+      registry: new AgentRegistry({ fake: { name: 'Fake', command: TSX, args: [FAKE] } }),
+      store: new TranscriptStore(dir),
+      log: () => {}, cwd: () => cwd, defaultAgent: () => 'fake', runInTerminal: () => {}, toast: () => {},
+    });
+    try {
+      await m.init();
+      await m.probeControls('fake');
+      expect(m.agentHealth('fake')).toMatchObject({ stage: 'auth_required', source: 'probe' });
+      process.env.FAKE_INIT_FAIL = '1';
+      cwd = dir;
+      await m.probeControls('fake');
+      expect(m.agentHealth('fake')).toMatchObject({ stage: 'handshake_failed', source: 'probe' });
+    } finally { delete process.env.FAKE_INIT_FAIL; await m.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('health: a binary that cannot exec is spawn_failed, and a failed probe keeps the last known controls', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acpira-health-'));
+    // A path that resolves (execute bit, regular file) but cannot exec — no interpreter behind the shebang
+    const bad = join(dir, 'bad-cli');
+    writeFileSync(bad, '#!/nonexistent/definitely-missing-interp\n');
+    chmodSync(bad, 0o755);
+    const m = new SessionManager({
+      registry: new AgentRegistry({ fake: { name: 'Fake', command: TSX, args: [FAKE] }, broken: { name: 'Broken', command: bad } }),
+      store: new TranscriptStore(dir),
+      log: () => {}, cwd: () => dir, defaultAgent: () => 'fake', runInTerminal: () => {}, toast: () => {},
+    });
+    try {
+      await m.init();
+      const before = await m.probeControls('fake');
+      expect(before.length).toBeGreaterThan(0);
+      // Directly against the probe and through the manager both land on spawn_failed
+      const def = m.registry.get('broken');
+      await expect(probeAgentControls({ def, binary: bad, cwd: dir, log: () => {} }))
+        .rejects.toMatchObject({ name: 'ProbeFailure', stage: 'spawn_failed' });
+      await m.probeControls('broken');
+      expect(m.agentHealth('broken')).toMatchObject({ stage: 'spawn_failed', source: 'probe' });
+      // A failed probe falls back to the last known controls instead of emptying the list
+      process.env.FAKE_INIT_FAIL = '1';
+      try {
+        await m.probeControls('fake');
+        expect(m.agentHealth('fake')).toMatchObject({ stage: 'handshake_failed', source: 'probe' });
+        expect(await m.knownControls('fake')).toEqual(before);
+      } finally { delete process.env.FAKE_INIT_FAIL; }
+    } finally { await m.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('terminal auth method runs the agent binary in a terminal and never reaches authenticate', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acpira-term-auth-'));
+    const authLog = join(dir, 'auth.log');
+    const terminals: { command: string; args: string[]; env?: Record<string, string | null> }[] = [];
+    const m = new SessionManager({
+      registry: new AgentRegistry({ fake: { name: 'Fake', command: TSX, args: [FAKE], env: { FAKE_TERMINAL_AUTH: authLog, FAKE_FLAG: 'agent', FAKE_OTHER: 'agent' } } }),
+      store: new TranscriptStore(dir),
+      log: () => {}, cwd: () => dir, defaultAgent: () => 'fake',
+      runInTerminal: (_title, command, args, env) => terminals.push({ command, args, env }),
+      toast: () => {},
+    });
+    try {
+      await m.init();
+      await m.newSession();
+      await vi.waitFor(() => expect(m.active()?.status).toBe('auth_required'));
+      // The terminal method only exists because the host advertised auth.terminal at initialize
+      expect(m.active()!.authMethods).toContainEqual(expect.objectContaining({
+        id: 'term-login', terminal: { args: ['--login'], env: { FAKE_LOGIN: '1', FAKE_FLAG: 'method' } },
+      }));
+      await m.handle({ type: 'login', methodId: 'term-login' });
+      // The resolved binary + the agent's own args + the method's args; env is the agent's launch env with the method's on top
+      expect(terminals).toEqual([{ command: TSX, args: [FAKE, '--login'], env: { FAKE_TERMINAL_AUTH: authLog, FAKE_OTHER: 'agent', FAKE_FLAG: 'method', FAKE_LOGIN: '1' } }]);
+      // authenticate never went to the agent for the terminal method
+      await new Promise(r => setTimeout(r, 150));
+      expect(existsSync(authLog)).toBe(false);
+      expect(m.agentHealth('fake')).toMatchObject({ stage: 'auth_required', source: 'session' });
+    } finally { await m.dispose(); rmSync(dir, { recursive: true, force: true }); }
   });
 
   // The fake agent's process starts every session on model m1 / effort high / mode agent; the option values and the mode picked last
@@ -726,7 +822,8 @@ describe('SessionManager', () => {
       await m.handle({ type: 'send', text: 'hi' });
       const ownId = m.activeId!;
       const own = (await m.listNativeSessions('fake')).find(s => s.localId === ownId);
-      expect(own).toMatchObject({ cwd: '/tmp', title: expect.stringMatching(/^Fake /) });
+      // The fake stores the canonical cwd (codex-acp canonicalizes thread cwd the same way)
+      expect(own).toMatchObject({ cwd: realpathSync('/tmp'), title: expect.stringMatching(/^Fake /) });
       expect(own?.updatedAt).toBeTruthy();
 
       // (b) a native session another process owns is listed bare; importing it replays the native history
@@ -757,6 +854,44 @@ describe('SessionManager', () => {
       await m.importNativeSession(v, 'fake', target);
       expect(m.sessions()).toHaveLength(count + 1);
       expect(v.activeId).toBe(importedId);
+    } finally { await m.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  }, 30_000);
+
+  // codex-acp stores the canonicalized thread cwd and filters each page by string compare, so a project reached
+  // through a symlink produced only empty pages with cursors; the host pages through and retries with the realpath
+  it('native sessions: a symlinked project dir still lists its sessions (empty pages paged through, realpath fallback)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acpira-mgr-'));
+    const target = join(dir, 'proj-real');
+    mkdirSync(target);
+    const projLink = join(dir, 'proj-link');
+    symlinkSync(target, projLink);
+    const otherDir = join(dir, 'other');
+    mkdirSync(otherDir);
+    const nativeDir = join(dir, 'native');
+    mkdirSync(nativeDir);
+    const registry = new AgentRegistry({ fake: { name: 'Fake', command: TSX, args: [FAKE], env: { FAKE_SESSION_DIR: nativeDir, FAKE_LIST_PAGE: '1' } } });
+    const store = new TranscriptStore(join(dir, 'sessions'));
+    const m = new SessionManager({
+      registry, store, log: () => {}, cwd: () => projLink, defaultAgent: () => 'fake', runInTerminal: () => {}, toast: () => {},
+    });
+    const mk = async (cwd: string) => {
+      const s = AcpSession.fresh('fake', cwd, { registry, log: () => {}, onChange: () => {}, blobs: store });
+      await s.start();
+      const id = s.toRecord().acpSessionId!;
+      s.dispose();
+      return id;
+    };
+    try {
+      await m.init();
+      const targetId = await mk(projLink);
+      const foreign = [await mk(otherDir), await mk(otherDir)];
+      // Deterministic order: the foreign sessions lead (filtered-out pages), the project's trails on the last page
+      const stamp = (id: string, t: number) => utimesSync(join(nativeDir, `${id}.json`), t / 1000, t / 1000);
+      stamp(targetId, 1000);
+      foreign.forEach((id, i) => stamp(id, 2000 + i * 1000));
+      const listed = await m.listNativeSessions('fake');
+      expect(listed.map(s => s.sessionId)).toEqual([targetId]);
+      expect(listed[0]!.cwd).toBe(realpathSync(projLink));
     } finally { await m.dispose(); rmSync(dir, { recursive: true, force: true }); }
   }, 30_000);
 

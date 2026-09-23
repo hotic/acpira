@@ -84,11 +84,36 @@ describe('AgentRegistry', () => {
 
   it('OpenCode / DSH / Pi are built in, and a custom entry overrides the builtin of the same id', () => {
     const ids = new AgentRegistry().list().map(a => a.id);
-    expect(ids).toEqual(expect.arrayContaining(['grok', 'devin', 'kimi', 'opencode', 'dsh', 'pi']));
+    expect(ids).toEqual(expect.arrayContaining(['grok', 'devin', 'kimi', 'codex', 'claude', 'opencode', 'dsh', 'pi']));
     const r = new AgentRegistry({ opencode: { name: 'OC Fork', command: '/x/oc-fork' } });
     const info = r.list().find(a => a.id === 'opencode');
     expect(info?.name).toBe('OC Fork');
     expect(r.get('opencode').command).toBe('/x/oc-fork');
+  });
+
+  it('Codex / Claude are npm adapter definitions, and a custom entry of the same id replaces them wholesale', () => {
+    const r = new AgentRegistry();
+    expect(r.get('codex')).toMatchObject({
+      command: 'codex-acp', requires: ['node'],
+      login: { command: 'codex-acp', args: ['cli', 'login'] },
+      adapter: { package: '@agentclientprotocol/codex-acp', engine: { package: '@openai/codex', overrideEnv: 'CODEX_PATH' } },
+    });
+    expect(r.get('claude')).toMatchObject({
+      command: 'claude-agent-acp', requires: ['node'],
+      login: { command: 'claude-agent-acp', args: ['--cli', 'auth', 'login'] },
+      adapter: { package: '@agentclientprotocol/claude-agent-acp', engine: { package: '@anthropic-ai/claude-agent-sdk', overrideEnv: 'CLAUDE_CODE_EXECUTABLE' } },
+    });
+    const custom = new AgentRegistry({ codex: { name: 'CX', command: '/x/cx' }, claude: { command: '/x/cl' } });
+    expect(custom.get('codex').command).toBe('/x/cx');
+    expect(custom.get('codex').adapter).toBeUndefined();
+    expect(custom.get('claude').adapter).toBeUndefined();
+  });
+
+  it('devin opts out of the terminal-auth capability; a custom agent does the same via terminalAuth: false', () => {
+    expect(new AgentRegistry().get('devin').auth).toEqual({ terminal: false });
+    const r = new AgentRegistry({ mine: { command: '/x/mine', terminalAuth: false }, other: { command: '/x/other' } });
+    expect(r.get('mine').auth).toEqual({ terminal: false });
+    expect(r.get('other').auth).toBeUndefined();
   });
 
   it('the pi builtin reports the missing pi helper when only pi-acp resolves', async () => {

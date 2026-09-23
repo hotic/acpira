@@ -1,7 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import type { AgentId } from '@shared/transcript';
-import type { AgentInventory, AgentRuntimeInfo, InventoryFile, InventoryMcp, InventoryScope, InventorySkill, McpTransport } from '@shared/inventory';
+import type { AdapterInfo, AgentHealth, AgentInventory, AgentRuntimeInfo, InventoryFile, InventoryMcp, InventoryScope, InventorySkill, McpTransport } from '@shared/inventory';
 import type { AgentExt, McpSource, RuleSource } from './agentExt';
 
 // Read-only scan of an agent's extension points (see agentExt.ts). Pure node: no vscode import, so it runs under vitest against temp directories
@@ -19,11 +19,13 @@ export interface ScanInput {
   ext?: AgentExt;
   binary: string | null;
   runtime?: AgentRuntimeInfo;
+  adapter?: AdapterInfo;
+  health?: AgentHealth;
 }
 
 export async function scanInventory(input: ScanInput, env: ScanEnv): Promise<AgentInventory> {
-  const { agent, ext, binary, runtime } = input;
-  const base: AgentInventory = { agent, binary, runtime, steer: ext?.steer ?? false, config: [], mcp: [], skills: [], rules: [], scannedAt: new Date().toISOString() };
+  const { agent, ext, binary, runtime, adapter, health } = input;
+  const base: AgentInventory = { agent, binary, runtime, adapter, health, steer: ext?.steer ?? false, config: [], mcp: [], skills: [], rules: [], scannedAt: new Date().toISOString() };
   if (!ext) return base;
   const [config, mcp, skills, rules] = await Promise.all([
     Promise.all(ext.config.map(p => fileInfo(p, env))),

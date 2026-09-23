@@ -55,6 +55,16 @@ beforeAll(async () => {
   await put(join(home, '.dsh/skills/bundled/SKILL.md'), '---\nname: bundled\ndescription: bundle\n---\n');
   await put(join(home, '.dsh/skills/flat-file.md'), '---\nname: flat-skill\ndescription: flat\n---\n# Flat\n');
   await put(join(home, '.dsh/skills/plain.md'), '# no frontmatter at all\n');
+
+  // Codex: toml MCP tables in config.toml like Grok's, ~/.codex/skills + AGENTS.md rules
+  await put(join(home, '.codex/config.toml'), '[mcp_servers.context7]\nurl = "https://mcp.context7.example/mcp"\n');
+  await put(join(home, '.codex/skills/shipit/SKILL.md'), '---\nname: shipit\ndescription: release it\n---\n');
+
+  // Claude: settings.json config, ~/.claude.json MCP, ~/.claude/skills and CLAUDE.md rules
+  await put(join(home, '.claude/settings.json'), '{ "model": "opus" }');
+  await put(join(home, '.claude.json'), JSON.stringify({ mcpServers: { remote: { url: 'https://claude-mcp.example/x' } } }));
+  await put(join(home, '.claude/skills/audit/SKILL.md'), '---\nname: audit\n---\n');
+  await put(join(home, '.claude/CLAUDE.md'), 'global rules\n');
 });
 
 afterAll(async () => { await rm(root, { recursive: true, force: true }); });
@@ -126,11 +136,12 @@ describe('scanInventory', () => {
     const inv = await scanInventory({ agent: 'grok', ext: AGENT_EXT.grok, binary: '/usr/local/bin/grok' }, env());
     expect(inv.steer).toBe(false);
     expect(inv.mcp.map(m => `${m.name}:${m.transport}:${m.scope}:${m.enabled}`)).toEqual([
-      'linear:http:user:true', 'filesystem:stdio:user:false', 'quoted name:stdio:user:true', 'hilfa:stdio:project:true',
+      'linear:http:user:true', 'filesystem:stdio:user:false', 'quoted name:stdio:user:true', 'hilfa:stdio:project:true', 'remote:http:user:true',
     ]);
     expect(inv.skills.map(s => [s.name, s.scope, s.description])).toEqual([
       ['dig', 'user', '挖历史会话'],
       ['local-only', 'project', 'folded description'],
+      ['audit', 'user', undefined],
     ]);
     expect(inv.rules.find(r => r.path.endsWith('AGENTS.md'))).toMatchObject({ exists: true, scope: 'project' });
     expect(inv.rules.find(r => r.path.endsWith('CLAUDE.md'))).toMatchObject({ exists: false });
@@ -161,6 +172,21 @@ describe('scanInventory', () => {
     const dsh = inv.skills.filter(s => s.path.includes('.dsh/skills'));
     expect(dsh.map(s => s.name)).toEqual(['bundled', 'flat-skill']);
     expect(dsh.find(s => s.name === 'flat-skill')?.path).toBe(join(home, '.dsh/skills/flat-file.md'));
+  });
+  it('codex: toml config + shared ~/.agents skill, AGENTS.md rules', async () => {
+    const inv = await scanInventory({ agent: 'codex', ext: AGENT_EXT.codex, binary: '/x/codex-acp' }, env());
+    expect(inv.mcp.map(m => `${m.name}:${m.transport}:${m.scope}`)).toEqual(['context7:http:user']);
+    expect(inv.skills.map(s => `${s.name}:${s.scope}`).sort()).toEqual(['hallmark:user', 'shipit:user']);
+    expect(inv.rules.find(r => r.path === join(cwd, 'AGENTS.md'))).toMatchObject({ exists: true, scope: 'project' });
+    expect(inv.rules.find(r => r.path.endsWith('AGENTS.override.md'))).toMatchObject({ exists: false });
+  });
+  it('claude: ~/.claude.json + project .mcp.json servers, settings and CLAUDE.md rules', async () => {
+    const inv = await scanInventory({ agent: 'claude', ext: AGENT_EXT.claude, binary: '/x/claude-agent-acp' }, env());
+    expect(inv.mcp.map(m => `${m.name}:${m.scope}`).sort()).toEqual(['hilfa:project', 'remote:user']);
+    expect(inv.skills.map(s => s.name)).toEqual(['audit']);
+    expect(inv.config.map(c => c.exists)).toEqual([true, false, false]);
+    expect(inv.rules.find(r => r.path === join(home, '.claude/CLAUDE.md'))).toMatchObject({ exists: true, scope: 'user' });
+    expect(inv.rules.find(r => r.path === join(cwd, 'CLAUDE.md'))).toMatchObject({ exists: false, scope: 'project' });
   });
   it('unknown agent: binary status only', async () => {
     const inv = await scanInventory({ agent: 'custom', binary: '/opt/custom' }, env());

@@ -1,5 +1,5 @@
 import type { AgentId } from '@shared/transcript';
-import type { AgentInventory, AgentRuntimeInfo } from '@shared/inventory';
+import type { AgentHealth, AgentInventory, AgentRuntimeInfo } from '@shared/inventory';
 import { AXES, type AxisKey } from '@shared/appearance';
 import { sanitizeSetting, type SettingKey, type SettingsView } from '@shared/settings';
 import { resolveLocale, type Locale } from '@shared/i18n';
@@ -7,6 +7,7 @@ import type { AgentRegistry } from './acp/AgentRegistry';
 import { agentExt } from './agentExt';
 import { cloneJson } from './clone';
 import { scanInventory } from './inventory';
+import { readAdapterInfo } from './acp/adapterInfo';
 
 export interface SettingsDeps {
   // Reads one acpira.* setting; object values come back as a read-only Proxy, so view() JSON-round-trips them
@@ -20,6 +21,8 @@ export interface SettingsDeps {
   registry: () => AgentRegistry;
   // Runtime info of an agent's live session (version, MCP capabilities), when one is running
   runtimeInfo: (agent: AgentId) => AgentRuntimeInfo | undefined;
+  // Latest launch outcome per agent (probe or real session), for the status line
+  health?: (agent: AgentId) => AgentHealth | undefined;
   home: () => string;
   cwd: () => string;
 }
@@ -80,9 +83,12 @@ export class SettingsCenter {
 
   // Scan one agent's extension points fresh; every request is a rescan (the page's refresh button sends the same message)
   async inventory(agent: AgentId): Promise<AgentInventory> {
-    const binary = await this.deps.registry().resolveBinary(agent);
+    const registry = this.deps.registry();
+    const binary = await registry.resolveBinary(agent);
     const env = { home: this.deps.home(), cwd: this.deps.cwd() };
-    return scanInventory({ agent, ext: agentExt(agent), binary, runtime: this.deps.runtimeInfo(agent) }, env);
+    // Adapter versions come off the npm package files next to the resolved binary; only agents defined as adapters have any
+    const adapter = binary ? await readAdapterInfo(binary, registry.get(agent), process.env) : undefined;
+    return scanInventory({ agent, ext: agentExt(agent), binary, runtime: this.deps.runtimeInfo(agent), adapter, health: this.deps.health?.(agent) }, env);
   }
 
   subscribe(fn: (ev: SettingsEvent) => void): () => void {
