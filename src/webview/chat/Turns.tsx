@@ -1,4 +1,4 @@
-import { Fragment, memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, memo, useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Bot, Check, ChevronRight, Compass, Hand, MessageCircleQuestion, TriangleAlert, X } from 'lucide-react';
 import type { AgentBlock, AgentTurn, CompactionBlock, PermissionBlock, SlashCommand, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
@@ -7,7 +7,7 @@ import { getLocale, t } from '../i18n';
 import { commandSegments } from './PromptInput';
 import { commandMarks } from './slashCommands';
 import { turnOutcome } from './turnOutcome';
-import { Row, RowLabel, RowTarget, RowEntranceContext } from '../ui/Row';
+import { Row, RowLabel, RowTarget, RowEntranceContext, EntranceScopeContext } from '../ui/Row';
 import { Shimmer } from '../ui/Shimmer';
 import { Disclosure, DisclosureObserverContext } from '../ui/Disclosure';
 import { Collapsible } from '../ui/Collapsible';
@@ -108,7 +108,9 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   const shown = useMemo(() => raw.blocks.some(b => b.type === 'tool_call' && b.subagentId !== undefined)
     ? { ...raw, blocks: raw.blocks.filter(b => b.type !== 'tool_call' || b.subagentId === undefined) } : raw, [raw]);
   const sections = splitPlanSections(shown.blocks);
-  return <RowEntranceContext.Provider value={running}><div className="group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]">
+  const entranceScope = useId();
+  const entrance = useMemo(() => ({ live: running, scope: memoryKey ?? entranceScope }), [running, memoryKey, entranceScope]);
+  return <EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><div className="group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]">
     {sections.map((section, i) => {
       const lastSection = i === sections.length - 1;
       // Only the continuation owns live activity and the turn outcome. Earlier
@@ -127,13 +129,13 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
       </Fragment>;
     })}
     {actions && !running && !compacting && turn.blocks.length > 0 && <TurnActions turn={turn} turnIndex={turnIndex} last={last} settings={settings} />}
-  </div></RowEntranceContext.Provider>;
+  </div></RowEntranceContext.Provider></EntranceScopeContext.Provider>;
 });
 
 interface SubagentSlots {
   subagents?: SubagentSummary[];
   allSubagents?: SubagentSummary[];
-  onInspect?: (id: string, tab: SubagentTab) => void;
+  onInspect?: (id: string) => void;
   lead?: 'orb' | 'static';
 }
 
