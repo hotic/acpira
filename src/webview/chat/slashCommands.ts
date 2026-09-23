@@ -29,11 +29,24 @@ export function completeCommand(text: string, span: SlashSpan, caret: number, na
 // start of a prompt (`/tmp/…`) does not keep hitting the middle of unrelated words
 export function matchCommands(commands: readonly SlashCommand[], query: string, locale: Locale = 'en'): SlashCommand[] {
   const q = query.toLowerCase();
-  if (!q) return [...commands];
+  if (!q) return mergeSkillCopies([...commands]);
   const prefix = commands.filter(c => c.name.toLowerCase().startsWith(q));
   const wordStart = (s: string) => s.toLowerCase().split(/[^\p{L}\p{N}]+/u).some(w => w.startsWith(q));
   const rest = commands.filter(c => !prefix.includes(c) && (c.name.toLowerCase().includes(q) || wordStart(c.description) || wordStart(presentCommand(c, locale).description)));
-  return [...prefix, ...rest];
+  return mergeSkillCopies([...prefix, ...rest]);
+}
+
+// Devin lists a skill found in both `~/.agents/skills` and `~/.claude/skills` twice (`agents:dig`, `claude:dig`). The list keeps
+// the first copy in ranking order, so `/claude:` still surfaces the claude copies; the picked name is sent verbatim
+const SKILL_SCOPE = /^(?:agents|claude):/;
+
+function mergeSkillCopies(commands: SlashCommand[]): SlashCommand[] {
+  const seen = new Set<string>();
+  return commands.filter(c => {
+    if (!SKILL_SCOPE.test(c.name)) return true;
+    const base = c.name.replace(SKILL_SCOPE, '');
+    return !seen.has(base) && !!seen.add(base);
+  });
 }
 
 // The command the prompt names when its last token is `/name` (optionally followed by whitespace), wherever that token sits,

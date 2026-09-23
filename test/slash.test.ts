@@ -70,6 +70,22 @@ describe('matchCommands', () => {
     expect(matchCommands(COMMANDS, 'ion')).toEqual([]);
     expect(matchCommands(COMMANDS, 'zzz')).toEqual([]);
   });
+
+  it('merges the agents: / claude: copies of one skill into the first-ranked row', () => {
+    const skills: SlashCommand[] = [
+      { name: 'agents:dig', description: 'Dig sessions' },
+      { name: 'agents:ui-pick', description: 'Pick UI' },
+      { name: 'claude:dig', description: 'Dig sessions (claude copy)' },
+      { name: 'dig', description: 'Project-level dig' },
+      { name: 'release', description: 'Ship it' },
+    ];
+    expect(matchCommands(skills, '').map(c => c.name)).toEqual(['agents:dig', 'agents:ui-pick', 'dig', 'release']);
+    expect(matchCommands(skills, 'dig').map(c => c.name)).toEqual(['dig', 'agents:dig']);
+    // Typing the claude scope ranks its copy first, so that copy is the one kept and sent
+    expect(matchCommands(skills, 'claude:').map(c => c.name)).toEqual(['claude:dig']);
+    // Both names still paint as commands in the composer
+    expect(commandMarks(skills, '/claude:dig /agents:dig').map(m => m.name)).toEqual(['claude:dig', 'agents:dig']);
+  });
 });
 
 describe('commandMarks', () => {
