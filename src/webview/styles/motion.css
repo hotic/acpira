@@ -39,8 +39,9 @@
    still apply (inline-block glyphs let a full stop start a line). The duration is fixed here instead of read from --sd-duration:
    streamdown re-renders the whole live block on every pass and stamps the characters it already animated with a 0 ms duration,
    which snapped each mid-fade glyph to full opacity while an earlier, no longer re-rendered block kept fading. The span element
-   is reused across passes, so a fixed duration lets its fade run to the end. */
-[data-sd-animate][style*="sd-acpGlyph"], .stream-glyph { animation: sd-acpGlyph var(--stream-char-duration) ease var(--sd-delay, var(--glyph-delay, 0ms)) both; }
+   is reused across passes, so a fixed duration lets its fade run to the end. Use backwards, not both: the end state is the natural
+   opacity, and a forwards fill keeps every finished glyph animation in effect, so each style recalc walks one per streamed character. */
+[data-sd-animate][style*="sd-acpGlyph"], .stream-glyph { animation: sd-acpGlyph var(--stream-char-duration) ease var(--sd-delay, var(--glyph-delay, 0ms)) backwards; }
 @keyframes sd-acpGlyph { from { opacity: 0; } }
 
 /* The previous entrance (inline-block + a short drop, streamdown-driven duration), kept for the comparison in lab/stream-pace.preview.html */

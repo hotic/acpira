@@ -2,8 +2,10 @@
 // expanding / collapsing thought rows and process folds blocks the main thread, optionally
 // while a live turn streams (the host pushes a full SessionView every ~30 ms then).
 // Needs the LAB server: `pnpm exec vite --config vite.lab.config.ts`
-// Usage: pnpm exec tsx scripts/probe-fold-perf.ts [profile=large|screenshot] [--stream] [--cpu]
+// Usage: pnpm exec tsx scripts/probe-fold-perf.ts [profile=large|screenshot] [chars=N] [--stream] [--live] [--cpu]
+//   chars=N   set the live thought length (default 1000)
 //   --stream  keep a turn streaming during the clicks and report the frame budget with no clicks first
+//   --live    leave the initial thought streaming; use with --stream to measure live glyphs after a 4 s warmup
 //   --cpu     record a CPU profile per step (top self-time frames printed, full profiles in /tmp/acpira-*.cpuprofile)
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
@@ -11,9 +13,11 @@ import { writeFileSync } from 'node:fs';
 const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const PORT = 9333;
 const profile = process.argv.find(a => a.startsWith('profile='))?.slice(8) ?? 'large';
-const url = `http://localhost:5199/performance.preview.html?profile=${profile}&fold=codex`;
+const chars = process.argv.find(a => a.startsWith('chars='))?.slice(6) ?? '1000';
+const url = `http://localhost:5199/performance.preview.html?profile=${profile}&fold=codex&chars=${chars}`;
 const cpu = process.argv.includes('--cpu');
 const stream = process.argv.includes('--stream');
+const live = process.argv.includes('--live');
 
 const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${PORT}`, '--window-size=900,1200', '--no-first-run', '--user-data-dir=/tmp/acpira-perf-profile', 'about:blank'], { stdio: 'ignore' });
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -40,8 +44,8 @@ await send('Runtime.enable');
 await send('Page.navigate', { url });
 await sleep(2500);
 if (!(await evaluate('window.perfProbe?.ready'))) throw new Error('LAB page not ready — is the lab server running on 5199?');
-await evaluate('window.perfProbe.historyFinish(); window.perfProbe.finish(); true');
-await sleep(800);
+await evaluate(live ? 'window.perfProbe.historyFinish(); true' : 'window.perfProbe.historyFinish(); window.perfProbe.finish(); true');
+await sleep(live ? 4000 : 800);
 
 // In-page instrumentation: frame gaps and long tasks around one click.
 await evaluate(`
@@ -75,6 +79,8 @@ console.log('dom', await evaluate(`({
   rails: document.querySelectorAll('.connected-rail').length,
   thoughts: [...document.querySelectorAll('button')].filter(b => /思考|Thought/.test(b.textContent)).length,
   folds: [...document.querySelectorAll('button')].filter(b => /已完成|用时|Done/.test(b.textContent)).length,
+  glyphs: document.querySelectorAll('.stream-glyph').length,
+  anims: document.getAnimations().length,
 })`));
 
 function summarize(profile: any) {
