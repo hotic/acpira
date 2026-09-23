@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agent-managed terminal output (Codex's `_meta.terminal_output_delta`, Claude's `_meta.terminal_*`) streams into the tool row as plain text; a completed command's `{ formatted_output, exit_code }` receipt no longer renders as raw JSON.
 - Modes tagged `full_access` by the adapter (Codex / Claude) keep their own name but carry the warning glyph in the mode picker.
 
+### Fixed
+
+- Long user prompts keep a stable capped viewport while sticky instead of shrinking to a few lines as the conversation reaches the bottom.
+
 ### Planned
 
 - MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.
