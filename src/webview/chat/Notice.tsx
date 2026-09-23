@@ -61,7 +61,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
         : { title: t('notice.error.title'), text: error ?? t('notice.error.unknown') };
   // Two button tiers only: the one action to take is primary, everything else (other paths, retry) secondary
   return (
-    <div className="px-page pt-2">
+    <div className="px-page pt-2 pb-gap-half">
       <Card className="flex flex-col gap-gap p-pad">
         <div className="text-2 font-semibold text-fg-strong">{body.title}</div>
         <p className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{body.text}</p>
