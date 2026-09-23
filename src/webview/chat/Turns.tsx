@@ -351,16 +351,16 @@ function CursorFold({ blocks }: { blocks: ToolCallBlock[] }) {
   );
 }
 
-// One process area per turn. Thoughts keep their normal disclosure under the activity row until the
-// first tool call makes the area foldable; the same panel stays mounted across that change so a row
-// the user opened is never rebuilt. Permission cards stay outside; the latest reply remains visible while it streams.
+// One process area per turn, a fold from the first moment: its head carries the Orb and the Working label, and the
+// thoughts before any tool call are its children, open by default (a separate Working row above a sibling Thinking
+// row read as the same status twice, and swapping it for the fold head at the first tool replayed the entrance).
+// Permission cards stay outside; the latest reply remains visible while it streams.
 function CodexMessage({ turn, running, onPermission, memoryKey, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; running: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
   const { process, reply, permissions } = splitCodexBlocks(detailBlocks(turn, running));
-  const foldable = turn.blocks.some(block => block.type === 'tool_call');
+  const hasTools = turn.blocks.some(block => block.type === 'tool_call');
   return (
     <div className="flex flex-col gap-gap">
-      {!foldable && <Activity turn={turn} running={running} leadKind={lead} />}
-      <CodexFold turn={turn} blocks={process} running={running} foldable={foldable} memoryKey={memoryKey} lead={lead} />
+      <CodexFold turn={turn} blocks={process} running={running} hasTools={hasTools} memoryKey={memoryKey} lead={lead} />
       {subagents !== undefined && subagents.length > 0 && onInspect !== undefined && (
         <>
           <SubagentGroup nodes={subagents} all={allSubagents ?? subagents} onInspect={onInspect} />
@@ -378,7 +378,7 @@ function CodexMessage({ turn, running, onPermission, memoryKey, subagents, allSu
 // tool stays visible when the process becomes foldable. Afterwards only a manual toggle moves it.
 // The toggle is also written to fold memory under `memoryKey`, so a rebuilt message (or a reloaded webview) reopens
 // what the reader had opened instead of snapping shut mid-turn.
-function CodexFold({ turn, blocks, running, foldable, memoryKey, lead }: { turn: AgentTurn; blocks: AgentBlock[]; running: boolean; foldable: boolean; memoryKey?: string; lead?: 'orb' | 'static' }) {
+function CodexFold({ turn, blocks, running, hasTools, memoryKey, lead }: { turn: AgentTurn; blocks: AgentBlock[]; running: boolean; hasTools: boolean; memoryKey?: string; lead?: 'orb' | 'static' }) {
   const recall = (key: string | undefined) => ({ key, manual: key ? rememberedFold(key) : undefined });
   const [choice, setChoice] = useState(() => recall(memoryKey));
   // A key that changes under a mounted fold (a turn that gains its start time) re-reads memory instead of keeping a stranger's choice
@@ -389,34 +389,48 @@ function CodexFold({ turn, blocks, running, foldable, memoryKey, lead }: { turn:
   // Remember committed content, including commentary that moves from the reply into the process on the
   // first tool call. The pre-tool Working row is not a disclosure, so it cannot record a manual choice.
   useLayoutEffect(() => {
-    if (!foldable) visibleBeforeTools.current = blocks.length > 0
+    if (!hasTools) visibleBeforeTools.current = blocks.length > 0
       || turn.blocks.some(block => block.type === 'text' && !!block.markdown.trim());
-  }, [foldable, blocks, turn.blocks]);
+  }, [hasTools, blocks, turn.blocks]);
   const latched = useRef<boolean | undefined>(undefined);
-  if (!foldable) latched.current = undefined;
+  if (!hasTools) latched.current = undefined;
   else latched.current ??= visibleBeforeTools.current || openedInside.current > 0;
   const observe = useCallback((next: boolean) => { openedInside.current += next ? 1 : -1; }, []);
   const toggle = useCallback((next: boolean) => { setChoice({ key: memoryKey, manual: next }); if (memoryKey) rememberFold(memoryKey, next); }, [memoryKey]);
-  const open = !foldable || (manual ?? latched.current);
+  // A turn that ends with no process worth a head (a plain reply, or only a compaction status) retires the head row
+  // the way the Working row used to: fade, then collapse. A compaction status stays as a flat line.
+  const retired = !running && !hasTools && !blocks.some(b => b.type !== 'compaction');
+  // Before tools the fold is open, so the first thoughts read as its children; afterwards the latched choice holds
+  const open = retired || (manual ?? (hasTools ? latched.current : true));
   const activity = liveActivity(turn, lead);
   const CompletionIcon = turn.stop === 'cancelled' ? X : outcomeOf(turn) ? TriangleAlert : Check;
   const leadIcon = running ? activity.lead : <CompletionIcon className="size-icon" strokeWidth={1.5} />;
   const label = running ? activity.label : outcomeOf(turn) ?? t('turns.done');
   const elapsed = !running && turn.startedAt !== undefined && turn.endedAt !== undefined ? elapsedLabel(turn) : undefined;
-  if (!foldable && blocks.length === 0) return null;
+  const mounted = useRef(!retired);
+  if (!retired) mounted.current = true;
+  if (!mounted.current && blocks.length === 0) return null;
+  const head = (
+    <Collapsible.Trigger render={<Row as="button" interactive lead={leadIcon} title={label} />}>
+      <RowLabel shimmer={running && activity.active}>{retired ? t('host.working') : label}</RowLabel>
+      {elapsed && !retired && <span className="min-w-0 truncate text-fg-3" title={elapsed}>{elapsed}</span>}
+      {blocks.length > 0 && <ChevronRight className={cn('size-3 shrink-0 self-center transition-transform', open && 'rotate-90')} strokeWidth={1.75} />}
+    </Collapsible.Trigger>
+  );
   return (
     <Collapsible.Root open={open} onOpenChange={toggle} className="group flex min-w-0 flex-col" data-open={open || undefined}>
-      {foldable && (
-        <Collapsible.Trigger render={<Row as="button" interactive lead={leadIcon} title={label} />}>
-          <RowLabel shimmer={running && activity.active}>{label}</RowLabel>
-          {elapsed && <span className="min-w-0 truncate text-fg-3" title={elapsed}>{elapsed}</span>}
-          <ChevronRight className={cn('size-3 shrink-0 self-center transition-transform', open && 'rotate-90')} strokeWidth={1.75} />
-        </Collapsible.Trigger>
+      {mounted.current && (
+        // The clip reserves the head's hit area like the panel below; a flex column stretches the button to the full row
+        <div inert={retired} className={cn('-mx-hit grid transition-[grid-template-rows,opacity,margin-bottom] duration-(--dur-open) ease-out',
+          retired ? 'grid-rows-[0fr] opacity-0 [transition-delay:var(--dur-open),0s,var(--dur-open)]' : 'grid-rows-[1fr] opacity-100',
+          retired && blocks.length === 0 && '-mb-gap')}>
+          <div className="flex min-h-0 flex-col overflow-hidden px-hit">{head}</div>
+        </div>
       )}
       {blocks.length > 0 && (
         // Nested rows extend their hit area beyond the text column; reserve it inside the clip so its edges cannot cut off row corners.
         <Collapsible.Panel className="-mx-hit [&>div]:px-hit">
-          <div className={cn(foldable && 'pt-1 pb-1.5')}>
+          <div className={cn(!retired && 'pt-1 pb-1.5')}>
             <DisclosureObserverContext.Provider value={observe}>
               <ProcessHistory><ProcessBlocks blocks={blocks} /></ProcessHistory>
             </DisclosureObserverContext.Provider>
