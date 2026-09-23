@@ -1,0 +1,32 @@
+/* Opacity and transform keep the travelling light off the layout and paint paths. */
+@keyframes subagent-signal-wave {
+  0%, 65%, 100% { opacity: .2; transform: scale(.7); }
+  25% { opacity: 1; transform: translateY(-1px) scale(1.3); }
+  42% { opacity: .65; transform: scale(1); }
+}
+
+@layer components {
+  .subagent-signal {
+    display: grid;
+    flex-shrink: 0;
+    grid-template-columns: repeat(2, 3px);
+    gap: 3px;
+    width: 9px;
+    height: 15px;
+    transform: rotate(-18deg);
+    color: var(--fg-1);
+  }
+  .subagent-signal > span {
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: .25;
+    animation: subagent-signal-wave 1.65s cubic-bezier(.4, 0, .2, 1) infinite;
+    animation-delay: calc(var(--signal-step) * -165ms);
+  }
+  [data-motion="none"] .subagent-signal > span { opacity: .7; }
+  @media (prefers-reduced-motion: reduce) {
+    .subagent-signal > span { animation: none; opacity: .7; }
+  }
+}

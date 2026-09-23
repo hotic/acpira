@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Paperclip, X } from 'lucide-react';
+import { Network, Paperclip, X } from 'lucide-react';
 import type { ExternalSessionInfo, AccountInfo, AgentInfo, AuthMethodInfo, Draft, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionControls, SessionStatus, SessionSummary, SlashCommand, Turn, Usage } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
 import type { HiddenMap, SessionScope } from '@shared/settings';
@@ -9,7 +9,7 @@ import { lookAttrs, ThemeContext, type ShellLook, type Theme } from '../look';
 import { t } from '../i18n';
 import { ShellLayerContext } from '../ui/Popover';
 import { cn } from '../ui/cn';
-import { IconButton } from '../ui/Button';
+import { Chip, IconButton } from '../ui/Button';
 import { useScrollReveal } from '../ui/useScrollReveal';
 import { useStableList } from '../ui/useStableList';
 import { scrollerUsable } from './promptStuck';
@@ -30,7 +30,8 @@ import { Queue } from './Queue';
 import { OpenToolFileContext } from './ToolCall';
 import { TurnActionsContext } from './TurnActions';
 import { SubagentInspector } from './subagents/SubagentInspector';
-import { breadcrumb, nodesByTurn, subagentTitle, type SubagentTab } from './subagents/subagentState';
+import { SubagentGraph } from './subagents/SubagentGraph';
+import { breadcrumb, nodesByTurn, subagentTitle } from './subagents/subagentState';
 
 // Every action the webview sends to the host; in the LAB a fake host implements these, the real build swaps in postMessage
 export interface ShellHandlers {
@@ -227,7 +228,9 @@ export function Shell(p: ShellProps) {
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  const [inspect, setInspect] = useState<{ id: string; tab: SubagentTab }>();
+  const [inspect, setInspect] = useState<{ id: string }>();
+  const [graphOpen, setGraphOpen] = useState(false);
+  useEffect(() => setGraphOpen(false), [p.activeSessionId]);
   useEffect(() => setInspect(undefined), [p.activeSessionId]);
   const inspectNode = inspect !== undefined ? p.subagents?.find(n => n.id === inspect.id) : undefined;
   useEffect(() => { if (inspect !== undefined && inspectNode === undefined) setInspect(undefined); }, [inspect, inspectNode]);
@@ -239,7 +242,7 @@ export function Shell(p: ShellProps) {
     on.observeSubagent(sid, id);
     return () => on.unobserveSubagent?.(sid, id);
   }, [inspect?.id, p.activeSessionId, on.observeSubagent, on.unobserveSubagent]);
-  const onInspect = useCallback((id: string, tab: SubagentTab) => setInspect({ id, tab }), []);
+  const onInspect = useCallback((id: string) => setInspect({ id }), []);
   // Deletion applies immediately, with an undoable toast floating at the bottom (modeled on Codex's archive), no confirmation dialog; refused attachments show up the same way
   const [toasts, setToasts] = useState<ToastState[]>([]);
   const dropToast = useCallback((key: string) => setToasts(ts => ts.filter(t => t.key !== key)), []);
@@ -439,7 +442,13 @@ export function Shell(p: ShellProps) {
                         } : undefined} />
                     : null}
                   {/* Sibling keys include the component role; duplicate session-only keys leave stale queue rows after reconciliation. */}
-                  {!p.external && <Composer key={`composer:${p.activeSessionId}`} {...composerProps} draftKey={p.activeSessionId} />}
+                  {!p.external && <Composer key={`composer:${p.activeSessionId}`} {...composerProps} draftKey={p.activeSessionId}
+                    toolbarStart={!!p.subagents?.length && <Chip narrow="icon" caret={false} className="shrink-0" icon={<Network strokeWidth={1.5} />}
+                      aria-label={`${t('subagents.graph')} · ${t('subagents.entry', { n: p.subagents.length })}`}
+                      title={`${t('subagents.graph')} · ${t('subagents.entry', { n: p.subagents.length })}`}
+                      aria-haspopup="dialog" aria-expanded={graphOpen} onClick={() => setGraphOpen(true)}>
+                      {t('subagents.entry', { n: p.subagents.length })}
+                    </Chip>} />}
                 </div>
               </div>
               {inspectNode !== undefined && !canDockInspector && inspect !== undefined && p.activeSessionId !== undefined && (
@@ -447,12 +456,8 @@ export function Shell(p: ShellProps) {
                   <SubagentInspector
                     mode="overlay"
                     node={inspectNode}
-                    all={p.subagents ?? []}
-                    sessionTitle={p.title}
                     transcript={p.subagentTranscripts?.[`${p.activeSessionId}:${inspect.id}`]}
-                    tab={inspect.tab}
-                    onTab={tab => setInspect({ id: inspect.id, tab })}
-                    onSelect={id => setInspect({ id, tab: 'session' })}
+                    onGraph={() => setGraphOpen(true)}
                     onClose={() => setInspect(undefined)}
                     onCancel={inspectNode.controls.cancel && on.cancelSubagent ? () => on.cancelSubagent!(p.activeSessionId!, inspectNode.id) : undefined}
                     onPermission={(blockId, optionId) => on.permission(p.activeSessionId!, blockId, optionId)}
@@ -469,12 +474,8 @@ export function Shell(p: ShellProps) {
               <SubagentInspector
                 mode="docked"
                 node={inspectNode}
-                all={p.subagents ?? []}
-                sessionTitle={p.title}
                 transcript={p.subagentTranscripts?.[`${p.activeSessionId}:${inspect.id}`]}
-                tab={inspect.tab}
-                onTab={tab => setInspect({ id: inspect.id, tab })}
-                onSelect={id => setInspect({ id, tab: 'session' })}
+                onGraph={() => setGraphOpen(true)}
                 onClose={() => setInspect(undefined)}
                 onCancel={inspectNode.controls.cancel && on.cancelSubagent ? () => on.cancelSubagent!(p.activeSessionId!, inspectNode.id) : undefined}
                 onPermission={(blockId, optionId) => on.permission(p.activeSessionId!, blockId, optionId)}
@@ -483,6 +484,7 @@ export function Shell(p: ShellProps) {
             </aside>
           )}
         </div>
+        <SubagentGraph nodes={p.subagents ?? []} sessionTitle={p.title} open={graphOpen && !!p.subagents?.length} onOpenChange={setGraphOpen} onInspect={onInspect} selectedId={inspect?.id} />
       </ShellLayerContext.Provider>
       </ThemeContext.Provider>
     </AppearanceContext.Provider>
@@ -499,7 +501,7 @@ interface ThreadProps {
   // Advertised slash commands: sent user messages paint their `/name` tokens like the composer does
   commands?: SlashCommand[];
   subagents?: SubagentSummary[];
-  onInspect?: (id: string, tab: SubagentTab) => void;
+  onInspect?: (id: string) => void;
   onPermission: (blockId: string, optionId: string) => void;
 }
 
