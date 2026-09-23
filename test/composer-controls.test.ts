@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { composerControls, effortOptions, familyLabel, presentReasoning, reasoningChip, reasoningVisible, thoughtCorrection } from '../src/shared/composerControls';
+import { composerControls, effortOptions, familyLabel, isFastControl, modelConfigChip, presentReasoning, reasoningChip, reasoningVisible, thoughtCorrection } from '../src/shared/composerControls';
 import { groupModels } from '../src/shared/models';
 import type { ConfigControl } from '../src/shared/transcript';
 
@@ -15,8 +15,33 @@ describe('shared composer controls', () => {
       options: ['Low', 'High', 'Max'].map(name => ({ id: name.toLowerCase(), name: `Thinking ${name}` })),
     };
     const model: ConfigControl = { id: 'model', name: 'Model', category: 'model', options: [{ id: 'asgard/kimi-k3', name: 'K3' }] };
-    expect(composerControls([model, thinking])).toEqual({ models: [model], reasoning: [thinking], other: [] });
+    expect(composerControls([model, thinking])).toEqual({ models: [model], reasoning: [thinking], modelConfig: [], other: [] });
     expect(composerControls([{ ...thinking, category: undefined }]).reasoning).toHaveLength(1);
+  });
+
+  it('places native model_config beside reasoning without parsing it into model families', () => {
+    const speed: ConfigControl = { id: 'speed', name: 'Speed', category: 'model_config', value: 'standard', options: [
+      { id: 'standard', name: 'Standard' }, { id: 'fast', name: 'Fast' },
+    ] };
+    const model: ConfigControl = { id: 'model', name: 'Model', category: 'model', value: 'claude-opus-5-medium', options: [
+      { id: 'claude-opus-5-medium', name: 'Claude Opus 5' },
+    ] };
+    const reasoning = kimiThink('medium', ['low', 'medium', 'high', 'xhigh', 'max']);
+    const custom = { ...speed, id: 'custom-speed', category: '_custom' };
+    const parameter: ConfigControl = { id: 'context', name: 'Context', category: 'model_config', value: 'context:1m', options: [
+      { id: 'context:normal', name: 'Context Standard' }, { id: 'context:1m', name: 'Context 1M' },
+    ] };
+    expect(composerControls([model, speed, reasoning, parameter, custom])).toEqual({
+      models: [model], reasoning: [reasoning], modelConfig: [speed, parameter], other: [custom],
+    });
+    expect(composerControls([speed]).modelConfig).toEqual([speed]);
+    expect(isFastControl(speed)).toBe(true);
+    expect(modelConfigChip(speed)).toBeUndefined();
+    expect(modelConfigChip({ ...speed, value: 'fast' })).toBe('Fast');
+    expect(isFastControl(parameter)).toBe(false);
+    expect(modelConfigChip(parameter)).toBe('Context 1M');
+    expect(isFastControl({ ...speed, options: [...speed.options, { id: 'auto', name: 'Auto' }] })).toBe(false);
+    expect(isFastControl({ ...speed, options: [{ id: 's', name: 'Standard' }, { id: 'f', name: 'Fast' }] })).toBe(false);
   });
 
   it('normalizes and orders Grok labels while preserving exact wire IDs', () => {
@@ -95,6 +120,6 @@ describe('shared composer controls', () => {
       { id: 'penguin-medium', name: 'Penguin Medium' }, { id: 'penguin-max', name: 'Penguin Max' },
     ] };
     const custom = { ...model, id: 'custom', category: 'custom' };
-    expect(composerControls([model, custom])).toEqual({ models: [model], reasoning: [], other: [custom] });
+    expect(composerControls([model, custom])).toEqual({ models: [model], reasoning: [], modelConfig: [], other: [custom] });
   });
 });

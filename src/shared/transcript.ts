@@ -79,7 +79,7 @@ export interface ConfigControl {
   // id of the configOption; required when calling set_config_option
   id: string;
   name: string;
-  // ACP's semantic category: model / thought_level / model_config / custom; only affects ordering and icon, not correctness
+  // ACP's semantic category: model / thought_level / model_config / custom; affects placement, ordering and icon, not wire values
   category?: string;
   options: SessionOption[];
   value?: string;

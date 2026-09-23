@@ -74,7 +74,7 @@ export function Composer(p: ComposerProps) {
   const mode = p.controls.modes.find(m => m.id === p.controls.modeId);
   const ModeIcon = mode ? modeIcon(mode) : undefined;
   const dim = p.running || p.disabled;
-  const { models, reasoning, other } = composerControls(p.controls.options);
+  const { models, reasoning, modelConfig, other } = composerControls(p.controls.options);
   const canCompact = !!p.commands?.some(c => c.name === 'compact');
   // Files are read asynchronously after a paste / drop; sending is held until every read has landed, so a message never leaves without its attachments
   const [reading, setReading] = useState(0);
@@ -286,13 +286,14 @@ export function Composer(p: ComposerProps) {
             )}
           </div>
           <div className="min-w-0 flex-1" />
-          {other.map(c => (
+          {[...other, ...(!models.length ? modelConfig : [])].map(c => (
             <OptionControl key={c.id} end control={c} hidden={p.hidden?.[c.id]} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
           ))}
           {p.usage && <ContextRing usage={p.usage} turns={p.turns} canCompact={canCompact} disabled={p.disabled} compactAt={p.compactAt} running={p.running} onCompact={p.onCompact} onOpenChange={onOpenChange} />}
           {models.map((c, i) => (
             <ModelControl key={c.id} control={c} hidden={p.hidden?.[c.id]} reasoning={i === 0 ? reasoning : undefined}
-              onSetReasoning={p.onSetConfig} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
+              modelConfig={i === 0 ? modelConfig : undefined} hiddenConfig={p.hidden}
+              onSetConfig={p.onSetConfig} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
           ))}
           {!models.length && reasoning.map(c => (
             <ReasoningControl key={c.id} control={c} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
