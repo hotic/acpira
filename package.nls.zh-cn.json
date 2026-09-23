@@ -5,6 +5,8 @@
   "acpira.cmd.openInNewWindow": "在新窗口打开",
   "acpira.cmd.showLog": "查看日志",
   "acpira.conf.defaultAgent": "新会话默认用哪个 agent",
+  "acpira.conf.agentOrder": "所有列表里 agent 的顺序（agent id，未列出的排在后面）。在 Acpira 设置页左侧导航里拖动即可调整",
+  "acpira.conf.disabledAgents": "从新建会话菜单和默认 agent 选择里隐藏的 agent（agent id），已有会话照常打开。在 Acpira 设置页左侧导航里用开关切换",
   "acpira.conf.language": "界面语言；auto 跟随 VS Code",
   "acpira.conf.sessionScope": "会话列表显示范围：仅当前工作区打开的会话，或本机全部会话",
   "acpira.conf.sessionScope.workspace": "仅当前工作区文件夹里打开的会话",

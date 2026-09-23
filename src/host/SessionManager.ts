@@ -8,6 +8,7 @@ import { CHATGPT_ID } from './external/chatgptEvents';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl, NativeSessionInfo, SessionSummary, SessionView, Turn, TurnSettings } from '@shared/transcript';
 import type { AccountAction, AddAccountVia, EditTurnRequest, WebviewMsg } from '@shared/protocol';
 import { inWorkspace, type HiddenMap, type SessionScope } from '@shared/settings';
+import { arrangeAgents, pickDefaultAgent, type AgentPrefs } from '@shared/agentOrder';
 import type { AgentRuntimeInfo } from '@shared/inventory';
 import { captureTurnSettings } from '@shared/turnSettings';
 import { exportFileName, exportMarkdown } from '@shared/exportTranscript';
@@ -31,6 +32,8 @@ export interface ManagerDeps {
   log: (line: string) => void;
   cwd: () => string;
   defaultAgent: () => AgentId;
+  // acpira.agentOrder / acpira.disabledAgents; absent means registry order, everything enabled
+  agentPrefs?: () => AgentPrefs;
   // Terminal-style login: open a terminal on the host and run the command
   runInTerminal: (title: string, command: string, args: string[]) => void;
   toast: (level: 'info' | 'error', text: string) => void;
@@ -154,8 +157,16 @@ export class SessionManager {
     this.scheduleProbe();
     this.deps.accounts?.refreshQuotas().catch(e => this.deps.log(`quota refresh failed: ${msg(e)}`));
     void this.deps.localAccounts?.refresh();
-    this.warm(this.deps.defaultAgent());
+    this.warm(this.defaultAgent());
   }
+
+  // The configured default, or the first enabled agent once the default was switched off
+  private defaultAgent(): AgentId {
+    return pickDefaultAgent(this.agents(), this.deps.defaultAgent());
+  }
+
+  // agentOrder / disabledAgents changed: every webview re-renders its menus from the rearranged list
+  emitAgents() { this.emit({ type: 'agents', agents: this.agents() }); }
 
   // Any lookup that flips an agent's availability (the poll, a settings-page rescan, a spawn) re-pushes the list to every webview,
   // so the menus and the settings navigation never wait for a reload
@@ -279,7 +290,8 @@ export class SessionManager {
     const native = this.deps.registry.list().filter(a => !this.deps.chatgpt || a.id !== CHATGPT_ID).map(a => this.deps.accounts?.supports(a.id)
       ? { ...a, accounts: true }
       : { ...a, localAccount: this.deps.localAccounts?.get(a.id) });
-    return this.deps.chatgpt ? [...native, { id: CHATGPT_ID, name: 'ChatGPT', external: true, available: true }] : native;
+    const all: AgentInfo[] = this.deps.chatgpt ? [...native, { id: CHATGPT_ID, name: 'ChatGPT', external: true, available: true }] : native;
+    return arrangeAgents(all, this.deps.agentPrefs?.() ?? { order: [], disabled: [] });
   }
 
   accounts(): AccountInfo[] { return this.deps.accounts?.list() ?? []; }
@@ -538,7 +550,7 @@ export class SessionManager {
 
   // Agents on the account layer: with no account specified, use that agent's default account (most recently used); if there is none, leave it unbound and let the Notice guide login
   async newSessionFor(v: SessionViewer, agent?: AgentId, accountId?: string): Promise<void> {
-    const id = agent ?? this.deps.defaultAgent();
+    const id = agent ?? this.defaultAgent();
     if (id === CHATGPT_ID) {
       const view = await this.connectChatgpt();
       await this.dropEmptyCurrent(v);
@@ -678,7 +690,6 @@ export class SessionManager {
         // Remembered only once the session actually shows the mode: setMode is a no-op on a session that is not ready
         case 'setMode': { const s = this.target(v, m.sessionId); if (s) { await s.setMode(m.id); if (s.view().controls.modeId === m.id) this.rememberMode(s.agent, m.id); } break; }
         case 'setConfig': { const s = this.target(v, m.sessionId); if (s) { await s.setConfig(m.configId, m.value); this.remember(s); } break; }
-        case 'selectAgent': if (this.viewOf(v.activeId)?.agent !== m.id) await this.newSessionFor(v, m.id); break;
         case 'selectSession': await this.selectSessionFor(v, m.id); break;
         case 'newSession': await this.newSessionFor(v, m.agent); break;
         case 'renameSession': await this.renameSession(m.id, m.title); break;

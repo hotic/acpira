@@ -124,6 +124,24 @@
           "default": "grok",
           "description": "%acpira.conf.defaultAgent%"
         },
+        "acpira.agentOrder": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "application",
+          "description": "%acpira.conf.agentOrder%"
+        },
+        "acpira.disabledAgents": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "application",
+          "description": "%acpira.conf.disabledAgents%"
+        },
         "acpira.language": {
           "type": "string",
           "enum": [

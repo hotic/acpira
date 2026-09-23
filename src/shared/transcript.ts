@@ -17,6 +17,8 @@ export interface AgentInfo {
   localAccount?: LocalAccountInfo;
   // An executable was detected locally; false greys it out in the menu, undefined means not probed yet
   available?: boolean;
+  // Switched off in the settings rail (acpira.disabledAgents): hidden from the new-session entry points, its sessions still open
+  disabled?: boolean;
   // Commands a probe looked for but did not find (the agent's own command and/or extra AgentDef.requires), for the install hint
   missing?: string[];
   // How to get the CLI when none was found: the vendor's one-line install for this platform and its docs page

@@ -507,6 +507,8 @@ export const zhCN = {
   'settings.general.title': '常规设置',
   'settings.appearance.title': '外观',
   'settings.agent.title': '{agent} 设置',
+  'settings.agent.enabled': '新建会话时提供 {agent}',
+  'settings.agent.lastEnabled': '至少保留一个 agent',
   'settings.nav.general': '常规',
   'settings.nav.appearance': '外观',
   'settings.language': '语言',

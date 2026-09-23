@@ -48,7 +48,6 @@ export interface ShellHandlers {
   openFile?: (sessionId: string, path: string, line?: number) => void;
   setMode: (id: string) => void;
   setConfig: (configId: string, value: string) => void;
-  selectAgent: (id: AgentInfo['id']) => void;
   selectSession: (id: string) => void;
   // Without an agent the host falls back to the configured defaultAgent
   newSession: (agent?: AgentInfo['id']) => void;

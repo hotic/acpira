@@ -16,6 +16,14 @@ const skins = {
     'focus-visible:shadow-[0_0_0_2px_var(--bg-0),0_0_0_3px_var(--fg-3)]!',
     'disabled:cursor-not-allowed disabled:opacity-40',
   ),
+  // Row-sized toggle beside a list entry (the settings rail): the menu track geometry, painted like the settings skin
+  compact: cn(
+    'relative inline-flex h-switch-track-h w-switch-track-w shrink-0 rounded-full bg-active transition-[background,filter]',
+    'after:absolute after:top-switch-off after:left-0 after:size-switch-thumb after:translate-x-switch-off after:rounded-full after:bg-fg-3 after:transition-[translate,background]',
+    'aria-checked:bg-btn-1 aria-checked:after:translate-x-switch-on aria-checked:after:bg-btn-1-fg aria-checked:enabled:hover:brightness-[.92]',
+    'outline-none focus-visible:shadow-[0_0_0_2px_var(--bg-0),0_0_0_3px_var(--fg-3)]',
+    'disabled:cursor-not-allowed disabled:opacity-40',
+  ),
 };
 
 export function Switch({ skin = 'settings', className, ...props }: ComponentProps<typeof Base.Root> & { skin?: keyof typeof skins }) {

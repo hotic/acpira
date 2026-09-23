@@ -75,6 +75,8 @@ export function SettingsShell(p: SettingsShellProps) {
   useScrollReveal(root);
   const page = p.page;
   const agent = page.kind === 'agent' ? p.agents.find(a => a.id === page.id) : undefined;
+  // Ids the rail does not show (a custom agent missing from acpira.agents for now) keep their saved order / off state
+  const unlisted = (id: AgentId) => !p.agents.some(a => a.id === id);
   const title = page.kind === 'chatgpt' ? 'ChatGPT' : agent ? t('settings.agent.title', { agent: agent.name }) : page.kind === 'appearance' ? t('settings.appearance.title') : t('settings.general.title');
   const action = (agent || page.kind === 'chatgpt') && (
     <IconButton title={t('common.refresh')} aria-label={t('common.refresh')} onClick={() => page.kind === 'chatgpt' ? p.on.refreshChatgpt?.() : agent && p.on.refreshAgent(agent.id)}>
@@ -96,7 +98,9 @@ export function SettingsShell(p: SettingsShellProps) {
             {...lookAttrs(p.look)}
           >
             <div className="flex min-h-0 flex-1">
-              <PageRail agents={p.agents} page={p.page} onPage={p.onPage} onBack={p.onBack} />
+              <PageRail agents={p.agents} page={p.page} onPage={p.onPage} onBack={p.onBack}
+                onReorder={ids => p.on.setSetting('agentOrder', [...ids, ...p.settings.agentOrder.filter(unlisted)])}
+                onDisabled={ids => p.on.setSetting('disabledAgents', [...ids, ...p.settings.disabledAgents.filter(unlisted)])} />
               <main key={page.kind === 'agent' ? page.id : page.kind} className="min-w-0 flex-1 overflow-y-auto scroll-stable">
                 <Page>
                   <PageHeader title={title} action={action} />

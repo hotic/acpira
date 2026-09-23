@@ -45,6 +45,8 @@ export class SettingsCenter {
       language: this.read('language'),
       locale: this.locale(),
       defaultAgent: this.read('defaultAgent'),
+      agentOrder: this.read('agentOrder'),
+      disabledAgents: this.read('disabledAgents'),
       sessionScope: this.read('sessionScope'),
       sessionListPosition: this.read('sessionListPosition'),
       autoCompact: this.read('autoCompact'),

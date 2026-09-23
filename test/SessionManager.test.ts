@@ -47,6 +47,30 @@ describe('SessionManager', () => {
     } finally { await m.dispose(); rmSync(dir, { recursive: true, force: true }); }
   });
 
+  it('orders the agent list and starts new sessions on the first enabled agent once the default is switched off', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acpira-order-'));
+    const prefs = { order: ['fake2'], disabled: [] as string[] };
+    const m = new SessionManager({
+      registry: new AgentRegistry({ fake: { name: 'Fake', command: TSX, args: [FAKE] }, fake2: { name: 'Fake 2', command: TSX, args: [FAKE] } }),
+      store: new TranscriptStore(dir), agentPrefs: () => prefs,
+      log: () => {}, cwd: () => '/tmp', defaultAgent: () => 'fake', runInTerminal: () => {}, toast: () => {},
+    });
+    const pushed: string[][] = [];
+    m.subscribe(ev => { if (ev.type === 'agents') pushed.push(ev.agents.filter(a => a.disabled).map(a => a.id)); });
+    try {
+      await m.init();
+      expect(m.agents()[0]?.id).toBe('fake2');
+      prefs.disabled = ['fake'];
+      m.emitAgents();
+      expect(pushed.at(-1)).toEqual(['fake']);
+      await m.newSession();
+      expect(m.active()?.agent).toBe('fake2');
+      // An explicit pick (a disabled agent's own Retry / new session) is still honoured
+      await m.newSession('fake');
+      expect(m.active()?.agent).toBe('fake');
+    } finally { await m.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it('publishes local quota updates and refreshes after a turn without binding an imported account', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'acpira-local-manager-'));
     const local = new LocalAccounts({ home: dir, env: () => ({ KIMI_CODE_API_KEY: 'test-code-key' }),

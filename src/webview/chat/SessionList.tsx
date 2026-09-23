@@ -3,6 +3,7 @@ import { Check, ChevronDown, Ellipsis, FolderInput, Import, ListFilter, LoaderCi
 import type { AgentId, AgentInfo, NativeSessionInfo, SessionSummary } from '@shared/transcript';
 import type { NativeSessionsState } from '@shared/protocol';
 import { inWorkspace, type SessionScope } from '@shared/settings';
+import { launchable } from '@shared/agentOrder';
 import { cn } from '../ui/cn';
 import { Command } from '../ui/Command';
 import { IconButton } from '../ui/Button';
@@ -200,8 +201,10 @@ function ImportSessions({ agents, agentFilter, activeAgent, native, onList, onIm
   const [open, setOpen] = useState(false);
   // An explicit pick outlives the popover only while it is open; a fresh open follows the filter / active session again
   const [picked, setPicked] = useState<AgentId>();
-  const candidates = agents.filter(a => !a.external);
-  const agent = picked ?? agentFilter ?? activeAgent ?? candidates.find(a => a.available !== false)?.id ?? candidates[0]?.id;
+  // Importing starts a record, so a switched-off agent is not offered even when the filter or the active session names it
+  const candidates = launchable(agents);
+  const offered = (id?: AgentId) => candidates.some(a => a.id === id) ? id : undefined;
+  const agent = picked ?? offered(agentFilter) ?? offered(activeAgent) ?? candidates.find(a => a.available !== false)?.id ?? candidates[0]?.id;
   const name = agent ? (agents.find(a => a.id === agent)?.name ?? agent) : '';
 
   // onList is a stable postMessage wrapper; the request fires when the popover opens and whenever the chosen agent changes
