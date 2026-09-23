@@ -186,7 +186,7 @@ export function variantLabel(v: ModelVariant, f: ModelFamily, labels?: { standar
 // back to an initial-letter tile
 const BRAND: [RegExp, string][] = [
   [/\bclaude\b/, 'claude'],
-  [/\bglm\b|\bzhipu\b|\bchatglm\b/, 'zhipu'],
+  [/\bglm\b|\bzhipu\b|\bchatglm\b|\bzai\b|\bz\.ai\b/, 'zhipu'],
   [/\bkimi\b|\bmoonshot\b/, 'kimi'],
   // Moonshot's bare K-series names (K2.7 Coding, K3, K3-256k) carry no "kimi" keyword — a last resort for
   // options whose wire id is also opaque (e.g. a gateway alias like "asgard")
