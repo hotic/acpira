@@ -5,9 +5,6 @@ import type { SubagentSummary } from '@shared/subagents';
 
 export type T = (key: MsgKey, params?: Params) => string;
 
-// The inspector's three tabs; the group row always opens on 'session', the header's link on 'tree'
-export type SubagentTab = 'session' | 'tree' | 'info';
-
 // Nodes anchored to one turn, keyed by the root agent turn's index. The previous map's arrays are
 // reused member-wise so memoized turn components keep identical props across session pushes.
 export function nodesByTurn(nodes: SubagentSummary[], prev?: Map<number, SubagentSummary[]>): Map<number, SubagentSummary[]> {

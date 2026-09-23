@@ -1,0 +1,92 @@
+@layer components {
+  .subagent-graph-scroll {
+    --subagent-graph-branch-gap: var(--pad);
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    flex: 1;
+    padding: var(--pad);
+  }
+
+  .subagent-graph-tree,
+  .subagent-graph-tree ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .subagent-graph-tree {
+    width: max-content;
+    min-width: 100%;
+  }
+
+  .subagent-graph-tree li {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .subagent-graph-tree > li {
+    width: max-content;
+    margin-inline: auto;
+  }
+
+  .subagent-graph-tree ul {
+    padding-left: var(--subagent-graph-branch-gap);
+  }
+
+  .subagent-graph-tree ul > li {
+    padding: var(--gap) 0 var(--gap) var(--subagent-graph-branch-gap);
+  }
+
+  .subagent-graph-tree ul > li::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    border-left: 1px solid var(--line-strong);
+  }
+
+  .subagent-graph-tree ul > li:first-child::before { top: 50%; }
+  .subagent-graph-tree ul > li:last-child::before { bottom: 50%; }
+  .subagent-graph-tree ul > li:only-child::before { display: none; }
+
+  .subagent-graph-tree ul > li::after,
+  .subagent-graph-node:has(+ ul)::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    width: var(--subagent-graph-branch-gap);
+    border-top: 1px solid var(--line-strong);
+  }
+
+  .subagent-graph-tree ul > li::after { left: 0; }
+  .subagent-graph-node:has(+ ul)::after { left: 100%; }
+
+  .subagent-graph-node {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--gap);
+    flex: none;
+    width: var(--pop-w-sm);
+    padding: var(--pad-y) var(--pad);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--bg-2);
+    text-align: left;
+  }
+
+  button.subagent-graph-node { cursor: pointer; }
+  button.subagent-graph-node[aria-current],
+  button.subagent-graph-node:hover {
+    background: var(--active);
+    border-color: var(--line-strong);
+  }
+
+  button.subagent-graph-node:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+}

@@ -1,11 +1,10 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, Eye, X } from 'lucide-react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ArrowLeft, Network, Square, Unplug, X } from 'lucide-react';
 import type { SubagentSummary } from '@shared/subagents';
-import type { MsgKey } from '@shared/i18n';
 import type { QuestionBlock, TextBlock, Turn } from '@shared/transcript';
 import { t } from '../../i18n';
 import { cn } from '../../ui/cn';
-import { Button, IconButton } from '../../ui/Button';
+import { IconButton } from '../../ui/Button';
 import { Row } from '../../ui/Row';
 import { Shimmer } from '../../ui/Shimmer';
 import { AgentMessage, UserMessage } from '../Turns';
@@ -14,20 +13,15 @@ import { Prose } from '../Prose';
 import { HistoryContext } from '../HistoryMessage';
 import { TurnActionsContext } from '../TurnActions';
 import { scrollerUsable } from '../promptStuck';
-import { breadcrumb, elapsedText, stateLabel, subagentTitle, type SubagentTab } from './subagentState';
-import { SubagentTreeView } from './SubagentTreeView';
-import { useElapsed } from './useElapsed';
+import { subagentTitle } from './subagentState';
 
 interface InspectorProps {
   node: SubagentSummary;
-  all: SubagentSummary[];
-  sessionTitle: string;
   // The observed child's transcript; absent until the host answers observeSubagent
   transcript?: { turns: Turn[]; running: boolean; rev: number };
-  tab: SubagentTab;
-  onTab: (tab: SubagentTab) => void;
-  onSelect: (id: string) => void;
   onClose: () => void;
+  // Opens the session's summon graph, the one place relations between children are drawn
+  onGraph?: () => void;
   onCancel?: () => void;
   onPermission: (blockId: string, optionId: string) => void;
   // The child's open question card — the overlay makes the main thread inert, so the card renders here too
@@ -36,13 +30,6 @@ interface InspectorProps {
   mode: 'docked' | 'overlay';
   blobUrl?: (blob: string) => string;
 }
-
-const TABS: SubagentTab[] = ['session', 'tree', 'info'];
-const TAB_KEY: Record<SubagentTab, 'subagents.tabs.session' | 'subagents.tabs.tree' | 'subagents.tabs.info'> = {
-  session: 'subagents.tabs.session',
-  tree: 'subagents.tabs.tree',
-  info: 'subagents.tabs.info',
-};
 
 // Read-only drill-down for one delegated child: the parent's delegation row opens this, and nothing
 // inside it controls the session except the declared cancel affordance.
@@ -58,9 +45,9 @@ export function SubagentInspector(p: InspectorProps) {
     // The inert ancestor clears in the same commit — the next frame is the first moment focus can land
     if (el instanceof HTMLElement && el.isConnected) requestAnimationFrame(() => el.focus({ preventScroll: true }));
   }, []);
-  const crumbs = breadcrumb(node.id, p.all);
-  const elapsed = useElapsed(node);
-  const meta = [stateLabel(node, t), node.role, elapsed, t('subagents.toolCount', { n: node.toolCount })].filter(Boolean);
+  const title = subagentTitle(node, t);
+  const cancelable = node.state === 'running' && node.controls.cancel && p.onCancel !== undefined;
+  const cancelLabel = t(node.cancelRequested ? 'subagents.cancelling' : 'subagents.cancel');
   return (
     <div
       ref={root}
@@ -70,57 +57,30 @@ export function SubagentInspector(p: InspectorProps) {
         if (e.key === 'Escape' && !e.defaultPrevented) { e.stopPropagation(); p.onClose(); }
       }}
     >
-      <div className="flex h-hdr shrink-0 items-center gap-gap border-b border-line px-pad">
+      {/* Same shape as the main Header: plain title, actions on the right; ancestry lives in the summon graph */}
+      <div className="flex h-hdr shrink-0 items-center gap-gap px-pad shadow-[inset_0_-1px_0_0_var(--line)]">
         <IconButton onClick={p.onClose} aria-label={t('subagents.back')} title={t('subagents.back')}>
           {mode === 'overlay' ? <ArrowLeft strokeWidth={1.5} /> : <X strokeWidth={1.5} />}
         </IconButton>
-        <nav aria-label={t('subagents.breadcrumb')} className="flex min-w-0 flex-1 items-baseline gap-1 text-3 text-fg-3">
-          <button type="button" onClick={p.onClose} className="shrink-0 cursor-pointer transition-colors hover:text-fg-1">{t('subagents.root')}</button>
-          {crumbs.map((c, i) => (
-            <Fragment key={c.id}>
-              <span aria-hidden="true" className="shrink-0">›</span>
-              {i === crumbs.length - 1
-                ? <span className="min-w-0 truncate text-fg-2">{subagentTitle(c, t)}</span>
-                : <button type="button" onClick={() => p.onSelect(c.id)} className="min-w-0 cursor-pointer truncate transition-colors hover:text-fg-1">{subagentTitle(c, t)}</button>}
-            </Fragment>
-          ))}
-        </nav>
-        <div role="tablist" className="flex shrink-0 items-center gap-gap">
-          {TABS.map(tb => (
-            <button
-              key={tb}
-              type="button"
-              role="tab"
-              aria-selected={p.tab === tb}
-              onClick={() => p.onTab(tb)}
-              className={cn('cursor-pointer text-2 transition-colors', p.tab === tb ? 'font-medium text-fg-1' : 'text-fg-3 hover:text-fg-1')}
-            >
-              {t(TAB_KEY[tb])}
-            </button>
-          ))}
-        </div>
+        <span className="min-w-0 flex-1 truncate text-2 font-medium text-fg-strong" title={title}>{title}</span>
+        {cancelable && (
+          <IconButton onClick={p.onCancel} disabled={node.cancelRequested} aria-label={cancelLabel} title={cancelLabel}
+            className="disabled:cursor-not-allowed disabled:opacity-50">
+            <Square strokeWidth={1.5} />
+          </IconButton>
+        )}
+        {p.onGraph && (
+          <IconButton onClick={p.onGraph} aria-haspopup="dialog" aria-label={t('subagents.graph')} title={t('subagents.graph')}>
+            <Network strokeWidth={1.5} />
+          </IconButton>
+        )}
       </div>
-      <div className="shrink-0 px-pad pt-pad">
-        <h2 className="m-0 truncate text-1 font-medium text-fg-1">{subagentTitle(node, t)}</h2>
-        <div className="mt-1 text-3 text-fg-3">{meta.join(' · ')}</div>
-      </div>
-      {p.tab === 'session' && <SessionTab {...p} />}
-      {p.tab === 'tree' && (
-        <div className="min-h-0 flex-1 overflow-y-auto scroll-thin">
-          <SubagentTreeView all={p.all} sessionTitle={p.sessionTitle} selectedId={node.id}
-            onSelect={id => { p.onSelect(id); p.onTab('session'); }} onClose={p.onClose} />
-        </div>
-      )}
-      {p.tab === 'info' && (
-        <div className="min-h-0 flex-1 overflow-y-auto scroll-thin">
-          <InfoTab node={node} />
-        </div>
-      )}
+      <SessionTab {...p} />
     </div>
   );
 }
 
-function SessionTab({ node, transcript, onPermission, onCancel, question, onAnswer, blobUrl }: InspectorProps) {
+function SessionTab({ node, transcript, onPermission, question, onAnswer, blobUrl }: InspectorProps) {
   const scroll = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   // Stick to the bottom while the child streams, exactly like the main thread; scrolling up releases the follow
@@ -139,11 +99,11 @@ function SessionTab({ node, transcript, onPermission, onCancel, question, onAnsw
   return (
     <>
       <div ref={scroll} className="scroll-thin min-h-0 min-w-0 flex-1 overflow-y-auto">
-        <div className="flex min-w-0 flex-col gap-msg px-pad py-gap">
+        <div className="flex min-w-0 flex-col gap-msg px-pad py-pad">
           {node.task !== undefined && <TaskCard task={node.task} />}
           {node.visibility === 'receipt' ? (
             <>
-              <Row className="text-fg-3"><span>{t('subagents.receiptOnly')}</span></Row>
+              <p className="m-0 text-2 text-fg-3">{t('subagents.receiptOnly')}</p>
               {node.result !== undefined && (
                 <section className="flex min-w-0 flex-col gap-1">
                   <div className="text-3 text-fg-3">{t('subagents.result')}</div>
@@ -156,7 +116,8 @@ function SessionTab({ node, transcript, onPermission, onCancel, question, onAnsw
           ) : (
             <TurnActionsContext.Provider value={undefined}>
               <HistoryContext.Provider value={undefined}>
-                <div className="flex min-w-0 flex-col gap-msg">
+                {/* Turns carry their own column padding, like in the main thread */}
+                <div className="-mx-pad flex min-w-0 flex-col gap-msg">
                   {transcript.turns.map((turn, ti) => turn.role === 'agent'
                     ? (
                       <AgentMessage
@@ -184,25 +145,14 @@ function SessionTab({ node, transcript, onPermission, onCancel, question, onAnsw
               <Prose block={textOf(node.result)} />
             </section>
           )}
-          {node.visibility === 'nested' && node.state === 'running' && node.result === undefined && (
-            <Row className="text-fg-3"><span>{t('subagents.nestedNote')}</span></Row>
+          {node.state === 'disconnected' && (
+            <Row lead={<Unplug className="size-icon" strokeWidth={1.5} />} className="text-fg-3">
+              <span className="min-w-0">{t('subagents.disconnectedNote')}</span>
+            </Row>
           )}
         </div>
       </div>
       {question !== undefined && onAnswer !== undefined && <Questions block={question} onAnswer={onAnswer} />}
-      <footer className="shrink-0 border-t border-line px-pad py-gap text-3 text-fg-3">
-        <div className="flex items-center gap-2">
-          <Eye className="size-icon shrink-0" strokeWidth={1.5} />
-          <span className="min-w-0 flex-1">{t('subagents.observedOnly')}</span>
-          {node.state === 'running' && node.controls.cancel && onCancel !== undefined && (
-            <Button onClick={onCancel} disabled={node.cancelRequested} className="shrink-0 disabled:cursor-not-allowed disabled:text-fg-3">
-              {t(node.cancelRequested ? 'subagents.cancelling' : 'subagents.cancel')}
-            </Button>
-          )}
-        </div>
-        {node.state === 'running' && !node.controls.cancel && <div className="mt-1">{t('subagents.noCancel')}</div>}
-        {node.state === 'disconnected' && <div className="mt-1">{t('subagents.disconnectedNote')}</div>}
-      </footer>
     </>
   );
 }
@@ -233,33 +183,4 @@ function TaskCard({ task }: { task: string }) {
       </div>
     </section>
   );
-}
-
-// Facts the agent actually reported — absent fields stay absent, nothing is invented
-function InfoTab({ node }: { node: SubagentSummary }) {
-  const peers = (Object.entries(node.peer) as [string, string][]).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(' · ');
-  const facts: ReactNode[] = [];
-  const fact = (label: string, value: ReactNode, mono = false) => facts.push(
-    <Row key={label} dense>
-      <dt className="shrink-0 text-fg-3">{label}</dt>
-      <dd className={cn('m-0 min-w-0 truncate text-fg-1', mono && 'font-mono text-mono text-fg-3')} title={typeof value === 'string' ? value : undefined}>{value}</dd>
-    </Row>,
-  );
-  fact(t('subagents.info.state'), stateLabel(node, t));
-  if (node.role !== undefined) fact(t('subagents.info.role'), node.role);
-  if (node.model !== undefined) fact(t('subagents.info.model'), node.model);
-  fact(
-    t('subagents.info.visibility'),
-    <span className="flex min-w-0 flex-col">
-      <span className="truncate text-fg-1">{t(`subagents.visibility.${node.visibility}` as MsgKey)}</span>
-      <span className="text-3 text-fg-3">{t(`subagents.visibility.${node.visibility}Hint` as MsgKey)}</span>
-    </span>,
-  );
-  fact(t('subagents.info.elapsed'), elapsedText(node, Date.now(), t));
-  fact(t('subagents.info.tools'), node.toolCount);
-  if (node.background) fact(t('subagents.info.background'), t('question.yes'));
-  fact(t('subagents.info.cancelable'), node.controls.cancel ? t('question.yes') : t('question.no'));
-  if (node.usage !== undefined) fact(t('subagents.info.context'), `${node.usage.used} / ${node.usage.size}`);
-  if (peers) fact(t('subagents.info.peer'), peers, true);
-  return <dl className="m-0 flex flex-col gap-0.5 px-pad py-gap">{facts}</dl>;
 }

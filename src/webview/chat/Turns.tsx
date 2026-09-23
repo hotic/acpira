@@ -32,7 +32,7 @@ import { compactionForDisplay } from './compactionDisplay';
 import { splitPlanSections } from './planSections';
 import { TurnActions } from './TurnActions';
 import { SubagentGroup } from './subagents/SubagentGroup';
-import { breadcrumb, nodesByTurn, subagentTitle, type SubagentTab } from './subagents/subagentState';
+import { breadcrumb, nodesByTurn, subagentTitle } from './subagents/subagentState';
 
 // User message: color block / right-aligned bubble / plain text; ones Acpira sends automatically (/compact) render as a note line, not a bubble.
 // Attachments (image thumbnails / file pills) sit above the text inside the same bubble.
@@ -97,7 +97,7 @@ type OnPermission = (blockId: string, optionId: string) => void;
 export const AgentMessage = memo(function AgentMessage({ turn, index, running, onPermission, compacting, memoryKey, turnIndex, last, settings, subagents, allSubagents, onInspect, actions = true, lead = 'orb' }: {
   turn: AgentTurn; index: number; running: boolean; onPermission: OnPermission; compacting?: boolean; memoryKey?: string; turnIndex: number; last: boolean; settings?: TurnSettings;
   // Nodes anchored to this turn plus the session-wide list (breadcrumbs/descendant counts may cross turns)
-  subagents?: SubagentSummary[]; allSubagents?: SubagentSummary[]; onInspect?: (id: string, tab: SubagentTab) => void;
+  subagents?: SubagentSummary[]; allSubagents?: SubagentSummary[]; onInspect?: (id: string) => void;
   // The subagent inspector renders turns without the copy/fork/stats row
   actions?: boolean;
   // Working-row lead: the Orb belongs to the root conversation; the inspector uses a static icon

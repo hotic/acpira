@@ -56,6 +56,8 @@ export interface ComposerProps {
   onSetMode: (id: string) => void;
   onSetConfig: (configId: string, value: string) => void;
   onCompact: () => void;
+  // Session-level navigation is omitted from history and queued-message editors.
+  toolbarStart?: ReactNode;
 }
 
 // Composer has three layers: attachment chips (when any), the input area, and a toolbar row below.
@@ -262,7 +264,7 @@ export function Composer(p: ComposerProps) {
           a fieldset lays children out in an anonymous inner box that ignores the fieldset's min-height, so items-center there
           only centered the chips within their own --ctl-sm height and they rode a few px above the row-centered send button */}
       <div className="@container flex min-h-ctl min-w-0 items-center gap-1 px-2 pt-1 pb-2">
-        <fieldset disabled={p.disabled || p.controlsLocked || sending} className="m-0 flex min-w-0 flex-1 items-center gap-1 border-0 p-0">
+        <fieldset disabled={p.disabled || p.controlsLocked || sending} className="m-0 flex min-w-0 shrink-0 items-center gap-1 border-0 p-0">
           <div className="flex shrink-0 items-center gap-1">
             {/* Mode is the one solid chip and never truncates; single-line rows with a glyph each, the description rides along as a tooltip */}
             {p.controls.modes.length > 0 && (
@@ -285,6 +287,9 @@ export function Composer(p: ComposerProps) {
               </DropdownMenu.Root>
             )}
           </div>
+        </fieldset>
+        {!p.edit && p.toolbarStart}
+        <fieldset disabled={p.disabled || p.controlsLocked || sending} className="m-0 flex min-w-0 flex-1 items-center gap-1 border-0 p-0">
           <div className="min-w-0 flex-1" />
           {[...other, ...(!models.length ? modelConfig : [])].map(c => (
             <OptionControl key={c.id} end control={c} hidden={p.hidden?.[c.id]} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
