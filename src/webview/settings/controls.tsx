@@ -103,8 +103,9 @@ export function SectionAction({ icon, onClick, children, title }: { icon?: React
   return <Chip caret={false} icon={icon} onClick={onClick} title={title} className="-mr-2 shrink-0">{children}</Chip>;
 }
 
-export function Group({ className, children }: { className?: string; children: ReactNode }) {
-  const inset = useContext(InsetGroupContext);
+export function Group({ className, children, embedded = false }: { className?: string; children: ReactNode; embedded?: boolean }) {
+  const inheritedInset = useContext(InsetGroupContext);
+  const inset = embedded || inheritedInset;
   const Container = inset ? 'div' : Card;
   return <GroupContext.Provider value={true}>
     <Container className={cn('flex flex-col divide-y divide-line overflow-hidden', !inset && 'px-pad shadow-none', className)}>{children}</Container>
