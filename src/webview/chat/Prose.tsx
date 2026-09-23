@@ -3,7 +3,7 @@ import { Streamdown, defaultRehypePlugins, type Components } from 'streamdown';
 import { createMathPlugin } from '@streamdown/math';
 import { mermaid as mermaidDiagram } from '@streamdown/mermaid';
 import type { TextBlock } from '@shared/transcript';
-import { useStreamMotion } from './streamMotion';
+import { STREAM_MOTION, useSmoothText, useStreamMotion, type StreamMotion } from './streamMotion';
 import { CodeBlock } from './CodeBlock';
 import { InlineFileCode, Link } from './Link';
 import { rewriteFileHrefs } from './fileLinks';
@@ -20,11 +20,14 @@ const { raw: rehypeRaw, sanitize: rehypeSanitize, harden: rehypeHarden } = defau
 if (!rehypeRaw || !rehypeSanitize || !rehypeHarden) throw new Error('streamdown default rehype plugins missing');
 // Rewrite file:// before sanitize/harden; urlTransform runs too late and harden would paint ` [blocked]`.
 const REHYPE = [rehypeRaw, rewriteFileHrefs, rehypeSanitize, rehypeHarden];
-export const Prose = memo(function Prose({ block }: { block: TextBlock }) {
-  const streaming = !!block.streaming;
-  const { animated, animating } = useStreamMotion(streaming);
+// `motion` is a stable module-level config (streamdown compares props by reference); the LAB passes alternatives
+export const Prose = memo(function Prose({ block, motion = STREAM_MOTION }: { block: TextBlock; motion?: StreamMotion }) {
+  const smooth = useSmoothText(block.markdown, !!block.streaming, motion.pace);
+  // Still draining counts as streaming: the renderer keeps its streaming mode until the visible text catches up
+  const streaming = !!block.streaming || smooth.draining;
+  const { animated, animating } = useStreamMotion(streaming, motion);
   // The turn heading already indicates waiting before the first visible words.
-  if (!block.markdown.trim()) return null;
+  if (!smooth.text.trim()) return null;
   return (
     <Streamdown
       mode={streaming || animating ? 'streaming' : 'static'}
@@ -40,7 +43,7 @@ export const Prose = memo(function Prose({ block }: { block: TextBlock }) {
       components={COMPONENTS}
       className="acp-prose flex min-w-0 flex-col gap-gap text-1 text-fg-1"
     >
-      {block.markdown}
+      {smooth.text}
     </Streamdown>
   );
 });

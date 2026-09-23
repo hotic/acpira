@@ -35,9 +35,16 @@
 @keyframes sd-blurIn { from { opacity: 0; filter: blur(4px); } }
 @keyframes sd-markerIn { from { color: transparent; } }
 
-/* New graphemes enter immediately; incoming chunks are never batched by the UI. */
-[data-sd-animate][style*="sd-acpCharIn"], .stream-glyph { display: inline-block; white-space: pre-wrap; }
-.stream-glyph { animation: sd-acpCharIn var(--stream-char-duration) ease var(--glyph-delay, 0ms) both; }
+/* Streamed graphemes (Prose `acpGlyph`, thought `.stream-glyph`): an opacity-only fade on inline spans, so CJK line-breaking rules
+   still apply (inline-block glyphs let a full stop start a line). The duration is fixed here instead of read from --sd-duration:
+   streamdown re-renders the whole live block on every pass and stamps the characters it already animated with a 0 ms duration,
+   which snapped each mid-fade glyph to full opacity while an earlier, no longer re-rendered block kept fading. The span element
+   is reused across passes, so a fixed duration lets its fade run to the end. */
+[data-sd-animate][style*="sd-acpGlyph"], .stream-glyph { animation: sd-acpGlyph var(--stream-char-duration) ease var(--sd-delay, var(--glyph-delay, 0ms)) both; }
+@keyframes sd-acpGlyph { from { opacity: 0; } }
+
+/* The previous entrance (inline-block + a short drop, streamdown-driven duration), kept for the comparison in lab/stream-pace.preview.html */
+[data-sd-animate][style*="sd-acpCharIn"] { display: inline-block; white-space: pre-wrap; }
 @keyframes sd-acpCharIn { from { opacity: 0; transform: translateY(var(--stream-char-y)); } to { opacity: 1; transform: none; } }
 
 /* Row slots enter once, independently of the active verb's continuous shimmer. */

@@ -94,8 +94,8 @@
   --process-row: 22px;
   --process-row-gap: 2px;
   --process-prose-gap: 10px;
-  --stream-char-y: -3px;
-  --stream-char-duration: 380ms;
+  --stream-char-y: -1px;
+  --stream-char-duration: 180ms;
   --row-enter-duration: 460ms;
   --row-enter-part: 65ms;
   --row-enter-file: 180ms;
