@@ -869,6 +869,28 @@ describe('AcpSession', () => {
     s.dispose();
   });
 
+  it('preserves native effort across a Fusion sidekick change on the wire', async () => {
+    const first = 'Fusion (GPT-6 Astra High Thinking + SWE-2 Medium)';
+    const second = 'Fusion (GPT-6 Astra High Thinking + SWE-2 High)';
+    const { session } = deps('/tmp', undefined, undefined, { env: {
+      FAKE_MODELS: `${first},${second}`, FAKE_MODEL_RESETS_EFFORT: '1',
+    } });
+    const s = session();
+    try {
+      await s.start();
+      await s.setConfig('model', first);
+      await s.setConfig('effort', 'low');
+      await s.setConfig('model', second);
+      expect(s.view().controls.options.find(o => o.id === 'effort')?.value).toBe('low');
+      expect(s.view().controls.options.find(o => o.id === 'model')?.value).toBe(second);
+      // Another round trip proves the restored value belongs to the agent, not only the view.
+      await s.setConfig('model', first);
+      expect(s.view().controls.options.find(o => o.id === 'effort')?.value).toBe('low');
+      await s.setConfig('model', 'm2');
+      expect(s.view().controls.options.find(o => o.id === 'effort')?.value).toBe('high');
+    } finally { s.dispose(); }
+  });
+
   it('resume: with acpSessionId goes through session/resume; unknown to the process → readonly', async () => {
     const { d, session } = deps();
     const s = session();
