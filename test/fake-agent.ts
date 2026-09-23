@@ -34,6 +34,7 @@ import * as acp from '@agentclientprotocol/sdk';
 // FAKE_STARTUP_BANNER → pi-acp's startup banner: the session/new response carries _meta.piAcp.startupInfo and the same
 // text is re-sent as one agent_message_chunk a tick later; =early instead sends it before session/new returns;
 // FAKE_MODELS → comma-separated extra model options appended to the model configOption (read at spawn, so a second spawn sees new values);
+// FAKE_CONFIG_DELAY_MS → setConfigOption and setMode wait that long before answering (rejections too), so tests can watch in-flight picks;
 // FAKE_SESSION_DIR → a native session store on disk: sessions persist as <id>.json, resume/load restore them (load replays a
 // "NATIVE_REPLAY" message), and the agent advertises sessionCapabilities.list, answering session/list with the dir's sessions
 // (title "Fake <id8>", updatedAt = file mtime, newest first; cursor is a numeric offset, page size 50)
@@ -188,8 +189,12 @@ const app = acp.agent({ name: 'fake-agent' })
     sessions.delete(params.sessionId);
     return {};
   })
-  .onRequest(acp.methods.agent.session.setMode, ({ params }) => { modes.set(params.sessionId, params.modeId); saveSession(params.sessionId); return {}; })
+  .onRequest(acp.methods.agent.session.setMode, async ({ params }) => {
+    await configDelay();
+    modes.set(params.sessionId, params.modeId); saveSession(params.sessionId); return {};
+  })
   .onRequest(acp.methods.agent.session.setConfigOption, async ({ params, client }) => {
+    await configDelay();
     if (params.value === 'unavailable') throw acp.RequestError.invalidParams(undefined, 'Model unavailable');
     if (background && params.configId === 'effort') {
       await background(params.value === 'low' ? 'start' : 'completed');
@@ -847,6 +852,8 @@ const failed = new Map<string, number>();
 
 // two select-type configOptions: reasoning level intentionally listed before model, verifying the client sorts by category
 const config: Record<string, string> = { model: 'm1', effort: 'high' };
+// FAKE_CONFIG_DELAY_MS: make control requests as slow as a real agent so in-flight state is observable
+const configDelay = () => new Promise(r => setTimeout(r, Number(process.env.FAKE_CONFIG_DELAY_MS) || 0));
 function configOptions(): acp.SessionConfigOption[] {
   return [
     { id: 'effort', name: 'Reasoning', category: 'thought_level', type: 'select', currentValue: config.effort!, options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }] },

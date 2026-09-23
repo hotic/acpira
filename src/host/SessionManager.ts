@@ -206,7 +206,7 @@ export class SessionManager {
 
   private remember(s: AcpSession) {
     const cur = this.prefs.lastSettings[s.agent];
-    this.prefs.lastSettings[s.agent] = { ...cur, config: captureTurnSettings(s.view().controls).config };
+    this.prefs.lastSettings[s.agent] = { ...cur, config: captureTurnSettings(s.agentControls).config };
     this.savePrefs(s.agent);
   }
 
@@ -326,7 +326,7 @@ export class SessionManager {
     if (p?.options.length) return p.options;
     for (const s of this.index) {
       if (s.agent !== agent) continue;
-      const options = this.live.get(s.id)?.view().controls.options ?? (await this.deps.store.load(s.id))?.controls?.options;
+      const options = this.live.get(s.id)?.agentControls.options ?? (await this.deps.store.load(s.id))?.controls?.options;
       if (options?.length) return options;
     }
     return [];
@@ -688,8 +688,8 @@ export class SessionManager {
         case 'answer': if (isSessionId(m.sessionId)) this.live.get(m.sessionId)?.answerQuestions(m.blockId, m.answers, m.skip); break;
         case 'buildPlan': if (isSessionId(m.sessionId)) await this.live.get(m.sessionId)?.buildPlan(m.planId, m.model, m.optionId); break;
         // Remembered only once the session actually shows the mode: setMode is a no-op on a session that is not ready
-        case 'setMode': { const s = this.target(v, m.sessionId); if (s) { await s.setMode(m.id); if (s.view().controls.modeId === m.id) this.rememberMode(s.agent, m.id); } break; }
-        case 'setConfig': { const s = this.target(v, m.sessionId); if (s) { await s.setConfig(m.configId, m.value); this.remember(s); } break; }
+        case 'setMode': { const s = this.target(v, m.sessionId); if (s) { await s.selectMode(m.id); if (s.agentControls.modeId === m.id) this.rememberMode(s.agent, m.id); } break; }
+        case 'setConfig': { const s = this.target(v, m.sessionId); if (s) { await s.selectConfig(m.configId, m.value); this.remember(s); } break; }
         case 'selectSession': await this.selectSessionFor(v, m.id); break;
         case 'newSession': await this.newSessionFor(v, m.agent); break;
         case 'renameSession': await this.renameSession(m.id, m.title); break;

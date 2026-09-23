@@ -869,6 +869,69 @@ describe('AcpSession', () => {
     s.dispose();
   });
 
+  it('optimistic config pick: view moves at once, record stays agent truth until the request settles', async () => {
+    const { session, changes } = deps('/tmp', undefined, undefined, { env: { FAKE_CONFIG_DELAY_MS: '150' } });
+    const s = session();
+    try {
+      await s.start();
+      const before = changes();
+      const p = s.selectConfig('effort', 'low');
+      expect(s.view().controls.options.find(o => o.id === 'effort')?.value).toBe('low');
+      expect(changes()).toBeGreaterThan(before);
+      expect(s.toRecord().controls.options.find(o => o.id === 'effort')?.value).toBe('high');
+      await p;
+      expect(s.view().controls.options.find(o => o.id === 'effort')?.value).toBe('low');
+      expect(s.toRecord().controls.options.find(o => o.id === 'effort')?.value).toBe('low');
+      expect(s.agentControls.options.find(o => o.id === 'effort')?.value).toBe('low');
+    } finally { s.dispose(); }
+  });
+
+  it('optimistic config pick: rapid clicks collapse to the last value without flicker', async () => {
+    const { d, session } = deps('/tmp', undefined, undefined, { env: { FAKE_CONFIG_DELAY_MS: '150' } });
+    const seen: (string | undefined)[] = [];
+    d.onChange = s => { seen.push(s.view().controls.options.find(o => o.id === 'model')?.value); };
+    const s = session();
+    try {
+      await s.start();
+      expect(s.agentControls.options.find(o => o.id === 'model')?.value).toBe('m1');
+      const p1 = s.selectConfig('model', 'm1');
+      const p2 = s.selectConfig('model', 'm2');
+      seen.length = 0;
+      await Promise.all([p1, p2]);
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen.every(v => v === 'm2')).toBe(true);
+      expect(s.agentControls.options.find(o => o.id === 'model')?.value).toBe('m2');
+    } finally { s.dispose(); }
+  });
+
+  it('optimistic config pick: a refused value reverts the view to agent truth', async () => {
+    const { session } = deps('/tmp', undefined, undefined, { env: { FAKE_CONFIG_DELAY_MS: '150', FAKE_MODELS: 'unavailable' } });
+    const s = session();
+    try {
+      await s.start();
+      const p = s.selectConfig('model', 'unavailable');
+      expect(s.view().controls.options.find(o => o.id === 'model')?.value).toBe('unavailable');
+      expect(s.toRecord().controls.options.find(o => o.id === 'model')?.value).toBe('m1');
+      await expect(p).rejects.toThrow();
+      expect(s.view().controls.options.find(o => o.id === 'model')?.value).toBe('m1');
+      expect(s.toRecord().controls.options.find(o => o.id === 'model')?.value).toBe('m1');
+    } finally { s.dispose(); }
+  });
+
+  it('optimistic mode pick: view moves at once, agent truth follows the wire request', async () => {
+    const { session } = deps('/tmp', undefined, undefined, { env: { FAKE_CONFIG_DELAY_MS: '150' } });
+    const s = session();
+    try {
+      await s.start();
+      const p = s.selectMode('plan');
+      expect(s.view().controls.modeId).toBe('plan');
+      expect(s.agentControls.modeId).toBe('agent');
+      await p;
+      expect(s.view().controls.modeId).toBe('plan');
+      expect(s.agentControls.modeId).toBe('plan');
+    } finally { s.dispose(); }
+  });
+
   it('preserves native effort across a Fusion sidekick change on the wire', async () => {
     const first = 'Fusion (GPT-6 Astra High Thinking + SWE-2 Medium)';
     const second = 'Fusion (GPT-6 Astra High Thinking + SWE-2 High)';
