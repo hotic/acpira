@@ -5,22 +5,29 @@ import { useCallback } from 'react';
 export function useScrollFade<T extends HTMLElement>() {
   return useCallback((element: T | null) => {
     if (!element) return;
+    let frame: number | undefined;
     const update = () => {
       if (element.clientHeight < 1) return;
       const overflow = element.scrollHeight - element.clientHeight;
       element.toggleAttribute('data-more-above', overflow > 1 && element.scrollTop > 1);
       element.toggleAttribute('data-more-below', overflow > 1 && overflow - element.scrollTop > 1);
     };
+    const schedule = () => {
+      if (typeof requestAnimationFrame === 'undefined') { update(); return; }
+      if (frame !== undefined) return;
+      frame = requestAnimationFrame(() => { frame = undefined; update(); });
+    };
     update();
-    element.addEventListener('scroll', update, { passive: true });
-    const size = new ResizeObserver(update);
+    element.addEventListener('scroll', schedule, { passive: true });
+    const size = new ResizeObserver(schedule);
     size.observe(element);
-    const content = new MutationObserver(update);
+    const content = new MutationObserver(schedule);
     content.observe(element, { childList: true, characterData: true, subtree: true });
     return () => {
-      element.removeEventListener('scroll', update);
+      element.removeEventListener('scroll', schedule);
       size.disconnect();
       content.disconnect();
+      if (frame !== undefined) cancelAnimationFrame(frame);
     };
   }, []);
 }
