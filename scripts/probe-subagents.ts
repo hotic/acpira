@@ -14,7 +14,8 @@ import { dataHome, readCredentials } from '../src/host/accounts/devin';
 // <agent>: a registry id (devin / grok / kimi / opencode / …) or a label for --cmd
 // --cmd: run this command line instead of the registry's (e.g. "npx -y @agentclientprotocol/claude-agent-acp@0.78.0")
 // --no-caps: do not advertise clientCapabilities.subagents (RFD #1992) — the control run
-// --air: also advertise _meta.jetbrains.air = { version: 1, capabilities: ['nativeSubagentSessions'] } — claude-agent-acp's bridge for
+// --air: also advertise _meta.jetbrains.air = { version: 1, capabilities: ['nativeSubagentSessions', 'sessionFailure', 'asyncTasks'] }
+//   — claude-agent-acp's bridge for
 //   SDKs that strip the draft `subagents` field (the shape `air-extension.js` `clientSupportsAirCapability` reads)
 // --devin-meta: also advertise _meta['cognition.ai/subagentSupport'] = true (a string found in the devin binary; unverified)
 // --import-local: Devin's ACP mode refuses local credentials; hand the CLI's own login (~/.local/share/devin/credentials.toml)
@@ -180,7 +181,8 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, () => { cons
 
 try {
   const meta: Record<string, unknown> = {};
-  if (flag('--air')) meta.jetbrains = { air: { version: 1, capabilities: ['nativeSubagentSessions'] } };
+  // The same AIR block AgentProcess sends — the raw probe exists to observe what an agent emits given the capability
+  if (flag('--air')) meta.jetbrains = { air: { version: 1, capabilities: ['nativeSubagentSessions', 'sessionFailure', 'asyncTasks'] } };
   if (flag('--devin-meta')) meta['cognition.ai/subagentSupport'] = true;
   const clientCapabilities: Record<string, unknown> = {
     fs: { readTextFile: false, writeTextFile: false },

@@ -1,4 +1,4 @@
-import type { AgentBlock, Turn } from '@shared/transcript';
+import type { AgentBlock, ToolCallBlock, Turn } from '@shared/transcript';
 
 function unfinished(block: AgentBlock): boolean {
   switch (block.type) {
@@ -9,6 +9,16 @@ function unfinished(block: AgentBlock): boolean {
     case 'question': return !block.outcome;
     default: return false;
   }
+}
+
+// A live AIR async task outlived its process: the last known task state stays honest (a stopped lie
+// would claim a kill nobody sent), but the row loses observation and stop control — the host can no
+// longer reach `_session/async_task/stop` for it
+function orphanTask(block: ToolCallBlock): Partial<ToolCallBlock> {
+  const task = block.asyncTask;
+  if (!task || (task.state !== 'running' && task.state !== 'paused')) return {};
+  const { stopRequested: _dropped, ...rest } = task;
+  return { observation: 'unknown', asyncTask: { ...rest, canStop: false } };
 }
 
 // A disk snapshot carries display history, never ownership of a live request or
@@ -39,7 +49,7 @@ export function restoreInterruptedTurns(turns: Turn[], updatedAt: string): Turn[
         case 'thought': return { ...block, streaming: false,
           ...(block.startedAt !== undefined && endedAt !== undefined
             ? { durationSec: Math.max(0, Math.round((endedAt - block.startedAt) / 1000)) } : {}) };
-        case 'tool_call': return { ...block, status: 'cancelled',
+        case 'tool_call': return { ...block, status: 'cancelled', ...orphanTask(block),
           ...(block.startedAt !== undefined && endedAt !== undefined ? { endedAt: Math.max(block.startedAt, endedAt) } : {}) };
         case 'compaction': return { ...block, status: 'cancelled' };
         case 'question': return { ...block, outcome: 'cancelled' };

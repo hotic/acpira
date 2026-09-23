@@ -4,6 +4,9 @@ export type FileLink = { path: string; line?: number };
 
 export const OpenToolFileContext = createContext<((path: string, line?: number) => void) | undefined>(undefined);
 
+// AIR asyncTasks: the stop affordance on a tool row asks the adapter to stop the task on the session that owns it
+export const AsyncTaskStopContext = createContext<((taskId: string) => void) | undefined>(undefined);
+
 // Agent-emitted images are blob-store files: the URL builds them for <img>, the opener hands the host the blob name
 export const BlobUrlContext = createContext<((blob: string) => string) | undefined>(undefined);
 export const OpenBlobContext = createContext<((blob: string) => void) | undefined>(undefined);

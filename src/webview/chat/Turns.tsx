@@ -1,6 +1,6 @@
-import { Fragment, memo, useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, createContext, memo, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Bot, Check, ChevronRight, Compass, Hand, MessageCircleQuestion, TriangleAlert, X } from 'lucide-react';
-import type { AgentBlock, AgentTurn, CompactionBlock, PermissionBlock, SlashCommand, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@shared/transcript';
+import type { AgentBlock, AgentTurn, CompactionBlock, FailureAction, NoticeBlock, PermissionBlock, SlashCommand, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
 import { useAppearance, type Appearance } from '../appearance';
 import { getLocale, t } from '../i18n';
@@ -91,11 +91,56 @@ export function UserMessage({ turn, index, blobUrl, onEdit, compact, commands }:
 
 type OnPermission = (blockId: string, optionId: string) => void;
 
+// AIR sessionFailure notices: the turn scopes which rows may offer their actions (the last settled turn,
+// never while streaming) and which notice the turn's own error card already explains — that one is
+// suppressed here instead of reporting the same failure twice
+interface NoticeActions {
+  onAction?: (action: FailureAction) => void;
+  showActions?: boolean;
+  suppressId?: string;
+}
+const NoticeActionContext = createContext<NoticeActions | undefined>(undefined);
+
+// One row per failure id: a warning sits in the transcript's quiet color, an error takes the warn tone.
+// Details wrap under the title; the adapter's own actions render as small buttons, in payload order
+function NoticeRow({ block }: { block: NoticeBlock }) {
+  const ctx = useContext(NoticeActionContext);
+  if (block.id === ctx?.suppressId) return null;
+  const error = block.severity === 'error';
+  const buttons = error && ctx?.showActions && ctx.onAction ? block.actions : [];
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <Row lead={<TriangleAlert className="size-icon" strokeWidth={1.5} />} className={error ? 'text-warn' : 'text-fg-3'}>
+        <RowLabel className="whitespace-pre-wrap">{block.title}</RowLabel>
+      </Row>
+      {block.details && (
+        <Row className="text-3 text-fg-3"><span className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere]">{block.details}</span></Row>
+      )}
+      {buttons.length > 0 && (
+        <Row className="text-fg-3">
+          <span className="flex flex-wrap gap-2">
+            {buttons.map(a => (
+              <button
+                key={a}
+                type="button"
+                className="rounded-md px-1.5 py-0.5 text-3 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1"
+                onClick={() => ctx?.onAction?.(a)}
+              >
+                {a === 'retry' ? t('common.retry') : a === 'new_session' ? t('notice.continueNew') : t('notice.goLogin')}
+              </button>
+            ))}
+          </span>
+        </Row>
+      )}
+    </div>
+  );
+}
+
 // Agent message: consecutive "lines" (thought / plan / tool, commands included) are grouped together; prose / permission cards each stand alone as blocks.
 // The top-level activity owns the only Orb; detailed rows show their own verbs with static icons.
 // Memoized: the host pushes the whole view on every stream chunk and `reuse` keeps finished turns by reference, so only the live turn renders.
 // `memoryKey` names the turn for fold memory (session + turn); without one the fold state lives only in the component.
-export const AgentMessage = memo(function AgentMessage({ turn, index, running, onPermission, compacting, memoryKey, turnIndex, last, settings, subagents, allSubagents, onInspect, actions = true, lead = 'orb' }: {
+export const AgentMessage = memo(function AgentMessage({ turn, index, running, onPermission, compacting, memoryKey, turnIndex, last, settings, subagents, allSubagents, onInspect, actions = true, lead = 'orb', onFailureAction }: {
   turn: AgentTurn; index: number; running: boolean; onPermission: OnPermission; compacting?: boolean; memoryKey?: string; turnIndex: number; last: boolean; settings?: TurnSettings;
   // Nodes anchored to this turn plus the session-wide list (breadcrumbs/descendant counts may cross turns)
   subagents?: SubagentSummary[]; allSubagents?: SubagentSummary[]; onInspect?: (id: string) => void;
@@ -103,6 +148,8 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   actions?: boolean;
   // Working-row lead: the Orb belongs to the root conversation; the inspector uses a static icon
   lead?: 'orb' | 'static';
+  // AIR sessionFailure notice actions (retry / sign in / new session), available on the last settled turn
+  onFailureAction?: (action: FailureAction) => void;
 }) {
   const raw = compacting ? compactionForDisplay(turn, running) : turn;
   // A delegation tool row is represented by its subagent group; filtered out before the fold sees it
@@ -111,7 +158,12 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   const sections = splitPlanSections(shown.blocks);
   const entranceScope = useId();
   const entrance = useMemo(() => ({ live: running, scope: memoryKey ?? entranceScope }), [running, memoryKey, entranceScope]);
-  return <EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><div className="group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]">
+  const noticeActions = useMemo<NoticeActions>(() => ({
+    onAction: onFailureAction,
+    showActions: last && !running,
+    ...(turn.error?.failureId !== undefined ? { suppressId: turn.error.failureId } : {}),
+  }), [onFailureAction, last, running, turn.error?.failureId]);
+  return <EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><NoticeActionContext.Provider value={noticeActions}><div className="group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]">
     {sections.map((section, i) => {
       const lastSection = i === sections.length - 1;
       // Only the continuation owns live activity and the turn outcome. Earlier
@@ -130,7 +182,7 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
       </Fragment>;
     })}
     {actions && !running && !compacting && turn.blocks.length > 0 && <TurnActions turn={turn} turnIndex={turnIndex} last={last} settings={settings} />}
-  </div></RowEntranceContext.Provider></EntranceScopeContext.Provider>;
+  </div></NoticeActionContext.Provider></RowEntranceContext.Provider></EntranceScopeContext.Provider>;
 });
 
 interface SubagentSlots {
@@ -267,7 +319,7 @@ function Activity({ turn, running, leadKind = 'orb' }: { turn: AgentTurn; runnin
   );
 }
 
-const LINE_TYPES = new Set(['thought', 'plan', 'tool_call', 'compaction']);
+const LINE_TYPES = new Set(['thought', 'plan', 'tool_call', 'compaction', 'notice']);
 type Group = { kind: 'lines'; blocks: AgentBlock[] } | { kind: 'block'; block: AgentBlock };
 
 function groupBlocks(blocks: AgentBlock[]): Group[] {
@@ -357,11 +409,12 @@ function CursorFold({ blocks }: { blocks: ToolCallBlock[] }) {
 // row read as the same status twice, and swapping it for the fold head at the first tool replayed the entrance).
 // Permission cards stay outside; the latest reply remains visible while it streams.
 function CodexMessage({ turn, running, onPermission, memoryKey, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; running: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
-  const { process, reply, permissions } = splitCodexBlocks(detailBlocks(turn, running));
+  const { process, reply, permissions, notices } = splitCodexBlocks(detailBlocks(turn, running));
   const hasTools = turn.blocks.some(block => block.type === 'tool_call');
   return (
     <div className="flex flex-col gap-gap">
       <CodexFold turn={turn} blocks={process} running={running} hasTools={hasTools} memoryKey={memoryKey} lead={lead} />
+      {notices.map(b => <NoticeRow key={b.id} block={b} />)}
       {subagents !== undefined && subagents.length > 0 && onInspect !== undefined && (
         <>
           <SubagentGroup nodes={subagents} all={allSubagents ?? subagents} onInspect={onInspect} />
@@ -458,6 +511,7 @@ function ProcessBlocks({ blocks }: { blocks: AgentBlock[] }) {
 }
 
 function LineBlock({ block }: { block: AgentBlock }) {
+  if (block.type === 'notice') return <NoticeRow block={block} />;
   if (block.type === 'thought') return <Thought block={block} />;
   if (block.type === 'plan') return <Plan block={block} />;
   if (block.type === 'tool_call') return <ToolCall block={block} />;

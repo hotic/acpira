@@ -694,7 +694,7 @@ export class SessionManager {
   async handleFor(v: SessionViewer, m: WebviewMsg): Promise<void> {
     try {
       const targetId = 'sessionId' in m && typeof m.sessionId === 'string' ? m.sessionId : v.activeId;
-      const execution = new Set(['send', 'stop', 'permission', 'answer', 'buildPlan', 'setMode', 'setConfig', 'selectAccount', 'compact', 'retry', 'retryTurn', 'reconnect', 'dequeue', 'sendQueued', 'editQueued', 'login']);
+      const execution = new Set(['send', 'stop', 'permission', 'answer', 'buildPlan', 'setMode', 'setConfig', 'selectAccount', 'compact', 'retry', 'retryTurn', 'reconnect', 'dequeue', 'sendQueued', 'editQueued', 'login', 'stopAsyncTask']);
       if (targetId && this.deps.chatgpt?.owns(targetId) && execution.has(m.type)) throw new Error(t('chatgpt.externalOnly'));
       switch (m.type) {
         case 'connectChatgpt': await this.newSessionFor(v, CHATGPT_ID); break;
@@ -727,6 +727,7 @@ export class SessionManager {
         }
         case 'unobserveSubagent': if (v.observing?.sessionId === m.sessionId && v.observing.subagentId === m.subagentId) { v.observing = undefined; v.lastSubagentRev = undefined; } break;
         case 'cancelSubagent': if (isSessionId(m.sessionId)) await this.live.get(m.sessionId)?.cancelSubagent(m.subagentId); break;
+        case 'stopAsyncTask': if (isSessionId(m.sessionId)) await this.live.get(m.sessionId)?.stopAsyncTask(m.taskId); break;
         case 'importNativeSession': await this.importNativeSession(v, m.agent, m); break;
         case 'selectAccount': await this.selectAccount(v, m.id, m.sessionId); break;
         case 'addAccount': await this.addAccount(v, m.agent, m.via); break;

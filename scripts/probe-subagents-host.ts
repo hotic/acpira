@@ -12,14 +12,15 @@ import { AccountStore, FileVault } from '../src/host/accounts/AccountStore';
 import { DevinAccountProvider } from '../src/host/accounts/devin';
 
 // Subagent end-to-end through the production host path (SessionManager → AcpSession → real CLI):
-//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe-subagents-host.ts <claude|devin>
-// claude registers as a custom agent on @agentclientprotocol/claude-agent-acp (custom agents advertise subagents: true,
-// which flips the adapter into native child sessions); devin runs through the account layer, binding the local CLI login.
+//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe-subagents-host.ts <claude|codex|devin>
+// claude and codex run through the built-in registry (the official adapters resolve from PATH — point it at the
+// local install, e.g. PATH=/tmp/acp-adapters/node_modules/.bin:$PATH); devin runs through the account layer,
+// binding the local CLI login.
 // One prompt asks for two parallel subagents; the script then observes each node's transcript, prints summaries and
 // transcripts, and re-opens the transcript store to verify the persisted node states. Permission cards — root or child —
 // are auto-allowed like a click.
 const [agentId = 'claude'] = process.argv.slice(2);
-if (agentId !== 'claude' && agentId !== 'devin') { console.error('usage: probe-subagents-host.ts <claude|devin>'); process.exit(1); }
+if (agentId !== 'claude' && agentId !== 'codex' && agentId !== 'devin') { console.error('usage: probe-subagents-host.ts <claude|codex|devin>'); process.exit(1); }
 const src = fileURLToPath(new URL('../src', import.meta.url));
 const project = mkdtempSync(join(tmpdir(), `acpira-sub-${agentId}-project-`));
 cpSync(join(src, 'shared'), join(project, 'src/shared'), { recursive: true });
@@ -40,9 +41,8 @@ const turnTags = (turns: Turn[]) => turns.map((t, i) => ({
   blocks: t.role === 'agent' ? t.blocks.map(b => blockTag(b)) : [t.text?.slice(0, 60) ?? '-'],
 }));
 
-const registry = new AgentRegistry(agentId === 'claude'
-  ? { claude: { name: 'Claude', command: 'npx', args: ['-y', '@agentclientprotocol/claude-agent-acp@0.78.0'] } }
-  : {});
+// Built-in registry: claude / codex resolve the official adapters from PATH, devin the local CLI
+const registry = new AgentRegistry();
 const log = (l: string) => logs.push(l);
 const toast = (level: 'info' | 'error', text: string) => console.log(`toast ${level}: ${text}`);
 const runInTerminal = () => {};
@@ -89,7 +89,9 @@ const approver = setInterval(() => {
 }, 100);
 
 const deadline = setTimeout(() => { console.log('deadline: 300 s budget spent'); void m.dispose().finally(() => process.exit(2)); }, 300_000);
-const PROMPT = 'Use two subagents in parallel, each with a short task: 1) list the files directly inside the `src/shared` directory and report how many there are; 2) list the files directly inside the `src/host/store` directory and report how many there are. Do not modify any files. When both return, reply with the two counts on one line.';
+const PROMPT = agentId === 'codex'
+  ? 'Spawn two subagents in parallel (use your agent-spawning / collaboration capability, not sequential work): 1) one lists the files directly inside the `src/shared` directory and reports the count; 2) one lists the files directly inside the `src/host/store` directory and reports the count. Do not modify any files. When both report back, reply with the two counts on one line.'
+  : 'Use two subagents in parallel, each with a short task: 1) list the files directly inside the `src/shared` directory and report how many there are; 2) list the files directly inside the `src/host/store` directory and report how many there are. Do not modify any files. When both return, reply with the two counts on one line.';
 let sessionId: string | undefined;
 let liveNodes: SubagentSummary[] = [];
 
@@ -145,6 +147,16 @@ try {
     check('all nodes model', nodes.every(n => n.model !== undefined), nodes.map(n => n.model).join(' '));
     const bare = rootTools.filter(b => b.subagentId === undefined);
     check('root tool_calls all carry subagentId', bare.length === 0, bare.map(b => `${b.id}(${b.kind})`).join(' '));
+  } else if (agentId === 'codex') {
+    // codex-acp's wire is the same subagent_spawned / subagent_state_update pair claude sends; capabilities {}
+    // means no per-child stop control, and nothing links the spawn to a root tool row (peer.toolCallId stays empty)
+    check('all nodes session visibility', nodes.every(n => n.visibility === 'session'), nodes.map(n => n.visibility).join(' '));
+    check('all nodes peer.sessionId', nodes.every(n => n.peer.sessionId !== undefined));
+    check('all nodes terminal', nodes.every(n => n.state !== 'running'), nodes.map(n => `${n.id}:${n.state}`).join(' '));
+    check('no per-child stop control (capabilities {})', nodes.every(n => n.controls.cancel === false), nodes.map(n => `${n.id}:${n.controls.cancel}`).join(' '));
+    // A generation reopen must land as a fresh node, never an orphan or a wrongly-failed one
+    const gens = nodes.filter(n => /:generation:\d+$/.test(n.peer.sessionId ?? ''));
+    if (gens.length) check('generation reopen nodes are well-formed', gens.every(n => n.state !== 'failed' || n.stateSource === 'agent'), gens.map(n => `${n.peer.sessionId}:${n.state}`).join(' '));
   } else {
     check('all nodes nested visibility', nodes.every(n => n.visibility === 'nested'), nodes.map(n => n.visibility).join(' '));
     check('all nodes role', nodes.every(n => n.role !== undefined), nodes.map(n => n.role).join(' '));

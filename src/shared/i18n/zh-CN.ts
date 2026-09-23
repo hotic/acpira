@@ -465,6 +465,18 @@ export const zhCN = {
   'verb.delegate': '委派',
   'verb.awaitSubagent': '等待子代理',
 
+  'asyncTask.running': '后台任务运行中',
+  'asyncTask.paused': '后台任务已暂停',
+  'asyncTask.completed': '后台任务已完成',
+  'asyncTask.failed': '后台任务失败',
+  'asyncTask.stopped': '后台任务已停止',
+  'asyncTask.stopping': '正在停止…',
+  'asyncTask.stop': '停止任务',
+  'asyncTask.stopRefused': 'agent 无法停止该任务',
+  'asyncTask.tokens': '{n} tokens',
+  'asyncTask.toolUses': '{n} 次工具调用',
+  'asyncTask.duration': '{s} 秒',
+
   'subagents.group': '子代理 {n}',
   'subagents.running': '{n} 运行中',
   'subagents.waiting': '{n} 待处理',

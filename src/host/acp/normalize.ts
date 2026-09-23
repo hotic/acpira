@@ -6,12 +6,14 @@ import { t } from '../i18n';
 import { MAX_OUT_IMAGE_BYTES, TOOL_OUTPUT_MAX } from '../limits';
 import { base64Bytes, imageMimeOf } from '@shared/attachments';
 import type {
-  AgentBlock, AgentTurn, CompactionBlock, CompactionStatus, ConfigControl, PlanPriority, PlanStatus, SessionControls, SessionOption, SlashCommand, ToolCallBlock, ToolContent, ToolKind, Turn, TurnError, Usage,
+  AgentBlock, AgentTurn, AsyncTaskInfo, AsyncTaskState, CompactionBlock, CompactionStatus, ConfigControl, NoticeBlock, PlanPriority, PlanStatus, SessionControls, SessionOption, SlashCommand, ToolCallBlock, ToolContent, ToolKind, ToolStatus, Turn, TurnError, Usage,
 } from '@shared/transcript';
 import { diffLines } from './diff';
 import { isTodoTool, todoEntries } from '@shared/todoTools';
 import { lastPlanSnapshot, samePlanEntries } from './planSnapshots';
 import type { AgentRuntimeInfo } from '@shared/inventory';
+import { failureOf, type SessionFailure } from './sessionFailure';
+import type { AsyncTaskEvent } from './subagents/wire';
 
 export { diffLines };
 
@@ -43,6 +45,13 @@ export interface NormalizeState {
   // a readable regular file becomes a blob, anything else falls back to the link's text rendering
   saveImageFile?: (absPath: string) => string | undefined;
   imageSeq?: number;
+  // AIR asyncTasks the owning session announced, whether or not a tool row hosts them yet
+  tasks?: Map<string, AsyncTaskInfo>;
+  // toolCallId → asyncTaskId: a task named a tool row that has not arrived yet; the next tool_call /
+  // tool_call_update for that id adopts the task instead of duplicating it
+  taskByTool?: Map<string, string>;
+  // Validation failures on extension metadata (sessionFailure, asyncTasks) are worth one log line
+  log?: (line: string) => void;
 }
 
 export function emptyState(): NormalizeState {
@@ -133,6 +142,7 @@ export function applyUpdate(s: NormalizeState, u: acp.SessionUpdate): boolean {
       const block = existing ?? toolBlock(u, s);
       if (existing) mergeTool(existing, u, s);
       else t.blocks.push(block);
+      linkAsyncTask(s, block);
       timeTool(block, t.startedAt !== undefined && !t.stop && t.blocks.includes(block));
       return true;
     }
@@ -146,6 +156,7 @@ export function applyUpdate(s: NormalizeState, u: acp.SessionUpdate): boolean {
       }, s);
       if (existing) mergeTool(existing, u, s);
       else { sealStreaming(s, t); t.blocks.push(block); }
+      linkAsyncTask(s, block);
       timeTool(block, t.startedAt !== undefined && !t.stop && t.blocks.includes(block));
       return true;
     }
@@ -185,9 +196,13 @@ export function applyUpdate(s: NormalizeState, u: acp.SessionUpdate): boolean {
     case 'config_option_update':
       applyConfigOptions(s.controls, u.configOptions);
       return true;
-    case 'session_info_update':
+    case 'session_info_update': {
       if (u.title) s.title = u.title;
+      // AIR sessionFailure rides this kind: the payload is only in _meta, and the same update may also carry a title
+      const failure = failureOf(u._meta, s.log);
+      if (failure) applySessionFailure(s, failure);
       return true;
+    }
     case 'compaction_update': {
       closeUserTurn(s);
       const t = currentAgentTurn(s);
@@ -233,7 +248,9 @@ export function endTurn(s: NormalizeState, stopReason: acp.StopReason) {
   t.activity = undefined;
   t.stop = stopReason;
   for (const b of t.blocks) {
-    if (b.type === 'tool_call' && (b.status === 'in_progress' || b.status === 'pending')) {
+    // A live AIR async task owns its row: the parent turn ending says nothing about it (the task's own
+    // state updates settle the row). A disconnected one (observation unknown) is swept like any other
+    if (b.type === 'tool_call' && !asyncTaskLive(b) && (b.status === 'in_progress' || b.status === 'pending')) {
       b.status = stopReason === 'cancelled' ? 'cancelled' : 'failed';
       timeTool(b, false);
     }
@@ -247,6 +264,158 @@ export function failTurn(s: NormalizeState, error: TurnError) {
   if (t?.role !== 'agent') return;
   t.stop = 'error';
   t.error = error;
+}
+
+// An AIR sessionFailure gets exactly one row per id in the whole session transcript: a higher
+// revision rewrites it in place (a retry warning becomes the terminal error under the same id), a
+// same or lower revision is a duplicate to ignore, and a different id is a new row even when the
+// text happens to match
+export function applySessionFailure(s: NormalizeState, f: SessionFailure): boolean {
+  const existing = findNotice(s, f.id);
+  if (existing) {
+    if (existing.revision >= f.revision) return false;
+    existing.revision = f.revision;
+    existing.category = f.category;
+    existing.severity = f.severity;
+    existing.title = f.title;
+    if (f.details === undefined) delete existing.details; else existing.details = f.details;
+    existing.actions = f.actions;
+    return true;
+  }
+  const notice: NoticeBlock = {
+    type: 'notice', id: f.id, revision: f.revision, category: f.category, severity: f.severity,
+    title: f.title, ...(f.details ? { details: f.details } : {}), actions: f.actions,
+  };
+  const last = s.turns[s.turns.length - 1];
+  if (last?.role === 'agent') last.blocks.push(notice);
+  else s.turns.push({ role: 'agent', blocks: [notice], stop: 'end_turn' });
+  return true;
+}
+
+function findNotice(s: NormalizeState, id: string): NoticeBlock | undefined {
+  for (let i = s.turns.length - 1; i >= 0; i--) {
+    const t = s.turns[i];
+    if (t?.role !== 'agent') continue;
+    const b = t.blocks.find(b => b.type === 'notice' && b.id === id);
+    if (b) return b as NoticeBlock;
+  }
+  return undefined;
+}
+
+// AIR asyncTasks: the task record lives on the owning session's state (tasks map); a tool row hosts it
+// once toolCallId resolves, and a row the adapter asked for without a toolCallId gets synthesized.
+// Terminal states are final — a stale 'running' must not resurrect a settled row
+const ASYNC_TERMINAL: readonly AsyncTaskState[] = ['completed', 'failed', 'stopped'];
+const taskTerminal = (st: AsyncTaskState) => ASYNC_TERMINAL.includes(st);
+const taskStatus = (st: AsyncTaskState): ToolStatus => st === 'completed' ? 'completed' : st === 'failed' ? 'failed' : st === 'stopped' ? 'cancelled' : 'in_progress';
+
+// The task is still observable and owns its row across turn ends; 'unknown' observation means the
+// host lost the process and the row is swept like any other
+export function asyncTaskLive(b: ToolCallBlock): boolean {
+  return b.asyncTask !== undefined && b.observation !== 'unknown' && !taskTerminal(b.asyncTask.state);
+}
+
+function blockByTask(s: NormalizeState, taskId: string): ToolCallBlock | undefined {
+  for (const t of s.turns) {
+    if (t.role !== 'agent') continue;
+    const b = t.blocks.find(b => b.type === 'tool_call' && b.asyncTask?.id === taskId);
+    if (b) return b as ToolCallBlock;
+  }
+  return undefined;
+}
+
+function dropTaskRow(s: NormalizeState, block: ToolCallBlock) {
+  for (const t of s.turns) {
+    if (t.role !== 'agent') continue;
+    const i = t.blocks.indexOf(block);
+    if (i >= 0) { t.blocks.splice(i, 1); return; }
+  }
+}
+
+// The named row adopts the task; a synthesized placeholder hosting it first comes out, so the task
+// never shows twice (spawned without toolCallId, then a later update names the row)
+function attachAsyncTask(s: NormalizeState, block: ToolCallBlock, info: AsyncTaskInfo) {
+  const prev = blockByTask(s, info.id);
+  if (prev && prev !== block) {
+    if (prev.id === `async:${info.id}`) dropTaskRow(s, prev);
+    else delete prev.asyncTask;
+  }
+  block.asyncTask = info;
+  block.background = true;
+}
+
+// A task event named a toolCallId before the row existed; the row's arrival adopts the parked task
+function linkAsyncTask(s: NormalizeState, block: ToolCallBlock) {
+  const taskId = s.taskByTool?.get(block.id);
+  if (taskId === undefined) return;
+  s.taskByTool!.delete(block.id);
+  const info = s.tasks?.get(taskId);
+  if (info === undefined) return;
+  attachAsyncTask(s, block, info);
+  block.status = taskStatus(info.state);
+}
+
+// One asyncTasks event on the owning session's transcript. Returns whether the transcript changed;
+// a task with no row and no showInTranscript is still recorded in s.tasks so a later toolCallId can link it
+export function applyAsyncTask(s: NormalizeState, e: AsyncTaskEvent): boolean {
+  const tasks = (s.tasks ??= new Map());
+  let info = tasks.get(e.asyncTaskId);
+  if (!info) {
+    info = { id: e.asyncTaskId, state: 'running', canStop: false };
+    tasks.set(e.asyncTaskId, info);
+  }
+  if (e.name !== undefined) info.name = e.name;
+  if (e.taskType !== undefined) info.taskType = e.taskType;
+  if (e.description !== undefined) info.description = e.description;
+  if (e.summary !== undefined) info.summary = e.summary;
+  if (e.lastToolName !== undefined) info.lastToolName = e.lastToolName;
+  if (e.outputFilePath !== undefined) info.outputFilePath = e.outputFilePath;
+  if (e.usage) info.usage = { ...info.usage, ...e.usage };
+  if (e.canStop !== undefined) info.canStop = e.canStop;
+  if (e.event === 'state' && e.state) {
+    if (!taskTerminal(info.state)) info.state = e.state;
+    if (taskTerminal(info.state)) delete info.stopRequested;
+  }
+  const named = e.toolCallId ? findTool(s, e.toolCallId) : undefined;
+  if (e.toolCallId) {
+    if (named) s.taskByTool?.delete(e.toolCallId);
+    else (s.taskByTool ??= new Map()).set(e.toolCallId, e.asyncTaskId);
+  }
+  const block = named ?? blockByTask(s, e.asyncTaskId);
+  if (block) {
+    if (named) attachAsyncTask(s, block, info);
+    // A live wire event is observation itself: a restored 'unknown' marker clears once the task speaks
+    delete block.observation;
+    block.status = taskStatus(info.state);
+    if (taskTerminal(info.state)) block.endedAt ??= Date.now();
+    else timeTool(block, true);
+    return true;
+  }
+  if (e.showInTranscript === true) {
+    const kind: ToolKind = e.taskType === 'shell' ? 'execute' : 'other';
+    const row: ToolCallBlock = { type: 'tool_call', id: `async:${e.asyncTaskId}`, kind, verb: verbOf(kind),
+      target: e.name ?? e.description, status: taskStatus(info.state), background: true, startedAt: Date.now(), asyncTask: info };
+    const last = s.turns[s.turns.length - 1];
+    if (last?.role === 'agent') last.blocks.push(row);
+    else s.turns.push({ role: 'agent', blocks: [row], stop: 'end_turn' });
+    return true;
+  }
+  s.log?.(`async task ${e.asyncTaskId}: no transcript row (no toolCallId match, showInTranscript off)`);
+  return false;
+}
+
+// The process carrying the tasks is gone (exit, reconnect, dispose): live tasks lose their observer —
+// the last known state stays honest, the row loses its stop control, and the next sweep settles it
+export function disconnectAsyncTasks(s: NormalizeState) {
+  for (const t of s.turns) {
+    if (t.role !== 'agent') continue;
+    for (const b of t.blocks) {
+      if (b.type !== 'tool_call' || !b.asyncTask || taskTerminal(b.asyncTask.state)) continue;
+      b.observation = 'unknown';
+      b.asyncTask.canStop = false;
+      delete b.asyncTask.stopRequested;
+    }
+  }
 }
 
 // A session/load replay (OpenCode streams the whole history as live-looking chunks, with no stop reasons and no usage) leaves
@@ -398,7 +567,9 @@ function mergeTool(b: ToolCallBlock, u: acp.ToolCall | acp.ToolCallUpdate, s?: N
     const inferred = inferKind(u.title ?? undefined);
     if (inferred) { b.kind = inferred; b.verb = verbOf(inferred); }
   }
-  if (u.status) b.status = u.status;
+  // A row an async task owns takes its status from the task's state updates, not from tool_call_update
+  // statuses the adapter keeps streaming (codex reports the backgrounded shell's outcome while the task runs)
+  if (u.status && !b.asyncTask) b.status = u.status;
   // Devin parks a command past its exec timeout: the call stays in_progress while the process runs, and later waits address it by shell id
   if (meta?.['cognition.ai/background'] === true) {
     b.background = true;
@@ -406,6 +577,9 @@ function mergeTool(b: ToolCallBlock, u: acp.ToolCall | acp.ToolCallUpdate, s?: N
     const command = meta['cognition.ai/backgroundCommand'];
     if (s && typeof shellId === 'string') (s.shells ??= {})[shellId] = typeof command === 'string' && command ? command : b.target ?? shellId;
   }
+  // AIR asyncTasks: codex marks the originating tool row right before async_task_spawned names it
+  const airTasks = (meta?.jetbrains as { air?: { asyncTasks?: { backgrounded?: unknown } } } | undefined)?.air?.asyncTasks;
+  if (airTasks?.backgrounded === true) b.background = true;
   if (u.locations) b.locations = u.locations.map(l => ({ path: l.path, ...(l.line != null ? { line: l.line } : {}) }));
   // Some ACP tools supply a path in rawInput instead of locations.
   if (b.kind === 'read' && raw) {

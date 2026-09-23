@@ -2189,3 +2189,119 @@ describe('historical message editing', () => {
     } finally { s.dispose(); rmSync(cwd, { recursive: true, force: true }); }
   });
 });
+
+describe('AIR sessionFailure', () => {
+  it('failure-retry: the warning revision upserts in place and the turn-ending error settles the turn', async () => {
+    const { session } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('failure-retry');
+      const turn = s.view().turns.at(-1)!;
+      if (turn.role !== 'agent') throw new Error('expected an agent turn');
+      expect(turn).toMatchObject({ stop: 'error' });
+      expect(turn.error).toMatchObject({ kind: 'limit', retryable: true, failureId: 'turn-1:error', actions: ['retry'] });
+      expect(turn.error!.message).toBe('Rate limit exceeded\nTry again in a minute');
+      // warning rev 1 and the error rev 2 share one notice row — the latest revision won
+      const notices = turn.blocks.filter(b => b.type === 'notice');
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toMatchObject({ type: 'notice', id: 'turn-1:error', revision: 2, severity: 'error', category: 'limit',
+        title: 'Rate limit exceeded', details: 'Try again in a minute', actions: ['retry'] });
+      expect(turn.error!.kind).not.toBe('empty_response');
+    } finally { s.dispose(); }
+  });
+
+  it('failure-dup: same or lower revisions are ignored; a different id is a separate notice even with identical text', async () => {
+    const { session } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('failure-dup');
+      const notices = s.view().turns.flatMap(t => t.role === 'agent' ? t.blocks : []).filter(b => b.type === 'notice');
+      expect(notices).toHaveLength(2);
+      expect(notices[0]).toMatchObject({ id: 'dup', revision: 2, title: 'upstream hiccup' });
+      expect(notices[1]).toMatchObject({ id: 'dup-2', revision: 1, title: 'upstream hiccup' });
+    } finally { s.dispose(); }
+  });
+
+  it('failure-login: an access error carrying a login action flips the session to auth_required', async () => {
+    const { session } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('failure-login');
+      const turn = s.view().turns.at(-1)!;
+      if (turn.role !== 'agent') throw new Error('expected an agent turn');
+      expect(turn).toMatchObject({ stop: 'error' });
+      expect(turn.error).toMatchObject({ kind: 'access', failureId: 'auth-1', actions: ['login'] });
+      expect(s.view().status).toBe('auth_required');
+    } finally { s.dispose(); }
+  });
+
+  it('failure-idle: a failure landing after the turn settled appends into the last agent turn', async () => {
+    const { session } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('failure-idle');
+      await until(() => {
+        const last = s.view().turns.at(-1);
+        return last?.role === 'agent' && last.blocks.some(b => b.type === 'notice');
+      });
+      const last = s.view().turns.at(-1)!;
+      if (last.role !== 'agent') throw new Error('expected an agent turn');
+      expect(last).toMatchObject({ stop: 'end_turn' });
+      expect(last.blocks.at(-1)).toMatchObject({ type: 'notice', id: 'sess-1', severity: 'error', category: 'connection',
+        title: 'Connection lost', details: 'upstream went away', actions: ['new_session'] });
+    } finally { s.dispose(); }
+  });
+
+  it('idle failure: with no prompt in flight the error synthesizes its own agent turn; a load replay does not duplicate it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acp-idle-'));
+    const env = { FAKE_SESSION_DIR: dir, FAKE_LOAD_ONLY: '1', FAKE_LOAD_FAILURE: '1', FAKE_IDLE_FAILURE: '1' };
+    const { session, d } = deps('/tmp', undefined, undefined, { env });
+    const s = session();
+    const restored: AcpSession[] = [];
+    try {
+      await s.start();
+      await until(() => s.view().turns.length === 1);
+      const idle = s.view().turns[0]!;
+      if (idle.role !== 'agent') throw new Error('expected an agent turn');
+      expect(idle).toMatchObject({ stop: 'end_turn' });
+      expect(idle.startedAt).toBeUndefined();
+      expect(idle.blocks[0]).toMatchObject({ type: 'notice', id: 'sess-1', severity: 'error', category: 'connection',
+        title: 'Connection lost', details: 'upstream went away', actions: ['new_session'] });
+      // restore: session/load replays the failure notification — the record's notice must not duplicate
+      const rec = new AcpSession(s.toRecord(), d);
+      restored.push(rec);
+      await rec.start();
+      expect(rec.view().status).toBe('ready');
+      const notices = rec.view().turns.flatMap(t => t.role === 'agent' ? t.blocks : []).filter(b => b.type === 'notice');
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toMatchObject({ id: 'sess-1', revision: 1 });
+    } finally { for (const r of restored) r.dispose(); s.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('restores a live async task with observation unknown and its last state — never a faked stop', () => {
+    const { session, d } = deps();
+    const original = session();
+    const record = original.toRecord();
+    record.updatedAt = new Date(5000).toISOString();
+    record.turns = [
+      { role: 'user', text: 'work' },
+      { role: 'agent', startedAt: 1000, blocks: [
+        { type: 'tool_call', id: 'bg', kind: 'execute', verb: 'Run', status: 'in_progress', startedAt: 2000, background: true,
+          asyncTask: { id: 't1', state: 'running', canStop: true, stopRequested: true, name: 'sleep 120' } },
+      ] },
+    ];
+    const restored = new AcpSession(record, d);
+    try {
+      const turn = restored.view().turns[1]!;
+      if (turn.role !== 'agent') throw new Error('expected an agent turn');
+      const row = turn.blocks[0] as ToolCallBlock;
+      expect(row).toMatchObject({ status: 'cancelled', observation: 'unknown', background: true });
+      expect(row.asyncTask).toMatchObject({ id: 't1', state: 'running', canStop: false, name: 'sleep 120' });
+      expect(row.asyncTask!.stopRequested).toBeUndefined();
+    } finally { restored.dispose(); original.dispose(); }
+  });
+});

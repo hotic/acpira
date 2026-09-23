@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Permission cards show the adapter's own title / reason from `_meta.permission` (Codex "Run command?", Claude's "Ready to code?"), offer quick Allow / Reject buttons picked by option kind, and emphasize the reject button when the adapter flags `defaultToNo`.
 - Agent-emitted images render inline in the transcript (click for the lightbox; the agent's saved path is an openable caption) and export as file links in Markdown exports.
 - Plan-mode approval is recognized for Codex (the `switch_mode` "Implement this plan?" review) and Claude (ExitPlanMode), linking the plan document to its permission card.
+- Structured agent failures (the AIR `sessionFailure` extension of Codex / Claude) show as warning and error rows in the transcript, updated in place by revision. A failure that ends a turn with a successful `end_turn` response now shows as an error with exactly the remedies the adapter offers (retry, new session, sign-in) instead of an empty reply.
+- Background tasks reported through the AIR `asyncTasks` extension stay live on their tool row after the reply ends, show progress and output file, and can be stopped when the adapter allows it. A task whose process went away is marked as no longer observed rather than stopped.
 
 ### Changed
 

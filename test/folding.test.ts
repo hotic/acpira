@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AgentTurn, PermissionBlock, QuestionBlock, ToolCallBlock } from '../src/shared/transcript';
+import type { AgentTurn, NoticeBlock, PermissionBlock, QuestionBlock, ToolCallBlock } from '../src/shared/transcript';
 import { setLocale } from '../src/webview/i18n';
 import { elapsedDuration, elapsedLabel, foldActivity, splitCodexBlocks, toolVerb } from '../src/webview/chat/folding';
 
@@ -14,10 +14,10 @@ describe('Codex process folding', () => {
     const progress = { type: 'text' as const, phase: 'commentary' as const, markdown: 'Checking.' };
     const final = { type: 'text' as const, phase: 'final' as const, markdown: 'Done.' };
     expect(splitCodexBlocks([progress, run, final, progress])).toEqual({
-      process: [progress, run, progress], reply: [final], permissions: [],
+      process: [progress, run, progress], reply: [final], permissions: [], notices: [],
     });
-    expect(splitCodexBlocks([progress])).toEqual({ process: [progress], reply: [], permissions: [] });
-    expect(splitCodexBlocks([final, read])).toEqual({ process: [read], reply: [final], permissions: [] });
+    expect(splitCodexBlocks([progress])).toEqual({ process: [progress], reply: [], permissions: [], notices: [] });
+    expect(splitCodexBlocks([final, read])).toEqual({ process: [read], reply: [final], permissions: [], notices: [] });
   });
 
   it('keeps one process history across commentary and leaves the trailing reply outside', () => {
@@ -25,7 +25,7 @@ describe('Codex process folding', () => {
     const progress = { type: 'text' as const, markdown: '继续验证。' };
     const reply = { type: 'text' as const, markdown: '检查完成。' };
     expect(splitCodexBlocks([intro, read, progress, run, reply])).toEqual({
-      process: [intro, read, progress, run], reply: [reply], permissions: [],
+      process: [intro, read, progress, run], reply: [reply], permissions: [], notices: [],
     });
     // Appending an action reclassifies the previous prose as history without duplicating it.
     expect(splitCodexBlocks([intro, read, progress]).reply).toEqual([progress]);
@@ -39,33 +39,39 @@ describe('Codex process folding', () => {
     const todo = { type: 'plan' as const, entries: [] };
     // Summary → thought → coda: both paragraphs are the reply; the thought joins the process fold.
     expect(splitCodexBlocks([read, think, summary, { ...think, streaming: true }, coda])).toEqual({
-      process: [read, think, { ...think, streaming: true }], reply: [summary, coda], permissions: [],
+      process: [read, think, { ...think, streaming: true }], reply: [summary, coda], permissions: [], notices: [],
     });
     // A still-streaming thought after the summary keeps it on screen instead of folding it away mid-turn.
     expect(splitCodexBlocks([read, summary, { ...think, streaming: true }]).reply).toEqual([summary]);
     // Ticking the to-do list after the summary is bookkeeping, not a new action.
-    expect(splitCodexBlocks([read, summary, todo])).toEqual({ process: [read, todo], reply: [summary], permissions: [] });
+    expect(splitCodexBlocks([read, summary, todo])).toEqual({ process: [read, todo], reply: [summary], permissions: [], notices: [] });
     // A real action after the summary still turns it into process history.
     expect(splitCodexBlocks([read, summary, think, run]).reply).toEqual([]);
     // Without tool calls nothing folds and the blocks render in order, so only the trailing text is the reply.
-    expect(splitCodexBlocks([think, summary, think, coda])).toEqual({ process: [think, summary, think], reply: [coda], permissions: [] });
+    expect(splitCodexBlocks([think, summary, think, coda])).toEqual({ process: [think, summary, think], reply: [coda], permissions: [], notices: [] });
   });
 
   it('keeps approval actions accessible outside a collapsed process', () => {
     const permission: PermissionBlock = { type: 'permission', id: 'p', title: '运行测试', options: [] };
     const blocks = [read, run, permission];
-    expect(splitCodexBlocks(blocks)).toEqual({ process: [read, run], reply: [], permissions: [permission] });
+    expect(splitCodexBlocks(blocks)).toEqual({ process: [read, run], reply: [], permissions: [permission], notices: [] });
     expect(foldActivity({ role: 'agent', blocks })).toEqual({ kind: 'other', label: 'Awaiting approval' });
+  });
+
+  it('keeps sessionFailure notices out of the collapsed process and the reply', () => {
+    const notice: NoticeBlock = { type: 'notice', id: 't1:error', revision: 2, category: 'connection', severity: 'warning', title: 'Reconnecting...', actions: [] };
+    const reply = { type: 'text' as const, markdown: 'Done.' };
+    expect(splitCodexBlocks([read, notice, run, reply])).toEqual({ process: [read, run], reply: [reply], permissions: [], notices: [notice] });
   });
 
   it('keeps the open question card out of the message and the answered one in place in the process history', () => {
     const asked: QuestionBlock = { type: 'question', id: 'q', questions: [{ id: 'a', text: 'Which?', kind: 'single', options: [{ id: 'x', label: 'X' }] }] };
     const answered: QuestionBlock = { ...asked, outcome: 'answered', answers: { a: 'x' } };
-    expect(splitCodexBlocks([read, asked])).toEqual({ process: [read], reply: [], permissions: [] });
+    expect(splitCodexBlocks([read, asked])).toEqual({ process: [read], reply: [], permissions: [], notices: [] });
     expect(foldActivity({ role: 'agent', blocks: [read, asked] })).toEqual({ kind: 'other', label: 'Waiting for your answers' });
     const reply = { type: 'text' as const, markdown: 'Done.' };
     // Later actions must not push the record below them: it stays where the question was asked.
-    expect(splitCodexBlocks([read, answered, run, reply])).toEqual({ process: [read, answered, run], reply: [reply], permissions: [] });
+    expect(splitCodexBlocks([read, answered, run, reply])).toEqual({ process: [read, answered, run], reply: [reply], permissions: [], notices: [] });
   });
 
   it('selects the actual pending action despite stale activity or later completed calls', () => {

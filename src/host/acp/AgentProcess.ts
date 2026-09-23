@@ -131,8 +131,9 @@ export class AgentProcess {
           // codex-acp streams shell output as _meta.terminal_output_delta and only then drops its JSON rawOutput receipt;
           // claude-agent-acp switches Bash to an agent-managed terminal on either terminal_output flag
           terminal_output_delta: true,
-          // RFD #1992 draft field plus claude-agent-acp's air-extension bridge for SDKs that strip it
-          ...(def.subagents === false ? {} : { jetbrains: { air: { version: 1, capabilities: ['nativeSubagentSessions'] } } }),
+          // JetBrains AIR bridge (RFD #1992 + adapter extensions): nativeSubagentSessions follows the def's subagents
+          // gate; sessionFailure and asyncTasks are independent capabilities the host always supports
+          jetbrains: { air: { version: 1, capabilities: [...(def.subagents === false ? [] : ['nativeSubagentSessions']), 'sessionFailure', 'asyncTasks'] } },
         },
       },
     } as acp.InitializeRequest;

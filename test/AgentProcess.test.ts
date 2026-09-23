@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { AgentDef } from '../src/host/acp/AgentRegistry';
@@ -49,6 +52,24 @@ describe('AgentProcess', () => {
     const r = await exited;
     expect(r.signal).toBe('SIGKILL');
     expect(Date.now() - t0).toBeGreaterThanOrEqual(1_500);
+  });
+
+  it('advertises the AIR capabilities: sessionFailure and asyncTasks always, nativeSubagentSessions unless the def opts out', async () => {
+    const log = join(mkdtempSync(join(tmpdir(), 'acp-init-')), 'init.log');
+    const airCaps = () => {
+      const lines = readFileSync(log, 'utf8').trim().split('\n');
+      return (JSON.parse(lines.at(-1)!) as { jetbrains: { air: { version: number; capabilities: string[] } } }).jetbrains.air;
+    };
+    const { h } = handlers();
+    const proc = await AgentProcess.spawn(DEF, NODE, '/tmp', h, { FAKE_INIT_LOG: log });
+    try {
+      expect(airCaps()).toEqual({ version: 1, capabilities: ['nativeSubagentSessions', 'sessionFailure', 'asyncTasks'] });
+    } finally { proc.kill(); }
+    const { h: h2 } = handlers();
+    const proc2 = await AgentProcess.spawn({ ...DEF, subagents: false }, NODE, '/tmp', h2, { FAKE_INIT_LOG: log });
+    try {
+      expect(airCaps().capabilities).toEqual(['sessionFailure', 'asyncTasks']);
+    } finally { proc2.kill(); }
   });
 
   it('reports the extension version as clientInfo', async () => {

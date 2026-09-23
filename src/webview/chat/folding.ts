@@ -1,4 +1,4 @@
-import type { AgentBlock, AgentTurn, TextBlock, ToolCallBlock, ToolKind } from '@shared/transcript';
+import type { AgentBlock, AgentTurn, NoticeBlock, TextBlock, ToolCallBlock, ToolKind } from '@shared/transcript';
 import type { MsgKey } from '@shared/i18n';
 import { t } from '../i18n';
 
@@ -13,7 +13,9 @@ const TAIL_PROCESS: ReadonlySet<AgentBlock['type']> = new Set<AgentBlock['type']
 // at the point where it was asked, so the answers read in sequence with the actions around them.
 export function splitCodexBlocks(blocks: AgentBlock[]) {
   const permissions = blocks.filter(b => b.type === 'permission');
-  const content = blocks.filter(b => b.type !== 'permission' && (b.type !== 'question' || !!b.outcome));
+  // AIR sessionFailure notices are status rows, not process detail: they never fold away under tools
+  const notices = blocks.filter((b): b is NoticeBlock => b.type === 'notice');
+  const content = blocks.filter(b => b.type !== 'permission' && b.type !== 'notice' && (b.type !== 'question' || !!b.outcome));
   const foldable = content.some(b => b.type === 'tool_call');
   let end = content.length;
   while (end > 0 && (content[end - 1]!.type === 'text' || (foldable && TAIL_PROCESS.has(content[end - 1]!.type)))) end--;
@@ -25,6 +27,7 @@ export function splitCodexBlocks(blocks: AgentBlock[]) {
     reply: content.filter((b, i): b is TextBlock => b.type === 'text' &&
       (b.phase === 'final' || (i >= end && b.phase !== 'commentary'))),
     permissions,
+    notices,
   };
 }
 

@@ -7,7 +7,8 @@ import type * as acp from '@agentclientprotocol/sdk';
 import type { SubagentRecord, SubagentState, SubagentSummary, SubagentVisibility } from '@shared/subagents';
 import type { PermissionBlock, QuestionBlock, ToolCallBlock, Turn } from '@shared/transcript';
 import { t } from '../../i18n';
-import { activityOf, applyUpdate, emptyState, endTurn, type NormalizeState } from '../normalize';
+import { activityOf, applySessionFailure, applyUpdate, asyncTaskLive, emptyState, endTurn, type NormalizeState } from '../normalize';
+import { failureOf } from '../sessionFailure';
 import { restoreInterruptedTurns } from '../restoreTurns';
 import type { SubagentLifecycle } from './wire';
 
@@ -132,7 +133,7 @@ export class SubagentTree {
   private now(): number { return this.deps.now?.() ?? Date.now(); }
 
   // A child transcript gets the same image saver as the root state
-  private childState(): NormalizeState { return { ...emptyState(), saveImage: this.deps.saveImage, saveImageFile: this.deps.saveImageFile }; }
+  private childState(): NormalizeState { return { ...emptyState(), saveImage: this.deps.saveImage, saveImageFile: this.deps.saveImageFile, log: this.deps.log }; }
   private bump(n: SubagentNode) { n.rev++; }
   get size(): number { return this.nodes.length; }
   private label(n: SubagentNode): string { return n.peer.sessionId ?? n.peer.agentId ?? n.peer.toolCallId ?? n.id.slice(0, 8); }
@@ -155,6 +156,13 @@ export class SubagentTree {
   stateForPeer(peerSessionId: string): { state: NormalizeState; nodeId?: string; bump?: () => void } | undefined {
     const n = this.byPeerSession.get(peerSessionId);
     return n === undefined || TERMINAL.has(n.status) ? undefined : { state: n.state, nodeId: n.id, bump: () => this.bump(n) };
+  }
+
+  // AIR asyncTasks on a child stream keep landing after the child's terminal word (background work outlives
+  // the subagent's own lifecycle), so this lookup ignores the terminal gate stateForPeer applies to requests
+  taskState(peerSessionId: string): { state: NormalizeState; bump: () => void } | undefined {
+    const n = this.byPeerSession.get(peerSessionId);
+    return n === undefined ? undefined : { state: n.state, bump: () => this.bump(n) };
   }
 
   states(): { state: NormalizeState; nodeId: string; bump?: () => void }[] {
@@ -296,11 +304,16 @@ export class SubagentTree {
     switch (u.sessionUpdate) {
       // A child session's own session-level noise never becomes transcript content
       case 'user_message_chunk':
-      case 'session_info_update':
       case 'available_commands_update':
       case 'current_mode_update':
       case 'config_option_update':
         return;
+      // Except AIR sessionFailure: a failing child reports it on its own stream and its transcript keeps it
+      case 'session_info_update': {
+        const failure = failureOf(u._meta, this.deps.log);
+        if (failure && applySessionFailure(n.state, failure)) this.bump(n);
+        return;
+      }
       case 'usage_update':
         n.usage = { used: u.used, size: u.size };
         this.bump(n);
@@ -666,6 +679,10 @@ export class SubagentTree {
   settle(reason: 'prompt-returned' | 'connection-lost' | 'disposed') {
     for (const n of this.nodes) {
       if (n.status !== 'running') continue;
+      // The prompt returning is not the child dying: a node still hosting live AIR async tasks stays
+      // running so their updates keep landing on its transcript. Connection loss and disposal sweep all
+      if (reason === 'prompt-returned'
+        && n.state.turns.some(t => t.role === 'agent' && t.blocks.some(b => b.type === 'tool_call' && asyncTaskLive(b)))) continue;
       // Never claim failed / cancelled for an outcome the agent did not report
       n.status = 'disconnected';
       n.stateSource = 'local';

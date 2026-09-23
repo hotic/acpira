@@ -150,6 +150,8 @@ export type WebviewMsg =
   | { type: 'unobserveSubagent'; sessionId: string; subagentId: string }
   // Ask the agent to cancel one child (sent as session/cancel under its own session id)
   | { type: 'cancelSubagent'; sessionId: string; subagentId: string }
+  // Ask the adapter to stop one AIR async task (sent as _session/async_task/stop under the session id that owns it)
+  | { type: 'stopAsyncTask'; sessionId: string; taskId: string }
   // Queued prompts (waiting for the running turn): drop one, or replace one in place — kept attachments by index, new drafts alongside
   | { type: 'dequeue'; sessionId: string; id: string }
   | { type: 'sendQueued'; sessionId: string; id: string }
