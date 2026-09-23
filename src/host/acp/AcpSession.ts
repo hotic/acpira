@@ -38,6 +38,8 @@ import { extensionOf } from './subagents/wire';
 const GROK_USAGE_INTERVAL_MS = 800;
 // How long dropProcess waits for session/close before killing the process anyway
 const CLOSE_GRACE_MS = 3_000;
+// picks map key for the optimistic mode overlay (a real configId can never collide)
+const MODE_PICK = '\0mode';
 
 // The persisted session record: view fields plus the acpSessionId needed for resuming
 export interface SessionRecord {
@@ -140,6 +142,9 @@ export class AcpSession {
   private grokUsageRequest?: Promise<void>;
   private finishUsageRefresh?: (cancelled?: boolean) => void;
   private syncingThought = false;
+  // User config/mode picks shown before the agent answers: view() overlays them on the agent's controls until the wire request settles
+  private picks = new Map<string, { value: string; token: object }>();
+  private pickChain: Promise<void> = Promise.resolve();
   private rev = 0;
   // See SessionRecord: a fork's copied transcript until its first prompt hands it to the native session as context
   private historyPending?: true;
@@ -215,7 +220,8 @@ export class AcpSession {
     return {
       id: this.id, agent: this.agent, accountId: this.accountId, title: this.title, cwd: this.cwd,
       status: this.status, error: this.error, authMethods: this.authMethods,
-      turns: this.visibleTurns(), running: this.phase.running, rev: this.rev, controls: this.state.controls,
+      turns: this.visibleTurns(), running: this.phase.running, rev: this.rev,
+      controls: this.picks.size ? this.pickedControls() : this.state.controls,
       usage: this.state.usage, commands: this.state.commands,
       queued: this.queue.snapshot(),
       ...(this.tree.size > 0 ? { subagents: this.tree.summaries() } : {}),
@@ -236,6 +242,22 @@ export class AcpSession {
 
   private visibleTurns(): Turn[] {
     return this.pendingPrompt ? [...this.state.turns, this.pendingPrompt] : this.state.turns;
+  }
+
+  // What the agent last confirmed, without the optimistic overlay; persistence and preference capture read this
+  get agentControls(): SessionControls { return this.state.controls; }
+
+  // Controls with in-flight picks overlaid; only picked fields are copied, everything else keeps its reference
+  private pickedControls(): SessionControls {
+    const modePick = this.picks.get(MODE_PICK);
+    return {
+      ...this.state.controls,
+      modeId: modePick ? modePick.value : this.state.controls.modeId,
+      options: this.state.controls.options.map(o => {
+        const pick = this.picks.get(o.id);
+        return pick ? { ...o, value: pick.value } : o;
+      }),
+    };
   }
 
   // touch: publish state, leaving updatedAt alone. Streamed chunks arrive every few ms, and the session list sorts by updatedAt,
@@ -1001,6 +1023,42 @@ export class AcpSession {
       await this.refreshGrokUsage();
     }
     this.touch();
+  }
+
+  // The composer's click path: same validation as setConfig, then an optimistic overlay in front of the wire request
+  async selectConfig(configId: string, value: string): Promise<void> {
+    if (this.phase.editing) throw new Error(t('history.unavailable'));
+    const c = this.state.controls;
+    const control = c.options.find(o => o.id === configId);
+    if (!this.proc || this.status !== 'ready' || !control || !control.options.some(o => o.id === value)) {
+      return this.setConfig(configId, value);
+    }
+    return this.pick(configId, value, () => this.setConfig(configId, value));
+  }
+
+  // Same for the mode picker
+  async selectMode(id: string): Promise<void> {
+    if (this.phase.editing) throw new Error(t('history.unavailable'));
+    const c = this.state.controls;
+    if (!this.proc || this.status !== 'ready' || !c.modes.some(m => m.id === id)) return this.setMode(id);
+    return this.pick(MODE_PICK, id, () => this.setMode(id));
+  }
+
+  // Show the pick at once, then serialize the wire requests: rapid clicks collapse to the last value per control
+  // (a superseded pick never reaches the wire), and a failed request drops the overlay so the view reverts to agent truth.
+  private async pick(key: string, value: string, run: () => Promise<void>) {
+    const token = {};
+    this.picks.set(key, { value, token });
+    this.touch();
+    const step = this.pickChain.then(async () => {
+      if (this.picks.get(key)?.token !== token) return;
+      try { await run(); }
+      finally {
+        if (this.picks.get(key)?.token === token) { this.picks.delete(key); this.touch(); }
+      }
+    });
+    this.pickChain = step.catch(() => {});
+    await step;
   }
 
   // Kimi appends the previous thinking value when the new model does not offer it; push a native value so the leftover never stays on the wire.
