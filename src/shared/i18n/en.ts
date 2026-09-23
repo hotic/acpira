@@ -415,6 +415,8 @@ export const en = {
   'host.forkStale': 'That reply is no longer there to fork from.',
   'host.forkRunning': 'Wait for this reply to finish before forking from it.',
   'host.forkContextTooLarge': 'The forked history is too large to hand to the agent; the fork continues without the earlier context.',
+  'host.forkContextTrimmed': 'The forked history is long; the {count} earliest turns were left out of the context handed to the agent.',
+  'host.forkContextFailed': 'Could not hand the forked history to the agent ({error}); the fork continues without the earlier context.',
   'host.exported': 'Exported to {path}',
   'export.label.user': 'User',
   'export.label.agent': 'Agent',
