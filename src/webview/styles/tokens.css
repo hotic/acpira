@@ -117,7 +117,7 @@
   /* Conversation column in the editor panel */
   --content-w: 720px;
   --gap: 8px;
-  --msg-gap: 18px;
+  --msg-gap: 16px;
   --hdr: 52px;
   /* Attachment thumbnail: the same square tile in drafts and sent messages */
   --thumb: 56px;

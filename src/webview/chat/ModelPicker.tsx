@@ -219,7 +219,7 @@ function EffortField({ options, value, onChange, label = t('composer.effort') }:
 }) {
   // Stacked pill surfaces share the full row width with switches; only the label is inset.
   return <div className={cn('flex min-h-row gap-2 py-1', options.length > 3 ? 'flex-col' : 'flex-wrap items-center px-2')}>
-    <span className={cn('shrink-0 text-2 text-fg-2', options.length > 3 && 'pl-1 pr-2')}>{label}</span>
+    <span className={cn('shrink-0 text-2 text-fg-2', options.length > 3 && 'px-2')}>{label}</span>
     <RadioPills label={label} options={options} value={value} onChange={onChange} />
   </div>;
 }
