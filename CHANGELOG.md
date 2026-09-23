@@ -12,6 +12,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.
 - Steer / interrupt follow-up modes remain planned. Mid-turn messages stay in the host-side queue.
 
+## [1.5.0] - 2026-09-23
+
+### Added
+
+- OpenCode (`opencode acp`), DSH (`dsh --profile acp`) and Pi (`pi-acp`) are built-in agents with install and login entries. Pi needs both `pi` and `pi-acp` on the PATH; a missing helper command is named on the agent's settings page.
+- The history list's Import button lists an agent's own native sessions for the current project and imports one into Acpira, replaying its history through `session/load`. Listing runs only `initialize` and `session/list` in a short-lived process and never creates a native session; already imported sessions open their local copy. An agent that can resume but not load (DSH) continues the session without replayed history and says so.
+- Subagents get their own transcript, lifecycle and inspector instead of being flattened into the parent conversation: Devin's nested subagents, Kimi's Agent tool and `claude-agent-acp` child sessions (as a custom agent). The announcing turn shows compact rows, the inspector docks beside the thread at wide widths or overlays it, permission and question cards stay with the subagent that asked, and a session-wide summon graph, opened from a composer chip or the inspector, drills into any node. Children still running when the parent finishes are marked disconnected rather than failed. Custom agents that reject unknown client capabilities can opt out with `subagents: false` in `acpira.agents`.
+- Agents can be reordered by drag or Alt+↑/↓ and switched off in the settings navigation (`acpira.agentOrder`, `acpira.disabledAgents`). Every list follows the same order; switched-off agents leave the new-session menu, the default-agent picker and the import picker while their existing sessions keep working, and the last enabled agent cannot be switched off.
+- Text attachment previews render Markdown for `.md` files and Markdown-looking text, with a toggle back to the source.
+- Vendor marks for z.ai, OpenCode and Pi; DSH, GLM / Zhipu, Llama and ChatGPT models reuse their parent brand's mark.
+
+### Changed
+
+- The process fold opens with the Working indicator from the first moment of a turn, so early thoughts read as its children, and a turn that ends with no process retires the fold with a fade. Process rows play their entrance once per tool rather than again when a tool changes shape.
+- Streamed text is revealed at the measured arrival rate: a burst after a stall plays at the running speed instead of all at once, cut points avoid half-typed Markdown syntax, and the glyph fade keeps CJK line breaking intact.
+- The person icon in the header is account-only: Devin's stored logins or Grok / Kimi's official account, hidden for agents without an account layer. New sessions of another agent start from the plus menu.
+- Model settings combine search, the master switch and disclosure in one card, list newer releases first and collapse catalogs beyond ten model families.
+- Native model parameters (`model_config`) sit below reasoning in the model picker, and an active Fast option appears in the model label.
+- Mode, effort and Fast picks show immediately instead of waiting for the agent's confirmation; rapid picks collapse to the last value and a refused pick reverts to the agent's state.
+- DeepSeek Harness is displayed as DSH.
+- Tighter spacing between conversation turns and around the composer; cards docked above the composer keep a gap below them.
+
+### Fixed
+
+- A turn that ends with no output and no error from the CLI shows a retryable empty-response error instead of a blank reply. Slash command receipts and tool-only turns are unaffected.
+- Follow-up messages sent during a running turn or automatic compaction stay visible below the compaction in send order, and the send button remains available for them.
+- Forking a long conversation compacts the handed-over history (clipped tool output and plan documents, oldest turns omitted with a note) instead of refusing it, and a trim or real failure gets its own notice.
+- Changing only the Devin Fusion sidekick keeps the lead model's reasoning level.
+- A skill installed under both `~/.agents/skills` and `~/.claude/skills` appears once in slash command completion.
+- Reasoning level controls no longer appear among the model visibility switches in agent settings.
+- Restoring a session distinguishes gone, locked, read-only and retryable failures from the agent's error message instead of treating every invalid-parameter error as a vanished session.
+- OpenCode edits keep their file diff when a permission request arrives late, and new files written by OpenCode show an all-added diff. Pi's startup banner no longer appears as a message, and its shell output streams into the tool card.
+- Agents that do not accept embedded context receive dropped text attachments as delimited text, and image attachments are refused with a notice when an agent does not support images.
+- Agent startup gives up after 30 seconds instead of waiting indefinitely.
+- The folded prompt frame shrinks together with its fold instead of leaving an empty strip.
+- The composer keeps the same height whether or not the context usage ring is shown, across agents and after a model switch.
+
 ## [1.4.0] - 2026-09-20
 
 ### Added
