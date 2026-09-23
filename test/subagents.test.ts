@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,8 +21,8 @@ const FAKE = fileURLToPath(new URL('./fake-agent.ts', import.meta.url));
 const TSX = fileURLToPath(new URL('../node_modules/.bin/tsx', import.meta.url));
 const LOADER = fileURLToPath(new URL('../node_modules/tsx/dist/loader.mjs', import.meta.url));
 
-function deps(cwd = '/tmp') {
-  const registry = new AgentRegistry({ fake: { name: 'Fake', command: TSX, args: [FAKE], login: 'echo login' } });
+function deps(cwd = '/tmp', env?: Record<string, string>) {
+  const registry = new AgentRegistry({ fake: { name: 'Fake', command: TSX, args: [FAKE], login: 'echo login', env } });
   const logs: string[] = [];
   const d: SessionDeps = {
     registry, log: (l: string) => logs.push(l), onChange: () => {},
@@ -88,12 +88,38 @@ describe('subagents/wire', () => {
     expect(logs.filter(l => l.includes('unknown subagent state'))).toHaveLength(1);
   });
 
-  it('async_task_* is ignored, and a missing subagentSessionId is dropped with a log', () => {
+  it('async_task_* without an asyncTaskId is ignored, and a missing subagentSessionId is dropped with a log', () => {
     const wrap = (inner: Record<string, unknown>) => asUpdate({ sessionUpdate: 'session_info_update', _meta: { [EXT_META_KEY]: inner } });
     expect(extensionOf(wrap({ sessionUpdate: 'async_task_spawned', id: 'a1' }))).toEqual({ kind: 'ignored', sessionUpdate: 'async_task_spawned' });
     const logs: string[] = [];
     expect(extensionOf(wrap({ sessionUpdate: 'subagent_update' }), l => logs.push(l))).toEqual({ kind: 'ignored', sessionUpdate: 'subagent_update' });
     expect(logs[0]).toContain('subagentSessionId');
+  });
+
+  it('decodes the three async_task kinds and drops an unknown state or a missing id', () => {
+    const logs: string[] = [];
+    const log = (l: string) => logs.push(l);
+    const wrap = (inner: Record<string, unknown>) => asUpdate({ sessionUpdate: 'session_info_update', _meta: { [EXT_META_KEY]: inner } });
+    expect(extensionOf(wrap({ sessionUpdate: 'async_task_spawned', asyncTaskId: 't1', name: 'sleep', taskType: 'shell',
+      showInTranscript: false, canStop: true, toolCallId: 'tc1', description: 'run it', outputFilePath: '/tmp/o.log' }), log))
+      .toMatchObject({ kind: 'async_task', event: 'spawned', asyncTaskId: 't1', name: 'sleep', taskType: 'shell',
+        canStop: true, toolCallId: 'tc1', description: 'run it', outputFilePath: '/tmp/o.log' });
+    // showInTranscript is only recorded when true — false is the default
+    expect(extensionOf(wrap({ sessionUpdate: 'async_task_spawned', asyncTaskId: 't1', showInTranscript: false }), log))
+      .not.toHaveProperty('showInTranscript');
+    expect(extensionOf(wrap({ sessionUpdate: 'async_task_spawned', asyncTaskId: 't1', showInTranscript: true }), log))
+      .toMatchObject({ showInTranscript: true });
+    expect(extensionOf(wrap({ sessionUpdate: 'async_task_progress', asyncTaskId: 't1', summary: 'half', lastToolName: 'wc',
+      usage: { totalTokens: 5, toolUses: 1, durationMs: 42, bogus: 'x' } }), log))
+      .toMatchObject({ kind: 'async_task', event: 'progress', summary: 'half', lastToolName: 'wc', usage: { totalTokens: 5, toolUses: 1, durationMs: 42 } });
+    expect(extensionOf(wrap({ sessionUpdate: 'async_task_state_update', asyncTaskId: 't1', state: 'stopped' }), log))
+      .toMatchObject({ kind: 'async_task', event: 'state', state: 'stopped' });
+    expect(extensionOf(wrap({ sessionUpdate: 'async_task_state_update', asyncTaskId: 't1', state: 'zzz' }), log))
+      .toEqual({ kind: 'ignored', sessionUpdate: 'async_task_state_update' });
+    expect(extensionOf(wrap({ sessionUpdate: 'async_task_progress' }), log))
+      .toEqual({ kind: 'ignored', sessionUpdate: 'async_task_progress' });
+    expect(logs.filter(l => l.includes('asyncTaskId'))).toHaveLength(1);
+    expect(logs.filter(l => l.includes('unknown state'))).toHaveLength(1);
   });
 
   it('leaves ordinary notifications, requests and plain session_info_updates untouched', () => {
@@ -531,6 +557,143 @@ describe('subagents', () => {
       expect(stored.rev).toBeGreaterThan(1);
       restored = new AcpSession(record, d);
       expect(restored.subagentTranscript(c1.id)?.rev).toBe(stored.rev);
+    } finally { restored?.dispose(); s.dispose(); }
+  }, 30_000);
+
+  it('generation: a codex reopen announces a new peer id; the old generation stays terminal with its own transcript', async () => {
+    const { session } = deps();
+    const s = await session();
+    try {
+      await s.prompt('subagents-generation');
+      const g1 = sub(s, 'sessionId', 'thr:generation:1')!;
+      const g2 = sub(s, 'sessionId', 'thr:generation:2')!;
+      expect(s.view().subagents).toHaveLength(2);
+      expect(g1).toMatchObject({ state: 'failed', stateSource: 'agent' });
+      expect(g2).toMatchObject({ state: 'completed', stateSource: 'agent' });
+      // codex sends capabilities {} — no per-child stop control
+      expect(g1.controls).toEqual({ cancel: false });
+      expect(g2.controls).toEqual({ cancel: false });
+      expect(childBlocks(s, g1.id).some(b => b.type === 'tool_call' && b.id === 'g1-t1')).toBe(true);
+      expect(childBlocks(s, g2.id).some(b => b.type === 'tool_call' && b.id === 'g2-t1')).toBe(true);
+      expect(rootBlocks(s).some(b => b.type === 'tool_call' && (b.id === 'g1-t1' || b.id === 'g2-t1'))).toBe(false);
+    } finally { s.dispose(); }
+  }, 30_000);
+});
+
+describe('AIR asyncTasks', () => {
+  const toolRow = (s: AcpSession, id: string) =>
+    rootBlocks(s).find(b => b.type === 'tool_call' && b.id === id) as ToolCallBlock | undefined;
+
+  it('async-shell: a backgrounded tool row survives end_turn and settles from the task state', async () => {
+    const { session } = deps();
+    const s = await session();
+    try {
+      const p = s.prompt('async-shell');
+      await until(() => toolRow(s, 'bg-1')?.asyncTask?.id === 'task-1');
+      expect(toolRow(s, 'bg-1')).toMatchObject({ status: 'in_progress', background: true });
+      expect(toolRow(s, 'bg-1')!.asyncTask).toMatchObject({ id: 'task-1', state: 'running', canStop: true, taskType: 'shell', name: 'sleep 45' });
+      await p;
+      // the turn ended end_turn while the task still ran — the row is not swept failed/cancelled
+      const ended = s.view().turns.at(-1)!;
+      expect(ended).toMatchObject({ stop: 'end_turn' });
+      expect(toolRow(s, 'bg-1')).toMatchObject({ status: 'in_progress', background: true });
+      await until(() => toolRow(s, 'bg-1')?.asyncTask?.state === 'completed');
+      expect(toolRow(s, 'bg-1')).toMatchObject({ status: 'completed' });
+      expect(toolRow(s, 'bg-1')!.asyncTask).toMatchObject({ summary: 'done', outputFilePath: '/tmp/fake-task.log' });
+      // exactly one row hosts the task the whole time
+      expect(rootBlocks(s).filter(b => b.type === 'tool_call')).toHaveLength(1);
+    } finally { s.dispose(); }
+  }, 30_000);
+
+  it('async-stop: stopAsyncTask sends _session/async_task/stop and the stopped update settles the row', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acp-stop-'));
+    const stopLog = join(dir, 'stop.log');
+    const { session } = deps('/tmp', { FAKE_STOP_LOG: stopLog });
+    const s = await session();
+    try {
+      await s.prompt('async-stop');
+      expect(toolRow(s, 'bg-1')!.asyncTask).toMatchObject({ id: 'task-1', state: 'running', canStop: true });
+      const peer = s.toRecord().acpSessionId;
+      const stop = s.stopAsyncTask('task-1');
+      // the optimistic marker is visible before the request resolves; the adapter's state update settles it
+      expect(toolRow(s, 'bg-1')!.asyncTask!.stopRequested).toBe(true);
+      await stop;
+      await until(() => toolRow(s, 'bg-1')?.asyncTask?.state === 'stopped');
+      expect(readFileSync(stopLog, 'utf8').trim()).toBe(`${peer} task-1`);
+      expect(toolRow(s, 'bg-1')).toMatchObject({ status: 'cancelled' });
+      expect(toolRow(s, 'bg-1')!.asyncTask!.stopRequested).toBeUndefined();
+      // a stop on a terminal task is a local no-op — no second request goes out
+      await s.stopAsyncTask('task-1');
+      expect(readFileSync(stopLog, 'utf8').trim().split('\n')).toHaveLength(1);
+    } finally { s.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  }, 30_000);
+
+  it('async-stop-nostop: canStop=false never sends the request and leaves the task running', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acp-stop-'));
+    const stopLog = join(dir, 'stop.log');
+    const { session, logs } = deps('/tmp', { FAKE_STOP_LOG: stopLog });
+    const s = await session();
+    try {
+      await s.prompt('async-stop-nostop');
+      const row = toolRow(s, 'bg-1')!;
+      expect(row.asyncTask).toMatchObject({ id: 'task-1', state: 'running', canStop: false });
+      await s.stopAsyncTask('task-1');
+      await new Promise(r => setTimeout(r, 150));
+      expect(existsSync(stopLog)).toBe(false);
+      expect(row.asyncTask).toMatchObject({ state: 'running' });
+      expect(row.asyncTask!.stopRequested).toBeUndefined();
+      expect(logs.some(l => l.includes('cannot be stopped'))).toBe(true);
+    } finally { s.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  }, 30_000);
+
+  it('async-orphan: a showInTranscript spawn synthesizes a row; a later toolCallId migrates it without duplicating', async () => {
+    const { session } = deps();
+    const s = await session();
+    try {
+      await s.prompt('async-orphan');
+      const tools = rootBlocks(s).filter(b => b.type === 'tool_call') as ToolCallBlock[];
+      expect(tools).toHaveLength(1);
+      expect(tools[0]).toMatchObject({ id: 'bg-1', status: 'in_progress', background: true });
+      expect(tools[0]!.asyncTask).toMatchObject({ id: 'task-9', name: 'orphan build', state: 'running' });
+      expect(rootBlocks(s).some(b => b.type === 'tool_call' && b.id === 'async:task-9')).toBe(false);
+    } finally { s.dispose(); }
+  }, 30_000);
+
+  it('async-child: a task on a child session lands in the child transcript, never the root; the node outlives the parent turn', async () => {
+    const { session } = deps();
+    const s = await session();
+    try {
+      const p = s.prompt('async-child');
+      await until(() => sub(s, 'sessionId', 'c1') !== undefined);
+      const c1 = () => sub(s, 'sessionId', 'c1')!;
+      const tool = () => childBlocks(s, c1().id).find(b => b.type === 'tool_call' && b.id === 'c1-t1') as ToolCallBlock | undefined;
+      await until(() => tool()?.asyncTask?.id === 'task-c1');
+      await p;
+      // the parent turn ended while the child's task still ran — the node stays running, not disconnected
+      expect(c1()).toMatchObject({ state: 'running' });
+      expect(tool()).toMatchObject({ status: 'in_progress', background: true });
+      expect(tool()!.asyncTask).toMatchObject({ id: 'task-c1', state: 'running', canStop: true });
+      expect(rootBlocks(s).some(b => b.type === 'tool_call' && (b.id === 'c1-t1' || b.asyncTask !== undefined))).toBe(false);
+      await until(() => c1().state === 'completed' && tool()?.asyncTask?.state === 'completed');
+      expect(tool()).toMatchObject({ status: 'completed' });
+    } finally { s.dispose(); }
+  }, 30_000);
+
+  it('dispose disconnects live tasks: the row keeps its state but loses observation and stop control', async () => {
+    const { session, d } = deps();
+    const s = await session();
+    let restored: AcpSession | undefined;
+    try {
+      await s.prompt('async-stop');
+      const record = s.toRecord();
+      restored = new AcpSession(record, d);
+      const last = restored.view().turns.at(-1)!;
+      if (last.role !== 'agent') throw new Error('expected an agent turn');
+      const row = last.blocks.find(b => b.type === 'tool_call') as ToolCallBlock;
+      expect(row).toMatchObject({ status: 'cancelled', observation: 'unknown' });
+      expect(row.asyncTask).toMatchObject({ id: 'task-1', state: 'running', canStop: false });
+      await restored.stopAsyncTask('task-1');
+      expect(row.asyncTask!.stopRequested).toBeUndefined();
     } finally { restored?.dispose(); s.dispose(); }
   }, 30_000);
 });

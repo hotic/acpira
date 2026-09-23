@@ -450,6 +450,20 @@ export const en = {
   'verb.delegate': 'Delegate',
   'verb.awaitSubagent': 'Wait for subagent',
 
+  // AIR asyncTasks: background work the adapter reports independently of the prompt lifecycle; the tag
+  // sits on its tool row and Stop goes to _session/async_task/stop
+  'asyncTask.running': 'Background task running',
+  'asyncTask.paused': 'Background task paused',
+  'asyncTask.completed': 'Background task done',
+  'asyncTask.failed': 'Background task failed',
+  'asyncTask.stopped': 'Background task stopped',
+  'asyncTask.stopping': 'Stopping…',
+  'asyncTask.stop': 'Stop task',
+  'asyncTask.stopRefused': 'The agent could not stop that task',
+  'asyncTask.tokens': '{n} tokens',
+  'asyncTask.toolUses': '{n} tool calls',
+  'asyncTask.duration': '{s}s',
+
   // Delegated child agents: the group row inside a turn, the inspector, and the relations tree
   'subagents.group': 'Subagents {n}',
   'subagents.running': '{n} running',

@@ -22,6 +22,14 @@ import * as acp from '@agentclientprotocol/sdk';
 //   subagent_context / read_subagent / subagent_completed, child usage_update); =receipt is Kimi's Agent tool.
 //   Extension kinds leave this process verbatim — the agent side does not validate outgoing params; the host's ndjson
 //   rewrite (subagents/wire.ts) is what parks them in session_info_update
+// "failure-*" → AIR sessionFailure payloads (only to clients advertising the capability): =retry sends a warning rev
+//   then the turn-ending error at a higher rev on the prompt response _meta; =dup sends same/lower revision retransmits
+//   plus a different id with identical text; =login ends the turn with category access + a login action; =idle sends a
+//   session-scoped error a tick after the turn settled (FAKE_LOAD_FAILURE re-sends one during session/load);
+// "async-*" → AIR asyncTasks: =shell is codex's backgrounded tool row + spawned/progress/completed past end_turn;
+//   =stop (=stop-nostop) spawns a stoppable (unstoppable) task the test stops through _session/async_task/stop
+//   (FAKE_STOP_LOG records the request params); =orphan spawns with showInTranscript and no toolCallId, then names one;
+//   =child puts the task on a subagent session that outlives the parent's turn
 // "ask-devin" / "ask-kimi" → the ask_user_question tool call followed by an elicitation/create form shaped like that CLI's (Devin: no toolCallId, label in const,
 // description in title, allowOther; Kimi: toolCallId, question texts joined in message); "ask-grok" → the `_x.ai/ask_user_question` request; the reply echoes what came back
 // Resume: when resume doesn't know the sessionId, a cwd containing "gone" mimics Devin's session_not_found, otherwise reports unknown session;
@@ -56,6 +64,9 @@ const modes = new Map<string, string>();
 // What the client's initialize declared: a boolean configOption is only offered to clients that advertised
 // clientCapabilities.session.configOptions.boolean (codex-acp degrades fast-mode to an on/off select otherwise)
 let booleanCap = false;
+// clientCapabilities._meta.jetbrains.air.capabilities: sessionFailure / asyncTasks payloads only go out
+// to clients that named them, the same gate both real adapters run through clientSupportsAirCapability
+let airCaps: string[] = [];
 // Optional native store for account-switch tests: context belongs to the session,
 // survives process replacement, and is never reconstructed from the UI transcript.
 const sessionDir = process.env.FAKE_SESSION_DIR;
@@ -99,6 +110,10 @@ const app = acp.agent({ name: 'fake-agent' })
     if (process.env.FAKE_INIT_FAIL) throw acp.RequestError.internalError(undefined, 'initialize refused by fixture');
     if (process.env.FAKE_INIT_HANG) return new Promise<never>(() => {});
     booleanCap = params.clientCapabilities?.session?.configOptions?.boolean != null;
+    const air = (params.clientCapabilities?._meta as { jetbrains?: { air?: { capabilities?: unknown } } } | undefined)?.jetbrains?.air?.capabilities;
+    airCaps = Array.isArray(air) ? air.filter((c): c is string => typeof c === 'string') : [];
+    // FAKE_INIT_LOG: the client's _meta as received, so a test can assert the AIR capabilities on the wire
+    if (process.env.FAKE_INIT_LOG) appendFileSync(process.env.FAKE_INIT_LOG, `${JSON.stringify(params.clientCapabilities?._meta ?? null)}\n`);
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
       agentInfo: { name: 'fake', version: '0.0.0' },
@@ -140,6 +155,14 @@ const app = acp.agent({ name: 'fake-agent' })
     const sessionId = sessionDir ? randomUUID() : `s${++seq}`;
     sessions.add(sessionId);
     saveSession(sessionId, [], canonicalCwd(params.cwd));
+    // FAKE_IDLE_FAILURE: a session-scoped failure lands while no prompt is in flight — it must synthesize
+    // its own transcript row (the prompt-triggered failure-idle script appends into the last agent turn)
+    if (process.env.FAKE_IDLE_FAILURE && airCaps.includes('sessionFailure')) setTimeout(() => {
+      void client.notify(acp.methods.client.session.update, { sessionId,
+        update: { sessionUpdate: 'session_info_update', _meta: { jetbrains: { air: { version: 1, sessionFailure: {
+          id: 'sess-1', revision: 1, category: 'connection', severity: 'error', title: 'Connection lost',
+          details: 'upstream went away', actions: ['new_session'] } } } } } as unknown as acp.SessionNotification });
+    }, 40);
     if (lateBanner) {
       setTimeout(() => { void client.notify(acp.methods.client.session.update, { sessionId,
         update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: lateBanner } } }); }, 0);
@@ -196,6 +219,12 @@ const app = acp.agent({ name: 'fake-agent' })
     // Native load replays content; an existing local transcript must not duplicate it.
     await client.notify(acp.methods.client.session.update, { sessionId: params.sessionId,
       update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'NATIVE_REPLAY' } } });
+    // FAKE_LOAD_FAILURE: a sessionFailure rides the replay — the record already carries the notice row it produced
+    if (process.env.FAKE_LOAD_FAILURE && airCaps.includes('sessionFailure')) {
+      await client.notify(acp.methods.client.session.update, { sessionId: params.sessionId,
+        update: { sessionUpdate: 'session_info_update', _meta: { jetbrains: { air: { version: 1, sessionFailure: {
+          id: 'sess-1', revision: 1, category: 'connection', severity: 'error', title: 'Connection lost', actions: ['new_session'] } } } } } as unknown as acp.SessionNotification });
+    }
     return restored;
   })
   .onRequest(acp.methods.agent.authenticate, ({ params }) => {
@@ -208,6 +237,16 @@ const app = acp.agent({ name: 'fake-agent' })
     if (key !== undefined && key !== 'good-key') throw acp.RequestError.authRequired({ reason: 'bad key' });
     authed = true;
     return {};
+  })
+  .onRequest('_session/async_task/stop', value => value as { sessionId: string; asyncTaskId: string }, ({ params, client }) => {
+    // FAKE_STOP_LOG: every stop request is appended so a test can assert the params — and prove none was sent
+    if (process.env.FAKE_STOP_LOG) appendFileSync(process.env.FAKE_STOP_LOG, `${params.sessionId} ${params.asyncTaskId}\n`);
+    const { sessionId, asyncTaskId } = params;
+    setTimeout(() => {
+      void client.notify(acp.methods.client.session.update, { sessionId,
+        update: { sessionUpdate: 'async_task_state_update', asyncTaskId, state: 'stopped' } } as unknown as acp.SessionNotification);
+    }, 20);
+    return { stopped: true };
   })
   .onRequest(acp.methods.agent.session.close, ({ params }) => {
     // FAKE_CLOSE_LOG: the test watches this file to see session/close land before the process dies
@@ -334,6 +373,105 @@ const app = acp.agent({ name: 'fake-agent' })
       // the follow-up without forwarding its reply through the original driver.
       if (backgroundStyle === 'devin') { await background('cancelled'); background = undefined; }
       else return { stopReason: 'end_turn' };
+    }
+
+    // AIR sessionFailure / asyncTasks fixtures (must run before the generic "fail" script below — these
+    // prompts contain that substring). The extension payloads only go to clients that advertised the
+    // capability, the same gate the real adapters run through clientSupportsAirCapability
+    const air = (cap: 'sessionFailure' | 'asyncTasks' | 'nativeSubagentSessions') => airCaps.includes(cap);
+    const sendExt = (sessionId: string, update: Record<string, unknown>) =>
+      client.notify(acp.methods.client.session.update, { sessionId, update } as unknown as acp.SessionNotification);
+    const sendFailure = (failure: Record<string, unknown>) =>
+      sendExt(sid, { sessionUpdate: 'session_info_update', _meta: { jetbrains: { air: { version: 1, sessionFailure: failure } } } });
+    const failureMeta = (failure: Record<string, unknown>) => ({ _meta: { jetbrains: { air: { version: 1, sessionFailure: failure } } } });
+
+    if (text === 'failure-retry') {
+      // codex's retry dance: a warning revision lands first, the turn-ending error bumps the same id
+      if (air('sessionFailure'))
+        await sendFailure({ id: 'turn-1:error', revision: 1, category: 'service', severity: 'warning', title: 'stream disconnected; retrying', actions: [] });
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'partial work' } });
+      return { stopReason: 'end_turn',
+        ...(air('sessionFailure') ? failureMeta({ id: 'turn-1:error', revision: 2, category: 'limit', severity: 'error', title: 'Rate limit exceeded', details: 'Try again in a minute', actions: ['retry'] }) : {}) };
+    }
+
+    if (text === 'failure-dup') {
+      // Same id at the same or a lower revision is a retransmit — ignored; a different id is a different
+      // failure even when the text happens to match
+      if (air('sessionFailure')) {
+        await sendFailure({ id: 'dup', revision: 2, category: 'service', severity: 'warning', title: 'upstream hiccup', actions: [] });
+        await sendFailure({ id: 'dup', revision: 2, category: 'service', severity: 'warning', title: 'rewritten', actions: [] });
+        await sendFailure({ id: 'dup', revision: 1, category: 'service', severity: 'warning', title: 'stale', actions: [] });
+        await sendFailure({ id: 'dup-2', revision: 1, category: 'service', severity: 'warning', title: 'upstream hiccup', actions: [] });
+      }
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'done' } });
+      return { stopReason: 'end_turn' };
+    }
+
+    if (text === 'failure-login') {
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'working…' } });
+      return { stopReason: 'end_turn',
+        ...(air('sessionFailure') ? failureMeta({ id: 'auth-1', revision: 1, category: 'access', severity: 'error', title: 'Sign-in expired', actions: ['login'] }) : {}) };
+    }
+
+    if (text === 'failure-idle') {
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'ok' } });
+      // A session-scoped failure lands after the turn settled — it synthesizes its own transcript row
+      if (air('sessionFailure')) setTimeout(() => {
+        void sendFailure({ id: 'sess-1', revision: 1, category: 'connection', severity: 'error', title: 'Connection lost', details: 'upstream went away', actions: ['new_session'] });
+      }, 40);
+      return { stopReason: 'end_turn' };
+    }
+
+    if (text === 'async-shell') {
+      // codex's backgrounded shell: the tool row is marked backgrounded, then the task announcement names it
+      await send({ sessionUpdate: 'tool_call', toolCallId: 'bg-1', title: 'shell', kind: 'execute', status: 'in_progress', rawInput: { command: 'sleep 45 && echo done' } });
+      if (air('asyncTasks')) {
+        await send({ sessionUpdate: 'tool_call_update', toolCallId: 'bg-1',
+          _meta: { jetbrains: { air: { asyncTasks: { backgrounded: true } } } } });
+        await sendExt(sid, { sessionUpdate: 'async_task_spawned', asyncTaskId: 'task-1', name: 'sleep 45', taskType: 'shell', showInTranscript: false, canStop: true, toolCallId: 'bg-1' });
+        // The task keeps reporting after the prompt returned and ends on its own a tick later
+        setTimeout(() => {
+          void sendExt(sid, { sessionUpdate: 'async_task_progress', asyncTaskId: 'task-1', summary: 'still sleeping', outputFilePath: '/tmp/fake-task.log' });
+          void sendExt(sid, { sessionUpdate: 'async_task_state_update', asyncTaskId: 'task-1', state: 'completed', summary: 'done', outputFilePath: '/tmp/fake-task.log' });
+        }, 80);
+      }
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'started in background' } });
+      return { stopReason: 'end_turn' };
+    }
+
+    if (text === 'async-stop' || text === 'async-stop-nostop') {
+      await send({ sessionUpdate: 'tool_call', toolCallId: 'bg-1', title: 'shell', kind: 'execute', status: 'in_progress', rawInput: { command: 'sleep 120' } });
+      if (air('asyncTasks'))
+        await sendExt(sid, { sessionUpdate: 'async_task_spawned', asyncTaskId: 'task-1', name: 'sleep 120', taskType: 'shell', showInTranscript: false, canStop: text === 'async-stop', toolCallId: 'bg-1' });
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'started' } });
+      return { stopReason: 'end_turn' };
+    }
+
+    if (text === 'async-orphan') {
+      await send({ sessionUpdate: 'tool_call', toolCallId: 'bg-1', title: 'shell', kind: 'execute', status: 'in_progress', rawInput: { command: 'make' } });
+      if (air('asyncTasks')) {
+        // No toolCallId at spawn: a synthesized row carries the card; the follow-up names the real row and the card migrates
+        await sendExt(sid, { sessionUpdate: 'async_task_spawned', asyncTaskId: 'task-9', name: 'orphan build', taskType: 'process', showInTranscript: true, canStop: false });
+        await sendExt(sid, { sessionUpdate: 'async_task_state_update', asyncTaskId: 'task-9', state: 'running', toolCallId: 'bg-1' });
+      }
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'ok' } });
+      return { stopReason: 'end_turn' };
+    }
+
+    if (text === 'async-child') {
+      // The task rides the child's stream: it lands inside the child's transcript, never the root's
+      await sendExt(sid, { sessionUpdate: 'subagent_update', subagentSessionId: 'c1', name: 'Worker', task: 'background job', capabilities: {} });
+      await sendExt('c1', { sessionUpdate: 'tool_call', toolCallId: 'c1-t1', title: 'shell', kind: 'execute', status: 'in_progress', rawInput: { command: 'sleep 30' } });
+      if (air('asyncTasks'))
+        await sendExt('c1', { sessionUpdate: 'async_task_spawned', asyncTaskId: 'task-c1', name: 'sleep 30', taskType: 'shell', showInTranscript: false, canStop: true, toolCallId: 'c1-t1' });
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'delegated' } });
+      // The child is still running with its task when the parent ends — the live task keeps the row and
+      // the node unsettled; both finish a tick later
+      setTimeout(() => {
+        void sendExt('c1', { sessionUpdate: 'async_task_state_update', asyncTaskId: 'task-c1', state: 'completed' });
+        void sendExt(sid, { sessionUpdate: 'subagent_state_update', subagentSessionId: 'c1', state: 'completed' });
+      }, 80);
+      return { stopReason: 'end_turn' };
     }
 
     if (text === 'cancel-empty-once' && !failed.has(text)) {
@@ -711,6 +849,19 @@ const app = acp.agent({ name: 'fake-agent' })
         await sendTo('c1', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(r) } });
         await announce('c1', { state: 'completed' });
         await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root done' } });
+        return { stopReason: 'end_turn' };
+      }
+
+      if (text === 'subagents-generation') {
+        // codex reopens a child as <thread>:generation:N after a restart — a new peer id, not a rename;
+        // the old generation reports its own terminal state
+        await announce('thr:generation:1', { name: 'Worker', task: 'first attempt', capabilities: {} });
+        await sendTo('thr:generation:1', { sessionUpdate: 'tool_call', toolCallId: 'g1-t1', title: 'read', kind: 'read', status: 'in_progress' });
+        await announce('thr:generation:1', { state: 'failed' });
+        await announce('thr:generation:2', { name: 'Worker', task: 'retry after restart', capabilities: {} });
+        await sendTo('thr:generation:2', { sessionUpdate: 'tool_call', toolCallId: 'g2-t1', title: 'read', kind: 'read', status: 'completed' });
+        await announce('thr:generation:2', { state: 'completed' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'done' } });
         return { stopReason: 'end_turn' };
       }
 

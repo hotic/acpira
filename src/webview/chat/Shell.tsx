@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Network, Paperclip, X } from 'lucide-react';
-import type { ExternalSessionInfo, AccountInfo, AgentInfo, AuthMethodInfo, Draft, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionControls, SessionStatus, SessionSummary, SlashCommand, Turn, Usage } from '@shared/transcript';
+import type { ExternalSessionInfo, AccountInfo, AgentInfo, AuthMethodInfo, Draft, FailureAction, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionControls, SessionStatus, SessionSummary, SlashCommand, Turn, Usage } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
 import type { HiddenMap, SessionScope } from '@shared/settings';
 import type { AccountAction, AddAccountVia, EditTurnRequest, FileHit, NativeSessionsState } from '@shared/protocol';
@@ -27,7 +27,7 @@ import { PlanBar } from './PlanBar';
 import { PlanDocumentContext } from './PlanDocument';
 import { planExecutionId } from '@shared/planExecution';
 import { Queue } from './Queue';
-import { OpenToolFileContext, BlobUrlContext, OpenBlobContext } from './fileLinks';
+import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, OpenBlobContext } from './fileLinks';
 import { TurnActionsContext } from './TurnActions';
 import { SubagentInspector } from './subagents/SubagentInspector';
 import { SubagentGraph } from './subagents/SubagentGraph';
@@ -89,6 +89,8 @@ export interface ShellHandlers {
   observeSubagent?: (sessionId: string, subagentId: string) => void;
   unobserveSubagent?: (sessionId: string, subagentId: string) => void;
   cancelSubagent?: (sessionId: string, subagentId: string) => void;
+  // Ask the adapter to stop one AIR async task on this session (host resolves the owning peer session)
+  stopAsyncTask?: (sessionId: string, taskId: string) => void;
 }
 
 export interface ShellProps {
@@ -327,6 +329,15 @@ export function Shell(p: ShellProps) {
   } : undefined, [on.editTurn, p.activeSessionId, editable, editing]);
   const openToolFile = useMemo(() => p.activeSessionId && on.openFile
     ? (path: string, line?: number) => on.openFile!(p.activeSessionId!, path, line) : undefined, [p.activeSessionId, on.openFile]);
+  const stopAsyncTask = useMemo(() => p.activeSessionId && on.stopAsyncTask
+    ? (taskId: string) => on.stopAsyncTask!(p.activeSessionId!, taskId) : undefined, [p.activeSessionId, on.stopAsyncTask]);
+  // An AIR failure notice's actions map onto existing session actions: a real turn retries the prompt,
+  // a session-scoped row (no live start) reconnects instead; the other two are the Notice's own verbs
+  const failureAction = useMemo(() => p.activeSessionId ? (action: FailureAction) => {
+    if (action === 'login') on.login();
+    else if (action === 'new_session') on.newSession(p.agent.id);
+    else (lastTurn?.role === 'agent' && lastTurn.startedAt !== undefined ? on.retryTurn : on.retry)();
+  } : undefined, [p.activeSessionId, p.agent.id, on.login, on.newSession, on.retryTurn, on.retry, lastTurn]);
   // Per-turn actions (copy / fork / stats): memoized like the other contexts so a stream push does not re-render consumers;
   // external conversations have no ACP transcript to fork
   const turnActions = useMemo(() => p.activeSessionId ? {
@@ -340,6 +351,7 @@ export function Shell(p: ShellProps) {
       <ShellLayerContext.Provider value={root}>
       <BlobUrlContext.Provider value={blobUrl}>
       <OpenBlobContext.Provider value={openBlob}>
+      <AsyncTaskStopContext.Provider value={stopAsyncTask}>
         <div
           ref={root}
           className={cn('acp-shell relative flex h-full min-h-0 w-full overflow-hidden', wide && 'acp-wide')}
@@ -399,7 +411,7 @@ export function Shell(p: ShellProps) {
                       <OpenToolFileContext.Provider value={openToolFile}>
                         <TurnActionsContext.Provider value={turnActions}>
                           <Thread key={p.activeSessionId} turns={p.turns} running={p.running} wide={wide} replayKey={p.replayKey} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands}
-                            subagents={p.subagents} onInspect={onInspect}
+                            subagents={p.subagents} onInspect={onInspect} onFailureAction={failureAction}
                             onPermission={(blockId, optionId) => { if (p.activeSessionId) on.permission(p.activeSessionId, blockId, optionId); }} />
                         </TurnActionsContext.Provider>
                       </OpenToolFileContext.Provider>
@@ -429,6 +441,7 @@ export function Shell(p: ShellProps) {
                       onCompact={p.commands?.some(c => c.name === 'compact') ? on.compact : undefined}
                       onContinue={() => on.send(t('alert.continueText'), [])}
                       onDismiss={() => setDismissedAlert(alertKey)}
+                      onNewSession={() => on.newSession(p.agent.id)}
                     />
                   )}
                   {p.external ? <ExternalSessionNotice info={p.external} /> : <Notice
@@ -490,6 +503,7 @@ export function Shell(p: ShellProps) {
           )}
         </div>
         <SubagentGraph nodes={p.subagents ?? []} sessionTitle={p.title} open={graphOpen && !!p.subagents?.length} onOpenChange={setGraphOpen} onInspect={onInspect} selectedId={inspect?.id} />
+      </AsyncTaskStopContext.Provider>
       </OpenBlobContext.Provider>
       </BlobUrlContext.Provider>
       </ShellLayerContext.Provider>
@@ -510,6 +524,7 @@ interface ThreadProps {
   subagents?: SubagentSummary[];
   onInspect?: (id: string) => void;
   onPermission: (blockId: string, optionId: string) => void;
+  onFailureAction?: (action: FailureAction) => void;
 }
 
 // Entrance stagger caps out at the 12th block, so long sessions don't take seconds
@@ -517,7 +532,7 @@ const STAGGER_CAP = 12;
 
 // Conversation flow: stick-to-bottom following only happens on transcript changes (new content / streaming growth); user actions like expand / collapse never touch the scroll position —
 // the toggle under the mouse stays put while the content below it moves. Scrolling away from the bottom releases the follow; scrolling back to the bottom restores it
-function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands, subagents, onInspect, onPermission }: ThreadProps) {
+function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands, subagents, onInspect, onPermission, onFailureAction }: ThreadProps) {
   const ref = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   useEffect(() => {
@@ -570,7 +585,7 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
       ? <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} />
       : <AgentMessage key={ti} turn={turn} index={index} compacting={compacting} running={running && ti === activeAgentIndex && !turn.stop} onPermission={onPermission} memoryKey={memoryKey}
           turnIndex={ti} last={ti === turns.length - 1} settings={previous?.role === 'user' ? previous.settings : undefined}
-          subagents={mine} allSubagents={mine ? subagents : undefined} onInspect={onInspect} />);
+          subagents={mine} allSubagents={mine ? subagents : undefined} onInspect={onInspect} onFailureAction={onFailureAction} />);
   });
   return (
     <div ref={ref} data-thread className="scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto px-page [container-type:size] [overflow-anchor:none]">

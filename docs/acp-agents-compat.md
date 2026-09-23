@@ -117,4 +117,18 @@ Consequences implemented: text attachments become marked-up `text` blocks when `
 - Codex `collaboration_mode` (default/plan) renders as a generic select; plan-mode proposals do reach the host as linked `plan_document` + permission cards (verified via `--plan`), but there is no dedicated plan-mode UI.
 - Codex read-only approval scope — `read-only` mode applies `workspaceWrite` with `$TMPDIR` / `/tmp` kept writable, so in-workspace and tmp writes pass without a card; only writes outside writable roots (or commands / network) raise `session/request_permission`.
 - Codex image output — `view_image` carries the file as a `resource_link` (rendered via `saveImageFile`, verified); whether any Codex tool emits inline `{ type: 'image' }` payloads (image generation) is unverified.
-- `subagents`, `asyncTasks` / `sessionFailure` `_meta` fields and `steering` on Codex/Claude are advertised but not consumed by the host.
+- `steering` (`_session/steering`) on Codex / Claude is advertised by both adapters but not used: Codex does not honour the `promptRequired` idle contract, so mid-turn messages stay in the host queue.
+
+## JetBrains AIR extensions (2026-09-23)
+
+The host advertises `_meta.jetbrains.air = { version: 1, capabilities: ['nativeSubagentSessions', 'sessionFailure', 'asyncTasks'] }` at `initialize` (`nativeSubagentSessions` only when `AgentDef.subagents !== false`). Evidence files live in `/tmp/acp-adapters/evidence/b3-*`.
+
+| extension | Claude (claude-agent-acp 0.81.0) | Codex (codex-acp 1.13.0) | status |
+|---|---|---|---|
+| `sessionFailure` turn-ending error | `ANTHROPIC_BASE_URL=http://127.0.0.1:9`: `end_turn` response with `_meta.jetbrains.air.sessionFailure { category: 'service', severity: 'error', title: 'API Error: Connection refused …', actions: ['retry'] }`; the host settled the turn as `stop: 'error'` with `failureId` and `actions` | not reached: the dead-provider run was stopped while Codex was still retrying | Claude verified, Codex source |
+| `sessionFailure` warnings | each reconnect attempt is a **new id** (`<session>:session-error:<epoch>:1` … `:10`, "Reconnecting to Claude, attempt N of 10."), so each is its own notice row per the spec | one id `<turnId>:error` with revisions 1 → 10+ ("Reconnecting... waiting for network"), which the host updates in place | wire verified; host rendering covered by fake-agent tests |
+| `asyncTasks` | source (`dist/async-tasks.js`, `acp-subagents.d.ts`) + fake-agent scenarios | source (`dist/index.js` background terminal: backgrounded `tool_call_update` then `async_task_spawned { taskType: 'shell', showInTranscript: false, canStop: true, toolCallId }`) + fake-agent scenarios | source, not run against a real CLI |
+| `_session/async_task/stop` | params `{ sessionId, asyncTaskId }` (source) | same method name (source) | source |
+| native subagents | 0.78/0.79 verified earlier (see above), 0.81.0 not re-run | `subagent_spawned { capabilities: {} }` on the parent session, `<thread>:generation:N` ids on reopen (source) + fake-agent scenarios | Claude verified on 0.78/0.79, Codex source |
+
+Open: whether a burst of Claude reconnect warnings (ten rows, one per attempt) needs visual grouping; the payload gives no shared incident id to group by, and the spec forbids deduplicating by text.

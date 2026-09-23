@@ -24,7 +24,8 @@ import { readModelSources } from './modelSources';
 import { fetchGrokUsage } from './grokUsage';
 import { blobName, preparePrompt, promptCapsOf, type BlobStore } from './attachments';
 import { extOfMime, imageMimeOf } from '@shared/attachments';
-import { activityOf, applyUpdate, configOptionSetValue, endTurn, failTurn, initControls, applyConfigOptions, runtimeInfoOf, sealReplay, type NormalizeState } from './normalize';
+import { activityOf, applyAsyncTask, applySessionFailure, applyUpdate, configOptionSetValue, disconnectAsyncTasks, endTurn, failTurn, initControls, applyConfigOptions, runtimeInfoOf, sealReplay, type NormalizeState } from './normalize';
+import { failureOf, failureTurnError, type SessionFailure } from './sessionFailure';
 import { PermissionGate } from './permissions';
 import { QuestionGate } from './questions';
 import { PromptQueue, type StagedSend } from './promptQueue';
@@ -36,7 +37,7 @@ import { cloneJson } from '../clone';
 import { t, tOr } from '../i18n';
 import { MAX_OUT_IMAGE_BYTES, RENAME_MAX, TITLE_MAX } from '../limits';
 import { SubagentTree, type RootRouteCtx } from './subagents/SubagentTree';
-import { extensionOf } from './subagents/wire';
+import { extensionOf, type AsyncTaskEvent } from './subagents/wire';
 
 const GROK_USAGE_INTERVAL_MS = 800;
 // How long dropProcess waits for session/close before killing the process anyway
@@ -111,6 +112,9 @@ export class AcpSession {
   private acpSessionId?: string;
   // Invalidates handlers of a process that retry / account rebind already replaced, so its exit cannot flip the new connection to error
   private procGen = 0;
+  // AIR asyncTasks: task id → the peer session id its updates arrive on (root's own, or a child's);
+  // _session/async_task/stop must go back to that same session
+  private taskPeer = new Map<string, string>();
   private state: NormalizeState;
   private status: SessionView['status'] = 'starting';
   private error?: string;
@@ -353,6 +357,7 @@ export class AcpSession {
     this.procGen++;
     this.proc = undefined;
     this.perms.bumpEpoch();
+    this.disconnectTasks();
     const sessionId = this.acpSessionId;
     const closing = (async () => {
       if (!sessionId || !proc.alive || !proc.init.agentCapabilities?.sessionCapabilities?.close) return;
@@ -451,6 +456,7 @@ export class AcpSession {
         this.status = 'error';
         this.error = this.error ?? t('host.exited', { agent: def.name, code: code ?? signal ?? '?' });
         this.tree.settle('connection-lost');
+        this.disconnectTasks();
         this.settle('cancelled');
         this.touch();
       },
@@ -887,35 +893,49 @@ export class AcpSession {
       // Per-prompt token accounting (standard usage + vendor _meta); a context snapshot stamped earlier survives the spread
       const usage = turnUsageOf(r);
       if (usage) agentTurn.usage = { ...agentTurn.usage, ...usage };
-      // Keep running and the queue intact until the background operation ends.
-      // Never infer this from the presence of a streaming text block or a timer.
-      if (stop === 'end_turn') {
-        const pending = completion.wait();
-        if (pending) { this.log('waiting for compaction completion'); await pending; }
-        if (this.status !== 'ready') { this.queue.flush(); return; }
-        // A background compaction ends without a fresh usage_update (Kimi pushes the next
-        // reading only after the following turn): adopt the count the agent reported in its
-        // completion prose so the ring leaves the pre-compaction snapshot right away
-        if ((auto || compacting) && completion.tokensAfter !== undefined && this.state.usage) {
-          this.state.usage = { ...this.state.usage, used: completion.tokensAfter };
-        }
-        if (!auto && !name && await this.waitForKimiUsage(usageBeforePrompt)) stop = 'cancelled';
-        if (this.status !== 'ready') return;
-      }
-      await this.refreshGrokUsage();
-      if (!livePrompt()) return;
-      if (agentTurn.command && stop === 'end_turn') Object.assign(agentTurn.command, commandChanges(before, this.state.controls));
-      // Some CLIs acknowledge provider failures as empty end_turn responses. Record
-      // the missing output without inventing an upstream cause or JSON-RPC code.
-      // Slash commands may legitimately return only a receipt; tool/thought output
-      // also counts as activity, even when there is no final prose.
-      if (stop === 'end_turn' && !auto && !agentTurn.command
-        && agentTurn.blocks.every(block => block.type === 'text' && !block.markdown.trim())) {
-        const error: TurnError = { message: t('host.emptyResponse'), kind: 'empty_response', retryable: true };
-        this.log('prompt empty: end_turn without output or error details');
+      // AIR sessionFailure: a turn-ending failure is a successful end_turn response carrying the payload
+      // in _meta. It settles as an error turn — empty-response and auto-compaction must not run for it —
+      // while a warning only upserts its notice row. The notice upsert runs first so a retry warning and
+      // its terminal error share one row when they carry the same id
+      const failure = failureOf((r as { _meta?: unknown })._meta, line => this.log(line));
+      if (failure?.severity === 'error') {
+        applySessionFailure(this.state, failure);
+        this.log(`prompt failed: sessionFailure ${failure.id} rev ${failure.revision} (${failure.category})`);
         stop = 'cancelled';
-        this.settle(stop, error);
-      } else this.settle(stop);
+        this.settle('cancelled', failureTurnError(failure));
+        if (failure.actions.includes('login')) this.status = 'auth_required';
+      } else {
+        if (failure) applySessionFailure(this.state, failure);
+        // Keep running and the queue intact until the background operation ends.
+        // Never infer this from the presence of a streaming text block or a timer.
+        if (stop === 'end_turn') {
+          const pending = completion.wait();
+          if (pending) { this.log('waiting for compaction completion'); await pending; }
+          if (this.status !== 'ready') { this.queue.flush(); return; }
+          // A background compaction ends without a fresh usage_update (Kimi pushes the next
+          // reading only after the following turn): adopt the count the agent reported in its
+          // completion prose so the ring leaves the pre-compaction snapshot right away
+          if ((auto || compacting) && completion.tokensAfter !== undefined && this.state.usage) {
+            this.state.usage = { ...this.state.usage, used: completion.tokensAfter };
+          }
+          if (!auto && !name && await this.waitForKimiUsage(usageBeforePrompt)) stop = 'cancelled';
+          if (this.status !== 'ready') return;
+        }
+        await this.refreshGrokUsage();
+        if (!livePrompt()) return;
+        if (agentTurn.command && stop === 'end_turn') Object.assign(agentTurn.command, commandChanges(before, this.state.controls));
+        // Some CLIs acknowledge provider failures as empty end_turn responses. Record
+        // the missing output without inventing an upstream cause or JSON-RPC code.
+        // Slash commands may legitimately return only a receipt; tool/thought output
+        // also counts as activity, even when there is no final prose.
+        if (stop === 'end_turn' && !auto && !agentTurn.command
+          && agentTurn.blocks.every(block => block.type === 'text' && !block.markdown.trim())) {
+          const error: TurnError = { message: t('host.emptyResponse'), kind: 'empty_response', retryable: true };
+          this.log('prompt empty: end_turn without output or error details');
+          stop = 'cancelled';
+          this.settle(stop, error);
+        } else this.settle(stop);
+      }
     } catch (e) {
       // Disposal already settled and persisted the interrupted turn. The old
       // channel's rejection must not overwrite it or publish into a new process.
@@ -1187,6 +1207,56 @@ export class AcpSession {
     return this.tree.transcript(id);
   }
 
+  // An AIR asyncTasks event lands on the transcript of the session whose stream carried it: the root id
+  // goes to the root state, a child peer id goes inside that node's transcript — even after the child's
+  // terminal word, since background tasks outlive it by design
+  private asyncTaskUpdate(peerSessionId: string, e: AsyncTaskEvent) {
+    if (this.replaying) return;
+    const target = peerSessionId === this.acpSessionId
+      ? { state: this.state, bump: undefined as (() => void) | undefined }
+      : this.tree.taskState(peerSessionId);
+    if (!target) {
+      this.log(`async task ${e.asyncTaskId} on unknown session ${peerSessionId} dropped`);
+      return;
+    }
+    this.taskPeer.set(e.asyncTaskId, peerSessionId);
+    if (applyAsyncTask(target.state, e)) target.bump?.();
+  }
+
+  // Every live async task loses its observer when the process carrying it dies (exit, reconnect, dispose):
+  // the row keeps its last reported state but observation flips to unknown and the stop affordance goes
+  private disconnectTasks() {
+    disconnectAsyncTasks(this.state);
+    for (const { state } of this.tree.states()) disconnectAsyncTasks(state);
+    this.taskPeer.clear();
+  }
+
+  // Ask the adapter to stop one background task on the session that owns it. stopRequested is only an
+  // optimistic marker — the adapter's own async_task_state_update settles the row
+  async stopAsyncTask(taskId: string): Promise<void> {
+    const peerSessionId = this.taskPeer.get(taskId);
+    const owner = peerSessionId === this.acpSessionId ? this.state : this.tree.taskState(peerSessionId ?? '')?.state;
+    const info = owner?.tasks?.get(taskId);
+    if (!info || peerSessionId === undefined) { this.log(`stopAsyncTask ${taskId}: unknown task`); return; }
+    if (info.stopRequested || (info.state !== 'running' && info.state !== 'paused')) return;
+    if (!info.canStop) { this.log(`stopAsyncTask ${taskId}: the adapter says it cannot be stopped`); return; }
+    if (!this.proc?.alive) return;
+    info.stopRequested = true;
+    this.touch();
+    try {
+      const r = await this.proc.agent.request<{ stopped?: boolean }>('_session/async_task/stop', { sessionId: peerSessionId, asyncTaskId: taskId });
+      if (r?.stopped === false) {
+        delete info.stopRequested;
+        this.touch();
+        throw new Error(t('asyncTask.stopRefused'));
+      }
+    } catch (e) {
+      delete info.stopRequested;
+      this.touch();
+      throw e;
+    }
+  }
+
   // A permission / question request addresses a session id: root → root state, a child peer id → that node's transcript
   private stateForPeer(sessionId: string | undefined): { state: NormalizeState; nodeId?: string } | undefined {
     if (!sessionId || !this.acpSessionId || sessionId === this.acpSessionId) return { state: this.state };
@@ -1289,6 +1359,7 @@ export class AcpSession {
     const ext = extensionOf(n.update, line => this.log(line));
     if (ext) {
       if (ext.kind === 'ignored') this.log(`${ext.sessionUpdate} ignored`);
+      else if (ext.kind === 'async_task') this.asyncTaskUpdate(n.sessionId, ext);
       else this.tree.lifecycle(n.sessionId, this.acpSessionId, ext, this.routeCtx());
       this.touch();
       return;
@@ -1319,6 +1390,9 @@ export class AcpSession {
     // yolo is host-side state: a current_mode_update pushed by the CLI (e.g. the shot that pulled it back from plan to default) must not drag the UI back
     if (this.perms.autoApprove && u.sessionUpdate === 'current_mode_update') u.currentModeId = 'yolo';
     if (this.replaying && ['user_message_chunk', 'agent_message_chunk', 'agent_thought_chunk', 'tool_call', 'tool_call_update', 'plan'].includes(u.sessionUpdate)) return;
+    // A replayed sessionFailure must not announce again: the record already carries its notice row, and
+    // a session-scoped one would otherwise synthesize a second turn
+    if (this.replaying && u.sessionUpdate === 'session_info_update' && failureOf(u._meta)) return;
     if (!this.replaying) this.compactionCompletion?.update(u);
     // A user_message_chunk echoed by the agent mid-turn is the one we just sent; it's already in turns
     if (this.phase.running && u.sessionUpdate === 'user_message_chunk') return;

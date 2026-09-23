@@ -153,6 +153,43 @@ export interface DiffLine {
   newLine?: number;
 }
 
+// JetBrains AIR sessionFailure actions, the only values the adapters emit
+export type FailureAction = 'retry' | 'login' | 'new_session';
+export type FailureCategory = 'connection' | 'access' | 'limit' | 'request' | 'service' | 'unknown';
+
+// An AIR sessionFailure warning or advisory delivered out of band: lives on the turn that was active
+// when it arrived, upserted by id (a higher revision replaces the row in place). The error that ends a
+// turn additionally lands on AgentTurn.error and is rendered by the alert card, so a notice row whose
+// id matches the turn error's failureId is not drawn a second time
+export interface NoticeBlock {
+  type: 'notice';
+  id: string;
+  revision: number;
+  category: FailureCategory;
+  severity: 'warning' | 'error';
+  title: string;
+  details?: string;
+  actions: FailureAction[];
+}
+
+// JetBrains AIR asyncTasks state: background work the adapter reports independently of the prompt
+// lifecycle. Terminal values are final; stopRequested records a host stop request the adapter's own
+// state update has not confirmed yet
+export type AsyncTaskState = 'running' | 'paused' | 'completed' | 'failed' | 'stopped';
+export interface AsyncTaskInfo {
+  id: string;
+  state: AsyncTaskState;
+  canStop: boolean;
+  taskType?: string;
+  name?: string;
+  description?: string;
+  summary?: string;
+  lastToolName?: string;
+  outputFilePath?: string;
+  usage?: { totalTokens?: number; toolUses?: number; durationMs?: number };
+  stopRequested?: true;
+}
+
 export interface ToolCallBlock {
   type: 'tool_call';
   // Observation lost; not a receipt that the remote process stopped.
@@ -172,6 +209,9 @@ export interface ToolCallBlock {
   // A command the agent parked in the background (Devin's exec past its timeout): it stays in_progress until the process exits,
   // so it must not pass for what the agent is doing right now
   background?: boolean;
+  // An AIR async task owns this row once attached: its state drives status, the end-of-turn sweep
+  // leaves it alone while the task runs, and stop requests go through `_session/async_task/stop`
+  asyncTask?: AsyncTaskInfo;
   // Observed execution time; initial pending approvals and replay-only tools have no timer.
   startedAt?: number;
   endedAt?: number;
@@ -312,7 +352,7 @@ export interface ImageBlock {
   uri?: string;
 }
 
-export type AgentBlock = ThoughtBlock | PlanBlock | ToolCallBlock | TextBlock | PermissionBlock | CompactionBlock | PlanDocumentBlock | QuestionBlock | ImageBlock;
+export type AgentBlock = ThoughtBlock | PlanBlock | ToolCallBlock | TextBlock | PermissionBlock | CompactionBlock | PlanDocumentBlock | QuestionBlock | ImageBlock | NoticeBlock;
 
 // What the composer attaches to a prompt before the host has seen it: images and dropped text carry their payload (base64 / text),
 // files carry a URI (Explorer drag / @ mention) that the host resolves — image files become `image`, everything else stays a link
@@ -361,6 +401,11 @@ export interface TurnError {
   // The vendor's error kind (Devin: data['cognition.ai/errorKind']) and whether it says the same request may succeed if retried
   kind?: string;
   retryable?: boolean;
+  // AIR sessionFailure on a turn-ending error: the payload's id (it also owns a NoticeBlock on this
+  // turn, which the renderer suppresses) and the action list the adapter declared — the UI renders
+  // exactly these, never a locally guessed set
+  failureId?: string;
+  actions?: FailureAction[];
 }
 
 // Token accounting the agent reported for one prompt (ACP PromptResponse.usage, Grok's _meta), plus the context snapshot the last

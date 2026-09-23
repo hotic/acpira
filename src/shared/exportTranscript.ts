@@ -106,6 +106,8 @@ function block(b: AgentBlock, labels: ExportLabels, blobPath?: ExportBlobPath): 
       return b.status === 'completed' ? `_${labels.compacted}_` : `_${labels.compacted}: ${b.status}_`;
     case 'plan_document':
       return `#### ${b.title}\n\n${b.markdown}`;
+    case 'notice':
+      return `> ${b.severity === 'error' ? labels.error : 'Notice'}: ${b.title}${b.details ? `\n> ${b.details}` : ''}`;
     default:
       return undefined;
   }

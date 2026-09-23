@@ -1,12 +1,14 @@
-import { Check, FileText, Globe, X } from 'lucide-react';
+import { Check, FileText, Globe, Square, X } from 'lucide-react';
 import { memo, useContext, type ReactNode } from 'react';
-import type { ToolCallBlock } from '@shared/transcript';
+import type { AsyncTaskInfo, AsyncTaskState, ToolCallBlock } from '@shared/transcript';
+import type { MsgKey } from '@shared/i18n';
 import { toolTodoEntries } from '@shared/todoTools';
 import { useAppearance } from '../appearance';
 import { Disclosure } from '../ui/Disclosure';
 import { EntranceOnce, Row, RowLabel, RowTarget } from '../ui/Row';
 import { cn } from '../ui/cn';
 import { ConnectedRail } from '../ui/ConnectedRail';
+import { IconButton } from '../ui/Button';
 import { t } from '../i18n';
 import { toolIcon } from './icons';
 import { PlanDetails } from './Plan';
@@ -14,7 +16,7 @@ import { CodeSurface, DiffBlock } from './CodeBlock';
 import { AgentImage } from './AgentImage';
 import { TerminalOutput } from './Terminal';
 import { toolVerb } from './folding';
-import { OpenToolFileContext } from './fileLinks';
+import { AsyncTaskStopContext, OpenToolFileContext } from './fileLinks';
 import { fileReference, toolFiles } from './toolDetails';
 import { useToolSeconds } from './useToolSeconds';
 
@@ -41,15 +43,40 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
 
   const lead = toolLine === 'text' ? undefined : <Icon className="size-icon" strokeWidth={1.5} />;
 
+  // An AIR async task owns this row while it runs: the state tag replaces the generic status icon, and
+  // a stoppable task gets a stop button that posts _session/async_task/stop through the host
+  const task = block.asyncTask;
+  const stopTask = useContext(AsyncTaskStopContext);
+  const stoppable = task !== undefined && task.canStop && task.stopRequested !== true
+    && (task.state === 'running' || task.state === 'paused') && stopTask !== undefined;
+  const taskTag = task && (
+    <span className={cn('inline-flex shrink-0 items-center gap-1 whitespace-nowrap',
+      task.state === 'failed' ? 'text-danger' : task.state === 'completed' ? 'text-ok' : 'text-fg-3')}>
+      {task.stopRequested ? t('asyncTask.stopping') : t(TASK_STATE_KEY[task.state])}
+    </span>
+  );
+  const taskStop = stoppable && (
+    <IconButton
+      aria-label={t('asyncTask.stop')}
+      title={t('asyncTask.stop')}
+      className="-my-1 -mr-1"
+      onClick={e => { e.stopPropagation(); stopTask(task.id); }}
+    >
+      <Square className="size-3" strokeWidth={1.5} />
+    </IconButton>
+  );
+
   // The diff stat is not decoration — every harness shows it — so it escapes the toolLine axis; 'rich' adds the rest of the meta
   const stat = block.diffStat && <span><span className="text-ok">+{block.diffStat.add}</span> <span className="text-danger">−{block.diffStat.del}</span></span>;
   const trailing = toolLine === 'rich'
     ? <>
         {stat || (block.meta && <span>{block.meta}</span>)}
+        {taskTag}
+        {taskStop}
         {block.status === 'completed' && <Check className="size-3 text-ok" strokeWidth={2} />}
         {block.status === 'failed' && <X className="size-3 text-danger" strokeWidth={2} />}
       </>
-    : stat || undefined;
+    : (stat || taskTag || taskStop ? <>{stat}{taskTag}{taskStop}</> : undefined);
 
   const label = <>
     <RowLabel className="tabular-nums" shimmer={running}>
@@ -79,9 +106,41 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
 
   // Opening a process fold reveals action rows; outputs only expand on an explicit click.
   return (
-    <Disclosure className="action-details" tone="action" lead={lead} trailing={trailing} indent={false} rail={block.content?.type === 'list' ? 'rows' : false} defaultOpen={!grouped && execute && running} body={<ToolBody block={block} />}>
+    <Disclosure className="action-details" tone="action" lead={lead} trailing={trailing} indent={false} rail={block.content?.type === 'list' ? 'rows' : false} defaultOpen={!grouped && execute && running} body={<><TaskMeta task={block.asyncTask} /><ToolBody block={block} /></>}>
       {label}
     </Disclosure>
+  );
+}
+
+const TASK_STATE_KEY: Record<AsyncTaskState, MsgKey> = {
+  running: 'asyncTask.running',
+  paused: 'asyncTask.paused',
+  completed: 'asyncTask.completed',
+  failed: 'asyncTask.failed',
+  stopped: 'asyncTask.stopped',
+};
+
+// An AIR async task's own report, under its tool row: latest summary, the tool it was last on,
+// usage when the adapter reports it, and the output file as an ordinary file link
+function TaskMeta({ task }: { task: AsyncTaskInfo | undefined }) {
+  const openFile = useContext(OpenToolFileContext);
+  if (!task) return null;
+  const usage = [
+    task.usage?.totalTokens !== undefined ? t('asyncTask.tokens', { n: task.usage.totalTokens }) : undefined,
+    task.usage?.toolUses !== undefined ? t('asyncTask.toolUses', { n: task.usage.toolUses }) : undefined,
+    task.usage?.durationMs !== undefined ? t('asyncTask.duration', { s: Math.round(task.usage.durationMs / 1000) }) : undefined,
+  ].filter(Boolean).join(' · ');
+  if (!task.summary && !task.lastToolName && !usage && !task.outputFilePath) return null;
+  return (
+    <div className="flex min-w-0 flex-col gap-1 text-3 text-fg-3">
+      {task.summary && <span className="whitespace-pre-wrap [overflow-wrap:anywhere]">{task.summary}</span>}
+      {task.lastToolName && <span>{task.lastToolName}</span>}
+      {usage && <span>{usage}</span>}
+      {task.outputFilePath && (openFile
+        ? <button type="button" title={task.outputFilePath} className="min-w-0 cursor-pointer truncate text-left hover:underline focus-visible:underline"
+            onClick={() => openFile(task.outputFilePath!)}>{task.outputFilePath}</button>
+        : <span className="truncate" title={task.outputFilePath}>{task.outputFilePath}</span>)}
+    </div>
   );
 }
 
