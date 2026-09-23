@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { BookOpen, Check, Copy, FileText, Globe, KeyRound, Plus, Server, SlidersHorizontal, Sparkles, SquareTerminal, X } from 'lucide-react';
+import { BookOpen, Check, ChevronDown, ChevronUp, Copy, FileText, Globe, KeyRound, Plus, Search, Server, SlidersHorizontal, Sparkles, SquareTerminal, X } from 'lucide-react';
 import type { AccountInfo, AgentInfo, ConfigControl } from '@shared/transcript';
 import type { AgentInventory, InventoryFile, InventoryMcp, InventorySkill, McpTransport } from '@shared/inventory';
 import type { SettingsView } from '@shared/settings';
 import { familyLabel, isReasoningControl } from '@shared/composerControls';
 import { familyHidden, groupModels, setFamilyVisible, variantLabel, type ModelFamily } from '@shared/models';
-import { IconButton } from '../ui/Button';
+import { filterModels, MODEL_PREVIEW_LIMIT, prioritizeModels, setModelsVisible } from '@shared/modelCatalog';
+import { Chip, IconButton } from '../ui/Button';
+import { Card } from '../ui/Card';
 import { QuotaBars } from '../ui/QuotaBars';
 import { AccountLabel } from '../ui/AccountLabel';
 import { LocalAccountQuota } from '../ui/LocalAccountQuota';
@@ -55,7 +57,7 @@ export function AgentPage({ agent, accounts, inventory, controls, settings, env,
     config: inventory?.config.filter(c => c.exists).length ?? 0,
   };
   const sections: Record<AgentSection, ReactNode> = {
-    models: <ModelsSection agent={agent} controls={modelControls} settings={settings} on={on} />,
+    models: <ModelsSection key={agent.id} agent={agent} controls={modelControls} settings={settings} on={on} />,
     mcp: <McpSection agent={agent} inventory={inventory} env={env} on={on} />,
     skills: <SkillsSection agent={agent} inventory={inventory} env={env} on={on} />,
     rules: <FilesSection kind="rules" agent={agent} files={inventory?.rules} env={env} on={on} />,
@@ -176,16 +178,38 @@ function hostOf(url: string): string {
 // The lists only ever come over ACP, so before the first session there is nothing to show. The family in use can be switched off too —
 // the composer keeps the current value reachable on its own (visibleOptions)
 function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; controls?: ConfigControl[]; settings: SettingsView; on: SettingsHandlers }) {
+  const [query, setQuery] = useState('');
+  const [expanded, setExpanded] = useState(false);
+  const catalogs = (controls ?? []).map(control => ({ control, families: prioritizeModels(groupModels(control.options)) }));
+  const total = catalogs.reduce((count, catalog) => count + catalog.families.length, 0);
   const hidden = settings.hiddenOptions[agent.id] ?? {};
-  const toggle = (c: ConfigControl, f: ModelFamily, show: boolean) => {
-    const cur = hidden[c.id] ?? [];
-    const next = setFamilyVisible(c.options, cur, f.key, show);
-    const forAgent = { ...hidden, [c.id]: next };
-    if (!next.length) delete forAgent[c.id];
+  const enabled = catalogs.reduce((count, { control, families }) => count + families.filter(family => !familyHidden(family, hidden[control.id] ?? [])).length, 0);
+  const save = (forAgent: Record<string, string[]>) => {
+    for (const id of Object.keys(forAgent)) if (!forAgent[id]!.length) delete forAgent[id];
     const all = { ...settings.hiddenOptions, [agent.id]: forAgent };
     if (!Object.keys(forAgent).length) delete all[agent.id];
     on.setSetting('hiddenOptions', all);
   };
+  const toggle = (c: ConfigControl, f: ModelFamily, show: boolean) => {
+    const cur = hidden[c.id] ?? [];
+    const next = setFamilyVisible(c.options, cur, f.key, show);
+    save({ ...hidden, [c.id]: next });
+  };
+  const toggleAll = (show: boolean) => {
+    const next = { ...hidden };
+    for (const { control, families } of catalogs) next[control.id] = setModelsVisible(families, hidden[control.id] ?? [], show);
+    save(next);
+  };
+  const searching = !!query.trim();
+  let remaining = searching || expanded ? Infinity : MODEL_PREVIEW_LIMIT;
+  let matched = 0;
+  const visible = catalogs.map(catalog => {
+    const matches = filterModels(catalog.families, query);
+    matched += matches.length;
+    const families = matches.slice(0, remaining);
+    remaining -= families.length;
+    return { ...catalog, families };
+  });
   // Second line: what the family spans — its effort levels, Fast / 1M — so the row says which switch is being flipped
   const summary = (f: ModelFamily) => {
     if (f.variants.length === 1) return f.variants[0]!.name === f.name ? undefined : variantLabel(f.variants[0]!, f, { standard: t('composer.standard') });
@@ -199,40 +223,64 @@ function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; co
   return (
     <>
       <SectionDescription>{t('settings.models.desc', { agent: agent.name })}</SectionDescription>
-      {controls.map(c => {
-        const families = groupModels(c.options);
-        const off = hidden[c.id] ?? [];
-        // With a single configOption the section heading names it; several get one labelled group each
-        const several = controls.length > 1;
-        // Translate standard categories; preserve names supplied by custom controls.
-        const title = c.category === 'model' ? t('settings.models.selection') : c.name;
-        // Agent adapters classify model sources; unclassified ACP options retain their own group.
-        const groups = c.category === 'model' && families.some(f => f.sourceKind)
-          ? [
-              { key: 'official', title: t('settings.models.official'), families: families.filter(f => f.sourceKind === 'official') },
-              { key: 'custom', title: t('settings.models.custom'), families: families.filter(f => f.sourceKind === 'custom') },
-              { key: 'other', title, families: families.filter(f => !f.sourceKind) },
-            ].filter(g => g.families.length)
-          : [{ key: c.id, title: several ? title : undefined, families }];
-        return groups.map(g => (
-          <Section key={`${c.id}:${g.key}`} title={g.title} count={g.title ? g.families.filter(f => !familyHidden(f, off)).length : undefined}>
-            {g.families.map(f => {
-              const shown = !familyHidden(f, off);
-              const name = familyLabel(c, f);
-              return (
-                <ItemRow
-                  key={f.key}
-                  lead={<ModelMark family={name} brand={f.brand} />}
-                  title={name}
-                  desc={[f.source, summary(f)].filter(Boolean).join(t('common.metaSep')) || undefined}
-                  dim={!shown}
-                  trailing={<Switch checked={shown} onChange={v => toggle(c, f, v)} label={`${name}${t('common.metaSep')}${f.source ?? c.name}`} />}
-                />
-              );
-            })}
-          </Section>
-        ));
-      })}
+      <Card className="flex flex-col px-pad shadow-none">
+        <div className="flex flex-wrap items-center gap-2 py-pad-y">
+          <div className="flex h-ctl min-w-0 flex-[1_1_var(--setting-header-copy)] items-center gap-2 rounded-md border border-line bg-chip px-3 focus-within:border-line-strong">
+            <Search className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} aria-hidden />
+            <input type="search" value={query} onChange={event => setQuery(event.target.value)}
+              aria-label={t('settings.models.search')} placeholder={t('settings.models.search')}
+              className="min-w-0 flex-1 border-0 bg-transparent text-2 text-fg-1 outline-none placeholder:text-fg-3" />
+          </div>
+          <span className="sr-only" aria-live="polite">{t('settings.models.enabled', { count: enabled, total })}</span>
+          <div className="ml-auto flex shrink-0 items-center gap-2" title={t('settings.models.enabled', { count: enabled, total })}>
+            <Switch checked={total > 0 && enabled === total} disabled={total === 0} onChange={toggleAll} label={t('settings.models.all')} />
+          </div>
+        </div>
+        {visible.map(({ control: c, families }) => {
+          if (!families.length) return null;
+          const off = hidden[c.id] ?? [];
+          // With a single configOption the section heading names it; several get one labelled group each
+          const several = controls.length > 1;
+          // Translate standard categories; preserve names supplied by custom controls.
+          const title = c.category === 'model' ? t('settings.models.selection') : c.name;
+          // Agent adapters classify model sources; unclassified ACP options retain their own group.
+          const groups = c.category === 'model' && families.some(f => f.sourceKind)
+            ? [
+                { key: 'official', title: t('settings.models.official'), families: families.filter(f => f.sourceKind === 'official') },
+                { key: 'custom', title: t('settings.models.custom'), families: families.filter(f => f.sourceKind === 'custom') },
+                { key: 'other', title, families: families.filter(f => !f.sourceKind) },
+              ].filter(g => g.families.length)
+            : [{ key: c.id, title: several ? title : undefined, families }];
+          return groups.map(g => (
+            <div key={`${c.id}:${g.key}`} className="border-t border-line">
+              {g.title && <h3 className="m-0 py-(--setting-row-pad) text-3 font-normal text-fg-2">{g.title}</h3>}
+              <Group embedded>
+                {g.families.map(f => {
+                  const shown = !familyHidden(f, off);
+                  const name = familyLabel(c, f);
+                  return (
+                    <ItemRow
+                      key={f.key}
+                      lead={<ModelMark family={name} brand={f.brand} />}
+                      title={name}
+                      desc={[f.source, summary(f)].filter(Boolean).join(t('common.metaSep')) || undefined}
+                      dim={!shown}
+                      trailing={<Switch checked={shown} onChange={v => toggle(c, f, v)} label={`${name}${t('common.metaSep')}${f.source ?? c.name}`} />}
+                    />
+                  );
+                })}
+              </Group>
+            </div>
+          ));
+        })}
+        {searching && matched === 0 && <Group embedded className="border-t border-line"><Note>{t('settings.models.noResults')}</Note></Group>}
+        {!searching && total > MODEL_PREVIEW_LIMIT && <div className="py-(--setting-row-pad)">
+          <Chip caret={false} aria-expanded={expanded} onClick={() => setExpanded(value => !value)}
+            icon={expanded ? <ChevronUp /> : <ChevronDown />}>
+            {expanded ? t('settings.models.showLess') : t('settings.models.showMore')}
+          </Chip>
+        </div>}
+      </Card>
     </>
   );
 }
