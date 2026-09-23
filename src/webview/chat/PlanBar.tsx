@@ -6,7 +6,7 @@ export function PlanBar({ turns, running }: { turns: Turn[]; running: boolean })
   const plan = dockPlan(turns, running);
   if (!plan) return null;
   return (
-    <div className="pointer-events-none px-page pt-gap">
+    <div className="pointer-events-none px-page pt-gap pb-gap-half">
       <div className="pointer-events-auto">
         <PlanCard entries={plan.entries} live={running} />
       </div>
