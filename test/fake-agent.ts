@@ -1,6 +1,6 @@
 import { Readable, Writable } from 'node:stream';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as acp from '@agentclientprotocol/sdk';
 
@@ -29,7 +29,10 @@ import * as acp from '@agentclientprotocol/sdk';
 // Process lifecycle knobs (env): FAKE_INIT_FAIL → initialize answers an error while the process stays up (an orphan unless the client kills it);
 // FAKE_INIT_HANG → the initialize handler returns a promise that never settles; FAKE_STUBBORN → ignores SIGTERM and keeps the event loop busy,
 // so only SIGKILL ends it; FAKE_SILENT_CANCEL → a cancel during background compaction drops the work without the usual "Compaction canceled." prose;
-// FAKE_AUTH_REJECT → authenticate always fails (terminal login only); FAKE_CLOSE_LOG → advertise sessionCapabilities.close and append the
+// FAKE_AUTH_REJECT → authenticate always fails (terminal login only); FAKE_TERMINAL_AUTH=<log file> → offer a `type: 'terminal'`
+// auth method (only to clients that advertise clientCapabilities.auth.terminal, like claude-agent-acp), require auth on every
+// session/new, and append each authenticate call's methodId to the file so a test can prove the method never went over the wire;
+// FAKE_CLOSE_LOG → advertise sessionCapabilities.close and append the
 // sessionId to that file on session/close; FAKE_PROMPT_CAPS=strict → advertise promptCapabilities { embeddedContext: false, image: false };
 // FAKE_STARTUP_BANNER → pi-acp's startup banner: the session/new response carries _meta.piAcp.startupInfo and the same
 // text is re-sent as one agent_message_chunk a tick later; =early instead sends it before session/new returns;
@@ -49,14 +52,17 @@ const modes = new Map<string, string>();
 // Optional native store for account-switch tests: context belongs to the session,
 // survives process replacement, and is never reconstructed from the UI transcript.
 const sessionDir = process.env.FAKE_SESSION_DIR;
-type SavedSession = { prompts: acp.ContentBlock[][]; mode: string; config: Record<string, string> };
+type SavedSession = { prompts: acp.ContentBlock[][]; mode: string; config: Record<string, string>; cwd?: string };
 function readSession(id: string): SavedSession | undefined {
   const file = sessionDir && join(sessionDir, `${id}.json`);
   return file && existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : undefined;
 }
-function saveSession(id: string, prompts = readSession(id)?.prompts ?? []) {
-  if (sessionDir) writeFileSync(join(sessionDir, `${id}.json`), JSON.stringify({ prompts, mode: modes.get(id) ?? 'agent', config }));
+function saveSession(id: string, prompts = readSession(id)?.prompts ?? [], cwd = readSession(id)?.cwd) {
+  if (sessionDir) writeFileSync(join(sessionDir, `${id}.json`), JSON.stringify({ prompts, mode: modes.get(id) ?? 'agent', config, cwd }));
 }
+// codex-acp canonicalizes the cwd it stores for a thread (macOS /var → /private/var); sessions created through a
+// symlinked project path land in the store under the resolved path
+const canonicalCwd = (cwd: string) => { try { return realpathSync(cwd); } catch { return cwd; } };
 function restoreSession(id: string, cwd: string): acp.LoadSessionResponse {
   // Same gate as session/new: auth is a property of the session's cwd, not of restore in general
   if (!authed && cwd.includes('needs-auth')) throw acp.RequestError.authRequired();
@@ -82,7 +88,7 @@ const app = acp.agent({ name: 'fake-agent' })
     if (grokUsage === 'malformed') return { result: { sessionId: params.sessionId, context: { used: -1, total: 0 } } };
     return { result: { sessionId: params.sessionId, context: { used: usedTokens, total: config.model === 'm2' ? 250_000 : 1_000_000 } } };
   })
-  .onRequest(acp.methods.agent.initialize, () => {
+  .onRequest(acp.methods.agent.initialize, ({ params }) => {
     if (process.env.FAKE_INIT_FAIL) throw acp.RequestError.internalError(undefined, 'initialize refused by fixture');
     if (process.env.FAKE_INIT_HANG) return new Promise<never>(() => {});
     return {
@@ -93,7 +99,14 @@ const app = acp.agent({ name: 'fake-agent' })
         sessionCapabilities: process.env.FAKE_LOAD_ONLY ? {} : { resume: {}, ...(process.env.FAKE_CLOSE_LOG ? { close: {} } : {}), ...(sessionDir ? { list: {} } : {}) },
         promptCapabilities: process.env.FAKE_PROMPT_CAPS === 'strict' ? { embeddedContext: false, image: false } : { embeddedContext: true },
       },
-      authMethods: [{ id: 'fake.login', name: 'Fake login', description: 'run fake login' }],
+      authMethods: [
+        { id: 'fake.login', name: 'Fake login', description: 'run fake login' },
+        // Terminal methods are only offered to clients that can run them (claude-agent-acp gates its logins the same way)
+        ...(process.env.FAKE_TERMINAL_AUTH && params.clientCapabilities?.auth?.terminal === true
+          // FAKE_FLAG lets a test check the method's env overriding a var the agent def also sets
+          ? [{ id: 'term-login', name: 'Terminal login', description: 'run in a terminal', type: 'terminal' as const, args: ['--login'], env: { FAKE_LOGIN: '1', FAKE_FLAG: 'method' } }]
+          : []),
+      ],
     };
   })
   .onRequest(acp.methods.agent.session.new, async ({ params, client }) => {
@@ -105,7 +118,7 @@ const app = acp.agent({ name: 'fake-agent' })
       await client.notify(acp.methods.client.session.update, { sessionId: 'pending-session',
         update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: banner } } });
     }
-    if (params.cwd.includes('needs-auth') && !authed) {
+    if (!authed && (params.cwd.includes('needs-auth') || !!process.env.FAKE_TERMINAL_AUTH)) {
       // Mimic Kimi: the reason goes to stderr as an ndjson log line, the -32000 itself carries nothing
       if (process.env.FAKE_AUTH_HINT === 'devin') {
         process.stderr.write('2026-09-07T06:49:18.250107Z WARN run_acp_server:acp_bridge_dispatch{method="session/new" queue_wait_ms=0}:new_session: chisel_agent::acp_server::agent_impl: ACP: Creating session without credentials - agent may not work\n');
@@ -118,7 +131,7 @@ const app = acp.agent({ name: 'fake-agent' })
     }
     const sessionId = sessionDir ? randomUUID() : `s${++seq}`;
     sessions.add(sessionId);
-    saveSession(sessionId, []);
+    saveSession(sessionId, [], canonicalCwd(params.cwd));
     if (lateBanner) {
       setTimeout(() => { void client.notify(acp.methods.client.session.update, { sessionId,
         update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: lateBanner } } }); }, 0);
@@ -157,13 +170,16 @@ const app = acp.agent({ name: 'fake-agent' })
   .onRequest(acp.methods.agent.session.list, ({ params }) => {
     if (!sessionDir) throw acp.RequestError.methodNotFound(acp.methods.agent.session.list);
     const all = readdirSync(sessionDir).filter(f => f.endsWith('.json'))
-      .map(f => ({ id: f.slice(0, -'.json'.length), mtime: statSync(join(sessionDir, f)).mtime }))
+      .map(f => ({ id: f.slice(0, -'.json'.length), mtime: statSync(join(sessionDir, f)).mtime, saved: readSession(f.slice(0, -'.json'.length)) }))
       .sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
     const offset = Number(params.cursor) || 0;
-    const page = all.slice(offset, offset + 50);
+    // FAKE_LIST_PAGE: page size (default 50). codex-acp filters each page by the request cwd AFTER slicing the full
+    // list, so a page that only held other projects still carries nextCursor — mirror that order of operations
+    const size = Number(process.env.FAKE_LIST_PAGE) || 50;
+    const page = all.slice(offset, offset + size).filter(f => !params.cwd || !f.saved?.cwd || f.saved.cwd === params.cwd);
     return {
-      sessions: page.map(f => ({ sessionId: f.id, cwd: params.cwd ?? '', title: `Fake ${f.id.slice(0, 8)}`, updatedAt: f.mtime.toISOString() })),
-      ...(offset + page.length < all.length ? { nextCursor: String(offset + page.length) } : {}),
+      sessions: page.map(f => ({ sessionId: f.id, cwd: f.saved?.cwd ?? params.cwd ?? '', title: `Fake ${f.id.slice(0, 8)}`, updatedAt: f.mtime.toISOString() })),
+      ...(offset + size < all.length ? { nextCursor: String(offset + size) } : {}),
     };
   })
   .onRequest(acp.methods.agent.session.load, async ({ params, client }) => {
@@ -175,6 +191,9 @@ const app = acp.agent({ name: 'fake-agent' })
     return restored;
   })
   .onRequest(acp.methods.agent.authenticate, ({ params }) => {
+    // FAKE_TERMINAL_AUTH: every authenticate call is logged so the test can assert a terminal method never reached the wire
+    const authLog = process.env.FAKE_TERMINAL_AUTH;
+    if (authLog) appendFileSync(authLog, `${params.methodId}\n`);
     // FAKE_AUTH_REJECT: a CLI whose ACP authenticate never succeeds, so the host has to fall back to the registry's terminal login
     if (process.env.FAKE_AUTH_REJECT) throw acp.RequestError.authRequired({ reason: 'use the terminal login' });
     const key = params._meta?.api_key;

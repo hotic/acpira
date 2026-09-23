@@ -72,6 +72,7 @@ export class HostRuntime {
       hostLanguage: () => platform.hostLanguage(),
       registry: () => this.manager.registry,
       runtimeInfo: agent => this.manager.runtimeInfo(agent),
+      health: agent => this.manager.agentHealth(agent),
       home: () => platform.home(),
       cwd: () => platform.cwd(),
     });

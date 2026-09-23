@@ -73,6 +73,8 @@ Acpira 位于活动栏，通过 [ACP](https://agentclientprotocol.com)（JSON-RP
 - `grok agent stdio`
 - `devin acp`
 - `kimi acp`
+- `codex-acp`
+- `claude-agent-acp`
 - 任何兼容 ACP 的命令（通过 `acpira.agents` 添加）
 
 界面、会话、权限审批、账号与上下文预算由扩展管理；模型调用、Agent 执行与上下文压缩仍由各 CLI 完成。
@@ -86,6 +88,8 @@ Acpira 位于活动栏，通过 [ACP](https://agentclientprotocol.com)（JSON-RP
    - [Grok](https://x.ai) — `grok`（`grok agent stdio`）
    - [Devin](https://devin.ai) — `devin`（`devin acp`）
    - [Kimi Code](https://www.kimi.com) — `kimi`（`kimi acp`）
+   - [Codex](https://developers.openai.com/codex) — `codex-acp`（`npm install -g @agentclientprotocol/codex-acp`）
+   - [Claude](https://code.claude.com) — `claude-agent-acp`（`npm install -g @agentclientprotocol/claude-agent-acp`）
 3. 点击**活动栏**（左侧）的 Acpira 图标。若未显示，在活动栏空白处右键勾选 **Acpira**。也可把视图拖到副侧栏。IntelliJ IDEA 中打开右侧的 **Acpira** 工具窗，标题栏按钮可把对话开成编辑器标签。
 
 ## 开始使用

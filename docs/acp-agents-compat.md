@@ -1,18 +1,45 @@
-# ACP agent compatibility baseline: OpenCode / DeepSeek Harness / Pi
+# ACP agent compatibility baseline: built-in adapters
 
-Facts the OpenCode, DSH and Pi integrations rest on, with their provenance. Three grades:
+Facts the built-in agent integrations rest on, with their provenance. Three grades:
 
-- **verified** — observed on this machine on 2026-09-20 with the version named, through `AgentProcess` (the same client code the extension uses)
-- **source** — read in the vendor's source at the commit named; not yet exercised end to end
+- **verified** — observed on this machine with the version named, through `AgentProcess` or the full `SessionManager` path (the same client code the extension uses)
+- **source** — read in the vendor's source or docs at the version named; not yet exercised end to end
 - **unverified** — assumed from documentation or the plan; must be checked before it is relied on
 
-Re-run the raw probes with `pnpm probe <agent> [--wait MS] [prompt]`; a temp `DSH_HOME` / `PI_CODING_AGENT_DIR` keeps probe sessions out of the real stores (`session/new` persists a session in every one of these CLIs).
+Re-run the raw probes with `pnpm probe <agent> [--wait MS] [prompt]`; a temp `DSH_HOME` / `PI_CODING_AGENT_DIR` keeps probe sessions out of the real stores (`session/new` persists a session in every one of these CLIs). Host-path runs: `scripts/probe-agent-host.ts <agent> [--attach] [--shell]` and `scripts/probe-restore-host.ts <agent>` (new → dispose → same-store restore → fresh-store native import).
+
+## Codex / Claude (official ACP adapters)
+
+Both are npm-packaged adapters bundling the vendor runtime; the host reads versions off `package.json` files (`acp/adapterInfo.ts`), never by running the CLI. Verified 2026-09-23 against `@agentclientprotocol/codex-acp` 1.13.0 (bundled `@openai/codex` 0.155.1) and `@agentclientprotocol/claude-agent-acp` 0.81.0 (bundled `@anthropic-ai/claude-agent-sdk` 0.3.280), both via `PATH=/tmp/acp-adapters/node_modules/.bin`.
+
+| Fact | Codex (`codex-acp`) | Claude (`claude-agent-acp`) | Grade |
+|---|---|---|---|
+| install / engine override | `npm install -g @agentclientprotocol/codex-acp`; `CODEX_PATH` replaces the bundled Codex binary | `npm install -g @agentclientprotocol/claude-agent-acp`; `CLAUDE_CODE_EXECUTABLE` replaces the bundled native binary | verified |
+| `agentInfo` | `@agentclientprotocol/codex-acp 1.13.0` | `@agentclientprotocol/claude-agent-acp 0.81.0`, title "Claude Agent" | verified |
+| `loadSession` / `sessionCapabilities` | true / `list resume close delete fork additionalDirectories subagents` | same set | verified |
+| `promptCapabilities` | image + embeddedContext true | image + embeddedContext true | verified |
+| `authMethods` | `api-key` (reads `CODEX_API_KEY` / `OPENAI_API_KEY`), `chat-gpt` (adapter opens a browser) | **empty unless the client sends `clientCapabilities.auth.terminal: true`** — then two `type: 'terminal'` methods: `claude-ai-login` (args `--cli auth login --claudeai`), `console-login` (`--console`); a single `claude-login` (args `--cli`) over SSH / `NO_BROWSER` | verified |
+| terminal auth semantics | n/a (no terminal methods advertised) | a terminal method means the client runs the agent binary with `args` appended and `env` applied in a terminal; the method id must **not** go to `authenticate` | verified |
+| terminal login fallback | `codex-acp cli login` — `codex-acp login` shells out to a separately installed `codex` and fails without one | `claude-agent-acp --cli auth login` | verified |
+| `modes` | `read-only` / `agent` / `agent-full-access` (plus a `mode` configOption) | `default` / `acceptEdits` / `plan` / `auto` / `bypassPermissions` | verified |
+| configOptions | `model` (5), `reasoning_effort` (`thought_level`, 6), `fast-mode` (`model_config` off/on), `collaboration_mode` (default/plan — rendered as a generic select) | `model` (5), `effort` (`thought_level`, 6) | verified |
+| commands | `/plan /mcp /skills /status /review /compact /goal /rename /logout` … plus every discovered skill as `/$<name>` (`/$dig`, `/$release`, …) | skills and built-ins as plain `/<name>` (`/dig`, `/compact`, `/model`, …) | verified |
+| usage | `usage_update` per turn + context window | `usage_update` with `{ used: 0, size }` (zeroed) | verified |
+| `session/resume` | restores context; same `acpSessionId`, no duplicated turns, remembers the earlier reply | same | verified |
+| `session/list` | canonicalizes the thread cwd (macOS `/var` → `/private/var`) and `arePathsEqual`s it against the request cwd **per 25-thread page**, so a symlinked project path yields empty pages that still carry `nextCursor`; the host pages through (≤40 pages / 200 sessions) and retries once with `realpath(cwd)` | newest first with title; import replays ≥2 sealed turns and re-listing marks `localId` | verified |
+| process teardown | killing the adapter takes the app-server and MCP children down; no orphans at idle | same for the native `claude` child | verified |
+
+Implemented consequences: the initialize request advertises `auth: { terminal: true }` unless the def opts out (`AgentDef.auth.terminal`, `acpira.agents.<id>.terminalAuth` — Devin opts out because its ACP process ignores a locally written login); `AuthMethodInfo.terminal` carries `args`/`env`; `SessionManager.login` runs terminal methods in a host terminal as `<binary> <agent args> <method args>` with `{ ...def.env, ...method.env }` and never sends them to `authenticate`; `session/list` pages through empty pages and retries a symlinked cwd with its realpath; the settings page shows adapter / bundled-engine versions and the last launch stage (`ready` / `auth_required` / `handshake_failed` / `spawn_failed`).
+
+Regression check (2026-09-23, initialize only, vs. without `auth.terminal`): grok, kimi, codex, opencode, dsh, pi — identical responses; devin additionally offered `devin-terminal-login` and is now opted out on purpose (`AgentDef.auth.terminal = false` — with `ACP_BACKEND=windsurf` the ACP process ignores the local login a terminal method would write); claude gains the two terminal methods above. No capability shrank anywhere.
 
 ## Versions used
 
 | Agent | CLI | ACP layer | Client SDK |
 |---|---|---|---|
-| OpenCode | `opencode` 1.18.15 (Homebrew) | built in (`opencode acp`), `agentInfo` `OpenCode 1.18.15` | `@agentclientprotocol/sdk` 1.4.0 |
+| Codex | bundled `@openai/codex` 0.155.1 (`CODEX_PATH` overrides) | `codex-acp` 1.13.0 (`@agentclientprotocol/codex-acp`) | `@agentclientprotocol/sdk` 1.4.0 |
+| Claude | bundled `@anthropic-ai/claude-agent-sdk` 0.3.280 + native `claude` binary (`CLAUDE_CODE_EXECUTABLE` overrides) | `claude-agent-acp` 0.81.0 (`@agentclientprotocol/claude-agent-acp`) | same |
+| OpenCode | `opencode` 1.18.15 (Homebrew) | built in (`opencode acp`), `agentInfo` `OpenCode 1.18.15` | same |
 | DeepSeek Harness | `dsh` 0.1.5-rc.2 (`@deepseek-ai/dsh`) | `dsh --profile acp`, `agentInfo` `deepseek-harness-acp 0.0.1` (the ACP package version, not the CLI's) | same |
 | Pi | `pi` 0.86.0 (`@earendil-works/pi-coding-agent`) | `pi-acp` 0.0.33 (svkozak/pi-acp; spawns `pi --mode rpc`) | same |
 
@@ -79,3 +106,9 @@ Consequences implemented: text attachments become marked-up `text` blocks when `
 - Pi `steer` / `follow_up` (in-flight instructions) and `session/fork` / `clone` / `get_tree` — none used yet; the host queue stands in.
 - DSH image acceptance per model route after a model switch (the flag is computed once at initialize).
 - Windows `.cmd` launch of `pi-acp` / `dsh` (npm shims) — `launch.ts` `spawnSpec` implements cross-spawn's escaping but has not run on a Windows machine.
+- Codex `session/list` empty pages — root-caused: the app-server stores the canonicalized thread cwd and the adapter string-compares it per page, so a symlinked project path filters every page to `[]` (each still carrying `nextCursor`). The host now pages through empty pages and retries once with `realpath(cwd)`; `probe-restore-host.ts codex` exercises exactly this on a `/var/folders` temp dir.
+- Codex `/$<name>` commands — the adapter publishes skill names like `$dig`; `/$dig` reaches Codex as plain text and how the app-server resolves it is unverified.
+- Codex `collaboration_mode` (default/plan) renders as a generic select; plan mode has no dedicated UI.
+- `subagents`, `asyncTasks` / `sessionFailure` `_meta` fields and `steering` on Codex/Claude are advertised but not consumed by the host.
+- Boolean config options are still filtered out (`config.ts` drops non-select options).
+- Image output still renders as the `[image]` placeholder for every agent.

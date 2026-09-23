@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -22,8 +22,8 @@ const SYN_MODES: SessionOption[] = [
   { id: 'yolo', name: 'Auto accept' },
 ];
 
-function deps(cwd = '/tmp', compaction?: () => CompactionPolicy, modes?: SessionOption[], extra?: { env?: Record<string, string>; ignoreModes?: boolean }) {
-  const registry = new AgentRegistry({ fake: { name: 'Fake', command: TSX, args: [FAKE], login: 'echo login', modes, env: extra?.env, ignoreModes: extra?.ignoreModes } });
+function deps(cwd = '/tmp', compaction?: () => CompactionPolicy, modes?: SessionOption[], extra?: { env?: Record<string, string>; ignoreModes?: boolean; terminalAuth?: boolean }) {
+  const registry = new AgentRegistry({ fake: { name: 'Fake', command: TSX, args: [FAKE], login: 'echo login', modes, env: extra?.env, ignoreModes: extra?.ignoreModes, terminalAuth: extra?.terminalAuth } });
   const logs: string[] = [];
   let changes = 0;
   // In-memory blob store: remembers what was written so tests can check the payload landed
@@ -1309,6 +1309,42 @@ describe('AcpSession', () => {
     expect(s.view().status).toBe('ready');
     expect(s.view().error).toBeUndefined();
     s.dispose();
+  });
+
+  it('a terminal auth method lands on the view but authenticate refuses to send it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acpira-term-'));
+    const authLog = join(dir, 'auth.log');
+    const { session } = deps(dir, undefined, undefined, { env: { FAKE_TERMINAL_AUTH: authLog } });
+    const s = session();
+    try {
+      await s.start();
+      expect(s.view().status).toBe('auth_required');
+      expect(s.view().authMethods).toContainEqual(expect.objectContaining({
+        id: 'term-login', terminal: { args: ['--login'], env: { FAKE_LOGIN: '1', FAKE_FLAG: 'method' } },
+      }));
+      await expect(s.authenticate('term-login')).rejects.toThrow('term-login');
+      await new Promise(r => setTimeout(r, 100));
+      expect(existsSync(authLog)).toBe(false);
+      // A plain method still goes over the wire
+      await s.authenticate('fake.login');
+      expect(readFileSync(authLog, 'utf8')).toBe('fake.login\n');
+      await s.retry();
+      expect(s.view().status).toBe('ready');
+    } finally { s.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  // Devin's case: credentials only ever come from the account layer, so the capability is not advertised and the
+  // agent never offers a terminal login (a `devin acp --login` would write a login the ACP process ignores)
+  it('an agent that opts out of terminal auth is not offered terminal methods', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acpira-term-'));
+    const authLog = join(dir, 'auth.log');
+    const { session } = deps(dir, undefined, undefined, { env: { FAKE_TERMINAL_AUTH: authLog }, terminalAuth: false });
+    const s = session();
+    try {
+      await s.start();
+      expect(s.view().status).toBe('auth_required');
+      expect(s.view().authMethods?.map(m => m.id)).toEqual(['fake.login']);
+    } finally { s.dispose(); rmSync(dir, { recursive: true, force: true }); }
   });
 
   it('records per-prompt token usage on the agent turn (Devin standard usage, Grok _meta)', async () => {

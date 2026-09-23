@@ -4,6 +4,8 @@ import type { AgentId } from '@shared/transcript';
 // Grok   — ~/.grok/README.md §Skills / §MCP Servers / §AGENTS.md; also reads Claude Code's ~/.claude/skills, ~/.claude.json, .mcp.json
 // Devin  — docs/reference/configuration/config-file.mdx, extensibility/skills/overview.mdx, extensibility/rules.mdx
 // Kimi   — kimi.com/code/docs: configuration/data-locations, customization/mcp, customization/skills
+// Codex  — developers.openai.com/codex (config.toml, AGENTS.md, skills); MCP servers are `[mcp_servers.name]` tables like Grok's
+// Claude — code.claude.com/docs (settings.json, .mcp.json, CLAUDE.md, skills)
 // OpenCode — opencode.ai/docs/config, /skills, /rules; MCP servers are the `mcp` object in opencode.json(c)
 // DSH    — deepseekdocs skills page; DSH_HOME defaults to ~/.dsh, a flat <name>.md is a skill next to <name>/SKILL.md bundles
 // Pi     — github.com/svkozak/pi-acp + pi README (~/.pi/agent/settings.json, skills, AGENTS.md / AGENTS.override.md)
@@ -70,6 +72,26 @@ export const AGENT_EXT: Record<string, AgentExt> = {
     ],
     skills: ['~/.kimi-code/skills', '~/.agents/skills', '.kimi-code/skills', '.agents/skills'],
     rules: [{ path: 'AGENTS.md' }, { path: '~/.kimi-code/AGENTS.md' }],
+    steer: false,
+  },
+  codex: {
+    config: ['~/.codex/config.toml', '.codex/config.toml'],
+    mcp: [
+      { path: '~/.codex/config.toml', format: 'toml' },
+      { path: '.codex/config.toml', format: 'toml' },
+    ],
+    skills: ['~/.codex/skills', '~/.agents/skills', '.codex/skills', '.agents/skills'],
+    rules: [{ path: 'AGENTS.md' }, { path: 'AGENTS.override.md' }, { path: '~/.codex/AGENTS.md' }],
+    steer: false,
+  },
+  claude: {
+    config: ['~/.claude/settings.json', '.claude/settings.json', '.claude/settings.local.json'],
+    mcp: [
+      { path: '~/.claude.json', format: 'json' },
+      { path: '.mcp.json', format: 'json' },
+    ],
+    skills: ['~/.claude/skills', '.claude/skills'],
+    rules: [{ path: 'CLAUDE.md' }, { path: 'CLAUDE.local.md' }, { path: '.claude/CLAUDE.md' }, { path: '~/.claude/CLAUDE.md' }],
     steer: false,
   },
   opencode: {

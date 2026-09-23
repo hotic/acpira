@@ -107,6 +107,9 @@ export interface AuthMethodInfo {
   id: string;
   name: string;
   description?: string;
+  // `type: 'terminal'` on the wire: the client runs the agent binary with these args/env in an interactive
+  // terminal and never passes the method to `authenticate`
+  terminal?: { args: string[]; env?: Record<string, string> };
 }
 
 // Session lifecycle: starting (spawn process / initialize / session.new) → ready; login failure → auth_required;

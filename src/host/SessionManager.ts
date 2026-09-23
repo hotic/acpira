@@ -9,13 +9,13 @@ import type { AccountInfo, AgentId, AgentInfo, ConfigControl, NativeSessionInfo,
 import type { AccountAction, AddAccountVia, EditTurnRequest, WebviewMsg } from '@shared/protocol';
 import { inWorkspace, type HiddenMap, type SessionScope } from '@shared/settings';
 import { arrangeAgents, pickDefaultAgent, type AgentPrefs } from '@shared/agentOrder';
-import type { AgentRuntimeInfo } from '@shared/inventory';
+import type { AgentHealth, AgentRuntimeInfo } from '@shared/inventory';
 import { captureTurnSettings } from '@shared/turnSettings';
 import { exportFileName, exportMarkdown } from '@shared/exportTranscript';
 import { AgentRegistry } from './acp/AgentRegistry';
 import { AgentPool } from './acp/AgentPool';
 import { AcpSession, type CompactionPolicy, type SessionRecord } from './acp/AcpSession';
-import { probeAgentControls, type ProbeResult } from './acp/probeControls';
+import { probeAgentControls, ProbeFailure, type ProbeResult } from './acp/probeControls';
 import { listNativeSessions } from './acp/nativeSessions';
 import type { AccountManager } from './accounts/AccountManager';
 import type { LocalAccounts } from './accounts/local';
@@ -34,8 +34,8 @@ export interface ManagerDeps {
   defaultAgent: () => AgentId;
   // acpira.agentOrder / acpira.disabledAgents; absent means registry order, everything enabled
   agentPrefs?: () => AgentPrefs;
-  // Terminal-style login: open a terminal on the host and run the command
-  runInTerminal: (title: string, command: string, args: string[]) => void;
+  // Terminal-style login: open a terminal on the host and run the command; env overrides apply to that terminal (null deletes)
+  runInTerminal: (title: string, command: string, args: string[], env?: Record<string, string | null>) => void;
   toast: (level: 'info' | 'error', text: string) => void;
   // Account layer (optional): agents on the account layer bind an account when opening a session
   accounts?: AccountManager;
@@ -110,6 +110,10 @@ export class SessionManager {
   private readonly pool: AgentPool;
   // Options a throwaway probe process just read (the refresh button); newer than any stored session, preferred until a real session starts
   private probed = new Map<AgentId, ProbeResult>();
+  // The latest launch outcome per agent (probe or real session, newest wins) — the settings page's status line
+  private health = new Map<AgentId, AgentHealth>();
+  // startOutcome already folded into `health` per session, so a change burst doesn't record the same start twice
+  private healthSeen = new Map<string, Omit<AgentHealth, 'source'>>();
   // Sessions seen running at the last onChange; a running → idle edge is the moment to re-read the account's quota
   private wasRunning = new Set<string>();
   private prefs: SessionPrefs = { lastSettings: {} };
@@ -314,6 +318,11 @@ export class SessionManager {
     return this.probed.get(agent)?.runtime;
   }
 
+  // How far launching this agent got last time (probe or real session); undefined until either has run
+  agentHealth(agent: AgentId): AgentHealth | undefined {
+    return this.health.get(agent);
+  }
+
   hidden(): HiddenMap { return cloneJson(this.deps.hidden?.() ?? {}); }
 
   // The setting changed (settings page or a hand edit of settings.json): re-push a copy
@@ -349,10 +358,13 @@ export class SessionManager {
     try {
       const r = await probeAgentControls({ def, binary: bin, cwd: this.deps.cwd(), extraEnv, log: line => this.deps.log(line) });
       this.probed.set(agent, r);
+      this.health.set(agent, { stage: 'ready', at: new Date().toISOString(), source: 'probe' });
       // The dropped warm process is replaced by one that has read the current config
       this.warm(agent, acc);
       return r.options;
     } catch (e) {
+      // A ProbeFailure names the stage it died at; an unexpected error is still past spawn, so it lands on the handshake
+      this.health.set(agent, { stage: e instanceof ProbeFailure ? e.stage : 'handshake_failed', at: new Date().toISOString(), error: msg(e), source: 'probe' });
       this.deps.log(`probe ${agent} failed: ${msg(e)}`);
       return this.knownControls(agent);
     }
@@ -525,6 +537,10 @@ export class SessionManager {
     this.saveIndex();
     this.emitSession(s);
     this.emitSessions();
+    if (s.startOutcome && this.healthSeen.get(s.id) !== s.startOutcome) {
+      this.healthSeen.set(s.id, s.startOutcome);
+      this.health.set(s.agent, { ...s.startOutcome, source: 'session' });
+    }
     if (s.isRunning) this.wasRunning.add(s.id);
     else if (this.wasRunning.delete(s.id)) {
       if (s.accountId) this.deps.accounts?.refreshQuota(s.accountId, true).catch(e => this.deps.log(`quota refresh failed: ${msg(e)}`));
@@ -792,6 +808,7 @@ export class SessionManager {
     this.live.delete(id);
     live?.dispose();
     this.wasRunning.delete(id);
+    this.healthSeen.delete(id);
   }
 
   // Viewers left on a session that is gone move to the newest one in scope; with none, the first opens a new session and the rest follow onto it
@@ -965,10 +982,21 @@ export class SessionManager {
     }
   }
 
-  // Login: prefer the agent's own authenticate; if that fails, run the registry's login command in a terminal
+  // Login: a `type: 'terminal'` method runs the agent binary itself with its args/env in a terminal (never authenticate);
+  // other methods go through ACP authenticate, and a failure there falls back to the registry's login command
   private async login(s: AcpSession | undefined, methodId?: string) {
     if (!s) return;
     const def = this.deps.registry.get(s.agent);
+    const method = s.authMethod(methodId);
+    if (method?.terminal) {
+      // Same binary the session would spawn: the adapter IS the agent program, its args carry the login subcommand;
+      // the method's env overrides the agent's own launch env per the spec
+      const bin = await this.deps.registry.resolveBinary(s.agent);
+      const env = { ...def.env, ...method.terminal.env };
+      this.deps.runInTerminal(t('host.loginTerminalTitle', { agent: def.name }), bin ?? def.command, [...def.args, ...method.terminal.args], Object.keys(env).length ? env : undefined);
+      this.deps.toast('info', t('host.loginThenRetry', { agent: def.name }));
+      return;
+    }
     try {
       await s.authenticate(methodId);
       await s.retry();

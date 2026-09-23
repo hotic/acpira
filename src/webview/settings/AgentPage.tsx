@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { BookOpen, Check, ChevronDown, ChevronUp, Copy, FileText, Globe, KeyRound, Plus, Search, Server, SlidersHorizontal, Sparkles, SquareTerminal, X } from 'lucide-react';
 import type { AccountInfo, AgentInfo, ConfigControl } from '@shared/transcript';
-import type { AgentInventory, InventoryFile, InventoryMcp, InventorySkill, McpTransport } from '@shared/inventory';
+import type { AgentHealthStage, AgentInventory, InventoryFile, InventoryMcp, InventorySkill, McpTransport } from '@shared/inventory';
+import type { MsgKey } from '@shared/i18n';
 import type { SettingsView } from '@shared/settings';
 import { familyLabel, isReasoningControl } from '@shared/composerControls';
 import { familyHidden, groupModels, setFamilyVisible, variantLabel, type ModelFamily } from '@shared/models';
@@ -112,9 +113,29 @@ export function AgentPage({ agent, accounts, inventory, controls, settings, env,
   );
 }
 
-// Facts card: executable (with install state) and version. Only the path may truncate; the words around it keep their width
+// Facts card: executable (with install state), version, adapter / engine for npm-packaged adapters, and the latest
+// launch outcome. Only paths may truncate; the words around them keep their width
+const HEALTH_LABEL: Record<AgentHealthStage, MsgKey> = {
+  ready: 'settings.health.ready',
+  spawn_failed: 'settings.health.spawnFailed',
+  handshake_failed: 'settings.health.handshakeFailed',
+  auth_required: 'settings.health.authRequired',
+};
+
 function AgentFacts({ agent, inventory, env }: { agent: AgentInfo; inventory?: AgentInventory; env: SettingsEnv }) {
   const version = inventory?.runtime?.version ? t('settings.agent.version', { name: inventory.runtime.name ?? agent.name, version: inventory.runtime.version }) : undefined;
+  const adapter = inventory?.adapter?.adapter;
+  const engine = inventory?.adapter?.engine;
+  const health = inventory?.health;
+  // The adapter package version duplicates the live runtime line when initialize already reported the same number
+  const adapterText = adapter && inventory?.runtime?.version !== adapter.version
+    ? (adapter.version ? t('settings.agent.version', { name: adapter.name, version: adapter.version }) : adapter.name)
+    : undefined;
+  const engineText = engine
+    ? engine.override
+      ? t('settings.fact.engineOverride', { name: engine.name, env: engine.overrideEnv ?? '', path: engine.override })
+      : `${engine.version ? t('settings.agent.version', { name: engine.name, version: engine.version }) : engine.name} · ${t('settings.fact.bundled')}`
+    : undefined;
   return (
     <Group>
       <FactRow label={t('settings.fact.binary')}>
@@ -124,7 +145,17 @@ function AgentFacts({ agent, inventory, env }: { agent: AgentInfo; inventory?: A
             ? <><Dot ok /><PathText path={inventory.binary} env={env} /></>
             : <><Dot ok={false} /><span className="truncate font-sans text-2 text-fg-2">{t('settings.agent.notInstalled', { command: agent.id })}</span></>}
       </FactRow>
+      {adapterText && <FactRow label={t('settings.fact.adapter')}><span className="truncate" title={adapter?.root}>{adapterText}</span></FactRow>}
+      {engineText && <FactRow label={t('settings.fact.engine')}><span className="truncate" title={engine?.override}>{engineText}</span></FactRow>}
       <FactRow label={t('settings.fact.version')}>{version ?? <span className="text-fg-2">{t('settings.fact.noLive')}</span>}</FactRow>
+      {health && (
+        <FactRow label={t('settings.fact.status')}>
+          <Dot ok={health.stage === 'ready'} />
+          <span className="truncate" title={[health.at, health.error].filter(Boolean).join('\n')}>
+            {t(HEALTH_LABEL[health.stage])}{health.error && health.stage !== 'ready' ? ` · ${health.error}` : ''}
+          </span>
+        </FactRow>
+      )}
     </Group>
   );
 }

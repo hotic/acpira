@@ -5,9 +5,9 @@ import type { EditTurnRequest } from '@shared/protocol';
 import * as acp from '@agentclientprotocol/sdk';
 import type { AgentId, AgentTurn, AuthMethodInfo, ConfigControl, Draft, QuestionAnswers, SessionControls, SessionView, SlashCommand, ToolCallBlock, Turn, TurnError, TurnSettings, Usage, UserTurn } from '@shared/transcript';
 import type { SubagentRecord } from '@shared/subagents';
-import type { AgentRuntimeInfo } from '@shared/inventory';
+import type { AgentHealthStage, AgentRuntimeInfo } from '@shared/inventory';
 import type { AgentRegistry } from './AgentRegistry';
-import { AgentProcess, type ClientHandlers } from './AgentProcess';
+import { AgentProcess, AgentSpawnError, type ClientHandlers } from './AgentProcess';
 import type { AgentPool } from './AgentPool';
 import { capturePlan, planDocuments } from './plans';
 import { planExecutionPrompt } from '@shared/planExecution';
@@ -112,6 +112,8 @@ export class AcpSession {
   private status: SessionView['status'] = 'starting';
   private error?: string;
   private authMethods?: AuthMethodInfo[];
+  // How far the latest start/retry got, for the agent page's health line (SessionManager stamps the source on it)
+  startOutcome?: { stage: AgentHealthStage; at: string; error?: string };
   private phase: TurnPhase = { running: false, staging: false, stagingAborted: false, editing: false, editNotifications: [] };
   private replaying = false;
   // pi-acp echoes its startup prelude in _meta.piAcp.startupInfo and re-sends it as one agent_message_chunk a tick
@@ -354,6 +356,8 @@ export class AcpSession {
     } catch (e) {
       this.fail(e);
     }
+    // Stamped before touch: the manager folds this outcome into the agent's health record
+    if ((this.status as SessionView['status']) === 'ready') this.startOutcome = { stage: 'ready', at: new Date().toISOString() };
     this.touch();
     if ((this.status as SessionView['status']) === 'ready') this.queue.flush();
   }
@@ -381,7 +385,11 @@ export class AcpSession {
     const info = this.proc.init.agentInfo;
     this.log(`initialize ok: protocol ${this.proc.init.protocolVersion}${info ? ` · ${info.name} ${info.version}` : ''}`);
     this.tree.reindex();
-    this.authMethods = this.proc.init.authMethods?.map(m => ({ id: m.id, name: m.name, description: m.description ?? undefined }));
+    this.authMethods = this.proc.init.authMethods?.map(m => ({
+      id: m.id, name: m.name, description: m.description ?? undefined,
+      // A terminal method runs the agent binary itself with args/env in a host terminal; it never goes to authenticate
+      ...('type' in m && m.type === 'terminal' ? { terminal: { args: m.args ?? [], ...(m.env ? { env: m.env } : {}) } } : {}),
+    }));
     await this.handoff();
   }
 
@@ -676,6 +684,7 @@ export class AcpSession {
   private fail(e: unknown) {
     if (isAuth(e)) {
       this.status = 'auth_required';
+      this.startOutcome = { stage: 'auth_required', at: new Date().toISOString() };
       // When an account credential can't be handed over, keep the reason for the Notice to display; otherwise fall back to what the CLI said on stderr,
       // and a plain "not logged in yet" with no hint needs no explanation
       this.error = e instanceof AccountAuthError ? e.message : this.authHint;
@@ -683,16 +692,26 @@ export class AcpSession {
     } else {
       this.status = 'error';
       this.error = msg(e);
+      // The executable not spawning at all is a different stage than a process that ran but failed the handshake
+      this.startOutcome = { stage: e instanceof AgentSpawnError ? 'spawn_failed' : 'handshake_failed', at: new Date().toISOString(), error: this.error };
       this.log(`error: ${this.error}`);
     }
+  }
+
+  // The advertised sign-in method authenticate would pick: the named one, or the first
+  authMethod(methodId?: string): AuthMethodInfo | undefined {
+    const id = methodId ?? this.authMethods?.[0]?.id;
+    return this.authMethods?.find(m => m.id === id);
   }
 
   // Login: ACP authenticate goes to the agent itself; terminal-style methods are left for the caller to run in a terminal
   async authenticate(methodId?: string): Promise<void> {
     if (!this.proc) return;
-    const id = methodId ?? this.authMethods?.[0]?.id;
-    if (!id) throw new Error(t('host.noAuthMethod'));
-    await this.proc.agent.request(acp.methods.agent.authenticate, { methodId: id });
+    const method = this.authMethod(methodId);
+    if (!method) throw new Error(t('host.noAuthMethod'));
+    // A terminal method sent to authenticate is a protocol violation (the spec forbids it), so refuse before the wire
+    if (method.terminal) throw new Error(t('host.terminalAuthMethod', { id: method.id }));
+    await this.proc.agent.request(acp.methods.agent.authenticate, { methodId: method.id });
   }
 
   // Retry establishing the session (after login / after an error). An earlier account hand-off may have failed while the
@@ -708,6 +727,7 @@ export class AcpSession {
         await this.openSession();
         await this.refreshGrokUsage();
       } catch (e) { this.fail(e); }
+      if ((this.status as SessionView['status']) === 'ready') this.startOutcome = { stage: 'ready', at: new Date().toISOString() };
       this.touch();
       if ((this.status as SessionView['status']) === 'ready') this.queue.flush();
       return;
