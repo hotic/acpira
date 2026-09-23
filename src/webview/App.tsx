@@ -161,7 +161,6 @@ export function App() {
     openFile: (sessionId, path, line) => post({ type: 'openFile', sessionId, path, line }),
     setMode: id => post({ type: 'setMode', sessionId: activeId.current, id }),
     setConfig: (configId, value) => post({ type: 'setConfig', sessionId: activeId.current, configId, value }),
-    selectAgent: id => post({ type: 'selectAgent', id }),
     selectSession: id => post({ type: 'selectSession', id }),
     newSession: agent => post({ type: 'newSession', ...(agent ? { agent } : {}) }),
     renameSession: (id, title) => post({ type: 'renameSession', id, title }),

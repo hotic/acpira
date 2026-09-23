@@ -291,7 +291,7 @@
 /* Settings surface (SettingsShell): a second type scale (heading, 20px body leading) and its layout measures.
    Everything else comes from the tokens above; the shell itself is the @container the navigation collapses against. */
 .acp-settings {
-  --settings-nav-w: 184px;
+  --settings-nav-w: 212px;
   --settings-rail-w: 52px;
   --section-gap: calc(var(--pad) + var(--gap));
   --text-2-lh: calc(var(--ui-font-size) + 7px);

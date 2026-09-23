@@ -56,6 +56,7 @@ export class HostRuntime {
       log,
       cwd: () => platform.cwd(),
       defaultAgent: () => this.read<string>('defaultAgent') ?? 'grok',
+      agentPrefs: () => ({ order: sanitizeSetting('agentOrder', this.read('agentOrder')), disabled: sanitizeSetting('disabledAgents', this.read('disabledAgents')) }),
       runInTerminal, toast, accounts,
       localAccounts: new LocalAccounts({ env: agent => ({ ...process.env, ...this.activeRegistry.get(agent).env }) }),
       compaction: () => ({ atTokens: this.read<number>('compactAtTokens') ?? 300_000, auto: this.read<boolean>('autoCompact') ?? true }),
@@ -124,6 +125,7 @@ export class HostRuntime {
     if (affects('appearance')) for (const b of this.bridges) b.pushAppearance();
     if (affects('agents')) { this.activeRegistry = new AgentRegistry(this.read<Record<string, CustomAgentSetting>>('agents') ?? {}); this.manager.setRegistry(this.activeRegistry); }
     if (affects('hiddenOptions')) this.manager.emitHidden();
+    if (affects('agentOrder') || affects('disabledAgents')) this.manager.emitAgents();
     // Any knob the settings page shows (language, defaultAgent, compaction, …): re-push the view and follow a language change host-side.
     // Checked per key, not as "anything but appearance / agents": one shell event may carry an appearance axis and a language change together
     if (SETTING_KEYS.some(k => affects(k))) {

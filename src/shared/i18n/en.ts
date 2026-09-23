@@ -491,6 +491,8 @@ export const en = {
   'settings.general.title': 'General settings',
   'settings.appearance.title': 'Appearance',
   'settings.agent.title': '{agent} settings',
+  'settings.agent.enabled': 'Offer {agent} for new sessions',
+  'settings.agent.lastEnabled': 'At least one agent stays on',
   'settings.nav.general': 'General',
   'settings.nav.appearance': 'Appearance',
   'settings.language': 'Language',

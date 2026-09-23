@@ -36,6 +36,9 @@ export interface SettingsView {
   // Language resolved against the host's display language
   locale: Locale;
   defaultAgent: AgentId;
+  // Agent order of every list (ids not listed follow in registry order) and the agents kept out of the new-session entry points
+  agentOrder: AgentId[];
+  disabledAgents: AgentId[];
   sessionScope: SessionScope;
   sessionListPosition: SessionListPosition;
   autoCompact: boolean;
@@ -50,8 +53,8 @@ export interface SettingsView {
 }
 
 // Keys the webview may write back; the host maps them onto acpira.<key> at user scope
-export type SettingKey = 'language' | 'defaultAgent' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing';
-export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing'];
+export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing';
+export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing'];
 
 export const MIN_COMPACT_AT_TOKENS = 10_000;
 
@@ -59,6 +62,8 @@ export const DEFAULT_SETTINGS: SettingsView = {
   language: 'auto',
   locale: 'en',
   defaultAgent: 'grok',
+  agentOrder: [],
+  disabledAgents: [],
   sessionScope: 'workspace',
   sessionListPosition: 'hidden',
   autoCompact: true,
@@ -100,7 +105,16 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
       return (oneOf(value, SESSION_LIST_POSITIONS) ?? fallback) as SettingsView[K];
     case 'hiddenOptions':
       return (isHiddenMap(value) ? value : fallback) as SettingsView[K];
+    case 'agentOrder':
+    case 'disabledAgents':
+      return idList(value) as SettingsView[K];
   }
+}
+
+// Trimmed, non-empty, first occurrence wins; anything that is not an array reads as empty
+function idList(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return [...new Set(v.filter((x): x is string => typeof x === 'string').map(x => x.trim()).filter(Boolean))];
 }
 
 function oneOf<T extends string>(v: unknown, list: readonly T[]): T | undefined {

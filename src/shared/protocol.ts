@@ -117,7 +117,6 @@ export type WebviewMsg =
   | { type: 'openPlan'; sessionId: string; planId: string }
   | { type: 'setMode'; sessionId?: string; id: string }
   | { type: 'setConfig'; sessionId?: string; configId: string; value: string }
-  | { type: 'selectAgent'; id: AgentId }
   | { type: 'selectSession'; id: string }
   | { type: 'newSession'; agent?: AgentId }
   | { type: 'renameSession'; id: string; title: string }

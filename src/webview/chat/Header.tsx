@@ -3,6 +3,7 @@ import { Ellipsis, History, PanelLeft, PanelRight, Plus, Settings2, UserRound } 
 import type { AccountInfo, AgentInfo, SessionSummary } from '@shared/transcript';
 import type { NativeSessionsState } from '@shared/protocol';
 import type { SessionScope } from '@shared/settings';
+import { launchable } from '@shared/agentOrder';
 import { t } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { Popover } from '../ui/Popover';
@@ -10,7 +11,7 @@ import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { quotaSummary } from '../ui/QuotaBars';
 import { AgentMark } from './AgentMark';
-import { AgentPanel } from './AgentPanel';
+import { AccountPanel, hasAccountMenu } from './AccountPanel';
 import { SessionList } from './SessionList';
 import { SessionMenu } from './SessionMenu';
 import type { ShellHandlers } from './Shell';
@@ -29,7 +30,7 @@ export interface HeaderProps {
   sessionScope?: SessionScope;
   // The import popover's current listing, handed on to the session list
   nativeSessions?: NativeSessionsState;
-  on: Pick<ShellHandlers, 'selectSession' | 'newSession' | 'renameSession' | 'deleteSession' | 'pinSession' | 'moveSession' | 'exportSession' | 'openInEditor' | 'selectAgent' | 'selectAccount' | 'addAccount' | 'removeAccount' | 'refreshQuota' | 'listNativeSessions' | 'importNativeSession'>;
+  on: Pick<ShellHandlers, 'selectSession' | 'newSession' | 'renameSession' | 'deleteSession' | 'pinSession' | 'moveSession' | 'exportSession' | 'openInEditor' | 'selectAccount' | 'addAccount' | 'removeAccount' | 'refreshQuota' | 'listNativeSessions' | 'importNativeSession'>;
   onToggleDrawer?: () => void;
   drawerOpen?: boolean;
   sessionPanel?: 'hidden' | 'left' | 'right';
@@ -40,7 +41,8 @@ export interface HeaderProps {
 
 // Header: a plain text title on the left (sharing the conversation flow's left edge), account / session history / new session icons on the right
 // A narrow session panel gets a drawer toggle; collapsed navigation uses the history popover.
-// The person icon is the account layer's home (login state, switching, adding): it opens the agent panel, whose footer leads to the accounts page
+// The person icon is the account layer's home (login state, switching, adding) for the current agent only; agents without accounts have no person icon.
+// The plus menu lists the enabled agents in the configured order (acpira.agentOrder / acpira.disabledAgents)
 export function Header({ title, sessions, agent, agents, accounts, accountId, activeSessionId, workspace, sessionScope, nativeSessions, on, onToggleDrawer, onOpenSettings, drawerOpen, sessionPanel = 'hidden', sessionPanelDocked = false }: HeaderProps) {
   const [accountOpen, setAccountOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -56,8 +58,8 @@ export function Header({ title, sessions, agent, agents, accounts, accountId, ac
     <Popover.Root open={accountOpen} onOpenChange={setAccountOpen}>
       <Popover.Trigger render={<IconButton title={accountTitle} aria-label={t('common.account')}><UserRound strokeWidth={1.5} /></IconButton>} />
       <Popover.Portal><Popover.Positioner side="bottom" align="end" width="md"><Popover.Popup>
-        <AgentPanel agent={agent} agents={agents} accounts={accounts?.filter(a => a.agent === agent.id) ?? []} accountId={accountId} close={() => setAccountOpen(false)}
-          onSelectAgent={on.selectAgent} onSelectAccount={on.selectAccount} onAddAccount={on.addAccount} onRemoveAccount={on.removeAccount} onRefreshQuota={on.refreshQuota} />
+        <AccountPanel agent={agent} accounts={accounts?.filter(a => a.agent === agent.id) ?? []} accountId={accountId} close={() => setAccountOpen(false)}
+          onSelectAccount={on.selectAccount} onAddAccount={on.addAccount} onRemoveAccount={on.removeAccount} onRefreshQuota={on.refreshQuota} />
       </Popover.Popup></Popover.Positioner></Popover.Portal>
     </Popover.Root>
   );
@@ -76,7 +78,7 @@ export function Header({ title, sessions, agent, agents, accounts, accountId, ac
           <DropdownMenu.Trigger render={<IconButton title={t('session.new')} aria-label={t('session.new')}><Plus strokeWidth={1.5} /></IconButton>} />
           <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="end" width="md"><DropdownMenu.Popup>
             <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
-              {agents.filter(a => !a.external).map(a => <DropdownMenu.Item key={a.id} disabled={a.available === false} title={a.available === false ? t('agent.notInstalled') : undefined} onClick={() => on.newSession(a.id)}>
+              {launchable(agents).map(a => <DropdownMenu.Item key={a.id} disabled={a.available === false} title={a.available === false ? t('agent.notInstalled') : undefined} onClick={() => on.newSession(a.id)}>
                 <OptionContent icon={<AgentMark id={a.id} name={a.name} />}>{a.name}</OptionContent>
               </DropdownMenu.Item>)}
             </div>
@@ -91,7 +93,7 @@ export function Header({ title, sessions, agent, agents, accounts, accountId, ac
               activeAgent={agent.id} nativeSessions={nativeSessions} onListNative={on.listNativeSessions} onImportNative={on.importNativeSession} />
           </Popover.Popup></Popover.Positioner></Popover.Portal>
         </Popover.Root>}
-        {!agent.external && accountButton}
+        {hasAccountMenu(agent) && accountButton}
         {/* The active session's "…" menu: the row summary when the list knows it, a stub built from the header facts otherwise */}
         {activeSessionId && (
           <SessionMenu

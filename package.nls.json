@@ -5,6 +5,8 @@
   "acpira.cmd.openInNewWindow": "Open in New Window",
   "acpira.cmd.showLog": "Show Log",
   "acpira.conf.defaultAgent": "The default agent for new sessions",
+  "acpira.conf.agentOrder": "Order of the agents in every list (agent ids; unlisted agents follow). Drag the agents in the Acpira settings navigation to change it",
+  "acpira.conf.disabledAgents": "Agents hidden from the new-session menu and the default agent picker (agent ids); their existing sessions still open. Toggle them in the Acpira settings navigation",
   "acpira.conf.language": "Interface language; auto follows VS Code",
   "acpira.conf.sessionScope": "Which sessions the list shows: those opened in this workspace folder, or every session on this machine",
   "acpira.conf.sessionScope.workspace": "Sessions opened in the current workspace folder",
