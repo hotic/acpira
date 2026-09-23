@@ -1,0 +1,57 @@
+import { useContext, useState } from 'react';
+import { Image as ImageIcon } from 'lucide-react';
+import type { ImageRef } from '@shared/transcript';
+import { t } from '../i18n';
+import { cn } from '../ui/cn';
+import { Lightbox } from './Lightbox';
+import { BlobUrlContext, OpenBlobContext, OpenToolFileContext, parseFileLink } from './fileLinks';
+
+// An agent-emitted image (message chunk or tool content): pixels live in the session's blob store, base64 never
+// enters the transcript. A click opens the file in the editor; without a host opener the Lightbox is the fallback.
+// The agent's `uri` (where it saved its copy, e.g. codex-acp) rides along as a small openable caption.
+export function AgentImage({ image }: { image: ImageRef }) {
+  const blobUrl = useContext(BlobUrlContext);
+  const openBlob = useContext(OpenBlobContext);
+  const openFile = useContext(OpenToolFileContext);
+  const [preview, setPreview] = useState(false);
+  const src = image.blob && blobUrl ? blobUrl(image.blob) : undefined;
+  const file = image.uri ? parseFileLink(image.uri) : undefined;
+  const name = file?.path.split(/[\\/]/).pop() ?? t('common.image');
+  const open = image.blob && openBlob ? () => openBlob(image.blob!) : src ? () => setPreview(true) : undefined;
+  return (
+    <div className="flex min-w-0 flex-col items-start gap-1">
+      {src ? (
+        <button
+          type="button"
+          title={name}
+          aria-label={t('attach.view', { name })}
+          onClick={open}
+          disabled={!open}
+          className={cn('block max-w-full overflow-hidden rounded-md border border-line outline-none focus-visible:ring-1 focus-visible:ring-focus', open && 'cursor-pointer')}
+        >
+          <img src={src} alt={name} className="max-h-[240px] w-auto max-w-full object-contain" />
+        </button>
+      ) : (
+        // No saved pixels (a refused payload or a URI-only reference): the card still names the source
+        <button
+          type="button"
+          title={image.uri ?? name}
+          aria-label={t('attach.view', { name })}
+          onClick={file && openFile ? () => openFile(file.path, file.line) : undefined}
+          disabled={!(file && openFile)}
+          className="inline-flex h-ctl-sm max-w-full min-w-0 items-center gap-1 rounded-sm bg-chip px-2 text-3 font-medium text-fg-2 disabled:cursor-default enabled:cursor-pointer enabled:hover:bg-chip-hover [&_svg]:size-icon [&_svg]:shrink-0 [&_svg]:text-fg-3"
+        >
+          <ImageIcon strokeWidth={1.5} />
+          <span className="truncate">{name}</span>
+        </button>
+      )}
+      {file && openFile && (
+        <button type="button" title={file.path} onClick={() => openFile(file.path, file.line)}
+          className="max-w-full truncate text-3 text-fg-3 underline-offset-2 outline-none hover:text-fg-2 hover:underline focus-visible:text-fg-1 focus-visible:underline">
+          {image.uri}
+        </button>
+      )}
+      {preview && src && <Lightbox src={src} name={name} onClose={() => setPreview(false)} />}
+    </div>
+  );
+}

@@ -93,6 +93,8 @@ export function isFastControl(control: ConfigControl): boolean {
 
 export function modelConfigChip(control: ConfigControl): string | undefined {
   if (isFastControl(control)) return control.value === 'fast' ? 'Fast' : undefined;
+  // A boolean shows its name only while on — an off toggle adds no chip clutter
+  if (control.type === 'boolean') return control.value === 'true' ? control.name : undefined;
   return control.options.find(option => option.id === control.value)?.name;
 }
 
@@ -110,7 +112,8 @@ export function composerControls(options: ConfigControl[]) {
   for (const c of options) {
     if (isReasoningControl(c)) reasoning.push(c);
     else if (c.category === 'model_config') modelConfig.push(c);
-    else if (c.category === 'model' || (!c.category && (c.id === 'model' || groupModels(c.options).length < c.options.length))) models.push(c);
+    // A boolean's synthetic Off/On pair is not a model family even under a `model` category; it chips in `other`
+    else if (c.type !== 'boolean' && (c.category === 'model' || (!c.category && (c.id === 'model' || groupModels(c.options).length < c.options.length)))) models.push(c);
     else other.push(c);
   }
   return { models, reasoning, modelConfig, other };

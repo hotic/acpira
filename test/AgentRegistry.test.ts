@@ -103,6 +103,9 @@ describe('AgentRegistry', () => {
       login: { command: 'claude-agent-acp', args: ['--cli', 'auth', 'login'] },
       adapter: { package: '@agentclientprotocol/claude-agent-acp', engine: { package: '@anthropic-ai/claude-agent-sdk', overrideEnv: 'CLAUDE_CODE_EXECUTABLE' } },
     });
+    // No synthetic `modes` either: `yolo` / autoApprove is Grok's registry-declared path, unreachable here
+    expect(r.get('codex').modes).toBeUndefined();
+    expect(r.get('claude').modes).toBeUndefined();
     const custom = new AgentRegistry({ codex: { name: 'CX', command: '/x/cx' }, claude: { command: '/x/cl' } });
     expect(custom.get('codex').command).toBe('/x/cx');
     expect(custom.get('codex').adapter).toBeUndefined();

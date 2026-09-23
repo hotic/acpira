@@ -16,6 +16,9 @@ export interface SubagentTreeDeps {
   now?: () => number;
   // A node went terminal — agent-reported, or 'disconnected' from a local settle; pending cards close as cancelled
   onTerminal?: (nodeId: string) => void;
+  // A child's image content parks its pixels in the parent's session blob store, same as the root transcript
+  saveImage?: NormalizeState['saveImage'];
+  saveImageFile?: NormalizeState['saveImageFile'];
 }
 
 export interface RootRouteCtx {
@@ -106,7 +109,7 @@ export class SubagentTree {
         announcedAt: r.announcedAt,
         toolCount: r.toolCount,
         peer: { ...r.peer },
-        state: { ...emptyState(), turns: restoreInterruptedTurns(r.turns, at) },
+        state: { ...this.childState(), turns: restoreInterruptedTurns(r.turns, at) },
         rev: r.rev ?? 1,
         restored: true,
       };
@@ -127,6 +130,9 @@ export class SubagentTree {
   }
 
   private now(): number { return this.deps.now?.() ?? Date.now(); }
+
+  // A child transcript gets the same image saver as the root state
+  private childState(): NormalizeState { return { ...emptyState(), saveImage: this.deps.saveImage, saveImageFile: this.deps.saveImageFile }; }
   private bump(n: SubagentNode) { n.rev++; }
   get size(): number { return this.nodes.length; }
   private label(n: SubagentNode): string { return n.peer.sessionId ?? n.peer.agentId ?? n.peer.toolCallId ?? n.id.slice(0, 8); }
@@ -208,7 +214,7 @@ export class SubagentTree {
         announcedAt: this.now(),
         toolCount: 0,
         peer: { sessionId: l.peerSessionId },
-        state: emptyState(),
+        state: this.childState(),
         rev: 0,
       };
       // The eager turn gives tool rows real startedAt/endedAt and endTurn something to seal
@@ -496,7 +502,7 @@ export class SubagentTree {
         announcedAt: this.now(),
         toolCount: 0,
         peer: { agentId },
-        state: emptyState(),
+        state: this.childState(),
         rev: 0,
         dialect: 'devin',
       };
@@ -624,7 +630,7 @@ export class SubagentTree {
         announcedAt: this.now(),
         toolCount: 0,
         peer: { toolCallId },
-        state: emptyState(),
+        state: this.childState(),
         rev: 0,
       };
       n.state.turns.push({ role: 'agent', startedAt: n.announcedAt, blocks: [] });

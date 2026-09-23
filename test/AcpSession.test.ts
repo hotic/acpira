@@ -10,6 +10,7 @@ import type { EditTurnRequest } from '@shared/protocol';
 import { MAX_IMAGE_BYTES } from '@shared/attachments';
 import { AgentRegistry } from '../src/host/acp/AgentRegistry';
 import { AcpSession, type CompactionPolicy, type SessionDeps } from '../src/host/acp/AcpSession';
+import { blobName } from '../src/host/acp/attachments';
 
 // Launch test/fake-agent.ts via tsx as the agent; the registry holds a custom agent pointing at it
 const FAKE = fileURLToPath(new URL('./fake-agent.ts', import.meta.url));
@@ -31,8 +32,10 @@ function deps(cwd = '/tmp', compaction?: () => CompactionPolicy, modes?: Session
   const d: SessionDeps = {
     registry, log: (l: string) => logs.push(l), onChange: () => { changes++; }, compaction,
     blobs: {
-      saveBlob: async (sid, ext, bytes) => { const name = `b${blobs.size}${ext}`; blobs.set(name, bytes); return { name, path: `/blobs/${sid}/${name}` }; },
+      // Content-hash names like TranscriptStore: normalize's saveImage computes the same name synchronously
+      saveBlob: async (sid, ext, bytes) => { const name = blobName(ext, bytes); blobs.set(name, bytes); return { name, path: `/blobs/${sid}/${name}` }; },
       readBlob: async (_sid, name) => { const b = blobs.get(name); if (!b) throw new Error(`no blob ${name}`); return b; },
+      blobPath: (_sid, name) => blobs.has(name) ? `/blobs/${name}` : undefined,
     },
   };
   return { d, logs, blobs, changes: () => changes, session: () => AcpSession.fresh('fake', cwd, d) };
@@ -250,6 +253,48 @@ describe('AcpSession', () => {
     } finally { s.dispose(); }
   });
 
+  it('a defaultToNo plan card still approves through Build — defaultToNo is emphasis, not the fallback', async () => {
+    const { session } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.setMode('plan');
+      const pending = s.prompt('plan-veto');
+      await until(() => s.view().turns.some(t => t.role === 'agent' && t.blocks.some(b => b.type === 'permission')));
+      const blocks = s.view().turns.flatMap(t => t.role === 'agent' ? t.blocks : []);
+      const permission = blocks.find(b => b.type === 'permission')!;
+      const plan = blocks.find(b => b.type === 'plan_document')!;
+      if (permission.type !== 'permission' || plan.type !== 'plan_document') throw new Error();
+      expect(permission.defaultToNo).toBe(true);
+      await s.buildPlan(plan.id);
+      await pending;
+      expect(plan.status).toBe('approved');
+      expect(JSON.stringify(s.view().turns)).toContain('APPROVED');
+    } finally { s.dispose(); }
+  });
+
+  it('an explicit reject option on a plan card resolves it without touching the executor model', async () => {
+    const { session } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.setMode('plan');
+      const pending = s.prompt('plan-devin');
+      await until(() => s.view().turns.some(t => t.role === 'agent' && t.blocks.some(b => b.type === 'permission')));
+      const blocks = s.view().turns.flatMap(t => t.role === 'agent' ? t.blocks : []);
+      const permission = blocks.find(b => b.type === 'permission')!;
+      const plan = blocks.find(b => b.type === 'plan_document')!;
+      if (permission.type !== 'permission' || plan.type !== 'plan_document') throw new Error();
+      const reject = permission.options.find(o => o.kind === 'reject_once')!;
+      await s.buildPlan(plan.id, { configId: 'model', value: 'm2' }, reject.id);
+      await pending;
+      expect(plan.status).toBe('rejected');
+      expect(s.view().controls.options.find(c => c.id === 'model')?.value).toBe('m1');
+      expect(s.view().controls.modeId).toBe('plan');
+      expect(JSON.stringify(s.view().turns)).toContain('REJECTED');
+    } finally { s.dispose(); }
+  });
+
   it('start session: receives modes and configOptions (model sorted before thought_level)', async () => {
     const { session } = deps();
     const s = session();
@@ -300,21 +345,25 @@ describe('AcpSession', () => {
       { kind: 'file', uri: 'file:///repo/src/a.ts', name: 'src/a.ts' },
     ]);
     const v = s.view();
-    expect(v.turns[0]).toMatchObject({
+    const user = v.turns[0]!;
+    if (user.role !== 'user') throw new Error();
+    expect(user).toMatchObject({
       role: 'user', text: 'echo blocks',
       attachments: [
-        { kind: 'image', blob: 'b0.png', mimeType: 'image/png', name: 'shot.png' },
-        { kind: 'text', blob: 'b1.txt', name: 'notes.md' },
+        { kind: 'image', mimeType: 'image/png', name: 'shot.png' },
+        { kind: 'text', name: 'notes.md' },
         { kind: 'file', uri: 'file:///repo/src/a.ts', name: 'src/a.ts' },
       ],
     });
-    expect(Buffer.from(blobs.get('b0.png')!).toString()).toBe('fake-png-bytes');
-    expect(Buffer.from(blobs.get('b1.txt')!).toString()).toBe('# notes');
+    const names = user.attachments!.map(a => ('blob' in a ? a.blob! : ''));
+    const [imgBlob, txtBlob] = [names[0]!, names[1]!];
+    expect(Buffer.from(blobs.get(imgBlob)!).toString()).toBe('fake-png-bytes');
+    expect(Buffer.from(blobs.get(txtBlob)!).toString()).toBe('# notes');
     // the fake agent echoes the block types and key fields it received
     const agent = v.turns[1]!;
     if (agent.role !== 'agent') throw new Error();
     const echoed = agent.blocks.find(b => b.type === 'text');
-    expect(echoed).toMatchObject({ type: 'text', markdown: 'text · image:image/png · resource:file:///blobs/' + s.id + '/b1.txt:# notes · resource_link:file:///repo/src/a.ts:src/a.ts' });
+    expect(echoed).toMatchObject({ type: 'text', markdown: `text · image:image/png · resource:file:///blobs/${s.id}/${txtBlob}:# notes · resource_link:file:///repo/src/a.ts:src/a.ts` });
     s.dispose();
   });
 
@@ -349,8 +398,9 @@ describe('AcpSession', () => {
       { kind: 'image', mimeType: 'image/png', data: huge, name: 'huge.png' },
     ]);
     const v = s.view();
-    expect(v.turns[0]).toMatchObject({ role: 'user', attachments: [{ kind: 'image', blob: 'b0.png', mimeType: 'image/png', name: 'shot.png' }] });
-    expect(Buffer.from(blobs.get('b0.png')!).toString()).toBe('real-png-bytes');
+    const shot = v.turns[0]?.role === 'user' ? v.turns[0].attachments?.[0] : undefined;
+    expect(shot).toMatchObject({ kind: 'image', mimeType: 'image/png', name: 'shot.png' });
+    expect(Buffer.from(blobs.get(shot && 'blob' in shot ? shot.blob! : '')!).toString()).toBe('real-png-bytes');
     const agent = v.turns[1]!;
     if (agent.role !== 'agent') throw new Error();
     expect(agent.blocks.find(b => b.type === 'text')).toMatchObject({ markdown: 'text · image:image/png' });
@@ -465,6 +515,85 @@ describe('AcpSession', () => {
       // The new-file write renders as the all-add diff parked from the in_progress update's rawInput.content
       expect(block).toMatchObject({ kind: 'edit', status: 'completed' });
       expect(block.content).toMatchObject({ type: 'diff', source: { path: '/tmp/proj/a.txt' } });
+    } finally { s.dispose(); }
+  });
+
+  // claude-agent-acp / codex-acp decorate session/request_permission with _meta.permission (version 1): the card
+  // takes the adapter's own title/description/defaultToNo, and each option may carry its own description
+  it("permission _meta.permission: adapter title/description/defaultToNo drive the card, option details ride along", async () => {
+    const { session } = deps();
+    const s = session();
+    try {
+      await s.start();
+      const p = s.prompt('perm-meta');
+      await until(() => s.view().turns.some(t => t.role === 'agent' && t.blocks.some(b => b.type === 'permission')));
+      const agent = s.view().turns[1]!;
+      if (agent.role !== 'agent') throw new Error();
+      const perm = agent.blocks.find(b => b.type === 'permission') as PermissionBlock;
+      expect(perm.title).toBe('Run command?');
+      expect(perm.description).toBe('Reason: cleans the tree');
+      expect(perm.defaultToNo).toBe(true);
+      expect(perm.options.map(o => o.id)).toEqual(['yes-proceed', 'yes-session', 'no-diff']);
+      expect(perm.options[1]!.detail).toBe('Remembered for this session');
+      s.resolvePermission(perm.id, 'yes-proceed');
+      await p;
+      const blocks = (s.view().turns[1] as { blocks: AgentBlock[] }).blocks;
+      expect(blocks.find((b): b is ToolCallBlock => b.type === 'tool_call' && b.id === 'pm1')).toMatchObject({ status: 'completed' });
+      expect(blocks.at(-1)).toMatchObject({ type: 'text', markdown: 'picked yes-proceed' });
+    } finally { s.dispose(); }
+  });
+
+  // ACP RFD boolean-config-option: the fake only offers its `fast` toggle to clients advertising
+  // clientCapabilities.session.configOptions.boolean, and the set request must carry a real boolean — a
+  // "false" string would parse truthy on some agents
+  it('boolean config option: capability-gated arrival, synthetic Off/On, the wire value is a real boolean', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acpira-cfg-'));
+    const logFile = join(dir, 'config.log');
+    try {
+      const { session } = deps('/tmp', undefined, undefined, { env: { FAKE_BOOL: '1', FAKE_CONFIG_LOG: logFile } });
+      const s = session();
+      try {
+        await s.start();
+        const fast = s.view().controls.options.find(o => o.id === 'fast')!;
+        expect(fast).toMatchObject({ type: 'boolean', name: 'Fast mode', value: 'false' });
+        expect(fast.options.map(o => o.id)).toEqual(['false', 'true']);
+        await s.setConfig('fast', 'true');
+        expect(s.view().controls.options.find(o => o.id === 'fast')?.value).toBe('true');
+        await s.setConfig('fast', 'false');
+        expect(s.view().controls.options.find(o => o.id === 'fast')?.value).toBe('false');
+        const wire = readFileSync(logFile, 'utf8').trim().split('\n').map(l => JSON.parse(l) as { configId: string; type: unknown; value: unknown });
+        expect(wire).toEqual([
+          { configId: 'fast', type: 'boolean', value: true },
+          { configId: 'fast', type: 'boolean', value: false },
+        ]);
+      } finally { s.dispose(); }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  // codex-acp / claude-agent-acp send images as message chunks and tool content items; the payload lands in the
+  // session's blob store under its content-hash name (replay writes the same file, no duplicates)
+  it('agent-emitted images: a chunk becomes its own block, tool content keeps the image item, the blob is on the store', async () => {
+    const { session, blobs } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('image');
+      const agent = s.view().turns[1]!;
+      if (agent.role !== 'agent') throw new Error();
+      const PNG = new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
+      const name = blobName('.png', PNG);
+      expect(blobs.has(name)).toBe(true);
+      expect(new Uint8Array(blobs.get(name)!)).toEqual(PNG);
+      const img = agent.blocks.find(b => b.type === 'image')!;
+      expect(img).toMatchObject({ type: 'image', mimeType: 'image/png', blob: name });
+      const texts = agent.blocks.filter(b => b.type === 'text');
+      expect(texts.map(b => (b as { markdown: string }).markdown)).toEqual(['here is ', 'the red dot']);
+      const tool = agent.blocks.find((b): b is ToolCallBlock => b.type === 'tool_call' && b.id === 'im1')!;
+      expect(tool.contents).toEqual([
+        { type: 'text', text: 'Revised prompt: red dot' },
+        { type: 'image', mimeType: 'image/png', blob: name, uri: '/repo/red.png' },
+      ]);
+      expect(tool.content).toEqual({ type: 'text', text: 'Revised prompt: red dot' });
     } finally { s.dispose(); }
   });
 
@@ -757,8 +886,9 @@ describe('AcpSession', () => {
       await s.prompt('third');
       let queued = s.view().queued!;
       expect(queued.map(q => q.text)).toEqual(['first', 'second', 'third']);
-      expect(queued[0]!.attachments).toEqual([{ kind: 'image', blob: 'b0.png', mimeType: 'image/png', name: 'a.png' }]);
-      expect(blobs.has('b0.png')).toBe(true);
+      const staged = queued[0]!.attachments![0]!;
+      expect(staged).toMatchObject({ kind: 'image', mimeType: 'image/png', name: 'a.png' });
+      expect('blob' in staged && staged.blob && blobs.has(staged.blob)).toBe(true);
       // Edit the first: new text, the image kept, a text draft added; the entry stays first
       await s.editQueued(queued[0]!.id, 'first edited', [0], [{ kind: 'text', name: 'n.md', text: 'x' }]);
       queued = s.view().queued!;

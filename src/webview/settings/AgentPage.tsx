@@ -48,8 +48,8 @@ export function AgentPage({ agent, accounts, inventory, controls, settings, env,
     return () => clearInterval(timer);
   }, [agent.id, hasQuota, accountKey, on]);
 
-  // Reasoning levels belong to the current model's picker, not agent-wide visibility settings.
-  const modelControls = controls?.filter(c => !isReasoningControl(c));
+  // Reasoning levels belong to the current model's picker, not agent-wide visibility settings; a boolean's synthetic Off/On pair is not a family either.
+  const modelControls = controls?.filter(c => !isReasoningControl(c) && c.type !== 'boolean');
   const counts: Record<AgentSection, number> = {
     models: modelControls?.reduce((n, c) => n + groupModels(c.options).length, 0) ?? 0,
     mcp: inventory?.mcp.length ?? 0,

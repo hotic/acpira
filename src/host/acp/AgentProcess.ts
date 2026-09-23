@@ -78,7 +78,7 @@ export class AgentProcess {
       Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
       Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
     );
-    // Extension session/update kinds are rewritten into session_info_update before the SDK's closed-union parse
+    // Extension session/update kinds are rewritten into session_info_update before the SDK's closed-union parse drops them
     const stream: acp.Stream = {
       writable: raw.writable,
       readable: raw.readable.pipeThrough(new TransformStream<acp.AnyMessage, acp.AnyMessage>({
@@ -123,11 +123,17 @@ export class AgentProcess {
         // an agent whose ACP process ignores the local login opts out (AgentDef.auth.terminal, Devin)
         ...(def.auth?.terminal === false ? {} : { auth: { terminal: true } }),
         ...(h.onElicitation ? { elicitation: { form: {} } } : {}),
-        // RFD #1992 draft field plus claude-agent-acp's air-extension bridge for SDKs that strip it
-        ...(def.subagents === false ? {} : {
-          subagents: {},
-          _meta: { jetbrains: { air: { version: 1, capabilities: ['nativeSubagentSessions'] } } },
-        }),
+        // ACP boolean session config options (RFD boolean-config-option); the codex / claude adapters degrade
+        // an option like Codex's fast-mode to an on/off select when the client does not declare this
+        session: { configOptions: { boolean: {} } },
+        ...(def.subagents === false ? {} : { subagents: {} }),
+        _meta: {
+          // codex-acp streams shell output as _meta.terminal_output_delta and only then drops its JSON rawOutput receipt;
+          // claude-agent-acp switches Bash to an agent-managed terminal on either terminal_output flag
+          terminal_output_delta: true,
+          // RFD #1992 draft field plus claude-agent-acp's air-extension bridge for SDKs that strip it
+          ...(def.subagents === false ? {} : { jetbrains: { air: { version: 1, capabilities: ['nativeSubagentSessions'] } } }),
+        },
       },
     } as acp.InitializeRequest;
     const initTimeoutMs = opts?.initTimeoutMs ?? INIT_TIMEOUT_MS;

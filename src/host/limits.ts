@@ -3,6 +3,8 @@ export const TITLE_MAX = 40;
 export const RENAME_MAX = 80;
 // Tool output parked on a transcript block; beyond this only the head is kept
 export const TOOL_OUTPUT_MAX = 20_000;
+// Inline image payload an agent emits (message chunk / tool content); above this it degrades to a note instead of a blob
+export const MAX_OUT_IMAGE_BYTES = 20 * 1024 * 1024;
 // Full-history editing is a fallback, not native compaction. Bound its wire
 // payload before replacing a session; this is not a model token-window estimate.
 export const EDIT_CONTEXT_MAX_BYTES = 256 * 1024;

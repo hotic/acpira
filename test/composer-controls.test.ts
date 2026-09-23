@@ -44,6 +44,18 @@ describe('shared composer controls', () => {
     expect(isFastControl({ ...speed, options: [{ id: 's', name: 'Standard' }, { id: 'f', name: 'Fast' }] })).toBe(false);
   });
 
+  it('a boolean control (ACP fast-mode) chips as its own name only while on', () => {
+    const fast: ConfigControl = { id: 'fast-mode', name: 'Fast mode', category: 'model_config', type: 'boolean', value: 'true',
+      options: [{ id: 'false', name: 'Off' }, { id: 'true', name: 'On' }] };
+    expect(modelConfigChip(fast)).toBe('Fast mode');
+    expect(modelConfigChip({ ...fast, value: 'false' })).toBeUndefined();
+    // The synthetic Off/On pair must never read as a model family or a fast/standard select
+    expect(isFastControl(fast)).toBe(false);
+    expect(composerControls([fast])).toEqual({ models: [], reasoning: [], modelConfig: [fast], other: [] });
+    // Even a `model`-categorized boolean stays out of the models bucket — Off/On is never a family
+    expect(composerControls([{ ...fast, category: 'model' }])).toEqual({ models: [], reasoning: [], modelConfig: [], other: [{ ...fast, category: 'model' }] });
+  });
+
   it('normalizes and orders Grok labels while preserving exact wire IDs', () => {
     expect(effortOptions([
       { id: 'xhigh', name: 'Extra High Effort' },

@@ -18,7 +18,7 @@ async function setup() {
   const view = await store.open('test-conversation-a', root, 'ChatGPT test');
   let seq = 0;
   const send = (body: object) => store.accept(view.id, { id: `event-${++seq}`, turnId: 'turn-a', ...body });
-  return { root, dir, store, view, send, clock: (ms: number) => { now += ms; } };
+  return { root, dir, store, view, send, clock: (ms: number) => { now += ms; }, now: () => now };
 }
 
 describe('ChatGPT external session bridge', () => {
@@ -87,8 +87,10 @@ describe('ChatGPT external session bridge', () => {
   });
 
   it('merges concurrent writers and replays into another host without overwriting events', async () => {
-    const { root, dir, store, view, send } = await setup();
-    const second = new ChatGptBridgeStore(dir);
+    const { root, dir, store, view, send, now } = await setup();
+    // Same clock as `store`: a real-time `Date.now` here makes whichever writer's event lands last stamp
+    // `lastEventAt` ~3 months in the fake clock's past, so the fake-now view flips to stale at random
+    const second = new ChatGptBridgeStore(dir, () => {}, now);
     await second.init(); cleanups.unshift(() => second.dispose());
     await send({ type: 'turn_start', text: 'concurrency test' });
     await Promise.all(Array.from({ length: 16 }, (_, i) => (i % 2 ? store : second).accept(view.id, {

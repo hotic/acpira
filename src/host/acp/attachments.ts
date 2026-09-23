@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -8,11 +9,19 @@ import type { AgentDef } from './AgentRegistry';
 import { msg } from '../errors';
 import { t } from '../i18n';
 
+// Blob names are content-derived so a transcript can reference a blob before its write completes (agent images are
+// referenced synchronously while the store write lands async) and identical payloads share one file
+export function blobName(ext: string, bytes: Uint8Array): string {
+  return `${createHash('sha256').update(bytes).digest('hex').slice(0, 16)}${ext}`;
+}
+
 // Where a session parks attachment payloads (TranscriptStore implements it): the name is what the turn keeps and the webview loads via blobBase,
-// the absolute path is what the agent gets told when the content is embedded
+// the absolute path is what the agent gets told when the content is embedded. Names follow blobName()
 export interface BlobStore {
   saveBlob(sessionId: string, ext: string, bytes: Uint8Array): Promise<{ name: string; path: string }>;
   readBlob(sessionId: string, name: string): Promise<Uint8Array>;
+  // Absolute path of a saved blob, when the store is on this machine's disk (export links, opening in the editor)
+  blobPath?(sessionId: string, name: string): string | undefined;
 }
 
 export interface PreparedPrompt {

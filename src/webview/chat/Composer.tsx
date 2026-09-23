@@ -272,7 +272,7 @@ export function Composer(p: ComposerProps) {
               <DropdownMenu.Root onOpenLifecycle={onOpenChange}>
                 <DropdownMenu.Trigger render={<Chip variant="solid" className="ml-0.5 shrink-0" narrow="icon"
                   title={mode ? [mode.name, mode.description].filter(Boolean).join(t('common.metaSep')) : t('composer.mode')}
-                  icon={ModeIcon && <ModeIcon strokeWidth={1.75} />}>
+                  icon={ModeIcon && <ModeIcon strokeWidth={1.75} className={mode?.kind === 'full_access' ? 'text-warn' : undefined} />}>
                   {mode?.name ?? t('composer.mode')}
                 </Chip>} />
                 <DropdownMenu.Portal><DropdownMenu.Positioner side="top" width="sm"><DropdownMenu.Popup>
@@ -280,7 +280,8 @@ export function Composer(p: ComposerProps) {
                     {p.controls.modes.map(m => {
                       const Icon = modeIcon(m);
                       return <DropdownMenu.RadioItem key={m.id} value={m.id} title={m.description} onClick={() => p.onSetMode(m.id)}>
-                        <OptionContent icon={<Icon strokeWidth={1.75} />} checked={m.id === p.controls.modeId} checkSlot={!!mode}>{m.name}</OptionContent>
+                        {/* full_access kinds keep the agent's own name; only the glyph carries the warning color */}
+                        <OptionContent icon={<Icon strokeWidth={1.75} className={m.kind === 'full_access' ? 'text-warn' : undefined} />} checked={m.id === p.controls.modeId} checkSlot={!!mode}>{m.name}</OptionContent>
                       </DropdownMenu.RadioItem>;
                     })}
                   </DropdownMenu.RadioGroup>

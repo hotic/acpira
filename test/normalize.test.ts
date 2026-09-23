@@ -1,7 +1,10 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type * as acp from '@agentclientprotocol/sdk';
-import type { ToolCallBlock } from '@shared/transcript';
-import { activityOf, applyUpdate, diffLines, emptyState, endTurn, failTurn, permissionToolUpdate, sealReplay } from '../src/host/acp/normalize';
+import type { ConfigControl, ToolCallBlock } from '@shared/transcript';
+import { activityOf, applyUpdate, configOptionSetValue, diffLines, emptyState, endTurn, failTurn, initControls, permissionToolUpdate, sealReplay } from '../src/host/acp/normalize';
 
 describe('diffLines', () => {
   it('LCS line-level diff, keeping only context near changes', () => {
@@ -324,7 +327,7 @@ describe('applyUpdate', () => {
     expect(s.commands).toEqual([]);
   });
 
-  it('configOptions: every select becomes a control, groups flattened, sorted by category, boolean hidden, category=mode promoted to modes', () => {
+  it('configOptions: every select becomes a control, groups flattened, sorted by category, boolean kept as a synthetic Off/On pair, category=mode promoted to modes', () => {
     const s = emptyState();
     applyUpdate(s, {
       sessionUpdate: 'config_option_update',
@@ -339,7 +342,9 @@ describe('applyUpdate', () => {
         },
       ],
     });
-    expect(s.controls.options.map(o => o.id)).toEqual(['model', 'effort', 'custom']);
+    expect(s.controls.options.map(o => o.id)).toEqual(['model', 'effort', 'verbose', 'custom']);
+    // A boolean option is a string-valued control everywhere but the wire (synthetic Off/On pair, value stringified)
+    expect(s.controls.options[2]).toEqual({ id: 'verbose', name: 'Verbose', category: undefined, type: 'boolean', value: 'true', options: [{ id: 'false', name: 'Off' }, { id: 'true', name: 'On' }] });
     expect(s.controls.options[0]!.options).toEqual([{ id: 'a', name: 'A', description: 'Group 1', group: { id: 'g1', name: 'Group 1' } }, { id: 'b', name: 'B', description: 'Group 2', group: { id: 'g2', name: 'Group 2' } }]);
     expect(s.controls.options[0]!.value).toBe('b');
     expect(s.controls.modes.map(m => m.id)).toEqual(['agent', 'plan']);
@@ -407,6 +412,172 @@ describe('applyUpdate', () => {
     if (overwritten?.type !== 'tool_call') throw new Error();
     expect(overwritten.content).toEqual({ type: 'text', text: 'Wrote file successfully.' });
     expect(overwritten.contents).toBeUndefined();
+  });
+
+  // codex-acp streams command output as _meta.terminal_output_delta and answers with a { formatted_output, exit_code } receipt
+  it('terminal_output_delta concatenates like terminal_output and marks the terminal agent-wired', () => {
+    const s = emptyState();
+    applyUpdate(s, { sessionUpdate: 'tool_call', toolCallId: 't', title: 'bash', kind: 'execute', status: 'in_progress',
+      content: [{ type: 'terminal', terminalId: 'term-1' }] });
+    applyUpdate(s, { sessionUpdate: 'tool_call_update', toolCallId: 't', _meta: { terminal_output_delta: { terminal_id: 'term-1', data: 'hel' } } });
+    applyUpdate(s, { sessionUpdate: 'tool_call_update', toolCallId: 't', _meta: { terminal_output_delta: { terminal_id: 'term-1', data: 'lo\n' } } });
+    applyUpdate(s, { sessionUpdate: 'tool_call_update', toolCallId: 't', status: 'completed', _meta: { terminal_exit: { terminal_id: 'term-1', exit_code: 3, signal: null } } });
+    const t = s.turns[0];
+    if (t?.role !== 'agent') throw new Error();
+    expect(t.blocks[0]).toMatchObject({ status: 'completed', content: { type: 'text', text: 'hello\nexit code 3' } });
+    // A delta alone already means the agent wired the terminal: no not-wired placeholder even mid-stream
+    const s2 = emptyState();
+    applyUpdate(s2, { sessionUpdate: 'tool_call', toolCallId: 't', title: 'bash', kind: 'execute', status: 'in_progress',
+      content: [{ type: 'terminal', terminalId: 'term-1' }] });
+    applyUpdate(s2, { sessionUpdate: 'tool_call_update', toolCallId: 't', _meta: { terminal_output_delta: { terminal_id: 'term-1', data: 'hi' } } });
+    expect((s2.turns[0] as { blocks: { content?: { text?: string } }[] }).blocks[0]!.content?.text).toBe('hi');
+  });
+
+  it("a rawOutput { formatted_output, exit_code } receipt renders as plain text; other objects stay pretty JSON", () => {
+    const s = emptyState();
+    applyUpdate(s, { sessionUpdate: 'tool_call', toolCallId: 'sh', title: 'bash', kind: 'execute', status: 'in_progress' });
+    applyUpdate(s, { sessionUpdate: 'tool_call_update', toolCallId: 'sh', status: 'completed', rawOutput: { formatted_output: 'tests passed\n', exit_code: 0 } });
+    applyUpdate(s, { sessionUpdate: 'tool_call', toolCallId: 'sh2', title: 'bash', kind: 'execute', status: 'in_progress' });
+    applyUpdate(s, { sessionUpdate: 'tool_call_update', toolCallId: 'sh2', status: 'completed', rawOutput: { formatted_output: 'boom', exit_code: 2 } });
+    applyUpdate(s, { sessionUpdate: 'tool_call', toolCallId: 'sh3', title: 'bash', kind: 'execute', status: 'in_progress' });
+    applyUpdate(s, { sessionUpdate: 'tool_call_update', toolCallId: 'sh3', status: 'completed', rawOutput: { output: 'done', metadata: { exists: true } } });
+    const t = s.turns[0];
+    if (t?.role !== 'agent') throw new Error();
+    expect(t.blocks[0]).toMatchObject({ content: { type: 'text', text: 'tests passed\n' } });
+    expect(t.blocks[1]).toMatchObject({ content: { type: 'text', text: 'boom\nexit code 2' } });
+    expect(t.blocks[2]).toMatchObject({ content: { type: 'text', text: '{\n  "output": "done",\n  "metadata": {\n    "exists": true\n  }\n}' } });
+  });
+
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64').toString('base64');
+
+  it('an image chunk closes the text run, becomes its own block and keeps the saved blob name', () => {
+    const saved: string[] = [];
+    const s = { ...emptyState(), saveImage: (data: string, mimeType: string) => { saved.push(mimeType); return `blob-${saved.length}.png`; } };
+    applyUpdate(s, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'here is ' } });
+    applyUpdate(s, { sessionUpdate: 'agent_message_chunk', content: { type: 'image', data: PNG, mimeType: 'image/png' } });
+    applyUpdate(s, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'the dot' } });
+    const t = s.turns[0];
+    if (t?.role !== 'agent') throw new Error();
+    expect(t.blocks).toEqual([
+      { type: 'text', markdown: 'here is ', streaming: false },
+      { type: 'image', id: 'img-1', mimeType: 'image/png', blob: 'blob-1.png' },
+      { type: 'text', markdown: 'the dot', streaming: true },
+    ]);
+    expect(saved).toEqual(['image/png']);
+  });
+
+  it('without saveImage an image chunk degrades to [image]; an unsaveable or non-showable payload says so', () => {
+    const s = emptyState();
+    applyUpdate(s, { sessionUpdate: 'agent_message_chunk', content: { type: 'image', data: PNG, mimeType: 'image/png' } });
+    const s2 = { ...emptyState(), saveImage: () => undefined };
+    applyUpdate(s2, { sessionUpdate: 'agent_message_chunk', content: { type: 'image', data: PNG, mimeType: 'image/tiff' } });
+    const a = s.turns[0], b = s2.turns[0];
+    if (a?.role !== 'agent' || b?.role !== 'agent') throw new Error();
+    expect(a.blocks[0]).toMatchObject({ type: 'text', markdown: '[image]' });
+    expect(b.blocks[0]).toMatchObject({ type: 'text', markdown: '[image: image/tiff, not shown]' });
+  });
+
+  it('a tool image item keeps wire order, splitting the text run around it', () => {
+    const s = { ...emptyState(), saveImage: () => 'img.png' };
+    applyUpdate(s, { sessionUpdate: 'tool_call', toolCallId: 'im', title: 'view', kind: 'other', status: 'completed',
+      content: [
+        { type: 'content', content: { type: 'text', text: 'Revised prompt' } },
+        { type: 'content', content: { type: 'image', data: PNG, mimeType: 'image/png', uri: '/repo/red.png' } },
+        { type: 'content', content: { type: 'text', text: 'saved to disk' } },
+      ] });
+    const t = s.turns[0];
+    if (t?.role !== 'agent') throw new Error();
+    expect(t.blocks[0]).toMatchObject({
+      contents: [
+        { type: 'text', text: 'Revised prompt' },
+        { type: 'image', mimeType: 'image/png', blob: 'img.png', uri: '/repo/red.png' },
+        { type: 'text', text: 'saved to disk' },
+      ],
+    });
+    // A lone image is the primary content — no contents list needed
+    const s2 = { ...emptyState(), saveImage: () => 'img.png' };
+    applyUpdate(s2, { sessionUpdate: 'tool_call', toolCallId: 'im', title: 'view', kind: 'other', status: 'completed',
+      content: [{ type: 'content', content: { type: 'image', data: PNG, mimeType: 'image/png' } }] });
+    const t2 = s2.turns[0];
+    if (t2?.role !== 'agent') throw new Error();
+    expect(t2.blocks[0]).toMatchObject({ content: { type: 'image', blob: 'img.png' } });
+    expect(t2.blocks[0]).not.toHaveProperty('contents');
+  });
+
+  it('a resource_link to a local image file becomes an image through saveImageFile; unreadable stays a link', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acpira-img-'));
+    const pngPath = join(dir, 'shot.png');
+    writeFileSync(pngPath, Buffer.from(PNG, 'base64'));
+    const seen: string[] = [];
+    const s = { ...emptyState(), saveImageFile: (p: string) => { seen.push(p); return 'file.png'; } };
+    applyUpdate(s, { sessionUpdate: 'tool_call', toolCallId: 'v', title: 'view_image', kind: 'read', status: 'completed',
+      content: [{ type: 'content', content: { type: 'resource_link', name: 'shot.png', uri: pngPath } }] });
+    const t = s.turns[0];
+    if (t?.role !== 'agent') throw new Error();
+    expect(seen).toEqual([pngPath]);
+    expect(t.blocks[0]).toMatchObject({ content: { type: 'image', mimeType: 'image/png', blob: 'file.png', uri: pngPath } });
+    // A file:// uri resolves the same way
+    const s2 = { ...emptyState(), saveImageFile: () => 'f2.png' };
+    applyUpdate(s2, { sessionUpdate: 'tool_call', toolCallId: 'v', title: 'view_image', kind: 'read', status: 'completed',
+      content: [{ type: 'content', content: { type: 'resource_link', name: 'shot.png', uri: `file://${pngPath}` } }] });
+    expect(s2.turns[0]?.role === 'agent' && s2.turns[0].blocks[0]).toMatchObject({ content: { type: 'image', blob: 'f2.png' } });
+    // Non-image links, remote links and a saver that refuses all keep the link's text rendering
+    const s3 = { ...emptyState(), saveImageFile: () => undefined };
+    applyUpdate(s3, { sessionUpdate: 'tool_call', toolCallId: 'v', title: 'view', kind: 'read', status: 'completed',
+      content: [
+        { type: 'content', content: { type: 'resource_link', name: 'nope.png', uri: '/missing/nope.png' } },
+        { type: 'content', content: { type: 'resource_link', name: 'notes', uri: '/repo/notes.md' } },
+        { type: 'content', content: { type: 'resource_link', name: 'remote', uri: 'https://x.io/pic.png' } },
+      ] });
+    const t3 = s3.turns[0];
+    if (t3?.role !== 'agent') throw new Error();
+    expect(t3.blocks[0]).toMatchObject({ content: { type: 'text', text: '/missing/nope.png\n/repo/notes.md\nhttps://x.io/pic.png' } });
+  });
+
+  it('a data-URL image saves the decoded payload; a uri-only image keeps just the reference', () => {
+    const saved: { data: string; mimeType: string }[] = [];
+    const s = { ...emptyState(), saveImage: (data: string, mimeType: string) => { saved.push({ data, mimeType }); return 'i.png'; } };
+    applyUpdate(s, { sessionUpdate: 'agent_message_chunk', content: { type: 'image', data: '', mimeType: '', uri: `data:image/png;base64,${PNG}` } as acp.ContentBlock });
+    const s2 = { ...emptyState(), saveImage: () => 'x.png' };
+    applyUpdate(s2, { sessionUpdate: 'agent_message_chunk', content: { type: 'image', data: '', mimeType: 'image/png', uri: '/tmp/red.png' } as acp.ContentBlock });
+    const a = s.turns[0], b = s2.turns[0];
+    if (a?.role !== 'agent' || b?.role !== 'agent') throw new Error();
+    expect(saved).toEqual([{ data: PNG, mimeType: 'image/png' }]);
+    expect(a.blocks[0]).toMatchObject({ type: 'image', blob: 'i.png', uri: undefined });
+    expect(b.blocks[0]).toMatchObject({ type: 'image', blob: undefined, uri: '/tmp/red.png' });
+  });
+});
+
+describe('configOptionSetValue', () => {
+  it('boolean controls send a real boolean on the wire; everything else stays a value string', () => {
+    const bool: ConfigControl = { id: 'fast', name: 'Fast', type: 'boolean', value: 'false', options: [{ id: 'false', name: 'Off' }, { id: 'true', name: 'On' }] };
+    expect(configOptionSetValue(bool, 'true')).toEqual({ type: 'boolean', value: true });
+    expect(configOptionSetValue(bool, 'false')).toEqual({ type: 'boolean', value: false });
+    const sel: ConfigControl = { id: 'model', name: 'Model', value: 'a', options: [{ id: 'a', name: 'A' }] };
+    expect(configOptionSetValue(sel, 'b')).toEqual({ value: 'b' });
+    expect(configOptionSetValue(undefined, 'x')).toEqual({ value: 'x' });
+  });
+});
+
+describe('initControls', () => {
+  it('mode _meta.kind lands on the SessionOption for full_access styling downstream', () => {
+    const s = emptyState();
+    initControls(s.controls, { currentModeId: 'default', availableModes: [
+      { id: 'default', name: 'Default' },
+      { id: 'full', name: 'Full access', _meta: { kind: 'full_access' } },
+    ] });
+    expect(s.controls.modes.map(m => m.kind)).toEqual([undefined, 'full_access']);
+  });
+
+  it('a mode config select keeps _meta.kind on its options', () => {
+    const s = emptyState();
+    applyUpdate(s, { sessionUpdate: 'config_option_update', configOptions: [
+      { id: 'mode', name: 'Mode', category: 'mode', type: 'select', currentValue: 'default', options: [
+        { value: 'default', name: 'Default' },
+        { value: 'full', name: 'Full access', _meta: { kind: 'full_access' } },
+      ] },
+    ] });
+    expect(s.controls.modes.map(m => m.kind)).toEqual([undefined, 'full_access']);
   });
 });
 

@@ -4,7 +4,7 @@ import { planExecutionId } from '@shared/planExecution';
 import { isContextLengthError } from '@shared/turnErrors';
 import type { EditTurnRequest } from '@shared/protocol';
 import type { AgentBlock, Draft, SessionControls, SessionOption, SessionView, ToolContent, Turn } from '@shared/transcript';
-import { applyConfigOptions, initControls, type NormalizeState } from './normalize';
+import { applyConfigOptions, configOptionSetValue, initControls, type NormalizeState } from './normalize';
 import { preparePrompt, restoreDrafts, type BlobStore, type PromptCaps } from './attachments';
 import type { StagedSend } from './promptQueue';
 import type { AgentProcess } from './AgentProcess';
@@ -64,6 +64,7 @@ function clip(text: string, max: number): string {
 function toolContentBrief(c: ToolContent, fallbackPath?: string): string {
   if (c.type === 'text') return clip(c.text, HISTORY_TOOL_OUTPUT_MAX);
   if (c.type === 'list') return clip(c.items.join('\n'), HISTORY_TOOL_OUTPUT_MAX);
+  if (c.type === 'image') return `image ${c.mimeType}${c.uri ? ` ${c.uri}` : ''}`.trim();
   const add = c.lines.filter(l => l.kind === 'add').length, del = c.lines.filter(l => l.kind === 'del').length;
   return `diff ${c.source?.path ?? fallbackPath ?? ''} +${add} -${del}`.trim();
 }
@@ -81,6 +82,7 @@ function compactBlock(b: AgentBlock): unknown {
     case 'plan': return { plan: b.entries.map(e => `[${e.status}] ${e.title}`) };
     case 'plan_document': return { planDocument: b.title, status: b.status, ...(b.path ? { path: b.path } : {}), markdown: clip(b.markdown, HISTORY_PLAN_MAX) };
     case 'question': return { questions: b.questions.map(q => q.text), ...(b.outcome ? { outcome: b.outcome } : {}), ...(b.answers ? { answers: b.answers } : {}) };
+    case 'image': return { image: b.mimeType, ...(b.uri ? { uri: b.uri } : {}) };
     default: return undefined;
   }
 }
@@ -180,7 +182,7 @@ async function applyEditSettings(ctx: SessionEditCtx, sessionId: string, control
     if (!c?.options.some(o => o.id === value)) throw new Error(t('history.optionUnavailable', { name: configId }));
     if (c.value === value) continue;
     checkEditActive(ctx);
-    const r = await peer.request(acp.methods.agent.session.setConfigOption, { sessionId, configId, value });
+    const r = await peer.request(acp.methods.agent.session.setConfigOption, { sessionId, configId, ...configOptionSetValue(c, value) });
     applyConfigOptions(controls, r.configOptions);
     if (controls.options.find(c => c.id === configId)?.value !== value) throw new Error(t('history.optionUnavailable', { name: configId }));
   }

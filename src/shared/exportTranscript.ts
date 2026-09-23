@@ -38,14 +38,18 @@ export interface ExportInput {
 
 const TOOL_CONTENT_MAX = 4000;
 
-export function exportMarkdown(input: ExportInput, labels: ExportLabels = EXPORT_LABELS_EN): string {
+// Resolves a blob name to its absolute store path so an agent image can export as a real file link;
+// absent (a store without disk paths) the image degrades to a `[image]` note
+export type ExportBlobPath = (name: string) => string | undefined;
+
+export function exportMarkdown(input: ExportInput, labels: ExportLabels = EXPORT_LABELS_EN, blobPath?: ExportBlobPath): string {
   const parts: string[] = [
     `# ${input.title}`,
     `- **${labels.agent}**: ${input.agentName}\n- **${labels.project}**: ${input.cwd}\n- **${labels.exported}**: ${input.exportedAt}`,
     '---',
   ];
   for (const turn of input.turns) {
-    const rendered = turn.role === 'user' ? userTurn(turn, labels) : agentTurn(turn, input.agentName, labels);
+    const rendered = turn.role === 'user' ? userTurn(turn, labels) : agentTurn(turn, input.agentName, labels, blobPath);
     if (rendered) parts.push(rendered);
   }
   return `${parts.join('\n\n')}\n`;
@@ -61,10 +65,10 @@ function userTurn(turn: Extract<Turn, { role: 'user' }>, labels: ExportLabels): 
   return out.join('\n');
 }
 
-function agentTurn(turn: Extract<Turn, { role: 'agent' }>, agentName: string, labels: ExportLabels): string {
+function agentTurn(turn: Extract<Turn, { role: 'agent' }>, agentName: string, labels: ExportLabels, blobPath?: ExportBlobPath): string {
   const out = [`### ${agentName}`];
   for (const b of turn.blocks) {
-    const rendered = block(b, labels);
+    const rendered = block(b, labels, blobPath);
     if (rendered) out.push('', rendered);
   }
   if (turn.stop === 'error' && turn.error) out.push('', `> ${labels.error}: ${turn.error.message}`);
@@ -72,18 +76,20 @@ function agentTurn(turn: Extract<Turn, { role: 'agent' }>, agentName: string, la
   return out.join('\n');
 }
 
-function block(b: AgentBlock, labels: ExportLabels): string | undefined {
+function block(b: AgentBlock, labels: ExportLabels, blobPath?: ExportBlobPath): string | undefined {
   switch (b.type) {
     case 'thought':
       return `<details><summary>${labels.thinking}</summary>\n\n${b.text}\n\n</details>`;
     case 'text':
       return b.markdown;
+    case 'image':
+      return imageLine(b, blobPath);
     case 'plan':
       return b.entries.map(e => e.status === 'completed' ? `- [x] ${e.title}`
         : `- [ ] ${e.title}${e.status === 'in_progress' ? ' _(in progress)_' : ''}`).join('\n');
     case 'tool_call': {
       const head = `- **${b.verb}**${b.target ? ` \`${b.target}\`` : ''}${b.meta ? ` (${b.meta})` : ''}`;
-      const content = toolContent(b.content);
+      const content = (b.contents ?? (b.content ? [b.content] : [])).map(c => toolContent(c, blobPath)).filter(Boolean).join('\n');
       return content ? `${head}\n${content}` : head;
     }
     case 'permission':
@@ -105,7 +111,15 @@ function block(b: AgentBlock, labels: ExportLabels): string | undefined {
   }
 }
 
-function toolContent(c: ToolContent | undefined): string | undefined {
+// An agent image exports as a link to its blob file on disk; uri-only ones keep the path the agent saved
+function imageLine(i: { blob?: string; mimeType: string; uri?: string }, blobPath?: ExportBlobPath): string {
+  const path = i.blob && blobPath?.(i.blob);
+  if (path) return `![image](${path})`;
+  if (i.uri) return `[image](${i.uri})`;
+  return `[image: ${i.mimeType}]`;
+}
+
+function toolContent(c: ToolContent | undefined, blobPath?: ExportBlobPath): string | undefined {
   if (!c) return undefined;
   switch (c.type) {
     case 'text': {
@@ -117,6 +131,8 @@ function toolContent(c: ToolContent | undefined): string | undefined {
       return `\`\`\`diff\n${c.lines.map(l => l.kind === 'hunk' ? `@@ ${l.text} @@` : l.text).join('\n')}\n\`\`\``;
     case 'list':
       return c.items.map(i => `  - ${i}`).join('\n');
+    case 'image':
+      return imageLine(c, blobPath);
     default:
       return undefined;
   }

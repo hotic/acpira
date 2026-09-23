@@ -11,6 +11,7 @@ import { t } from '../i18n';
 import { toolIcon } from './icons';
 import { PlanDetails } from './Plan';
 import { CodeSurface, DiffBlock } from './CodeBlock';
+import { AgentImage } from './AgentImage';
 import { TerminalOutput } from './Terminal';
 import { toolVerb } from './folding';
 import { OpenToolFileContext } from './fileLinks';
@@ -103,7 +104,11 @@ export const ReadGroup = memo(function ReadGroup({ blocks }: { blocks: ToolCallB
 
 function ToolBody({ block }: { block: ToolCallBlock }) {
   const c = block.content;
-  if (block.kind === 'execute') return <TerminalOutput block={block} />;
+  // Command output owns the execute body; an image it produced (screenshot tools) renders below the text
+  if (block.kind === 'execute') {
+    const images = block.contents?.filter((i): i is Extract<typeof i, { type: 'image' }> => i.type === 'image') ?? [];
+    return <div className="flex flex-col gap-gap"><TerminalOutput block={block} />{images.map((i, n) => <AgentImage key={n} image={i} />)}</div>;
+  }
   // Several content items in one update (e.g. two diffs with a receipt line between them) render stacked in wire order —
   // each diff keeps its own file path, `content` alone would only ever show the first
   if (block.contents && block.contents.length > 1) {
@@ -111,6 +116,7 @@ function ToolBody({ block }: { block: ToolCallBlock }) {
       {block.contents.map((item, i) => {
         if (item.type === 'diff') return <DiffBlock key={i} lines={item.lines} source={item.source} path={item.source?.path ?? block.locations?.[0]?.path ?? block.target} />;
         if (item.type === 'list') return <ResultList key={i} items={item.items} kind={block.kind} />;
+        if (item.type === 'image') return <AgentImage key={i} image={item} />;
         return <CodeSurface key={i} className="text-fg-2 whitespace-pre">{item.text}</CodeSurface>;
       })}
     </div>;
@@ -118,6 +124,7 @@ function ToolBody({ block }: { block: ToolCallBlock }) {
   if (!c) return null;
   if (c.type === 'diff') return <DiffBlock lines={c.lines} source={c.source} path={block.locations?.[0]?.path ?? block.target} />;
   if (c.type === 'list') return <ResultList items={c.items} kind={block.kind} />;
+  if (c.type === 'image') return <AgentImage image={c} />;
   return <CodeSurface className="text-fg-2 whitespace-pre">{c.text}</CodeSurface>;
 }
 
