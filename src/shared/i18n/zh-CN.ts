@@ -430,6 +430,8 @@ export const zhCN = {
   'host.forkStale': '这条回复已不在会话里，无法从这里分支。',
   'host.forkRunning': '等这条回复结束后再从这里分支。',
   'host.forkContextTooLarge': '分支的历史太长，无法交给 agent；这次分支不带早先的上下文继续。',
+  'host.forkContextTrimmed': '分支的历史较长，交给 agent 的上下文省略了最早的 {count} 轮。',
+  'host.forkContextFailed': '无法把分支的历史交给 agent（{error}），这次分支不带早先的上下文继续。',
   'host.exported': '已导出到 {path}',
   'export.label.user': '用户',
   'export.label.agent': 'Agent',

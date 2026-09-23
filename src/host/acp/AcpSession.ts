@@ -735,10 +735,11 @@ export class AcpSession {
     // edited message's prefix (native session/fork is whole-session, not turn-addressed, and is deliberately unused).
     // The context is built while the flag is still set, but the flag only clears once the send can no longer be dropped —
     // a cancel landing mid-staging keeps the copy for the next attempt instead of losing it for good
-    let forkHistory: acp.ContentBlock[] | undefined;
+    let forkHistory: Awaited<ReturnType<typeof historyContext>>;
+    let forkError: string | undefined;
     if (!auto && this.historyPending) {
-      try { forkHistory = await historyContext(this.id, this.state.turns, this.proc!, this.deps.blobs, FORK_HISTORY_LEAD, promptCapsOf(this.proc?.init, this.deps.registry.get(this.agent))); }
-      catch (e) { this.log(`fork context skipped: ${msg(e)}`); }
+      try { forkHistory = await historyContext(this.id, this.state.turns, this.proc!, this.deps.blobs, FORK_HISTORY_LEAD, promptCapsOf(this.proc?.init, this.deps.registry.get(this.agent)), true); }
+      catch (e) { forkError = msg(e); this.log(`fork context skipped: ${forkError}`); }
     }
     this.phase.staging = false;
     if (this.phase.stagingAborted || this.status !== 'ready') {
@@ -752,8 +753,11 @@ export class AcpSession {
       // A failed first send retries through retryTurn → editTurn, which rebuilds the prefix in a fresh native session;
       // that is exactly what the edited flag on the user turn is for
       this.historyPending = undefined;
-      if (forkHistory) { prepared.blocks = [...forkHistory, ...prepared.blocks]; edited = true; }
-      else this.deps.notify?.(t('host.forkContextTooLarge'));
+      if (forkHistory) {
+        prepared.blocks = [...forkHistory.blocks, ...prepared.blocks];
+        edited = true;
+        if (forkHistory.omitted) this.deps.notify?.(t('host.forkContextTrimmed', { count: String(forkHistory.omitted) }));
+      } else this.deps.notify?.(forkError ? t('host.forkContextFailed', { error: forkError }) : t('host.forkContextTooLarge'));
     }
     for (const p of prepared.problems) { this.log(p); this.deps.notify?.(p); }
     if (prepared.attachments.length) this.log(`attachments: ${prepared.blocks.slice(text ? 1 : 0).map(b => b.type).join(' ')}`);

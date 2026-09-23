@@ -3,7 +3,7 @@ import { captureTurnSettings } from '@shared/turnSettings';
 import { planExecutionId } from '@shared/planExecution';
 import { isContextLengthError } from '@shared/turnErrors';
 import type { EditTurnRequest } from '@shared/protocol';
-import type { Draft, SessionControls, SessionOption, SessionView, Turn } from '@shared/transcript';
+import type { AgentBlock, Draft, SessionControls, SessionOption, SessionView, ToolContent, Turn } from '@shared/transcript';
 import { applyConfigOptions, initControls, type NormalizeState } from './normalize';
 import { preparePrompt, restoreDrafts, type BlobStore, type PromptCaps } from './attachments';
 import type { StagedSend } from './promptQueue';
@@ -52,19 +52,86 @@ function contextLengthHint(ctx: SessionEditCtx): string {
   return t(ctx.state.commands.some(c => c.name === 'compact') ? 'alert.contextLength.text' : 'alert.contextLength.unsupported');
 }
 
+// Per-item caps for the serialized history: tool output and plan bodies are the bulk of a transcript, while the
+// workspace itself stays readable by the agent
+const HISTORY_TOOL_OUTPUT_MAX = 2_000;
+const HISTORY_PLAN_MAX = 8_000;
+
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}… [${text.length - max} chars truncated]` : text;
+}
+
+function toolContentBrief(c: ToolContent, fallbackPath?: string): string {
+  if (c.type === 'text') return clip(c.text, HISTORY_TOOL_OUTPUT_MAX);
+  if (c.type === 'list') return clip(c.items.join('\n'), HISTORY_TOOL_OUTPUT_MAX);
+  const add = c.lines.filter(l => l.kind === 'add').length, del = c.lines.filter(l => l.kind === 'del').length;
+  return `diff ${c.source?.path ?? fallbackPath ?? ''} +${add} -${del}`.trim();
+}
+
+// Lean view of an agent block for the model: UI-only state (timers, streaming flags, diff sources, permission cards,
+// thoughts) is dropped, long bodies are clipped
+function compactBlock(b: AgentBlock): unknown {
+  switch (b.type) {
+    case 'text': return { text: b.markdown };
+    case 'tool_call': {
+      const items = b.contents ?? (b.content ? [b.content] : []);
+      const output = items.map(c => toolContentBrief(c, b.target));
+      return { tool: b.verb, kind: b.kind, ...(b.target ? { target: b.target } : {}), status: b.status, ...(output.length ? { output } : {}) };
+    }
+    case 'plan': return { plan: b.entries.map(e => `[${e.status}] ${e.title}`) };
+    case 'plan_document': return { planDocument: b.title, status: b.status, ...(b.path ? { path: b.path } : {}), markdown: clip(b.markdown, HISTORY_PLAN_MAX) };
+    case 'question': return { questions: b.questions.map(q => q.text), ...(b.outcome ? { outcome: b.outcome } : {}), ...(b.answers ? { answers: b.answers } : {}) };
+    default: return undefined;
+  }
+}
+
+function compactTurn(turn: Turn): unknown {
+  if (turn.role === 'user') {
+    return { role: 'user', text: turn.text, ...(turn.attachments?.length ? { attachments: turn.attachments.map(a => a.name ?? a.kind) } : {}) };
+  }
+  return {
+    role: 'agent',
+    blocks: turn.blocks.map(compactBlock).filter(b => b !== undefined),
+    ...(turn.stop && turn.stop !== 'end_turn' ? { stop: turn.stop } : {}),
+    ...(turn.error ? { error: turn.error.message } : {}),
+  };
+}
+
+// Index of the first turn to keep so the serialized history fits the budget, aligned to a user turn; 0 when everything
+// fits, undefined when nothing does (or trimming is not allowed)
+function fitStart(items: string[], turns: readonly Turn[], budget: number, trim: boolean): number | undefined {
+  // Array brackets plus one comma per item
+  let total = 2 + items.reduce((n, s) => n + Buffer.byteLength(s, 'utf8') + 1, 0);
+  if (total <= budget) return 0;
+  if (!trim) return undefined;
+  for (let start = 0; start < items.length; start++) {
+    total -= Buffer.byteLength(items[start]!, 'utf8') + 1;
+    const next = start + 1;
+    if (total <= budget && turns[next]?.role === 'user') return next;
+  }
+  return undefined;
+}
+
 // ACP cannot rewind to a message. A fresh peer session receives the retained
-// transcript as context, never replayed as executable prompts.
+// transcript as context, never replayed as executable prompts. `trim` lets an oversized history keep only its most
+// recent turns (fork); without it an oversized history yields undefined (edit falls back to the native session)
 export async function historyContext(
   sessionId: string,
-  turns: readonly Turn[],
+  allTurns: readonly Turn[],
   proc: AgentProcess,
   blobs: BlobStore,
   lead: string,
   caps: PromptCaps,
-): Promise<acp.ContentBlock[] | undefined> {
-  if (!turns.length) return [];
-  const history = `${lead}\n${JSON.stringify(turns)}`;
-  if (Buffer.byteLength(history, 'utf8') > EDIT_CONTEXT_MAX_BYTES) return undefined;
+  trim = false,
+): Promise<{ blocks: acp.ContentBlock[]; omitted: number } | undefined> {
+  const source = allTurns.filter(turn => turn.role !== 'user' || !turn.auto);
+  if (!source.length) return { blocks: [], omitted: 0 };
+  const items = source.map(turn => JSON.stringify(compactTurn(turn)));
+  const omitNote = (n: number) => `\n${n} earlier turns were omitted to fit the size limit.`;
+  const start = fitStart(items, source, EDIT_CONTEXT_MAX_BYTES - Buffer.byteLength(lead + omitNote(source.length), 'utf8') - 1, trim);
+  if (start === undefined) return undefined;
+  const turns = source.slice(start);
+  const history = `${lead}${start ? omitNote(start) : ''}\n[${items.slice(start).join(',')}]`;
   const context: acp.ContentBlock[] = [
     proc.init.agentCapabilities?.promptCapabilities?.embeddedContext
       ? { type: 'resource', resource: { uri: `acpira://history/${sessionId}`, mimeType: 'text/plain', text: history } }
@@ -78,7 +145,7 @@ export async function historyContext(
     if (old.problems.length) throw new Error(old.problems.join('\n'));
     context.push({ type: 'text', text: `Attachments from earlier user message: ${turn.text}` }, ...old.blocks);
   }
-  return context;
+  return { blocks: context, omitted: start };
 }
 
 // Resending an unchanged message after empty failures/cancellations is a retry. Reuse the
@@ -171,7 +238,7 @@ export async function editTurn(ctx: SessionEditCtx, edit: EditTurnRequest): Prom
     let rebuilt: acp.ContentBlock[] | undefined;
     if (!continuing && !retry && prefix.length) {
       const history = await historyContext(ctx.id, prefix, ctx.proc, ctx.blobs, EDIT_HISTORY_LEAD, ctx.caps());
-      const blocks = history && [...history, ...prepared.blocks];
+      const blocks = history && [...history.blocks, ...prepared.blocks];
       // Include expanded historical attachments and the replacement message.
       continuing = !blocks || Buffer.byteLength(JSON.stringify(blocks), 'utf8') > EDIT_CONTEXT_MAX_BYTES;
       if (!continuing) rebuilt = blocks;

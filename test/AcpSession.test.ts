@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import type { AgentBlock, PermissionBlock, SessionOption, ToolCallBlock } from '@shared/transcript';
+import type { AgentBlock, PermissionBlock, SessionOption, ToolCallBlock, Turn } from '@shared/transcript';
 import { captureTurnSettings } from '@shared/turnSettings';
 import type { EditTurnRequest } from '@shared/protocol';
 import { MAX_IMAGE_BYTES } from '@shared/attachments';
@@ -1274,6 +1274,46 @@ describe('AcpSession', () => {
       expect(replyText).toContain('resource:acpira://history/');
       expect(replyText).toContain('earlier');
       expect(s.toRecord().historyPending).toBeUndefined();
+    } finally { s.dispose(); base.dispose(); }
+  });
+
+  it('compacts an oversized fork history and keeps its most recent turns instead of dropping it', async () => {
+    const { session, d } = deps();
+    const notes: string[] = [];
+    d.notify = t => notes.push(t);
+    const base = session();
+    const record = base.toRecord();
+    // Each tool output is clipped in the handed-over history, so twelve 30 KB outputs fit where the raw JSON would not;
+    // the 200 KB replies do not, so only the newest pair survives
+    const bulky = (i: number): Turn[] => [
+      { role: 'user', text: `ask-${i}` },
+      { role: 'agent', stop: 'end_turn', blocks: [
+        { type: 'thought', text: 'x'.repeat(30_000) },
+        { type: 'tool_call', id: `t${i}`, kind: 'execute', verb: 'Run', status: 'completed', content: { type: 'text', text: 'y'.repeat(30_000) } },
+        { type: 'text', markdown: `reply-${i}` },
+      ] },
+    ];
+    record.turns = [
+      ...Array.from({ length: 12 }, (_, i) => bulky(i)).flat(),
+      { role: 'user', text: 'old-big' },
+      { role: 'agent', stop: 'end_turn', blocks: [{ type: 'text', markdown: 'z'.repeat(200_000) }] },
+      { role: 'user', text: 'recent' },
+      { role: 'agent', stop: 'end_turn', blocks: [{ type: 'text', markdown: 'w'.repeat(200_000) }] },
+    ];
+    record.historyPending = true;
+    delete record.acpSessionId;
+    const s = new AcpSession(record, d);
+    try {
+      await s.start();
+      await s.prompt('now');
+      const reply = s.view().turns.at(-1);
+      if (reply?.role !== 'agent') throw new Error('Missing reply');
+      const replyText = reply.blocks.filter(b => b.type === 'text').map(b => b.markdown).join('');
+      expect(replyText).toContain('resource:acpira://history/');
+      expect(replyText).toContain('26 earlier turns were omitted');
+      expect(replyText).toContain('recent');
+      expect(replyText).not.toContain('old-big');
+      expect(notes.some(n => n.includes('26'))).toBe(true);
     } finally { s.dispose(); base.dispose(); }
   });
 
