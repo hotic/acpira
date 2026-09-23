@@ -172,6 +172,7 @@ try {
   console.log('usage:', JSON.stringify(v.usage ?? null));
 } catch (e) {
   console.log('probe aborted:', e instanceof Error ? e.message : e);
+  check('probe ran to the end', false, e instanceof Error ? e.message : String(e));
 } finally {
   clearInterval(approver);
   clearTimeout(deadline);

@@ -234,7 +234,7 @@ try {
       catch { return 0; }
     };
     const baseline = sleepCount();
-    await m.handle({ type: 'send', text: 'Run the shell command `sleep 20 && echo done` in the background (do not wait for it) and reply with just: started' });
+    await m.handle({ type: 'send', text: 'Run exactly the shell command `sleep 20 && echo done` — no `&`, no nohup, no redirection — as a background command, do not wait for it to finish, and reply with just: started' });
     v = m.active()!;
     dump(v);
     const row = tasks(v)[0];
@@ -244,22 +244,30 @@ try {
       check('task running after the turn ended', ['running', 'paused'].includes(row.asyncTask!.state), row.asyncTask!.state);
       check('tool row kept running (end_turn did not sweep it)', row.status === 'in_progress', row.status);
       check('row flagged background', row.background === true);
-      await until(() => tasks(m.active()!).some(t => t.id === row.id && t.asyncTask!.state === 'completed'), 45_000, 'async task completed');
+      // A missed terminal update is a FAIL of its own, not an abort: the stop scenario below still runs
+      await until(() => tasks(m.active()!).some(t => t.id === row.id && t.asyncTask!.state === 'completed'), 45_000, 'async task completed')
+        .catch(e => console.log(String(e)));
       const done = tasks(m.active()!).find(t => t.id === row.id)!;
       check('task reached completed', done.asyncTask!.state === 'completed', done.asyncTask!.state);
       check('row settled completed with the task', done.status === 'completed', done.status);
     }
     // A second, long task: stopped through the host's stopAsyncTask route, then the sleep must be gone
-    await m.handle({ type: 'send', text: 'Run the shell command `sleep 120` in the background (do not wait for it) and reply with just: started' });
+    // Both prompts are spelled out: codex may detach a bare "in the background" request itself (seen:
+    // `(sleep 20 && echo done) >/tmp/….log 2>&1 &`), which returns at once and never becomes a background
+    // terminal; the adapter only tracks a command that keeps its own shell running
+    await m.handle({ type: 'send', text: 'Run exactly the shell command `sleep 120` — no `&`, no nohup, no redirection — as a background command, do not wait for it to finish, and reply with just: started' });
     v = m.active()!;
     dump(v);
-    const live = tasks(v).filter(t => ['running', 'paused'].includes(t.asyncTask!.state));
+    // Whether the first task's terminal update only arrives once the next prompt drives the adapter again
+    if (row) console.log('first task after the next prompt:', tasks(v).find(t => t.id === row.id)?.asyncTask?.state);
+    const live = tasks(v).filter(t => t.id !== row?.id && ['running', 'paused'].includes(t.asyncTask!.state));
     const t2 = live[0];
     check('second background task running', !!t2, `${live.length} live task(s)`);
     if (t2) {
       console.log('stopping task', t2.asyncTask!.id, 'canStop', t2.asyncTask!.canStop);
       await m.handle({ type: 'stopAsyncTask', sessionId: v.id, taskId: t2.asyncTask!.id });
-      await until(() => tasks(m.active()!).some(t => t.id === t2.id && t.asyncTask!.state === 'stopped'), 15_000, 'task stopped');
+      await until(() => tasks(m.active()!).some(t => t.id === t2.id && t.asyncTask!.state === 'stopped'), 15_000, 'task stopped')
+        .catch(e => console.log(String(e)));
       const stopped = tasks(m.active()!).find(t => t.id === t2.id)!;
       check('task reached stopped', stopped.asyncTask!.state === 'stopped', stopped.asyncTask!.state);
       check('row cancelled with the task', stopped.status === 'cancelled', stopped.status);
@@ -288,6 +296,7 @@ try {
   }
 } catch (e) {
   console.log('probe aborted:', e instanceof Error ? e.message : e);
+  check('probe ran to the end', false, e instanceof Error ? e.message : String(e));
 } finally {
   clearInterval(approver);
   await m.dispose();
