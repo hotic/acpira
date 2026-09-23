@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { ConfigControl } from '@shared/transcript';
 import { findFusionVariant, findVariant, fusionLabel, groupModels, optionBrand, variantLabel, visibleOptions, type ModelFamily, type ModelVariant } from '@shared/models';
-import { presentReasoning, reasoningChip, reasoningVisible } from '@shared/composerControls';
+import { isFastControl, modelConfigChip, presentReasoning, reasoningChip, reasoningVisible } from '@shared/composerControls';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
 import { Chip } from '../ui/Button';
@@ -44,12 +44,14 @@ export function ModelOptions({ control, hidden, onSelect, close }: {
   return <ModelPanel families={families} cur={cur} curVar={curVar} onSelect={onSelect} close={close} />;
 }
 
-// Every ACP uses the Devin-style model chip and panel. Separate ACP reasoning
-// options join the footer, while Devin's embedded variants retain their wire IDs.
-export function ModelControl({ control, hidden, reasoning = [], onSetReasoning, onSelect, onOpenChange }: OptionMenuProps & {
+// Every ACP uses the Devin-style model chip and panel. Native reasoning and model
+// parameters join the footer, while embedded variants retain their wire IDs.
+export function ModelControl({ control, hidden, reasoning = [], modelConfig = [], hiddenConfig, onSetConfig, onSelect, onOpenChange }: OptionMenuProps & {
   hidden?: string[];
   reasoning?: ConfigControl[];
-  onSetReasoning: (id: string, value: string) => void;
+  modelConfig?: ConfigControl[];
+  hiddenConfig?: Record<string, string[]>;
+  onSetConfig: (id: string, value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const c = useMemo(() => ({ ...control, options: visibleOptions(control.options, hidden, control.value) }), [control, hidden]);
@@ -60,7 +62,7 @@ export function ModelControl({ control, hidden, reasoning = [], onSetReasoning, 
   const params = cur && curVar && !curVar.lead && (cur.efforts.length > 1 || curVar.effort || curVar.fast || curVar.long) ? variantLabel(curVar, cur, { standard: t('composer.standard') }) : undefined;
   const levels = reasoning.map(reasoningChip);
   // Provider identity stays in the expanded list; the chip reads as one model name.
-  const meta = [params, ...levels].filter(Boolean).join(' ') || undefined;
+  const meta = [params, ...levels, ...modelConfig.map(modelConfigChip)].filter(Boolean).join(' ') || undefined;
   const title = [cur?.name ?? c.name, curVar?.lead ? fusionLabel(curVar) : meta].filter(Boolean).join(' ');
   return (
     <Popover.Root open={open} onOpenChange={setOpen} onOpenLifecycle={onOpenChange}>
@@ -71,7 +73,7 @@ export function ModelControl({ control, hidden, reasoning = [], onSetReasoning, 
       } />
       <Popover.Portal><Popover.Positioner side="top" align="end" width="md"><Popover.Popup>
         <ModelPanel families={families} cur={cur} curVar={curVar} onSelect={onSelect} close={() => setOpen(false)}
-          reasoning={reasoning} onSetReasoning={onSetReasoning} />
+          reasoning={reasoning} modelConfig={modelConfig} hiddenConfig={hiddenConfig} onSetConfig={onSetConfig} />
       </Popover.Popup></Popover.Positioner></Popover.Portal>
     </Popover.Root>
   );
@@ -97,10 +99,12 @@ interface ModelPanelProps {
   onSelect: (value: string) => void;
   close: () => void;
   reasoning?: ConfigControl[];
-  onSetReasoning?: (id: string, value: string) => void;
+  modelConfig?: ConfigControl[];
+  hiddenConfig?: Record<string, string[]>;
+  onSetConfig?: (id: string, value: string) => void;
 }
 
-function ModelPanel({ families, cur, curVar, onSelect, close, reasoning = [], onSetReasoning }: ModelPanelProps) {
+function ModelPanel({ families, cur, curVar, onSelect, close, reasoning = [], modelConfig = [], hiddenConfig, onSetConfig }: ModelPanelProps) {
   const pickFamily = (key: string) => {
     const f = families.find(x => x.key === key);
     if (!f) return;
@@ -126,12 +130,23 @@ function ModelPanel({ families, cur, curVar, onSelect, close, reasoning = [], on
           </Command.Item>}
         </Command.List>
       </Command.Root>
-      {(showParams || shown.length > 0) && <div className="mt-1 flex flex-col border-t border-line pt-1">
+      {(showParams || shown.length > 0 || modelConfig.length > 0) && <div className="mt-1 flex flex-col border-t border-line pt-1">
         {showParams && (cur!.fusion ? <FusionParams family={cur!} variant={curVar!} onSelect={onSelect} /> : <ModelParams family={cur!} variant={curVar!} onSelect={onSelect} />)}
-        {shown.map(c => <ReasoningParams key={c.id} control={c} onChange={value => onSetReasoning?.(c.id, value)} />)}
+        {shown.map(c => <ReasoningParams key={c.id} control={c} onChange={value => onSetConfig?.(c.id, value)} />)}
+        {modelConfig.map(control => <ModelConfigParams key={control.id} control={control} hidden={hiddenConfig?.[control.id]} onChange={value => onSetConfig?.(control.id, value)} />)}
       </div>}
     </>
   );
+}
+
+// Category chooses placement; unfamiliar model parameters retain their advertised labels and wire values.
+function ModelConfigParams({ control, hidden, onChange }: { control: ConfigControl; hidden?: string[]; onChange: (value: string) => void }) {
+  const options = visibleOptions(control.options, hidden, control.value);
+  if (isFastControl(control)) {
+    const next = control.value === 'fast' ? 'standard' : 'fast';
+    return <SwitchRow label="Fast" checked={control.value === 'fast'} disabled={!options.some(option => option.id === next)} onChange={() => onChange(next)} />;
+  }
+  return <SelectRow label={control.name} options={options.map(option => ({ value: option.id, label: option.name }))} value={control.value ?? ''} onChange={onChange} />;
 }
 
 // Devin's Fusion pair as the four controls its own picker has: Lead (menu), Effort (pills of what that lead offers), Sidekick (menu),
@@ -202,8 +217,9 @@ function EffortField({ options, value, onChange, label = t('composer.effort') }:
   onChange: (value: string) => void;
   label?: string;
 }) {
-  return <div className={cn('flex min-h-row gap-2 px-2 py-1', options.length > 3 ? 'flex-col' : 'flex-wrap items-center')}>
-    <span className="shrink-0 text-2 text-fg-2">{label}</span>
+  // Stacked pill surfaces share the full row width with switches; only the label is inset.
+  return <div className={cn('flex min-h-row gap-2 py-1', options.length > 3 ? 'flex-col' : 'flex-wrap items-center px-2')}>
+    <span className={cn('shrink-0 text-2 text-fg-2', options.length > 3 && 'pl-1 pr-2')}>{label}</span>
     <RadioPills label={label} options={options} value={value} onChange={onChange} />
   </div>;
 }

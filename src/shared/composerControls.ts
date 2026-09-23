@@ -86,6 +86,16 @@ export function reasoningChip(control: ConfigControl): string | undefined {
   return p.efforts.find(o => o.id === p.value)?.name;
 }
 
+// A native Standard / Fast select shares the embedded variant's switch presentation.
+export function isFastControl(control: ConfigControl): boolean {
+  return control.options.length === 2 && ['standard', 'fast'].every(id => control.options.some(option => option.id === id));
+}
+
+export function modelConfigChip(control: ConfigControl): string | undefined {
+  if (isFastControl(control)) return control.value === 'fast' ? 'Fast' : undefined;
+  return control.options.find(option => option.id === control.value)?.name;
+}
+
 // Settings rows reuse composer labels; hide/show keys stay on the original ACP names.
 export function familyLabel(control: Pick<ConfigControl, 'id' | 'category'>, family: Pick<ModelFamily, 'name' | 'variants'>): string {
   const option = family.variants[0];
@@ -94,13 +104,14 @@ export function familyLabel(control: Pick<ConfigControl, 'id' | 'category'>, fam
 }
 
 // ACP capabilities choose the contents of one composer, never its layout.
-// Recognize legacy reasoning IDs before applying model-name decomposition.
+// Recognize native reasoning and model parameters before applying model-name decomposition.
 export function composerControls(options: ConfigControl[]) {
-  const models: ConfigControl[] = [], reasoning: ConfigControl[] = [], other: ConfigControl[] = [];
+  const models: ConfigControl[] = [], reasoning: ConfigControl[] = [], modelConfig: ConfigControl[] = [], other: ConfigControl[] = [];
   for (const c of options) {
     if (isReasoningControl(c)) reasoning.push(c);
+    else if (c.category === 'model_config') modelConfig.push(c);
     else if (c.category === 'model' || (!c.category && (c.id === 'model' || groupModels(c.options).length < c.options.length))) models.push(c);
     else other.push(c);
   }
-  return { models, reasoning, other };
+  return { models, reasoning, modelConfig, other };
 }
