@@ -4,7 +4,7 @@ import type { ToolCallBlock } from '@shared/transcript';
 import { toolTodoEntries } from '@shared/todoTools';
 import { useAppearance } from '../appearance';
 import { Disclosure } from '../ui/Disclosure';
-import { Row, RowLabel, RowTarget } from '../ui/Row';
+import { EntranceOnce, Row, RowLabel, RowTarget } from '../ui/Row';
 import { cn } from '../ui/cn';
 import { ConnectedRail } from '../ui/ConnectedRail';
 import { t } from '../i18n';
@@ -22,8 +22,13 @@ export { OpenToolFileContext } from './fileLinks';
 // One tool call = one expandable row, command execution included (Codex-style: the command sits on the row, the output is a card below).
 // Three modes: text only / with icon / icon + meta. No Orb while running: icon mode uses the same static icon as the completed state, with the verb shimmering.
 // Bodies (diff / output / list) are not indented — they align with the row's left edge, like Codex
-// Memoized on the block reference: a live turn re-renders on every chunk, and only the tool that changed should pay for it
+// Memoized on the block reference: a live turn re-renders on every chunk, and only the tool that changed should pay for it.
+// The rows enter once per tool id: the branch below changes shape as the call progresses, and a remount must not replay it
 export const ToolCall = memo(function ToolCall({ block, grouped = false }: { block: ToolCallBlock; grouped?: boolean }) {
+  return <EntranceOnce id={`${block.id}:tool`}><ToolCallRows block={block} grouped={grouped} /></EntranceOnce>;
+});
+
+function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boolean }) {
   const { toolLine } = useAppearance();
   // Announced calls can wait behind another tool; only execution shimmers.
   const running = block.status === 'in_progress' && block.observation !== 'unknown';
@@ -65,7 +70,7 @@ export const ToolCall = memo(function ToolCall({ block, grouped = false }: { blo
   if (files.length) return (
     <ConnectedRail enabled={toolLine !== 'text'} endAtLastRow className="action-details flex flex-col">
       <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>
-      <ResultList items={files} kind={block.kind} />
+      <EntranceOnce id={`${block.id}:files`}><ResultList items={files} kind={block.kind} /></EntranceOnce>
     </ConnectedRail>
   );
   // File-less responses must not fall through to the generic raw-output disclosure.
@@ -77,7 +82,7 @@ export const ToolCall = memo(function ToolCall({ block, grouped = false }: { blo
       {label}
     </Disclosure>
   );
-});
+}
 
 // Several ACP read calls form one visible list of file references.
 // The grouping array is rebuilt on every render, so compare its members rather than the array itself.
@@ -85,11 +90,13 @@ export const ReadGroup = memo(function ReadGroup({ blocks }: { blocks: ToolCallB
   const { toolLine } = useAppearance();
   const first = blocks[0]!;
   return <ConnectedRail enabled={toolLine !== 'text'} endAtLastRow className="action-details read-group flex flex-col">
-    <Row tone="action" lead={toolLine === 'text' ? undefined : <FileText className="size-icon" strokeWidth={1.5} />}>
-      <RowLabel>{toolVerb(first)}</RowLabel>
-    </Row>
+    <EntranceOnce id={`${first.id}:tool`}>
+      <Row tone="action" lead={toolLine === 'text' ? undefined : <FileText className="size-icon" strokeWidth={1.5} />}>
+        <RowLabel>{toolVerb(first)}</RowLabel>
+      </Row>
+    </EntranceOnce>
     <div className="tool-results flex flex-col">
-      {blocks.map(block => <ResultList key={block.id} items={toolFiles(block)} kind="read" rail={false} />)}
+      {blocks.map(block => <EntranceOnce key={block.id} id={`${block.id}:files`}><ResultList items={toolFiles(block)} kind="read" rail={false} /></EntranceOnce>)}
     </div>
   </ConnectedRail>;
 }, (a, b) => a.blocks.length === b.blocks.length && a.blocks.every((block, i) => block === b.blocks[i]));
