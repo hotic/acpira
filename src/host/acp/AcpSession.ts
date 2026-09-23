@@ -16,7 +16,8 @@ import { restoreInterruptedTurns } from './restoreTurns';
 import { isContextLengthError } from '@shared/turnErrors';
 import { CompactionCompletion, isCompactCommand } from './compaction';
 import { applyModelSources, type ModelSources } from '@shared/modelSources';
-import { thoughtCorrection } from '@shared/composerControls';
+import { isReasoningControl, thoughtCorrection } from '@shared/composerControls';
+import { parseFusionName } from '@shared/models';
 import { readModelSources } from './modelSources';
 import { fetchGrokUsage } from './grokUsage';
 import { preparePrompt, promptCapsOf, type BlobStore } from './attachments';
@@ -978,8 +979,22 @@ export class AcpSession {
     if (this.phase.editing) throw new Error(t('history.unavailable'));
     const c = this.state.controls;
     if (!this.proc || this.status !== 'ready' || !c.options.some(o => o.id === configId)) return;
+    const model = c.options.find(o => o.id === configId && o.category === 'model');
+    const before = parseFusionName(model?.options.find(o => o.id === model.value)?.name ?? '');
+    const after = parseFusionName(model?.options.find(o => o.id === value)?.name ?? '');
+    // Devin resets native thought_level when a sidekick changes the compound model ID.
+    // Preserve the lead's independent effort only for a sidekick-only change.
+    const sidekickOnly = before && after && before.lead === after.lead && before.effort === after.effort
+      && before.fast === after.fast && before.long === after.long && before.sidekick !== after.sidekick;
+    const reasoning = sidekickOnly ? c.options.filter(isReasoningControl).map(o => ({ id: o.id, value: o.value })) : [];
     const r = await this.proc.agent.request(acp.methods.agent.session.setConfigOption, { sessionId: this.acpSessionId!, configId, value });
     applyConfigOptions(c, r.configOptions);
+    for (const previous of reasoning) {
+      const current = c.options.find(o => o.id === previous.id);
+      if (previous.value && current && current.value !== previous.value && current.options.some(o => o.id === previous.value)) {
+        await this.setConfig(previous.id, previous.value);
+      }
+    }
     if (!this.syncingThought) await this.syncThought();
     if (this.agent === 'grok' && !this.usageNotifications && c.options.find(o => o.id === configId)?.category === 'model') {
       this.state.usage = undefined;

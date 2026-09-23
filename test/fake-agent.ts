@@ -196,6 +196,8 @@ const app = acp.agent({ name: 'fake-agent' })
       if (params.value !== 'low') background = undefined;
     }
     config[params.configId] = String(params.value);
+    // Devin's compound Fusion model switch resets its independent reasoning option.
+    if (process.env.FAKE_MODEL_RESETS_EFFORT && params.configId === 'model') config.effort = 'high';
     saveSession(params.sessionId);
     if (process.env.FAKE_CONFIG_USAGE) await client.notify(acp.methods.client.session.update, { sessionId: params.sessionId,
       update: { sessionUpdate: 'usage_update', used: 24_000, size: 200_000 } });
