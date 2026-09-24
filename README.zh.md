@@ -83,7 +83,7 @@ Acpira 位于活动栏，通过 [ACP](https://agentclientprotocol.com)（JSON-RP
 
 ## 安装
 
-1. 用 `.vsix` 安装扩展（**从 VSIX 安装…**），或在上架后从 Marketplace 安装。IntelliJ IDEA 2026.1 及以上可从 JetBrains Marketplace 安装插件，或选与本机匹配的 `acpira-<version>-<os>-<arch>.zip`（**Settings → Plugins → ⚙ → Install Plugin from Disk…**）；每个 zip 自带 Node.js 运行时。
+1. 用 `.vsix` 安装扩展（**从 VSIX 安装…**），或在上架后从 Marketplace 安装。IntelliJ IDEA 2026.1 及以上可从 JetBrains Marketplace 安装插件，或从 `acpira-<version>-universal.zip` 安装（**Settings → Plugins → ⚙ → Install Plugin from Disk…**）；通用包内置各支持平台的原生后端，无需 Node.js，并支持客户端与后端操作系统不同的远程开发。GitHub 上另有体积更小的单平台包。
 2. 至少安装一家 Agent CLI，并保证它在 `PATH` 上：
    - [Grok](https://x.ai) — `grok`（`grok agent stdio`）
    - [Devin](https://devin.ai) — `devin`（`devin acp`）
