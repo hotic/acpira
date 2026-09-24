@@ -16,8 +16,9 @@ dist/
 !.vscode/launch.json
 !.vscode/tasks.json
 
-# Internal docs (not published)
-docs/
+# Internal docs (not published); docs/dev/ holds the committed agent guides indexed by AGENTS.md
+docs/*
+!docs/dev/
 
 # Local agent skills
 .agents/skills/

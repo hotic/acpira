@@ -10,7 +10,7 @@ object Acpira {
     const val NOTIFICATION_GROUP = "Acpira"
 
     // The fake https host the webview is served from: a secure context (clipboard, module scripts, fetch) with no init-order race,
-    // because the handler is registered on the running CefApp. A real custom scheme is not viable under out-of-process JCEF (see AGENTS.md)
+    // because the handler is registered on the running CefApp. A real custom scheme is not viable under out-of-process JCEF (see docs/dev/intellij.md)
     const val ORIGIN = "https://acpira.local"
 
     val LOG: Logger = Logger.getInstance("#acpira")

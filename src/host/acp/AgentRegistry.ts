@@ -48,7 +48,7 @@ export const BUILTIN_AGENTS: AgentDef[] = [
     candidates: ['~/.grok/bin/grok', '~/.local/bin/grok', '/opt/homebrew/bin/grok', '/usr/local/bin/grok'],
     login: { command: 'grok', args: ['login'] },
     install: { posix: 'curl -fsSL https://x.ai/cli/install.sh | bash', windows: 'irm https://x.ai/cli/install.ps1 | iex', docs: 'https://docs.x.ai/build/overview' },
-    // Grok advertises promptCapabilities.image: false yet accepts inline image blocks and the model sees the pixels (AGENTS.md, "Protocol gotchas")
+    // Grok advertises promptCapabilities.image: false yet accepts inline image blocks and the model sees the pixels (docs/dev/agent-quirks.md)
     prompt: { imagesRegardless: true },
     // Grok doesn't give modes in session/new, but CLI ≥ 0.2.117 accepts session/set_mode (verified in probe-set-mode.ts):
     // default / plan go through the protocol; yolo is host-side auto-approval of permission requests, and the CLI stays in default.

@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-// Cascade layering contract for src/webview/styles (see AGENTS.md): an unlayered rule beats every Tailwind utility
+// Cascade layering contract for src/webview/styles (see docs/dev/webview.md): an unlayered rule beats every Tailwind utility
 // regardless of specificity, so a stray `.foo { padding: … }` silently overrides the call-site className.
 // Top-level rules must therefore be layered (`@layer`, `@utility`, `@theme`, `@keyframes`) or set custom properties
 // only, except in the files that exist precisely to beat other unlayered stylesheets.
