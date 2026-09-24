@@ -234,6 +234,11 @@ describe('optionBrand', () => {
     expect(optionBrand({ id: 'asgard', name: 'K3' })).toBe('kimi');
     expect(optionBrand({ id: 'custom-1', name: 'Claude Opus 5' })).toBe('claude');
     expect(optionBrand({ id: 'model-1', name: 'Composer 2.5' })).toBeUndefined();
+    // claude-agent-acp's short ids: no "claude" anywhere, the family word alone is the brand
+    expect(optionBrand({ id: 'opus[1m]', name: 'Opus 5.5' })).toBe('claude');
+    expect(optionBrand({ id: 'sonnet', name: 'Sonnet 5' })).toBe('claude');
+    expect(optionBrand({ id: 'haiku', name: 'Haiku 4.5' })).toBe('claude');
+    expect(optionBrand({ id: 'claude-fable-5[1m]', name: 'Fable 5' })).toBe('claude');
   });
 
   it('groupModels carries the resolved brand on the family', () => {
