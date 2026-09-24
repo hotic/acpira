@@ -12,7 +12,7 @@ import { Questions, type OnAnswer } from '../Questions';
 import { Prose } from '../Prose';
 import { HistoryContext } from '../HistoryMessage';
 import { TurnActionsContext } from '../TurnActions';
-import { scrollerUsable } from '../promptStuck';
+import { followsBottom, scrollerUsable } from '../promptStuck';
 import { subagentTitle } from './subagentState';
 
 interface InspectorProps {
@@ -87,7 +87,12 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, blobUr
   useEffect(() => {
     const el = scroll.current;
     if (!el) return;
-    const onScroll = () => { if (scrollerUsable(el)) pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48; };
+    let lastTop = el.scrollTop;
+    const onScroll = () => {
+      if (!scrollerUsable(el)) return;
+      pinned.current = followsBottom(el, pinned.current, lastTop);
+      lastTop = el.scrollTop;
+    };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
   }, []);

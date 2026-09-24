@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { promptIsStuck, promptIsStuckAt, scrollerUsable } from '../src/webview/chat/promptStuck';
+import { followsBottom, promptIsStuck, promptIsStuckAt, scrollerUsable } from '../src/webview/chat/promptStuck';
 
 const entry = (p: { intersecting: boolean; top: number; rootTop: number; rootHeight: number; rootWidth?: number; root?: null }) => ({
   isIntersecting: p.intersecting,
@@ -32,6 +32,20 @@ describe('promptIsStuckAt', () => {
     expect(promptIsStuckAt({ bottom: 101 }, root)).toBe(false);
     expect(promptIsStuckAt({ bottom: 520 }, root)).toBe(false);
     expect(promptIsStuckAt({ bottom: 0 }, { top: 0, height: 0, width: 320 })).toBeUndefined();
+  });
+});
+
+describe('followsBottom', () => {
+  it('keeps following when a late scroll event reads a gap left by a second viewport shrink', () => {
+    expect(followsBottom({ scrollHeight: 2000, scrollTop: 1100, clientHeight: 840 }, true, 1040)).toBe(true);
+    expect(followsBottom({ scrollHeight: 2000, scrollTop: 1100, clientHeight: 840 }, true, 1100)).toBe(true);
+  });
+
+  it('releases only on an upward scroll away from the bottom, and re-arms at the bottom', () => {
+    expect(followsBottom({ scrollHeight: 2000, scrollTop: 900, clientHeight: 900 }, true, 1100)).toBe(false);
+    expect(followsBottom({ scrollHeight: 2000, scrollTop: 1080, clientHeight: 900 }, true, 1100)).toBe(true);
+    expect(followsBottom({ scrollHeight: 2000, scrollTop: 1000, clientHeight: 900 }, false, 900)).toBe(false);
+    expect(followsBottom({ scrollHeight: 2000, scrollTop: 1100, clientHeight: 900 }, false, 900)).toBe(true);
   });
 });
 
