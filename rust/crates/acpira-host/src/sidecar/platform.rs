@@ -194,14 +194,18 @@ impl SidecarPlatform {
   }
 
   async fn rpc(&self, request: PlatformRequest) -> Result<Value> {
-    if let Some(reason) = self.closed.lock().clone() {
-      return Err(anyhow!("sidecar closed ({reason})"));
-    }
     debug_assert!(PLATFORM_RPC_METHODS.contains(&request.method()));
     let method = request.method();
     let id = format!("p{}", self.seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1);
     let (tx, rx) = oneshot::channel();
-    self.pending.lock().insert(id.clone(), Pending { method, tx });
+    {
+      // Checked under the pending lock: close() records the reason before it drains, so a request is either refused here or failed there
+      let mut pending = self.pending.lock();
+      if let Some(reason) = self.closed.lock().clone() {
+        return Err(anyhow!("sidecar closed ({reason})"));
+      }
+      pending.insert(id.clone(), Pending { method, tx });
+    }
     (self.send)(SidecarMsg::PlatformRequest { request_id: Some(id.clone()), request });
     match tokio::time::timeout(RPC_TIMEOUT, rx).await {
       Ok(Ok(r)) => r,
