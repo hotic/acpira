@@ -1,6 +1,6 @@
 # Publishing Acpira
 
-Publishing a stable GitHub Release triggers `.github/workflows/release.yml`. The workflow checks the tag against `package.json`, installs locked dependencies, runs type checks and tests, and builds one VSIX. It then builds the IntelliJ plugin at the same version (`idea/build.gradle.kts` reads `package.json`): tests, Plugin Verifier, the universal Marketplace zip and six per-platform zips (`acpira-<version>-<os>-<arch>.zip`, each with its Node.js runtime). Separate jobs publish the VSIX to Visual Studio Marketplace and Open VSX, upload the universal zip to the JetBrains Marketplace, and attach everything, with SHA-256 checksums, to the GitHub Release.
+Publishing a stable GitHub Release triggers `.github/workflows/release.yml`. The `sidecar` job builds the Rust sidecar for six platforms on macOS, Linux (x64 and arm64) and Windows runners, runs the Rust unit tests and checks each runner's own binary. The `build` job checks the tag against `package.json`, installs locked dependencies, runs type checks and tests, runs the sidecar contracts against the shipped Linux binary, and packages eight platform VSIXes (`acpira-<version>-<target>.vsix`, darwin / linux / alpine / win32 × x64 / arm64, each with its binary). There is no universal VSIX: other platforms (`linux-armhf`, `web`) cannot install the extension. It then builds the IntelliJ plugin at the same version (`idea/build.gradle.kts` reads `package.json`): tests, Plugin Verifier, the universal Marketplace zip and six per-platform zips (`acpira-<version>-<os>-<arch>.zip`, each with its sidecar binary). Separate jobs publish every VSIX to Visual Studio Marketplace and Open VSX, upload the universal zip to the JetBrains Marketplace, and attach everything, with SHA-256 checksums (`vsix.sha256`, `SHA256SUMS`), to the GitHub Release.
 
 ## One-time credentials
 
@@ -14,7 +14,7 @@ Add these repository secrets under [Settings → Secrets and variables → Actio
 
 Tokens expire or can be revoked. Update the corresponding secret when rotating one. Microsoft currently documents retirement of global Azure DevOps PATs on December 1, 2026; migrate the Marketplace job to Microsoft Entra ID before that date. The current workflow uses PATs, not Entra ID or Open VSX trusted publishing.
 
-The JetBrains Marketplace API requires an existing plugin listing. Subsequent releases upload only `acpira-<version>-universal.zip`, whose plugin version is the unsuffixed `X.Y.Z`. It carries all six verified Node.js binaries under `node/<os>-<arch>/`; only the backend selects and runs its matching runtime. The same artifact therefore works on a macOS Client connected to a Linux host.
+The JetBrains Marketplace API requires an existing plugin listing. Subsequent releases upload only `acpira-<version>-universal.zip`, whose plugin version is the unsuffixed `X.Y.Z`. It carries all six sidecar binaries under `sidecar/bin/<os>-<arch>/`; only the backend selects and runs its matching one. The same artifact therefore works on a macOS Client connected to a Linux host.
 
 OS/CPU dependencies inside optional content modules do not restrict compatibility of the whole plugin. Uploading six such versions would make them compete for installation. The six smaller platform archives are retained as GitHub downloads for manual installation; choose the host's archive for the backend and the client's archive for the frontend. The runtime-free base ZIP is a development artifact. See [Plugin Management in Split Mode](https://plugins.jetbrains.com/docs/intellij/plugin-management-in-split-mode.html).
 
@@ -24,7 +24,7 @@ Creating the Open VSX namespace does not verify ownership. Follow [Namespace Acc
 
 ## Release an update
 
-1. Update `package.json` and `CHANGELOG.md`, then commit and push the release changes.
+1. Update the version in `package.json` and `rust/Cargo.toml` (`[workspace.package]`), run `cargo update --workspace` in `rust/` so `Cargo.lock` follows (CI builds with `--locked`; `test/rustWorkspace.test.ts` checks all three), update `CHANGELOG.md`, then commit and push the release changes.
 2. Create a GitHub Release whose tag exactly matches the manifest version, for example `v1.0.1` for version `1.0.1`. Select the commit containing the release changes. Publish it as a stable release.
 3. Check the six jobs in [Publish extension](https://github.com/hotic/acpira/actions/workflows/release.yml). Green build status alone does not confirm marketplace publication.
 4. Confirm the version on [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=hotic.acpira), [Open VSX](https://open-vsx.org/extension/hotic/acpira) and the [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/com.github.hotic.acpira) (the unsuffixed `<version>` update). Cursor discovery can lag Open VSX publication because its marketplace proxy performs additional checks. Installed copies update according to each editor's automatic-update settings.

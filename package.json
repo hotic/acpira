@@ -454,8 +454,8 @@
     "test": "vitest run",
     "probe": "tsx --tsconfig tsconfig.host.json scripts/acp-probe.ts",
     "harness": "node dist/host-server.cjs --ws",
-    "package": "pnpm build && vsce package --no-dependencies",
-    "vscode:prepublish": "pnpm build"
+    "build:sidecar": "node scripts/build-sidecar.mjs",
+    "package": "pnpm build && pnpm build:sidecar && node scripts/package-vsix.mjs"
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "1.4.0",

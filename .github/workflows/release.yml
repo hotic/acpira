@@ -23,13 +23,65 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The Rust sidecar both shells ship, for six platforms, each built on a runner of its OS (Linux builds are static musl binaries).
+  sidecar:
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    strategy:
+      matrix:
+        include:
+          - runner: macos-latest
+            platforms: mac-arm64 mac-x86_64
+          - runner: ubuntu-24.04
+            platforms: linux-x86_64
+          - runner: ubuntu-24.04-arm
+            platforms: linux-arm64
+          - runner: windows-latest
+            platforms: windows-x86_64 windows-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          key: ${{ matrix.runner }}
+      - name: Install musl-gcc
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Rust unit tests
+        if: matrix.runner == 'ubuntu-24.04'
+        working-directory: rust
+        run: cargo test --workspace --locked
+      - name: Build the sidecar
+        run: node scripts/build-sidecar.mjs ${{ matrix.platforms }}
+      - name: Check the binary this runner can execute
+        shell: bash
+        run: |
+          host=$(node --input-type=module -e "import('./scripts/sidecar-targets.mjs').then(m => console.log(m.hostPlatform()))")
+          exe="dist/sidecar/$host/acpira"; [ -f "$exe.exe" ] && exe="$exe.exe"
+          test "$("$exe" --version)" = "$(node -p "require('./package.json').version")"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sidecar-${{ matrix.runner }}
+          path: dist/sidecar/
+          if-no-files-found: error
+          retention-days: 30
+
   build:
     # Only stable releases are supported; manual runs default to validation only.
     if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    needs: sidecar
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     outputs:
-      file: ${{ steps.manifest.outputs.file }}
+      version: ${{ steps.manifest.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -61,31 +113,39 @@ jobs:
             ], { encoding: 'utf8' }));
             if (release.isDraft || release.isPrerelease) throw new Error('Publish a stable GitHub Release first');
           }
-          appendFileSync(process.env.GITHUB_OUTPUT, `file=${name}-${version}.vsix\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
           NODE
       - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: sidecar-*
+          merge-multiple: true
+          path: dist/sidecar
+      - run: chmod +x dist/sidecar/*/acpira
       - run: pnpm typecheck
       - run: pnpm test
-      - name: Build VSIX once for both marketplaces
-        run: pnpm package
-      - name: Record package checksum
-        env:
-          VSIX_FILE: ${{ steps.manifest.outputs.file }}
+      - name: Run the sidecar contracts against the shipped Linux binary
+        run: ACPIRA_ENGINE=rust ACPIRA_RUST_BIN="$PWD/dist/sidecar/linux-x86_64/acpira" pnpm vitest run test/hostServer.test.ts test/sidecarContract.test.ts test/sidecarClient.test.ts
+      - name: Build the VSIXes once for both marketplaces
         run: |
-          sha256sum "$VSIX_FILE" > "$VSIX_FILE.sha256"
-          cat "$VSIX_FILE.sha256" >> "$GITHUB_STEP_SUMMARY"
+          pnpm build
+          node scripts/package-vsix.mjs --all
+      - name: Record package checksums
+        run: |
+          sha256sum *.vsix > vsix.sha256
+          cat vsix.sha256 >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         with:
           name: extension-vsix
           path: |
             *.vsix
-            *.vsix.sha256
+            vsix.sha256
           if-no-files-found: error
           retention-days: 30
 
-  # The IntelliJ plugin: the same version (build.gradle.kts reads package.json), one zip per OS / CPU with its Node.js runtime.
+  # The IntelliJ plugin: the same version (build.gradle.kts reads package.json), one zip per OS / CPU with its sidecar binary.
   build-idea:
-    needs: build
+    needs: [sidecar, build]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -106,6 +166,11 @@ jobs:
         with:
           cache-read-only: ${{ github.event_name == 'release' }}
       - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: sidecar-*
+          merge-multiple: true
+          path: dist/sidecar
       - name: Build the webview and sidecar bundles
         run: pnpm build
       - name: Build, verify and package the plugin
@@ -113,9 +178,8 @@ jobs:
         run: ./gradlew test buildPlugin verifyPlugin buildPluginVariants buildMarketplacePlugin checksums --no-daemon
       - name: Check the plugin version against the release
         env:
-          VSIX_FILE: ${{ needs.build.outputs.file }}
+          version: ${{ needs.build.outputs.version }}
         run: |
-          version="${VSIX_FILE#acpira-}"; version="${version%.vsix}"
           ls idea/build/distributions
           for target in mac-arm64 mac-x86_64 linux-arm64 linux-x86_64 windows-arm64 windows-x86_64; do
             test -f "idea/build/distributions/acpira-$version-$target.zip"
@@ -151,13 +215,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.ref }}
-          VSIX_FILE: ${{ needs.build.outputs.file }}
         run: |
-          sha256sum --check "$VSIX_FILE.sha256"
+          sha256sum --check vsix.sha256
           (cd idea && sha256sum --check SHA256SUMS --ignore-missing)
           # Keep original release assets on retries instead of replacing a published package.
           gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' > assets.txt
-          for file in "$VSIX_FILE" "$VSIX_FILE.sha256" idea/*.zip idea/SHA256SUMS; do
+          for file in *.vsix vsix.sha256 idea/*.zip idea/SHA256SUMS; do
             if ! grep -Fxq "$(basename "$file")" assets.txt; then
               gh release upload "$RELEASE_TAG" "$file"
             fi
@@ -183,10 +246,9 @@ jobs:
       - name: Publish the universal distribution
         env:
           PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
-          VSIX_FILE: ${{ needs.build.outputs.file }}
+          version: ${{ needs.build.outputs.version }}
         run: |
           sha256sum --check SHA256SUMS --ignore-missing
-          version="${VSIX_FILE#acpira-}"; version="${version%.vsix}"
           # One version works across different client/backend platforms. Per-platform archives remain GitHub downloads only.
           curl -fsS "https://plugins.jetbrains.com/plugins/list?pluginId=com.github.hotic.acpira" > published.xml
           if grep -Fq "<version>$version</version>" published.xml; then
@@ -220,10 +282,12 @@ jobs:
       - name: Publish to Visual Studio Marketplace
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-          VSIX_FILE: ${{ needs.build.outputs.file }}
         run: |
-          sha256sum --check "$VSIX_FILE.sha256"
-          npx --yes @vscode/vsce@3.9.2 publish --packagePath "$VSIX_FILE" --skip-duplicate
+          sha256sum --check vsix.sha256
+          # One package per platform, each with its sidecar binary; there is no universal package
+          for f in *.vsix; do
+            npx --yes @vscode/vsce@3.9.2 publish --packagePath "$f" --skip-duplicate
+          done
 
   open-vsx:
     needs: build
@@ -248,7 +312,8 @@ jobs:
       - name: Publish to Open VSX
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
-          VSIX_FILE: ${{ needs.build.outputs.file }}
         run: |
-          sha256sum --check "$VSIX_FILE.sha256"
-          npx --yes ovsx@1.1.1 publish "$VSIX_FILE" --skip-duplicate
+          sha256sum --check vsix.sha256
+          for f in *.vsix; do
+            npx --yes ovsx@1.1.1 publish "$f" --skip-duplicate
+          done
