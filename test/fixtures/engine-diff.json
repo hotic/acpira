@@ -1,0 +1,637 @@
+[
+ {
+  "name": "splice30",
+  "oldText": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\nline 21\nline 22\nline 23\nline 24\nline 25\nline 26\nline 27\nline 28\nline 29\nline 30",
+  "newText": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nreplacement\ninserted\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\nline 21\nline 22\nline 23\nline 24\nline 25\nline 26\nline 27\nline 28\nline 29\nline 30",
+  "lines": [
+   {
+    "kind": "hunk",
+    "text": "@@ … 7 unchanged lines … @@"
+   },
+   {
+    "kind": "ctx",
+    "text": " line 8",
+    "oldLine": 8,
+    "newLine": 8
+   },
+   {
+    "kind": "ctx",
+    "text": " line 9",
+    "oldLine": 9,
+    "newLine": 9
+   },
+   {
+    "kind": "ctx",
+    "text": " line 10",
+    "oldLine": 10,
+    "newLine": 10
+   },
+   {
+    "kind": "del",
+    "text": "-line 11",
+    "oldLine": 11
+   },
+   {
+    "kind": "add",
+    "text": "+replacement",
+    "newLine": 11
+   },
+   {
+    "kind": "add",
+    "text": "+inserted",
+    "newLine": 12
+   },
+   {
+    "kind": "ctx",
+    "text": " line 12",
+    "oldLine": 12,
+    "newLine": 13
+   },
+   {
+    "kind": "ctx",
+    "text": " line 13",
+    "oldLine": 13,
+    "newLine": 14
+   },
+   {
+    "kind": "ctx",
+    "text": " line 14",
+    "oldLine": 14,
+    "newLine": 15
+   }
+  ]
+ },
+ {
+  "name": "new-ab",
+  "oldText": "",
+  "newText": "a\nb",
+  "lines": [
+   {
+    "kind": "add",
+    "text": "+a",
+    "newLine": 1
+   },
+   {
+    "kind": "add",
+    "text": "+b",
+    "newLine": 2
+   }
+  ]
+ },
+ {
+  "name": "bounded450",
+  "oldText": "old\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\nold\n",
+  "newText": "new\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\nnew\n",
+  "lines": [
+   {
+    "kind": "hunk",
+    "text": "@@ 450 lines → 450 lines @@"
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 1
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 2
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 3
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 4
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 5
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 6
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 7
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 8
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 9
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 10
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 11
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 12
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 13
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 14
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 15
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 16
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 17
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 18
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 19
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 20
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 21
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 22
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 23
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 24
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 25
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 26
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 27
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 28
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 29
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 30
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 31
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 32
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 33
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 34
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 35
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 36
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 37
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 38
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 39
+   },
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 40
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 1
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 2
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 3
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 4
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 5
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 6
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 7
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 8
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 9
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 10
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 11
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 12
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 13
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 14
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 15
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 16
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 17
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 18
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 19
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 20
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 21
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 22
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 23
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 24
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 25
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 26
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 27
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 28
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 29
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 30
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 31
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 32
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 33
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 34
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 35
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 36
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 37
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 38
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 39
+   },
+   {
+    "kind": "add",
+    "text": "+new",
+    "newLine": 40
+   }
+  ]
+ },
+ {
+  "name": "py-multiline",
+  "oldText": "text = \"\"\"\nline 0\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\n\"\"\"\nprint(text)\n",
+  "newText": "text = \"\"\"\nline 0\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nnew text\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\n\"\"\"\nprint(text)\n",
+  "lines": [
+   {
+    "kind": "hunk",
+    "text": "@@ … 8 unchanged lines … @@"
+   },
+   {
+    "kind": "ctx",
+    "text": " line 7",
+    "oldLine": 9,
+    "newLine": 9
+   },
+   {
+    "kind": "ctx",
+    "text": " line 8",
+    "oldLine": 10,
+    "newLine": 10
+   },
+   {
+    "kind": "ctx",
+    "text": " line 9",
+    "oldLine": 11,
+    "newLine": 11
+   },
+   {
+    "kind": "del",
+    "text": "-line 10",
+    "oldLine": 12
+   },
+   {
+    "kind": "add",
+    "text": "+new text",
+    "newLine": 12
+   },
+   {
+    "kind": "ctx",
+    "text": " line 11",
+    "oldLine": 13,
+    "newLine": 13
+   },
+   {
+    "kind": "ctx",
+    "text": " line 12",
+    "oldLine": 14,
+    "newLine": 14
+   },
+   {
+    "kind": "ctx",
+    "text": " line 13",
+    "oldLine": 15,
+    "newLine": 15
+   }
+  ]
+ },
+ {
+  "name": "tsx",
+  "oldText": "",
+  "newText": "export const View = () => <div title=\"hello\" />;",
+  "lines": [
+   {
+    "kind": "add",
+    "text": "+export const View = () => <div title=\"hello\" />;",
+    "newLine": 1
+   }
+  ]
+ },
+ {
+  "name": "py",
+  "oldText": "",
+  "newText": "import json\nprint(\"hello\")",
+  "lines": [
+   {
+    "kind": "add",
+    "text": "+import json",
+    "newLine": 1
+   },
+   {
+    "kind": "add",
+    "text": "+print(\"hello\")",
+    "newLine": 2
+   }
+  ]
+ },
+ {
+  "name": "json",
+  "oldText": "",
+  "newText": "{\"enabled\": true, \"count\": 3}",
+  "lines": [
+   {
+    "kind": "add",
+    "text": "+{\"enabled\": true, \"count\": 3}",
+    "newLine": 1
+   }
+  ]
+ },
+ {
+  "name": "answer",
+  "oldText": "",
+  "newText": "const answer = \"yes\";",
+  "lines": [
+   {
+    "kind": "add",
+    "text": "+const answer = \"yes\";",
+    "newLine": 1
+   }
+  ]
+ },
+ {
+  "name": "crlf",
+  "oldText": "",
+  "newText": "a\r\nb\r\n",
+  "lines": [
+   {
+    "kind": "add",
+    "text": "+a",
+    "newLine": 1
+   },
+   {
+    "kind": "add",
+    "text": "+b",
+    "newLine": 2
+   }
+  ]
+ },
+ {
+  "name": "empty",
+  "oldText": "",
+  "newText": "",
+  "lines": []
+ },
+ {
+  "name": "to-empty",
+  "oldText": "old",
+  "newText": "",
+  "lines": [
+   {
+    "kind": "del",
+    "text": "-old",
+    "oldLine": 1
+   }
+  ]
+ }
+]
