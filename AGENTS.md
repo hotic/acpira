@@ -1,6 +1,6 @@
 # Acpira
 
-A chat shell for VS Code / Cursor that drives official agent CLIs (`grok agent stdio`, `devin acp`, `kimi acp`, or any ACP-compatible command) over [ACP](https://agentclientprotocol.com) (JSON-RPC over stdio). The shell owns UI, session organization, permission approvals, accounts, and context budget; model calls and agent execution stay in the CLIs.
+A chat shell for VS Code / Cursor (and IntelliJ) that drives official agent CLIs (`grok agent stdio`, `devin acp`, `kimi acp`, or any ACP-compatible command) over [ACP](https://agentclientprotocol.com) (JSON-RPC over stdio). The shell owns UI, session organization, permission approvals, accounts, and context budget; model calls and agent execution stay in the CLIs.
 
 ## Working rules
 
@@ -19,12 +19,13 @@ A chat shell for VS Code / Cursor that drives official agent CLIs (`grok agent s
 - `pnpm probe grok [--auth] [--api-key-env VAR] [--import-local] [--image PATH] [--link PATH] [--embed PATH] [--elicit] [--wait MS] [prompt]` — run `initialize` + `session/new` (+ one prompt, optionally with an inline image / `resource_link` / embedded `resource` block) against a CLI without VS Code; `--elicit` advertises form elicitation and prints / auto-answers `elicitation/create`; `--wait MS` keeps the process alive after the last response, which is where `available_commands_update` arrives (Grok / Kimi send it after `session/new` returns, Devin during). Use this first when debugging protocol issues
 - `pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe-agent-host.ts <agent> [--attach] [--shell] [--write] [--plan] [--image] [--raw]` — the same path the webview takes (`SessionManager` → `AcpSession`) against a real CLI: new session, controls, one prompt, boolean controls flipped on/off, optionally a dropped text attachment, a shell command, a permission-card write (`--write`), a plan-review reject (`--plan`) or an image view (`--image`), permission cards answered like a click; `scripts/probe-opencode-host.ts [--model provider/model]` adds OpenCode's mode / effort switching, a two-file write and the native-session import round trip on a second manager (`--model` when the CLI's default route is down — OpenCode retries a 503 silently, so a first prompt that never returns is the gateway, check it with curl before suspecting the host); `scripts/probe-restore-host.ts <agent>` is the generic restore round trip for any agent: a tiny prompt, a same-store reopen (same `acpSessionId`, no duplicated or re-sent turns, a follow-up that must recall the first reply — it logs whether `session/resume` or `session/load` ran), then `session/list` → import on a fresh store (≥2 sealed replayed turns, re-listing marks it imported). All spend real model calls; give the CLI a temp store (`DSH_HOME`, `PI_CODING_AGENT_DIR`) where it has one
 - `pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe-subagents.ts <agent> [--air] [--no-caps] [--import-local] [--cmd "<command line>"] [--wait MS]` — raw-ndjson subagent probe (what an agent really emits, SDK validation bypassed) and `scripts/probe-subagents-host.ts <claude|devin>` — the same through `SessionManager`; both spend real model calls and leave their logs / temp stores in place for inspection
-- `pnpm package` — build a `.vsix`
+- `pnpm package` — build everything and package this machine's platform `.vsix` (with its Rust sidecar at `bin/`); `pnpm build:sidecar [--all | <os>-<arch>…]` builds release sidecars into `dist/sidecar/`, `node scripts/package-vsix.mjs [--all | <vsce-target>…]` packages from them (one VSIX per platform, no universal package)
+- `cd rust && cargo test --workspace && cargo clippy --workspace --all-targets` — the Rust sidecar engine, the one both shells ship (see `docs/dev/host-architecture.md`); after `cargo build`, `ACPIRA_ENGINE=rust pnpm exec vitest run test/hostServer.test.ts test/sidecarContract.test.ts test/sidecarClient.test.ts` runs the envelope contracts against it
 
 ## Hard rules
 
-- `src/webview/` and `src/host/acp/` must never import `vscode`. Only `src/host/extension.ts`, `bridge.ts`, `vscodePlatform.ts` and `files.ts` import it; `SessionManager.ts`, `src/host/accounts/` and the sidecar do not (the sidecar bundle is built without `external: vscode`, so a stray import fails `pnpm build`)
-- `createHostRuntime(platform)` in `src/host/runtime.ts` is the single composition root; the VS Code extension and the sidecar both call it, and no other entry point re-creates that wiring
+- `src/webview/` and `src/host/acp/` must never import `vscode`. Only `src/host/extension.ts`, `bridge.ts`, `vscodePlatform.ts` and `files.ts` import it (`src/host/shell/`, the extension's sidecar client, does not); `SessionManager.ts`, `src/host/accounts/` and the sidecar do not (the sidecar bundle is built without `external: vscode`, so a stray import fails `pnpm build`)
+- `createHostRuntime(platform)` in `src/host/runtime.ts` is the single composition root of the TS engine; only the sidecar calls it (both IDE extensions are sidecar shells), and no other entry point re-creates that wiring
 - `src/shared/transcript.ts` (`SessionView`) and `src/shared/protocol.ts` (`HostMsg` / `WebviewMsg`) are the only host ↔ webview contract; `src/shared/sidecar.ts` is the sidecar wire contract (`SIDECAR_PROTOCOL_VERSION`)
 - Sidecar stdout carries envelopes only; logs go to stderr
 - The root `tsconfig.json` holds `references` only
@@ -37,8 +38,9 @@ A chat shell for VS Code / Cursor that drives official agent CLIs (`grok agent s
 ## Layout
 
 - `src/shared/` — contracts and pure logic shared by host and webview (transcript, protocol, sidecar, appearance, agent order, models, export)
-- `src/host/` — `platform.ts` seam, `runtime.ts`, `bridgeCore.ts`, `SessionManager.ts`; `acp/` the ACP client (registry, launching, process, `AcpSession` state machine, `normalize.ts`, subagents); `store/` data dir, transcript store, file lock; `accounts/`; `sidecar/` + `server.ts` the non-VS Code host
+- `src/host/` — `platform.ts` seam, `runtime.ts`, `bridgeCore.ts`, `SessionManager.ts`; `acp/` the ACP client (registry, launching, process, `AcpSession` state machine, `normalize.ts`, subagents); `store/` data dir, transcript store, file lock; `accounts/`; `sidecar/` + `server.ts` the Node sidecar; `shell/` the extension's sidecar client
 - `src/webview/` — React UI: `ui/` primitives, `chat/`, `settings/`, `effects/`, `styles/`
+- `rust/` the Rust sidecar engine (`acpira-shared`, `acpira-host`, binary `acpira`)
 - `test/` vitest suites and `fake-agent.ts`; `scripts/` probes; `idea/` the IntelliJ plugin; `lab/` + `src/lab/` the LAB (local only)
 
 ## Read before changing
