@@ -157,8 +157,9 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
     const measure = () => {
       const root = ref.current;
       if (!root) return;
-      const origin = root.getBoundingClientRect();
-      const leads = enabled && origin.width && origin.height && !root.closest('[inert]')
+      // A disabled or inert rail reads no geometry: every read forces a layout, and a closed row's rail mounts disabled
+      const origin = enabled && !root.closest('[inert]') ? root.getBoundingClientRect() : undefined;
+      const leads = origin && origin.width && origin.height
         ? [...root.querySelectorAll(selector)].filter(lead => lead.closest('.connected-rail') === root && !lead.closest('[inert]'))
         : [];
       const currentLeads = new Set(leads);
@@ -169,6 +170,7 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
         if (!observedLeads.current.has(lead)) observerRef.current?.observe(lead);
       }
       observedLeads.current = currentLeads;
+      if (!origin || !leads.length) { setSegments(previous => previous.length ? [] : previous); return; }
       const icons = leads.map(leadAnchor).filter((anchor): anchor is Anchor => anchor !== null);
       const scaleX = root.offsetWidth ? origin.width / root.offsetWidth : 1;
       const scaleY = root.offsetHeight ? origin.height / root.offsetHeight : 1;

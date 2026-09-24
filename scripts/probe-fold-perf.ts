@@ -2,11 +2,13 @@
 // expanding / collapsing thought rows and process folds blocks the main thread, optionally
 // while a live turn streams (the host pushes a full SessionView every ~30 ms then).
 // Needs the LAB server: `pnpm exec vite --config vite.lab.config.ts`
-// Usage: pnpm exec tsx scripts/probe-fold-perf.ts [profile=large|screenshot] [chars=N] [--stream] [--live] [--cpu]
+// Usage: pnpm exec tsx scripts/probe-fold-perf.ts [profile=large|screenshot] [chars=N] [--stream] [--live] [--cpu] [--switch]
 //   chars=N   set the live thought length (default 1000)
 //   --stream  keep a turn streaming during the clicks and report the frame budget with no clicks first
 //   --live    leave the initial thought streaming; use with --stream to measure live glyphs after a 4 s warmup
 //   --cpu     record a CPU profile per step (top self-time frames printed, full profiles in /tmp/acpira-*.cpuprofile)
+//   --switch  only measure session switches: three sessions of the same shape arrive in turn (dispatch → second frame, long tasks)
+// The dev server runs React's development build; for absolute numbers, build the page with `vite build` and serve it with `vite preview`
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 
@@ -18,6 +20,7 @@ const url = `http://localhost:5199/performance.preview.html?profile=${profile}&f
 const cpu = process.argv.includes('--cpu');
 const stream = process.argv.includes('--stream');
 const live = process.argv.includes('--live');
+const switching = process.argv.includes('--switch');
 
 const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${PORT}`, '--window-size=900,1200', '--no-first-run', '--user-data-dir=/tmp/acpira-perf-profile', 'about:blank'], { stdio: 'ignore' });
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -104,6 +107,26 @@ async function profiled<T>(label: string, run: () => Promise<T>): Promise<T> {
   writeFileSync(`/tmp/acpira-${label.replace(/\W+/g, '_')}.cpuprofile`, JSON.stringify(result.profile));
   console.log('  top self time:', summarize(result.profile));
   return value;
+}
+
+if (switching) {
+  // A new id remounts the whole transcript under its replay key, like picking another conversation in the list
+  for (const id of ['switch-b', 'switch-c', 'switch-d']) {
+    const r = await profiled(`switch ${id}`, () => evaluate(`new Promise(done => {
+      window.__long = [];
+      const s = structuredClone(window.perfProbe.session); s.id = ${JSON.stringify(id)}; s.running = false;
+      const t0 = performance.now();
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'session', session: s } }));
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const paint = Math.round(performance.now() - t0);
+        setTimeout(() => done({ paint, long: window.__long.map(Math.round), nodes: document.querySelectorAll('*').length }), 1000);
+      }));
+    })`));
+    console.log('switch', r);
+  }
+  ws.close();
+  chrome.kill();
+  process.exit(0);
 }
 
 if (stream) {

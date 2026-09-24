@@ -10,7 +10,7 @@ import { turnOutcome } from './turnOutcome';
 import { Row, RowLabel, RowTarget, RowEntranceContext, EntranceScopeContext } from '../ui/Row';
 import { Shimmer } from '../ui/Shimmer';
 import { Disclosure, DisclosureObserverContext } from '../ui/Disclosure';
-import { Collapsible } from '../ui/Collapsible';
+import { Collapsible, LazyPanelContext } from '../ui/Collapsible';
 import { Orb } from '../effects/Orb';
 import { cn } from '../ui/cn';
 import { useMergedRefs } from '../ui/mergeRefs';
@@ -164,7 +164,8 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
     showActions: last && !running,
     ...(turn.error?.failureId !== undefined ? { suppressId: turn.error.failureId } : {}),
   }), [onFailureAction, last, running, turn.error?.failureId]);
-  return <EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><NoticeActionContext.Provider value={noticeActions}><div className="group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]">
+  // A settled turn mounts fold bodies on first open; a live one keeps them mounted so streamed content stays in step while closed
+  return <LazyPanelContext.Provider value={!running}><EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><NoticeActionContext.Provider value={noticeActions}><div className="group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]">
     {sections.map((section, i) => {
       const lastSection = i === sections.length - 1;
       // Only the continuation owns live activity and the turn outcome. Earlier
@@ -183,7 +184,7 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
       </Fragment>;
     })}
     {actions && !running && !compacting && turn.blocks.length > 0 && <TurnActions turn={turn} turnIndex={turnIndex} last={last} settings={settings} />}
-  </div></NoticeActionContext.Provider></RowEntranceContext.Provider></EntranceScopeContext.Provider>;
+  </div></NoticeActionContext.Provider></RowEntranceContext.Provider></EntranceScopeContext.Provider></LazyPanelContext.Provider>;
 });
 
 interface SubagentSlots {
