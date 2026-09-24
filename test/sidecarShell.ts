@@ -107,4 +107,3 @@ export class Shell {
     await this.exited(3000).catch(() => { this.proc.kill('SIGKILL'); return this.exited().catch(() => {}); });
   }
 }
-

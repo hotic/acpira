@@ -8,7 +8,7 @@
         or an editor tab. The agents keep their own execution engines; Acpira adds a clear execution history, inline approvals,
         queued follow-ups, session and account management, and a context budget.</p>
         <p>Sessions, accounts and settings live in <code>~/.acpira</code>, shared with the Acpira extension for VS Code and Cursor.
-        Requires an IDE from 2026.1 on; the Marketplace package carries a Node.js runtime for each supported OS and CPU.</p>
+        Requires an IDE from 2026.1 on; the Marketplace package carries the native Acpira backend for each supported OS and CPU, with no Node.js required.</p>
     ]]></description>
 
     <content>
