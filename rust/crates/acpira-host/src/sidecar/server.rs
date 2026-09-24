@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -33,12 +34,14 @@ pub struct SidecarServer {
   platform: Option<Arc<SidecarPlatform>>,
   runtime: Option<Arc<HostRuntime>>,
   views: HashMap<String, Arc<BridgeCore>>,
+  /// Raised when teardown starts: senders handed to views and the platform go quiet, so nothing follows shutdownOk
+  closing: Arc<AtomicBool>,
   done: bool,
 }
 
 impl SidecarServer {
   pub fn new(opts: ServerOpts, out: mpsc::UnboundedSender<String>) -> Self {
-    SidecarServer { opts, out, platform: None, runtime: None, views: HashMap::new(), done: false }
+    SidecarServer { opts, out, platform: None, runtime: None, views: HashMap::new(), closing: Default::default(), done: false }
   }
 
   fn log(&self, line: &str) {
@@ -47,9 +50,10 @@ impl SidecarServer {
 
   fn sender(&self) -> Arc<dyn Fn(SidecarMsg) + Send + Sync> {
     let out = self.out.clone();
+    let closing = self.closing.clone();
     Arc::new(move |m: SidecarMsg| {
-      if let Ok(line) = serde_json::to_string(&m) {
-        let _ = out.send(line);
+      if !closing.load(Ordering::Acquire) {
+        write(&out, &m);
       }
     })
   }
@@ -111,7 +115,7 @@ impl SidecarServer {
       return None;
     };
     match m {
-      ShellMsg::AttachView { view_id, host, initial } => {
+      ShellMsg::AttachView { view_id, host, initial, blob_base } => {
         if self.views.contains_key(&view_id) {
           self.log(&format!("attachView: {view_id} already attached, ignored"));
           return None;
@@ -119,7 +123,7 @@ impl SidecarServer {
         let send = self.sender();
         let vid = view_id.clone();
         let post = Arc::new(move |message: HostMsg| send(SidecarMsg::HostMessage { view_id: vid.clone(), message }));
-        let core = runtime.attach_view(host, initial, platform.blob_base(), post);
+        let core = runtime.attach_view(host, initial, blob_base.or_else(|| platform.blob_base()), post);
         self.views.insert(view_id, core);
       }
       ShellMsg::DetachView { view_id } => {
@@ -192,6 +196,7 @@ impl SidecarServer {
       return code;
     }
     self.log(&format!("sidecar finishing: {reason}"));
+    self.closing.store(true, Ordering::Release);
     if let Some(p) = &self.platform {
       p.dispose(reason);
     }
@@ -200,10 +205,16 @@ impl SidecarServer {
       rt.dispose().await;
     }
     if ack {
-      self.send(SidecarMsg::ShutdownOk);
+      write(&self.out, &SidecarMsg::ShutdownOk);
     }
     self.done = true;
     code
+  }
+}
+
+fn write(out: &mpsc::UnboundedSender<String>, m: &SidecarMsg) {
+  if let Ok(line) = serde_json::to_string(m) {
+    let _ = out.send(line);
   }
 }
 

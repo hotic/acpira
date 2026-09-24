@@ -63,6 +63,20 @@ describe('sidecar session contract', () => {
     expect(pidsWith(mark)).toEqual([]);
   });
 
+  // Teardown fails the pending platform RPC; the view operation that was waiting on it must not answer after shutdown, so
+  // shutdownOk is the last envelope on the wire
+  it('nothing follows shutdownOk, not even a view operation failed by the teardown', async () => {
+    const s = shell();
+    await s.hello({ client: { name: 'contract', version: '0', capabilities: ['searchFiles'] } });
+    await s.open('V');
+    s.view('V', { type: 'searchFiles', query: 'foo', seq: 1 });
+    await s.next((m): m is Extract<typeof m, { type: 'platformRequest' }> => m.type === 'platformRequest' && m.request.method === 'searchFiles');
+    s.send({ type: 'shutdown' });
+    expect(await s.exited()).toBe(0);
+    expect(s.out.at(-1)).toEqual({ type: 'shutdownOk' });
+    expect(s.hostMsgs('V').some(m => m.type === 'files')).toBe(false);
+  });
+
   it('a permission card answered by the webview lets the tool run; usage and the diff land in the turn', async () => {
     const s = shell();
     const id = await started(s);
