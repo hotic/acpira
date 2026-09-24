@@ -9,8 +9,6 @@ export interface WebviewBridgeOpts {
   extensionUri: vscode.Uri;
   sessionsDir: string;
   locale: () => string;
-  // The blob base this webview resolves the sessions directory to; the platform tells the sidecar before the view attaches
-  noteBlobBase: (base: string) => void;
   // Every session the view shows (init, then each push), for tab titles and one-shot watchers
   onSession?: (session: SessionView) => void;
 }
@@ -19,6 +17,7 @@ export interface WebviewBridgeOpts {
 // sidecar. Routing and every decision live in the sidecar; this file only knows the vscode.Webview API
 export class WebviewBridge implements vscode.Disposable, ShellView {
   readonly viewId = randomUUID();
+  readonly blobBase: string;
   private disposables: vscode.Disposable[] = [];
   private detach: () => void;
   private initialized = false;
@@ -32,8 +31,8 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
     const sessions = vscode.Uri.file(opts.sessionsDir);
     webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(opts.extensionUri, 'dist', 'webview'), sessions] };
     webview.html = this.html();
-    // Attachment blobs are served to the webview straight from the sessions directory
-    opts.noteBlobBase(webview.asWebviewUri(sessions).toString());
+    // Attachment blobs are served to the webview straight from the sessions directory, through this webview's own resource URI
+    this.blobBase = webview.asWebviewUri(sessions).toString();
     this.disposables.push(webview.onDidReceiveMessage((m: WebviewMsg) => opts.client.send(this.viewId, m)));
     this.detach = opts.client.attach(this);
   }

@@ -9,14 +9,13 @@ import type { HelloPayload } from './shell/SidecarClient';
 // Every IDE action the sidecar may ask for; VS Code implements them all
 const CAPABILITIES: PlatformMethod[] = ['openResolvedFile', 'openPlanDocument', 'revealInOS', 'searchFiles', 'writeSetting', 'openExternal', 'openInEditor', 'runInTerminal', 'toast'];
 
-// The VS Code / Cursor side of the sidecar's platform: the facts hello carries (workspace folder, display language, acpira.* settings,
-// where blobs load from), the events that refresh them, and the IDE actions platformRequests ask for. The only host-side file besides
+// The VS Code / Cursor side of the sidecar's platform: the facts hello carries (workspace folder, display language, acpira.* settings),
+// the events that refresh them, and the IDE actions platformRequests ask for. The only host-side file besides
 // extension.ts, bridge.ts and files.ts that imports vscode
 export class VscodePlatform {
   readonly legacy: { from: string; vault: SecretVault };
   private readonly files = new WorkspaceFiles();
   private readonly keys: string[];
-  private blobBase?: string;
 
   constructor(private context: vscode.ExtensionContext, private openInEditor: (sessionId?: string) => void) {
     // Each IDE's globalStorage / SecretStorage tree is merged into ~/.acpira once (dataDir.migrateOnce), before the sidecar starts
@@ -42,7 +41,7 @@ export class VscodePlatform {
   hello(): HelloPayload {
     return {
       client: { name: vscode.env.appName, version: String((this.context.extension.packageJSON as { version?: unknown }).version ?? '0'), capabilities: CAPABILITIES },
-      env: { cwd: this.cwd(), hostLanguage: vscode.env.language, ...(this.blobBase ? { blobBase: this.blobBase } : {}) },
+      env: { cwd: this.cwd(), hostLanguage: vscode.env.language },
       settings: this.snapshot(),
     };
   }
@@ -56,14 +55,6 @@ export class VscodePlatform {
       if (v !== undefined) out[k] = JSON.parse(JSON.stringify(v)) as unknown;
     }
     return out;
-  }
-
-  // Attachment blobs load through the webview resource scheme; every webview maps the sessions directory to the same base. Returns the
-  // envChanged event to send when it differs from what the sidecar was told
-  noteBlobBase(base: string): PlatformEvent | undefined {
-    if (base === this.blobBase) return undefined;
-    this.blobBase = base;
-    return { type: 'envChanged', env: { blobBase: base } };
   }
 
   // Settings edits (the settings page, settings.json, the Settings UI), window focus and workspace folder changes, as platform events

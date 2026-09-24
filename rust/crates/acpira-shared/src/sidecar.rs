@@ -154,6 +154,9 @@ pub enum ShellMsg {
     host: WebviewHost,
     #[serde(default)]
     initial: Option<InitialView>,
+    /// This view's own blob base; the env's when absent
+    #[serde(default)]
+    blob_base: Option<String>,
   },
   DetachView {
     view_id: String,

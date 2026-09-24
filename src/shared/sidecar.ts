@@ -41,7 +41,8 @@ export type ShellMsg =
     // Flat acpira.* keys (`defaultAgent`, `appearance.motion`, …): the shell owns the settings store, the sidecar reads this snapshot
     settings: Record<string, unknown>;
   }
-  | { type: 'attachView'; viewId: string; host: WebviewHost; initial?: string | { mostRecent: true } }
+  // blobBase: this view's own blob base (VS Code maps the sessions directory per webview); env.blobBase when absent
+  | { type: 'attachView'; viewId: string; host: WebviewHost; initial?: string | { mostRecent: true }; blobBase?: string }
   | { type: 'detachView'; viewId: string }
   | { type: 'webviewMessage'; viewId: string; message: WebviewMsg }
   | { type: 'platformResponse'; requestId: string; result?: unknown; error?: string }
