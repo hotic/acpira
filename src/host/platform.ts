@@ -1,5 +1,4 @@
 import type { FileHit } from '@shared/protocol';
-import type { SecretVault } from './accounts/AccountStore';
 
 export type ToastLevel = 'info' | 'error';
 
@@ -12,7 +11,7 @@ export type SettingsAffects = (section?: string) => boolean;
 // What a host application provides for the Acpira runtime to run inside it: environment facts, settings storage, and IDE actions that
 // take already-resolved arguments. Routing, validation and every business decision (which file a link means, when a login falls back
 // to the terminal, what an install command is) stay in BridgeCore / SessionManager, so a platform never sees an unresolved message.
-// VS Code implements this over the vscode module; the sidecar forwards each call to the Kotlin shell as a platformRequest
+// The sidecar implements it over the envelope channel (SidecarPlatform): each IDE action is a platformRequest to the shell
 export interface HostPlatform {
   log(line: string): void;
   // The IDE's display language, for resolving acpira.language = auto
@@ -39,6 +38,4 @@ export interface HostPlatform {
   openInEditor(sessionId?: string): void;
   // Workspace file search behind the composer's @ mention, ranked, top hits only
   searchFiles(query: string): Promise<FileHit[]>;
-  // A legacy per-IDE data tree (VS Code globalStorage + SecretStorage) to merge into ~/.acpira once; only a platform that had one declares it
-  legacy?: { from: string; vault: SecretVault };
 }
