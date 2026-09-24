@@ -172,11 +172,27 @@ impl AgentPool {
   /// A warm process for these coordinates, rebound to the session's handlers; None when there is none (or it died)
   pub async fn take(&self, agent: &str, cwd: &str, account: Option<&str>, handlers: Arc<dyn ClientHandlers>) -> Option<Arc<AgentProcess>> {
     let key = pool_key(agent, cwd, account);
-    let slot = self.slots.lock().remove(&key)?;
-    let proc = match slot {
-      Slot::Ready(_, p) => Some(p),
-      Slot::Warming(_, mut rx) => rx.wait_for(Option::is_some).await.ok().and_then(|v| v.clone()).flatten(),
-    }?;
+    // A warming slot stays in the map while its spawn settles, so invalidate() / dispose() still own (and kill) it; the claim
+    // below only succeeds if the same generation is still there afterwards
+    let (gen_id, rx) = match self.slots.lock().get(&key)? {
+      Slot::Ready(g, _) => (*g, None),
+      Slot::Warming(g, rx) => (*g, Some(rx.clone())),
+    };
+    if let Some(mut rx) = rx {
+      let _ = rx.wait_for(Option::is_some).await;
+    }
+    let proc = {
+      let mut slots = self.slots.lock();
+      match slots.get(&key) {
+        Some(Slot::Ready(g, _) | Slot::Warming(g, _)) if *g == gen_id => {}
+        _ => return None,
+      }
+      match slots.remove(&key)? {
+        Slot::Ready(_, p) => p,
+        // The spawn task went away without settling
+        Slot::Warming(..) => return None,
+      }
+    };
     if !proc.alive() {
       return None;
     }
