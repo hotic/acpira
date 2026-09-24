@@ -232,6 +232,12 @@ export const zhCN = {
   'notice.method.devin:devin-browser': '浏览器登录',
   'notice.method.grok:grok.com': '登录 Grok 账号',
   'notice.method.grok:xai.api_key': '用 XAI_API_KEY',
+  'notice.method.claude:claude-ai-login': '用 Claude 订阅登录（终端）',
+  'notice.method.claude:console-login': '用 Anthropic Console 登录（终端）',
+  'notice.method.claude:claude-login': '用 Claude 登录（终端）',
+  'notice.method.codex:chat-gpt': '用 ChatGPT 登录',
+  'notice.method.codex:chat-gpt-device-code': '用 ChatGPT 设备码登录',
+  'notice.method.codex:api-key': '用 OPENAI_API_KEY',
   'notice.method.opencode:opencode-login': '用 OpenCode 登录（终端）',
   'notice.method.pi:pi_terminal_login': '用 Pi 登录（终端）',
 

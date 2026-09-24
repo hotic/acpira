@@ -222,6 +222,12 @@ export const en = {
   'notice.method.devin:devin-browser': 'Sign in with browser',
   'notice.method.grok:grok.com': 'Sign in with Grok',
   'notice.method.grok:xai.api_key': 'Use XAI_API_KEY',
+  'notice.method.claude:claude-ai-login': 'Sign in with Claude subscription (terminal)',
+  'notice.method.claude:console-login': 'Sign in with Anthropic Console (terminal)',
+  'notice.method.claude:claude-login': 'Sign in with Claude (terminal)',
+  'notice.method.codex:chat-gpt': 'Sign in with ChatGPT',
+  'notice.method.codex:chat-gpt-device-code': 'Sign in with ChatGPT (device code)',
+  'notice.method.codex:api-key': 'Use OPENAI_API_KEY',
   'notice.method.opencode:opencode-login': 'Sign in with OpenCode (terminal)',
   'notice.method.pi:pi_terminal_login': 'Sign in with Pi (terminal)',
 
