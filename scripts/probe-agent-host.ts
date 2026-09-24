@@ -3,9 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PermissionBlock, PlanDocumentBlock, SessionView, ToolCallBlock } from '@shared/transcript';
-import { AgentRegistry } from '../src/host/acp/AgentRegistry';
-import { SessionManager } from '../src/host/SessionManager';
-import { TranscriptStore } from '../src/host/store/TranscriptStore';
+import { Host } from './lib/host';
+import { builtinAgent } from './lib/sidecarBin';
 
 // Generic host-path smoke for any registered agent (real CLI, real model):
 //   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe-agent-host.ts <agent> [--attach] [--shell] [--write] [--plan] [--image] [--background] [--failure] [--env KEY=VALUE]... [--raw]
@@ -40,7 +39,6 @@ for (let i = 0; i < flags.length; i++) {
 }
 const project = mkdtempSync(join(tmpdir(), `acpira-${agentId}-project-`));
 const store = mkdtempSync(join(tmpdir(), `acpira-${agentId}-store-`));
-const logs: string[] = [];
 const checks: [string, boolean, string?][] = [];
 const check = (name: string, ok: boolean, detail?: string) => { checks.push([name, ok, detail]); console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` · ${detail}` : ''}`); };
 const until = async (pred: () => boolean, ms: number, what: string) => {
@@ -52,17 +50,14 @@ const text = (v: SessionView) => lastAgent(v)?.blocks.filter(b => b.type === 'te
 
 // --env merges into the agent's own env: the built-in def is cloned with the overrides since a custom entry
 // replaces the whole definition
-const baseRegistry = new AgentRegistry();
-const registry = Object.keys(env).length
-  ? (() => { const d = baseRegistry.get(agentId); return new AgentRegistry({ [agentId]: { name: d.name, command: d.command, args: d.args, env: { ...d.env, ...env } } }); })()
-  : baseRegistry;
-if (Object.keys(env).length) console.log('env overrides:', Object.keys(env).join(', '));
+const agents = Object.keys(env).length
+  ? (() => { const d = builtinAgent(agentId); return { [agentId]: { name: d.name, command: d.command, args: d.args, env: { ...d.env, ...env } } }; })()
+  : undefined;
+if (agents) console.log('env overrides:', Object.keys(env).join(', '));
 
-const m = new SessionManager({
-  registry, store: new TranscriptStore(store),
-  log: l => logs.push(l), cwd: () => project, defaultAgent: () => agentId,
-  runInTerminal: () => {}, toast: (l, t) => console.log(`toast ${l}: ${t}`),
-});
+// The Rust sidecar driven over the envelope protocol, the way the webview drives it (scripts/lib/host.ts)
+const host = await Host.start({ cwd: project, home: store, defaultAgent: agentId, agents });
+const m = await host.view();
 // --write / --plan answer their permission cards deliberately, so the click-through approver stands down there
 const autoApprove = !write && !plan;
 const approver = setInterval(() => {
@@ -289,7 +284,7 @@ try {
     const blob = block?.type === 'image' ? block.blob : toolImg?.type === 'image' ? toolImg.blob : undefined;
     const uri = block?.type === 'image' ? block.uri : toolImg?.type === 'image' ? toolImg.uri : undefined;
     check('agent emitted an image block or tool image content', !!(block || toolImg));
-    const path = blob ? m.blobPath(v.id, blob) : undefined;
+    const path = blob ? host.blobPath(v.id, blob) : undefined;
     check('image blob exists on disk', !!path && existsSync(path), `${path ?? 'no blob'}${uri ? ` · uri=${uri}` : ''}`);
     console.log('reply:', text(v).slice(0, 120));
     dump(v);
@@ -299,11 +294,11 @@ try {
   check('probe ran to the end', false, e instanceof Error ? e.message : String(e));
 } finally {
   clearInterval(approver);
-  await m.dispose();
+  await host.dispose();
 }
 const failed = checks.filter(c => !c[1]);
 console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);
-console.log('log tail:\n' + logs.filter(l => !/^stderr: /.test(l) || /error|warn|fail/i.test(l)).slice(-15).join('\n'));
+console.log('log tail:\n' + host.logs.filter(l => !/^stderr: /.test(l) || /error|warn|fail/i.test(l)).slice(-15).join('\n'));
 rmSync(store, { recursive: true, force: true });
 rmSync(project, { recursive: true, force: true });
 process.exit(failed.length ? 1 : 0);

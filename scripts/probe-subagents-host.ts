@@ -4,14 +4,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AgentBlock, PermissionBlock, SessionView, ToolCallBlock, Turn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
-import { AgentRegistry } from '../src/host/acp/AgentRegistry';
-import { SessionManager } from '../src/host/SessionManager';
-import { TranscriptStore } from '../src/host/store/TranscriptStore';
-import { AccountManager } from '../src/host/accounts/AccountManager';
-import { AccountStore, FileVault } from '../src/host/accounts/AccountStore';
-import { DevinAccountProvider } from '../src/host/accounts/devin';
+import { Host } from './lib/host';
 
-// Subagent end-to-end through the production host path (SessionManager → AcpSession → real CLI):
+// Subagent end-to-end through the production host path (the Rust sidecar over the envelope protocol → real CLI):
 //   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe-subagents-host.ts <claude|codex|devin>
 // claude and codex run through the built-in registry (the official adapters resolve from PATH — point it at the
 // local install, e.g. PATH=/tmp/acp-adapters/node_modules/.bin:$PATH); devin runs through the account layer,
@@ -26,7 +21,6 @@ const project = mkdtempSync(join(tmpdir(), `acpira-sub-${agentId}-project-`));
 cpSync(join(src, 'shared'), join(project, 'src/shared'), { recursive: true });
 cpSync(join(src, 'host/store'), join(project, 'src/host/store'), { recursive: true });
 const store = mkdtempSync(join(tmpdir(), `acpira-sub-${agentId}-store-`));
-const logs: string[] = [];
 const checks: [string, boolean, string?][] = [];
 const check = (name: string, ok: boolean, detail?: string) => { checks.push([name, ok, detail]); console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` · ${detail}` : ''}`); };
 const until = async (pred: () => boolean, ms: number, what: string) => {
@@ -42,35 +36,16 @@ const turnTags = (turns: Turn[]) => turns.map((t, i) => ({
 }));
 
 // Built-in registry: claude / codex resolve the official adapters from PATH, devin the local CLI
-const registry = new AgentRegistry();
-const log = (l: string) => logs.push(l);
-const toast = (level: 'info' | 'error', text: string) => console.log(`toast ${level}: ${text}`);
-const runInTerminal = () => {};
-
-let accounts: AccountManager | undefined;
+const m = await Host.start({ cwd: project, home: store, defaultAgent: agentId });
+// `subagent` messages are per view (each webview observes its own child)
+const viewer = await m.view();
 if (agentId === 'devin') {
-  const scratch = mkdtempSync(join(tmpdir(), 'acpira-sub-devin-accounts-'));
-  const provider = new DevinAccountProvider(scratch, () => registry.resolveBinary('devin'));
-  accounts = new AccountManager({
-    store: new AccountStore(join(scratch, 'accounts.json'), new FileVault(join(scratch, 'secrets.json'))),
-    providers: [provider], log, runInTerminal, toast,
-  });
-  const imported = await accounts.import('devin');
-  console.log('account:', imported ? `imported ${imported.label}` : 'NO LOCAL LOGIN');
-  if (!imported) process.exit(1);
+  const action = await viewer.addAccount('devin', 'import');
+  console.log('account:', action.status === 'success' ? 'imported the local login' : `NO LOCAL LOGIN (${action.status}${action.error ? `: ${action.error}` : ''})`);
+  if (action.status !== 'success') { await m.dispose(); process.exit(1); }
 }
-
-const m = new SessionManager({
-  registry, store: new TranscriptStore(store),
-  log, cwd: () => project, defaultAgent: () => agentId,
-  runInTerminal, toast, accounts,
-});
-// `subagent` events are per-viewer (each webview observes its own child); an explicit viewer gets them
-const viewer = m.attach();
 const childStreams = new Map<string, { rev: number; running: boolean; turns: Turn[] }>();
-viewer.subscribe(ev => {
-  if (ev.type === 'subagent') childStreams.set(`${ev.sessionId}:${ev.subagentId}`, { rev: ev.rev, running: ev.running, turns: ev.turns });
-});
+viewer.onSubagent(ev => childStreams.set(`${ev.sessionId}:${ev.subagentId}`, { rev: ev.rev, running: ev.running, turns: ev.turns }));
 
 // Permission cards live on the root turn or inside a child node's summary; both answer through the same message
 const approver = setInterval(() => {
@@ -180,7 +155,7 @@ try {
 }
 
 // Persistence: the store survives the session; node ids and states must round-trip
-const saved = sessionId ? await new TranscriptStore(store).load(sessionId).catch(() => null) : null;
+const saved = sessionId ? await m.record(sessionId) as { subagents?: SubagentSummary[] } | null : null;
 console.log('persisted:', JSON.stringify(saved?.subagents?.map(n => ({ id: n.id, state: n.state, source: n.stateSource })) ?? 'no record'));
 check('persisted nodes match live ids + states',
   saved !== null && (saved.subagents ?? []).length === liveNodes.length
@@ -191,5 +166,5 @@ const failed = checks.filter(c => !c[1]);
 console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);
 console.log('store:', store);
 console.log('project:', project);
-console.log('log tail:\n' + logs.filter(l => !/^stderr: /.test(l) || /error|warn|fail|subagent/i.test(l)).slice(-30).join('\n'));
+console.log('log tail:\n' + m.logs.filter(l => !/^stderr: /.test(l) || /error|warn|fail|subagent/i.test(l)).slice(-30).join('\n'));
 process.exit(failed.length ? 1 : 0);

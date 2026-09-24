@@ -1,18 +1,17 @@
-import { spawn } from 'node:child_process';
-import { createInterface } from 'node:readline';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { AgentRegistry } from '../src/host/acp/AgentRegistry';
-import { dataHome, readCredentials } from '../src/host/accounts/devin';
+import { devinAuthenticate, readDevinLogin } from './lib/devin';
+import { RawAgent, RpcError, type RpcMessage } from './lib/rawAcp';
+import { builtinAgent, type SpawnSpec } from './lib/sidecarBin';
 
 // Raw-wire subagent probe. Speaks JSON-RPC over stdio itself (no SDK), so nothing an agent sends is validated away:
 // the released SDK's session/update parser is a closed union and drops unknown `sessionUpdate` kinds.
 //
 //   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe-subagents.ts <agent> [--cmd "<command line>"] [--no-caps] [--air] [--devin-meta] [--wait MS] [--out FILE] [prompt]
 //
-// <agent>: a registry id (devin / grok / kimi / opencode / …) or a label for --cmd
-// --cmd: run this command line instead of the registry's (e.g. "npx -y @agentclientprotocol/claude-agent-acp@0.78.0")
+// <agent>: a built-in id (devin / grok / kimi / opencode / …, launched as the sidecar would: `acpira agents --json`) or a label for --cmd
+// --cmd: run this command line instead of the built-in one (e.g. "npx -y @agentclientprotocol/claude-agent-acp@0.78.0")
 // --no-caps: do not advertise clientCapabilities.subagents (RFD #1992) — the control run
 // --air: also advertise _meta.jetbrains.air = { version: 1, capabilities: ['nativeSubagentSessions', 'sessionFailure', 'asyncTasks'] }
 //   — claude-agent-acp's bridge for
@@ -42,16 +41,16 @@ const promptText = rest.join(' ') || [
   'Do not modify any files. When both return, reply with the two counts on one line.',
 ].join(' ');
 
-let command: string, args: string[];
+let spec: SpawnSpec, agentEnv: Record<string, string> = {};
 if (cmdOpt?.value) {
-  [command = '', ...args] = cmdOpt.value.split(/\s+/).filter(Boolean);
+  const [command = '', ...args] = cmdOpt.value.split(/\s+/).filter(Boolean);
+  spec = { command, args, verbatim: false };
 } else {
-  const registry = new AgentRegistry();
-  const def = registry.get(agentId);
-  const bin = await registry.resolveBinary(agentId);
-  if (!bin) { console.error(`command not found: ${def.command}`); process.exit(1); }
-  command = bin; args = def.args;
+  const def = builtinAgent(agentId);
+  spec = def.spawn!;
+  agentEnv = def.env ?? {};
 }
+const { command, args } = spec;
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 const outFile = outOpt?.value ?? join(homedir(), '.acpira', 'probe', `subagents-${agentId}-${stamp}.jsonl`);
 await mkdir(join(outFile, '..'), { recursive: true });
@@ -65,22 +64,11 @@ function redact(v: unknown): unknown {
 }
 
 const log: string[] = [];
-const record = (dir: '→' | '←', msg: unknown) => { log.push(JSON.stringify({ t: Date.now(), dir, msg: redact(msg) })); };
-
+// A secret request (the local login handed over) goes into the log as its method only; the redactor cannot know the key is secret
+const record = (dir: '→' | '←', msg: RpcMessage, secret?: boolean) => {
+  log.push(JSON.stringify({ t: Date.now(), dir, msg: secret ? { id: msg.id, method: msg.method, params: '[redacted: api_key]' } : redact(msg) }));
+};
 console.error(`→ ${command} ${args.join(' ')}`);
-const child = spawn(command, args, { cwd: process.cwd(), stdio: ['pipe', 'pipe', 'pipe'], env: process.env });
-createInterface({ input: child.stderr }).on('line', l => { console.error(`\x1b[33mstderr\x1b[0m ${l}`); log.push(JSON.stringify({ t: Date.now(), dir: 'stderr', line: l.slice(0, 400) })); });
-
-let seq = 0;
-const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
-function send(msg: Record<string, unknown>) { record('→', msg); child.stdin.write(JSON.stringify(msg) + '\n'); }
-function request(method: string, params: unknown): Promise<unknown> {
-  const id = ++seq;
-  send({ jsonrpc: '2.0', id, method, params });
-  return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
-}
-function respond(id: unknown, result: unknown) { send({ jsonrpc: '2.0', id, result }); }
-function respondError(id: unknown, code: number, message: string) { send({ jsonrpc: '2.0', id, error: { code, message } }); }
 
 // Evidence tallies
 const kindsBySession = new Map<string, Map<string, number>>();
@@ -99,30 +87,24 @@ function collectMeta(v: unknown, path = '') {
 
 const short = (id: unknown) => (typeof id === 'string' ? id.slice(0, 12) : String(id));
 
-createInterface({ input: child.stdout }).on('line', line => {
-  if (!line.trim()) return;
-  let msg: Record<string, unknown>;
-  try { msg = JSON.parse(line); } catch { console.error(`\x1b[31mnon-json stdout\x1b[0m ${line.slice(0, 200)}`); log.push(JSON.stringify({ t: Date.now(), dir: 'stdout-raw', line: line.slice(0, 400) })); return; }
-  record('←', msg);
-  if ('method' in msg) {
-    const method = msg.method as string;
-    const params = (msg.params ?? {}) as Record<string, unknown>;
+const agent = new RawAgent(spec, process.cwd(), agentEnv, {
+  onMessage: record,
+  onStderr: l => { console.error(`\x1b[33mstderr\x1b[0m ${l}`); log.push(JSON.stringify({ t: Date.now(), dir: 'stderr', line: l.slice(0, 400) })); },
+  onNonJson: line => { console.error(`\x1b[31mnon-json stdout\x1b[0m ${line.slice(0, 200)}`); log.push(JSON.stringify({ t: Date.now(), dir: 'stdout-raw', line: line.slice(0, 400) })); },
+  onRequest: (method, params) => {
     collectMeta(params, method);
-    if ('id' in msg) {
-      requestMethods.set(method, (requestMethods.get(method) ?? 0) + 1);
-      console.log(`\x1b[36m[request ${method}]\x1b[0m session ${short(params.sessionId)}${params.sessionId && params.sessionId !== rootSessionId ? ' \x1b[35m(child?)\x1b[0m' : ''} ${JSON.stringify(redact(params)).slice(0, 300)}`);
-      if (method === 'session/request_permission') {
-        const options = (params.options ?? []) as { optionId: string; kind: string }[];
-        const allow = options.find(o => o.kind === 'allow_once') ?? options[0];
-        if (allow) respond(msg.id, { outcome: { outcome: 'selected', optionId: allow.optionId } });
-        else respond(msg.id, { outcome: { outcome: 'cancelled' } });
-      } else if (method === 'elicitation/create') {
-        respond(msg.id, { action: 'cancel' });
-      } else {
-        respondError(msg.id, -32601, `Method not found: ${method}`);
-      }
-      return;
+    requestMethods.set(method, (requestMethods.get(method) ?? 0) + 1);
+    console.log(`\x1b[36m[request ${method}]\x1b[0m session ${short(params.sessionId)}${params.sessionId && params.sessionId !== rootSessionId ? ' \x1b[35m(child?)\x1b[0m' : ''} ${JSON.stringify(redact(params)).slice(0, 300)}`);
+    if (method === 'session/request_permission') {
+      const options = (params.options ?? []) as { optionId: string; kind: string }[];
+      const allow = options.find(o => o.kind === 'allow_once') ?? options[0];
+      return allow ? { outcome: { outcome: 'selected', optionId: allow.optionId } } : { outcome: { outcome: 'cancelled' } };
     }
+    if (method === 'elicitation/create') return { action: 'cancel' };
+    throw new RpcError(-32601, `Method not found: ${method}`);
+  },
+  onNotification: (method, params) => {
+    collectMeta(params, method);
     if (method === 'session/update') {
       const sid = String(params.sessionId);
       const u = (params.update ?? {}) as Record<string, unknown>;
@@ -144,17 +126,9 @@ createInterface({ input: child.stdout }).on('line', line => {
       return;
     }
     console.log(`\n\x1b[2m[notification ${method}]\x1b[0m ${JSON.stringify(redact(params)).slice(0, 300)}`);
-    return;
-  }
-  if ('id' in msg) {
-    const p = pending.get(msg.id as number);
-    pending.delete(msg.id as number);
-    if (!p) return;
-    if ('error' in msg && msg.error) p.reject(msg.error); else p.resolve(msg.result);
-  }
+  },
 });
-
-const exited = new Promise<void>(resolve => child.once('exit', (code, signal) => { console.error(`exit code=${code} signal=${signal}`); resolve(); }));
+const exited = agent.exited.then(({ code, signal }) => { console.error(`exit code=${code} signal=${signal}`); });
 
 async function finish(exitCode: number) {
   const summary = {
@@ -171,8 +145,7 @@ async function finish(exitCode: number) {
   console.log('\n\n=== summary ===');
   console.log(JSON.stringify(summary, null, 2));
   console.log(`\nlog: ${outFile}`);
-  if (child.exitCode === null) { child.kill(); setTimeout(() => child.kill('SIGKILL'), 5000).unref(); }
-  await Promise.race([exited, new Promise(r => setTimeout(r, 6000))]);
+  await Promise.race([agent.kill(), exited.then(() => {}), new Promise(r => setTimeout(r, 6000))]);
   process.exit(exitCode);
 }
 
@@ -190,28 +163,22 @@ try {
     ...(flag('--no-caps') ? {} : { subagents: {} }),
     ...(Object.keys(meta).length ? { _meta: meta } : {}),
   };
-  const init = await request('initialize', { protocolVersion: 1, clientInfo: { name: 'acpira-probe', version: '0' }, clientCapabilities }) as Record<string, unknown>;
+  const init = await agent.request<Record<string, unknown>>('initialize', { protocolVersion: 1, clientInfo: { name: 'acpira-probe', version: '0' }, clientCapabilities });
   collectMeta(init, 'initialize.result');
   console.log('initialize →', JSON.stringify(redact(init), null, 1).slice(0, 1500));
   if (flag('--import-local')) {
-    const cred = await readCredentials(join(dataHome(), 'devin', 'credentials.toml'));
-    if (!cred) throw new Error('no local devin login (credentials.toml)');
+    const login = await readDevinLogin();
+    if (!login) throw new Error('no local devin login (credentials.toml)');
     const methods = (init.authMethods ?? []) as { id: string }[];
-    const authMeta: Record<string, string> = { api_key: cred.secret };
-    if (cred.meta?.api_server_url) authMeta.api_server_url = cred.meta.api_server_url;
-    // Logged through `send`; the redactor cannot know this key is secret, so the request goes out unrecorded
-    const id = ++seq;
-    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'authenticate', params: { methodId: methods[0]?.id ?? 'devin-browser', _meta: authMeta } }) + '\n');
-    log.push(JSON.stringify({ t: Date.now(), dir: '→', msg: { id, method: 'authenticate', params: '[redacted: api_key]' } }));
-    await new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
+    await agent.request('authenticate', devinAuthenticate(methods[0]?.id, login), { secret: true });
     console.log('authenticate ok (local login)');
   }
-  const s = await request('session/new', { cwd: process.cwd(), mcpServers: [] }) as { sessionId: string; [k: string]: unknown };
+  const s = await agent.request<{ sessionId: string; [k: string]: unknown }>('session/new', { cwd: process.cwd(), mcpServers: [] });
   rootSessionId = s.sessionId;
   console.log(`session/new → ${s.sessionId}`);
   console.log(`\nprompt → ${promptText}\n`);
   const started = Date.now();
-  const r = await request('session/prompt', { sessionId: s.sessionId, prompt: [{ type: 'text', text: promptText }] }) as Record<string, unknown>;
+  const r = await agent.request<Record<string, unknown>>('session/prompt', { sessionId: s.sessionId, prompt: [{ type: 'text', text: promptText }] });
   collectMeta(r, 'prompt.result');
   console.log(`\n\nprompt done in ${((Date.now() - started) / 1000).toFixed(1)}s → ${JSON.stringify(redact(r)).slice(0, 400)}`);
   await new Promise(res => setTimeout(res, waitMs));
