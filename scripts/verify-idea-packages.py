@@ -26,7 +26,7 @@ def check_plugin(archive, version):
     assert {m.attrib["name"] for m in root.findall("content/module")} == {f"acpira.{m}" for m in MODULES}
     for module in MODULES:
         descriptor(archive, f"acpira/lib/modules/acpira.{module}.jar", f"acpira.{module}.xml")
-    assert archive.read("acpira/sidecar/host-server.cjs")
+    assert not any(n.endswith(".cjs") for n in archive.namelist()), "No Node sidecar script is shipped"
     # JCEF's public content modules exist only from 262 onward; the legacy adapter remains separately loadable on 261.
     modern = descriptor(archive, "acpira/lib/modules/acpira.browser.modular.jar", "acpira.browser.modular.xml")
     deps = {d.attrib.get("name") for d in modern.findall("dependencies/module")}
