@@ -6,10 +6,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AgentBlock, AgentTurn, SessionView, Turn } from '../src/shared/transcript';
-import { FAKE, RUST_BIN, Shell } from './sidecarShell';
+import { FAKE, Shell } from './sidecarShell';
 
-// Session-loop contract at the envelope level: the same scenarios run against the TS sidecar and, with ACPIRA_ENGINE=rust,
-// the Rust one. Only what a shell / webview can observe is asserted, so either engine may implement it its own way
+// Session-loop contract at the envelope level against the Rust sidecar: only what a shell / webview can observe is asserted
 
 const lastAgent = (v: SessionView): AgentTurn | undefined => {
   const t = v.turns.at(-1);
@@ -38,8 +37,8 @@ describe('sidecar session contract', () => {
     return { home, cwd };
   }
 
-  function shell(at = dirsFor(), engine?: 'ts' | 'rust') {
-    const s = new Shell(at.home, at.cwd, engine);
+  function shell(at = dirsFor()) {
+    const s = new Shell(at.home, at.cwd);
     shells.push(s);
     return s;
   }
@@ -213,39 +212,5 @@ describe('sidecar session contract', () => {
     expect(init.state.sessions.find(x => x.id === id)?.title).toBe('Fake title');
     const ready = await second.hostMsg('V', 'session', m => m.session.id === id && m.session.status === 'ready');
     expect(ready.session.turns[1]).toMatchObject({ role: 'agent', stop: 'end_turn' });
-  });
-
-  // Both engines share ~/.acpira during the migration: a record, its index entry and its blobs written by one must
-  // reopen in the other, in both directions
-  it.runIf(!!RUST_BIN)('records round-trip between the TS and Rust engines', async () => {
-    for (const [writer, reader] of [['ts', 'rust'], ['rust', 'ts']] as const) {
-      const at = dirsFor();
-      const agentOver = { env: { FAKE_SESSION_DIR: join(at.home, 'native') } };
-      mkdirSync(agentOver.env.FAKE_SESSION_DIR);
-      const first = shell(at, writer);
-      const id = await started(first, agentOver);
-      first.view('V', { type: 'send', sessionId: id, text: 'tool' });
-      const asked = await first.hostMsg('V', 'session', m => blocks(m.session).some(b => b.type === 'permission'));
-      const card = blocks(asked.session).find(b => b.type === 'permission')!;
-      first.view('V', { type: 'permission', sessionId: id, blockId: card.id, optionId: 'allow' });
-      await first.hostMsg('V', 'session', idle(2));
-      first.view('V', { type: 'send', sessionId: id, text: 'image' });
-      const written = await first.hostMsg('V', 'session', idle(4));
-      first.view('V', { type: 'renameSession', id, title: `by ${writer}` });
-      await first.hostMsg('V', 'sessions', m => m.sessions.some(x => x.id === id && x.title === `by ${writer}`));
-      await first.kill();
-
-      const second = shell(at, reader);
-      await second.hello({ client: { name: 'contract', version: '0', capabilities: [] } }, agentOver);
-      const init = await second.open('V', 'sidebar', { mostRecent: true });
-      expect(init.state.active?.id).toBe(id);
-      expect(init.state.sessions.find(x => x.id === id)?.title).toBe(`by ${writer}`);
-      const reopened = await second.hostMsg('V', 'session', m => m.session.id === id && m.session.status === 'ready');
-      expect(reopened.session.turns).toEqual(written.session.turns);
-      expect(reopened.session.usage).toEqual(written.session.usage);
-      second.view('V', { type: 'send', sessionId: id, text: 'hi' });
-      await second.hostMsg('V', 'session', m => m.session.id === id && idle(6)(m));
-      await second.kill();
-    }
   });
 });

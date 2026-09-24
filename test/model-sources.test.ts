@@ -1,21 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { grokModelSources } from '../src/host/acp/modelSources';
 import { applyModelSources } from '../src/shared/modelSources';
 import { findVariant, groupModels, visibleOptions } from '../src/shared/models';
 import type { ConfigControl } from '../src/shared/transcript';
 
 describe('ACP model source adapters', () => {
-  it('classifies Grok custom endpoints without exporting credentials or misclassifying context overrides', () => {
-    const sources = grokModelSources(`
-[model.asgard]
-model = "grok-4.6"
-name = "grok-4.6"
-base_url = "https://gateway.example/v1"
-api_key = "test-only-secret"
-[model.grok-build]
-context_window = 250000
-`);
-    expect(sources).toEqual({ asgard: { id: 'asgard', name: 'asgard', kind: 'custom' } });
+  it('groups a Grok custom endpoint apart from the official models', () => {
+    // What the engine reads off ~/.grok/config.toml for this config (rust/crates/acpira-host/tests/engine/registry.rs)
+    const sources = { asgard: { id: 'asgard', name: 'asgard', kind: 'custom' as const } };
     const control: ConfigControl = { id: 'model', name: 'Model', category: 'model', options: [
       { id: 'grok-4.6', name: 'Grok 4.6' }, { id: 'asgard', name: 'Grok 4.6' }, { id: 'grok-build', name: 'grok-build' },
     ] };

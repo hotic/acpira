@@ -3,24 +3,17 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { buildSync } from 'esbuild';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { ChatGptBridgeStore } from '../src/host/external/ChatGptBridgeStore';
+import { afterEach, describe, expect, it } from 'vitest';
+import { SIDECAR } from './sidecarShell';
 
-const bundleDir = mkdtempSync(join(tmpdir(), 'acpira-chatgpt-cli-bundle-'));
-const cli = join(bundleDir, 'bridge.cjs');
+// `acpira bridge …` is what the copied connection prompt runs; every case goes through the real binary
 const roots: string[] = [];
-beforeAll(() => buildSync({ entryPoints: [fileURLToPath(new URL('../src/host/external/chatgptCli.ts', import.meta.url))],
-  outfile: cli, bundle: true, platform: 'node', target: 'node22', format: 'cjs',
-  alias: { '@shared': fileURLToPath(new URL('../src/shared', import.meta.url)) } }));
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
-afterAll(() => rmSync(bundleDir, { recursive: true, force: true }));
 
 function fixture(prompt = true) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'acpira-chatgpt-cli-'))); roots.push(root);
   const home = join(root, 'profile');
-  const invoke = (args: string[], input?: string) => spawnSync(process.execPath, [cli, ...args, '--home', home], { encoding: 'utf8', input, timeout: 10_000 });
+  const invoke = (args: string[], input?: string) => spawnSync(SIDECAR, ['bridge', ...args, '--home', home], { encoding: 'utf8', input, timeout: 10_000 });
   const opened = invoke(['open', '--key', 'test-only', '--cwd', root]);
   if (opened.status !== 0) throw new Error(opened.stderr);
   const id = (JSON.parse(opened.stdout) as { sessionId: string }).sessionId;
@@ -79,25 +72,27 @@ describe('ChatGPT bridge CLI real execution', () => {
   });
 
   it('publishes stdout before process completion so an open session shows the live loop', async () => {
-    const { home, id, scope } = fixture();
-    const reader = new ChatGptBridgeStore(join(home, 'bridges', 'chatgpt')); await reader.init();
+    const { home, id, scope, record } = fixture();
     let done = false;
-    const child = new Promise<void>((resolve, reject) => execFile(process.execPath,
-      [cli, 'exec', ...scope, '--home', home, '--command', command("console.log('stream-before-exit'); setTimeout(() => console.log('stream-done'), 1500)")],
+    const child = new Promise<void>((resolve, reject) => execFile(SIDECAR,
+      ['bridge', 'exec', ...scope, '--home', home, '--command', command("console.log('stream-before-exit'); setTimeout(() => console.log('stream-done'), 1500)")],
       (error) => { done = true; if (error) reject(error); else resolve(); }));
+    // The mirror record on disk is what every window's store reads
+    const live = () => {
+      const turn = record().turns.at(-1);
+      return turn?.role === 'agent' && turn.blocks.some((b: { type: string; status?: string; content?: { type: string; text: string } }) =>
+        b.type === 'tool_call' && b.status === 'in_progress' && b.content?.type === 'text' && b.content.text.includes('Output:\nstream-before-exit'));
+    };
     try {
       const start = Date.now(); let sawOutput = false;
       while (Date.now() - start < 1400 && !done) {
-        await reader.refresh();
-        const turn = reader.view(id)?.turns.at(-1);
-        sawOutput = !!(turn?.role === 'agent' && turn.blocks.some(b => b.type === 'tool_call' && b.status === 'in_progress' && b.content?.type === 'text' && b.content.text.includes('Output:\nstream-before-exit')));
+        sawOutput = live();
         if (sawOutput) break;
         await new Promise(r => setTimeout(r, 25));
       }
       expect(sawOutput).toBe(true); expect(done).toBe(false);
-      await child; await reader.refresh();
-      const turn = reader.view(id)?.turns.at(-1);
-      expect(turn?.role === 'agent' && turn.blocks[0]).toMatchObject({ status: 'completed' });
-    } finally { await child.catch(() => {}); await reader.dispose(); }
+      await child;
+      expect(record().turns.at(-1).blocks[0]).toMatchObject({ status: 'completed' });
+    } finally { await child.catch(() => {}); }
   });
 });

@@ -6,10 +6,10 @@ import type { HostMsg } from '../src/shared/protocol';
 import type { PlatformRequest } from '../src/shared/sidecar';
 import { SidecarClient, type SidecarCommand, type SidecarState, type ShellView } from '../src/host/shell/SidecarClient';
 import { sidecarCommands } from '../src/host/shell/sidecarLocator';
-import { FAKE, RUST_BIN, SERVER, TSCONFIG, TSX } from './sidecarShell';
+import { FAKE, SIDECAR, TSX } from './sidecarShell';
 
-// The VS Code shell's sidecar client against a real sidecar (TS, or Rust with ACPIRA_ENGINE=rust): handshake, outbox, platform RPCs,
-// restart with re-attach, engine fallback and shutdown
+// The VS Code shell's sidecar client against the real Rust sidecar: handshake, outbox, platform RPCs, restart with re-attach,
+// fallback to the next command and shutdown
 
 const dirs: string[] = [];
 const clients: SidecarClient[] = [];
@@ -25,9 +25,7 @@ function tmp(prefix: string) {
 }
 
 function engine(home: string): SidecarCommand {
-  return RUST_BIN
-    ? { command: RUST_BIN, args: ['--home', home], env: { ACPIRA_HOME: '' }, label: 'rust' }
-    : { command: TSX, args: ['--tsconfig', TSCONFIG, SERVER, '--home', home], env: { ACPIRA_HOME: '' }, label: 'ts' };
+  return { command: SIDECAR, args: ['--home', home], env: { ACPIRA_HOME: '' }, label: 'rust' };
 }
 
 class View implements ShellView {

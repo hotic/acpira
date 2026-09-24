@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { withFileLock, writeAtomic } from '../src/host/store/fileLock';
-import { TranscriptStore } from '../src/host/store/TranscriptStore';
 
 const TSX = fileURLToPath(new URL('../node_modules/.bin/tsx', import.meta.url));
 const WORKER = fileURLToPath(new URL('./lock-worker.ts', import.meta.url));
@@ -69,28 +68,4 @@ describe('withFileLock', () => {
     expect(Number(readFileSync(file, 'utf8'))).toBe(2);
     expect(() => readFileSync(lock)).toThrow();
   }, 30_000);
-});
-
-describe('prefs.json shared by two windows', () => {
-  it('each window writes only its own agent; the file keeps both', async () => {
-    const dir = tmp();
-    const a = new TranscriptStore(dir);
-    const b = new TranscriptStore(dir);
-    const prefsA = await a.loadPrefs();
-    const prefsB = await b.loadPrefs();
-    prefsA.lastSettings.grok = { modeId: 'plan', config: { model: 'grok-4.6' } };
-    await a.savePrefs(prefsA, ['grok']);
-    // b's snapshot predates a's write; writing kimi must not drop grok
-    prefsB.lastSettings.kimi = { modeId: 'default', config: {} };
-    const merged = await b.savePrefs(prefsB, ['kimi']);
-    expect(Object.keys(merged.lastSettings).sort()).toEqual(['grok', 'kimi']);
-    expect((await a.loadPrefs()).lastSettings.kimi).toEqual({ modeId: 'default', config: {} });
-    // a newer choice for the same agent wins, whatever the other window's stale snapshot said
-    prefsA.lastSettings.grok = { modeId: 'default', config: { model: 'grok-4.5' } };
-    await a.savePrefs(prefsA, ['grok']);
-    expect((await b.loadPrefs()).lastSettings.grok).toEqual({ modeId: 'default', config: { model: 'grok-4.5' } });
-    // the default (no agent list) writes every entry the caller has, as before
-    await b.savePrefs({ lastSettings: { devin: { config: {} } } });
-    expect(Object.keys((await a.loadPrefs()).lastSettings).sort()).toEqual(['devin', 'grok', 'kimi']);
-  });
 });
