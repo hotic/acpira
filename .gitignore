@@ -4,6 +4,8 @@ node_modules/
 # Build
 dist/
 *.vsix
+# Sidecar binary staged into a platform VSIX by scripts/package-vsix.mjs
+/bin/
 
 # Logs
 *.log
