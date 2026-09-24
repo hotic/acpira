@@ -2,6 +2,7 @@
 //!   acpira [--home DIR]                          the sidecar: envelope protocol over stdio (stdout carries envelopes only)
 //!   acpira --ws [PORT] [--token T] [--home DIR]  the browser harness, one sidecar per WebSocket, data in ~/.acpira/harness
 //!   acpira bridge <action> ...                   the ChatGPT event-mirror CLI
+//!   acpira agents [--json]                       the built-in agents, where each CLI was found and how it is initialized
 //!   acpira --version
 
 use std::path::PathBuf;
@@ -10,6 +11,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
+use acpira_host::agents_cli;
 use acpira_host::external::chatgpt_cli;
 use acpira_host::sidecar::server::{ServerOpts, SidecarServer};
 use acpira_host::sidecar::ws::{HarnessOpts, start_harness};
@@ -37,6 +39,9 @@ fn main() {
   let code = rt.block_on(async move {
     if args.first().map(String::as_str) == Some("bridge") {
       return chatgpt_cli::run(&args[1..]).await;
+    }
+    if args.first().map(String::as_str) == Some("agents") {
+      return agents_cli::run(&args[1..]).await;
     }
     let explicit_home = flag(&args, "--home").filter(|h| !h.is_empty()).map(|h| absolute(&PathBuf::from(h)));
     let exe = std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned());
