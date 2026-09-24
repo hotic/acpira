@@ -12,7 +12,7 @@ import { cn } from '../ui/cn';
 import { Chip, IconButton } from '../ui/Button';
 import { useScrollReveal } from '../ui/useScrollReveal';
 import { useStableList } from '../ui/useStableList';
-import { scrollerUsable } from './promptStuck';
+import { followsBottom, scrollerUsable } from './promptStuck';
 import { Header } from './Header';
 import { SessionList } from './SessionList';
 import { AgentMessage } from './Turns';
@@ -542,7 +542,12 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
     const pin = () => { if (scrollerUsable(el) && pinned.current) el.scrollTop = el.scrollHeight; };
     pin();
     // A hidden sidebar collapses this to no box and fires a scroll that looks like "left the bottom".
-    const onScroll = () => { if (scrollerUsable(el)) pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48; };
+    let lastTop = el.scrollTop;
+    const onScroll = () => {
+      if (!scrollerUsable(el)) return;
+      pinned.current = followsBottom(el, pinned.current, lastTop);
+      lastTop = el.scrollTop;
+    };
     el.addEventListener('scroll', onScroll, { passive: true });
     // Keep stuck to the bottom when the container itself shrinks (composer grows / panel narrows); observe only the container, not the content
     const ro = new ResizeObserver(pin);
