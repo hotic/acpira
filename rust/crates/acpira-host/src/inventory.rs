@@ -1,4 +1,4 @@
-//! Read-only scan of an agent's extension points (mirror of src/host/inventory.ts)
+//! Read-only scan of an agent's extension points
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -109,11 +109,13 @@ async fn file_info(template: &str, env: &ScanEnv) -> InventoryFile {
   }
 }
 
-struct McpEntry {
-  name: String,
-  transport: McpTransport,
-  target: String,
-  enabled: bool,
+/// One server entry as a config file declares it, before the scan adds where it came from
+#[derive(Debug, Clone, PartialEq)]
+pub struct McpEntry {
+  pub name: String,
+  pub transport: McpTransport,
+  pub target: String,
+  pub enabled: bool,
 }
 
 async fn read_mcp(template: &str, format: McpFormat, env: &ScanEnv) -> Vec<InventoryMcp> {
@@ -152,7 +154,7 @@ fn transport_of(kind: Option<&str>, command: Option<&str>, url: Option<&str>) ->
   }
 }
 
-fn parse_json_mcp(text: &str) -> Vec<McpEntry> {
+pub fn parse_json_mcp(text: &str) -> Vec<McpEntry> {
   let Some(Value::Object(data)) = parse_json_loose(text) else { return vec![] };
   let Some(servers) = data.get("mcpServers").and_then(Value::as_object) else { return vec![] };
   servers
@@ -194,7 +196,7 @@ fn toml_string(v: &str) -> String {
 }
 
 /// [mcp_servers.name] tables: enough of TOML for these tables, nothing more
-fn parse_toml_mcp(text: &str) -> Vec<McpEntry> {
+pub fn parse_toml_mcp(text: &str) -> Vec<McpEntry> {
   struct Cur {
     name: String,
     command: Option<String>,
@@ -257,7 +259,7 @@ fn parse_toml_mcp(text: &str) -> Vec<McpEntry> {
   out
 }
 
-fn parse_opencode_mcp(text: &str) -> Vec<McpEntry> {
+pub fn parse_opencode_mcp(text: &str) -> Vec<McpEntry> {
   let Some(Value::Object(data)) = parse_json_loose(text) else { return vec![] };
   let Some(servers) = data.get("mcp").and_then(Value::as_object) else { return vec![] };
   servers

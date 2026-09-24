@@ -1,4 +1,4 @@
-//! ChatGPT mirrors (mirror of src/host/external/ChatGptBridgeStore.ts): a separate writer-owned store; opening a mirror
+//! ChatGPT mirrors: a separate writer-owned store; opening a mirror
 //! never creates an ACP process, and every host observes the same atomic records by polling
 
 use std::collections::{HashMap, HashSet};
@@ -35,6 +35,8 @@ pub struct ChatGptBridgeStore {
   log: LogFn,
   /// The bridge executable (this binary) when the bridge is available
   exe: Option<String>,
+  /// Wall clock in ms; tests substitute their own
+  now: Arc<dyn Fn() -> i64 + Send + Sync>,
   state: parking_lot::Mutex<State>,
   listeners: parking_lot::Mutex<Vec<(u64, ChangeListener)>>,
   seq: std::sync::atomic::AtomicU64,
@@ -46,10 +48,15 @@ pub struct ChatGptBridgeStore {
 
 impl ChatGptBridgeStore {
   pub fn new(dir: PathBuf, log: LogFn, exe: Option<String>) -> Arc<Self> {
+    Self::with_clock(dir, log, exe, Arc::new(now_ms))
+  }
+
+  pub fn with_clock(dir: PathBuf, log: LogFn, exe: Option<String>, now: Arc<dyn Fn() -> i64 + Send + Sync>) -> Arc<Self> {
     Arc::new_cyclic(|me| ChatGptBridgeStore {
       dir,
       log,
       exe,
+      now,
       state: Default::default(),
       listeners: Default::default(),
       seq: Default::default(),
@@ -97,7 +104,7 @@ impl ChatGptBridgeStore {
   pub fn view(&self, id: &str) -> Option<SessionView> {
     let st = self.state.lock();
     let r = st.records.get(id).filter(|r| r.deleted_at.is_none())?;
-    let mut v = chatgpt_view(r, now_ms());
+    let mut v = chatgpt_view(r, (self.now)());
     if let Some(exe) = &self.exe
       && v.external.is_some()
     {
@@ -111,7 +118,7 @@ impl ChatGptBridgeStore {
   }
 
   pub fn summaries(&self) -> Vec<SessionSummary> {
-    let now = now_ms();
+    let now = (self.now)();
     let mut out: Vec<SessionSummary> =
       self.state.lock().records.values().filter(|r| r.deleted_at.is_none()).map(|r| chatgpt_summary(r, now)).collect();
     sort_index(&mut out);
@@ -177,7 +184,7 @@ impl ChatGptBridgeStore {
         }
         return Ok(());
       }
-      let at = iso_of_ms(now_ms());
+      let at = iso_of_ms((self.now)());
       let title: String = title.trim().chars().take(160).collect();
       self
         .save(&ChatGptRecord {
@@ -220,7 +227,7 @@ impl ChatGptBridgeStore {
   }
 
   pub async fn accept(&self, id: &str, event: &Value) -> Result<()> {
-    self.mutate(id, |r| apply_chatgpt_event(r, event, now_ms())).await
+    self.mutate(id, |r| apply_chatgpt_event(r, event, (self.now)())).await
   }
 
   pub async fn rename(&self, id: &str, title: &str) -> Result<()> {
@@ -252,7 +259,7 @@ impl ChatGptBridgeStore {
   pub async fn delete(&self, id: &str) -> Result<()> {
     self
       .mutate(id, |r| {
-        Ok(r.deleted_at.is_none().then(|| ChatGptRecord { deleted_at: Some(now_ms()), revision: r.revision + 1, ..r.clone() }))
+        Ok(r.deleted_at.is_none().then(|| ChatGptRecord { deleted_at: Some((self.now)()), revision: r.revision + 1, ..r.clone() }))
       })
       .await
   }
@@ -261,7 +268,7 @@ impl ChatGptBridgeStore {
     self
       .mutate(id, |r| {
         let Some(at) = r.deleted_at else { return Ok(None) };
-        if now_ms() - at > UNDO_MS {
+        if (self.now)() - at > UNDO_MS {
           bail!("The undo window has expired");
         }
         Ok(Some(ChatGptRecord { deleted_at: None, revision: r.revision + 1, ..r.clone() }))
@@ -325,7 +332,7 @@ impl ChatGptBridgeStore {
       let mut st = self.state.lock();
       st.records.retain(|id, _| found.contains(id));
       st.stamps.retain(|id, _| found.contains(id));
-      let now = now_ms();
+      let now = (self.now)();
       let next: HashMap<String, i64> = st
         .records
         .iter()
@@ -350,14 +357,14 @@ impl ChatGptBridgeStore {
       .lock()
       .records
       .values()
-      .filter(|r| r.deleted_at.is_some_and(|d| now_ms() - d > UNDO_MS) && !r.turns.is_empty())
+      .filter(|r| r.deleted_at.is_some_and(|d| (self.now)() - d > UNDO_MS) && !r.turns.is_empty())
       .map(|r| r.id.clone())
       .collect();
     for id in expired {
       let file = self.file(&id)?;
       with_file_lock(&file, || async {
         if let Some(latest) = self.read(&id).await?
-          && latest.deleted_at.is_some_and(|d| now_ms() - d > UNDO_MS)
+          && latest.deleted_at.is_some_and(|d| (self.now)() - d > UNDO_MS)
         {
           self
             .save(&ChatGptRecord { turns: vec![], receipts: Map::new(), active_turn_id: None, revision: latest.revision + 1, ..latest })
