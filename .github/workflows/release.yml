@@ -55,7 +55,13 @@ jobs:
       - name: Install musl-gcc
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - name: Rust unit tests
+      # The engine suites drive test/fake-agent.ts, which needs the repository's node_modules
+      - uses: pnpm/action-setup@v6
+        if: matrix.runner == 'ubuntu-24.04'
+      - name: Install node_modules for the engine suites
+        if: matrix.runner == 'ubuntu-24.04'
+        run: pnpm install --frozen-lockfile
+      - name: Rust tests
         if: matrix.runner == 'ubuntu-24.04'
         working-directory: rust
         run: cargo test --workspace --locked
@@ -123,9 +129,8 @@ jobs:
           path: dist/sidecar
       - run: chmod +x dist/sidecar/*/acpira
       - run: pnpm typecheck
-      - run: pnpm test
-      - name: Run the sidecar contracts against the shipped Linux binary
-        run: ACPIRA_ENGINE=rust ACPIRA_RUST_BIN="$PWD/dist/sidecar/linux-x86_64/acpira" pnpm vitest run test/hostServer.test.ts test/sidecarContract.test.ts test/sidecarClient.test.ts
+      # The suites drive the sidecar; here that is the shipped Linux binary (no Rust toolchain on this runner)
+      - run: ACPIRA_SIDECAR_BIN="$PWD/dist/sidecar/linux-x86_64/acpira" pnpm test
       - name: Build the VSIXes once for both marketplaces
         run: |
           pnpm build
