@@ -3,7 +3,7 @@ import { createInterface } from 'node:readline';
 import type { HostMsg, WebviewHost, WebviewMsg } from '@shared/protocol';
 import { SIDECAR_PROTOCOL_VERSION, type PlatformEvent, type PlatformRequest, type ShellMsg, type SidecarMsg } from '@shared/sidecar';
 
-// One way to start a sidecar (the Rust binary, or Node running host-server.cjs) and a label for the log
+// One way to start the sidecar binary and a label for the log
 export interface SidecarCommand {
   command: string;
   args: string[];

@@ -2,9 +2,19 @@ import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { AccountInfo, AgentId } from '@shared/transcript';
-import type { AccountCredential, AccountDraft } from './types';
 import { msg } from '../errors';
 import { withFileLock, writeAtomic } from '../store/fileLock';
+
+// Credential = secret + non-secret companion fields (service URL, etc.)
+export interface AccountCredential {
+  secret: string;
+  meta?: Record<string, string>;
+}
+
+export interface AccountDraft extends AccountCredential {
+  label: string;
+  detail?: string;
+}
 
 // Secret vault: FileVault (secrets.json, mode 600) in the app, in-memory in tests
 export interface SecretVault {
