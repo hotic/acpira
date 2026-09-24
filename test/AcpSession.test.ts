@@ -2266,6 +2266,23 @@ describe('AIR sessionFailure', () => {
     } finally { s.dispose(); }
   });
 
+  it('failure-login-reject: a login failure published mid-turn owns the rejected prompt even when the code is not -32000', async () => {
+    const { session } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('failure-login-reject');
+      const turn = s.view().turns.at(-1)!;
+      if (turn.role !== 'agent') throw new Error('expected an agent turn');
+      expect(turn).toMatchObject({ stop: 'error' });
+      // The card shows the adapter's title / details and exactly its actions; the JSON-RPC code stays for the copy line
+      expect(turn.error).toMatchObject({ kind: 'access', code: -32603, actions: ['login'] });
+      expect(turn.error!.message).toMatch(/^Sign in to continue using Claude\.\nFailed to authenticate/);
+      expect(turn.error!.failureId).toBe(turn.blocks.find(b => b.type === 'notice')!.id);
+      expect(s.view().status).toBe('auth_required');
+    } finally { s.dispose(); }
+  });
+
   it('failure-idle: a failure landing after the turn settled appends into the last agent turn', async () => {
     const { session } = deps();
     const s = session();
