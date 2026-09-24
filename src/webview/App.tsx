@@ -265,6 +265,7 @@ export function App() {
       running={session?.running ?? false}
       queued={session?.queued}
       controls={session?.controls ?? { modes: [], options: [] }}
+      modelShapes={session?.modelShapes}
       usage={session?.usage}
       commands={session?.commands}
       compactAt={settings.autoCompact ? settings.compactAtTokens : undefined}

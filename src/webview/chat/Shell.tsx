@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { Network, Paperclip, X } from 'lucide-react';
 import type { ExternalSessionInfo, AccountInfo, AgentInfo, AuthMethodInfo, Draft, FailureAction, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionControls, SessionStatus, SessionSummary, SlashCommand, Turn, Usage } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
+import type { ModelShapes } from '@shared/modelShapes';
 import type { HiddenMap, SessionScope } from '@shared/settings';
 import type { AccountAction, AddAccountVia, EditTurnRequest, FileHit, NativeSessionsState } from '@shared/protocol';
 import { AppearanceContext, appearanceDataAttrs, type Appearance } from '../appearance';
@@ -117,6 +118,8 @@ export interface ShellProps {
   running: boolean;
   queued?: QueuedPrompt[];
   controls: SessionControls;
+  // Remembered per-model parameters, so a model switch in the history editor shows that model's own
+  modelShapes?: ModelShapes;
   usage?: Usage;
   // The slash commands the agent advertised for this session (available_commands_update): the composer's / menu,
   // and the context panel only gets a compact button when `compact` is among them
@@ -321,12 +324,12 @@ export function Shell(p: ShellProps) {
   // Stable across stream pushes (every prompt card subscribes); the composer props go through their own context to the open editor
   const editable = !composerProps.disabled && !composerProps.running;
   const history = useMemo(() => on.editTurn && p.activeSessionId ? {
-    sessionId: p.activeSessionId, edit: on.editTurn, editable,
+    sessionId: p.activeSessionId, edit: on.editTurn, editable, shapes: p.modelShapes,
     editing: editing?.sessionId === p.activeSessionId ? editing.index : undefined,
     select: (index: number | undefined) => setEditing(current => index === undefined
       ? current?.sessionId === p.activeSessionId ? undefined : current
       : { sessionId: p.activeSessionId!, index }),
-  } : undefined, [on.editTurn, p.activeSessionId, editable, editing]);
+  } : undefined, [on.editTurn, p.activeSessionId, editable, editing, p.modelShapes]);
   const openToolFile = useMemo(() => p.activeSessionId && on.openFile
     ? (path: string, line?: number) => on.openFile!(p.activeSessionId!, path, line) : undefined, [p.activeSessionId, on.openFile]);
   const stopAsyncTask = useMemo(() => p.activeSessionId && on.stopAsyncTask

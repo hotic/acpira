@@ -7,6 +7,7 @@ import type { EditTurnRequest } from '@shared/protocol';
 import * as acp from '@agentclientprotocol/sdk';
 import type { AgentId, AgentTurn, AuthMethodInfo, ConfigControl, Draft, QuestionAnswers, SessionControls, SessionView, SlashCommand, ToolCallBlock, Turn, TurnError, TurnSettings, Usage, UserTurn } from '@shared/transcript';
 import type { SubagentRecord } from '@shared/subagents';
+import type { ModelShapes } from '@shared/modelShapes';
 import type { AgentHealthStage, AgentRuntimeInfo } from '@shared/inventory';
 import type { AgentRegistry } from './AgentRegistry';
 import { AgentProcess, AgentSpawnError, type ClientHandlers } from './AgentProcess';
@@ -97,6 +98,8 @@ export interface SessionDeps {
   accounts?: SessionAccountHooks;
   compaction?: () => CompactionPolicy;
   pool?: AgentPool;
+  // The agent's remembered per-model parameters, carried on the view for the history editor
+  modelShapes?: (agent: AgentId) => ModelShapes | undefined;
 }
 
 // One session = one agent subprocess + one transcript. State machine:
@@ -267,11 +270,13 @@ export class AcpSession {
   }
 
   view(): SessionView {
+    const modelShapes = this.deps.modelShapes?.(this.agent);
     return {
       id: this.id, agent: this.agent, accountId: this.accountId, title: this.title, cwd: this.cwd,
       status: this.status, error: this.error, authMethods: this.authMethods,
       turns: this.visibleTurns(), running: this.phase.running, rev: this.rev,
       controls: this.picks.size ? this.pickedControls() : this.state.controls,
+      ...(modelShapes ? { modelShapes } : {}),
       usage: this.state.usage, commands: this.state.commands,
       queued: this.queue.snapshot(),
       ...(this.tree.size > 0 ? { subagents: this.tree.summaries() } : {}),
@@ -317,6 +322,9 @@ export class AcpSession {
     this.rev++;
     this.deps.onChange(this);
   }
+
+  // Re-publish after host-side view inputs changed (model shapes another window learned); the webview drops a push without a newer rev
+  republish() { this.touch(); }
 
   // bump: a user-initiated message (prompt / queue / edit) moves the session to the top of the list
   private bump() {

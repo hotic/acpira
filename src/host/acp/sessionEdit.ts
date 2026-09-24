@@ -176,10 +176,20 @@ async function applyEditSettings(ctx: SessionEditCtx, sessionId: string, control
   const modeId = settings.modeId;
   if (modeId && !controls.modes.some(m => m.id === modeId)) throw new Error(t('history.optionUnavailable', { name: modeId }));
   // Model changes can replace the available effort options, so apply them first.
-  const selections = Object.entries(settings.config).sort(([a], [b]) => Number(controls.options.find(c => c.id === b)?.category === 'model') - Number(controls.options.find(c => c.id === a)?.category === 'model'));
+  const isModel = (id: string) => { const c = controls.options.find(c => c.id === id); return c?.category === 'model' || (!c?.category && id === 'model'); };
+  const selections = Object.entries(settings.config).sort(([a], [b]) => Number(isModel(b)) - Number(isModel(a)));
+  // The editor switches models locally, so its dependent controls still describe the previous model (Devin 3000.11.3:
+  // GPT-6 Luna Fast → SWE-2 keeps `speed=fast`, yet SWE-2 has no speed control and no low effort). Only the model is
+  // strict; a dependent value the chosen model no longer offers yields to the agent's own value, as a live switch would.
+  const settled = new Set<string>();
   for (const [configId, value] of selections) {
     const c = controls.options.find(c => c.id === configId);
-    if (!c?.options.some(o => o.id === value)) throw new Error(t('history.optionUnavailable', { name: configId }));
+    if (!c?.options.some(o => o.id === value)) {
+      if (isModel(configId)) throw new Error(t('history.optionUnavailable', { name: configId }));
+      ctx.log(`edit: ${configId}=${value} is not offered after the model switch; keeping ${c?.value ?? 'no control'}`);
+      settled.add(configId);
+      continue;
+    }
     if (c.value === value) continue;
     checkEditActive(ctx);
     const r = await peer.request(acp.methods.agent.session.setConfigOption, { sessionId, configId, ...configOptionSetValue(c, value) });
@@ -202,7 +212,7 @@ async function applyEditSettings(ctx: SessionEditCtx, sessionId: string, control
     if (live && ctx.syntheticModes()) ctx.autoApprove = modeId === 'yolo';
   }
   for (const [id, value] of selections) {
-    if (controls.options.find(c => c.id === id)?.value !== value) throw new Error(t('history.optionUnavailable', { name: id }));
+    if (!settled.has(id) && controls.options.find(c => c.id === id)?.value !== value) throw new Error(t('history.optionUnavailable', { name: id }));
   }
   checkEditActive(ctx);
 }

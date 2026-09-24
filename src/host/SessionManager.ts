@@ -11,6 +11,7 @@ import { inWorkspace, type HiddenMap, type SessionScope } from '@shared/settings
 import { arrangeAgents, pickDefaultAgent, type AgentPrefs } from '@shared/agentOrder';
 import type { AgentHealth, AgentRuntimeInfo } from '@shared/inventory';
 import { captureTurnSettings } from '@shared/turnSettings';
+import { learnShape } from '@shared/modelShapes';
 import { exportFileName, exportMarkdown } from '@shared/exportTranscript';
 import { AgentRegistry } from './acp/AgentRegistry';
 import { AgentPool } from './acp/AgentPool';
@@ -221,6 +222,15 @@ export class SessionManager {
     this.savePrefs(agent);
   }
 
+  // A ready session's agent truth tells which parameters its current model comes with; the history editor reads them back
+  private learnShape(s: AcpSession) {
+    if (s.view().status !== 'ready') return;
+    const next = learnShape(this.prefs.modelShapes?.[s.agent], s.agentControls);
+    if (!next) return;
+    this.prefs.modelShapes = { ...this.prefs.modelShapes, [s.agent]: next };
+    this.savePrefs(s.agent);
+  }
+
   // Fire-and-forget disk writes surface their failures in the log rather than as unhandled rejections. Only this agent's entry goes to
   // the file (merged with what other windows remembered for theirs); memory stays this window's own choices
   private savePrefs(agent: AgentId) {
@@ -244,7 +254,19 @@ export class SessionManager {
     this.syncTimer = undefined;
     this.syncFirstAt = undefined;
     await this.syncIndex();
+    await this.syncShapes();
     await this.deps.chatgpt?.refresh();
+  }
+
+  // Model shapes another window learned (same prefs.json) reach this one's history editor on the same occasions as its sessions do
+  private async syncShapes() {
+    const disk = (await this.deps.store.loadPrefs()).modelShapes ?? {};
+    const mine = this.prefs.modelShapes ?? {};
+    const changed = Object.keys(disk).filter(agent => Object.keys(disk[agent]!).some(model => !mine[agent]?.[model]
+      || JSON.stringify(mine[agent][model]) !== JSON.stringify(disk[agent]![model])));
+    if (!changed.length) return;
+    this.prefs.modelShapes = { ...mine, ...Object.fromEntries(changed.map(agent => [agent, { ...mine[agent], ...disk[agent] }])) };
+    for (const s of this.live.values()) if (changed.includes(s.agent)) s.republish();
   }
 
   // One run at a time; a request arriving mid-run schedules exactly one more. The result is corrected for what changed during the await:
@@ -529,6 +551,7 @@ export class SessionManager {
   private onChange = (s: AcpSession) => {
     // A deleted session still calls back once while winding down; don't let it write its record back
     if (!this.live.has(s.id)) return;
+    this.learnShape(s);
     const i = this.index.findIndex(x => x.id === s.id);
     const sum = summarize(s.toRecord());
     if (i >= 0) this.index[i] = sum; else this.index.unshift(sum);
@@ -553,7 +576,7 @@ export class SessionManager {
     return {
       registry: this.deps.registry, log: this.deps.log, onChange: this.onChange, blobs: this.deps.store,
       notify: (text: string) => this.deps.toast('info', text), accounts: this.deps.accounts, compaction: this.deps.compaction,
-      pool: this.pool,
+      pool: this.pool, modelShapes: (agent: AgentId) => this.prefs.modelShapes?.[agent],
     };
   }
 
