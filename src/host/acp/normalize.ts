@@ -684,7 +684,7 @@ function mergeTool(b: ToolCallBlock, u: acp.ToolCall | acp.ToolCallUpdate, s?: N
 
 // OpenCode's session/request_permission embeds a low-fidelity copy of the call — kind 'other', the parent dir as title,
 // file + parent dir as locations, rawInput { filepath, parentDir }. Merging it verbatim downgrades the block the
-// original tool_call established (kind → 'other', target → the dir; the card reads "Use tool"). AGENTS.md: "Permission
+// original tool_call established (kind → 'other', target → the dir; the card reads "Use tool"). docs/dev/protocol-gotchas.md: "Permission
 // requests usually carry only toolCall.title" — with a block already there, take only what the request can improve:
 // the status, a specific kind onto an unclassified block, and the path fields only while the block has no file of its
 // own (rawInput preferred — pathFromRaw names the file — since the request's locations often list the directory too).

@@ -592,7 +592,7 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
       <div key={replayKey} ref={contentRef} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-gap', wide && 'max-w-(--content-w)')}>
         {exchanges.map(exchange => (
           // Positioned so the prompt's stuck-state sentinel can sit at the exchange's top edge. Paint containment gives each exchange
-          // its own paint offset, so a fold opening mid-thread no longer re-walks every later exchange each frame (see AGENTS.md,
+          // its own paint offset, so a fold opening mid-thread no longer re-walks every later exchange each frame (see docs/dev/webview.md,
           // transcript render budget); the clip it brings is pushed out by --hit on the sides and bottom, where row hit areas and
           // card shadows reach past the column, and the top edge stays put for the sentinel.
           <section key={exchange.key} className="relative -mx-hit -mb-hit flex min-w-0 flex-col gap-msg px-hit pb-hit contain-paint">
