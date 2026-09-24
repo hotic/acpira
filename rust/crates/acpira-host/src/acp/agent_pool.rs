@@ -1,4 +1,4 @@
-//! Warm agent processes (mirror of src/host/acp/AgentPool.ts): one idle initialized CLI per agent + cwd + account;
+//! Warm agent processes: one idle initialized CLI per agent + cwd + account;
 //! new sessions take it and only run session/new
 
 use std::collections::HashMap;

@@ -1,4 +1,4 @@
-//! The history list's "Import from <agent>" (mirror of src/host/acp/nativeSessions.ts): a throwaway spawn runs
+//! The history list's "Import from <agent>": a throwaway spawn runs
 //! initialize + session/list for this workspace, then dies; session/new is never called
 
 use std::time::Duration;

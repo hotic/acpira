@@ -1,4 +1,4 @@
-//! Prompt staging (mirror of src/host/acp/attachments.ts): composer text + drafts → the wire prompt and the transcript attachments
+//! Prompt staging: composer text + drafts → the wire prompt and the transcript attachments
 
 use base64::Engine;
 use serde_json::{Value, json};

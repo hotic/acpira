@@ -1,4 +1,4 @@
-//! The settings page's host-side counterpart (mirror of src/host/settings.ts): builds the SettingsView from acpira.*,
+//! The settings page's host-side counterpart: builds the SettingsView from acpira.*,
 //! writes edits back, and scans agent inventories on demand
 
 use std::sync::Arc;

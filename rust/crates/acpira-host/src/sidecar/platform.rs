@@ -1,4 +1,4 @@
-//! The host platform over the envelope protocol (mirror of src/host/sidecar/SidecarPlatform.ts): every IDE action becomes
+//! The host platform over the envelope protocol: every IDE action becomes
 //! a platformRequest to the shell, facts come from hello and later platformEvents. Capabilities the shell did not declare
 //! fall back host-side where that makes sense (file search walks the workspace) and are otherwise logged
 

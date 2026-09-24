@@ -1,4 +1,4 @@
-//! Grok model provenance from its config files (mirror of src/host/acp/modelSources.ts): only aliases and source
+//! Grok model provenance from its config files: only aliases and source
 //! labels leave this module, endpoint credentials stay in the CLI config
 
 use std::path::Path;

@@ -1,4 +1,4 @@
-//! The one composition root (mirror of src/host/runtime.ts): registry, vault, account layer, session manager and
+//! The one composition root: registry, vault, account layer, session manager and
 //! settings center built from a platform, reacting to its settings / focus events. Views attach as BridgeCores
 
 use std::collections::HashMap;

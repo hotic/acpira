@@ -1,4 +1,4 @@
-//! One agent subprocess = one long-lived ACP connection (mirror of src/host/acp/AgentProcess.ts). Handlers are
+//! One agent subprocess = one long-lived ACP connection. Handlers are
 //! rebindable so a warm (initialize-only) process can be handed to a session without a second spawn
 
 use std::process::Stdio;

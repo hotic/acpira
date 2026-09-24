@@ -1,5 +1,5 @@
-//! Cross-process mutex around a shared file (mirror of src/host/store/fileLock.ts, same on-disk protocol so TS windows
-//! and Rust sidecars arbitrate with each other): `<file>.lock` is created with O_EXCL and carries `pid\ntoken`; a sibling
+//! Cross-process mutex around a shared file (mirror of src/host/store/fileLock.ts, same on-disk protocol so the VS Code shell's
+//! migration and Rust sidecars arbitrate with each other): `<file>.lock` is created with O_EXCL and carries `pid\ntoken`; a sibling
 //! `<file>.lock.<token>` is the generation stale waiters rename, so a check made against a dead holder can never move a
 //! lock a live host just created. Callers in this process queue per path, so the lock file only arbitrates between processes
 

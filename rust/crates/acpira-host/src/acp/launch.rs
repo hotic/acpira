@@ -1,4 +1,4 @@
-//! Executable resolution and the spawn shape for agent CLIs (mirror of src/host/acp/launch.ts). Pure functions of the
+//! Executable resolution and the spawn shape for agent CLIs. Pure functions of the
 //! target platform and env, so the Windows branches are testable anywhere
 
 use std::path::Path;

@@ -1,4 +1,4 @@
-//! Session persistence (mirror of src/host/store/TranscriptStore.ts): `<dir>/index.json` caches the summary list,
+//! Session persistence: `<dir>/index.json` caches the summary list,
 //! `<dir>/prefs.json` the per-agent memory, `<dir>/<id>.json` the full record, `<dir>/<id>/` its blobs, `<dir>/trash/`
 //! the soft-deleted ones during their undo window. The directory is shared by every host, so the index is reconciled
 //! with the record files before every write, and every file is written tmp + rename. Record writes are debounced per

@@ -1,4 +1,4 @@
-//! Error classification for sessions (mirror of src/host/acp/sessionErrors.ts)
+//! Error classification for sessions
 
 use std::sync::LazyLock;
 

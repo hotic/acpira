@@ -1,4 +1,4 @@
-//! The connection prompt that binds one ChatGPT conversation to an external session (mirror of src/host/external/chatgptBinding.ts).
+//! The connection prompt that binds one ChatGPT conversation to an external session.
 //! The bridge CLI is this binary's `bridge` subcommand
 
 use acpira_shared::transcript::SessionView;

@@ -1,4 +1,4 @@
-//! Plan documents (mirror of src/host/acp/plans.ts): full plan content is kept before tool normalization reduces a diff to lines
+//! Plan documents: full plan content is kept before tool normalization reduces a diff to lines
 
 use std::sync::LazyLock;
 

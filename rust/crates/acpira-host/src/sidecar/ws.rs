@@ -1,5 +1,4 @@
-//! A dependency-free HTTP + WebSocket (RFC 6455, text frames) server for the browser harness (mirror of
-//! src/host/sidecar/ws.ts): serves the harness page, the real webview bundle and attachment blobs, and turns each /ws
+//! A dependency-free HTTP + WebSocket (RFC 6455, text frames) server for the browser harness: serves the harness page, the real webview bundle and attachment blobs, and turns each /ws
 //! connection into a line channel. Development only; the IDE shells speak stdio
 
 use std::path::{Path, PathBuf};

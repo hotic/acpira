@@ -1,4 +1,4 @@
-//! JetBrains AIR sessionFailure (mirror of src/host/acp/sessionFailure.ts): structured warnings / errors at
+//! JetBrains AIR sessionFailure: structured warnings / errors at
 //! `_meta.jetbrains.air.sessionFailure`; same id + higher revision updates in place
 
 use serde_json::Value;

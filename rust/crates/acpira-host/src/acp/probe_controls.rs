@@ -1,4 +1,4 @@
-//! A throwaway spawn reading an agent's configOptions (mirror of src/host/acp/probeControls.ts)
+//! A throwaway spawn reading an agent's configOptions
 
 use std::sync::Arc;
 use std::time::Duration;

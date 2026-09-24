@@ -1,4 +1,4 @@
-//! Interrupted-turn repair when a record is opened (mirror of src/host/acp/restoreTurns.ts): a disk snapshot carries
+//! Interrupted-turn repair when a record is opened: a disk snapshot carries
 //! display history, never ownership of a live request or background shell
 
 use acpira_shared::num::Num;

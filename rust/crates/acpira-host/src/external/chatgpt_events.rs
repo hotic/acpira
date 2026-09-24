@@ -1,4 +1,4 @@
-//! ChatGPT event mirror reducer (mirror of src/host/external/chatgptEvents.ts): a pure transactional reducer, the
+//! ChatGPT event mirror reducer: a pure transactional reducer, the
 //! caller owns the file lock and persists only on success
 
 use std::sync::LazyLock;

@@ -1,4 +1,4 @@
-//! Account master (mirror of src/host/accounts/AccountManager.ts): who supports the account layer, the list,
+//! Account master: who supports the account layer, the list,
 //! import / login / removal, the session hooks, and in-memory quotas
 
 use std::collections::HashMap;
