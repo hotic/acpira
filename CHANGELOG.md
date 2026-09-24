@@ -7,17 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planned
+
+- MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.
+- Steer / interrupt follow-up modes remain planned. Mid-turn messages stay in the host-side queue.
+
+## [1.6.0] - 2026-09-24
+
 ### Added
 
-- Codex (`codex-acp`, the official `@agentclientprotocol/codex-acp` adapter) and Claude (`claude-agent-acp`, `@agentclientprotocol/claude-agent-acp`) are built-in agents with install, login and extension entries. A user-defined `acpira.agents.codex` / `.claude` entry still overrides the built-in.
+- Codex (`codex-acp`, the official `@agentclientprotocol/codex-acp` adapter) and Claude (`claude-agent-acp`, `@agentclientprotocol/claude-agent-acp`) are built-in agents with install, login and extension entries, named sign-in methods (ChatGPT, device code, `OPENAI_API_KEY`; Claude subscription or Anthropic Console in a terminal) and the Claude mark on the adapter's bare model ids (`opus`, `sonnet`, `haiku`). A user-defined `acpira.agents.codex` / `.claude` entry still overrides the built-in.
 - The agent settings page shows the adapter package version and its bundled engine version (read off npm `package.json` files, the CLI is never launched), an active engine-override variable (`CODEX_PATH` / `CLAUDE_CODE_EXECUTABLE`) with its value, and the last launch stage — `spawn_failed` / `handshake_failed` / `auth_required` / `ready` — from probes and real session starts.
 - `type: 'terminal'` ACP auth methods are supported: the client advertises `clientCapabilities.auth.terminal` and runs the method's binary + args in a host terminal instead of calling `authenticate` (Claude's `claude-ai-login` / `console-login`, pi-acp's `pi_terminal_login`). An agent can opt out (`acpira.agents.<id>.terminalAuth`); the Devin built-in does — its ACP process ignores a locally written login.
 - Boolean ACP config options render as switches (Codex `fast-mode`) and send a real boolean to `session/set_config_option`.
 - Permission cards show the adapter's own title / reason from `_meta.permission` (Codex "Run command?", Claude's "Ready to code?"), offer quick Allow / Reject buttons picked by option kind, and emphasize the reject button when the adapter flags `defaultToNo`.
 - Agent-emitted images render inline in the transcript (click for the lightbox; the agent's saved path is an openable caption) and export as file links in Markdown exports.
 - Plan-mode approval is recognized for Codex (the `switch_mode` "Implement this plan?" review) and Claude (ExitPlanMode), linking the plan document to its permission card.
-- Structured agent failures (the AIR `sessionFailure` extension of Codex / Claude) show as warning and error rows in the transcript, updated in place by revision. A failure that ends a turn with a successful `end_turn` response now shows as an error with exactly the remedies the adapter offers (retry, new session, sign-in) instead of an empty reply.
-- Background tasks reported through the AIR `asyncTasks` extension stay live on their tool row after the reply ends, show progress and output file, and can be stopped when the adapter allows it. A task whose process went away is marked as no longer observed rather than stopped.
+- Structured agent failures (the AIR `sessionFailure` extension of Codex / Claude) show as warning and error rows in the transcript, updated in place by revision. A failure that ends a turn with a successful `end_turn` response now shows as an error with exactly the remedies the adapter offers (retry, new session, sign-in) instead of an empty reply. A failure published mid-turn (Claude's sign-out) also owns the prompt the adapter then rejects with a bare JSON-RPC error, so the turn shows the sign-in remedy rather than a generic internal error.
+- Background tasks reported through the AIR `asyncTasks` extension stay live on their tool row after the reply ends, show progress and output file, and can be stopped when the adapter allows it. A task whose process went away is marked as no longer observed rather than stopped, and a completed update that follows a best-effort stopped one (Claude) marks the task completed.
+- The historical turn editor switches models with each model's own parameters: controls learned from live model switches are remembered in `sessions/prefs.json` and shared across windows, a turn opens with its own model's controls, and a model pick re-shapes them. A model not yet seen keeps the turn's snapshot, and a value the chosen model no longer offers yields to the agent's own value when the edit is applied.
 
 ### Changed
 
@@ -26,17 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fast reads the same everywhere: Devin's Standard / Fast select, Codex's "Fast mode" and Claude's fast toggle are one "Fast" switch in the model panel and "Fast" on the model chip.
 - Codex's collaboration mode moves to the left of the composer as a Build / Plan chip next to the permission modes, instead of a "Default" chip among the model controls.
 - The context usage panel no longer shows the chat-history category estimate; it shows only the agent-reported context and the auto-compaction threshold.
+- Switching to a long session is faster: folds of finished turns build their contents on first open instead of up front (about 310 ms down to 25 ms measured on a 700-block session), and toggling a fold while a long thought streams no longer stalls frames.
 
 ### Fixed
 
 - Claude no longer offers placeholder "Default" model and effort entries: the client advertises the AIR `recommendedValue` capability, so the adapter reports concrete models and effort levels.
 - Switching models keeps the chosen reasoning effort when the new model offers it (Devin reset it to the model's default after every switch, briefly showing the previous level first).
 - Long user prompts keep a stable capped viewport while sticky instead of shrinking to a few lines as the conversation reaches the bottom.
-
-### Planned
-
-- MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.
-- Steer / interrupt follow-up modes remain planned. Mid-turn messages stay in the host-side queue.
+- The transcript stays pinned to the bottom while a reply streams: only an upward scroll releases the pin, so a late scroll event after the viewport shrinks no longer hides the tail under the composer.
 
 ## [1.5.0] - 2026-09-23
 
