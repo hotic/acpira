@@ -105,19 +105,18 @@ class SidecarService(private val project: Project) : Disposable {
         setState(SidecarState.STARTING, null)
         lastStart = System.currentTimeMillis()
         try {
-            val node = NodeLocator.node()
-            val script = NodeLocator.script()
+            val command = SidecarLocator.command()
             if (disposed.get() || gen != generation.get()) {
                 starting = false
                 return
             }
             process = SidecarProcess(
-                node, script, project.basePath?.let { Paths.get(it) },
+                command, project.basePath?.let { Paths.get(it) },
                 { env -> enqueue { onEnvelope(gen, env) } },
                 { code -> enqueue { onExit(gen, code) } },
             )
             starting = false
-            Acpira.LOG.info("sidecar started: pid ${process?.pid}, script $script, cwd ${project.basePath}, remoteDevHost=${IdeProductMode.isBackend}")
+            Acpira.LOG.info("sidecar started: pid ${process?.pid}, ${command.label}, cwd ${project.basePath}, remoteDevHost=${IdeProductMode.isBackend}")
             hello()
         } catch (e: SidecarSetupException) {
             if (gen != generation.get()) return
