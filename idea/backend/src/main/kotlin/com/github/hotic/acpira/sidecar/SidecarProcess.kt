@@ -10,7 +10,7 @@ import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
-// One sidecar process (the Rust binary or Node running host-server.cjs): ndjson envelopes on stdout (one JsonObject per line; anything else is logged and skipped), the sidecar's
+// One sidecar process (the Rust binary): ndjson envelopes on stdout (one JsonObject per line; anything else is logged and skipped), the sidecar's
 // log on stderr, our envelopes on stdin. Reader threads hand parsed envelopes to `onEnvelope`; `onExit` fires once, however it ended
 class SidecarProcess(
     command: SidecarCommand,
@@ -27,7 +27,7 @@ class SidecarProcess(
     init {
         val pb = ProcessBuilder(command.argv)
         cwd?.let { pb.directory(it.toFile()) }
-        pb.environment().putAll(NodeLocator.shellEnv())
+        pb.environment().putAll(ShellEnv.map())
         // The sidecar honours ACPIRA_HOME itself; nothing else of ours goes into its environment
         process = pb.start()
         writer = BufferedWriter(OutputStreamWriter(process.outputStream, StandardCharsets.UTF_8))

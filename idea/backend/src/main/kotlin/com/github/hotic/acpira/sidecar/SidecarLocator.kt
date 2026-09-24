@@ -1,44 +1,47 @@
 package com.github.hotic.acpira.sidecar
 
 import com.github.hotic.acpira.Acpira
+import com.intellij.util.EnvironmentUtil
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 
+class SidecarSetupException(message: String) : Exception(message)
+
 // The process line that starts the sidecar and a label for the log
 data class SidecarCommand(val argv: List<String>, val label: String)
 
-// Which sidecar engine runs. The Rust binary speaks the same envelope protocol as host-server.cjs, so the choice is
-// invisible above SidecarProcess. Order: ACPIRA_ENGINE=node forces Node; ACPIRA_SIDECAR_BIN names a Rust binary;
-// ACPIRA_HOST_SERVER (a repository script) keeps Node; a binary packaged at <plugin>/sidecar/bin/<os>-<arch>/acpira
-// (every release package carries one) is preferred next; otherwise Node from the shell PATH runs the packaged script.
-// A packaged binary that cannot be made executable falls back to Node
-object SidecarLocator {
-    fun command(): SidecarCommand = choose(NodeLocator::env, bundledBinary(), ::nodeCommand) { Acpira.LOG.warn(it) }
-        .also { if (it.argv.size == 1) Acpira.LOG.info("sidecar engine rust: ${it.argv[0]}") }
+// The IDE's login-shell environment (EnvironmentUtil, never System.getenv alone: a Dock launch has no shell PATH), which the sidecar
+// and the agent CLIs it spawns run with
+object ShellEnv {
+    fun map(): Map<String, String> = EnvironmentUtil.getEnvironmentMap()
 
-    // Pure selection; `warn` reports a packaged binary that had to be skipped
-    internal fun choose(env: (String) -> String?, bundled: Path?, node: () -> SidecarCommand, warn: (String) -> Unit): SidecarCommand {
-        if (env("ACPIRA_ENGINE").equals("node", ignoreCase = true)) return node()
+    fun get(name: String): String? = (System.getenv(name) ?: map()[name])?.trim()?.takeIf { it.isNotEmpty() }
+}
+
+// Which sidecar binary runs: ACPIRA_SIDECAR_BIN (Gradle -PsidecarBin) names one for development; otherwise the binary packaged at
+// <plugin>/sidecar/bin/<os>-<arch>/acpira[.exe] for the backend machine. Every release package carries it, so a missing or
+// unrunnable binary is a setup error rather than something to work around
+object SidecarLocator {
+    fun command(): SidecarCommand = choose(ShellEnv::get, bundledBinary(), platformLabel())
+        .also { Acpira.LOG.info("sidecar binary: ${it.argv[0]}") }
+
+    // Pure selection over the environment and the packaged binary for this machine (null when the package has none)
+    internal fun choose(env: (String) -> String?, bundled: Path?, platform: String): SidecarCommand {
         env("ACPIRA_SIDECAR_BIN")?.let { override ->
             val p = Paths.get(override)
             if (!Files.isRegularFile(p) || !Files.isExecutable(p)) throw SidecarSetupException("ACPIRA_SIDECAR_BIN is not an executable file: $p")
-            return rust(p)
+            return binary(p)
         }
-        if (env("ACPIRA_HOST_SERVER") != null || bundled == null) return node()
+        if (bundled == null) throw SidecarSetupException("This plugin package has no sidecar binary for $platform; install the package built for this machine.")
         if (!Files.isExecutable(bundled)) runCatching { bundled.toFile().setExecutable(true, false) }
-        if (Files.isExecutable(bundled)) return rust(bundled)
-        warn("bundled sidecar binary is not executable, using Node: $bundled")
-        return node()
+        if (!Files.isExecutable(bundled)) throw SidecarSetupException("The packaged sidecar binary cannot be made executable: $bundled")
+        return binary(bundled)
     }
 
-    private fun rust(path: Path) = SidecarCommand(listOf(path.toString()), "binary $path")
+    private fun binary(path: Path) = SidecarCommand(listOf(path.toString()), "binary $path")
 
-    private fun nodeCommand(): SidecarCommand {
-        val node = NodeLocator.node()
-        val script = NodeLocator.script()
-        return SidecarCommand(listOf(node.toString(), script.toString()), "script $script")
-    }
+    private fun platformLabel() = "${System.getProperty("os.name")} ${System.getProperty("os.arch")}"
 
     private fun bundledBinary(): Path? {
         val dir = Acpira.descriptor?.pluginPath?.resolve("sidecar/bin") ?: return null

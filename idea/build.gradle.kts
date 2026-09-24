@@ -51,9 +51,6 @@ dependencies {
     }
 }
 
-// The Node sidecar comes from the repository build one level up (`pnpm build`) and is packaged next to the plugin so Node can run it as a file
-val sidecarBundle: File = file("../dist/host-server.cjs")
-
 // A task action may only capture plain values (configuration cache): copy the files into locals first
 fun requireBuilt(file: File, what: String, command: String = "pnpm build"): Action<Task> {
     val f = file
@@ -74,8 +71,7 @@ val hostVariant: String = run {
 
 // A sandbox launched from the terminal opens the project given as -PrunIdeProject (or none); trusting it up front keeps startup
 // activities from waiting behind the trust dialog. -PautoOpen shows the tool window at once, -PjcefDebug exposes CDP on 9222,
-// -PhostServer=/abs/path/host-server.cjs points the sandbox at a different sidecar build without repackaging,
-// -PsidecarBin=/abs/path/acpira runs the Rust sidecar binary instead
+// -PsidecarBin=/abs/path/acpira runs another sidecar binary (a debug build under rust/target) without repackaging
 fun RunIdeTask.acpiraDevIde() {
     systemProperty("idea.trust.all.projects", "true")
     // argumentProviders, not args=: split-mode runIde tasks reject direct arguments (they are routed to the backend process)
@@ -85,7 +81,6 @@ fun RunIdeTask.acpiraDevIde() {
         systemProperty("ide.browser.jcef.debug.port", "9222")
         systemProperty("ide.browser.jcef.debug.port.random.enabled", "false")
     }
-    providers.gradleProperty("hostServer").orNull?.let { environment("ACPIRA_HOST_SERVER", it) }
     providers.gradleProperty("sidecarBin").orNull?.let { environment("ACPIRA_SIDECAR_BIN", it) }
 }
 
@@ -93,11 +88,9 @@ tasks {
     named("test") {
         dependsOn(subprojects.map { "${it.path}:test" })
     }
-    // Every runIde task has its own sandbox (prepareSandbox_<name>); they all need the sidecar script, and the Rust binary for this
-    // machine when `pnpm build:sidecar` has produced it (without one the sandbox runs the Node sidecar, as -PhostServer also forces)
+    // Every runIde task has its own sandbox (prepareSandbox_<name>); each carries this machine's sidecar binary when
+    // `pnpm build:sidecar` has produced it (-PsidecarBin substitutes one; without either the tool window reports the missing binary)
     withType<PrepareSandboxTask>().configureEach {
-        doFirst(requireBuilt(sidecarBundle, "the sidecar bundle"))
-        from(sidecarBundle) { into(intellijPlatform.projectName.map { "$it/sidecar" }) }
         from(sidecarDir(hostVariant)) {
             into(intellijPlatform.projectName.map { "$it/sidecar/bin/${hostVariant.replaceFirst('_', '-')}" })
             filesMatching("acpira") { permissions { unix("rwxr-xr-x") } }
@@ -177,8 +170,8 @@ intellijPlatform {
 }
 
 // Six per-platform distributions: the root plugin version is suffixed -<os>-<arch>, while the corresponding os / arch plugin
-// dependencies live in the backend module descriptor. The plain `buildPlugin` zip carries no binary and runs the Node sidecar from the
-// shell PATH
+// dependencies live in the backend module descriptor. The plain `buildPlugin` zip carries no binary: it is the base the packages below
+// are assembled from and what verifyPlugin checks, not something to install
 val pluginName = intellijPlatform.projectName
 val backendComposedJar = project(":backend").tasks.named<ComposedJarTask>("composedJar").flatMap { it.archiveFile }
 val buildPluginVariant = sidecarPlatforms.associateWith { variant ->

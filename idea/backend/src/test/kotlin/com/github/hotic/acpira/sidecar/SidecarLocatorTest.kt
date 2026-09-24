@@ -8,8 +8,6 @@ import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
 
 class SidecarLocatorTest {
-    private val node = SidecarCommand(listOf("node", "host-server.cjs"), "script host-server.cjs")
-
     private fun executable(): java.nio.file.Path {
         val f = Files.createTempFile("acpira-bin", "")
         runCatching { Files.setPosixFilePermissions(f, PosixFilePermissions.fromString("rwxr-xr-x")) }
@@ -37,19 +35,18 @@ class SidecarLocatorTest {
         } finally { dir.toFile().deleteRecursively() }
     }
 
-    @Test fun `engine precedence keeps node reachable in every case`() {
+    @Test fun `an explicit binary wins, the packaged one runs otherwise, and nothing else is guessed`() {
         val bin = executable()
         try {
             val env = { map: Map<String, String> -> { k: String -> map[k] } }
-            assertEquals(listOf(bin.toString()), SidecarLocator.choose(env(emptyMap()), bin, { node }, {}).argv)
-            assertEquals(node, SidecarLocator.choose(env(mapOf("ACPIRA_ENGINE" to "node")), bin, { node }, {}))
-            assertEquals(node, SidecarLocator.choose(env(mapOf("ACPIRA_HOST_SERVER" to "/repo/dist/host-server.cjs")), bin, { node }, {}))
-            assertEquals(node, SidecarLocator.choose(env(emptyMap()), null, { node }, {}))
-            assertEquals(listOf(bin.toString()), SidecarLocator.choose(env(mapOf("ACPIRA_SIDECAR_BIN" to bin.toString(), "ACPIRA_HOST_SERVER" to "/x")), null, { node }, {}).argv)
-            try {
-                SidecarLocator.choose(env(mapOf("ACPIRA_SIDECAR_BIN" to "/definitely/missing")), null, { node }, {})
-                fail("expected a setup error")
-            } catch (_: SidecarSetupException) {}
+            assertEquals(listOf(bin.toString()), SidecarLocator.choose(env(emptyMap()), bin, "test").argv)
+            assertEquals(listOf(bin.toString()), SidecarLocator.choose(env(mapOf("ACPIRA_SIDECAR_BIN" to bin.toString())), null, "test").argv)
+            for ((vars, bundled) in listOf(emptyMap<String, String>() to null, mapOf("ACPIRA_SIDECAR_BIN" to "/definitely/missing") to bin)) {
+                try {
+                    SidecarLocator.choose(env(vars), bundled, "test")
+                    fail("expected a setup error for $vars / $bundled")
+                } catch (_: SidecarSetupException) {}
+            }
         } finally { Files.deleteIfExists(bin) }
     }
 }

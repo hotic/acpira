@@ -23,12 +23,12 @@ import java.util.concurrent.atomic.AtomicInteger
 // Protocol version of src/shared/sidecar.ts; a sidecar built for another version is rejected at hello, never guessed around
 const val SIDECAR_PROTOCOL_VERSION = 1
 
-// One sidecar per project window: the Node host runs with the project folder as its cwd (sessions belong to a project), the views of
+// One sidecar per project window: the sidecar runs with the project folder as its cwd (sessions belong to a project), the views of
 // this window (tool window, later editor tabs) attach to it. Envelopes before hello completes wait in an outbox; a crash restarts the
 // process with backoff and re-attaches every view on the session it was showing.
 //
 // Start, handshake, attach, outbox drain, and ordinary sends share one single-thread executor so a second view cannot spawn a second
-// process during Node lookup, and a page's one-shot ready cannot overtake attachView. Each process has a generation; stale stdout and
+// process while the binary is located, and a page's one-shot ready cannot overtake attachView. Each process has a generation; stale stdout and
 // exit callbacks from a replaced process cannot mutate the new one
 @Service(Service.Level.PROJECT)
 class SidecarService(private val project: Project) : Disposable {
@@ -87,7 +87,7 @@ class SidecarService(private val project: Project) : Disposable {
         }
     }
 
-    // Spawns the sidecar on the serial executor (locating Node runs `node --version`); safe to call again after a failure
+    // Spawns the sidecar on the serial executor (locating the binary touches the disk); safe to call again after a failure
     fun start() { enqueue { startOnIo() } }
 
     // Retry from the status panel: the consecutive-failure counter is only cleared here, not on helloOk
