@@ -1,0 +1,29 @@
+[package]
+name = "acpira-host"
+description = "The Acpira host runtime: ACP client, sessions, stores, accounts and the sidecar server (mirror of src/host)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "acpira"
+path = "src/bin/acpira.rs"
+
+[dependencies]
+acpira-shared.workspace = true
+anyhow.workspace = true
+base64.workspace = true
+libc.workspace = true
+parking_lot.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+toml.workspace = true
+ureq.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

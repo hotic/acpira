@@ -1,0 +1,7 @@
+# The sidecar ships as a single file: link the C runtime statically on Windows (no VC++ redistributable needed).
+# Linux builds target musl, which is static by default
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

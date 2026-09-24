@@ -1,0 +1,12 @@
+[package]
+name = "acpira-shared"
+description = "Contracts and pure logic shared by the Acpira host and webview (mirror of src/shared)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
