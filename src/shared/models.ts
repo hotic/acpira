@@ -185,7 +185,8 @@ export function variantLabel(v: ModelVariant, f: ModelFamily, labels?: { standar
 // "Adaptive" / "Fusion" map to devin because they are Devin's own routing models; no match yields undefined and the renderer falls
 // back to an initial-letter tile
 const BRAND: [RegExp, string][] = [
-  [/\bclaude\b/, 'claude'],
+  // claude-agent-acp's short ids ("opus[1m]", "sonnet", "haiku") and names ("Opus 5.5") carry no "claude" keyword
+  [/\bclaude\b|\bopus\b|\bsonnet\b|\bhaiku\b|\bfable\b/, 'claude'],
   [/\bglm\b|\bzhipu\b|\bchatglm\b|\bzai\b|\bz\.ai\b/, 'zhipu'],
   [/\bkimi\b|\bmoonshot\b/, 'kimi'],
   // Moonshot's bare K-series names (K2.7 Coding, K3, K3-256k) carry no "kimi" keyword — a last resort for
