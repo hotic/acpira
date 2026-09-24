@@ -93,7 +93,11 @@ function restoreSession(id: string, cwd: string): acp.LoadSessionResponse {
   sessions.add(id);
   modes.set(id, saved.mode);
   Object.assign(config, saved.config);
-  return { modes: { currentModeId: saved.mode, availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }] }, configOptions: configOptions() };
+  // A cwd with no-modes restores without modes too, like its session/new (Grok never advertises them)
+  return {
+    ...(cwd.includes('no-modes') ? {} : { modes: { currentModeId: saved.mode, availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }] } }),
+    configOptions: configOptions(),
+  };
 }
 let seq = 0;
 let usedTokens = 1234;
