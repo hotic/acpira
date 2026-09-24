@@ -6,9 +6,8 @@
 | --- | --- | --- |
 | Context used / size | ACP `usage_update`; Grok `_x.ai/session/info` fallback | Latest native context snapshot and model window |
 | Automatic threshold | Host platform `compactAtTokens`, default 300,000 | Acpira's turn-boundary `/compact` policy |
-| History categories | Retained transcript text estimates | Full displayed history, including messages already compacted by the CLI |
 
-The threshold does not configure the CLI's own compactor, enlarge the model window, or interrupt an active `session/prompt`. A threshold at or above the reported model window is flagged in the panel. Native compaction can happen earlier. The context ring and panel percentage both use the reported model window; history estimates never override that total or drive automatic compaction.
+The threshold does not configure the CLI's own compactor, enlarge the model window, or interrupt an active `session/prompt`. A threshold at or above the reported model window is flagged in the panel. Native compaction can happen earlier. The context ring and panel percentage both use the reported model window. The panel shows no transcript-based category estimate: the displayed history includes messages the CLI already compacted and cannot describe the native window.
 
 VS Code and Cursor read their own `acpira.*` settings. IntelliJ persists an application-level settings document and forwards it to `SidecarPlatform`. Both entry points construct the same `HostRuntime`, `AcpSession`, and webview. Shared logic does not imply shared IDE settings or that an installed plugin already contains the latest source changes.
 
@@ -38,4 +37,4 @@ pnpm exec vitest run test/usage-breakdown.test.ts test/grok-usage.test.ts test/c
 pnpm exec vite --config vite.lab.config.ts --port 5207
 ```
 
-`lab/context.preview.html` retains approximately 996K tool-history tokens while reporting a 24K / 200K native context. Running/idle transitions must remain at 12%. The over-threshold scene reports 350K / 1M, displays 35% consistently, and explains that compaction waits for the turn boundary. Both scenes support light/dark and narrow-screen checks.
+`lab/context.preview.html` reports a 24K / 200K native context over a session that retains approximately 996K tool-history tokens. Running/idle transitions must remain at 12%. The over-threshold scene reports 350K / 1M, displays 35% consistently, and explains that compaction waits for the turn boundary. Both scenes support light/dark and narrow-screen checks.

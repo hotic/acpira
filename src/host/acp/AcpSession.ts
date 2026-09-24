@@ -151,6 +151,8 @@ export class AcpSession {
   private grokUsageRequest?: Promise<void>;
   private finishUsageRefresh?: (cancelled?: boolean) => void;
   private syncingThought = false;
+  // adoptControls replays remembered values in control order; a model switch there must not re-set the previous effort
+  private adopting = false;
   // User config/mode picks shown before the agent answers: view() overlays them on the agent's controls until the wire request settles
   private picks = new Map<string, { value: string; token: object }>();
   private pickChain: Promise<void> = Promise.resolve();
@@ -1083,11 +1085,13 @@ export class AcpSession {
     const model = c.options.find(o => o.id === configId && o.category === 'model');
     const before = parseFusionName(model?.options.find(o => o.id === model.value)?.name ?? '');
     const after = parseFusionName(model?.options.find(o => o.id === value)?.name ?? '');
-    // Devin resets native thought_level when a sidekick changes the compound model ID.
-    // Preserve the lead's independent effort only for a sidekick-only change.
+    // Devin resets native thought_level on every model change (a Fusion sidekick change included), and claude-agent-acp
+    // re-seeds its effort per model. A user's model switch keeps the chosen effort when the new model offers it; replaying
+    // remembered controls (adoptControls) sets effort itself right after, so only a sidekick-only change is preserved there.
     const sidekickOnly = before && after && before.lead === after.lead && before.effort === after.effort
       && before.fast === after.fast && before.long === after.long && before.sidekick !== after.sidekick;
-    const reasoning = sidekickOnly ? c.options.filter(isReasoningControl).map(o => ({ id: o.id, value: o.value })) : [];
+    const keepEffort = !!model && (sidekickOnly || !this.adopting);
+    const reasoning = keepEffort ? c.options.filter(isReasoningControl).map(o => ({ id: o.id, value: o.value })) : [];
     const r = await this.proc.agent.request(acp.methods.agent.session.setConfigOption, { sessionId: this.acpSessionId!, configId, ...configOptionSetValue(control, value) });
     applyConfigOptions(c, r.configOptions);
     for (const previous of reasoning) {
@@ -1112,7 +1116,16 @@ export class AcpSession {
     if (!this.proc || this.status !== 'ready' || !control || !control.options.some(o => o.id === value)) {
       return this.setConfig(configId, value);
     }
-    return this.pick(configId, value, () => this.setConfig(configId, value));
+    // A model switch keeps the chosen effort (setConfig restores it); hold it on screen meanwhile so the agent's interim reset never flashes
+    const held = control.category === 'model'
+      ? c.options.filter(o => isReasoningControl(o) && o.value && !this.picks.has(o.id)).map(o => ({ id: o.id, pick: { value: o.value!, token: {} } }))
+      : [];
+    for (const h of held) this.picks.set(h.id, h.pick);
+    try { await this.pick(configId, value, () => this.setConfig(configId, value)); }
+    finally {
+      for (const h of held) if (this.picks.get(h.id)?.token === h.pick.token) this.picks.delete(h.id);
+      if (held.length) this.touch();
+    }
   }
 
   // Same for the mode picker
@@ -1157,13 +1170,16 @@ export class AcpSession {
   async adoptControls(settings: TurnSettings): Promise<void> {
     if (this.status !== 'ready' || !this.proc) return;
     const c = this.state.controls;
-    for (const id of c.options.map(o => o.id)) {
-      const value = settings.config[id];
-      const control = c.options.find(o => o.id === id);
-      if (!value || !control || control.value === value || !control.options.some(o => o.id === value)) continue;
-      try { await this.setConfig(id, value); }
-      catch (e) { this.log(`adopt ${id}=${value} refused: ${msg(e)}`); }
-    }
+    this.adopting = true;
+    try {
+      for (const id of c.options.map(o => o.id)) {
+        const value = settings.config[id];
+        const control = c.options.find(o => o.id === id);
+        if (!value || !control || control.value === value || !control.options.some(o => o.id === value)) continue;
+        try { await this.setConfig(id, value); }
+        catch (e) { this.log(`adopt ${id}=${value} refused: ${msg(e)}`); }
+      }
+    } finally { this.adopting = false; }
     const mode = settings.modeId;
     if (mode && mode !== c.modeId && c.modes.some(m => m.id === mode)) {
       try { await this.setMode(mode); }

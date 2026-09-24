@@ -86,13 +86,24 @@ export function reasoningChip(control: ConfigControl): string | undefined {
   return p.efforts.find(o => o.id === p.value)?.name;
 }
 
-// A native Standard / Fast select shares the embedded variant's switch presentation.
+// One "Fast" switch whatever the wire shape: Devin's native Standard / Fast select (`speed`), the codex / claude
+// adapters' boolean (`fast-mode` "Fast mode", `fast`), and the embedded model-name variant all read the same.
 export function isFastControl(control: ConfigControl): boolean {
+  if (control.type === 'boolean') return /(^|[\s_-])fast($|[\s_-])/i.test(control.id) || /^fast( mode)?$/i.test(control.name);
   return control.options.length === 2 && ['standard', 'fast'].every(id => control.options.some(option => option.id === id));
 }
 
+export function fastOn(control: ConfigControl): boolean {
+  return control.value === (control.type === 'boolean' ? 'true' : 'fast');
+}
+
+// The wire value that turns a Fast control on or off
+export function fastValue(control: ConfigControl, on: boolean): string {
+  return control.type === 'boolean' ? String(on) : on ? 'fast' : 'standard';
+}
+
 export function modelConfigChip(control: ConfigControl): string | undefined {
-  if (isFastControl(control)) return control.value === 'fast' ? 'Fast' : undefined;
+  if (isFastControl(control)) return fastOn(control) ? 'Fast' : undefined;
   // A boolean shows its name only while on — an off toggle adds no chip clutter
   if (control.type === 'boolean') return control.value === 'true' ? control.name : undefined;
   return control.options.find(option => option.id === control.value)?.name;
@@ -107,14 +118,16 @@ export function familyLabel(control: Pick<ConfigControl, 'id' | 'category'>, fam
 
 // ACP capabilities choose the contents of one composer, never its layout.
 // Recognize native reasoning and model parameters before applying model-name decomposition.
+// Codex's `collaboration_mode` (default / plan) is a working mode next to the permission modes, so it sits on the left.
 export function composerControls(options: ConfigControl[]) {
-  const models: ConfigControl[] = [], reasoning: ConfigControl[] = [], modelConfig: ConfigControl[] = [], other: ConfigControl[] = [];
+  const models: ConfigControl[] = [], reasoning: ConfigControl[] = [], modelConfig: ConfigControl[] = [], collaboration: ConfigControl[] = [], other: ConfigControl[] = [];
   for (const c of options) {
     if (isReasoningControl(c)) reasoning.push(c);
+    else if (c.category === 'collaboration_mode' && c.type !== 'boolean') collaboration.push(c);
     else if (c.category === 'model_config') modelConfig.push(c);
     // A boolean's synthetic Off/On pair is not a model family even under a `model` category; it chips in `other`
     else if (c.type !== 'boolean' && (c.category === 'model' || (!c.category && (c.id === 'model' || groupModels(c.options).length < c.options.length)))) models.push(c);
     else other.push(c);
   }
-  return { models, reasoning, modelConfig, other };
+  return { models, reasoning, modelConfig, collaboration, other };
 }

@@ -63,12 +63,12 @@ describe('AgentProcess', () => {
     const { h } = handlers();
     const proc = await AgentProcess.spawn(DEF, NODE, '/tmp', h, { FAKE_INIT_LOG: log });
     try {
-      expect(airCaps()).toEqual({ version: 1, capabilities: ['nativeSubagentSessions', 'sessionFailure', 'asyncTasks'] });
+      expect(airCaps()).toEqual({ version: 1, capabilities: ['nativeSubagentSessions', 'sessionFailure', 'asyncTasks', 'recommendedValue'] });
     } finally { proc.kill(); }
     const { h: h2 } = handlers();
     const proc2 = await AgentProcess.spawn({ ...DEF, subagents: false }, NODE, '/tmp', h2, { FAKE_INIT_LOG: log });
     try {
-      expect(airCaps().capabilities).toEqual(['sessionFailure', 'asyncTasks']);
+      expect(airCaps().capabilities).toEqual(['sessionFailure', 'asyncTasks', 'recommendedValue']);
     } finally { proc2.kill(); }
   });
 

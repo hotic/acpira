@@ -1080,7 +1080,35 @@ describe('AcpSession', () => {
       await s.setConfig('model', first);
       expect(s.view().controls.options.find(o => o.id === 'effort')?.value).toBe('low');
       await s.setConfig('model', 'm2');
-      expect(s.view().controls.options.find(o => o.id === 'effort')?.value).toBe('high');
+      expect(s.view().controls.options.find(o => o.id === 'effort')?.value).toBe('low');
+    } finally { s.dispose(); }
+  });
+
+  it('a model switch keeps the chosen effort and never shows the agent\'s interim reset', async () => {
+    const { d, session } = deps('/tmp', undefined, undefined, { env: { FAKE_MODEL_RESETS_EFFORT: '1', FAKE_CONFIG_DELAY_MS: '60' } });
+    const s = session();
+    try {
+      await s.start();
+      await s.setConfig('effort', 'low');
+      const seen: (string | undefined)[] = [];
+      d.onChange = x => { seen.push(x.view().controls.options.find(o => o.id === 'effort')?.value); };
+      await s.selectConfig('model', 'm2');
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen.every(v => v === 'low')).toBe(true);
+      expect(s.agentControls.options.find(o => o.id === 'model')?.value).toBe('m2');
+      expect(s.agentControls.options.find(o => o.id === 'effort')?.value).toBe('low');
+    } finally { s.dispose(); }
+  });
+
+  it('replaying remembered controls does not re-set the previous effort between model and effort', async () => {
+    const { session } = deps('/tmp', undefined, undefined, { env: { FAKE_MODEL_RESETS_EFFORT: '1' } });
+    const s = session();
+    try {
+      await s.start();
+      await s.setConfig('effort', 'low');
+      await s.adoptControls({ config: { model: 'm2' } });
+      // Nothing remembered for effort: the agent's own value for the new model stands
+      expect(s.agentControls.options.find(o => o.id === 'effort')?.value).toBe('high');
     } finally { s.dispose(); }
   });
 
