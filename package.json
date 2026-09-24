@@ -453,7 +453,7 @@
     "typecheck": "tsc -p tsconfig.webview.json --noEmit && tsc -p tsconfig.host.json --noEmit",
     "test": "vitest run",
     "probe": "tsx --tsconfig tsconfig.host.json scripts/acp-probe.ts",
-    "harness": "node dist/host-server.cjs --ws",
+    "harness": "cargo run --release --quiet --manifest-path rust/Cargo.toml --bin acpira -- --ws",
     "build:sidecar": "node scripts/build-sidecar.mjs",
     "package": "pnpm build && pnpm build:sidecar && node scripts/package-vsix.mjs"
   },

@@ -2,15 +2,13 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PermissionBlock, SessionView, ToolCallBlock } from '@shared/transcript';
-import { AgentRegistry } from '../src/host/acp/AgentRegistry';
-import { SessionManager } from '../src/host/SessionManager';
-import { TranscriptStore } from '../src/host/store/TranscriptStore';
+import { Host } from './lib/host';
 
 // Host-path acceptance for the OpenCode integration, against the real `opencode acp` (needs a configured provider):
 //   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe-opencode-host.ts [--keep] [--model provider/model]
-// Drives SessionManager the way the webview does: new session → controls (mode / model / effort) → set effort + mode → one prompt →
-// a two-file write (permission cards answered like a click; both diffs must land on the tool block) → a second manager on a
-// fresh store lists the native sessions and imports the first one, replaying its history through session/load.
+// Drives the Rust sidecar the way the webview does (scripts/lib/host.ts): new session → controls (mode / model / effort) → set effort +
+// mode → one prompt → a two-file write (permission cards answered like a click; both diffs must land on the tool block) → a second host
+// on a fresh store lists the native sessions and imports the first one, replaying its history through session/load.
 // Every OpenCode session created here persists in OpenCode's own store (that is what session/list reads); --keep leaves the temp project.
 const keep = process.argv.includes('--keep');
 // --model <provider/model>: switch the session's model before the first prompt (the default route may be slow or unavailable)
@@ -24,18 +22,13 @@ const until = async (pred: () => boolean, ms: number, what: string) => {
   while (!pred()) { if (Date.now() - t0 > ms) throw new Error(`timeout waiting for ${what}`); await new Promise(r => setTimeout(r, 50)); }
 };
 const logs: string[] = [];
-function makeManager(store: string) {
-  return new SessionManager({
-    registry: new AgentRegistry(), store: new TranscriptStore(store),
-    log: l => logs.push(l), cwd: () => project, defaultAgent: () => 'opencode',
-    runInTerminal: () => {}, toast: (l, text) => console.log(`toast ${l}: ${text}`),
-  });
-}
+const makeHost = (home: string) => Host.start({ cwd: project, home, defaultAgent: 'opencode' });
 const lastAgent = (v: SessionView) => { const t = v.turns[v.turns.length - 1]; return t?.role === 'agent' ? t : undefined; };
 const text = (v: SessionView) => lastAgent(v)?.blocks.filter(b => b.type === 'text').map(b => b.type === 'text' ? b.markdown : '').join('') ?? '';
 
 const storeA = mkdtempSync(join(tmpdir(), 'acpira-oc-store-a-'));
-const m1 = makeManager(storeA);
+const h1 = await makeHost(storeA);
+const m1 = await h1.view();
 await m1.newSession('opencode');
 await until(() => m1.active()?.status === 'ready', 60_000, 'ready');
 let v = m1.active()!;
@@ -93,18 +86,20 @@ check('write turn finished cleanly', lastAgent(v)?.stop === 'end_turn', String(l
 
 const nativeId = m1.sessions().find(s => s.id === v.id)?.acpSessionId;
 console.log('native session id:', nativeId);
-await m1.dispose();
+logs.push(...h1.logs);
+await h1.dispose();
 
 // A second host on a fresh store: the session exists only on OpenCode's side now
 const storeB = mkdtempSync(join(tmpdir(), 'acpira-oc-store-b-'));
-const m2 = makeManager(storeB);
+const h2 = await makeHost(storeB);
+const m2 = await h2.view();
 const listed = await m2.listNativeSessions('opencode');
 console.log('native list:', JSON.stringify(listed.map(s => ({ id: s.sessionId.slice(0, 14), title: s.title, updatedAt: s.updatedAt, localId: s.localId })).slice(0, 5)));
 const mine = listed.find(s => s.sessionId === nativeId);
 check('session/list shows the session with no local owner', !!mine && !mine.localId, mine ? `title ${mine.title}` : 'not listed');
 if (mine) {
-  const viewer = m2.attach();
-  await m2.importNativeSession(viewer, 'opencode', mine);
+  const viewer = m2;
+  await m2.importNativeSession('opencode', mine);
   await until(() => viewer.active()?.status === 'ready' || viewer.active()?.status === 'error', 60_000, 'import');
   const iv = viewer.active()!;
   const turnsBefore = iv.turns.length;
@@ -119,7 +114,8 @@ if (mine) {
   const fv = viewer.active()!;
   check('imported session continues the native context', /pong/i.test(text(fv)), text(fv).slice(0, 60));
 }
-await m2.dispose();
+logs.push(...h2.logs);
+await h2.dispose();
 
 const failed = checks.filter(c => !c[1]);
 console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);

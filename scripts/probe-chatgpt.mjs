@@ -1,4 +1,5 @@
 // Isolated browser acceptance test. No real ChatGPT conversation or user profile is read.
+// Runs the release sidecar (`cargo build --release` in rust/, `pnpm build` for the webview); ACPIRA_SIDECAR_BIN substitutes another binary
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -12,12 +13,12 @@ const root = process.cwd();
 const fixture = await mkdtemp(join(tmpdir(), 'acpira-chatgpt-ui-'));
 const home = join(fixture, 'profile');
 const browserProfile = join(fixture, 'browser');
-const cli = join(root, 'dist/chatgpt-bridge.cjs');
+const bin = process.env.ACPIRA_SIDECAR_BIN || join(root, 'rust/target/release/acpira');
 const token = randomBytes(24).toString('hex');
 const chrome = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 if (!existsSync(chrome)) throw new Error('Set CHROME_PATH to a Chromium executable for this UI probe');
 const env = { ...process.env, HOME: fixture, XDG_CONFIG_HOME: join(fixture, 'config') };
-const invoke = (args, input) => execFileSync(process.execPath, [cli, ...args, '--home', home], { env, encoding: 'utf8', input });
+const invoke = (args, input) => execFileSync(bin, ['bridge', ...args, '--home', home], { env, encoding: 'utf8', input });
 const opened = JSON.parse(invoke(['open', '--key', 'isolated-ui-fixture', '--cwd', fixture, '--title', 'ChatGPT · UI acceptance fixture']));
 const scope = ['--session', opened.sessionId, '--turn', 'ui-test'];
 invoke(['prompt', ...scope, '--text', 'Isolated UI test: observe a real local command. This is not a user conversation.']);
@@ -26,7 +27,7 @@ invoke(['message', ...scope, '--message', 'progress', '--text', 'The local comma
 const socket = createServer();
 await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
 const port = socket.address().port; await new Promise(resolve => socket.close(resolve));
-const server = spawn(process.execPath, ['dist/host-server.cjs', '--ws', String(port), '--home', home, '--token', token], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+const server = spawn(bin, ['--ws', String(port), '--home', home, '--token', token], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
 const browser = spawn(chrome, ['--headless=new', '--no-first-run', '--no-default-browser-check', '--disable-background-networking', '--disable-default-apps',
   '--remote-debugging-port=0', `--user-data-dir=${browserProfile}`, 'about:blank'], { stdio: ['ignore', 'pipe', 'pipe'] });
 let ws; let command;
@@ -82,7 +83,7 @@ try {
   await evaluate(`Object.defineProperty(navigator, 'clipboard', { value: { writeText: async text => { window.__probeClipboard = text; } }, configurable: true });`);
   await evaluate(`Array.from(document.querySelectorAll('button')).find(b => b.textContent.includes('复制连接指令')).click()`);
   await until(`window.__probeClipboard && window.__probeClipboard.includes(${JSON.stringify(opened.sessionId)})`);
-  command = spawn(process.execPath, [cli, 'exec', ...scope, '--home', home, '--command', `${JSON.stringify(process.execPath)} -e "console.log('UI_LIVE_OUTPUT'); setTimeout(() => console.log('UI_FINISHED'), 8000)"`], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  command = spawn(bin, ['bridge', 'exec', ...scope, '--home', home, '--command', `${JSON.stringify(process.execPath)} -e "console.log('UI_LIVE_OUTPUT'); setTimeout(() => console.log('UI_FINISHED'), 8000)"`], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   let commandError = '';
   command.stderr.on('data', data => { commandError += String(data); });
   command.stdout.resume();

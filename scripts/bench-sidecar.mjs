@@ -1,5 +1,5 @@
-// Cold-start and idle-memory comparison of the two sidecar engines over the real envelope protocol.
-// Usage: node scripts/bench-sidecar.mjs [runs]   (needs `pnpm build:host` and `cargo build --release` in rust/)
+// Cold start and idle memory of the sidecar over the real envelope protocol.
+// Usage: node scripts/bench-sidecar.mjs [runs]   (needs `cargo build --release` in rust/; ACPIRA_SIDECAR_BIN measures another binary)
 // No agent process is involved: the configured agent command does not exist, so only the host itself is measured
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -9,8 +9,7 @@ import { createInterface } from 'node:readline';
 
 const runs = Number(process.argv[2]) || 5;
 const engines = {
-  node: ['node', ['dist/host-server.cjs']],
-  rust: ['rust/target/release/acpira', []],
+  rust: [process.env.ACPIRA_SIDECAR_BIN || 'rust/target/release/acpira', []],
 };
 
 function once(cmd, args) {
