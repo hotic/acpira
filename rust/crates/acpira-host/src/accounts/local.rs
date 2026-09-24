@@ -1,4 +1,4 @@
-//! Read-only official CLI accounts (mirror of src/host/accounts/local.ts): identity, quota and status of the login a
+//! Read-only official CLI accounts: identity, quota and status of the login a
 //! CLI keeps on disk; credentials stay in the CLI's files
 
 use std::collections::HashMap;
@@ -25,9 +25,12 @@ fn name_of(agent: &str) -> Option<&'static str> {
 }
 
 pub type EnvFn = Arc<dyn Fn(&str) -> HashMap<String, String> + Send + Sync>;
+/// One JSON GET (url, headers); the default is `http::get_json`, tests substitute a canned service
+pub type HttpGet = Arc<dyn Fn(String, Vec<(String, String)>) -> crate::acp::rpc::BoxFuture<anyhow::Result<Value>> + Send + Sync>;
 
 pub struct LocalAccounts {
   env: EnvFn,
+  http: HttpGet,
   snapshots: parking_lot::Mutex<HashMap<String, LocalAccountInfo>>,
   checked: parking_lot::Mutex<HashMap<String, i64>>,
   fetching: tokio::sync::Mutex<()>,
@@ -63,8 +66,13 @@ fn account(label: &str, status: LocalAccountStatus) -> LocalAccountInfo {
 
 impl LocalAccounts {
   pub fn new(env: EnvFn) -> Arc<Self> {
+    Self::with_http(env, Arc::new(|url, headers| Box::pin(crate::http::get_json(url, headers, Duration::from_secs(10)))))
+  }
+
+  pub fn with_http(env: EnvFn, http: HttpGet) -> Arc<Self> {
     Arc::new(LocalAccounts {
       env,
+      http,
       snapshots: Default::default(),
       checked: Default::default(),
       fetching: tokio::sync::Mutex::new(()),
@@ -105,8 +113,8 @@ impl LocalAccounts {
     }
   }
 
-  async fn request(url: &str, headers: Vec<(String, String)>) -> anyhow::Result<Map<String, Value>> {
-    Ok(obj(Some(&crate::http::get_json(url.to_owned(), headers, Duration::from_secs(10)).await?)))
+  async fn request(&self, url: &str, headers: Vec<(String, String)>) -> anyhow::Result<Map<String, Value>> {
+    Ok(obj(Some(&(self.http)(url.to_owned(), headers).await?)))
   }
 
   async fn grok(&self, env: &HashMap<String, String>) -> anyhow::Result<LocalAccountInfo> {
@@ -127,8 +135,8 @@ impl LocalAccounts {
     let headers =
       vec![("Authorization".into(), format!("Bearer {}", s(cred.get("key")).unwrap())), ("x-xai-token-auth".into(), "xai-grok-cli".into())];
     let (billing, settings) = tokio::join!(
-      Self::request("https://cli-chat-proxy.grok.com/v1/billing?format=credits", headers.clone()),
-      Self::request("https://cli-chat-proxy.grok.com/v1/settings", headers)
+      self.request("https://cli-chat-proxy.grok.com/v1/billing?format=credits", headers.clone()),
+      self.request("https://cli-chat-proxy.grok.com/v1/settings", headers)
     );
     let quota = billing.ok().and_then(|b| parse_grok_quota(&Value::Object(b)));
     let detail = settings.ok().and_then(|x| s(x.get("subscription_tier_display")));
@@ -181,7 +189,7 @@ impl LocalAccounts {
       ]);
     }
     headers.push(("Authorization".into(), format!("Bearer {}", token.unwrap())));
-    let payload = Self::request("https://api.kimi.com/coding/v1/usages", headers).await?;
+    let payload = self.request("https://api.kimi.com/coding/v1/usages", headers).await?;
     let payload = Value::Object(payload);
     let quota = parse_kimi_quota(&payload);
     Ok(LocalAccountInfo {

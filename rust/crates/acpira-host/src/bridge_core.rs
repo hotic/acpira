@@ -1,4 +1,4 @@
-//! One per view (mirror of src/host/bridgeCore.ts + msgBatch.ts): routes WebviewMsgs to its viewer / the manager / the
+//! One per view: routes WebviewMsgs to its viewer / the manager / the
 //! settings center, resolves paths before asking the platform for an IDE action, and pushes changes back coalesced
 
 use std::path::Path;
@@ -24,10 +24,50 @@ pub const BATCH_WINDOW: Duration = Duration::from_millis(30);
 
 pub type Post = Arc<dyn Fn(HostMsg) + Send + Sync>;
 
+/// Streaming updates are dense: within one batch window only the latest message per key survives, and an idle session edge
+/// goes out at once together with whatever was pending
 #[derive(Default)]
-struct Batch {
+pub struct MsgBatch {
   pending: Vec<(String, HostMsg)>,
   armed: bool,
+}
+
+/// What a push asks of the owner
+pub enum Pushed {
+  /// Post these now
+  Flush(Vec<HostMsg>),
+  /// Start the window timer, then flush
+  Arm,
+  /// A timer is already running
+  Wait,
+}
+
+impl MsgBatch {
+  pub fn push(&mut self, m: HostMsg) -> Pushed {
+    let idle = matches!(&m, HostMsg::Session { running: false, .. });
+    let key = m.batch_key();
+    match self.pending.iter().position(|(k, _)| *k == key) {
+      Some(i) => self.pending[i].1 = m,
+      None => self.pending.push((key, m)),
+    }
+    if idle {
+      return Pushed::Flush(self.flush());
+    }
+    if self.armed {
+      return Pushed::Wait;
+    }
+    self.armed = true;
+    Pushed::Arm
+  }
+
+  pub fn flush(&mut self) -> Vec<HostMsg> {
+    self.armed = false;
+    std::mem::take(&mut self.pending).into_iter().map(|(_, m)| m).collect()
+  }
+
+  pub fn clear(&mut self) {
+    self.pending.clear();
+  }
 }
 
 pub struct BridgeCore {
@@ -40,7 +80,7 @@ pub struct BridgeCore {
   host: WebviewHost,
   blob_base: Option<String>,
   ready: std::sync::atomic::AtomicBool,
-  batch: parking_lot::Mutex<Batch>,
+  batch: parking_lot::Mutex<MsgBatch>,
   settings_sub: parking_lot::Mutex<Option<u64>>,
   me: Weak<BridgeCore>,
 }
@@ -256,46 +296,29 @@ impl BridgeCore {
     Ok(())
   }
 
-  /// Streaming updates are dense: within one batch window only the latest per message type survives
   fn queue(&self, m: HostMsg) {
     if !self.ready.load(std::sync::atomic::Ordering::Acquire) {
       return;
     }
-    let idle = matches!(&m, HostMsg::Session { running: false, .. });
-    let key = m.batch_key();
-    let arm = {
-      let mut b = self.batch.lock();
-      match b.pending.iter().position(|(k, _)| *k == key) {
-        Some(i) => b.pending[i].1 = m,
-        None => b.pending.push((key, m)),
+    let pushed = self.batch.lock().push(m);
+    match pushed {
+      Pushed::Flush(queued) => queued.into_iter().for_each(|m| (self.post)(m)),
+      Pushed::Arm => {
+        let weak = self.me.clone();
+        tokio::spawn(async move {
+          tokio::time::sleep(BATCH_WINDOW).await;
+          if let Some(c) = weak.upgrade() {
+            c.flush();
+          }
+        });
       }
-      let arm = !idle && !b.armed;
-      if arm {
-        b.armed = true;
-      }
-      arm
-    };
-    // An idle edge must not wait out the window
-    if idle {
-      self.flush();
-    } else if arm {
-      let weak = self.me.clone();
-      tokio::spawn(async move {
-        tokio::time::sleep(BATCH_WINDOW).await;
-        if let Some(c) = weak.upgrade() {
-          c.flush();
-        }
-      });
+      Pushed::Wait => {}
     }
   }
 
   fn flush(&self) {
-    let queued = {
-      let mut b = self.batch.lock();
-      b.armed = false;
-      std::mem::take(&mut b.pending)
-    };
-    for (_, m) in queued {
+    let queued = self.batch.lock().flush();
+    for m in queued {
       (self.post)(m);
     }
   }
@@ -309,7 +332,7 @@ impl BridgeCore {
   }
 
   pub fn dispose(&self) {
-    self.batch.lock().pending.clear();
+    self.batch.lock().clear();
     if let Some(id) = self.settings_sub.lock().take() {
       self.settings.unsubscribe(id);
     }
