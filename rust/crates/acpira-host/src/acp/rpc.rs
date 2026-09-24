@@ -214,12 +214,16 @@ impl Connection {
   }
 
   pub async fn request(&self, method: &str, params: Value) -> Result<Value, RpcError> {
-    if self.shared.closed.load(Ordering::Acquire) {
-      return Err(RpcError::connection_closed());
-    }
     let id = self.next_id.fetch_add(1, Ordering::Relaxed);
     let (tx, rx) = oneshot::channel();
-    self.shared.pending.lock().insert(id, tx);
+    {
+      // Checked under the pending lock: close() raises the flag before it drains, so a waiter is either refused here or drained there
+      let mut pending = self.shared.pending.lock();
+      if self.shared.closed.load(Ordering::Acquire) {
+        return Err(RpcError::connection_closed());
+      }
+      pending.insert(id, tx);
+    }
     let line = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }).to_string();
     if self.out.send(line).is_err() {
       self.shared.pending.lock().remove(&id);
@@ -307,5 +311,23 @@ mod tests {
     assert_eq!(b.request("nope", json!({})).await.unwrap_err().code, -32601);
     a.close();
     assert_eq!(a.request("echo", json!({})).await.unwrap_err().code, -32099);
+  }
+
+  // A request racing close() must settle: either refused up front or failed by the drain, never parked on a waiter nobody drains
+  #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+  async fn a_request_racing_close_always_settles() {
+    let log: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(|_| {});
+    let echo: Arc<dyn Fn() -> Arc<dyn Inbound> + Send + Sync> = Arc::new(|| Arc::new(Echo));
+    for _ in 0..2_000 {
+      // The peer never answers, so only close() can settle the request
+      let (r, _peer_w) = tokio::io::duplex(1 << 16);
+      let (_peer_r, w) = tokio::io::duplex(1 << 16);
+      let conn = Connection::start(r, w, echo.clone(), log.clone());
+      let closer = conn.clone();
+      let req = tokio::spawn(async move { conn.request("echo", json!({})).await });
+      tokio::spawn(async move { closer.close() });
+      let res = tokio::time::timeout(std::time::Duration::from_secs(2), req).await.expect("request settles after close").unwrap();
+      assert_eq!(res.unwrap_err().code, -32099);
+    }
   }
 }
