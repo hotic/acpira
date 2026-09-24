@@ -139,6 +139,10 @@ export class AcpSession {
   // Usage at the end of the last auto-compaction: don't compact again until it has grown back a fair bit, so a "won't shrink" case doesn't fire every turn
   private compactedAt?: number;
   private compactionCompletion?: CompactionCompletion;
+  // The AIR error failure published out of band (session_info_update) while the current prompt was on the wire. claude-agent-acp
+  // reports a sign-out this way and then rejects the prompt with a plain -32603 ("preserve legacy codes"), so the rejection alone
+  // never says auth; the failure is what the turn error and the session status must follow
+  private turnFailure?: SessionFailure;
   // The last auth-related line the CLI wrote to stderr since the session was (re)opened. -32000 carries no reason, but the CLI usually logs one right before
   // (Kimi: "provider managed:kimi-code has no credential configured"), and that is what the Notice should show instead of a generic "log in"
   private authHint?: string;
@@ -876,6 +880,7 @@ export class AcpSession {
     const compacting = isCompactCommand(text);
     const completion = new CompactionCompletion(compacting ? this.agent : undefined);
     this.compactionCompletion = completion;
+    this.turnFailure = undefined;
     this.state.turns.push(userTurn);
     if (!auto && !planId && (!this.state.title || this.state.title === t('session.untitled'))) this.state.title = summarizePrompt(text, prepared.attachments).slice(0, TITLE_MAX);
     const agentTurn: AgentTurn = { role: 'agent', blocks: [], startedAt: Date.now(), activity: activityOf(this.state.turns),
@@ -948,8 +953,12 @@ export class AcpSession {
       this.log(`prompt failed: ${msg(e)}`);
       await this.refreshGrokUsage();
       if (!livePrompt()) return;
-      this.settle('cancelled', turnErrorOf(e));
-      if (isAuth(e)) this.status = 'auth_required';
+      // A failure the adapter published during this turn explains the rejection better than the bare JSON-RPC error: the card
+      // shows its title / details and exactly its actions (the notice row is suppressed by failureId), the code stays for the copy line
+      // (set by the update handler while the request was pending; the reset at the top of this method is what TS still sees)
+      const failure = this.turnFailure as SessionFailure | undefined;
+      this.settle('cancelled', failure ? { ...failureTurnError(failure), ...(e instanceof acp.RequestError ? { code: e.code } : {}) } : turnErrorOf(e));
+      if (isAuth(e) || failure?.actions.includes('login')) this.status = 'auth_required';
       // The peer forgot the native session, or the process carrying it died: resending over this connection can only fail
       // the same way. Leave ready for the error state, whose Notice Retry does a full reconnect + resume instead of reusing a dead channel
       else if (isSessionGone(e) || !this.proc?.alive) {
@@ -1409,6 +1418,10 @@ export class AcpSession {
     // A replayed sessionFailure must not announce again: the record already carries its notice row, and
     // a session-scoped one would otherwise synthesize a second turn
     if (this.replaying && u.sessionUpdate === 'session_info_update' && failureOf(u._meta)) return;
+    if (this.phase.running && u.sessionUpdate === 'session_info_update') {
+      const failure = failureOf(u._meta);
+      if (failure?.severity === 'error') this.turnFailure = failure;
+    }
     if (!this.replaying) this.compactionCompletion?.update(u);
     // A user_message_chunk echoed by the agent mid-turn is the one we just sent; it's already in turns
     if (this.phase.running && u.sessionUpdate === 'user_message_chunk') return;

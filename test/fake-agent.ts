@@ -24,7 +24,8 @@ import * as acp from '@agentclientprotocol/sdk';
 //   rewrite (subagents/wire.ts) is what parks them in session_info_update
 // "failure-*" → AIR sessionFailure payloads (only to clients advertising the capability): =retry sends a warning rev
 //   then the turn-ending error at a higher rev on the prompt response _meta; =dup sends same/lower revision retransmits
-//   plus a different id with identical text; =login ends the turn with category access + a login action; =idle sends a
+//   plus a different id with identical text; =login ends the turn with category access + a login action; =login-reject
+//   publishes the session-scoped login failure then rejects the prompt with a plain internalError (claude-agent-acp); =idle sends a
 //   session-scoped error a tick after the turn settled (FAKE_LOAD_FAILURE re-sends one during session/load);
 // "async-*" → AIR asyncTasks: =shell is codex's backgrounded tool row + spawned/progress/completed past end_turn;
 //   =stop (=stop-nostop) spawns a stoppable (unstoppable) task the test stops through _session/async_task/stop
@@ -411,6 +412,15 @@ const app = acp.agent({ name: 'fake-agent' })
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'working…' } });
       return { stopReason: 'end_turn',
         ...(air('sessionFailure') ? failureMeta({ id: 'auth-1', revision: 1, category: 'access', severity: 'error', title: 'Sign-in expired', actions: ['login'] }) : {}) };
+    }
+
+    if (text === 'failure-login-reject') {
+      // claude-agent-acp's sign-out: the session-scoped failure rides a session_info_update, then the
+      // prompt itself is rejected with a plain internalError ("Preserve legacy codes"), never -32000
+      if (air('sessionFailure'))
+        await sendFailure({ id: `${sid}:session-error:1`, revision: 1, category: 'access', severity: 'error', title: 'Sign in to continue using Claude.',
+          details: 'Failed to authenticate: OAuth session expired and could not be refreshed', actions: ['login'] });
+      throw acp.RequestError.internalError();
     }
 
     if (text === 'failure-idle') {
