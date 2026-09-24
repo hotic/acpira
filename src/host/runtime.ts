@@ -15,16 +15,15 @@ import { setHostLocale, t } from './i18n';
 import type { HostPlatform, SettingsAffects } from './platform';
 import { SessionManager } from './SessionManager';
 import { SettingsCenter } from './settings';
-import { acpiraHome, migrateOnce } from './store/dataDir';
+import { acpiraHome } from './store/dataDir';
 import { TranscriptStore } from './store/TranscriptStore';
 
 export interface HostRuntimeOpts {
   // ACPIRA_HOME / ~/.acpira by default; tests point it at a temp directory
   home?: string;
-  chatgptBridgePath?: string;
 }
 
-// The one composition root: every host (the VS Code extension, the sidecar) builds the same registry, vault, account layer, session
+// The one composition root of the TS engine: the sidecar (which both IDE shells run) builds the registry, vault, account layer, session
 // manager and settings center from a HostPlatform here, and reacts to its settings / focus events the same way. Views attach as
 // BridgeCores and are torn down with the runtime
 export class HostRuntime {
@@ -35,7 +34,7 @@ export class HostRuntime {
   private activeRegistry: AgentRegistry;
   private unsubscribe: (() => void)[] = [];
 
-  private constructor(private platform: HostPlatform, root: string, vault: FileVault, accountStore: AccountStore, opts: HostRuntimeOpts) {
+  private constructor(private platform: HostPlatform, root: string, accountStore: AccountStore) {
     const log = (line: string) => platform.log(line);
     const registry = () => new AgentRegistry(this.read<Record<string, CustomAgentSetting>>('agents') ?? {});
     const runInTerminal = platform.runInTerminal.bind(platform);
@@ -48,7 +47,7 @@ export class HostRuntime {
     });
 
     this.sessionsDir = join(root, 'sessions');
-    const bridgePath = opts.chatgptBridgePath ?? join(typeof __dirname === 'string' ? __dirname : join(process.cwd(), 'dist'), 'chatgpt-bridge.cjs');
+    const bridgePath = join(typeof __dirname === 'string' ? __dirname : join(process.cwd(), 'dist'), 'chatgpt-bridge.cjs');
     this.manager = new SessionManager({
       registry: this.activeRegistry,
       chatgpt: new ChatGptBridgeStore(join(root, 'bridges', 'chatgpt'), log, Date.now, existsSync(bridgePath) ? bridgePath : undefined),
@@ -91,13 +90,12 @@ export class HostRuntime {
 
   static async create(platform: HostPlatform, opts: HostRuntimeOpts = {}): Promise<HostRuntime> {
     const log = (line: string) => platform.log(line);
-    // ~/.acpira (ACPIRA_HOME) holds accounts.json, secrets.json, sessions/, scratch/; a platform with a legacy tree has it copied once
+    // ~/.acpira (ACPIRA_HOME) holds accounts.json, secrets.json, sessions/, scratch/ (a shell with a legacy tree merges it before starting the sidecar)
     const root = opts.home ?? acpiraHome();
     const vault = new FileVault(join(root, 'secrets.json'), log);
-    if (platform.legacy) await migrateOnce({ from: platform.legacy.from, to: root, oldVault: platform.legacy.vault, newVault: vault, log });
     const accountStore = new AccountStore(join(root, 'accounts.json'), vault, log);
     await accountStore.load();
-    const runtime = new HostRuntime(platform, root, vault, accountStore, opts);
+    const runtime = new HostRuntime(platform, root, accountStore);
     await runtime.manager.init();
     setHostLocale(runtime.settings.locale());
     return runtime;
