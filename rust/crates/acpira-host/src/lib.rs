@@ -6,6 +6,7 @@
 pub mod accounts;
 pub mod acp;
 pub mod agent_ext;
+pub mod agents_cli;
 pub mod bridge_core;
 pub mod external;
 pub mod file_rank;
