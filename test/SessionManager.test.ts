@@ -466,6 +466,47 @@ describe('SessionManager', () => {
     await m3.dispose();
   }, 40_000);
 
+  // The history editor switches models locally; what each model really offers (Devin: SWE-2 drops `speed`) is learned from live
+  // switches, carried on the view and kept in prefs.json for the next host
+  it('learns each model\'s parameters from live switches and carries them on the view', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acpira-mgr-'));
+    const make = () => new SessionManager({
+      registry: new AgentRegistry({ fake: { name: 'Fake', command: TSX, args: [FAKE], env: { FAKE_SPEED: '1', FAKE_MODELS: 'x3' } } }), store: new TranscriptStore(dir),
+      log: () => {}, cwd: () => '/tmp', defaultAgent: () => 'fake', runInTerminal: () => {}, toast: () => {},
+    });
+    const ids = (shape?: ConfigControl[]) => shape?.map(c => `${c.id}:${c.options.map(o => o.id).join('|')}`);
+    const m = make();
+    try {
+      await m.init();
+      await m.newSession();
+      expect(ids(m.active()!.modelShapes?.m1)).toEqual(['effort:low|high', 'speed:standard|fast']);
+      const before = m.active()!.modelShapes;
+      await m.handle({ type: 'setConfig', configId: 'effort', value: 'low' });
+      // A value change is not a new shape
+      expect(m.active()!.modelShapes).toBe(before);
+      await m.handle({ type: 'setConfig', configId: 'model', value: 'm2' });
+      expect(ids(m.active()!.modelShapes?.m2)).toEqual(['effort:high']);
+      // prefs writes are fire-and-forget
+      await vi.waitFor(async () => expect(Object.keys((await new TranscriptStore(dir).loadPrefs()).modelShapes?.fake ?? {}).sort()).toEqual(['m1', 'm2']));
+    } finally { await m.dispose(); }
+    const next = make();
+    const other = make();
+    try {
+      await next.init();
+      await next.newSession();
+      expect(Object.keys(next.active()!.modelShapes ?? {}).sort()).toEqual(['m1', 'm2']);
+      // Another window that was already running picks up a shape learned here on focus / webview ready, with a newer rev
+      await other.init();
+      await other.newSession();
+      const rev = other.active()!.rev!;
+      await next.handle({ type: 'setConfig', configId: 'model', value: 'x3' });
+      await vi.waitFor(async () => expect(Object.keys((await new TranscriptStore(dir).loadPrefs()).modelShapes?.fake ?? {})).toContain('x3'));
+      await other.refreshIndex();
+      expect(ids(other.active()!.modelShapes?.x3)).toEqual(['effort:high']);
+      expect(other.active()!.rev).toBeGreaterThan(rev);
+    } finally { await next.dispose(); await other.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  }, 40_000);
+
   // Two viewers landing on the same stored session at once used to build one AcpSession each: two processes, the second
   // shadowing the first in the live map. The shared load hands both the same session
   it('concurrent selects of the same stored session share one load — a single process is spawned', async () => {

@@ -2,6 +2,7 @@
 
 import type { MsgKey } from './i18n/keys';
 import type { SubagentSummary } from './subagents';
+import type { ModelShapes } from './modelShapes';
 
 // Built-in devin / grok; custom ids can be added in acpira.agents
 export type AgentId = string;
@@ -518,6 +519,8 @@ export interface SessionView {
   // lower or equal rev. Not persisted.
   rev?: number;
   controls: SessionControls;
+  // The agent's remembered per-model parameters (shared/modelShapes.ts), for the history editor's local model switch
+  modelShapes?: ModelShapes;
   usage?: Usage;
   commands: SlashCommand[];
   // Prompts sent while a turn was in progress, in send order; the first goes out when the turn ends

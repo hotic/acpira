@@ -1767,6 +1767,45 @@ describe('historical message editing', () => {
     } finally { s.dispose(); }
   });
 
+  // The editor's picker switches models locally, so its settings still carry the previous model's Fast and effort
+  // (Devin: GPT-6 Luna Fast → SWE-2, which has no `speed` control and no low effort); the edit must still send
+  it('lets the agent settle dependent controls the newly chosen model no longer offers', async () => {
+    const { session } = deps('/tmp', undefined, undefined, { env: { FAKE_SPEED: '1' } });
+    const s = session();
+    try {
+      await s.start();
+      await s.setConfig('speed', 'fast');
+      await s.setConfig('effort', 'low');
+      await s.prompt('earlier-context');
+      await s.prompt('original');
+      const edit = historyEdit(s, 2);
+      expect(edit.settings.config).toMatchObject({ model: 'm1', speed: 'fast', effort: 'low' });
+      edit.settings.config.model = 'm2';
+      await s.editTurn(edit);
+      await until(() => !s.isRunning);
+      const controls = s.view().controls.options;
+      expect(controls.find(c => c.id === 'model')?.value).toBe('m2');
+      expect(controls.find(c => c.id === 'speed')).toBeUndefined();
+      expect(controls.find(c => c.id === 'effort')?.value).toBe('high');
+      expect(s.view().turns[2]).toMatchObject({ text: 'inspect-history', edited: true, settings: { config: { model: 'm2', effort: 'high' } } });
+      expect(JSON.stringify(s.view().turns[3])).toContain('m2');
+    } finally { s.dispose(); }
+  });
+
+  it('still refuses a model the agent no longer offers', async () => {
+    const { session } = deps();
+    const s = session();
+    try {
+      await s.start();
+      await s.prompt('earlier-context');
+      await s.prompt('original');
+      const edit = historyEdit(s, 2);
+      edit.settings.config.model = 'gone';
+      await expect(s.editTurn(edit)).rejects.toThrow(/model/);
+      expect(s.view().turns).toHaveLength(4);
+    } finally { s.dispose(); }
+  });
+
   it('ignores the rebuilt peer\'s title update so a renamed session keeps its title', async () => {
     const { session } = deps();
     const s = session();
@@ -2128,7 +2167,8 @@ describe('historical message editing', () => {
 
   it.each([false, true])('retains native usage reported while applying editor settings (later selection rejected: %s)', async rejected => {
     const { session, d } = deps();
-    d.registry.get('fake').env = { FAKE_CONFIG_USAGE: '1' };
+    // The rejected effort is offered and refused on the wire; an effort the model does not offer would just yield
+    d.registry.get('fake').env = { FAKE_CONFIG_USAGE: '1', FAKE_EFFORTS: 'unavailable' };
     const s = session();
     try {
       await s.start();

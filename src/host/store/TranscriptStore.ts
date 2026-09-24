@@ -1,15 +1,18 @@
 import { access, mkdir, readFile, readdir, realpath, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 import type { AgentId, SessionSummary, TurnSettings } from '@shared/transcript';
+import type { ModelShapes } from '@shared/modelShapes';
 import type { SessionRecord } from '../acp/AcpSession';
 import { blobName, type BlobStore } from '../acp/attachments';
 import { msg } from '../errors';
 import { t } from '../i18n';
 import { withFileLock, writeAtomic } from './fileLock';
 
-// Cross-session memory that is not a setting: the mode / config values last chosen per agent, replayed onto new sessions
+// Cross-session memory that is not a setting: the mode / config values last chosen per agent, replayed onto new sessions,
+// and the parameters each model came with (shared/modelShapes.ts), for the history editor's local model switch
 export interface SessionPrefs {
   lastSettings: Record<AgentId, TurnSettings>;
+  modelShapes?: Record<AgentId, ModelShapes>;
 }
 
 const META_FILES = new Set(['index.json', 'prefs.json']);
@@ -82,8 +85,12 @@ export class TranscriptStore implements BlobStore {
     return withFileLock(file, async () => {
       const disk = await this.loadPrefs();
       for (const agent of agents) {
+        // A window with no remembered settings for the agent (it only learned a model shape) leaves another window's entry alone
         const v = prefs.lastSettings[agent];
-        if (v) disk.lastSettings[agent] = v; else delete disk.lastSettings[agent];
+        if (v) disk.lastSettings[agent] = v;
+        // Shapes merge per model: every window learns only the models it has seen
+        const shapes = prefs.modelShapes?.[agent];
+        if (shapes) disk.modelShapes = { ...disk.modelShapes, [agent]: { ...disk.modelShapes?.[agent], ...shapes } };
       }
       await writeAtomic(file, JSON.stringify(disk, null, 2));
       return disk;

@@ -49,6 +49,9 @@ import * as acp from '@agentclientprotocol/sdk';
 // text is re-sent as one agent_message_chunk a tick later; =early instead sends it before session/new returns;
 // FAKE_MODELS → comma-separated extra model options appended to the model configOption (read at spawn, so a second spawn sees new values);
 // FAKE_BOOL → offer a `type: 'boolean'` model_config option, but only to clients advertising clientCapabilities.session.configOptions.boolean;
+// FAKE_EFFORTS → comma-separated extra effort options (`unavailable` is offered yet refused on set, like every `unavailable` value);
+// FAKE_SPEED → Devin-shaped per-model controls (3000.11.3): m1 offers a `speed` Standard / Fast select and every effort, while any
+// other model drops `speed` entirely and narrows effort to `high` (SWE-2 has no speed control and only medium / high / max);
 // FAKE_CONFIG_LOG → append the raw session/set_config_option payload (configId / type / value) to that file;
 // FAKE_CONFIG_DELAY_MS → setConfigOption and setMode wait that long before answering (rejections too), so tests can watch in-flight picks;
 // FAKE_SESSION_DIR → a native session store on disk: sessions persist as <id>.json, resume/load restore them (load replays a
@@ -272,6 +275,7 @@ const app = acp.agent({ name: 'fake-agent' })
     config[params.configId] = String(params.value);
     // Devin's compound Fusion model switch resets its independent reasoning option.
     if (process.env.FAKE_MODEL_RESETS_EFFORT && params.configId === 'model') config.effort = 'high';
+    if (process.env.FAKE_SPEED && config.model !== 'm1') config.effort = 'high';
     saveSession(params.sessionId);
     if (process.env.FAKE_CONFIG_USAGE) await client.notify(acp.methods.client.session.update, { sessionId: params.sessionId,
       update: { sessionUpdate: 'usage_update', used: 24_000, size: 200_000 } });
@@ -1083,8 +1087,15 @@ const config: Record<string, string> = { model: 'm1', effort: 'high' };
 // FAKE_CONFIG_DELAY_MS: make control requests as slow as a real agent so in-flight state is observable
 const configDelay = () => new Promise(r => setTimeout(r, Number(process.env.FAKE_CONFIG_DELAY_MS) || 0));
 function configOptions(): acp.SessionConfigOption[] {
+  const speed = process.env.FAKE_SPEED;
+  const narrow = speed && config.model !== 'm1';
   return [
-    { id: 'effort', name: 'Reasoning', category: 'thought_level', type: 'select', currentValue: config.effort!, options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }] },
+    { id: 'effort', name: 'Reasoning', category: 'thought_level', type: 'select', currentValue: config.effort!, options: [
+      ...(narrow ? [] : [{ value: 'low', name: 'Low' }]), { value: 'high', name: 'High' },
+      ...(process.env.FAKE_EFFORTS ?? '').split(',').map(s => s.trim()).filter(Boolean).map(value => ({ value, name: value })),
+    ] },
+    ...(speed && !narrow ? [{ id: 'speed', name: 'Speed', category: 'model_config' as const, type: 'select' as const, currentValue: config.speed ?? 'standard',
+      options: [{ value: 'standard', name: 'Standard' }, { value: 'fast', name: 'Fast' }] }] : []),
     { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: config.model!, options: [
       { value: 'm1', name: 'Model 1' }, { value: 'm2', name: 'Model 2' },
       // A "config file" the test edits between spawns: each listed value shows up as a model option

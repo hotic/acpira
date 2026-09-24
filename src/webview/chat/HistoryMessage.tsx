@@ -2,7 +2,8 @@ import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffec
 import { flushSync } from 'react-dom';
 import type { EditTurnRequest } from '@shared/protocol';
 import type { Draft, SlashCommand, UserTurn } from '@shared/transcript';
-import { captureTurnSettings, controlsForTurn } from '@shared/turnSettings';
+import { captureTurnSettings, editTurnConfig, openTurnControls } from '@shared/turnSettings';
+import type { ModelShapes } from '@shared/modelShapes';
 import { useAppearance } from '../appearance';
 import { Composer, type ComposerProps } from './Composer';
 import { EditAttachments } from './Attachments';
@@ -18,6 +19,8 @@ interface HistoryContextValue {
   editing?: number;
   select: (index?: number) => void;
   editable: boolean;
+  // Remembered per-model parameters (shared/modelShapes.ts); changes only when the agent reveals a new model's shape
+  shapes?: ModelShapes;
 }
 
 export const HistoryContext = createContext<HistoryContextValue | undefined>(undefined);
@@ -124,7 +127,7 @@ function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
 }) {
   // Provided together with HistoryContext by the shell; the editor is the only reader
   const composer = useContext(HistoryComposerContext)!;
-  const [controls, setControls] = useState(() => controlsForTurn(composer.controls, turn.settings));
+  const [controls, setControls] = useState(() => openTurnControls(composer.controls, turn.settings, c.shapes));
   const [retained, setRetained] = useState(() => (turn.attachments ?? []).map((_, i) => i));
   const [turnCount] = useState(composer.turns.length);
   const [error, setError] = useState<string>();
@@ -154,7 +157,7 @@ function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
       controls={controls} usage={undefined} draftKey={undefined}
       onNotice={setError}
       onSetMode={modeId => setControls(c => ({ ...c, modeId }))}
-      onSetConfig={(id, value) => setControls(c => ({ ...c, options: c.options.map(o => o.id === id ? { ...o, value } : o) }))}
+      onSetConfig={(id, value) => setControls(cur => editTurnConfig(cur, composer.controls, id, value, c.shapes))}
       edit={{ text: turn.text, hasAttachments: retained.length > 0, onCancel: onClose, dismissOnOutside: true,
         attachments: <EditAttachments attachments={turn.attachments ?? []} retained={retained} blobUrl={blobUrl} disabled={pending} onRemove={i => setRetained(r => r.filter(n => n !== i))} />,
       }}
