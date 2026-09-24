@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The host (sessions, agent processes, accounts, settings) runs as a native sidecar process written in Rust in VS Code, Cursor and IntelliJ alike; the extension and the plugin are thin shells around it over the same envelope protocol. On the measured harness the host starts in about 5 ms instead of 58 ms and idles at about 7 MB instead of 71 MB. Sessions, accounts and settings in `~/.acpira` are unchanged and remain readable by earlier versions.
 - VS Code / Cursor installs a platform package (macOS, Linux, Alpine and Windows on x64 and arm64) that carries the sidecar binary. There is no universal package any more: other platforms, such as 32-bit ARM Linux, can no longer install the extension.
 - The ChatGPT bridge CLI in the copied connection instructions is `acpira bridge` from the packaged binary; Node.js is no longer required on the machine.
-- The IntelliJ packages carry the six sidecar binaries instead of six Node.js runtimes. Node from the shell PATH is only used when forced with `ACPIRA_ENGINE=node`.
+- The IntelliJ packages carry the six sidecar binaries instead of six Node.js runtimes; Node.js is no longer used at all.
 
 ### Planned
 

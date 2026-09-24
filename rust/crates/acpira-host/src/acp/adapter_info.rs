@@ -1,4 +1,4 @@
-//! Version diagnostics for npm-packaged ACP adapters (mirror of src/host/acp/adapterInfo.ts): read off package.json
+//! Version diagnostics for npm-packaged ACP adapters: read off package.json
 //! files, the CLIs are never invoked, nothing throws
 
 use std::path::{Path, PathBuf};

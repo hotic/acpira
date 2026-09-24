@@ -1,4 +1,4 @@
-//! Devin accounts (mirror of src/host/accounts/devin.ts): the CLI login is a PKCE exchange for a long-lived API key in
+//! Devin accounts: the CLI login is a PKCE exchange for a long-lived API key in
 //! $XDG_DATA_HOME/devin/credentials.toml; ACP mode ignores that file, so the key is handed over in authenticate's
 //! `_meta.api_key`. Quota comes from the Windsurf seat-management service (a Connect RPC answering JSON)
 

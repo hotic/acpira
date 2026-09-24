@@ -1,4 +1,4 @@
-//! ACP session/update → transcript blocks (mirror of src/host/acp/normalize.ts): pure functions over a mutable state.
+//! ACP session/update → transcript blocks: pure functions over a mutable state.
 //!
 //! Two TS idioms are explicit here. An open user turn during replay (`_open` on the object) is `NormalizeState::open_user`.
 //! An AIR async task's info object is shared between the task map and the tool row hosting it; `TaskBook::linked`

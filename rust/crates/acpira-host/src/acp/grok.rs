@@ -1,4 +1,4 @@
-//! Grok's private requests (mirror of src/host/acp/grokPlan.ts and grokQuestions.ts), verified on the wire with Grok 1.0.18
+//! Grok's private requests, verified on the wire with Grok 1.0.18
 
 use std::sync::Arc;
 

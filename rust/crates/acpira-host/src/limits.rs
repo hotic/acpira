@@ -1,4 +1,4 @@
-//! Size caps (mirror of src/host/limits.ts)
+//! Size caps
 
 pub const TITLE_MAX: usize = 40;
 pub const RENAME_MAX: usize = 80;

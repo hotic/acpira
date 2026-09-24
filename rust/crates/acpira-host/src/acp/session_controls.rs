@@ -1,4 +1,4 @@
-//! Modes and config options of a session (mirror of the controls half of src/host/acp/AcpSession.ts): wire requests,
+//! Modes and config options of a session: wire requests,
 //! the optimistic pick overlay, effort preservation across model switches, and replaying remembered choices
 
 use std::sync::Arc;

@@ -1,4 +1,4 @@
-//! The ChatGPT bridge CLI (mirror of src/host/external/chatgptCli.ts), served as `acpira bridge <action>`: a local event
+//! The ChatGPT bridge CLI, served as `acpira bridge <action>`: a local event
 //! mirror that never calls a model
 
 use std::collections::HashMap;

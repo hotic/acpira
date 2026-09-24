@@ -1,4 +1,4 @@
-//! Desktop Commander presence (mirror of src/host/external/desktopCommanderStatus.ts): executable / process presence and
+//! Desktop Commander presence: executable / process presence and
 //! config metadata only; pairing tokens, cookies and process arguments never reach a response
 
 use acpira_shared::chatgpt_integration::DesktopCommanderStatus;

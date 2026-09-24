@@ -1,4 +1,4 @@
-//! First-class subagent nodes for one session (mirror of src/host/acp/subagents/SubagentTree.ts): per-dialect
+//! First-class subagent nodes for one session: per-dialect
 //! normalization (RFD / claude native sessions, Devin's nested cognition.ai updates, Claude legacy Agent, Kimi's
 //! receipt), lifecycle, early-update buffering and record round trips. All mutations are synchronous. Nodes are found
 //! through peer-id → node-id maps; the root transcript is reached through `RouteCtx`

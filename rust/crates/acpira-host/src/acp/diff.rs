@@ -1,4 +1,4 @@
-//! Line-level diff (mirror of src/host/acp/diff.ts): LCS over the common lines; beyond 800 combined lines only a head is shown
+//! Line-level diff: LCS over the common lines; beyond 800 combined lines only a head is shown
 
 use acpira_shared::transcript::{DiffKind, DiffLine};
 

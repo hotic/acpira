@@ -1,4 +1,4 @@
-//! Structured questions (mirror of the pure part of src/host/acp/questions.ts): elicitation forms and Grok's question
+//! Structured questions: elicitation forms and Grok's question
 //! request become one QuestionBlock; answers go back typed the way the schema declared them. The pending-card
 //! bookkeeping lives in the session, under its lock
 

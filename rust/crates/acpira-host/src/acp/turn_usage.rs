@@ -1,4 +1,4 @@
-//! Per-prompt token accounting off the session/prompt response (mirror of src/host/acp/turnUsage.ts)
+//! Per-prompt token accounting off the session/prompt response
 
 use serde_json::Value;
 

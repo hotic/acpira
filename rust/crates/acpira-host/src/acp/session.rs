@@ -1,4 +1,4 @@
-//! One session = one agent subprocess + one transcript (mirror of src/host/acp/AcpSession.ts). State machine:
+//! One session = one agent subprocess + one transcript. State machine:
 //! start → (resume | load | new) → ready ⇄ prompt / cancel; failed login → auth_required; unresumable → readonly;
 //! dead process → error.
 //!

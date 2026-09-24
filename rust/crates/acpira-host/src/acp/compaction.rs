@@ -1,4 +1,4 @@
-//! Compaction completion latch (mirror of src/host/acp/compaction.ts). Devin and Kimi run /compact in the background and
+//! Compaction completion latch. Devin and Kimi run /compact in the background and
 //! report the result as prose; other peers use the RPC lifetime plus structured compaction_update events
 
 use std::collections::HashSet;

@@ -1,4 +1,4 @@
-//! Plan snapshot dedup (mirror of src/host/acp/planSnapshots.ts)
+//! Plan snapshot dedup
 
 use acpira_shared::todo_tools::is_todo_tool;
 use acpira_shared::transcript::{AgentBlock, PlanBlock, PlanEntry, PlanStatus, Turn};

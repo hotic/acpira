@@ -1,5 +1,4 @@
-//! Permission and question cards of a session (mirror of src/host/acp/permissions.ts and the gate half of
-//! questions.ts). A request lands a card in the owning transcript (root or a child's), the answer travels back through
+//! Permission and question cards of a session. A request lands a card in the owning transcript (root or a child's), the answer travels back through
 //! a oneshot; the agent withdrawing its request (the connection's cancel signal) closes the card
 
 use std::sync::Arc;

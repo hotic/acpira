@@ -1,4 +1,4 @@
-//! The persisted session record (mirror of `SessionRecord` in src/host/acp/AcpSession.ts): view fields plus what resuming needs
+//! The persisted session record: view fields plus what resuming needs
 
 use serde::{Deserialize, Serialize};
 

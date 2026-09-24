@@ -1,4 +1,4 @@
-//! What one agent's account adaptation provides (mirror of src/host/accounts/types.ts)
+//! What one agent's account adaptation provides
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

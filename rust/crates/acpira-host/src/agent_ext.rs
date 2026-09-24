@@ -1,4 +1,4 @@
-//! Where each CLI keeps its extension points (mirror of src/host/agentExt.ts). Path templates: `~/` = home,
+//! Where each CLI keeps its extension points. Path templates: `~/` = home,
 //! `$CONFIG/` = XDG config home (%APPDATA% on Windows), anything else is relative to the workspace root
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

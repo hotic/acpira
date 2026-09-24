@@ -1,4 +1,4 @@
-//! Agent definitions and executable discovery (mirror of src/host/acp/AgentRegistry.ts)
+//! Agent definitions and executable discovery
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -96,7 +96,7 @@ fn mode(id: &str, name: &str, description: &str) -> SessionOption {
   SessionOption { id: s(id), name: s(name), description: Some(s(description)), ..Default::default() }
 }
 
-/// The built-in agents, verified on real machines (see the TS registry for the per-version notes)
+/// The built-in agents, verified on real machines (per-version notes in docs/dev/agent-quirks.md)
 pub fn builtin_agents() -> Vec<AgentDef> {
   vec![
     AgentDef {

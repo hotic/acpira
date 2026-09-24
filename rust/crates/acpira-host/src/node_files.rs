@@ -1,4 +1,4 @@
-//! The @ mention index for a shell without searchFiles (mirror of src/host/nodeFiles.ts): a capped breadth-first walk
+//! The @ mention index for a shell without searchFiles: a capped breadth-first walk
 //! of the workspace folder, cached briefly
 
 use std::collections::VecDeque;

@@ -1,6 +1,6 @@
-//! Extension session updates (mirror of src/host/acp/subagents/wire.ts). The TS host parks these kinds inside
-//! `session_info_update` so the SDK's closed union does not drop them; this host has no closed union, so the raw kind is
-//! read directly. The parked form is still understood (recorded fixtures carry it)
+//! Extension session updates. Hosts built on the TS SDK park these kinds inside `session_info_update` so its closed union
+//! does not drop them; this host has no closed union, so the raw kind is read directly. The parked form is still understood
+//! (recorded fixtures carry it)
 
 use serde_json::Value;
 

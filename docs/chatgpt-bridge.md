@@ -72,6 +72,6 @@ Deleting a mirror stops accepting events for that ID. Undo is available for 30 s
 
 ## Verification
 
-`test/chatgptBridge.test.ts` covers lifecycle, identity, isolation, concurrency, replay, stale-state honesty, output limits, diff receipts, deletion and malformed inputs. `test/chatgptCli.test.ts` runs real child processes, checks streaming before completion, nonzero exit codes, guarded edits and path confinement. `test/hostRuntime.test.ts` verifies live view delivery and that selecting ChatGPT never spawns an ACP process.
+`tests/engine/chatgpt.rs` covers lifecycle, identity, isolation, concurrency, replay, stale-state honesty, output limits, diff receipts, deletion and malformed inputs. `test/chatgptCli.test.ts` runs real child processes, checks streaming before completion, nonzero exit codes, guarded edits and path confinement. `test/sidecarRuntime.test.ts` verifies live view delivery and that selecting ChatGPT never spawns an ACP process.
 
-`test/chatgptContinuation.test.ts` covers transactional continuation, late receipts, source cancellation versus local command lifetime, idempotent prompt delivery and explicit unknown transport states. Early events missed before successful binding are not backfilled. Automatic transcript capture, source cancellation events, image ingestion and cloud pairing verification remain unsupported.
+`tests/engine/chatgpt.rs` covers transactional continuation, late receipts, source cancellation versus local command lifetime, idempotent prompt delivery and explicit unknown transport states. Early events missed before successful binding are not backfilled. Automatic transcript capture, source cancellation events, image ingestion and cloud pairing verification remain unsupported.
