@@ -26,22 +26,22 @@ There are intentionally no send, model-switch or stop controls for these session
 
 ## Local CLI
 
-The VSIX includes `dist/chatgpt-bridge.cjs`; Node.js 22 or later must be available on the executing machine. The copied instructions contain the installed path and the correct profile directory. The CLI has no network listener and requires no model API key.
+The CLI is the `bridge` subcommand of the sidecar binary every package carries (`bin/acpira` in the VSIX, `sidecar/bin/<os>-<arch>/acpira` in the IntelliJ plugin); no Node.js is needed. The copied instructions contain the installed path and the correct profile directory (`--home`). The CLI has no network listener and requires no model API key. A repository build also produces the TypeScript equivalent, `node dist/chatgpt-bridge.cjs`, with the same commands.
 
 ```sh
-node /path/to/extension/dist/chatgpt-bridge.cjs --help
-node /path/to/extension/dist/chatgpt-bridge.cjs open \
+/path/to/extension/bin/acpira bridge --help
+/path/to/extension/bin/acpira bridge open \
   --key explicit-source-key --cwd /absolute/project --title 'ChatGPT task'
 ```
 
 `open` returns the `sessionId`. Commands take `--session ID`, and events inside a turn additionally take `--turn TURN_ID`:
 
 ```sh
-node /path/to/bridge.cjs prompt --session ID --turn TURN_ID --text 'Actual user message'
-node /path/to/bridge.cjs exec --session ID --turn TURN_ID --command 'git status --short'
-node /path/to/bridge.cjs message --session ID --turn TURN_ID \
+/path/to/acpira bridge prompt --session ID --turn TURN_ID --text 'Actual user message'
+/path/to/acpira bridge exec --session ID --turn TURN_ID --command 'git status --short'
+/path/to/acpira bridge message --session ID --turn TURN_ID \
   --message MESSAGE_ID --phase final --text 'Actual visible reply'
-node /path/to/bridge.cjs finish --session ID --turn TURN_ID
+/path/to/acpira bridge finish --session ID --turn TURN_ID
 ```
 
 Use `--text -` or `--command -` to read stdin rather than interpolate text into a shell command. `write` always takes new text on stdin. `show --session ID` prints the normalized view. `emit --session ID` takes one JSON event on stdin, with a unique `id`, `turnId`, and the payload defined in `src/host/external/chatgptEvents.ts`.
