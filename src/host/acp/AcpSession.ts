@@ -1370,7 +1370,10 @@ export class AcpSession {
     }
   }
 
-  dispose() {
+  // Resolves once the agent process has closed its session and exited; `process` read beforehand is the handle for a hard kill
+  get process(): AgentProcess | undefined { return this.proc; }
+
+  dispose(): Promise<void> {
     this.clearGrokUsageTimer();
     this.perms.bumpEpoch();
     this.status = 'closed';
@@ -1379,7 +1382,7 @@ export class AcpSession {
     if (this.phase.running) this.settle('cancelled');
     this.perms.cancelAll();
     this.questions.cancelAll();
-    this.dropProcess();
+    return this.dropProcess() ?? Promise.resolve();
   }
 
   private onUpdate(n: acp.SessionNotification) {

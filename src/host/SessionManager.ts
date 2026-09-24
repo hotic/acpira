@@ -15,6 +15,7 @@ import { learnShape } from '@shared/modelShapes';
 import { exportFileName, exportMarkdown } from '@shared/exportTranscript';
 import { AgentRegistry } from './acp/AgentRegistry';
 import { AgentPool } from './acp/AgentPool';
+import type { AgentProcess } from './acp/AgentProcess';
 import { AcpSession, type CompactionPolicy, type SessionRecord } from './acp/AcpSession';
 import { probeAgentControls, ProbeFailure, type ProbeResult } from './acp/probeControls';
 import { listNativeSessions } from './acp/nativeSessions';
@@ -62,6 +63,8 @@ export type ManagerEvent =
 const TRASH_TTL = 30_000;
 // While some agent has no executable, look again this often (a handful of stat calls) so a CLI installed in a terminal lights up without a reload
 const PROBE_INTERVAL = 10_000;
+// How long shutdown waits for agent processes to close and exit; shells escalate to SIGTERM after 3 s, so this stays below it
+const DISPOSE_GRACE_MS = 2_500;
 // Streamed updates change the in-memory list every few milliseconds; the disk index (a readdir + merge) follows at this pace,
 // capped so a continuous stream still reconciles
 const INDEX_DEBOUNCE = 400;
@@ -1061,12 +1064,28 @@ export class SessionManager {
     this.probeTimer = undefined;
     this.unwatchRegistry?.();
     this.unwatchRegistry = undefined;
+    // Agent processes are ended before the host returns (the sidecar exits right after): each session closes and kills its process,
+    // the pool kills its idle ones, all at once; whatever has not exited within DISPOSE_GRACE_MS is SIGKILLed so nothing outlives the host
+    const procs: AgentProcess[] = [];
+    const exits: Promise<void>[] = [];
     for (const s of this.live.values()) {
-      s.dispose();
+      if (s.process) procs.push(s.process);
+      exits.push(s.dispose());
       await this.deps.store.flush(s.toRecord());
     }
     this.live.clear();
-    this.pool.dispose();
+    const pooled = this.pool.dispose();
+    exits.push(pooled.done);
+    let timer: NodeJS.Timeout | undefined;
+    const settled = await Promise.race([
+      Promise.all(exits).then(() => true),
+      new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), DISPOSE_GRACE_MS); }),
+    ]);
+    clearTimeout(timer);
+    if (!settled) {
+      this.deps.log('agent processes still running at shutdown; killing them');
+      for (const p of [...procs, ...pooled.procs]) p.killHard();
+    }
     // Trashed entries are cleaned up when their time comes
     for (const [id, t] of this.trash) { clearTimeout(t.timer); await this.deps.store.remove(id); }
     this.trash.clear();

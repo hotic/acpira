@@ -82,7 +82,20 @@ export class AgentPool {
     for (const p of pending) void p.then(proc => proc.kill()).catch(() => {});
   }
 
-  dispose() { this.invalidate(); }
+  // Every pooled process, ended before the host exits: SIGTERM now, `done` once they are gone (a warming one is killed as soon as its
+  // spawn settles). `procs` gains each process as soon as it exists, for a hard kill if waiting runs out
+  dispose(): { procs: AgentProcess[]; done: Promise<void> } {
+    const procs: AgentProcess[] = [];
+    const pending = [...this.inflight];
+    for (const slot of this.slots.values()) {
+      if (slot.state === 'ready') { clearTimeout(slot.timer); procs.push(slot.proc); }
+      else if (!pending.includes(slot.promise)) pending.push(slot.promise);
+    }
+    this.slots.clear();
+    this.inflight.clear();
+    const done = Promise.all([...procs.map(p => p.kill()), ...pending.map(p => p.then(proc => { procs.push(proc); return proc.kill(); }, () => {}))]).then(() => {});
+    return { procs, done };
+  }
 
   private async spawnWarm(agent: AgentId, cwd: string, accountId: string | undefined, key: string, slot: Warming): Promise<AgentProcess> {
     try {
