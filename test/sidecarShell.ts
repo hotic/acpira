@@ -2,16 +2,13 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import type { HostMsg, WebviewMsg } from '../src/shared/protocol';
+import { sidecarBin } from '../scripts/lib/sidecarBin';
 import { SIDECAR_PROTOCOL_VERSION, type PlatformMethod, type PlatformRequest, type ShellMsg, type SidecarMsg } from '../src/shared/sidecar';
 
 export const FAKE = fileURLToPath(new URL('./fake-agent.ts', import.meta.url));
 export const TSX = fileURLToPath(new URL('../node_modules/.bin/tsx', import.meta.url));
-export const SERVER = fileURLToPath(new URL('../src/host/server.ts', import.meta.url));
-// ACPIRA_ENGINE=rust runs the same contract against the Rust sidecar (ACPIRA_RUST_BIN overrides the debug build path)
-export const RUST_BIN = process.env.ACPIRA_ENGINE === 'rust'
-  ? process.env.ACPIRA_RUST_BIN || fileURLToPath(new URL('../rust/target/debug/acpira', import.meta.url))
-  : undefined;
-export const TSCONFIG = fileURLToPath(new URL('../tsconfig.host.json', import.meta.url));
+// The Rust sidecar under test: ACPIRA_SIDECAR_BIN, or the workspace debug build test/globalSetup.ts brings up to date
+export const SIDECAR = sidecarBin();
 
 type Hello = Extract<ShellMsg, { type: 'hello' }>;
 
@@ -26,18 +23,18 @@ export class Shell {
   private waiters: { pred: (m: SidecarMsg) => boolean; resolve: (m: SidecarMsg) => void }[] = [];
   // How this shell answers RPCs; a method not listed here is left unanswered
   answers: Partial<Record<PlatformMethod, (r: PlatformRequest) => unknown>> = {};
+  private listeners: ((m: SidecarMsg) => void)[] = [];
 
-  // engine: which sidecar to spawn; the default follows ACPIRA_ENGINE
-  constructor(readonly home: string, readonly cwd: string, engine: 'ts' | 'rust' = RUST_BIN ? 'rust' : 'ts') {
-    this.proc = engine === 'rust' && RUST_BIN
-      ? spawn(RUST_BIN, ['--home', home], { stdio: 'pipe', env: { ...process.env, ACPIRA_HOME: '' } })
-      : spawn(TSX, ['--tsconfig', TSCONFIG, SERVER, '--home', home], { stdio: 'pipe', env: { ...process.env, ACPIRA_HOME: '' } });
+  // bin: another sidecar binary than the one under test
+  constructor(readonly home: string, readonly cwd: string, bin = SIDECAR) {
+    this.proc = spawn(bin, ['--home', home], { stdio: 'pipe', env: { ...process.env, ACPIRA_HOME: '' } });
     createInterface({ input: this.proc.stdout }).on('line', line => {
       this.stdoutLines.push(line);
       let m: SidecarMsg;
       try { m = JSON.parse(line) as SidecarMsg; } catch { return; }
       this.out.push(m);
       if (m.type === 'platformRequest') this.onRequest(m);
+      for (const l of this.listeners) l(m);
       for (const w of this.waiters.splice(0)) { if (w.pred(m)) w.resolve(m); else this.waiters.push(w); }
     });
     createInterface({ input: this.proc.stderr }).on('line', line => this.stderr.push(line));
@@ -51,6 +48,8 @@ export class Shell {
     try { this.send({ type: 'platformResponse', requestId: m.requestId, result: answer(m.request) }); }
     catch (e) { this.send({ type: 'platformResponse', requestId: m.requestId, error: String(e) }); }
   }
+
+  onMessage(listener: (m: SidecarMsg) => void) { this.listeners.push(listener); }
 
   send(m: ShellMsg | Record<string, unknown>) { this.proc.stdin.write(`${JSON.stringify(m)}\n`); }
   raw(line: string) { this.proc.stdin.write(`${line}\n`); }

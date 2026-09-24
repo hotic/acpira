@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { Brain, ListTodo } from 'lucide-react';
-import { applyUpdate, emptyState } from '../src/host/acp/normalize';
 import { todoEntries, toolTodoEntries } from '../src/shared/todoTools';
-import type { AgentTurn, ToolCallBlock } from '../src/shared/transcript';
+import type { ToolCallBlock } from '../src/shared/transcript';
 import { toolIcon } from '../src/webview/chat/icons';
+import { agentTurn } from './fixtures/engine';
 
 const todos = [
   { content: 'Inspect status', status: 'in_progress', priority: 'medium' },
@@ -14,12 +14,7 @@ const stored: ToolCallBlock = { type: 'tool_call', id: 'todo', kind: 'think', ve
 
 describe('todo tool presentation', () => {
   it('normalizes Grok sparse packets and keeps the standard plan separate', () => {
-    const s = emptyState();
-    applyUpdate(s, { sessionUpdate: 'tool_call', toolCallId: 'todo', title: 'todo_write', rawInput: { todos } });
-    applyUpdate(s, { sessionUpdate: 'tool_call_update', toolCallId: 'todo', kind: 'think', title: 'Updating plan' });
-    applyUpdate(s, { sessionUpdate: 'tool_call_update', toolCallId: 'todo', status: 'completed', rawOutput: result });
-    applyUpdate(s, { sessionUpdate: 'plan', entries: todos as never });
-    const turn = s.turns[0] as AgentTurn;
+    const turn = agentTurn('todo-grok-sparse');
     const tool = turn.blocks[0] as ToolCallBlock;
     expect(tool.target).toBeUndefined();
     expect(toolIcon(tool)).toBe(ListTodo);
@@ -32,9 +27,7 @@ describe('todo tool presentation', () => {
   });
 
   it('recognizes a sparse Grok update from its tool metadata', () => {
-    const s = emptyState();
-    applyUpdate(s, { sessionUpdate: 'tool_call_update', toolCallId: 'todo', title: 'Updating plan', kind: 'think', status: 'completed', _meta: { 'x.ai/tool': { name: 'todo_write' } }, rawOutput: result });
-    expect(toolIcon((s.turns[0] as AgentTurn).blocks[0] as ToolCallBlock)).toBe(ListTodo);
+    expect(toolIcon(agentTurn('todo-meta').blocks[0] as ToolCallBlock)).toBe(ListTodo);
   });
 
   it('renders stored JSON with the same entries and preserves ordinary thinking icons', () => {
@@ -58,9 +51,6 @@ describe('todo tool presentation', () => {
   });
 
   it('preserves full results before generic output truncation', () => {
-    const s = emptyState();
-    const large = { ...result, TodosUpdated: { ...result.TodosUpdated, summary_for_prompt: 'x'.repeat(25_000) } };
-    applyUpdate(s, { sessionUpdate: 'tool_call', toolCallId: 'todo', title: 'todo_write', kind: 'think', status: 'completed', rawOutput: large });
-    expect(toolTodoEntries((s.turns[0] as AgentTurn).blocks[0] as ToolCallBlock)).toEqual(todoEntries(result));
+    expect(toolTodoEntries(agentTurn('todo-large').blocks[0] as ToolCallBlock)).toEqual(todoEntries(result));
   });
 });

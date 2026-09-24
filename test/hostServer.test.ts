@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { SIDECAR_PROTOCOL_VERSION, type SidecarMsg } from '../src/shared/sidecar';
 import { Shell } from './sidecarShell';
 
-describe('sidecar (host-server)', () => {
+describe('sidecar (stdio envelopes)', () => {
   const shells: Shell[] = [];
   const dirs: string[] = [];
   afterEach(async () => {
