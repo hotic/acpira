@@ -3,7 +3,6 @@ import org.jetbrains.intellij.platform.gradle.tasks.ComposedJarTask
 import org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask
 import org.jetbrains.intellij.platform.gradle.tasks.RunIdeTask
 import org.jetbrains.intellij.platform.gradle.tasks.aware.SplitModeAware
-import java.net.URI
 import java.security.MessageDigest
 
 plugins {
@@ -56,67 +55,17 @@ dependencies {
 val sidecarBundle: File = file("../dist/host-server.cjs")
 
 // A task action may only capture plain values (configuration cache): copy the files into locals first
-fun requireBuilt(file: File, what: String): Action<Task> {
+fun requireBuilt(file: File, what: String, command: String = "pnpm build"): Action<Task> {
     val f = file
-    return Action { check(f.isFile) { "$what is missing ($f): run `pnpm build` in the repository root first" } }
+    return Action { check(f.isFile) { "$what is missing ($f): run `$command` in the repository root first" } }
 }
 
-// One official Node.js archive → `<out>/node/node` (`node.exe` on Windows) + its LICENSE. The digest is the line pinned in
-// node-sha256.txt, so a swapped download fails the build instead of shipping. Cached by version + digest
-@CacheableTask
-abstract class FetchNode @Inject constructor(private val archives: ArchiveOperations, private val fs: FileSystemOperations) : DefaultTask() {
-    @get:Input abstract val version: Property<String>
-    @get:Input abstract val platform: Property<String>
-    @get:Input abstract val sha256: Property<String>
-    @get:OutputDirectory abstract val out: DirectoryProperty
+// The Rust sidecar, one binary per platform, built into ../dist/sidecar/<os>-<arch>/ by `pnpm build:sidecar` (scripts/build-sidecar.mjs;
+// CI builds all six). Packaged as <plugin>/sidecar/bin/<os>-<arch>/acpira[.exe], where SidecarLocator looks for it
+val sidecarPlatforms = listOf("mac_arm64", "mac_x86_64", "linux_arm64", "linux_x86_64", "windows_arm64", "windows_x86_64")
+fun sidecarDir(variant: String): File = file("../dist/sidecar/${variant.replaceFirst('_', '-')}")
+fun sidecarBinary(variant: String): File = sidecarDir(variant).resolve(if (variant.startsWith("windows")) "acpira.exe" else "acpira")
 
-    @TaskAction
-    fun fetch() {
-        val plat = platform.get()
-        val ext = if (plat.startsWith("win")) "zip" else "tar.gz"
-        val name = "node-v${version.get()}-$plat.$ext"
-        val archive = temporaryDir.resolve(name)
-        URI("https://nodejs.org/dist/v${version.get()}/$name").toURL().openStream().use { input -> archive.outputStream().use { input.copyTo(it) } }
-        val digest = MessageDigest.getInstance("SHA-256").digest(archive.readBytes()).joinToString("") { "%02x".format(it) }
-        check(digest == sha256.get()) { "$name: SHA-256 $digest does not match node-sha256.txt (${sha256.get()})" }
-        val tree = if (ext == "zip") archives.zipTree(archive) else archives.tarTree(archive)
-        val dest = out.get().asFile.also { it.deleteRecursively() }
-        fs.copy {
-            from(tree) {
-                include("*/bin/node", "*/node.exe", "*/LICENSE")
-                eachFile { relativePath = RelativePath(true, "node", sourceName) }
-                includeEmptyDirs = false
-            }
-            into(dest)
-        }
-        check(dest.resolve("node").listFiles()?.any { it.name.startsWith("node") } == true) { "$name: no node executable found in the archive" }
-        archive.delete()
-    }
-}
-
-// nativeVariants naming ↔ nodejs.org naming
-val nodePlatforms = mapOf(
-    "mac_arm64" to "darwin-arm64", "mac_x86_64" to "darwin-x64",
-    "linux_arm64" to "linux-arm64", "linux_x86_64" to "linux-x64",
-    "windows_arm64" to "win-arm64", "windows_x86_64" to "win-x64",
-)
-val nodeVersion = providers.gradleProperty("nodeVersion")
-val nodeDigests = providers.fileContents(layout.projectDirectory.file("node-sha256.txt")).asText.map { text ->
-    text.lines().filter { it.isNotBlank() && !it.startsWith("#") }.associate { line -> line.substringAfterLast(' ') to line.substringBefore(' ') }
-}
-val fetchNode = nodePlatforms.mapValues { (variant, plat) ->
-    tasks.register<FetchNode>("fetchNode_$variant") {
-        group = "build"
-        description = "Downloads and verifies the Node.js runtime for $plat"
-        version = nodeVersion
-        platform = plat
-        sha256 = nodeVersion.zip(nodeDigests) { v, d ->
-            val ext = if (plat.startsWith("win")) "zip" else "tar.gz"
-            d["node-v$v-$plat.$ext"] ?: error("node-sha256.txt has no digest for node-v$v-$plat.$ext")
-        }
-        out = layout.buildDirectory.dir("node/$plat")
-    }
-}
 val hostVariant: String = run {
     val os = System.getProperty("os.name").lowercase()
     val arch = System.getProperty("os.arch").lowercase()
@@ -125,7 +74,8 @@ val hostVariant: String = run {
 
 // A sandbox launched from the terminal opens the project given as -PrunIdeProject (or none); trusting it up front keeps startup
 // activities from waiting behind the trust dialog. -PautoOpen shows the tool window at once, -PjcefDebug exposes CDP on 9222,
-// -PhostServer=/abs/path/host-server.cjs points the sandbox at a different sidecar build without repackaging
+// -PhostServer=/abs/path/host-server.cjs points the sandbox at a different sidecar build without repackaging,
+// -PsidecarBin=/abs/path/acpira runs the Rust sidecar binary instead
 fun RunIdeTask.acpiraDevIde() {
     systemProperty("idea.trust.all.projects", "true")
     // argumentProviders, not args=: split-mode runIde tasks reject direct arguments (they are routed to the backend process)
@@ -136,22 +86,26 @@ fun RunIdeTask.acpiraDevIde() {
         systemProperty("ide.browser.jcef.debug.port.random.enabled", "false")
     }
     providers.gradleProperty("hostServer").orNull?.let { environment("ACPIRA_HOST_SERVER", it) }
+    providers.gradleProperty("sidecarBin").orNull?.let { environment("ACPIRA_SIDECAR_BIN", it) }
 }
 
 tasks {
     named("test") {
         dependsOn(subprojects.map { "${it.path}:test" })
     }
-    // Every runIde task has its own sandbox (prepareSandbox_<name>); they all need the sidecar script and the bundled runtime
+    // Every runIde task has its own sandbox (prepareSandbox_<name>); they all need the sidecar script, and the Rust binary for this
+    // machine when `pnpm build:sidecar` has produced it (without one the sandbox runs the Node sidecar, as -PhostServer also forces)
     withType<PrepareSandboxTask>().configureEach {
         doFirst(requireBuilt(sidecarBundle, "the sidecar bundle"))
         from(sidecarBundle) { into(intellijPlatform.projectName.map { "$it/sidecar" }) }
-        // The sandbox runs on the bundled runtime like an installed variant would; -PsystemNode leaves it out to exercise the PATH fallback
-        if (!providers.gradleProperty("systemNode").isPresent) from(fetchNode[hostVariant]!!) { into(intellijPlatform.projectName) }
+        from(sidecarDir(hostVariant)) {
+            into(intellijPlatform.projectName.map { "$it/sidecar/bin/${hostVariant.replaceFirst('_', '-')}" })
+            filesMatching("acpira") { permissions { unix("rwxr-xr-x") } }
+        }
     }
     buildPlugin {
-        // buildPlugin zips the sandbox plugin dir; the runtime placed there for runIde belongs to the per-platform variants only
-        exclude("node/**")
+        // buildPlugin zips the sandbox plugin dir; the binary placed there for runIde belongs to the platform packages only
+        exclude("sidecar/bin/**")
     }
     runIde {
         acpiraDevIde()
@@ -223,10 +177,11 @@ intellijPlatform {
 }
 
 // Six per-platform distributions: the root plugin version is suffixed -<os>-<arch>, while the corresponding os / arch plugin
-// dependencies live in the backend module descriptor. The plain `buildPlugin` zip stays runtime-free and falls back to the shell PATH
+// dependencies live in the backend module descriptor. The plain `buildPlugin` zip carries no binary and runs the Node sidecar from the
+// shell PATH
 val pluginName = intellijPlatform.projectName
 val backendComposedJar = project(":backend").tasks.named<ComposedJarTask>("composedJar").flatMap { it.archiveFile }
-val buildPluginVariant = nodePlatforms.keys.associateWith { variant ->
+val buildPluginVariant = sidecarPlatforms.associateWith { variant ->
     val (os, arch) = variant.split('_', limit = 2)
     val variantRootJar = tasks.register<Jar>("pluginVariantJar_$variant") {
         val composed = tasks.composedJar.flatMap { it.archiveFile }
@@ -255,7 +210,8 @@ val buildPluginVariant = nodePlatforms.keys.associateWith { variant ->
     }
     tasks.register<Zip>("buildPluginVariant_$variant") {
         group = "build"
-        description = "Builds the plugin distribution for $os $arch with its Node.js runtime"
+        description = "Builds the plugin distribution for $os $arch with its sidecar binary"
+        doFirst(requireBuilt(sidecarBinary(variant), "the $os-$arch sidecar binary", "pnpm build:sidecar $os-$arch"))
         val base = tasks.buildPlugin.flatMap { it.archiveFile }
         from(zipTree(base)) {
             exclude("*/lib/${pluginName.get()}-*.jar")
@@ -263,10 +219,10 @@ val buildPluginVariant = nodePlatforms.keys.associateWith { variant ->
         }
         from(variantRootJar) { into(pluginName.map { "$it/lib" }) }
         from(variantBackendJar) { into(pluginName.map { "$it/lib/modules" }) }
-        // Zip does not keep source modes; the IDE's installer restores what the entry says, so the runtime must be marked here
-        from(fetchNode[variant]!!) {
-            into(pluginName)
-            filesMatching("**/node/node") { permissions { unix("rwxr-xr-x") } }
+        // Zip does not keep source modes; the IDE's installer restores what the entry says, so the binary must be marked here
+        from(sidecarDir(variant)) {
+            into(pluginName.map { "$it/sidecar/bin/$os-$arch" })
+            filesMatching("acpira") { permissions { unix("rwxr-xr-x") } }
         }
         archiveBaseName = pluginName
         archiveClassifier = "$os-$arch"
@@ -283,12 +239,13 @@ val buildPluginVariants by tasks.registering {
 // a macOS client and a Linux backend can install the same version without competing OS-specific updates.
 val buildMarketplacePlugin by tasks.registering(Zip::class) {
     group = "build"
-    description = "Builds the cross-platform Marketplace package with all six Node.js runtimes"
+    description = "Builds the cross-platform Marketplace package with all six sidecar binaries"
     from(zipTree(tasks.buildPlugin.flatMap { it.archiveFile }))
-    for ((variant, runtime) in fetchNode) {
-        from(runtime.flatMap { it.out }.map { it.dir("node") }) {
-            into(pluginName.map { "$it/node/${variant.replaceFirst("_", "-")}" })
-            filesMatching("**/node") { permissions { unix("rwxr-xr-x") } }
+    for (variant in sidecarPlatforms) {
+        doFirst(requireBuilt(sidecarBinary(variant), "the ${variant.replaceFirst('_', '-')} sidecar binary", "pnpm build:sidecar --all"))
+        from(sidecarDir(variant)) {
+            into(pluginName.map { "$it/sidecar/bin/${variant.replaceFirst('_', '-')}" })
+            filesMatching("acpira") { permissions { unix("rwxr-xr-x") } }
         }
     }
     archiveBaseName = pluginName

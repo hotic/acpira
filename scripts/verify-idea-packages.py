@@ -34,18 +34,17 @@ def check_plugin(archive, version):
     assert not root.findall("depends"), "Root OS constraints would prevent cross-platform client/backend installation"
 
 
-def runtime(archive, prefix, target):
-    exe = "node.exe" if target.startswith("windows-") else "node"
-    entry = f"{prefix}/{exe}"
-    assert archive.read(f"{prefix}/LICENSE")
-    if exe == "node":
+def sidecar(archive, target):
+    exe = "acpira.exe" if target.startswith("windows-") else "acpira"
+    entry = f"acpira/sidecar/bin/{target}/{exe}"
+    if exe == "acpira":
         assert archive.getinfo(entry).external_attr >> 16 & 0o111 == 0o111, f"Missing executable permissions: {entry}"
     return hashlib.sha256(archive.read(entry)).digest()
 
 
 with ZipFile(DIST / f"acpira-{VERSION}.zip") as base:
     check_plugin(base, VERSION)
-    assert not any(n.startswith("acpira/node/") for n in base.namelist())
+    assert not any(n.startswith(("acpira/node/", "acpira/sidecar/bin/")) for n in base.namelist())
 
 with ZipFile(DIST / f"acpira-{VERSION}-universal.zip") as universal:
     check_plugin(universal, VERSION)
@@ -54,7 +53,8 @@ with ZipFile(DIST / f"acpira-{VERSION}-universal.zip") as universal:
     for target in TARGETS:
         with ZipFile(DIST / f"acpira-{VERSION}-{target}.zip") as variant:
             check_plugin(variant, f"{VERSION}-{target}")
-            assert runtime(universal, f"acpira/node/{target}", target) == runtime(variant, "acpira/node", target)
+            assert sidecar(universal, target) == sidecar(variant, target)
+            assert not any(n.startswith("acpira/sidecar/bin/") and not n.startswith(f"acpira/sidecar/bin/{target}/") for n in variant.namelist() if not n.endswith("/"))
             os, arch = target.split("-", 1)
             backend = descriptor(variant, "acpira/lib/modules/acpira.backend.jar", "acpira.backend.xml")
             deps = {d.attrib.get("id") for d in backend.findall("dependencies/plugin")}
@@ -63,7 +63,7 @@ with ZipFile(DIST / f"acpira-{VERSION}-universal.zip") as universal:
                 if module != "backend":
                     entry = f"acpira/lib/modules/acpira.{module}.jar"
                     assert variant.read(entry) == universal.read(entry), f"Stale module: {target}/{module}"
-            print(f"Verified {target}: runtime, permissions, version and module consistency")
+            print(f"Verified {target}: sidecar binary, permissions, version and module consistency")
 
 for line in (DIST / "SHA256SUMS").read_text().splitlines():
     expected, name = line.split("  ", 1)
