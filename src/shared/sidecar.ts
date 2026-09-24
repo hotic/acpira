@@ -1,6 +1,6 @@
 import type { HostMsg, WebviewHost, WebviewMsg } from './protocol';
 
-// Envelope protocol between a shell (the IntelliJ plugin, the browser harness) and the Node sidecar (`dist/host-server.cjs`):
+// Envelope protocol between a shell (the VS Code extension, the IntelliJ plugin, the browser harness) and the Rust sidecar (`acpira`):
 // ndjson, one envelope per line, stdout carries only these (logs go to stderr). Both sides must speak the same protocolVersion;
 // a mismatch is rejected at hello, never guessed around. A shell that restarts the sidecar re-sends hello and every attachView
 
