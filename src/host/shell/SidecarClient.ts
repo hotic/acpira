@@ -20,6 +20,8 @@ export interface ShellView {
   readonly viewId: string;
   readonly host: WebviewHost;
   readonly initial?: string | { mostRecent: true };
+  // Where this view loads attachment blobs from; sent with every attach, so a re-attach after a restart keeps its own
+  readonly blobBase?: string;
   onHostMessage(m: HostMsg): void;
   // Called once on attach with the current state, then on every change; a view that already initialized reloads on a later `ready`
   onState(state: SidecarState, detail?: string): void;
@@ -127,8 +129,8 @@ export class SidecarClient {
     this.post({ type: 'webviewMessage', viewId, message });
   }
 
-  // Facts about the IDE changed. Before helloOk the event waits too: the hello already in flight may predate it (the first webview's
-  // blobBase arrives while the handshake runs), and replaying a snapshot the next hello also carries is harmless
+  // Facts about the IDE changed. Before helloOk the event waits too: the hello already in flight may predate it, and replaying a
+  // snapshot the next hello also carries is harmless
   event(event: PlatformEvent) {
     this.post({ type: 'platformEvent', event });
   }
@@ -145,7 +147,8 @@ export class SidecarClient {
 
   private attachEnvelope(a: Attached): ShellMsg {
     const initial = a.lastSessionId ?? a.view.initial;
-    return { type: 'attachView', viewId: a.view.viewId, host: a.view.host, ...(initial !== undefined ? { initial } : {}) };
+    const { blobBase } = a.view;
+    return { type: 'attachView', viewId: a.view.viewId, host: a.view.host, ...(initial !== undefined ? { initial } : {}), ...(blobBase ? { blobBase } : {}) };
   }
 
   private onLine(gen: number, line: string) {
@@ -158,7 +161,7 @@ export class SidecarClient {
         this.candidate = 0;
         this.sessionsDir = m.sessionsDir;
         this.opts.log(`sidecar ready: pid ${m.sidecar.pid}, version ${m.sidecar.version}, sessions ${m.sessionsDir}`);
-        // Queued facts first: a view reads the environment (blobBase) when it attaches
+        // Queued facts first: a view reads the environment when it attaches
         const queued = this.outbox.splice(0);
         for (const m of queued) if (m.type === 'platformEvent') this.write(m);
         for (const a of this.views.values()) this.write(this.attachEnvelope(a));

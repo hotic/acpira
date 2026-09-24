@@ -32,7 +32,7 @@ class View implements ShellView {
   readonly messages: HostMsg[] = [];
   readonly states: SidecarState[] = [];
   private waiters: { pred: (m: HostMsg) => boolean; resolve: (m: HostMsg) => void }[] = [];
-  constructor(readonly viewId: string, readonly host: 'sidebar' | 'editor' = 'sidebar', readonly initial?: string | { mostRecent: true }) {}
+  constructor(readonly viewId: string, readonly host: 'sidebar' | 'editor' = 'sidebar', readonly initial?: string | { mostRecent: true }, readonly blobBase?: string) {}
   onHostMessage(m: HostMsg) {
     this.messages.push(m);
     for (const w of this.waiters.splice(0)) { if (w.pred(m)) w.resolve(m); else this.waiters.push(w); }
@@ -99,7 +99,7 @@ describe('SidecarClient', () => {
     expect(again.state.active?.turns).toHaveLength(2);
   });
 
-  // VS Code learns the blob base from the first webview, typically while the handshake is still running
+  // An env fact that changes while the handshake runs (the hello in flight predates it) still lands before the views attach
   it('delivers an environment change made during the handshake before the views attach', async () => {
     const home = tmp('acpira-client-home-');
     const c = client([engine(home)], { blobBase: undefined });
@@ -109,6 +109,29 @@ describe('SidecarClient', () => {
     c.attach(view);
     c.send('V', { type: 'ready' });
     expect((await view.next('init')).state.blobBase).toBe('https://late.test');
+  });
+
+  // Each VS Code webview has its own resource URI for the sessions directory: a view's blob base wins over the env's and survives
+  // the re-attach after a restart, whichever view attached last
+  it('keeps each view on its own blob base across a restart', async () => {
+    const home = tmp('acpira-client-home-');
+    const c = client([engine(home)]);
+    const v1 = new View('V1', 'sidebar', undefined, 'https://view-1.test/blobs');
+    const v2 = new View('V2', 'editor', undefined, 'https://view-2.test/blobs');
+    c.attach(v1);
+    c.attach(v2);
+    c.send('V1', { type: 'ready' });
+    c.send('V2', { type: 'ready' });
+    c.start();
+    expect((await v1.next('init')).state.blobBase).toBe('https://view-1.test/blobs');
+    expect((await v2.next('init')).state.blobBase).toBe('https://view-2.test/blobs');
+    const seen = [v1.messages.length, v2.messages.length];
+    process.kill((c as unknown as { proc: { pid: number } }).proc.pid, 'SIGTERM');
+    await expect.poll(() => v1.states.filter(s => s === 'ready').length, { timeout: 15_000 }).toBe(2);
+    c.send('V1', { type: 'ready' });
+    c.send('V2', { type: 'ready' });
+    expect((await v1.next('init', () => true, seen[0])).state.blobBase).toBe('https://view-1.test/blobs');
+    expect((await v2.next('init', () => true, seen[1])).state.blobBase).toBe('https://view-2.test/blobs');
   });
 
   it('falls through to the next engine when one cannot start or dies before the handshake', async () => {

@@ -48,7 +48,6 @@ export async function activate(context: vscode.ExtensionContext) {
     new WebviewBridge(webview, host, {
       client: sidecar, extensionUri: context.extensionUri, sessionsDir, onSession,
       locale: () => platform.locale(),
-      noteBlobBase: base => { const ev = platform.noteBlobBase(base); if (ev) sidecar.event(ev); },
     }, initial);
 
   // A new tab is a new conversation: without a session id (title bar / command palette) it opens on a fresh session; a webview passing its
