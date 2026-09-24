@@ -167,6 +167,13 @@ export class AgentProcess {
     terminate(this.child);
     return exited;
   }
+
+  // SIGKILL at once, for a host that is about to exit and cannot wait out the grace period
+  killHard() {
+    this.stderr.close();
+    this.conn.close();
+    if (this.child.exitCode === null && this.child.signalCode === null) this.child.kill('SIGKILL');
+  }
 }
 
 function terminate(child: ChildProcessByStdio<Writable, Readable, Readable>) {
