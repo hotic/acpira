@@ -140,6 +140,43 @@ async fn invalidate_drops_a_ready_process_so_the_next_take_misses() {
   p.dispose().1.await;
 }
 
+// A take waiting on a warming slot must not pull the spawn out of the pool's reach: dispose still tracks and ends it, and the
+// stale process is never handed to the session
+#[tokio::test(flavor = "multi_thread")]
+async fn a_take_waiting_on_a_warming_slot_leaves_it_to_dispose() {
+  let fake = fake_or_skip!();
+  let p = pool(&fake, Arc::new(std::sync::Mutex::new(vec![])));
+  p.ensure("fake", "/tmp", None);
+  let taker = {
+    let p = p.clone();
+    tokio::spawn(async move { p.take("fake", "/tmp", None, Arc::new(Recorder::default())).await })
+  };
+  tokio::time::sleep(Duration::from_millis(20)).await;
+  let (seen, done) = p.dispose();
+  done.await;
+  assert!(taker.await.unwrap().is_none(), "a take racing dispose must miss");
+  let tracked = seen.lock().clone();
+  assert_eq!(tracked.len(), 1, "dispose owns the warming spawn");
+  until(|| !tracked[0].alive(), 5_000).await;
+}
+
+// Same race against invalidate (a credential change): the waiting take misses and the next ensure starts a fresh spawn
+#[tokio::test(flavor = "multi_thread")]
+async fn a_take_waiting_on_a_warming_slot_misses_after_invalidate() {
+  let fake = fake_or_skip!();
+  let logs = Arc::new(std::sync::Mutex::new(vec![]));
+  let p = pool(&fake, logs.clone());
+  p.ensure("fake", "/tmp", None);
+  let taker = {
+    let p = p.clone();
+    tokio::spawn(async move { p.take("fake", "/tmp", None, Arc::new(Recorder::default())).await })
+  };
+  tokio::time::sleep(Duration::from_millis(20)).await;
+  p.invalidate(Some("fake"));
+  assert!(taker.await.unwrap().is_none(), "a take racing invalidate must miss");
+  p.dispose().1.await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn disposing_a_warming_slot_leaves_nothing_to_take() {
   let fake = fake_or_skip!();
