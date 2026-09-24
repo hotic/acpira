@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { X } from 'lucide-react';
-import type { Draft, SessionControls, SlashCommand, Turn, Usage } from '@shared/transcript';
+import type { Draft, SessionControls, SessionOption, SlashCommand, Turn, Usage } from '@shared/transcript';
 import type { FileHit } from '@shared/protocol';
 import type { HiddenMap } from '@shared/settings';
 import { composerControls } from '@shared/composerControls';
@@ -73,10 +73,8 @@ export function Composer(p: ComposerProps) {
   const [openMenus, setOpenMenus] = useState(0);
   const onOpenChange = useCallback((open: boolean) => setOpenMenus(n => n + (open ? 1 : -1)), []);
   const beamActive = focused || openMenus > 0;
-  const mode = p.controls.modes.find(m => m.id === p.controls.modeId);
-  const ModeIcon = mode ? modeIcon(mode) : undefined;
   const dim = p.running || p.disabled;
-  const { models, reasoning, modelConfig, other } = composerControls(p.controls.options);
+  const { models, reasoning, modelConfig, collaboration, other } = composerControls(p.controls.options);
   const canCompact = !!p.commands?.some(c => c.name === 'compact');
   // Files are read asynchronously after a paste / drop; sending is held until every read has landed, so a message never leaves without its attachments
   const [reading, setReading] = useState(0);
@@ -267,26 +265,13 @@ export function Composer(p: ComposerProps) {
       <div className="@container box-content flex min-h-ctl min-w-0 items-center gap-1 px-2 pt-1 pb-2">
         <fieldset disabled={p.disabled || p.controlsLocked || sending} className="m-0 flex min-w-0 shrink-0 items-center gap-1 border-0 p-0">
           <div className="flex shrink-0 items-center gap-1">
-            {/* Mode is the one solid chip and never truncates; single-line rows with a glyph each, the description rides along as a tooltip */}
+            {/* Working mode first (Codex collaboration_mode: Build / Plan), then the permission modes; both are solid chips that never truncate */}
+            {collaboration.map(c => (
+              <ModeMenu key={c.id} title={c.name} value={c.value} onOpenChange={onOpenChange} onSelect={v => p.onSetConfig(c.id, v)}
+                modes={c.options.map(o => (o.id === 'default' ? { ...o, name: t('composer.build') } : o))} />
+            ))}
             {p.controls.modes.length > 0 && (
-              <DropdownMenu.Root onOpenLifecycle={onOpenChange}>
-                <DropdownMenu.Trigger render={<Chip variant="solid" className="ml-0.5 shrink-0" narrow="icon"
-                  title={mode ? [mode.name, mode.description].filter(Boolean).join(t('common.metaSep')) : t('composer.mode')}
-                  icon={ModeIcon && <ModeIcon strokeWidth={1.75} className={mode?.kind === 'full_access' ? 'text-warn' : undefined} />}>
-                  {mode?.name ?? t('composer.mode')}
-                </Chip>} />
-                <DropdownMenu.Portal><DropdownMenu.Positioner side="top" width="sm"><DropdownMenu.Popup>
-                  <DropdownMenu.RadioGroup value={p.controls.modeId} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
-                    {p.controls.modes.map(m => {
-                      const Icon = modeIcon(m);
-                      return <DropdownMenu.RadioItem key={m.id} value={m.id} title={m.description} onClick={() => p.onSetMode(m.id)}>
-                        {/* full_access kinds keep the agent's own name; only the glyph carries the warning color */}
-                        <OptionContent icon={<Icon strokeWidth={1.75} className={m.kind === 'full_access' ? 'text-warn' : undefined} />} checked={m.id === p.controls.modeId} checkSlot={!!mode}>{m.name}</OptionContent>
-                      </DropdownMenu.RadioItem>;
-                    })}
-                  </DropdownMenu.RadioGroup>
-                </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
-              </DropdownMenu.Root>
+              <ModeMenu title={t('composer.mode')} modes={p.controls.modes} value={p.controls.modeId} onOpenChange={onOpenChange} onSelect={p.onSetMode} />
             )}
           </div>
         </fieldset>
@@ -316,5 +301,37 @@ export function Composer(p: ComposerProps) {
     <div className={cn(p.edit ? 'min-w-0' : flush ? 'pt-0' : 'px-page pb-page')}>
       <WorkingBeam active={beamActive} theme={p.theme}>{field}</WorkingBeam>
     </div>
+  );
+}
+
+// One mode chip and its menu: single-line rows with a glyph each, the description rides along as a tooltip.
+// full_access kinds keep the agent's own name; only the glyph carries the warning color
+function ModeMenu({ modes, value, title, onSelect, onOpenChange }: {
+  modes: SessionOption[];
+  value?: string;
+  title: string;
+  onSelect: (id: string) => void;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const mode = modes.find(m => m.id === value);
+  const ModeIcon = mode ? modeIcon(mode) : undefined;
+  return (
+    <DropdownMenu.Root onOpenLifecycle={onOpenChange}>
+      <DropdownMenu.Trigger render={<Chip variant="solid" className="ml-0.5 shrink-0" narrow="icon"
+        title={mode ? [mode.name, mode.description].filter(Boolean).join(t('common.metaSep')) : title}
+        icon={ModeIcon && <ModeIcon strokeWidth={1.75} className={mode?.kind === 'full_access' ? 'text-warn' : undefined} />}>
+        {mode?.name ?? title}
+      </Chip>} />
+      <DropdownMenu.Portal><DropdownMenu.Positioner side="top" width="sm"><DropdownMenu.Popup>
+        <DropdownMenu.RadioGroup value={value} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
+          {modes.map(m => {
+            const Icon = modeIcon(m);
+            return <DropdownMenu.RadioItem key={m.id} value={m.id} title={m.description} onClick={() => onSelect(m.id)}>
+              <OptionContent icon={<Icon strokeWidth={1.75} className={m.kind === 'full_access' ? 'text-warn' : undefined} />} checked={m.id === value} checkSlot={!!mode}>{m.name}</OptionContent>
+            </DropdownMenu.RadioItem>;
+          })}
+        </DropdownMenu.RadioGroup>
+      </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
+    </DropdownMenu.Root>
   );
 }

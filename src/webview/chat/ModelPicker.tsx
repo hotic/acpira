@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { ConfigControl } from '@shared/transcript';
 import { findFusionVariant, findVariant, fusionLabel, groupModels, optionBrand, variantLabel, visibleOptions, type ModelFamily, type ModelVariant } from '@shared/models';
-import { isFastControl, modelConfigChip, presentReasoning, reasoningChip, reasoningVisible } from '@shared/composerControls';
+import { fastOn, fastValue, isFastControl, modelConfigChip, presentReasoning, reasoningChip, reasoningVisible } from '@shared/composerControls';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
 import { Chip } from '../ui/Button';
@@ -142,13 +142,14 @@ function ModelPanel({ families, cur, curVar, onSelect, close, reasoning = [], mo
 // Category chooses placement; unfamiliar model parameters retain their advertised labels and wire values.
 function ModelConfigParams({ control, hidden, onChange }: { control: ConfigControl; hidden?: string[]; onChange: (value: string) => void }) {
   const options = visibleOptions(control.options, hidden, control.value);
+  // Every Fast shape (native select, adapter boolean) is the same "Fast" switch the embedded variants use
+  if (isFastControl(control)) {
+    const next = fastValue(control, !fastOn(control));
+    return <SwitchRow label="Fast" checked={fastOn(control)} disabled={!options.some(option => option.id === next)} onChange={() => onChange(next)} />;
+  }
   // An ACP boolean arrives as a synthetic Off/On pair; the panel shows it as the switch it really is
   if (control.type === 'boolean') {
     return <SwitchRow label={control.name} checked={control.value === 'true'} onChange={on => onChange(on ? 'true' : 'false')} />;
-  }
-  if (isFastControl(control)) {
-    const next = control.value === 'fast' ? 'standard' : 'fast';
-    return <SwitchRow label="Fast" checked={control.value === 'fast'} disabled={!options.some(option => option.id === next)} onChange={() => onChange(next)} />;
   }
   return <SelectRow label={control.name} options={options.map(option => ({ value: option.id, label: option.name }))} value={control.value ?? ''} onChange={onChange} />;
 }

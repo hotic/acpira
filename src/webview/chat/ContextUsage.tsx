@@ -5,9 +5,9 @@ import { t, useLocale } from '../i18n';
 import { cn } from '../ui/cn';
 import { IconButton } from '../ui/Button';
 import { Popover } from '../ui/Popover';
-import { conversationTokens, estimateUsage, liveUsage, overCompactBudget, usageWindow, type UsageSegment } from './usageBreakdown';
+import { liveUsage, overCompactBudget, usageWindow } from './usageBreakdown';
 
-// Context usage: a --icon-sized ring inside a --ctl-square button; hovering shows the breakdown card (Cursor-style), and agents with /compact can be compacted from its title row.
+// Context usage: a --icon-sized ring inside a --ctl-square button; hovering shows the usage card (Cursor-style), and agents with /compact can be compacted from its title row.
 // Focus opens the card only when it arrives from another element (Tab / Shift+Tab). Focus the popup hands back after closing — outside click, Escape, the compact
 // button — has no relatedTarget (the card is already gone), and opening on it would reopen the card the user just dismissed
 export function ContextRing({ usage, turns, canCompact, compactAt, running, disabled, onCompact, onOpenChange }: {
@@ -19,10 +19,6 @@ export function ContextRing({ usage, turns, canCompact, compactAt, running, disa
   const ringSize = usageWindow(shown.size);
   const pct = Math.min(1, shown.used / ringSize);
   const over = overCompactBudget(shown.used, compactAt);
-  // History categories remain useful, but must never masquerade as the
-  // composition of a native window whose compacted contents ACP does not expose.
-  const segments = useMemo(() => estimateUsage(turns, { used: conversationTokens(turns), size: shown.size })
-    .filter(segment => segment.id !== 'system'), [turns, shown.size]);
   const r = 6, c = 2 * Math.PI * r;
   return (
     <Popover.Root open={open} onOpenChange={setOpen} onOpenLifecycle={onOpenChange}>
@@ -40,7 +36,6 @@ export function ContextRing({ usage, turns, canCompact, compactAt, running, disa
         <UsagePanel
           usage={shown}
           pct={Math.min(1, shown.used / shown.size)}
-          segments={segments}
           compactAt={compactAt}
           canCompact={canCompact}
           overAt={over && compactAt ? compactAt : undefined}
@@ -52,15 +47,6 @@ export function ContextRing({ usage, turns, canCompact, compactAt, running, disa
   );
 }
 
-// Segment colors and legend dots share one mapping: segment id → chart token
-const SEG_COLOR: Record<UsageSegment['id'], string> = {
-  user: 'bg-chart-user',
-  agent: 'bg-chart-agent',
-  tool: 'bg-chart-tool',
-  thought: 'bg-chart-thought',
-  system: 'bg-chart-system',
-};
-
 // Threshold tick and its tail number share one status color; the status words themselves live in the tooltip.
 const BUDGET_TONE = {
   ok: { tick: 'bg-fg-1', text: 'text-fg-3' },
@@ -70,13 +56,12 @@ const BUDGET_TONE = {
 } as const;
 type BudgetTone = keyof typeof BUDGET_TONE;
 
-// Agent-reported context and its model-window bar are independent of the full
-// retained history estimates below. ACP exposes no authoritative category split.
-function UsagePanel({ usage, pct, segments, compactAt, canCompact, overAt, pending, onCompact }: {
-  usage: Usage; pct: number; segments: UsageSegment[];
+// Only the agent-reported context and its model-window bar: ACP exposes no authoritative category split,
+// and a transcript-based estimate cannot describe a window whose compacted contents stay inside the agent
+function UsagePanel({ usage, pct, compactAt, canCompact, overAt, pending, onCompact }: {
+  usage: Usage; pct: number;
   compactAt?: number; canCompact: boolean; overAt?: number; pending?: string; onCompact?: () => void;
 }) {
-  const [hov, setHov] = useState<UsageSegment['id']>();
   const locale = useLocale();
   const fmt = new Intl.NumberFormat(locale).format;
   const mark = [t('usage.used', { n: fmt(usage.used) }), t('usage.limit', { n: fmt(usage.size) }), overAt && t('usage.budget', { n: fmt(overAt) })].filter(Boolean).join(t('common.metaSep'));
@@ -115,22 +100,6 @@ function UsagePanel({ usage, pct, segments, compactAt, canCompact, overAt, pendi
             {fmt(compactAt)}
           </span>
         )}
-      </div>
-      <div className="mt-1 px-2 text-3 text-fg-3" title={t('usage.historyEstimateHint')}>{t('usage.historyEstimate')}</div>
-      <div className="flex flex-col">
-        {segments.map(s => (
-          <div
-            key={s.id}
-            title={s.hint}
-            onMouseEnter={() => setHov(s.id)}
-            onMouseLeave={() => setHov(undefined)}
-            className={cn('flex min-h-row w-full items-center gap-2 rounded-md px-2 text-3 transition-colors', hov === s.id && 'bg-hover')}
-          >
-            <span className="flex w-lead shrink-0 justify-center"><span className={cn('size-2.5 rounded-xs', SEG_COLOR[s.id])} /></span>
-            <span className="flex-1 text-fg-1">{s.label}</span>
-            <span className="text-fg-2">{t('usage.about', { n: fmt(s.tokens) })}</span>
-          </div>
-        ))}
       </div>
     </div>
   );

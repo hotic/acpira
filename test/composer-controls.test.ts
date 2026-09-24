@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { composerControls, effortOptions, familyLabel, isFastControl, modelConfigChip, presentReasoning, reasoningChip, reasoningVisible, thoughtCorrection } from '../src/shared/composerControls';
+import { composerControls, effortOptions, familyLabel, fastOn, fastValue, isFastControl, modelConfigChip, presentReasoning, reasoningChip, reasoningVisible, thoughtCorrection } from '../src/shared/composerControls';
 import { groupModels } from '../src/shared/models';
 import type { ConfigControl } from '../src/shared/transcript';
 
@@ -15,7 +15,7 @@ describe('shared composer controls', () => {
       options: ['Low', 'High', 'Max'].map(name => ({ id: name.toLowerCase(), name: `Thinking ${name}` })),
     };
     const model: ConfigControl = { id: 'model', name: 'Model', category: 'model', options: [{ id: 'asgard/kimi-k3', name: 'K3' }] };
-    expect(composerControls([model, thinking])).toEqual({ models: [model], reasoning: [thinking], modelConfig: [], other: [] });
+    expect(composerControls([model, thinking])).toEqual({ models: [model], reasoning: [thinking], modelConfig: [], collaboration: [], other: [] });
     expect(composerControls([{ ...thinking, category: undefined }]).reasoning).toHaveLength(1);
   });
 
@@ -32,7 +32,7 @@ describe('shared composer controls', () => {
       { id: 'context:normal', name: 'Context Standard' }, { id: 'context:1m', name: 'Context 1M' },
     ] };
     expect(composerControls([model, speed, reasoning, parameter, custom])).toEqual({
-      models: [model], reasoning: [reasoning], modelConfig: [speed, parameter], other: [custom],
+      models: [model], reasoning: [reasoning], modelConfig: [speed, parameter], collaboration: [], other: [custom],
     });
     expect(composerControls([speed]).modelConfig).toEqual([speed]);
     expect(isFastControl(speed)).toBe(true);
@@ -44,16 +44,42 @@ describe('shared composer controls', () => {
     expect(isFastControl({ ...speed, options: [{ id: 's', name: 'Standard' }, { id: 'f', name: 'Fast' }] })).toBe(false);
   });
 
-  it('a boolean control (ACP fast-mode) chips as its own name only while on', () => {
+  it('every Fast shape reads as one "Fast" switch: Devin speed select, codex fast-mode and claude fast booleans', () => {
     const fast: ConfigControl = { id: 'fast-mode', name: 'Fast mode', category: 'model_config', type: 'boolean', value: 'true',
       options: [{ id: 'false', name: 'Off' }, { id: 'true', name: 'On' }] };
-    expect(modelConfigChip(fast)).toBe('Fast mode');
+    const claude: ConfigControl = { ...fast, id: 'fast', name: 'Fast mode' };
+    const speed: ConfigControl = { id: 'speed', name: 'Speed', category: 'model_config', value: 'fast', options: [
+      { id: 'standard', name: 'Standard' }, { id: 'fast', name: 'Fast' },
+    ] };
+    for (const c of [fast, claude, speed]) {
+      expect(isFastControl(c)).toBe(true);
+      expect(fastOn(c)).toBe(true);
+      expect(modelConfigChip(c)).toBe('Fast');
+    }
     expect(modelConfigChip({ ...fast, value: 'false' })).toBeUndefined();
-    // The synthetic Off/On pair must never read as a model family or a fast/standard select
-    expect(isFastControl(fast)).toBe(false);
-    expect(composerControls([fast])).toEqual({ models: [], reasoning: [], modelConfig: [fast], other: [] });
+    expect(fastValue(fast, false)).toBe('false');
+    expect(fastValue(speed, false)).toBe('standard');
+    // "breakfast" is not Fast
+    expect(isFastControl({ ...fast, id: 'breakfast', name: 'Breakfast' })).toBe(false);
+  });
+
+  it('codex collaboration_mode joins the working modes on the left, not the right-side option chips', () => {
+    const collab: ConfigControl = { id: 'collaboration_mode', name: 'Collaboration mode', category: 'collaboration_mode', value: 'default', options: [
+      { id: 'default', name: 'Default' }, { id: 'plan', name: 'Plan', description: 'Plan before making changes' },
+    ] };
+    expect(composerControls([collab])).toEqual({ models: [], reasoning: [], modelConfig: [], collaboration: [collab], other: [] });
+  });
+
+  it('a non-Fast boolean control chips as its own name only while on', () => {
+    const toggle: ConfigControl = { id: 'auto-review', name: 'Auto review', category: 'model_config', type: 'boolean', value: 'true',
+      options: [{ id: 'false', name: 'Off' }, { id: 'true', name: 'On' }] };
+    expect(modelConfigChip(toggle)).toBe('Auto review');
+    expect(modelConfigChip({ ...toggle, value: 'false' })).toBeUndefined();
+    expect(isFastControl(toggle)).toBe(false);
+    // The synthetic Off/On pair must never read as a model family
+    expect(composerControls([toggle])).toEqual({ models: [], reasoning: [], modelConfig: [toggle], collaboration: [], other: [] });
     // Even a `model`-categorized boolean stays out of the models bucket — Off/On is never a family
-    expect(composerControls([{ ...fast, category: 'model' }])).toEqual({ models: [], reasoning: [], modelConfig: [], other: [{ ...fast, category: 'model' }] });
+    expect(composerControls([{ ...toggle, category: 'model' }])).toEqual({ models: [], reasoning: [], modelConfig: [], collaboration: [], other: [{ ...toggle, category: 'model' }] });
   });
 
   it('normalizes and orders Grok labels while preserving exact wire IDs', () => {
@@ -132,6 +158,6 @@ describe('shared composer controls', () => {
       { id: 'penguin-medium', name: 'Penguin Medium' }, { id: 'penguin-max', name: 'Penguin Max' },
     ] };
     const custom = { ...model, id: 'custom', category: 'custom' };
-    expect(composerControls([model, custom])).toEqual({ models: [model], reasoning: [], modelConfig: [], other: [custom] });
+    expect(composerControls([model, custom])).toEqual({ models: [model], reasoning: [], modelConfig: [], collaboration: [], other: [custom] });
   });
 });

@@ -23,9 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Agent-managed terminal output (Codex's `_meta.terminal_output_delta`, Claude's `_meta.terminal_*`) streams into the tool row as plain text; a completed command's `{ formatted_output, exit_code }` receipt no longer renders as raw JSON.
 - Modes tagged `full_access` by the adapter (Codex / Claude) keep their own name but carry the warning glyph in the mode picker.
+- Fast reads the same everywhere: Devin's Standard / Fast select, Codex's "Fast mode" and Claude's fast toggle are one "Fast" switch in the model panel and "Fast" on the model chip.
+- Codex's collaboration mode moves to the left of the composer as a Build / Plan chip next to the permission modes, instead of a "Default" chip among the model controls.
+- The context usage panel no longer shows the chat-history category estimate; it shows only the agent-reported context and the auto-compaction threshold.
 
 ### Fixed
 
+- Claude no longer offers placeholder "Default" model and effort entries: the client advertises the AIR `recommendedValue` capability, so the adapter reports concrete models and effort levels.
+- Switching models keeps the chosen reasoning effort when the new model offers it (Devin reset it to the model's default after every switch, briefly showing the previous level first).
 - Long user prompts keep a stable capped viewport while sticky instead of shrinking to a few lines as the conversation reaches the bottom.
 
 ### Planned

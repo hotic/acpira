@@ -74,10 +74,6 @@
   --tk-t: #6fc9bd;
   --tk-c: #6a8f5e;
 
-  /* Segment colors for the context breakdown bar: only for the usage panel's small charts; agent / tool / system reuse ok / warn / fg-3 */
-  --chart-user: #6ea8fe;
-  --chart-thought: #b08ae0;
-
   /* Fonts */
   --font: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif;
   --font-mono: var(--vscode-editor-font-family, "SF Mono", Menlo, Monaco, monospace);
@@ -233,8 +229,6 @@
   --tk-s: #a31515;
   --tk-t: #267f99;
   --tk-c: #6a8f5e;
-  --chart-user: #2f6fe0;
-  --chart-thought: #8250df;
 }
 
 /* Container the shell lives in: sidebar base #181818 / editor base #1f1f1f, each raised two levels */
@@ -338,11 +332,6 @@
   --color-danger: var(--danger);
   --color-transparent: transparent;
   --color-current: currentColor;
-  --color-chart-user: var(--chart-user);
-  --color-chart-agent: var(--ok);
-  --color-chart-tool: var(--warn);
-  --color-chart-thought: var(--chart-thought);
-  --color-chart-system: var(--fg-3);
 
   --font-sans: var(--font);
   --font-mono: var(--font-mono);

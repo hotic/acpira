@@ -132,8 +132,10 @@ export class AgentProcess {
           // claude-agent-acp switches Bash to an agent-managed terminal on either terminal_output flag
           terminal_output_delta: true,
           // JetBrains AIR bridge (RFD #1992 + adapter extensions): nativeSubagentSessions follows the def's subagents
-          // gate; sessionFailure and asyncTasks are independent capabilities the host always supports
-          jetbrains: { air: { version: 1, capabilities: [...(def.subagents === false ? [] : ['nativeSubagentSessions']), 'sessionFailure', 'asyncTasks'] } },
+          // gate; sessionFailure and asyncTasks are independent capabilities the host always supports.
+          // recommendedValue: claude-agent-acp drops its placeholder `default` effort row (and the `default` model row when
+          // a concrete model matches it) and reports concrete current values instead
+          jetbrains: { air: { version: 1, capabilities: [...(def.subagents === false ? [] : ['nativeSubagentSessions']), 'sessionFailure', 'asyncTasks', 'recommendedValue'] } },
         },
       },
     } as acp.InitializeRequest;
