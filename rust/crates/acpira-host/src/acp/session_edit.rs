@@ -1,4 +1,4 @@
-//! History editing (mirror of src/host/acp/sessionEdit.ts). ACP cannot rewind to a message: a fresh peer session
+//! History editing. ACP cannot rewind to a message: a fresh peer session
 //! receives the retained transcript as context, never replayed as executable prompts
 
 use std::collections::HashSet;
@@ -415,7 +415,12 @@ impl AcpSession {
           let c = self.core.lock();
           (c.acp_session_id.clone().unwrap_or_default(), c.state.controls.clone())
         };
-        self.apply_edit_settings(&proc, &sid, &mut controls, &edit.settings).await?;
+        let applied = self.apply_edit_settings(&proc, &sid, &mut controls, &edit.settings).await;
+        if applied.is_err() {
+          // A later selection failed, yet the earlier ones already landed on the live peer: the view follows that agent truth
+          self.core.lock().state.controls = controls.clone();
+        }
+        applied?;
         self.check_edit_active()?;
         let notes = {
           let mut c = self.core.lock();
@@ -438,7 +443,7 @@ impl AcpSession {
         });
         let me = self.clone();
         let text = edit.text.clone();
-        tokio::spawn(async move { me.prompt(text, drafts, false, Some(Staged { prepared, edited: false }), None).await });
+        crate::util::run_prefix(me.prompt(text, drafts, false, Some(Staged { prepared, edited: false }), None));
         return Ok(());
       }
       if let Some(b) = rebuilt {
@@ -475,7 +480,7 @@ impl AcpSession {
       accepted = true;
       let me = self.clone();
       let text = edit.text.clone();
-      tokio::spawn(async move { me.prompt(text, drafts, false, Some(Staged { prepared, edited: true }), None).await });
+      crate::util::run_prefix(me.prompt(text, drafts, false, Some(Staged { prepared, edited: true }), None));
       Ok(())
     }
     .await;

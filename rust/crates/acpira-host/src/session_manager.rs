@@ -1,4 +1,4 @@
-//! Master of all sessions (mirror of src/host/SessionManager.ts): live processes, the summary list, the viewers; every
+//! Master of all sessions: live processes, the summary list, the viewers; every
 //! webview action enters here.
 //!
 //! Locking: the manager's own state is one short-held mutex that is never held while a session is locked or while
@@ -494,13 +494,21 @@ impl SessionManager {
       }
       let _serial = me.sync_lock.lock().await;
       loop {
-        let (mine, own) = {
+        let (mut mine, own) = {
           let mut st = me.state.lock();
           st.sync_again = false;
           let mut own: HashSet<String> = st.live.keys().cloned().collect();
           own.extend(st.touched.drain());
           (st.index.clone(), own)
         };
+        // A live session's latest change may still wait for its flush: the shared file gets its current summary, not the stale copy
+        for s in me.live_sessions() {
+          let sum = s.summary();
+          match mine.iter().position(|x| x.id == s.id) {
+            Some(i) => mine[i] = sum,
+            None => mine.push(sum),
+          }
+        }
         match me.deps.store.sync_index(&mine, &own).await {
           Ok(merged) => {
             let trash: HashSet<String> = me.state.lock().trash.keys().cloned().collect();
@@ -931,6 +939,10 @@ impl SessionManager {
   pub(crate) fn mark_dirty(&self, id: &str, running: bool) {
     let mut st = self.state.lock();
     let prev = st.dirty.insert(id.to_owned(), running);
+    // Every change reports here, so a turn shorter than one flush quantum still leaves its running edge for the idle check
+    if running {
+      st.was_running.insert(id.to_owned());
+    }
     drop(st);
     // A fresh entry or an idle edge wakes the flusher at once
     if prev.is_none() || !running {

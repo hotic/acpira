@@ -1,13 +1,11 @@
-//! The sidecar's state machine over one wire (mirror of src/host/sidecar/SidecarServer.ts): hello (version-checked) →
+//! The sidecar's state machine over one wire: hello (version-checked) →
 //! runtime → views. Control messages are processed strictly in order. A view's WebviewMsg runs its synchronous prefix
 //! in order and continues concurrently, exactly like `void core.handle(m)` in the TS host: a `send` claims its turn
 //! before a following `stop` is looked at, and the `stop` never queues behind the whole turn
 
 use std::collections::HashMap;
-use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::task::{Context, Waker};
 
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -27,15 +25,6 @@ pub struct ServerOpts {
   pub ignore_client_agents: bool,
   /// The executable the ChatGPT connection prompt names (this binary)
   pub bridge_exe: Option<String>,
-}
-
-/// Poll a future once inline; if it is still pending, the rest runs as its own task
-pub fn run_prefix<F: Future<Output = ()> + Send + 'static>(fut: F) {
-  let mut fut = Box::pin(fut);
-  let mut cx = Context::from_waker(Waker::noop());
-  if fut.as_mut().poll(&mut cx).is_pending() {
-    tokio::spawn(fut);
-  }
 }
 
 pub struct SidecarServer {
@@ -139,7 +128,7 @@ impl SidecarServer {
         }
       }
       ShellMsg::WebviewMessage { view_id, message } => match self.views.get(&view_id) {
-        Some(core) => run_prefix(core.clone().handle(message)),
+        Some(core) => crate::util::run_prefix(core.clone().handle(message)),
         None => {
           let kind = message.get("type").and_then(Value::as_str).unwrap_or("undefined");
           self.log(&format!("webviewMessage for unknown view {view_id} ({kind}), ignored"));
