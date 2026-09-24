@@ -1,5 +1,4 @@
-//! The turn lifecycle of a session (mirror of the prompt / settle / cancel / queue / update-routing half of
-//! src/host/acp/AcpSession.ts and src/host/acp/promptQueue.ts)
+//! The turn lifecycle of a session: prompt, settle, cancel, the follow-up queue and update routing
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -484,7 +483,7 @@ impl AcpSession {
       c.queue.remove(0)
     };
     let me = self.clone();
-    tokio::spawn(async move { me.prompt(next.text, vec![], false, Some(Staged { prepared: next.prepared, edited: false }), None).await });
+    crate::util::run_prefix(me.prompt(next.text, vec![], false, Some(Staged { prepared: next.prepared, edited: false }), None));
     true
   }
 
@@ -1102,7 +1101,7 @@ pub(crate) fn summarize_prompt(text: &str, attachments: &[Attachment]) -> String
 }
 
 /// The session-info context snapshot of a Grok `_x.ai/session/info` answer
-fn grok_context_usage(v: &Value, session_id: &str) -> Option<Usage> {
+pub fn grok_context_usage(v: &Value, session_id: &str) -> Option<Usage> {
   let result = v.get("result")?;
   if result.get("sessionId").and_then(Value::as_str) != Some(session_id) {
     return None;

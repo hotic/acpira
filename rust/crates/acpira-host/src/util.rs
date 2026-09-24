@@ -2,8 +2,21 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+thread_local! {
+  static MOCK_NOW: std::cell::Cell<Option<i64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Pins this thread's clock for a test (the Date.now spy of the TS suites); None restores the system clock
+#[doc(hidden)]
+pub fn mock_now(ms: Option<i64>) {
+  MOCK_NOW.with(|c| c.set(ms));
+}
+
 /// Date.now()
 pub fn now_ms() -> i64 {
+  if let Some(ms) = MOCK_NOW.with(|c| c.get()) {
+    return ms;
+  }
   SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
@@ -175,5 +188,15 @@ mod sha1_tests {
   fn known_vector() {
     let hex: String = super::sha1(b"abc").iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(hex, "a9993e364706816aba3e25717850c26c9cd0d89d");
+  }
+}
+
+/// Poll a future once inline; if it is still pending, the rest runs as its own task. What `void promise()` does in the TS host:
+/// the synchronous prefix (a turn claiming `running`, a handler taking its place in line) happens before the caller moves on
+pub fn run_prefix<F: std::future::Future<Output = ()> + Send + 'static>(fut: F) {
+  let mut fut = Box::pin(fut);
+  let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+  if fut.as_mut().poll(&mut cx).is_pending() {
+    tokio::spawn(fut);
   }
 }
