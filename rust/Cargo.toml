@@ -1,0 +1,30 @@
+[workspace]
+resolver = "3"
+members = ["crates/acpira-shared", "crates/acpira-host"]
+
+[workspace.package]
+version = "1.6.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+acpira-shared = { path = "crates/acpira-shared" }
+anyhow = "1.0.100"
+base64 = "0.22"
+libc = "0.2"
+parking_lot = "0.12"
+regex = "1.12"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.149", features = ["preserve_order", "raw_value"] }
+sha2 = "0.10"
+tempfile = "3.24"
+toml = { version = "=1.1.6", default-features = false, features = ["parse", "serde"] }
+tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "io-util", "io-std", "process", "sync", "time", "fs", "net", "signal"] }
+ureq = "=3.4.2"
+uuid = { version = "1.24", features = ["v4"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
