@@ -335,8 +335,7 @@ async fn viewers_hold_independent_active_sessions_and_only_get_their_sessions_ev
   seen_a.lock().unwrap().clear();
   seen_b.lock().unwrap().clear();
   m.handle_on(&a, json!({ "type": "send", "text": "again" })).await;
-  tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-  assert!(session_ids_seen(&seen_a).contains(&sa));
+  until(|| session_ids_seen(&seen_a).contains(&sa), 5000).await;
   assert!(!session_ids_seen(&seen_b).contains(&sa));
   // deleting a's session moves only a; b stays where it was
   let sb2 = b.active_id().unwrap();
@@ -580,6 +579,25 @@ async fn a_terminal_auth_method_runs_the_agent_binary_in_a_terminal_and_never_re
 
 fn option_values(view: &Value) -> Vec<Value> {
   view["controls"]["options"].as_array().unwrap().iter().map(|c| c["value"].clone()).collect()
+}
+
+// Every pick saves prefs.json in the background: a burst of picks must leave the last one on disk once dispose returns, never an
+// older snapshot that finished writing late
+#[tokio::test(flavor = "multi_thread")]
+async fn a_burst_of_picks_leaves_the_last_one_on_disk_after_dispose() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let m = Mgr::new(dir.path(), Opts::fake(&fake));
+  m.init().await;
+  m.new_session(None).await;
+  for i in 0..20 {
+    let effort = if i % 2 == 0 { "low" } else { "high" };
+    m.handle(json!({ "type": "setConfig", "configId": "effort", "value": effort })).await;
+  }
+  m.handle(json!({ "type": "setConfig", "configId": "effort", "value": "low" })).await;
+  m.dispose().await;
+  let store = TranscriptStore::new(dir.path().to_path_buf(), Arc::new(|_: &str| {}), None);
+  assert_eq!(store.load_prefs().await.last_settings["fake"].config["effort"], "low");
 }
 
 // The fake agent's process starts every session on model m1 / effort high / mode agent; the option values and the mode picked last
@@ -855,9 +873,14 @@ async fn the_workspace_scope_keeps_most_recent_and_deletion_picks_inside_the_fol
   m.new_session(None).await;
   let b1 = m.active_id().unwrap();
   m.handle(json!({ "type": "send", "text": "in b" })).await;
+  // Listed once its first turn is flushed into the index: before that it is an empty session a new one would reuse, and no fallback
+  let listed = |id: &str| m.sessions().iter().any(|s| s["id"] == id);
+  until(|| listed(&b1), 5000).await;
   m.new_session(None).await;
   let b2 = m.active_id().unwrap();
+  assert_ne!(b1, b2);
   m.handle(json!({ "type": "send", "text": "in b too" })).await;
+  until(|| listed(&b2), 5000).await;
   // Deleting the active one falls back to B's other session, not the newer-looking A one
   m.handle(json!({ "type": "deleteSession", "id": b2 })).await;
   assert_eq!(m.active_id().as_deref(), Some(b1.as_str()));

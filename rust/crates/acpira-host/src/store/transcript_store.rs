@@ -273,8 +273,11 @@ impl TranscriptStore {
         tokio::time::sleep_until(due.into()).await;
         continue;
       }
+      // The write chain is held before the record leaves `pending`, so flush_pending always sees it in one place or the other
+      let chain = self.chain(&id);
+      let _g = chain.lock().await;
       let Some(p) = self.state.lock().pending.remove(&id) else { return };
-      if let Err(e) = self.write(p.source).await {
+      if let Err(e) = self.write_locked(p.source).await {
         self.report(&id, &e);
       }
       return;
@@ -314,9 +317,14 @@ impl TranscriptStore {
   /// Creates the file or replaces it while it is still there; a record this store once had on disk that is gone now was
   /// deleted by another window, and writing it back would undo that
   async fn write(&self, source: Arc<dyn RecordSource>) -> Result<()> {
-    let id = source.record_id();
-    let chain = self.chain(&id);
+    let chain = self.chain(&source.record_id());
     let _g = chain.lock().await;
+    self.write_locked(source).await
+  }
+
+  /// `write` with the record's chain already held
+  async fn write_locked(&self, source: Arc<dyn RecordSource>) -> Result<()> {
+    let id = source.record_id();
     if !is_session_id(&id) {
       return Ok(());
     }

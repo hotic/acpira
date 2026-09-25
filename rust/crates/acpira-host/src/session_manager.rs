@@ -134,6 +134,9 @@ pub struct SessionManager {
   pool: Arc<AgentPool>,
   wake: Arc<tokio::sync::Notify>,
   sync_lock: tokio::sync::Mutex<()>,
+  // prefs.json writes run one at a time; dispose waits for the ones still in flight
+  prefs_writer: tokio::sync::Mutex<()>,
+  prefs_saves: parking_lot::Mutex<Vec<tokio::task::JoinHandle<()>>>,
   viewer_seq: std::sync::atomic::AtomicU64,
   me: Weak<SessionManager>,
 }
@@ -182,6 +185,8 @@ impl SessionManager {
         pool,
         wake: Arc::new(tokio::sync::Notify::new()),
         sync_lock: tokio::sync::Mutex::new(()),
+        prefs_writer: tokio::sync::Mutex::new(()),
+        prefs_saves: Default::default(),
         viewer_seq: Default::default(),
         me: me.clone(),
       }
@@ -381,15 +386,19 @@ impl SessionManager {
   }
 
   fn save_prefs(&self, agent: &str) {
-    let prefs = self.state.lock().prefs.clone();
-    let store = self.deps.store.clone();
-    let log = self.deps.log.clone();
+    let Some(me) = self.me.upgrade() else { return };
     let agent = agent.to_owned();
-    tokio::spawn(async move {
-      if let Err(e) = store.save_prefs(&prefs, &[agent]).await {
-        log(&format!("prefs save failed: {e}"));
+    let task = tokio::spawn(async move {
+      // Each write takes the newest prefs when its turn comes, so a late one can never put back an older snapshot
+      let _turn = me.prefs_writer.lock().await;
+      let prefs = me.state.lock().prefs.clone();
+      if let Err(e) = me.deps.store.save_prefs(&prefs, &[agent]).await {
+        me.log(&format!("prefs save failed: {e}"));
       }
     });
+    let mut saves = self.prefs_saves.lock();
+    saves.retain(|h| !h.is_finished());
+    saves.push(task);
   }
 
   /// The in-memory list changed: bring the disk index along shortly (debounced)
@@ -1902,6 +1911,10 @@ impl SessionManager {
     for (id, t) in trash {
       t.timer.abort();
       self.deps.store.remove(&id).await;
+    }
+    let saves: Vec<_> = self.prefs_saves.lock().drain(..).collect();
+    for h in saves {
+      let _ = h.await;
     }
     self.state.lock().sync_due = None;
     self.deps.store.dispose().await;

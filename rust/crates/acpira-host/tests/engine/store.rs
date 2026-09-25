@@ -282,8 +282,8 @@ async fn a_stream_of_saves_still_flushes_within_the_max_wait() {
   store.save(record("a", "v2"));
   sleep(25).await;
   store.save(record("a", "v3"));
-  sleep(80).await;
-  assert_eq!(title_of(&dir.path().join("a.json")), "v3");
+  // The debounce alone would hold it for 10 s; the 80 ms max wait brings it out long before
+  crate::support::until(|| dir.path().join("a.json").exists() && title_of(&dir.path().join("a.json")) == "v3", 2000).await;
   store.dispose().await;
 }
 
