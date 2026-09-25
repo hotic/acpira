@@ -78,7 +78,7 @@ describe('Codex process folding', () => {
     const turn: AgentTurn = { role: 'agent', blocks: [run, read], activity: { kind: 'think', label: 'Thinking' } };
     expect(foldActivity(turn)).toEqual({ kind: 'execute', label: 'Run…', target: 'pnpm test', mono: true, active: true });
     expect(foldActivity({ role: 'agent', blocks: [{ ...run, status: 'completed' }], activity: turn.activity }).label).toBe('Run');
-    expect(foldActivity({ role: 'agent', blocks: [{ type: 'compaction', id: 'c', status: 'in_progress' }] }).label).toBe('Compacting');
+    expect(foldActivity({ role: 'agent', blocks: [{ type: 'compaction', id: 'c', status: 'in_progress' }] }).label).toBe('Compacting context');
   });
 
   it('a parked background command never reads as the current action; a wait on it names the command', () => {
@@ -124,6 +124,6 @@ describe('Codex process folding', () => {
     const turn: AgentTurn = { role: 'agent', blocks: [run], startedAt: 1000, endedAt: 287000 };
     expect(elapsedLabel(turn)).toBe('用时 4 分钟 46 秒');
     expect(toolVerb({ ...run, status: 'failed' })).toBe('运行失败');
-    expect(foldActivity({ role: 'agent', blocks: [{ type: 'compaction', id: 'c', status: 'in_progress' }] }).label).toBe('正在压缩');
+    expect(foldActivity({ role: 'agent', blocks: [{ type: 'compaction', id: 'c', status: 'in_progress' }] }).label).toBe('正在压缩上下文');
   });
 });

@@ -309,8 +309,9 @@ pub fn initialize_request(def: &AgentDef) -> Value {
     caps["auth"] = json!({ "terminal": true });
   }
   caps["elicitation"] = json!({ "form": {} });
-  // ACP boolean session config options (RFD boolean-config-option)
-  caps["session"] = json!({ "configOptions": { "boolean": {} } });
+  // ACP boolean session config options (RFD boolean-config-option). `compaction` opts into structured
+  // compaction_update: without it claude-agent-acp 0.81.0 reports compaction as a `think` tool call
+  caps["session"] = json!({ "configOptions": { "boolean": {} }, "compaction": {} });
   if def.subagents {
     caps["subagents"] = json!({});
   }
@@ -324,4 +325,15 @@ pub fn initialize_request(def: &AgentDef) -> Value {
     "jetbrains": { "air": { "version": 1, "capabilities": air } },
   });
   json!({ "protocolVersion": PROTOCOL_VERSION, "clientInfo": { "name": CLIENT_NAME, "version": client_version() }, "clientCapabilities": caps })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn initialize_advertises_structured_compaction() {
+    let req = initialize_request(&AgentDef::default());
+    assert!(req["clientCapabilities"]["session"]["compaction"].is_object());
+  }
 }

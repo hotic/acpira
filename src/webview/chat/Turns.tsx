@@ -1,5 +1,5 @@
 import { Fragment, createContext, memo, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { Bot, Check, ChevronRight, Compass, Hand, MessageCircleQuestion, TriangleAlert, X } from 'lucide-react';
+import { Bot, Check, ChevronRight, Compass, Hand, MessageCircleQuestion, Shrink, TriangleAlert, X } from 'lucide-react';
 import type { AgentBlock, AgentTurn, CompactionBlock, FailureAction, NoticeBlock, PermissionBlock, SlashCommand, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
 import { useAppearance, type Appearance } from '../appearance';
@@ -8,7 +8,6 @@ import { commandSegments } from './PromptInput';
 import { commandMarks } from './slashCommands';
 import { turnOutcome } from './turnOutcome';
 import { Row, RowLabel, RowTarget, RowEntranceContext, EntranceScopeContext } from '../ui/Row';
-import { Shimmer } from '../ui/Shimmer';
 import { Disclosure, DisclosureObserverContext } from '../ui/Disclosure';
 import { Collapsible, LazyPanelContext } from '../ui/Collapsible';
 import { Orb } from '../effects/Orb';
@@ -198,7 +197,7 @@ function AgentContent({ turn, index, running, onPermission, memoryKey, subagents
   const { fold } = useAppearance();
   if (fold === 'codex') return <CodexMessage turn={turn} running={running} onPermission={onPermission} memoryKey={memoryKey} subagents={subagents} allSubagents={allSubagents} onInspect={onInspect} lead={lead} />;
   // Plan approvals live on the plan card and the open question card above the composer; neither takes a slot in the message
-  const groups = groupBlocks(detailBlocks(turn, running).filter(b => (b.type !== 'permission' || !b.planId) && (b.type !== 'question' || !!b.outcome)));
+  const groups = groupBlocks(turn.blocks.filter(b => (b.type !== 'permission' || !b.planId) && (b.type !== 'question' || !!b.outcome)));
   return (
     <div className="flex flex-col gap-gap">
       <Activity turn={turn} running={running} leadKind={lead} />
@@ -263,18 +262,8 @@ function Outcome({ turn }: { turn: AgentTurn }) {
 
 // Turn-level activity is independent of the latest tool and the fold's expansion state.
 // A pending user decision suspends the animation until the turn can continue.
-function compactionInActivity(turn: AgentTurn) {
-  return !turn.blocks.some(b => b.type === 'permission' || (b.type === 'question' && !b.outcome))
-    && turn.blocks.some(b => b.type === 'compaction' && b.status === 'in_progress');
-}
-
-// The activity owns live compaction; terminal statuses stay in transcript history.
-function detailBlocks(turn: AgentTurn, running: boolean) {
-  return running && compactionInActivity(turn)
-    ? turn.blocks.filter(b => b.type !== 'compaction' || b.status !== 'in_progress')
-    : turn.blocks;
-}
-
+// Live compaction is a row at its transcript position, like a running tool; the activity stays generic
+// (a heading label read as belonging to an earlier, finished compaction row further up).
 function liveActivity(turn: AgentTurn, leadKind: 'orb' | 'static' = 'orb') {
   if (turn.blocks.some(b => b.type === 'permission')) {
     return { label: t('host.awaitingApproval'), active: false, lead: <Hand className="size-icon" strokeWidth={1.5} /> };
@@ -283,7 +272,7 @@ function liveActivity(turn: AgentTurn, leadKind: 'orb' | 'static' = 'orb') {
     return { label: t('host.awaitingAnswers'), active: false, lead: <MessageCircleQuestion className="size-icon" strokeWidth={1.5} /> };
   }
   // The Orb belongs to the root turn only; observed child transcripts get a static lead
-  return { label: t(compactionInActivity(turn) ? 'turns.compacting' : 'host.working'), active: true, lead: leadKind === 'static' ? <Bot className="size-icon" strokeWidth={1.5} /> : <Orb kind="think" /> };
+  return { label: t('host.working'), active: true, lead: leadKind === 'static' ? <Bot className="size-icon" strokeWidth={1.5} /> : <Orb kind="think" /> };
 }
 
 function Activity({ turn, running, leadKind = 'orb' }: { turn: AgentTurn; running: boolean; leadKind?: 'orb' | 'static' }) {
@@ -411,7 +400,7 @@ function CursorFold({ blocks }: { blocks: ToolCallBlock[] }) {
 // row read as the same status twice, and swapping it for the fold head at the first tool replayed the entrance).
 // Permission cards stay outside; the latest reply remains visible while it streams.
 function CodexMessage({ turn, running, onPermission, memoryKey, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; running: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
-  const { process, reply, permissions, notices } = splitCodexBlocks(detailBlocks(turn, running));
+  const { process, reply, permissions, notices } = splitCodexBlocks(turn.blocks);
   const hasTools = turn.blocks.some(block => block.type === 'tool_call');
   return (
     <div className="flex flex-col gap-gap">
@@ -524,13 +513,18 @@ function LineBlock({ block }: { block: AgentBlock }) {
   return null;
 }
 
-// Context compaction is a localized status aligned with ordinary reply text.
+// Context compaction is an action row like a tool call: same lead slot (the context panel's compact icon), and the
+// live status shimmers in place until the agent reports the outcome. The host turns structured compaction_update and
+// adapter prose (rust `compaction_text`) into the same block, so every agent shares this one presentation.
 function Compaction({ block }: { block: CompactionBlock }) {
+  const { toolLine } = useAppearance();
   const running = block.status === 'in_progress';
   const label = running ? t('turns.compacting') : block.status === 'completed' ? t('turns.compacted') : block.status === 'failed' ? t('turns.compactFailed') : t('turns.compactCancelled');
+  const Icon = block.status === 'failed' ? TriangleAlert : Shrink;
   return (
-    <Row className="text-fg-3">
-      <Shimmer active={running}>{label}</Shimmer>
+    <Row tone="action" lead={toolLine === 'text' ? undefined : <Icon className="size-icon" strokeWidth={1.5} />}>
+      <RowLabel shimmer={running}>{label}</RowLabel>
+      {block.status === 'failed' && block.error && <RowTarget className="text-fg-3">{block.error}</RowTarget>}
     </Row>
   );
 }

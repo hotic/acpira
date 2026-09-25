@@ -42,6 +42,11 @@ describe('compaction presentation', () => {
     ]);
   });
 
+  it('keeps the host-recorded failure reason on the collapsed status', () => {
+    const turn: AgentTurn = { role: 'agent', stop: 'end_turn', blocks: [{ type: 'compaction', id: 'text-compaction-1', status: 'failed', error: 'Compaction failed: too large' }] };
+    expect(compactionForDisplay(turn, false).blocks).toEqual([{ type: 'compaction', id: 'text-compaction-1', status: 'failed', error: 'Compaction failed: too large' }]);
+  });
+
   it('does not turn unrecognized output into a successful compaction', () => {
     const original = reply('The command is not supported.');
     expect(compactionForDisplay(original, false)).toBe(original);

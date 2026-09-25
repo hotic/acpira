@@ -298,6 +298,8 @@ export interface CompactionBlock {
   type: 'compaction';
   id: string;
   status: CompactionStatus;
+  // The agent's reason for a failed compaction
+  error?: string;
 }
 
 // A structured question the agent put to the user: one property of an elicitation form (Devin / Kimi `elicitation/create`, mode form)

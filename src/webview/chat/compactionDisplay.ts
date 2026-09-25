@@ -1,7 +1,8 @@
 import type { AgentTurn, CompactionBlock, CompactionStatus } from '@shared/transcript';
 
 // Presentation only: ACP completion and queue release remain owned by the host.
-// Apply this exclusively to replies to /compact, including persisted transcripts.
+// Apply this exclusively to replies to /compact. The host already turns adapter prose into compaction blocks
+// (rust `compaction_text`); this keeps records persisted before that readable and covers the wait for the first chunk.
 export function compactionForDisplay(turn: AgentTurn, running: boolean): AgentTurn {
   const text = turn.blocks.filter(b => b.type === 'text').map(b => b.markdown).join('').trim();
   const structured = turn.blocks.filter((b): b is CompactionBlock => b.type === 'compaction');
@@ -20,7 +21,8 @@ export function compactionForDisplay(turn: AgentTurn, running: boolean): AgentTu
   }
   if (turn.stop === 'error') status = 'failed';
   if (turn.stop === 'cancelled') status = 'cancelled';
-  const block: CompactionBlock = { type: 'compaction', id: structured[0]?.id ?? 'compact-display', status };
+  const error = status === 'failed' ? structured.at(-1)?.error : undefined;
+  const block: CompactionBlock = { type: 'compaction', id: structured[0]?.id ?? 'compact-display', status, ...(error ? { error } : {}) };
   // Known CLI responses include progress text and statistics; show a single status.
   // Preserve unrelated content and concrete failure details for diagnosis.
   const blocks = turn.blocks.filter(b => b.type !== 'compaction' && !(b.type === 'text' && known));
