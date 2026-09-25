@@ -38,8 +38,8 @@ import { breadcrumb, nodesByTurn, subagentTitle } from './subagents/subagentStat
 // Attachments (image thumbnails / file pills) sit above the text inside the same bubble.
 // Clicking the card opens its inline editor, which also gives the full text for copying; no separate hover actions.
 // Sticking within the exchange is the caller's job (`HistoryMessage` wraps it), so the editor can take the card's place without a layout jump;
-// `compact` is its stuck state: a long prompt keeps the same capped viewport with a fading edge so it does not wall off the reply
-// or animate between a full card and a three-line fold while the conversation reaches the bottom.
+// `compact` is its stuck state: the text folds to a few lines with a fading edge so a long prompt does not wall off the reply.
+// Trailing blank lines are not displayed; the turn keeps its original text.
 export function UserMessage({ turn, index, blobUrl, onEdit, compact, commands }: { turn: UserTurn; index: number; blobUrl?: (blob: string) => string; onEdit?: () => void; compact?: boolean; commands?: readonly SlashCommand[] }) {
   const { userMessage } = useAppearance();
   const fade = useScrollFade<HTMLDivElement>();
@@ -55,8 +55,9 @@ export function UserMessage({ turn, index, blobUrl, onEdit, compact, commands }:
   }
   // The same marks the composer painted while this was being typed; a recorded command keeps its pill
   // even after the agent stops advertising it
-  const marks = commandMarks(commands ?? [], turn.text);
-  if (turn.command && turn.text.startsWith(`/${turn.command}`) && marks[0]?.start !== 0)
+  const shown = turn.text.trimEnd();
+  const marks = commandMarks(commands ?? [], shown);
+  if (turn.command && shown.startsWith(`/${turn.command}`) && marks[0]?.start !== 0)
     marks.unshift({ start: 0, name: turn.command });
   return (
     <div className={cn('flex w-full min-w-0 flex-col', userMessage === 'bubble' && 'self-end max-w-[88%]')}>
@@ -77,13 +78,13 @@ export function UserMessage({ turn, index, blobUrl, onEdit, compact, commands }:
         )}
       >
         {turn.attachments?.length ? <TurnAttachments attachments={turn.attachments} blobUrl={blobUrl} /> : null}
-        {turn.text && <div ref={textRef} className={cn(
+        {shown && <div ref={textRef} className={cn(
           'scroll-fade scroll-thin min-h-0 whitespace-pre-wrap [--scroll-fade-size:var(--text-1-lh)] [overflow-anchor:none]',
           // A command mark's background overhangs its line box on any side; without room inside the padding box the scrollport shaves it.
           marks.length > 0 && 'py-0.5 px-1',
-          // Stuck text does not take the wheel: scrolling over the capped card keeps moving the conversation.
+          // Folded text does not take the wheel: scrolling over a stuck card keeps moving the conversation.
           compact ? 'max-h-(--user-message-stuck-max) overflow-hidden' : 'max-h-(--user-message-max) overflow-y-auto',
-        )}>{marks.length ? commandSegments(turn.text, marks) : turn.text}</div>}
+        )}>{marks.length ? commandSegments(shown, marks) : shown}</div>}
       </div>
     </div>
   );

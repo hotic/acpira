@@ -31,10 +31,12 @@ export const HistoryComposerContext = createContext<ComposerProps | undefined>(u
 // instant — a click should land in the text at once, like direct manipulation; only the way back (cancel / sent) animates: the
 // opaque base animates its own height while the returning card fades in. Automatic prompts are plain rows. Keep the base outside
 // the fade so replies cannot show through the editor or the swapping content.
-// A stuck card keeps the same capped viewport as the normal prompt: the sentinel at the exchange's top leaving the scroller marks
-// the stuck state, while the card clips its overflow with a fade instead of shrinking between natural height and a three-line fold.
-// A hidden sidebar webview collapses the thread to no box — those IntersectionObserver records are ignored, then re-checked when
-// the thread is visible again.
+// A stuck card folds to a few lines: the sentinel at the exchange's top leaving the scroller marks the stuck state. The fold must not
+// change the exchange's flow height — the reply would jump up under the card, and at the bottom of the thread the shorter scroll range
+// pulls the sentinel back into view, unsticks the card, grows it and sticks it again in a loop. A spacer after the frame backfills
+// exactly the height the fold removed; it sits outside the sticky box, so the folded card still leaves when its own bottom meets the
+// next exchange instead of trailing an empty strip. A hidden sidebar webview collapses the thread to no box — those
+// IntersectionObserver records are ignored, then re-checked when the thread is visible again.
 export const HistoryMessage = memo(function HistoryMessage(p: { turn: UserTurn; index: number; turnIndex: number; blobUrl?: (blob: string) => string; commands?: readonly SlashCommand[] }) {
   const context = useContext(HistoryContext);
   const { motion } = useAppearance();
@@ -44,7 +46,16 @@ export const HistoryMessage = memo(function HistoryMessage(p: { turn: UserTurn; 
   const from = useRef<number>(undefined);
   // Swap counter remounts the content; `fade` is true only for the way back, so opening the editor never fades
   const [swap, setSwap] = useState({ n: 0, fade: false });
-  const [stuck, setStuck] = useState(false);
+  const spacer = useRef<HTMLDivElement>(null);
+  // Unfolded frame height, measured right before the fold so the spacer can give back what the fold takes
+  const natural = useRef<number>(undefined);
+  const stuckNow = useRef(false);
+  const [stuck, setStuckState] = useState(false);
+  const setStuck = useCallback((next: boolean) => {
+    if (next && !stuckNow.current) natural.current = frame.current?.offsetHeight;
+    stuckNow.current = next;
+    setStuckState(next);
+  }, []);
   const sentinel = useCallback((el: HTMLDivElement | null) => {
     if (!el || typeof IntersectionObserver === 'undefined') return;
     const thread = el.closest('[data-thread]');
@@ -80,9 +91,17 @@ export const HistoryMessage = memo(function HistoryMessage(p: { turn: UserTurn; 
     });
     ro.observe(thread);
     return () => { observer.disconnect(); ro.disconnect(); };
-  }, []);
+  }, [setStuck]);
   const editor = context && context.editing === p.turnIndex ? context : undefined;
   const editing = !!editor;
+  // Runs in the same commit as the fold, before paint and before the observer sees the new layout
+  useLayoutEffect(() => {
+    const el = spacer.current;
+    if (!el) return;
+    const folded = frame.current?.offsetHeight ?? 0;
+    const gap = stuck && !editing && natural.current !== undefined ? Math.max(0, natural.current - folded) : 0;
+    el.style.height = `${gap}px`;
+  }, [stuck, editing]);
   const select = (index?: number) => {
     const closing = index === undefined;
     from.current = closing ? base.current?.offsetHeight : undefined;
@@ -118,6 +137,8 @@ export const HistoryMessage = memo(function HistoryMessage(p: { turn: UserTurn; 
           </div>
         </div>
       </div>
+      {/* Cancels the exchange's gap so an empty spacer adds nothing */}
+      <div ref={spacer} aria-hidden="true" className="pointer-events-none -mt-msg shrink-0" />
     </>
   );
 });
