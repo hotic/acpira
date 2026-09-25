@@ -89,7 +89,7 @@ fn diff_positions_survive_omitted_context_and_inserted_lines() {
   assert_eq!(v(diff_lines("", "a\nb")).as_array().unwrap().iter().map(|l| l["newLine"].clone()).collect::<Vec<_>>(), [json!(1), json!(2)]);
   let bounded = v(diff_lines(&"old\n".repeat(450), &"new\n".repeat(450)));
   let dels: Vec<i64> = bounded.as_array().unwrap().iter().filter(|l| l["kind"] == "del").map(|l| l["oldLine"].as_i64().unwrap()).collect();
-  assert_eq!(dels, (1..=40).collect::<Vec<_>>());
+  assert_eq!(dels, (1..=450).collect::<Vec<_>>());
   // No manufactured trailing blank line, and nothing for two empty sides
   assert_eq!(v(diff_lines("", "a\r\nb\r\n")).as_array().unwrap().iter().map(|l| l["text"].clone()).collect::<Vec<_>>(), [json!("+a"), json!("+b")]);
   assert!(diff_lines("", "").is_empty());

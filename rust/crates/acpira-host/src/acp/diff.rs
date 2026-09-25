@@ -1,8 +1,15 @@
-//! Line-level diff: LCS over the common lines; beyond 800 combined lines only a head is shown
+//! Line-level diff: git's histogram algorithm (via `similar`), so a small edit in a large file stays small.
+//! A time budget bounds pathological inputs; past it the algorithm settles for a coarser but still valid script.
+
+use std::time::{Duration, Instant};
 
 use acpira_shared::transcript::{DiffKind, DiffLine};
+use similar::{Algorithm, DiffTag, capture_diff_slices_deadline};
 
 use crate::i18n::tp;
+
+/// Wall-clock budget for one diff; beyond it `similar` returns an approximate (never wrong) script
+const DIFF_BUDGET: Duration = Duration::from_millis(200);
 
 fn line(kind: DiffKind, text: String, old_line: Option<u64>, new_line: Option<u64>) -> DiffLine {
   DiffLine { kind, text, old_line, new_line }
@@ -11,52 +18,39 @@ fn line(kind: DiffKind, text: String, old_line: Option<u64>, new_line: Option<u6
 pub fn diff_lines(old_text: &str, new_text: &str) -> Vec<DiffLine> {
   let a = source_lines(old_text);
   let b = source_lines(new_text);
-  if a.len() + b.len() > 800 {
-    let mut out = vec![line(DiffKind::Hunk, tp("host.hunk", &[("a", &a.len().to_string()), ("b", &b.len().to_string())]), None, None)];
-    out.extend(a.iter().take(40).enumerate().map(|(i, t)| line(DiffKind::Del, format!("-{t}"), Some(i as u64 + 1), None)));
-    out.extend(b.iter().take(40).enumerate().map(|(i, t)| line(DiffKind::Add, format!("+{t}"), None, Some(i as u64 + 1))));
-    return out;
-  }
-  let (m, n) = (a.len(), b.len());
-  let w = n + 1;
-  let mut dp = vec![0u32; (m + 1) * w];
-  for i in (0..m).rev() {
-    for j in (0..n).rev() {
-      dp[i * w + j] = if a[i] == b[j] { dp[(i + 1) * w + j + 1] + 1 } else { dp[(i + 1) * w + j].max(dp[i * w + j + 1]) };
-    }
-  }
+  let ops = capture_diff_slices_deadline(Algorithm::Histogram, &a, &b, Some(Instant::now() + DIFF_BUDGET));
   let mut out = vec![];
-  let (mut i, mut j) = (0, 0);
-  while i < m && j < n {
-    if a[i] == b[j] {
-      out.push(line(DiffKind::Ctx, format!(" {}", a[i]), Some(i as u64 + 1), Some(j as u64 + 1)));
-      i += 1;
-      j += 1;
-    } else if dp[(i + 1) * w + j] >= dp[i * w + j + 1] {
-      out.push(line(DiffKind::Del, format!("-{}", a[i]), Some(i as u64 + 1), None));
-      i += 1;
-    } else {
-      out.push(line(DiffKind::Add, format!("+{}", b[j]), None, Some(j as u64 + 1)));
-      j += 1;
+  for op in ops {
+    let (tag, old, new) = op.as_tag_tuple();
+    match tag {
+      DiffTag::Equal => {
+        out.extend(old.zip(new).map(|(i, j)| line(DiffKind::Ctx, format!(" {}", a[i]), Some(i as u64 + 1), Some(j as u64 + 1))));
+      }
+      DiffTag::Delete | DiffTag::Insert | DiffTag::Replace => {
+        push_changed(&mut out, &a, old, DiffKind::Del);
+        push_changed(&mut out, &b, new, DiffKind::Add);
+      }
     }
-  }
-  while i < m {
-    out.push(line(DiffKind::Del, format!("-{}", a[i]), Some(i as u64 + 1), None));
-    i += 1;
-  }
-  while j < n {
-    out.push(line(DiffKind::Add, format!("+{}", b[j]), None, Some(j as u64 + 1)));
-    j += 1;
   }
   collapse_context(out, 3)
 }
 
-fn source_lines(text: &str) -> Vec<String> {
+fn push_changed(out: &mut Vec<DiffLine>, src: &[&str], range: std::ops::Range<usize>, kind: DiffKind) {
+  for i in range {
+    let n = Some(i as u64 + 1);
+    out.push(match kind {
+      DiffKind::Del => line(kind, format!("-{}", src[i]), n, None),
+      _ => line(kind, format!("+{}", src[i]), None, n),
+    });
+  }
+}
+
+fn source_lines(text: &str) -> Vec<&str> {
   if text.is_empty() {
     return vec![];
   }
-  let mut lines: Vec<String> = text.replace("\r\n", "\n").split('\n').map(str::to_owned).collect();
-  if lines.last().is_some_and(String::is_empty) {
+  let mut lines: Vec<&str> = text.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l)).collect();
+  if lines.last().is_some_and(|l| l.is_empty()) {
     lines.pop();
   }
   lines
@@ -108,5 +102,24 @@ mod tests {
     assert_eq!(d[1].old_line, Some(7));
     assert_eq!(d.last().unwrap().text, " l13");
     assert_eq!(diff_lines("", "a\nb\n").len(), 2);
+  }
+
+  #[test]
+  fn a_small_edit_in_a_large_file_stays_small() {
+    let old: String = (1..=1600).map(|i| format!("fn f{i}() {{}}\n")).collect();
+    let new = old.replace("fn f900() {}\n", "fn f900() { todo!() }\nfn extra() {}\n");
+    let d = diff_lines(&old, &new);
+    let changed: Vec<_> = d.iter().filter(|l| matches!(l.kind, DiffKind::Add | DiffKind::Del)).collect();
+    assert_eq!(changed.len(), 3);
+    assert_eq!((changed[0].kind, changed[0].old_line), (DiffKind::Del, Some(900)));
+    assert_eq!(changed[1].new_line, Some(900));
+    assert_eq!(changed[2].new_line, Some(901));
+  }
+
+  #[test]
+  fn a_full_rewrite_keeps_every_line_so_the_stat_is_exact() {
+    let d = diff_lines(&"old\n".repeat(1000), &"new\n".repeat(1000));
+    assert_eq!(d.iter().filter(|l| l.kind == DiffKind::Del).count(), 1000);
+    assert_eq!(d.iter().filter(|l| l.kind == DiffKind::Add).count(), 1000);
   }
 }
