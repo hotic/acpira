@@ -227,7 +227,8 @@ async fn the_accepted_prompt_shows_below_pre_send_compaction_without_going_out_e
     s.set_config("effort".into(), "low".into()).await.ok();
     let pending = last_turn(&view(&s));
     expect_match(&pending, json!({ "role": "user", "text": "follow-up" }));
-    expect_match(turn_at(&view(&s), -2), json!({ "role": "agent", "blocks": [{ "type": "text" }] }));
+    // The background acknowledgement is adapter prose; normalize shows it as the open compaction row
+    expect_match(turn_at(&view(&s), -2), json!({ "role": "agent", "blocks": [{ "type": "compaction", "status": "in_progress" }] }));
     assert_eq!(done_count(&h), 2, "{agent}");
     s.set_config("effort".into(), "high".into()).await.ok();
     sent.await.unwrap();

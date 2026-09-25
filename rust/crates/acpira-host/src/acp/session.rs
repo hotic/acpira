@@ -206,6 +206,7 @@ impl AcpSession {
         title: Some(record.title).filter(|t| !t.is_empty()),
         ctx: ctx.clone(),
         log: Some(tree_log.clone()),
+        agent: Some(record.agent.clone()),
         ..Default::default()
       };
       let tree = SubagentTree::new(tree_log, ctx, record.subagents, Some(&record.updated_at));

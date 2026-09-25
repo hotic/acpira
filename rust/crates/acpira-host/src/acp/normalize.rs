@@ -16,8 +16,10 @@ use acpira_shared::num::Num;
 use acpira_shared::todo_tools::{is_todo_tool, todo_entries};
 use acpira_shared::transcript::*;
 
+use super::compaction_text;
 use super::diff::diff_lines;
 use super::plan_snapshots::{last_plan_snapshot, same_plan_entries};
+use super::retry_text;
 use super::session_failure::{SessionFailure, failure_of};
 use super::wire::{AsyncTaskEvent, TaskEventKind};
 use crate::i18n::{t, tp};
@@ -58,6 +60,10 @@ pub struct NormalizeState {
   pub ctx: ToolCtx,
   pub tasks: TaskBook,
   pub log: Option<Log>,
+  /// The agent id, for adapter strings that stand for structured events (`compaction_text`)
+  pub agent: Option<String>,
+  /// The notice of the retry run in progress (`retry_text`) and its last attempt number, until the adapter says it resumed
+  pub retry: Option<(String, Option<u32>)>,
 }
 
 impl NormalizeState {
@@ -172,6 +178,15 @@ pub fn apply_update(s: &mut NormalizeState, u: &Value) -> bool {
         Some(ToolContent::Text { text }) => text,
         _ => text_of_content(&content),
       };
+      if let Some(found) = s.agent.as_deref().and_then(|a| compaction_text::markers(a, &text))
+        && apply_compaction_markers(s, i, &found)
+      {
+        return true;
+      }
+      if let Some(found) = s.agent.as_deref().and_then(|a| retry_text::marker(a, &text)) {
+        apply_retry_marker(s, i, &found);
+        return true;
+      }
       let t = agent(s, i);
       if let Some(AgentBlock::Text(last)) = t.blocks.last_mut()
         && last.streaming == Some(true)
@@ -348,16 +363,71 @@ pub fn apply_update(s: &mut NormalizeState, u: &Value) -> bool {
         _ => CompactionStatus::InProgress,
       };
       let id = str_of(u, "compactionId").unwrap_or("").to_owned();
+      let error = if status == CompactionStatus::Failed { text_of(u, "error").map(str::to_owned) } else { None };
       if let Some(b) = find_compaction(&mut s.turns, &id) {
         b.status = status;
+        b.error = error.or(b.error.take());
       } else {
         seal(s, i);
-        agent(s, i).blocks.push(AgentBlock::Compaction(CompactionBlock { id, status }));
+        agent(s, i).blocks.push(AgentBlock::Compaction(CompactionBlock { id, status, error }));
       }
       true
     }
     _ => false,
   }
+}
+
+/// Prose compaction markers become compaction blocks. A start opens a row in place; an outcome settles the latest open
+/// prose compaction, which may sit in an earlier turn (Devin / Kimi finish /compact in the background), or stands alone.
+/// Detail lines are absorbed only right under a compaction row; false leaves the chunk to render as text
+fn apply_compaction_markers(s: &mut NormalizeState, i: usize, found: &[compaction_text::Marker]) -> bool {
+  use compaction_text::Marker;
+  let under_row = matches!(agent(s, i).blocks.last(), Some(AgentBlock::Compaction(_)));
+  if found.iter().all(|m| *m == Marker::Detail) {
+    return under_row;
+  }
+  seal(s, i);
+  for m in found {
+    let (status, error) = match m {
+      Marker::Detail => continue,
+      // A repeated start while this turn's prose compaction is still open is the same compaction
+      Marker::Start if agent(s, i).blocks.iter().any(open_text_compaction) => continue,
+      Marker::Start => {
+        s.image_seq += 1;
+        let id = format!("{TEXT_COMPACTION}{}-{}", now_ms(), s.image_seq);
+        agent(s, i).blocks.push(AgentBlock::Compaction(CompactionBlock { id, status: CompactionStatus::InProgress, error: None }));
+        continue;
+      }
+      Marker::Done => (CompactionStatus::Completed, None),
+      Marker::Cancelled => (CompactionStatus::Cancelled, None),
+      Marker::Failed(e) => (CompactionStatus::Failed, Some(e.clone())),
+    };
+    let open = s.turns.iter_mut().rev().filter_map(Turn::as_agent_mut).find_map(|t| {
+      t.blocks.iter_mut().rev().find(|b| open_text_compaction(b)).and_then(|b| match b {
+        AgentBlock::Compaction(c) => Some(c),
+        _ => None,
+      })
+    });
+    match open {
+      Some(c) => {
+        c.status = status;
+        c.error = error;
+      }
+      None => {
+        s.image_seq += 1;
+        let id = format!("{TEXT_COMPACTION}{}-{}", now_ms(), s.image_seq);
+        agent(s, i).blocks.push(AgentBlock::Compaction(CompactionBlock { id, status, error }));
+      }
+    }
+  }
+  true
+}
+
+/// Id prefix of compaction rows synthesized from prose, so an outcome never settles a structured compaction
+const TEXT_COMPACTION: &str = "text-compaction-";
+
+fn open_text_compaction(b: &AgentBlock) -> bool {
+  matches!(b, AgentBlock::Compaction(c) if c.status == CompactionStatus::InProgress && c.id.starts_with(TEXT_COMPACTION))
 }
 
 fn find_compaction<'a>(turns: &'a mut [Turn], id: &str) -> Option<&'a mut CompactionBlock> {
@@ -369,8 +439,62 @@ fn find_compaction<'a>(turns: &'a mut [Turn], id: &str) -> Option<&'a mut Compac
   })
 }
 
+/// Prose retries become one quiet notice per retry run: each attempt rewrites it in place and the adapter's resume line
+/// settles it. A resume line without a run in progress is dropped, never rendered as reply text
+fn apply_retry_marker(s: &mut NormalizeState, i: usize, m: &retry_text::Marker) {
+  use retry_text::Marker;
+  let n = |v: u32| v.to_string();
+  let finished = *m == Marker::Finished;
+  let (title, attempt) = match *m {
+    Marker::Attempt(Some((a, max, wait))) => (tp("host.retrying", &[("attempt", &n(a)), ("max", &n(max)), ("seconds", &n(wait))]), Some(a)),
+    Marker::Attempt(None) => (t("host.retryingBare"), None),
+    Marker::Finished => match s.retry.as_ref().and_then(|r| r.1) {
+      Some(a) => (tp("host.retryFinished", &[("attempt", &n(a))]), Some(a)),
+      None => (t("host.retryFinishedBare"), None),
+    },
+  };
+  let open_id = s.retry.take().map(|r| r.0);
+  let existing = open_id.as_deref().and_then(|id| find_notice(&mut s.turns, id));
+  let id = match existing {
+    Some(notice) => {
+      notice.revision = Num(notice.revision.0 + 1.0);
+      notice.title = title;
+      notice.id.clone()
+    }
+    None if finished => return,
+    None => {
+      seal(s, i);
+      s.image_seq += 1;
+      let id = format!("text-retry-{}-{}", now_ms(), s.image_seq);
+      agent(s, i).blocks.push(AgentBlock::Notice(NoticeBlock {
+        id: id.clone(),
+        revision: Num(1.0),
+        category: FailureCategory::Connection,
+        severity: Severity::Warning,
+        title,
+        details: None,
+        actions: vec![],
+      }));
+      id
+    }
+  };
+  if !finished {
+    s.retry = Some((id, attempt));
+  }
+}
+
+fn find_notice<'a>(turns: &'a mut [Turn], id: &str) -> Option<&'a mut NoticeBlock> {
+  turns.iter_mut().rev().filter_map(Turn::as_agent_mut).find_map(|t| {
+    t.blocks.iter_mut().find_map(|b| match b {
+      AgentBlock::Notice(n) if n.id == id => Some(n),
+      _ => None,
+    })
+  })
+}
+
 /// Turn ended: seal streaming blocks, record how it ended; tools still running are marked per stop reason
 pub fn end_turn(s: &mut NormalizeState, stop: TurnStop) {
+  s.retry = None;
   let NormalizeState { turns, thought_started_at, .. } = s;
   let Some(Turn::Agent(t)) = turns.last_mut() else { return };
   seal_streaming(thought_started_at, t);
@@ -402,13 +526,7 @@ pub fn fail_turn(s: &mut NormalizeState, error: TurnError) {
 
 /// One row per failure id in the whole transcript; a higher revision rewrites it in place
 pub fn apply_session_failure(s: &mut NormalizeState, f: &SessionFailure) -> bool {
-  let existing = s.turns.iter_mut().rev().filter_map(Turn::as_agent_mut).find_map(|t| {
-    t.blocks.iter_mut().find_map(|b| match b {
-      AgentBlock::Notice(n) if n.id == f.id => Some(n),
-      _ => None,
-    })
-  });
-  if let Some(n) = existing {
+  if let Some(n) = find_notice(&mut s.turns, &f.id) {
     if n.revision.0 >= f.revision {
       return false;
     }

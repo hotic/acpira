@@ -590,6 +590,9 @@ pub enum CompactionStatus {
 pub struct CompactionBlock {
   pub id: String,
   pub status: CompactionStatus,
+  /// The agent's reason for a failed compaction
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

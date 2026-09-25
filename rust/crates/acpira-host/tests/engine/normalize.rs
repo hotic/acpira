@@ -728,3 +728,102 @@ fn a_completed_task_never_moves_and_a_stopped_one_is_never_revived() {
   apply_async_task(&mut s2, &task(TaskEventKind::State, Some("running")));
   expect_match(task_row(&s2), json!({ "status": "cancelled", "asyncTask": { "state": "stopped" } }));
 }
+
+fn chunk(text: &str) -> Value {
+  json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": text } })
+}
+
+fn compaction_rows(s: &NormalizeState) -> Vec<(String, Option<String>)> {
+  s.turns
+    .iter()
+    .filter_map(Turn::as_agent)
+    .flat_map(|t| &t.blocks)
+    .filter_map(|b| match b {
+      AgentBlock::Compaction(c) => Some((v(c.status).as_str().unwrap_or("").to_owned(), c.error.clone())),
+      _ => None,
+    })
+    .collect()
+}
+
+// pi-acp 0.0.33 reports automatic compaction mid-turn as two adapter sentences; they become one compaction row in place
+#[test]
+fn adapter_compaction_prose_mid_turn_becomes_a_compaction_row() {
+  let mut s = NormalizeState { agent: Some("pi".into()), ..state() };
+  apply(&mut s, chunk("Reading the file"));
+  apply(&mut s, chunk("Context nearing limit, running automatic compaction..."));
+  expect_match(block(&s, 0, 1), json!({ "type": "compaction", "status": "in_progress" }));
+  apply(&mut s, chunk("Automatic compaction finished; context was summarized to continue the session."));
+  apply(&mut s, chunk("Continuing"));
+  let blocks = v(&s.turns[0])["blocks"].clone();
+  expect_eq(&blocks[0]["markdown"], json!("Reading the file"));
+  expect_match(&blocks[1], json!({ "type": "compaction", "status": "completed" }));
+  expect_eq(&blocks[2]["markdown"], json!("Continuing"));
+  assert_eq!(blocks.as_array().unwrap().len(), 3);
+}
+
+// pi-acp 0.0.33 forwards pi's auto_retry_start / auto_retry_end as prose; one retry run is one notice row updated in place
+#[test]
+fn adapter_retry_prose_becomes_one_notice_row() {
+  let mut s = NormalizeState { agent: Some("pi".into()), ..state() };
+  apply(&mut s, chunk("Reading"));
+  apply(&mut s, chunk("Retrying (attempt 1/3, waiting 2s)..."));
+  apply(&mut s, chunk("Retrying (attempt 2/3, waiting 4s)..."));
+  expect_match(block(&s, 0, 1), json!({ "type": "notice", "severity": "warning", "category": "connection", "revision": 2, "actions": [] }));
+  assert!(block(&s, 0, 1)["title"].as_str().unwrap().contains("2/3"));
+  apply(&mut s, chunk("Retry finished, resuming."));
+  apply(&mut s, chunk("Done"));
+  let blocks = v(&s.turns[0])["blocks"].clone();
+  expect_eq(&blocks[0]["markdown"], json!("Reading"));
+  expect_match(&blocks[1], json!({ "type": "notice", "revision": 3 }));
+  expect_eq(&blocks[2]["markdown"], json!("Done"));
+  assert_eq!(blocks.as_array().unwrap().len(), 3);
+  // A later run opens a row of its own; a stray resume line is swallowed
+  apply(&mut s, chunk("Retrying..."));
+  apply(&mut s, chunk("Retry finished, resuming."));
+  apply(&mut s, chunk("Retry finished, resuming."));
+  assert_eq!(v(&s.turns[0])["blocks"].as_array().unwrap().len(), 4);
+}
+
+// Devin: start and outcome arrive as separate whole chunks; a failure keeps its reason; Kimi's statistics are absorbed
+#[test]
+fn prose_outcomes_settle_the_open_row_and_keep_failure_reasons() {
+  let mut s = NormalizeState { agent: Some("devin".into()), ..state() };
+  apply(&mut s, chunk("Compacting context…"));
+  apply(&mut s, chunk("Context compacted"));
+  apply(&mut s, chunk("Compacting context…"));
+  apply(&mut s, chunk("Compaction failed: window too small"));
+  assert_eq!(compaction_rows(&s), vec![
+    ("completed".into(), None),
+    ("failed".into(), Some("Compaction failed: window too small".into())),
+  ]);
+  assert_eq!(s.turns[0].as_agent().unwrap().blocks.len(), 2);
+
+  let mut k = NormalizeState { agent: Some("kimi".into()), ..state() };
+  apply(&mut k, chunk("Compaction completed."));
+  apply(&mut k, chunk("\n- Messages compacted: 3\n- Tokens after: 1200"));
+  assert_eq!(compaction_rows(&k), vec![("completed".into(), None)]);
+  assert_eq!(k.turns[0].as_agent().unwrap().blocks.len(), 1);
+}
+
+// Model prose that merely mentions compaction, and agents without a prose table, stay text
+#[test]
+fn prose_that_is_not_an_adapter_marker_stays_text() {
+  let mut s = NormalizeState { agent: Some("devin".into()), ..state() };
+  apply(&mut s, chunk("Context compacted, so I will continue"));
+  let mut c = NormalizeState { agent: Some("claude".into()), ..state() };
+  apply(&mut c, chunk("Context compacted"));
+  let mut k = NormalizeState { agent: Some("kimi".into()), ..state() };
+  apply(&mut k, chunk("- Tokens after: 1200"));
+  for st in [&s, &c, &k] {
+    assert!(compaction_rows(st).is_empty());
+    expect_match(block(st, 0, 0), json!({ "type": "text" }));
+  }
+}
+
+#[test]
+fn a_failed_compaction_update_carries_its_error() {
+  let mut s = state();
+  apply(&mut s, json!({ "sessionUpdate": "compaction_update", "compactionId": "c1", "status": "in_progress" }));
+  apply(&mut s, json!({ "sessionUpdate": "compaction_update", "compactionId": "c1", "status": "failed", "error": "too large" }));
+  assert_eq!(compaction_rows(&s), vec![("failed".into(), Some("too large".into()))]);
+}
