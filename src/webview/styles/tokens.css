@@ -117,10 +117,12 @@
   --hdr: 52px;
   /* Attachment thumbnail: the same square tile in drafts and sent messages */
   --thumb: 56px;
-  /* Sticky prompts leave room for the reply, even in a short sidebar. A long prompt keeps this capped viewport while it
-     sticks at the top; only the overflow is clipped, so the card does not keep jumping between its natural height and a fold. */
-  --user-message-max: min(240px, max(40cqh, calc(3 * var(--text-1-lh))));
-  --user-message-stuck-max: var(--user-message-max);
+  /* Sticky prompts leave room for the reply, even in a short sidebar; once stuck at the top they fold to a few lines.
+     The fold does not change the exchange's flow height (HistoryMessage backfills it with a spacer), so nothing below moves.
+     Floor at the stuck height so a hidden webview (40cqh → 0) does not collapse the card to nothing. */
+  --user-message-stuck-lines: 3;
+  --user-message-stuck-max: calc(var(--user-message-stuck-lines) * var(--text-1-lh));
+  --user-message-max: min(240px, max(40cqh, var(--user-message-stuck-max)));
 
   /* Three radius levels: inline (inline code / progress bar) / control (button / Chip / menu item / row hover) / container (composer / card / overlay / code block / bubble).
      --r-xs is for tiny swatches only (legend squares) and does not follow the radius axis */
