@@ -71,6 +71,5 @@ async fn the_websocket_gate_refuses_a_missing_token_and_a_foreign_origin() {
   assert_ne!(upgrade(port, "/ws?token=nope", &origin).await, 101);
   assert_ne!(upgrade(port, "/ws?token=test-token", "Origin: http://evil.example\r\n").await, 101);
   assert_eq!(upgrade(port, "/ws?token=test-token", &origin).await, 101);
-  tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-  assert_eq!(wired.load(Ordering::SeqCst), 1);
+  crate::support::until(|| wired.load(Ordering::SeqCst) == 1, 5000).await;
 }
