@@ -116,6 +116,10 @@ impl AgentProcess {
     self.conn.request(method, params).await
   }
 
+  pub async fn request_ordered(&self, method: &str, params: Value) -> Result<(Value, super::rpc::Handoff), RpcError> {
+    self.conn.request_ordered(method, params).await
+  }
+
   pub fn notify(&self, method: &str, params: Value) {
     self.conn.notify(method, params);
   }

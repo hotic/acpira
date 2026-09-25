@@ -1057,9 +1057,8 @@ async fn updated_at_is_bumped_once_by_the_prompt_then_stable_across_the_stream()
   tokio::time::sleep(std::time::Duration::from_millis(5)).await;
   let seen = h.sample(&s, |vw| vw.updated_at.clone());
   prompt(&s, "hi").await;
-  tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+  until(|| seen.lock().unwrap().len() > 2, 5000).await;
   let seen = seen.lock().unwrap().clone();
-  assert!(seen.len() > 2, "{seen:?}");
   assert_ne!(seen[0], before);
   assert_eq!(seen.iter().collect::<std::collections::HashSet<_>>().len(), 1, "{seen:?}");
   assert_eq!(s.view().updated_at, seen[0]);
@@ -1135,9 +1134,8 @@ async fn rapid_config_picks_collapse_to_the_last_value_without_flicker() {
   let seen = h.sample(&s, |vw| vw.controls.options.iter().find(|o| o.id == "model").and_then(|o| o.value.clone()));
   p1.await.ok();
   p2.await.ok();
-  tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+  until(|| !seen.lock().unwrap().is_empty(), 5000).await;
   let seen = seen.lock().unwrap().clone();
-  assert!(!seen.is_empty());
   assert!(seen.iter().all(|x| x.as_deref() == Some("m2")), "{seen:?}");
   assert_eq!(agent_value(&s, "model").as_deref(), Some("m2"));
 }
@@ -1201,9 +1199,8 @@ async fn a_model_switch_keeps_the_chosen_effort_and_never_shows_the_interim_rese
   s.set_config("effort".into(), "low".into()).await.unwrap();
   let seen = h.sample(&s, |vw| vw.controls.options.iter().find(|o| o.id == "effort").and_then(|o| o.value.clone()));
   s.select_config("model".into(), "m2".into()).await.unwrap();
-  tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+  until(|| !seen.lock().unwrap().is_empty(), 5000).await;
   let seen = seen.lock().unwrap().clone();
-  assert!(!seen.is_empty());
   assert!(seen.iter().all(|x| x.as_deref() == Some("low")), "{seen:?}");
   assert_eq!(agent_value(&s, "model").as_deref(), Some("m2"));
   assert_eq!(agent_value(&s, "effort").as_deref(), Some("low"));
@@ -1562,8 +1559,9 @@ async fn login_goes_through_auth_required_authenticate_and_a_successful_retry() 
   let s = started(&h, "/tmp/acpira-needs-auth").await;
   assert_eq!(view(&s)["status"], "auth_required");
   assert_eq!(view(&s)["authMethods"][0]["id"], "fake.login");
-  // The reason the CLI logged to stderr right before -32000 is surfaced instead of a bare "log in"
-  assert_eq!(view(&s)["error"], "provider managed:fake has no credential configured");
+  // The reason the CLI logged to stderr right before -32000 is surfaced instead of a bare "log in" (stderr may be read after the
+  // response, so it can land a moment later)
+  until(|| view(&s)["error"] == "provider managed:fake has no credential configured", 5000).await;
   s.authenticate(None).await.unwrap();
   s.retry().await.unwrap();
   assert_eq!(view(&s)["status"], "ready");

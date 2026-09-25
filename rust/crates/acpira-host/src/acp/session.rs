@@ -725,8 +725,8 @@ impl AcpSession {
             let mut c = self.core.lock();
             c.replaying = !c.state.turns.is_empty();
           }
-          match proc.request(method, req.clone()).await {
-            Ok(r) => {
+          match proc.request_ordered(method, req.clone()).await {
+            Ok((r, handoff)) => {
               let mut c = self.core.lock();
               c.replaying = false;
               Self::note_startup_banner(&mut c, r.get("_meta"));
@@ -736,6 +736,7 @@ impl AcpSession {
               self.apply_controls(&mut c, r.get("modes"), r.get("configOptions"));
               c.status = SessionStatus::Ready;
               drop(c);
+              drop(handoff);
               self.log(&format!("{method} ok"));
               return Ok(true);
             }
@@ -808,7 +809,8 @@ impl AcpSession {
     // A fresh native session starts with no command inventory; cleared before the request because peers advertise
     // commands while session/new is still in flight
     self.core.lock().state.commands = vec![];
-    let r = proc.request("session/new", json!({ "cwd": self.cwd, "mcpServers": [] })).await.map_err(anyhow::Error::new)?;
+    // Ordered: pi-acp re-sends the startup banner as a chunk right after this response, which must meet the recorded banner
+    let (r, handoff) = proc.request_ordered("session/new", json!({ "cwd": self.cwd, "mcpServers": [] })).await.map_err(anyhow::Error::new)?;
     let mut c = self.core.lock();
     let sid = r.get("sessionId").and_then(Value::as_str).unwrap_or("").to_owned();
     c.acp_session_id = Some(sid.clone());
@@ -822,6 +824,7 @@ impl AcpSession {
       if opts.is_empty() { "-".into() } else { opts.join(" ") }
     );
     drop(c);
+    drop(handoff);
     self.log(&line);
     Ok(())
   }
@@ -1292,7 +1295,13 @@ impl ClientHandlers for SessionHandlers {
     let Some(s) = self.live() else { return };
     s.log(&format!("stderr: {line}"));
     if let Some(hint) = auth_hint_of(line) {
-      s.core.lock().auth_hint = Some(hint);
+      let mut c = s.core.lock();
+      // stderr and the -32000 on stdout are separate pipes: a reason read after the failure still reaches the view
+      if c.status == SessionStatus::AuthRequired && c.error.is_none() {
+        c.error = Some(hint.clone());
+        s.touch(&mut c);
+      }
+      c.auth_hint = Some(hint);
     }
   }
 

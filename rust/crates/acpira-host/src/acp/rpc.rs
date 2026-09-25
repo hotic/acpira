@@ -3,6 +3,8 @@
 //!
 //! Ordering: one reader task handles lines in arrival order. Notifications run synchronously on it, and a response
 //! only wakes its waiter, so every `session/update` sent before a response is applied before the awaiting code resumes.
+//! The reverse (a notification sent right after a response must see what the awaiting code did with it) holds only for
+//! `request_ordered`: the reader waits for the caller to drop its `Handoff` before it reads on.
 //! Incoming requests (permission, questions, file access) run as their own tasks and answer when they finish
 
 use std::collections::HashMap;
@@ -78,7 +80,18 @@ pub trait Inbound: Send + Sync + 'static {
   fn request(&self, method: String, params: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>>;
 }
 
-type Waiter = oneshot::Sender<Result<Value, RpcError>>;
+/// Held by the caller of `request_ordered` while it applies the response; the reader reads the next message once it is dropped
+pub struct Handoff(#[allow(dead_code)] oneshot::Sender<()>);
+
+// How long the reader waits for a Handoff; a caller holding one this long is a bug, and the wire must not stall on it
+const HANDOFF_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+type Reply = Result<(Value, Option<Handoff>), RpcError>;
+
+struct Waiter {
+  tx: oneshot::Sender<Reply>,
+  ordered: bool,
+}
 
 struct Shared {
   pending: parking_lot::Mutex<HashMap<i64, Waiter>>,
@@ -153,26 +166,38 @@ impl Connection {
             continue;
           }
         };
-        reader_conn.dispatch(msg, &inbound);
+        if let Some(ack) = reader_conn.dispatch(msg, &inbound)
+          && tokio::time::timeout(HANDOFF_WAIT, ack).await.is_err()
+        {
+          log("ACP reader: an ordered response was held past the handoff wait");
+        }
       }
       reader_conn.close();
     });
     conn
   }
 
-  fn dispatch(&self, mut msg: Value, inbound: &Arc<dyn Fn() -> Arc<dyn Inbound> + Send + Sync>) {
+  /// For the response to an ordered request, the signal the reader waits on before the next message
+  fn dispatch(&self, mut msg: Value, inbound: &Arc<dyn Fn() -> Arc<dyn Inbound> + Send + Sync>) -> Option<oneshot::Receiver<()>> {
     let method = msg.get("method").and_then(Value::as_str).map(str::to_owned);
     let id = msg.get_mut("id").map(Value::take);
     match (method, id) {
       // A response to one of ours
       (None, Some(id)) => {
-        let Some(id) = id.as_i64() else { return };
-        let Some(w) = self.shared.pending.lock().remove(&id) else { return };
+        let w = self.shared.pending.lock().remove(&id.as_i64()?)?;
         let res = match msg.get("error") {
-          Some(e) if !e.is_null() => Err(RpcError::from_json(e)),
-          _ => Ok(msg.get_mut("result").map(Value::take).unwrap_or(Value::Null)),
+          Some(e) if !e.is_null() => {
+            let _ = w.tx.send(Err(RpcError::from_json(e)));
+            return None;
+          }
+          _ => msg.get_mut("result").map(Value::take).unwrap_or(Value::Null),
         };
-        let _ = w.send(res);
+        if !w.ordered {
+          let _ = w.tx.send(Ok((res, None)));
+          return None;
+        }
+        let (ack_tx, ack_rx) = oneshot::channel();
+        w.tx.send(Ok((res, Some(Handoff(ack_tx))))).ok().map(|_| ack_rx)
       }
       (Some(method), None) => {
         let params = msg.get_mut("params").map(Value::take).unwrap_or(Value::Null);
@@ -182,9 +207,10 @@ impl Connection {
           {
             c.cancel();
           }
-          return;
+          return None;
         }
         inbound().notification(&method, params);
+        None
       }
       (Some(method), Some(id)) => {
         let params = msg.get_mut("params").map(Value::take).unwrap_or(Value::Null);
@@ -202,8 +228,9 @@ impl Connection {
           };
           conn.send_line(line.to_string());
         });
+        None
       }
-      (None, None) => {}
+      (None, None) => None,
     }
   }
 
@@ -214,6 +241,17 @@ impl Connection {
   }
 
   pub async fn request(&self, method: &str, params: Value) -> Result<Value, RpcError> {
+    self.send_request(method, params, false).await.map(|(v, _)| v)
+  }
+
+  /// A request whose response the caller applies before the reader handles anything after it: keep the Handoff until the
+  /// state change is done (no awaits in between), then drop it
+  pub async fn request_ordered(&self, method: &str, params: Value) -> Result<(Value, Handoff), RpcError> {
+    let (v, h) = self.send_request(method, params, true).await?;
+    Ok((v, h.expect("an ordered reply carries its handoff")))
+  }
+
+  async fn send_request(&self, method: &str, params: Value, ordered: bool) -> Reply {
     let id = self.next_id.fetch_add(1, Ordering::Relaxed);
     let (tx, rx) = oneshot::channel();
     {
@@ -222,7 +260,7 @@ impl Connection {
       if self.shared.closed.load(Ordering::Acquire) {
         return Err(RpcError::connection_closed());
       }
-      pending.insert(id, tx);
+      pending.insert(id, Waiter { tx, ordered });
     }
     let line = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }).to_string();
     if self.out.send(line).is_err() {
@@ -244,7 +282,7 @@ impl Connection {
     self.shared.close_signal.cancel();
     let waiters: Vec<Waiter> = self.shared.pending.lock().drain().map(|(_, w)| w).collect();
     for w in waiters {
-      let _ = w.send(Err(RpcError::connection_closed()));
+      let _ = w.tx.send(Err(RpcError::connection_closed()));
     }
   }
 
@@ -311,6 +349,50 @@ mod tests {
     assert_eq!(b.request("nope", json!({})).await.unwrap_err().code, -32601);
     a.close();
     assert_eq!(a.request("echo", json!({})).await.unwrap_err().code, -32099);
+  }
+
+  // A notification sent right behind the response to an ordered request is handled only after the caller dropped its Handoff
+  #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+  async fn an_ordered_response_is_applied_before_the_next_notification() {
+    struct Seen(Arc<AtomicBool>, Arc<parking_lot::Mutex<Option<bool>>>);
+    impl Inbound for Seen {
+      fn notification(&self, _: &str, _: Value) {
+        *self.1.lock() = Some(self.0.load(Ordering::SeqCst));
+      }
+      fn request(&self, _: String, _: Value, _: Cancel) -> BoxFuture<Result<Value, RpcError>> {
+        Box::pin(async { Ok(Value::Null) })
+      }
+    }
+    let applied = Arc::new(AtomicBool::new(false));
+    let seen = Arc::new(parking_lot::Mutex::new(None));
+    let (r, mut peer_w) = tokio::io::duplex(1 << 16);
+    let (peer_r, w) = tokio::io::duplex(1 << 16);
+    let inbound: Arc<dyn Inbound> = Arc::new(Seen(applied.clone(), seen.clone()));
+    let conn = Connection::start(r, w, Arc::new(move || inbound.clone()), Arc::new(|_| {}));
+    tokio::spawn(async move {
+      let mut lines = BufReader::new(peer_r).lines();
+      let req: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+      let both = format!(
+        "{}\n{}\n",
+        json!({ "jsonrpc": "2.0", "id": req["id"], "result": { "ok": true } }),
+        json!({ "jsonrpc": "2.0", "method": "session/update", "params": {} })
+      );
+      peer_w.write_all(both.as_bytes()).await.unwrap();
+      std::future::pending::<()>().await;
+    });
+    let (res, handoff) = conn.request_ordered("session/new", json!({})).await.unwrap();
+    assert_eq!(res, json!({ "ok": true }));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(seen.lock().is_none(), "the reader waits for the handoff");
+    applied.store(true, Ordering::SeqCst);
+    drop(handoff);
+    for _ in 0..100 {
+      if seen.lock().is_some() {
+        break;
+      }
+      tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(*seen.lock(), Some(true));
   }
 
   // A request racing close() must settle: either refused up front or failed by the drain, never parked on a waiter nobody drains
