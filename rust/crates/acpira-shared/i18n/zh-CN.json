@@ -565,6 +565,7 @@
   "settings.tab.models": "模型",
   "settings.models.desc": "选择在输入框菜单中显示的选项。关闭后隐藏，当前使用的选项仍会保留。",
   "settings.models.selection": "模型选择",
+  "settings.models.collaboration": "协作模式",
   "settings.models.search": "搜索模型…",
   "settings.models.enabled": "已开启 {count} / {total}",
   "settings.models.all": "全部模型",
