@@ -17,7 +17,6 @@ use tokio::sync::oneshot;
 
 use acpira_shared::inventory::{AgentHealthStage, AgentRuntimeInfo};
 use acpira_shared::model_shapes::ModelShapes;
-use acpira_shared::model_sources::{ModelSources, apply_model_sources};
 use acpira_shared::num::Num;
 use acpira_shared::protocol::RawJson;
 use acpira_shared::slash_commands::restore_command_receipts;
@@ -29,7 +28,7 @@ use super::agent_process::{AgentProcess, AgentSpawnError, ClientHandlers};
 use super::agent_registry::AgentRegistry;
 use super::cancel::Cancel;
 use super::compaction::CompactionCompletion;
-use super::model_sources::read_model_sources;
+use super::model_sources::{ModelFacts, read_model_facts, refine_controls};
 use super::normalize::{
   FileImageSaver, ImageSaver, NormalizeState, ToolCtx, disconnect_async_tasks, runtime_info_of, seal_replay,
 };
@@ -163,7 +162,7 @@ pub(crate) struct Core {
   pub completion: Option<CompactionCompletion>,
   pub turn_failure: Option<SessionFailure>,
   pub auth_hint: Option<String>,
-  pub model_sources: ModelSources,
+  pub model_facts: ModelFacts,
   pub usage_revision: u64,
   pub usage_notifications: bool,
   pub auto_compact_eligible: bool,
@@ -258,7 +257,7 @@ impl AcpSession {
           completion: None,
           turn_failure: None,
           auth_hint: None,
-          model_sources: ModelSources::new(),
+          model_facts: ModelFacts::default(),
           usage_revision: 0,
           usage_notifications: false,
           auto_compact_eligible: false,
@@ -334,9 +333,14 @@ impl AcpSession {
 
   /// Publish state, leaving updatedAt alone (streamed chunks must not reorder the list)
   pub(crate) fn touch(&self, c: &mut Core) {
-    apply_model_sources(&self.agent, &mut c.state.controls.options, &c.model_sources);
+    self.refine_controls(c);
     c.rev += 1;
     (self.deps.on_change)(&self.id, c.phase.running);
+  }
+
+  /// Model sources and catalogue-narrowed efforts over whatever the agent last sent
+  pub(crate) fn refine_controls(&self, c: &mut Core) {
+    refine_controls(&self.agent, &mut c.state.controls.options, &c.model_facts);
   }
 
   /// A user-initiated message moves the session to the top of the list
@@ -552,6 +556,10 @@ impl AcpSession {
         }
         me.connect().await?;
         me.open_session().await?;
+        // The value the agent started with may be one the catalogue narrowed away
+        if let Err(e) = me.sync_thought().await {
+          me.log(&format!("effort correction refused: {e}"));
+        }
         me.refresh_context_usage().await;
         let (plan, proc, sid) = {
           let c = me.core.lock();
@@ -599,8 +607,8 @@ impl AcpSession {
       clear_usage_timer(&mut c);
       (c.proc_gen, c.account_id.clone())
     };
-    let sources = read_model_sources(&self.agent, &self.cwd).await;
-    self.core.lock().model_sources = sources;
+    let facts = read_model_facts(&def, &self.cwd).await;
+    self.core.lock().model_facts = facts;
     let handlers: Arc<dyn ClientHandlers> = Arc::new(SessionHandlers { session: self.me.clone(), gen_id });
     let account_note = account.as_ref().map(|a| format!(" account {}", a.chars().take(8).collect::<String>())).unwrap_or_default();
     let borrowed = match &self.deps.pool {

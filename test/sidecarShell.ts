@@ -27,7 +27,7 @@ export class Shell {
 
   // bin: another sidecar binary than the one under test
   constructor(readonly home: string, readonly cwd: string, bin = SIDECAR) {
-    this.proc = spawn(bin, ['--home', home], { stdio: 'pipe', env: { ...process.env, ACPIRA_HOME: '' } });
+    this.proc = spawn(bin, ['--home', home], { stdio: 'pipe', env: { ...process.env, ACPIRA_HOME: '', ACPIRA_CATALOG_REFRESH: '0' } });
     createInterface({ input: this.proc.stdout }).on('line', line => {
       this.stdoutLines.push(line);
       let m: SidecarMsg;

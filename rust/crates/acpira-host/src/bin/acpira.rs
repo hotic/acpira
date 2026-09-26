@@ -3,6 +3,7 @@
 //!   acpira --ws [PORT] [--token T] [--home DIR]  the browser harness, one sidecar per WebSocket, data in ~/.acpira/harness
 //!   acpira bridge <action> ...                   the ChatGPT event-mirror CLI
 //!   acpira agents [--json]                       the built-in agents, where each CLI was found and how it is initialized
+//!   acpira model-catalog [--out FILE]            fetch models.dev, print (or write) the trimmed model catalogue
 //!   acpira --version
 
 use std::path::PathBuf;
@@ -13,6 +14,7 @@ use tokio::sync::mpsc;
 
 use acpira_host::agents_cli;
 use acpira_host::external::chatgpt_cli;
+use acpira_host::model_catalog;
 use acpira_host::sidecar::server::{ServerOpts, SidecarServer};
 use acpira_host::sidecar::ws::{HarnessOpts, start_harness};
 use acpira_host::store::data_dir::{absolute, acpira_home};
@@ -42,6 +44,9 @@ fn main() {
     }
     if args.first().map(String::as_str) == Some("agents") {
       return agents_cli::run(&args[1..]).await;
+    }
+    if args.first().map(String::as_str) == Some("model-catalog") {
+      return model_catalog_cli(&args[1..]).await;
     }
     let explicit_home = flag(&args, "--home").filter(|h| !h.is_empty()).map(|h| absolute(&PathBuf::from(h)));
     let exe = std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned());
@@ -106,6 +111,34 @@ async fn shutdown_signal() {
   #[cfg(not(unix))]
   {
     let _ = tokio::signal::ctrl_c().await;
+  }
+}
+
+async fn model_catalog_cli(args: &[String]) -> i32 {
+  let file = match model_catalog::fetch(None).await {
+    Ok(Some(f)) => f,
+    Ok(None) => return 1,
+    Err(e) => {
+      stderr(&format!("model-catalog: {e}"));
+      return 1;
+    }
+  };
+  let text = file.to_json();
+  match flag(args, "--out").filter(|o| !o.is_empty()) {
+    Some(out) => match std::fs::write(&out, text) {
+      Ok(()) => {
+        stderr(&format!("model-catalog: {} models -> {out}", file.models.len()));
+        0
+      }
+      Err(e) => {
+        stderr(&format!("model-catalog: {out}: {e}"));
+        1
+      }
+    },
+    None => {
+      print!("{text}");
+      0
+    }
   }
 }
 
