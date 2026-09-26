@@ -103,6 +103,23 @@ pub fn auth_hint_of(line: &str) -> Option<String> {
   AUTH_WORDS.is_match(text).then(|| text.to_owned())
 }
 
+static QUOTA_TEXT: LazyLock<Regex> =
+  LazyLock::new(|| Regex::new(r"(?i)usage (?:quota|limit) has been (?:exhausted|reached)|usage limit reached|^You've (?:hit|reached) your|out of usage").unwrap());
+
+/// The account behind the session ran out of allowance, so another account can carry on: Devin's typed
+/// `resource_exhausted` (-32011), the AIR `quota_exhausted` failure codex-acp / claude-agent-acp send (category limit with no
+/// remedy action — rate limits offer retry, context and budget limits offer new_session), or the plain texts both CLIs use
+/// when AIR is not negotiated
+pub fn is_quota_exhausted(e: &TurnError) -> bool {
+  if e.kind.as_deref() == Some("resource_exhausted") {
+    return true;
+  }
+  if e.failure_id.is_some() {
+    return e.kind.as_deref() == Some("limit") && e.actions.as_ref().is_some_and(Vec::is_empty);
+  }
+  QUOTA_TEXT.is_match(&e.message)
+}
+
 fn error_kind(e: &anyhow::Error) -> Option<String> {
   rpc_of(e)?.data.as_ref()?.get("cognition.ai/errorKind")?.as_str().map(str::to_owned)
 }

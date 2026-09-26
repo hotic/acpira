@@ -756,6 +756,18 @@ pub struct UserTurn {
   pub plan_id: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub auto: Option<bool>,
+  /// Why an automatic turn was sent; absent on an automatic turn means the over-threshold /compact
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub auto_reason: Option<AutoReason>,
+}
+
+/// What made Acpira send an automatic user turn
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AutoReason {
+  Compact,
+  /// The previous turn ran out of account quota and the session moved to another account
+  AccountSwitch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

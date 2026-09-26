@@ -16,7 +16,10 @@ use acpira_shared::sidecar::InitialView;
 
 use crate::accounts::account_manager::AccountManager;
 use crate::accounts::account_store::{AccountStore, FileVault};
-use crate::accounts::devin::DevinAccountProvider;
+use crate::accounts::claude::ClaudeAccountProvider;
+use crate::accounts::codex::CodexAccountProvider;
+use crate::accounts::devin::{BinaryFn, DevinAccountProvider};
+use crate::accounts::switch::SwitchStrategy;
 use crate::accounts::local::LocalAccounts;
 use crate::acp::agent_registry::AgentRegistry;
 use crate::acp::session::CompactionPolicy;
@@ -52,17 +55,18 @@ impl HostRuntime {
     };
     let registry = Arc::new(AgentRegistry::new(&read("agents").unwrap_or(Value::Null)));
 
-    // The manager is created below; the Devin provider resolves its binary through whatever registry is current then
+    // The manager is created below; the providers resolve their binaries through whatever registry is current then
     let mgr_slot: Arc<parking_lot::Mutex<Option<std::sync::Weak<SessionManager>>>> = Default::default();
-    let slot = mgr_slot.clone();
-    let fallback = registry.clone();
-    let devin = DevinAccountProvider::new(
-      root.join("scratch"),
+    let binary_of = |agent: &'static str| -> BinaryFn {
+      let (slot, fallback) = (mgr_slot.clone(), registry.clone());
       Arc::new(move || {
         let reg = slot.lock().as_ref().and_then(|w| w.upgrade()).map(|m| m.registry()).unwrap_or_else(|| fallback.clone());
-        Box::pin(async move { reg.resolve_binary("devin").await })
-      }),
-    );
+        Box::pin(async move { reg.resolve_binary(agent).await })
+      })
+    };
+    let devin = DevinAccountProvider::new(root.join("scratch"), binary_of("devin"));
+    let codex = CodexAccountProvider::new(root.join("accounts").join("codex"), binary_of("codex"));
+    let claude = ClaudeAccountProvider::new(root.join("accounts").join("claude"), binary_of("claude"));
     let terminal = {
       let p = platform.clone();
       Arc::new(move |title, command, args, env| p.run_in_terminal(title, command, args, env))
@@ -71,7 +75,18 @@ impl HostRuntime {
       let p = platform.clone();
       Arc::new(move |level: &str, text: &str| p.toast(level, text))
     };
-    let accounts = AccountManager::new(account_store, vec![Arc::new(devin)], log.clone(), terminal.clone(), toast.clone());
+    let accounts = AccountManager::new(
+      account_store,
+      vec![Arc::new(devin), Arc::new(codex), Arc::new(claude)],
+      log.clone(),
+      terminal.clone(),
+      toast.clone(),
+    );
+    let policy = platform.clone();
+    accounts.set_switch_policy(Arc::new(move |agent: &str| {
+      let map = acpira_shared::settings::account_switch_map(&policy.read_setting("accountSwitch").unwrap_or(Value::Null));
+      SwitchStrategy::parse(map.get(agent).map(String::as_str))
+    }));
 
     let sessions_dir = root.join("sessions");
     let save_toast = toast.clone();

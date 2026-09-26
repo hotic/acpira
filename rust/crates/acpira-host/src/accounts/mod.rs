@@ -1,5 +1,9 @@
 pub mod account_manager;
 pub mod account_store;
+pub mod claude;
+pub mod cli_home;
+pub mod codex;
 pub mod devin;
 pub mod local;
 pub mod provider;
+pub mod switch;

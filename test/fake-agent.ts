@@ -36,7 +36,10 @@ import * as acp from '@agentclientprotocol/sdk';
 // Resume: when resume doesn't know the sessionId, a cwd containing "gone" mimics Devin's session_not_found, otherwise reports unknown session;
 // "dsh-active" / "dsh-cwd" / "dsh-unresumable" / "dsh-mcp" mimic DeepSeek Harness answering bare invalidParams for an active session,
 // a cwd mismatch, an unresumable session and an MCP config error
-// Login: when cwd contains "needs-auth", session/new requires authenticate first; authenticate validates _meta.api_key the way Devin does (only accepts good-key)
+// Login: when cwd contains "needs-auth", session/new requires authenticate first; authenticate validates _meta.api_key the way Devin does (only accepts
+// good-key and its good-key-* siblings, one per test account); FAKE_EXHAUSTED_KEYS=<comma list> → a prompt under one of those keys streams some output,
+// then runs out of quota: Devin's typed -32011 resource_exhausted, or with "quota-air" in the text the AIR quota_exhausted failure
+// (category limit, no actions) codex-acp / claude-agent-acp end the turn with
 // Process lifecycle knobs (env): FAKE_INIT_FAIL → initialize answers an error while the process stays up (an orphan unless the client kills it);
 // FAKE_INIT_HANG → the initialize handler returns a promise that never settles; FAKE_STUBBORN → ignores SIGTERM and keeps the event loop busy,
 // so only SIGKILL ends it; FAKE_SILENT_CANCEL → a cancel during background compaction drops the work without the usual "Compaction canceled." prose;
@@ -242,7 +245,8 @@ const app = acp.agent({ name: 'fake-agent' })
     // FAKE_AUTH_REJECT: a CLI whose ACP authenticate never succeeds, so the host has to fall back to the registry's terminal login
     if (process.env.FAKE_AUTH_REJECT) throw acp.RequestError.authRequired({ reason: 'use the terminal login' });
     const key = params._meta?.api_key;
-    if (key !== undefined && key !== 'good-key') throw acp.RequestError.authRequired({ reason: 'bad key' });
+    if (key !== undefined && (typeof key !== 'string' || !/^good-key(-|$)/.test(key))) throw acp.RequestError.authRequired({ reason: 'bad key' });
+    if (typeof key === 'string') apiKey = key;
     authed = true;
     return {};
   })
@@ -317,6 +321,13 @@ const app = acp.agent({ name: 'fake-agent' })
       const saved = readSession(sid);
       if (!saved) throw acp.RequestError.invalidParams(undefined, 'unknown native session');
       saveSession(sid, [...saved.prompts, params.prompt]);
+    }
+    if (apiKey && process.env.FAKE_EXHAUSTED_KEYS?.split(',').includes(apiKey)) {
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'partial work' } });
+      if (text.includes('quota-air') && airCaps.includes('sessionFailure'))
+        return { stopReason: 'end_turn', _meta: { jetbrains: { air: { version: 1, sessionFailure: {
+          id: 'turn-q:error', revision: 1, category: 'limit', severity: 'error', title: "You've hit your usage limit.", actions: [] } } } } };
+      throw new acp.RequestError(-32011, 'Your weekly usage quota has been exhausted.', { 'cognition.ai/errorKind': 'resource_exhausted', 'cognition.ai/retryable': false });
     }
     // The peer forgot this session mid-conversation (the way a swept Devin session answers a prompt)
     if (text === 'prompt-session-gone') throw new acp.RequestError(-32016, 'Session not found', { 'cognition.ai/errorKind': 'session_not_found' });
@@ -1078,6 +1089,8 @@ async function ask(text: string, sid: string, send: (u: acp.SessionUpdate) => Pr
 }
 
 let authed = false;
+// The api key the last authenticate handed over (FAKE_EXHAUSTED_KEYS)
+let apiKey: string | undefined;
 const cancelled = new Set<string>();
 // Subagent scripts block on a child permission; a session/cancel for that child's id unblocks them
 const cancelWaiters = new Map<string, (() => void)[]>();

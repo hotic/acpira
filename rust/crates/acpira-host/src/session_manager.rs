@@ -1711,6 +1711,7 @@ impl SessionManager {
           thinking: t("export.label.thinking"),
           compacted: t("export.label.compacted"),
           auto_compact: t("export.label.autoCompact"),
+          auto_continue: t("export.label.autoContinue"),
           error: t("export.label.error"),
         };
         let store = self.deps.store.clone();

@@ -34,4 +34,8 @@ pub trait AccountProvider: Send + Sync {
   fn quota(&self, _cred: AccountCredential) -> Option<BoxFuture<Result<Option<AccountQuota>>>> {
     None
   }
+  /// The account was removed: drop whatever the provider keeps outside the vault
+  fn forget(&self, _cred: AccountCredential) -> Option<BoxFuture<()>> {
+    None
+  }
 }
