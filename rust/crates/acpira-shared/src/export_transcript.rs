@@ -11,6 +11,7 @@ pub struct ExportLabels {
   pub thinking: String,
   pub compacted: String,
   pub auto_compact: String,
+  pub auto_continue: String,
   pub error: String,
 }
 
@@ -60,7 +61,8 @@ pub fn export_markdown(input: &ExportInput, labels: &ExportLabels, blob_path: &d
 
 fn user_turn(turn: &UserTurn, labels: &ExportLabels) -> String {
   if turn.auto == Some(true) {
-    return format!("_{}_", labels.auto_compact);
+    let label = if turn.auto_reason == Some(AutoReason::AccountSwitch) { &labels.auto_continue } else { &labels.auto_compact };
+    return format!("_{label}_");
   }
   let mut out = vec![format!("### {}", labels.user), String::new(), turn.text.clone()];
   if let Some(a) = turn.attachments.as_ref().filter(|a| !a.is_empty()) {

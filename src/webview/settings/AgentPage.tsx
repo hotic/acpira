@@ -3,7 +3,7 @@ import { BookOpen, Check, ChevronDown, ChevronUp, Copy, FileText, Globe, KeyRoun
 import type { AccountInfo, AgentInfo, ConfigControl } from '@shared/transcript';
 import type { AgentHealthStage, AgentInventory, InventoryFile, InventoryMcp, InventorySkill, McpTransport } from '@shared/inventory';
 import type { MsgKey } from '@shared/i18n';
-import type { SettingsView } from '@shared/settings';
+import { ACCOUNT_SWITCH_STRATEGIES, accountSwitchOf, type AccountSwitchStrategy, type SettingsView } from '@shared/settings';
 import { familyLabel, isReasoningControl } from '@shared/composerControls';
 import { familyHidden, groupModels, setFamilyVisible, variantLabel, type ModelFamily } from '@shared/models';
 import { filterModels, MODEL_PREVIEW_LIMIT, prioritizeModels, setModelsVisible } from '@shared/modelCatalog';
@@ -15,7 +15,7 @@ import { LocalAccountQuota } from '../ui/LocalAccountQuota';
 import { Shimmer } from '../ui/Shimmer';
 import { t } from '../i18n';
 import { ModelMark } from '../chat/ModelMark';
-import { Dot, FactRow, Group, ItemRow, Note, PathText, Section, SectionAction, SectionDescription, SectionHead, SourceLink, Switch, shortPath } from './controls';
+import { Dot, FactRow, Field, Group, ItemRow, Note, PathText, Section, SectionAction, SectionDescription, SectionHead, Select, SourceLink, Switch, shortPath } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 
 type AgentSection = 'models' | 'mcp' | 'skills' | 'rules' | 'config';
@@ -100,6 +100,7 @@ export function AgentPage({ agent, accounts, inventory, controls, settings, env,
               />
             ))}
           </Section>
+          <AccountSwitchField agent={agent} settings={settings} on={on} />
         </div>
       )}
 
@@ -110,6 +111,19 @@ export function AgentPage({ agent, accounts, inventory, controls, settings, env,
         </div>
       ))}
     </>
+  );
+}
+
+// Which saved account takes over when the bound one runs out of quota (acpira.accountSwitch, per agent)
+function AccountSwitchField({ agent, settings, on }: { agent: AgentInfo; settings: SettingsView; on: SettingsHandlers }) {
+  const options = ACCOUNT_SWITCH_STRATEGIES.map(s => ({ value: s, label: t(`settings.accountSwitch.${s}` as const) }));
+  return (
+    <Section>
+      <Field label={t('settings.accountSwitch')} desc={t('settings.accountSwitch.desc')}>
+        <Select<AccountSwitchStrategy> options={options} value={accountSwitchOf(settings.accountSwitch, agent.id)}
+          onChange={v => on.setSetting('accountSwitch', { ...settings.accountSwitch, [agent.id]: v })} label={t('settings.accountSwitch')} />
+      </Field>
+    </Section>
   );
 }
 

@@ -1,4 +1,4 @@
-import { Fragment, createContext, memo, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, createContext, memo, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Bot, Check, ChevronRight, Compass, Hand, MessageCircleQuestion, Shrink, TriangleAlert, X } from 'lucide-react';
 import type { AgentBlock, AgentTurn, CompactionBlock, FailureAction, NoticeBlock, PermissionBlock, SlashCommand, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
@@ -34,25 +34,20 @@ import { TurnActions } from './TurnActions';
 import { SubagentGroup } from './subagents/SubagentGroup';
 import { breadcrumb, nodesByTurn, subagentTitle } from './subagents/subagentState';
 
-// User message: color block / right-aligned bubble / plain text; ones Acpira sends automatically (/compact) render as a note line, not a bubble.
+// User message: color block / right-aligned bubble / plain text; ones Acpira sends automatically (/compact) render nothing,
+// since the reply's compaction row already says what happened.
 // Attachments (image thumbnails / file pills) sit above the text inside the same bubble.
 // Clicking the card opens its inline editor, which also gives the full text for copying; no separate hover actions.
 // Sticking within the exchange is the caller's job (`HistoryMessage` wraps it), so the editor can take the card's place without a layout jump;
 // `compact` is its stuck state: the text folds to a few lines with a fading edge so a long prompt does not wall off the reply.
 // Trailing blank lines are not displayed; the turn keeps its original text.
-export function UserMessage({ turn, index, blobUrl, onEdit, compact, commands }: { turn: UserTurn; index: number; blobUrl?: (blob: string) => string; onEdit?: () => void; compact?: boolean; commands?: readonly SlashCommand[] }) {
+export function UserMessage({ turn, blobUrl, onEdit, compact, commands }: { turn: UserTurn; index: number; blobUrl?: (blob: string) => string; onEdit?: () => void; compact?: boolean; commands?: readonly SlashCommand[] }) {
   const { userMessage } = useAppearance();
   const fade = useScrollFade<HTMLDivElement>();
   const text = useRef<HTMLDivElement>(null);
   const textRef = useMergedRefs(fade, text);
   useLayoutEffect(() => { if (compact && text.current) text.current.scrollTop = 0; }, [compact]);
-  if (turn.auto) {
-    return (
-      <div className="enter px-pad" style={{ '--i': index } as CSSProperties}>
-        <Row className="text-fg-3"><span>{t('turns.autoCompact')}</span></Row>
-      </div>
-    );
-  }
+  if (turn.auto) return null;
   // The same marks the composer painted while this was being typed; a recorded command keeps its pill
   // even after the agent stops advertising it
   const shown = turn.text.trimEnd();

@@ -59,6 +59,7 @@ impl SettingsCenter {
       auto_compact: self.read("autoCompact").as_bool().unwrap_or(true),
       compact_at_tokens: self.read("compactAtTokens").as_i64().unwrap_or(300_000),
       hidden_options: serde_json::from_value(self.read("hiddenOptions")).unwrap_or_default(),
+      account_switch: serde_json::from_value(self.read("accountSwitch")).unwrap_or_default(),
       theme: str_of("theme"),
       ui_font_size: self.read("uiFontSize").as_i64().unwrap_or(13),
       code_font_size: self.read("codeFontSize").as_i64().unwrap_or(12),

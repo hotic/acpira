@@ -20,7 +20,7 @@ use super::plans::{capture_plan, plan_documents, plan_documents_mut};
 use super::rpc::{BoxFuture, RpcError};
 use super::session::{AcpSession, Core, QueuedEntry, USAGE_POLL_INTERVAL, clear_usage_timer, num};
 use super::session_edit::{FORK_HISTORY_LEAD, history_context};
-use super::session_errors::{is_auth, is_session_gone, turn_error_of};
+use super::session_errors::{is_auth, is_quota_exhausted, is_session_gone, turn_error_of};
 use super::session_failure::{failure_of, failure_turn_error};
 use super::subagent_tree::{Route, RouteCtx};
 use super::turn_usage::turn_usage_of;
@@ -34,6 +34,23 @@ use crate::util::{clip, now_ms, random_uuid};
 pub struct Staged {
   pub prepared: PreparedPrompt,
   pub edited: bool,
+}
+
+/// Who sent a prompt: the user (or the queue on the user's behalf), the over-threshold /compact, or the continue that
+/// follows an automatic account switch
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Origin {
+  User,
+  Compact,
+  Continue,
+}
+
+/// What the exhausted turn looked like before the switch rewrote it, so a failed switch can put the error back
+struct ExhaustedTurn {
+  stop: Option<TurnStop>,
+  error: Option<TurnError>,
+  notice: Option<(usize, AgentBlock)>,
+  switch_notice: String,
 }
 
 const RUNNING_KINDS: [&str; 6] =
@@ -55,36 +72,50 @@ impl AcpSession {
     plan_id: Option<String>,
   ) -> BoxFuture<()> {
     let me = self.clone();
-    Box::pin(async move { me.prompt_inner(text, drafts, auto, staged, plan_id).await })
+    let origin = if auto { Origin::Compact } else { Origin::User };
+    Box::pin(async move { me.prompt_inner(text, drafts, origin, staged, plan_id).await })
   }
 
-  async fn prompt_inner(self: Arc<Self>, text: String, drafts: Vec<Draft>, auto: bool, staged: Option<Staged>, plan_id: Option<String>) {
+  /// The hidden follow-up after an automatic account switch, in the host language: the native session came back on the
+  /// new account, so the agent picks the task up from its own context
+  fn continue_after_switch(self: &Arc<Self>) -> BoxFuture<()> {
+    let me = self.clone();
+    Box::pin(async move { me.prompt_inner(t("host.autoContinuePrompt"), vec![], Origin::Continue, None, None).await })
+  }
+
+  async fn prompt_inner(self: Arc<Self>, text: String, drafts: Vec<Draft>, origin: Origin, staged: Option<Staged>, plan_id: Option<String>) {
     enum Gate {
       Queue,
       Drop,
       Go(bool),
     }
+    let auto = origin == Origin::Compact;
     let gate = {
       let mut c = self.core.lock();
-      if c.status == SessionStatus::Starting {
+      if origin == Origin::Continue && (c.status != SessionStatus::Ready || c.phase.running) {
+        // The switch reserved the session for this prompt; anything else taking it first means the continue is moot
+        c.switching = false;
+        Gate::Drop
+      } else if c.status == SessionStatus::Starting {
         Gate::Queue
       } else if c.status != SessionStatus::Ready
         || (text.trim().is_empty() && drafts.is_empty() && staged.as_ref().is_none_or(|s| s.prepared.blocks.is_empty()))
       {
         Gate::Drop
-      } else if c.phase.running || (!auto && c.pending_prompt.is_some()) {
+      } else if origin != Origin::Continue && (c.switching || c.phase.running || (!auto && c.pending_prompt.is_some())) {
         Gate::Queue
       } else {
+        c.switching = false;
         // Mid-turn /compact cannot be injected: the next user-facing request is the earliest slot, compact that first
         let compact_first = !auto && !is_compact_command(&text) && self.should_auto_compact(&c);
         c.phase.running = true;
         c.auto_compact_eligible = false;
         c.phase.staging = true;
         c.phase.staging_aborted = false;
-        if auto {
-          self.touch(&mut c);
-        } else {
+        if origin == Origin::User {
           self.bump(&mut c);
+        } else {
+          self.touch(&mut c);
         }
         Gate::Go(compact_first)
       }
@@ -94,7 +125,12 @@ impl AcpSession {
         self.enqueue(text, drafts, staged.map(|s| s.prepared)).await;
         return;
       }
-      Gate::Drop => return,
+      Gate::Drop => {
+        if origin == Origin::Continue {
+          self.flush_queue();
+        }
+        return;
+      }
       Gate::Go(first) => first,
     };
     let edited_staged = staged.as_ref().is_some_and(|s| s.edited);
@@ -166,10 +202,17 @@ impl AcpSession {
       let before = capture_turn_settings(&c.state.controls);
       let command = named_command(&c.state.commands, &text).map(|x| x.name.clone());
       let name = command_name(&text).map(str::to_owned);
-      let user_turn = if auto {
-        UserTurn { text: text.clone(), auto: Some(true), ..Default::default() }
-      } else {
-        UserTurn {
+      let user_turn = match origin {
+        Origin::Compact => UserTurn { text: text.clone(), auto: Some(true), ..Default::default() },
+        Origin::Continue => UserTurn {
+          id: Some(random_uuid()),
+          text: text.clone(),
+          settings: Some(before.clone()),
+          auto: Some(true),
+          auto_reason: Some(AutoReason::AccountSwitch),
+          ..Default::default()
+        },
+        Origin::User => UserTurn {
           id: Some(random_uuid()),
           text: text.clone(),
           settings: Some(before.clone()),
@@ -178,7 +221,7 @@ impl AcpSession {
           plan_id: plan_id.clone(),
           attachments: (!prepared.attachments.is_empty()).then(|| prepared.attachments.clone()),
           ..Default::default()
-        }
+        },
       };
       (user_turn, is_compact_command(&text), name, before)
     };
@@ -207,7 +250,7 @@ impl AcpSession {
       c.turn_failure = None;
       c.state.turns.push(Turn::User(user_turn));
       let untitled = c.state.title.as_deref().is_none_or(|x| x.is_empty() || x == t("session.untitled"));
-      if !auto && plan_id.is_none() && untitled {
+      if origin == Origin::User && plan_id.is_none() && untitled {
         let summary = summarize_prompt(&text, &prepared.attachments);
         c.state.title = Some(clip(&summary, TITLE_MAX));
       }
@@ -226,6 +269,8 @@ impl AcpSession {
     };
     let live = |c: &Core| c.proc_gen == prompt_gen && c.status != SessionStatus::Closed;
     let mut stop;
+    // Set when the turn ran out of account quota and the session was reserved for an automatic switch
+    let mut exhausted = false;
     let blocks = std::mem::take(&mut prepared.blocks);
     let result = match &proc {
       Some(p) => p.request("session/prompt", json!({ "sessionId": acp_id, "prompt": blocks })).await,
@@ -268,7 +313,9 @@ impl AcpSession {
           ));
           let mut c = self.core.lock();
           stop = TurnStop::Cancelled;
-          self.settle(&mut c, TurnStop::Cancelled, Some(failure_turn_error(f)));
+          let turn_error = failure_turn_error(f);
+          exhausted = self.reserve_switch(&mut c, &turn_error);
+          self.settle(&mut c, TurnStop::Cancelled, Some(turn_error));
           if f.actions.contains(&FailureAction::Login) {
             c.status = SessionStatus::AuthRequired;
           }
@@ -359,6 +406,7 @@ impl AcpSession {
           Some(f) => TurnError { code: Some(code), ..failure_turn_error(f) },
           None => turn_error_of(&err),
         };
+        exhausted = self.reserve_switch(&mut c, &turn_error);
         self.settle(&mut c, TurnStop::Cancelled, Some(turn_error));
         if is_auth(&err) || failure.as_ref().is_some_and(|f| f.actions.contains(&FailureAction::Login)) {
           c.status = SessionStatus::AuthRequired;
@@ -382,7 +430,89 @@ impl AcpSession {
     if context_error {
       return;
     }
+    if exhausted {
+      tokio::spawn(self.clone().switch_after_exhaustion(agent_idx, started_at));
+      return;
+    }
     self.after_prompt(auto, stop);
+  }
+
+  /// A turn that ran out of account quota reserves the session for the automatic switch (under the same lock that settles
+  /// it, so no queued or new prompt can slip onto the exhausted account); only a session bound to a saved account qualifies
+  fn reserve_switch(&self, c: &mut Core, error: &TurnError) -> bool {
+    let yes = self.deps.accounts.is_some() && c.account_id.is_some() && is_quota_exhausted(error);
+    if yes {
+      c.switching = true;
+    }
+    yes
+  }
+
+  /// Move to the account the strategy picks and continue the task there: the exhausted turn keeps its output and gets a
+  /// notice row instead of the error card, the native session is resumed on the new credential, and a hidden continue
+  /// prompt picks the work up. With no account to move to (or a failed hand-off) the error stays where it was
+  async fn switch_after_exhaustion(self: Arc<Self>, agent_idx: usize, started_at: i64) {
+    let Some(hooks) = self.deps.accounts.clone() else { return self.release_switch() };
+    let current = self.core.lock().account_id.clone();
+    let Some((next, to)) = hooks.fallback(self.agent.clone(), current.clone()).await else {
+      self.log("quota exhausted: no other account to switch to");
+      return self.release_switch();
+    };
+    let from = current.as_ref().and_then(|id| hooks.label(id.clone())).or(current).unwrap_or_default();
+    self.log(&format!("quota exhausted: switching {from} → {to}"));
+    let saved = {
+      let mut c = self.core.lock();
+      let saved = agent_turn_mut(&mut c, agent_idx, started_at).map(|turn| {
+        let failure_id = turn.error.as_ref().and_then(|e| e.failure_id.clone());
+        let notice = failure_id
+          .and_then(|id| turn.blocks.iter().position(|b| matches!(b, AgentBlock::Notice(n) if n.id == id)))
+          .map(|i| (i, turn.blocks.remove(i)));
+        let switch_notice = format!("account-switch:{}", random_uuid());
+        let details = turn.error.as_ref().map(|e| e.message.clone());
+        turn.blocks.push(AgentBlock::Notice(NoticeBlock {
+          id: switch_notice.clone(),
+          revision: acpira_shared::num::Num(1.0),
+          category: FailureCategory::Limit,
+          severity: Severity::Warning,
+          title: tp("host.accountSwitched", &[("from", &from), ("to", &to)]),
+          details,
+          actions: vec![],
+        }));
+        let saved = ExhaustedTurn { stop: turn.stop, error: turn.error.take(), notice, switch_notice };
+        turn.stop = Some(TurnStop::EndTurn);
+        saved
+      });
+      self.touch(&mut c);
+      saved
+    };
+    self.rebind_reserved(&next).await;
+    if self.status() == SessionStatus::Ready {
+      return self.continue_after_switch().await;
+    }
+    // The new account did not come up: the session's own error / login state explains it, the turn gets its error back
+    if let Some(saved) = saved {
+      let mut c = self.core.lock();
+      let turn = c.state.turns.iter_mut().rev().filter_map(Turn::as_agent_mut).find(|t| {
+        t.blocks.iter().any(|b| matches!(b, AgentBlock::Notice(n) if n.id == saved.switch_notice))
+      });
+      if let Some(turn) = turn {
+        turn.blocks.retain(|b| !matches!(b, AgentBlock::Notice(n) if n.id == saved.switch_notice));
+        if let Some((i, block)) = saved.notice {
+          turn.blocks.insert(i.min(turn.blocks.len()), block);
+        }
+        turn.stop = saved.stop;
+        turn.error = saved.error;
+      }
+    }
+    self.release_switch();
+  }
+
+  fn release_switch(self: &Arc<Self>) {
+    {
+      let mut c = self.core.lock();
+      c.switching = false;
+      self.touch(&mut c);
+    }
+    self.after_prompt(false, TurnStop::Cancelled);
   }
 
   fn log_usage_threshold(&self, c: &Core, what: &str) {
@@ -477,7 +607,7 @@ impl AcpSession {
   pub(crate) fn flush_queue(self: &Arc<Self>) -> bool {
     let next = {
       let mut c = self.core.lock();
-      if c.status != SessionStatus::Ready || c.phase.running || c.pending_prompt.is_some() || c.queue.is_empty() {
+      if c.status != SessionStatus::Ready || c.phase.running || c.switching || c.pending_prompt.is_some() || c.queue.is_empty() {
         return false;
       }
       c.sending_id = None;

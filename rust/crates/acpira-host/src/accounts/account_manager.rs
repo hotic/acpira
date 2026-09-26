@@ -11,6 +11,7 @@ use acpira_shared::transcript::{AccountInfo, AccountQuota, StrMap};
 
 use super::account_store::AccountStore;
 use super::provider::AccountProvider;
+use super::switch::{SwitchStrategy, parked_until, pick_fallback};
 use crate::acp::agent_process::AgentProcess;
 use crate::acp::cancel::Cancel;
 use crate::acp::rpc::BoxFuture;
@@ -24,6 +25,8 @@ const QUOTA_MAX_AGE_MS: i64 = 30_000;
 
 pub type RunInTerminal = Arc<dyn Fn(String, String, Vec<String>, Option<std::collections::BTreeMap<String, Option<String>>>) + Send + Sync>;
 pub type Toast = Arc<dyn Fn(&str, &str) + Send + Sync>;
+/// agent → the strategy of its automatic account switch (acpira.accountSwitch)
+pub type SwitchPolicy = Arc<dyn Fn(&str) -> SwitchStrategy + Send + Sync>;
 
 pub struct AccountManager {
   store: Arc<AccountStore>,
@@ -34,6 +37,9 @@ pub struct AccountManager {
   listeners: parking_lot::Mutex<Vec<(u64, Arc<dyn Fn(Vec<AccountInfo>) + Send + Sync>)>>,
   quotas: parking_lot::Mutex<HashMap<String, AccountQuota>>,
   fetching: parking_lot::Mutex<HashMap<String, tokio::sync::watch::Receiver<bool>>>,
+  /// Accounts that reported exhaustion → until when they stay out of the automatic switch (epoch ms, this host only)
+  parked: parking_lot::Mutex<HashMap<String, i64>>,
+  switch_policy: parking_lot::Mutex<SwitchPolicy>,
   seq: std::sync::atomic::AtomicU64,
 }
 
@@ -54,8 +60,34 @@ impl AccountManager {
       listeners: Default::default(),
       quotas: Default::default(),
       fetching: Default::default(),
+      parked: Default::default(),
+      switch_policy: parking_lot::Mutex::new(Arc::new(|_: &str| SwitchStrategy::EarliestReset)),
       seq: Default::default(),
     })
+  }
+
+  pub fn set_switch_policy(&self, policy: SwitchPolicy) {
+    *self.switch_policy.lock() = policy;
+  }
+
+  /// The account a session moves to after `current` ran out of quota: `current` is parked until its empty windows refill,
+  /// every quota of the agent is brought up to date, then the agent's strategy picks among the rest. None when the strategy
+  /// is off or no other account has allowance left
+  pub async fn fallback(self: &Arc<Self>, agent: &str, current: Option<&str>) -> Option<AccountInfo> {
+    let strategy = (self.switch_policy.lock().clone())(agent);
+    if strategy == SwitchStrategy::Off {
+      return None;
+    }
+    if let Some(cur) = current {
+      self.refresh_quota(cur, true).await;
+      let q = self.quotas.lock().get(cur).cloned();
+      self.parked.lock().insert(cur.to_owned(), parked_until(q.as_ref(), now_ms()));
+    }
+    self.refresh_quotas(Some(agent), false).await;
+    let list = self.store.list(Some(agent)).into_iter().map(|a| self.with_quota(a)).collect::<Vec<_>>();
+    let id = pick_fallback(&list, current, strategy, &self.parked.lock(), now_ms())?;
+    (self.log)(&format!("account fallback ({strategy:?}): {} → {id}", current.unwrap_or("-")));
+    list.into_iter().find(|a| a.id == id)
   }
 
   pub fn supports(&self, agent: &str) -> bool {
@@ -213,8 +245,17 @@ impl AccountManager {
   }
 
   pub async fn remove(&self, id: &str) -> Result<()> {
+    let owner = self.store.get(id).and_then(|a| self.providers.get(&a.agent).cloned());
+    let cred = self.store.credential(id).await.ok().flatten();
     self.store.remove(id).await?;
+    // The provider cleans up what it keeps outside the vault (a CLI home, a keychain entry)
+    if let (Some(p), Some(cred)) = (owner, cred)
+      && let Some(fut) = p.forget(cred)
+    {
+      fut.await;
+    }
     self.quotas.lock().remove(id);
+    self.parked.lock().remove(id);
     self.emit();
     Ok(())
   }
@@ -256,5 +297,14 @@ impl SessionAccountHooks for AccountHooks {
   fn authenticate(&self, agent: String, account: String, proc: Arc<AgentProcess>) -> BoxFuture<Result<()>> {
     let m = self.0.clone();
     Box::pin(async move { m.authenticate_for(&agent, &account, proc).await })
+  }
+
+  fn fallback(&self, agent: String, current: Option<String>) -> BoxFuture<Option<(String, String)>> {
+    let m = self.0.clone();
+    Box::pin(async move { m.fallback(&agent, current.as_deref()).await.map(|a| (a.id, a.label)) })
+  }
+
+  fn label(&self, account: String) -> Option<String> {
+    self.0.get(&account).map(|a| a.label)
   }
 }

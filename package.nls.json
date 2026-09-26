@@ -17,6 +17,7 @@
   "acpira.conf.compactAtTokens": "When the agent's reported usage.used reaches this many tokens, /compact is sent automatically before the next message (a running turn cannot be interrupted). Only applies to agents that report usage and offer a /compact command; models with a smaller context window are the agent's own lookout",
   "acpira.conf.autoCompact": "Send /compact automatically before the next message once over the threshold (turn off to compact by hand from the context panel only)",
   "acpira.conf.hiddenOptions": "Option families hidden from the menus (models / reasoning levels…): `{ \"<agent>\": { \"<configOption id>\": [\"<family name>\", ...] } }`. Toggle them on the agent page in Acpira settings; hand-editing is rarely needed",
+  "acpira.conf.accountSwitch": "Automatic account switch per agent when the bound account runs out of quota: `{ \"<agent>\": \"earliestReset\" | \"mostRemaining\" | \"listOrder\" | \"off\" }`. An agent not listed switches to the saved account whose nearest allowance window resets first. Pick it on the agent page in Acpira settings",
   "acpira.conf.theme": "Color scheme of the Acpira panels: auto follows the VS Code theme, light / dark ignore it",
   "acpira.conf.sessionListPosition": "Session list position inside Acpira: collapsed, left, or right. Narrow panels use a drawer.",
   "acpira.conf.uiFontSize": "Base font size of the interface in px (10–20)",

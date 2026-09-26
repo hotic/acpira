@@ -13,6 +13,7 @@ export interface ExportLabels {
   thinking: string;
   compacted: string;
   autoCompact: string;
+  autoContinue: string;
   error: string;
 }
 
@@ -25,6 +26,7 @@ export const EXPORT_LABELS_EN: ExportLabels = {
   thinking: 'Thinking',
   compacted: 'Context compacted',
   autoCompact: 'Automatic /compact',
+  autoContinue: 'Continued automatically after an account switch',
   error: 'Error',
 };
 
@@ -56,7 +58,7 @@ export function exportMarkdown(input: ExportInput, labels: ExportLabels = EXPORT
 }
 
 function userTurn(turn: Extract<Turn, { role: 'user' }>, labels: ExportLabels): string {
-  if (turn.auto) return `_${labels.autoCompact}_`;
+  if (turn.auto) return `_${turn.autoReason === 'accountSwitch' ? labels.autoContinue : labels.autoCompact}_`;
   const out = [`### ${labels.user}`, '', turn.text];
   if (turn.attachments?.length) {
     const names = turn.attachments.map(a => a.kind === 'file' ? a.name : a.name ?? a.blob ?? 'image');

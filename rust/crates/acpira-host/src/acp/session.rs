@@ -48,10 +48,18 @@ pub const USAGE_POLL_INTERVAL: Duration = Duration::from_millis(800);
 const CLOSE_GRACE: Duration = Duration::from_secs(3);
 pub(crate) const MODE_PICK: &str = "\0mode";
 
-/// The two hooks the account layer gives a session: environment variables before spawn, authenticate after initialize
+/// The hooks the account layer gives a session: environment variables before spawn, authenticate after initialize, and
+/// the automatic switch when the bound account runs out of quota
 pub trait SessionAccountHooks: Send + Sync {
   fn spawn_env(&self, agent: String, account: String) -> BoxFuture<Option<StrMap>>;
   fn authenticate(&self, agent: String, account: String, proc: Arc<AgentProcess>) -> BoxFuture<Result<()>>;
+  /// (id, label) of the account to move to after `current` ran out of quota; None = stay and show the error
+  fn fallback(&self, _agent: String, _current: Option<String>) -> BoxFuture<Option<(String, String)>> {
+    Box::pin(async { None })
+  }
+  fn label(&self, _account: String) -> Option<String> {
+    None
+  }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -174,6 +182,8 @@ pub(crate) struct Core {
   pub import_pending: bool,
   pub imported_from: Option<ImportedFrom>,
   pub agent_title_muted: bool,
+  /// An automatic account switch is between the exhausted turn and its continue: prompts queue, manual switches wait
+  pub switching: bool,
 }
 
 pub struct AcpSession {
@@ -267,6 +277,7 @@ impl AcpSession {
           forked_from: record.forked_from,
           import_pending: record.import_pending,
           imported_from: record.imported_from,
+          switching: false,
         }),
         deps,
         me: me.clone(),
@@ -912,8 +923,8 @@ impl AcpSession {
     Ok(())
   }
 
-  fn busy(c: &Core) -> bool {
-    c.phase.running || c.phase.editing || c.phase.staging || c.status == SessionStatus::Starting
+  pub(crate) fn busy(c: &Core) -> bool {
+    c.phase.running || c.phase.editing || c.phase.staging || c.switching || c.status == SessionStatus::Starting
   }
 
   /// Re-authenticate a replacement process, then resume / load the same native session
@@ -930,6 +941,12 @@ impl AcpSession {
     }
     self.reopen().await;
     Ok(())
+  }
+
+  /// The automatic switch's rebind: the session is already reserved by `switching`, which `busy` would refuse
+  pub(crate) async fn rebind_reserved(self: &Arc<Self>, account_id: &str) {
+    self.core.lock().account_id = Some(account_id.to_owned());
+    self.reopen().await;
   }
 
   /// Rebuild the connection under a session whose prompts keep failing on a live process

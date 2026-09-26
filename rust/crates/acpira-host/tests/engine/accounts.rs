@@ -354,6 +354,10 @@ struct Setup {
 }
 
 fn setup(fake: &crate::support::FakeAgent, load_only: bool) -> Setup {
+  setup_env(fake, if load_only { json!({ "FAKE_LOAD_ONLY": "1" }) } else { json!({}) })
+}
+
+fn setup_env(fake: &crate::support::FakeAgent, extra: Value) -> Setup {
   let dir = tempfile::tempdir().unwrap();
   let cwd = dir.path().join("needs-auth");
   std::fs::create_dir(&cwd).unwrap();
@@ -363,8 +367,8 @@ fn setup(fake: &crate::support::FakeAgent, load_only: bool) -> Setup {
   let t = toasts.clone();
   let accounts = AccountManager::new(store.clone(), vec![provider.clone()], log(), Arc::new(|_, _, _, _| {}), Arc::new(move |_l: &str, x: &str| t.lock().unwrap().push(x.to_owned())));
   let mut env = json!({ "FAKE_SESSION_DIR": dir.path() });
-  if load_only {
-    env["FAKE_LOAD_ONLY"] = json!("1");
+  for (k, x) in extra.as_object().unwrap() {
+    env[k] = x.clone();
   }
   let mut opts = Opts::with_agents(fake.setting(json!({ "env": env })), "fake").cwd(cwd.to_str().unwrap());
   opts.accounts = Some(accounts.clone());
@@ -654,4 +658,81 @@ async fn a_transient_hand_off_failure_is_auth_required_and_retry_re_authenticate
   s.retry().await.unwrap();
   assert_eq!(hooks.1.load(Ordering::SeqCst), 2);
   expect_match(view(&s), json!({ "status": "ready", "error": null }));
+}
+
+/// A session on `one` (good-key, exhausted) with `two` (good-key-2) saved next to it
+async fn exhausted_session(s: &Setup) -> (String, String) {
+  s.m.init().await;
+  s.m.new_session(None).await;
+  s.m.handle(json!({ "type": "addAccount", "agent": "fake", "via": "import" })).await;
+  until(|| s.m.active().is_some_and(|a| a["status"] == "ready"), 5000).await;
+  let one = s.accounts.list()[0].id.clone();
+  let two = s.store.add("fake", draft("two@example.com", None, "good-key-2", None)).await.unwrap().id;
+  s.accounts.reload().await;
+  (one, two)
+}
+
+fn turns(m: &Mgr) -> Vec<Value> {
+  m.active().unwrap()["turns"].as_array().unwrap().clone()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_exhausted_account_hands_the_turn_to_the_next_account_which_continues_it() {
+  let fake = fake_or_skip!();
+  // Devin's typed -32011 and the AIR quota_exhausted failure of codex-acp / claude-agent-acp take the same path
+  for prompt in ["hi", "quota-air"] {
+    let s = setup_env(&fake, json!({ "FAKE_EXHAUSTED_KEYS": "good-key" }));
+    let (one, two) = exhausted_session(&s).await;
+    s.m.handle(json!({ "type": "send", "text": prompt })).await;
+    // Sent while the switch is under way: it waits for the continue instead of landing on the exhausted account
+    s.m.handle(json!({ "type": "send", "text": "echo-blocks after" })).await;
+    until(|| s.m.active().is_some_and(|a| a["status"] == "ready" && a["turns"].as_array().unwrap().len() == 6 && a["turns"][5]["stop"] == "end_turn"), 10_000).await;
+    let t = turns(&s.m);
+    assert_eq!(t[4]["text"], "echo-blocks after");
+    expect_match(s.m.active().unwrap(), json!({ "accountId": two }));
+    // The exhausted turn keeps its output; a notice row replaces the error card
+    let exhausted = &t[1];
+    assert!(exhausted["error"].is_null(), "{prompt}: {exhausted}");
+    assert_eq!(exhausted["stop"], "end_turn");
+    assert_eq!(exhausted["blocks"][0]["markdown"], "partial work");
+    let notices: Vec<&Value> = exhausted["blocks"].as_array().unwrap().iter().filter(|b| b["type"] == "notice").collect();
+    assert_eq!(notices.len(), 1, "{prompt}: the AIR row is replaced, not doubled");
+    expect_match(notices[0], json!({ "severity": "warning", "category": "limit", "actions": [] }));
+    let title = notices[0]["title"].as_str().unwrap();
+    assert!(title.contains("one@example.com") && title.contains("two@example.com"), "{title}");
+    // The continue is a hidden automatic turn in the host language, answered on the new account
+    expect_match(&t[2], json!({ "role": "user", "auto": true, "autoReason": "accountSwitch", "text": acpira_host::i18n::t("host.autoContinuePrompt") }));
+    assert!(t[3]["error"].is_null());
+    assert!(!t[3]["blocks"].as_array().unwrap().is_empty());
+    // Same native session: the continue reached the context the exhausted turn left
+    s.m.handle(json!({ "type": "send", "text": "inspect-native-history" })).await;
+    let reply = turns(&s.m).last().cloned().unwrap();
+    let echoed: Value = serde_json::from_str(reply["blocks"][0]["markdown"].as_str().unwrap()).unwrap();
+    let texts: Vec<&str> = echoed["prompts"].as_array().unwrap().iter().map(|p| p[0]["text"].as_str().unwrap()).collect();
+    assert_eq!(texts[..3], [prompt, acpira_host::i18n::t("host.autoContinuePrompt").as_str(), "echo-blocks after"]);
+    assert_eq!(s.accounts.default_for("fake").unwrap().id, two);
+    assert_ne!(one, two);
+    s.m.dispose().await;
+  }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn with_every_account_exhausted_or_the_switch_off_the_error_stays() {
+  let fake = fake_or_skip!();
+  let s = setup_env(&fake, json!({ "FAKE_EXHAUSTED_KEYS": "good-key,good-key-2" }));
+  let (_, two) = exhausted_session(&s).await;
+  // one → two, two is exhausted as well, and one is parked: the second failure stays on screen
+  s.m.handle(json!({ "type": "send", "text": "hi" })).await;
+  until(|| s.m.active().is_some_and(|a| a["status"] == "ready" && a["turns"].as_array().unwrap().len() == 4 && a["turns"][3]["error"].is_object()), 10_000).await;
+  expect_match(s.m.active().unwrap(), json!({ "accountId": two }));
+  expect_match(&turns(&s.m)[3], json!({ "stop": "error", "error": { "code": -32011, "kind": "resource_exhausted" } }));
+  s.m.dispose().await;
+
+  let s = setup_env(&fake, json!({ "FAKE_EXHAUSTED_KEYS": "good-key" }));
+  s.accounts.set_switch_policy(Arc::new(|_: &str| acpira_host::accounts::switch::SwitchStrategy::Off));
+  let (one, _) = exhausted_session(&s).await;
+  s.m.handle(json!({ "type": "send", "text": "hi" })).await;
+  until(|| s.m.active().is_some_and(|a| a["turns"].as_array().unwrap().len() == 2 && a["turns"][1]["error"].is_object()), 5000).await;
+  expect_match(s.m.active().unwrap(), json!({ "status": "ready", "accountId": one }));
+  s.m.dispose().await;
 }

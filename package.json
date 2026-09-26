@@ -245,6 +245,21 @@
             }
           }
         },
+        "acpira.accountSwitch": {
+          "type": "object",
+          "default": {},
+          "scope": "application",
+          "markdownDescription": "%acpira.conf.accountSwitch%",
+          "additionalProperties": {
+            "type": "string",
+            "enum": [
+              "earliestReset",
+              "mostRemaining",
+              "listOrder",
+              "off"
+            ]
+          }
+        },
         "acpira.theme": {
           "type": "string",
           "enum": [
