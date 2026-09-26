@@ -70,8 +70,10 @@ export function App() {
   // The import popover's listing; `agent` ties it to the request it answers so a stale reply can't overwrite a newer request
   const [nativeSessions, setNativeSessions] = useState<NativeSessionsState>();
   const [page, setPage] = useState<SettingsPage>({ kind: 'general' });
-  // Agents whose next controls request is a refresh: the flag rides the effect's request so a re-render can't double-spawn the probe
-  const freshControls = useRef(new Set<AgentId>());
+  // Agents whose refresh button is waiting on the probe; their cached inventory / controls stay on screen until the reply replaces them
+  const [refreshing, setRefreshing] = useState<ReadonlySet<AgentId>>(() => new Set());
+  const refreshingRef = useRef(refreshing);
+  refreshingRef.current = refreshing;
   // The agents list as last received, for spotting availability flips inside the message handler
   const lastAgents = useRef<AgentInfo[]>([]);
   const hostTheme = useVsCodeTheme();
@@ -119,7 +121,10 @@ export function App() {
         }
         case 'settings': setSettings(m.settings); setLocale(m.locale); setLoc(m.locale); break;
         case 'inventory': setInventories(inv => ({ ...inv, [m.agent]: m.inventory })); break;
-        case 'controls': setControls(c => ({ ...c, [m.agent]: m.controls })); break;
+        case 'controls':
+          setControls(c => ({ ...c, [m.agent]: m.controls }));
+          setRefreshing(r => { if (!r.has(m.agent)) return r; const next = new Set(r); next.delete(m.agent); return next; });
+          break;
         // A reply for an agent the popover has since moved away from is dropped; the effect re-requested the new one already
         case 'nativeSessions': setNativeSessions(cur => cur?.agent === m.agent ? { agent: m.agent, sessions: m.sessions, error: m.error, loading: false } : cur); break;
         case 'chatgptStatus': setChatgptStatus(m.status); break;
@@ -137,7 +142,7 @@ export function App() {
 
   // The model lists of an agent page come from the configOptions of its latest session; ask for them on first visit
   useEffect(() => {
-    if (view === 'settings' && page.kind === 'agent' && controls[page.id] === undefined) post({ type: 'controls', agent: page.id, fresh: freshControls.current.delete(page.id) || undefined });
+    if (view === 'settings' && page.kind === 'agent' && controls[page.id] === undefined) post({ type: 'controls', agent: page.id });
   }, [view, page, controls]);
 
   useEffect(() => {
@@ -201,11 +206,14 @@ export function App() {
     openPath: path => post({ type: 'openPath', path }),
     // Drop the cached copy first so the page shows the scanning shimmer until the reply lands
     refreshInventory: agent => { setInventories(inv => { const { [agent]: _drop, ...rest } = inv; return rest; }); post({ type: 'inventory', agent }); },
-    // The refresh button: only drop the caches — the controls effect re-requests with fresh (probe process), the inventory one as usual
+    // The refresh button keeps the cached page visible: the file scan answers first, the probe process (a cold CLI start) replaces
+    // controls and then inventory again with the live version; quotas refresh alongside. A second click while probing is ignored
     refreshAgent: agent => {
-      freshControls.current.add(agent);
-      setControls(c => { const { [agent]: _drop, ...rest } = c; return rest; });
-      setInventories(inv => { const { [agent]: _drop, ...rest } = inv; return rest; });
+      if (refreshingRef.current.has(agent)) return;
+      setRefreshing(r => new Set(r).add(agent));
+      post({ type: 'inventory', agent });
+      post({ type: 'controls', agent, fresh: true });
+      post({ type: 'refreshQuota', agent });
     },
     selectAccount: id => post({ type: 'selectAccount', id }),
     addAccount: agent => post({ type: 'addAccount', agent, via: 'auto' }),
@@ -234,6 +242,7 @@ export function App() {
         chatgptStatus={chatgptStatus}
         inventories={inventories}
         controls={controls}
+        refreshing={refreshing}
         env={{ home: init.home, cwd: session?.cwd ?? init.cwd }}
         page={page}
         onPage={setPage}

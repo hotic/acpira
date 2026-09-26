@@ -9,6 +9,7 @@ import type { Locale } from '@shared/i18n';
 import { AppearanceContext, appearanceDataAttrs, type Appearance, type AxisKey } from '../appearance';
 import { lookAttrs, ThemeContext, type ShellLook, type Theme } from '../look';
 import { IconButton } from '../ui/Button';
+import { cn } from '../ui/cn';
 import { ShellLayerContext } from '../ui/Popover';
 import { useScrollReveal } from '../ui/useScrollReveal';
 import { LocaleContext, t } from '../i18n';
@@ -60,6 +61,8 @@ export interface SettingsShellProps {
   chatgptStatus?: ChatGptIntegrationStatus;
   // Per agent, the configOptions of its latest session (the hide lists are built from these)
   controls: Partial<Record<AgentId, ConfigControl[]>>;
+  // Agents whose refresh is in flight: the button spins and ignores clicks while the cached page stays in place
+  refreshing?: ReadonlySet<AgentId>;
   env: SettingsEnv;
   page: SettingsPage;
   onPage: (p: SettingsPage) => void;
@@ -78,9 +81,11 @@ export function SettingsShell(p: SettingsShellProps) {
   // Ids the rail does not show (a custom agent missing from acpira.agents for now) keep their saved order / off state
   const unlisted = (id: AgentId) => !p.agents.some(a => a.id === id);
   const title = page.kind === 'chatgpt' ? 'ChatGPT' : agent ? t('settings.agent.title', { agent: agent.name }) : page.kind === 'appearance' ? t('settings.appearance.title') : t('settings.general.title');
+  const busy = !!agent && !!p.refreshing?.has(agent.id);
   const action = (agent || page.kind === 'chatgpt') && (
-    <IconButton title={t('common.refresh')} aria-label={t('common.refresh')} onClick={() => page.kind === 'chatgpt' ? p.on.refreshChatgpt?.() : agent && p.on.refreshAgent(agent.id)}>
-      <RefreshCw strokeWidth={1.5} />
+    <IconButton title={t('common.refresh')} aria-label={t('common.refresh')} aria-busy={busy || undefined} disabled={busy}
+      onClick={() => page.kind === 'chatgpt' ? p.on.refreshChatgpt?.() : agent && p.on.refreshAgent(agent.id)}>
+      <RefreshCw strokeWidth={1.5} className={cn(busy && 'animate-spin live-spin')} />
     </IconButton>
   );
   return (

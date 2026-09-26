@@ -15,7 +15,7 @@ export function PageHeader({ title, action }: { title: ReactNode; action?: React
   return (
     <header className="flex min-h-ctl items-center gap-pad">
       <h1 className="m-0 min-w-0 flex-1 text-(length:--text-h) leading-(--text-h-lh) font-medium text-fg-1 [overflow-wrap:anywhere]">{title}</h1>
-      {action && <div className="-mr-1.5 flex shrink-0 items-center">{action}</div>}
+      {action && <div className="flex shrink-0 items-center">{action}</div>}
     </header>
   );
 }
@@ -98,9 +98,10 @@ export function Section({ title, desc, count, action, cards, children }: Section
   );
 }
 
-// A small text action for a Section's title line: quiet Chip, no caret
+// A small text action for a Section's title line: quiet Chip, no caret. Its box (and hover fill) ends on the cards' right edge
+// like the page header's action, rather than overhanging it
 export function SectionAction({ icon, onClick, children, title }: { icon?: ReactNode; onClick: () => void; children: ReactNode; title?: string }) {
-  return <Chip caret={false} icon={icon} onClick={onClick} title={title} className="-mr-2 shrink-0">{children}</Chip>;
+  return <Chip caret={false} icon={icon} onClick={onClick} title={title} className="shrink-0">{children}</Chip>;
 }
 
 export function Group({ className, children, embedded = false }: { className?: string; children: ReactNode; embedded?: boolean }) {
