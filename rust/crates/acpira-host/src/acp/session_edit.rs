@@ -15,7 +15,7 @@ use acpira_shared::turn_settings::capture_turn_settings;
 
 use super::agent_process::AgentProcess;
 use super::attachments::{PromptCaps, prepare_prompt, restore_drafts};
-use super::normalize::{apply_config_options, config_option_set_value, init_controls};
+use super::normalize::{apply_config_options, config_option_set_value};
 use super::session::{AcpSession, Core};
 use super::session_prompt::Staged;
 use crate::i18n::{t, tp};
@@ -254,7 +254,8 @@ impl AcpSession {
     settings: &TurnSettings,
   ) -> Result<()> {
     let live = self.core.lock().acp_session_id.as_deref() == Some(session_id);
-    let mode_id = settings.mode_id.clone();
+    // A session without modes has none to restore; turns recorded while pi-acp's mirrored modes leaked still carry one
+    let mode_id = settings.mode_id.clone().filter(|_| !controls.modes.is_empty());
     if let Some(m) = &mode_id
       && !controls.modes.iter().any(|x| &x.id == m)
     {
@@ -452,8 +453,8 @@ impl AcpSession {
       let fresh = proc.request("session/new", json!({ "cwd": self.cwd, "mcpServers": [] })).await?;
       let fresh_id = fresh.get("sessionId").and_then(Value::as_str).unwrap_or("").to_owned();
       let mut controls = SessionControls::default();
-      init_controls(&mut controls, fresh.get("modes"), fresh.get("configOptions"));
-      if controls.modes.is_empty()
+      if !self.protocol_controls(&mut controls, fresh.get("modes"), fresh.get("configOptions"))
+        && controls.modes.is_empty()
         && let Some(syn) = self.synthetic_modes()
       {
         controls.modes = syn;

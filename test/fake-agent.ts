@@ -51,6 +51,8 @@ import * as acp from '@agentclientprotocol/sdk';
 // FAKE_STARTUP_BANNER → pi-acp's startup banner: the session/new response carries _meta.piAcp.startupInfo and the same
 // text is re-sent as one agent_message_chunk a tick later; =early instead sends it before session/new returns;
 // FAKE_MODELS → comma-separated extra model options appended to the model configOption (read at spawn, so a second spawn sees new values);
+// FAKE_MIRROR_MODES → pi-acp 0.0.33's shape: session/new's modes are the effort levels (`Thinking: <id>`, the thought_level ids)
+// and every effort pick is echoed as current_mode_update before the set answers;
 // FAKE_BOOL → offer a `type: 'boolean'` model_config option, but only to clients advertising clientCapabilities.session.configOptions.boolean;
 // FAKE_EFFORTS → comma-separated extra effort options (`unavailable` is offered yet refused on set, like every `unavailable` value);
 // FAKE_SPEED → Devin-shaped per-model controls (3000.11.3): m1 offers a `speed` Standard / Fast select and every effort, while any
@@ -182,7 +184,8 @@ const app = acp.agent({ name: 'fake-agent' })
       sessionId,
       ...(lateBanner ? { _meta: { piAcp: { startupInfo: lateBanner } } } : {}),
       // when cwd contains no-modes, mimic Grok: omit modes, forcing the client to use the registry's synthesized modes
-      ...(params.cwd.includes('no-modes') ? {} : { modes: { currentModeId: 'agent', availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }] } }),
+      ...(params.cwd.includes('no-modes') ? {} : { modes: process.env.FAKE_MIRROR_MODES ? mirrorModes()
+        : { currentModeId: 'agent', availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }] } }),
       configOptions: configOptions(),
     };
   })
@@ -284,6 +287,8 @@ const app = acp.agent({ name: 'fake-agent' })
     // Devin's compound Fusion model switch resets its independent reasoning option.
     if (process.env.FAKE_MODEL_RESETS_EFFORT && params.configId === 'model') config.effort = 'high';
     if (process.env.FAKE_SPEED && config.model !== 'm1') config.effort = 'high';
+    if (process.env.FAKE_MIRROR_MODES && params.configId === 'effort') await client.notify(acp.methods.client.session.update, { sessionId: params.sessionId,
+      update: { sessionUpdate: 'current_mode_update', currentModeId: config.effort! } });
     saveSession(params.sessionId);
     if (process.env.FAKE_CONFIG_USAGE) await client.notify(acp.methods.client.session.update, { sessionId: params.sessionId,
       update: { sessionUpdate: 'usage_update', used: 24_000, size: 200_000 } });
@@ -1103,6 +1108,11 @@ const failed = new Map<string, number>();
 const config: Record<string, string> = { model: 'm1', effort: 'high' };
 // FAKE_CONFIG_DELAY_MS: make control requests as slow as a real agent so in-flight state is observable
 const configDelay = () => new Promise(r => setTimeout(r, Number(process.env.FAKE_CONFIG_DELAY_MS) || 0));
+function mirrorModes() {
+  const effort = configOptions().find(o => o.id === 'effort') as { options: { value: string }[] };
+  return { currentModeId: config.effort!, availableModes: effort.options.map(o => ({ id: o.value, name: `Thinking: ${o.value}` })) };
+}
+
 function configOptions(): acp.SessionConfigOption[] {
   const speed = process.env.FAKE_SPEED;
   const narrow = speed && config.model !== 'm1';

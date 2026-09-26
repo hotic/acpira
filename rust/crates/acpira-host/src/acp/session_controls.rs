@@ -1,6 +1,7 @@
 //! Modes and config options of a session: wire requests,
 //! the optimistic pick overlay, effort preservation across model switches, and replaying remembered choices
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
@@ -10,12 +11,34 @@ use acpira_shared::composer_controls::{is_reasoning_control, thought_correction}
 use acpira_shared::models::parse_fusion_name;
 use acpira_shared::transcript::*;
 
-use super::normalize::{apply_config_options, config_option_set_value};
+use super::normalize::{apply_config_options, config_option_set_value, init_controls};
 use super::rpc::BoxFuture;
 use super::session::{AcpSession, MODE_PICK};
 use crate::i18n::t;
 
+/// pi-acp 0.0.33 advertises its thinking levels twice, as modes and as the thought_level select: such modes select nothing
+/// of their own, whichever agent definition launched the adapter
+fn modes_mirror_reasoning(controls: &SessionControls) -> bool {
+  fn ids(options: &[SessionOption]) -> HashSet<&str> {
+    options.iter().map(|o| o.id.as_str()).collect()
+  }
+  !controls.modes.is_empty() && controls.options.iter().any(|c| is_reasoning_control(c) && ids(&c.options) == ids(&controls.modes))
+}
+
 impl AcpSession {
+  /// Controls from a start response (session/new / resume / load, an edit's fresh peer). Protocol modes are dropped for an
+  /// `ignoreModes` agent and when they only mirror the reasoning select; true when they were
+  pub(crate) fn protocol_controls(&self, controls: &mut SessionControls, modes: Option<&Value>, config_options: Option<&Value>) -> bool {
+    init_controls(controls, modes, config_options);
+    if !self.def().ignore_modes && !modes_mirror_reasoning(controls) {
+      return false;
+    }
+    controls.modes = vec![];
+    controls.mode_id = None;
+    controls.mode_config_id = None;
+    true
+  }
+
   fn editing_guard(&self) -> Result<()> {
     if self.core.lock().phase.editing { Err(anyhow!(t("history.unavailable"))) } else { Ok(()) }
   }

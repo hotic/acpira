@@ -1294,6 +1294,51 @@ async fn ignore_modes_drops_protocol_modes_and_a_pushed_mode_update() {
   assert_eq!(view(&s)["controls"]["modes"], json!([]));
 }
 
+// Editing a historical turn rebuilds the peer through session/new, whose modes used to skip ignoreModes (Pi, 2026-09-26)
+#[tokio::test(flavor = "multi_thread")]
+async fn an_edit_keeps_ignored_modes_hidden_on_the_rebuilt_peer() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({ "ignoreModes": true }));
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "earlier-context").await;
+  prompt(&s, "original").await;
+  let old_peer = s.to_record().acp_session_id;
+  let mut edit = history_edit(&s, 2, "inspect-history");
+  // A turn recorded while the modes leaked still carries a mode id; with no modes it is moot, not an error
+  edit.settings.mode_id = Some("plan".into());
+  s.edit_turn(edit).await.unwrap();
+  until(|| !s.is_running(), 5000).await;
+  assert_ne!(s.to_record().acp_session_id, old_peer);
+  let vw = view(&s);
+  assert_eq!(vw["controls"]["modes"], json!([]));
+  expect_absent(&vw["controls"], "modeId");
+  // The fresh peer was never asked to switch modes
+  let reply: Value = serde_json::from_str(vw["turns"][3]["blocks"][0]["markdown"].as_str().unwrap()).unwrap();
+  expect_absent(&reply, "mode");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn modes_mirroring_the_reasoning_select_stay_hidden_through_picks_and_edits() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({ "env": { "FAKE_MIRROR_MODES": "1" } }));
+  let s = started(&h, "/tmp").await;
+  assert_eq!(view(&s)["controls"]["modes"], json!([]));
+  expect_absent(&view(&s)["controls"], "modeId");
+  // The adapter echoes the pick as current_mode_update, which must not bring a mode back
+  s.set_config("effort".into(), "low".into()).await.unwrap();
+  prompt(&s, "earlier-context").await;
+  let vw = view(&s);
+  assert_eq!(option_value(&vw, "effort"), "low");
+  expect_absent(&vw["controls"], "modeId");
+  expect_absent(&vw["turns"][0]["settings"], "modeId");
+  prompt(&s, "original").await;
+  s.edit_turn(history_edit(&s, 2, "inspect-history")).await.unwrap();
+  until(|| !s.is_running(), 5000).await;
+  let vw = view(&s);
+  assert_eq!(vw["controls"]["modes"], json!([]));
+  expect_absent(&vw["controls"], "modeId");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_strict_prompt_capabilities_agent_receives_dropped_text_as_marked_up_text() {
   let fake = fake_or_skip!();
