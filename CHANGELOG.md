@@ -7,17 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planned
+
+- MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.
+- Steer / interrupt follow-up modes remain planned. Mid-turn messages stay in the host-side queue.
+
+## [1.7.0] - 2026-09-26
+
+### Added
+
+- Automatic account switch: when a turn fails because the bound account ran out of quota (Devin `resource_exhausted`, AIR `quota_exhausted`, Codex / Claude usage-limit errors), Acpira binds another saved account, resumes the same native session and continues the task with a hidden continue prompt in the host language. The exhausted turn keeps its output with a switch notice in place of the error. One global strategy, `acpira.accountSwitch` on the General settings page: `off` (default), `earliestReset`, `mostRemaining` or `listOrder`. Exhausted accounts stay parked until their empty quota windows reset; with no usable account or a failed hand-off the original error stays and the queue moves on.
+- Codex and Claude saved accounts: each login lives in a private CLI home under `~/.acpira/accounts/<agent>/`, with import of the existing CLI login, terminal sign-in, quota display and cleanup on removal (including the Claude keychain item on macOS).
+- The reasoning effort list follows the current model: a built-in models.dev catalogue (cached under `~/.acpira`, refreshed at startup) and the reasoning levels in Pi, OpenCode, Codex and Claude configs narrow the offered efforts, and a value the model does not support is corrected after a model switch or at session start.
+- Pi and OpenCode models are grouped by provider (the `Provider/` prefix of the model name becomes its source), and Codex / Claude models show the configured endpoint as their source. Hidden-model preferences saved under the old `Provider/Name` keep working.
+- Compaction and provider retries appear as rows for every agent: Codex and Claude send structured compaction updates (the client advertises `session.compaction`), adapter compaction prose becomes the same row with a failed compaction's reason, and pi-acp's retry chunks fold into one notice per retry run instead of reply text.
+- Pi reports context usage, read from its session file and the model's window while a prompt runs (pi-acp sends no `usage_update`).
+- Image generation calls (Codex "Image generation", Grok `image_gen` / `image_edit`) show their images below the process fold, with an animated placeholder while the call runs; images a tool only names by path are loaded too.
+- Right-clicking an agent image offers **Copy image**; clicking still opens the lightbox.
+- Codex `$`-prefixed skill commands (`/$name`) are recognized and highlighted as commands in the composer.
+- `acpira agents [--json]` prints how each built-in CLI resolves, its spawn line and the exact `initialize` request.
+
 ### Changed
 
 - The host (sessions, agent processes, accounts, settings) runs as a native sidecar process written in Rust in VS Code, Cursor and IntelliJ alike; the extension and the plugin are thin shells around it over the same envelope protocol. On the measured harness the host starts in about 5 ms instead of 58 ms and idles at about 7 MB instead of 71 MB. Sessions, accounts and settings in `~/.acpira` are unchanged and remain readable by earlier versions.
 - VS Code / Cursor installs a platform package (macOS, Linux, Alpine and Windows on x64 and arm64) that carries the sidecar binary. There is no universal package any more: other platforms, such as 32-bit ARM Linux, can no longer install the extension.
 - The ChatGPT bridge CLI in the copied connection instructions is `acpira bridge` from the packaged binary; Node.js is no longer required on the machine.
 - The IntelliJ packages carry the six sidecar binaries instead of six Node.js runtimes; Node.js is no longer used at all.
+- Diffs use git's histogram algorithm: a small edit in a large file shows only the changed lines, and a full rewrite keeps every line so the stat is exact, instead of falling back to a truncated head beyond 800 lines.
+- Settings pickers that used segmented buttons are Select menus.
 
-### Planned
+### Fixed
 
-- MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.
-- Steer / interrupt follow-up modes remain planned. Mid-turn messages stay in the host-side queue.
+- Agent processes are ended before the host shuts down; one still alive after 2.5 s is killed instead of being left orphaned.
+- pi-acp's startup banner is no longer lost to a race with the `session/new` response, and a sign-in reason printed to stderr after an auth error still reaches the view.
+- A queued follow-up or a historical edit's continuation can no longer be overtaken by a message sent in between; an edit whose settings fail half-way keeps the controls the agent already switched to; a turn shorter than one flush still refreshes quota; a rename still waiting to be saved reaches other windows.
+- Preference and transcript writes land in order and are flushed before anything reads them back.
+- Modes that only mirror the reasoning select (pi-acp's thinking levels) stay hidden across historical edits, whichever agent definition launched the adapter.
+- A sticky long prompt folds to three lines without shifting the thread or flickering at the bottom, and trailing blank lines of a prompt are no longer shown.
+- Slash command pills use one fixed colour for every agent; they were transparent for agents other than Devin and Grok.
+- Automatic compaction no longer shows a redundant status line, the connected rail animation no longer runs backward, and the collaboration mode heading is localized.
 
 ## [1.6.0] - 2026-09-24
 
