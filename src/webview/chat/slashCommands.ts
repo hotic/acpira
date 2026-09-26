@@ -68,7 +68,7 @@ export interface CommandMark {
 export function commandMarks(commands: readonly SlashCommand[], text: string): CommandMark[] {
   if (!commands.length || !text.includes('/')) return [];
   const marks: CommandMark[] = [];
-  for (const m of text.matchAll(/(^|\s)\/([\p{L}\p{N}][\p{L}\p{N}_.:-]*)(?=\s|$)/gu))
+  for (const m of text.matchAll(/(^|\s)\/(\$?[\p{L}\p{N}][\p{L}\p{N}_.:-]*)(?=\s|$)/gu))
     if (commands.some(c => c.name === m[2])) marks.push({ start: m.index + m[1]!.length, name: m[2]! });
   return marks;
 }

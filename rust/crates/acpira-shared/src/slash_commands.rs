@@ -6,7 +6,7 @@ use regex::Regex;
 
 use crate::transcript::{CommandOption, CommandReceipt, SessionControls, SlashCommand, Turn, TurnSettings, TurnStop};
 
-static NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^/([\p{L}\p{N}][\p{L}\p{N}_.:-]*)").unwrap());
+static NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^/(\$?[\p{L}\p{N}][\p{L}\p{N}_.:-]*)").unwrap());
 
 /// A command candidate must be a leading token followed by whitespace or the end
 pub fn command_name(text: &str) -> Option<&str> {
@@ -72,5 +72,8 @@ mod tests {
     assert_eq!(command_name("/a/b"), None);
     assert_eq!(command_name("/计划 x"), Some("计划"));
     assert_eq!(command_name("hi /x"), None);
+    assert_eq!(command_name("/$git-commit x"), Some("$git-commit"));
+    assert_eq!(command_name("/skill:dig"), Some("skill:dig"));
+    assert_eq!(command_name("/$ x"), None);
   }
 }

@@ -96,6 +96,15 @@ describe('commandMarks', () => {
     expect(commandMarks(COMMANDS, 'line\n/review')).toEqual([{ start: 5, name: 'review' }]);
   });
 
+  it('marks every agent\'s skill naming: Kimi / Pi `skill:`, Devin scopes, Codex `$`', () => {
+    const skills = [{ name: 'skill:git-commit', description: '' }, { name: 'agents:dig', description: '' }, { name: '$git-commit', description: '' }];
+    expect(commandMarks(skills, '/skill:git-commit')).toEqual([{ start: 0, name: 'skill:git-commit' }]);
+    expect(commandMarks(skills, '拆分 /skill:git-commit 提交')).toEqual([{ start: 3, name: 'skill:git-commit' }]);
+    expect(commandMarks(skills, '/agents:dig x')).toEqual([{ start: 0, name: 'agents:dig' }]);
+    expect(commandMarks(skills, '/$git-commit 分批')).toEqual([{ start: 0, name: '$git-commit' }]);
+    expect(commandMarks(skills, 'a /$ b /$$x')).toEqual([]);
+  });
+
   it('leaves partial names, paths, in-word slashes and punctuated tails plain', () => {
     expect(commandMarks(COMMANDS, 'foo /rev bar')).toEqual([]);
     expect(commandMarks(COMMANDS, 'a/review')).toEqual([]);
@@ -157,6 +166,7 @@ describe('command presentation and feedback', () => {
       expect(namedCommand(commands, text)).toBeUndefined();
     }
     expect(commandName('/unknown argument')).toBe('unknown');
+    expect(commandName('/$git-commit x')).toBe('$git-commit');
     for (const text of ['/tmp/file.ts', '//server/share', '/tmp/', '/', 'hello']) expect(commandName(text)).toBeUndefined();
   });
 
