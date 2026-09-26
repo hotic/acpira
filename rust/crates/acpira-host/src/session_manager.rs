@@ -265,7 +265,10 @@ impl SessionManager {
     self.registry().probe_all().await;
     self.schedule_probe();
     if let Some(a) = self.deps.accounts.clone() {
-      tokio::spawn(async move { a.refresh_quotas(None, false).await });
+      tokio::spawn(async move {
+        a.sync_local(None).await;
+        a.refresh_quotas(None, false).await;
+      });
     }
     if let Some(l) = self.deps.local_accounts.clone() {
       tokio::spawn(async move { l.refresh(None, false).await });
@@ -1363,6 +1366,8 @@ impl SessionManager {
         tokio::join!(
           async move {
             if let Some(a) = a {
+              // The account view is open: a login made in a terminal since shows up without a click
+              a.sync_local(Some(&ag1)).await;
               a.refresh_quotas(Some(&ag1), false).await;
             }
           },

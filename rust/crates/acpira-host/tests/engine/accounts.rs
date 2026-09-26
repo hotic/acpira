@@ -300,6 +300,7 @@ struct FakeProvider {
   imports: AtomicUsize,
   quota_reads: AtomicUsize,
   authentications: AtomicUsize,
+  auto: bool,
 }
 
 impl FakeProvider {
@@ -324,6 +325,9 @@ impl AccountProvider for FakeProvider {
       }
       draft
     })
+  }
+  fn auto_import(&self) -> bool {
+    self.auto
   }
   fn login(&self) -> BoxFuture<Result<LoginFlow>> {
     Box::pin(async { Err(anyhow!("not in test")) })
@@ -735,4 +739,74 @@ async fn with_every_account_exhausted_or_the_switch_off_the_error_stays() {
   until(|| s.m.active().is_some_and(|a| a["turns"].as_array().unwrap().len() == 2 && a["turns"][1]["error"].is_object()), 5000).await;
   expect_match(s.m.active().unwrap(), json!({ "status": "ready", "accountId": one }));
   s.m.dispose().await;
+}
+
+// Claude / Codex: the CLI's own login is listed without a "+" click, follows a re-login and stays gone once removed
+#[tokio::test(flavor = "multi_thread")]
+async fn the_local_login_is_listed_by_itself_follows_a_relogin_and_stays_removed() {
+  let dir = tempfile::tempdir().unwrap();
+  let store = Arc::new(store_in(dir.path()));
+  store.load().await.unwrap();
+  let provider = Arc::new(FakeProvider { auto: true, ..FakeProvider::default() });
+  let accounts = AccountManager::new(store.clone(), vec![provider.clone()], log(), Arc::new(|_, _, _, _| {}), Arc::new(|_: &str, _: &str| {}));
+  let pushed = Arc::new(AtomicUsize::new(0));
+  let p = pushed.clone();
+  accounts.subscribe(Arc::new(move |_| {
+    p.fetch_add(1, Ordering::SeqCst);
+  }));
+  let labels = || accounts.list().into_iter().map(|a| (a.label, a.detail)).collect::<Vec<_>>();
+  let set_local = |label: Option<&str>, detail: Option<&str>| *provider.import_draft.lock().unwrap() = label.map(|l| draft(l, detail, "local", None));
+  // not logged in: nothing
+  accounts.sync_local(None).await;
+  assert!(labels().is_empty());
+  // a login made in a terminal shows up, once
+  set_local(Some("me@x.io"), Some("Claude Pro"));
+  accounts.sync_local(Some("fake")).await;
+  accounts.sync_local(None).await;
+  assert_eq!(labels(), [("me@x.io".to_owned(), Some("Claude Pro".to_owned()))]);
+  let id = accounts.list()[0].id.clone();
+  assert_eq!(store.credential(&id).await.unwrap().unwrap().secret, "local");
+  let after_add = pushed.load(Ordering::SeqCst);
+  assert!(after_add >= 1);
+  // nothing changed: no push
+  accounts.sync_local(None).await;
+  assert_eq!(pushed.load(Ordering::SeqCst), after_add);
+  // a plan change and then a re-login as someone else update the same account
+  set_local(Some("me@x.io"), Some("Claude Max"));
+  accounts.sync_local(None).await;
+  set_local(Some("other@x.io"), None);
+  accounts.sync_local(None).await;
+  assert_eq!(labels(), [("other@x.io".to_owned(), None)]);
+  assert_eq!(accounts.list()[0].id, id);
+  // an account in its own home with the local login's identity is not duplicated
+  set_local(Some("home@x.io"), None);
+  let home = store.add("fake", draft("home@x.io", None, "/private/home", None)).await.unwrap();
+  accounts.reload().await;
+  accounts.sync_local(None).await;
+  assert_eq!(accounts.list().len(), 2);
+  assert_eq!(accounts.get(&id).unwrap().label, "other@x.io");
+  accounts.remove(&home.id).await.unwrap();
+  // removed by the user: not picked up again, until imported on purpose
+  set_local(Some("other@x.io"), None);
+  accounts.remove(&id).await.unwrap();
+  accounts.sync_local(None).await;
+  assert!(labels().is_empty());
+  let again = accounts.import("fake").await.unwrap().unwrap();
+  accounts.remove(&again.id).await.unwrap();
+  // the removal is remembered again, and a fresh import clears it once more
+  accounts.sync_local(None).await;
+  assert!(labels().is_empty());
+  accounts.import("fake").await.unwrap().unwrap();
+  store.remove(&accounts.list()[0].id).await.unwrap();
+  accounts.reload().await;
+  accounts.sync_local(None).await;
+  assert_eq!(labels(), [("other@x.io".to_owned(), None)]);
+  // a provider without auto_import is never synced
+  let manual = FakeProvider::new();
+  let other = tempfile::tempdir().unwrap();
+  let store2 = Arc::new(store_in(other.path()));
+  store2.load().await.unwrap();
+  let accounts2 = AccountManager::new(store2, vec![manual], log(), Arc::new(|_, _, _, _| {}), Arc::new(|_: &str, _: &str| {}));
+  accounts2.sync_local(None).await;
+  assert!(accounts2.list().is_empty());
 }

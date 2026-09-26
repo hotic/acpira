@@ -24,6 +24,11 @@ pub struct LoginFlow {
 pub trait AccountProvider: Send + Sync {
   fn agent(&self) -> &str;
   fn import_local(&self) -> BoxFuture<Option<AccountDraft>>;
+  /// The local login is cheap to read and stays in the CLI's own store (the draft's secret is `LOCAL_LOGIN`), so the
+  /// manager keeps it in the list by itself (`AccountManager::sync_local`) instead of waiting for a "+" click
+  fn auto_import(&self) -> bool {
+    false
+  }
   fn login(&self) -> BoxFuture<Result<LoginFlow>>;
   fn spawn_env(&self, _cred: &AccountCredential) -> Option<BTreeMap<String, String>> {
     None

@@ -111,6 +111,10 @@ impl AccountProvider for ClaudeAccountProvider {
     Box::pin(async move { draft_of(None, LOCAL_LOGIN.into(), None).await })
   }
 
+  fn auto_import(&self) -> bool {
+    true
+  }
+
   /// `claude-agent-acp --cli auth login --claudeai` (the bundled Claude Code) with the config dir and the secure store
   /// both in a fresh account directory
   fn login(&self) -> BoxFuture<Result<LoginFlow>> {

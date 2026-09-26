@@ -314,6 +314,63 @@ impl AccountStore {
     Ok(secret.filter(|s| !s.is_empty()).map(|secret| AccountCredential { secret, meta }))
   }
 
+  /// A new identity for an account (the local login it stands for now belongs to someone else); the secret stays
+  pub async fn set_identity(&self, id: &str, label: &str, detail: Option<String>) -> Result<()> {
+    let (id, label) = (id.to_owned(), label.to_owned());
+    self
+      .mutate(move |items| {
+        if let Some(a) = items.iter_mut().find(|x| x.id == id) {
+          a.label = label;
+          a.detail = detail;
+        }
+        Ok(())
+      })
+      .await
+  }
+
+  /// accounts-dismissed.json next to accounts.json: `{ agent: [label, …] }`, the local logins the user removed and the
+  /// automatic import must leave alone (a separate file, so accounts.json keeps the array older builds read)
+  fn dismissed_file(&self) -> PathBuf {
+    self.file.with_file_name("accounts-dismissed.json")
+  }
+
+  async fn read_dismissed(&self) -> Map<String, Value> {
+    let Ok(raw) = fs::read(self.dismissed_file()).await else { return Map::new() };
+    serde_json::from_slice::<Value>(&raw).ok().and_then(|v| v.as_object().cloned()).unwrap_or_default()
+  }
+
+  pub async fn is_dismissed(&self, agent: &str, label: &str) -> bool {
+    self.read_dismissed().await.get(agent).and_then(Value::as_array).is_some_and(|l| l.iter().any(|x| x.as_str() == Some(label)))
+  }
+
+  /// Record (`on`) or clear a dismissal
+  pub async fn set_dismissed(&self, agent: &str, label: &str, on: bool) -> Result<()> {
+    let file = self.dismissed_file();
+    with_file_lock(&file, || async {
+      let mut data = self.read_dismissed().await;
+      let mut labels: Vec<String> =
+        data.get(agent).and_then(Value::as_array).map(|l| l.iter().filter_map(Value::as_str).map(str::to_owned).collect()).unwrap_or_default();
+      let had = labels.iter().any(|l| l == label);
+      if had == on {
+        return Ok(());
+      }
+      labels.retain(|l| l != label);
+      if on {
+        labels.push(label.to_owned());
+      }
+      if labels.is_empty() {
+        data.remove(agent);
+      } else {
+        data.insert(agent.to_owned(), Value::from(labels));
+      }
+      if let Some(dir) = file.parent() {
+        fs::create_dir_all(dir).await?;
+      }
+      write_atomic(&file, serde_json::to_string_pretty(&data)?.as_bytes(), Some(0o600)).await
+    })
+    .await
+  }
+
   /// Marks the account used; one another host removed meanwhile is not resurrected
   pub async fn touch(&self, id: &str) -> Result<()> {
     if !self.items.lock().iter().any(|x| x.id == id) {

@@ -177,6 +177,7 @@ impl HostRuntime {
         rt.manager.reprobe().await;
         rt.manager.refresh_index().await;
         rt.accounts.reload().await;
+        rt.accounts.sync_local(None).await;
       });
     }));
     tokio::spawn(crate::model_catalog::refresh(root.clone(), log.clone()));
