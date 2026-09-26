@@ -977,6 +977,17 @@ static ASK_TITLE: LazyLock<Regex> =
   LazyLock::new(|| Regex::new(r"(?i)^(ask_?user_?questions?|ask(ed|ing)?\s+(the\s+)?(user\s+)?(\d+\s+)?questions?\b)").unwrap());
 static SHELL_WAIT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(get_output|read(ing)?\s+shell(\s+output)?)$").unwrap());
 static SHELL_KILL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(kill_shell|kill(ing)?\s+shell)$").unwrap());
+/// Image generation tools by name: codex-acp's "Image generation" title, Grok's `image_gen` / `image_edit` (`x.ai/tool` name)
+static IMAGE_GEN: LazyLock<Regex> =
+  LazyLock::new(|| Regex::new(r"(?i)^(image[_\s-]?gen(eration)?|generate[_\s-]?image|image[_\s-]?edit)$").unwrap());
+/// Grok's display titles for the same tools (`imagine: <prompt>` / `imagine-edit: <prompt>`; source strings, not yet seen on the wire)
+static IMAGE_GEN_TITLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^imagine(-edit)?:\s").unwrap());
+/// An absolute image path (POSIX, `C:\`, or file://) inside a tool's text result; group 1 is the path. The leading boundary keeps
+/// a relative `images/1.jpg` from matching as `/1.jpg`
+static SAVED_IMAGE_PATH: LazyLock<Regex> = LazyLock::new(|| {
+  Regex::new(r#"(?i)(?:^|[\s"'`(<\[=:])((?:file://|[A-Za-z]:[\\/]|/)[^\s"'`<>()\[\]]*?\.(?:png|jpe?g|gif|webp))\b"#).unwrap()
+});
+pub const IMAGE_GEN_VERB: &str = "verb.imagegen";
 static KIND_BY_TITLE: LazyLock<Vec<(Regex, ToolKind)>> = LazyLock::new(|| {
   [
     (r"(?i)^(read|open|view|cat)(_[a-z]+)*$", ToolKind::Read),
@@ -1106,6 +1117,10 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   if let Some(shell) = shell_verb(meta, title) {
     set_verb(b, shell);
   }
+  let image_gen_title = title.map(str::trim).is_some_and(|x| IMAGE_GEN.is_match(x) || IMAGE_GEN_TITLE.is_match(x));
+  if image_gen_title || tool_name.and_then(Value::as_str).is_some_and(|n| IMAGE_GEN.is_match(n)) {
+    set_verb(b, IMAGE_GEN_VERB);
+  }
   if b.verb_key.is_none()
     && matches!(b.kind, ToolKind::Other | ToolKind::Think)
     && let Some(inferred) = infer_kind(title)
@@ -1164,9 +1179,11 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   {
     ctx.pending_writes.insert(b.id.clone(), (path, content.to_owned()));
   }
-  let named = matches!(b.verb_key.as_deref(), Some("verb.todo" | "verb.ask" | "verb.wait" | "verb.kill"));
+  let named = matches!(b.verb_key.as_deref(), Some("verb.todo" | "verb.ask" | "verb.wait" | "verb.kill" | IMAGE_GEN_VERB));
   let target = if matches!(b.verb_key.as_deref(), Some("verb.wait" | "verb.kill")) {
     shell_target(raw, ctx.as_deref())
+  } else if b.verb_key.as_deref() == Some(IMAGE_GEN_VERB) {
+    prompt_target(raw)
   } else {
     pick_target(u, b.kind)
   };
@@ -1231,6 +1248,9 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
       };
       b.contents = if list.len() > 1 { Some(list) } else { None };
     }
+  }
+  if b.verb_key.as_deref() == Some(IMAGE_GEN_VERB) && !b.status.is_open() {
+    attach_saved_images(b, u, ctx.as_deref());
   }
   // pi-acp and the claude / codex adapters stream terminal output through _meta
   let term_out = meta.and_then(|m| m.get("terminal_output").filter(|v| !v.is_null()).or_else(|| m.get("terminal_output_delta")));
@@ -1403,6 +1423,61 @@ fn shell_target(raw: Option<&Map<String, Value>>, ctx: Option<&ToolCtx>) -> Opti
   let shell_id = ["shell_id", "shellId", "id"].iter().find_map(|k| raw.get(*k).and_then(Value::as_str).filter(|v| !v.is_empty()))?;
   let text = ctx.and_then(|c| c.shells.get(shell_id)).cloned().unwrap_or_else(|| shell_id.to_owned());
   Some(Target { text, mono: true, from_title: false })
+}
+
+/// An image generation call's prompt, when the agent puts it in rawInput (codex-acp only sends the item id)
+fn prompt_target(raw: Option<&Map<String, Value>>) -> Option<Target> {
+  let raw = raw?;
+  let prompt = ["prompt", "description"].iter().find_map(|k| raw.get(*k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()))?;
+  Some(Target { text: prompt.to_owned(), mono: false, from_title: false })
+}
+
+/// Every string inside a JSON value, depth first
+fn json_strings<'a>(v: &'a Value, out: &mut Vec<&'a str>) {
+  match v {
+    Value::String(s) => out.push(s),
+    Value::Array(a) => a.iter().for_each(|x| json_strings(x, out)),
+    Value::Object(o) => o.values().for_each(|x| json_strings(x, out)),
+    _ => {}
+  }
+}
+
+/// An image generation tool that answers with the saved file's path instead of an image block (Grok's `image_gen` returns the
+/// absolute path as text): the files named in its text results or rawOutput are read into the blob store and appended as images
+fn attach_saved_images(b: &mut ToolCallBlock, u: &Value, ctx: Option<&ToolCtx>) {
+  let is_image = |c: &ToolContent| matches!(c, ToolContent::Image(_));
+  if b.content.as_ref().is_some_and(is_image) || b.contents.as_ref().is_some_and(|l| l.iter().any(is_image)) {
+    return;
+  }
+  let Some(save) = ctx.and_then(|c| c.save_image_file.as_ref()) else { return };
+  let mut texts: Vec<&str> = vec![];
+  for c in b.contents.iter().flatten().chain(b.content.iter()) {
+    if let ToolContent::Text { text } = c {
+      texts.push(text);
+    }
+  }
+  if let Some(out) = u.get("rawOutput") {
+    json_strings(out, &mut texts);
+  }
+  let mut seen = HashSet::new();
+  let images: Vec<ToolContent> = texts
+    .iter()
+    .flat_map(|x| SAVED_IMAGE_PATH.captures_iter(x).map(|m| m[1].to_owned()).collect::<Vec<_>>())
+    .filter(|uri| seen.insert(uri.clone()))
+    .filter_map(|uri| {
+      let path = local_path_of(&uri)?;
+      let mime = image_mime_of(&path)?;
+      let blob = save(&path)?;
+      Some(ToolContent::Image(ImageRef { blob: Some(blob), mime_type: mime.to_owned(), uri: Some(uri) }))
+    })
+    .collect();
+  if images.is_empty() {
+    return;
+  }
+  let mut list = b.contents.take().unwrap_or_else(|| b.content.iter().cloned().collect());
+  list.extend(images);
+  b.content = list.first().cloned();
+  b.contents = if list.len() > 1 { Some(list) } else { None };
 }
 
 /// An agent's title is often like "Read file foo.ts"; the verb is ours, so strip the English one

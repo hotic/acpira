@@ -29,7 +29,7 @@ export function AgentImage({ image }: { image: ImageRef }) {
           disabled={!open}
           className={cn('block max-w-full overflow-hidden rounded-md border border-line outline-none focus-visible:ring-1 focus-visible:ring-focus', open && 'cursor-pointer')}
         >
-          <img src={src} alt={name} className="max-h-[240px] w-auto max-w-full object-contain" />
+          <img src={src} alt={name} className="max-h-agent-image w-auto max-w-full object-contain" />
         </button>
       ) : (
         // No saved pixels (a refused payload or a URI-only reference): the card still names the source

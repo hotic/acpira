@@ -435,6 +435,7 @@
   "verb.ask": "Ask",
   "verb.wait": "Wait for background command",
   "verb.kill": "Stop background command",
+  "verb.imagegen": "Generate image",
   "verb.delegate": "Delegate",
   "verb.awaitSubagent": "Wait for subagent",
   "asyncTask.running": "Background task running",

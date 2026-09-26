@@ -2,6 +2,7 @@ import { Fragment, createContext, memo, useCallback, useContext, useId, useLayou
 import { Bot, Check, ChevronRight, Compass, Hand, MessageCircleQuestion, Shrink, TriangleAlert, X } from 'lucide-react';
 import type { AgentBlock, AgentTurn, CompactionBlock, FailureAction, NoticeBlock, PermissionBlock, SlashCommand, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
+import { isImageGenBlock } from '@shared/imageTools';
 import { useAppearance, type Appearance } from '../appearance';
 import { getLocale, t } from '../i18n';
 import { commandSegments } from './PromptInput';
@@ -21,6 +22,7 @@ import { ReadGroup, ToolCall } from './ToolCall';
 import { groupReadCalls } from './toolDetails';
 import { Prose } from './Prose';
 import { AgentImage } from './AgentImage';
+import { GeneratedImages } from './GeneratedImage';
 import { Permission } from './Permission';
 import { QuestionRecord } from './Questions';
 import { PlanDocument } from './PlanDocument';
@@ -398,10 +400,13 @@ function CursorFold({ blocks }: { blocks: ToolCallBlock[] }) {
 function CodexMessage({ turn, running, onPermission, memoryKey, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; running: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
   const { process, reply, permissions, notices } = splitCodexBlocks(turn.blocks);
   const hasTools = turn.blocks.some(block => block.type === 'tool_call');
+  // Generated images are results, not process detail: they stay visible however the fold is set
+  const generations = turn.blocks.filter(isImageGenBlock);
   return (
     <div className="flex flex-col gap-gap">
       <CodexFold turn={turn} blocks={process} running={running} hasTools={hasTools} memoryKey={memoryKey} lead={lead} />
       {notices.map(b => <NoticeRow key={b.id} block={b} />)}
+      {generations.map(b => <GeneratedImages key={b.id} block={b} />)}
       {subagents !== undefined && subagents.length > 0 && onInspect !== undefined && (
         <>
           <SubagentGroup nodes={subagents} all={allSubagents ?? subagents} onInspect={onInspect} />

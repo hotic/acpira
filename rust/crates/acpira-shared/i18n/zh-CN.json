@@ -435,6 +435,7 @@
   "verb.ask": "提问",
   "verb.wait": "等待后台命令",
   "verb.kill": "终止后台命令",
+  "verb.imagegen": "生成图片",
   "verb.delegate": "委派",
   "verb.awaitSubagent": "等待子代理",
   "asyncTask.running": "后台任务运行中",
