@@ -1,4 +1,13 @@
-import type { AgentBlock, ToolCallBlock } from '@shared/transcript';
+import type { AgentBlock, ToolCallBlock, ToolContent } from '@shared/transcript';
+
+const EDIT_SUCCESS_RECEIPTS = new Set(['Edit applied successfully.', 'Wrote file successfully.']);
+
+// A completed edit row and its diff already confirm success. Keep other output, especially failures, visible.
+export function visibleToolContents(block: ToolCallBlock): ToolContent[] {
+  const items = block.contents ?? (block.content ? [block.content] : []);
+  if (block.kind !== 'edit' || block.status !== 'completed') return items;
+  return items.filter(item => item.type !== 'text' || !EDIT_SUCCESS_RECEIPTS.has(item.text.trim()));
+}
 
 // Strip only a trailing location suffix; preserve drive letters and full paths.
 export function fileReference(hit: string): { path: string; line?: number } {
