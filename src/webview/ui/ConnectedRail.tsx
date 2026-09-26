@@ -1,5 +1,6 @@
 import { useImperativeHandle, useLayoutEffect, useRef, useState, type HTMLAttributes, type ReactNode, type Ref } from 'react';
 import { cn } from './cn';
+import { railStep } from './railStep';
 
 type Anchor = { x: number; top: number; bottom: number };
 type Segment = Anchor & { terminal: boolean };
@@ -85,7 +86,6 @@ export interface ConnectedRailProps extends HTMLAttributes<HTMLDivElement> {
   endAtLastRow?: boolean;
 }
 
-const SNAP_DISTANCE = 0.25;
 const DEFAULT_GROW_MS = 220;
 
 // Motion-off and reduced-motion settings snap the rail instead of easing it.
@@ -132,16 +132,19 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
     if (!pending) return;
     const duration = Number.parseFloat(getComputedStyle(root).getPropertyValue('--rail-grow-duration')) || DEFAULT_GROW_MS;
     const tau = duration / 4;
+    // Both ends read performance.now(): the rAF timestamp is the frame's start, which on a busy main thread
+    // lies before the effect that scheduled it, and this effect restarts on every measured frame of an opening panel
     let last = performance.now();
-    const tick = (now: number) => {
+    const tick = () => {
       growFrame.current = undefined;
-      const rate = 1 - Math.exp(-(now - last) / tau);
+      const now = performance.now();
+      const elapsed = now - last;
       last = now;
       let busy = false;
       targets.forEach((target, index) => {
         const current = lengths.current[index];
         if (current === undefined || current === target) return;
-        const next = Math.abs(target - current) < SNAP_DISTANCE ? target : current + (target - current) * rate;
+        const next = railStep(current, target, elapsed, tau);
         write(index, next);
         if (next !== target) busy = true;
       });
