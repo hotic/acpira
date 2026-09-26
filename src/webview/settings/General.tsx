@@ -1,5 +1,5 @@
 import type { AgentInfo } from '@shared/transcript';
-import { MIN_COMPACT_AT_TOKENS, SESSION_SCOPES, type SessionScope, type SettingsView } from '@shared/settings';
+import { ACCOUNT_SWITCH_STRATEGIES, MIN_COMPACT_AT_TOKENS, SESSION_SCOPES, type AccountSwitchStrategy, type SessionScope, type SettingsView } from '@shared/settings';
 import { LANGUAGES, type Language } from '@shared/i18n';
 import { launchable, pickDefaultAgent } from '@shared/agentOrder';
 import { AgentMark } from '../chat/AgentMark';
@@ -17,6 +17,7 @@ export function General({ settings, agents, on }: { settings: SettingsView; agen
   // Switched-off agents are not offered; a default that was switched off reads as the agent new sessions actually fall back to
   const agentOptions = launchable(agents).map(a => ({ value: a.id, label: a.name, icon: <AgentMark id={a.id} name={a.name} />, disabled: a.available === false }));
   const scopes = SESSION_SCOPES.map(s => ({ value: s, label: t(`settings.sessionScope.${s}` as const) }));
+  const switchStrategies = ACCOUNT_SWITCH_STRATEGIES.map(s => ({ value: s, label: t(`settings.accountSwitch.${s}` as const) }));
   return (
     <>
       <Section>
@@ -28,6 +29,9 @@ export function General({ settings, agents, on }: { settings: SettingsView; agen
         </Field>
         <Field label={t('settings.sessionScope')} desc={t('settings.sessionScope.desc')}>
           <Select<SessionScope> options={scopes} value={settings.sessionScope} onChange={v => on.setSetting('sessionScope', v)} label={t('settings.sessionScope')} />
+        </Field>
+        <Field label={t('settings.accountSwitch')} desc={t('settings.accountSwitch.desc')}>
+          <Select<AccountSwitchStrategy> options={switchStrategies} value={settings.accountSwitch} onChange={v => on.setSetting('accountSwitch', v)} label={t('settings.accountSwitch')} />
         </Field>
       </Section>
 

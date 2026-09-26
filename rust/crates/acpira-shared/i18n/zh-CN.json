@@ -557,7 +557,7 @@
   "settings.agent.accounts.desc": "登录信息保存在 ~/.acpira。切换账号将新建会话。",
   "settings.agent.accounts.none": "尚未添加账号",
   "settings.accountSwitch": "额度用完自动切号",
-  "settings.accountSwitch.desc": "当前账号的额度在任务中途用完时，把会话切到另一个已存账号并自动继续。",
+  "settings.accountSwitch.desc": "当前账号的额度在任务中途用完时，把会话切到同一 agent 的另一个已存账号并自动继续。",
   "settings.accountSwitch.earliestReset": "最早重置优先",
   "settings.accountSwitch.mostRemaining": "剩余额度最多",
   "settings.accountSwitch.listOrder": "按列表顺序",

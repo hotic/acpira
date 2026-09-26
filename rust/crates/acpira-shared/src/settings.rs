@@ -45,8 +45,8 @@ pub struct SettingsView {
   pub auto_compact: bool,
   pub compact_at_tokens: i64,
   pub hidden_options: HiddenMap,
-  /// agent → strategy of the automatic account switch; an agent not listed uses `earliestReset`
-  pub account_switch: BTreeMap<AgentId, String>,
+  /// Strategy of the automatic account switch, shared by every agent (`off` by default)
+  pub account_switch: String,
   pub theme: String,
   pub ui_font_size: i64,
   pub code_font_size: i64,
@@ -54,19 +54,8 @@ pub struct SettingsView {
   pub font_smoothing: bool,
 }
 
-pub const ACCOUNT_SWITCH_STRATEGIES: [&str; 4] = ["earliestReset", "mostRemaining", "listOrder", "off"];
-pub const DEFAULT_ACCOUNT_SWITCH: &str = "earliestReset";
-
-/// Unknown strategies are dropped per agent, so one bad entry never costs the others their choice
-pub fn account_switch_map(v: &Value) -> BTreeMap<AgentId, String> {
-  v.as_object()
-    .map(|m| {
-      m.iter()
-        .filter_map(|(agent, s)| s.as_str().filter(|s| ACCOUNT_SWITCH_STRATEGIES.contains(s)).map(|s| (agent.clone(), s.to_owned())))
-        .collect()
-    })
-    .unwrap_or_default()
-}
+pub const ACCOUNT_SWITCH_STRATEGIES: [&str; 4] = ["off", "earliestReset", "mostRemaining", "listOrder"];
+pub const DEFAULT_ACCOUNT_SWITCH: &str = "off";
 
 pub fn is_setting_key(k: &str) -> bool {
   SETTING_KEYS.contains(&k)
@@ -131,7 +120,7 @@ pub fn sanitize_setting(key: &str, value: &Value) -> Value {
         Value::Object(Default::default())
       }
     }
-    "accountSwitch" => serde_json::to_value(account_switch_map(value)).unwrap_or_default(),
+    "accountSwitch" => Value::from(one_of(value, &ACCOUNT_SWITCH_STRATEGIES, DEFAULT_ACCOUNT_SWITCH)),
     "agentOrder" | "disabledAgents" => Value::from(id_list(value)),
     _ => Value::Null,
   }
