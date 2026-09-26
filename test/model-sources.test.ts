@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { applyModelSources } from '../src/shared/modelSources';
-import { findVariant, groupModels, visibleOptions } from '../src/shared/models';
+import { ALL, applyModelSources } from '../src/shared/modelSources';
+import { findVariant, groupModels, setFamilyVisible, visibleOptions } from '../src/shared/models';
 import type { ConfigControl } from '../src/shared/transcript';
 
 describe('ACP model source adapters', () => {
@@ -38,5 +38,38 @@ describe('ACP model source adapters', () => {
     applyModelSources('devin', [control]);
     expect(control.options[0]!.source).toBeUndefined();
     expect(groupModels(control.options)[0]!.source).toBeUndefined();
+  });
+  it('moves the provider label of Pi / OpenCode names into the source, once', () => {
+    const sources = { asgard: { id: 'asgard', name: 'asgard', kind: 'custom' as const } };
+    const control: ConfigControl = { id: 'model', name: 'Model', category: 'model', options: [
+      { id: 'asgard/kimi-k3', name: 'asgard/Kimi K3' }, { id: 'anthropic/claude-opus-5', name: 'anthropic/Claude Opus 5' },
+    ] };
+    applyModelSources('pi', [control], sources);
+    applyModelSources('pi', [control], sources);
+    expect(control.options.map(o => [o.name, o.source?.name, o.source?.kind])).toEqual([
+      ['Kimi K3', 'asgard', 'custom'], ['Claude Opus 5', 'anthropic', 'official'],
+    ]);
+    const oc: ConfigControl = { id: 'model', name: 'Model', category: 'model', options: [{ id: 'asgard/glm-5.3', name: 'Asgard/GLM-5.3' }] };
+    applyModelSources('opencode', [oc], sources);
+    expect([oc.options[0]!.name, oc.options[0]!.source?.name]).toEqual(['GLM-5.3', 'Asgard']);
+  });
+
+  it('keeps a Provider/Name preference hidden once the provider became the source', () => {
+    const control: ConfigControl = { id: 'model', name: 'Model', category: 'model', options: [
+      { id: 'asgard/kimi-k3', name: 'asgard/Kimi K3' }, { id: 'asgard/glm-5.3', name: 'asgard/GLM-5.3' },
+    ] };
+    applyModelSources('pi', [control]);
+    expect(visibleOptions(control.options, ['asgard/Kimi K3']).map(o => o.id)).toEqual(['asgard/glm-5.3']);
+    const kimi = groupModels(control.options)[0]!;
+    expect(setFamilyVisible(control.options, ['asgard/Kimi K3'], groupModels(control.options)[1]!.key, false)).toEqual(
+      expect.arrayContaining([kimi.key]));
+  });
+
+  it('sources every Codex / Claude model from the single configured endpoint', () => {
+    const control: ConfigControl = { id: 'model', name: 'Model', category: 'model', options: [{ id: 'opus', name: 'claude-opus-5.5' }] };
+    applyModelSources('claude', [control]);
+    expect(control.options[0]!.source).toBeUndefined();
+    applyModelSources('claude', [control], { [ALL]: { id: 'gw.example', name: 'gw.example', kind: 'custom' } });
+    expect(control.options[0]!.source?.kind).toBe('custom');
   });
 });
