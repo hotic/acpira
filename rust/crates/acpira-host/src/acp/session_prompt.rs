@@ -923,7 +923,8 @@ impl AcpSession {
       self.log(&format!("startup {kind} ignored (no session yet)"));
       return;
     }
-    if kind == "current_mode_update" && self.def().ignore_modes {
+    // Hidden modes, or none at all: pi-acp echoes every thinking pick as a mode update that selects nothing here
+    if kind == "current_mode_update" && (self.def().ignore_modes || c.state.controls.modes.is_empty()) {
       return;
     }
     // yolo is host-side state: a mode pushed by the CLI must not drag the UI back

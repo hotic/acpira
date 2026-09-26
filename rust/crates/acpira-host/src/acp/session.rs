@@ -31,7 +31,7 @@ use super::cancel::Cancel;
 use super::compaction::CompactionCompletion;
 use super::model_sources::read_model_sources;
 use super::normalize::{
-  FileImageSaver, ImageSaver, NormalizeState, ToolCtx, disconnect_async_tasks, init_controls, runtime_info_of, seal_replay,
+  FileImageSaver, ImageSaver, NormalizeState, ToolCtx, disconnect_async_tasks, runtime_info_of, seal_replay,
 };
 use super::plan_snapshots::restore_plan_snapshots;
 use super::restore_turns::restore_interrupted_turns;
@@ -695,11 +695,7 @@ impl AcpSession {
   /// Every session/new / resume / load response: synthetic modes fill in, a resumed session keeps its persisted mode
   pub(crate) fn apply_controls(&self, c: &mut Core, modes: Option<&Value>, config_options: Option<&Value>) {
     let wanted = c.state.controls.mode_id.clone();
-    init_controls(&mut c.state.controls, modes, config_options);
-    if self.def().ignore_modes {
-      c.state.controls.modes = vec![];
-      c.state.controls.mode_id = None;
-      c.state.controls.mode_config_id = None;
+    if self.protocol_controls(&mut c.state.controls, modes, config_options) {
       return;
     }
     let Some(syn) = self.synthetic_modes() else { return };
