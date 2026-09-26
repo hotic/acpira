@@ -97,7 +97,7 @@ impl SettingsCenter {
       (Some(b), Some(def)) => read_adapter_info(b, def).await,
       _ => None,
     };
-    let env = ScanEnv { home: (self.deps.home)(), cwd: (self.deps.cwd)() };
+    let env = ScanEnv::new((self.deps.home)(), (self.deps.cwd)());
     scan_inventory(
       ScanInput {
         agent: agent.to_owned(),

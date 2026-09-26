@@ -70,7 +70,8 @@ fn fixture() -> Fixture {
 
 impl Fixture {
   fn env(&self) -> ScanEnv {
-    ScanEnv { home: self.home.clone(), cwd: self.cwd.clone() }
+    // $CONFIG pinned to ~/.config so the runner's XDG_CONFIG_HOME / APPDATA cannot leak in
+    ScanEnv { home: self.home.clone(), cwd: self.cwd.clone(), config: Path::new(&self.home).join(".config") }
   }
   async fn scan(&self, agent: &str, binary: Option<&str>) -> AgentInventory {
     scan_inventory(ScanInput { agent: agent.into(), ext: agent_ext(agent), binary: binary.map(str::to_owned), runtime: None, adapter: None, health: None }, &self.env()).await
@@ -87,10 +88,7 @@ impl Fixture {
 fn path_templates_expand_and_scope_user_versus_project() {
   let f = fixture();
   assert_eq!(expand_path("~/.grok/skills", &f.env()), f.home(".grok/skills"));
-  // $CONFIG follows XDG_CONFIG_HOME (APPDATA on Windows) from the process environment; unset here, it is ~/.config
-  if std::env::var("XDG_CONFIG_HOME").is_err() && !cfg!(windows) {
-    assert_eq!(expand_path("$CONFIG/devin/config.json", &f.env()), f.home(".config/devin/config.json"));
-  }
+  assert_eq!(expand_path("$CONFIG/devin/config.json", &f.env()), f.home(".config/devin/config.json"));
   assert_eq!(expand_path(".devin/rules", &f.env()), f.cwd(".devin/rules"));
   assert_eq!(v(scope_of("~/.grok/skills")), "user");
   assert_eq!(v(scope_of("$CONFIG/devin/skills")), "user");
