@@ -818,31 +818,34 @@ fn adapter_compaction_prose_mid_turn_becomes_a_compaction_row() {
   assert_eq!(blocks.as_array().unwrap().len(), 3);
 }
 
-// pi-acp 0.0.33 forwards pi's auto_retry_start / auto_retry_end as prose; one retry run is one notice row updated in
-// place, and it leaves the transcript as soon as the stream resumes
+fn retry_of(s: &NormalizeState) -> Value {
+  v(&s.turns[s.turns.len() - 1])["retry"].clone()
+}
+
+// pi-acp 0.0.33 forwards pi's auto_retry_start / auto_retry_end as prose; neither becomes a row, the live turn is
+// labelled as retrying until the resume line
 #[test]
-fn adapter_retry_prose_becomes_one_notice_row_that_clears_on_resume() {
+fn adapter_retry_prose_labels_the_turn_instead_of_adding_rows() {
   let mut s = NormalizeState { agent: Some("pi".into()), ..state() };
   apply(&mut s, chunk("Reading"));
   apply(&mut s, chunk("Retrying (attempt 1/3, waiting 2s)..."));
   apply(&mut s, chunk("Retrying (attempt 2/3, waiting 4s)..."));
-  expect_match(block(&s, 0, 1), json!({ "type": "notice", "severity": "warning", "category": "connection", "revision": 2, "actions": [] }));
-  assert!(block(&s, 0, 1)["title"].as_str().unwrap().contains("2/3"));
+  expect_match(retry_of(&s), json!({ "attempt": 2, "max": 3 }));
+  assert!(retry_of(&s)["detail"].as_str().unwrap().contains("2/3"));
   apply(&mut s, chunk("Retry finished, resuming."));
-  expect_match(block(&s, 0, 1), json!({ "type": "notice", "revision": 3 }));
-  apply(&mut s, chunk("Done"));
-  let blocks = v(&s.turns[0])["blocks"].clone();
-  expect_eq(&blocks[0]["markdown"], json!("Reading"));
-  expect_eq(&blocks[1]["markdown"], json!("Done"));
-  assert_eq!(blocks.as_array().unwrap().len(), 2);
-  // A stray resume line is swallowed; a run the turn ends inside stays as the reason
+  assert!(retry_of(&s).is_null());
   apply(&mut s, chunk("Retry finished, resuming."));
   apply(&mut s, chunk("Retrying..."));
-  end_turn(&mut s, TurnStop::EndTurn);
-  apply(&mut s, chunk("Retry finished, resuming."));
+  expect_match(retry_of(&s), json!({ "detail": "Model request failed; retrying…" }));
+  apply(&mut s, chunk(" Done"));
   let blocks = v(&s.turns[0])["blocks"].clone();
-  assert_eq!(blocks.as_array().unwrap().len(), 3);
-  expect_match(&blocks[2], json!({ "type": "notice", "revision": 1 }));
+  assert_eq!(blocks.as_array().unwrap().len(), 1);
+  expect_eq(&blocks[0]["markdown"], json!("Reading Done"));
+  assert!(retry_of(&s).is_null());
+  // A turn that ends mid-retry drops the label with the rest of its live state
+  apply(&mut s, chunk("Retrying..."));
+  end_turn(&mut s, TurnStop::EndTurn);
+  assert!(retry_of(&s).is_null());
 }
 
 fn air_failure(id: &str, revision: u32, severity: &str, category: &str, title: &str, actions: Value) -> Value {
@@ -851,42 +854,39 @@ fn air_failure(id: &str, revision: u32, severity: &str, category: &str, title: &
 }
 
 // claude-agent-acp 0.81.0 api_retry: a session-scoped id per attempt (`…:session-error:<epoch>:<n>`, seen in stored
-// transcripts 2026-09-26). The attempts share one row, which the next streamed content removes
+// transcripts 2026-09-26). No row at all: the live turn's label carries the attempt until the stream resumes
 #[test]
-fn air_retry_warnings_share_one_row_and_clear_when_the_stream_resumes() {
+fn air_retry_warnings_only_label_the_live_turn() {
   let mut s = state();
   apply(&mut s, json!({ "sessionUpdate": "agent_thought_chunk", "content": { "type": "text", "text": "Planning" } }));
   for n in 1..=3 {
     apply(&mut s, air_failure(&format!("s:session-error:e:{n}"), 1, "warning", "connection", &format!("Reconnecting to Claude, attempt {n} of 10."), json!([])));
   }
-  let blocks = v(&s.turns[0])["blocks"].clone();
-  assert_eq!(blocks.as_array().unwrap().len(), 2);
-  expect_match(&blocks[1], json!({ "type": "notice", "id": "s:session-error:e:1", "revision": 3, "title": "Reconnecting to Claude, attempt 3 of 10." }));
-  // An advisory is a permanent row of its own
+  expect_eq(retry_of(&s), json!({ "attempt": 3, "max": 10, "detail": "Reconnecting to Claude, attempt 3 of 10." }));
+  // An advisory is still a row of its own
   apply(&mut s, air_failure("s:notice:e:1", 1, "warning", "unknown", "Switched to the fallback model.", json!([])));
   apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "t1", "title": "Read", "kind": "read", "status": "in_progress" }));
   let types: Vec<Value> = v(&s.turns[0])["blocks"].as_array().unwrap().iter().map(|b| b["type"].clone()).collect();
   expect_eq(types, json!(["thought", "notice", "tool_call"]));
-  expect_eq(block(&s, 0, 1)["id"].clone(), json!("s:notice:e:1"));
+  assert!(retry_of(&s).is_null());
+  // Between turns there is nothing to label
+  end_turn(&mut s, TurnStop::EndTurn);
+  apply(&mut s, air_failure("s:session-error:e:4", 1, "warning", "connection", "Reconnecting to Claude, attempt 1 of 10.", json!([])));
+  assert!(retry_of(&s).is_null());
+  assert_eq!(s.turns.len(), 1);
 }
 
-// Retries that end in a real error: the error row replaces the warning instead of stacking under it
+// Retries that end in a real error: the error row appears and the retry label goes
 #[test]
-fn an_air_error_replaces_the_live_retry_warning() {
+fn an_air_error_clears_the_retry_label() {
   let mut s = state();
   apply(&mut s, chunk("Working"));
   apply(&mut s, air_failure("turn-1:error", 1, "warning", "service", "Retrying Claude, attempt 1 of 2.", json!([])));
-  apply(&mut s, air_failure("turn-1:error", 2, "warning", "service", "Retrying Claude, attempt 2 of 2.", json!([])));
-  apply(&mut s, air_failure("s:session-error:e:9", 1, "error", "service", "Claude is temporarily overloaded.", json!(["retry"])));
+  apply(&mut s, air_failure("turn-1:error", 2, "error", "service", "Claude is temporarily overloaded.", json!(["retry"])));
   let blocks = v(&s.turns[0])["blocks"].clone();
   assert_eq!(blocks.as_array().unwrap().len(), 2);
-  expect_match(&blocks[1], json!({ "type": "notice", "severity": "error", "id": "s:session-error:e:9" }));
-  // A same-id escalation rewrites the row in place and it is no longer transient
-  let mut t = state();
-  apply(&mut t, air_failure("turn-2:error", 1, "warning", "service", "Retrying", json!([])));
-  apply(&mut t, air_failure("turn-2:error", 2, "error", "service", "Overloaded", json!(["retry"])));
-  apply(&mut t, chunk("later"));
-  expect_match(block(&t, 0, 0), json!({ "type": "notice", "severity": "error", "revision": 2 }));
+  expect_match(&blocks[1], json!({ "type": "notice", "severity": "error", "id": "turn-1:error", "revision": 2 }));
+  assert!(retry_of(&s).is_null());
 }
 
 // Devin: start and outcome arrive as separate whole chunks; a failure keeps its reason; Kimi's statistics are absorbed

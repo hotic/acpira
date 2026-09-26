@@ -453,6 +453,15 @@ export interface AgentTurn {
   // A slash request can finish without prose. Keep the receipt separate from
   // agent-authored blocks, with only observed ACP setting changes.
   command?: { name: string; mode?: string; options?: { name: string; value: string }[] };
+  // A provider retry in progress: shown in the working label only, cleared once the stream resumes or the turn ends
+  retry?: TurnRetry;
+}
+
+export interface TurnRetry {
+  attempt?: number;
+  max?: number;
+  // The adapter's own wording, for the label's tooltip
+  detail: string;
 }
 
 export type Turn = UserTurn | AgentTurn;

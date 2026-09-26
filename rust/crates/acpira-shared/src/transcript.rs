@@ -876,6 +876,20 @@ pub struct AgentTurn {
   pub error: Option<TurnError>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub command: Option<CommandReceipt>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub retry: Option<TurnRetry>,
+}
+
+/// A provider retry in progress. It lives in the turn's working label, never as a transcript row, and is cleared as
+/// soon as the stream resumes or the turn ends
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnRetry {
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub attempt: Option<u32>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub max: Option<u32>,
+  /// The adapter's own wording (or the host's for prose retries), for the label's tooltip
+  pub detail: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
