@@ -2,7 +2,7 @@
 
 use serde_json::{Value, json};
 
-use acpira_host::acp::questions::{RawOption, RawQuestion, form_questions, spare_message};
+use acpira_host::acp::questions::{RawOption, RawQuestion, form_content, form_question_count, form_questions, spare_message};
 
 use crate::acp_session::{agent_blocks, last_turn, prompt, spawn_prompt, view};
 use crate::fake_or_skip;
@@ -61,6 +61,44 @@ fn the_other_property_types_map_to_yes_no_multiple_plain_and_numeric() {
     json!(["n", "text", [], false, true]),
     json!(["free", "text", [], false, false]),
   ]);
+}
+
+#[test]
+fn claudes_custom_answer_boxes_fold_into_their_questions_and_answers_split_back() {
+  let custom = |q: &str| json!({ "type": "string", "title": "Other",
+    "description": "Type your own answer, or add a note to the option you chose above (optional).",
+    "_meta": { "_askUserQuestionCustomAnswer": { "questionId": q, "isCustomAnswer": true } } });
+  let schema = json!({ "type": "object", "properties": {
+    "question_0": { "type": "string", "title": "范围", "description": "往回看几个月？", "oneOf": [{ "const": "1 个月", "title": "1 个月" }, { "const": "3 个月", "title": "3 个月" }] },
+    "question_0_custom": custom("question_0"),
+    "question_1": { "type": "array", "title": "目录", "description": "改哪些目录？", "items": { "anyOf": [{ "const": "src", "title": "src" }, { "const": "docs", "title": "docs" }] } },
+    "question_1_custom": custom("question_1"),
+  } });
+  let message = "Please answer the following questions.";
+  let qs = form_questions(&schema, message, None, None);
+  assert_eq!(form_question_count(&schema), 2);
+  let j = v(&qs);
+  assert_eq!(j.as_array().unwrap().iter().map(|q| (q["id"].clone(), q["text"].clone(), q["other"].clone())).collect::<Vec<_>>(),
+    [(json!("question_0"), json!("往回看几个月？"), json!(true)), (json!("question_1"), json!("改哪些目录？"), json!(true))]);
+  assert!(spare_message(message, &qs).is_none());
+  // A pick stays on the question, typed text goes to the companion
+  expect_eq(form_content(&schema, &qs, &answers(json!({ "question_0": "3 个月", "question_1": ["docs", "只改 README"] }))),
+    json!({ "question_0": "3 个月", "question_1": ["docs"], "question_1_custom": "只改 README" }));
+  expect_eq(form_content(&schema, &qs, &answers(json!({ "question_0": "半年" }))), json!({ "question_0_custom": "半年" }));
+}
+
+#[test]
+fn codexs_note_field_folds_in_and_typed_text_picks_its_other_choice() {
+  let schema = json!({ "type": "object", "required": ["q"], "properties": {
+    "q": { "type": "string", "title": "Which one?", "oneOf": [{ "const": "A", "title": "A" }, { "const": "None of the above", "title": "None of the above" }], "_meta": { "codex": { "isOther": true } } },
+    "q_note": { "type": "string", "title": "Additional answer or note", "_meta": { "codex": { "questionId": "q", "role": "user_note" } } },
+  } });
+  let qs = form_questions(&schema, "Codex needs your input to continue.", None, None);
+  expect_match(v(&qs), json!([{ "id": "q", "other": true, "options": [{ "id": "A" }] }]));
+  assert_eq!(v(&qs)[0]["options"].as_array().unwrap().len(), 1);
+  assert!(spare_message("Codex needs your input to continue.", &qs).is_none());
+  expect_eq(form_content(&schema, &qs, &answers(json!({ "q": "B" }))), json!({ "q": "None of the above", "q_note": "B" }));
+  expect_eq(form_content(&schema, &qs, &answers(json!({ "q": "A" }))), json!({ "q": "A" }));
 }
 
 fn questions(s: &acpira_host::acp::session::AcpSession) -> Vec<Value> {
