@@ -11,7 +11,7 @@ use acpira_shared::transcript::*;
 use super::cancel::Cancel;
 use super::normalize::{NormalizeState, activity_of, apply_update, command_from_raw, permission_tool_update};
 use super::plans::{capture_plan, plan_documents_mut, set_plan_content};
-use super::questions::{clean_answers, form_content, form_questions, grok_questions, grok_response, spare_message};
+use super::questions::{clean_answers, form_content, form_question_count, form_questions, grok_questions, grok_response, spare_message};
 use super::rpc::RpcError;
 use super::session::{AcpSession, Core, PendingPermission, PendingQuestion, QuestionReply};
 use super::session_errors::{best_allow, permission_kind};
@@ -311,7 +311,7 @@ impl AcpSession {
         self.log(&format!("elicitation request for unknown session {}", session_id.as_deref().unwrap_or("(request scope)")));
         return json!({ "action": "cancel" });
       };
-      let count = schema.get("properties").and_then(Value::as_object).map(|p| p.len()).unwrap_or(0);
+      let count = form_question_count(&schema);
       let raw = c.raw_questions.for_call(tool_call_id.as_deref(), count);
       let questions = form_questions(&schema, &message, req.get("_meta"), raw.as_deref());
       if questions.is_empty() {
