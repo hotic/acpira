@@ -119,15 +119,18 @@ impl AcpSession {
       if !me.core.lock().syncing_thought {
         me.sync_thought().await?;
       }
-      let grok_model = {
+      let polled_model = {
         let c = me.core.lock();
-        me.agent == "grok"
+        matches!(me.agent.as_str(), "grok" | "pi")
           && !c.usage_notifications
           && c.state.controls.options.iter().find(|o| o.id == config_id).and_then(|o| o.category.as_deref()) == Some("model")
       };
-      if grok_model {
-        me.core.lock().state.usage = None;
-        me.refresh_grok_usage().await;
+      if polled_model {
+        // Grok's snapshot is per model; Pi keeps the same messages and only the window moves
+        if me.agent == "grok" {
+          me.core.lock().state.usage = None;
+        }
+        me.refresh_context_usage().await;
       }
       let mut c = me.core.lock();
       me.touch(&mut c);
