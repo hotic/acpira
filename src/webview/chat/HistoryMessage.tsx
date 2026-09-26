@@ -29,7 +29,7 @@ export const HistoryComposerContext = createContext<ComposerProps | undefined>(u
 // One frame per prompt, kept mounted while the card and its inline editor swap inside it: it carries the sticky positioning
 // (so a card stuck at the top opens its editor right there instead of jumping back to its natural place). Opening the editor is
 // instant — a click should land in the text at once, like direct manipulation; only the way back (cancel / sent) animates: the
-// opaque base animates its own height while the returning card fades in. Automatic prompts are plain rows. Keep the base outside
+// opaque base animates its own height while the returning card fades in. Automatic prompts render nothing. Keep the base outside
 // the fade so replies cannot show through the editor or the swapping content.
 // A stuck card folds to a few lines: the sentinel at the exchange's top leaving the scroller marks the stuck state. The fold must not
 // change the exchange's flow height — the reply would jump up under the card, and at the bottom of the thread the shorter scroll range
@@ -123,7 +123,7 @@ export const HistoryMessage = memo(function HistoryMessage(p: { turn: UserTurn; 
     animation.oncancel = done;
     return () => animation.cancel();
   }, [editing, motion]);
-  if (p.turn.auto) return <UserMessage {...p} />;
+  if (p.turn.auto) return null;
   const editable = !!context?.editable;
   return (
     <>
