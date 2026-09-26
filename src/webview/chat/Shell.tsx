@@ -31,6 +31,7 @@ import { Queue } from './Queue';
 import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, OpenBlobContext } from './fileLinks';
 import { TurnActionsContext } from './TurnActions';
 import { SubagentInspector } from './subagents/SubagentInspector';
+import { InspectorSplitter, clamp, usePreferredPaneWidth, type PaneBounds } from './subagents/InspectorSplitter';
 import { SubagentGraph } from './subagents/SubagentGraph';
 import { breadcrumb, nodesByTurn, subagentTitle } from './subagents/subagentState';
 
@@ -218,22 +219,42 @@ export function Shell(p: ShellProps) {
   }, [drawerOpen, canDock]);
   const [editing, setEditing] = useState<{ sessionId: string; index: number }>();
   useEffect(() => setEditing(undefined), [p.activeSessionId]);
-  // The subagent inspector: one open child at a time, docked beside the column when it is wide enough
+  // The subagent inspector: one open child at a time, docked beside the column when it is wide enough.
+  // The docked pane's width is the user's (drag its left edge), clamped so the conversation keeps --subagent-main-min.
   const mainColumn = useRef<HTMLDivElement>(null);
+  const inspectorPane = useRef<HTMLElement>(null);
   const [canDockInspector, setCanDockInspector] = useState(false);
+  // Main column + docked pane: the room the pane's width is carved from
+  const [inspectorRoom, setInspectorRoom] = useState(0);
+  const [preferredPane, setPreferredPane] = usePreferredPaneWidth();
+  const [draggedPane, setDraggedPane] = useState<number>();
   useLayoutEffect(() => {
     const element = mainColumn.current;
     if (!element) return;
-    const styles = getComputedStyle(element);
-    const minWidth = Number.parseFloat(styles.getPropertyValue('--subagent-dock-min'));
-    const paneWidth = Number.parseFloat(styles.getPropertyValue('--subagent-pane-w'));
+    const minWidth = Number.parseFloat(getComputedStyle(element).getPropertyValue('--subagent-dock-min'));
     // Hysteresis: once docked, the column lost the pane's width — count it back so the panel does not flap open/closed
-    const update = () => setCanDockInspector(docked => element.clientWidth + (docked ? paneWidth : 0) >= minWidth);
+    const update = () => {
+      const room = element.clientWidth + (inspectorPane.current?.offsetWidth ?? 0);
+      setInspectorRoom(room);
+      setCanDockInspector(room >= minWidth);
+    };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
+  const paneBounds = useCallback((): PaneBounds => {
+    const styles = getComputedStyle(mainColumn.current ?? document.documentElement);
+    const px = (name: string) => Number.parseFloat(styles.getPropertyValue(name));
+    const room = (mainColumn.current?.clientWidth ?? 0) + (inspectorPane.current?.offsetWidth ?? 0);
+    return { min: px('--subagent-pane-min'), max: room - px('--subagent-main-min'), initial: px('--subagent-pane-w') };
+  }, []);
+  // inspectorRoom is read so a resized shell re-clamps the pane
+  const paneWidth = useMemo(() => {
+    if (!inspectorRoom) return undefined;
+    const b = paneBounds();
+    return clamp(draggedPane ?? preferredPane ?? b.initial, b.min, b.max);
+  }, [inspectorRoom, draggedPane, preferredPane, paneBounds]);
   const [inspect, setInspect] = useState<{ id: string }>();
   const [graphOpen, setGraphOpen] = useState(false);
   useEffect(() => setGraphOpen(false), [p.activeSessionId]);
@@ -491,7 +512,12 @@ export function Shell(p: ShellProps) {
             </div>
           </div>
           {inspectNode !== undefined && canDockInspector && inspect !== undefined && p.activeSessionId !== undefined && (
-            <aside data-subagent-panel="docked" className="order-last flex w-subagent-pane shrink-0 flex-col border-l border-line bg-bg-0">
+            <aside ref={inspectorPane} data-subagent-panel="docked" className="relative order-last flex w-subagent-pane shrink-0 flex-col border-l border-line bg-bg-0"
+              style={paneWidth !== undefined ? { width: paneWidth } : undefined}>
+              <InspectorSplitter width={paneWidth ?? paneBounds().initial} bounds={paneBounds}
+                onDrag={setDraggedPane}
+                onCommit={w => { setDraggedPane(undefined); setPreferredPane(w); }}
+                onReset={() => { setDraggedPane(undefined); setPreferredPane(undefined); }} />
               <SubagentInspector
                 mode="docked"
                 node={inspectNode}
