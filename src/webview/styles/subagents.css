@@ -1,32 +1,114 @@
-/* Opacity and transform keep the travelling light off the layout and paint paths. */
-@keyframes subagent-signal-wave {
-  0%, 65%, 100% { opacity: .2; transform: scale(.7); }
-  25% { opacity: 1; transform: translateY(-1px) scale(1.3); }
-  42% { opacity: .65; transform: scale(1); }
+/* Subagent state mark (chat/subagents/icons.tsx SubagentMark): three dotted bars bob while the child runs. Each bar is
+   five fixed beads; a bar "grows" by fading its outer beads in, so the loop is opacity + transform only (compositor,
+   full frame rate) and matches the dotted Working ring below it. The finish into the ✓ is WAAPI from the live frame.
+   Bead opacity tracks a bar half-height h(t) = 3.5 + 2.5·sin(2πt) (24 steps), fading over one bead pitch (3). */
+@keyframes subagent-mark-mid {
+  0.00% { opacity: 0.667; transform: scale(0.800); }
+  4.17% { opacity: 0.882; transform: scale(0.929); }
+  8.33% { opacity: 1.000; transform: scale(1.000); }
+  12.50% { opacity: 1.000; transform: scale(1.000); }
+  16.67% { opacity: 1.000; transform: scale(1.000); }
+  20.83% { opacity: 1.000; transform: scale(1.000); }
+  25.00% { opacity: 1.000; transform: scale(1.000); }
+  29.17% { opacity: 1.000; transform: scale(1.000); }
+  33.33% { opacity: 1.000; transform: scale(1.000); }
+  37.50% { opacity: 1.000; transform: scale(1.000); }
+  41.67% { opacity: 1.000; transform: scale(1.000); }
+  45.83% { opacity: 0.882; transform: scale(0.929); }
+  50.00% { opacity: 0.667; transform: scale(0.800); }
+  54.17% { opacity: 0.451; transform: scale(0.671); }
+  58.33% { opacity: 0.250; transform: scale(0.550); }
+  62.50% { opacity: 0.077; transform: scale(0.446); }
+  66.67% { opacity: 0.000; transform: scale(0.400); }
+  70.83% { opacity: 0.000; transform: scale(0.400); }
+  75.00% { opacity: 0.000; transform: scale(0.400); }
+  79.17% { opacity: 0.000; transform: scale(0.400); }
+  83.33% { opacity: 0.000; transform: scale(0.400); }
+  87.50% { opacity: 0.077; transform: scale(0.446); }
+  91.67% { opacity: 0.250; transform: scale(0.550); }
+  95.83% { opacity: 0.451; transform: scale(0.671); }
+  100.00% { opacity: 0.667; transform: scale(0.800); }
+}
+@keyframes subagent-mark-tip {
+  0.00% { opacity: 0.000; transform: scale(0.400); }
+  4.17% { opacity: 0.000; transform: scale(0.400); }
+  8.33% { opacity: 0.083; transform: scale(0.450); }
+  12.50% { opacity: 0.256; transform: scale(0.554); }
+  16.67% { opacity: 0.388; transform: scale(0.633); }
+  20.83% { opacity: 0.472; transform: scale(0.683); }
+  25.00% { opacity: 0.500; transform: scale(0.700); }
+  29.17% { opacity: 0.472; transform: scale(0.683); }
+  33.33% { opacity: 0.388; transform: scale(0.633); }
+  37.50% { opacity: 0.256; transform: scale(0.554); }
+  41.67% { opacity: 0.083; transform: scale(0.450); }
+  45.83% { opacity: 0.000; transform: scale(0.400); }
+  50.00% { opacity: 0.000; transform: scale(0.400); }
+  54.17% { opacity: 0.000; transform: scale(0.400); }
+  58.33% { opacity: 0.000; transform: scale(0.400); }
+  62.50% { opacity: 0.000; transform: scale(0.400); }
+  66.67% { opacity: 0.000; transform: scale(0.400); }
+  70.83% { opacity: 0.000; transform: scale(0.400); }
+  75.00% { opacity: 0.000; transform: scale(0.400); }
+  79.17% { opacity: 0.000; transform: scale(0.400); }
+  83.33% { opacity: 0.000; transform: scale(0.400); }
+  87.50% { opacity: 0.000; transform: scale(0.400); }
+  91.67% { opacity: 0.000; transform: scale(0.400); }
+  95.83% { opacity: 0.000; transform: scale(0.400); }
+  100.00% { opacity: 0.000; transform: scale(0.400); }
 }
 
 @layer components {
-  .subagent-signal {
-    display: grid;
+  .subagent-mark {
+    display: block;
     flex-shrink: 0;
-    grid-template-columns: repeat(2, 3px);
-    gap: 3px;
-    width: 9px;
-    height: 15px;
-    transform: rotate(-18deg);
-    color: var(--fg-1);
+    overflow: visible;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
-  .subagent-signal > span {
-    width: 3px;
-    height: 3px;
-    border-radius: 50%;
-    background: currentColor;
-    opacity: .25;
-    animation: subagent-signal-wave 1.65s cubic-bezier(.4, 0, .2, 1) infinite;
-    animation-delay: calc(var(--signal-step) * -165ms);
+  /* Live ink is full strength; the settled ✓ takes the row's quiet colour, like every other Check */
+  .subagent-mark { color: var(--fg-1); }
+  .subagent-mark-bead { fill: currentColor; stroke: none; transform-box: fill-box; transform-origin: center; }
+  .subagent-mark-bead[data-ring="1"] { animation: subagent-mark-mid 1s linear infinite; animation-delay: var(--bar-delay); }
+  .subagent-mark-bead[data-ring="2"] { animation: subagent-mark-tip 1s linear infinite; animation-delay: var(--bar-delay); }
+  .subagent-mark-check {
+    stroke-width: 1.5;
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    transform: scale(var(--check-scale, 1));
+    transform-box: view-box;
+    transform-origin: center;
   }
-  [data-motion="none"] .subagent-signal > span { opacity: .7; }
+  /* The row's slot is --subagent-mark wide; the ✓ shrinks back to --icon so it matches every other Check */
+  .subagent-row .subagent-mark { --check-scale: var(--subagent-check-scale); }
+  .subagent-mark[data-phase="done"] { color: inherit; }
+  .subagent-mark[data-phase="done"] .subagent-mark-check { stroke-dashoffset: 0; }
+  /* Resize edge of the docked inspector (Shell.tsx): a wide invisible grab strip centred on the pane's border line */
+  .subagent-splitter {
+    position: absolute;
+    inset-block: 0;
+    left: calc(var(--splitter-hit) / -2);
+    z-index: 1;
+    width: var(--splitter-hit);
+    cursor: col-resize;
+    touch-action: none;
+    outline: none;
+  }
+  .subagent-splitter::after {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    left: 50%;
+    width: 1px;
+    background: var(--focus);
+    opacity: 0;
+    transition: opacity var(--dur);
+  }
+  .subagent-splitter:hover::after,
+  .subagent-splitter:focus-visible::after,
+  .subagent-splitter[data-dragging]::after { opacity: 1; }
   @media (prefers-reduced-motion: reduce) {
-    .subagent-signal > span { animation: none; opacity: .7; }
+    .subagent-mark-bead { animation: none; }
   }
 }

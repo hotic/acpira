@@ -482,6 +482,7 @@ export const en = {
   'subagents.cancelled': '{n} cancelled',
   'subagents.disconnected': '{n} unknown',
   'subagents.tree': 'Relations',
+  'subagents.resize': 'Drag to resize · double-click to reset',
   'subagents.graph': 'Subagent graph',
   'subagents.entry': '{n} subagents',
   'subagents.back': 'Back to conversation',

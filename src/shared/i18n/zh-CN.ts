@@ -494,6 +494,7 @@ export const zhCN = {
   'subagents.cancelled': '{n} 已取消',
   'subagents.disconnected': '{n} 结果未知',
   'subagents.tree': '关系',
+  'subagents.resize': '拖动调整宽度 · 双击恢复默认',
   'subagents.graph': '子代理召唤图',
   'subagents.entry': '{n} 个子代理',
   'subagents.back': '返回主会话',

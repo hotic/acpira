@@ -146,6 +146,15 @@
   /* The subagent inspector docks beside the conversation when the main column still has room, else it drills down as an overlay */
   --subagent-dock-min: 900px;
   --subagent-pane-w: 360px;
+  /* Drag range of the docked inspector: the pane never gets narrower than this, the conversation keeps at least the other */
+  --subagent-pane-min: 280px;
+  --subagent-main-min: 420px;
+  /* Grab width of the pane's resize edge; the visible line stays 1px */
+  --splitter-hit: 8px;
+  /* The subagent row's state mark: the lead slot's width, a notch above a process row's glyph so it holds two lines */
+  --subagent-mark: 20px;
+  /* --icon / --subagent-mark as a plain number (JS reads it for the finish animation's landing points) */
+  --subagent-check-scale: 0.7;
   /* The faint project name a session row from another project carries before its time, kept short so the title keeps the room */
   --session-project-w: 10ch;
 
@@ -193,6 +202,9 @@
   --text-2-lh: calc(var(--ui-font-size) + 5px);
   --text-3: calc(var(--ui-font-size) - 1px);
   --text-3-lh: calc(var(--ui-font-size) + 3px);
+  /* Micro: secondary lines inside compact framed rows (the subagent row's activity line) */
+  --text-4: calc(var(--ui-font-size) - 2px);
+  --text-4-lh: calc(var(--ui-font-size) + 2px);
   --text-mono: var(--code-font-size);
   --text-mono-lh: calc(var(--code-font-size) + 6px);
 }
@@ -358,6 +370,8 @@
   --text-2--line-height: var(--text-2-lh);
   --text-3: var(--text-3);
   --text-3--line-height: var(--text-3-lh);
+  --text-4: var(--text-4);
+  --text-4--line-height: var(--text-4-lh);
   --text-mono: var(--text-mono);
   --text-mono--line-height: var(--text-mono-lh);
   --leading-code-output: var(--code-output-line-height);
@@ -422,4 +436,5 @@
   --spacing-pop-xl: var(--pop-w-xl);
   --spacing-project: var(--session-project-w);
   --spacing-subagent-pane: var(--subagent-pane-w);
+  --spacing-subagent-mark: var(--subagent-mark);
 }
