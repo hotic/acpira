@@ -44,7 +44,7 @@ use crate::store::record::{ForkedFrom, ImportedFrom, RecordSource, SessionRecord
 use crate::store::transcript_store::{LogFn, TranscriptStore, blob_name};
 use crate::util::{now_iso, random_uuid};
 
-pub const GROK_USAGE_INTERVAL: Duration = Duration::from_millis(800);
+pub const USAGE_POLL_INTERVAL: Duration = Duration::from_millis(800);
 const CLOSE_GRACE: Duration = Duration::from_secs(3);
 pub(crate) const MODE_PICK: &str = "\0mode";
 
@@ -160,8 +160,9 @@ pub(crate) struct Core {
   pub usage_notifications: bool,
   pub auto_compact_eligible: bool,
   pub grok_usage_unavailable: bool,
-  pub grok_timer: Option<tokio::task::AbortHandle>,
-  pub grok_inflight: bool,
+  pub usage_timer: Option<tokio::task::AbortHandle>,
+  pub usage_inflight: bool,
+  pub pi_stamp: Option<super::pi_usage::Stamp>,
   pub finish_usage_refresh: Option<oneshot::Sender<bool>>,
   pub syncing_thought: bool,
   pub adopting: bool,
@@ -185,8 +186,8 @@ pub struct AcpSession {
   pub(crate) me: Weak<AcpSession>,
   // Serializes composer picks: rapid clicks collapse to the last value per control
   pub(crate) pick_lock: tokio::sync::Mutex<()>,
-  // Serializes Grok usage reads so slow replies never overwrite a newer snapshot
-  pub(crate) grok_lock: tokio::sync::Mutex<()>,
+  // Serializes polled usage reads (Grok, Pi) so slow replies never overwrite a newer snapshot
+  pub(crate) usage_lock: tokio::sync::Mutex<()>,
 }
 
 impl AcpSession {
@@ -252,8 +253,9 @@ impl AcpSession {
           usage_notifications: false,
           auto_compact_eligible: false,
           grok_usage_unavailable: false,
-          grok_timer: None,
-          grok_inflight: false,
+          usage_timer: None,
+          usage_inflight: false,
+          pi_stamp: None,
           finish_usage_refresh: None,
           syncing_thought: false,
           adopting: false,
@@ -269,7 +271,7 @@ impl AcpSession {
         deps,
         me: me.clone(),
         pick_lock: tokio::sync::Mutex::new(()),
-        grok_lock: tokio::sync::Mutex::new(()),
+        usage_lock: tokio::sync::Mutex::new(()),
       }
     })
   }
@@ -539,7 +541,7 @@ impl AcpSession {
         }
         me.connect().await?;
         me.open_session().await?;
-        me.refresh_grok_usage().await;
+        me.refresh_context_usage().await;
         let (plan, proc, sid) = {
           let c = me.core.lock();
           (
@@ -582,7 +584,8 @@ impl AcpSession {
       c.usage_notifications = false;
       c.auto_compact_eligible = false;
       c.grok_usage_unavailable = false;
-      clear_grok_timer(&mut c);
+      c.pi_stamp = None;
+      clear_usage_timer(&mut c);
       (c.proc_gen, c.account_id.clone())
     };
     let sources = read_model_sources(&self.agent, &self.cwd).await;
@@ -887,7 +890,7 @@ impl AcpSession {
     let result: Result<()> = async {
       self.handoff().await?;
       self.open_session().await?;
-      self.refresh_grok_usage().await;
+      self.refresh_context_usage().await;
       Ok(())
     }
     .await;
@@ -1010,7 +1013,7 @@ impl AcpSession {
     let proc = self.core.lock().proc.clone();
     let closing = {
       let mut c = self.core.lock();
-      clear_grok_timer(&mut c);
+      clear_usage_timer(&mut c);
       c.perm_epoch += 1;
       c.status = SessionStatus::Closed;
       c.queue.clear();
@@ -1028,8 +1031,8 @@ impl AcpSession {
   }
 }
 
-pub(crate) fn clear_grok_timer(c: &mut Core) {
-  if let Some(h) = c.grok_timer.take() {
+pub(crate) fn clear_usage_timer(c: &mut Core) {
+  if let Some(h) = c.usage_timer.take() {
     h.abort();
   }
 }

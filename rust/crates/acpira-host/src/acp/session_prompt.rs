@@ -15,9 +15,10 @@ use acpira_shared::turn_settings::capture_turn_settings;
 use super::attachments::{PreparedPrompt, prepare_prompt, prompt_caps_of, restore_drafts};
 use super::compaction::{CompactionCompletion, is_compact_command};
 use super::normalize::{activity_of, apply_async_task, apply_session_failure, apply_update, end_turn, fail_turn, set_stop_requested};
+use super::pi_usage;
 use super::plans::{capture_plan, plan_documents, plan_documents_mut};
 use super::rpc::{BoxFuture, RpcError};
-use super::session::{AcpSession, Core, GROK_USAGE_INTERVAL, QueuedEntry, clear_grok_timer, num};
+use super::session::{AcpSession, Core, QueuedEntry, USAGE_POLL_INTERVAL, clear_usage_timer, num};
 use super::session_edit::{FORK_HISTORY_LEAD, history_context};
 use super::session_errors::{is_auth, is_session_gone, turn_error_of};
 use super::session_failure::{failure_of, failure_turn_error};
@@ -220,7 +221,7 @@ impl AcpSession {
       }));
       let agent_idx = c.state.turns.len() - 1;
       self.touch(&mut c);
-      self.schedule_grok_usage(&mut c);
+      self.schedule_usage_poll(&mut c);
       (c.proc.clone(), c.acp_session_id.clone(), c.proc_gen, c.usage_revision, agent_idx, started_at)
     };
     let live = |c: &Core| c.proc_gen == prompt_gen && c.status != SessionStatus::Closed;
@@ -301,7 +302,7 @@ impl AcpSession {
               return;
             }
           }
-          self.refresh_grok_usage().await;
+          self.refresh_context_usage().await;
           let mut c = self.core.lock();
           if !live(&c) {
             return;
@@ -346,7 +347,7 @@ impl AcpSession {
         }
         stop = TurnStop::Cancelled;
         self.log(&format!("prompt failed: {e}"));
-        self.refresh_grok_usage().await;
+        self.refresh_context_usage().await;
         let mut c = self.core.lock();
         if !live(&c) {
           return;
@@ -393,7 +394,7 @@ impl AcpSession {
     if let Some(f) = c.finish_usage_refresh.take() {
       let _ = f.send(false);
     }
-    clear_grok_timer(c);
+    clear_usage_timer(c);
     c.perm_epoch += 1;
     if let Some(comp) = c.completion.as_mut() {
       comp.close();
@@ -606,20 +607,51 @@ impl AcpSession {
 
   // Usage snapshots
 
+  /// Agents that never send `usage_update` and have their context snapshot polled instead: Grok over
+  /// `_x.ai/session/info`, Pi from its session file (`pi_usage`)
+  fn polls_usage(&self, c: &Core) -> bool {
+    !c.usage_notifications && (self.agent == "pi" || (self.agent == "grok" && !c.grok_usage_unavailable))
+  }
+
   /// Refresh before settling a turn so auto-compaction sees the current window; Grok only fills context.used after
-  /// a model round, so it is polled while a prompt is on the wire
-  pub(crate) async fn refresh_grok_usage(self: &Arc<Self>) {
-    clear_grok_timer(&mut self.core.lock());
-    let _serial = self.grok_lock.lock().await;
-    self.core.lock().grok_inflight = true;
-    self.read_grok_usage().await;
-    self.core.lock().grok_inflight = false;
+  /// a model round and Pi's file grows per reply, so both are polled while a prompt is on the wire
+  pub(crate) async fn refresh_context_usage(self: &Arc<Self>) {
+    clear_usage_timer(&mut self.core.lock());
+    let _serial = self.usage_lock.lock().await;
+    self.core.lock().usage_inflight = true;
+    match self.agent.as_str() {
+      "grok" => self.read_grok_usage().await,
+      "pi" => self.read_pi_usage().await,
+      _ => {}
+    }
+    self.core.lock().usage_inflight = false;
+  }
+
+  async fn read_pi_usage(self: &Arc<Self>) {
+    let (sid, revision, stamp) = {
+      let mut c = self.core.lock();
+      if c.status != SessionStatus::Ready || !self.polls_usage(&c) {
+        return;
+      }
+      let Some(sid) = c.acp_session_id.clone() else { return };
+      c.usage_revision += 1;
+      (sid, c.usage_revision, c.pi_stamp.clone())
+    };
+    let (cwd, id) = (self.cwd.clone(), sid.clone());
+    let Ok(read) = tokio::task::spawn_blocking(move || pi_usage::read(&cwd, &id, stamp.as_ref())).await else { return };
+    let pi_usage::Snapshot::Fresh(stamp, usage) = read else { return };
+    let mut c = self.core.lock();
+    if c.acp_session_id.as_deref() != Some(sid.as_str()) || c.status != SessionStatus::Ready || c.usage_revision != revision {
+      return;
+    }
+    c.pi_stamp = Some(stamp);
+    self.apply_context_usage(&mut c, usage);
   }
 
   async fn read_grok_usage(self: &Arc<Self>) {
     let (proc, sid, revision) = {
       let mut c = self.core.lock();
-      if self.agent != "grok" || c.status != SessionStatus::Ready || c.usage_notifications || c.grok_usage_unavailable {
+      if c.status != SessionStatus::Ready || !self.polls_usage(&c) {
         return;
       }
       let (Some(proc), Some(sid)) = (c.proc.clone(), c.acp_session_id.clone()) else { return };
@@ -649,36 +681,35 @@ impl AcpSession {
     {
       return;
     }
+    self.apply_context_usage(&mut c, usage);
+  }
+
+  /// A polled snapshot becomes the session's usage and the context mark of the turn it follows
+  fn apply_context_usage(&self, c: &mut Core, usage: Option<Usage>) {
     let prev = c.state.usage;
     c.state.usage = usage;
     if let (Some(u), Some(Turn::Agent(last))) = (usage, c.state.turns.last_mut()) {
       last.usage.get_or_insert_with(Default::default).context = Some(ContextUse { used: u.used, size: u.size });
     }
     if prev.map(|p| (p.used, p.size, p.cost)) != usage.map(|u| (u.used, u.size, u.cost)) {
-      self.touch(&mut c);
+      self.touch(c);
     }
   }
 
-  pub(crate) fn schedule_grok_usage(&self, c: &mut Core) {
-    if self.agent != "grok"
-      || !c.phase.running
-      || c.usage_notifications
-      || c.grok_usage_unavailable
-      || c.grok_timer.is_some()
-      || c.grok_inflight
-    {
+  pub(crate) fn schedule_usage_poll(&self, c: &mut Core) {
+    if !self.polls_usage(c) || !c.phase.running || c.usage_timer.is_some() || c.usage_inflight {
       return;
     }
     let weak = self.me.clone();
     let handle = tokio::spawn(async move {
-      tokio::time::sleep(GROK_USAGE_INTERVAL).await;
+      tokio::time::sleep(USAGE_POLL_INTERVAL).await;
       let Some(me) = weak.upgrade() else { return };
-      me.core.lock().grok_timer = None;
-      me.refresh_grok_usage().await;
+      me.core.lock().usage_timer = None;
+      me.refresh_context_usage().await;
       let mut c = me.core.lock();
-      me.schedule_grok_usage(&mut c);
+      me.schedule_usage_poll(&mut c);
     });
-    c.grok_timer = Some(handle.abort_handle());
+    c.usage_timer = Some(handle.abort_handle());
   }
 
   /// Kimi emits its context snapshot asynchronously after end_turn: park the queue until it lands (bounded).
@@ -826,9 +857,9 @@ impl AcpSession {
       if let Some(f) = c.finish_usage_refresh.take() {
         let _ = f.send(false);
       }
-      clear_grok_timer(&mut c);
+      clear_usage_timer(&mut c);
     } else if c.phase.running {
-      self.schedule_grok_usage(&mut c);
+      self.schedule_usage_poll(&mut c);
     }
     if matches!(kind.as_str(), "tool_call" | "tool_call_update") {
       {

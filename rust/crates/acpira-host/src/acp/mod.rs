@@ -12,6 +12,7 @@ pub mod launch;
 pub mod model_sources;
 pub mod native_sessions;
 pub mod normalize;
+pub mod pi_usage;
 pub mod plan_snapshots;
 pub mod plans;
 pub mod probe_controls;
