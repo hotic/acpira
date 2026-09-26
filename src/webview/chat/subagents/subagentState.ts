@@ -2,6 +2,7 @@
 // No DOM — unit-tested in test/subagentState.test.ts; `t` arrives as a parameter so fixtures decide the locale.
 import type { MsgKey, Params } from '@shared/i18n';
 import type { SubagentSummary } from '@shared/subagents';
+import type { AgentBlock } from '@shared/transcript';
 
 export type T = (key: MsgKey, params?: Params) => string;
 
@@ -19,6 +20,37 @@ export function nodesByTurn(nodes: SubagentSummary[], prev?: Map<number, Subagen
     if (old && old.length === list.length && old.every((n, i) => n === list[i])) next.set(ti, old);
   }
   return next;
+}
+
+// Which of a turn's nodes can sit at their delegation row: those whose id a root tool call in the turn carries
+export function delegatedIds(blocks: AgentBlock[], turnNodes: SubagentSummary[]): Set<string> {
+  const ids = new Set(turnNodes.map(n => n.id));
+  const out = new Set<string>();
+  for (const b of blocks) if (b.type === 'tool_call' && b.subagentId !== undefined && ids.has(b.subagentId)) out.add(b.subagentId);
+  return out;
+}
+
+// Splits a turn's nodes by the delegation they hang under: each placed id takes itself and every descendant
+// anchored to the same turn (nearest placed ancestor wins); nodes with no placed ancestor go to `rest`,
+// which renders after the turn's content as before. Cycles stop at a visited id.
+export function placeNodes(turnNodes: SubagentSummary[], placed: ReadonlySet<string>): { byId: Map<string, SubagentSummary[]>; rest: SubagentSummary[] } {
+  const byNodeId = new Map(turnNodes.map(n => [n.id, n]));
+  const byId = new Map<string, SubagentSummary[]>();
+  const rest: SubagentSummary[] = [];
+  for (const n of turnNodes) {
+    const seen = new Set<string>();
+    let cur: SubagentSummary | undefined = n;
+    while (cur && !placed.has(cur.id) && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      cur = cur.parentId !== undefined ? byNodeId.get(cur.parentId) : undefined;
+    }
+    if (cur && placed.has(cur.id)) {
+      const list = byId.get(cur.id);
+      if (list) list.push(n);
+      else byId.set(cur.id, [n]);
+    } else rest.push(n);
+  }
+  return { byId, rest };
 }
 
 // Rows of the group: top-level children in announce order. A node whose parent was anchored to another

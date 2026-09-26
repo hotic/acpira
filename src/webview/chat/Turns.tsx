@@ -34,7 +34,7 @@ import { compactionForDisplay } from './compactionDisplay';
 import { splitPlanSections } from './planSections';
 import { TurnActions } from './TurnActions';
 import { SubagentGroup } from './subagents/SubagentGroup';
-import { breadcrumb, nodesByTurn, subagentTitle } from './subagents/subagentState';
+import { breadcrumb, delegatedIds, nodesByTurn, placeNodes, subagentTitle } from './subagents/subagentState';
 
 // User message: color block / right-aligned bubble / plain text; ones Acpira sends automatically (/compact) render nothing,
 // since the reply's compaction row already says what happened.
@@ -150,10 +150,15 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   onFailureAction?: (action: FailureAction) => void;
 }) {
   const raw = compacting ? compactionForDisplay(turn, running) : turn;
-  // A delegation tool row is represented by its subagent group; filtered out before the fold sees it
+  // Everything but the section split reads the turn without its delegation rows
   const shown = useMemo(() => raw.blocks.some(b => b.type === 'tool_call' && b.subagentId !== undefined)
     ? { ...raw, blocks: raw.blocks.filter(b => b.type !== 'tool_call' || b.subagentId === undefined) } : raw, [raw]);
-  const sections = splitPlanSections(shown.blocks);
+  // Subagent rows sit where they were delegated: a delegation row (tool call with `subagentId`) splits the turn
+  // like a plan does, and its node plus that node's same-turn descendants render at the split. Nodes with no
+  // delegation row in this turn trail the content as before. Delegation rows themselves never render.
+  const placed = useMemo(() => subagents?.length && onInspect ? delegatedIds(raw.blocks, subagents) : undefined, [raw.blocks, subagents, onInspect]);
+  const { byId: placedNodes, rest: restNodes } = useMemo(() => placed?.size ? placeNodes(subagents!, placed) : { byId: undefined, rest: subagents }, [placed, subagents]);
+  const sections = useMemo(() => splitPlanSections(raw.blocks, placed), [raw.blocks, placed]);
   // A /compact reply that so far holds only its compaction row: that row shimmers in place, so no generic Working row above it
   const compactionOnly = !!compacting && shown.blocks.length > 0 && shown.blocks.every(b => b.type === 'compaction');
   const entranceScope = useId();
@@ -177,7 +182,9 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
         {(section.blocks.length > 0 || (lastSection && (running || outcomeOf(shown)))) && <AgentContent turn={content} index={index}
           running={lastSection && running} compactionOnly={compactionOnly} onPermission={onPermission}
           memoryKey={memoryKey && (i === 0 ? memoryKey : `${memoryKey}:after-plan:${section.key}`)}
-          subagents={lastSection ? subagents : undefined} allSubagents={lastSection ? allSubagents : undefined} onInspect={onInspect} lead={lead} />}
+          subagents={lastSection ? restNodes : undefined} allSubagents={lastSection ? allSubagents : undefined} onInspect={onInspect} lead={lead} />}
+        {section.subagents && placedNodes && onInspect && <PlacedSubagents nodes={section.subagents.flatMap(id => placedNodes.get(id) ?? [])}
+          all={allSubagents ?? subagents!} onInspect={onInspect} onPermission={onPermission} />}
         {section.plan && <PlanDocument block={section.plan}
           permission={shown.blocks.find((b): b is PermissionBlock => b.type === 'permission' && b.planId === section.plan!.id)} onChoose={onPermission} />}
       </Fragment>;
@@ -222,6 +229,15 @@ function AgentContent({ turn, index, running, compactionOnly, onPermission, memo
       )}
     </div>
   );
+}
+
+// Subagent rows at their delegation point, with any pending child approvals right under them
+function PlacedSubagents({ nodes, all, onInspect, onPermission }: { nodes: SubagentSummary[]; all: SubagentSummary[]; onInspect: (id: string) => void; onPermission: OnPermission }) {
+  if (!nodes.length) return null;
+  return <div className="flex flex-col gap-gap">
+    <SubagentGroup nodes={nodes} all={all} onInspect={onInspect} />
+    <ChildPermissions nodes={nodes} all={all} onPermission={onPermission} />
+  </div>;
 }
 
 // A child's pending approval shows in the turn that delegated it, labeled with the chain it came from
