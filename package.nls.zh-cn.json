@@ -17,7 +17,7 @@
   "acpira.conf.compactAtTokens": "上下文用量（agent 报的 usage.used）达到这么多 token 后，下一条消息发出前自动发 /compact。进行中的回合无法插入。只对报 usage 且有 /compact 命令的 agent 生效；上下文窗口比这个数小的模型由 agent 自己兜底",
   "acpira.conf.autoCompact": "超阈值后，在下一条消息发出前自动发送 /compact（关掉就只能在上下文面板里手动压）",
   "acpira.conf.hiddenOptions": "从菜单里隐藏的选项家族（模型 / 推理层级…）：`{ \"<agent>\": { \"<configOption id>\": [\"<家族名>\", ...] } }`。在 Acpira 设置页的 agent 页里开关即可，一般不用手编",
-  "acpira.conf.accountSwitch": "账号额度用完时按 agent 自动切换账号：`{ \"<agent>\": \"earliestReset\" | \"mostRemaining\" | \"listOrder\" | \"off\" }`。没列出的 agent 默认切到最近一个额度窗口最早重置的已存账号。在 Acpira 设置页的 agent 页里选即可",
+  "acpira.conf.accountSwitch": "当前账号额度在任务中途用完时自动切换账号，对所有 agent 生效：`off`（默认，不切换）、`earliestReset`（最近一个额度窗口最早重置的已存账号）、`mostRemaining` 或 `listOrder`。也可在 Acpira 设置的常规页里选",
   "acpira.conf.theme": "Acpira 面板配色：auto 跟随 VS Code 主题，light / dark 固定不跟",
   "acpira.conf.sessionListPosition": "Acpira 内的会话列表位置：收起、左侧或右侧。面板较窄时使用抽屉。",
   "acpira.conf.uiFontSize": "界面基准字号，px（10–20）",

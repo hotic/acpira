@@ -1,4 +1,4 @@
-//! Which saved account takes over when the bound one runs out of quota (acpira.accountSwitch). Pure: the account
+//! Which saved account takes over when the bound one runs out of quota (acpira.accountSwitch, global). Pure: the account
 //! manager feeds it the list, the parked (known exhausted) accounts and the clock
 
 use std::collections::HashMap;
@@ -22,13 +22,13 @@ pub enum SwitchStrategy {
 }
 
 impl SwitchStrategy {
-  /// Unknown or absent values fall back to the default, earliestReset
+  /// Unknown or absent values fall back to the default, off
   pub fn parse(s: Option<&str>) -> SwitchStrategy {
     match s {
+      Some("earliestReset") => SwitchStrategy::EarliestReset,
       Some("mostRemaining") => SwitchStrategy::MostRemaining,
       Some("listOrder") => SwitchStrategy::ListOrder,
-      Some("off") => SwitchStrategy::Off,
-      _ => SwitchStrategy::EarliestReset,
+      _ => SwitchStrategy::Off,
     }
   }
 }
@@ -168,6 +168,7 @@ mod tests {
     assert_eq!(parked_until(acc("b", Some(&[(0.4, 30)])).quota.as_ref(), NOW), NOW + PARK_FALLBACK_MS);
     assert_eq!(parked_until(None, NOW), NOW + PARK_FALLBACK_MS);
     assert_eq!(SwitchStrategy::parse(Some("listOrder")), SwitchStrategy::ListOrder);
-    assert_eq!(SwitchStrategy::parse(Some("bogus")), SwitchStrategy::EarliestReset);
+    assert_eq!(SwitchStrategy::parse(Some("bogus")), SwitchStrategy::Off);
+    assert_eq!(SwitchStrategy::parse(None), SwitchStrategy::Off);
   }
 }

@@ -246,19 +246,16 @@
           }
         },
         "acpira.accountSwitch": {
-          "type": "object",
-          "default": {},
+          "type": "string",
+          "enum": [
+            "off",
+            "earliestReset",
+            "mostRemaining",
+            "listOrder"
+          ],
+          "default": "off",
           "scope": "application",
-          "markdownDescription": "%acpira.conf.accountSwitch%",
-          "additionalProperties": {
-            "type": "string",
-            "enum": [
-              "earliestReset",
-              "mostRemaining",
-              "listOrder",
-              "off"
-            ]
-          }
+          "markdownDescription": "%acpira.conf.accountSwitch%"
         },
         "acpira.theme": {
           "type": "string",

@@ -83,9 +83,9 @@ impl HostRuntime {
       toast.clone(),
     );
     let policy = platform.clone();
-    accounts.set_switch_policy(Arc::new(move |agent: &str| {
-      let map = acpira_shared::settings::account_switch_map(&policy.read_setting("accountSwitch").unwrap_or(Value::Null));
-      SwitchStrategy::parse(map.get(agent).map(String::as_str))
+    // One strategy for every agent; the setting is read at each switch, so an edit applies to the next exhausted turn
+    accounts.set_switch_policy(Arc::new(move |_agent: &str| {
+      SwitchStrategy::parse(policy.read_setting("accountSwitch").as_ref().and_then(Value::as_str))
     }));
 
     let sessions_dir = root.join("sessions");

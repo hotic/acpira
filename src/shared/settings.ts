@@ -5,12 +5,10 @@ import { isLanguage, type Language, type Locale } from './i18n';
 // Long lists (Devin's 210 models) are trimmed to what is actually used via this; the option currently selected is never hidden
 export type HiddenMap = Record<AgentId, Record<string, string[]>>;
 
-// Which saved account takes over when the bound one runs out of quota (acpira.accountSwitch, per agent; absent = earliestReset):
+// Which saved account takes over when the bound one runs out of quota (acpira.accountSwitch, one choice for every agent; default off):
 // the one whose nearest allowance window resets first, the one with the most allowance left, the next one in list order, or no automatic switch
-export type AccountSwitchStrategy = 'earliestReset' | 'mostRemaining' | 'listOrder' | 'off';
-export const ACCOUNT_SWITCH_STRATEGIES: AccountSwitchStrategy[] = ['earliestReset', 'mostRemaining', 'listOrder', 'off'];
-export const DEFAULT_ACCOUNT_SWITCH: AccountSwitchStrategy = 'earliestReset';
-export type AccountSwitchMap = Record<AgentId, AccountSwitchStrategy>;
+export type AccountSwitchStrategy = 'off' | 'earliestReset' | 'mostRemaining' | 'listOrder';
+export const ACCOUNT_SWITCH_STRATEGIES: AccountSwitchStrategy[] = ['off', 'earliestReset', 'mostRemaining', 'listOrder'];
 
 // Color scheme of the Acpira panels: `auto` follows the VS Code theme, a fixed scheme ignores the host palette
 export type ThemeSetting = 'auto' | 'light' | 'dark';
@@ -51,7 +49,7 @@ export interface SettingsView {
   autoCompact: boolean;
   compactAtTokens: number;
   hiddenOptions: HiddenMap;
-  accountSwitch: AccountSwitchMap;
+  accountSwitch: AccountSwitchStrategy;
   theme: ThemeSetting;
   uiFontSize: number;
   codeFontSize: number;
@@ -77,7 +75,7 @@ export const DEFAULT_SETTINGS: SettingsView = {
   autoCompact: true,
   compactAtTokens: 300_000,
   hiddenOptions: {},
-  accountSwitch: {},
+  accountSwitch: 'off',
   theme: 'auto',
   uiFontSize: UI_FONT_SIZE.default,
   codeFontSize: CODE_FONT_SIZE.default,
@@ -115,27 +113,11 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
     case 'hiddenOptions':
       return (isHiddenMap(value) ? value : fallback) as SettingsView[K];
     case 'accountSwitch':
-      return accountSwitchMap(value) as SettingsView[K];
+      return (oneOf(value, ACCOUNT_SWITCH_STRATEGIES) ?? fallback) as SettingsView[K];
     case 'agentOrder':
     case 'disabledAgents':
       return idList(value) as SettingsView[K];
   }
-}
-
-// Unknown strategies are dropped per agent, so one bad entry never costs the others their choice
-function accountSwitchMap(v: unknown): AccountSwitchMap {
-  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
-  const out: AccountSwitchMap = {};
-  for (const [agent, strategy] of Object.entries(v as Record<string, unknown>)) {
-    const s = oneOf(strategy, ACCOUNT_SWITCH_STRATEGIES);
-    if (s) out[agent] = s;
-  }
-  return out;
-}
-
-// The strategy an agent's automatic account switch uses
-export function accountSwitchOf(map: AccountSwitchMap, agent: AgentId): AccountSwitchStrategy {
-  return map[agent] ?? DEFAULT_ACCOUNT_SWITCH;
 }
 
 // Trimmed, non-empty, first occurrence wins; anything that is not an array reads as empty
