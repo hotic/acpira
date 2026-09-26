@@ -15,6 +15,16 @@ use crate::util::now_iso;
 pub struct ScanEnv {
   pub home: String,
   pub cwd: String,
+  /// What `$CONFIG/` expands to
+  pub config: PathBuf,
+}
+
+impl ScanEnv {
+  /// `$CONFIG` from the process environment: XDG config home (%APPDATA% on Windows), else ~/.config
+  pub fn new(home: String, cwd: String) -> Self {
+    let config = config_home(&home);
+    Self { home, cwd, config }
+  }
 }
 
 pub struct ScanInput {
@@ -66,7 +76,7 @@ pub async fn scan_inventory(input: ScanInput, env: &ScanEnv) -> AgentInventory {
   out
 }
 
-fn config_home(env: &ScanEnv) -> PathBuf {
+fn config_home(home: &str) -> PathBuf {
   if cfg!(windows)
     && let Ok(a) = std::env::var("APPDATA")
     && !a.is_empty()
@@ -75,7 +85,7 @@ fn config_home(env: &ScanEnv) -> PathBuf {
   }
   match std::env::var("XDG_CONFIG_HOME") {
     Ok(x) if !x.is_empty() => PathBuf::from(x),
-    _ => Path::new(&env.home).join(".config"),
+    _ => Path::new(home).join(".config"),
   }
 }
 
@@ -84,7 +94,7 @@ pub fn expand_path(template: &str, env: &ScanEnv) -> String {
   let p = if let Some(rest) = template.strip_prefix("~/") {
     Path::new(&env.home).join(rest)
   } else if let Some(rest) = template.strip_prefix("$CONFIG/") {
-    config_home(env).join(rest)
+    env.config.join(rest)
   } else if Path::new(template).is_absolute() {
     PathBuf::from(template)
   } else {
