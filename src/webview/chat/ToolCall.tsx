@@ -19,7 +19,7 @@ import { GeneratedImages } from './GeneratedImage';
 import { TerminalOutput } from './Terminal';
 import { toolVerb } from './folding';
 import { AsyncTaskStopContext, OpenToolFileContext } from './fileLinks';
-import { fileReference, toolFiles } from './toolDetails';
+import { fileReference, toolFiles, visibleToolContents } from './toolDetails';
 import { useToolSeconds } from './useToolSeconds';
 
 export { OpenToolFileContext } from './fileLinks';
@@ -40,6 +40,7 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
   const execute = block.kind === 'execute';
   const seconds = useToolSeconds(block);
   const files = toolFiles(block);
+  const visibleContent = visibleToolContents(block);
   const Icon = toolIcon(block);
   const todos = toolTodoEntries(block);
 
@@ -114,11 +115,12 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
     </ConnectedRail>
   );
   // File-less responses must not fall through to the generic raw-output disclosure.
-  if (block.kind === 'read' || block.kind === 'search' || (grouped && !block.content)) return <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
+  if (block.kind === 'read' || block.kind === 'search' || (block.kind === 'edit' && !visibleContent.length && !task)
+    || (grouped && !block.content)) return <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
 
   // Opening a process fold reveals action rows; outputs only expand on an explicit click.
   return (
-    <Disclosure className="action-details" tone="action" lead={lead} trailing={trailing} indent={false} rail={block.content?.type === 'list' ? 'rows' : false} defaultOpen={!grouped && execute && running} body={<><TaskMeta task={block.asyncTask} /><ToolBody block={block} /></>}>
+    <Disclosure className="action-details" tone="action" lead={lead} trailing={trailing} indent={false} rail={block.content?.type === 'list' ? 'rows' : false} defaultOpen={!grouped && execute && running} body={<><TaskMeta task={block.asyncTask} /><ToolBody block={block} items={visibleContent} /></>}>
       {label}
     </Disclosure>
   );
@@ -173,8 +175,7 @@ export const ReadGroup = memo(function ReadGroup({ blocks }: { blocks: ToolCallB
   </ConnectedRail>;
 }, (a, b) => a.blocks.length === b.blocks.length && a.blocks.every((block, i) => block === b.blocks[i]));
 
-function ToolBody({ block }: { block: ToolCallBlock }) {
-  const c = block.content;
+function ToolBody({ block, items }: { block: ToolCallBlock; items: ReturnType<typeof visibleToolContents> }) {
   // Command output owns the execute body; an image it produced (screenshot tools) renders below the text
   if (block.kind === 'execute') {
     const images = block.contents?.filter((i): i is Extract<typeof i, { type: 'image' }> => i.type === 'image') ?? [];
@@ -182,9 +183,9 @@ function ToolBody({ block }: { block: ToolCallBlock }) {
   }
   // Several content items in one update (e.g. two diffs with a receipt line between them) render stacked in wire order —
   // each diff keeps its own file path, `content` alone would only ever show the first
-  if (block.contents && block.contents.length > 1) {
+  if (items.length > 1) {
     return <div className="flex flex-col gap-gap">
-      {block.contents.map((item, i) => {
+      {items.map((item, i) => {
         if (item.type === 'diff') return <DiffBlock key={i} lines={item.lines} source={item.source} path={item.source?.path ?? block.locations?.[0]?.path ?? block.target} />;
         if (item.type === 'list') return <ResultList key={i} items={item.items} kind={block.kind} />;
         if (item.type === 'image') return <AgentImage key={i} image={item} />;
@@ -192,6 +193,7 @@ function ToolBody({ block }: { block: ToolCallBlock }) {
       })}
     </div>;
   }
+  const c = items[0];
   if (!c) return null;
   if (c.type === 'diff') return <DiffBlock lines={c.lines} source={c.source} path={block.locations?.[0]?.path ?? block.target} />;
   if (c.type === 'list') return <ResultList items={c.items} kind={block.kind} />;

@@ -2,12 +2,24 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { setLocale } from '../src/webview/i18n';
 import { foldActivity, toolVerb } from '../src/webview/chat/folding';
 import type { AgentTurn, ToolCallBlock } from '../src/shared/transcript';
-import { fileReference, groupReadCalls, isLineCount, toolFiles } from '../src/webview/chat/toolDetails';
+import { fileReference, groupReadCalls, isLineCount, toolFiles, visibleToolContents } from '../src/webview/chat/toolDetails';
 import { agentTurn } from './fixtures/engine';
 
 afterEach(() => setLocale('en'));
 
 describe('ACP tool presentation', () => {
+  it('hides only redundant receipts on completed edits', () => {
+    const diff = { type: 'diff' as const, lines: [] };
+    const receipt = { type: 'text' as const, text: 'Edit applied successfully.' };
+    const detail = { type: 'text' as const, text: 'Replaced 3 occurrences.' };
+    const edit: ToolCallBlock = { type: 'tool_call', id: 'edit', kind: 'edit', verb: 'Edit', status: 'completed',
+      content: diff, contents: [receipt, diff, detail] };
+    expect(visibleToolContents(edit)).toEqual([diff, detail]);
+    expect(visibleToolContents({ ...edit, content: receipt, contents: undefined })).toEqual([]);
+    expect(visibleToolContents({ ...edit, contents: [{ type: 'text', text: 'Wrote file successfully.' }, diff] })).toEqual([diff]);
+    expect(visibleToolContents({ ...edit, status: 'failed' })).toEqual([receipt, diff, detail]);
+    expect(visibleToolContents({ ...edit, kind: 'other' })).toEqual([receipt, diff, detail]);
+  });
   it.each([
     ['/repo/my file.ts:408–420', { path: '/repo/my file.ts', line: 408 }],
     ['src/a.ts:12:8', { path: 'src/a.ts', line: 12 }],
