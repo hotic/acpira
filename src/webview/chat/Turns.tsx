@@ -154,6 +154,8 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   const shown = useMemo(() => raw.blocks.some(b => b.type === 'tool_call' && b.subagentId !== undefined)
     ? { ...raw, blocks: raw.blocks.filter(b => b.type !== 'tool_call' || b.subagentId === undefined) } : raw, [raw]);
   const sections = splitPlanSections(shown.blocks);
+  // A /compact reply that so far holds only its compaction row: that row shimmers in place, so no generic Working row above it
+  const compactionOnly = !!compacting && shown.blocks.length > 0 && shown.blocks.every(b => b.type === 'compaction');
   const entranceScope = useId();
   const entrance = useMemo(() => ({ live: running, scope: memoryKey ?? entranceScope }), [running, memoryKey, entranceScope]);
   const noticeActions = useMemo<NoticeActions>(() => ({
@@ -173,7 +175,7 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
       };
       return <Fragment key={section.key}>
         {(section.blocks.length > 0 || (lastSection && (running || outcomeOf(shown)))) && <AgentContent turn={content} index={index}
-          running={lastSection && running} onPermission={onPermission}
+          running={lastSection && running} compactionOnly={compactionOnly} onPermission={onPermission}
           memoryKey={memoryKey && (i === 0 ? memoryKey : `${memoryKey}:after-plan:${section.key}`)}
           subagents={lastSection ? subagents : undefined} allSubagents={lastSection ? allSubagents : undefined} onInspect={onInspect} lead={lead} />}
         {section.plan && <PlanDocument block={section.plan}
@@ -191,14 +193,15 @@ interface SubagentSlots {
   lead?: 'orb' | 'static';
 }
 
-function AgentContent({ turn, index, running, onPermission, memoryKey, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; index: number; running: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
+function AgentContent({ turn, index, running, compactionOnly, onPermission, memoryKey, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; index: number; running: boolean; compactionOnly?: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
   const { fold } = useAppearance();
-  if (fold === 'codex') return <CodexMessage turn={turn} running={running} onPermission={onPermission} memoryKey={memoryKey} subagents={subagents} allSubagents={allSubagents} onInspect={onInspect} lead={lead} />;
+  const working = running && !compactionOnly;
+  if (fold === 'codex') return <CodexMessage turn={turn} running={running} working={working} onPermission={onPermission} memoryKey={memoryKey} subagents={subagents} allSubagents={allSubagents} onInspect={onInspect} lead={lead} />;
   // Plan approvals live on the plan card and the open question card above the composer; neither takes a slot in the message
   const groups = groupBlocks(turn.blocks.filter(b => (b.type !== 'permission' || !b.planId) && (b.type !== 'question' || !!b.outcome)));
   return (
     <div className="flex flex-col gap-gap">
-      <Activity turn={turn} running={running} leadKind={lead} />
+      <Activity turn={turn} running={working} leadKind={lead} />
       {groups.map((g, gi) => (
         <div key={g.kind === 'block' && 'id' in g.block && g.block.id ? g.block.id : `g${gi}`}>
           {g.kind === 'lines'
@@ -397,14 +400,15 @@ function CursorFold({ blocks }: { blocks: ToolCallBlock[] }) {
 // thoughts before any tool call are its children, open by default (a separate Working row above a sibling Thinking
 // row read as the same status twice, and swapping it for the fold head at the first tool replayed the entrance).
 // Permission cards stay outside; the latest reply remains visible while it streams.
-function CodexMessage({ turn, running, onPermission, memoryKey, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; running: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
+// `working` is false while a /compact reply shows only its compaction row, which retires the head the same way a settled turn does
+function CodexMessage({ turn, running, working = running, onPermission, memoryKey, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; running: boolean; working?: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
   const { process, reply, permissions, notices } = splitCodexBlocks(turn.blocks);
   const hasTools = turn.blocks.some(block => block.type === 'tool_call');
   // Generated images are results, not process detail: they stay visible however the fold is set
   const generations = turn.blocks.filter(isImageGenBlock);
   return (
     <div className="flex flex-col gap-gap">
-      <CodexFold turn={turn} blocks={process} running={running} hasTools={hasTools} memoryKey={memoryKey} lead={lead} />
+      <CodexFold turn={turn} blocks={process} running={working} hasTools={hasTools} memoryKey={memoryKey} lead={lead} />
       {notices.map(b => <NoticeRow key={b.id} block={b} />)}
       {generations.map(b => <GeneratedImages key={b.id} block={b} />)}
       {subagents !== undefined && subagents.length > 0 && onInspect !== undefined && (
