@@ -12,6 +12,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.
 - Steer / interrupt follow-up modes remain planned. Mid-turn messages stay in the host-side queue.
 
+## [1.7.1] - 2026-09-27
+
+### Added
+
+- The Claude and Codex login already present in the CLI's own home is listed as an account without clicking **+**: it is picked up at startup, on window focus and when the accounts view refreshes quotas. Signing in again as another identity renames that local account instead of adding a second one, and a removed local login stays hidden (`~/.acpira/accounts-dismissed.json`) until it is imported again.
+- The docked subagent inspector can be resized by dragging its edge; double-click resets the width.
+- Subagent rows sit in a frame, and a live child's dotted running mark folds into a check when it finishes.
+
+### Changed
+
+- Provider retries (Claude `api_retry`, pi-acp retry chunks) show in the working label as "Retrying (attempt N/M)", with the adapter's text as tooltip, instead of stacking a transcript row per attempt. Streamed content, an error or the end of the turn clears it; a turn that ends mid-retry keeps the warning as its reason.
+- Claude's per-question **Other** box and Codex's note field become the question's own Other row instead of an extra English question, and the adapters' fixed English form messages are dropped. Choices stay on the question and typed text goes back to the adapter's companion field.
+
+### Fixed
+
+- A fresh Claude session no longer shows a 200k context window (and a false budget-exceeds-window warning) on models with a larger one while the first turn runs; the window a finished turn confirmed for the same account and model, or the built-in catalogue for official Anthropic models, is used. Models behind a custom `ANTHROPIC_BASE_URL` keep the adapter's value.
+- Subagent rows stay at the point of delegation in the turn instead of trailing the latest content.
+- Completed edits no longer repeat an "Edit applied successfully." / "Wrote file successfully." receipt below their diff; other output and failures stay visible.
+- Refreshing an agent's settings page keeps its inventory and controls on screen while the probe runs (the button spins until it replies and also re-reads quotas), and header actions line up with the cards' right edge.
+
 ## [1.7.0] - 2026-09-26
 
 ### Added
