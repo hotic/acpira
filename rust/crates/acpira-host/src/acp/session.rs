@@ -170,6 +170,8 @@ pub(crate) struct Core {
   pub usage_timer: Option<tokio::task::AbortHandle>,
   pub usage_inflight: bool,
   pub pi_stamp: Option<super::pi_usage::Stamp>,
+  /// Claude's last `usage_update.size` as the adapter sent it, before `claude_window` corrected it
+  pub reported_window: Option<f64>,
   pub finish_usage_refresh: Option<oneshot::Sender<bool>>,
   pub syncing_thought: bool,
   pub adopting: bool,
@@ -265,6 +267,7 @@ impl AcpSession {
           usage_timer: None,
           usage_inflight: false,
           pi_stamp: None,
+          reported_window: None,
           finish_usage_refresh: None,
           syncing_thought: false,
           adopting: false,

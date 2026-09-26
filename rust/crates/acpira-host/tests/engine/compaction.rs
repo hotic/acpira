@@ -233,3 +233,23 @@ async fn polling_continues_during_quiet_model_work() {
   assert!(s.is_running());
   p.await.unwrap();
 }
+
+// claude-agent-acp 0.81.0 streams its 200000 placeholder until the turn's result: an official 1M model shows its window at
+// once, a gateway alias keeps what the adapter says (Claude Code sizes those at 200k)
+#[tokio::test(flavor = "multi_thread")]
+async fn claude_placeholder_window_is_replaced_for_official_models_only() {
+  let fake = fake_or_skip!();
+  for (base, size) in [("https://api.anthropic.com", 1_000_000), ("https://gw.example/v1", 200_000)] {
+    let h = Harness::for_agent(
+      &fake,
+      "claude",
+      json!({ "env": { "FAKE_CONFIG_USAGE": "1", "FAKE_MODELS": "claude-opus-5-5", "ANTHROPIC_BASE_URL": base } }),
+    );
+    let s = started(&h).await;
+    // The fake answers a config change with the usage before the new options, so the second change reports under the new model
+    s.set_config("model".into(), "claude-opus-5-5".into()).await.unwrap();
+    s.set_config("effort".into(), "low".into()).await.unwrap();
+    until(|| usage(&s)["used"] == 24_000, 3000).await;
+    assert_eq!(usage(&s)["size"], size, "{base}");
+  }
+}

@@ -13,6 +13,7 @@ use acpira_shared::turn_errors::is_context_length_error;
 use acpira_shared::turn_settings::capture_turn_settings;
 
 use super::attachments::{PreparedPrompt, prepare_prompt, prompt_caps_of, restore_drafts};
+use super::claude_window;
 use super::compaction::{CompactionCompletion, is_compact_command};
 use super::normalize::{activity_of, apply_async_task, apply_session_failure, apply_update, end_turn, fail_turn, set_stop_requested};
 use super::pi_usage;
@@ -324,6 +325,12 @@ impl AcpSession {
             apply_session_failure(&mut self.core.lock().state, f);
           }
           if stop == TurnStop::EndTurn {
+            if self.agent == "claude" {
+              let c = self.core.lock();
+              if let Some(size) = c.reported_window {
+                claude_window::confirm(c.account_id.as_deref(), &c.state.controls, size);
+              }
+            }
             let pending = self.core.lock().completion.as_mut().and_then(CompactionCompletion::wait);
             if let Some(rx) = pending {
               self.log("waiting for compaction completion");
@@ -959,6 +966,15 @@ impl AcpSession {
       let head: String = title.chars().take(60).collect();
       self.log(&format!("agent title ignored: {head}"));
       u["title"] = Value::Null;
+    }
+    if self.agent == "claude"
+      && kind == "usage_update"
+      && let Some(size) = u.get("size").and_then(Value::as_f64)
+    {
+      c.reported_window = Some(size);
+      if let Some(w) = claude_window::correct(c.account_id.as_deref(), &c.state.controls, size, &crate::model_catalog::current()) {
+        u["size"] = w.into();
+      }
     }
     if kind == "agent_message_chunk"
       && let Some(banner) = c.startup_banner.clone()
