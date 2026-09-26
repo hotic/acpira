@@ -63,6 +63,8 @@
 
   --brand: #e6a63e;
   --brand-fg: #1b1300;
+  /* Slash command / skill pills: one colour for every agent, independent of the accent axis */
+  --command: #6ea8fe;
   --agent-devin: #6ea8fe;
   --agent-devin-fg: #0b1220;
   --agent-grok: #e8e8e8;
@@ -228,6 +230,7 @@
   --danger: #cf222e;
   --brand: #b7791f;
   --brand-fg: #ffffff;
+  --command: #2f6fe0;
   --agent-devin: #2f6fe0;
   --agent-devin-fg: #ffffff;
   --agent-grok: #1a1a1a;
@@ -287,6 +290,8 @@
 
 [data-accent="brand"]  { --accent: var(--brand); --accent-fg: var(--brand-fg); }
 [data-accent="vscode"] { --accent: var(--focus); --accent-fg: #ffffff; }
+/* Agents without a colour of their own take the brand accent, so accent surfaces (command pills, plan dots, send) never go transparent */
+[data-accent="agent"] { --accent: var(--brand); --accent-fg: var(--brand-fg); }
 [data-accent="agent"][data-agent="devin"] { --accent: var(--agent-devin); --accent-fg: var(--agent-devin-fg); }
 [data-accent="agent"][data-agent="grok"]  { --accent: var(--agent-grok); --accent-fg: var(--agent-grok-fg); }
 
@@ -333,6 +338,7 @@
   --color-focus: var(--focus);
   --color-scrim: var(--scrim);
   --color-accent: var(--accent);
+  --color-command: var(--command);
   --color-accent-fg: var(--accent-fg);
   --color-btn-1: var(--btn-1-bg);
   --color-btn-1-fg: var(--btn-1-fg);

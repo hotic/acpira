@@ -3,7 +3,7 @@ import { useMergedRefs } from '../ui/mergeRefs';
 import { cn } from '../ui/cn';
 import type { CommandMark } from './slashCommands';
 
-export const COMMAND_MARK = 'rounded-sm -mx-1 px-1 py-0.5 bg-accent/15 text-accent [box-decoration-break:clone]';
+export const COMMAND_MARK = 'rounded-sm -mx-1 px-1 py-0.5 bg-command/15 text-command [box-decoration-break:clone]';
 
 // The text broken around the marks into plain runs and <mark> pills, for the composer mirror and the sent user message alike
 export function commandSegments(value: string, marks: readonly CommandMark[]): ReactNode[] {
