@@ -597,7 +597,8 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
   });
   return (
     <div ref={ref} data-thread className="scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto px-page [container-type:size] [overflow-anchor:none]">
-      <div key={replayKey} ref={contentRef} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-gap', wide && 'max-w-(--content-w)')}>
+      {/* The tail clearance equals the message gap, so the last message sits as far from the composer as from the message above it */}
+      <div key={replayKey} ref={contentRef} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-(--content-w)')}>
         {exchanges.map(exchange => (
           // Positioned so the prompt's stuck-state sentinel can sit at the exchange's top edge. Paint containment gives each exchange
           // its own paint offset, so a fold opening mid-thread no longer re-walks every later exchange each frame (see docs/dev/webview.md,
