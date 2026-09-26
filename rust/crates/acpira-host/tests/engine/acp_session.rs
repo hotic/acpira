@@ -2532,3 +2532,44 @@ async fn a_live_async_task_restores_with_observation_unknown_and_its_last_state(
   expect_match(&row["asyncTask"], json!({ "id": "t1", "state": "running", "canStop": false, "name": "sleep 120" }));
   expect_absent(&row["asyncTask"], "stopRequested");
 }
+
+fn option_ids(view: &Value, id: &str) -> Vec<String> {
+  let control = view["controls"]["options"].as_array().unwrap().iter().find(|o| o["id"] == id).cloned().unwrap_or(Value::Null);
+  control["options"].as_array().map(|a| a.iter().map(|o| o["id"].as_str().unwrap_or("").to_owned()).collect()).unwrap_or_default()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pi_custom_model_offers_only_the_efforts_pi_and_the_catalogue_both_allow() {
+  let fake = fake_or_skip!();
+  // pi's own model data: a gateway provider whose models set `reasoning` but no thinkingLevelMap (pi clamps to off…high)
+  let pi = tempfile::tempdir().unwrap();
+  let models = json!({ "providers": { "asgard": { "baseUrl": "https://gateway.example/v1", "api": "openai-completions", "models": [
+    { "id": "gemini-3.8-flash", "reasoning": true }, { "id": "unlisted-9", "reasoning": true }
+  ] } } });
+  std::fs::write(pi.path().join("models.json"), models.to_string()).unwrap();
+  let h = Harness::for_agent(&fake, "pi", json!({ "env": {
+    "PI_CODING_AGENT_DIR": pi.path().to_string_lossy(),
+    "FAKE_MODELS": "asgard/gemini-3.8-flash,asgard/unlisted-9",
+    "FAKE_EFFORTS": "off,minimal,medium,xhigh,max",
+  } }));
+  let s = started(&h, "/tmp").await;
+  // m1 is in neither pi's data nor the catalogue: the adapter's list stands
+  assert_eq!(option_ids(&view(&s), "effort"), ["low", "high", "off", "minimal", "medium", "xhigh", "max"]);
+  s.set_config("effort".into(), "max".into()).await.unwrap();
+  s.select_config("model".into(), "asgard/gemini-3.8-flash".into()).await.unwrap();
+  let vw = view(&s);
+  let gemini = vw["controls"]["options"].as_array().unwrap().iter().find(|o| o["id"] == "model").unwrap()["options"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|o| o["id"] == "asgard/gemini-3.8-flash")
+    .cloned()
+    .unwrap();
+  expect_match(&gemini, json!({ "name": "gemini-3.8-flash", "source": { "id": "asgard", "kind": "custom" } }));
+  // Google documents low / medium / high; max was narrowed away and corrected to a value the model offers
+  assert_eq!(option_ids(&vw, "effort"), ["low", "high", "medium"]);
+  assert_eq!(option_value(&vw, "effort"), "high");
+  // Unknown to the catalogue: pi's own levels alone, so xhigh / max (which pi would clamp) are gone
+  s.select_config("model".into(), "asgard/unlisted-9".into()).await.unwrap();
+  assert_eq!(option_ids(&view(&s), "effort"), ["low", "high", "off", "minimal", "medium"]);
+}

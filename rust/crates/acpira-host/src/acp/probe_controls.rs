@@ -6,13 +6,12 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use acpira_shared::inventory::{AgentHealthStage, AgentRuntimeInfo};
-use acpira_shared::model_sources::apply_model_sources;
 use acpira_shared::transcript::{ConfigControl, SessionControls, StrMap};
 
 use super::agent_pool::IdleHandlers;
 use super::agent_process::{AgentProcess, AgentSpawnError};
 use super::agent_registry::AgentDef;
-use super::model_sources::read_model_sources;
+use super::model_sources::{read_model_facts, refine_controls};
 use super::normalize::{init_controls, runtime_info_of};
 use super::session_errors::is_auth;
 use crate::store::transcript_store::LogFn;
@@ -68,7 +67,7 @@ pub async fn probe_agent_controls(
     session_id = r.get("sessionId").and_then(Value::as_str).map(str::to_owned);
     let mut controls = SessionControls::default();
     init_controls(&mut controls, r.get("modes"), r.get("configOptions"));
-    apply_model_sources(&def.id, &mut controls.options, &read_model_sources(&def.id, cwd).await);
+    refine_controls(&def.id, &mut controls.options, &read_model_facts(def, cwd).await);
     let summary: Vec<String> = controls.options.iter().map(|o| format!("{}({})", o.id, o.options.len())).collect();
     log(&format!("probe {}: session/new ok · options {}", def.command, if summary.is_empty() { "-".into() } else { summary.join(" ") }));
     Ok::<_, anyhow::Error>(ProbeResult { options: controls.options, runtime: runtime_info_of(&proc.init) })

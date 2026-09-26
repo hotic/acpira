@@ -179,6 +179,7 @@ impl HostRuntime {
         rt.accounts.reload().await;
       });
     }));
+    tokio::spawn(crate::model_catalog::refresh(root.clone(), log.clone()));
     runtime.manager.init().await;
     set_host_locale(runtime.settings.locale());
     Ok(runtime)

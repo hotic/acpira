@@ -12,6 +12,7 @@ pub mod composer_controls;
 pub mod export_transcript;
 pub mod i18n;
 pub mod inventory;
+pub mod model_catalog;
 pub mod model_shapes;
 pub mod model_sources;
 pub mod models;

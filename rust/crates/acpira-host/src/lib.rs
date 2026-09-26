@@ -15,6 +15,7 @@ pub mod i18n;
 pub mod inventory;
 pub mod json;
 pub mod limits;
+pub mod model_catalog;
 pub mod node_files;
 pub mod runtime;
 pub mod session_manager;

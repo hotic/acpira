@@ -40,7 +40,12 @@ pub enum Snapshot {
 
 /// `PI_CODING_AGENT_DIR` (with `~` expanded) or `~/.pi/agent`, like pi's `getAgentDir`
 pub fn agent_dir() -> PathBuf {
-  match std::env::var(AGENT_DIR_ENV).ok().filter(|s| !s.trim().is_empty()) {
+  agent_dir_of(std::env::var(AGENT_DIR_ENV).ok())
+}
+
+/// `agent_dir` for a given `PI_CODING_AGENT_DIR` value (an agent entry's own env)
+pub fn agent_dir_of(value: Option<String>) -> PathBuf {
+  match value.filter(|s| !s.trim().is_empty()) {
     Some(d) if d == "~" => home_dir(),
     Some(d) => d.strip_prefix("~/").map(|rest| home_dir().join(rest)).unwrap_or_else(|| PathBuf::from(d)),
     None => home_dir().join(".pi").join("agent"),

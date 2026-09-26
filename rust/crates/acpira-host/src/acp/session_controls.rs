@@ -39,6 +39,14 @@ impl AcpSession {
     true
   }
 
+  /// A set_config_option answer is the full configOptions set; it is narrowed at once, so the effort restore and
+  /// `sync_thought` below only ever pick values the view will offer
+  fn adopt_config_response(&self, r: &Value) {
+    let mut c = self.core.lock();
+    apply_config_options(&mut c.state.controls, r.get("configOptions").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]));
+    self.refine_controls(&mut c);
+  }
+
   fn editing_guard(&self) -> Result<()> {
     if self.core.lock().phase.editing { Err(anyhow!(t("history.unavailable"))) } else { Ok(()) }
   }
@@ -57,10 +65,7 @@ impl AcpSession {
       };
       if let Some(config_id) = mode_config {
         let r = proc.request("session/set_config_option", json!({ "sessionId": sid, "configId": config_id, "value": id })).await?;
-        apply_config_options(
-          &mut me.core.lock().state.controls,
-          r.get("configOptions").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]),
-        );
+        me.adopt_config_response(&r);
         me.sync_thought().await?;
       } else if me.synthetic_modes().is_some() {
         // yolo is host-side auto-approval: the CLI stays in default (pulled back first when coming from plan)
@@ -120,10 +125,7 @@ impl AcpSession {
         params[k] = v;
       }
       let r = proc.request("session/set_config_option", params).await?;
-      apply_config_options(
-        &mut me.core.lock().state.controls,
-        r.get("configOptions").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]),
-      );
+      me.adopt_config_response(&r);
       for (id, prev) in reasoning {
         let Some(prev) = prev else { continue };
         let restore = {
@@ -247,8 +249,9 @@ impl AcpSession {
     result
   }
 
-  /// Kimi appends the previous thinking value when the new model does not offer it: push a native value instead
-  async fn sync_thought(self: &Arc<Self>) -> Result<()> {
+  /// Kimi appends the previous thinking value when the new model does not offer it, and the catalogue may narrow the
+  /// current one away: push a native value instead
+  pub(crate) async fn sync_thought(self: &Arc<Self>) -> Result<()> {
     self.core.lock().syncing_thought = true;
     let ids: Vec<String> = self.core.lock().state.controls.options.iter().map(|o| o.id.clone()).collect();
     let mut result = Ok(());
