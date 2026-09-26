@@ -2,7 +2,7 @@
 
 **原生的 Agent Harness，讲究的交互体验。**
 
-在 VS Code、Cursor 与 IntelliJ IDEA 中使用 Grok、Devin、Kimi Code 及其他 ACP Agent。保留各自的执行引擎，清晰查看执行过程、审批操作，在任务进行时继续安排下一步。
+在 VS Code、Cursor 与 IntelliJ IDEA 中使用 Grok、Devin、Kimi Code、Codex、Claude、OpenCode、Pi 及其他 ACP Agent。保留各自的执行引擎，清晰查看执行过程、审批操作，在任务进行时继续安排下一步。
 
 [English](README.md) · **简体中文**
 
@@ -14,7 +14,7 @@
 
 - **执行记录。** 在对话中查看文件读取、代码修改和命令输出。
 - **消息队列与审批。** Agent 工作时可追加排队消息，计划审阅和权限审批在对话中完成。
-- **切换 Agent，保留熟悉的操作。** 支持 Grok、Devin、Kimi Code 及其他兼容 ACP 的 CLI，共用会话管理与模型控制界面。
+- **切换 Agent，保留熟悉的操作。** 支持 Grok、Devin、Kimi Code、Codex、Claude、OpenCode、DSH、Pi 及其他兼容 ACP 的 CLI，共用会话管理与模型控制界面。
 
 <table width="100%">
   <tr>
@@ -75,21 +75,29 @@ Acpira 位于活动栏，通过 [ACP](https://agentclientprotocol.com)（JSON-RP
 - `kimi acp`
 - `codex-acp`
 - `claude-agent-acp`
+- `opencode acp`
+- `dsh --profile acp`
+- `pi-acp`
 - 任何兼容 ACP 的命令（通过 `acpira.agents` 添加）
 
-界面、会话、权限审批、账号与上下文预算由扩展管理；模型调用、Agent 执行与上下文压缩仍由各 CLI 完成。
+界面、会话、权限审批、账号与上下文预算由 Acpira 管理；模型调用、Agent 执行与上下文压缩仍由各 CLI 完成。Acpira 的引擎是随各平台安装包附带的原生小程序，VS Code、Cursor 与 IntelliJ IDEA 共用同一套实现；Acpira 本身不需要 Node.js。
 
 支持为每个 Agent 保存多个账号、粘贴或拖入图片，以及通过 `@` 附加工作区文件。对话可在侧栏或编辑器标签页中打开。
 
 ## 安装
 
-1. 用 `.vsix` 安装扩展（**从 VSIX 安装…**），或在上架后从 Marketplace 安装。IntelliJ IDEA 2026.1 及以上可从 JetBrains Marketplace 安装插件，或从 `acpira-<version>-universal.zip` 安装（**Settings → Plugins → ⚙ → Install Plugin from Disk…**）；通用包内置各支持平台的原生后端，无需 Node.js，并支持客户端与后端操作系统不同的远程开发。GitHub 上另有体积更小的单平台包。
+1. 从 [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=hotic.acpira)（VS Code）或 [Open VSX](https://open-vsx.org/extension/hotic/acpira)（Cursor 及其他基于 VS Code 的编辑器）安装 **Acpira**。每个 [GitHub Release](https://github.com/hotic/acpira/releases) 也附有 macOS、Linux、Alpine、Windows（x64 与 arm64）的单平台 `.vsix`，可用 **从 VSIX 安装…** 安装。IntelliJ IDEA 2026.1 及以上可从 JetBrains Marketplace 安装插件，或从 `acpira-<version>-universal.zip` 安装（**Settings → Plugins → ⚙ → Install Plugin from Disk…**）；通用包内置各支持平台的原生后端，无需 Node.js，并支持客户端与后端操作系统不同的远程开发。GitHub 上另有体积更小的单平台包。
 2. 至少安装一家 Agent CLI，并保证它在 `PATH` 上：
    - [Grok](https://x.ai) — `grok`（`grok agent stdio`）
    - [Devin](https://devin.ai) — `devin`（`devin acp`）
    - [Kimi Code](https://www.kimi.com) — `kimi`（`kimi acp`）
    - [Codex](https://developers.openai.com/codex) — `codex-acp`（`npm install -g @agentclientprotocol/codex-acp`）
    - [Claude](https://code.claude.com) — `claude-agent-acp`（`npm install -g @agentclientprotocol/claude-agent-acp`）
+   - [OpenCode](https://opencode.ai) — `opencode`（`opencode acp`）
+   - [DSH](https://deepseekdocs.com/en/docs/guides/acp-automation-server) — `dsh`（`npm install -g @deepseek-ai/dsh`）
+   - [Pi](https://github.com/svkozak/pi-acp) — `pi` 与 `pi-acp`（`npm install -g @earendil-works/pi-coding-agent pi-acp`）
+
+   未安装 CLI 的 Agent 在菜单中显示为灰色；它的设置页给出官方安装命令，可复制或直接在终端中运行。新装好的 CLI 会被自动识别，无需重新加载窗口。
 3. 点击**活动栏**（左侧）的 Acpira 图标。若未显示，在活动栏空白处右键勾选 **Acpira**。也可把视图拖到副侧栏。IntelliJ IDEA 中打开右侧的 **Acpira** 工具窗，标题栏按钮可把对话开成编辑器标签。
 
 ## 开始使用
@@ -104,23 +112,35 @@ Acpira 位于活动栏，通过 [ACP](https://agentclientprotocol.com)（JSON-RP
 - 从资源管理器拖入文件，或输入 `@` 搜索工作区文件，由 Agent 自行读取。从资源管理器拖入的图片文件会作为图片发送。
 - 从系统文件管理器拖入的文本文件（最大 256 KB）会嵌入消息。不支持二进制文件。
 
-会话、账号和密钥保存在 `~/.acpira`（可用 `ACPIRA_HOME` 覆盖）。Cursor 与 VS Code 共用该目录；两边同时打开时，会话列表可能互相覆盖。重启后，若 Agent 支持恢复，Acpira 会继续该会话；否则历史记录以只读方式保留。上下文用量较高时，Acpira 可自动发送 `/compact`，也可以在上下文面板中手动压缩。
+### 会话与历史
+
+- 会话、账号和密钥保存在 `~/.acpira`（可用 `ACPIRA_HOME` 覆盖）。VS Code、Cursor 与 IntelliJ IDEA 共用该目录，同时打开也不会互相覆盖。
+- 重启后，若 Agent 支持恢复，Acpira 会继续该会话；否则历史记录以只读方式保留。
+- 历史列表中的「导入」会列出该 Agent 在当前项目下的原生会话，选中一项即可带着回放的历史导入 Acpira（需要 Agent 支持列出与加载会话）。
+- 可以编辑或重试之前的消息，从已完成的回复分叉出新会话，或把对话导出为 Markdown / JSON。
+- Devin、Kimi Code、Claude 启动的子代理拥有独立的记录、审批与检查面板，不会混进主对话。
+- 上下文用量较高时，Acpira 可自动发送 `/compact`，也可以在上下文面板中手动压缩。压缩与服务端重试会以行的形式出现在对话中。
 
 ### 账号
 
-Acpira 可为每个 Agent 保存多份登录，并在创建会话时注入凭据。每个会话绑定一个账号，选择另一账号会创建新会话。
+Acpira 可为 Devin、Codex、Claude 保存多份登录，并在创建会话时注入凭据。每个会话绑定一个账号，选择另一账号会创建新会话。Grok 与 Kimi Code 会显示本机 CLI 登录的额度。
 
 - Agent 菜单的下半部分列出已保存的账号，选择一项即可用该账号创建新会话。「导入 CLI 登录」读取该 CLI 本机已有的登录（Devin 为 `~/.local/share/devin/credentials.toml`）。「在终端登录」在隔离目录中运行该 Agent 的登录命令，不影响本机已有登录。远程服务器上同样可用：复制链接并粘贴验证码。
 - 密钥写在 `secrets.json`（权限 600），不是系统钥匙串。`accounts.json` 仅保存邮箱、套餐等元信息。会话记录只存储账号 id。
 - 每个会话自始至终绑定一个账号。登录提示上的「仅本次」选项（例如 Devin 的「浏览器登录」）只认证当前进程，不会保存。
+- 「自动切换账号」（通用设置，默认关闭）会在绑定账号于任务中途耗尽额度时换用另一个已保存账号，并继续同一个 Agent 会话。下一个账号可按最早重置、剩余额度最多或列表顺序挑选。
 
 尚未提供账号列表的 Agent，仍使用各自 CLI 的登录。
 
+### 设置
+
+每个 Agent 有独立的设置页：安装与登录状态、适配器版本、模型显隐，以及该 Agent 从自身配置中加载的 MCP 服务、Skills、规则与配置文件（只读查看）。在设置导航中可以拖动排序或停用 Agent。外观页可调整主题、字号、密度与动效。
+
 ## 路线图
 
-- 更多 Agent 接入：通过 ACP 或适配器支持 Antigravity、Claude Code、OpenCode、Cursor CLI、Pi 等。
+- 更多 Agent 接入：通过 ACP 或适配器支持 Antigravity、Cursor CLI 等。
 - 统一模型配置入口，自动同步到不同 Agent。
-- 统一管理 Skills 与 MCP。
+- 统一管理 Skills 与 MCP，而不只是目前的只读查看。
 - 跨 Harness 共享提示词与项目指令。
 - 长期方向：独立桌面端。
 
@@ -130,16 +150,18 @@ Acpira 可为每个 Agent 保存多份登录，并在创建会话时注入凭据
 
 ```sh
 pnpm install
-pnpm build          # host（esbuild）+ webview（Vite）
+pnpm build          # VS Code 外壳（esbuild）+ webview（Vite）
 pnpm probe grok     # 直接对 CLI 跑 initialize + session/new
 pnpm probe devin --import-local "Reply pong"   # 走账号层：导入本机登录 → authenticate → 一轮
 pnpm typecheck && pnpm test
-pnpm package        # 打 .vsix
+pnpm package        # 打本机平台的 .vsix（含 Rust sidecar）
+(cd rust && cargo test --workspace)                  # 引擎
+cd idea && ./gradlew test buildPlugin verifyPlugin   # IntelliJ 插件；buildMarketplacePlugin 打通用 ZIP；buildPluginVariants 打单平台 ZIP
 ```
 
 按 F5 启动 Extension Development Host。日志在 Output → Acpira。架构与协议说明见 [AGENTS.md](AGENTS.md)。
 
-发布正式版 GitHub Release 后，可自动将同一份 VSIX 发布到 VS Code Marketplace 和 Open VSX。首次凭据配置、版本发布和失败重试见 [发布说明](RELEASING.md)。
+发布正式版 GitHub Release 后，可自动将各平台 VSIX 发布到 VS Code Marketplace 和 Open VSX，并把 IntelliJ 插件发布到 JetBrains Marketplace。首次凭据配置、版本发布和失败重试见 [发布说明](RELEASING.md)。
 
 ## 许可证
 
