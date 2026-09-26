@@ -287,7 +287,8 @@ function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; co
           // With a single configOption the section heading names it; several get one labelled group each
           const several = controls.length > 1;
           // Translate standard categories; preserve names supplied by custom controls.
-          const title = c.category === 'model' ? t('settings.models.selection') : c.name;
+          const title = c.category === 'model' ? t('settings.models.selection')
+            : c.category === 'collaboration_mode' ? t('settings.models.collaboration') : c.name;
           // Agent adapters classify model sources; unclassified ACP options retain their own group.
           const groups = c.category === 'model' && families.some(f => f.sourceKind)
             ? [

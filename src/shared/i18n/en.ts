@@ -592,6 +592,7 @@ export const en = {
   'settings.tab.models': 'Models',
   'settings.models.desc': 'Choose which options appear in the composer menus. Hidden options stay available while in use.',
   'settings.models.selection': 'Model selection',
+  'settings.models.collaboration': 'Collaboration mode',
   'settings.models.search': 'Search models…',
   'settings.models.enabled': '{count} / {total} enabled',
   'settings.models.all': 'All models',
