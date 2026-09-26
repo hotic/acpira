@@ -10,6 +10,7 @@ use anyhow::{Result, anyhow};
 use acpira_shared::transcript::{AccountInfo, AccountQuota, StrMap};
 
 use super::account_store::AccountStore;
+use super::cli_home::LOCAL_LOGIN;
 use super::provider::AccountProvider;
 use super::switch::{SwitchStrategy, parked_until, pick_fallback};
 use crate::acp::agent_process::AgentProcess;
@@ -41,6 +42,8 @@ pub struct AccountManager {
   parked: parking_lot::Mutex<HashMap<String, i64>>,
   switch_policy: parking_lot::Mutex<SwitchPolicy>,
   seq: std::sync::atomic::AtomicU64,
+  /// One `sync_local` at a time: startup, focus and the account view can all ask at once
+  syncing: tokio::sync::Mutex<()>,
 }
 
 impl AccountManager {
@@ -63,6 +66,7 @@ impl AccountManager {
       parked: Default::default(),
       switch_policy: parking_lot::Mutex::new(Arc::new(|_: &str| SwitchStrategy::EarliestReset)),
       seq: Default::default(),
+      syncing: tokio::sync::Mutex::new(()),
     })
   }
 
@@ -196,13 +200,77 @@ impl AccountManager {
     verb: &str,
     toast_key: &str,
   ) -> Result<AccountInfo> {
+    let local = draft.secret == LOCAL_LOGIN;
     let a = self.store.add(agent, draft).await?;
+    if local {
+      // Imported on purpose: the automatic import may keep it up to date again
+      let _ = self.store.set_dismissed(agent, &a.label, false).await;
+    }
     (self.log)(&format!("account {verb}: {agent} {}", a.label));
     (self.toast)("info", &tp(toast_key, &[("label", &a.label)]));
     self.emit();
     // Quota is decoration: do not wait on the vendor before the row appears
     tokio::spawn(self.refresh_quota(&a.id, false));
     Ok(a)
+  }
+
+  /// The saved account that stands for the CLI's own login (secret `LOCAL_LOGIN`), if any
+  async fn local_account(&self, agent: &str) -> Option<AccountInfo> {
+    for a in self.store.list(Some(agent)) {
+      if self.store.credential(&a.id).await.ok().flatten().is_some_and(|c| c.secret == LOCAL_LOGIN) {
+        return Some(a);
+      }
+    }
+    None
+  }
+
+  /// Keep the CLI's own login in the list without a "+" click, for providers whose local login stays in the CLI's store
+  /// (`auto_import`): a login appears as an account, a re-login as another identity renames that account (the CLI
+  /// store it points at now holds the new one), and nothing happens when the login is gone, when an account with that
+  /// label already exists (e.g. the same identity in a private home) or when the user removed it (`dismissed`, cleared
+  /// by importing it again)
+  pub async fn sync_local(self: &Arc<Self>, agent: Option<&str>) {
+    let _serial = self.syncing.lock().await;
+    let providers: Vec<_> =
+      self.providers.values().filter(|p| p.auto_import() && agent.is_none_or(|a| p.agent() == a)).cloned().collect();
+    for p in providers {
+      let agent = p.agent().to_owned();
+      let Some(draft) = p.import_local().await else { continue };
+      if draft.secret != LOCAL_LOGIN || self.store.is_dismissed(&agent, &draft.label).await {
+        continue;
+      }
+      let local = self.local_account(&agent).await;
+      let same_label = self.store.list(Some(&agent)).into_iter().find(|a| a.label == draft.label);
+      let result = match (same_label, local) {
+        (Some(a), Some(l)) if a.id == l.id => {
+          if a.detail == draft.detail {
+            continue;
+          }
+          self.store.set_identity(&a.id, &draft.label, draft.detail.clone()).await.map(|_| a.id)
+        }
+        (Some(_), _) => continue,
+        (None, Some(l)) => {
+          (self.log)(&format!("account local login changed: {agent} {} → {}", l.label, draft.label));
+          self.quotas.lock().remove(&l.id);
+          self.store.set_identity(&l.id, &draft.label, draft.detail.clone()).await.map(|_| l.id)
+        }
+        (None, None) => {
+          let label = draft.label.clone();
+          let added = self.store.add(&agent, draft).await.map(|a| a.id);
+          if added.is_ok() {
+            (self.log)(&format!("account local login picked up: {agent} {label}"));
+          }
+          added
+        }
+      };
+      match result {
+        Ok(id) => {
+          self.emit();
+          tokio::spawn(self.refresh_quota(&id, true));
+        }
+        Err(e) => (self.log)(&format!("account local login {agent}: {e}")),
+      }
+    }
   }
 
   pub async fn import(self: &Arc<Self>, agent: &str) -> Result<Option<AccountInfo>> {
@@ -247,7 +315,16 @@ impl AccountManager {
   pub async fn remove(&self, id: &str) -> Result<()> {
     let owner = self.store.get(id).and_then(|a| self.providers.get(&a.agent).cloned());
     let cred = self.store.credential(id).await.ok().flatten();
+    let info = self.store.get(id);
     self.store.remove(id).await?;
+    // A removed local login would be picked up again on the next sync: remember the user's choice
+    if let (Some(p), Some(a), Some(c)) = (&owner, &info, &cred)
+      && p.auto_import()
+      && c.secret == LOCAL_LOGIN
+      && let Err(e) = self.store.set_dismissed(&a.agent, &a.label, true).await
+    {
+      (self.log)(&format!("account dismiss {}: {e}", a.label));
+    }
     // The provider cleans up what it keeps outside the vault (a CLI home, a keychain entry)
     if let (Some(p), Some(cred)) = (owner, cred)
       && let Some(fut) = p.forget(cred)

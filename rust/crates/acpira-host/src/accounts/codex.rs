@@ -73,6 +73,10 @@ impl AccountProvider for CodexAccountProvider {
     Box::pin(async move { draft_of(&default_home(), LOCAL_LOGIN.into(), None).await })
   }
 
+  fn auto_import(&self) -> bool {
+    true
+  }
+
   /// `codex-acp cli login` (the bundled Codex CLI) with CODEX_HOME pointing at a fresh account home
   fn login(&self) -> BoxFuture<Result<LoginFlow>> {
     let (homes, binary) = (self.homes.clone(), self.binary.clone());
