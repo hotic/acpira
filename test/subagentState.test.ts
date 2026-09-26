@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { translate, type MsgKey, type Params } from '../src/shared/i18n';
 import type { SubagentSummary } from '../src/shared/subagents';
 import type { PermissionBlock, QuestionBlock } from '../src/shared/transcript';
-import { breadcrumb, countsLabel, descendantCount, elapsedMs, elapsedText, flattenTree, nodesByTurn, partitionRows, rootRows, secondLine, stateLabel, subagentTitle } from '../src/webview/chat/subagents/subagentState';
+import { breadcrumb, countsLabel, delegatedIds, placeNodes, descendantCount, elapsedMs, elapsedText, flattenTree, nodesByTurn, partitionRows, rootRows, secondLine, stateLabel, subagentTitle } from '../src/webview/chat/subagents/subagentState';
 
 const zh = (key: MsgKey, params?: Params) => translate('zh-CN', key, params);
 const en = (key: MsgKey, params?: Params) => translate('en', key, params);
@@ -161,5 +161,23 @@ describe('labels', () => {
     expect(elapsedText(n, 90000, en)).toBe('1m');
     expect(elapsedText(node({ announcedAt: 0, endedAt: 65000 }), 0, en)).toBe('1m 5s');
     expect(elapsedText(r, 11000, zh)).toBe('10 秒');
+  });
+});
+
+describe('placing nodes at their delegation', () => {
+  it('hangs descendants under the nearest placed ancestor and leaves the rest trailing', () => {
+    const a = node({ id: 'pa' });
+    const child = node({ id: 'pa1', parentId: 'pa' });
+    const grand = node({ id: 'pa2', parentId: 'pa1' });
+    const loose = node({ id: 'px' });
+    const blocks = [
+      { type: 'tool_call' as const, id: 't1', kind: 'other' as const, verb: 'Agent', status: 'completed' as const, subagentId: 'pa' },
+      { type: 'tool_call' as const, id: 't2', kind: 'other' as const, verb: 'Agent', status: 'completed' as const, subagentId: 'elsewhere' },
+    ];
+    const placed = delegatedIds(blocks, [a, child, grand, loose]);
+    expect([...placed]).toEqual(['pa']);
+    const { byId, rest } = placeNodes([a, child, grand, loose], placed);
+    expect(byId.get('pa')?.map(n => n.id)).toEqual(['pa', 'pa1', 'pa2']);
+    expect(rest.map(n => n.id)).toEqual(['px']);
   });
 });

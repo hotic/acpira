@@ -54,4 +54,22 @@ describe('chronological plan sections', () => {
     ]);
     expect(splitPlanSections([])).toEqual([{ key: 'start', blocks: [] }]);
   });
+
+  it('splits at placed delegation rows, groups a parallel launch, and drops every delegation row', () => {
+    const a: AgentBlock = { type: 'tool_call', id: 'agent-a', kind: 'other', verb: 'Agent', status: 'completed', subagentId: 'na' };
+    const b: AgentBlock = { ...a, id: 'agent-b', subagentId: 'nb' };
+    const orphan: AgentBlock = { ...a, id: 'agent-c', subagentId: 'nc' };
+    const later: AgentBlock = { ...write, id: 'later' };
+    const sections = splitPlanSections([reply, a, b, orphan, later, thought], new Set(['na', 'nb']));
+    expect(sections).toEqual([
+      { key: 'start', blocks: [reply], subagents: ['na', 'nb'] },
+      { key: 'subagents:agent-a', blocks: [later, thought] },
+    ]);
+    // Without placement the delegation rows still vanish and nothing splits
+    expect(splitPlanSections([reply, a, later])).toEqual([{ key: 'start', blocks: [reply, later] }]);
+    // A delegation first in the turn leaves an empty leading section that carries the rows
+    expect(splitPlanSections([a, later], new Set(['na']))).toEqual([
+      { key: 'start', blocks: [], subagents: ['na'] }, { key: 'subagents:agent-a', blocks: [later] },
+    ]);
+  });
 });
