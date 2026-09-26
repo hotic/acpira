@@ -39,29 +39,29 @@ export function SubagentGroup({ nodes, all, onInspect }: GroupProps) {
   );
 }
 
-// Title (or role) on the first line, live activity / waiting / result excerpt on the second. The shared Row
-// holds lead / trailing / hover; items-start + lead-top keeps the state icon on the first of the two lines.
+// A framed two-line row: title (or role) on top, live activity / waiting / result excerpt below, one type step
+// smaller than process rows. State icon and chevron sit inside the frame, centred on the two lines so they bracket
+// the text. The frame hangs into the hit outset, which keeps the icon on the transcript's lead column.
 function SubagentRow({ node, all, onInspect }: { node: SubagentSummary; all: SubagentSummary[]; onInspect: GroupProps['onInspect'] }) {
   const title = subagentTitle(node, t);
   const descendants = descendantCount(node.id, all);
   return (
     <Row
       as="button"
-      interactive
-      className="group/subagent w-full items-start lead-top py-[9px]"
+      className="group/subagent subagent-row [&>.row-lead]:size-subagent-mark [&>.row-lead>.subagent-mark]:size-subagent-mark -mx-hit w-auto cursor-pointer rounded-md border border-line px-hit py-1 transition-colors hover:bg-hover focus-visible:bg-hover"
       aria-label={`${title} · ${stateLabel(node, t)} · ${secondLine(node, t)}`}
       title={node.task?.slice(0, 200)}
       onClick={() => onInspect(node.id)}
       lead={stateIcon(node)}
-      trailing={<ChevronRight className="size-icon opacity-0 transition-opacity group-hover/subagent:opacity-100 group-focus-visible/subagent:opacity-100" strokeWidth={1.5} />}
+      trailing={<ChevronRight className="size-icon opacity-60 transition-opacity group-hover/subagent:opacity-100 group-focus-visible/subagent:opacity-100" strokeWidth={1.5} />}
     >
-      <span className="flex min-w-0 flex-1 flex-col gap-1">
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex min-w-0 items-baseline gap-2">
-          <span className="min-w-0 truncate text-2 font-medium text-fg-1">{title}</span>
-          {node.role !== undefined && node.role !== title && <span className="min-w-0 max-w-project truncate text-3 text-fg-3 [flex-shrink:9]">{node.role}</span>}
-          {descendants > 0 && <span className="shrink-0 text-3 text-fg-3">· {t('subagents.descendants', { n: descendants })}</span>}
+          <span className="min-w-0 truncate text-3 font-medium text-fg-1">{title}</span>
+          {node.role !== undefined && node.role !== title && <span className="min-w-0 max-w-project truncate text-4 text-fg-3 [flex-shrink:9]">{node.role}</span>}
+          {descendants > 0 && <span className="shrink-0 text-4 text-fg-3">· {t('subagents.descendants', { n: descendants })}</span>}
         </span>
-        <span className="truncate text-3 text-fg-3">{secondLine(node, t)}</span>
+        <span className="truncate text-4 text-fg-3">{secondLine(node, t)}</span>
       </span>
     </Row>
   );

@@ -166,7 +166,7 @@ function textOf(markdown: string): TextBlock {
   return { type: 'text', markdown };
 }
 
-// The delegated task in a quiet card; long briefs clamp to six lines with a text toggle
+// The delegated task is the child's prompt, so it wears the main thread's user-message card; long briefs clamp to six lines with a text toggle
 function TaskCard({ task }: { task: string }) {
   const body = useRef<HTMLDivElement>(null);
   const [clamped, setClamped] = useState(false);
@@ -178,8 +178,8 @@ function TaskCard({ task }: { task: string }) {
   return (
     <section className="flex min-w-0 flex-col gap-1">
       <div className="text-3 text-fg-3">{t('subagents.task')}</div>
-      <div className="rounded-md border border-line bg-bg-1 p-pad">
-        <div ref={body} className={cn('text-2 text-fg-2 whitespace-pre-wrap [overflow-wrap:anywhere]', !open && 'line-clamp-6')}>{task}</div>
+      <div className="rounded-lg bg-bg-0 bg-[linear-gradient(var(--chip),var(--chip))] px-pad py-gap shadow-[inset_0_0_0_1px_var(--conversation-line)]">
+        <div ref={body} className={cn('text-1 text-fg-1 whitespace-pre-wrap [overflow-wrap:anywhere]', !open && 'line-clamp-6')}>{task}</div>
         {(clamped || open) && (
           <button type="button" onClick={() => setOpen(o => !o)} className="mt-1 cursor-pointer text-3 text-fg-3 transition-colors hover:text-fg-1">
             {t(open ? 'subagents.taskCollapse' : 'subagents.taskExpand')}
