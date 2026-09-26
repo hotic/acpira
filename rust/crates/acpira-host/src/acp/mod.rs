@@ -4,6 +4,7 @@ pub mod agent_process;
 pub mod agent_registry;
 pub mod attachments;
 pub mod cancel;
+pub mod claude_window;
 pub mod compaction;
 pub mod compaction_text;
 pub mod diff;
