@@ -421,12 +421,12 @@ const app = acp.agent({ name: 'fake-agent' })
 
     if (text === 'failure-dup') {
       // Same id at the same or a lower revision is a retransmit — ignored; a different id is a different
-      // failure even when the text happens to match
+      // failure even when the text happens to match. Advisory-shaped (category unknown): retry warnings share one row
       if (air('sessionFailure')) {
-        await sendFailure({ id: 'dup', revision: 2, category: 'service', severity: 'warning', title: 'upstream hiccup', actions: [] });
-        await sendFailure({ id: 'dup', revision: 2, category: 'service', severity: 'warning', title: 'rewritten', actions: [] });
-        await sendFailure({ id: 'dup', revision: 1, category: 'service', severity: 'warning', title: 'stale', actions: [] });
-        await sendFailure({ id: 'dup-2', revision: 1, category: 'service', severity: 'warning', title: 'upstream hiccup', actions: [] });
+        await sendFailure({ id: 'dup', revision: 2, category: 'unknown', severity: 'warning', title: 'upstream hiccup', actions: [] });
+        await sendFailure({ id: 'dup', revision: 2, category: 'unknown', severity: 'warning', title: 'rewritten', actions: [] });
+        await sendFailure({ id: 'dup', revision: 1, category: 'unknown', severity: 'warning', title: 'stale', actions: [] });
+        await sendFailure({ id: 'dup-2', revision: 1, category: 'unknown', severity: 'warning', title: 'upstream hiccup', actions: [] });
       }
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'done' } });
       return { stopReason: 'end_turn' };

@@ -62,8 +62,11 @@ pub struct NormalizeState {
   pub log: Option<Log>,
   /// The agent id, for adapter strings that stand for structured events (`compaction_text`)
   pub agent: Option<String>,
-  /// The notice of the retry run in progress (`retry_text`) and its last attempt number, until the adapter says it resumed
-  pub retry: Option<(String, Option<u32>)>,
+  /// A prose retry run in progress (`retry_text`) with its last attempt number, until the adapter says it resumed
+  pub retry: Option<Option<u32>>,
+  /// The live retry warning row (prose retries or an AIR retry warning): later attempts rewrite it in place, and it
+  /// leaves the transcript once the stream resumes. A turn that ends while it is live keeps it as the reason
+  pub transient: Option<String>,
 }
 
 impl NormalizeState {
@@ -168,6 +171,7 @@ pub fn apply_update(s: &mut NormalizeState, u: &Value) -> bool {
       let content = u.get("content").cloned().unwrap_or(Value::Null);
       let img = image_content(&content, Some(&s.ctx));
       if let Some(ToolContent::Image(r)) = img {
+        drop_transient(s);
         seal(s, i);
         s.image_seq += 1;
         let id = format!("img-{}", s.image_seq);
@@ -186,6 +190,9 @@ pub fn apply_update(s: &mut NormalizeState, u: &Value) -> bool {
       if let Some(found) = s.agent.as_deref().and_then(|a| retry_text::marker(a, &text)) {
         apply_retry_marker(s, i, &found);
         return true;
+      }
+      if !text.trim().is_empty() {
+        drop_transient(s);
       }
       let t = agent(s, i);
       if let Some(AgentBlock::Text(last)) = t.blocks.last_mut()
@@ -206,6 +213,9 @@ pub fn apply_update(s: &mut NormalizeState, u: &Value) -> bool {
       }
       close_user_turn(s);
       let i = current_agent_turn(s);
+      if !text.trim().is_empty() {
+        drop_transient(s);
+      }
       if let Some(AgentBlock::Thought(last)) = agent(s, i).blocks.last_mut()
         && last.streaming == Some(true)
       {
@@ -224,6 +234,7 @@ pub fn apply_update(s: &mut NormalizeState, u: &Value) -> bool {
     "tool_call" => {
       close_user_turn(s);
       let i = current_agent_turn(s);
+      drop_transient(s);
       seal(s, i);
       let id = str_of(u, "toolCallId").unwrap_or("").to_owned();
       let loc = match find_tool(&s.turns, &id) {
@@ -439,48 +450,67 @@ fn find_compaction<'a>(turns: &'a mut [Turn], id: &str) -> Option<&'a mut Compac
   })
 }
 
-/// Prose retries become one quiet notice per retry run: each attempt rewrites it in place and the adapter's resume line
-/// settles it. A resume line without a run in progress is dropped, never rendered as reply text
+/// Prose retries become one quiet notice per retry run: each attempt rewrites it in place, the adapter's resume line
+/// settles its text and the next streamed content removes it. A resume line without a run in progress is dropped,
+/// never rendered as reply text
 fn apply_retry_marker(s: &mut NormalizeState, i: usize, m: &retry_text::Marker) {
   use retry_text::Marker;
   let n = |v: u32| v.to_string();
-  let finished = *m == Marker::Finished;
   let (title, attempt) = match *m {
     Marker::Attempt(Some((a, max, wait))) => (tp("host.retrying", &[("attempt", &n(a)), ("max", &n(max)), ("seconds", &n(wait))]), Some(a)),
     Marker::Attempt(None) => (t("host.retryingBare"), None),
-    Marker::Finished => match s.retry.as_ref().and_then(|r| r.1) {
-      Some(a) => (tp("host.retryFinished", &[("attempt", &n(a))]), Some(a)),
-      None => (t("host.retryFinishedBare"), None),
+    Marker::Finished => match s.retry.take() {
+      None => return,
+      Some(Some(a)) => (tp("host.retryFinished", &[("attempt", &n(a))]), None),
+      Some(None) => (t("host.retryFinishedBare"), None),
     },
   };
-  let open_id = s.retry.take().map(|r| r.0);
-  let existing = open_id.as_deref().and_then(|id| find_notice(&mut s.turns, id));
-  let id = match existing {
-    Some(notice) => {
-      notice.revision = Num(notice.revision.0 + 1.0);
-      notice.title = title;
-      notice.id.clone()
-    }
-    None if finished => return,
-    None => {
-      seal(s, i);
-      s.image_seq += 1;
-      let id = format!("text-retry-{}-{}", now_ms(), s.image_seq);
-      agent(s, i).blocks.push(AgentBlock::Notice(NoticeBlock {
-        id: id.clone(),
-        revision: Num(1.0),
-        category: FailureCategory::Connection,
-        severity: Severity::Warning,
-        title,
-        details: None,
-        actions: vec![],
-      }));
-      id
-    }
-  };
-  if !finished {
-    s.retry = Some((id, attempt));
+  if *m != Marker::Finished {
+    s.retry = Some(attempt);
   }
+  if let Some(notice) = live_transient(s) {
+    notice.revision = Num(notice.revision.0 + 1.0);
+    notice.title = title;
+    return;
+  }
+  seal(s, i);
+  s.image_seq += 1;
+  let id = format!("text-retry-{}-{}", now_ms(), s.image_seq);
+  agent(s, i).blocks.push(AgentBlock::Notice(NoticeBlock {
+    id: id.clone(),
+    revision: Num(1.0),
+    category: FailureCategory::Connection,
+    severity: Severity::Warning,
+    title,
+    details: None,
+    actions: vec![],
+  }));
+  s.transient = Some(id);
+}
+
+fn live_transient(s: &mut NormalizeState) -> Option<&mut NoticeBlock> {
+  let id = s.transient.clone()?;
+  find_notice(&mut s.turns, &id)
+}
+
+/// The stream resumed (or a real error took over): the retry warning has served its purpose and leaves the transcript
+fn drop_transient(s: &mut NormalizeState) {
+  s.retry = None;
+  let Some(id) = s.transient.take() else { return };
+  for t in s.turns.iter_mut().rev().filter_map(Turn::as_agent_mut) {
+    if let Some(at) = t.blocks.iter().position(|b| matches!(b, AgentBlock::Notice(n) if n.id == id)) {
+      t.blocks.remove(at);
+      return;
+    }
+  }
+}
+
+/// An AIR warning that only reports a retry in progress (claude-agent-acp `api_retry`): no remedy to offer and a
+/// transient cause. Advisories (category `unknown`) and anything with actions stay permanent rows
+fn is_retry_warning(f: &SessionFailure) -> bool {
+  f.severity == Severity::Warning
+    && f.actions.is_empty()
+    && matches!(f.category, FailureCategory::Connection | FailureCategory::Service | FailureCategory::Limit)
 }
 
 fn find_notice<'a>(turns: &'a mut [Turn], id: &str) -> Option<&'a mut NoticeBlock> {
@@ -495,6 +525,7 @@ fn find_notice<'a>(turns: &'a mut [Turn], id: &str) -> Option<&'a mut NoticeBloc
 /// Turn ended: seal streaming blocks, record how it ended; tools still running are marked per stop reason
 pub fn end_turn(s: &mut NormalizeState, stop: TurnStop) {
   s.retry = None;
+  s.transient = None;
   let NormalizeState { turns, thought_started_at, .. } = s;
   let Some(Turn::Agent(t)) = turns.last_mut() else { return };
   seal_streaming(thought_started_at, t);
@@ -524,8 +555,13 @@ pub fn fail_turn(s: &mut NormalizeState, error: TurnError) {
   }
 }
 
-/// One row per failure id in the whole transcript; a higher revision rewrites it in place
+/// One row per failure id in the whole transcript; a higher revision rewrites it in place. Retry warnings share one
+/// live row whatever their ids (claude-agent-acp 0.81.0 mints a new session-scoped id per attempt); an error drops it
 pub fn apply_session_failure(s: &mut NormalizeState, f: &SessionFailure) -> bool {
+  let retry = is_retry_warning(f);
+  if !retry && s.transient.as_deref() == Some(f.id.as_str()) {
+    s.transient = None;
+  }
   if let Some(n) = find_notice(&mut s.turns, &f.id) {
     if n.revision.0 >= f.revision {
       return false;
@@ -538,6 +574,17 @@ pub fn apply_session_failure(s: &mut NormalizeState, f: &SessionFailure) -> bool
     n.actions = f.actions.clone();
     return true;
   }
+  if retry && let Some(n) = live_transient(s) {
+    // The row keeps its first id so the webview does not remount it on every attempt
+    n.revision = Num((n.revision.0 + 1.0).max(f.revision));
+    n.category = f.category;
+    n.title = f.title.clone();
+    n.details = f.details.clone().filter(|d| !d.is_empty());
+    return true;
+  }
+  if f.severity == Severity::Error {
+    drop_transient(s);
+  }
   let notice = AgentBlock::Notice(NoticeBlock {
     id: f.id.clone(),
     revision: Num(f.revision),
@@ -548,6 +595,9 @@ pub fn apply_session_failure(s: &mut NormalizeState, f: &SessionFailure) -> bool
     actions: f.actions.clone(),
   });
   push_standalone(s, notice);
+  if retry {
+    s.transient = Some(f.id.clone());
+  }
   true
 }
 
