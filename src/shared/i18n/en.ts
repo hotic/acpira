@@ -452,6 +452,8 @@ export const en = {
   // Background-shell tools (Devin's get_output / kill_shell); the target is the parked command they act on
   'verb.wait': 'Wait for background command',
   'verb.kill': 'Stop background command',
+  // Image generation tools (codex-acp "Image generation", Grok image_gen / image_edit), recognized by name
+  'verb.imagegen': 'Generate image',
   // Delegation calls: the tool that spawns a subagent (Devin run_subagent, Claude/Kimi Agent) and the one that blocks on it
   'verb.delegate': 'Delegate',
   'verb.awaitSubagent': 'Wait for subagent',

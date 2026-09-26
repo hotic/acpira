@@ -3,6 +3,7 @@ import { memo, useContext, type ReactNode } from 'react';
 import type { AsyncTaskInfo, AsyncTaskState, ToolCallBlock } from '@shared/transcript';
 import type { MsgKey } from '@shared/i18n';
 import { toolTodoEntries } from '@shared/todoTools';
+import { isImageGenTool, toolTexts } from '@shared/imageTools';
 import { useAppearance } from '../appearance';
 import { Disclosure } from '../ui/Disclosure';
 import { EntranceOnce, Row, RowLabel, RowTarget } from '../ui/Row';
@@ -14,6 +15,7 @@ import { toolIcon } from './icons';
 import { PlanDetails } from './Plan';
 import { CodeSurface, DiffBlock } from './CodeBlock';
 import { AgentImage } from './AgentImage';
+import { GeneratedImages } from './GeneratedImage';
 import { TerminalOutput } from './Terminal';
 import { toolVerb } from './folding';
 import { AsyncTaskStopContext, OpenToolFileContext } from './fileLinks';
@@ -87,6 +89,16 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
     {block.target && !(block.kind === 'read' && files.length) && <RowTarget mono={block.targetMono}>{block.target}</RowTarget>}
   </>;
   if (todos !== undefined) return <PlanDetails entries={todos} label={label} trailing={trailing} />;
+  // Image generation: the row names the call and its text (codex-acp's revised prompt) opens on demand. In the process fold
+  // the images render outside it (CodexMessage); elsewhere they sit right below the row
+  if (isImageGenTool(block)) {
+    const text = toolTexts(block);
+    const row = text
+      ? <Disclosure className="action-details" tone="action" lead={lead} trailing={trailing} indent={false} rail={false}
+          body={<CodeSurface className="text-fg-2 whitespace-pre-wrap">{text}</CodeSurface>}>{label}</Disclosure>
+      : <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
+    return grouped ? row : <div className="flex flex-col gap-gap">{row}<GeneratedImages block={block} /></div>;
+  }
   // Search hits open on demand; read references remain visible inside the process.
   if (files.length && block.kind === 'search') return (
     <Disclosure className="action-details" tone="action" lead={lead} trailing={trailing} indent={false} rail="rows"

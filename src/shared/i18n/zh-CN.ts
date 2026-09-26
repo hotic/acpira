@@ -467,6 +467,8 @@ export const zhCN = {
   // Background-shell tools (Devin's get_output / kill_shell); the target is the parked command they act on
   'verb.wait': '等待后台命令',
   'verb.kill': '终止后台命令',
+  // Image generation tools (codex-acp "Image generation", Grok image_gen / image_edit), recognized by name
+  'verb.imagegen': '生成图片',
   // Delegation calls: the tool that spawns a subagent (Devin run_subagent, Claude/Kimi Agent) and the one that blocks on it
   'verb.delegate': '委派',
   'verb.awaitSubagent': '等待子代理',

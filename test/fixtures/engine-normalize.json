@@ -1319,5 +1319,89 @@
     ]
    }
   ]
+ },
+ {
+  "name": "image-gen-codex",
+  "steps": [
+   {
+    "at": 1000,
+    "update": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "ig_1",
+     "kind": "other",
+     "title": "Image generation",
+     "status": "in_progress",
+     "rawInput": {
+      "id": "ig_1"
+     }
+    },
+    "turns": [
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "tool_call",
+        "id": "ig_1",
+        "kind": "other",
+        "verb": "Generate image",
+        "verbKey": "verb.imagegen",
+        "status": "in_progress"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "at": 9000,
+    "update": {
+     "sessionUpdate": "tool_call_update",
+     "toolCallId": "ig_1",
+     "status": "completed",
+     "content": [
+      {
+       "type": "content",
+       "content": {
+        "type": "text",
+        "text": "Revised prompt: a red dot on white"
+       }
+      },
+      {
+       "type": "content",
+       "content": {
+        "type": "image",
+        "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+        "mimeType": "image/png",
+        "uri": "/Users/x/.codex/generated_images/t/ig_1.png"
+       }
+      }
+     ],
+     "rawOutput": {
+      "status": "completed",
+      "revisedPrompt": "a red dot on white",
+      "result": "iVBORw0KGgo=",
+      "savedPath": "/Users/x/.codex/generated_images/t/ig_1.png"
+     }
+    },
+    "turns": [
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "tool_call",
+        "id": "ig_1",
+        "kind": "other",
+        "verb": "Generate image",
+        "verbKey": "verb.imagegen",
+        "status": "completed",
+        "content": {
+         "type": "text",
+         "text": "Revised prompt: a red dot on white\n[image]"
+        }
+       }
+      ]
+     }
+    ]
+   }
+  ]
  }
 ]

@@ -4,6 +4,7 @@ import { useAppearance } from '../appearance';
 import { cn } from '../ui/cn';
 import { t } from '../i18n';
 import { METAL_PRESET, METAL_VARIANT } from './presets';
+import { hasWebGL } from './webgl';
 
 export interface SendButtonProps {
   running: boolean;
@@ -13,18 +14,7 @@ export interface SendButtonProps {
   onClick?: () => void;
 }
 
-// metal-fx throws directly inside an effect when there's no WebGL, tearing down the whole React tree; probe once, and fall back to the inverted-neutral look without it
-let webgl: boolean | undefined;
-function hasWebGL(): boolean {
-  if (webgl === undefined) {
-    try {
-      const c = document.createElement('canvas');
-      webgl = !!(c.getContext('webgl2') ?? c.getContext('webgl'));
-    } catch { webgl = false; }
-  }
-  return webgl;
-}
-
+// metal-fx throws directly inside an effect when there's no WebGL, tearing down the whole React tree; without it the button keeps the inverted-neutral look
 // Send / stop in one, a --ctl-sm flat button, one tier below the toolbar chips' neighbors. Dim when empty, lit when there's text or a run in progress.
 // Three modes: accent lights up with the accent color; icon is inverted-neutral; metal adds a silver ring around the same solid surface.
 // MetalFx clears the child's background, so the wrapper owns the inverted fill and icon color.

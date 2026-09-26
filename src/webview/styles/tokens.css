@@ -117,6 +117,8 @@
   --hdr: 52px;
   /* Attachment thumbnail: the same square tile in drafts and sent messages */
   --thumb: 56px;
+  /* Agent image height cap in the transcript; also the side of the image generation placeholder */
+  --agent-image: 240px;
   /* Sticky prompts leave room for the reply, even in a short sidebar; once stuck at the top they fold to a few lines.
      The fold does not change the exchange's flow height (HistoryMessage backfills it with a spacer), so nothing below moves.
      Floor at the stuck height so a hidden webview (40cqh → 0) does not collapse the card to nothing. */
@@ -173,6 +175,10 @@
   /* Running-verb shimmer (ui/Shimmer): resting text colour and one full sweep */
   --shimmer-base: #9a9a9a;
   --shimmer-cycle: 2s;
+  /* Image generation card: the loader layer's fade under the dissolve, the card's top highlight and the mosaic's peak cell colour */
+  --image-gen-fade: 420ms;
+  --image-gen-card-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg-1) 6%, transparent);
+  --image-gen-peak: #7dc4ff;
 }
 
 /* Type scale: body 13/20 · line 13/18 · caption 12/16 · mono 12/18 at the default sizes; line heights keep their offset as the base grows.
@@ -231,6 +237,7 @@
   --tk-s: #a31515;
   --tk-t: #267f99;
   --tk-c: #6a8f5e;
+  --image-gen-peak: #246ec8;
 }
 
 /* Container the shell lives in: sidebar base #181818 / editor base #1f1f1f, each raised two levels */
@@ -390,6 +397,7 @@
   --spacing-msg: var(--msg-gap);
   --spacing-hdr: var(--hdr);
   --spacing-thumb: var(--thumb);
+  --spacing-agent-image: var(--agent-image);
   --spacing-indent: calc(var(--lead) + var(--gap));
   --spacing-hit: var(--row-hit-outset);
 
