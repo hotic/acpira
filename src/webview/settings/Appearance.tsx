@@ -1,7 +1,7 @@
 import { CODE_FONT_SIZE, DIFF_MARKERS, SESSION_LIST_POSITIONS, THEMES, UI_FONT_SIZE, type SettingsView } from '@shared/settings';
 import type { Appearance } from '../appearance';
 import { t } from '../i18n';
-import { Field, NumberField, Section, Segmented, Switch } from './controls';
+import { Field, NumberField, Section, Select, Switch } from './controls';
 import type { SettingsHandlers } from './SettingsShell';
 
 // Motion is the one appearance axis surfaced as a user setting (it is an accessibility preference), a plain on / off switch;
@@ -12,16 +12,16 @@ export function AppearancePage({ settings, appearance, on }: { settings: Setting
     <>
       <Section>
         <Field label={t('settings.sessionListPosition')} desc={t('settings.sessionListPosition.desc')}>
-          <Segmented options={SESSION_LIST_POSITIONS.map(v => ({ value: v, label: t(`settings.sessionListPosition.${v}` as const) }))} value={settings.sessionListPosition} onChange={v => on.setSetting('sessionListPosition', v)} label={t('settings.sessionListPosition')} />
+          <Select options={SESSION_LIST_POSITIONS.map(v => ({ value: v, label: t(`settings.sessionListPosition.${v}` as const) }))} value={settings.sessionListPosition} onChange={v => on.setSetting('sessionListPosition', v)} label={t('settings.sessionListPosition')} />
         </Field>
         <Field label={t('settings.theme')} desc={t('settings.theme.desc')}>
-          <Segmented options={THEMES.map(v => ({ value: v, label: t(`settings.theme.${v}` as const) }))} value={settings.theme} onChange={v => on.setSetting('theme', v)} label={t('settings.theme')} />
+          <Select options={THEMES.map(v => ({ value: v, label: t(`settings.theme.${v}` as const) }))} value={settings.theme} onChange={v => on.setSetting('theme', v)} label={t('settings.theme')} />
         </Field>
         <Field label={t('settings.motion')} desc={t('settings.motion.desc')}>
           <Switch checked={appearance.motion !== 'none'} onChange={v => on.setAppearance('motion', v ? 'on' : 'none')} label={t('settings.motion')} />
         </Field>
         <Field label={t('settings.diffMarkers')} desc={t('settings.diffMarkers.desc')}>
-          <Segmented options={DIFF_MARKERS.map(v => ({ value: v, label: t(`settings.diffMarkers.${v}` as const) }))} value={settings.diffMarkers} onChange={v => on.setSetting('diffMarkers', v)} label={t('settings.diffMarkers')} />
+          <Select options={DIFF_MARKERS.map(v => ({ value: v, label: t(`settings.diffMarkers.${v}` as const) }))} value={settings.diffMarkers} onChange={v => on.setSetting('diffMarkers', v)} label={t('settings.diffMarkers')} />
         </Field>
       </Section>
 

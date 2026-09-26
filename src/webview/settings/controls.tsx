@@ -142,32 +142,6 @@ export function Note({ children, shimmer }: { children: ReactNode; shimmer?: boo
 
 export interface Option<V extends string> { value: V; label: string; icon?: ReactNode; hint?: string; disabled?: boolean }
 
-// Two to four exclusive choices as a pill strip; the chosen one is filled, the rest are text until hovered
-export function Segmented<V extends string>({ options, value, onChange, label }: { options: Option<V>[]; value: V; onChange: (v: V) => void; label: string }) {
-  return (
-    <div role="radiogroup" aria-label={label} className="inline-flex max-w-full flex-wrap items-center gap-0.5">
-      {options.map(o => (
-        <button
-          key={o.value}
-          type="button"
-          role="radio"
-          aria-checked={o.value === value}
-          disabled={o.disabled}
-          title={o.hint}
-          onClick={() => onChange(o.value)}
-          className={cn(
-            'inline-flex h-ctl items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-2 transition-colors disabled:cursor-not-allowed disabled:opacity-40',
-            o.value === value ? 'bg-active text-fg-strong' : 'text-fg-2 hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1',
-          )}
-        >
-          {o.icon && <span className="flex shrink-0 items-center [&_svg]:size-icon">{o.icon}</span>}
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 // Dropdown select: a bordered Chip that opens the shared Menu; radio semantics, the current value gets the check.
 // Sized like NumberField (--ctl tall, --r-md) so the two form controls line up in a column; the label grows so the caret stays at the right edge with or without an icon
 export function Select<V extends string>({ options, value, onChange, label, className }: { options: Option<V>[]; value: V; onChange: (v: V) => void; label: string; className?: string }) {
@@ -297,9 +271,10 @@ export function PathText({ path, env, onOpen, className }: { path: string; env: 
 }
 
 // The source is supporting metadata after the items, not another heading level.
+// The group's last row: its hover fill runs to the card edges (the card clips the corners) instead of floating inside the inset
 export function SourceLink({ path, env, onOpen }: { path: string; env: { home: string; cwd: string }; onOpen: (path: string) => void }) {
   return (
-    <button type="button" title={path} onClick={() => onOpen(path)} className={cn(useSettingRow(), 'flex w-full items-center gap-gap rounded-md text-left text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:text-fg-1 focus-visible:bg-hover')}>
+    <button type="button" title={path} onClick={() => onOpen(path)} className={cn(settingRow, '-mx-pad flex items-center gap-gap self-stretch px-pad text-left text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:text-fg-1 focus-visible:bg-hover')}>
       <span className="min-w-0 flex-1 truncate">{shortPath(path, env)}</span>
       <ExternalLink className="size-icon shrink-0" strokeWidth={1.5} />
     </button>
