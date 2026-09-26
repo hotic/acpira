@@ -3,7 +3,7 @@ import type { SessionControls, SlashCommand, Turn, TurnSettings } from './transc
 // A command candidate must be a leading token, excluding multi-segment paths. Discovery
 // is not a whitelist: unknown names still travel to the CLI unchanged.
 export function commandName(text: string): string | undefined {
-  return /^\/([\p{L}\p{N}][\p{L}\p{N}_.:-]*)(?=\s|$)/u.exec(text)?.[1];
+  return /^\/(\$?[\p{L}\p{N}][\p{L}\p{N}_.:-]*)(?=\s|$)/u.exec(text)?.[1];
 }
 
 export function namedCommand(commands: readonly SlashCommand[], text: string): SlashCommand | undefined {
