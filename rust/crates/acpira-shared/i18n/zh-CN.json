@@ -83,6 +83,7 @@
   "code.copied": "已复制",
   "code.copyFailed": "复制失败，请重试",
   "common.image": "图片",
+  "image.copy": "复制图片",
   "common.previewImage": "预览 {name}",
   "common.removeNamed": "移除 {name}",
   "common.account": "账号",

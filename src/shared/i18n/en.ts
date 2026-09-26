@@ -85,6 +85,7 @@ export const en = {
   'code.copied': 'Copied',
   'code.copyFailed': 'Copy failed, try again',
   'common.image': 'Image',
+  'image.copy': 'Copy image',
   'common.previewImage': 'Preview {name}',
   'common.removeNamed': 'Remove {name}',
   'common.account': 'Account',

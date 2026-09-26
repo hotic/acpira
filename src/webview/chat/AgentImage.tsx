@@ -1,8 +1,13 @@
-import { useContext, useState } from 'react';
-import { Image as ImageIcon } from 'lucide-react';
+import { useCallback, useContext, useState } from 'react';
+import { Copy, Image as ImageIcon } from 'lucide-react';
+import { ContextMenu } from '@base-ui/react/context-menu';
 import type { ImageRef } from '@shared/transcript';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
+import { ShellLayerContext, overlayWidth, popupClass } from '../ui/Overlay';
+import { optionClass } from '../ui/DropdownMenu';
+import { useCopyAction } from '../ui/useCopied';
+import { copyImage } from './copyImage';
 import { Lightbox } from './Lightbox';
 import { BlobUrlContext, OpenBlobContext, OpenToolFileContext, parseFileLink } from './fileLinks';
 
@@ -13,24 +18,41 @@ export function AgentImage({ image }: { image: ImageRef }) {
   const blobUrl = useContext(BlobUrlContext);
   const openBlob = useContext(OpenBlobContext);
   const openFile = useContext(OpenToolFileContext);
+  const layer = useContext(ShellLayerContext);
   const [preview, setPreview] = useState(false);
   const src = image.blob && blobUrl ? blobUrl(image.blob) : undefined;
   const file = image.uri ? parseFileLink(image.uri) : undefined;
   const name = file?.path.split(/[\\/]/).pop() ?? t('common.image');
   const open = image.blob && openBlob ? () => openBlob(image.blob!) : src ? () => setPreview(true) : undefined;
+  const writeImage = useCallback(() => (src ? copyImage(src, image.mimeType) : Promise.reject(new Error('No image pixels'))), [src, image.mimeType]);
+  const { state: copyState, copy } = useCopyAction(src, writeImage);
   return (
     <div className="flex min-w-0 flex-col items-start gap-1">
       {src ? (
-        <button
-          type="button"
-          title={name}
-          aria-label={t('attach.view', { name })}
-          onClick={open}
-          disabled={!open}
-          className={cn('block max-w-full overflow-hidden rounded-md border border-line outline-none focus-visible:ring-1 focus-visible:ring-focus', open && 'cursor-pointer')}
-        >
-          <img src={src} alt={name} className="max-h-agent-image w-auto max-w-full object-contain" />
-        </button>
+        <ContextMenu.Root>
+          <ContextMenu.Trigger className="max-w-full">
+            <button
+              type="button"
+              title={name}
+              aria-label={t('attach.view', { name })}
+              onClick={open}
+              disabled={!open}
+              className={cn('block max-w-full overflow-hidden rounded-md border border-line outline-none focus-visible:ring-1 focus-visible:ring-focus', open && 'cursor-pointer')}
+            >
+              <img src={src} alt={name} className="max-h-agent-image w-auto max-w-full object-contain" />
+            </button>
+          </ContextMenu.Trigger>
+          <ContextMenu.Portal container={layer?.current ?? undefined}>
+            <ContextMenu.Positioner className={cn('z-40', overlayWidth.sm)} collisionBoundary={layer?.current ?? undefined}>
+              <ContextMenu.Popup className={popupClass}>
+                <ContextMenu.Item onClick={() => void copy()} className={optionClass}>
+                  <Copy className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} />
+                  {t('image.copy')}
+                </ContextMenu.Item>
+              </ContextMenu.Popup>
+            </ContextMenu.Positioner>
+          </ContextMenu.Portal>
+        </ContextMenu.Root>
       ) : (
         // No saved pixels (a refused payload or a URI-only reference): the card still names the source
         <button
@@ -45,6 +67,7 @@ export function AgentImage({ image }: { image: ImageRef }) {
           <span className="truncate">{name}</span>
         </button>
       )}
+      {copyState !== 'idle' && <span role="status" className="text-3 text-fg-3">{t(copyState === 'copied' ? 'code.copied' : 'code.copyFailed')}</span>}
       {file && openFile && (
         <button type="button" title={file.path} onClick={() => openFile(file.path, file.line)}
           className="max-w-full truncate text-3 text-fg-3 underline-offset-2 outline-none hover:text-fg-2 hover:underline focus-visible:text-fg-1 focus-visible:underline">
