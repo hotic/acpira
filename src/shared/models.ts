@@ -144,14 +144,17 @@ export function fusionLabel(v: ModelVariant): string {
   return [[v.lead, v.effort].filter(Boolean).join(' '), [v.sidekick, v.fast && 'Fast'].filter(Boolean).join(' ')].filter(Boolean).join(' + ');
 }
 
-export const familyHidden = (f: ModelFamily, hidden: string[]): boolean => hidden.includes(f.key) || hidden.includes(f.name);
+// Preferences stored before the family had a source: its bare name, or the `Provider/Name` Pi and OpenCode used to show
+const legacyKeys = (f: ModelFamily): string[] => (f.source ? [f.name, `${f.source}/${f.name}`] : [f.name]);
+
+export const familyHidden = (f: ModelFamily, hidden: string[]): boolean => hidden.includes(f.key) || legacyKeys(f).some(k => hidden.includes(k));
 
 // Expand legacy name-only preferences before toggling one source, preserving its siblings.
 export function setFamilyVisible(options: SessionOption[], hidden: string[], key: string, show: boolean): string[] {
   const families = groupModels(options);
   const next = new Set(hidden);
   for (const f of families) {
-    if (hidden.includes(f.name)) { next.delete(f.name); next.add(f.key); }
+    for (const k of legacyKeys(f)) if (hidden.includes(k)) { next.delete(k); next.add(f.key); }
   }
   if (show) next.delete(key); else next.add(key);
   return [...next];
