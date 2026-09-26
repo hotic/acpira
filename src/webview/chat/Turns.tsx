@@ -273,7 +273,15 @@ function liveActivity(turn: AgentTurn, leadKind: 'orb' | 'static' = 'orb') {
     return { label: t('host.awaitingAnswers'), active: false, lead: <MessageCircleQuestion className="size-icon" strokeWidth={1.5} /> };
   }
   // The Orb belongs to the root turn only; observed child transcripts get a static lead
-  return { label: t('host.working'), active: true, lead: leadKind === 'static' ? <Bot className="size-icon" strokeWidth={1.5} /> : <Orb kind="think" /> };
+  const lead = leadKind === 'static' ? <Bot className="size-icon" strokeWidth={1.5} /> : <Orb kind="think" />;
+  // A provider retry (network blip, overload) only relabels the working row; the adapter's wording stays in the tooltip
+  const retry = turn.retry;
+  if (retry) {
+    const label = retry.attempt !== undefined && retry.max !== undefined
+      ? t('turns.retryingAttempt', { attempt: retry.attempt, max: retry.max }) : t('turns.retrying');
+    return { label, title: retry.detail, active: true, lead };
+  }
+  return { label: t('host.working'), active: true, lead };
 }
 
 function Activity({ turn, running, leadKind = 'orb' }: { turn: AgentTurn; running: boolean; leadKind?: 'orb' | 'static' }) {
@@ -303,7 +311,7 @@ function Activity({ turn, running, leadKind = 'orb' }: { turn: AgentTurn; runnin
       running ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0 -mb-gap [transition-delay:var(--dur-open),0s,var(--dur-open)]',
     )}>
       <div className="min-h-0 overflow-hidden">
-        <Row lead={activity.lead} className="font-medium">
+        <Row lead={activity.lead} className="font-medium" title={activity.title}>
           <RowLabel shimmer={activity.active}>{activity.label}</RowLabel>
         </Row>
       </div>
@@ -461,7 +469,7 @@ function CodexFold({ turn, blocks, running, hasTools, memoryKey, lead }: { turn:
   if (!retired) mounted.current = true;
   if (!mounted.current && blocks.length === 0) return null;
   const head = (
-    <Collapsible.Trigger render={<Row as="button" interactive lead={leadIcon} title={label} />}>
+    <Collapsible.Trigger render={<Row as="button" interactive lead={leadIcon} title={(running && activity.title) || label} />}>
       <RowLabel shimmer={running && activity.active}>{retired ? t('host.working') : label}</RowLabel>
       {elapsed && !retired && <span className="min-w-0 truncate text-fg-3" title={elapsed}>{elapsed}</span>}
       {blocks.length > 0 && <ChevronRight className={cn('size-3 shrink-0 self-center transition-transform', open && 'rotate-90')} strokeWidth={1.75} />}
