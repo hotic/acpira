@@ -1,6 +1,6 @@
 //! test/accounts.test.ts: the account store and vault, Devin's credential plumbing, and the account layer wired into sessions
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow};
@@ -301,6 +301,8 @@ struct FakeProvider {
   quota_reads: AtomicUsize,
   authentications: AtomicUsize,
   auto: bool,
+  /// The credential store as a keychain seen over SSH: while set, authenticate fails like a CLI that cannot read its login
+  locked: AtomicBool,
 }
 
 impl FakeProvider {
@@ -334,7 +336,11 @@ impl AccountProvider for FakeProvider {
   }
   fn authenticate(&self, proc: Arc<AgentProcess>, cred: AccountCredential) -> Option<BoxFuture<Result<()>>> {
     self.authentications.fetch_add(1, Ordering::SeqCst);
+    let locked = self.locked.load(Ordering::SeqCst);
     Some(Box::pin(async move {
+      if locked {
+        return Err(anyhow!("keychain locked"));
+      }
       proc.request("authenticate", json!({ "methodId": "fake.login", "_meta": { "api_key": cred.secret } })).await?;
       Ok(())
     }))
@@ -346,6 +352,13 @@ impl AccountProvider for FakeProvider {
       Ok(Some(serde_json::from_value(json!({ "windows": [{ "id": "weekly", "remaining": 1.0 - reads as f64 / 10.0, "resetsAt": "2026-09-14T00:00:00.000Z" }], "fetchedAt": acpira_host::util::now_iso() }))?))
     }))
   }
+  fn credentials_locked(&self) -> Option<BoxFuture<bool>> {
+    let locked = self.locked.load(Ordering::SeqCst);
+    Some(Box::pin(async move { locked }))
+  }
+  fn unlock_command(&self) -> Option<(String, Vec<String>)> {
+    Some(("unlock-fake".into(), vec![]))
+  }
 }
 
 struct Setup {
@@ -354,6 +367,8 @@ struct Setup {
   store: Arc<AccountStore>,
   provider: Arc<FakeProvider>,
   toasts: Arc<Mutex<Vec<String>>>,
+  /// Commands the account layer opened a terminal for
+  terminals: Arc<Mutex<Vec<String>>>,
   dir: tempfile::TempDir,
 }
 
@@ -369,7 +384,15 @@ fn setup_env(fake: &crate::support::FakeAgent, extra: Value) -> Setup {
   let store = Arc::new(store_in(dir.path()));
   let toasts = Arc::new(Mutex::new(vec![]));
   let t = toasts.clone();
-  let accounts = AccountManager::new(store.clone(), vec![provider.clone()], log(), Arc::new(|_, _, _, _| {}), Arc::new(move |_l: &str, x: &str| t.lock().unwrap().push(x.to_owned())));
+  let terminals = Arc::new(Mutex::new(vec![]));
+  let term = terminals.clone();
+  let accounts = AccountManager::new(
+    store.clone(),
+    vec![provider.clone()],
+    log(),
+    Arc::new(move |_, command, _, _| term.lock().unwrap().push(command)),
+    Arc::new(move |_l: &str, x: &str| t.lock().unwrap().push(x.to_owned())),
+  );
   let mut env = json!({ "FAKE_SESSION_DIR": dir.path() });
   for (k, x) in extra.as_object().unwrap() {
     env[k] = x.clone();
@@ -377,7 +400,7 @@ fn setup_env(fake: &crate::support::FakeAgent, extra: Value) -> Setup {
   let mut opts = Opts::with_agents(fake.setting(json!({ "env": env })), "fake").cwd(cwd.to_str().unwrap());
   opts.accounts = Some(accounts.clone());
   let m = Mgr::new(&dir.path().join("sessions"), opts);
-  Setup { m, accounts, store, provider, toasts, dir }
+  Setup { m, accounts, store, provider, toasts, terminals, dir }
 }
 
 fn actions(m: &Mgr) -> Value {
@@ -609,6 +632,44 @@ async fn an_invalid_key_is_auth_required_and_removing_the_account_removes_its_cr
   assert!(s.accounts.list().is_empty());
   assert!(s.store.credential(&bad.id).await.unwrap().is_none());
   s.m.dispose().await;
+}
+
+// A remote workspace over SSH sees the macOS keychain locked: the saved account stays listed, the agent reports the locked
+// store, quota is not read and the session stops on sign-in. Unlocking runs the provider's command in a terminal, waits for
+// the store to open, then reconnects that session on the same account
+#[tokio::test(flavor = "multi_thread")]
+async fn a_locked_credential_store_is_reported_and_unlocking_it_reconnects_sessions_stuck_on_sign_in() {
+  let fake = fake_or_skip!();
+  let s = setup(&fake, false);
+  let m = &s.m;
+  m.init().await;
+  let one = s.store.add("fake", draft("one@example.com", None, "good-key", None)).await.unwrap();
+  s.accounts.reload().await;
+  s.provider.locked.store(true, Ordering::SeqCst);
+  m.handle(json!({ "type": "refreshQuota", "agent": "fake" })).await;
+  let locked = || m.m.agents().into_iter().find(|a| a.id == "fake").unwrap().credentials_locked;
+  assert_eq!(locked(), Some(true));
+  let pushed = m.events.lock().unwrap().iter().rfind(|e| e["type"] == "agents").cloned().unwrap();
+  assert_eq!(pushed["agents"].as_array().unwrap().iter().find(|a| a["id"] == "fake").unwrap()["credentialsLocked"], true);
+  assert_eq!(s.provider.quota_reads.load(Ordering::SeqCst), 0);
+  m.m.new_session_for(&m.v, Some("fake".into()), Some(one.id.clone())).await.unwrap();
+  assert_eq!(m.active().unwrap()["status"], "auth_required");
+
+  let unlock = m.spawn_handle(json!({ "type": "unlockCredentials", "agent": "fake" }));
+  until(|| s.terminals.lock().unwrap().iter().any(|c| c == "unlock-fake"), 2000).await;
+  assert_eq!(actions(m), json!([{ "agent": "fake", "via": "unlock", "status": "pending" }]));
+  // A second click while the terminal is open does not open another one
+  m.handle(json!({ "type": "unlockCredentials", "agent": "fake" })).await;
+  assert_eq!(s.terminals.lock().unwrap().len(), 1);
+  // The password typed in the terminal
+  s.provider.locked.store(false, Ordering::SeqCst);
+  unlock.await.unwrap();
+  assert_eq!(actions(m), json!([{ "agent": "fake", "via": "unlock", "status": "success" }]));
+  assert_eq!(locked(), None);
+  until(|| m.active().is_some_and(|a| a["status"] == "ready"), 5000).await;
+  expect_match(m.active().unwrap(), json!({ "accountId": one.id }));
+  until(|| first_quota(&s.accounts).is_some(), 5000).await;
+  m.dispose().await;
 }
 
 /// Hooks answered by closures, the AcpSession side of the account layer without a manager

@@ -67,6 +67,8 @@ export interface ShellHandlers {
   removeAccount: (id: string) => void;
   // An account list opened: re-read the quotas of that agent's accounts
   refreshQuota?: (agent: AgentInfo['id']) => void;
+  // AgentInfo.credentialsLocked: unlock the credential store in a host terminal
+  unlockCredentials?: (agent: AgentInfo['id']) => void;
   compact: () => void;
   login: (methodId?: string) => void;
   retry: () => void;
@@ -474,6 +476,7 @@ export function Shell(p: ShellProps) {
                     accountAction={p.accountAction}
                     onLogin={on.login} onRetry={on.retry} onNewSession={() => on.newSession(p.agent.id)}
                     onSelectAccount={on.selectAccount} onAddAccount={via => on.addAccount(p.agent.id, via)}
+                    onUnlock={on.unlockCredentials && (() => on.unlockCredentials?.(p.agent.id))}
                   />}
                   {p.queued?.length && p.activeSessionId
                     ? <Queue key={`queue:${p.activeSessionId}`} items={p.queued} composer={composerProps} blobUrl={blobUrl}

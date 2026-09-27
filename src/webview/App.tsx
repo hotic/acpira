@@ -178,6 +178,7 @@ export function App() {
     addAccount: (agent, via) => post({ type: 'addAccount', agent, via }),
     removeAccount: id => post({ type: 'removeAccount', id }),
     refreshQuota: agent => post({ type: 'refreshQuota', agent }),
+    unlockCredentials: agent => post({ type: 'unlockCredentials', agent }),
     compact: () => post({ type: 'compact', sessionId: activeId.current }),
     login: methodId => post({ type: 'login', sessionId: activeId.current, methodId }),
     retry: () => post({ type: 'retry', sessionId: activeId.current }),
@@ -219,6 +220,7 @@ export function App() {
     addAccount: agent => post({ type: 'addAccount', agent, via: 'auto' }),
     removeAccount: id => post({ type: 'removeAccount', id }),
     refreshQuota: agent => post({ type: 'refreshQuota', agent }),
+    unlockCredentials: agent => post({ type: 'unlockCredentials', agent }),
     installAgent: agent => post({ type: 'installAgent', agent }),
     openExternal: url => post({ type: 'openExternal', url }),
   }), []);

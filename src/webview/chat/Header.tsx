@@ -30,7 +30,7 @@ export interface HeaderProps {
   sessionScope?: SessionScope;
   // The import popover's current listing, handed on to the session list
   nativeSessions?: NativeSessionsState;
-  on: Pick<ShellHandlers, 'selectSession' | 'newSession' | 'renameSession' | 'deleteSession' | 'pinSession' | 'moveSession' | 'exportSession' | 'openInEditor' | 'selectAccount' | 'addAccount' | 'removeAccount' | 'refreshQuota' | 'listNativeSessions' | 'importNativeSession'>;
+  on: Pick<ShellHandlers, 'selectSession' | 'newSession' | 'renameSession' | 'deleteSession' | 'pinSession' | 'moveSession' | 'exportSession' | 'openInEditor' | 'selectAccount' | 'addAccount' | 'removeAccount' | 'refreshQuota' | 'unlockCredentials' | 'listNativeSessions' | 'importNativeSession'>;
   onToggleDrawer?: () => void;
   drawerOpen?: boolean;
   sessionPanel?: 'hidden' | 'left' | 'right';
@@ -59,7 +59,7 @@ export function Header({ title, sessions, agent, agents, accounts, accountId, ac
       <Popover.Trigger render={<IconButton title={accountTitle} aria-label={t('common.account')}><UserRound strokeWidth={1.5} /></IconButton>} />
       <Popover.Portal><Popover.Positioner side="bottom" align="end" width="md"><Popover.Popup>
         <AccountPanel agent={agent} accounts={accounts?.filter(a => a.agent === agent.id) ?? []} accountId={accountId} close={() => setAccountOpen(false)}
-          onSelectAccount={on.selectAccount} onAddAccount={on.addAccount} onRemoveAccount={on.removeAccount} onRefreshQuota={on.refreshQuota} />
+          onSelectAccount={on.selectAccount} onAddAccount={on.addAccount} onRemoveAccount={on.removeAccount} onRefreshQuota={on.refreshQuota} onUnlockCredentials={on.unlockCredentials} />
       </Popover.Popup></Popover.Positioner></Popover.Portal>
     </Popover.Root>
   );

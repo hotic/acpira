@@ -43,4 +43,13 @@ pub trait AccountProvider: Send + Sync {
   fn forget(&self, _cred: AccountCredential) -> Option<BoxFuture<()>> {
     None
   }
+  /// Whether the store the CLI keeps its logins in is locked for this host's session (the macOS keychain over SSH), so
+  /// saved logins exist but cannot be read; None when the provider has no such store
+  fn credentials_locked(&self) -> Option<BoxFuture<bool>> {
+    None
+  }
+  /// The terminal command (program, args) that unlocks that store; the user types the password in the terminal
+  fn unlock_command(&self) -> Option<(String, Vec<String>)> {
+    None
+  }
 }

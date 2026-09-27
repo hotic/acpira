@@ -20,12 +20,16 @@ export interface NoticeProps {
   onNewSession: () => void;
   onSelectAccount: (id: string) => void;
   onAddAccount: (via: AddAccountVia) => void;
+  // AgentInfo.credentialsLocked: unlock the credential store in a terminal (the sessions then reconnect by themselves)
+  onUnlock?: () => void;
 }
 
 // A bar pinned above the composer while the session isn't ready: connecting / login required / error / read-only. Renders nothing when ready.
 // For agents on the account layer, the main login paths are "import the local CLI login / sign in a new account in the terminal" — credentials from these two are saved;
 // the agent's own browser login only authenticates this one process and isn't saved, so it's labeled as this-session-only
-export function Notice({ status, error, agent, authMethods, accounts, accountId, accountAction, onLogin, onRetry, onNewSession, onSelectAccount, onAddAccount }: NoticeProps) {
+// A locked credential store (the macOS keychain in an SSH session) keeps the saved logins unreadable, so importing or signing in again
+// would only duplicate them: unlocking is the one action then
+export function Notice({ status, error, agent, authMethods, accounts, accountId, accountAction, onLogin, onRetry, onNewSession, onSelectAccount, onAddAccount, onUnlock }: NoticeProps) {
   if (status === 'ready') return null;
   if (status === 'starting') {
     const label = t('notice.connecting', { agent: agent.name });
@@ -40,16 +44,23 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
     </div>;
   }
   const withAccounts = !!agent.accounts;
+  const locked = status === 'auth_required' && withAccounts && !!agent.credentialsLocked;
   const action = status === 'auth_required' && accountAction?.agent === agent.id ? accountAction : undefined;
   const busy = action?.status === 'pending';
-  const feedback = action && (action.status === 'pending'
-    ? t(action.via === 'import' ? 'notice.importing' : 'notice.loginWaiting')
-    : action.status === 'error' ? t('notice.accountFailed', { error: action.error ?? t('notice.error.unknown') })
-      : t(`notice.account.${action.status}`));
+  const unlockFeedback = (a: AccountAction) => a.status === 'pending' ? t('notice.unlockWaiting')
+    : a.status === 'error' ? t('notice.unlockFailed', { error: a.error ?? t('notice.error.unknown') })
+      // Success needs no line: the sessions reconnect and this bar goes away
+      : a.status === 'success' ? undefined : t('notice.unlock.cancelled');
+  const feedback = action && (action.via === 'unlock' ? unlockFeedback(action)
+    : action.status === 'pending' ? t(action.via === 'import' ? 'notice.importing' : 'notice.loginWaiting')
+      : action.status === 'error' ? t('notice.accountFailed', { error: action.error ?? t('notice.error.unknown') })
+        : t(`notice.account.${action.status}`));
   const others = (accounts ?? []).filter(a => a.id !== accountId);
   // The protocol names sign-in methods in English; known ones get a localized name, the rest keep what the agent sent
   const methodName = (m: AuthMethodInfo) => tOr(`notice.method.${agent.id}:${m.id}`, m.name);
-  const body = status === 'auth_required'
+  const body = locked
+    ? { title: t('notice.locked.title', { agent: agent.name }), text: t('notice.locked.text') }
+    : status === 'auth_required'
     ? {
         title: t('notice.login.title', { agent: agent.name }),
         text: error ?? (withAccounts ? t('notice.login.accounts') : authMethods?.length ? t('notice.login.methods') : t('notice.login.terminal')),
@@ -67,7 +78,8 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
         <p className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{body.text}</p>
         {feedback && <p role="status" className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{feedback}</p>}
         <fieldset disabled={busy} aria-busy={busy} className="m-0 flex min-w-0 flex-wrap justify-end gap-gap border-0 p-0 disabled:opacity-60">
-          {status === 'auth_required' && withAccounts && (
+          {locked && onUnlock && <Button variant="primary" onClick={onUnlock}>{t('notice.unlock')}</Button>}
+          {status === 'auth_required' && withAccounts && !locked && (
             <>
               {others.map(a => <Button key={a.id} title={a.detail} onClick={() => onSelectAccount(a.id)}>{t('notice.useAccount', { label: a.label })}</Button>)}
               <Button variant="primary" onClick={() => onAddAccount('import')}>{t(busy && action.via === 'import' ? 'notice.importingShort' : 'notice.importCli')}</Button>
