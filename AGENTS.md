@@ -8,7 +8,7 @@ A chat shell for VS Code / Cursor (and IntelliJ) that drives official agent CLIs
 - Keep going while the next step needs no decision, and put status notes in the same message as the next action. Stop and ask only when blocked on a decision, or before: deleting files this task did not create, force-pushing or rewriting history, deleting or rewriting data outside the repository (`~/.acpira`, the CLIs' own stores), or sending real prompts to a CLI (the host probe scripts, `pnpm probe` with a prompt), since those spend model calls.
 - Read the area's doc from the table below before changing it; the recorded wire behaviour outranks the ACP spec and memory of it. A newly verified fact goes into the matching `docs/dev/` file together with the agent version it was observed on. This file stays an index under 16 KB, because some hosts truncate it there.
 - Long multi-part work keeps its checklist in `docs/TASKS.md` (ignored by git) and ticks items as they finish.
-- A run ends with, in this order: **Blocked on** (decisions needed), **Changed**, **Verified** (commands actually run), **Not verified** (and why). Anything not confirmed against code, tests or a real CLI is marked unverified, with where it was looked for.
+- A run that changed files closes with a short summary: any decision still needed first, then what changed, the commands actually run, and what was left unverified (and why). Sections with nothing to say are left out, and a plain question gets a plain answer. Anything not confirmed against code, tests or a real CLI is still called out as unverified, with where it was looked for.
 
 ## Commands
 

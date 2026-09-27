@@ -75,8 +75,9 @@ function windowLabel(id: string): string {
 }
 
 // The compact badge shows up to two units; the tooltip names the exact reset timestamp.
+// An untouched window has no reset yet (Claude starts the 5-hour clock on the first message), so it reads as idle.
 function resetLabel(w: QuotaWindow, now: number): string {
-  if (!w.resetsAt || !Number.isFinite(Date.parse(w.resetsAt))) return t('quota.resetUnknown');
+  if (!w.resetsAt || !Number.isFinite(Date.parse(w.resetsAt))) return t(w.remaining >= 1 ? 'quota.resetIdle' : 'quota.resetUnknown');
   if (Date.parse(w.resetsAt) <= now) return t('quota.resetPending');
   return t('quota.reset', { time: fmtUntil(w.resetsAt, now) });
 }
