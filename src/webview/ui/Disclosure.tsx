@@ -16,10 +16,12 @@ export interface DisclosureProps extends Omit<RowProps, 'as' | 'interactive' | '
   indent?: boolean;
   rail?: 'body' | 'rows' | false;
   onToggle?: (open: boolean) => void;
+  /** Extra classes on the body's padding box, e.g. a density-aware top gap */
+  bodyClassName?: string;
 }
 
 // Rule: a body that is indented past the lead slot (i.e. not full width) gets a rail down that slot; full-width bodies (cards, lists) get none
-export function Disclosure({ body, open: controlled, defaultOpen = false, indent = true, rail = indent ? 'body' : false, onToggle, className, ...row }: DisclosureProps) {
+export function Disclosure({ body, open: controlled, defaultOpen = false, indent = true, rail = indent ? 'body' : false, onToggle, className, bodyClassName, ...row }: DisclosureProps) {
   const [inner, setInner] = useState(defaultOpen);
   const observe = useContext(DisclosureObserverContext);
   const open = controlled ?? inner;
@@ -32,7 +34,7 @@ export function Disclosure({ body, open: controlled, defaultOpen = false, indent
       <Collapsible.Trigger render={<Row as="button" interactive {...row} />} />
       {/* Nested rows extend their hit area beyond the text column; reserve it inside the clip so its edges cannot cut off row corners. */}
       <Collapsible.Panel className="-mx-hit [&>div]:px-hit">
-        <div className={cn('pt-1', !rail && 'pb-1.5', indent && row.lead !== undefined && 'pl-indent')}>{body}</div>
+        <div className={cn('pt-1', !rail && 'pb-1.5', indent && row.lead !== undefined && 'pl-indent', bodyClassName)}>{body}</div>
       </Collapsible.Panel>
     </Collapsible.Root>
   );

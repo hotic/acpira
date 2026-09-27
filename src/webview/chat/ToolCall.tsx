@@ -21,12 +21,14 @@ import { toolVerb } from './folding';
 import { AsyncTaskStopContext, OpenToolFileContext } from './fileLinks';
 import { fileReference, toolFiles, visibleToolContents } from './toolDetails';
 import { useToolSeconds } from './useToolSeconds';
+import { commandDuration, commandSummary } from './commandSummary';
 
 export { OpenToolFileContext } from './fileLinks';
 
-// One tool call = one expandable row, command execution included (Codex-style: the command sits on the row, the output is a card below).
+// One tool call = one expandable row, command execution included (the row names the program, the card below holds the full command and its output).
 // Three modes: text only / with icon / icon + meta. No Orb while running: icon mode uses the same static icon as the completed state, with the verb shimmering.
-// Bodies (diff / output / list) are not indented — they align with the row's left edge, like Codex
+// Bodies (diff / list) are not indented — they align with the row's left edge, like Codex; a command card is indented to the label
+// column and hangs from the row icon on a connected rail
 // Memoized on the block reference: a live turn re-renders on every chunk, and only the tool that changed should pay for it.
 // The rows enter once per tool id: the branch below changes shape as the call progresses, and a remount must not replay it
 export const ToolCall = memo(function ToolCall({ block, grouped = false }: { block: ToolCallBlock; grouped?: boolean }) {
@@ -39,6 +41,9 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
   const running = block.status === 'in_progress' && block.observation !== 'unknown';
   const execute = block.kind === 'execute';
   const seconds = useToolSeconds(block);
+  // A shell command the agent handed over verbatim: the row shows a summary, the card the whole command.
+  // Title-derived targets may be prose, and background wait / kill rows name another command, so both stay on the row
+  const command = execute && block.targetMono && !block.verbKey && block.target?.trim() ? block.target : undefined;
   const files = toolFiles(block);
   const visibleContent = visibleToolContents(block);
   const Icon = toolIcon(block);
@@ -71,23 +76,37 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
 
   // The diff stat is not decoration — every harness shows it — so it escapes the toolLine axis; 'rich' adds the rest of the meta
   const stat = block.diffStat && <span><span className="text-ok">+{block.diffStat.add}</span> <span className="text-danger">−{block.diffStat.del}</span></span>;
-  const trailing = toolLine === 'rich'
+  const glyph = <>
+    {block.status === 'completed' && <Check className="size-3 text-ok" strokeWidth={2} aria-hidden="true" />}
+    {block.status === 'failed' && <X className="size-3 text-danger" strokeWidth={2} aria-hidden="true" />}
+  </>;
+  // Commands always end their row with the outcome and run time; an async task's state tag stands in for the glyph.
+  // A live command ticks in whole seconds, a finished one reads its host timestamps, and no timer means no duration
+  const duration = seconds === undefined ? undefined
+    : block.startedAt !== undefined && block.endedAt !== undefined ? commandDuration(block.endedAt - block.startedAt)
+      : commandDuration(seconds * 1000, true);
+  const trailing = execute
     ? <>
-        {stat || (block.meta && <span>{block.meta}</span>)}
+        {toolLine === 'rich' && block.meta && <span>{block.meta}</span>}
         {taskTag}
         {taskStop}
-        {block.status === 'completed' && <Check className="size-3 text-ok" strokeWidth={2} />}
-        {block.status === 'failed' && <X className="size-3 text-danger" strokeWidth={2} />}
+        {!task && glyph}
+        {duration && <span>{duration}</span>}
       </>
-    : (stat || taskTag || taskStop ? <>{stat}{taskTag}{taskStop}</> : undefined);
+    : toolLine === 'rich'
+      ? <>
+          {stat || (block.meta && <span>{block.meta}</span>)}
+          {taskTag}
+          {taskStop}
+          {glyph}
+        </>
+      : (stat || taskTag || taskStop ? <>{stat}{taskTag}{taskStop}</> : undefined);
 
   const label = <>
-    <RowLabel className="tabular-nums" shimmer={running}>
-      {seconds !== undefined && block.status === 'in_progress' ? t('tool.runningSeconds', { s: seconds })
-        : seconds !== undefined && seconds > 0 && block.status === 'completed' ? t('tool.completedSeconds', { s: seconds })
-          : toolVerb(block)}
-    </RowLabel>
-    {block.target && !(block.kind === 'read' && files.length) && <RowTarget mono={block.targetMono}>{block.target}</RowTarget>}
+    <RowLabel shimmer={running}>{toolVerb(block)}</RowLabel>
+    {command
+      ? <RowTarget mono><span title={command}>{commandSummary(command)}</span></RowTarget>
+      : block.target && !(block.kind === 'read' && files.length) && <RowTarget mono={block.targetMono}>{block.target}</RowTarget>}
   </>;
   if (todos !== undefined) return <PlanDetails entries={todos} label={label} trailing={trailing} />;
   // Image generation: the row names the call and its text (codex-acp's revised prompt) opens on demand. In the process fold
@@ -119,8 +138,15 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
     || (grouped && !block.content)) return <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
 
   // Opening a process fold reveals action rows; outputs only expand on an explicit click.
+  // A command card sits in the label column on the row's rail; the space after it stays outside the rail so the end dot meets the card
+  if (execute) return (
+    <Disclosure className="action-details data-open:mb-command-after" bodyClassName="pt-gap-half" tone="action" lead={lead} trailing={trailing} defaultOpen={!grouped && running}
+      body={<><TaskMeta task={block.asyncTask} /><ToolBody block={block} items={visibleContent} command={command} /></>}>
+      {label}
+    </Disclosure>
+  );
   return (
-    <Disclosure className="action-details" tone="action" lead={lead} trailing={trailing} indent={false} rail={block.content?.type === 'list' ? 'rows' : false} defaultOpen={!grouped && execute && running} body={<><TaskMeta task={block.asyncTask} /><ToolBody block={block} items={visibleContent} /></>}>
+    <Disclosure className="action-details" tone="action" lead={lead} trailing={trailing} indent={false} rail={block.content?.type === 'list' ? 'rows' : false} body={<><TaskMeta task={block.asyncTask} /><ToolBody block={block} items={visibleContent} /></>}>
       {label}
     </Disclosure>
   );
@@ -175,11 +201,11 @@ export const ReadGroup = memo(function ReadGroup({ blocks }: { blocks: ToolCallB
   </ConnectedRail>;
 }, (a, b) => a.blocks.length === b.blocks.length && a.blocks.every((block, i) => block === b.blocks[i]));
 
-function ToolBody({ block, items }: { block: ToolCallBlock; items: ReturnType<typeof visibleToolContents> }) {
+function ToolBody({ block, items, command }: { block: ToolCallBlock; items: ReturnType<typeof visibleToolContents>; command?: string }) {
   // Command output owns the execute body; an image it produced (screenshot tools) renders below the text
   if (block.kind === 'execute') {
     const images = block.contents?.filter((i): i is Extract<typeof i, { type: 'image' }> => i.type === 'image') ?? [];
-    return <div className="flex flex-col gap-gap"><TerminalOutput block={block} />{images.map((i, n) => <AgentImage key={n} image={i} />)}</div>;
+    return <div className="flex flex-col gap-gap"><TerminalOutput block={block} command={command} />{images.map((i, n) => <AgentImage key={n} image={i} />)}</div>;
   }
   // Several content items in one update (e.g. two diffs with a receipt line between them) render stacked in wire order —
   // each diff keeps its own file path, `content` alone would only ever show the first

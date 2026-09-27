@@ -60,6 +60,9 @@
   --code-output-max: 350px;
   --code-output-line-height: 22px;
   --code-copy-duration: 120ms;
+  /* Command card: the full command's lines shown before "show all", and the hanging indent under its `$ ` prompt */
+  --command-prompt-lines: 3;
+  --command-prompt-indent: 2ch;
 
   --brand: #e6a63e;
   --brand-fg: #1b1300;
@@ -407,6 +410,10 @@
   --spacing-gap-half: calc(var(--gap) / 2);
   --spacing-code-output: var(--code-output-max);
   --spacing-code-line: var(--code-output-line-height);
+  /* Command card: compact padding around the command and its output, and the space after an open card */
+  --spacing-command-x: calc(var(--pad) - var(--gap) / 2);
+  --spacing-command-y: calc(var(--gap) * 0.75);
+  --spacing-command-after: calc(var(--gap) * 0.75);
   --spacing-diff-number: var(--diff-number-width);
   --spacing-diff-sign: var(--diff-sign-width);
   --spacing-diff-gutter: calc(var(--diff-number-width) + var(--diff-sign-width));
