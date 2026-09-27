@@ -160,6 +160,7 @@ export const en = {
   'quota.window.weeklySonnet': 'Weekly Sonnet',
   'quota.reset': 'Resets in {time}',
   'quota.resetUnknown': 'Reset time unavailable',
+  'quota.resetIdle': 'Not started',
   'quota.resetPending': 'Awaiting refresh',
   'quota.officialAccount': 'Official account',
   'quota.local.desc': 'Official CLI subscription usage. Custom model providers have separate quotas.',

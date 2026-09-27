@@ -155,6 +155,7 @@
   "quota.window.weeklySonnet": "每周 Sonnet",
   "quota.reset": "{time}后重置",
   "quota.resetUnknown": "重置时间未知",
+  "quota.resetIdle": "未开始",
   "quota.resetPending": "等待刷新",
   "quota.officialAccount": "官方账号",
   "quota.local.desc": "官方 CLI 订阅额度，自定义模型供应商的额度单独计算。",
