@@ -4,6 +4,7 @@ import type { SubagentSummary } from '@shared/subagents';
 import { t } from '../../i18n';
 import { IconButton } from '../../ui/Button';
 import { Dialog } from '../../ui/Dialog';
+import { Row } from '../../ui/Row';
 import { stateIcon } from './icons';
 import { useElapsed } from './useElapsed';
 import { isWaiting, secondLine, stateLabel, subagentTitle } from './subagentState';
@@ -59,25 +60,23 @@ function graphRoots(nodes: SubagentSummary[]): Branch[] {
   return roots;
 }
 
-// Title, then role · elapsed (· model when the children differ); a third line only when the state is worth words:
-// the live activity or pending decision, or how it ended short. A completed child says so with its icon alone.
+// One row per child, in the transcript's row language: state mark, title, then role · elapsed (· model when the children
+// differ) · the state when it is worth words (live activity, a pending decision, or how it ended short). A completed
+// child says so with its mark. Children hang one indent step deeper, joined by the tree's elbow lines.
 function GraphBranch({ branch, onSelect, selectedId, showModel }: { branch: Branch; onSelect: (id: string) => void; selectedId?: string; showModel: boolean }) {
   const { node, children } = branch;
   const elapsed = useElapsed(node);
-  const meta = [node.role !== undefined && node.role !== subagentTitle(node, t) ? node.role : undefined, elapsed, showModel ? node.model : undefined].filter(Boolean).join(' · ');
   const status = node.state === 'running' || isWaiting(node) ? secondLine(node, t) : node.state === 'completed' ? undefined : stateLabel(node, t);
+  const meta = [node.role !== undefined && node.role !== subagentTitle(node, t) ? node.role : undefined, elapsed, showModel ? node.model : undefined, status].filter(Boolean).join(' · ');
   return <li>
-    <button type="button" className="subagent-graph-node" data-node-id={node.id}
+    <Row as="button" interactive className="subagent-graph-node" data-node-id={node.id}
       aria-current={node.id === selectedId ? 'true' : undefined}
-      aria-label={[subagentTitle(node, t), stateLabel(node, t), meta, status].filter(Boolean).join(' · ')}
-      title={[node.task, node.model].filter(Boolean).join('\n\n')} onClick={() => onSelect(node.id)}>
-      <span className="shrink-0 text-fg-3" aria-hidden="true">{stateIcon(node)}</span>
-      <span className="flex min-w-0 flex-1 flex-col gap-1">
-        <span className="truncate text-2 font-medium text-fg-1">{subagentTitle(node, t)}</span>
-        <span className="truncate text-3 text-fg-3 tabular-nums">{meta}</span>
-        {status && <span className="truncate text-3 text-fg-2">{status}</span>}
-      </span>
-    </button>
+      aria-label={[subagentTitle(node, t), stateLabel(node, t), meta].filter(Boolean).join(' · ')}
+      title={[node.task, node.model].filter(Boolean).join('\n\n')} onClick={() => onSelect(node.id)}
+      lead={stateIcon(node)}>
+      <span className="min-w-0 truncate text-fg-1">{subagentTitle(node, t)}</span>
+      {meta && <span className="min-w-0 truncate text-3 text-fg-3 tabular-nums [flex-shrink:9]">{meta}</span>}
+    </Row>
     {children.length > 0 && <ul>{children.map(child => <GraphBranch key={child.node.id} branch={child} onSelect={onSelect} selectedId={selectedId} showModel={showModel} />)}</ul>}
   </li>;
 }
@@ -100,8 +99,8 @@ export function SubagentGraph({ nodes, sessionTitle, open, onOpenChange, onInspe
         finalFocus={() => !inspecting.current}
         onClick={event => { if (event.target === event.currentTarget) onOpenChange(false); }}
         className="absolute inset-0 z-40 flex items-center justify-center bg-scrim p-pad">
-        <div className="flex max-h-full w-max min-w-0 max-w-full flex-col overflow-hidden rounded-lg border border-line bg-bg-1 shadow-pop">
-          <header className="flex shrink-0 items-center gap-gap border-b border-line p-pad">
+        <div className="flex max-h-full w-max min-w-pop-xl max-w-full flex-col overflow-hidden rounded-lg border border-line bg-bg-1 shadow-pop">
+          <header className="flex shrink-0 items-center gap-gap border-b border-line py-gap pl-pad pr-gap">
             <GitBranch className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} aria-hidden="true" />
             <Dialog.Title className="m-0 min-w-0 flex-1 text-2 font-medium text-fg-1">{t('subagents.graph')}</Dialog.Title>
             <IconButton ref={closeRef} size="sm" title={t('common.close')} aria-label={t('common.close')}
@@ -109,13 +108,11 @@ export function SubagentGraph({ nodes, sessionTitle, open, onOpenChange, onInspe
           </header>
           <div className="subagent-graph-scroll scroll-thin" tabIndex={0} role="region" aria-label={t('subagents.graph')}>
             <ul className="subagent-graph-tree"><li>
-              <div className="subagent-graph-node">
-                <GitBranch className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} aria-hidden="true" />
-                <span className="flex min-w-0 flex-1 flex-col gap-1">
-                  <span className="truncate text-2 font-medium text-fg-1" title={sessionTitle}>{sessionTitle || t('subagents.root')}</span>
-                  <span className="text-3 text-fg-3">{t('subagents.entry', { n: nodes.length })}</span>
-                </span>
-              </div>
+              {/* The session itself labels the tree; it is not a node to open */}
+              <Row lead={<GitBranch className="size-icon" strokeWidth={1.5} />}>
+                <span className="min-w-0 truncate font-medium text-fg-1" title={sessionTitle}>{sessionTitle || t('subagents.root')}</span>
+                <span className="shrink-0 text-3 text-fg-3">{t('subagents.entry', { n: nodes.length })}</span>
+              </Row>
               {roots.length > 0 && <ul>{roots.map(branch => <GraphBranch key={branch.node.id} branch={branch} onSelect={select} selectedId={selectedId} showModel={showModel} />)}</ul>}
             </li></ul>
           </div>

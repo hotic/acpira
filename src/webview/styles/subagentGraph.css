@@ -1,11 +1,13 @@
 @layer components {
+  /* Summon graph (chat/subagents/SubagentGraph.tsx): a vertical tree of rows. Each nested list steps one lead + --gap in;
+     its elbow lines start under the parent's lead centre and stop a --gap short of the child's lead. */
   .subagent-graph-scroll {
-    --subagent-graph-branch-gap: var(--pad);
+    --subagent-graph-elbow: calc(var(--lead) / 2 + var(--gap));
     min-height: 0;
     overflow: auto;
     overscroll-behavior: contain;
     flex: 1;
-    padding: var(--pad);
+    padding: var(--gap) var(--pad) var(--pad);
   }
 
   .subagent-graph-tree,
@@ -15,78 +17,40 @@
     margin: 0;
   }
 
-  .subagent-graph-tree {
-    width: max-content;
-    min-width: 100%;
-  }
-
-  .subagent-graph-tree li {
-    position: relative;
-    display: flex;
-    align-items: center;
-  }
-
-  .subagent-graph-tree > li {
-    width: max-content;
-    margin-inline: auto;
-  }
+  .subagent-graph-tree li { position: relative; }
 
   .subagent-graph-tree ul {
-    padding-left: var(--subagent-graph-branch-gap);
+    margin-left: calc(var(--lead) / 2);
+    padding-left: var(--subagent-graph-elbow);
   }
 
-  .subagent-graph-tree ul > li {
-    padding: var(--gap) 0 var(--gap) var(--subagent-graph-branch-gap);
-  }
-
+  /* The trunk runs past every sibling but the last, which stops at its own elbow */
   .subagent-graph-tree ul > li::before {
     content: '';
     position: absolute;
     top: 0;
     bottom: 0;
-    left: 0;
+    left: calc(-1 * var(--subagent-graph-elbow));
     border-left: 1px solid var(--line-strong);
   }
+  .subagent-graph-tree ul > li:last-child::before { bottom: auto; height: calc(var(--row) / 2); }
 
-  .subagent-graph-tree ul > li:first-child::before { top: 50%; }
-  .subagent-graph-tree ul > li:last-child::before { bottom: 50%; }
-  .subagent-graph-tree ul > li:only-child::before { display: none; }
-
-  .subagent-graph-tree ul > li::after,
-  .subagent-graph-node:has(+ ul)::after {
+  .subagent-graph-tree ul > li::after {
     content: '';
     position: absolute;
-    top: 50%;
-    width: var(--subagent-graph-branch-gap);
+    top: calc(var(--row) / 2);
+    left: calc(-1 * var(--subagent-graph-elbow));
+    width: calc(var(--subagent-graph-elbow) - var(--gap) / 2);
     border-top: 1px solid var(--line-strong);
   }
 
-  .subagent-graph-tree ul > li::after { left: 0; }
-  .subagent-graph-node:has(+ ul)::after { left: 100%; }
-
-  .subagent-graph-node {
-    position: relative;
-    display: flex;
-    align-items: flex-start;
-    gap: var(--gap);
-    flex: none;
-    width: var(--pop-w-sm);
-    padding: var(--pad-y) var(--pad);
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    background: var(--bg-2);
-    text-align: left;
-  }
-
-  button.subagent-graph-node { cursor: pointer; }
-  button.subagent-graph-node[aria-current],
-  button.subagent-graph-node:hover {
-    background: var(--active);
-    border-color: var(--line-strong);
-  }
-
-  button.subagent-graph-node:focus-visible {
-    outline: 2px solid var(--focus);
-    outline-offset: 2px;
+  /* The inspected child stays marked while the graph is open over it */
+  .subagent-graph-node[aria-current] { background: var(--active); color: var(--fg-1); }
+  /* Same mark size as the transcript row, the ✓ scaled back to a plain Check */
+  .subagent-graph-node > .row-lead { width: var(--subagent-mark); height: var(--subagent-mark); }
+  .subagent-graph-node .subagent-mark {
+    width: var(--subagent-mark);
+    height: var(--subagent-mark);
+    --check-scale: var(--subagent-check-scale);
   }
 }
