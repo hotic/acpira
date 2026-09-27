@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowLeft, Network, Square, Unplug, X } from 'lucide-react';
+import { ArrowLeft, Square, Unplug, X } from 'lucide-react';
 import type { SubagentSummary } from '@shared/subagents';
 import type { QuestionBlock, TextBlock, Turn } from '@shared/transcript';
 import { t } from '../../i18n';
@@ -20,8 +20,6 @@ interface InspectorProps {
   // The observed child's transcript; absent until the host answers observeSubagent
   transcript?: { turns: Turn[]; running: boolean; rev: number };
   onClose: () => void;
-  // Opens the session's summon graph, the one place relations between children are drawn
-  onGraph?: () => void;
   onCancel?: () => void;
   onPermission: (blockId: string, optionId: string) => void;
   // The child's open question card — the overlay makes the main thread inert, so the card renders here too
@@ -59,9 +57,11 @@ export function SubagentInspector(p: InspectorProps) {
         if (e.key === 'Escape' && !e.defaultPrevented) { e.stopPropagation(); p.onClose(); }
       }}
     >
-      {/* Same shape as the main Header: plain title, actions on the right; ancestry lives in the summon graph */}
+      {/* Same shape as the main Header, which the overlay covers: back / close, the child's title, cancel on the right.
+          Ancestry and the graph live behind the composer's subagent entry. The icon bites into the page margin like the
+          Header's trailing icons, so the arrow sits on the column edge */}
       <div className="flex h-hdr shrink-0 items-center gap-gap px-page shadow-[inset_0_-1px_0_0_var(--line)]">
-        <IconButton onClick={p.onClose} aria-label={t('subagents.back')} title={t('subagents.back')}>
+        <IconButton className="-ml-1.5" onClick={p.onClose} aria-label={t('subagents.back')} title={t('subagents.back')}>
           {mode === 'overlay' ? <ArrowLeft strokeWidth={1.5} /> : <X strokeWidth={1.5} />}
         </IconButton>
         <span className="min-w-0 flex-1 truncate text-2 font-medium text-fg-strong" title={title}>{title}</span>
@@ -69,11 +69,6 @@ export function SubagentInspector(p: InspectorProps) {
           <IconButton onClick={p.onCancel} disabled={node.cancelRequested} aria-label={cancelLabel} title={cancelLabel}
             className="disabled:cursor-not-allowed disabled:opacity-50">
             <Square strokeWidth={1.5} />
-          </IconButton>
-        )}
-        {p.onGraph && (
-          <IconButton onClick={p.onGraph} aria-haspopup="dialog" aria-label={t('subagents.graph')} title={t('subagents.graph')}>
-            <Network strokeWidth={1.5} />
           </IconButton>
         )}
       </div>
@@ -168,7 +163,8 @@ function textOf(markdown: string): TextBlock {
   return { type: 'text', markdown };
 }
 
-// The delegated task is the child's prompt, so it wears the main thread's user-message card; long briefs clamp to six lines with a text toggle
+// The delegated task is the child's prompt, so it wears the main thread's user-message card with no caption above it;
+// long briefs clamp to six lines with a text toggle
 function TaskCard({ task }: { task: string }) {
   const body = useRef<HTMLDivElement>(null);
   const [clamped, setClamped] = useState(false);
@@ -178,8 +174,7 @@ function TaskCard({ task }: { task: string }) {
     if (el) setClamped(el.scrollHeight > el.clientHeight + 1);
   }, [task]);
   return (
-    <section className="flex min-w-0 flex-col gap-1">
-      <div className="px-pad text-3 text-fg-3">{t('subagents.task')}</div>
+    <section className="flex min-w-0 flex-col" aria-label={t('subagents.task')}>
       <div className="rounded-lg bg-bg-0 bg-[linear-gradient(var(--chip),var(--chip))] px-pad py-gap shadow-[inset_0_0_0_1px_var(--conversation-line)]">
         <div ref={body} className={cn('text-1 text-fg-1 whitespace-pre-wrap [overflow-wrap:anywhere]', !open && 'line-clamp-6')}>{task}</div>
         {(clamped || open) && (
