@@ -12,6 +12,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.
 - Steer / interrupt follow-up modes remain planned. Mid-turn messages stay in the host-side queue.
 
+## [1.7.2] - 2026-09-27
+
+### Added
+
+- A session held by an orphaned Acpira instance on the same machine (typically a window left behind by a dropped Remote-SSH connection, whose sidecar and `devin acp` keep the session locked) offers **Take over here**: the holder is checked again, its agent process is ended and the session reconnects like Retry. Any other holder, such as Devin running in a terminal, keeps the plain retryable error.
+- Claude over a remote session on macOS (such as Remote-SSH), where the login keychain is locked for that session while the desktop has it open, shows one **Unlock keychain** action instead of import / sign-in. It runs `security unlock-keychain` in a terminal; once unlocked, sessions waiting on sign-in reconnect on the same native session. Signing in again is not offered, since it would rotate the desktop login's refresh token.
+
+### Changed
+
+- Subagent rows are unframed and take the process-fold shape (state mark, title, fainter activity, chevron after the text). A running child keeps showing its latest tool step between tools instead of flickering back to Working, and the inspector uses the main thread's column width, capped at the content width in the editor panel.
+
+### Fixed
+
+- Scrolling up in small wheel or trackpad steps while a reply streams no longer snaps back to the bottom; following resumes only at the actual bottom.
+- Scrolling down past a sticky user prompt as it folds no longer snaps back near the bottom of the thread.
+- The connecting notice sits slightly higher above the composer.
+- A quota window with full remaining and no reset time yet (Claude starts the 5-hour clock on the first message) reads "Not started" instead of an unknown reset.
+
 ## [1.7.1] - 2026-09-27
 
 ### Added
