@@ -202,6 +202,8 @@
   "notice.closed.text": "进程已结束",
   "notice.error.title": "出错了",
   "notice.error.unknown": "未知错误",
+  "notice.takeOver": "在此接管",
+  "notice.takeOver.text": "占用它的是这台机器上另一个 Acpira 实例，多半是远程连接断开后遗留的旧窗口。接管会结束那边的 agent 进程。",
   "notice.useAccount": "用 {label}",
   "notice.importCli": "导入 CLI 登录",
   "notice.importingShort": "正在导入…",

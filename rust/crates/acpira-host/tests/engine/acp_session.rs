@@ -1443,6 +1443,60 @@ async fn a_typed_session_locked_is_reported_as_held_elsewhere() {
   assert_eq!(view(&s2)["status"], "error");
   assert!(view(&s2)["error"].as_str().unwrap().contains("held by another"));
   assert_eq!(view(&s2)["turns"].as_array().unwrap().len(), 2);
+  assert!(view(&s2)["canTakeOver"].is_null());
+}
+
+/// A dropped Remote-SSH connection leaves the old extension host, its sidecar and that sidecar's agent running; the
+/// reconnected window's resume then meets the lock. Only a holder whose parent is another `acpira` binary is offered for
+/// take-over; any other process (a terminal CLI, this test binary's child) keeps the plain retryable error
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lock_held_by_another_sidecars_agent_can_be_taken_over() {
+  use std::io::BufRead;
+  use std::process::{Command, Stdio};
+  let fake = fake_or_skip!();
+  let dir = tempfile::Builder::new().prefix("acpira-locked-").tempdir().unwrap();
+  let h = Harness::new(&fake, json!({}));
+  let record = ran_once(&h, dir.path().to_str().unwrap()).await;
+  let alive = |pid: u32| unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
+
+  let mut stranger = Command::new("sleep").arg("30").spawn().unwrap();
+  std::fs::write(dir.path().join("holder.pid"), stranger.id().to_string()).unwrap();
+  let s = reopened(&h, record.clone()).await;
+  assert_eq!(view(&s)["status"], "error");
+  assert!(view(&s)["error"].as_str().unwrap().contains(&format!("PID {}", stranger.id())));
+  assert!(view(&s)["canTakeOver"].is_null());
+  // Not offered, so a stray takeOverSession leaves the stranger alone and just retries
+  s.take_over().await.unwrap();
+  assert!(alive(stranger.id()));
+  assert_eq!(view(&s)["status"], "error");
+  drop(s);
+  stranger.kill().unwrap();
+  stranger.wait().unwrap();
+
+  // A stand-in sidecar: a shell run through a symlink named acpira (macOS SIGKILLs a copied system binary), whose child
+  // plays the orphaned agent
+  let bin = dir.path().join("bin");
+  std::fs::create_dir(&bin).unwrap();
+  let shell = ["/bin/bash", "/usr/bin/bash"].into_iter().find(|p| std::path::Path::new(p).exists()).unwrap();
+  std::os::unix::fs::symlink(shell, bin.join("acpira")).unwrap();
+  let mut sidecar =
+    Command::new(bin.join("acpira")).args(["-c", "sleep 30 & echo $!; wait"]).stdout(Stdio::piped()).spawn().unwrap();
+  let mut line = String::new();
+  std::io::BufReader::new(sidecar.stdout.take().unwrap()).read_line(&mut line).unwrap();
+  let agent: u32 = line.trim().parse().unwrap();
+  std::fs::write(dir.path().join("holder.pid"), agent.to_string()).unwrap();
+  let s = reopened(&h, record).await;
+  assert_eq!(view(&s)["status"], "error");
+  assert_eq!(view(&s)["canTakeOver"], true);
+  s.take_over().await.unwrap();
+  assert!(!alive(agent));
+  assert_eq!(view(&s)["status"], "ready");
+  assert!(view(&s)["canTakeOver"].is_null());
+  assert_eq!(view(&s)["turns"].as_array().unwrap().len(), 2);
+  assert!(h.logs().iter().any(|l| l.contains(&format!("taking the session over from pid {agent}"))));
+  let _ = sidecar.kill();
+  sidecar.wait().unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]

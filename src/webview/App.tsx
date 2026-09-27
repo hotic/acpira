@@ -184,6 +184,7 @@ export function App() {
     retry: () => post({ type: 'retry', sessionId: activeId.current }),
     retryTurn: () => post({ type: 'retryTurn', sessionId: activeId.current }),
     reconnect: () => post({ type: 'reconnect', sessionId: activeId.current }),
+    takeOver: () => post({ type: 'takeOverSession', sessionId: activeId.current }),
     dequeue: (sessionId, id) => post({ type: 'dequeue', sessionId, id }),
     sendQueued: (sessionId, id) => post({ type: 'sendQueued', sessionId, id }),
     editQueued: (sessionId, id, text, retainedAttachments, attachments) => post({ type: 'editQueued', sessionId, id, text, retainedAttachments, attachments }),
@@ -271,6 +272,7 @@ export function App() {
       status={session?.status ?? 'starting'}
       external={session?.external}
       error={session?.error}
+      canTakeOver={session?.canTakeOver}
       authMethods={session?.authMethods}
       turns={session?.turns ?? []}
       running={session?.running ?? false}

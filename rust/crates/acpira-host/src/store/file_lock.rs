@@ -158,7 +158,7 @@ async fn claim_stale(lock: &Path) -> bool {
 }
 
 #[cfg(unix)]
-fn pid_alive(pid: Option<i64>) -> bool {
+pub(crate) fn pid_alive(pid: Option<i64>) -> bool {
   let Some(pid) = pid.filter(|p| *p > 0 && *p <= i32::MAX as i64) else { return false };
   // SAFETY: signal 0 only checks for existence and permission
   let r = unsafe { libc::kill(pid as libc::pid_t, 0) };
@@ -166,7 +166,7 @@ fn pid_alive(pid: Option<i64>) -> bool {
 }
 
 #[cfg(not(unix))]
-fn pid_alive(pid: Option<i64>) -> bool {
+pub(crate) fn pid_alive(pid: Option<i64>) -> bool {
   // Without a portable liveness probe a stale-by-age lock is taken over; holders keep it for milliseconds
   let _ = pid;
   false

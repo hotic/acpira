@@ -392,6 +392,9 @@ pub enum WebviewMsg {
   Reconnect {
     session_id: Option<String>,
   },
+  TakeOverSession {
+    session_id: Option<String>,
+  },
   ObserveSubagent {
     session_id: String,
     subagent_id: String,

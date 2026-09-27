@@ -1406,6 +1406,11 @@ impl SessionManager {
           s.reconnect().await?;
         }
       }
+      W::TakeOverSession { session_id } => {
+        if let Some(s) = self.target(v, session_id.as_deref()) {
+          s.take_over().await?;
+        }
+      }
       W::Dequeue { session_id, id } => {
         if valid(&session_id)
           && let Some(s) = self.live(&session_id)
@@ -1988,6 +1993,7 @@ fn session_id_of(m: &WebviewMsg) -> Option<String> {
     | W::Retry { session_id }
     | W::RetryTurn { session_id }
     | W::Reconnect { session_id }
+    | W::TakeOverSession { session_id }
     | W::OpenInEditor { session_id } => session_id.clone(),
     W::Permission { session_id, .. }
     | W::Answer { session_id, .. }
@@ -2024,6 +2030,7 @@ fn is_execution(m: &WebviewMsg) -> bool {
       | W::Retry { .. }
       | W::RetryTurn { .. }
       | W::Reconnect { .. }
+      | W::TakeOverSession { .. }
       | W::Dequeue { .. }
       | W::SendQueued { .. }
       | W::EditQueued { .. }

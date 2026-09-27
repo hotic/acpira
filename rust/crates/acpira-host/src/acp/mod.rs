@@ -10,6 +10,7 @@ pub mod compaction_text;
 pub mod diff;
 pub mod grok;
 pub mod launch;
+pub mod lock_holder;
 pub mod model_sources;
 pub mod native_sessions;
 pub mod normalize;

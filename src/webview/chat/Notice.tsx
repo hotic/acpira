@@ -22,6 +22,8 @@ export interface NoticeProps {
   onAddAccount: (via: AddAccountVia) => void;
   // AgentInfo.credentialsLocked: unlock the credential store in a terminal (the sessions then reconnect by themselves)
   onUnlock?: () => void;
+  // SessionView.canTakeOver: the error is a session lock held by another Acpira instance's agent; ending it frees the session
+  onTakeOver?: () => void;
 }
 
 // A bar pinned above the composer while the session isn't ready: connecting / login required / error / read-only. Renders nothing when ready.
@@ -29,7 +31,7 @@ export interface NoticeProps {
 // the agent's own browser login only authenticates this one process and isn't saved, so it's labeled as this-session-only
 // A locked credential store (the macOS keychain in an SSH session) keeps the saved logins unreadable, so importing or signing in again
 // would only duplicate them: unlocking is the one action then
-export function Notice({ status, error, agent, authMethods, accounts, accountId, accountAction, onLogin, onRetry, onNewSession, onSelectAccount, onAddAccount, onUnlock }: NoticeProps) {
+export function Notice({ status, error, agent, authMethods, accounts, accountId, accountAction, onLogin, onRetry, onNewSession, onSelectAccount, onAddAccount, onUnlock, onTakeOver }: NoticeProps) {
   if (status === 'ready') return null;
   if (status === 'starting') {
     const label = t('notice.connecting', { agent: agent.name });
@@ -55,6 +57,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
     : action.status === 'pending' ? t(action.via === 'import' ? 'notice.importing' : 'notice.loginWaiting')
       : action.status === 'error' ? t('notice.accountFailed', { error: action.error ?? t('notice.error.unknown') })
         : t(`notice.account.${action.status}`));
+  const takeOver = status === 'error' ? onTakeOver : undefined;
   const others = (accounts ?? []).filter(a => a.id !== accountId);
   // The protocol names sign-in methods in English; known ones get a localized name, the rest keep what the agent sent
   const methodName = (m: AuthMethodInfo) => tOr(`notice.method.${agent.id}:${m.id}`, m.name);
@@ -76,6 +79,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
       <Card className="flex flex-col gap-gap p-pad">
         <div className="text-2 font-semibold text-fg-strong">{body.title}</div>
         <p className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{body.text}</p>
+        {takeOver && <p className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{t('notice.takeOver.text')}</p>}
         {feedback && <p role="status" className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{feedback}</p>}
         <fieldset disabled={busy} aria-busy={busy} className="m-0 flex min-w-0 flex-wrap justify-end gap-gap border-0 p-0 disabled:opacity-60">
           {locked && onUnlock && <Button variant="primary" onClick={onUnlock}>{t('notice.unlock')}</Button>}
@@ -90,9 +94,10 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
           {status === 'auth_required' && !withAccounts && (authMethods?.length
             ? authMethods.map((m, i) => <Button key={m.id} variant={i === 0 ? 'primary' : 'secondary'} title={m.description} onClick={() => onLogin(m.id)}>{methodName(m)}</Button>)
             : <Button variant="primary" onClick={() => onLogin()}>{t('notice.goLogin')}</Button>)}
+          {takeOver && <Button variant="primary" onClick={takeOver}>{t('notice.takeOver')}</Button>}
           {status === 'readonly' || status === 'closed'
             ? <Button variant="primary" onClick={() => onNewSession()}>{t('notice.continueNew')}</Button>
-            : <Button variant={status === 'auth_required' ? 'secondary' : 'primary'} onClick={onRetry}>{t('common.retry')}</Button>}
+            : <Button variant={status === 'auth_required' || takeOver ? 'secondary' : 'primary'} onClick={onRetry}>{t('common.retry')}</Button>}
         </fieldset>
       </Card>
     </div>

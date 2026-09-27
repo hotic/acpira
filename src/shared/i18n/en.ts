@@ -209,6 +209,8 @@ export const en = {
   'notice.closed.text': 'The process has exited',
   'notice.error.title': 'Something went wrong',
   'notice.error.unknown': 'Unknown error',
+  'notice.takeOver': 'Take over here',
+  'notice.takeOver.text': 'It is held by another Acpira instance on this machine, usually a window left behind by a dropped remote connection. Taking over ends that instance’s agent process.',
   'notice.useAccount': 'Use {label}',
   'notice.importCli': 'Import CLI login',
   'notice.importingShort': 'Importing…',

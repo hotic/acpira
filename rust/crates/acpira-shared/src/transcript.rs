@@ -1024,6 +1024,9 @@ pub struct SessionView {
   pub status: SessionStatus,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub error: Option<String>,
+  /// The error is a native session lock held by an agent another Acpira sidecar left running (takeOverSession ends it)
+  #[serde(default, skip_serializing_if = "is_false")]
+  pub can_take_over: bool,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub auth_methods: Option<Vec<AuthMethodInfo>>,
   pub turns: Vec<Turn>,
