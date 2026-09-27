@@ -16,12 +16,12 @@ use acpira_shared::num::Num;
 use acpira_shared::todo_tools::{is_todo_tool, todo_entries};
 use acpira_shared::transcript::*;
 
-use super::compaction_text;
-use super::diff::diff_lines;
-use super::plan_snapshots::{last_plan_snapshot, same_plan_entries};
-use super::retry_text;
-use super::session_failure::{SessionFailure, failure_of};
-use super::wire::{AsyncTaskEvent, TaskEventKind};
+use crate::acp::transcript::compaction_text;
+use crate::acp::transcript::diff::diff_lines;
+use crate::acp::transcript::plan_snapshots::{last_plan_snapshot, same_plan_entries};
+use crate::acp::transcript::retry_text;
+use crate::acp::session::failure::{SessionFailure, failure_of};
+use crate::acp::transport::wire::{AsyncTaskEvent, TaskEventKind};
 use crate::i18n::{t, tp};
 use crate::json::{basename, pretty, slice16, str_of, text_of};
 use crate::limits::{MAX_OUT_IMAGE_BYTES, TOOL_OUTPUT_MAX};

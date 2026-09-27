@@ -3,8 +3,8 @@
 
 use acpira_shared::chatgpt_integration::DesktopCommanderStatus;
 
-use crate::acp::agent_registry::resolve_command;
-use crate::acp::launch::{Os, ProcessEnv};
+use crate::acp::agents::registry::resolve_command;
+use crate::acp::agents::launch::{Os, ProcessEnv};
 use crate::store::data_dir::home_dir;
 
 pub fn commander_facts(binary: bool, configuration: bool, running: Option<bool>) -> DesktopCommanderStatus {

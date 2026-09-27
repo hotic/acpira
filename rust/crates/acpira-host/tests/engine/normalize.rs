@@ -4,9 +4,9 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 
-use acpira_host::acp::diff::diff_lines;
-use acpira_host::acp::normalize::*;
-use acpira_host::acp::wire::{AsyncTaskEvent, TaskEventKind};
+use acpira_host::acp::transcript::diff::diff_lines;
+use acpira_host::acp::transcript::normalize::*;
+use acpira_host::acp::transport::wire::{AsyncTaskEvent, TaskEventKind};
 use acpira_shared::transcript::*;
 
 use crate::support::{Clock, expect_absent, expect_eq, expect_match, v};

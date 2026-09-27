@@ -4,7 +4,18 @@
 //!
 //! All mutable state is `Core`, behind one short-held mutex. Waiting (a prompt on the wire, a permission card, a platform
 //! round trip) happens with the lock released, so a `stop` never queues behind a running `send`. The gates, the queue,
-//! the controls and history editing are further `impl AcpSession` blocks in sibling files
+//! the controls and history editing are further `impl AcpSession` blocks in the child modules
+
+pub mod attachments;
+pub mod compaction;
+pub mod controls;
+pub mod edit;
+pub mod errors;
+pub mod failure;
+pub mod gates;
+pub mod prompt;
+pub mod restore_turns;
+pub mod turn_usage;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
@@ -23,22 +34,22 @@ use acpira_shared::slash_commands::restore_command_receipts;
 use acpira_shared::subagents::SubagentSummary;
 use acpira_shared::transcript::*;
 
-use super::agent_pool::AgentPool;
-use super::agent_process::{AgentProcess, AgentSpawnError, ClientHandlers};
-use super::agent_registry::AgentRegistry;
-use super::cancel::Cancel;
-use super::compaction::CompactionCompletion;
-use super::lock_holder;
-use super::model_sources::{ModelFacts, read_model_facts, refine_controls};
-use super::normalize::{
+use crate::acp::agents::pool::AgentPool;
+use crate::acp::transport::process::{AgentProcess, AgentSpawnError, ClientHandlers};
+use crate::acp::agents::registry::AgentRegistry;
+use crate::acp::transport::cancel::Cancel;
+use crate::acp::session::compaction::CompactionCompletion;
+use crate::acp::agents::lock_holder;
+use crate::acp::agents::model_sources::{ModelFacts, read_model_facts, refine_controls};
+use crate::acp::transcript::normalize::{
   FileImageSaver, ImageSaver, NormalizeState, ToolCtx, disconnect_async_tasks, runtime_info_of, seal_replay,
 };
-use super::plan_snapshots::restore_plan_snapshots;
-use super::restore_turns::restore_interrupted_turns;
-use super::rpc::{BoxFuture, RpcError};
-use super::session_errors::{AccountAuthError, RestoreFailure, auth_hint_of, classify_restore_error, is_auth};
-use super::session_failure::SessionFailure;
-use super::subagent_tree::SubagentTree;
+use crate::acp::transcript::plan_snapshots::restore_plan_snapshots;
+use crate::acp::session::restore_turns::restore_interrupted_turns;
+use crate::acp::transport::rpc::{BoxFuture, RpcError};
+use crate::acp::session::errors::{AccountAuthError, RestoreFailure, auth_hint_of, classify_restore_error, is_auth};
+use crate::acp::session::failure::SessionFailure;
+use crate::acp::transcript::subagent_tree::SubagentTree;
 use crate::i18n::{t, t_or, tp};
 use crate::store::record::{ForkedFrom, ImportedFrom, RecordSource, SessionRecord};
 use crate::store::transcript_store::{LogFn, TranscriptStore, blob_name};
@@ -124,7 +135,7 @@ pub(crate) struct PendingQuestion {
 pub(crate) struct QueuedEntry {
   pub id: String,
   pub text: String,
-  pub prepared: super::attachments::PreparedPrompt,
+  pub prepared: crate::acp::session::attachments::PreparedPrompt,
 }
 
 pub(crate) struct Core {
@@ -151,7 +162,7 @@ pub(crate) struct Core {
   // Question gate
   pub questions: Vec<PendingQuestion>,
   pub question_seq: u64,
-  pub raw_questions: super::questions::RawMemory,
+  pub raw_questions: crate::acp::transcript::questions::RawMemory,
   pub tree: SubagentTree,
   // Prompt queue
   pub queue: Vec<QueuedEntry>,
@@ -172,7 +183,7 @@ pub(crate) struct Core {
   pub grok_usage_unavailable: bool,
   pub usage_timer: Option<tokio::task::AbortHandle>,
   pub usage_inflight: bool,
-  pub pi_stamp: Option<super::pi_usage::Stamp>,
+  pub pi_stamp: Option<crate::acp::vendors::pi_usage::Stamp>,
   /// Claude's last `usage_update.size` as the adapter sent it, before `claude_window` corrected it
   pub reported_window: Option<f64>,
   pub finish_usage_refresh: Option<oneshot::Sender<bool>>,
@@ -334,7 +345,7 @@ impl AcpSession {
     }
   }
 
-  pub(crate) fn def(&self) -> super::agent_registry::AgentDef {
+  pub(crate) fn def(&self) -> crate::acp::agents::registry::AgentDef {
     self.deps.registry.get(&self.agent).cloned().unwrap_or_default()
   }
 
@@ -1214,7 +1225,7 @@ struct RecordRef<'a> {
   #[serde(skip_serializing_if = "Option::is_none")]
   imported_from: Option<&'a ImportedFrom>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  subagents: Option<Vec<super::subagent_tree::RecordRef<'a>>>,
+  subagents: Option<Vec<crate::acp::transcript::subagent_tree::RecordRef<'a>>>,
 }
 
 impl RecordSource for AcpSession {

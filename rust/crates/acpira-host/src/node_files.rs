@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use acpira_shared::protocol::FileHit;
 
-use crate::acp::attachments::path_to_file_url;
+use crate::acp::session::attachments::path_to_file_url;
 use crate::file_rank::rank_files;
 
 const TTL: Duration = Duration::from_secs(15);

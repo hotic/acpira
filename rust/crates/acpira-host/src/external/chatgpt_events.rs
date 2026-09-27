@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 
 use acpira_shared::transcript::*;
 
-use crate::acp::diff::diff_lines;
+use crate::acp::transcript::diff::diff_lines;
 use crate::json::{len16, slice16};
 use crate::util::{iso_of_ms, ms_of_iso};
 
@@ -253,7 +253,7 @@ pub fn apply_chatgpt_event(record: &ChatGptRecord, value: &Value, now: i64) -> R
             status: ToolStatus::InProgress,
             started_at: Some(now),
             content: Some(ToolContent::Text { text: input }),
-            ..crate::acp::normalize::empty_tool(call_id)
+            ..crate::acp::transcript::normalize::empty_tool(call_id)
           }));
         }
         "tool_output" => {

@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use acpira_shared::transcript::{AgentId, AgentInfo, AgentInstall, SessionOption, StrMap};
 
-use super::launch::{Env, Os, ProcessEnv, resolve_executable};
+use crate::acp::agents::launch::{Env, Os, ProcessEnv, resolve_executable};
 use crate::i18n::tp;
 use crate::store::data_dir::home_dir;
 

@@ -26,7 +26,7 @@ fn name_of(agent: &str) -> Option<&'static str> {
 
 pub type EnvFn = Arc<dyn Fn(&str) -> HashMap<String, String> + Send + Sync>;
 /// One JSON GET (url, headers); the default is `http::get_json`, tests substitute a canned service
-pub type HttpGet = Arc<dyn Fn(String, Vec<(String, String)>) -> crate::acp::rpc::BoxFuture<anyhow::Result<Value>> + Send + Sync>;
+pub type HttpGet = Arc<dyn Fn(String, Vec<(String, String)>) -> crate::acp::transport::rpc::BoxFuture<anyhow::Result<Value>> + Send + Sync>;
 
 pub struct LocalAccounts {
   env: EnvFn,
@@ -253,7 +253,7 @@ pub fn parse_kimi_quota(payload: &Value) -> Option<AccountQuota> {
         Some(Some(300.0)) => "5h".to_owned(),
         Some(Some(1440.0)) => "daily".to_owned(),
         Some(Some(10080.0)) => "weekly".to_owned(),
-        Some(Some(m)) if m != 0.0 && m.is_finite() => format!("{} min", crate::acp::session_prompt::js_num(m)),
+        Some(Some(m)) if m != 0.0 && m.is_finite() => format!("{} min", crate::acp::session::prompt::js_num(m)),
         _ => format!("limit {}", index + 1),
       };
       let id = if windows.iter().any(|w| w.id == id) { format!("{id} {}", index + 1) } else { id };

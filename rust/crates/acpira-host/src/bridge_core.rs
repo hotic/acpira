@@ -12,7 +12,7 @@ use acpira_shared::protocol::{FileHit, HostMsg, InitState, WebviewHost, WebviewM
 use acpira_shared::settings::is_setting_key;
 use acpira_shared::sidecar::{InitialView, PlanTarget};
 
-use crate::acp::normalize::file_url_to_path;
+use crate::acp::transcript::normalize::file_url_to_path;
 use crate::i18n::tp;
 use crate::session_manager::{SessionManager, Viewer};
 use crate::settings::SettingsCenter;

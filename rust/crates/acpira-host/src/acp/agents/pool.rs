@@ -7,10 +7,10 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use super::agent_process::{AgentProcess, ClientHandlers};
-use super::agent_registry::AgentRegistry;
-use super::cancel::Cancel;
-use super::rpc::{BoxFuture, RpcError};
+use crate::acp::transport::process::{AgentProcess, ClientHandlers};
+use crate::acp::agents::registry::AgentRegistry;
+use crate::acp::transport::cancel::Cancel;
+use crate::acp::transport::rpc::{BoxFuture, RpcError};
 use crate::store::transcript_store::LogFn;
 
 const WARM_TTL: Duration = Duration::from_secs(5 * 60);

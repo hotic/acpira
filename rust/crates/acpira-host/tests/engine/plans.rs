@@ -2,11 +2,11 @@
 
 use serde_json::{Value, json};
 
-use acpira_host::acp::grok::parse_exit_plan;
-use acpira_host::acp::normalize::{NormalizeState, apply_update, end_turn};
-use acpira_host::acp::plan_snapshots::restore_plan_snapshots;
-use acpira_host::acp::plans::{capture_plan, plan_documents, plan_documents_mut};
-use acpira_host::acp::restore_turns::restore_interrupted_turns;
+use acpira_host::acp::vendors::grok::parse_exit_plan;
+use acpira_host::acp::transcript::normalize::{NormalizeState, apply_update, end_turn};
+use acpira_host::acp::transcript::plan_snapshots::restore_plan_snapshots;
+use acpira_host::acp::transcript::plans::{capture_plan, plan_documents, plan_documents_mut};
+use acpira_host::acp::session::restore_turns::restore_interrupted_turns;
 use acpira_host::util::iso_of_ms;
 use acpira_shared::transcript::{Turn, TurnStop};
 

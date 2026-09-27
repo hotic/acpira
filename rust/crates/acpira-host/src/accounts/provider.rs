@@ -8,9 +8,9 @@ use anyhow::Result;
 use acpira_shared::transcript::AccountQuota;
 
 use super::account_store::{AccountCredential, AccountDraft};
-use crate::acp::agent_process::AgentProcess;
-use crate::acp::cancel::Cancel;
-use crate::acp::rpc::BoxFuture;
+use crate::acp::transport::process::AgentProcess;
+use crate::acp::transport::cancel::Cancel;
+use crate::acp::transport::rpc::BoxFuture;
 
 /// Terminal login: run the CLI's login in an isolated directory and collect the credential once written
 pub struct LoginFlow {

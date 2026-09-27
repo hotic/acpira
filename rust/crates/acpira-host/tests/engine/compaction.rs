@@ -2,8 +2,8 @@
 
 use serde_json::{Value, json};
 
-use acpira_host::acp::compaction::{CompactionCompletion, is_compact_command};
-use acpira_host::acp::session_prompt::grok_context_usage;
+use acpira_host::acp::session::compaction::{CompactionCompletion, is_compact_command};
+use acpira_host::acp::session::prompt::grok_context_usage;
 
 use crate::acp_session::{agent_blocks, prompt, spawn_prompt, view};
 use crate::fake_or_skip;

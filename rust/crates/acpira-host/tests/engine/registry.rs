@@ -7,10 +7,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde_json::json;
 
-use acpira_host::acp::adapter_info::read_adapter_info;
-use acpira_host::acp::agent_registry::{AdapterDef, AdapterEngine, AgentDef, AgentRegistry, resolve_command};
-use acpira_host::acp::launch::{Env, Os, resolve_executable, spawn_spec};
-use acpira_host::acp::model_sources::grok_model_sources;
+use acpira_host::acp::agents::adapter_info::read_adapter_info;
+use acpira_host::acp::agents::registry::{AdapterDef, AdapterEngine, AgentDef, AgentRegistry, resolve_command};
+use acpira_host::acp::agents::launch::{Env, Os, resolve_executable, spawn_spec};
+use acpira_host::acp::agents::model_sources::grok_model_sources;
 
 use crate::support::{expect_eq, expect_match, v};
 

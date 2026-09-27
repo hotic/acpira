@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use acpira_shared::inventory::{AdapterInfo, AdapterPart, EnginePart};
 
-use super::agent_registry::AgentDef;
+use crate::acp::agents::registry::AgentDef;
 
 const MAX_UP: usize = 8;
 

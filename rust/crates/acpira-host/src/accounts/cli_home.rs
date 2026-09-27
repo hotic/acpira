@@ -12,7 +12,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::account_store::AccountCredential;
-use crate::acp::cancel::Cancel;
+use crate::acp::transport::cancel::Cancel;
 
 /// The credential secret of an imported local login: the CLI keeps using its own home, nothing is copied
 pub const LOCAL_LOGIN: &str = "local";

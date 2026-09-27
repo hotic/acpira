@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
 
-use super::cancel::Cancel;
+use crate::acp::transport::cancel::Cancel;
 
 // A single message above this is a broken peer, not a big image (inline images are capped far below)
 const MAX_LINE: usize = 256 * 1024 * 1024;

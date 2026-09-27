@@ -11,9 +11,9 @@ use acpira_shared::composer_controls::{is_reasoning_control, thought_correction}
 use acpira_shared::models::parse_fusion_name;
 use acpira_shared::transcript::*;
 
-use super::normalize::{apply_config_options, config_option_set_value, init_controls};
-use super::rpc::BoxFuture;
-use super::session::{AcpSession, MODE_PICK};
+use crate::acp::transcript::normalize::{apply_config_options, config_option_set_value, init_controls};
+use crate::acp::transport::rpc::BoxFuture;
+use crate::acp::session::{AcpSession, MODE_PICK};
 use crate::i18n::t;
 
 /// pi-acp 0.0.33 advertises its thinking levels twice, as modes and as the thought_level select: such modes select nothing

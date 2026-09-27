@@ -27,11 +27,11 @@ use acpira_shared::turn_settings::capture_turn_settings;
 
 use crate::accounts::account_manager::{AccountHooks, AccountManager, RunInTerminal, Toast};
 use crate::accounts::local::LocalAccounts;
-use crate::acp::agent_pool::AgentPool;
-use crate::acp::agent_registry::AgentRegistry;
-use crate::acp::native_sessions::list_native_sessions;
-use crate::acp::probe_controls::{ProbeResult, probe_agent_controls};
-use crate::acp::rpc::BoxFuture;
+use crate::acp::agents::pool::AgentPool;
+use crate::acp::agents::registry::AgentRegistry;
+use crate::acp::agents::native_sessions::list_native_sessions;
+use crate::acp::agents::probe_controls::{ProbeResult, probe_agent_controls};
+use crate::acp::transport::rpc::BoxFuture;
 use crate::acp::session::{AcpSession, CompactionPolicy, SessionAccountHooks, SessionDeps, StartOutcome};
 use crate::external::chatgpt_events::CHATGPT_ID;
 use crate::external::chatgpt_store::ChatGptBridgeStore;

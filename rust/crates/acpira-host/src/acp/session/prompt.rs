@@ -12,20 +12,20 @@ use acpira_shared::transcript::*;
 use acpira_shared::turn_errors::is_context_length_error;
 use acpira_shared::turn_settings::capture_turn_settings;
 
-use super::attachments::{PreparedPrompt, prepare_prompt, prompt_caps_of, restore_drafts};
-use super::claude_window;
-use super::compaction::{CompactionCompletion, is_compact_command};
-use super::normalize::{activity_of, apply_async_task, apply_session_failure, apply_update, end_turn, fail_turn, set_stop_requested};
-use super::pi_usage;
-use super::plans::{capture_plan, plan_documents, plan_documents_mut};
-use super::rpc::{BoxFuture, RpcError};
-use super::session::{AcpSession, Core, QueuedEntry, USAGE_POLL_INTERVAL, clear_usage_timer, num};
-use super::session_edit::{FORK_HISTORY_LEAD, history_context};
-use super::session_errors::{is_auth, is_quota_exhausted, is_session_gone, turn_error_of};
-use super::session_failure::{failure_of, failure_turn_error};
-use super::subagent_tree::{Route, RouteCtx};
-use super::turn_usage::turn_usage_of;
-use super::wire::{ExtensionUpdate, extension_of};
+use crate::acp::session::attachments::{PreparedPrompt, prepare_prompt, prompt_caps_of, restore_drafts};
+use crate::acp::vendors::claude_window;
+use crate::acp::session::compaction::{CompactionCompletion, is_compact_command};
+use crate::acp::transcript::normalize::{activity_of, apply_async_task, apply_session_failure, apply_update, end_turn, fail_turn, set_stop_requested};
+use crate::acp::vendors::pi_usage;
+use crate::acp::transcript::plans::{capture_plan, plan_documents, plan_documents_mut};
+use crate::acp::transport::rpc::{BoxFuture, RpcError};
+use crate::acp::session::{AcpSession, Core, QueuedEntry, USAGE_POLL_INTERVAL, clear_usage_timer, num};
+use crate::acp::session::edit::{FORK_HISTORY_LEAD, history_context};
+use crate::acp::session::errors::{is_auth, is_quota_exhausted, is_session_gone, turn_error_of};
+use crate::acp::session::failure::{failure_of, failure_turn_error};
+use crate::acp::transcript::subagent_tree::{Route, RouteCtx};
+use crate::acp::session::turn_usage::turn_usage_of;
+use crate::acp::transport::wire::{ExtensionUpdate, extension_of};
 use crate::i18n::{t, tp};
 use crate::limits::TITLE_MAX;
 use crate::util::{clip, now_ms, random_uuid};
@@ -58,7 +58,7 @@ const RUNNING_KINDS: [&str; 6] =
   ["user_message_chunk", "agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update", "plan"];
 
 impl AcpSession {
-  pub(crate) fn caps(&self, c: &Core) -> super::attachments::PromptCaps {
+  pub(crate) fn caps(&self, c: &Core) -> crate::acp::session::attachments::PromptCaps {
     prompt_caps_of(c.proc.as_ref().map(|p| &p.init), &self.def())
   }
 
@@ -1044,7 +1044,7 @@ impl AcpSession {
   }
 
   /// An AIR async task lands on the transcript of the session whose stream carried it
-  fn async_task_update(&self, c: &mut Core, peer: &str, e: &super::wire::AsyncTaskEvent) {
+  fn async_task_update(&self, c: &mut Core, peer: &str, e: &crate::acp::transport::wire::AsyncTaskEvent) {
     if c.replaying {
       return;
     }
@@ -1275,7 +1275,7 @@ fn merge_usage(into: &mut TurnUsage, u: TurnUsage) {
 /// First line of the text, or what was attached when there is no text
 pub(crate) fn summarize_prompt(text: &str, attachments: &[Attachment]) -> String {
   let first = text.trim().split('\n').next().unwrap_or("").trim();
-  if first.is_empty() { super::attachments::describe_drafts(attachments) } else { first.to_owned() }
+  if first.is_empty() { crate::acp::session::attachments::describe_drafts(attachments) } else { first.to_owned() }
 }
 
 /// The session-info context snapshot of a Grok `_x.ai/session/info` answer
