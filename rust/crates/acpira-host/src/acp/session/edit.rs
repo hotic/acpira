@@ -450,7 +450,7 @@ impl AcpSession {
       if let Some(b) = rebuilt {
         prepared.blocks = b;
       }
-      let fresh = proc.request("session/new", json!({ "cwd": self.cwd, "mcpServers": [] })).await?;
+      let fresh = proc.request("session/new", self.session_request(None)).await?;
       let fresh_id = fresh.get("sessionId").and_then(Value::as_str).unwrap_or("").to_owned();
       let mut controls = SessionControls::default();
       if !self.protocol_controls(&mut controls, fresh.get("modes"), fresh.get("configOptions"))
