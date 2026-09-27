@@ -1,7 +1,5 @@
-// A hidden sidebar webview collapses the thread to no box. IntersectionObserver then
-// reports every exchange sentinel as off-screen, and scroll listeners treat the empty
-// viewport as "left the bottom". Callers must ignore those frames and re-check once
-// the thread has a box again.
+// A hidden sidebar webview collapses the thread to no box. Scroll listeners must
+// ignore the empty viewport and re-check once the thread has a box again.
 
 export function scrollerUsable(el: { clientHeight: number; clientWidth: number }): boolean {
   return el.clientHeight >= 1 && el.clientWidth >= 1;
@@ -14,20 +12,4 @@ export function scrollerUsable(el: { clientHeight: number; clientWidth: number }
 // every streamed update pins again before those steps can accumulate enough distance to release the follow.
 export function followsBottom(el: { scrollHeight: number; scrollTop: number; clientHeight: number }, pinned: boolean, lastTop: number): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight <= 1 || (pinned && el.scrollTop >= lastTop);
-}
-
-// The same verdict from plain geometry, for a synchronous check before the first paint: the sentinel has left through the top edge
-export function promptIsStuckAt(sentinel: { bottom: number }, root: { top: number; height: number; width: number }): boolean | undefined {
-  if (root.height < 1 || root.width < 1) return undefined;
-  return sentinel.bottom <= root.top;
-}
-
-export function promptIsStuck(entry: {
-  isIntersecting: boolean;
-  boundingClientRect: { top: number };
-  rootBounds: { top: number; height: number; width: number } | null;
-}): boolean | undefined {
-  const root = entry.rootBounds;
-  if (!root || root.height < 1 || root.width < 1) return undefined;
-  return !entry.isIntersecting && entry.boundingClientRect.top < root.top;
 }
