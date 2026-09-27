@@ -28,6 +28,8 @@ interface InspectorProps {
   question?: QuestionBlock;
   onAnswer?: OnAnswer;
   mode: 'docked' | 'overlay';
+  // Editor panel: the column caps at --content-w like the main thread
+  wide?: boolean;
   blobUrl?: (blob: string) => string;
 }
 
@@ -58,7 +60,7 @@ export function SubagentInspector(p: InspectorProps) {
       }}
     >
       {/* Same shape as the main Header: plain title, actions on the right; ancestry lives in the summon graph */}
-      <div className="flex h-hdr shrink-0 items-center gap-gap px-pad shadow-[inset_0_-1px_0_0_var(--line)]">
+      <div className="flex h-hdr shrink-0 items-center gap-gap px-page shadow-[inset_0_-1px_0_0_var(--line)]">
         <IconButton onClick={p.onClose} aria-label={t('subagents.back')} title={t('subagents.back')}>
           {mode === 'overlay' ? <ArrowLeft strokeWidth={1.5} /> : <X strokeWidth={1.5} />}
         </IconButton>
@@ -80,7 +82,7 @@ export function SubagentInspector(p: InspectorProps) {
   );
 }
 
-function SessionTab({ node, transcript, onPermission, question, onAnswer, blobUrl }: InspectorProps) {
+function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, blobUrl }: InspectorProps) {
   const scroll = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   // Stick to the bottom while the child streams, exactly like the main thread; scrolling up releases the follow
@@ -103,26 +105,26 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, blobUr
   const lastAgent = transcript ? transcript.turns.reduce((at, turn, i) => (turn.role === 'agent' ? i : at), -1) : -1;
   return (
     <>
-      <div ref={scroll} className="scroll-thin min-h-0 min-w-0 flex-1 overflow-y-auto">
-        <div className="flex min-w-0 flex-col gap-msg px-pad py-pad">
+      {/* The main thread's column: page margin on the scroller, turns and the task card carry their own --pad */}
+      <div ref={scroll} className="scroll-thin min-h-0 min-w-0 flex-1 overflow-y-auto px-page">
+        <div className={cn('mx-auto flex min-w-0 flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-(--content-w)')}>
           {node.task !== undefined && <TaskCard task={node.task} />}
           {node.visibility === 'receipt' ? (
             <>
-              <p className="m-0 text-2 text-fg-3">{t('subagents.receiptOnly')}</p>
+              <p className="m-0 px-pad text-2 text-fg-3">{t('subagents.receiptOnly')}</p>
               {node.result !== undefined && (
-                <section className="flex min-w-0 flex-col gap-1">
+                <section className="flex min-w-0 flex-col gap-1 px-pad">
                   <div className="text-3 text-fg-3">{t('subagents.result')}</div>
                   <Prose block={textOf(node.result)} />
                 </section>
               )}
             </>
           ) : transcript === undefined ? (
-            <Row className="text-fg-3"><Shimmer active>{t('subagents.loading')}</Shimmer></Row>
+            <Row className="px-pad text-fg-3"><Shimmer active>{t('subagents.loading')}</Shimmer></Row>
           ) : (
             <TurnActionsContext.Provider value={undefined}>
               <HistoryContext.Provider value={undefined}>
-                {/* Turns carry their own column padding, like in the main thread */}
-                <div className="-mx-pad flex min-w-0 flex-col gap-msg">
+                <div className="flex min-w-0 flex-col gap-msg">
                   {transcript.turns.map((turn, ti) => turn.role === 'agent'
                     ? (
                       <AgentMessage
@@ -139,19 +141,19 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, blobUr
                       />
                     )
                     : <UserMessage key={ti} turn={turn} index={ti} blobUrl={blobUrl} />)}
-                  {transcript.turns.length === 0 && <Row className="text-fg-3"><Shimmer active>{t('subagents.loading')}</Shimmer></Row>}
+                  {transcript.turns.length === 0 && <Row className="px-pad text-fg-3"><Shimmer active>{t('subagents.loading')}</Shimmer></Row>}
                 </div>
               </HistoryContext.Provider>
             </TurnActionsContext.Provider>
           )}
           {node.visibility === 'nested' && node.result !== undefined && (
-            <section className="flex min-w-0 flex-col gap-1">
+            <section className="flex min-w-0 flex-col gap-1 px-pad">
               <div className="text-3 text-fg-3">{t('subagents.result')}</div>
               <Prose block={textOf(node.result)} />
             </section>
           )}
           {node.state === 'disconnected' && (
-            <Row lead={<Unplug className="size-icon" strokeWidth={1.5} />} className="text-fg-3">
+            <Row lead={<Unplug className="size-icon" strokeWidth={1.5} />} className="px-pad text-fg-3">
               <span className="min-w-0">{t('subagents.disconnectedNote')}</span>
             </Row>
           )}
@@ -177,7 +179,7 @@ function TaskCard({ task }: { task: string }) {
   }, [task]);
   return (
     <section className="flex min-w-0 flex-col gap-1">
-      <div className="text-3 text-fg-3">{t('subagents.task')}</div>
+      <div className="px-pad text-3 text-fg-3">{t('subagents.task')}</div>
       <div className="rounded-lg bg-bg-0 bg-[linear-gradient(var(--chip),var(--chip))] px-pad py-gap shadow-[inset_0_0_0_1px_var(--conversation-line)]">
         <div ref={body} className={cn('text-1 text-fg-1 whitespace-pre-wrap [overflow-wrap:anywhere]', !open && 'line-clamp-6')}>{task}</div>
         {(clamped || open) && (

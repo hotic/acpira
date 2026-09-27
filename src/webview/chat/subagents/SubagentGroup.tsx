@@ -23,14 +23,14 @@ export function SubagentGroup({ nodes, all, onInspect }: GroupProps) {
   const { shown, hidden } = partitionRows(rows);
   if (!nodes.length || !rows.length) return null;
   return (
-    <div className="flex flex-col gap-1.5" aria-label={t('subagents.group', { n: nodes.length })}>
+    <div className="flex flex-col gap-gap" aria-label={t('subagents.group', { n: nodes.length })}>
       {shown.map(n => <SubagentRow key={n.id} node={n} all={all} onInspect={onInspect} />)}
       {hidden.length > 0 && (
         <Disclosure
           open={open}
           onToggle={next => { if (next) setOpen(true); }}
           lead={<Check className="size-icon" strokeWidth={1.5} />}
-          body={<div className="flex flex-col gap-1.5">{hidden.map(n => <SubagentRow key={n.id} node={n} all={all} onInspect={onInspect} />)}</div>}
+          body={<div className="flex flex-col gap-gap">{hidden.map(n => <SubagentRow key={n.id} node={n} all={all} onInspect={onInspect} />)}</div>}
         >
           <span className="text-fg-3">{t('subagents.moreCompleted', { n: hidden.length })}</span>
         </Disclosure>
@@ -39,30 +39,28 @@ export function SubagentGroup({ nodes, all, onInspect }: GroupProps) {
   );
 }
 
-// A framed two-line row: title (or role) on top, live activity / waiting / result excerpt below, one type step
-// smaller than process rows. State icon and chevron sit inside the frame, centred on the two lines so they bracket
-// the text. The frame hangs into the hit outset, which keeps the icon on the transcript's lead column.
+// An unframed row like the process folds ("Done ›"): state mark, title, then the live activity / waiting / result excerpt
+// one step fainter, with the chevron right after the text. The activity gives up width first, the role before the title.
+// The mark fills the lead slot (--subagent-mark) so the dotted bars read; the ✓ scales back to a plain Check.
 function SubagentRow({ node, all, onInspect }: { node: SubagentSummary; all: SubagentSummary[]; onInspect: GroupProps['onInspect'] }) {
   const title = subagentTitle(node, t);
   const descendants = descendantCount(node.id, all);
+  const line = secondLine(node, t);
   return (
     <Row
       as="button"
-      className="group/subagent subagent-row [&>.row-lead]:size-subagent-mark [&>.row-lead>.subagent-mark]:size-subagent-mark -mx-hit w-auto cursor-pointer rounded-md border border-line px-hit py-1 transition-colors hover:bg-hover focus-visible:bg-hover"
-      aria-label={`${title} · ${stateLabel(node, t)} · ${secondLine(node, t)}`}
+      interactive
+      className="subagent-row [&>.row-lead]:size-subagent-mark [&>.row-lead>.subagent-mark]:size-subagent-mark"
+      aria-label={`${title} · ${stateLabel(node, t)} · ${line}`}
       title={node.task?.slice(0, 200)}
       onClick={() => onInspect(node.id)}
       lead={stateIcon(node)}
-      trailing={<ChevronRight className="size-icon opacity-60 transition-opacity group-hover/subagent:opacity-100 group-focus-visible/subagent:opacity-100" strokeWidth={1.5} />}
     >
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="flex min-w-0 items-baseline gap-2">
-          <span className="min-w-0 truncate text-3 font-medium text-fg-1">{title}</span>
-          {node.role !== undefined && node.role !== title && <span className="min-w-0 max-w-project truncate text-4 text-fg-3 [flex-shrink:9]">{node.role}</span>}
-          {descendants > 0 && <span className="shrink-0 text-4 text-fg-3">· {t('subagents.descendants', { n: descendants })}</span>}
-        </span>
-        <span className="truncate text-4 text-fg-3">{secondLine(node, t)}</span>
-      </span>
+      <span className="min-w-0 truncate">{title}</span>
+      {node.role !== undefined && node.role !== title && <span className="min-w-0 max-w-project truncate text-fg-3 [flex-shrink:4]">{node.role}</span>}
+      <span className="min-w-0 truncate text-fg-3 [flex-shrink:9]">{line}</span>
+      {descendants > 0 && <span className="shrink-0 text-fg-3">· {t('subagents.descendants', { n: descendants })}</span>}
+      <ChevronRight className="size-3 shrink-0 self-center" strokeWidth={1.75} />
     </Row>
   );
 }

@@ -19,7 +19,7 @@ export function stateIcon(node: SubagentSummary) {
   }
 }
 
-// Drawn on lucide's 24 grid; the ✓ is lucide Check's own geometry. In the framed row the mark gets a larger slot
+// Drawn on lucide's 24 grid; the ✓ is lucide Check's own geometry. In the group row the mark fills its lead slot
 // (--subagent-mark) so the bars read, and CSS shrinks the ✓ back by --check-scale (a scale transform keeps the
 // on-screen stroke equal too), so it matches the plain size-icon Check on the process fold above it.
 const CHECK_VERTICES: [number, number][] = [[4, 12], [9, 17], [20, 6]];
