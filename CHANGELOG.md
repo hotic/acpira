@@ -12,6 +12,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.
 - Steer / interrupt follow-up modes remain planned. Mid-turn messages stay in the host-side queue.
 
+## [1.7.3] - 2026-09-28
+
+### Changed
+
+- Command rows name the program and up to two subcommand words, with the full command as tooltip, and end with the outcome glyph and run time. The full command opens the output card behind a muted `$`, clamped to three lines with a **Show full command** toggle, and the card hangs from the row icon on the body rail.
+- The subagent summon graph is a vertical tree of the same rows as the transcript (state mark, title, role · elapsed · live state), one indent per level with elbow lines under a plain session label.
+- When the panel is too narrow to dock the subagent inspector, its overlay covers the whole column including the session header, so the child's title with a back arrow replaces the session title; the overlay header carries only back / close, the title and cancel.
+- Fading scrollers (user prompts, thoughts, questions, the to-do dock, terminal output) drop the vertical scrollbar and keep the faded edge; a terminal's horizontal scrollbar stays.
+
+### Fixed
+
+- Sticky user prompts keep one height and their inner scroll position before and after sticking, instead of folding to three lines when stuck.
+- A running subagent's state mark matches the size of the Working orb.
+
 ## [1.7.2] - 2026-09-27
 
 ### Added
