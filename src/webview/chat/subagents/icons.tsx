@@ -24,11 +24,14 @@ export function stateIcon(node: SubagentSummary) {
 // on-screen stroke equal too), so it matches the plain size-icon Check on the process fold above it.
 const CHECK_VERTICES: [number, number][] = [[4, 12], [9, 17], [20, 6]];
 const CHECK = 'M4 12 L9 17 L20 6';
-const BAR_X = [7, 12, 17];
+// The bars span about as much of the slot as the Orb's dotted ring does in its own (a looser dot field reads smaller
+// than a closed ring, so a mark at the geometric minimum looked a size down next to the Working row)
+const SPREAD = 1.3;
+const BAR_X = [12 - 5 * SPREAD, 12, 12 + 5 * SPREAD];
 // Five beads per bar: ring 0 is the centre, 1 and 2 step out by the bead pitch; CSS fades the outer rings in and out
-const PITCH = 3;
+const PITCH = 3 * SPREAD;
 const BEADS = [0, -1, 1, -2, 2];
-const BEAD_R = 0.9;
+const BEAD_R = 1;
 const EASE_OUT = 'cubic-bezier(.3, .7, .2, 1)';
 const GATHER_MS = 340;
 

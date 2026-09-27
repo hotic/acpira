@@ -1,7 +1,8 @@
 /* Subagent state mark (chat/subagents/icons.tsx SubagentMark): three dotted bars bob while the child runs. Each bar is
    five fixed beads; a bar "grows" by fading its outer beads in, so the loop is opacity + transform only (compositor,
    full frame rate) and matches the dotted Working ring below it. The finish into the ✓ is WAAPI from the live frame.
-   Bead opacity tracks a bar half-height h(t) = 3.5 + 2.5·sin(2πt) (24 steps), fading over one bead pitch (3). */
+   Bead opacity tracks a bar half-height h(t) = 3.5 + 2.5·sin(2πt) in units of a 3-unit pitch (24 steps), fading over one
+   pitch; the mark's SPREAD scales the pitch, so the timing holds. */
 @keyframes subagent-mark-mid {
   0.00% { opacity: 0.667; transform: scale(0.800); }
   4.17% { opacity: 0.882; transform: scale(0.929); }
