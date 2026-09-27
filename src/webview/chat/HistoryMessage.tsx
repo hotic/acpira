@@ -52,7 +52,13 @@ export const HistoryMessage = memo(function HistoryMessage(p: { turn: UserTurn; 
   const stuckNow = useRef(false);
   const [stuck, setStuckState] = useState(false);
   const setStuck = useCallback((next: boolean) => {
-    if (next && !stuckNow.current) natural.current = frame.current?.offsetHeight;
+    const el = frame.current;
+    if (next && !stuckNow.current && el) {
+      natural.current = el.offsetHeight;
+      // Hold the flow height until the folded body has been measured and its spacer installed.
+      // Even a pre-paint layout read can clamp scrollTop if the temporary scroll range shrinks.
+      el.style.minHeight = `${natural.current}px`;
+    }
     stuckNow.current = next;
     setStuckState(next);
   }, []);
@@ -98,9 +104,12 @@ export const HistoryMessage = memo(function HistoryMessage(p: { turn: UserTurn; 
   useLayoutEffect(() => {
     const el = spacer.current;
     if (!el) return;
-    const folded = frame.current?.offsetHeight ?? 0;
+    // Measure the inner body: the frame still carries the temporary unfolded minimum.
+    const folded = base.current?.offsetHeight ?? 0;
     const gap = stuck && !editing && natural.current !== undefined ? Math.max(0, natural.current - folded) : 0;
     el.style.height = `${gap}px`;
+    // Both writes precede the next layout; no short scroll range is exposed between them.
+    frame.current?.style.removeProperty('min-height');
   }, [stuck, editing]);
   const select = (index?: number) => {
     const closing = index === undefined;
