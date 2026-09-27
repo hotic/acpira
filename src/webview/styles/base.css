@@ -53,6 +53,10 @@
    Plain unlayered class, not @utility: the host's unlayered ::-webkit-scrollbar { width: 10px } would beat a layered one. */
 .acp-shell .scroll-thin::-webkit-scrollbar { width: 6px; height: 6px; }
 .acp-shell .scroll-thin::-webkit-scrollbar-thumb { border-width: 2px; }
+/* A fading scroller (user prompt, thought, question, to-do dock, terminal output) already signals overflow with its masked edge,
+   so it drops the vertical bar and keeps only the wheel; a horizontal bar (terminal long lines) keeps its height.
+   Must follow .scroll-thin (same specificity) and must not use scrollbar-width, which would disable the ::-webkit-scrollbar rules. */
+.acp-shell .scroll-fade::-webkit-scrollbar { width: 0; }
 
 /* The host injects unlayered code rules; this reset matches the selected LAB. */
 .acp-shell .diff-source { padding: 0 var(--pad) 0 0; border: 0; border-radius: 0; background: transparent; font: inherit; color: var(--fg-1); }
