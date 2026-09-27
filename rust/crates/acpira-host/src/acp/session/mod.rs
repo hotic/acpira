@@ -349,6 +349,20 @@ impl AcpSession {
     self.deps.registry.get(&self.agent).cloned().unwrap_or_default()
   }
 
+  /// Params for session/new, resume and load; Claude sessions also ask for summarized thinking (see `claude_thinking`)
+  pub(crate) fn session_request(&self, acp_id: Option<&str>) -> Value {
+    let mut req = json!({ "cwd": self.cwd, "mcpServers": [] });
+    if let Some(id) = acp_id {
+      req["sessionId"] = json!(id);
+    }
+    if self.agent != "claude" {
+      return req;
+    }
+    let def_env = self.def().env.and_then(|e| e.get("MAX_THINKING_TOKENS").cloned());
+    let budget = def_env.or_else(|| std::env::var("MAX_THINKING_TOKENS").ok());
+    crate::acp::vendors::claude_thinking::with_thinking(req, budget.as_deref())
+  }
+
   /// Publish state, leaving updatedAt alone (streamed chunks must not reorder the list)
   pub(crate) fn touch(&self, c: &mut Core) {
     self.refine_controls(c);
@@ -745,7 +759,7 @@ impl AcpSession {
     };
     let caps = proc.caps().clone();
     if let Some(acp_id) = acp_id {
-      let req = json!({ "sessionId": acp_id, "cwd": self.cwd, "mcpServers": [] });
+      let req = self.session_request(Some(&acp_id));
       let (mut gone, mut failed, mut locked, mut unresumable): (bool, Option<anyhow::Error>, bool, bool) = (false, None, false, false);
       let mut holder: Option<u32> = None;
       let attempts: [&str; 2] = if importing { ["load", "resume"] } else { ["resume", "load"] };
@@ -858,7 +872,7 @@ impl AcpSession {
     // commands while session/new is still in flight
     self.core.lock().state.commands = vec![];
     // Ordered: pi-acp re-sends the startup banner as a chunk right after this response, which must meet the recorded banner
-    let (r, handoff) = proc.request_ordered("session/new", json!({ "cwd": self.cwd, "mcpServers": [] })).await.map_err(anyhow::Error::new)?;
+    let (r, handoff) = proc.request_ordered("session/new", self.session_request(None)).await.map_err(anyhow::Error::new)?;
     let mut c = self.core.lock();
     let sid = r.get("sessionId").and_then(Value::as_str).unwrap_or("").to_owned();
     c.acp_session_id = Some(sid.clone());
