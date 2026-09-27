@@ -18,7 +18,7 @@ use acpira_shared::export_transcript::{ExportInput, ExportLabels, export_file_na
 use acpira_shared::inventory::{AgentHealth, AgentHealthStage, AgentRuntimeInfo, HealthSource};
 use acpira_shared::model_shapes::learn_shape;
 use acpira_shared::protocol::{
-  AccountAction, AccountActionStatus, AddAccountVia, EditTurnRequest, ExportFormat, HostMsg, RawJson, WebviewMsg,
+  AccountAction, AccountActionStatus, AccountActionVia, AddAccountVia, EditTurnRequest, ExportFormat, HostMsg, RawJson, WebviewMsg,
 };
 use acpira_shared::settings::{HiddenMap, in_workspace};
 use acpira_shared::subagents::{StateSource, SubagentState};
@@ -196,6 +196,12 @@ impl SessionManager {
       a.subscribe(Arc::new(move |accounts| {
         if let Some(m) = me.upgrade() {
           m.emit(HostMsg::Accounts { accounts });
+        }
+      }));
+      let me = mgr.me.clone();
+      a.on_lock_change(Arc::new(move || {
+        if let Some(m) = me.upgrade() {
+          m.emit_agents();
         }
       }));
     }
@@ -593,8 +599,9 @@ impl SessionManager {
       .into_iter()
       .filter(|a| self.deps.chatgpt.is_none() || a.id != CHATGPT_ID)
       .map(|mut a| {
-        if self.deps.accounts.as_ref().is_some_and(|m| m.supports(&a.id)) {
+        if let Some(m) = self.deps.accounts.as_ref().filter(|m| m.supports(&a.id)) {
           a.accounts = Some(true);
+          a.credentials_locked = m.credentials_locked(&a.id).then_some(true);
         } else {
           a.local_account = self.deps.local_accounts.as_ref().and_then(|l| l.get(&a.id));
         }
@@ -1359,6 +1366,7 @@ impl SessionManager {
         }
         self.pool.invalidate(None);
       }
+      W::UnlockCredentials { agent } => self.unlock_credentials(&agent).await?,
       W::RefreshQuota { agent } => {
         let a = self.deps.accounts.clone();
         let l = self.deps.local_accounts.clone();
@@ -1798,7 +1806,7 @@ impl SessionManager {
     if self.state.lock().account_actions.iter().any(|a| a.agent == agent && a.status == AccountActionStatus::Pending) {
       return Ok(());
     }
-    let action = |status, error| AccountAction { agent: agent.to_owned(), via, status, error };
+    let action = |status, error| AccountAction { agent: agent.to_owned(), via: via.into(), status, error };
     self.set_account_action(action(AccountActionStatus::Pending, None));
     let result = match via {
       AddAccountVia::Import => accounts.import(agent).await,
@@ -1831,6 +1839,34 @@ impl SessionManager {
         Err(e)
       }
     }
+  }
+
+  /// Unlock the agent's credential store in a terminal; once it opens, warm processes started without it are dropped
+  /// and every session of the agent that stopped on sign-in reconnects on the same native session
+  pub async fn unlock_credentials(&self, agent: &str) -> Result<()> {
+    let Some(accounts) = self.deps.accounts.clone() else { return Ok(()) };
+    if self.state.lock().account_actions.iter().any(|a| a.agent == agent && a.status == AccountActionStatus::Pending) {
+      return Ok(());
+    }
+    let action = |status, error| AccountAction { agent: agent.to_owned(), via: AccountActionVia::Unlock, status, error };
+    self.set_account_action(action(AccountActionStatus::Pending, None));
+    match accounts.unlock(agent).await {
+      Ok(false) => self.set_account_action(action(AccountActionStatus::Cancelled, None)),
+      Ok(true) => {
+        self.pool.invalidate(Some(agent));
+        for s in self.live_sessions().into_iter().filter(|s| s.agent == agent && s.status() == SessionStatus::AuthRequired) {
+          tokio::spawn(async move {
+            let _ = s.reconnect().await;
+          });
+        }
+        self.set_account_action(action(AccountActionStatus::Success, None));
+      }
+      Err(e) => {
+        self.set_account_action(action(AccountActionStatus::Error, Some(e.to_string())));
+        return Err(e);
+      }
+    }
+    Ok(())
   }
 
   /// A terminal method runs the agent binary itself in a terminal; other methods go through ACP authenticate, falling

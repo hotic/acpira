@@ -36,6 +36,8 @@ export interface SettingsHandlers {
   removeAccount: (id: string) => void;
   // An agent page with accounts opened: re-read their quotas
   refreshQuota?: (agent: AgentId) => void;
+  // AgentInfo.credentialsLocked: unlock the credential store in a host terminal
+  unlockCredentials?: (agent: AgentId) => void;
   // Agent without an executable: run its vendor install line in a host terminal; docs links open in the browser
   installAgent: (agent: AgentId) => void;
   openExternal: (url: string) => void;

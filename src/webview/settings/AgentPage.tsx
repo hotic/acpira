@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { BookOpen, Check, ChevronDown, ChevronUp, Copy, FileText, Globe, KeyRound, Plus, Search, Server, SlidersHorizontal, Sparkles, SquareTerminal, X } from 'lucide-react';
+import { BookOpen, Check, ChevronDown, ChevronUp, Copy, FileText, Globe, KeyRound, LockKeyhole, Plus, Search, Server, SlidersHorizontal, Sparkles, SquareTerminal, X } from 'lucide-react';
 import type { AccountInfo, AgentInfo, ConfigControl } from '@shared/transcript';
 import type { AgentHealthStage, AgentInventory, InventoryFile, InventoryMcp, InventorySkill, McpTransport } from '@shared/inventory';
 import type { MsgKey } from '@shared/i18n';
@@ -85,6 +85,8 @@ export function AgentPage({ agent, accounts, inventory, controls, settings, env,
             {t('settings.agent.accounts')}
           </SectionHead>
           <Section desc={t('settings.agent.accounts.desc')}>
+            {agent.credentialsLocked && <ItemRow lead={<LockKeyhole strokeWidth={1.5} />} title={t('notice.locked.short')}
+              trailing={on.unlockCredentials && <SectionAction onClick={() => on.unlockCredentials?.(agent.id)}>{t('notice.unlock')}</SectionAction>} />}
             {accounts.length === 0 && <Note>{t('settings.agent.accounts.none')}</Note>}
             {accounts.map(a => (
               <ItemRow

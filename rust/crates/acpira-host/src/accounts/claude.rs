@@ -21,6 +21,7 @@ use acpira_shared::transcript::{AccountQuota, QuotaWindow};
 use super::account_store::{AccountCredential, AccountDraft};
 use super::cli_home::{LOCAL_LOGIN, account_home, create_private_dir, home_meta, json_file, plan_label, poll_until, remove_home, sha8};
 use super::devin::BinaryFn;
+use super::keychain;
 use super::provider::{AccountProvider, LoginFlow};
 use crate::acp::rpc::BoxFuture;
 use crate::i18n::tp;
@@ -182,6 +183,15 @@ impl AccountProvider for ClaudeAccountProvider {
       }
       remove_home(&homes, &home).await;
     }))
+  }
+
+  /// Every Claude login on macOS sits in the default keychain, which a remote (SSH) session sees locked
+  fn credentials_locked(&self) -> Option<BoxFuture<bool>> {
+    cfg!(target_os = "macos").then(|| Box::pin(keychain::default_keychain_locked()) as BoxFuture<bool>)
+  }
+
+  fn unlock_command(&self) -> Option<(String, Vec<String>)> {
+    cfg!(target_os = "macos").then(keychain::unlock_command)
   }
 }
 

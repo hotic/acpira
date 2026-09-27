@@ -1,7 +1,7 @@
 //! Account master: who supports the account layer, the list,
 //! import / login / removal, the session hooks, and in-memory quotas
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,7 +10,7 @@ use anyhow::{Result, anyhow};
 use acpira_shared::transcript::{AccountInfo, AccountQuota, StrMap};
 
 use super::account_store::AccountStore;
-use super::cli_home::LOCAL_LOGIN;
+use super::cli_home::{LOCAL_LOGIN, poll_until};
 use super::provider::AccountProvider;
 use super::switch::{SwitchStrategy, parked_until, pick_fallback};
 use crate::acp::agent_process::AgentProcess;
@@ -22,7 +22,19 @@ use crate::store::transcript_store::LogFn;
 use crate::util::{ms_of_iso, now_ms};
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const UNLOCK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const QUOTA_MAX_AGE_MS: i64 = 30_000;
+
+/// A cancel that fires by itself after `after`; the handle stops the timer
+fn cancel_after(after: Duration) -> (Cancel, tokio::task::JoinHandle<()>) {
+  let cancel = Cancel::new();
+  let timer_cancel = cancel.clone();
+  let timer = tokio::spawn(async move {
+    tokio::time::sleep(after).await;
+    timer_cancel.cancel();
+  });
+  (cancel, timer)
+}
 
 pub type RunInTerminal = Arc<dyn Fn(String, String, Vec<String>, Option<std::collections::BTreeMap<String, Option<String>>>) + Send + Sync>;
 pub type Toast = Arc<dyn Fn(&str, &str) + Send + Sync>;
@@ -44,6 +56,9 @@ pub struct AccountManager {
   seq: std::sync::atomic::AtomicU64,
   /// One `sync_local` at a time: startup, focus and the account view can all ask at once
   syncing: tokio::sync::Mutex<()>,
+  /// Agents whose credential store the last check found locked (`AccountProvider::credentials_locked`)
+  locked: parking_lot::Mutex<HashSet<String>>,
+  lock_listeners: parking_lot::Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl AccountManager {
@@ -67,7 +82,44 @@ impl AccountManager {
       switch_policy: parking_lot::Mutex::new(Arc::new(|_: &str| SwitchStrategy::EarliestReset)),
       seq: Default::default(),
       syncing: tokio::sync::Mutex::new(()),
+      locked: Default::default(),
+      lock_listeners: Default::default(),
     })
+  }
+
+  /// The agent's credential store was locked at the last check: its accounts are listed but unusable until unlocked
+  pub fn credentials_locked(&self, agent: &str) -> bool {
+    self.locked.lock().contains(agent)
+  }
+
+  /// Called whenever an agent's credential store turns locked or unlocked
+  pub fn on_lock_change(&self, f: Arc<dyn Fn() + Send + Sync>) {
+    self.lock_listeners.lock().push(f);
+  }
+
+  fn set_locked(&self, agent: &str, locked: bool) {
+    let changed = {
+      let mut set = self.locked.lock();
+      if locked { set.insert(agent.to_owned()) } else { set.remove(agent) }
+    };
+    if !changed {
+      return;
+    }
+    (self.log)(&format!("account credentials {agent}: {}", if locked { "locked" } else { "unlocked" }));
+    let ls: Vec<_> = self.lock_listeners.lock().clone();
+    for f in ls {
+      f();
+    }
+  }
+
+  /// Ask each provider with a lockable credential store (all, or one agent's) whether it is locked right now
+  pub async fn check_locks(&self, agent: Option<&str>) {
+    let providers: Vec<_> = self.providers.values().filter(|p| agent.is_none_or(|a| p.agent() == a)).cloned().collect();
+    for p in providers {
+      if let Some(check) = p.credentials_locked() {
+        self.set_locked(p.agent(), check.await);
+      }
+    }
   }
 
   pub fn set_switch_policy(&self, policy: SwitchPolicy) {
@@ -136,6 +188,10 @@ impl AccountManager {
       }
       let Some(a) = me.store.get(&id) else { return };
       let Some(p) = me.providers.get(&a.agent).cloned() else { return };
+      // A locked store cannot hand out the token; the last known quota stays until it is unlocked
+      if me.credentials_locked(&a.agent) {
+        return;
+      }
       if !force
         && let Some(have) = me.quotas.lock().get(&id)
         && now_ms() - ms_of_iso(&have.fetched_at).unwrap_or(0) < QUOTA_MAX_AGE_MS
@@ -231,6 +287,8 @@ impl AccountManager {
   /// by importing it again)
   pub async fn sync_local(self: &Arc<Self>, agent: Option<&str>) {
     let _serial = self.syncing.lock().await;
+    // Same moments as the local login: startup, window focus, an account view refreshing
+    self.check_locks(agent).await;
     let providers: Vec<_> =
       self.providers.values().filter(|p| p.auto_import() && agent.is_none_or(|a| p.agent() == a)).cloned().collect();
     for p in providers {
@@ -297,12 +355,7 @@ impl AccountManager {
     let flow = self.provider(agent)?.login().await?;
     (self.run_in_terminal)(tp("host.loginTerminalTitle", &[("agent", agent)]), flow.command, flow.args, Some(flow.env));
     (self.toast)("info", &t("host.finishLoginInTerminal"));
-    let cancel = Cancel::new();
-    let timer_cancel = cancel.clone();
-    let timer = tokio::spawn(async move {
-      tokio::time::sleep(LOGIN_TIMEOUT).await;
-      timer_cancel.cancel();
-    });
+    let (cancel, timer) = cancel_after(LOGIN_TIMEOUT);
     let draft = (flow.collect)(cancel).await;
     timer.abort();
     let Some(draft) = draft else {
@@ -310,6 +363,43 @@ impl AccountManager {
       return Ok(None);
     };
     Ok(Some(self.store_draft(agent, draft, "login", "host.accountAdded").await?))
+  }
+
+  /// Unlock the agent's credential store: the provider's unlock command runs in a terminal where the user types the
+  /// password (it never passes through Acpira), and the store is polled until it opens. Then the local login and the
+  /// quotas are read again. Ok(false) when the provider has nothing to unlock or the terminal was left unfinished
+  pub async fn unlock(self: &Arc<Self>, agent: &str) -> Result<bool> {
+    let p = self.provider(agent)?;
+    let Some((command, args)) = p.unlock_command() else { return Ok(false) };
+    let locked = || {
+      let p = p.clone();
+      async move {
+        match p.credentials_locked() {
+          Some(check) => check.await,
+          None => false,
+        }
+      }
+    };
+    if locked().await {
+      self.set_locked(agent, true);
+      (self.run_in_terminal)(tp("host.unlockTerminalTitle", &[("agent", agent)]), command, args, None);
+      (self.toast)("info", &t("host.finishUnlockInTerminal"));
+      let (cancel, timer) = cancel_after(UNLOCK_TIMEOUT);
+      let opened = poll_until(&cancel, || {
+        let still = locked();
+        async move { (!still.await).then_some(()) }
+      })
+      .await;
+      timer.abort();
+      if opened.is_none() {
+        (self.toast)("info", &t("host.unlockIncomplete"));
+        return Ok(false);
+      }
+    }
+    self.set_locked(agent, false);
+    self.sync_local(Some(agent)).await;
+    self.refresh_quotas(Some(agent), true).await;
+    Ok(true)
   }
 
   pub async fn remove(&self, id: &str) -> Result<()> {
@@ -349,6 +439,11 @@ impl AccountManager {
 
   pub async fn authenticate_for(self: &Arc<Self>, agent: &str, account: &str, proc: Arc<AgentProcess>) -> Result<()> {
     let Some(p) = self.providers.get(agent).cloned() else { return Ok(()) };
+    // A CLI that reads its own store (Claude) only fails later, at the first prompt: learn now whether that store is locked
+    if p.credentials_locked().is_some() {
+      let (me, agent) = (self.clone(), agent.to_owned());
+      tokio::spawn(async move { me.check_locks(Some(&agent)).await });
+    }
     let cred = self.store.credential(account).await?;
     let Some(cred) = cred else {
       let label = self.get(account).map(|a| a.label).unwrap_or_else(|| account.to_owned());

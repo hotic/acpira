@@ -14,6 +14,9 @@ export interface AgentInfo {
   external?: boolean;
   // Goes through the account layer (multiple logins can be stored and switched); agents without it rely on their own CLI's login
   accounts?: boolean;
+  // The store holding the CLI's logins (the macOS keychain) is locked for this host's session, e.g. a remote workspace over SSH:
+  // the logins exist but neither the CLI nor Acpira can read them until it is unlocked (unlockCredentials)
+  credentialsLocked?: boolean;
   // Read-only official CLI account; independent of the selected model's provider.
   localAccount?: LocalAccountInfo;
   // An executable was detected locally; false greys it out in the menu, undefined means not probed yet

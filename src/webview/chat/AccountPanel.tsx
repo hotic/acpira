@@ -7,6 +7,7 @@ import { RadioGroup } from '../ui/RadioGroup';
 import { QuotaBars } from '../ui/QuotaBars';
 import { AccountLabel } from '../ui/AccountLabel';
 import { LocalAccountQuota } from '../ui/LocalAccountQuota';
+import { Button } from '../ui/Button';
 import { t } from '../i18n';
 
 export interface AccountPanelProps {
@@ -20,6 +21,8 @@ export interface AccountPanelProps {
   onRemoveAccount: (id: string) => void;
   // Called when the panel opens (and every minute while open), so the quotas on its rows are fresh
   onRefreshQuota?: (agent: AgentInfo['id']) => void;
+  // Shown while AgentInfo.credentialsLocked: unlock the credential store in a terminal
+  onUnlockCredentials?: (agent: AgentInfo['id']) => void;
 }
 
 // True when the agent has something for the account menu to show: stored logins (Devin) or the CLI's own official account (Grok, Kimi)
@@ -57,6 +60,11 @@ export function AccountPanel(p: AccountPanelProps) {
   const add = { label: t('composer.addAccount'), icon: <Plus strokeWidth={1.75} />, onClick: () => { p.onAddAccount(p.agent.id, 'auto'); p.close(); } };
   return <div className="flex flex-col">
     <PanelHeader action={add}>{p.agent.name}</PanelHeader>
+    {/* The rows stay listed while the keychain is locked; they just cannot be read (no quota, sign-in fails) until it is unlocked */}
+    {p.agent.credentialsLocked && <div className="flex min-w-0 items-center gap-gap px-2 py-1.5">
+      <span className="min-w-0 flex-1 text-3 text-fg-2">{t('notice.locked.short')}</span>
+      {p.onUnlockCredentials && <Button className="shrink-0" onClick={() => { p.onUnlockCredentials?.(p.agent.id); p.close(); }}>{t('notice.unlock')}</Button>}
+    </div>}
     <RadioGroup.Root ref={list} aria-label={p.agent.name} value={p.accountId ?? ''} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
       {!p.accounts.length && <div className="flex min-h-row items-center px-2 text-3 text-fg-3">{t('composer.noAccounts')}</div>}
       {p.accounts.map(a => <div key={a.id} className="group/item relative flex shrink-0 flex-col">

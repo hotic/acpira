@@ -27,6 +27,8 @@ pub struct AgentInfo {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub accounts: Option<bool>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub credentials_locked: Option<bool>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   pub local_account: Option<LocalAccountInfo>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub available: Option<bool>,

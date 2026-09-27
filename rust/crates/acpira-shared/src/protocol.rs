@@ -103,6 +103,26 @@ pub enum AddAccountVia {
   Auto,
 }
 
+/// What an `AccountAction` is doing: adding an account, or unlocking the credential store that holds them
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccountActionVia {
+  Import,
+  Login,
+  Auto,
+  Unlock,
+}
+
+impl From<AddAccountVia> for AccountActionVia {
+  fn from(v: AddAccountVia) -> Self {
+    match v {
+      AddAccountVia::Import => AccountActionVia::Import,
+      AddAccountVia::Login => AccountActionVia::Login,
+      AddAccountVia::Auto => AccountActionVia::Auto,
+    }
+  }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountActionStatus {
@@ -116,7 +136,7 @@ pub enum AccountActionStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountAction {
   pub agent: AgentId,
-  pub via: AddAccountVia,
+  pub via: AccountActionVia,
   pub status: AccountActionStatus,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub error: Option<String>,
@@ -346,6 +366,9 @@ pub enum WebviewMsg {
   },
   RemoveAccount {
     id: String,
+  },
+  UnlockCredentials {
+    agent: AgentId,
   },
   RefreshQuota {
     agent: AgentId,
