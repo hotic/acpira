@@ -265,6 +265,8 @@ export function Shell(p: ShellProps) {
   useEffect(() => setGraphOpen(false), [p.activeSessionId]);
   useEffect(() => setInspect(undefined), [p.activeSessionId]);
   const inspectNode = inspect !== undefined ? p.subagents?.find(n => n.id === inspect.id) : undefined;
+  // Too narrow to dock: the child takes over the main column, header included
+  const overlayInspect = inspectNode !== undefined && !canDockInspector;
   useEffect(() => { if (inspect !== undefined && inspectNode === undefined) setInspect(undefined); }, [inspect, inspectNode]);
   // Observing is exactly the open child; the previous subscription ends before the next one starts
   useEffect(() => {
@@ -412,6 +414,8 @@ export function Shell(p: ShellProps) {
             </>
           )}
           <div ref={mainColumn} className="relative flex min-w-0 flex-1 flex-col">
+            {/* Covered by the overlay inspector: out of the tab order and the accessibility tree meanwhile */}
+            <div inert={overlayInspect || undefined} aria-hidden={overlayInspect || undefined} className="contents">
             <Header
               title={p.title}
               sessions={p.sessions}
@@ -430,9 +434,10 @@ export function Shell(p: ShellProps) {
               sessionPanelDocked={canDock}
               onOpenSettings={p.onOpenSettings}
             />
+            </div>
             <div className="relative flex min-h-0 flex-1 flex-col">
               {/* The overlay inspector replaces this block visually; it stays mounted (scroll + draft survive) but inert */}
-              <div inert={inspectNode !== undefined && !canDockInspector || undefined} aria-hidden={inspectNode !== undefined && !canDockInspector || undefined} className="flex min-h-0 flex-1 flex-col">
+              <div inert={overlayInspect || undefined} aria-hidden={overlayInspect || undefined} className="flex min-h-0 flex-1 flex-col">
                 <div className="relative flex min-h-0 flex-1 flex-col">
                   <PlanDocumentContext.Provider value={planDoc}>
                     <HistoryContext.Provider value={history}>
@@ -500,24 +505,24 @@ export function Shell(p: ShellProps) {
                     </Chip>} />}
                 </div>
               </div>
-              {inspectNode !== undefined && !canDockInspector && inspect !== undefined && p.activeSessionId !== undefined && (
-                <div data-subagent-panel="overlay" className="absolute inset-0 z-20 flex flex-col bg-bg-0">
-                  <SubagentInspector
-                    mode="overlay"
-                    node={inspectNode}
-                    transcript={p.subagentTranscripts?.[`${p.activeSessionId}:${inspect.id}`]}
-                    onGraph={() => setGraphOpen(true)}
-                    onClose={() => setInspect(undefined)}
-                    onCancel={inspectNode.controls.cancel && on.cancelSubagent ? () => on.cancelSubagent!(p.activeSessionId!, inspectNode.id) : undefined}
-                    onPermission={(blockId, optionId) => on.permission(p.activeSessionId!, blockId, optionId)}
-                    question={inspectNode.question}
-                    onAnswer={on.answer ? (blockId, answers, skip) => on.answer!(p.activeSessionId!, blockId, answers, skip) : undefined}
-                    wide={wide}
-                    blobUrl={blobUrl}
-                  />
-                </div>
-              )}
             </div>
+            {/* The overlay inspector takes the whole column, header included, so the child's title replaces the session's */}
+            {overlayInspect && inspect !== undefined && inspectNode !== undefined && p.activeSessionId !== undefined && (
+              <div data-subagent-panel="overlay" className="absolute inset-0 z-20 flex flex-col bg-bg-0">
+                <SubagentInspector
+                  mode="overlay"
+                  node={inspectNode}
+                  transcript={p.subagentTranscripts?.[`${p.activeSessionId}:${inspect.id}`]}
+                  onClose={() => setInspect(undefined)}
+                  onCancel={inspectNode.controls.cancel && on.cancelSubagent ? () => on.cancelSubagent!(p.activeSessionId!, inspectNode.id) : undefined}
+                  onPermission={(blockId, optionId) => on.permission(p.activeSessionId!, blockId, optionId)}
+                  question={inspectNode.question}
+                  onAnswer={on.answer ? (blockId, answers, skip) => on.answer!(p.activeSessionId!, blockId, answers, skip) : undefined}
+                  wide={wide}
+                  blobUrl={blobUrl}
+                />
+              </div>
+            )}
           </div>
           {inspectNode !== undefined && canDockInspector && inspect !== undefined && p.activeSessionId !== undefined && (
             <aside ref={inspectorPane} data-subagent-panel="docked" className="relative order-last flex w-subagent-pane shrink-0 flex-col border-l border-line bg-bg-0"
@@ -530,7 +535,6 @@ export function Shell(p: ShellProps) {
                 mode="docked"
                 node={inspectNode}
                 transcript={p.subagentTranscripts?.[`${p.activeSessionId}:${inspect.id}`]}
-                onGraph={() => setGraphOpen(true)}
                 onClose={() => setInspect(undefined)}
                 onCancel={inspectNode.controls.cancel && on.cancelSubagent ? () => on.cancelSubagent!(p.activeSessionId!, inspectNode.id) : undefined}
                 onPermission={(blockId, optionId) => on.permission(p.activeSessionId!, blockId, optionId)}
