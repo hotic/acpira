@@ -1,5 +1,4 @@
-import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { flushSync } from 'react-dom';
+import { createContext, memo, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { EditTurnRequest } from '@shared/protocol';
 import type { Draft, SlashCommand, UserTurn } from '@shared/transcript';
 import { captureTurnSettings, editTurnConfig, openTurnControls } from '@shared/turnSettings';
@@ -8,7 +7,6 @@ import { useAppearance } from '../appearance';
 import { Composer, type ComposerProps } from './Composer';
 import { EditAttachments } from './Attachments';
 import { UserMessage } from './Turns';
-import { promptIsStuck, promptIsStuckAt, scrollerUsable } from './promptStuck';
 import { cn } from '../ui/cn';
 
 // Every prompt card reads this, so it must stay stable across stream pushes: editability is a flag,
@@ -31,86 +29,17 @@ export const HistoryComposerContext = createContext<ComposerProps | undefined>(u
 // instant — a click should land in the text at once, like direct manipulation; only the way back (cancel / sent) animates: the
 // opaque base animates its own height while the returning card fades in. Automatic prompts render nothing. Keep the base outside
 // the fade so replies cannot show through the editor or the swapping content.
-// A stuck card folds to a few lines: the sentinel at the exchange's top leaving the scroller marks the stuck state. The fold must not
-// change the exchange's flow height — the reply would jump up under the card, and at the bottom of the thread the shorter scroll range
-// pulls the sentinel back into view, unsticks the card, grows it and sticks it again in a loop. A spacer after the frame backfills
-// exactly the height the fold removed; it sits outside the sticky box, so the folded card still leaves when its own bottom meets the
-// next exchange instead of trailing an empty strip. A hidden sidebar webview collapses the thread to no box — those
-// IntersectionObserver records are ignored, then re-checked when the thread is visible again.
+// Sticky positioning never changes the card height; long prompts keep the same bounded, scrollable body.
 export const HistoryMessage = memo(function HistoryMessage(p: { turn: UserTurn; index: number; turnIndex: number; blobUrl?: (blob: string) => string; commands?: readonly SlashCommand[] }) {
   const context = useContext(HistoryContext);
   const { motion } = useAppearance();
-  const frame = useRef<HTMLDivElement>(null);
   const base = useRef<HTMLDivElement>(null);
   // Height measured right before an animated swap; the layout effect animates from it once the replacement has laid out
   const from = useRef<number>(undefined);
   // Swap counter remounts the content; `fade` is true only for the way back, so opening the editor never fades
   const [swap, setSwap] = useState({ n: 0, fade: false });
-  const spacer = useRef<HTMLDivElement>(null);
-  // Unfolded frame height, measured right before the fold so the spacer can give back what the fold takes
-  const natural = useRef<number>(undefined);
-  const stuckNow = useRef(false);
-  const [stuck, setStuckState] = useState(false);
-  const setStuck = useCallback((next: boolean) => {
-    const el = frame.current;
-    if (next && !stuckNow.current && el) {
-      natural.current = el.offsetHeight;
-      // Hold the flow height until the folded body has been measured and its spacer installed.
-      // Even a pre-paint layout read can clamp scrollTop if the temporary scroll range shrinks.
-      el.style.minHeight = `${natural.current}px`;
-    }
-    stuckNow.current = next;
-    setStuckState(next);
-  }, []);
-  const sentinel = useCallback((el: HTMLDivElement | null) => {
-    if (!el || typeof IntersectionObserver === 'undefined') return;
-    const thread = el.closest('[data-thread]');
-    const apply = (entry: IntersectionObserverEntry) => {
-      const below = promptIsStuck(entry);
-      if (below !== undefined) setStuck(below);
-    };
-    // The observer's first record arrives after the first paint, so a session opened at its bottom showed every prompt at full
-    // height for a frame and then folded it with the max-height transition. A microtask still runs before that paint but after the
-    // whole commit — including the Thread's layout effect that scrolls to the bottom — so the geometry is final here: fold
-    // synchronously, with the transition zeroed for this one style change, and the first frame already shows the folded card
-    queueMicrotask(() => {
-      if (!(thread instanceof HTMLElement) || !scrollerUsable(thread)) return;
-      if (!promptIsStuckAt(el.getBoundingClientRect(), thread.getBoundingClientRect())) return;
-      const target = frame.current;
-      target?.style.setProperty('--dur-open', '0s');
-      flushSync(() => setStuck(true));
-      void target?.offsetHeight;
-      target?.style.removeProperty('--dur-open');
-    });
-    const observer = new IntersectionObserver(([entry]) => { if (entry) apply(entry); }, { root: thread, threshold: 0 });
-    observer.observe(el);
-    if (!(thread instanceof HTMLElement)) return () => observer.disconnect();
-    // A collapsed webview never delivers a usable record; force one when the thread gets a box again.
-    let usable = scrollerUsable(thread);
-    const ro = new ResizeObserver(() => {
-      const next = scrollerUsable(thread);
-      if (next === usable) return;
-      usable = next;
-      if (!next) return;
-      observer.unobserve(el);
-      observer.observe(el);
-    });
-    ro.observe(thread);
-    return () => { observer.disconnect(); ro.disconnect(); };
-  }, [setStuck]);
   const editor = context && context.editing === p.turnIndex ? context : undefined;
   const editing = !!editor;
-  // Runs in the same commit as the fold, before paint and before the observer sees the new layout
-  useLayoutEffect(() => {
-    const el = spacer.current;
-    if (!el) return;
-    // Measure the inner body: the frame still carries the temporary unfolded minimum.
-    const folded = base.current?.offsetHeight ?? 0;
-    const gap = stuck && !editing && natural.current !== undefined ? Math.max(0, natural.current - folded) : 0;
-    el.style.height = `${gap}px`;
-    // Both writes precede the next layout; no short scroll range is exposed between them.
-    frame.current?.style.removeProperty('min-height');
-  }, [stuck, editing]);
   const select = (index?: number) => {
     const closing = index === undefined;
     from.current = closing ? base.current?.offsetHeight : undefined;
@@ -135,20 +64,15 @@ export const HistoryMessage = memo(function HistoryMessage(p: { turn: UserTurn; 
   if (p.turn.auto) return null;
   const editable = !!context?.editable;
   return (
-    <>
-      <div ref={sentinel} aria-hidden="true" className="pointer-events-none absolute top-0 left-0 size-px" />
-      <div ref={frame} className="pointer-events-none sticky top-0 z-10 flex min-w-0 shrink-0 flex-col">
-        <div ref={base} className="pointer-events-auto flex min-w-0 flex-col rounded-lg bg-bg-0">
-          <div key={swap.n} className={cn('flex min-w-0 flex-col', swap.fade && 'fade-in')}>
-            {editor
-              ? <HistoryEditor {...p} context={editor} onClose={() => select(undefined)} />
-              : <UserMessage {...p} compact={stuck} onEdit={editable ? () => select(p.turnIndex) : undefined} />}
-          </div>
+    <div className="pointer-events-none sticky top-0 z-10 flex min-w-0 shrink-0 flex-col">
+      <div ref={base} className="pointer-events-auto flex min-w-0 flex-col rounded-lg bg-bg-0">
+        <div key={swap.n} className={cn('flex min-w-0 flex-col', swap.fade && 'fade-in')}>
+          {editor
+            ? <HistoryEditor {...p} context={editor} onClose={() => select(undefined)} />
+            : <UserMessage {...p} onEdit={editable ? () => select(p.turnIndex) : undefined} />}
         </div>
       </div>
-      {/* Cancels the exchange's gap so an empty spacer adds nothing */}
-      <div ref={spacer} aria-hidden="true" className="pointer-events-none -mt-msg shrink-0" />
-    </>
+    </div>
   );
 });
 

@@ -13,7 +13,6 @@ import { Disclosure, DisclosureObserverContext } from '../ui/Disclosure';
 import { Collapsible, LazyPanelContext } from '../ui/Collapsible';
 import { Orb } from '../effects/Orb';
 import { cn } from '../ui/cn';
-import { useMergedRefs } from '../ui/mergeRefs';
 import { useScrollFade } from '../ui/useScrollFade';
 import { TOOL_ICON } from './icons';
 import { Thought } from './Thought';
@@ -41,14 +40,11 @@ import { breadcrumb, delegatedIds, nodesByTurn, placeNodes, subagentTitle } from
 // Attachments (image thumbnails / file pills) sit above the text inside the same bubble.
 // Clicking the card opens its inline editor, which also gives the full text for copying; no separate hover actions.
 // Sticking within the exchange is the caller's job (`HistoryMessage` wraps it), so the editor can take the card's place without a layout jump;
-// `compact` is its stuck state: the text folds to a few lines with a fading edge so a long prompt does not wall off the reply.
+// The height cap and inner scrolling stay identical before and after sticking, preserving the reading position.
 // Trailing blank lines are not displayed; the turn keeps its original text.
-export function UserMessage({ turn, blobUrl, onEdit, compact, commands }: { turn: UserTurn; index: number; blobUrl?: (blob: string) => string; onEdit?: () => void; compact?: boolean; commands?: readonly SlashCommand[] }) {
+export function UserMessage({ turn, blobUrl, onEdit, commands }: { turn: UserTurn; index: number; blobUrl?: (blob: string) => string; onEdit?: () => void; commands?: readonly SlashCommand[] }) {
   const { userMessage } = useAppearance();
   const fade = useScrollFade<HTMLDivElement>();
-  const text = useRef<HTMLDivElement>(null);
-  const textRef = useMergedRefs(fade, text);
-  useLayoutEffect(() => { if (compact && text.current) text.current.scrollTop = 0; }, [compact]);
   if (turn.auto) return null;
   // The same marks the composer painted while this was being typed; a recorded command keeps its pill
   // even after the agent stops advertising it
@@ -75,12 +71,11 @@ export function UserMessage({ turn, blobUrl, onEdit, compact, commands }: { turn
         )}
       >
         {turn.attachments?.length ? <TurnAttachments attachments={turn.attachments} blobUrl={blobUrl} /> : null}
-        {shown && <div ref={textRef} className={cn(
+        {shown && <div ref={fade} className={cn(
           'scroll-fade scroll-thin min-h-0 whitespace-pre-wrap [--scroll-fade-size:var(--text-1-lh)] [overflow-anchor:none]',
           // A command mark's background overhangs its line box on any side; without room inside the padding box the scrollport shaves it.
           marks.length > 0 && 'py-0.5 px-1',
-          // Folded text does not take the wheel: scrolling over a stuck card keeps moving the conversation.
-          compact ? 'max-h-(--user-message-stuck-max) overflow-hidden' : 'max-h-(--user-message-max) overflow-y-auto',
+          'max-h-(--user-message-max) overflow-y-auto',
         )}>{marks.length ? commandSegments(shown, marks) : shown}</div>}
       </div>
     </div>
