@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use acpira_host::acp::attachments::{PromptCaps, prepare_prompt, restore_drafts};
 use acpira_host::acp::diff::diff_lines;
-use acpira_host::acp::normalize::{NormalizeState, activity_of, apply_update};
+use acpira_host::acp::normalize::{NormalizeState, activity_of, apply_update, latest_step, live_activity};
 use acpira_host::util::mock_now;
 use acpira_shared::transcript::{Draft, Turn};
 
@@ -118,6 +118,23 @@ fn startup_and_unclassified_gaps_stay_generic_while_reply_activity_is_kept() {
   assert_eq!(activity_of(&[]).unwrap().label, "Working");
   assert_eq!(activity_of(&turns(json!([{ "role": "agent", "blocks": [] }]))).unwrap().label, "Working");
   assert_eq!(activity_of(&turns(json!([{ "role": "agent", "blocks": [{ "type": "text", "markdown": "Done", "streaming": true }] }]))).unwrap().label, "Replying");
+}
+
+// A subagent row keeps the latest step between tools: live_activity drops a finished call, latest_step still names it
+#[test]
+fn a_finished_tool_leaves_live_activity_empty_while_latest_step_keeps_it() {
+  let mut s = NormalizeState::new(vec![]);
+  apply_update(&mut s, &json!({ "sessionUpdate": "tool_call", "toolCallId": "r1", "title": "Read", "kind": "read", "status": "in_progress", "rawInput": { "file_path": "/tmp/a.ts" } }));
+  let open = live_activity(&s.turns).unwrap().label;
+  assert_eq!(latest_step(&s.turns).unwrap().label, open);
+  apply_update(&mut s, &json!({ "sessionUpdate": "tool_call_update", "toolCallId": "r1", "status": "completed" }));
+  assert!(live_activity(&s.turns).is_none());
+  assert_eq!(activity_of(&s.turns).unwrap().label, "Working");
+  assert_eq!(latest_step(&s.turns).unwrap().label, open);
+  // A streamed reply is live again; a turn without tools has no step to keep
+  apply_update(&mut s, &json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "Found it" } }));
+  assert_eq!(live_activity(&s.turns).unwrap().label, "Replying");
+  assert!(latest_step(&turns(json!([{ "role": "agent", "blocks": [] }]))).is_none());
 }
 
 fn draft(j: Value) -> Draft {

@@ -1665,26 +1665,39 @@ fn tool_contents(items: &[Value], ctx: Option<&ToolCtx>) -> Vec<ToolContent> {
 
 /// What's happening right now: the Activity line
 pub fn activity_of(turns: &[Turn]) -> Option<Activity> {
-  let working = || Some(Activity { kind: ToolKind::Think, label: t("host.working") });
-  let Some(Turn::Agent(turn)) = turns.last() else { return working() };
+  live_activity(turns).or_else(|| Some(Activity { kind: ToolKind::Think, label: t("host.working") }))
+}
+
+/// The specific action in flight (an open tool call, a pending card, streamed reply text); `None` when the
+/// only honest label is the generic "Working"
+pub fn live_activity(turns: &[Turn]) -> Option<Activity> {
+  let Some(Turn::Agent(turn)) = turns.last() else { return None };
   for b in turn.blocks.iter().rev() {
     match b {
-      AgentBlock::ToolCall(tc) if tc.background != Some(true) && tc.status.is_open() => {
-        return Some(Activity {
-          kind: tc.kind,
-          label: tp("host.doing", &[("verb", &tc.verb), ("target", tc.target.as_deref().unwrap_or(""))]).trim().to_owned(),
-        });
-      }
+      AgentBlock::ToolCall(tc) if tc.background != Some(true) && tc.status.is_open() => return Some(tool_activity(tc)),
       AgentBlock::Permission(_) => return Some(Activity { kind: ToolKind::Other, label: t("host.awaitingApproval") }),
       AgentBlock::Question(q) if q.outcome.is_none() => return Some(Activity { kind: ToolKind::Other, label: t("host.awaitingAnswers") }),
       _ => {}
     }
   }
   match turn.blocks.last() {
-    Some(AgentBlock::Thought(th)) if th.streaming == Some(true) => working(),
     Some(AgentBlock::Text(tx)) if tx.streaming == Some(true) => Some(Activity { kind: ToolKind::Other, label: t("host.replying") }),
-    _ => working(),
+    _ => None,
   }
+}
+
+/// The latest foreground tool call of the last agent turn, open or finished
+pub fn latest_step(turns: &[Turn]) -> Option<Activity> {
+  let Some(Turn::Agent(turn)) = turns.last() else { return None };
+  turn.blocks.iter().rev().find_map(|b| match b {
+    AgentBlock::ToolCall(tc) if tc.background != Some(true) => Some(tool_activity(tc)),
+    _ => None,
+  })
+}
+
+fn tool_activity(tc: &ToolCallBlock) -> Activity {
+  let label = tp("host.doing", &[("verb", &tc.verb), ("target", tc.target.as_deref().unwrap_or(""))]);
+  Activity { kind: tc.kind, label: label.trim().to_owned() }
 }
 
 /// A tool content JSON value, for callers that build updates by hand

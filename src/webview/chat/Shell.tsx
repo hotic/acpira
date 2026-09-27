@@ -505,6 +505,7 @@ export function Shell(p: ShellProps) {
                     onPermission={(blockId, optionId) => on.permission(p.activeSessionId!, blockId, optionId)}
                     question={inspectNode.question}
                     onAnswer={on.answer ? (blockId, answers, skip) => on.answer!(p.activeSessionId!, blockId, answers, skip) : undefined}
+                    wide={wide}
                     blobUrl={blobUrl}
                   />
                 </div>
@@ -526,6 +527,7 @@ export function Shell(p: ShellProps) {
                 onClose={() => setInspect(undefined)}
                 onCancel={inspectNode.controls.cancel && on.cancelSubagent ? () => on.cancelSubagent!(p.activeSessionId!, inspectNode.id) : undefined}
                 onPermission={(blockId, optionId) => on.permission(p.activeSessionId!, blockId, optionId)}
+                wide={wide}
                 blobUrl={blobUrl}
               />
             </aside>

@@ -17,7 +17,8 @@ use acpira_shared::transcript::{
 };
 
 use super::normalize::{
-  Log, NormalizeState, ToolCtx, activity_of, apply_session_failure, apply_update, async_task_live, end_turn, find_tool_mut,
+  Log, NormalizeState, ToolCtx, activity_of, apply_session_failure, apply_update, async_task_live, end_turn, find_tool_mut, latest_step,
+  live_activity,
 };
 use super::restore_turns::restore_interrupted_turns;
 use super::session_failure::failure_of;
@@ -993,7 +994,10 @@ impl SubagentTree {
       }
       let mut core = Self::core_of(n);
       if n.status == SubagentState::Running {
-        core.activity = activity_of(&n.state.turns).map(|a| a.label);
+        // The row's second line is the only live view of a child. Read-only tools finish within a frame, so between
+        // steps it keeps the latest one instead of dropping back to "Working", which read as a flicker
+        let turns = &n.state.turns;
+        core.activity = live_activity(turns).or_else(|| latest_step(turns)).or_else(|| activity_of(turns)).map(|a| a.label);
       }
       let summary = SubagentSummary { core, permissions: (!permissions.is_empty()).then_some(permissions), question };
       n.cached = Some((n.rev, summary));

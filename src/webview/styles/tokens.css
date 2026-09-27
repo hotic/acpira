@@ -151,7 +151,7 @@
   --subagent-main-min: 420px;
   /* Grab width of the pane's resize edge; the visible line stays 1px */
   --splitter-hit: 8px;
-  /* The subagent row's state mark: the lead slot's width, a notch above a process row's glyph so it holds two lines */
+  /* The subagent row's state mark: the lead slot's width, a notch above a process row's glyph so the dotted bars read */
   --subagent-mark: 20px;
   /* --icon / --subagent-mark as a plain number (JS reads it for the finish animation's landing points) */
   --subagent-check-scale: 0.7;
