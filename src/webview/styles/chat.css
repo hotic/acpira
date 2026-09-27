@@ -72,6 +72,39 @@
   .diff-source > span { color: var(--syntax-dark, var(--fg-1)); }
   [data-theme="light"] .diff-source > span { color: var(--syntax-light, var(--fg-1)); }
 
+  /* The command at the head of a command card: a hanging indent keeps wrapped and heredoc lines clear of the `$ `.
+     Terminal.tsx cuts the text itself and drives the height inline while it animates */
+  .command-prompt-text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    padding-inline-start: var(--command-prompt-indent);
+    text-indent: calc(-1 * var(--command-prompt-indent));
+    overflow: hidden;
+    transition: height var(--dur-open) ease-out;
+  }
+  /* Invisible copy at the same width that the cut point is measured on */
+  .command-prompt-probe {
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+  .command-prompt-chevron { transition: transform var(--dur-open) ease-out; }
+  .command-prompt-chevron[data-open] { transform: rotate(180deg); }
+  .command-prompt-toggle {
+    border-radius: var(--radius-sm);
+    padding-inline: var(--spacing-gap-half);
+    color: var(--fg-3);
+    background: color-mix(in srgb, var(--fg-3) 14%, transparent);
+    cursor: pointer;
+    transition: color var(--dur) ease, background var(--dur) ease;
+  }
+  .command-prompt-toggle:is(:hover, :focus-visible) {
+    color: var(--fg-1);
+    background: color-mix(in srgb, var(--fg-3) 26%, transparent);
+  }
+
   /* Narrative text separates consecutive action groups without loosening tool rows.
      Use one leading margin per boundary, including adjacent prose blocks. */
   .process-content > .acp-prose:not(:first-child),

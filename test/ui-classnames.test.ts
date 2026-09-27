@@ -11,6 +11,7 @@ describe('token-aware class merging', () => {
   it('replaces token geometry and shadows without swallowing unrelated properties', () => {
     expect(cn('size-ctl', 'size-ctl-sm')).toBe('size-ctl-sm');
     expect(cn('px-pad py-pad-y', 'px-page')).toBe('py-pad-y px-page');
+    expect(cn('pt-1 pl-indent', 'pt-gap-half')).toBe('pl-indent pt-gap-half');
     expect(cn('shadow-card', 'shadow-none')).toBe('shadow-none');
     expect(cn('bg-card border-card-line', 'bg-bg-1')).toBe('border-card-line bg-bg-1');
   });
