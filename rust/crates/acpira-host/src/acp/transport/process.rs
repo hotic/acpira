@@ -11,11 +11,11 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::watch;
 
-use super::agent_registry::AgentDef;
-use super::cancel::Cancel;
-use super::grok::{GROK_ASK_QUESTION, GROK_EXIT_PLAN};
-use super::launch::{Os, ProcessEnv, spawn_spec};
-use super::rpc::{BoxFuture, Connection, Inbound, RpcError};
+use crate::acp::agents::registry::AgentDef;
+use crate::acp::transport::cancel::Cancel;
+use crate::acp::vendors::grok::{GROK_ASK_QUESTION, GROK_EXIT_PLAN};
+use crate::acp::agents::launch::{Os, ProcessEnv, spawn_spec};
+use crate::acp::transport::rpc::{BoxFuture, Connection, Inbound, RpcError};
 use crate::i18n::tp;
 
 pub const CLIENT_NAME: &str = "acpira";
@@ -73,12 +73,12 @@ impl Inbound for Router {
     match method.as_str() {
       "session/request_permission" => h.on_permission(params, cancel),
       "elicitation/create" => h.on_elicitation(params, cancel),
-      GROK_ASK_QUESTION => match super::grok::parse_question(&params) {
+      GROK_ASK_QUESTION => match crate::acp::vendors::grok::parse_question(&params) {
         Ok(req) => h.on_grok_question(req, cancel),
         Err(e) => Box::pin(async move { Err(e) }),
       },
-      GROK_EXIT_PLAN => match super::grok::parse_exit_plan(&params) {
-        Ok(req) => Box::pin(super::grok::approve_plan(req, cancel, h)),
+      GROK_EXIT_PLAN => match crate::acp::vendors::grok::parse_exit_plan(&params) {
+        Ok(req) => Box::pin(crate::acp::vendors::grok::approve_plan(req, cancel, h)),
         Err(e) => Box::pin(async move { Err(e) }),
       },
       _ => Box::pin(async move { Err(RpcError::method_not_found(&method)) }),
@@ -116,7 +116,7 @@ impl AgentProcess {
     self.conn.request(method, params).await
   }
 
-  pub async fn request_ordered(&self, method: &str, params: Value) -> Result<(Value, super::rpc::Handoff), RpcError> {
+  pub async fn request_ordered(&self, method: &str, params: Value) -> Result<(Value, crate::acp::transport::rpc::Handoff), RpcError> {
     self.conn.request_ordered(method, params).await
   }
 

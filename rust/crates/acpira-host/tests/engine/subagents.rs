@@ -4,11 +4,11 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 
-use acpira_host::acp::agent_process::{AgentProcess, ClientHandlers};
-use acpira_host::acp::cancel::Cancel;
-use acpira_host::acp::rpc::{BoxFuture, RpcError};
+use acpira_host::acp::transport::process::{AgentProcess, ClientHandlers};
+use acpira_host::acp::transport::cancel::Cancel;
+use acpira_host::acp::transport::rpc::{BoxFuture, RpcError};
 use acpira_host::acp::session::AcpSession;
-use acpira_host::acp::wire::{EXT_META_KEY, ExtensionUpdate, TaskEventKind, extension_of};
+use acpira_host::acp::transport::wire::{EXT_META_KEY, ExtensionUpdate, TaskEventKind, extension_of};
 
 use crate::acp_session::{claimed, history_edit, prompt, spawn_prompt, view};
 use crate::fake_or_skip;

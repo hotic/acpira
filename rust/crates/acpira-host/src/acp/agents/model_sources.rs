@@ -15,8 +15,8 @@ use acpira_shared::model_catalog::{Level, NativeLevels, clip_efforts};
 use acpira_shared::model_sources::{ALL, ModelSources, apply_model_sources};
 use acpira_shared::transcript::{ConfigControl, OptionSource, SourceKind};
 
-use super::agent_registry::AgentDef;
-use super::pi_usage;
+use crate::acp::agents::registry::AgentDef;
+use crate::acp::vendors::pi_usage;
 use crate::inventory::parse_json_loose;
 use crate::store::data_dir::home_dir;
 

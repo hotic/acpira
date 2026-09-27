@@ -24,7 +24,7 @@ use super::cli_home::{LOCAL_LOGIN, account_home, create_private_dir, home_meta, 
 use super::devin::BinaryFn;
 use super::keychain;
 use super::provider::{AccountProvider, LoginFlow};
-use crate::acp::rpc::BoxFuture;
+use crate::acp::transport::rpc::BoxFuture;
 use crate::i18n::tp;
 use crate::store::data_dir::home_dir;
 use crate::util::{iso_of_ms, ms_of_iso, now_iso, now_ms, random_uuid};

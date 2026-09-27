@@ -16,13 +16,13 @@ use acpira_shared::transcript::{
   AgentBlock, AgentTurn, PermissionBlock, QuestionBlock, ToolCallBlock, ToolContent, ToolStatus, Turn, TurnStop,
 };
 
-use super::normalize::{
+use crate::acp::transcript::normalize::{
   Log, NormalizeState, ToolCtx, activity_of, apply_session_failure, apply_update, async_task_live, end_turn, find_tool_mut, latest_step,
   live_activity,
 };
-use super::restore_turns::restore_interrupted_turns;
-use super::session_failure::failure_of;
-use super::wire::SubagentLifecycle;
+use crate::acp::session::restore_turns::restore_interrupted_turns;
+use crate::acp::session::failure::failure_of;
+use crate::acp::transport::wire::SubagentLifecycle;
 use crate::i18n::t;
 use crate::util::{ms_of_iso, now_iso, now_ms, random_uuid};
 

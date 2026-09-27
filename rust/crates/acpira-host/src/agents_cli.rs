@@ -3,9 +3,9 @@
 
 use serde_json::{Value, json};
 
-use crate::acp::agent_process::initialize_request;
-use crate::acp::agent_registry::AgentRegistry;
-use crate::acp::launch::{Os, ProcessEnv, spawn_spec};
+use crate::acp::transport::process::initialize_request;
+use crate::acp::agents::registry::AgentRegistry;
+use crate::acp::agents::launch::{Os, ProcessEnv, spawn_spec};
 
 pub async fn run(args: &[String]) -> i32 {
   let registry = AgentRegistry::new(&Value::Null);

@@ -8,12 +8,12 @@ use serde_json::{Value, json};
 use acpira_shared::inventory::{AgentHealthStage, AgentRuntimeInfo};
 use acpira_shared::transcript::{ConfigControl, SessionControls, StrMap};
 
-use super::agent_pool::IdleHandlers;
-use super::agent_process::{AgentProcess, AgentSpawnError};
-use super::agent_registry::AgentDef;
-use super::model_sources::{read_model_facts, refine_controls};
-use super::normalize::{init_controls, runtime_info_of};
-use super::session_errors::is_auth;
+use crate::acp::agents::pool::IdleHandlers;
+use crate::acp::transport::process::{AgentProcess, AgentSpawnError};
+use crate::acp::agents::registry::AgentDef;
+use crate::acp::agents::model_sources::{read_model_facts, refine_controls};
+use crate::acp::transcript::normalize::{init_controls, runtime_info_of};
+use crate::acp::session::errors::is_auth;
 use crate::store::transcript_store::LogFn;
 
 pub struct ProbeResult {

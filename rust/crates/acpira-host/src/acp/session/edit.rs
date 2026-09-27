@@ -13,11 +13,11 @@ use acpira_shared::transcript::*;
 use acpira_shared::turn_errors::is_context_length_error;
 use acpira_shared::turn_settings::capture_turn_settings;
 
-use super::agent_process::AgentProcess;
-use super::attachments::{PromptCaps, prepare_prompt, restore_drafts};
-use super::normalize::{apply_config_options, config_option_set_value};
-use super::session::{AcpSession, Core};
-use super::session_prompt::Staged;
+use crate::acp::transport::process::AgentProcess;
+use crate::acp::session::attachments::{PromptCaps, prepare_prompt, restore_drafts};
+use crate::acp::transcript::normalize::{apply_config_options, config_option_set_value};
+use crate::acp::session::{AcpSession, Core};
+use crate::acp::session::prompt::Staged;
 use crate::i18n::{t, tp};
 use crate::json::{len16, slice16};
 use crate::limits::EDIT_CONTEXT_MAX_BYTES;

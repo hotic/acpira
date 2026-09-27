@@ -16,8 +16,8 @@ use acpira_shared::transcript::{AccountQuota, QuotaWindow};
 
 use super::account_store::{AccountCredential, AccountDraft};
 use super::provider::{AccountProvider, LoginFlow};
-use crate::acp::agent_process::AgentProcess;
-use crate::acp::rpc::BoxFuture;
+use crate::acp::transport::process::AgentProcess;
+use crate::acp::transport::rpc::BoxFuture;
 use crate::i18n::tp;
 use crate::store::data_dir::home_dir;
 use crate::util::{iso_of_ms, now_iso, random_uuid};

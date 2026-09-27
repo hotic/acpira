@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use acpira_shared::transcript::{PermissionKind, TurnError};
 
-use super::rpc::RpcError;
+use crate::acp::transport::rpc::RpcError;
 use crate::i18n::t;
 
 /// Credential hand-off by the account layer failed: auth_required like -32000, but the reason must reach the user

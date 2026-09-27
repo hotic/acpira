@@ -8,13 +8,13 @@ use tokio::sync::oneshot;
 
 use acpira_shared::transcript::*;
 
-use super::cancel::Cancel;
-use super::normalize::{NormalizeState, activity_of, apply_update, command_from_raw, permission_tool_update};
-use super::plans::{capture_plan, plan_documents_mut, set_plan_content};
-use super::questions::{clean_answers, form_content, form_question_count, form_questions, grok_questions, grok_response, spare_message};
-use super::rpc::RpcError;
-use super::session::{AcpSession, Core, PendingPermission, PendingQuestion, QuestionReply};
-use super::session_errors::{best_allow, permission_kind};
+use crate::acp::transport::cancel::Cancel;
+use crate::acp::transcript::normalize::{NormalizeState, activity_of, apply_update, command_from_raw, permission_tool_update};
+use crate::acp::transcript::plans::{capture_plan, plan_documents_mut, set_plan_content};
+use crate::acp::transcript::questions::{clean_answers, form_content, form_question_count, form_questions, grok_questions, grok_response, spare_message};
+use crate::acp::transport::rpc::RpcError;
+use crate::acp::session::{AcpSession, Core, PendingPermission, PendingQuestion, QuestionReply};
+use crate::acp::session::errors::{best_allow, permission_kind};
 use crate::i18n::{t, tp};
 use crate::limits::PLAN_PREVIEW_MAX_BYTES;
 

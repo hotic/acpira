@@ -100,7 +100,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use acpira_host::acp::agent_registry::AgentRegistry;
+use acpira_host::acp::agents::registry::AgentRegistry;
 use acpira_host::acp::session::{AcpSession, CompactionPolicy, SessionDeps};
 use acpira_host::store::transcript_store::TranscriptStore;
 

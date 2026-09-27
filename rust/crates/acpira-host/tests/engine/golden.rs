@@ -5,9 +5,9 @@ use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
-use acpira_host::acp::attachments::{PromptCaps, prepare_prompt, restore_drafts};
-use acpira_host::acp::diff::diff_lines;
-use acpira_host::acp::normalize::{NormalizeState, activity_of, apply_update, latest_step, live_activity};
+use acpira_host::acp::session::attachments::{PromptCaps, prepare_prompt, restore_drafts};
+use acpira_host::acp::transcript::diff::diff_lines;
+use acpira_host::acp::transcript::normalize::{NormalizeState, activity_of, apply_update, latest_step, live_activity};
 use acpira_host::util::mock_now;
 use acpira_shared::transcript::{Draft, Turn};
 

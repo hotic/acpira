@@ -2,7 +2,7 @@
 
 use serde_json::{Value, json};
 
-use acpira_host::acp::questions::{RawOption, RawQuestion, form_content, form_question_count, form_questions, spare_message};
+use acpira_host::acp::transcript::questions::{RawOption, RawQuestion, form_content, form_question_count, form_questions, spare_message};
 
 use crate::acp_session::{agent_blocks, last_turn, prompt, spawn_prompt, view};
 use crate::fake_or_skip;

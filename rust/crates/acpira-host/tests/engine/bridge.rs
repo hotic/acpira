@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 
-use acpira_host::acp::agent_registry::AgentRegistry;
+use acpira_host::acp::agents::registry::AgentRegistry;
 use acpira_host::bridge_core::{MsgBatch, Pushed};
 use acpira_host::settings::{SettingsCenter, SettingsDeps};
 use acpira_shared::protocol::{HostMsg, RawJson};

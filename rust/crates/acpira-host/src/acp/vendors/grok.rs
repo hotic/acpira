@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 
-use super::agent_process::ClientHandlers;
-use super::cancel::Cancel;
-use super::rpc::RpcError;
+use crate::acp::transport::process::ClientHandlers;
+use crate::acp::transport::cancel::Cancel;
+use crate::acp::transport::rpc::RpcError;
 use crate::i18n::t;
 
 pub const GROK_EXIT_PLAN: &str = "_x.ai/exit_plan_mode";

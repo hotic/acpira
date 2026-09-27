@@ -8,9 +8,9 @@ use serde_json::{Value, json};
 
 use acpira_shared::transcript::StrMap;
 
-use super::agent_pool::IdleHandlers;
-use super::agent_process::AgentProcess;
-use super::agent_registry::AgentDef;
+use crate::acp::agents::pool::IdleHandlers;
+use crate::acp::transport::process::AgentProcess;
+use crate::acp::agents::registry::AgentDef;
 use crate::i18n::tp;
 use crate::store::transcript_store::LogFn;
 

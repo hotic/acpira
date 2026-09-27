@@ -5,9 +5,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use acpira_host::acp::agent_pool::AgentPool;
-use acpira_host::acp::agent_process::{AgentProcess, client_version};
-use acpira_host::acp::agent_registry::{AgentDef, AgentRegistry};
+use acpira_host::acp::agents::pool::AgentPool;
+use acpira_host::acp::transport::process::{AgentProcess, client_version};
+use acpira_host::acp::agents::registry::{AgentDef, AgentRegistry};
 use acpira_host::acp::session::AcpSession;
 use acpira_shared::transcript::StrMap;
 

@@ -4,10 +4,10 @@ use std::sync::Mutex;
 
 use serde_json::{Value, json};
 
-use acpira_host::acp::rpc::RpcError;
-use acpira_host::acp::session_errors::{RestoreFailure, classify_restore_error};
-use acpira_host::acp::session_failure::{failure_of, failure_turn_error};
-use acpira_host::acp::turn_usage::turn_usage_of;
+use acpira_host::acp::transport::rpc::RpcError;
+use acpira_host::acp::session::errors::{RestoreFailure, classify_restore_error};
+use acpira_host::acp::session::failure::{failure_of, failure_turn_error};
+use acpira_host::acp::session::turn_usage::turn_usage_of;
 
 use crate::support::{expect_eq, expect_match, v};
 

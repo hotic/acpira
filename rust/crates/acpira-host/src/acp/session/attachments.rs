@@ -6,8 +6,8 @@ use serde_json::{Value, json};
 use acpira_shared::attachments::{MAX_IMAGE_BYTES, MAX_TEXT_BYTES, base64_bytes, ext_of_mime, image_mime_of};
 use acpira_shared::transcript::{Attachment, Draft};
 
-use super::agent_registry::AgentDef;
-use super::normalize::file_url_to_path;
+use crate::acp::agents::registry::AgentDef;
+use crate::acp::transcript::normalize::file_url_to_path;
 use crate::i18n::{t, tp};
 use crate::json::basename;
 use crate::store::transcript_store::TranscriptStore;

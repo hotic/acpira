@@ -21,7 +21,7 @@ use crate::accounts::codex::CodexAccountProvider;
 use crate::accounts::devin::{BinaryFn, DevinAccountProvider};
 use crate::accounts::switch::SwitchStrategy;
 use crate::accounts::local::LocalAccounts;
-use crate::acp::agent_registry::AgentRegistry;
+use crate::acp::agents::registry::AgentRegistry;
 use crate::acp::session::CompactionPolicy;
 use crate::bridge_core::{BridgeCore, Post};
 use crate::external::chatgpt_store::ChatGptBridgeStore;

@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use regex::Regex;
 
-use super::agent_process::KILL_GRACE;
-use super::session_errors::rpc_of;
+use crate::acp::transport::process::KILL_GRACE;
+use crate::acp::session::errors::rpc_of;
 use crate::store::file_lock::pid_alive;
 
 static HOLDER_PID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bPID[:\s]+(\d+)").unwrap());

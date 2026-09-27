@@ -11,9 +11,9 @@ use acpira_shared::i18n::{Language, Locale, resolve_locale};
 use acpira_shared::inventory::{AgentHealth, AgentInventory, AgentRuntimeInfo};
 use acpira_shared::settings::{SettingsView, sanitize_setting};
 
-use crate::acp::adapter_info::read_adapter_info;
-use crate::acp::agent_registry::AgentRegistry;
-use crate::acp::rpc::BoxFuture;
+use crate::acp::agents::adapter_info::read_adapter_info;
+use crate::acp::agents::registry::AgentRegistry;
+use crate::acp::transport::rpc::BoxFuture;
 use crate::agent_ext::agent_ext;
 use crate::inventory::{ScanEnv, ScanInput, scan_inventory};
 
