@@ -6,7 +6,8 @@
 //! a switched session resumes its own history. The login runs `claude auth login --claudeai` with both variables pointing
 //! at the account directory, which also keeps the new identity (`.claude.json` oauthAccount) out of the user's config.
 //! Claude refreshes its tokens in place; Acpira only reads them. Quota: `GET api.anthropic.com/api/oauth/usage` with the
-//! `oauth-2025-04-20` beta (shape per CodexBar's docs; unverified here — the endpoint answered 429 on 2026-09-26)
+//! `oauth-2025-04-20` beta (shape checked against a live Pro reply on 2026-09-27; the endpoint rate-limits hard and
+//! often answers 429 `rate_limit_error` in between)
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -243,6 +244,17 @@ mod tests {
     assert_eq!(q.windows.iter().map(|w| (w.id.as_str(), w.remaining.0)).collect::<Vec<_>>(), [("5h", 0.63), ("weekly", 0.0)]);
     assert_eq!(q.windows[0].resets_at.as_deref(), Some("2026-09-26T18:00:00.000Z"));
     assert!(parse_claude_usage(&json!({ "error": { "type": "rate_limit_error" } })).is_none());
+    // A live Pro reply (2026-09-27): microsecond timestamps, a window without a reset, many null windows beside them
+    let live = parse_claude_usage(&json!({
+      "five_hour": { "utilization": 24.0, "resets_at": "2026-09-27T13:00:00.424000+00:00" },
+      "seven_day": { "utilization": 29.0, "resets_at": "2026-09-30T21:00:00.424022+00:00" },
+      "seven_day_opus": null, "seven_day_sonnet": null, "nimbus_quill": { "utilization": 0.0, "resets_at": null },
+      "limits": [{ "kind": "session", "percent": 24, "resets_at": "2026-09-27T13:00:00.424000+00:00" }]
+    }))
+    .unwrap();
+    assert_eq!(live.windows.iter().map(|w| (w.id.as_str(), w.remaining.0)).collect::<Vec<_>>(), [("5h", 0.76), ("weekly", 0.71)]);
+    assert_eq!(live.windows[0].resets_at.as_deref(), Some("2026-09-27T13:00:00.424Z"));
+    assert_eq!(live.windows[1].resets_at.as_deref(), Some("2026-09-30T21:00:00.424Z"));
     assert_eq!(ms_of_offset_iso("2026-09-26T20:00:00.5+02:00"), ms_of_iso("2026-09-26T18:00:00.500Z"));
     assert_eq!(keychain_service(None), "Claude Code-credentials");
     assert_eq!(keychain_service(Some("abc")), "Claude Code-credentials-ba7816bf");
