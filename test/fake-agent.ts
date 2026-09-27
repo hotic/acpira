@@ -206,8 +206,20 @@ const app = acp.agent({ name: 'fake-agent' })
       if (params.cwd.includes('dsh-mcp')) throw acp.RequestError.invalidParams(undefined, 'mcp server "fs": command not found');
       // when cwd contains gone, mimic Devin: empty sessions get swept once the process exits, report session_not_found
       if (params.cwd.includes('gone')) throw new acp.RequestError(-32016, 'Session not found', { 'cognition.ai/errorKind': 'session_not_found', 'cognition.ai/retryable': false });
-      // cwd containing "locked": Devin's session_locked — another process holds the session
-      if (params.cwd.includes('locked')) throw new acp.RequestError(-32015, 'Session is locked', { 'cognition.ai/errorKind': 'session_locked', 'cognition.ai/retryable': true });
+      // cwd containing "locked": Devin's session_locked — another process holds the session. A holder.pid file in it names
+      // the holder the way Devin's message does; once that process is gone the session resumes
+      if (params.cwd.includes('locked')) {
+        const holderFile = join(params.cwd, 'holder.pid');
+        const holder = existsSync(holderFile) ? Number(readFileSync(holderFile, 'utf8').trim()) : undefined;
+        const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+        if (holder === undefined) throw new acp.RequestError(-32015, 'Session is locked', { 'cognition.ai/errorKind': 'session_locked', 'cognition.ai/retryable': true });
+        if (alive(holder)) {
+          throw new acp.RequestError(-32015, `Session '${params.sessionId}' is already open in another process (PID ${holder}). Close the other instance before opening it here.`,
+            { 'cognition.ai/errorKind': 'session_locked', 'cognition.ai/retryable': true });
+        }
+        sessions.add(params.sessionId);
+        return { modes: { currentModeId: 'agent', availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }] } };
+      }
       throw acp.RequestError.invalidParams({ sessionId: params.sessionId }, 'unknown session');
     }
     return { modes: { currentModeId: 'plan', availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }] } };

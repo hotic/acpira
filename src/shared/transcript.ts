@@ -530,6 +530,8 @@ export interface SessionView {
   cwd: string;
   status: SessionStatus;
   error?: string;
+  // The error is a native session lock held by an agent another Acpira sidecar left running (takeOverSession ends it)
+  canTakeOver?: boolean;
   authMethods?: AuthMethodInfo[];
   turns: Turn[];
   running: boolean;

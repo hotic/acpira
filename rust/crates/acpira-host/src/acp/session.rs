@@ -28,6 +28,7 @@ use super::agent_process::{AgentProcess, AgentSpawnError, ClientHandlers};
 use super::agent_registry::AgentRegistry;
 use super::cancel::Cancel;
 use super::compaction::CompactionCompletion;
+use super::lock_holder;
 use super::model_sources::{ModelFacts, read_model_facts, refine_controls};
 use super::normalize::{
   FileImageSaver, ImageSaver, NormalizeState, ToolCtx, disconnect_async_tasks, runtime_info_of, seal_replay,
@@ -162,6 +163,8 @@ pub(crate) struct Core {
   pub completion: Option<CompactionCompletion>,
   pub turn_failure: Option<SessionFailure>,
   pub auth_hint: Option<String>,
+  /// The last restore met a native session lock held by an agent of another Acpira sidecar: its pid, for take_over
+  pub lock_holder: Option<u32>,
   pub model_facts: ModelFacts,
   pub usage_revision: u64,
   pub usage_notifications: bool,
@@ -259,6 +262,7 @@ impl AcpSession {
           completion: None,
           turn_failure: None,
           auth_hint: None,
+          lock_holder: None,
           model_facts: ModelFacts::default(),
           usage_revision: 0,
           usage_notifications: false,
@@ -459,6 +463,7 @@ impl AcpSession {
       cwd: &self.cwd,
       status: c.status,
       error: c.error.as_deref(),
+      can_take_over: c.status == SessionStatus::Error && c.lock_holder.is_some(),
       auth_methods: c.auth_methods.as_deref(),
       turns: TurnsRef { turns: &c.state.turns, pending: c.pending_prompt.as_ref() },
       running: c.phase.running,
@@ -549,6 +554,7 @@ impl AcpSession {
         c.status = SessionStatus::Starting;
         c.error = None;
         c.auth_hint = None;
+        c.lock_holder = None;
         me.touch(&mut c);
         me.drop_process(&mut c)
       };
@@ -730,6 +736,7 @@ impl AcpSession {
     if let Some(acp_id) = acp_id {
       let req = json!({ "sessionId": acp_id, "cwd": self.cwd, "mcpServers": [] });
       let (mut gone, mut failed, mut locked, mut unresumable): (bool, Option<anyhow::Error>, bool, bool) = (false, None, false, false);
+      let mut holder: Option<u32> = None;
       let attempts: [&str; 2] = if importing { ["load", "resume"] } else { ["resume", "load"] };
       let has_resume = crate::json::truthy(caps.get("sessionCapabilities").and_then(|s| s.get("resume")));
       let has_load = crate::json::truthy(caps.get("loadSession"));
@@ -772,6 +779,7 @@ impl AcpSession {
               match classify_restore_error(&e) {
                 Some(RestoreFailure::Gone) => gone = true,
                 Some(RestoreFailure::Locked) => {
+                  holder = holder.or(lock_holder::holder_pid(&e));
                   failed = Some(e);
                   locked = true;
                 }
@@ -798,6 +806,13 @@ impl AcpSession {
       }
       if outcome? {
         return Ok(());
+      }
+      if locked
+        && let Some(pid) = holder
+      {
+        let sibling = lock_holder::held_by_sibling(pid).await;
+        self.log(&format!("session held by pid {pid}{}", if sibling { " (another acpira sidecar's agent)" } else { "" }));
+        self.core.lock().lock_holder = sibling.then_some(pid);
       }
       if !gone {
         let mut c = self.core.lock();
@@ -971,6 +986,26 @@ impl AcpSession {
     Ok(())
   }
 
+  /// The native session is locked by an agent another Acpira sidecar left running (an extension host orphaned by a dropped
+  /// remote connection): end that process, then start over like Retry. The holder is checked again right before the signal
+  pub async fn take_over(self: &Arc<Self>) -> Result<()> {
+    let holder = {
+      let c = self.core.lock();
+      if c.status != SessionStatus::Error {
+        return Ok(());
+      }
+      c.lock_holder
+    };
+    if let Some(pid) = holder
+      && lock_holder::held_by_sibling(pid).await
+    {
+      self.log(&format!("taking the session over from pid {pid}"));
+      lock_holder::terminate(pid).await;
+    }
+    self.start().await;
+    Ok(())
+  }
+
   async fn reopen(self: &Arc<Self>) {
     let settings = acpira_shared::turn_settings::capture_turn_settings(&self.core.lock().state.controls);
     self.start().await;
@@ -1129,6 +1164,8 @@ struct ViewRef<'a> {
   status: SessionStatus,
   #[serde(skip_serializing_if = "Option::is_none")]
   error: Option<&'a str>,
+  #[serde(skip_serializing_if = "std::ops::Not::not")]
+  can_take_over: bool,
   #[serde(skip_serializing_if = "Option::is_none")]
   auth_methods: Option<&'a [AuthMethodInfo]>,
   turns: TurnsRef<'a>,

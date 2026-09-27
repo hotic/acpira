@@ -388,6 +388,7 @@ pub fn chatgpt_view(r: &ChatGptRecord, now: i64) -> SessionView {
     cwd: r.cwd.clone(),
     status: SessionStatus::Readonly,
     error: None,
+    can_take_over: false,
     auth_methods: None,
     turns,
     running: r.active_turn_id.is_some() && !stale,

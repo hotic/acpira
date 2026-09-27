@@ -20,7 +20,7 @@ use crate::i18n::tp;
 
 pub const CLIENT_NAME: &str = "acpira";
 pub const PROTOCOL_VERSION: i64 = 1;
-const KILL_GRACE: Duration = Duration::from_secs(5);
+pub(crate) const KILL_GRACE: Duration = Duration::from_secs(5);
 pub const INIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub fn client_version() -> &'static str {

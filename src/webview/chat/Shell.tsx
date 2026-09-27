@@ -76,6 +76,8 @@ export interface ShellHandlers {
   retryTurn: () => void;
   // Drop the agent process and resume the same native session (a live connection whose prompts keep failing)
   reconnect: () => void;
+  // SessionView.canTakeOver: end the other Acpira instance's agent holding the session lock, then start over
+  takeOver?: () => void;
   // Queued prompts: drop one / replace one in place (kept attachments by index plus new drafts)
   dequeue?: (sessionId: string, id: string) => void;
   sendQueued?: (sessionId: string, id: string) => void;
@@ -116,6 +118,7 @@ export interface ShellProps {
   status: SessionStatus;
   external?: ExternalSessionInfo;
   error?: string;
+  canTakeOver?: boolean;
   authMethods?: AuthMethodInfo[];
   turns: Turn[];
   running: boolean;
@@ -477,6 +480,7 @@ export function Shell(p: ShellProps) {
                     onLogin={on.login} onRetry={on.retry} onNewSession={() => on.newSession(p.agent.id)}
                     onSelectAccount={on.selectAccount} onAddAccount={via => on.addAccount(p.agent.id, via)}
                     onUnlock={on.unlockCredentials && (() => on.unlockCredentials?.(p.agent.id))}
+                    onTakeOver={p.canTakeOver ? on.takeOver : undefined}
                   />}
                   {p.queued?.length && p.activeSessionId
                     ? <Queue key={`queue:${p.activeSessionId}`} items={p.queued} composer={composerProps} blobUrl={blobUrl}
