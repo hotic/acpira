@@ -93,9 +93,28 @@
         "command": "acpira.connectChatgpt",
         "title": "%acpira.cmd.connectChatgpt%",
         "category": "Acpira"
+      },
+      {
+        "command": "acpira.addSelection",
+        "title": "%acpira.cmd.addSelection%",
+        "category": "Acpira",
+        "icon": "$(comment-discussion)"
       }
     ],
     "menus": {
+      "editor/context": [
+        {
+          "command": "acpira.addSelection",
+          "when": "resourceScheme == file",
+          "group": "0_acpira@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "acpira.addSelection",
+          "when": "editorTextFocus && resourceScheme == file"
+        }
+      ],
       "view/title": [
         {
           "command": "acpira.newSession",
@@ -304,6 +323,11 @@
           "type": "boolean",
           "default": false,
           "description": "%acpira.conf.fontSmoothing%"
+        },
+        "acpira.shareEditorSelection": {
+          "type": "boolean",
+          "default": true,
+          "description": "%acpira.conf.shareEditorSelection%"
         },
         "acpira.appearance.density": {
           "type": "string",

@@ -24,6 +24,7 @@
   "acpira.conf.codeFontSize": "Base font size of code blocks, tool output and diffs in px (9–20)",
   "acpira.conf.diffMarkers": "Diff markers: color tints changed lines, signs relies on the +/- prefixes alone",
   "acpira.conf.fontSmoothing": "Render text with -webkit-font-smoothing: antialiased (thinner strokes; macOS only)",
+  "acpira.conf.shareEditorSelection": "Offer the current editor selection to the chat: it shows as a chip beside the mode and goes out with the next message",
   "acpira.conf.appearance.density": "Density",
   "acpira.conf.appearance.radius": "Corner radius",
   "acpira.conf.appearance.surface": "Surface: hairline thin lines / tonal borderless layering / stroke outlines",
@@ -39,5 +40,6 @@
   "acpira.conf.appearance.accent": "Accent color source",
   "acpira.conf.appearance.motion": "Interface animation (transitions, entrances, shimmer): on / none. The working indicator keeps turning either way",
   "acpira.conf.appearance.fold": "Process-line folding: keep the whole turn in one fold showing the current action while running and the elapsed time when done, click to expand / fold read-only actions only (edits and commands stay visible)",
+  "acpira.cmd.addSelection": "Add to Chat",
   "acpira.cmd.connectChatgpt": "Connect ChatGPT Session"
 }

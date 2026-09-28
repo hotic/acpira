@@ -707,6 +707,21 @@ pub enum Draft {
     uri: String,
     name: String,
   },
+  /// A line range of an editor document; lines are 1-based and inclusive
+  #[serde(rename_all = "camelCase")]
+  Selection {
+    uri: String,
+    name: String,
+    start_line: u32,
+    end_line: u32,
+    text: String,
+  },
+  /// Text quoted from the conversation with an optional remark
+  Quote {
+    text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    comment: Option<String>,
+  },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -729,6 +744,38 @@ pub enum Attachment {
     uri: String,
     name: String,
   },
+  /// The selected text is in the blob store like dropped text
+  #[serde(rename_all = "camelCase")]
+  Selection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    blob: Option<String>,
+    uri: String,
+    name: String,
+    start_line: u32,
+    end_line: u32,
+  },
+  Quote {
+    text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    comment: Option<String>,
+  },
+}
+
+impl Attachment {
+  /// What a chip / export line calls it; quotes have no name of their own
+  pub fn label(&self) -> Option<String> {
+    match self {
+      Attachment::Image { name, .. } => name.clone(),
+      Attachment::Text { name, .. } | Attachment::File { name, .. } => Some(name.clone()),
+      Attachment::Selection { name, start_line, end_line, .. } => Some(format!("{name} {}", line_range_label(*start_line, *end_line))),
+      Attachment::Quote { .. } => None,
+    }
+  }
+}
+
+/// `(12-19)`, or `(12)` for one line
+pub fn line_range_label(start_line: u32, end_line: u32) -> String {
+  if start_line == end_line { format!("({start_line})") } else { format!("({start_line}-{end_line})") }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

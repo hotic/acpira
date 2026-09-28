@@ -203,3 +203,52 @@ async fn no_capabilities_at_all_keep_the_historical_behaviour() {
   let result = prepare_prompt("session", "", &[draft(json!({ "kind": "image", "name": "shot.png", "mimeType": "image/png", "data": PNG }))], &blobs, None).await;
   assert_eq!(result.blocks[0]["type"], "image");
 }
+
+#[tokio::test]
+async fn an_editor_selection_goes_as_a_located_resource_and_restores_with_its_text() {
+  let (_dir, blobs) = store();
+  let d = draft(json!({ "kind": "selection", "uri": "file:///w/docker-compose.yml", "name": "docker-compose.yml", "startLine": 12, "endLine": 19, "text": "  db:\n    image: x\n" }));
+  let result = prepare_prompt("session", "why?", std::slice::from_ref(&d), &blobs, None).await;
+  assert!(result.problems.is_empty());
+  expect_eq(
+    &result.blocks,
+    json!([
+      { "type": "text", "text": "why?" },
+      { "type": "resource", "resource": { "uri": "file:///w/docker-compose.yml#L12:19", "mimeType": "text/plain", "text": "  db:\n    image: x\n" } },
+    ]),
+  );
+  let a = v(&result.attachments);
+  assert_eq!(a[0]["kind"], "selection");
+  assert_eq!(a[0]["startLine"], 12);
+  assert!(a[0]["blob"].is_string());
+  assert_eq!(v(restore_drafts("session", &result.attachments, &blobs).await.unwrap()), v([d]));
+}
+
+#[tokio::test]
+async fn without_embedded_context_a_selection_is_marked_up_text() {
+  let (_dir, blobs) = store();
+  let d = draft(json!({ "kind": "selection", "uri": "file:///w/a.ts", "name": "a.ts", "startLine": 3, "endLine": 3, "text": "let x = 1;" }));
+  let result = prepare_prompt("session", "", &[d], &blobs, caps(false, true, false)).await;
+  expect_eq(&result.blocks, json!([{ "type": "text", "text": "[Selection: a.ts (3)]\nlet x = 1;\n[End of selection: a.ts (3)]" }]));
+}
+
+#[tokio::test]
+async fn quotes_lead_the_prompt_as_blockquotes_and_round_trip() {
+  let (_dir, blobs) = store();
+  let drafts = [
+    draft(json!({ "kind": "file", "uri": "file:///w/a.ts", "name": "a.ts" })),
+    draft(json!({ "kind": "quote", "text": "first line\n\nthird", "comment": "  really?  " })),
+    draft(json!({ "kind": "quote", "text": "bare" })),
+  ];
+  let result = prepare_prompt("session", "explain", &drafts, &blobs, None).await;
+  expect_eq(
+    &result.blocks,
+    json!([
+      { "type": "text", "text": "[Quoted from the conversation]\n> first line\n>\n> third\n\n[Comment on this quote]\nreally?" },
+      { "type": "text", "text": "[Quoted from the conversation]\n> bare" },
+      { "type": "text", "text": "explain" },
+      { "type": "resource_link", "uri": "file:///w/a.ts", "name": "a.ts" },
+    ]),
+  );
+  assert_eq!(v(restore_drafts("session", &result.attachments, &blobs).await.unwrap()), v(drafts));
+}

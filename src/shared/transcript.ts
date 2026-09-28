@@ -365,14 +365,22 @@ export type AgentBlock = ThoughtBlock | PlanBlock | ToolCallBlock | TextBlock | 
 export type Draft =
   | { kind: 'image'; mimeType: string; data: string; name?: string }
   | { kind: 'text'; name: string; text: string }
-  | { kind: 'file'; uri: string; name: string };
+  | { kind: 'file'; uri: string; name: string }
+  // A line range of an editor document (the IDE's selection, its "Add to chat" action, or a paste of text copied there); lines are 1-based and inclusive
+  | { kind: 'selection'; uri: string; name: string; startLine: number; endLine: number; text: string }
+  // Text quoted from the conversation with the user's optional remark on it
+  | { kind: 'quote'; text: string; comment?: string };
 
 // Attachment as persisted on a user turn. Images and dropped text live in the session's blob directory (the turn keeps only the file name,
 // the webview loads it via blobBase; absent when the write failed — the prompt still went out, only the preview is gone); files are paths the agent reads by itself (sent as resource_link)
 export type Attachment =
   | { kind: 'image'; blob?: string; mimeType: string; name?: string }
   | { kind: 'text'; blob?: string; name: string }
-  | { kind: 'file'; uri: string; name: string };
+  | { kind: 'file'; uri: string; name: string }
+  // The selected text is in the blob store like dropped text
+  | { kind: 'selection'; blob?: string; uri: string; name: string; startLine: number; endLine: number }
+  // Quotes are short and kept inline
+  | { kind: 'quote'; text: string; comment?: string };
 
 export interface UserTurn {
   role: 'user';

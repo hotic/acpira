@@ -13,6 +13,8 @@ import { lookFromSettings, resolveTheme } from './look';
 import { useVsCodeTheme } from './useVsCodeTheme';
 import { vscodeApi } from './vscodeApi';
 import { SettingsShell, type SettingsHandlers } from './settings/SettingsShell';
+import { sameRange, selectionDraft, setEditorCopy, setEditorSelection } from './chat/editorContext';
+import { updateMainComposer } from './chat/useComposerDraft';
 import type { SettingsPage } from './settings/Nav';
 
 declare global {
@@ -61,6 +63,8 @@ export function App() {
   // carries it so a click rendered for one conversation can never be applied to another after a fast switch
   const activeId = useRef<string | undefined>(undefined);
   activeId.current = session?.id;
+  // Where an editor range pinned by "Add to chat" is labeled relative to
+  const cwdRef = useRef<string>('');
   const [view, setView] = useState<'chat' | 'settings'>('chat');
   const [settings, setSettings] = useState<SettingsView>();
   const [locale, setLoc] = useState<Locale>('en');
@@ -129,11 +133,22 @@ export function App() {
         case 'nativeSessions': setNativeSessions(cur => cur?.agent === m.agent ? { agent: m.agent, sessions: m.sessions, error: m.error, loading: false } : cur); break;
         case 'chatgptStatus': setChatgptStatus(m.status); break;
         case 'files': settleFiles(m.seq, m.files); break;
+        case 'editorSelection': setEditorSelection(m.selection); break;
+        case 'editorCopy': setEditorCopy(m.selection); break;
+        case 'addSelection': {
+          const draft = selectionDraft(m.selection, cwdRef.current);
+          setView('chat');
+          updateMainComposer(d => (d.some(x => sameRange(x, draft)) ? d : [...d, draft]), true);
+          break;
+        }
       }
     };
     window.addEventListener('message', onMsg);
     post({ type: 'ready' });
-    return () => window.removeEventListener('message', onMsg);
+    // The shell routes "Add to Chat" to the chat used last; a click into an already visible view changes no visibility it could see
+    const onFocus = () => post({ type: 'viewFocus' });
+    window.addEventListener('focus', onFocus);
+    return () => { window.removeEventListener('message', onMsg); window.removeEventListener('focus', onFocus); };
   }, []);
 
   // Observed transcripts belong to the session they streamed from
@@ -226,6 +241,7 @@ export function App() {
     openExternal: url => post({ type: 'openExternal', url }),
   }), []);
 
+  cwdRef.current = session?.cwd ?? init?.cwd ?? '';
   if (!init || !settings) return null;
   const agent = agents.find(a => a.id === session?.agent) ?? agents[0];
   if (!agent) return null;
@@ -282,6 +298,7 @@ export function App() {
       usage={session?.usage}
       commands={session?.commands}
       compactAt={settings.autoCompact ? settings.compactAtTokens : undefined}
+      shareEditorSelection={settings.shareEditorSelection}
       sessions={sessions}
       activeSessionId={session?.id}
       cwd={session?.cwd}

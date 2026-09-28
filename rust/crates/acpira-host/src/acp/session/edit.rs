@@ -115,8 +115,8 @@ fn compact_turn(turn: &Turn) -> Value {
         v["attachments"] = json!(
           a.iter()
             .map(|x| match x {
-              Attachment::Image { name, .. } => name.clone().unwrap_or_else(|| "image".into()),
-              Attachment::Text { name, .. } | Attachment::File { name, .. } => name.clone(),
+              Attachment::Quote { text, .. } => format!("> {}", text.lines().next().unwrap_or_default()),
+              other => other.label().unwrap_or_else(|| "image".into()),
             })
             .collect::<Vec<_>>()
         );

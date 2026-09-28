@@ -11,6 +11,10 @@ export interface WebviewBridgeOpts {
   locale: () => string;
   // Every session the view shows (init, then each push), for tab titles and one-shot watchers
   onSession?: (session: SessionView) => void;
+  // The page has its init state; shell-originated state (the editor selection, the last copy) is replayed from here
+  onPageReady?: (bridge: WebviewBridge) => void;
+  // The page's window got focus (`viewFocus`, kept in the shell)
+  onFocus?: (bridge: WebviewBridge) => void;
 }
 
 // One bridge per VS Code webview: renders the HTML (CSP, bundle URIs, host flag) and relays between the webview and its view in the
@@ -21,6 +25,9 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
   private disposables: vscode.Disposable[] = [];
   private detach: () => void;
   private initialized = false;
+  // Shell messages wait until the page has been initialized: before that nothing listens, and init would overwrite them anyway
+  private pageReady = false;
+  private shellQueue: HostMsg[] = [];
 
   constructor(
     private webview: vscode.Webview,
@@ -33,7 +40,10 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
     webview.html = this.html();
     // Attachment blobs are served to the webview straight from the sessions directory, through this webview's own resource URI
     this.blobBase = webview.asWebviewUri(sessions).toString();
-    this.disposables.push(webview.onDidReceiveMessage((m: WebviewMsg) => opts.client.send(this.viewId, m)));
+    this.disposables.push(webview.onDidReceiveMessage((m: WebviewMsg) => {
+      if (m.type === 'viewFocus') { opts.onFocus?.(this); return; }
+      opts.client.send(this.viewId, m);
+    }));
     this.detach = opts.client.attach(this);
   }
 
@@ -43,12 +53,24 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
     const session = m.type === 'session' ? m.session : m.type === 'init' ? m.state.active : undefined;
     if (session) this.opts.onSession?.(session);
     void this.webview.postMessage(m);
+    if (m.type !== 'init') return;
+    this.pageReady = true;
+    for (const q of this.shellQueue.splice(0)) void this.webview.postMessage(q);
+    this.opts.onPageReady?.(this);
+  }
+
+  // Editor state from the extension itself (never through the sidecar): selection, copy, "Add to chat"
+  postShell(m: HostMsg) {
+    if (this.pageReady) { void this.webview.postMessage(m); return; }
+    // Only the latest live selection matters; pinned ranges all wait
+    if (m.type === 'editorSelection') this.shellQueue = this.shellQueue.filter(q => q.type !== 'editorSelection');
+    this.shellQueue.push(m);
   }
 
   // The page posts `ready` once, at load; a sidecar that came back after it initialized needs the page to start over
   onState(state: SidecarState) {
     if (state !== 'ready') return;
-    if (this.initialized) this.webview.html = this.html();
+    if (this.initialized) { this.pageReady = false; this.webview.html = this.html(); }
     this.initialized = true;
   }
 

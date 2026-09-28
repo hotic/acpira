@@ -4,7 +4,7 @@ use base64::Engine;
 use serde_json::{Value, json};
 
 use acpira_shared::attachments::{MAX_IMAGE_BYTES, MAX_TEXT_BYTES, base64_bytes, ext_of_mime, image_mime_of};
-use acpira_shared::transcript::{Attachment, Draft};
+use acpira_shared::transcript::{Attachment, Draft, line_range_label};
 
 use crate::acp::agents::registry::AgentDef;
 use crate::acp::transcript::normalize::file_url_to_path;
@@ -45,6 +45,15 @@ pub async fn prepare_prompt(
   let mut out =
     PreparedPrompt { blocks: if text.is_empty() { vec![] } else { vec![json!({ "type": "text", "text": text })] }, ..Default::default() };
   let no_images = caps.is_some_and(|c| !c.image && !c.images_regardless);
+  // Quotes lead the prompt: the user's text usually refers to them ("why this?")
+  let quotes: Vec<Value> = drafts
+    .iter()
+    .filter_map(|d| match d {
+      Draft::Quote { text, comment } => Some(json!({ "type": "text", "text": quote_text(text, comment.as_deref()) })),
+      _ => None,
+    })
+    .collect();
+  out.blocks.splice(0..0, quotes);
   for d in drafts {
     match d {
       Draft::Image { mime_type, data, name } => {
@@ -78,6 +87,32 @@ pub async fn prepare_prompt(
           out.blocks.push(json!({ "type": "resource", "resource": { "uri": uri, "mimeType": "text/plain", "text": text } }));
         }
         out.attachments.push(Attachment::Text { blob: saved.map(|s| s.0), name: name.clone() });
+      }
+      Draft::Selection { uri, name, start_line, end_line, text } => {
+        let label = format!("{name} {}", line_range_label(*start_line, *end_line));
+        if text.len() > MAX_TEXT_BYTES {
+          out.problems.push(tp("attach.tooBigText", &[("name", &label), ("kb", &(MAX_TEXT_BYTES >> 10).to_string())]));
+          continue;
+        }
+        let saved = stage(&mut out, blobs, session_id, ".txt", text.as_bytes(), &label).await;
+        if caps.is_some_and(|c| !c.embedded_context) {
+          out.blocks.push(json!({ "type": "text", "text": format!("[Selection: {label}]\n{text}\n[End of selection: {label}]") }));
+        } else {
+          // The fragment is the line range the way Zed writes a selection mention (`#Lstart:end`), so the agent knows where the text sits
+          let located = format!("{}#L{start_line}:{end_line}", uri.split('#').next().unwrap_or(uri));
+          out.blocks.push(json!({ "type": "resource", "resource": { "uri": located, "mimeType": "text/plain", "text": text } }));
+        }
+        out.attachments.push(Attachment::Selection {
+          blob: saved.map(|s| s.0),
+          uri: uri.clone(),
+          name: name.clone(),
+          start_line: *start_line,
+          end_line: *end_line,
+        });
+      }
+      Draft::Quote { text, comment } => {
+        // The block went out ahead of the loop; only the record is kept here
+        out.attachments.push(Attachment::Quote { text: text.clone(), comment: comment.clone() });
       }
       Draft::File { uri, name } => {
         if let Some((mime, bytes)) = read_image_file(uri).await {
@@ -130,6 +165,17 @@ pub async fn restore_drafts(session_id: &str, attachments: &[Attachment], blobs:
         let bytes = blobs.read_blob(session_id, b).await?;
         out.push(Draft::Text { name: name.clone(), text: String::from_utf8_lossy(&bytes).into_owned() });
       }
+      Attachment::Selection { blob: Some(b), uri, name, start_line, end_line } => {
+        let bytes = blobs.read_blob(session_id, b).await?;
+        out.push(Draft::Selection {
+          uri: uri.clone(),
+          name: name.clone(),
+          start_line: *start_line,
+          end_line: *end_line,
+          text: String::from_utf8_lossy(&bytes).into_owned(),
+        });
+      }
+      Attachment::Quote { text, comment } => out.push(Draft::Quote { text: text.clone(), comment: comment.clone() }),
       _ => {}
     }
   }
@@ -159,6 +205,8 @@ pub fn describe_drafts(items: &[Attachment]) -> String {
   for d in items {
     match d {
       Attachment::Text { name, .. } | Attachment::File { name, .. } if !name.is_empty() => parts.push(name.clone()),
+      Attachment::Selection { .. } => parts.extend(d.label()),
+      Attachment::Quote { text, .. } => parts.extend(text.lines().map(str::trim).find(|l| !l.is_empty()).map(|l| l.chars().take(40).collect::<String>())),
       _ => {}
     }
   }
@@ -174,10 +222,20 @@ pub fn describe_draft_list(items: &[Draft]) -> String {
   for d in items {
     match d {
       Draft::Text { name, .. } | Draft::File { name, .. } if !name.is_empty() => parts.push(name.clone()),
+      Draft::Selection { name, start_line, end_line, .. } => parts.push(format!("{name} {}", line_range_label(*start_line, *end_line))),
       _ => {}
     }
   }
   parts.join(&t("common.listSep"))
+}
+
+/// A quote as the agent reads it: a Markdown blockquote, the remark (if any) under it
+fn quote_text(text: &str, comment: Option<&str>) -> String {
+  let quoted = text.lines().map(|l| if l.is_empty() { ">".to_owned() } else { format!("> {l}") }).collect::<Vec<_>>().join("\n");
+  match comment.map(str::trim).filter(|c| !c.is_empty()) {
+    Some(c) => format!("[Quoted from the conversation]\n{quoted}\n\n[Comment on this quote]\n{c}"),
+    None => format!("[Quoted from the conversation]\n{quoted}"),
+  }
 }
 
 /// url.pathToFileURL(p).href

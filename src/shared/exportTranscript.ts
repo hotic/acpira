@@ -2,6 +2,7 @@
 // tsconfigs (host and webview) can type-check it; the host formats, writes under exports/, and opens the result
 
 import type { AgentBlock, ToolContent, Turn } from './transcript';
+import { attachmentLabel } from './attachments';
 
 // Every user-facing label the export emits; English is the default so a host without a locale still produces a readable file
 export interface ExportLabels {
@@ -59,9 +60,17 @@ export function exportMarkdown(input: ExportInput, labels: ExportLabels = EXPORT
 
 function userTurn(turn: Extract<Turn, { role: 'user' }>, labels: ExportLabels): string {
   if (turn.auto) return `_${turn.autoReason === 'accountSwitch' ? labels.autoContinue : labels.autoCompact}_`;
-  const out = [`### ${labels.user}`, '', turn.text];
-  if (turn.attachments?.length) {
-    const names = turn.attachments.map(a => a.kind === 'file' ? a.name : a.name ?? a.blob ?? 'image');
+  const out = [`### ${labels.user}`];
+  // Quotes lead, as they do in the prompt: blockquotes with the remark under each
+  for (const q of turn.attachments ?? []) {
+    if (q.kind !== 'quote') continue;
+    out.push('', q.text.split(/\r?\n/).map(l => `> ${l}`).join('\n'));
+    if (q.comment) out.push('', q.comment);
+  }
+  out.push('', turn.text);
+  const named = turn.attachments?.filter(a => a.kind !== 'quote') ?? [];
+  if (named.length) {
+    const names = named.map(a => attachmentLabel(a) ?? (a.kind === 'image' ? a.blob : undefined) ?? 'image');
     out.push('', `> ${labels.attachments}: ${names.join(', ')}`);
   }
   return out.join('\n');

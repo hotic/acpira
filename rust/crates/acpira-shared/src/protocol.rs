@@ -278,6 +278,8 @@ pub enum WebviewMsg {
     edit: EditTurnRequest,
   },
   Ready,
+  /// The page's window got focus: only the VS Code shell uses it (the "Add to Chat" target)
+  ViewFocus,
   Send {
     session_id: Option<String>,
     text: String,

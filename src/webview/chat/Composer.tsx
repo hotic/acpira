@@ -1,10 +1,10 @@
 import { useCallback, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { X } from 'lucide-react';
+import { TextSelect, X } from 'lucide-react';
 import type { Draft, SessionControls, SessionOption, SlashCommand, Turn, Usage } from '@shared/transcript';
-import type { FileHit } from '@shared/protocol';
+import type { EditorSelection, FileHit } from '@shared/protocol';
 import type { HiddenMap } from '@shared/settings';
 import { composerControls } from '@shared/composerControls';
-import { MAX_TEXT_BYTES } from '@shared/attachments';
+import { MAX_TEXT_BYTES, lineRangeLabel } from '@shared/attachments';
 import { collectPastedText } from '@shared/pastedText';
 import { useAppearance } from '../appearance';
 import { getLocale, t } from '../i18n';
@@ -22,6 +22,7 @@ import { modeIcon } from './modeIcons';
 import { ModelControl, OptionControl, ReasoningControl } from './ModelPicker';
 import { ContextRing } from './ContextUsage';
 import { useComposerDraft } from './useComposerDraft';
+import { copiedSelection, markSelectionSent, sameRange, selectionDraft, selectionKey, useEditorSelection } from './editorContext';
 import { PromptInput } from './PromptInput';
 
 export interface ComposerProps {
@@ -58,6 +59,10 @@ export interface ComposerProps {
   onCompact: () => void;
   // Session-level navigation is omitted from history and queued-message editors.
   toolbarStart?: ReactNode;
+  // The session's own composer (not an inline editor): it takes drafts pushed from outside (editor "Add to chat", transcript quotes)
+  // and, with `shareSelection`, offers the editor's live selection as a toolbar chip that goes out with the next prompt
+  main?: boolean;
+  shareSelection?: boolean;
 }
 
 // Composer has three layers: attachment chips (when any), the input area, and a toolbar row below.
@@ -65,7 +70,14 @@ export interface ComposerProps {
 // Attachments come from pasting / dropping (images, OS files, Explorer items) or from an @ mention that searches the workspace
 export function Composer(p: ComposerProps) {
   const { composer } = useAppearance();
-  const { text, setText, drafts, setDrafts } = useComposerDraft(p.draftKey, p.edit?.text);
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  const focusInput = useCallback(() => textarea.current?.focus(), []);
+  const { text, setText, drafts, setDrafts } = useComposerDraft(p.draftKey, p.edit?.text, p.main ? { focus: focusInput } : undefined);
+  // The editor's live selection: offered as a chip beside the mode, clicked away to leave it out of this prompt
+  const live = useEditorSelection();
+  const offered = p.main && p.shareSelection && !p.edit ? live : undefined;
+  const [excluded, setExcluded] = useState<string>();
+  const offeredOn = !!offered && selectionKey(offered) !== excluded;
   const flush = !p.edit && composer === 'flush';
   // The beam lights up while the composer is focused (focus-within semantics), not while it's working.
   // Overlays portal to the shell root, so opening a menu blurs the composer; "a menu is open" therefore also counts as focused
@@ -89,7 +101,9 @@ export function Composer(p: ComposerProps) {
     sendingRef.current = true;
     setSending(true);
     try {
-      await p.onSend(text, drafts);
+      const sel = offeredOn ? selectionDraft(offered, p.cwd) : undefined;
+      await p.onSend(text, sel && !drafts.some(d => sameRange(d, sel)) ? [...drafts, sel] : drafts);
+      if (offeredOn) markSelectionSent(offered);
       setText('');
       setDrafts([]);
       setDismissed(undefined);
@@ -139,8 +153,17 @@ export function Composer(p: ComposerProps) {
       void addFrom(e.clipboardData);
       return;
     }
+    const pasted = e.clipboardData.getData('text/plain');
+    // Lines copied from an editor come back as the range they were copied from, like Cursor's code references
+    const copied = copiedSelection(pasted);
+    if (copied) {
+      e.preventDefault();
+      const sel = selectionDraft(copied, p.cwd);
+      setDrafts(current => (current.some(d => sameRange(d, sel)) ? current : [...current, sel]));
+      return;
+    }
     const name = t('attach.pastedText');
-    const { draft, tooBig } = collectPastedText(e.clipboardData.getData('text/plain'), name);
+    const { draft, tooBig } = collectPastedText(pasted, name);
     if (!draft && !tooBig) return;
     e.preventDefault();
     if (tooBig) p.onNotice(t('attach.tooBigText', { name, kb: MAX_TEXT_BYTES >> 10 }));
@@ -148,7 +171,6 @@ export function Composer(p: ComposerProps) {
   };
 
   // @ mention: the span under the caret drives the file list (only with a collapsed selection); Esc parks it for that @ until the caret leaves or the message is sent
-  const textarea = useRef<HTMLTextAreaElement>(null);
   const [caret, setCaret] = useState(0);
   const [collapsed, setCollapsed] = useState(true);
   const [dismissed, setDismissed] = useState<number>();
@@ -226,7 +248,9 @@ export function Composer(p: ComposerProps) {
       onDrop={onDrop}
     >
       {/* Kept attachments of an edited prompt lead the same wrapping row as freshly pasted ones */}
-      <DraftChips drafts={drafts} before={p.edit?.hasAttachments ? p.edit.attachments : undefined} onRemove={i => setDrafts(d => d.filter((_, j) => j !== i))} />
+      <DraftChips drafts={drafts} before={p.edit?.hasAttachments ? p.edit.attachments : undefined}
+        onRemove={gone => setDrafts(d => d.filter((_, j) => !gone.includes(j)))}
+        onUpdate={(i, next) => setDrafts(d => d.map((x, j) => (j === i ? next : x)))} />
       <PromptInput
         marks={marks}
         ref={textarea}
@@ -275,6 +299,7 @@ export function Composer(p: ComposerProps) {
             )}
           </div>
         </fieldset>
+        {offered && <SelectionChip selection={offered} cwd={p.cwd} on={offeredOn} onToggle={() => setExcluded(offeredOn ? selectionKey(offered) : undefined)} />}
         {!p.edit && p.toolbarStart}
         <fieldset disabled={p.disabled || p.controlsLocked || sending} className="m-0 flex min-w-0 flex-1 items-center gap-1 border-0 p-0">
           <div className="min-w-0 flex-1" />
@@ -333,5 +358,21 @@ function ModeMenu({ modes, value, title, onSelect, onOpenChange }: {
         </DropdownMenu.RadioGroup>
       </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
     </DropdownMenu.Root>
+  );
+}
+
+// The editor's live selection in the toolbar: `name (12-19)`, struck through while left out. The name truncates before the range does
+function SelectionChip({ selection, cwd, on, onToggle }: { selection: EditorSelection; cwd: string; on: boolean; onToggle: () => void }) {
+  const draft = selectionDraft(selection, cwd);
+  const range = lineRangeLabel(draft.startLine, draft.endLine);
+  const hint = on ? t('composer.selection.include') : t('composer.selection.excluded');
+  return (
+    // Splits the free width with the right-hand controls (both basis 0, this one capped at its content) and folds to its icon
+    // on a narrow toolbar, so a long file name never squeezes the model name
+    <Chip caret={false} narrow="icon" aria-pressed={on} onClick={onToggle} className={cn('min-w-0 max-w-fit flex-1', !on && 'text-fg-3 line-through')}
+      title={`${draft.name} ${range}\n${hint}`} aria-label={`${draft.name} ${range}. ${hint}`}
+      icon={<TextSelect strokeWidth={1.5} />} meta={range}>
+      {draft.name.split('/').pop()}
+    </Chip>
   );
 }

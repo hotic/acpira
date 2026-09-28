@@ -33,6 +33,9 @@ export function General({ settings, agents, on }: { settings: SettingsView; agen
         <Field label={t('settings.accountSwitch')} desc={t('settings.accountSwitch.desc')}>
           <Select<AccountSwitchStrategy> options={switchStrategies} value={settings.accountSwitch} onChange={v => on.setSetting('accountSwitch', v)} label={t('settings.accountSwitch')} />
         </Field>
+        <Field label={t('settings.shareEditorSelection')} desc={t('settings.shareEditorSelection.desc')}>
+          <Switch checked={settings.shareEditorSelection} onChange={v => on.setSetting('shareEditorSelection', v)} label={t('settings.shareEditorSelection')} />
+        </Field>
       </Section>
 
       <Section title={t('settings.compaction.title')}>

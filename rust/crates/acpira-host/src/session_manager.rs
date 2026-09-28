@@ -1668,8 +1668,8 @@ impl SessionManager {
       let Turn::User(u) = turn else { continue };
       for a in u.attachments.iter_mut().flatten() {
         let blob = match a {
-          Attachment::Image { blob, .. } | Attachment::Text { blob, .. } => blob,
-          Attachment::File { .. } => continue,
+          Attachment::Image { blob, .. } | Attachment::Text { blob, .. } | Attachment::Selection { blob, .. } => blob,
+          Attachment::File { .. } | Attachment::Quote { .. } => continue,
         };
         let Some(name) = blob.clone() else { continue };
         let ext = std::path::Path::new(&name).extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();

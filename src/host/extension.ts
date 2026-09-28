@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import * as vscode from 'vscode';
+import type { EditorSelection, HostMsg } from '@shared/protocol';
 import type { SessionView } from '@shared/transcript';
 import { FileVault } from './accounts/AccountStore';
 import { WebviewBridge } from './bridge';
@@ -8,6 +9,7 @@ import { SidecarClient } from './shell/SidecarClient';
 import { sidecarCommands } from './shell/sidecarLocator';
 import { acpiraHome, migrateOnce } from './store/dataDir';
 import { VscodePlatform } from './vscodePlatform';
+import { editorSelectionOf } from './editorSelection';
 
 const VIEW_ID = 'acpira.chat';
 
@@ -44,11 +46,62 @@ export async function activate(context: vscode.ExtensionContext) {
   const sessionsDir = join(home, 'sessions');
   let sidebar: WebviewBridge | undefined;
   const sidebarPending: ((b: WebviewBridge) => void)[] = [];
-  const attach = (webview: vscode.Webview, host: 'sidebar' | 'editor', initial?: string | { mostRecent: true }, onSession?: (s: SessionView) => void) =>
-    new WebviewBridge(webview, host, {
+  // Every live chat webview, for the editor state broadcast below; a page that (re)initializes gets the current selection again
+  const bridges = new Set<WebviewBridge>();
+  // The chat last focused, clicked into or brought into view: where "Add to Chat" goes. Editor tabs are revealed through their panel
+  let lastFocused: WebviewBridge | undefined;
+  const panels = new Map<WebviewBridge, vscode.WebviewPanel>();
+  const attach = (webview: vscode.Webview, host: 'sidebar' | 'editor', initial?: string | { mostRecent: true }, onSession?: (s: SessionView) => void) => {
+    const b = new WebviewBridge(webview, host, {
       client: sidecar, extensionUri: context.extensionUri, sessionsDir, onSession,
       locale: () => platform.locale(),
+      onPageReady: ready => {
+        ready.postShell({ type: 'editorSelection', selection: liveSelection });
+        if (lastCopy) ready.postShell({ type: 'editorCopy', selection: lastCopy });
+      },
+      onFocus: focused => { lastFocused = focused; },
     }, initial);
+    bridges.add(b);
+    return b;
+  };
+  const broadcast = (m: HostMsg) => { for (const b of bridges) b.postShell(m); };
+
+  // The editor's live selection. Focus moving into a chat keeps the last one (that is when it gets used); only another file editor
+  // becoming active, a collapsed selection, or closing the document clears it. Selections are debounced: a drag fires dozens
+  const shareSelection = () => vscode.workspace.getConfiguration('acpira').get<boolean>('shareEditorSelection', true);
+  let liveSelection: EditorSelection | undefined;
+  // Kept for pages that open (or reload after a sidecar restart) after the copy: a paste there must still become a range chip
+  let lastCopy: EditorSelection | undefined;
+  let selectionTimer: NodeJS.Timeout | undefined;
+  const selectionIn = (editor: vscode.TextEditor | undefined): EditorSelection | undefined => {
+    // A document closed inside the debounce window must not be offered after its close cleared it
+    if (!editor || editor.document.isClosed || editor.document.uri.scheme !== 'file') return undefined;
+    const s = editor.selection;
+    if (s.isEmpty) return undefined;
+    return editorSelectionOf(editor.document.uri.toString(), s.start, s.end, editor.document.getText(s));
+  };
+  const publishSelection = (next: EditorSelection | undefined) => {
+    if (!liveSelection && !next) return;
+    liveSelection = next;
+    broadcast({ type: 'editorSelection', selection: next });
+  };
+  const trackSelection = (editor: vscode.TextEditor | undefined) => {
+    clearTimeout(selectionTimer);
+    selectionTimer = setTimeout(() => publishSelection(shareSelection() ? selectionIn(editor) : undefined), 150);
+  };
+
+  // "Add to chat" lands in the chat the user last looked at: an editor tab if one was active since, else the sidebar
+  const addToChat = (selection: EditorSelection) => {
+    const m: HostMsg = { type: 'addSelection', selection };
+    const panel = lastFocused && panels.get(lastFocused);
+    if (panel && lastFocused) {
+      panel.reveal(undefined, false);
+      lastFocused.postShell(m);
+      return;
+    }
+    void vscode.commands.executeCommand(`${VIEW_ID}.focus`);
+    withSidebar(b => b.postShell(m));
+  };
 
   // A new tab is a new conversation: without a session id (title bar / command palette) it opens on a fresh session; a webview passing its
   // id opens that one. The tab title follows the session it shows
@@ -59,7 +112,15 @@ export async function activate(context: vscode.ExtensionContext) {
       dark: vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.svg'),
     };
     const b = attach(panel.webview, 'editor', typeof sessionId === 'string' ? sessionId : undefined, s => { panel.title = s.title; watch?.(s); });
-    panel.onDidDispose(() => b.dispose());
+    panels.set(b, panel);
+    lastFocused = b;
+    panel.onDidChangeViewState(e => { if (e.webviewPanel.active) lastFocused = b; });
+    panel.onDidDispose(() => {
+      if (lastFocused === b) lastFocused = undefined;
+      panels.delete(b);
+      bridges.delete(b);
+      b.dispose();
+    });
     return b;
   }
 
@@ -79,11 +140,46 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.window.registerWebviewViewProvider(VIEW_ID, {
       resolveWebviewView(view) {
         const b = sidebar = attach(view.webview, 'sidebar', { mostRecent: true });
-        view.onDidDispose(() => { if (sidebar === b) sidebar = undefined; b.dispose(); });
+        // Bringing the sidebar chat into view makes it the "Add to Chat" target again (clicking into it does too, via viewFocus)
+        view.onDidChangeVisibility(() => { if (view.visible) lastFocused = b; });
+        view.onDidDispose(() => {
+          if (sidebar === b) sidebar = undefined;
+          if (lastFocused === b) lastFocused = undefined;
+          bridges.delete(b);
+          b.dispose();
+        });
         for (const fn of sidebarPending.splice(0)) fn(b);
       },
     }, { webviewOptions: { retainContextWhenHidden: true } }),
 
+    vscode.window.onDidChangeTextEditorSelection(e => trackSelection(e.textEditor)),
+    vscode.window.onDidChangeActiveTextEditor(editor => { if (editor) trackSelection(editor); }),
+    vscode.workspace.onDidCloseTextDocument(doc => {
+      if (liveSelection?.uri !== doc.uri.toString()) return;
+      clearTimeout(selectionTimer);
+      publishSelection(undefined);
+    }),
+    vscode.workspace.onDidChangeConfiguration(e => { if (e.affectsConfiguration('acpira.shareEditorSelection')) trackSelection(vscode.window.activeTextEditor); }),
+    { dispose: () => clearTimeout(selectionTimer) },
+    // Editor context menu: pin the selection (or, without one, the caret's line) into the chat regardless of the live-selection setting
+    vscode.commands.registerTextEditorCommand('acpira.addSelection', editor => {
+      const s = editor.selection;
+      const range = s.isEmpty ? editor.document.lineAt(s.active.line).range : s;
+      const picked = editorSelectionOf(editor.document.uri.toString(), range.start, range.end, editor.document.getText(range));
+      if (picked) addToChat(picked);
+    }),
+    // Copy capture: VS Code hands paste providers the copied ranges, which is the only way to learn where clipboard text came from.
+    // Nothing is ever pasted by this provider; the webview turns a matching paste into a selection chip (`editorCopy`)
+    vscode.languages.registerDocumentPasteEditProvider({ scheme: 'file' }, {
+      prepareDocumentPaste(document, ranges) {
+        if (ranges.length !== 1) return;
+        const range = ranges[0]!;
+        const copied = editorSelectionOf(document.uri.toString(), range.start, range.end, document.getText(range));
+        if (!copied) return;
+        lastCopy = copied;
+        broadcast({ type: 'editorCopy', selection: copied });
+      },
+    }, { providedPasteEditKinds: [], copyMimeTypes: ['application/vnd.acpira.copy'] }),
     vscode.commands.registerCommand('acpira.openView', () => vscode.commands.executeCommand(`${VIEW_ID}.focus`)),
     vscode.commands.registerCommand('acpira.newSession', () => withSidebar(b => b.send({ type: 'newSession' }))),
     vscode.commands.registerCommand('acpira.showLog', () => log.show()),
@@ -106,6 +202,7 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   sidecar.start();
+  trackSelection(vscode.window.activeTextEditor);
 }
 
 // VS Code waits for the returned promise: the sidecar gets its shutdown and takes its agent processes with it

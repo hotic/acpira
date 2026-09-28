@@ -2,6 +2,8 @@
 @layer base {
   .acp-shell { isolation: isolate; font-family: var(--font); font-size: var(--text-1); line-height: var(--text-1-lh); color: var(--fg-1); background: var(--bg-0); }
   .acp-shell ::selection { background: color-mix(in srgb, var(--focus) 35%, transparent); }
+  /* A quote being commented on keeps its selection paint while focus is in the comment field (chat/QuoteToolbar) */
+  ::highlight(acpira-quote) { background: color-mix(in srgb, var(--focus) 35%, transparent); }
   .acp-shell summary::-webkit-details-marker { display: none; }
   .acp-shell textarea { field-sizing: content; }
   /* Native scrollbars and form controls follow the shell theme, not the host's. */
