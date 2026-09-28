@@ -21,7 +21,7 @@ import { toolVerb } from './folding';
 import { AsyncTaskStopContext, OpenToolFileContext } from './fileLinks';
 import { fileReference, toolFiles, visibleToolContents } from './toolDetails';
 import { useToolSeconds } from './useToolSeconds';
-import { commandDuration, commandSummary } from './commandSummary';
+import { commandDuration } from './commandDuration';
 
 export { OpenToolFileContext } from './fileLinks';
 
@@ -41,7 +41,7 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
   const running = block.status === 'in_progress' && block.observation !== 'unknown';
   const execute = block.kind === 'execute';
   const seconds = useToolSeconds(block);
-  // A shell command the agent handed over verbatim: the row shows a summary, the card the whole command.
+  // A shell command the agent handed over verbatim: the row shows it on one line (truncated to the row), the card wraps it whole.
   // Title-derived targets may be prose, and background wait / kill rows name another command, so both stay on the row
   const command = execute && block.targetMono && !block.verbKey && block.target?.trim() ? block.target : undefined;
   const files = toolFiles(block);
@@ -105,7 +105,7 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
   const label = <>
     <RowLabel shimmer={running}>{toolVerb(block)}</RowLabel>
     {command
-      ? <RowTarget mono><span title={command}>{commandSummary(command)}</span></RowTarget>
+      ? <RowTarget mono><span title={command}>{command}</span></RowTarget>
       : block.target && !(block.kind === 'read' && files.length) && <RowTarget mono={block.targetMono}>{block.target}</RowTarget>}
   </>;
   if (todos !== undefined) return <PlanDetails entries={todos} label={label} trailing={trailing} />;
