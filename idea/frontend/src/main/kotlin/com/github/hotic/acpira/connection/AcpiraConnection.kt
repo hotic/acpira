@@ -12,7 +12,9 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonParser
 import com.google.gson.JsonPrimitive
 import com.intellij.DynamicBundle
+import com.github.hotic.acpira.editor.EditorRelay
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.intellij.platform.project.projectId
 import fleet.rpc.client.durable
@@ -42,13 +44,20 @@ class AcpiraConnection(private val project: Project, val cs: CoroutineScope) {
         val lastSessionId: String?
         fun onHostMessage(message: JsonElement)
         fun onState(state: SidecarState, detail: String?)
+        // Editor state from the IDE itself (selection, copy, "Add to chat"), never through the sidecar; the view holds it until its page initialized
+        fun onShellMessage(message: JsonElement)
     }
 
     private data class Binding(val posts: Channel<String>, val job: Job)
 
     private val bindings = ConcurrentHashMap<String, Binding>()
+    private val views = ConcurrentHashMap<String, View>()
+    // Shell messages for a host that has no view yet (the tool window opened by "Add to chat"), delivered when one attaches
+    private val waiting = ConcurrentHashMap<String, MutableList<JsonElement>>()
 
     init {
+        // Editor selection / copy relay starts with the first view of the project
+        project.service<EditorRelay>()
         cs.launch {
             retryNonRpc("backend UI request stream") {
                 durable {
@@ -102,11 +111,33 @@ class AcpiraConnection(private val project: Project, val cs: CoroutineScope) {
         }
         val binding = Binding(posts, job)
         bindings[view.viewId] = binding
+        views[view.viewId] = view
+        waiting.remove(view.host)?.forEach(view::onShellMessage)
         job.invokeOnCompletion {
             bindings.remove(view.viewId, binding)
+            views.remove(view.viewId, view)
             posts.close()
         }
         return job
+    }
+
+    // Every view of this project
+    fun shell(message: JsonElement) {
+        views.values.forEach { it.onShellMessage(message) }
+    }
+
+    // The views of one host kind ("sidebar" / "editor"), or the next one to attach when there is none yet
+    fun shellTo(host: String, message: JsonElement) {
+        val targets = views.values.filter { it.host == host }
+        if (targets.isEmpty()) waiting.computeIfAbsent(host) { java.util.Collections.synchronizedList(mutableListOf()) }.add(message)
+        else targets.forEach { it.onShellMessage(message) }
+    }
+
+    // A page finished initializing: it gets the editor's current selection and the last editor copy
+    fun pageReady(view: View) {
+        val relay = project.service<EditorRelay>()
+        relay.current()?.let { view.onShellMessage(EditorRelay.message("editorSelection", it)) }
+        relay.lastCopy()?.let { view.onShellMessage(EditorRelay.message("editorCopy", it)) }
     }
 
     fun post(viewId: String, json: String) {

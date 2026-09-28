@@ -54,6 +54,9 @@ class AcpiraBrowser(
     private val query: JBCefJSQuery
     @Volatile private var pageLoaded = false
     @Volatile private var wasReady = false
+    // Shell messages wait for the page's init state: before it nothing listens, and init would overwrite them anyway
+    private val shellQueue = mutableListOf<JsonElement>()
+    private var pageInitialized = false
     override val component: JComponent get() = browser.component
 
     init {
@@ -136,6 +139,27 @@ class AcpiraBrowser(
                 onSession?.invoke(id, session.get("title")?.takeIf { it.isJsonPrimitive }?.asString ?: "Acpira")
             }
         }
+        deliver(message)
+        if (message.isJsonObject && message.asJsonObject.get("type")?.asString == "init") {
+            val queued = synchronized(shellQueue) { pageInitialized = true; shellQueue.toList().also { shellQueue.clear() } }
+            queued.forEach(::deliver)
+            connection.pageReady(this)
+        }
+    }
+
+    override fun onShellMessage(message: JsonElement) {
+        val now = synchronized(shellQueue) {
+            if (!pageInitialized) {
+                // Only the latest live selection matters; pinned ranges all wait
+                if (message.asJsonObject.get("type")?.asString == "editorSelection") shellQueue.removeAll { it.asJsonObject.get("type")?.asString == "editorSelection" }
+                shellQueue.add(message)
+            }
+            pageInitialized
+        }
+        if (now) deliver(message)
+    }
+
+    private fun deliver(message: JsonElement) {
         val b64 = Base64.getEncoder().encodeToString(message.toString().toByteArray())
         browser.cefBrowser.executeJavaScript("window.__acpiraReceive && window.__acpiraReceive('$b64')", browser.cefBrowser.url, 0)
     }
@@ -143,7 +167,7 @@ class AcpiraBrowser(
     // A sidecar that came back after the page had already initialized needs the page to start over (it posts `ready` once, at mount)
     override fun onState(state: SidecarState, detail: String?) {
         if (state == SidecarState.READY) {
-            if (wasReady && pageLoaded) browser.cefBrowser.reload()
+            if (wasReady && pageLoaded) { synchronized(shellQueue) { pageInitialized = false }; browser.cefBrowser.reload() }
             wasReady = true
         }
         onState.invoke(state, detail)

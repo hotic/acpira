@@ -19,6 +19,13 @@
         <postStartupActivity implementation="com.github.hotic.acpira.DevAutoOpen"/>
     </extensions>
 
+    <actions>
+        <action id="Acpira.AddSelection" class="com.github.hotic.acpira.editor.AddSelectionAction"
+                text="Add to Chat" description="Add the selected lines to the Acpira chat">
+            <add-to-group group-id="EditorPopupMenu" anchor="first"/>
+        </action>
+    </actions>
+
     <applicationListeners>
         <listener class="com.github.hotic.acpira.WindowFocusRelay" topic="com.intellij.openapi.application.ApplicationActivationListener"/>
     </applicationListeners>
