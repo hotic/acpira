@@ -1582,10 +1582,11 @@ pub fn file_url_to_path(uri: &str) -> Option<String> {
     let i = rest.find('/')?;
     (&rest[..i], &rest[i..])
   };
-  if !host.is_empty() && host != "localhost" {
-    return None;
-  }
   let decoded = percent_decode(path)?;
+  if !host.is_empty() && host != "localhost" {
+    // `file://server/share/a.ts` is a UNC path, which only Windows can open
+    return cfg!(windows).then(|| format!("\\\\{host}{}", decoded.replace('/', "\\")));
+  }
   if cfg!(windows) {
     let p = decoded.trim_start_matches('/');
     return Some(p.replace('/', "\\"));
