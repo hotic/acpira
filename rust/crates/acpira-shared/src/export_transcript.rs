@@ -64,16 +64,29 @@ fn user_turn(turn: &UserTurn, labels: &ExportLabels) -> String {
     let label = if turn.auto_reason == Some(AutoReason::AccountSwitch) { &labels.auto_continue } else { &labels.auto_compact };
     return format!("_{label}_");
   }
-  let mut out = vec![format!("### {}", labels.user), String::new(), turn.text.clone()];
-  if let Some(a) = turn.attachments.as_ref().filter(|a| !a.is_empty()) {
-    let names: Vec<String> = a
-      .iter()
-      .map(|x| match x {
-        Attachment::File { name, .. } => name.clone(),
-        Attachment::Image { name, blob, .. } => name.clone().or_else(|| blob.clone()).unwrap_or_else(|| "image".into()),
-        Attachment::Text { name, .. } => name.clone(),
-      })
-      .collect();
+  let mut out = vec![format!("### {}", labels.user)];
+  let all = turn.attachments.as_deref().unwrap_or(&[]);
+  // Quotes lead, as they do in the prompt: blockquotes with the remark under each
+  for x in all {
+    let Attachment::Quote { text, comment } = x else { continue };
+    out.push(String::new());
+    out.push(text.split('\n').map(|l| format!("> {}", l.strip_suffix('\r').unwrap_or(l))).collect::<Vec<_>>().join("\n"));
+    if let Some(c) = comment.as_ref().filter(|c| !c.is_empty()) {
+      out.push(String::new());
+      out.push(c.clone());
+    }
+  }
+  out.push(String::new());
+  out.push(turn.text.clone());
+  let names: Vec<String> = all
+    .iter()
+    .filter(|x| !matches!(x, Attachment::Quote { .. }))
+    .map(|x| match x {
+      Attachment::Image { name, blob, .. } => name.clone().or_else(|| blob.clone()).unwrap_or_else(|| "image".into()),
+      other => other.label().unwrap_or_default(),
+    })
+    .collect();
+  if !names.is_empty() {
     out.push(String::new());
     out.push(format!("> {}: {}", labels.attachments, names.join(", ")));
   }
@@ -212,4 +225,38 @@ pub fn export_file_name(title: &str, markdown: bool, stamp: &str) -> String {
   let slug = capped.trim_end_matches(['-', '.']);
   let slug = if slug.is_empty() { "session" } else { slug };
   format!("{slug}-{stamp}.{}", if markdown { "md" } else { "json" })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  // Same expectations as the selection / quote lines in test/exportTranscript.test.ts
+  #[test]
+  fn user_turns_list_selections_by_range_and_render_quotes_as_blockquotes() {
+    let turn: UserTurn = serde_json::from_value(serde_json::json!({
+      "role": "user", "text": "fix", "attachments": [
+        { "kind": "file", "uri": "file:///repo/x.ts", "name": "x.ts" },
+        { "kind": "selection", "uri": "file:///repo/y.ts", "name": "y.ts", "startLine": 3, "endLine": 9, "blob": "h3.txt" },
+        { "kind": "quote", "text": "said this\nand that", "comment": "why?" },
+      ],
+    }))
+    .unwrap();
+    let labels = ExportLabels {
+      user: "User".into(),
+      agent: "Agent".into(),
+      project: "Project".into(),
+      exported: "Exported".into(),
+      attachments: "Attachments".into(),
+      thinking: "Thinking".into(),
+      compacted: "Compacted".into(),
+      auto_compact: "Automatic /compact".into(),
+      auto_continue: "Continued".into(),
+      error: "Error".into(),
+    };
+    let md = user_turn(&turn, &labels);
+    assert!(md.contains("> Attachments: x.ts, y.ts (3-9)"), "{md}");
+    // Quotes lead the prompt text, in the order they were sent
+    assert!(md.contains("> said this\n> and that\n\nwhy?\n\nfix\n\n> Attachments:"), "{md}");
+  }
 }

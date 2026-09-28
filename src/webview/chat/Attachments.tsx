@@ -1,12 +1,13 @@
 import { useContext, useState, type ReactNode } from 'react';
-import { FileText, Image as ImageIcon, X } from 'lucide-react';
+import { FileText, Image as ImageIcon, TextSelect, X } from 'lucide-react';
 import type { Attachment, Draft } from '@shared/transcript';
-import { imageMimeOf } from '@shared/attachments';
+import { attachmentLabel, imageMimeOf } from '@shared/attachments';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
 import { Lightbox } from './Lightbox';
 import { TextPeek } from './TextPeek';
 import { OpenToolFileContext, parseFileLink } from './fileLinks';
+import { QuoteChip } from './Quotes';
 
 // An image open in the Lightbox: the source to show and the name for labels
 interface Preview {
@@ -63,29 +64,71 @@ function openFor(a: Draft | Attachment, ctx: {
     const url = a.blob && ctx.blobUrl ? ctx.blobUrl(a.blob) : undefined;
     return url ? () => ctx.peek.openBlob(a.name, url) : undefined;
   }
-  if (a.kind === 'file' && ctx.openFile) {
+  if ((a.kind === 'file' || a.kind === 'selection') && ctx.openFile) {
     const file = parseFileLink(a.uri);
     const open = ctx.openFile;
-    if (file) return () => open(file.path, file.line);
+    const line = a.kind === 'selection' ? a.startLine : file?.line;
+    if (file) return () => open(file.path, line);
   }
+}
+
+type Named = Exclude<Attachment | Draft, { kind: 'quote' }>;
+type Quote = Extract<Attachment | Draft, { kind: 'quote' }>;
+
+// Stable React key of a non-quote chip
+function chipKey(a: Named, i: number): string {
+  if (a.kind === 'file') return a.uri;
+  if (a.kind === 'selection') return `${a.uri}#${a.startLine}-${a.endLine}`;
+  return ('blob' in a && a.blob) || `${a.name ?? a.kind}-${i}`;
+}
+
+const isImage = (a: Named) => a.kind === 'image' || (a.kind === 'file' && !!imageMimeOf(a.name));
+const chipIcon = (a: Named) => (a.kind === 'selection' ? <TextSelect strokeWidth={1.5} /> : undefined);
+const chipTitle = (a: Named) => (a.kind === 'file' ? a.uri : a.kind === 'selection' ? `${a.uri}#L${a.startLine}-${a.endLine}` : undefined);
+
+// Quotes and everything else, each with its index in the original list
+function split<T extends Attachment | Draft>(items: T[], indices?: number[]) {
+  const quotes: { item: Quote; index: number }[] = [];
+  const named: { item: Exclude<T, { kind: 'quote' }>; index: number }[] = [];
+  (indices ?? items.map((_, i) => i)).forEach(index => {
+    const item = items[index]!;
+    if (item.kind === 'quote') quotes.push({ item: item as Quote, index }); else named.push({ item: item as Exclude<T, { kind: 'quote' }>, index });
+  });
+  return { quotes, named };
 }
 
 // Composer images use individual thumbnails; other attachments keep compact file labels.
 // An inline editor's retained attachments (`before`) share this one wrapping row, so a newly pasted image lands beside them instead of on a second row.
-export function DraftChips({ drafts, before, onRemove }: { drafts: Draft[]; before?: ReactNode; onRemove?: (index: number) => void }) {
+// Quotes from the transcript lead the row as one annotations chip; its corner button drops them all, the card edits or removes one
+export function DraftChips({ drafts, before, onRemove, onUpdate }: {
+  drafts: Draft[];
+  before?: ReactNode;
+  onRemove?: (indices: number[]) => void;
+  onUpdate?: (index: number, draft: Draft) => void;
+}) {
   const [preview, setPreview] = useState<Preview | null>(null);
   const peek = useTextPeek();
   const openFile = useContext(OpenToolFileContext);
   if (!drafts.length && !before) return null;
+  const { quotes, named } = split(drafts);
   return (
     <div className="flex flex-wrap items-start gap-gap px-pad pt-gap">
       {before}
-      {drafts.map((d, i) => (
-        <Removable key={d.kind === 'file' ? d.uri : `${d.name ?? d.kind}-${i}`} label={t('common.removeNamed', { name: d.name ?? t('common.image') })} onRemove={onRemove ? () => onRemove(i) : undefined}>
+      {quotes.length > 0 && (
+        <Removable label={t('quote.removeAll')} onRemove={onRemove ? () => onRemove(quotes.map(q => q.index)) : undefined}>
+          <QuoteChip quotes={quotes.map(q => q.item)}
+            onEdit={onUpdate && ((i, comment) => { const q = quotes[i]!; onUpdate(q.index, { ...q.item, comment: comment || undefined }); })}
+            onRemove={onRemove && (i => onRemove([quotes[i]!.index]))} />
+        </Removable>
+      )}
+      {named.map(({ item: d, index: i }) => (
+        <Removable key={chipKey(d, i)} label={t('common.removeNamed', { name: attachmentLabel(d) ?? t('common.image') })} onRemove={onRemove ? () => onRemove([i]) : undefined}>
           <AttachmentTag
             thumbnail
-            name={d.name}
-            image={d.kind === 'image' || (d.kind === 'file' && !!imageMimeOf(d.name))}
+            name={attachmentLabel(d)}
+            image={isImage(d)}
+            icon={chipIcon(d)}
+            title={chipTitle(d)}
             src={d.kind === 'image' ? `data:${d.mimeType};base64,${d.data}` : undefined}
             onPreview={src => setPreview({ src, name: d.name })}
             onOpen={openFor(d, { openFile, peek })}
@@ -104,16 +147,19 @@ export function TurnAttachments({ attachments, blobUrl }: { attachments: Attachm
   const [preview, setPreview] = useState<Preview | null>(null);
   const peek = useTextPeek();
   const openFile = useContext(OpenToolFileContext);
+  const { quotes, named } = split(attachments);
   return (
     <div className="flex shrink-0 flex-wrap items-start gap-gap">
-      {attachments.map((a, i) => (
+      {quotes.length > 0 && <QuoteChip quotes={quotes.map(q => q.item)} />}
+      {named.map(({ item: a, index: i }) => (
         <AttachmentTag
-          key={a.kind === 'file' ? a.uri : a.blob ?? `${a.kind}-${i}`}
+          key={chipKey(a, i)}
           thumbnail
-          name={a.name}
-          image={a.kind === 'image' || (a.kind === 'file' && !!imageMimeOf(a.name))}
+          name={attachmentLabel(a)}
+          image={isImage(a)}
+          icon={chipIcon(a)}
           src={a.kind === 'image' && blobUrl && a.blob ? blobUrl(a.blob) : undefined}
-          title={a.kind === 'file' ? a.uri : undefined}
+          title={chipTitle(a)}
           onPreview={src => setPreview({ src, name: a.name })}
           onOpen={openFor(a, { blobUrl, openFile, peek })}
         />
@@ -130,15 +176,16 @@ export function AttachmentTiles({ attachments, blobUrl }: { attachments: Attachm
   const peek = useTextPeek();
   return (
     <span className="flex shrink-0 self-center items-center gap-1">
-      {attachments.map((a, i) => {
-        const key = a.kind === 'file' ? a.uri : a.blob ?? `${a.kind}-${i}`;
+      {split(attachments).quotes.length > 0 && <QuoteChip quotes={split(attachments).quotes.map(q => q.item)} />}
+      {split(attachments).named.map(({ item: a, index: i }) => {
+        const key = chipKey(a, i);
         const src = a.kind === 'image' && blobUrl && a.blob ? blobUrl(a.blob) : undefined;
         return src
           ? <button key={key} type="button" title={a.name} aria-label={t('common.previewImage', { name: a.name ?? t('common.image') })} onClick={() => setPreview({ src, name: a.name })}
               className="flex size-lead shrink-0 cursor-zoom-in overflow-hidden rounded-xs outline-none hover:ring-1 hover:ring-fg-3 focus-visible:ring-1 focus-visible:ring-focus">
               <img src={src} alt="" className="size-full object-cover" />
             </button>
-          : <AttachmentTag key={key} name={a.name} image={a.kind === 'image' || (a.kind === 'file' && !!imageMimeOf(a.name))} title={a.kind === 'file' ? a.uri : undefined}
+          : <AttachmentTag key={key} name={attachmentLabel(a)} image={isImage(a)} icon={chipIcon(a)} title={chipTitle(a)}
               onOpen={openFor(a, { blobUrl, peek })} />;
       })}
       {preview && <Lightbox src={preview.src} name={preview.name} onClose={() => setPreview(null)} />}
@@ -156,15 +203,20 @@ export function EditAttachments({ attachments, retained, blobUrl, disabled, onRe
   const peek = useTextPeek();
   const openFile = useContext(OpenToolFileContext);
   if (!retained.length) return null;
+  const { quotes, named } = split(attachments, retained);
   return (
     <>
-      {retained.map(i => {
-        const attachment = attachments[i]!;
+      {quotes.length > 0 && (
+        <Removable disabled={disabled} label={t('quote.removeAll')} onRemove={() => { for (const q of quotes) onRemove(q.index); }}>
+          <QuoteChip quotes={quotes.map(q => q.item)} onRemove={disabled ? undefined : i => onRemove(quotes[i]!.index)} />
+        </Removable>
+      )}
+      {named.map(({ item: attachment, index: i }) => {
         const src = attachment.kind === 'image' && blobUrl && attachment.blob ? blobUrl(attachment.blob) : undefined;
-        return <Removable key={i} disabled={disabled} label={t('common.removeNamed', { name: attachment.name ?? t('common.image') })} onRemove={() => onRemove(i)}>
-          <AttachmentTag thumbnail name={attachment.name} src={src}
-            image={attachment.kind === 'image' || (attachment.kind === 'file' && !!imageMimeOf(attachment.name))}
-            title={attachment.kind === 'file' ? attachment.uri : undefined}
+        return <Removable key={i} disabled={disabled} label={t('common.removeNamed', { name: attachmentLabel(attachment) ?? t('common.image') })} onRemove={() => onRemove(i)}>
+          <AttachmentTag thumbnail name={attachmentLabel(attachment)} src={src}
+            image={isImage(attachment)} icon={chipIcon(attachment)}
+            title={chipTitle(attachment)}
             onPreview={src => setPreview({ src, name: attachment.name })}
             onOpen={openFor(attachment, { blobUrl, openFile, peek })} />
         </Removable>;
@@ -175,10 +227,12 @@ export function EditAttachments({ attachments, retained, blobUrl, disabled, onRe
   );
 }
 
-function AttachmentTag({ name = 'image.png', src, image, title, thumbnail, onPreview, onOpen }: {
+function AttachmentTag({ name = 'image.png', src, image, icon, title, thumbnail, onPreview, onOpen }: {
   name?: string;
   src?: string;
   image: boolean;
+  // Replaces the file glyph (an editor selection)
+  icon?: ReactNode;
   title?: string;
   thumbnail?: boolean;
   onPreview?: (src: string) => void;
@@ -201,7 +255,7 @@ function AttachmentTag({ name = 'image.png', src, image, title, thumbnail, onPre
     >
       {src
         ? <img src={src} alt="" className={thumbnail && image ? 'size-full object-cover' : 'size-icon-ctl shrink-0 rounded-xs object-cover'} />
-        : image ? <ImageIcon strokeWidth={1.5} /> : <FileText strokeWidth={1.5} />}
+        : image ? <ImageIcon strokeWidth={1.5} /> : icon ?? <FileText strokeWidth={1.5} />}
       {!(thumbnail && image) && <span className="truncate">{name}</span>}
     </Tag>
   );

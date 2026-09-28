@@ -147,6 +147,7 @@ impl BridgeCore {
     use WebviewMsg as W;
     let (manager, platform) = (&self.manager, &self.platform);
     match m {
+      W::ViewFocus => {}
       W::Ready => {
         self.ready.store(true, std::sync::atomic::Ordering::Release);
         // A view (re)opening is a cheap moment to re-check executables and pick up sessions another window created

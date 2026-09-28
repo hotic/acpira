@@ -56,11 +56,13 @@ export interface SettingsView {
   diffMarkers: DiffMarkers;
   // -webkit-font-smoothing: antialiased (thinner strokes on macOS) instead of the platform default
   fontSmoothing: boolean;
+  // The IDE editor's current selection rides along with the next prompt (a chip in the composer toolbar)
+  shareEditorSelection: boolean;
 }
 
 // Keys the webview may write back; the host maps them onto acpira.<key> at user scope
-export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing';
-export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing'];
+export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection';
+export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection'];
 
 export const MIN_COMPACT_AT_TOKENS = 10_000;
 
@@ -81,6 +83,7 @@ export const DEFAULT_SETTINGS: SettingsView = {
   codeFontSize: CODE_FONT_SIZE.default,
   diffMarkers: 'color',
   fontSmoothing: false,
+  shareEditorSelection: true,
 };
 
 // A hand-edited settings.json or a forged webview message can send anything; fall back per key so the page never sees an illegal value
@@ -93,6 +96,7 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
       return (typeof value === 'string' && value.trim() ? value.trim() : fallback) as SettingsView[K];
     case 'autoCompact':
     case 'fontSmoothing':
+    case 'shareEditorSelection':
       return (typeof value === 'boolean' ? value : fallback) as SettingsView[K];
     case 'compactAtTokens': {
       const n = typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : fallback as number;

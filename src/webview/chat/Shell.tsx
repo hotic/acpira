@@ -18,6 +18,7 @@ import { Header } from './Header';
 import { SessionList } from './SessionList';
 import { AgentMessage } from './Turns';
 import { HistoryComposerContext, HistoryContext, HistoryMessage } from './HistoryMessage';
+import { QuoteToolbar } from './QuoteToolbar';
 import { Composer, type ComposerProps } from './Composer';
 import { Notice } from './Notice';
 import { ExternalSessionNotice } from './ExternalSessionNotice';
@@ -131,6 +132,8 @@ export interface ShellProps {
   // and the context panel only gets a compact button when `compact` is among them
   commands?: SlashCommand[];
   compactAt?: number;
+  // Settings: the editor's live selection is offered in the main composer
+  shareEditorSelection?: boolean;
   sessions: SessionSummary[];
   activeSessionId?: string;
   // Workspace root of the session; attachments are labeled relative to it
@@ -439,6 +442,7 @@ export function Shell(p: ShellProps) {
               {/* The overlay inspector replaces this block visually; it stays mounted (scroll + draft survive) but inert */}
               <div inert={overlayInspect || undefined} aria-hidden={overlayInspect || undefined} className="flex min-h-0 flex-1 flex-col">
                 <div className="relative flex min-h-0 flex-1 flex-col">
+                  {!p.external && <QuoteToolbar root={threadContent} />}
                   <PlanDocumentContext.Provider value={planDoc}>
                     <HistoryContext.Provider value={history}>
                     <HistoryComposerContext.Provider value={history?.editing !== undefined ? composerProps : undefined}>
@@ -496,7 +500,7 @@ export function Shell(p: ShellProps) {
                         } : undefined} />
                     : null}
                   {/* Sibling keys include the component role; duplicate session-only keys leave stale queue rows after reconciliation. */}
-                  {!p.external && <Composer key={`composer:${p.activeSessionId}`} {...composerProps} draftKey={p.activeSessionId}
+                  {!p.external && <Composer key={`composer:${p.activeSessionId}`} {...composerProps} draftKey={p.activeSessionId} main shareSelection={p.shareEditorSelection}
                     toolbarStart={!!p.subagents?.length && <Chip narrow="icon" caret={false} className="shrink-0" icon={<Network strokeWidth={1.5} />}
                       aria-label={`${t('subagents.graph')} · ${t('subagents.entry', { n: p.subagents.length })}`}
                       title={`${t('subagents.graph')} · ${t('subagents.entry', { n: p.subagents.length })}`}

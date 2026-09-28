@@ -24,6 +24,7 @@
   "acpira.conf.codeFontSize": "代码块、工具输出与差异视图的基准字号，px（9–20）",
   "acpira.conf.diffMarkers": "差异标记：color 给改动行上底色，signs 只靠 +/- 前缀",
   "acpira.conf.fontSmoothing": "用 -webkit-font-smoothing: antialiased 渲染文字（笔画更细，仅 macOS 生效）",
+  "acpira.conf.shareEditorSelection": "把编辑器里当前选中的代码带进聊天：模式旁显示一个标签，随下一条消息发出",
   "acpira.conf.appearance.density": "密度",
   "acpira.conf.appearance.radius": "圆角",
   "acpira.conf.appearance.surface": "表面：hairline 细线 / tonal 无边分层 / stroke 描边",
@@ -39,5 +40,6 @@
   "acpira.conf.appearance.accent": "强调色来源",
   "acpira.conf.appearance.motion": "界面动画（过渡、入场与流光）：on 开启 / none 关闭。「正在处理」的指示环始终转动",
   "acpira.conf.appearance.fold": "过程行的折叠：整轮过程收在一栏，运行时显示当前动作，结束后显示用时，点击展开 / 只收只读动作（编辑与命令保持可见）",
+  "acpira.cmd.addSelection": "添加到对话",
   "acpira.cmd.connectChatgpt": "连接 ChatGPT 会话"
 }

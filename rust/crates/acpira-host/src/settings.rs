@@ -65,6 +65,7 @@ impl SettingsCenter {
       code_font_size: self.read("codeFontSize").as_i64().unwrap_or(12),
       diff_markers: str_of("diffMarkers"),
       font_smoothing: self.read("fontSmoothing").as_bool().unwrap_or(false),
+      share_editor_selection: self.read("shareEditorSelection").as_bool().unwrap_or(true),
     }
   }
 

@@ -7,6 +7,8 @@ const turns: Turn[] = [
     { kind: 'image', mimeType: 'image/png', blob: 'h1.png', name: 'a.png' },
     { kind: 'text', name: 'notes.txt', blob: 'h2.txt' },
     { kind: 'file', uri: 'file:///repo/x.ts', name: 'x.ts' },
+    { kind: 'selection', uri: 'file:///repo/y.ts', name: 'y.ts', startLine: 3, endLine: 9, blob: 'h3.txt' },
+    { kind: 'quote', text: 'said this\nand that', comment: 'why?' },
   ] },
   { role: 'agent', startedAt: 1, endedAt: 2, stop: 'end_turn', blocks: [
     { type: 'thought', text: 'thinking about it' },
@@ -55,7 +57,9 @@ describe('exportMarkdown', () => {
   it('renders user turns with their attachment names and the auto-compact line', () => {
     expect(md).toContain('### User');
     expect(md).toContain('fix the tests');
-    expect(md).toContain('> Attachments: a.png, notes.txt, x.ts');
+    expect(md).toContain('> Attachments: a.png, notes.txt, x.ts, y.ts (3-9)');
+    // Quotes lead the prompt text, in the order they were sent
+    expect(md).toContain('> said this\n> and that\n\nwhy?\n\nfix the tests\n\n> Attachments:');
     expect(md).toContain('_Automatic /compact_');
   });
 

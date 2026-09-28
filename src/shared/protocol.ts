@@ -47,6 +47,14 @@ export interface FileHit {
   path: string;
 }
 
+// A line range of an editor document as the IDE shell reports it: 1-based inclusive lines, the selected text verbatim
+export interface EditorSelection {
+  uri: string;
+  startLine: number;
+  endLine: number;
+  text: string;
+}
+
 // Links in agent output open on the host side; only these schemes are ever handed to openExternal
 export function isSafeExternalUrl(url: string): boolean {
   try {
@@ -57,6 +65,13 @@ export function isSafeExternalUrl(url: string): boolean {
 }
 
 export type HostMsg =
+  // The next three come from the IDE shell itself, not the sidecar: editor state is UI, and the engine never sees it until a prompt carries it.
+  // The editor's current selection, on every change; absent when nothing (or no file: document) is selected
+  | { type: 'editorSelection'; selection?: EditorSelection }
+  // The editor's "Add to chat" action: pin this range into the composer
+  | { type: 'addSelection'; selection: EditorSelection }
+  // Text just copied from an editor, so pasting the same text into the composer becomes a selection chip instead
+  | { type: 'editorCopy'; selection: EditorSelection }
   | { type: 'chatgptStatus'; status: ChatGptIntegrationStatus }
   | { type: 'editTurnResult'; requestId: string; error?: string }
   | { type: 'init'; state: InitState }
@@ -108,6 +123,8 @@ export type WebviewMsg =
   | { type: 'connectChatgpt' }
   | { type: 'editTurn'; requestId: string; edit: EditTurnRequest }
   | { type: 'ready' }
+  // The page's window got focus. The VS Code shell keeps it (the last-used chat is where "Add to Chat" goes); the sidecar ignores it
+  | { type: 'viewFocus' }
   | { type: 'send'; sessionId?: string; text: string; attachments?: Draft[] }
   | { type: 'stop'; sessionId?: string }
   // @ mention: fuzzy search over workspace files, answered with a `files` message

@@ -14,7 +14,7 @@ pub const UI_FONT_SIZE: (i64, i64, i64) = (10, 20, 13);
 pub const CODE_FONT_SIZE: (i64, i64, i64) = (9, 20, 12);
 pub const MIN_COMPACT_AT_TOKENS: i64 = 10_000;
 
-pub const SETTING_KEYS: [&str; 15] = [
+pub const SETTING_KEYS: [&str; 16] = [
   "language",
   "defaultAgent",
   "agentOrder",
@@ -30,6 +30,7 @@ pub const SETTING_KEYS: [&str; 15] = [
   "codeFontSize",
   "diffMarkers",
   "fontSmoothing",
+  "shareEditorSelection",
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -52,6 +53,7 @@ pub struct SettingsView {
   pub code_font_size: i64,
   pub diff_markers: String,
   pub font_smoothing: bool,
+  pub share_editor_selection: bool,
 }
 
 pub const ACCOUNT_SWITCH_STRATEGIES: [&str; 4] = ["off", "earliestReset", "mostRemaining", "listOrder"];
@@ -103,6 +105,7 @@ pub fn sanitize_setting(key: &str, value: &Value) -> Value {
     "defaultAgent" => Value::from(value.as_str().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("grok")),
     "autoCompact" => Value::from(value.as_bool().unwrap_or(true)),
     "fontSmoothing" => Value::from(value.as_bool().unwrap_or(false)),
+    "shareEditorSelection" => Value::from(value.as_bool().unwrap_or(true)),
     "compactAtTokens" => {
       let n = value.as_f64().filter(|n| n.is_finite()).map(|n| js_round(n) as i64).unwrap_or(300_000);
       Value::from(n.max(MIN_COMPACT_AT_TOKENS))
