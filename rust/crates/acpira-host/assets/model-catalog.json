@@ -1,4 +1,4 @@
-{"source":"https://models.dev/api.json","etag":"W/\"96eb31ae197b0630fb3ee1320c04b656\"","fetchedAt":"2026-09-26T07:01:18.549Z","models":[
+{"source":"https://models.dev/api.json","etag":"W/\"06e0071dd4ae9c9da2db1fabf28eb499\"","fetchedAt":"2026-09-28T19:17:27.859Z","models":[
 {"provider":"anthropic","id":"claude-fable-5","name":"Claude Fable 5","reasoning":true,"efforts":["low","medium","high","xhigh","max"],"context":1000000},
 {"provider":"anthropic","id":"claude-fable-5-1","name":"Claude Fable 5.1","reasoning":true,"efforts":["low","medium","high","xhigh","max"],"context":1000000},
 {"provider":"anthropic","id":"claude-haiku-4-5","name":"Claude Haiku 4.5 (latest)","reasoning":true,"context":200000},
@@ -14,6 +14,7 @@
 {"provider":"anthropic","id":"claude-sonnet-4-5-20250929","name":"Claude Sonnet 4.5","reasoning":true,"context":1000000},
 {"provider":"anthropic","id":"claude-sonnet-4-6","name":"Claude Sonnet 4.6","reasoning":true,"efforts":["low","medium","high","max"],"context":1000000},
 {"provider":"anthropic","id":"claude-sonnet-5","name":"Claude Sonnet 5","reasoning":true,"efforts":["low","medium","high","xhigh","max"],"toggle":true,"context":1000000},
+{"provider":"anthropic","id":"claude-sonnet-5-5","name":"Claude Sonnet 5.5","reasoning":true,"efforts":["low","medium","high","xhigh","max"],"context":1000000},
 {"provider":"openai","id":"chatgpt-image-latest","name":"chatgpt-image-latest"},
 {"provider":"openai","id":"gpt-3.5-turbo","name":"GPT-3.5-turbo","context":16385},
 {"provider":"openai","id":"gpt-4","name":"GPT-4","context":8192},
@@ -50,6 +51,8 @@
 {"provider":"openai","id":"gpt-6-astra","name":"GPT-6 Astra","reasoning":true,"efforts":["low","medium","high","xhigh","max"],"context":1050000},
 {"provider":"openai","id":"gpt-6-luna","name":"GPT-6 Luna","reasoning":true,"efforts":["none","low","medium","high","xhigh","max"],"context":1050000},
 {"provider":"openai","id":"gpt-6-sol","name":"GPT-6 Sol","reasoning":true,"efforts":["none","low","medium","high","xhigh","max"],"context":1050000},
+{"provider":"openai","id":"gpt-daybreak-blue-latest","name":"Daybreak Blue","reasoning":true,"efforts":["none","low","medium","high","xhigh","max"],"context":1050000},
+{"provider":"openai","id":"gpt-daybreak-red-latest","name":"Daybreak Red","reasoning":true,"efforts":["none","low","medium","high","xhigh","max"],"context":400000},
 {"provider":"openai","id":"gpt-image-1","name":"gpt-image-1"},
 {"provider":"openai","id":"gpt-image-1-mini","name":"gpt-image-1-mini"},
 {"provider":"openai","id":"gpt-image-1.5","name":"gpt-image-1.5"},
@@ -227,15 +230,18 @@
 {"provider":"alibaba","id":"qwen3.5-27b","name":"Qwen3.5 27B","reasoning":true,"toggle":true,"context":262144},
 {"provider":"alibaba","id":"qwen3.5-35b-a3b","name":"Qwen3.5 35B-A3B","reasoning":true,"toggle":true,"context":262144},
 {"provider":"alibaba","id":"qwen3.5-397b-a17b","name":"Qwen3.5 397B-A17B","reasoning":true,"toggle":true,"context":262144},
+{"provider":"alibaba","id":"qwen3.5-flash","name":"Qwen3.5 Flash","reasoning":true,"toggle":true,"context":1000000},
 {"provider":"alibaba","id":"qwen3.5-plus","name":"Qwen3.5 Plus","reasoning":true,"toggle":true,"context":1000000},
 {"provider":"alibaba","id":"qwen3.6-27b","name":"Qwen3.6 27B","reasoning":true,"toggle":true,"context":262144},
 {"provider":"alibaba","id":"qwen3.6-35b-a3b","name":"Qwen3.6 35B-A3B","reasoning":true,"toggle":true,"context":262144},
 {"provider":"alibaba","id":"qwen3.6-flash","name":"Qwen3.6 Flash","reasoning":true,"toggle":true,"context":1000000},
 {"provider":"alibaba","id":"qwen3.6-max-preview","name":"Qwen3.6 Max Preview","reasoning":true,"toggle":true,"context":262144},
 {"provider":"alibaba","id":"qwen3.6-plus","name":"Qwen3.6 Plus","reasoning":true,"toggle":true,"context":1000000},
+{"provider":"alibaba","id":"qwen3.7-flash","name":"Qwen3.7 Flash","reasoning":true,"toggle":true,"context":1000000},
 {"provider":"alibaba","id":"qwen3.7-max","name":"Qwen3.7 Max","reasoning":true,"toggle":true,"context":1000000},
 {"provider":"alibaba","id":"qwen3.7-plus","name":"Qwen3.7 Plus","reasoning":true,"toggle":true,"context":1000000},
 {"provider":"alibaba","id":"qwen3.8-flash","name":"Qwen3.8 Flash","reasoning":true,"efforts":["low","medium","xhigh"],"toggle":true,"context":1000000},
 {"provider":"alibaba","id":"qwen3.8-max","name":"Qwen3.8 Max","reasoning":true,"efforts":["low","medium","xhigh"],"toggle":true,"context":1000000},
+{"provider":"alibaba","id":"qwen3.8-omni-flash","name":"Qwen3.8 Omni Flash","reasoning":true,"efforts":["none","low","medium","xhigh"],"context":1000000},
 {"provider":"alibaba","id":"qwq-plus","name":"QwQ Plus","reasoning":true,"context":131072}
 ]}
