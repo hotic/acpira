@@ -10,7 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Planned
 
 - MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.
-- Steer / interrupt follow-up modes remain planned. Mid-turn messages stay in the host-side queue.
+- An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
+
+## [1.7.4] - 2026-09-30
+
+### Added
+
+- **Steer queued messages** (Settings → General, `acpira.steerQueued`, off by default): on agents that advertise steering (Claude, Codex), a queued message's send button becomes Steer while a turn runs, and the message joins the running turn between its steps instead of stopping it. The steered prompt shows as a user card at the point it joined, is kept with its attachments in rebuilt history and forks, and exports as a user section inside the reply. Other agents keep Send now.
+- **Share editor selection** (`acpira.shareEditorSelection`, on by default): lines selected in the editor show as a chip beside the mode and go out with the next message; clicking the chip leaves them out. A selection is sent as an embedded resource with a `#Lstart:end` range, or as marked-up text to agents without embedded context. Pasting text copied from an editor turns into the same range chip.
+- **Add to Chat** in the editor context menu and command palette pins the selection, or the caret's line, into the chat last focused, regardless of the live-selection setting. The IntelliJ plugin gains the same action and relays editor selections and copies.
+- Selecting text in the transcript offers an **Add to chat** toolbar that quotes it into the composer with an optional comment. Quotes lead the prompt as Markdown blockquotes, and an annotations chip lists, edits and removes them.
+
+### Changed
+
+- Command rows show the whole command on one line, cut by the row width, instead of the program and subcommand summary.
+- Quota bars animate width and color changes.
+- Claude runs on `claude-agent-acp` 0.84.0, which bundles the SDK with Sonnet 5.5 in the model select. The built-in model catalogue is refreshed.
+
+### Fixed
+
+- Claude thought rows reappear: recent Claude models omit thinking text under stream-json by default, so sessions now ask for summarized thinking. A positive `MAX_THINKING_TOKENS` keeps its budget and `0` sends nothing.
+- Drags from extension trees and editor tabs are accepted when the URI list arrives blank, UNC file URIs resolve on Windows, and a drag of remote-only resources reports that only local files can be dropped instead of failing silently.
 
 ## [1.7.3] - 2026-09-28
 
