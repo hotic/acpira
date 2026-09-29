@@ -43,4 +43,15 @@ describe('the live selection', () => {
     setEditorSelection(copy);
     expect(offeredSelection()).toBe(copy);
   });
+
+  it('treats a same-length selection that only differs past its first characters as a new one', () => {
+    const head = 'x'.repeat(64);
+    const a = { ...copy, text: `${head}A` };
+    const b = { ...copy, text: `${head}B` };
+    setEditorSelection(undefined);
+    setEditorSelection(a);
+    markSelectionSent(a);
+    setEditorSelection(b);
+    expect(offeredSelection()).toBe(b);
+  });
 });
