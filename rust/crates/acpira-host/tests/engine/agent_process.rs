@@ -11,7 +11,7 @@ use acpira_host::acp::agents::registry::{AgentDef, AgentRegistry};
 use acpira_host::acp::session::AcpSession;
 use acpira_shared::transcript::StrMap;
 
-use crate::acp_session::{claimed, last_turn, prompt, turn_at, view};
+use crate::acp_session::{claimed, last_turn, prompt, turn_at, turn_count, view};
 use crate::fake_or_skip;
 use crate::subagents::Recorder;
 use crate::support::{Disposing, FakeAgent, Harness, expect_eq, expect_match, until};
@@ -307,12 +307,12 @@ async fn a_follow_up_is_held_after_the_compact_rpc_returns_until_compaction_comp
     assert!(s.is_running(), "{agent}");
     prompt(&s, "follow-up").await;
     assert_eq!(view(&s)["queued"].as_array().unwrap().iter().map(|q| q["text"].clone()).collect::<Vec<_>>(), [json!("follow-up")]);
-    assert_eq!(view(&s)["turns"].as_array().unwrap().len(), 4);
+    assert_eq!(turn_count(&s), 4);
     s.set_config("effort".into(), "low".into()).await.ok();
     assert!(s.is_running(), "{agent}");
     s.set_config("effort".into(), "high".into()).await.ok();
     compact.await.unwrap().ok();
-    until(|| !s.is_running() && view(&s)["turns"].as_array().unwrap().len() == 6, 5000).await;
+    until(|| !s.is_running() && turn_count(&s) == 6, 5000).await;
     let vw = view(&s);
     assert!(vw["queued"].is_null());
     expect_match(&vw["turns"][4], json!({ "role": "user", "text": "follow-up" }));
@@ -337,7 +337,7 @@ async fn auto_compaction_keeps_the_queue_and_records_usage_after_completion() {
     assert_eq!(before, 401234.0);
     prompt(&s, "follow-up").await;
     s.set_config("effort".into(), "high".into()).await.ok();
-    until(|| !s.is_running() && view(&s)["turns"].as_array().unwrap().len() == 6, 5000).await;
+    until(|| !s.is_running() && turn_count(&s) == 6, 5000).await;
     // Kimi pushes no usage_update here: the reading is adopted from its completion prose
     assert_eq!(view(&s)["usage"]["used"].as_f64().unwrap(), (before * 0.2).round(), "{agent}");
   }
@@ -380,5 +380,5 @@ async fn dispose_releases_a_background_wait_without_dispatching_the_queued_promp
   s.dispose();
   compact.await.unwrap().ok();
   assert_eq!(view(&s)["status"], "closed");
-  assert_eq!(view(&s)["turns"].as_array().unwrap().len(), 4);
+  assert_eq!(turn_count(&s), 4);
 }

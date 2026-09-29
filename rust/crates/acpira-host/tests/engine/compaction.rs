@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use acpira_host::acp::session::compaction::{CompactionCompletion, is_compact_command};
 use acpira_host::acp::session::prompt::grok_context_usage;
 
-use crate::acp_session::{agent_blocks, prompt, spawn_prompt, view};
+use crate::acp_session::{agent_blocks, prompt, spawn_prompt, turn_count, view};
 use crate::fake_or_skip;
 use crate::support::{Disposing, Harness, expect_eq, until, v};
 
@@ -188,7 +188,7 @@ async fn unsupported_or_malformed_context_stays_unknown_without_breaking_prompts
     prompt(&s, "big").await;
     assert_eq!(view(&s)["status"], "ready");
     assert!(usage(&s).is_null(), "{style}");
-    assert_eq!(view(&s)["turns"].as_array().unwrap().len(), 2);
+    assert_eq!(turn_count(&s), 2);
     if style == "unsupported" {
       assert_eq!(h.logs().iter().filter(|l| l.contains("context unavailable")).count(), 1);
     }

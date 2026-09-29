@@ -11,7 +11,7 @@ use acpira_host::external::chatgpt_store::ChatGptBridgeStore;
 use acpira_host::external::desktop_commander::commander_facts;
 use acpira_shared::transcript::SessionView;
 
-use crate::support::{expect_absent, expect_match, v};
+use crate::support::{expect_absent, expect_match, turns_in, v};
 
 struct Setup {
   root: tempfile::TempDir,
@@ -126,7 +126,7 @@ async fn retry_receipts_deduplicate_while_conflicting_ids_and_hidden_phases_are_
   assert!(err(s.store.accept(&s.view.id, &changed).await).contains("different content"));
   assert!(parse_chatgpt_event(&json!({ "id": "__proto__", "turnId": "x", "type": "heartbeat" })).is_err());
   assert!(err(s.store.accept(&s.view.id, &json!({ "id": "two", "turnId": "turn-a", "type": "message", "messageId": "m", "text": "not allowed", "phase": "analysis" })).await).contains("visible"));
-  assert_eq!(s.current()["turns"].as_array().unwrap().len(), 2);
+  assert_eq!(turns_in(&s.current()), 2);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -263,7 +263,7 @@ fn the_next_turn_names_the_exact_previous_one_whose_outcome_stays_unconfirmed() 
   assert!(f.send(json!({ "type": "turn_start", "turnId": "b", "text": "next", "previousTurnId": "wrong" })).is_err());
   f.send(json!({ "type": "turn_start", "turnId": "b", "text": "next", "previousTurnId": "a" })).unwrap();
   let view = f.view(2);
-  assert_eq!(view["turns"].as_array().unwrap().len(), 4);
+  assert_eq!(turns_in(&view), 4);
   expect_match(&view["turns"][1], json!({ "observation": "unknown" }));
   expect_absent(&view["turns"][1], "stop");
   expect_absent(&view["turns"][1], "endedAt");

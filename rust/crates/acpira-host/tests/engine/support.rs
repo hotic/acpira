@@ -238,6 +238,12 @@ impl Harness {
   }
 }
 
+/// How many turns a serialized view holds
+#[track_caller]
+pub fn turns_in(view: &Value) -> usize {
+  view["turns"].as_array().expect("view.turns").len()
+}
+
 /// Polls until the condition holds (5 s by default in the TS suites)
 pub async fn until(mut pred: impl FnMut() -> bool, ms: u64) {
   let t0 = Instant::now();

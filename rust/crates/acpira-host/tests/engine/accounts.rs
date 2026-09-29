@@ -20,7 +20,7 @@ use acpira_shared::transcript::{AccountQuota, StrMap};
 use crate::acp_session::view;
 use crate::fake_or_skip;
 use crate::session_manager::{Mgr, Opts};
-use crate::support::{Disposing, Harness, expect_eq, expect_match, until, v};
+use crate::support::{Disposing, Harness, expect_eq, expect_match, turns_in, until, v};
 
 fn log() -> acpira_host::store::transcript_store::LogFn {
   Arc::new(|_: &str| {})
@@ -751,7 +751,7 @@ async fn an_exhausted_account_hands_the_turn_to_the_next_account_which_continues
     s.m.handle(json!({ "type": "send", "text": prompt })).await;
     // Sent while the switch is under way: it waits for the continue instead of landing on the exhausted account
     s.m.handle(json!({ "type": "send", "text": "echo-blocks after" })).await;
-    until(|| s.m.active().is_some_and(|a| a["status"] == "ready" && a["turns"].as_array().unwrap().len() == 6 && a["turns"][5]["stop"] == "end_turn"), 10_000).await;
+    until(|| s.m.active().is_some_and(|a| a["status"] == "ready" && turns_in(&a) == 6 && a["turns"][5]["stop"] == "end_turn"), 10_000).await;
     let t = turns(&s.m);
     assert_eq!(t[4]["text"], "echo-blocks after");
     expect_match(s.m.active().unwrap(), json!({ "accountId": two }));
@@ -788,7 +788,7 @@ async fn with_every_account_exhausted_or_the_switch_off_the_error_stays() {
   let (_, two) = exhausted_session(&s).await;
   // one → two, two is exhausted as well, and one is parked: the second failure stays on screen
   s.m.handle(json!({ "type": "send", "text": "hi" })).await;
-  until(|| s.m.active().is_some_and(|a| a["status"] == "ready" && a["turns"].as_array().unwrap().len() == 4 && a["turns"][3]["error"].is_object()), 10_000).await;
+  until(|| s.m.active().is_some_and(|a| a["status"] == "ready" && turns_in(&a) == 4 && a["turns"][3]["error"].is_object()), 10_000).await;
   expect_match(s.m.active().unwrap(), json!({ "accountId": two }));
   expect_match(&turns(&s.m)[3], json!({ "stop": "error", "error": { "code": -32011, "kind": "resource_exhausted" } }));
   s.m.dispose().await;
@@ -797,7 +797,7 @@ async fn with_every_account_exhausted_or_the_switch_off_the_error_stays() {
   s.accounts.set_switch_policy(Arc::new(|_: &str| acpira_host::accounts::switch::SwitchStrategy::Off));
   let (one, _) = exhausted_session(&s).await;
   s.m.handle(json!({ "type": "send", "text": "hi" })).await;
-  until(|| s.m.active().is_some_and(|a| a["turns"].as_array().unwrap().len() == 2 && a["turns"][1]["error"].is_object()), 5000).await;
+  until(|| s.m.active().is_some_and(|a| turns_in(&a) == 2 && a["turns"][1]["error"].is_object()), 5000).await;
   expect_match(s.m.active().unwrap(), json!({ "status": "ready", "accountId": one }));
   s.m.dispose().await;
 }
