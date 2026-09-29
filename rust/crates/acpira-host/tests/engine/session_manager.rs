@@ -1005,6 +1005,39 @@ async fn forking_copies_the_prefix_records_its_origin_re_homes_blobs_and_hands_o
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn forking_re_homes_the_blobs_of_a_steered_prompt_and_hands_them_over() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let m = Mgr::new(dir.path(), Opts::with_agents(fake.setting(json!({ "env": { "FAKE_STEERING": "1" } })), "fake"));
+  m.init().await;
+  m.new_session(None).await;
+  let src = m.active_id().unwrap();
+  let running = m.spawn_handle(json!({ "type": "send", "text": "slow" }));
+  let t0 = std::time::Instant::now();
+  while turns_len(m.active()) < 2 {
+    assert!(t0.elapsed() < std::time::Duration::from_secs(5));
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+  }
+  m.handle(json!({ "type": "send", "text": "steer me", "attachments": [{ "kind": "image", "mimeType": "image/png", "data": "aGVsbG8=", "name": "s.png" }] })).await;
+  let id = m.active().unwrap()["queued"][0]["id"].as_str().unwrap().to_owned();
+  m.handle(json!({ "type": "steerQueued", "sessionId": src, "id": id })).await;
+  running.await.unwrap();
+  m.handle(json!({ "type": "forkSession", "sessionId": src, "turnIndex": 1 })).await;
+  let fork = m.active_id().unwrap();
+  assert_ne!(fork, src);
+  let store = TranscriptStore::new(dir.path().to_path_buf(), Arc::new(|_: &str| {}), None);
+  let record = v(store.load(&fork).await.unwrap());
+  let steer = record["turns"][1]["blocks"].as_array().unwrap().iter().find(|b| b["type"] == "steer").cloned().expect("steer block");
+  let blob = steer["attachments"][0]["blob"].as_str().expect("copied blob").to_owned();
+  assert!(dir.path().join(&fork).join(&blob).exists());
+  // The image reaches the fork's first prompt next to the history (the fake echoes non-text blocks)
+  m.handle(json!({ "type": "send", "text": "again" })).await;
+  let reply = last_turn(&m.active().unwrap())["blocks"].to_string();
+  assert!(reply.contains("resource:acpira://history/") && reply.contains("image"), "{reply}");
+  m.dispose().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn forking_a_non_agent_turn_or_the_running_last_turn_is_refused() {
   let fake = fake_or_skip!();
   let dir = tempfile::tempdir().unwrap();

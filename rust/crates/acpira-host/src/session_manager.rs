@@ -1671,9 +1671,20 @@ impl SessionManager {
     };
     // Attachment blobs are re-saved under the fork's own blob dir (content-hash names keep the same file name)
     let fork_id = record.id.clone();
-    for turn in &mut record.turns {
-      let Turn::User(u) = turn else { continue };
-      for a in u.attachments.iter_mut().flatten() {
+    // Prompts steered into a reply carry attachments of their own
+    let lists = record.turns.iter_mut().flat_map(|turn| match turn {
+      Turn::User(u) => vec![&mut u.attachments],
+      Turn::Agent(a) => a
+        .blocks
+        .iter_mut()
+        .filter_map(|b| match b {
+          AgentBlock::Steer(s) => Some(&mut s.attachments),
+          _ => None,
+        })
+        .collect(),
+    });
+    for list in lists {
+      for a in list.iter_mut().flatten() {
         let blob = match a {
           Attachment::Image { blob, .. } | Attachment::Text { blob, .. } | Attachment::Selection { blob, .. } => blob,
           Attachment::File { .. } | Attachment::Quote { .. } => continue,

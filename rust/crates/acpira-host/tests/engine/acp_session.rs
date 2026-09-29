@@ -1062,6 +1062,30 @@ async fn steer_joins_the_running_turn_as_a_steer_block_and_leaves_the_rest_queue
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_rebuilt_peer_receives_the_attachments_of_a_steered_prompt() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({ "env": { "FAKE_STEERING": "1" } }));
+  let s = started(&h, "/tmp").await;
+  let running = spawn_prompt(&s, "slow");
+  until(|| view(&s)["turns"].as_array().unwrap().len() == 2, 5000).await;
+  s.prompt("steer me".into(), drafts(json!([{ "kind": "text", "name": "note.txt", "text": "steered payload" }])), false, None, None).await;
+  let id = view(&s)["queued"][0]["id"].as_str().unwrap().to_owned();
+  s.steer_queued(&id).await.unwrap();
+  running.await.unwrap();
+  until(|| !s.is_running(), 5000).await;
+  prompt(&s, "original").await;
+  // Editing the next prompt rebuilds the peer from the transcript, the steered prompt's attachment included
+  s.edit_turn(history_edit(&s, 2, "inspect-history")).await.unwrap();
+  until(|| !s.is_running(), 5000).await;
+  let wire = wire_prompt(&view(&s)["turns"][3]);
+  let blocks = wire["prompt"].as_array().unwrap();
+  let history = blocks[0]["resource"]["text"].as_str().or(blocks[0]["text"].as_str()).unwrap();
+  assert!(history.contains(r#""user":"steer me","attachments":["note.txt"]"#), "{history}");
+  let at = blocks.iter().position(|b| b["text"] == "Attachments from earlier user message: steer me").expect("attachment lead");
+  assert!(blocks[at + 1].to_string().contains("steered payload"), "{}", blocks[at + 1]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn steer_answered_prompt_required_goes_out_first_when_the_turn_ends() {
   let fake = fake_or_skip!();
   let h = Harness::new(&fake, json!({ "env": { "FAKE_STEERING": "idle" } }));
