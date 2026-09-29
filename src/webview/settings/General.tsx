@@ -36,6 +36,9 @@ export function General({ settings, agents, on }: { settings: SettingsView; agen
         <Field label={t('settings.shareEditorSelection')} desc={t('settings.shareEditorSelection.desc')}>
           <Switch checked={settings.shareEditorSelection} onChange={v => on.setSetting('shareEditorSelection', v)} label={t('settings.shareEditorSelection')} />
         </Field>
+        <Field label={t('settings.steerQueued')} desc={t('settings.steerQueued.desc')}>
+          <Switch checked={settings.steerQueued} onChange={v => on.setSetting('steerQueued', v)} label={t('settings.steerQueued')} />
+        </Field>
       </Section>
 
       <Section title={t('settings.compaction.title')}>
