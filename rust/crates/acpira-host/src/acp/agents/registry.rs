@@ -179,8 +179,8 @@ pub fn builtin_agents() -> Vec<AgentDef> {
       requires: list(&["node"]),
       login: login("claude-agent-acp", &["--cli", "auth", "login"]),
       install: install(
-        "npm install -g @agentclientprotocol/claude-agent-acp@0.83.0",
-        "npm install -g @agentclientprotocol/claude-agent-acp@0.83.0",
+        "npm install -g @agentclientprotocol/claude-agent-acp@0.84.0",
+        "npm install -g @agentclientprotocol/claude-agent-acp@0.84.0",
         "https://github.com/agentclientprotocol/claude-agent-acp",
       ),
       adapter: Some(AdapterDef {
