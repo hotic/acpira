@@ -47,7 +47,7 @@ function QuotaBar({ window: w, now }: { window: QuotaWindow; now: number }) {
       </span>
       <span className="h-(--quota-track) overflow-hidden rounded-full bg-active">
         <span
-          className={cn('block h-full rounded-full', w.remaining <= CRITICAL ? 'bg-(--quota-danger)' : w.remaining <= LOW ? 'bg-(--quota-warn)' : 'bg-(--quota-ok)')}
+          className={cn('block h-full rounded-full transition-[width,background-color] duration-(--quota-fill-duration) ease-out', w.remaining <= CRITICAL ? 'bg-(--quota-danger)' : w.remaining <= LOW ? 'bg-(--quota-warn)' : 'bg-(--quota-ok)')}
           style={{ width: `${pct}%` }}
         />
       </span>

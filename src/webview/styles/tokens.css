@@ -3,6 +3,8 @@
 
 :root {
   --quota-track: 7px;
+  /* A refreshed quota slides the fill and blends its color instead of jumping */
+  --quota-fill-duration: 600ms;
   --quota-ok: #39745f;
   --quota-warn: color-mix(in srgb, var(--warn) 75%, var(--bg-2));
   --quota-danger: color-mix(in srgb, var(--danger) 70%, var(--bg-2));
