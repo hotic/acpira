@@ -97,7 +97,13 @@ fn compact_block(b: &AgentBlock) -> Option<Value> {
       v
     }
     // The user's message steered into this reply, where it arrived
-    AgentBlock::Steer(s) => json!({ "user": s.text }),
+    AgentBlock::Steer(s) => {
+      let mut v = json!({ "user": s.text });
+      if let Some(a) = s.attachments.as_ref().filter(|a| !a.is_empty()) {
+        v["attachments"] = attachment_labels(a);
+      }
+      v
+    }
     AgentBlock::Image(i) => {
       let mut v = json!({ "image": i.mime_type });
       if let Some(u) = &i.uri {
@@ -109,19 +115,39 @@ fn compact_block(b: &AgentBlock) -> Option<Value> {
   })
 }
 
+/// How the compacted history names a message's attachments; their content follows the history as separate blocks
+fn attachment_labels(a: &[Attachment]) -> Value {
+  json!(
+    a.iter()
+      .map(|x| match x {
+        Attachment::Quote { text, .. } => format!("> {}", text.lines().next().unwrap_or_default()),
+        other => other.label().unwrap_or_else(|| "image".into()),
+      })
+      .collect::<Vec<_>>()
+  )
+}
+
+/// Every user message in a turn that carried attachments: the prompt itself, or the prompts steered into a reply
+fn attached_messages(turn: &Turn) -> Vec<(&str, &[Attachment])> {
+  match turn {
+    Turn::User(u) => u.attachments.as_deref().filter(|a| !a.is_empty()).map(|a| (u.text.as_str(), a)).into_iter().collect(),
+    Turn::Agent(a) => a
+      .blocks
+      .iter()
+      .filter_map(|b| match b {
+        AgentBlock::Steer(s) => s.attachments.as_deref().filter(|a| !a.is_empty()).map(|a| (s.text.as_str(), a)),
+        _ => None,
+      })
+      .collect(),
+  }
+}
+
 fn compact_turn(turn: &Turn) -> Value {
   match turn {
     Turn::User(u) => {
       let mut v = json!({ "role": "user", "text": u.text });
       if let Some(a) = u.attachments.as_ref().filter(|a| !a.is_empty()) {
-        v["attachments"] = json!(
-          a.iter()
-            .map(|x| match x {
-              Attachment::Quote { text, .. } => format!("> {}", text.lines().next().unwrap_or_default()),
-              other => other.label().unwrap_or_else(|| "image".into()),
-            })
-            .collect::<Vec<_>>()
-        );
+        v["attachments"] = attachment_labels(a);
       }
       v
     }
@@ -188,9 +214,7 @@ pub async fn history_context(
   } else {
     json!({ "type": "text", "text": history })
   }];
-  for turn in &source[start..] {
-    let Turn::User(u) = turn else { continue };
-    let Some(att) = u.attachments.as_ref().filter(|a| !a.is_empty()) else { continue };
+  for (text, att) in source[start..].iter().flat_map(|t| attached_messages(t)) {
     let drafts = restore_drafts(session_id, att, blobs).await?;
     if drafts.len() != att.len() {
       return Err(anyhow!(t("history.missingAttachment")));
@@ -199,7 +223,7 @@ pub async fn history_context(
     if !old.problems.is_empty() {
       return Err(anyhow!(old.problems.join("\n")));
     }
-    context.push(json!({ "type": "text", "text": format!("Attachments from earlier user message: {}", u.text) }));
+    context.push(json!({ "type": "text", "text": format!("Attachments from earlier user message: {text}") }));
     context.extend(old.blocks);
   }
   Ok(Some(HistoryContext { blocks: context, omitted: start }))
