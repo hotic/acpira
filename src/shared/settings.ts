@@ -58,11 +58,13 @@ export interface SettingsView {
   fontSmoothing: boolean;
   // The IDE editor's current selection rides along with the next prompt (a chip in the composer toolbar)
   shareEditorSelection: boolean;
+  // A queued prompt's send button steers it into the running turn on agents that support `_session/steering`
+  steerQueued: boolean;
 }
 
 // Keys the webview may write back; the host maps them onto acpira.<key> at user scope
-export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection';
-export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection'];
+export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued';
+export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued'];
 
 export const MIN_COMPACT_AT_TOKENS = 10_000;
 
@@ -84,6 +86,7 @@ export const DEFAULT_SETTINGS: SettingsView = {
   diffMarkers: 'color',
   fontSmoothing: false,
   shareEditorSelection: true,
+  steerQueued: false,
 };
 
 // A hand-edited settings.json or a forged webview message can send anything; fall back per key so the page never sees an illegal value
@@ -97,6 +100,7 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
     case 'autoCompact':
     case 'fontSmoothing':
     case 'shareEditorSelection':
+    case 'steerQueued':
       return (typeof value === 'boolean' ? value : fallback) as SettingsView[K];
     case 'compactAtTokens': {
       const n = typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : fallback as number;

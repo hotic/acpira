@@ -178,6 +178,8 @@ export type WebviewMsg =
   // Queued prompts (waiting for the running turn): drop one, or replace one in place — kept attachments by index, new drafts alongside
   | { type: 'dequeue'; sessionId: string; id: string }
   | { type: 'sendQueued'; sessionId: string; id: string }
+  // Inject a queued prompt into the running turn instead of waiting for it to end (SessionView.canSteer)
+  | { type: 'steerQueued'; sessionId: string; id: string }
   | { type: 'editQueued'; sessionId: string; id: string; text: string; retainedAttachments: number[]; attachments: Draft[] }
   // Open an editor tab; each tab is its own viewer with its own active session. The tab starts on this webview's session, or on a fresh one without an id
   | { type: 'openInEditor'; sessionId?: string }

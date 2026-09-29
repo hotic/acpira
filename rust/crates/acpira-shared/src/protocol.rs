@@ -421,6 +421,10 @@ pub enum WebviewMsg {
     session_id: String,
     id: String,
   },
+  SteerQueued {
+    session_id: String,
+    id: String,
+  },
   EditQueued {
     session_id: String,
     id: String,

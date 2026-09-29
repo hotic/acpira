@@ -62,6 +62,14 @@ import * as acp from '@agentclientprotocol/sdk';
 // FAKE_SESSION_DIR → a native session store on disk: sessions persist as <id>.json, resume/load restore them (load replays a
 // "NATIVE_REPLAY" message), and the agent advertises sessionCapabilities.list, answering session/list with the dir's sessions
 // (title "Fake <id8>", updatedAt = file mtime, newest first; cursor is a numeric offset, page size 50)
+// FAKE_STEERING → advertise `_meta.steering.supported` and take `_session/steering` the way claude-agent-acp does: while a
+// "slow" prompt runs the text is injected (the loop answers it with a `steered:<text>` chunk), idle with the promptRequired
+// opt-in it is handed back; =idle always answers promptRequired (the turn-just-ended race), =fail rejects every request.
+// =codex is codex-acp 1.13.0: "slow" turns are bracketed by session_info_update `_meta.codex.threadStatus` active … idle, and an
+// idle steer ignores the opt-in and runs a turn of its own (`startedNewTurn`, then active, `detached:<text>`, idle).
+// =codex-late: a steer during "slow" ends that turn first (idle, end_turn) and then lands idle, the race the host has to absorb;
+// =codex-gap: "slow" stops after 10 chunks, reports idle and answers the prompt 600 ms later.
+// FAKE_STEER_LOG → append every steering request's text to that file
 
 if (process.env.FAKE_STUBBORN) {
   process.on('SIGTERM', () => {});
@@ -69,6 +77,15 @@ if (process.env.FAKE_STUBBORN) {
 }
 
 const sessions = new Set<string>();
+// FAKE_STEERING: the sessions with a "slow" prompt in flight and the steered texts it has yet to answer
+const steerable = new Set<string>();
+const steered = new Map<string, string[]>();
+const steerMode = process.env.FAKE_STEERING ?? '';
+const codexLike = steerMode.startsWith('codex');
+// codex-late: the steer that ends the running turn, and the moment that turn's response is out
+const lateSteer = new Map<string, { text: string; done: () => void }>();
+const threadStatus = (sessionId: string, type: 'active' | 'idle') => ({ sessionId,
+  update: { sessionUpdate: 'session_info_update', _meta: { codex: { threadStatus: type === 'active' ? { type, activeFlags: [] } : { type } } } } }) as unknown as acp.SessionNotification;
 const modes = new Map<string, string>();
 // What the client's initialize declared: a boolean configOption is only offered to clients that advertised
 // clientCapabilities.session.configOptions.boolean (codex-acp degrades fast-mode to an on/off select otherwise)
@@ -135,6 +152,7 @@ const app = acp.agent({ name: 'fake-agent' })
         sessionCapabilities: process.env.FAKE_LOAD_ONLY ? {} : { resume: {}, ...(process.env.FAKE_CLOSE_LOG ? { close: {} } : {}), ...(sessionDir ? { list: {} } : {}) },
         promptCapabilities: process.env.FAKE_PROMPT_CAPS === 'strict' ? { embeddedContext: false, image: false } : { embeddedContext: true },
       },
+      ...(process.env.FAKE_STEERING ? { _meta: { steering: { supported: true } } } : {}),
       authMethods: [
         { id: 'fake.login', name: 'Fake login', description: 'run fake login' },
         // Terminal methods are only offered to clients that can run them (claude-agent-acp gates its logins the same way)
@@ -264,6 +282,30 @@ const app = acp.agent({ name: 'fake-agent' })
     if (typeof key === 'string') apiKey = key;
     authed = true;
     return {};
+  })
+  .onRequest('_session/steering', value => value as { sessionId: string; prompt: acp.ContentBlock[]; _meta?: { steering?: { idleBehavior?: string } } }, async ({ params, client }) => {
+    const mode = steerMode;
+    if (!mode) throw acp.RequestError.methodNotFound('_session/steering');
+    const sid = params.sessionId;
+    const text = params.prompt.map(p => (p.type === 'text' ? p.text : `[${p.type}]`)).join('');
+    if (process.env.FAKE_STEER_LOG) appendFileSync(process.env.FAKE_STEER_LOG, `${text}\n`);
+    if (mode === 'fail') throw acp.RequestError.internalError(undefined, 'steering refused by fixture');
+    if (mode === 'codex-late' && steerable.has(sid)) {
+      // The turn wraps up before the steer is looked at: its idle and response go out first
+      await new Promise<void>(done => lateSteer.set(sid, { text, done }));
+    } else if (mode !== 'idle' && steerable.has(sid)) {
+      steered.set(sid, [...steered.get(sid) ?? [], text]);
+      return { outcome: 'injected' };
+    }
+    if (!codexLike && params._meta?.steering?.idleBehavior === 'promptRequired') return { outcome: 'promptRequired', reason: 'noRunningTurn' };
+    // codex-acp starts a turn of its own, bracketed like any other
+    setTimeout(async () => {
+      await client.notify(acp.methods.client.session.update, threadStatus(sid, 'active'));
+      await client.notify(acp.methods.client.session.update, { sessionId: sid, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `detached:${text}` } } });
+      await new Promise(r => setTimeout(r, 300));
+      await client.notify(acp.methods.client.session.update, threadStatus(sid, 'idle'));
+    }, 20);
+    return { outcome: 'startedNewTurn' };
   })
   .onRequest('_session/async_task/stop', value => value as { sessionId: string; asyncTaskId: string }, ({ params, client }) => {
     // FAKE_STOP_LOG: every stop request is appended so a test can assert the params — and prove none was sent
@@ -996,13 +1038,41 @@ const app = acp.agent({ name: 'fake-agent' })
     }
 
     if (text.includes('slow')) {
-      for (let i = 0; i < 50; i++) {
-        if (cancelled.has(sid)) return { stopReason: 'cancelled' };
-        if (grokUsage) usedTokens += 1000;
-        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `${i} ` } });
-        await new Promise(r => setTimeout(r, 40));
+      steerable.add(sid);
+      if (codexLike) await client.notify(acp.methods.client.session.update, threadStatus(sid, 'active'));
+      const late = lateSteer;
+      try {
+        for (let i = 0; i < 50; i++) {
+          if (cancelled.has(sid)) {
+            if (codexLike) await client.notify(acp.methods.client.session.update, threadStatus(sid, 'idle'));
+            return { stopReason: 'cancelled' };
+          }
+          if (late.has(sid)) break;
+          if (steerMode === 'codex-gap' && i === 10) {
+            await client.notify(acp.methods.client.session.update, threadStatus(sid, 'idle'));
+            steerable.delete(sid);
+            await new Promise(r => setTimeout(r, 600));
+            return { stopReason: 'end_turn' };
+          }
+          if (grokUsage) usedTokens += 1000;
+          // A steered message is answered inside this turn, before the loop carries on
+          const next = steered.get(sid)?.shift();
+          if (next !== undefined) await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `steered:${next} ` } });
+          await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `${i} ` } });
+          await new Promise(r => setTimeout(r, 40));
+        }
+        if (codexLike) await client.notify(acp.methods.client.session.update, threadStatus(sid, 'idle'));
+        return { stopReason: 'end_turn' };
+      } finally {
+        steerable.delete(sid);
+        steered.delete(sid);
+        // codex-late: the steer is looked at only once this turn's response is on the wire
+        const pending = late.get(sid);
+        if (pending) {
+          late.delete(sid);
+          setTimeout(pending.done, 30);
+        }
       }
-      return { stopReason: 'end_turn' };
     }
 
     // "perm-meta" → the claude / codex adapters' `_meta.permission` (version 1): card title + reason + defaultToNo,

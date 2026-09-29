@@ -398,6 +398,7 @@ pub fn chatgpt_view(r: &ChatGptRecord, now: i64) -> SessionView {
     usage: None,
     commands: vec![],
     queued: None,
+    can_steer: false,
     subagents: None,
     created_at: r.created_at.clone(),
     updated_at: r.updated_at.clone(),
