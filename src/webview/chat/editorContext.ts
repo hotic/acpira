@@ -39,8 +39,17 @@ export function useEditorSelection(): EditorSelection | undefined {
   return useSyncExternalStore(subscribe, offeredSelection);
 }
 
+// Keys cover the whole text (two selections that only differ past a prefix are different excerpts); a selection object is
+// never mutated, so its key is built once rather than on every render that asks for the offered selection
+const keys = new WeakMap<EditorSelection, string>();
+
 export function selectionKey(s: EditorSelection): string {
-  return `${s.uri}#${s.startLine}:${s.endLine}:${s.text.length}:${s.text.slice(0, 64)}`;
+  let key = keys.get(s);
+  if (key === undefined) {
+    key = `${s.uri}#${s.startLine}:${s.endLine}:${s.text}`;
+    keys.set(s, key);
+  }
+  return key;
 }
 
 const normalize = (text: string) => text.replace(/\r\n?/g, '\n').replace(/\n+$/, '');
