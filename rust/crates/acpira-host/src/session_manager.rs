@@ -1425,6 +1425,13 @@ impl SessionManager {
           s.send_queued(&id).await?;
         }
       }
+      W::SteerQueued { session_id, id } => {
+        if valid(&session_id)
+          && let Some(s) = self.live(&session_id)
+        {
+          s.steer_queued(&id).await?;
+        }
+      }
       W::EditQueued { session_id, id, text, retained_attachments, attachments } => {
         if valid(&session_id)
           && let Some(s) = self.live(&session_id)
@@ -2006,6 +2013,7 @@ fn session_id_of(m: &WebviewMsg) -> Option<String> {
     | W::StopAsyncTask { session_id, .. }
     | W::Dequeue { session_id, .. }
     | W::SendQueued { session_id, .. }
+    | W::SteerQueued { session_id, .. }
     | W::EditQueued { session_id, .. }
     | W::OpenFile { session_id, .. }
     | W::OpenBlob { session_id, .. }
@@ -2033,6 +2041,7 @@ fn is_execution(m: &WebviewMsg) -> bool {
       | W::TakeOverSession { .. }
       | W::Dequeue { .. }
       | W::SendQueued { .. }
+      | W::SteerQueued { .. }
       | W::EditQueued { .. }
       | W::Login { .. }
       | W::StopAsyncTask { .. }

@@ -79,6 +79,11 @@ function userTurn(turn: Extract<Turn, { role: 'user' }>, labels: ExportLabels): 
 function agentTurn(turn: Extract<Turn, { role: 'agent' }>, agentName: string, labels: ExportLabels, blobPath?: ExportBlobPath): string {
   const out = [`### ${agentName}`];
   for (const b of turn.blocks) {
+    // A steered prompt reads as the user speaking mid-reply: its own user section, then the agent carries on
+    if (b.type === 'steer') {
+      out.push('', userTurn({ role: 'user', text: b.text, ...(b.attachments ? { attachments: b.attachments } : {}) }, labels), '', `### ${agentName}`);
+      continue;
+    }
     const rendered = block(b, labels, blobPath);
     if (rendered) out.push('', rendered);
   }

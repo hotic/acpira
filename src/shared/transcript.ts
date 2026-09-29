@@ -358,7 +358,16 @@ export interface ImageBlock {
   uri?: string;
 }
 
-export type AgentBlock = ThoughtBlock | PlanBlock | ToolCallBlock | TextBlock | PermissionBlock | CompactionBlock | PlanDocumentBlock | QuestionBlock | ImageBlock | NoticeBlock;
+// A queued prompt steered into this running turn over `_session/steering`: it joined the agent loop at this point instead of
+// waiting for a turn of its own, so it renders as a user message between the blocks around it
+export interface SteerBlock {
+  type: 'steer';
+  id: string;
+  text: string;
+  attachments?: Attachment[];
+}
+
+export type AgentBlock = ThoughtBlock | PlanBlock | ToolCallBlock | TextBlock | PermissionBlock | CompactionBlock | PlanDocumentBlock | QuestionBlock | ImageBlock | NoticeBlock | SteerBlock;
 
 // What the composer attaches to a prompt before the host has seen it: images and dropped text carry their payload (base64 / text),
 // files carry a URI (Explorer drag / @ mention) that the host resolves — image files become `image`, everything else stays a link
@@ -554,6 +563,8 @@ export interface SessionView {
   commands: SlashCommand[];
   // Prompts sent while a turn was in progress, in send order; the first goes out when the turn ends
   queued?: QueuedPrompt[];
+  // The agent takes `_session/steering` and honours its idle fallback: a queued prompt can join the running turn
+  canSteer?: boolean;
   // Delegated child nodes announced during this session; each carries its own transcript via the `subagent` message
   subagents?: SubagentSummary[];
   createdAt: string;

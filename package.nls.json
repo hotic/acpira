@@ -25,6 +25,7 @@
   "acpira.conf.diffMarkers": "Diff markers: color tints changed lines, signs relies on the +/- prefixes alone",
   "acpira.conf.fontSmoothing": "Render text with -webkit-font-smoothing: antialiased (thinner strokes; macOS only)",
   "acpira.conf.shareEditorSelection": "Offer the current editor selection to the chat: it shows as a chip beside the mode and goes out with the next message",
+  "acpira.conf.steerQueued": "On agents that support steering (Claude, Codex), the send button of a queued message steers it into the running turn instead of stopping that turn",
   "acpira.conf.appearance.density": "Density",
   "acpira.conf.appearance.radius": "Corner radius",
   "acpira.conf.appearance.surface": "Surface: hairline thin lines / tonal borderless layering / stroke outlines",

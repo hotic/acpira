@@ -123,6 +123,15 @@ fn seal(s: &mut NormalizeState, i: usize) {
   }
 }
 
+/// A queued prompt steered into the running turn: the streaming body / thought before it is sealed, so the output that
+/// answers the steer opens blocks of its own after it
+pub fn push_steer(s: &mut NormalizeState, block: SteerBlock) {
+  close_user_turn(s);
+  let i = current_agent_turn(s);
+  seal(s, i);
+  agent(s, i).blocks.push(AgentBlock::Steer(block));
+}
+
 pub fn text_of_content(c: &Value) -> String {
   match str_of(c, "type") {
     Some("text") => str_of(c, "text").unwrap_or("").to_owned(),

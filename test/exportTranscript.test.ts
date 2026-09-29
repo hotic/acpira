@@ -113,6 +113,19 @@ describe('exportMarkdown', () => {
     expect(out).toContain('[image](/repo/red.png)');
     expect(out).toContain('[image: image/png]');
   });
+
+  // Same expectation as the Rust `steered_prompts_export_as_a_user_section_inside_the_reply`
+  it('a steered prompt exports as a user section inside the reply, after which the agent carries on', () => {
+    const steered: Turn[] = [
+      { role: 'agent', startedAt: 1, endedAt: 2, stop: 'end_turn', blocks: [
+        { type: 'text', markdown: 'before' },
+        { type: 'steer', id: 's1', text: 'use pnpm', attachments: [{ kind: 'file', uri: 'file:///repo/x.ts', name: 'x.ts' }] },
+        { type: 'text', markdown: 'after' },
+      ] },
+    ];
+    const out = exportMarkdown({ title: 'x', agentName: 'Fake', cwd: '/repo', exportedAt: 't', turns: steered });
+    expect(out).toContain('### Fake\n\nbefore\n\n### User\n\nuse pnpm\n\n> Attachments: x.ts\n\n### Fake\n\nafter');
+  });
 });
 
 describe('exportFileName', () => {

@@ -100,6 +100,12 @@ fn stop_name(s: TurnStop) -> String {
 fn agent_turn(turn: &AgentTurn, agent_name: &str, labels: &ExportLabels, blob_path: &dyn Fn(&str) -> Option<String>) -> String {
   let mut out = vec![format!("### {agent_name}")];
   for b in &turn.blocks {
+    // A steered prompt reads as the user speaking mid-reply: its own user section, then the agent carries on
+    if let AgentBlock::Steer(s) = b {
+      let u = UserTurn { text: s.text.clone(), attachments: s.attachments.clone(), ..Default::default() };
+      out.extend([String::new(), user_turn(&u, labels), String::new(), format!("### {agent_name}")]);
+      continue;
+    }
     if let Some(r) = block(b, labels, blob_path) {
       out.push(String::new());
       out.push(r);
@@ -149,7 +155,7 @@ fn block(b: &AgentBlock, labels: &ExportLabels, blob_path: &dyn Fn(&str) -> Opti
       let content: Vec<String> = items.into_iter().filter_map(|c| tool_content(c, blob_path)).filter(|s| !s.is_empty()).collect();
       if content.is_empty() { head } else { format!("{head}\n{}", content.join("\n")) }
     }
-    AgentBlock::Permission(_) => return None,
+    AgentBlock::Permission(_) | AgentBlock::Steer(_) => return None,
     AgentBlock::Question(q) => {
       q.outcome?;
       q.questions
@@ -258,5 +264,32 @@ mod tests {
     assert!(md.contains("> Attachments: x.ts, y.ts (3-9)"), "{md}");
     // Quotes lead the prompt text, in the order they were sent
     assert!(md.contains("> said this\n> and that\n\nwhy?\n\nfix\n\n> Attachments:"), "{md}");
+  }
+
+  // Same expectation as the steered-prompt case in test/exportTranscript.test.ts
+  #[test]
+  fn steered_prompts_export_as_a_user_section_inside_the_reply() {
+    let turn: AgentTurn = serde_json::from_value(serde_json::json!({
+      "role": "agent", "startedAt": 1, "endedAt": 2, "stop": "end_turn", "blocks": [
+        { "type": "text", "markdown": "before" },
+        { "type": "steer", "id": "s1", "text": "use pnpm", "attachments": [{ "kind": "file", "uri": "file:///repo/x.ts", "name": "x.ts" }] },
+        { "type": "text", "markdown": "after" },
+      ],
+    }))
+    .unwrap();
+    let labels = ExportLabels {
+      user: "User".into(),
+      agent: "Agent".into(),
+      project: "Project".into(),
+      exported: "Exported".into(),
+      attachments: "Attachments".into(),
+      thinking: "Thinking".into(),
+      compacted: "Compacted".into(),
+      auto_compact: "Automatic /compact".into(),
+      auto_continue: "Continued".into(),
+      error: "Error".into(),
+    };
+    let md = agent_turn(&turn, "Fake", &labels, &|_| None);
+    assert_eq!(md, "### Fake\n\nbefore\n\n### User\n\nuse pnpm\n\n> Attachments: x.ts\n\n### Fake\n\nafter");
   }
 }

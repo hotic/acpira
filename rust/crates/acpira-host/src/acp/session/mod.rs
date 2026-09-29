@@ -167,6 +167,15 @@ pub(crate) struct Core {
   // Prompt queue
   pub queue: Vec<QueuedEntry>,
   pub sending_id: Option<String>,
+  /// The queued entry whose `_session/steering` request is on the wire; the queue holds its flush until the answer
+  pub steering_id: Option<String>,
+  /// The peer brackets its turns (Codex `threadStatus`), so a turn it starts on its own has an observable end
+  pub thread_status_seen: bool,
+  /// The running turn's peer already reported its thread idle: the prompt response is on its way and a steer would miss
+  pub peer_idle: bool,
+  /// A steer landed after the turn it aimed at had ended and the peer started a turn of its own (Codex `startedNewTurn`):
+  /// the session stays running until the peer's thread reports idle
+  pub detached: bool,
   /// A message accepted below a pre-send compaction: visible, but not the normalizer's last turn
   pub pending_prompt: Option<Turn>,
   pub building_plan: bool,
@@ -267,6 +276,10 @@ impl AcpSession {
           tree,
           queue: vec![],
           sending_id: None,
+          steering_id: None,
+          thread_status_seen: false,
+          peer_idle: false,
+          detached: false,
           pending_prompt: None,
           building_plan: false,
           compacted_at: None,
@@ -418,6 +431,11 @@ impl AcpSession {
     c.state.commands.iter().any(|x| x.name == "compact")
   }
 
+  /// A queued prompt can join the running turn over `_session/steering` (see `vendors::steering::supported`)
+  pub(crate) fn can_steer_of(&self, c: &Core) -> bool {
+    c.proc.as_ref().is_some_and(|p| crate::acp::vendors::steering::supported(&p.init))
+  }
+
   pub fn runtime_info(&self) -> Option<AgentRuntimeInfo> {
     self.core.lock().proc.as_ref().map(|p| runtime_info_of(&p.init))
   }
@@ -498,6 +516,7 @@ impl AcpSession {
       usage: c.state.usage.as_ref(),
       commands: &c.state.commands,
       queued,
+      can_steer: self.can_steer_of(&c),
       subagents: subagents.as_deref(),
       created_at: &self.created_at,
       updated_at: &c.updated_at,
@@ -546,6 +565,9 @@ impl AcpSession {
     let proc = c.proc.take()?;
     c.proc_gen += 1;
     c.perm_epoch += 1;
+    c.detached = false;
+    c.peer_idle = false;
+    c.thread_status_seen = false;
     self.disconnect_tasks(c);
     let session_id = c.acp_session_id.clone();
     let me = self.arc();
@@ -1102,6 +1124,8 @@ impl AcpSession {
       c.status = SessionStatus::Closed;
       c.queue.clear();
       c.sending_id = None;
+      c.steering_id = None;
+      c.detached = false;
       c.tree.settle("disposed");
       self.drain_terminal(&mut c);
       if c.phase.running {
@@ -1150,7 +1174,7 @@ pub(crate) fn queue_snapshot(c: &Core) -> Option<Vec<QueuedPrompt>> {
         id: q.id.clone(),
         text: q.text.clone(),
         attachments: q.prepared.attachments.clone(),
-        sending: (c.sending_id.as_deref() == Some(q.id.as_str())).then_some(true),
+        sending: (c.sending_id.as_deref() == Some(q.id.as_str()) || c.steering_id.as_deref() == Some(q.id.as_str())).then_some(true),
       })
       .collect(),
   )
@@ -1204,6 +1228,8 @@ struct ViewRef<'a> {
   commands: &'a [SlashCommand],
   #[serde(skip_serializing_if = "Option::is_none")]
   queued: Option<Vec<QueuedPrompt>>,
+  #[serde(skip_serializing_if = "std::ops::Not::not")]
+  can_steer: bool,
   #[serde(skip_serializing_if = "Option::is_none")]
   subagents: Option<&'a [SubagentSummary]>,
   created_at: &'a str,
@@ -1415,6 +1441,7 @@ impl ClientHandlers for SessionHandlers {
     c.tree.settle("connection-lost");
     s.drain_terminal(&mut c);
     s.disconnect_tasks(&mut c);
+    c.detached = false;
     s.settle(&mut c, TurnStop::Cancelled, None);
     s.touch(&mut c);
   }

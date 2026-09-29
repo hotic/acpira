@@ -66,6 +66,7 @@ impl SettingsCenter {
       diff_markers: str_of("diffMarkers"),
       font_smoothing: self.read("fontSmoothing").as_bool().unwrap_or(false),
       share_editor_selection: self.read("shareEditorSelection").as_bool().unwrap_or(true),
+      steer_queued: self.read("steerQueued").as_bool().unwrap_or(false),
     }
   }
 

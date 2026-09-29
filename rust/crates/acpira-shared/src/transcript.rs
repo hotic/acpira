@@ -674,6 +674,16 @@ pub struct ImageBlock {
   pub uri: Option<String>,
 }
 
+/// A queued prompt steered into the running turn over `_session/steering`: it joined the agent loop at this point
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SteerBlock {
+  pub id: String,
+  pub text: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub attachments: Option<Vec<Attachment>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentBlock {
@@ -687,6 +697,7 @@ pub enum AgentBlock {
   Question(QuestionBlock),
   Image(ImageBlock),
   Notice(NoticeBlock),
+  Steer(SteerBlock),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1088,6 +1099,9 @@ pub struct SessionView {
   pub commands: Vec<SlashCommand>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub queued: Option<Vec<QueuedPrompt>>,
+  /// The agent takes `_session/steering` and honours its idle fallback: a queued prompt can join the running turn
+  #[serde(default, skip_serializing_if = "is_false")]
+  pub can_steer: bool,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub subagents: Option<Vec<SubagentSummary>>,
   pub created_at: String,

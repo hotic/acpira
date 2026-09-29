@@ -96,6 +96,8 @@ fn compact_block(b: &AgentBlock) -> Option<Value> {
       }
       v
     }
+    // The user's message steered into this reply, where it arrived
+    AgentBlock::Steer(s) => json!({ "user": s.text }),
     AgentBlock::Image(i) => {
       let mut v = json!({ "image": i.mime_type });
       if let Some(u) = &i.uri {
