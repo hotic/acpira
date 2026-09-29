@@ -72,4 +72,16 @@ describe('chronological plan sections', () => {
       { key: 'start', blocks: [], subagents: ['na'] }, { key: 'subagents:agent-a', blocks: [later] },
     ]);
   });
+
+  it('splits at a steered prompt: the output before it folds on its own, the reply to it continues below', () => {
+    const steer: AgentBlock = { type: 'steer', id: 's1', text: 'use pnpm' };
+    const after: AgentBlock = { type: 'text', markdown: 'Switching to pnpm.', streaming: true };
+    const sections = splitPlanSections([write, thought, steer, after]);
+    expect(sections).toEqual([
+      { key: 'start', blocks: [write, thought], steer },
+      { key: 'steer:s1', blocks: [after] },
+    ]);
+    // The trailing section exists (and keeps its key) before the agent answers the steer
+    expect(splitPlanSections([write, steer]).map(s => s.key)).toEqual(['start', 'steer:s1']);
+  });
 });

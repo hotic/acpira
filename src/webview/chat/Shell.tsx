@@ -82,6 +82,8 @@ export interface ShellHandlers {
   // Queued prompts: drop one / replace one in place (kept attachments by index plus new drafts)
   dequeue?: (sessionId: string, id: string) => void;
   sendQueued?: (sessionId: string, id: string) => void;
+  // Inject a queued prompt into the running turn (`steerQueued` setting on an agent with SessionView.canSteer)
+  steerQueued?: (sessionId: string, id: string) => void;
   editQueued?: (sessionId: string, id: string, text: string, retainedAttachments: number[], attachments: Draft[]) => void;
   // Start a new session whose transcript is this session's turns through the given agent turn
   forkSession?: (sessionId: string, turnIndex: number) => void;
@@ -134,6 +136,8 @@ export interface ShellProps {
   compactAt?: number;
   // Settings: the editor's live selection is offered in the main composer
   shareEditorSelection?: boolean;
+  // Settings `steerQueued` on an agent that can steer: a queued row's send button steers it into the running turn
+  steerQueued?: boolean;
   sessions: SessionSummary[];
   activeSessionId?: string;
   // Workspace root of the session; attachments are labeled relative to it
@@ -496,6 +500,7 @@ export function Shell(p: ShellProps) {
                         on={on.dequeue && on.editQueued ? {
                           remove: id => on.dequeue!(p.activeSessionId!, id),
                           sendNow: on.sendQueued && (id => on.sendQueued!(p.activeSessionId!, id)),
+                          steer: p.steerQueued && p.running && on.steerQueued ? id => on.steerQueued!(p.activeSessionId!, id) : undefined,
                           edit: (id, text, kept, drafts) => on.editQueued!(p.activeSessionId!, id, text, kept, drafts),
                         } : undefined} />
                     : null}
@@ -636,7 +641,7 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
       ? <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} />
       : <AgentMessage key={ti} turn={turn} index={index} compacting={compacting} running={running && ti === activeAgentIndex && !turn.stop} onPermission={onPermission} memoryKey={memoryKey}
           turnIndex={ti} last={ti === turns.length - 1} settings={previous?.role === 'user' ? previous.settings : undefined}
-          subagents={mine} allSubagents={mine ? subagents : undefined} onInspect={onInspect} onFailureAction={onFailureAction} />);
+          subagents={mine} allSubagents={mine ? subagents : undefined} onInspect={onInspect} onFailureAction={onFailureAction} blobUrl={blobUrl} />);
   });
   return (
     <div ref={ref} data-thread className="scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto px-page [container-type:size] [overflow-anchor:none]">

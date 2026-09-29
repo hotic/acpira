@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ArrowUp, ListEnd, Pencil, Trash2 } from 'lucide-react';
+import { ArrowUp, ListEnd, Merge, Pencil, Trash2 } from 'lucide-react';
 import type { Draft, QueuedPrompt, SessionControls } from '@shared/transcript';
 import { t } from '../i18n';
 import { IconButton } from '../ui/Button';
@@ -10,6 +10,8 @@ import { AttachmentTiles, EditAttachments } from './Attachments';
 export interface QueueHandlers {
   remove: (id: string) => void;
   sendNow?: (id: string) => void;
+  // Present while the turn runs on an agent that can steer (and the setting is on): the send button steers instead
+  steer?: (id: string) => void;
   edit: (id: string, text: string, retainedAttachments: number[], attachments: Draft[]) => void;
 }
 
@@ -26,25 +28,29 @@ export function Queue({ items, composer, blobUrl, on }: { items: QueuedPrompt[];
           ? <QueuedEditor key={item.id} item={item} composer={composer} blobUrl={blobUrl} onSave={(text, retained, drafts) => on.edit(item.id, text, retained, drafts)} onClose={() => setEditing(undefined)} />
           : <QueuedRow key={item.id} item={item} blobUrl={blobUrl} sending={sending} disabled={composer.disabled}
               onEdit={on && (() => setEditing(item.id))} onRemove={on && (() => on.remove(item.id))}
-              onSendNow={on?.sendNow && (() => on.sendNow!(item.id))} />
+              onSendNow={on?.sendNow && (() => on.sendNow!(item.id))} onSteer={on?.steer && (() => on.steer!(item.id))} />
       ))}
     </div>
   );
 }
 
-function QueuedRow({ item, blobUrl, sending, disabled, onEdit, onRemove, onSendNow }: {
+function QueuedRow({ item, blobUrl, sending, disabled, onEdit, onRemove, onSendNow, onSteer }: {
   item: QueuedPrompt; blobUrl?: (blob: string) => string; sending: boolean; disabled?: boolean;
-  onEdit?: () => void; onRemove?: () => void; onSendNow?: () => void;
+  onEdit?: () => void; onRemove?: () => void; onSendNow?: () => void; onSteer?: () => void;
 }) {
   const first = item.text.trim().split('\n')[0];
+  // One send button: Steer joins the running turn, Send now stops it first; the in-flight label follows the same choice
+  const send = onSteer
+    ? { run: onSteer, label: t('queue.steer'), busy: t('queue.steering'), icon: <Merge /> }
+    : onSendNow && { run: onSendNow, label: t('queue.sendNow'), busy: t('queue.sending'), icon: <ArrowUp /> };
   return (
     <Row
       lead={<ListEnd className="size-icon" strokeWidth={1.5} />}
-      title={t(item.sending ? 'queue.sending' : 'queue.title')}
+      title={item.sending ? send?.busy ?? t('queue.sending') : t('queue.title')}
       aria-busy={item.sending || undefined}
       className="bg-(--cmp-bg) shadow-[inset_0_0_0_1px_var(--conversation-line)] rounded-lg px-pad py-1 text-1 text-fg-1"
       trailing={(onEdit || onRemove) && <>
-        {onSendNow && <IconButton title={t(item.sending ? 'queue.sending' : 'queue.sendNow')} aria-label={t('queue.sendNow')} disabled={disabled || sending} className="disabled:opacity-50" onClick={onSendNow}><ArrowUp /></IconButton>}
+        {send && <IconButton title={item.sending ? send.busy : send.label} aria-label={send.label} disabled={disabled || sending} className="disabled:opacity-50" onClick={send.run}>{send.icon}</IconButton>}
         {onEdit && <IconButton title={t('queue.edit')} aria-label={t('queue.edit')} disabled={item.sending} className="disabled:opacity-50" onClick={onEdit}><Pencil /></IconButton>}
         {onRemove && <IconButton title={t('queue.remove')} aria-label={t('queue.remove')} disabled={item.sending} className="disabled:opacity-50" onClick={onRemove}><Trash2 /></IconButton>}
       </>}

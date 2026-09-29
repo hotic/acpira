@@ -202,6 +202,7 @@ export function App() {
     takeOver: () => post({ type: 'takeOverSession', sessionId: activeId.current }),
     dequeue: (sessionId, id) => post({ type: 'dequeue', sessionId, id }),
     sendQueued: (sessionId, id) => post({ type: 'sendQueued', sessionId, id }),
+    steerQueued: (sessionId, id) => post({ type: 'steerQueued', sessionId, id }),
     editQueued: (sessionId, id, text, retainedAttachments, attachments) => post({ type: 'editQueued', sessionId, id, text, retainedAttachments, attachments }),
     forkSession: (sessionId, turnIndex) => post({ type: 'forkSession', sessionId, turnIndex }),
     exportSession: (id, format) => post({ type: 'exportSession', id, format }),
@@ -299,6 +300,7 @@ export function App() {
       commands={session?.commands}
       compactAt={settings.autoCompact ? settings.compactAtTokens : undefined}
       shareEditorSelection={settings.shareEditorSelection}
+      steerQueued={settings.steerQueued && !!session?.canSteer}
       sessions={sessions}
       activeSessionId={session?.id}
       cwd={session?.cwd}

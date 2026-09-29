@@ -1,6 +1,6 @@
 import { Fragment, createContext, memo, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Bot, Check, ChevronRight, Compass, Hand, MessageCircleQuestion, Shrink, TriangleAlert, X } from 'lucide-react';
-import type { AgentBlock, AgentTurn, CompactionBlock, FailureAction, NoticeBlock, PermissionBlock, SlashCommand, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@shared/transcript';
+import type { AgentBlock, AgentTurn, CompactionBlock, FailureAction, NoticeBlock, PermissionBlock, SlashCommand, SteerBlock, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
 import { isImageGenBlock } from '@shared/imageTools';
 import { useAppearance, type Appearance } from '../appearance';
@@ -82,6 +82,13 @@ export function UserMessage({ turn, blobUrl, onEdit, commands }: { turn: UserTur
   );
 }
 
+// A queued prompt the user steered into the running turn: the same card as a sent message, at the point it joined the loop.
+// It is not an exchange of its own, so it neither sticks nor opens the history editor
+function SteeredMessage({ block, blobUrl }: { block: SteerBlock; blobUrl?: (blob: string) => string }) {
+  const turn = useMemo<UserTurn>(() => ({ role: 'user', text: block.text, ...(block.attachments ? { attachments: block.attachments } : {}) }), [block]);
+  return <div title={t('turns.steered')} className="flex min-w-0 flex-col"><UserMessage turn={turn} index={0} blobUrl={blobUrl} /></div>;
+}
+
 type OnPermission = (blockId: string, optionId: string) => void;
 
 // AIR sessionFailure notices: the turn scopes which rows may offer their actions (the last settled turn,
@@ -133,7 +140,7 @@ function NoticeRow({ block }: { block: NoticeBlock }) {
 // The top-level activity owns the only Orb; detailed rows show their own verbs with static icons.
 // Memoized: the host pushes the whole view on every stream chunk and `reuse` keeps finished turns by reference, so only the live turn renders.
 // `memoryKey` names the turn for fold memory (session + turn); without one the fold state lives only in the component.
-export const AgentMessage = memo(function AgentMessage({ turn, index, running, onPermission, compacting, memoryKey, turnIndex, last, settings, subagents, allSubagents, onInspect, actions = true, lead = 'orb', onFailureAction }: {
+export const AgentMessage = memo(function AgentMessage({ turn, index, running, onPermission, compacting, memoryKey, turnIndex, last, settings, subagents, allSubagents, onInspect, actions = true, lead = 'orb', onFailureAction, blobUrl }: {
   turn: AgentTurn; index: number; running: boolean; onPermission: OnPermission; compacting?: boolean; memoryKey?: string; turnIndex: number; last: boolean; settings?: TurnSettings;
   // Nodes anchored to this turn plus the session-wide list (breadcrumbs/descendant counts may cross turns)
   subagents?: SubagentSummary[]; allSubagents?: SubagentSummary[]; onInspect?: (id: string) => void;
@@ -143,6 +150,8 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   lead?: 'orb' | 'static';
   // AIR sessionFailure notice actions (retry / sign in / new session), available on the last settled turn
   onFailureAction?: (action: FailureAction) => void;
+  // Previews for the attachments of prompts steered into this turn
+  blobUrl?: (blob: string) => string;
 }) {
   const raw = compacting ? compactionForDisplay(turn, running) : turn;
   // Everything but the section split reads the turn without its delegation rows
@@ -182,6 +191,7 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
           all={allSubagents ?? subagents!} onInspect={onInspect} onPermission={onPermission} />}
         {section.plan && <PlanDocument block={section.plan}
           permission={shown.blocks.find((b): b is PermissionBlock => b.type === 'permission' && b.planId === section.plan!.id)} onChoose={onPermission} />}
+        {section.steer && <SteeredMessage block={section.steer} blobUrl={blobUrl} />}
       </Fragment>;
     })}
     {actions && !running && !compacting && turn.blocks.length > 0 && <TurnActions turn={turn} turnIndex={turnIndex} last={last} settings={settings} />}
