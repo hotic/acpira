@@ -163,6 +163,8 @@
   --subagent-check-scale: 0.7;
   /* The faint project name a session row from another project carries before its time, kept short so the title keeps the room */
   --session-project-w: 10ch;
+  /* The session list's unread dot, a pixel larger than the other state dots so it holds its own beside the 10 px ring */
+  --unread-dot: 7px;
 
   /* Max lines shown in a terminal block's output area; beyond that it scrolls inside the block */
   --term-lines: 12;
@@ -451,6 +453,10 @@
   --spacing-pop-lg: var(--pop-w-lg);
   --spacing-pop-xl: var(--pop-w-xl);
   --spacing-project: var(--session-project-w);
+  --spacing-unread-dot: var(--unread-dot);
+  /* Session times share one right-aligned column wide enough for the longest listed one, so the state marks before them line up
+     whatever the time's length. SessionList sets --session-time (in ch) on the list; it must be read where it is used, not on :root */
+  --spacing-session-time: var(--session-time, auto);
   --spacing-subagent-pane: var(--subagent-pane-w);
   --spacing-subagent-mark: var(--subagent-mark);
 }
