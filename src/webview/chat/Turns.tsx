@@ -1,4 +1,4 @@
-import { Fragment, createContext, memo, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Bot, Check, ChevronRight, Compass, Hand, MessageCircleQuestion, Shrink, TriangleAlert, X } from 'lucide-react';
 import type { AgentBlock, AgentTurn, CompactionBlock, FailureAction, NoticeBlock, PermissionBlock, SlashCommand, SteerBlock, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
@@ -8,8 +8,8 @@ import { getLocale, t } from '../i18n';
 import { commandSegments } from './PromptInput';
 import { commandMarks } from './slashCommands';
 import { turnOutcome } from './turnOutcome';
-import { Row, RowLabel, RowTarget, RowEntranceContext, EntranceScopeContext } from '../ui/Row';
-import { Disclosure, DisclosureObserverContext } from '../ui/Disclosure';
+import { EntranceOnce, Row, RowLabel, RowTarget, RowEntranceContext, EntranceScopeContext } from '../ui/Row';
+import { Disclosure } from '../ui/Disclosure';
 import { Collapsible, LazyPanelContext } from '../ui/Collapsible';
 import { Orb } from '../effects/Orb';
 import { cn } from '../ui/cn';
@@ -17,8 +17,11 @@ import { useScrollFade } from '../ui/useScrollFade';
 import { TOOL_ICON } from './icons';
 import { Thought } from './Thought';
 import { Plan } from './Plan';
-import { ReadGroup, ToolCall } from './ToolCall';
-import { groupReadCalls } from './toolDetails';
+import { ToolCall } from './ToolCall';
+import { ToolGroup } from './ToolGroup';
+import { foldStates, groupProcess, itemEntrance, type ProcessItem } from './processGroups';
+import { AutoFoldContext, AutoFoldItem, AutoFoldStore } from './autoFold';
+import { useFollowing } from './useBottomFollow';
 import { Prose } from './Prose';
 import { AgentImage } from './AgentImage';
 import { GeneratedImages } from './GeneratedImage';
@@ -441,9 +444,11 @@ function CodexMessage({ turn, running, working = running, onPermission, memoryKe
   const hasTools = turn.blocks.some(block => block.type === 'tool_call');
   // Generated and shown images are results, not process detail: they stay visible however the fold is set
   const generations = turn.blocks.filter(isImageResultBlock);
+  // The process folds away only once the reply has finished drawing, not when its last chunk arrived
+  const [replyBusy, setReplyBusy] = useState(false);
   return (
     <div className="flex flex-col gap-gap">
-      <CodexFold turn={turn} blocks={process} running={working} hasTools={hasTools} memoryKey={memoryKey} lead={lead} />
+      <CodexFold turn={turn} blocks={process} running={working} replyBusy={replyBusy && reply.length > 0} hasTools={hasTools} memoryKey={memoryKey} lead={lead} />
       {notices.map(b => <NoticeRow key={b.id} block={b} />)}
       {generations.map(b => <GeneratedImages key={b.id} block={b} />)}
       {subagents !== undefined && subagents.length > 0 && onInspect !== undefined && (
@@ -452,41 +457,34 @@ function CodexMessage({ turn, running, working = running, onPermission, memoryKe
           <ChildPermissions nodes={subagents} all={allSubagents ?? subagents} onPermission={onPermission} />
         </>
       )}
-      {reply.map((block, i) => <Prose key={i} block={block} />)}
+      {reply.map((block, i) => <Prose key={i} block={block} onBusy={i === reply.length - 1 ? setReplyBusy : undefined} />)}
       {permissions.filter(block => !block.planId).map(block => <Permission key={block.id} block={block} onChoose={id => onPermission(block.id, id)} />)}
       {!running && outcomeOf(turn) && <Outcome turn={turn} />}
     </div>
   );
 }
 
-// A turn first opened with tools starts collapsed. During streaming, content already shown before the first
-// tool stays visible when the process becomes foldable. Afterwards only a manual toggle moves it.
-// The toggle is also written to fold memory under `memoryKey`, so a rebuilt message (or a reloaded webview) reopens
-// what the reader had opened instead of snapping shut mid-turn.
-function CodexFold({ turn, blocks, running, hasTools, memoryKey, lead }: { turn: AgentTurn; blocks: AgentBlock[]; running: boolean; hasTools: boolean; memoryKey?: string; lead?: 'orb' | 'static' }) {
+// The process fold follows the run: open while the turn works and while its reply is still drawing, closed once
+// both are done, however the turn was mounted (a live session opened mid-turn shows what it is doing). A reader
+// scrolled away from the bottom holds every automatic close until they return. A manual toggle always wins; it is
+// written to fold memory under `memoryKey`, so a rebuilt message (or a reloaded webview) keeps what the reader chose.
+function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead }: { turn: AgentTurn; blocks: AgentBlock[]; running: boolean; replyBusy: boolean; hasTools: boolean; memoryKey?: string; lead?: 'orb' | 'static' }) {
   const recall = (key: string | undefined) => ({ key, manual: key ? rememberedFold(key) : undefined });
   const [choice, setChoice] = useState(() => recall(memoryKey));
   // A key that changes under a mounted fold (a turn that gains its start time) re-reads memory instead of keeping a stranger's choice
   if (choice.key !== memoryKey) setChoice(recall(memoryKey));
   const manual = choice.key === memoryKey ? choice.manual : undefined;
-  const openedInside = useRef(0);
-  const visibleBeforeTools = useRef(false);
-  // Remember committed content, including commentary that moves from the reply into the process on the
-  // first tool call. The pre-tool Working row is not a disclosure, so it cannot record a manual choice.
-  useLayoutEffect(() => {
-    if (!hasTools) visibleBeforeTools.current = blocks.length > 0
-      || turn.blocks.some(block => block.type === 'text' && !!block.markdown.trim());
-  }, [hasTools, blocks, turn.blocks]);
-  const latched = useRef<boolean | undefined>(undefined);
-  if (!hasTools) latched.current = undefined;
-  else latched.current ??= visibleBeforeTools.current || openedInside.current > 0;
-  const observe = useCallback((next: boolean) => { openedInside.current += next ? 1 : -1; }, []);
   const toggle = useCallback((next: boolean) => { setChoice({ key: memoryKey, manual: next }); if (memoryKey) rememberFold(memoryKey, next); }, [memoryKey]);
+  const following = useFollowing();
+  const held = useRef(false);
+  const auto = running || replyBusy || (!following && held.current);
+  held.current = auto;
+  const items = useMemo(() => groupProcess(blocks), [blocks]);
+  const store = useProcessFolds(items, manual === undefined, auto, following, memoryKey);
   // A turn that ends with no process worth a head (a plain reply, or only a compaction status) retires the head row
   // the way the Working row used to: fade, then collapse. A compaction status stays as a flat line.
   const retired = !running && !hasTools && !blocks.some(b => b.type !== 'compaction');
-  // Before tools the fold is open, so the first thoughts read as its children; afterwards the latched choice holds
-  const open = retired || (manual ?? (hasTools ? latched.current : true));
+  const open = retired || (manual ?? auto);
   const activity = liveActivity(turn, lead);
   const CompletionIcon = turn.stop === 'cancelled' ? X : outcomeOf(turn) ? TriangleAlert : Check;
   const leadIcon = running ? activity.lead : <CompletionIcon className="size-icon" strokeWidth={1.5} />;
@@ -512,16 +510,16 @@ function CodexFold({ turn, blocks, running, hasTools, memoryKey, lead }: { turn:
         // The clip reserves the head's hit area like the panel below; a flex column stretches the button to the full row
         <div inert={retired} className={cn('-mx-hit grid transition-[grid-template-rows,opacity] duration-(--dur-open) ease-out',
           retired ? 'grid-rows-[0fr] opacity-0 [transition-delay:var(--dur-open),0s]' : 'grid-rows-[1fr] opacity-100')}>
-          <div className="flex min-h-0 flex-col overflow-hidden px-hit">{head}</div>
+          <div className="flex min-h-0 flex-col overflow-hidden px-hit"><EntranceOnce id="fold-head">{head}</EntranceOnce></div>
         </div>
       )}
       {blocks.length > 0 && (
         // Nested rows extend their hit area beyond the text column; reserve it inside the clip so its edges cannot cut off row corners.
         <Collapsible.Panel className="-mx-hit [&>div]:px-hit">
           <div className={cn(!retired && 'pt-1 pb-1.5')}>
-            <DisclosureObserverContext.Provider value={observe}>
-              <ProcessHistory><ProcessBlocks blocks={blocks} /></ProcessHistory>
-            </DisclosureObserverContext.Provider>
+            <AutoFoldContext.Provider value={store}>
+              <ProcessHistory><ProcessBlocks blocks={blocks} items={items} /></ProcessHistory>
+            </AutoFoldContext.Provider>
           </div>
         </Collapsible.Panel>
       )}
@@ -529,19 +527,59 @@ function CodexFold({ turn, blocks, running, hasTools, memoryKey, lead }: { turn:
   );
 }
 
-// Process details retain static icons; only the currently running verb shimmers.
-// Unkeyed blocks take their transcript position, so a read group forming ahead of them does not remount them.
-function ProcessBlocks({ blocks }: { blocks: AgentBlock[] }) {
-  let position = 0;
-  return groupReadCalls(blocks).map(item => {
-    const at = position;
-    position += Array.isArray(item) ? item.length : 1;
-    return Array.isArray(item)
-      ? <ReadGroup key={item[0]!.id} blocks={item} />
-      : item.type === 'tool_call' ? <ToolCall key={item.id} block={item} grouped />
-      : item.type === 'text' ? <Prose key={at} block={item} />
-      : <LineBlock key={'id' in item ? item.id : at} block={item} />;
+// The outer fold's close (--dur-close) and a frame or two: rows inside hold still until it has finished
+const SETTLE_MS = 400;
+
+// The folds of a turn's process items, by `foldStates`. When the turn's fold closes on its own the rows hold still
+// until that close has run (`settle`); a manual toggle is remembered per row
+function useProcessFolds(items: ProcessItem[], settle: boolean, live: boolean, following: boolean, memoryKey: string | undefined): AutoFoldStore {
+  const { autoExpand } = useAppearance();
+  const [rows, setRows] = useState<Record<string, boolean>>({});
+  const [store] = useState(() => new AutoFoldStore(() => {}));
+  store.toggle = (id, next) => {
+    setRows(current => ({ ...current, [id]: next }));
+    if (memoryKey) rememberFold(`${memoryKey}:${id}`, next);
+  };
+  const [, wake] = useState(0);
+  const doneAt = useRef<Map<string, number> | undefined>(undefined);
+  const held = useRef(new Set<string>());
+  const settleUntil = useRef(0);
+  const wasLive = useRef(live);
+  const now = performance.now();
+  if (wasLive.current && !live && settle) settleUntil.current = now + SETTLE_MS;
+  wasLive.current = live;
+  const running = live || now < settleUntil.current;
+  // Items already finished when the turn mounted count as long done, so opening a live session does not flash them
+  const first = doneAt.current === undefined;
+  const { folds, open, wake: due } = foldStates({
+    items, now, live: running, autoExpand: autoExpand === 'on', following, doneAt: doneAt.current ??= new Map(), first, held: held.current,
+    manual: id => rows[id] ?? (memoryKey ? rememberedFold(`${memoryKey}:${id}`) : undefined),
   });
+  const next = running && !live ? Math.min(due, settleUntil.current) : due;
+  held.current = open;
+  // Written before the rows render; rows that skip rendering (memoized on their block) hear it after commit
+  store.write(folds);
+  useLayoutEffect(() => store.notify());
+  useEffect(() => {
+    if (next === Infinity) return;
+    const timer = setTimeout(() => wake(n => n + 1), Math.max(0, next - performance.now()));
+    return () => clearTimeout(timer);
+  }, [next]);
+  return store;
+}
+
+// Process details retain static icons; only the currently running verb shimmers. Each item enters once under its
+// own id at the list level, whatever row component draws it: a single call that becomes a group keeps its first
+// call's id, and a remounted transcript replays nothing. Unkeyed blocks take their transcript position
+function ProcessBlocks({ blocks, items }: { blocks: AgentBlock[]; items?: ProcessItem[] }) {
+  return (items ?? groupProcess(blocks)).map(item => (
+    <EntranceOnce key={item.id} id={itemEntrance(item.id)}>
+      <AutoFoldItem id={item.id}>{item.type === 'group' ? <ToolGroup kind={item.kind} blocks={item.blocks} />
+        : item.block.type === 'tool_call' ? <ToolCall block={item.block} grouped />
+        : item.block.type === 'text' ? <Prose block={item.block} />
+        : <LineBlock block={item.block} />}</AutoFoldItem>
+    </EntranceOnce>
+  ));
 }
 
 function LineBlock({ block }: { block: AgentBlock }) {

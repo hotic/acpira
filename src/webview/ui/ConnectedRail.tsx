@@ -87,6 +87,7 @@ export interface ConnectedRailProps extends HTMLAttributes<HTMLDivElement> {
 }
 
 const DEFAULT_GROW_MS = 220;
+const DEFAULT_CLOSE_MS = 320;
 
 // Motion-off and reduced-motion settings snap the rail instead of easing it.
 function motionDisabled(root: HTMLElement): boolean {
@@ -110,6 +111,24 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
   const spans = useRef<(HTMLSpanElement | null)[]>([]);
   const lengths = useRef<number[]>([]);
   const growFrame = useRef<number | undefined>(undefined);
+  // A rail switched off as its panel closes retracts with the panel instead of vanishing on the first frame of
+  // the close: for --dur-close it keeps measuring (its own inert rows included, bottoms clamped to the shrinking
+  // root), follows without easing and fades out, then drops
+  // Switched during render, so the segments are never unmounted for the frame in between (their length lives in inline style)
+  const [retracting, setRetracting] = useState(false);
+  const [wasEnabled, setWasEnabled] = useState(enabled);
+  if (wasEnabled !== enabled) {
+    setWasEnabled(enabled);
+    setRetracting(!enabled && segments.length > 0);
+  }
+  useLayoutEffect(() => {
+    const root = ref.current;
+    if (!retracting) return;
+    if (!root || motionDisabled(root)) { setRetracting(false); return; }
+    const timer = setTimeout(() => setRetracting(false), Number.parseFloat(getComputedStyle(root).getPropertyValue('--dur-close')) || DEFAULT_CLOSE_MS);
+    return () => clearTimeout(timer);
+  }, [retracting]);
+  const drawn = enabled || retracting;
 
   // Ease every segment toward its measured length with one shared value per segment.
   // Exponential approach tolerates a target that moves every frame without restarting.
@@ -122,7 +141,7 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
       spans.current[index]?.style.setProperty('--rail-length', String(value));
     };
     lengths.current.length = targets.length;
-    const snap = motionDisabled(root);
+    const snap = motionDisabled(root) || retracting;
     let pending = false;
     targets.forEach((target, index) => {
       const current = lengths.current[index];
@@ -161,9 +180,10 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
       const root = ref.current;
       if (!root) return;
       // A disabled or inert rail reads no geometry: every read forces a layout, and a closed row's rail mounts disabled
-      const origin = enabled && !root.closest('[inert]') ? root.getBoundingClientRect() : undefined;
+      const hidden = !!root.closest('[inert]');
+      const origin = drawn && !hidden ? root.getBoundingClientRect() : undefined;
       const leads = origin && origin.width && origin.height
-        ? [...root.querySelectorAll(selector)].filter(lead => lead.closest('.connected-rail') === root && !lead.closest('[inert]'))
+        ? [...root.querySelectorAll(selector)].filter(lead => lead.closest('.connected-rail') === root && (retracting || !lead.closest('[inert]')))
         : [];
       const currentLeads = new Set(leads);
       for (const lead of observedLeads.current) {
@@ -173,7 +193,12 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
         if (!observedLeads.current.has(lead)) observerRef.current?.observe(lead);
       }
       observedLeads.current = currentLeads;
-      if (!origin || !leads.length) { setSegments(previous => previous.length ? [] : previous); return; }
+      if (!origin || !leads.length) {
+        // Under a closing ancestor the rail stays as drawn, clipped and faded along with that ancestor's panel
+        if (drawn && hidden) return;
+        setSegments(previous => previous.length ? [] : previous);
+        return;
+      }
       const icons = leads.map(leadAnchor).filter((anchor): anchor is Anchor => anchor !== null);
       const scaleX = root.offsetWidth ? origin.width / root.offsetWidth : 1;
       const scaleY = root.offsetHeight ? origin.height / root.offsetHeight : 1;
@@ -183,9 +208,11 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
       const next = icons.map((icon, index) => ({
         x: round((icon.x - origin.left) / scaleX - root.clientLeft),
         top: round((icon.bottom - origin.top) / scaleY - root.clientTop),
-        bottom: round(index < icons.length - 1
+        bottom: round(Math.min(index < icons.length - 1
           ? (icons[index + 1]!.top - origin.top) / scaleY - root.clientTop
-          : (lastRow ? (lastRow.bottom - origin.top) / scaleY - root.clientTop : root.clientHeight) - endInset),
+          : (lastRow ? (lastRow.bottom - origin.top) / scaleY - root.clientTop : root.clientHeight) - endInset,
+        // A retracting rail never reaches past its shrinking root (the rows below are being clipped away)
+        retracting ? root.clientHeight - endInset : Infinity)),
         terminal: index === icons.length - 1,
       })).filter(segment => segment.bottom > segment.top);
       setSegments(previous => previous.length === next.length && previous.every((segment, index) => {
@@ -239,9 +266,9 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
     };
   }, []);
 
-  return <div {...rest} ref={ref} className={cn('connected-rail', className)}>
+  return <div {...rest} ref={ref} className={cn('connected-rail', className)} data-retracting={retracting || undefined}>
     {children}
-    {enabled && segments.map((segment, index) => <span key={index} aria-hidden="true" className="rail-segment"
+    {drawn && segments.map((segment, index) => <span key={index} aria-hidden="true" className="rail-segment"
       ref={span => { spans.current[index] = span; }}
       data-terminal={segment.terminal || undefined}
       style={{ left: segment.x, top: segment.top }} />)}

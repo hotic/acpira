@@ -10,6 +10,7 @@ import { Shimmer } from '../ui/Shimmer';
 import { useScrollFade } from '../ui/useScrollFade';
 import { StreamText } from './StreamText';
 import { useSmoothText } from './streamMotion';
+import { useAutoFold } from './autoFold';
 
 // ACP thought chunks have no end boundary: the next event can arrive only after
 // tool arguments finish generating. Keep the text, but never time that gap as thinking.
@@ -21,9 +22,10 @@ export const Thought = memo(function Thought({ block }: { block: ThoughtBlock })
   const lead = toolLine === 'text' ? undefined : <Brain className="size-icon" strokeWidth={1.5} />;
   // Thoughts carry no id; the start stamp names them within the turn, so a remounted transcript (another
   // session and back) does not replay the entrance of a thought that already entered
+  const fold = useAutoFold();
   return (
     <EntranceOnce id={`thought:${block.startedAt ?? ''}`}>
-      <Disclosure className="action-details" tone="action" lead={lead} body={<ThoughtBody block={block} />}>
+      <Disclosure className="action-details" tone="action" lead={lead} open={fold?.open} onToggle={fold?.onToggle} body={<ThoughtBody block={block} />}>
         <Shimmer active={live}>
           {live ? t('host.thinking') : t('thought.label')}
         </Shimmer>

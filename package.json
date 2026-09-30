@@ -480,6 +480,15 @@
           ],
           "default": "codex",
           "description": "%acpira.conf.appearance.fold%"
+        },
+        "acpira.appearance.autoExpand": {
+          "type": "string",
+          "enum": [
+            "on",
+            "off"
+          ],
+          "default": "on",
+          "description": "%acpira.conf.appearance.autoExpand%"
         }
       }
     }

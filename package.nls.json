@@ -41,6 +41,7 @@
   "acpira.conf.appearance.accent": "Accent color source",
   "acpira.conf.appearance.motion": "Interface animation (transitions, entrances, shimmer): on / none. The working indicator keeps turning either way",
   "acpira.conf.appearance.fold": "Process-line folding: keep the whole turn in one fold showing the current action while running and the elapsed time when done, click to expand / fold read-only actions only (edits and commands stay visible)",
+  "acpira.conf.appearance.autoExpand": "Auto-expand process details: while a turn runs, open the item it is working on (thinking, read and edit lists, command output) and close it once done; off keeps only the whole-turn fold following the run",
   "acpira.cmd.addSelection": "Add to Chat",
   "acpira.cmd.connectChatgpt": "Connect ChatGPT Session"
 }

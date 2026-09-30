@@ -12,7 +12,7 @@ import { Questions, type OnAnswer } from '../Questions';
 import { Prose } from '../Prose';
 import { HistoryContext } from '../HistoryMessage';
 import { TurnActionsContext } from '../TurnActions';
-import { useBottomFollow } from '../useBottomFollow';
+import { FollowContext, useBottomFollow } from '../useBottomFollow';
 import { subagentTitle } from './subagentState';
 
 interface InspectorProps {
@@ -81,7 +81,7 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
   const scroll = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   // Stick to the bottom while the child streams, exactly like the main thread; scrolling up releases the follow
-  useBottomFollow(scroll, body, undefined, [transcript?.turns, transcript?.running]);
+  const follow = useBottomFollow(scroll, body, undefined, [transcript?.turns, transcript?.running]);
   const lastAgent = transcript ? transcript.turns.reduce((at, turn, i) => (turn.role === 'agent' ? i : at), -1) : -1;
   return (
     <>
@@ -104,6 +104,7 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
           ) : (
             <TurnActionsContext.Provider value={undefined}>
               <HistoryContext.Provider value={undefined}>
+                <FollowContext.Provider value={follow}>
                 <div className="flex min-w-0 flex-col gap-msg">
                   {transcript.turns.map((turn, ti) => turn.role === 'agent'
                     ? (
@@ -123,6 +124,7 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
                     : <UserMessage key={ti} turn={turn} index={ti} blobUrl={blobUrl} />)}
                   {transcript.turns.length === 0 && <Row className="px-pad text-fg-3"><Shimmer active>{t('subagents.loading')}</Shimmer></Row>}
                 </div>
+                </FollowContext.Provider>
               </HistoryContext.Provider>
             </TurnActionsContext.Provider>
           )}
