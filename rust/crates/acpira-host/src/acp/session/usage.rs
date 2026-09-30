@@ -11,7 +11,7 @@ use tokio::task::AbortHandle;
 use acpira_shared::transcript::*;
 
 use crate::acp::session::{AcpSession, Core, num};
-use crate::acp::vendors::pi_usage;
+use crate::acp::vendors::{UsagePoll, pi_usage};
 
 pub const USAGE_POLL_INTERVAL: Duration = Duration::from_millis(800);
 
@@ -54,7 +54,12 @@ impl AcpSession {
   /// Agents that never send `usage_update` and have their context snapshot polled instead: Grok over
   /// `_x.ai/session/info`, Pi from its session file (`pi_usage`)
   fn polls_usage(&self, c: &Core) -> bool {
-    !c.usage.notifications && (self.agent == "pi" || (self.agent == "grok" && !c.usage.grok_unavailable))
+    !c.usage.notifications
+      && match self.vendor.usage_poll() {
+        Some(UsagePoll::Grok) => !c.usage.grok_unavailable,
+        Some(UsagePoll::Pi) => true,
+        None => false,
+      }
   }
 
   /// Refresh before settling a turn so auto-compaction sees the current window; Grok only fills context.used after
@@ -63,10 +68,10 @@ impl AcpSession {
     self.core.lock().usage.clear_timer();
     let _serial = self.usage_lock.lock().await;
     self.core.lock().usage.inflight = true;
-    match self.agent.as_str() {
-      "grok" => self.read_grok_usage().await,
-      "pi" => self.read_pi_usage().await,
-      _ => {}
+    match self.vendor.usage_poll() {
+      Some(UsagePoll::Grok) => self.read_grok_usage().await,
+      Some(UsagePoll::Pi) => self.read_pi_usage().await,
+      None => {}
     }
     self.core.lock().usage.inflight = false;
   }
@@ -156,13 +161,13 @@ impl AcpSession {
     c.usage.timer = Some(handle.abort_handle());
   }
 
-  /// Kimi emits its context snapshot asynchronously after end_turn: park the queue until it lands (bounded).
-  /// Resolves to whether the wait was cancelled
-  pub(crate) async fn wait_for_kimi_usage(self: &Arc<Self>, revision: u64) -> bool {
+  /// An agent that sends its context snapshot after end_turn (Kimi, `Vendor::late_usage`): park the queue until it lands
+  /// (bounded). Resolves to whether the wait was cancelled
+  pub(crate) async fn wait_for_late_usage(self: &Arc<Self>, revision: u64) -> bool {
     let rx = {
       let mut c = self.core.lock();
       let auto = self.deps.compaction.as_ref().is_some_and(|f| f().auto);
-      if self.agent != "kimi" || !auto || c.usage.revision != revision {
+      if !self.vendor.late_usage() || !auto || c.usage.revision != revision {
         return false;
       }
       let (tx, rx) = tokio::sync::oneshot::channel();

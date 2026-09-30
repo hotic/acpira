@@ -126,7 +126,7 @@ impl AcpSession {
       self.log(&format!("agent title ignored: {head}"));
       u["title"] = Value::Null;
     }
-    if self.agent == "claude"
+    if self.vendor.corrects_window()
       && kind == "usage_update"
       && let Some(size) = u.get("size").and_then(Value::as_f64)
     {
@@ -177,7 +177,7 @@ impl AcpSession {
       let plan = capture_plan(&mut c.state.turns, &u);
       // Kimi 0.41.0 confirms the plan exit in tool output but omits current_mode_update
       let tool_call_id = u.get("toolCallId").and_then(Value::as_str).unwrap_or("");
-      if self.agent == "kimi"
+      if self.vendor.plan_exit_in_tool_output()
         && let Some(pid) = plan
         && plan_documents(&c.state.turns).iter().any(|p| p.id == pid && p.approval_tool_call_id.as_deref() == Some(tool_call_id))
         && u.get("status").and_then(Value::as_str) == Some("completed")
