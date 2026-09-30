@@ -9,7 +9,7 @@ import { RadioPills } from '../ui/Field';
 import { cn } from '../ui/cn';
 import { t } from '../i18n';
 import { AgentMark } from '../chat/AgentMark';
-import { ItemRow, Note, Section, SectionAction, SectionDescription, Switch, shortPath } from './controls';
+import { ItemRow, Note, PathText, Section, SectionAction, SectionDescription, Switch, shortPath } from './controls';
 import type { SettingsHandlers } from './SettingsShell';
 
 // The Shared tab: one set of skills, MCP servers and prompts in open files, reaching every agent.
@@ -167,8 +167,14 @@ function LinkPanel({ ctx, onClose }: { ctx: Ctx; onClose: () => void }) {
     const blocked = p.kind === 'prompt' && !promptSource;
     const who = names([p.agent]);
     // A prompt row is titled by its agent already
-    const desc = [p.kind === 'skill' && who, shortPath(p.at, env), p.skipped && t('settings.shared.plan.skipped')].filter(Boolean).join(t('common.metaSep'));
     const conflict = p.state === 'conflict';
+    const sep = t('common.metaSep');
+    // A conflict's path is a link to the agent's own copy, which the editor can compare with the shared one;
+    // a link in the text instead of the row's hover button leaves the choice below the full width
+    const path = conflict
+      ? <PathText path={p.at} env={env} onOpen={() => ctx.open(p.kind === 'skill' ? `${p.at}/SKILL.md` : p.at)} />
+      : shortPath(p.at, env);
+    const desc = <>{p.kind === 'skill' && `${who}${sep}`}{path}{p.skipped && `${sep}${t('settings.shared.plan.skipped')}`}</>;
     const c = effective(p);
     return (
       <ItemRow key={p.at}
@@ -177,8 +183,6 @@ function LinkPanel({ ctx, onClose }: { ctx: Ctx; onClose: () => void }) {
         lead={<AgentMark id={p.agent} name={who} />}
         title={p.kind === 'prompt' ? who : p.name}
         desc={desc}
-        // The agent's own copy opens in the editor, which is where the two versions can really be compared
-        onOpen={conflict ? () => ctx.open(p.kind === 'skill' ? `${p.at}/SKILL.md` : p.at) : undefined}
         // Under the text rather than beside it, so a narrow sidebar keeps the name and path readable;
         // the line below says what the current pick will do, which is what the pill labels alone could not
         extra={conflict ? <div className="flex flex-col gap-1 pt-1">
