@@ -72,6 +72,15 @@
   .diff-source > span { color: var(--syntax-dark, var(--fg-1)); }
   [data-theme="light"] .diff-source > span { color: var(--syntax-light, var(--fg-1)); }
 
+  /* Tool output (ToolOutput in Terminal.tsx) wraps; each line is its own block so a wrapped continuation hangs under the
+     line's start and a long `key: value` report stays scannable */
+  .tool-output { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .tool-output-line {
+    display: block;
+    padding-inline-start: var(--command-prompt-indent);
+    text-indent: calc(-1 * var(--command-prompt-indent));
+  }
+
   /* The command at the head of a command card: a hanging indent keeps wrapped and heredoc lines clear of the `$ `.
      Terminal.tsx cuts the text itself and drives the height inline while it animates */
   .command-prompt-text {

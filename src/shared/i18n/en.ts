@@ -100,6 +100,8 @@ export const en = {
   'code.diff': 'Code changes',
   'code.commandOutput': 'Command output',
   'code.copyOutput': 'Copy command output',
+  'code.toolOutput': 'Tool output',
+  'code.copyToolOutput': 'Copy tool output',
   'code.commandExpand': 'Show full command',
   'code.commandCollapse': 'Collapse command',
   'code.copySource': 'Copy updated code',
