@@ -12,12 +12,13 @@ use acpira_shared::turn_settings::capture_turn_settings;
 
 use crate::acp::session::attachments::{PreparedPrompt, prepare_prompt, prompt_caps_of};
 use crate::acp::session::compaction::{CompactionCompletion, is_compact_command};
-use crate::acp::session::edit::{FORK_HISTORY_LEAD, history_context};
+use crate::acp::session::edit::{FORK_HISTORY_LEAD, HistoryContext, history_context};
 use crate::acp::session::errors::{is_auth, is_session_gone, turn_error_of};
 use crate::acp::session::failure::{failure_of, failure_turn_error};
 use crate::acp::session::turn_usage::turn_usage_of;
 use crate::acp::session::{AcpSession, Core, clear_usage_timer, num};
 use crate::acp::transcript::normalize::{activity_of, apply_session_failure, end_turn, fail_turn};
+use crate::acp::transport::process::AgentProcess;
 use crate::acp::transport::rpc::{BoxFuture, RpcError};
 use crate::acp::vendors::claude_window;
 use crate::i18n::{t, tp};
@@ -39,6 +40,56 @@ pub(crate) enum Origin {
   Compact,
   Continue,
 }
+
+/// Where `claim` sends a prompt: onto the wire (after an over-budget /compact first), behind the running turn, or nowhere
+enum Gate {
+  Queue,
+  Drop,
+  Go { compact_first: bool },
+}
+
+/// The staged payload, plus a fork's history context (or why it could not be built)
+struct Staging {
+  prepared: PreparedPrompt,
+  edited_staged: bool,
+  fork_history: Option<HistoryContext>,
+  fork_error: Option<String>,
+}
+
+/// A prompt accepted onto the transcript: its user turn and what settling the answer needs of it
+struct Accepted {
+  user_turn: UserTurn,
+  prepared: PreparedPrompt,
+  compacting: bool,
+  /// The slash command the text starts with, recorded on the agent turn as a receipt
+  command_name: Option<String>,
+  before: TurnSettings,
+  forked: bool,
+  edited_staged: bool,
+}
+
+/// The agent turn a prompt opened, and the process generation its answer must still belong to
+struct OpenTurn {
+  proc: Option<Arc<AgentProcess>>,
+  acp_id: Option<String>,
+  proc_gen: u64,
+  usage_before: u64,
+  agent_idx: usize,
+  started_at: i64,
+}
+
+impl OpenTurn {
+  fn live(&self, c: &Core) -> bool {
+    c.proc_gen == self.proc_gen && c.status != SessionStatus::Closed
+  }
+}
+
+/// How the answer settled the turn, and whether it reserved the session for an automatic account switch
+struct Settled {
+  stop: TurnStop,
+  exhausted: bool,
+}
+
 impl AcpSession {
   pub(crate) fn caps(&self, c: &Core) -> crate::acp::session::attachments::PromptCaps {
     prompt_caps_of(c.proc.as_ref().map(|p| &p.init), &self.def())
@@ -59,70 +110,88 @@ impl AcpSession {
     Box::pin(async move { me.prompt_inner(text, drafts, origin, staged, plan_id).await })
   }
 
+  /// One prompt, phase by phase: claim the session, stage the payload, accept it onto the transcript, compact first
+  /// when over budget, open the agent turn, send it, settle the answer and hand over to what follows the turn
   pub(crate) async fn prompt_inner(self: Arc<Self>, text: String, drafts: Vec<Draft>, origin: Origin, staged: Option<Staged>, plan_id: Option<String>) {
-    enum Gate {
-      Queue,
-      Drop,
-      Go(bool),
-    }
     let auto = origin == Origin::Compact;
-    let gate = {
-      let mut c = self.core.lock();
-      if origin == Origin::Continue && (c.status != SessionStatus::Ready || c.phase.running) {
-        // The switch reserved the session for this prompt; anything else taking it first means the continue is moot
-        c.switching = false;
-        Gate::Drop
-      } else if c.status == SessionStatus::Starting {
-        Gate::Queue
-      } else if c.status != SessionStatus::Ready
-        || (text.trim().is_empty() && drafts.is_empty() && staged.as_ref().is_none_or(|s| s.prepared.blocks.is_empty()))
-      {
-        Gate::Drop
-      } else if origin != Origin::Continue && (c.switching || c.adopt_pending || c.phase.running || c.detached || (!auto && c.pending_prompt.is_some())) {
-        Gate::Queue
-      } else {
-        c.switching = false;
-        c.peer_idle = false;
-        // Mid-turn /compact cannot be injected: the next user-facing request is the earliest slot, compact that first
-        let compact_first = !auto && !is_compact_command(&text) && self.should_auto_compact(&c);
-        c.phase.running = true;
-        c.auto_compact_eligible = false;
-        c.phase.staging = true;
-        c.phase.staging_aborted = false;
-        if origin == Origin::User {
-          self.bump(&mut c);
-        } else {
-          self.touch(&mut c);
-        }
-        Gate::Go(compact_first)
-      }
-    };
-    let compact_first = match gate {
-      Gate::Queue => {
-        self.enqueue(text, drafts, staged.map(|s| s.prepared)).await;
-        return;
-      }
+    let compact_first = match self.claim(&text, &drafts, origin, staged.as_ref()) {
+      Gate::Queue => return self.enqueue(text, drafts, staged.map(|s| s.prepared)).await,
       Gate::Drop => {
         if origin == Origin::Continue {
           self.flush_queue();
         }
         return;
       }
-      Gate::Go(first) => first,
+      Gate::Go { compact_first } => compact_first,
     };
+    let staging = self.stage_turn(&text, &drafts, staged, auto).await;
+    let Some(mut accepted) = self.accept(&text, origin, plan_id.as_deref(), staging) else { return };
+    if compact_first && !self.compact_before(&accepted.user_turn).await {
+      return;
+    }
+    let turn = self.open_turn(&text, origin, plan_id.as_deref(), &mut accepted);
+    let blocks = std::mem::take(&mut accepted.prepared.blocks);
+    let result = match &turn.proc {
+      Some(p) => p.request("session/prompt", json!({ "sessionId": turn.acp_id, "prompt": blocks })).await,
+      None => Err(RpcError::internal("no process")),
+    };
+    let settled = match result {
+      Ok(r) => self.prompt_answered(r, &turn, &accepted, auto).await,
+      Err(e) => self.prompt_failed(e, &turn).await,
+    };
+    if let Some(settled) = settled {
+      self.finish_turn(&turn, auto, accepted.compacting, settled);
+    }
+  }
+
+  /// Where a prompt goes. running is claimed here, before staging, so a second send meanwhile queues
+  fn claim(&self, text: &str, drafts: &[Draft], origin: Origin, staged: Option<&Staged>) -> Gate {
+    let auto = origin == Origin::Compact;
+    let mut c = self.core.lock();
+    if origin == Origin::Continue && (c.status != SessionStatus::Ready || c.phase.running) {
+      // The switch reserved the session for this prompt; anything else taking it first means the continue is moot
+      c.switching = false;
+      Gate::Drop
+    } else if c.status == SessionStatus::Starting {
+      Gate::Queue
+    } else if c.status != SessionStatus::Ready
+      || (text.trim().is_empty() && drafts.is_empty() && staged.is_none_or(|s| s.prepared.blocks.is_empty()))
+    {
+      Gate::Drop
+    } else if origin != Origin::Continue && (c.switching || c.adopt_pending || c.phase.running || c.detached || (!auto && c.pending_prompt.is_some())) {
+      Gate::Queue
+    } else {
+      c.switching = false;
+      c.peer_idle = false;
+      // Mid-turn /compact cannot be injected: the next user-facing request is the earliest slot, compact that first
+      let compact_first = !auto && !is_compact_command(text) && self.should_auto_compact(&c);
+      c.phase.running = true;
+      c.auto_compact_eligible = false;
+      c.phase.staging = true;
+      c.phase.staging_aborted = false;
+      if origin == Origin::User {
+        self.bump(&mut c);
+      } else {
+        self.touch(&mut c);
+      }
+      Gate::Go { compact_first }
+    }
+  }
+
+  /// The payload, staged now unless the queue or an edit already did; a fork's first prompt also builds its history
+  async fn stage_turn(&self, text: &str, drafts: &[Draft], staged: Option<Staged>, auto: bool) -> Staging {
     let edited_staged = staged.as_ref().is_some_and(|s| s.edited);
-    let mut prepared = match staged {
+    let prepared = match staged {
       Some(s) => s.prepared,
       None => {
         let caps = self.caps(&self.core.lock());
-        prepare_prompt(&self.id, &text, &drafts, &self.deps.blobs, Some(caps)).await
+        prepare_prompt(&self.id, text, drafts, &self.deps.blobs, Some(caps)).await
       }
     };
-    let mut edited = edited_staged;
     // A fork's copied transcript has never reached the peer: its first prompt carries it as retained context
-    let (history_pending, proc, caps, turns_copy) = {
+    let (proc, caps, turns_copy) = {
       let c = self.core.lock();
-      (c.history_pending, c.proc.clone(), self.caps(&c), if !auto && c.history_pending { Some(c.state.turns.clone()) } else { None })
+      (c.proc.clone(), self.caps(&c), if !auto && c.history_pending { Some(c.state.turns.clone()) } else { None })
     };
     let mut fork_history = None;
     let mut fork_error = None;
@@ -135,289 +204,317 @@ impl AcpSession {
         }
       }
     }
-    let _ = history_pending;
-    let (user_turn, compacting, name, before) = {
+    Staging { prepared, edited_staged, fork_history, fork_error }
+  }
+
+  /// Staging is over: the user turn as it will be recorded, or None when a cancel or close came first
+  fn accept(self: &Arc<Self>, text: &str, origin: Origin, plan_id: Option<&str>, staging: Staging) -> Option<Accepted> {
+    let Staging { mut prepared, edited_staged, fork_history, fork_error } = staging;
+    let mut edited = edited_staged;
+    let mut c = self.core.lock();
+    c.phase.staging = false;
+    if c.phase.staging_aborted || c.status != SessionStatus::Ready {
+      drop(c);
+      self.log("prompt dropped: cancelled or closed while staging");
       let mut c = self.core.lock();
-      c.phase.staging = false;
-      if c.phase.staging_aborted || c.status != SessionStatus::Ready {
-        drop(c);
-        self.log("prompt dropped: cancelled or closed while staging");
-        let mut c = self.core.lock();
-        c.phase.running = false;
-        self.touch(&mut c);
-        drop(c);
-        self.flush_queue();
-        return;
-      }
-      if c.history_pending {
-        c.history_pending = false;
-        match &fork_history {
-          Some(h) => {
-            let mut blocks = h.blocks.clone();
-            blocks.append(&mut prepared.blocks);
-            prepared.blocks = blocks;
-            edited = true;
-            if h.omitted > 0 {
-              self.notify(&tp("host.forkContextTrimmed", &[("count", &h.omitted.to_string())]));
-            }
+      c.phase.running = false;
+      self.touch(&mut c);
+      drop(c);
+      self.flush_queue();
+      return None;
+    }
+    if c.history_pending {
+      c.history_pending = false;
+      match &fork_history {
+        Some(h) => {
+          let mut blocks = h.blocks.clone();
+          blocks.append(&mut prepared.blocks);
+          prepared.blocks = blocks;
+          edited = true;
+          if h.omitted > 0 {
+            self.notify(&tp("host.forkContextTrimmed", &[("count", &h.omitted.to_string())]));
           }
-          None => self.notify(&match &fork_error {
-            Some(e) => tp("host.forkContextFailed", &[("error", e)]),
-            None => t("host.forkContextTooLarge"),
-          }),
+        }
+        None => self.notify(&match &fork_error {
+          Some(e) => tp("host.forkContextFailed", &[("error", e)]),
+          None => t("host.forkContextTooLarge"),
+        }),
+      }
+    }
+    for p in &prepared.problems {
+      self.log(p);
+      self.notify(p);
+    }
+    if !prepared.attachments.is_empty() {
+      let skip = usize::from(!text.is_empty());
+      let kinds: Vec<&str> = prepared.blocks.iter().skip(skip).map(|b| b.get("type").and_then(Value::as_str).unwrap_or("?")).collect();
+      self.log(&format!("attachments: {}", kinds.join(" ")));
+    }
+    let before = capture_turn_settings(&c.state.controls);
+    let command = named_command(&c.state.commands, text).map(|x| x.name.clone());
+    let command_name = command_name(text).map(str::to_owned);
+    let user_turn = match origin {
+      Origin::Compact => UserTurn { text: text.to_owned(), auto: Some(true), ..Default::default() },
+      Origin::Continue => UserTurn {
+        id: Some(random_uuid()),
+        text: text.to_owned(),
+        settings: Some(before.clone()),
+        auto: Some(true),
+        auto_reason: Some(AutoReason::AccountSwitch),
+        ..Default::default()
+      },
+      Origin::User => UserTurn {
+        id: Some(random_uuid()),
+        text: text.to_owned(),
+        settings: Some(before.clone()),
+        command,
+        edited,
+        plan_id: plan_id.map(str::to_owned),
+        attachments: (!prepared.attachments.is_empty()).then(|| prepared.attachments.clone()),
+        ..Default::default()
+      },
+    };
+    Some(Accepted {
+      user_turn,
+      prepared,
+      compacting: is_compact_command(text),
+      command_name,
+      before,
+      forked: fork_history.is_some(),
+      edited_staged,
+    })
+  }
+
+  /// The over-budget /compact that goes out ahead of an accepted prompt, which waits below it as `pending_prompt`.
+  /// false = the session did not come back Ready: the bubble is kept and the prompt goes no further
+  async fn compact_before(self: &Arc<Self>, user_turn: &UserTurn) -> bool {
+    {
+      let mut c = self.core.lock();
+      self.log_usage_threshold(&c, "auto /compact before prompt");
+      c.pending_prompt = Some(Turn::User(user_turn.clone()));
+      c.phase.running = false;
+    }
+    self.compact(true).await.ok();
+    let mut c = self.core.lock();
+    c.pending_prompt = None;
+    // Keep the accepted bubble even if the peer disconnected during compaction
+    if c.status != SessionStatus::Ready {
+      c.state.turns.push(Turn::User(user_turn.clone()));
+      self.touch(&mut c);
+      return false;
+    }
+    c.phase.running = true;
+    true
+  }
+
+  /// Record the user turn, title an untitled session after it and open the agent turn the answer streams into
+  fn open_turn(&self, text: &str, origin: Origin, plan_id: Option<&str>, accepted: &mut Accepted) -> OpenTurn {
+    let mut c = self.core.lock();
+    c.agent_title_muted = c.forked_from.is_some() || accepted.forked || accepted.edited_staged;
+    c.completion = Some(CompactionCompletion::new(accepted.compacting.then_some(self.agent.as_str())));
+    c.turn_failure = None;
+    c.state.turns.push(Turn::User(std::mem::take(&mut accepted.user_turn)));
+    let untitled = c.state.title.as_deref().is_none_or(|x| x.is_empty() || x == t("session.untitled"));
+    if origin == Origin::User && plan_id.is_none() && untitled {
+      let summary = summarize_prompt(text, &accepted.prepared.attachments);
+      c.state.title = Some(clip(&summary, TITLE_MAX));
+    }
+    let started_at = now_ms();
+    let activity = activity_of(&c.state.turns);
+    c.state.turns.push(Turn::Agent(AgentTurn {
+      started_at: Some(started_at),
+      activity,
+      command: accepted.command_name.clone().map(|n| CommandReceipt { name: n, mode: None, options: None }),
+      ..Default::default()
+    }));
+    let agent_idx = c.state.turns.len() - 1;
+    self.touch(&mut c);
+    self.schedule_usage_poll(&mut c);
+    OpenTurn {
+      proc: c.proc.clone(),
+      acp_id: c.acp_session_id.clone(),
+      proc_gen: c.proc_gen,
+      usage_before: c.usage_revision,
+      agent_idx,
+      started_at,
+    }
+  }
+
+  /// session/prompt answered: usage, a structured session failure, the compaction and usage waits, the empty-answer
+  /// check. None = the session moved on meanwhile (replaced, closed, no longer Ready) and the turn is not settled here
+  async fn prompt_answered(self: &Arc<Self>, r: Value, turn: &OpenTurn, accepted: &Accepted, auto: bool) -> Option<Settled> {
+    let (agent_idx, started_at) = (turn.agent_idx, turn.started_at);
+    if !turn.live(&self.core.lock()) {
+      return None;
+    }
+    let reason = r.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn").to_owned();
+    self.log(&format!("prompt done: {reason}"));
+    let mut stop = TurnStop::parse(&reason).unwrap_or(TurnStop::EndTurn);
+    let mut exhausted = false;
+    let usage = turn_usage_of(&r);
+    let log = |line: &str| self.log(line);
+    let failure = failure_of(r.get("_meta"), Some(&log));
+    {
+      let mut c = self.core.lock();
+      if let Some(u) = usage
+        && let Some(turn) = agent_turn_mut(&mut c, agent_idx, started_at)
+      {
+        let ctx = turn.usage.as_ref().and_then(|x| x.context);
+        let mut merged = turn.usage.clone().unwrap_or_default();
+        merge_usage(&mut merged, u);
+        if merged.context.is_none() {
+          merged.context = ctx;
+        }
+        turn.usage = Some(merged);
+      }
+    }
+    if let Some(f) = failure.as_ref().filter(|f| f.severity == Severity::Error) {
+      let mut c = self.core.lock();
+      apply_session_failure(&mut c.state, f);
+      drop(c);
+      self.log(&format!(
+        "prompt failed: sessionFailure {} rev {} ({})",
+        f.id,
+        js_num(f.revision),
+        serde_json::to_value(f.category).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default()
+      ));
+      let mut c = self.core.lock();
+      stop = TurnStop::Cancelled;
+      let turn_error = failure_turn_error(f);
+      exhausted = self.reserve_switch(&mut c, &turn_error);
+      self.settle(&mut c, TurnStop::Cancelled, Some(turn_error));
+      if f.actions.contains(&FailureAction::Login) {
+        c.status = SessionStatus::AuthRequired;
+      }
+      return Some(Settled { stop, exhausted });
+    }
+    if let Some(f) = &failure {
+      apply_session_failure(&mut self.core.lock().state, f);
+    }
+    if stop == TurnStop::EndTurn {
+      if self.agent == "claude" {
+        let c = self.core.lock();
+        if let Some(size) = c.reported_window {
+          claude_window::confirm(c.account_id.as_deref(), &c.state.controls, size);
         }
       }
-      for p in &prepared.problems {
-        self.log(p);
-        self.notify(p);
+      let pending = self.core.lock().completion.as_mut().and_then(CompactionCompletion::wait);
+      if let Some(rx) = pending {
+        self.log("waiting for compaction completion");
+        let _ = rx.await;
       }
-      if !prepared.attachments.is_empty() {
-        let skip = usize::from(!text.is_empty());
-        let kinds: Vec<&str> = prepared.blocks.iter().skip(skip).map(|b| b.get("type").and_then(Value::as_str).unwrap_or("?")).collect();
-        self.log(&format!("attachments: {}", kinds.join(" ")));
+      if self.status() != SessionStatus::Ready {
+        self.flush_queue();
+        return None;
       }
-      let before = capture_turn_settings(&c.state.controls);
-      let command = named_command(&c.state.commands, &text).map(|x| x.name.clone());
-      let name = command_name(&text).map(str::to_owned);
-      let user_turn = match origin {
-        Origin::Compact => UserTurn { text: text.clone(), auto: Some(true), ..Default::default() },
-        Origin::Continue => UserTurn {
-          id: Some(random_uuid()),
-          text: text.clone(),
-          settings: Some(before.clone()),
-          auto: Some(true),
-          auto_reason: Some(AutoReason::AccountSwitch),
-          ..Default::default()
-        },
-        Origin::User => UserTurn {
-          id: Some(random_uuid()),
-          text: text.clone(),
-          settings: Some(before.clone()),
-          command,
-          edited,
-          plan_id: plan_id.clone(),
-          attachments: (!prepared.attachments.is_empty()).then(|| prepared.attachments.clone()),
-          ..Default::default()
-        },
-      };
-      (user_turn, is_compact_command(&text), name, before)
-    };
-    if compact_first {
       {
         let mut c = self.core.lock();
-        self.log_usage_threshold(&c, "auto /compact before prompt");
-        c.pending_prompt = Some(Turn::User(user_turn.clone()));
-        c.phase.running = false;
-      }
-      self.compact(true).await.ok();
-      let mut c = self.core.lock();
-      c.pending_prompt = None;
-      // Keep the accepted bubble even if the peer disconnected during compaction
-      if c.status != SessionStatus::Ready {
-        c.state.turns.push(Turn::User(user_turn));
-        self.touch(&mut c);
-        return;
-      }
-      c.phase.running = true;
-    }
-    let (proc, acp_id, prompt_gen, usage_before, agent_idx, started_at) = {
-      let mut c = self.core.lock();
-      c.agent_title_muted = c.forked_from.is_some() || fork_history.is_some() || edited_staged;
-      c.completion = Some(CompactionCompletion::new(compacting.then_some(self.agent.as_str())));
-      c.turn_failure = None;
-      c.state.turns.push(Turn::User(user_turn));
-      let untitled = c.state.title.as_deref().is_none_or(|x| x.is_empty() || x == t("session.untitled"));
-      if origin == Origin::User && plan_id.is_none() && untitled {
-        let summary = summarize_prompt(&text, &prepared.attachments);
-        c.state.title = Some(clip(&summary, TITLE_MAX));
-      }
-      let started_at = now_ms();
-      let activity = activity_of(&c.state.turns);
-      c.state.turns.push(Turn::Agent(AgentTurn {
-        started_at: Some(started_at),
-        activity,
-        command: name.clone().map(|n| CommandReceipt { name: n, mode: None, options: None }),
-        ..Default::default()
-      }));
-      let agent_idx = c.state.turns.len() - 1;
-      self.touch(&mut c);
-      self.schedule_usage_poll(&mut c);
-      (c.proc.clone(), c.acp_session_id.clone(), c.proc_gen, c.usage_revision, agent_idx, started_at)
-    };
-    let live = |c: &Core| c.proc_gen == prompt_gen && c.status != SessionStatus::Closed;
-    let mut stop;
-    // Set when the turn ran out of account quota and the session was reserved for an automatic switch
-    let mut exhausted = false;
-    let blocks = std::mem::take(&mut prepared.blocks);
-    let result = match &proc {
-      Some(p) => p.request("session/prompt", json!({ "sessionId": acp_id, "prompt": blocks })).await,
-      None => Err(RpcError::internal("no process")),
-    };
-    match result {
-      Ok(r) => {
-        if !live(&self.core.lock()) {
-          return;
-        }
-        let reason = r.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn").to_owned();
-        self.log(&format!("prompt done: {reason}"));
-        stop = TurnStop::parse(&reason).unwrap_or(TurnStop::EndTurn);
-        let usage = turn_usage_of(&r);
-        let log = |line: &str| self.log(line);
-        let failure = failure_of(r.get("_meta"), Some(&log));
+        let after = c.completion.as_ref().and_then(|x| x.tokens_after);
+        if (auto || accepted.compacting)
+          && let (Some(after), Some(u)) = (after, c.state.usage.as_mut())
         {
-          let mut c = self.core.lock();
-          if let Some(u) = usage
-            && let Some(turn) = agent_turn_mut(&mut c, agent_idx, started_at)
-          {
-            let ctx = turn.usage.as_ref().and_then(|x| x.context);
-            let mut merged = turn.usage.clone().unwrap_or_default();
-            merge_usage(&mut merged, u);
-            if merged.context.is_none() {
-              merged.context = ctx;
-            }
-            turn.usage = Some(merged);
-          }
-        }
-        if let Some(f) = failure.as_ref().filter(|f| f.severity == Severity::Error) {
-          let mut c = self.core.lock();
-          apply_session_failure(&mut c.state, f);
-          drop(c);
-          self.log(&format!(
-            "prompt failed: sessionFailure {} rev {} ({})",
-            f.id,
-            js_num(f.revision),
-            serde_json::to_value(f.category).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default()
-          ));
-          let mut c = self.core.lock();
-          stop = TurnStop::Cancelled;
-          let turn_error = failure_turn_error(f);
-          exhausted = self.reserve_switch(&mut c, &turn_error);
-          self.settle(&mut c, TurnStop::Cancelled, Some(turn_error));
-          if f.actions.contains(&FailureAction::Login) {
-            c.status = SessionStatus::AuthRequired;
-          }
-        } else {
-          if let Some(f) = &failure {
-            apply_session_failure(&mut self.core.lock().state, f);
-          }
-          if stop == TurnStop::EndTurn {
-            if self.agent == "claude" {
-              let c = self.core.lock();
-              if let Some(size) = c.reported_window {
-                claude_window::confirm(c.account_id.as_deref(), &c.state.controls, size);
-              }
-            }
-            let pending = self.core.lock().completion.as_mut().and_then(CompactionCompletion::wait);
-            if let Some(rx) = pending {
-              self.log("waiting for compaction completion");
-              let _ = rx.await;
-            }
-            if self.status() != SessionStatus::Ready {
-              self.flush_queue();
-              return;
-            }
-            {
-              let mut c = self.core.lock();
-              let after = c.completion.as_ref().and_then(|x| x.tokens_after);
-              if (auto || compacting)
-                && let (Some(after), Some(u)) = (after, c.state.usage.as_mut())
-              {
-                u.used = num(after);
-              }
-            }
-            if !auto && name.is_none() && self.wait_for_kimi_usage(usage_before).await {
-              stop = TurnStop::Cancelled;
-            }
-            if self.status() != SessionStatus::Ready {
-              return;
-            }
-          }
-          self.refresh_context_usage().await;
-          let mut c = self.core.lock();
-          if !live(&c) {
-            return;
-          }
-          let controls = c.state.controls.clone();
-          if stop == TurnStop::EndTurn
-            && let Some(turn) = agent_turn_mut(&mut c, agent_idx, started_at)
-            && let Some(cmd) = turn.command.as_mut()
-          {
-            let (mode, options) = command_changes(&before, &controls);
-            cmd.mode = mode;
-            cmd.options = options;
-          }
-          // Some CLIs acknowledge provider failures as empty end_turn responses: record the missing output
-          let empty = agent_turn_mut(&mut c, agent_idx, started_at).is_some_and(|turn| {
-            turn.command.is_none() && turn.blocks.iter().all(|b| matches!(b, AgentBlock::Text(x) if x.markdown.trim().is_empty()))
-          });
-          if stop == TurnStop::EndTurn && !auto && empty {
-            drop(c);
-            self.log("prompt empty: end_turn without output or error details");
-            let mut c = self.core.lock();
-            stop = TurnStop::Cancelled;
-            self.settle(
-              &mut c,
-              stop,
-              Some(TurnError {
-                message: t("host.emptyResponse"),
-                kind: Some("empty_response".into()),
-                retryable: Some(true),
-                ..Default::default()
-              }),
-            );
-          } else {
-            self.settle(&mut c, stop, None);
-          }
+          u.used = num(after);
         }
       }
-      Err(e) => {
-        // Disposal already settled and persisted the interrupted turn
-        if !live(&self.core.lock()) {
-          return;
-        }
+      if !auto && accepted.command_name.is_none() && self.wait_for_kimi_usage(turn.usage_before).await {
         stop = TurnStop::Cancelled;
-        self.log(&format!("prompt failed: {e}"));
-        self.refresh_context_usage().await;
-        let mut c = self.core.lock();
-        if !live(&c) {
-          return;
-        }
-        let code = e.code;
-        let err = anyhow::Error::new(e);
-        let failure = c.turn_failure.clone();
-        let turn_error = match &failure {
-          Some(f) => TurnError { code: Some(code), ..failure_turn_error(f) },
-          None => turn_error_of(&err),
-        };
-        exhausted = self.reserve_switch(&mut c, &turn_error);
-        self.settle(&mut c, TurnStop::Cancelled, Some(turn_error));
-        if is_auth(&err) || failure.as_ref().is_some_and(|f| f.actions.contains(&FailureAction::Login)) {
-          c.status = SessionStatus::AuthRequired;
-        } else if is_session_gone(&err) || !c.proc.as_ref().is_some_and(|p| p.alive()) {
-          // Resending over this connection can only fail the same way: the error Notice's Retry reconnects
-          c.status = SessionStatus::Error;
-          c.error = Some(err.to_string());
-        }
+      }
+      if self.status() != SessionStatus::Ready {
+        return None;
       }
     }
+    self.refresh_context_usage().await;
+    let mut c = self.core.lock();
+    if !turn.live(&c) {
+      return None;
+    }
+    let controls = c.state.controls.clone();
+    if stop == TurnStop::EndTurn
+      && let Some(turn) = agent_turn_mut(&mut c, agent_idx, started_at)
+      && let Some(cmd) = turn.command.as_mut()
+    {
+      let (mode, options) = command_changes(&accepted.before, &controls);
+      cmd.mode = mode;
+      cmd.options = options;
+    }
+    // Some CLIs acknowledge provider failures as empty end_turn responses: record the missing output
+    let empty = agent_turn_mut(&mut c, agent_idx, started_at).is_some_and(|turn| {
+      turn.command.is_none() && turn.blocks.iter().all(|b| matches!(b, AgentBlock::Text(x) if x.markdown.trim().is_empty()))
+    });
+    if stop == TurnStop::EndTurn && !auto && empty {
+      drop(c);
+      self.log("prompt empty: end_turn without output or error details");
+      let mut c = self.core.lock();
+      stop = TurnStop::Cancelled;
+      self.settle(
+        &mut c,
+        stop,
+        Some(TurnError {
+          message: t("host.emptyResponse"),
+          kind: Some("empty_response".into()),
+          retryable: Some(true),
+          ..Default::default()
+        }),
+      );
+    } else {
+      self.settle(&mut c, stop, None);
+    }
+    Some(Settled { stop, exhausted })
+  }
+
+  /// session/prompt failed: the error card, and a login or reconnect state when resending cannot help. None = disposal or a
+  /// replacement process already settled the turn
+  async fn prompt_failed(self: &Arc<Self>, e: RpcError, turn: &OpenTurn) -> Option<Settled> {
+    // Disposal already settled and persisted the interrupted turn
+    if !turn.live(&self.core.lock()) {
+      return None;
+    }
+    self.log(&format!("prompt failed: {e}"));
+    self.refresh_context_usage().await;
+    let mut c = self.core.lock();
+    if !turn.live(&c) {
+      return None;
+    }
+    let code = e.code;
+    let err = anyhow::Error::new(e);
+    let failure = c.turn_failure.clone();
+    let turn_error = match &failure {
+      Some(f) => TurnError { code: Some(code), ..failure_turn_error(f) },
+      None => turn_error_of(&err),
+    };
+    let exhausted = self.reserve_switch(&mut c, &turn_error);
+    self.settle(&mut c, TurnStop::Cancelled, Some(turn_error));
+    if is_auth(&err) || failure.as_ref().is_some_and(|f| f.actions.contains(&FailureAction::Login)) {
+      c.status = SessionStatus::AuthRequired;
+    } else if is_session_gone(&err) || !c.proc.as_ref().is_some_and(|p| p.alive()) {
+      // Resending over this connection can only fail the same way: the error Notice's Retry reconnects
+      c.status = SessionStatus::Error;
+      c.error = Some(err.to_string());
+    }
+    Some(Settled { stop: TurnStop::Cancelled, exhausted })
+  }
+
+  /// After a settled turn: the compaction mark, then either park the queue (context overflow), switch accounts
+  /// (quota exhausted) or compact / flush as usual
+  fn finish_turn(self: &Arc<Self>, turn: &OpenTurn, auto: bool, compacting: bool, settled: Settled) {
     let context_error = {
       let mut c = self.core.lock();
       if auto || compacting {
         c.compacted_at = Some(c.state.usage.map(|u| u.used.0).unwrap_or(0.0));
       }
-      c.auto_compact_eligible = !auto && !compacting && stop == TurnStop::EndTurn;
+      c.auto_compact_eligible = !auto && !compacting && settled.stop == TurnStop::EndTurn;
       self.touch(&mut c);
-      agent_turn_mut(&mut c, agent_idx, started_at).is_some_and(|t| is_context_length_error(t.error.as_ref()))
+      agent_turn_mut(&mut c, turn.agent_idx, turn.started_at).is_some_and(|t| is_context_length_error(t.error.as_ref()))
     };
     // Queued messages stay parked until the context is compacted or the input changes
     if context_error {
       return;
     }
-    if exhausted {
-      tokio::spawn(self.clone().switch_after_exhaustion(agent_idx, started_at));
+    if settled.exhausted {
+      tokio::spawn(self.clone().switch_after_exhaustion(turn.agent_idx, turn.started_at));
       return;
     }
-    self.after_prompt(auto, stop);
+    self.after_prompt(auto, settled.stop);
   }
 
   pub(crate) fn settle(&self, c: &mut Core, stop: TurnStop, error: Option<TurnError>) {
