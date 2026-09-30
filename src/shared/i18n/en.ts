@@ -110,6 +110,7 @@ export const en = {
   'code.copyFailed': 'Copy failed, try again',
   'common.image': 'Image',
   'image.copy': 'Copy image',
+  'image.openInEditor': 'Open in editor',
   'common.previewImage': 'Preview {name}',
   'common.removeNamed': 'Remove {name}',
   'common.account': 'Account',

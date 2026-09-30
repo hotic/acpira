@@ -29,8 +29,11 @@ const idle = (fn: () => void) => {
 // hands over to the ordinary AgentImage. History, replay and a remount after completion show the static image directly.
 // Memoized on the block reference like ToolCall; the slot keys keep the placeholder's card (and its shader) through completion.
 // Shown images (show_image) take the same place without the generation placeholder: the files already exist.
+// Their row names the files, so the images carry no path caption.
 export const GeneratedImages = memo(function GeneratedImages({ block }: { block: ToolCallBlock }) {
-  const open = !isShowImageTool(block) && (block.status === 'pending' || block.status === 'in_progress');
+  // A show_image row already names its files, so the images drop their path captions
+  const shown = isShowImageTool(block);
+  const open = !shown && (block.status === 'pending' || block.status === 'in_progress');
   const [live] = useState(open);
   const images = toolImages(block);
   const slots: (ImageRef | undefined)[] = open && images.length === 0 ? [undefined] : images;
@@ -39,7 +42,7 @@ export const GeneratedImages = memo(function GeneratedImages({ block }: { block:
     <div className="flex min-w-0 flex-wrap gap-gap">
       {slots.map((image, i) => live
         ? <GenerationCard key={i} image={image} />
-        : image && <AgentImage key={i} image={image} />)}
+        : image && <AgentImage key={i} image={image} caption={!shown} />)}
     </div>
   );
 });

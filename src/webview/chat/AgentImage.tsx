@@ -1,5 +1,5 @@
 import { useCallback, useContext, useState } from 'react';
-import { Copy, Image as ImageIcon } from 'lucide-react';
+import { Copy, ExternalLink, Image as ImageIcon } from 'lucide-react';
 import { ContextMenu } from '@base-ui/react/context-menu';
 import type { ImageRef } from '@shared/transcript';
 import { t } from '../i18n';
@@ -12,9 +12,10 @@ import { Lightbox } from './Lightbox';
 import { BlobUrlContext, OpenBlobContext, OpenToolFileContext, parseFileLink } from './fileLinks';
 
 // An agent-emitted image (message chunk or tool content): pixels live in the session's blob store, base64 never
-// enters the transcript. A click opens the file in the editor; without a host opener the Lightbox is the fallback.
-// The agent's `uri` (where it saved its copy, e.g. codex-acp) rides along as a small openable caption.
-export function AgentImage({ image }: { image: ImageRef }) {
+// enters the transcript. A click previews it in the shell's Lightbox, like a dropped attachment; opening the file in an
+// editor tab is a right-click action next to Copy image. The agent's `uri` (where it saved its copy, e.g. codex-acp)
+// rides along as a small openable caption unless the surrounding row already names the file (`caption={false}`).
+export function AgentImage({ image, caption = true }: { image: ImageRef; caption?: boolean }) {
   const blobUrl = useContext(BlobUrlContext);
   const openBlob = useContext(OpenBlobContext);
   const openFile = useContext(OpenToolFileContext);
@@ -23,7 +24,8 @@ export function AgentImage({ image }: { image: ImageRef }) {
   const src = image.blob && blobUrl ? blobUrl(image.blob) : undefined;
   const file = image.uri ? parseFileLink(image.uri) : undefined;
   const name = file?.path.split(/[\\/]/).pop() ?? t('common.image');
-  const open = image.blob && openBlob ? () => openBlob(image.blob!) : src ? () => setPreview(true) : undefined;
+  // Editor-tab opener for the context menu: the blob itself when the host can open it, else the agent's own file
+  const openInEditor = image.blob && openBlob ? () => openBlob(image.blob!) : file && openFile ? () => openFile(file.path, file.line) : undefined;
   const writeImage = useCallback(() => (src ? copyImage(src, image.mimeType) : Promise.reject(new Error('No image pixels'))), [src, image.mimeType]);
   const { state: copyState, copy } = useCopyAction(src, writeImage);
   return (
@@ -34,10 +36,9 @@ export function AgentImage({ image }: { image: ImageRef }) {
             <button
               type="button"
               title={name}
-              aria-label={t('attach.view', { name })}
-              onClick={open}
-              disabled={!open}
-              className={cn('block max-w-full overflow-hidden rounded-md border border-line outline-none focus-visible:ring-1 focus-visible:ring-focus', open && 'cursor-pointer')}
+              aria-label={t('common.previewImage', { name })}
+              onClick={() => setPreview(true)}
+              className="block max-w-full cursor-pointer overflow-hidden rounded-md border border-line outline-none focus-visible:ring-1 focus-visible:ring-focus"
             >
               <img src={src} alt={name} className="max-h-agent-image w-auto max-w-full object-contain" />
             </button>
@@ -49,6 +50,12 @@ export function AgentImage({ image }: { image: ImageRef }) {
                   <Copy className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} />
                   {t('image.copy')}
                 </ContextMenu.Item>
+                {openInEditor && (
+                  <ContextMenu.Item onClick={openInEditor} className={optionClass}>
+                    <ExternalLink className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} />
+                    {t('image.openInEditor')}
+                  </ContextMenu.Item>
+                )}
               </ContextMenu.Popup>
             </ContextMenu.Positioner>
           </ContextMenu.Portal>
@@ -67,8 +74,9 @@ export function AgentImage({ image }: { image: ImageRef }) {
           <span className="truncate">{name}</span>
         </button>
       )}
-      {copyState !== 'idle' && <span role="status" className="text-3 text-fg-3">{t(copyState === 'copied' ? 'code.copied' : 'code.copyFailed')}</span>}
-      {file && openFile && (
+      {/* Copy feedback is for screen readers only: a visible line under the image would push the transcript down */}
+      <span className="sr-only" role="status">{copyState === 'idle' ? '' : t(copyState === 'copied' ? 'code.copied' : 'code.copyFailed')}</span>
+      {caption && file && openFile && (
         <button type="button" title={file.path} onClick={() => openFile(file.path, file.line)}
           className="max-w-full truncate text-3 text-fg-3 underline-offset-2 outline-none hover:text-fg-2 hover:underline focus-visible:text-fg-1 focus-visible:underline">
           {image.uri}
