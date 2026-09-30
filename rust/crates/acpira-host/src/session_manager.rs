@@ -764,6 +764,36 @@ impl SessionManager {
     vec![]
   }
 
+  /// What a new session of this agent paints before session/new: the probe's or a stored session's options, and the modes
+  /// a stored session showed (protocol modes are never probed)
+  async fn known_start_controls(&self, agent: &str) -> SessionControls {
+    let probed = self.state.lock().probed.get(agent).filter(|p| !p.options.is_empty()).map(|p| p.options.clone());
+    let index = self.state.lock().index.clone();
+    let mut out = SessionControls::default();
+    for s in index.iter().filter(|s| s.agent == agent) {
+      let controls = match self.live(&s.id) {
+        Some(l) => l.agent_controls(),
+        None => self.deps.store.load(&s.id).await.map(|r| r.controls).unwrap_or_default(),
+      };
+      if out.modes.is_empty() && !controls.modes.is_empty() {
+        out.modes = controls.modes;
+        out.mode_config_id = controls.mode_config_id;
+      }
+      if !controls.options.is_empty() && probed.is_none() {
+        out.options = controls.options;
+        break;
+      }
+      // The probe has the options: the newest session's modes are enough, older records are not worth loading
+      if probed.is_some() {
+        break;
+      }
+    }
+    if let Some(options) = probed {
+      out.options = options;
+    }
+    out
+  }
+
   /// The settings page's refresh button: a throwaway spawn reads the CLI's current configOptions
   pub async fn probe_controls(self: &Arc<Self>, agent: &str) -> Vec<ConfigControl> {
     if agent == CHATGPT_ID {
@@ -1197,7 +1227,10 @@ impl SessionManager {
       // Inheritable settings are snapped before the session starts spawning
       let last = me.last_settings(&id);
       let s = AcpSession::fresh(&id, &cwd, me.session_deps(), acc);
-      s.preview_controls(&me.known_controls(&id).await, last.as_ref());
+      s.preview_controls(&me.known_start_controls(&id).await, last.as_ref());
+      if let Some(last) = &last {
+        s.hold_settings(last);
+      }
       me.state.lock().live.insert(s.id.clone(), s.clone());
       me.set_active(&v, Some(s.id.clone()));
       me.process_change(&s.id);

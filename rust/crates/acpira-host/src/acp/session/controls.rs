@@ -268,19 +268,66 @@ impl AcpSession {
     result
   }
 
+  /// Keep a new session's remembered choices on screen from the preview until `adopt_controls` has replayed them, and
+  /// queue prompts meanwhile: session/new's defaults never flash, and a first prompt never runs under them
+  pub fn hold_settings(&self, settings: &TurnSettings) {
+    let mut c = self.core.lock();
+    let config = settings.config.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone()));
+    let mode = settings.mode_id.clone().filter(|m| !m.is_empty()).map(|m| (MODE_PICK.to_owned(), m));
+    let entries: Vec<(String, String)> = config.chain(mode).collect();
+    c.adopt_pending = true;
+    for (key, value) in entries {
+      c.pick_seq += 1;
+      let token = c.pick_seq;
+      c.picks.insert(key.clone(), (value, token));
+      c.holds.push((key, token));
+    }
+  }
+
+  /// A held key the user has picked over since: the replay leaves it to that pick
+  fn superseded(&self, key: &str) -> bool {
+    let c = self.core.lock();
+    c.holds.iter().any(|(k, t)| k == key && c.picks.get(k).is_none_or(|(_, cur)| cur != t))
+  }
+
+  /// Drop the holds still in place (agent truth or the user's own picks show from here) and let queued prompts go
+  fn release_holds(self: &Arc<Self>) {
+    {
+      let mut c = self.core.lock();
+      if !c.adopt_pending && c.holds.is_empty() {
+        return;
+      }
+      for (key, token) in std::mem::take(&mut c.holds) {
+        if c.picks.get(&key).is_some_and(|(_, t)| *t == token) {
+          c.picks.remove(&key);
+        }
+      }
+      c.adopt_pending = false;
+      self.touch(&mut c);
+    }
+    self.flush_queue();
+  }
+
   /// Replay what was chosen last time in this agent, one request per difference in control order; choices the agent
-  /// no longer offers are skipped, a refused one is logged and the rest go on
+  /// no longer offers are skipped, a refused one is logged and the rest go on. Runs under the pick lock, so a composer
+  /// pick made meanwhile lands after the replay and wins
   pub async fn adopt_controls(self: &Arc<Self>, settings: TurnSettings) {
     {
       let mut c = self.core.lock();
       if c.status != SessionStatus::Ready || c.proc.is_none() {
+        drop(c);
+        self.release_holds();
         return;
       }
       c.adopting = true;
     }
+    let serial = self.pick_lock.lock().await;
     let ids: Vec<String> = self.core.lock().state.controls.options.iter().map(|o| o.id.clone()).collect();
     for id in ids {
       let Some(value) = settings.config.get(&id).filter(|v| !v.is_empty()).cloned() else { continue };
+      if self.superseded(&id) {
+        continue;
+      }
       let differs = {
         let c = self.core.lock();
         c.state
@@ -298,7 +345,7 @@ impl AcpSession {
       }
     }
     self.core.lock().adopting = false;
-    if let Some(mode) = settings.mode_id.filter(|m| !m.is_empty()) {
+    if let Some(mode) = settings.mode_id.filter(|m| !m.is_empty() && !self.superseded(MODE_PICK)) {
       let differs = {
         let c = self.core.lock();
         c.state.controls.mode_id.as_ref() != Some(&mode) && c.state.controls.modes.iter().any(|m| m.id == mode)
@@ -307,5 +354,7 @@ impl AcpSession {
         self.log(&format!("adopt mode {mode} refused: {e}"));
       }
     }
+    drop(serial);
+    self.release_holds();
   }
 }

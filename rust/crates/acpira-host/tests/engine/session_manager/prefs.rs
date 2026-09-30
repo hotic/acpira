@@ -140,3 +140,48 @@ async fn each_models_parameters_are_learned_from_live_switches_and_carried_on_th
   next.dispose().await;
   other.dispose().await;
 }
+
+// A new session shows its remembered choices from the first frame: session/new's defaults (m1 / high / agent) never reach the
+// screen while a slow agent replays them one request at a time, and a prompt sent meanwhile waits for the replay instead of
+// running under the defaults
+#[tokio::test(flavor = "multi_thread")]
+async fn remembered_choices_show_from_the_first_frame_and_a_prompt_waits_for_the_replay() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let m = Mgr::new(dir.path(), Opts::with_agents(fake.setting(json!({ "env": { "FAKE_CONFIG_DELAY_MS": "150" } })), "fake"));
+  m.init().await;
+  m.new_session(None).await;
+  m.handle(json!({ "type": "setConfig", "configId": "model", "value": "m2" })).await;
+  m.handle(json!({ "type": "setConfig", "configId": "effort", "value": "low" })).await;
+  m.handle(json!({ "type": "setMode", "id": "plan" })).await;
+  // a turn keeps the first session out of the empty-session cleanup, so its controls stay known
+  m.handle(json!({ "type": "send", "text": "hello" })).await;
+  let first = m.active_id().unwrap();
+  m.events.lock().unwrap().clear();
+
+  let (mgr, viewer) = (m.m.clone(), m.v.clone());
+  let opening = tokio::spawn(async move { mgr.new_session_for(&viewer, None, None).await.unwrap() });
+  until(|| m.active_id().is_some_and(|id| id != first) && m.active().is_some_and(|a| a["status"] == "ready"), 5000).await;
+  // the replay is still in flight here: the prompt queues behind it
+  m.handle(json!({ "type": "send", "text": "inspect-history" })).await;
+  opening.await.unwrap();
+  until(|| m.active().is_some_and(|a| a["running"] == false && turns_len(Some(a.clone())) == 2), 5000).await;
+
+  let id = m.active_id().unwrap();
+  let frames: Vec<Value> =
+    m.events.lock().unwrap().iter().filter(|e| e["type"] == "session" && e["session"]["id"] == id.as_str()).map(|e| e["session"].clone()).collect();
+  assert!(frames.iter().any(|f| f["status"] == "starting" && f["controls"]["modeId"] == "plan"), "the mode was not painted before session/new");
+  for f in &frames {
+    let options = f["controls"]["options"].as_array().cloned().unwrap_or_default();
+    if !options.is_empty() {
+      assert_eq!(option_values(f), [json!("m2"), json!("low")], "status {}", f["status"]);
+    }
+    if f["controls"]["modes"].as_array().is_some_and(|m| !m.is_empty()) {
+      assert_eq!(f["controls"]["modeId"], "plan", "status {}", f["status"]);
+    }
+  }
+  // the queued prompt ran under the replayed choices
+  let markdown = last_turn(&m.active().unwrap())["blocks"].to_string();
+  assert!(markdown.contains("\\\"model\\\":\\\"m2\\\"") && markdown.contains("\\\"mode\\\":\\\"plan\\\""), "{markdown}");
+  m.dispose().await;
+}

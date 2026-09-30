@@ -202,6 +202,10 @@ pub(crate) struct Core {
   pub finish_usage_refresh: Option<oneshot::Sender<bool>>,
   pub syncing_thought: bool,
   pub adopting: bool,
+  /// A new session's remembered choices are on screen and still to be replayed: prompts queue until `adopt_controls` ends
+  pub adopt_pending: bool,
+  /// The pick overlay entries (key, token) that hold remembered choices on screen while they are replayed
+  pub holds: Vec<(String, u64)>,
   pub picks: HashMap<String, (String, u64)>,
   pub pick_seq: u64,
   pub rev: i64,
@@ -307,6 +311,8 @@ impl AcpSession {
           finish_usage_refresh: None,
           syncing_thought: false,
           adopting: false,
+          adopt_pending: false,
+          holds: vec![],
           picks: HashMap::new(),
           pick_seq: 0,
           rev: 0,
@@ -1096,21 +1102,28 @@ impl AcpSession {
     }
   }
 
-  /// Paint last-known chips before session/new returns so the composer isn't empty during start
-  pub fn preview_controls(&self, options: &[ConfigControl], settings: Option<&TurnSettings>) {
+  /// Paint last-known chips before session/new returns so the composer isn't empty during start: the remembered values
+  /// over the options and modes an earlier session of this agent showed
+  pub fn preview_controls(&self, known: &SessionControls, settings: Option<&TurnSettings>) {
     let mut c = self.core.lock();
+    let remembered_mode = settings.and_then(|s| s.mode_id.clone());
     if let Some(syn) = self.synthetic_modes().filter(|s| !s.is_empty()) {
-      c.state.controls.mode_id = Some(match settings.and_then(|s| s.mode_id.clone()) {
+      c.state.controls.mode_id = Some(match remembered_mode {
         Some(m) if syn.iter().any(|x| x.id == m) => m,
         _ => syn[0].id.clone(),
       });
       c.state.controls.modes = syn;
       c.auto_approve = c.state.controls.mode_id.as_deref() == Some("yolo");
+    } else if let Some(m) = remembered_mode.filter(|m| known.modes.iter().any(|x| &x.id == m)) {
+      // Protocol modes only arrive with session/new; without a remembered one the chip stays empty rather than guess
+      c.state.controls.modes = known.modes.clone();
+      c.state.controls.mode_id = Some(m);
+      c.state.controls.mode_config_id = known.mode_config_id.clone();
     }
-    if options.is_empty() {
+    if known.options.is_empty() {
       return;
     }
-    let mut next = options.to_vec();
+    let mut next = known.options.clone();
     for ctl in &mut next {
       if let Some(v) = settings.and_then(|s| s.config.get(&ctl.id))
         && ctl.options.iter().any(|o| &o.id == v)
@@ -1184,14 +1197,19 @@ pub(crate) fn visible_turns(c: &Core) -> impl DoubleEndedIterator<Item = &Turn> 
   c.state.turns.iter().chain(c.pending_prompt.iter())
 }
 
-/// Controls with in-flight picks overlaid
+/// Controls with in-flight picks overlaid; a pick the controls do not offer (a held remembered value the agent dropped)
+/// leaves agent truth showing
 pub(crate) fn picked_controls(c: &Core) -> SessionControls {
   let mut out = c.state.controls.clone();
-  if let Some((v, _)) = c.picks.get(MODE_PICK) {
+  if let Some((v, _)) = c.picks.get(MODE_PICK)
+    && out.modes.iter().any(|m| &m.id == v)
+  {
     out.mode_id = Some(v.clone());
   }
   for o in &mut out.options {
-    if let Some((v, _)) = c.picks.get(&o.id) {
+    if let Some((v, _)) = c.picks.get(&o.id)
+      && o.options.iter().any(|x| &x.id == v)
+    {
       o.value = Some(v.clone());
     }
   }
