@@ -10,6 +10,7 @@ import { lookAttrs, ThemeContext, type ShellLook, type Theme } from '../look';
 import { t } from '../i18n';
 import { ShellLayerContext } from '../ui/Popover';
 import { cn } from '../ui/cn';
+import { DockStack } from '../ui/DockStack';
 import { Chip, IconButton } from '../ui/Button';
 import { useScrollReveal } from '../ui/useScrollReveal';
 import { useStableList } from '../ui/useStableList';
@@ -498,23 +499,25 @@ export function Shell(p: ShellProps) {
                     onUnlock={on.unlockCredentials && (() => on.unlockCredentials?.(p.agent.id))}
                     onTakeOver={p.canTakeOver ? on.takeOver : undefined}
                   />}
-                  {p.queued?.length && p.activeSessionId
-                    ? <Queue key={`queue:${p.activeSessionId}`} items={p.queued} composer={composerProps} blobUrl={blobUrl}
-                        on={on.dequeue && on.editQueued ? {
-                          remove: id => on.dequeue!(p.activeSessionId!, id),
-                          sendNow: on.sendQueued && (id => on.sendQueued!(p.activeSessionId!, id)),
-                          steer: p.steerQueued && p.running && on.steerQueued ? id => on.steerQueued!(p.activeSessionId!, id) : undefined,
-                          edit: (id, text, kept, drafts) => on.editQueued!(p.activeSessionId!, id, text, kept, drafts),
-                        } : undefined} />
-                    : null}
-                  {/* Sibling keys include the component role; duplicate session-only keys leave stale queue rows after reconciliation. */}
-                  {!p.external && <Composer key={`composer:${p.activeSessionId}`} {...composerProps} draftKey={p.activeSessionId} main shareSelection={p.shareEditorSelection}
-                    toolbarStart={!!p.subagents?.length && <Chip narrow="icon" caret={false} className="shrink-0" icon={<Network strokeWidth={1.5} />}
-                      aria-label={`${t('subagents.graph')} · ${t('subagents.entry', { n: p.subagents.length })}`}
-                      title={`${t('subagents.graph')} · ${t('subagents.entry', { n: p.subagents.length })}`}
-                      aria-haspopup="dialog" aria-expanded={graphOpen} onClick={() => setGraphOpen(true)}>
-                      {t('subagents.entry', { n: p.subagents.length })}
-                    </Chip>} />}
+                  <DockStack>
+                    {p.queued?.length && p.activeSessionId
+                      ? <Queue key={`queue:${p.activeSessionId}`} items={p.queued} composer={composerProps} blobUrl={blobUrl}
+                          on={on.dequeue && on.editQueued ? {
+                            remove: id => on.dequeue!(p.activeSessionId!, id),
+                            sendNow: on.sendQueued && (id => on.sendQueued!(p.activeSessionId!, id)),
+                            steer: p.steerQueued && p.running && on.steerQueued ? id => on.steerQueued!(p.activeSessionId!, id) : undefined,
+                            edit: (id, text, kept, drafts) => on.editQueued!(p.activeSessionId!, id, text, kept, drafts),
+                          } : undefined} />
+                      : null}
+                    {/* Sibling keys include the component role; duplicate session-only keys leave stale queue rows after reconciliation. */}
+                    {!p.external && <Composer key={`composer:${p.activeSessionId}`} {...composerProps} draftKey={p.activeSessionId} main shareSelection={p.shareEditorSelection}
+                      toolbarStart={!!p.subagents?.length && <Chip narrow="icon" caret={false} className="shrink-0" icon={<Network strokeWidth={1.5} />}
+                        aria-label={`${t('subagents.graph')} · ${t('subagents.entry', { n: p.subagents.length })}`}
+                        title={`${t('subagents.graph')} · ${t('subagents.entry', { n: p.subagents.length })}`}
+                        aria-haspopup="dialog" aria-expanded={graphOpen} onClick={() => setGraphOpen(true)}>
+                        {t('subagents.entry', { n: p.subagents.length })}
+                      </Chip>} />}
+                  </DockStack>
                 </div>
               </div>
             </div>

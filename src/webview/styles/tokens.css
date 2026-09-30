@@ -119,6 +119,8 @@
   --pad-y: 18px;
   /* Page margin: content's distance from the shell edge (header / conversation flow / composer outline share one vertical line), larger than the card padding --pad */
   --page: 20px;
+  /* The composer dock is one stack: its cards use a smaller, stable rhythm than transcript exchanges. */
+  --dock-gap: 8px;
   /* Conversation column in the editor panel */
   --content-w: 720px;
   --gap: 8px;
