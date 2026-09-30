@@ -104,7 +104,7 @@ impl AcpSession {
         || (text.trim().is_empty() && drafts.is_empty() && staged.as_ref().is_none_or(|s| s.prepared.blocks.is_empty()))
       {
         Gate::Drop
-      } else if origin != Origin::Continue && (c.switching || c.phase.running || c.detached || (!auto && c.pending_prompt.is_some())) {
+      } else if origin != Origin::Continue && (c.switching || c.adopt_pending || c.phase.running || c.detached || (!auto && c.pending_prompt.is_some())) {
         Gate::Queue
       } else {
         c.switching = false;
@@ -624,6 +624,7 @@ impl AcpSession {
       if c.status != SessionStatus::Ready
         || c.phase.running
         || c.switching
+        || c.adopt_pending
         || c.pending_prompt.is_some()
         || c.steering_id.is_some()
         || c.detached
