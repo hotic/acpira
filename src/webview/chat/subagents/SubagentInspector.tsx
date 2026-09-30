@@ -12,7 +12,7 @@ import { Questions, type OnAnswer } from '../Questions';
 import { Prose } from '../Prose';
 import { HistoryContext } from '../HistoryMessage';
 import { TurnActionsContext } from '../TurnActions';
-import { followsBottom, scrollerUsable } from '../promptStuck';
+import { useBottomFollow } from '../useBottomFollow';
 import { subagentTitle } from './subagentState';
 
 interface InspectorProps {
@@ -79,30 +79,15 @@ export function SubagentInspector(p: InspectorProps) {
 
 function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, blobUrl }: InspectorProps) {
   const scroll = useRef<HTMLDivElement>(null);
-  const pinned = useRef(true);
+  const body = useRef<HTMLDivElement>(null);
   // Stick to the bottom while the child streams, exactly like the main thread; scrolling up releases the follow
-  useEffect(() => {
-    const el = scroll.current;
-    if (!el) return;
-    let lastTop = el.scrollTop;
-    const onScroll = () => {
-      if (!scrollerUsable(el)) return;
-      pinned.current = followsBottom(el, pinned.current, lastTop);
-      lastTop = el.scrollTop;
-    };
-    el.addEventListener('scroll', onScroll, { passive: true });
-    return () => el.removeEventListener('scroll', onScroll);
-  }, []);
-  useLayoutEffect(() => {
-    const el = scroll.current;
-    if (el && scrollerUsable(el) && pinned.current) el.scrollTop = el.scrollHeight;
-  }, [transcript?.turns, transcript?.running]);
+  useBottomFollow(scroll, body, undefined, [transcript?.turns, transcript?.running]);
   const lastAgent = transcript ? transcript.turns.reduce((at, turn, i) => (turn.role === 'agent' ? i : at), -1) : -1;
   return (
     <>
       {/* The main thread's column: page margin on the scroller, turns and the task card carry their own --pad */}
       <div ref={scroll} className="scroll-thin min-h-0 min-w-0 flex-1 overflow-y-auto px-page">
-        <div className={cn('mx-auto flex min-w-0 flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-(--content-w)')}>
+        <div ref={body} className={cn('mx-auto flex min-w-0 flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-(--content-w)')}>
           {node.task !== undefined && <TaskCard task={node.task} />}
           {node.visibility === 'receipt' ? (
             <>
