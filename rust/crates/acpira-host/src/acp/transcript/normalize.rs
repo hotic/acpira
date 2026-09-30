@@ -25,7 +25,7 @@ use crate::acp::transport::wire::{AsyncTaskEvent, TaskEventKind};
 use crate::i18n::{t, tp};
 use crate::json::{basename, pretty, slice16, str_of, text_of};
 use crate::limits::{MAX_OUT_IMAGE_BYTES, TOOL_OUTPUT_MAX};
-use crate::util::now_ms;
+use crate::util::{js_num, now_ms};
 
 pub type ImageSaver = Arc<dyn Fn(&str, &str) -> Option<String> + Send + Sync>;
 pub type FileImageSaver = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
@@ -1366,10 +1366,6 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
       b.todo_entries = entries;
     }
   }
-}
-
-fn js_num(n: f64) -> String {
-  if n.fract() == 0.0 && n.abs() < 1e21 { format!("{}", n as i64) } else { format!("{n}") }
 }
 
 /// OpenCode's permission request embeds a low-fidelity copy of the call: with a block already there, take only what

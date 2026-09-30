@@ -253,7 +253,7 @@ pub fn parse_kimi_quota(payload: &Value) -> Option<AccountQuota> {
         Some(Some(300.0)) => "5h".to_owned(),
         Some(Some(1440.0)) => "daily".to_owned(),
         Some(Some(10080.0)) => "weekly".to_owned(),
-        Some(Some(m)) if m != 0.0 && m.is_finite() => format!("{} min", crate::acp::session::prompt::js_num(m)),
+        Some(Some(m)) if m != 0.0 && m.is_finite() => format!("{} min", crate::util::js_num(m)),
         _ => format!("limit {}", index + 1),
       };
       let id = if windows.iter().any(|w| w.id == id) { format!("{id} {}", index + 1) } else { id };

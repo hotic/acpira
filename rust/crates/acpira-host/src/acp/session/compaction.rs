@@ -1,14 +1,21 @@
-//! Compaction completion latch. Devin and Kimi run /compact in the background and
+//! Compaction: the completion latch and the automatic /compact policy. Devin and Kimi run /compact in the background and
 //! report the result as prose; other peers use the RPC lifetime plus structured compaction_update events
 
 use std::collections::HashSet;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
+use anyhow::{Result, anyhow};
 use regex::Regex;
 use serde_json::Value;
 use tokio::sync::oneshot;
 
+use acpira_shared::transcript::{SessionStatus, TurnStop};
+
+use crate::acp::session::{AcpSession, Core};
+use crate::acp::transport::rpc::BoxFuture;
+use crate::i18n::t;
 use crate::json::str_of;
+use crate::util::js_num;
 
 static COMPACT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^/compact(?:\s|$)").unwrap());
 static TOKENS_AFTER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"- Tokens after:\s*([\d,]+)").unwrap());
@@ -102,6 +109,61 @@ impl CompactionCompletion {
     if let Some(r) = self.release.take() {
       let _ = r.send(());
     }
+  }
+}
+
+impl AcpSession {
+  pub(crate) fn log_usage_threshold(&self, c: &Core, what: &str) {
+    let used = c.state.usage.map(|u| js_num(u.used.0)).unwrap_or_else(|| "undefined".into());
+    self.log(&format!("usage {used} ≥ threshold, {what}"));
+  }
+
+  /// ACP has no dedicated compaction request: send the agent's own /compact
+  pub fn compact(self: &Arc<Self>, auto: bool) -> BoxFuture<Result<()>> {
+    let me = self.clone();
+    Box::pin(async move {
+      let can = Self::can_compact_of(&me.core.lock());
+      if !can {
+        return if auto { Ok(()) } else { Err(anyhow!(t("host.noCompact"))) };
+      }
+      me.prompt("/compact".into(), vec![], auto, None, None).await;
+      Ok(())
+    })
+  }
+
+  pub(crate) fn should_auto_compact(&self, c: &Core) -> bool {
+    let Some(policy) = self.deps.compaction.as_ref().map(|f| f()) else { return false };
+    let used = c.state.usage.map(|u| u.used.0).unwrap_or(0.0);
+    if !policy.auto || used == 0.0 || !Self::can_compact_of(c) || c.status != SessionStatus::Ready || used < policy.at_tokens {
+      return false;
+    }
+    c.compacted_at.is_none_or(|at| used >= at + policy.at_tokens / 10.0)
+  }
+
+  /// Compact before flushing so a queued follow-up is not the request that runs over budget
+  pub(crate) fn after_prompt(self: &Arc<Self>, auto: bool, stop: TurnStop) {
+    let compact = {
+      let c = self.core.lock();
+      if c.pending_prompt.is_some() {
+        return;
+      }
+      let yes = !auto && stop == TurnStop::EndTurn && self.should_auto_compact(&c);
+      if yes {
+        self.log_usage_threshold(&c, "auto /compact");
+      }
+      yes
+    };
+    if compact {
+      let me = self.clone();
+      tokio::spawn(async move {
+        if let Err(e) = me.compact(true).await {
+          me.log(&format!("auto /compact failed: {e}"));
+          me.flush_queue();
+        }
+      });
+      return;
+    }
+    self.flush_queue();
   }
 }
 

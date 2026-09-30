@@ -103,6 +103,11 @@ pub fn msg(e: &anyhow::Error) -> String {
   e.to_string()
 }
 
+/// JS `String(n)` for the numbers logs and labels print: integers without a fraction
+pub fn js_num(n: f64) -> String {
+  if n.fract() == 0.0 && n.abs() < 1e21 { format!("{}", n as i64) } else { format!("{n}") }
+}
+
 /// JS `s.slice(0, n)` counted in UTF-16 units is what the TS side clips titles with; chars are close enough and never split a code point
 pub fn clip(s: &str, n: usize) -> String {
   s.chars().take(n).collect()

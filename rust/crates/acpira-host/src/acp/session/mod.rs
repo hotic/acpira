@@ -6,6 +6,7 @@
 //! round trip) happens with the lock released, so a `stop` never queues behind a running `send`. The gates, the queue,
 //! the controls and history editing are further `impl AcpSession` blocks in the child modules
 
+pub mod account_switch;
 pub mod attachments;
 pub mod compaction;
 pub mod controls;
@@ -13,9 +14,14 @@ pub mod edit;
 pub mod errors;
 pub mod failure;
 pub mod gates;
+pub mod plan_build;
 pub mod prompt;
+pub mod queue;
 pub mod restore_turns;
+pub mod tasks;
 pub mod turn_usage;
+pub mod updates;
+pub mod usage;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
