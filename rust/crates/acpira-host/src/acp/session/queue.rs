@@ -247,3 +247,20 @@ impl AcpSession {
     Ok(())
   }
 }
+
+pub(crate) fn queue_snapshot(c: &Core) -> Option<Vec<QueuedPrompt>> {
+  if c.queue.is_empty() {
+    return None;
+  }
+  Some(
+    c.queue
+      .iter()
+      .map(|q| QueuedPrompt {
+        id: q.id.clone(),
+        text: q.text.clone(),
+        attachments: q.prepared.attachments.clone(),
+        sending: (c.sending_id.as_deref() == Some(q.id.as_str()) || c.steering_id.as_deref() == Some(q.id.as_str())).then_some(true),
+      })
+      .collect(),
+  )
+}

@@ -11,10 +11,11 @@ use acpira_shared::composer_controls::{is_reasoning_control, thought_correction}
 use acpira_shared::models::parse_fusion_name;
 use acpira_shared::transcript::*;
 
+use crate::acp::agents::model_sources::refine_controls;
 use crate::acp::transcript::normalize::{apply_config_options, config_option_set_value, init_controls};
 use crate::acp::transport::rpc::BoxFuture;
-use crate::acp::session::{AcpSession, MODE_PICK};
-use crate::i18n::t;
+use crate::acp::session::{AcpSession, Core};
+use crate::i18n::{t, t_or};
 
 /// pi-acp 0.0.33 advertises its thinking levels twice, as modes and as the thought_level select: such modes select nothing
 /// of their own, whichever agent definition launched the adapter
@@ -357,4 +358,94 @@ impl AcpSession {
     drop(serial);
     self.release_holds();
   }
+}
+
+pub(crate) const MODE_PICK: &str = "\0mode";
+
+impl AcpSession {
+  /// Model sources and catalogue-narrowed efforts over whatever the agent last sent
+  pub(crate) fn refine_controls(&self, c: &mut Core) {
+    refine_controls(&self.agent, &mut c.state.controls.options, &c.model_facts);
+  }
+
+  pub(crate) fn synthetic_modes(&self) -> Option<Vec<SessionOption>> {
+    self.def().modes.map(|modes| {
+      modes
+        .into_iter()
+        .map(|mut m| {
+          m.description = m.description.map(|d| t_or(&d));
+          m
+        })
+        .collect()
+    })
+  }
+
+  /// Every session/new / resume / load response: synthetic modes fill in, a resumed session keeps its persisted mode
+  pub(crate) fn apply_controls(&self, c: &mut Core, modes: Option<&Value>, config_options: Option<&Value>) {
+    let wanted = c.state.controls.mode_id.clone();
+    if self.protocol_controls(&mut c.state.controls, modes, config_options) {
+      return;
+    }
+    let Some(syn) = self.synthetic_modes() else { return };
+    if !c.state.controls.modes.is_empty() {
+      return;
+    }
+    c.state.controls.mode_id = Some(match wanted {
+      Some(w) if syn.iter().any(|m| m.id == w) => w,
+      _ => "default".into(),
+    });
+    c.state.controls.modes = syn;
+    c.auto_approve = c.state.controls.mode_id.as_deref() == Some("yolo");
+  }
+
+  /// Paint last-known chips before session/new returns so the composer isn't empty during start: the remembered values
+  /// over the options and modes an earlier session of this agent showed
+  pub fn preview_controls(&self, known: &SessionControls, settings: Option<&TurnSettings>) {
+    let mut c = self.core.lock();
+    let remembered_mode = settings.and_then(|s| s.mode_id.clone());
+    if let Some(syn) = self.synthetic_modes().filter(|s| !s.is_empty()) {
+      c.state.controls.mode_id = Some(match remembered_mode {
+        Some(m) if syn.iter().any(|x| x.id == m) => m,
+        _ => syn[0].id.clone(),
+      });
+      c.state.controls.modes = syn;
+      c.auto_approve = c.state.controls.mode_id.as_deref() == Some("yolo");
+    } else if let Some(m) = remembered_mode.filter(|m| known.modes.iter().any(|x| &x.id == m)) {
+      // Protocol modes only arrive with session/new; without a remembered one the chip stays empty rather than guess
+      c.state.controls.modes = known.modes.clone();
+      c.state.controls.mode_id = Some(m);
+      c.state.controls.mode_config_id = known.mode_config_id.clone();
+    }
+    if known.options.is_empty() {
+      return;
+    }
+    let mut next = known.options.clone();
+    for ctl in &mut next {
+      if let Some(v) = settings.and_then(|s| s.config.get(&ctl.id))
+        && ctl.options.iter().any(|o| &o.id == v)
+      {
+        ctl.value = Some(v.clone());
+      }
+    }
+    c.state.controls.options = next;
+  }
+}
+
+/// Controls with in-flight picks overlaid; a pick the controls do not offer (a held remembered value the agent dropped)
+/// leaves agent truth showing
+pub(crate) fn picked_controls(c: &Core) -> SessionControls {
+  let mut out = c.state.controls.clone();
+  if let Some((v, _)) = c.picks.get(MODE_PICK)
+    && out.modes.iter().any(|m| &m.id == v)
+  {
+    out.mode_id = Some(v.clone());
+  }
+  for o in &mut out.options {
+    if let Some((v, _)) = c.picks.get(&o.id)
+      && o.options.iter().any(|x| &x.id == v)
+    {
+      o.value = Some(v.clone());
+    }
+  }
+  out
 }

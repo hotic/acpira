@@ -8,8 +8,10 @@ use serde_json::{Value, json};
 
 use acpira_shared::transcript::*;
 
-use crate::acp::session::{AcpSession, Core, USAGE_POLL_INTERVAL, clear_usage_timer, num};
+use crate::acp::session::{AcpSession, Core, num};
 use crate::acp::vendors::pi_usage;
+
+pub const USAGE_POLL_INTERVAL: Duration = Duration::from_millis(800);
 
 impl AcpSession {
   /// Agents that never send `usage_update` and have their context snapshot polled instead: Grok over
@@ -156,4 +158,10 @@ pub fn grok_context_usage(v: &Value, session_id: &str) -> Option<Usage> {
     return None;
   }
   Some(Usage { used: num(used), size: num(total), cost: None })
+}
+
+pub(crate) fn clear_usage_timer(c: &mut Core) {
+  if let Some(h) = c.usage_timer.take() {
+    h.abort();
+  }
 }

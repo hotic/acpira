@@ -16,7 +16,8 @@ use crate::acp::session::edit::{FORK_HISTORY_LEAD, HistoryContext, history_conte
 use crate::acp::session::errors::{is_auth, is_session_gone, turn_error_of};
 use crate::acp::session::failure::{failure_of, failure_turn_error};
 use crate::acp::session::turn_usage::turn_usage_of;
-use crate::acp::session::{AcpSession, Core, clear_usage_timer, num};
+use crate::acp::session::usage::clear_usage_timer;
+use crate::acp::session::{AcpSession, Core, num};
 use crate::acp::transcript::normalize::{activity_of, apply_session_failure, end_turn, fail_turn};
 use crate::acp::transport::process::AgentProcess;
 use crate::acp::transport::rpc::{BoxFuture, RpcError};
