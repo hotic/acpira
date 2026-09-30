@@ -16,6 +16,8 @@ use crate::acp::agents::registry::AgentRegistry;
 use crate::acp::transport::rpc::BoxFuture;
 use crate::agent_ext::agent_ext;
 use crate::inventory::{ScanEnv, ScanInput, scan_inventory};
+use crate::shared_config::{AGENTS, Outcome, Places, SharedConfig};
+use acpira_shared::shared_config::{SharedAction, SharedView};
 
 pub struct SettingsDeps {
   pub read: Arc<dyn Fn(&str) -> Option<Value> + Send + Sync>,
@@ -26,6 +28,7 @@ pub struct SettingsDeps {
   pub health: Arc<dyn Fn(&str) -> Option<AgentHealth> + Send + Sync>,
   pub home: Arc<dyn Fn() -> String + Send + Sync>,
   pub cwd: Arc<dyn Fn() -> String + Send + Sync>,
+  pub shared: Arc<SharedConfig>,
 }
 
 pub type SettingsListener = Arc<dyn Fn(&SettingsView, Locale) + Send + Sync>;
@@ -112,6 +115,48 @@ impl SettingsCenter {
       &env,
     )
     .await
+  }
+
+  /// Built-in agents whose CLI resolves on this machine: only they get links or show up on the Shared tab
+  /// Agents turned off in the settings (`disabledAgents`): the Shared tab leaves them out and takes their links back
+  fn disabled_agents(&self) -> Vec<String> {
+    serde_json::from_value(self.read("disabledAgents")).unwrap_or_default()
+  }
+
+  async fn installed_agents(&self) -> Vec<String> {
+    let registry = (self.deps.registry)();
+    let off = self.disabled_agents();
+    let mut out = vec![];
+    for a in AGENTS {
+      if !off.iter().any(|o| o == a) && registry.resolve_binary(a).await.is_some() {
+        out.push(a.to_owned());
+      }
+    }
+    out
+  }
+
+  fn places(&self) -> Places {
+    Places::new(&(self.deps.home)(), &(self.deps.cwd)())
+  }
+
+  /// The Shared tab for the workspace (keeping links up to date first when "link all" is on)
+  pub async fn shared_view(&self) -> SharedView {
+    let runtime_info = self.deps.runtime_info.clone();
+    let caps = Arc::new(move |a: &str| runtime_info(a).and_then(|r| r.mcp));
+    self.deps.shared.retire(&self.disabled_agents()).await;
+    self.deps.shared.view(self.places(), self.installed_agents().await, caps).await
+  }
+
+  pub async fn shared_action(&self, action: SharedAction) -> Result<Outcome> {
+    let agents = self.installed_agents().await;
+    self.deps.shared.apply(action, &self.places(), &agents).await
+  }
+
+  /// Startup and window focus: new shared skills get their links without opening the page
+  pub async fn shared_maintain(&self) -> Result<()> {
+    self.deps.shared.retire(&self.disabled_agents()).await;
+    let agents = self.installed_agents().await;
+    self.deps.shared.maintain(&self.places(), &agents).await
   }
 
   pub fn subscribe(&self, f: SettingsListener) -> u64 {

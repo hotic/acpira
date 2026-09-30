@@ -4,6 +4,7 @@ import type { Appearance, AxisKey } from './appearance';
 import type { HiddenMap, SettingKey, SettingsView } from './settings';
 import type { Locale } from './i18n';
 import type { AgentInventory } from './inventory';
+import type { SharedAction, SharedView } from './sharedConfig';
 
 // Message contract between host ↔ webview; both sides trust only this file
 
@@ -94,6 +95,8 @@ export type HostMsg =
   | { type: 'settings'; settings: SettingsView; locale: Locale }
   // Answers to the inventory / controls requests, one agent at a time (both are lazy: scanned / read on demand)
   | { type: 'inventory'; agent: AgentId; inventory: AgentInventory }
+  // The Shared tab; error when the action that triggered this reply failed
+  | { type: 'shared'; view: SharedView; error?: string }
   | { type: 'controls'; agent: AgentId; controls: ConfigControl[] }
   // Reply to searchFiles; seq echoes the request so stale replies can be dropped
   | { type: 'files'; seq: number; files: FileHit[] }
@@ -206,6 +209,9 @@ export type WebviewMsg =
   // A session blob (agent-produced image, parked attachment) by store name; the host resolves it under the session's blob dir
   | { type: 'openBlob'; sessionId: string; name: string }
   | { type: 'inventory'; agent: AgentId }
+  // Shared tab: read the view (links are repaired first once "link all" ran), or apply an action and get the view back
+  | { type: 'shared' }
+  | { type: 'sharedAction'; action: SharedAction }
   // fresh: the refresh button — host spawns a throwaway process to re-read the current configOptions; without it, the latest session's list
   | { type: 'controls'; agent: AgentId; fresh?: boolean }
   // History list → "Import from <agent>": the host spawns a throwaway process, initialize + session/list for this workspace; no session is created

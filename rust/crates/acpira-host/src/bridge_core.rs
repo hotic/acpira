@@ -285,6 +285,28 @@ impl BridgeCore {
         let inventory = self.settings.inventory(&agent).await;
         self.post_now(HostMsg::Inventory { agent, inventory });
       }
+      W::Shared => {
+        let view = self.settings.shared_view().await;
+        self.post_now(HostMsg::Shared { view, error: None });
+      }
+      W::SharedAction { action } => {
+        let error = match self.settings.shared_action(action).await {
+          Ok(outcome) => {
+            // A created file opens in the editor, a folder is revealed in the OS
+            if let Some(p) = outcome.open {
+              let path = p.to_string_lossy().into_owned();
+              let r = if p.is_dir() { platform.reveal_in_os(&path).await } else { platform.open_resolved_file(&path, None).await };
+              if let Err(e) = r {
+                platform.log(&format!("shared config: opening {path} failed: {e}"));
+              }
+            }
+            None
+          }
+          Err(e) => Some(format!("{e:#}")),
+        };
+        let view = self.settings.shared_view().await;
+        self.post_now(HostMsg::Shared { view, error });
+      }
       W::Controls { agent, fresh } => {
         if fresh != Some(true) {
           let controls = manager.known_controls(&agent).await;

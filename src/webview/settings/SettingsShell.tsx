@@ -17,6 +17,8 @@ import { PageRail, type SettingsPage } from './Nav';
 import { General } from './General';
 import { AppearancePage } from './Appearance';
 import { AgentPage } from './AgentPage';
+import { SharedPage, type SharedState } from './SharedPage';
+import type { SharedAction } from '@shared/sharedConfig';
 import { Page, PageHeader } from './controls';
 
 // Every action the settings page sends to the host; the LAB implements these with a fake host, the real page with postMessage
@@ -41,6 +43,9 @@ export interface SettingsHandlers {
   // Run the agent's install line in a host terminal; docs links open in the browser
   installAgent: (agent: AgentId) => void;
   openExternal: (url: string) => void;
+  // Shared tab: read the view, apply an action (the reply is the fresh view)
+  shared?: () => void;
+  sharedAction?: (action: SharedAction) => void;
 }
 
 export interface SettingsEnv {
@@ -61,6 +66,8 @@ export interface SettingsShellProps {
   accounts: AccountInfo[];
   inventories: Partial<Record<AgentId, AgentInventory>>;
   chatgptStatus?: ChatGptIntegrationStatus;
+  // The Shared tab's last view; undefined until the page asked for it
+  shared?: SharedState;
   // Per agent, the configOptions of its latest session (the hide lists are built from these)
   controls: Partial<Record<AgentId, ConfigControl[]>>;
   // Agents whose refresh is in flight: the button spins and ignores clicks while the cached page stays in place
@@ -82,11 +89,12 @@ export function SettingsShell(p: SettingsShellProps) {
   const agent = page.kind === 'agent' ? p.agents.find(a => a.id === page.id) : undefined;
   // Ids the rail does not show (a custom agent missing from acpira.agents for now) keep their saved order / off state
   const unlisted = (id: AgentId) => !p.agents.some(a => a.id === id);
-  const title = page.kind === 'chatgpt' ? 'ChatGPT' : agent ? t('settings.agent.title', { agent: agent.name }) : page.kind === 'appearance' ? t('settings.appearance.title') : t('settings.general.title');
+  const title = page.kind === 'chatgpt' ? 'ChatGPT' : agent ? t('settings.agent.title', { agent: agent.name }) : page.kind === 'appearance' ? t('settings.appearance.title')
+    : page.kind === 'shared' ? t('settings.shared.title') : t('settings.general.title');
   const busy = !!agent && !!p.refreshing?.has(agent.id);
-  const action = (agent || page.kind === 'chatgpt') && (
+  const action = (agent || page.kind === 'chatgpt' || page.kind === 'shared') && (
     <IconButton title={t('common.refresh')} aria-label={t('common.refresh')} aria-busy={busy || undefined} disabled={busy}
-      onClick={() => page.kind === 'chatgpt' ? p.on.refreshChatgpt?.() : agent && p.on.refreshAgent(agent.id)}>
+      onClick={() => page.kind === 'chatgpt' ? p.on.refreshChatgpt?.() : page.kind === 'shared' ? p.on.shared?.() : agent && p.on.refreshAgent(agent.id)}>
       <RefreshCw strokeWidth={1.5} className={cn(busy && 'animate-spin live-spin')} />
     </IconButton>
   );
@@ -114,6 +122,7 @@ export function SettingsShell(p: SettingsShellProps) {
                   {page.kind === 'chatgpt' && <ChatGptPage status={p.chatgptStatus} on={p.on} />}
                   {page.kind === 'general' && <General settings={p.settings} agents={p.agents} on={p.on} />}
                   {page.kind === 'appearance' && <AppearancePage settings={p.settings} appearance={p.appearance} on={p.on} />}
+                  {page.kind === 'shared' && <SharedPage state={p.shared} agents={p.agents} on={p.on} />}
                   {agent && (
                     <AgentPage
                       key={agent.id}

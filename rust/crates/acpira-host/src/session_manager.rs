@@ -83,6 +83,8 @@ pub struct ManagerDeps {
   pub compaction: Arc<dyn Fn() -> CompactionPolicy + Send + Sync>,
   pub hidden: Arc<dyn Fn() -> HiddenMap + Send + Sync>,
   pub scope: Arc<dyn Fn() -> String + Send + Sync>,
+  /// Shared MCP servers handed to every session (`shared_config::mcp_provider`); None in tests that do not need them
+  pub shared_mcp: Option<crate::shared_config::McpProvider>,
   /// Acpira's own MCP server (`acpira mcp`) for every session request; None without a known executable
   pub host_mcp: Option<crate::host_mcp::HostMcp>,
 }
@@ -1145,6 +1147,7 @@ impl SessionManager {
       model_shapes: Some(Arc::new(move |agent: &str| {
         shapes_me.upgrade().and_then(|m| m.state.lock().prefs.model_shapes.as_ref().and_then(|s| s.get(agent).cloned()))
       })),
+      shared_mcp: self.deps.shared_mcp.clone(),
     }
   }
 

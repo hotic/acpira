@@ -13,13 +13,15 @@ import { QuotaBars } from '../ui/QuotaBars';
 import { AccountLabel } from '../ui/AccountLabel';
 import { LocalAccountQuota } from '../ui/LocalAccountQuota';
 import { Shimmer } from '../ui/Shimmer';
+import { Collapsible } from '../ui/Collapsible';
 import { t } from '../i18n';
 import { ModelMark } from '../chat/ModelMark';
-import { Dot, FactRow, Field, Group, ItemRow, Note, PathText, Section, SectionAction, SectionDescription, SectionHead, Select, SourceLink, Switch, shortPath } from './controls';
+import { Count, Dot, FactRow, Field, Group, ItemRow, Note, PathText, Section, SectionAction, SectionDescription, SectionHead, Select, SourceLink, Switch, shortPath } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 
 type AgentSection = 'models' | 'mcp' | 'skills' | 'rules' | 'config';
-const SECTIONS: AgentSection[] = ['models', 'mcp', 'skills', 'rules', 'config'];
+// What the CLI's own files declare; shared resources live on the Shared page, so these fold away by default
+const NATIVE: AgentSection[] = ['mcp', 'skills', 'rules'];
 
 export interface AgentPageProps {
   agent: AgentInfo;
@@ -65,6 +67,13 @@ export function AgentPage({ agent, accounts, inventory, controls, settings, env,
     config: <FilesSection kind="config" agent={agent} files={inventory?.config} env={env} on={on} />,
   };
 
+  const block = (id: AgentSection) => (
+    <div className="flex flex-col gap-2">
+      <SectionHead count={inventory ? counts[id] : undefined}>{t(`settings.tab.${id}` as const)}</SectionHead>
+      <div className="flex flex-col gap-pad">{sections[id]}</div>
+    </div>
+  );
+
   return (
     <>
       <AgentFacts agent={agent} inventory={inventory} env={env} />
@@ -105,13 +114,38 @@ export function AgentPage({ agent, accounts, inventory, controls, settings, env,
         </div>
       )}
 
-      {SECTIONS.map(id => (
-        <div key={id} className="flex flex-col gap-2">
-          <SectionHead count={inventory ? counts[id] : undefined}>{t(`settings.tab.${id}` as const)}</SectionHead>
-          <div className="flex flex-col gap-pad">{sections[id]}</div>
-        </div>
-      ))}
+      {block('models')}
+      <NativeBlock agent={agent} count={inventory ? counts.mcp + counts.skills + counts.rules : undefined}>
+        {NATIVE.map(id => (
+          <div key={id} className="flex flex-col gap-2">
+            <h3 className="m-0 flex items-baseline gap-2 text-2 font-normal text-fg-1">
+              <span>{t(`settings.tab.${id}` as const)}</span>
+              {inventory && <Count n={counts[id]} />}
+            </h3>
+            <div className="flex flex-col gap-pad">{sections[id]}</div>
+          </div>
+        ))}
+      </NativeBlock>
+      {block('config')}
     </>
+  );
+}
+
+// The agent's own MCP servers, skills and rules under one heading, closed until asked for
+function NativeBlock({ agent, count, children }: { agent: AgentInfo; count?: number; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Collapsible.Root open={open} onOpenChange={setOpen} className="flex flex-col gap-2">
+      <SectionHead count={count} action={
+        <Chip caret={false} aria-expanded={open} icon={open ? <ChevronUp /> : <ChevronDown />} className="shrink-0" onClick={() => setOpen(v => !v)}>
+          {open ? t('settings.agent.native.hide') : t('settings.agent.native.show')}
+        </Chip>
+      }>{t('settings.agent.native', { agent: agent.name })}</SectionHead>
+      <SectionDescription>{t('settings.agent.native.desc', { agent: agent.name })}</SectionDescription>
+      <Collapsible.Panel>
+        <div className="flex flex-col gap-(--section-gap) pt-2">{children}</div>
+      </Collapsible.Panel>
+    </Collapsible.Root>
   );
 }
 

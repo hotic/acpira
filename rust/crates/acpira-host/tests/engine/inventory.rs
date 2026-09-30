@@ -158,7 +158,13 @@ async fn grok_scans_toml_and_project_servers_skills_and_rule_files() {
     "linear:http:user:true", "filesystem:stdio:user:false", "quoted name:stdio:user:true", "hilfa:stdio:project:true", "remote:http:user:true",
   ]);
   let skills: Vec<serde_json::Value> = v(&inv.skills).as_array().unwrap().iter().map(|s| json!([s["name"], s["scope"], s["description"]])).collect();
-  assert_eq!(skills, [json!(["dig", "user", "挖历史会话"]), json!(["local-only", "project", "folded description"]), json!(["audit", "user", null])]);
+  // grok 1.0.18 also scans `.agents/skills` (its embedded docs), so the shared `hallmark` shows up last
+  assert_eq!(skills, [
+    json!(["dig", "user", "挖历史会话"]),
+    json!(["local-only", "project", "folded description"]),
+    json!(["audit", "user", null]),
+    json!(["hallmark", "user", "Anti-slop design"]),
+  ]);
   let rules = v(&inv.rules);
   expect_match(rules.as_array().unwrap().iter().find(|r| r["path"].as_str().unwrap().ends_with("AGENTS.md")).unwrap(), json!({ "exists": true, "scope": "project" }));
   expect_match(rules.as_array().unwrap().iter().find(|r| r["path"].as_str().unwrap().ends_with("CLAUDE.md")).unwrap(), json!({ "exists": false }));
@@ -171,7 +177,14 @@ async fn devin_scans_jsonc_mcp_config_shared_skills_and_only_markdown_rules() {
   let inv = f.scan("devin", None).await;
   assert!(inv.steer);
   assert!(inv.binary.is_none());
-  expect_eq(&inv.mcp, json!([{ "name": "jina", "transport": "sse", "target": "https://mcp.jina.ai/sse", "source": f.home(".config/devin/mcp_config.json"), "scope": "user", "enabled": true }]));
+  // `.mcp.json`: Devin 3000.11.3 launches the project's servers at session/new
+  expect_eq(
+    &inv.mcp,
+    json!([
+      { "name": "jina", "transport": "sse", "target": "https://mcp.jina.ai/sse", "source": f.home(".config/devin/mcp_config.json"), "scope": "user", "enabled": true },
+      { "name": "hilfa", "transport": "stdio", "target": "hilfa serve", "source": f.cwd(".mcp.json"), "scope": "project", "enabled": true },
+    ]),
+  );
   assert_eq!(inv.skills.iter().map(|s| s.name.clone()).collect::<Vec<_>>(), ["hallmark"]);
   let dir_rules: Vec<String> = inv.rules.iter().filter(|r| r.path.contains(".devin/rules")).map(|r| r.path.rsplit('/').next().unwrap().to_owned()).collect();
   assert_eq!(dir_rules, ["style.md"]);

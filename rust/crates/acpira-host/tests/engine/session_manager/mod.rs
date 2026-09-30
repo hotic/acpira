@@ -108,6 +108,7 @@ impl Mgr {
         compaction: Arc::new(|| CompactionPolicy { at_tokens: 300_000.0, auto: false }),
         hidden: Arc::new(move || hidden.clone()),
         scope: Arc::new(move || scope.lock().unwrap().clone()),
+        shared_mcp: None,
         host_mcp: None,
       },
     );
@@ -210,6 +211,7 @@ async fn foreign_native_session(fake: &FakeAgent, native: &Path, store: &Arc<Tra
     compaction: None,
     pool: None,
     model_shapes: None,
+    shared_mcp: None,
     host_mcp: None,
   };
   let s = AcpSession::fresh("fake", cwd, deps, None);

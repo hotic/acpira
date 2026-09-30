@@ -7,6 +7,7 @@ use crate::appearance::Appearance;
 use crate::chatgpt_integration::ChatGptIntegrationStatus;
 use crate::i18n::Locale;
 use crate::inventory::AgentInventory;
+use crate::shared_config::{SharedAction, SharedView};
 use crate::settings::{HiddenMap, SettingsView};
 use crate::transcript::{
   AccountInfo, AgentId, AgentInfo, ConfigControl, Draft, NativeSessionInfo, QuestionAnswers, SessionSummary, Turn, TurnSettings,
@@ -203,6 +204,12 @@ pub enum HostMsg {
     agent: AgentId,
     inventory: AgentInventory,
   },
+  /// The Shared tab; `error` when the action that triggered this reply failed
+  Shared {
+    view: SharedView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+  },
   Controls {
     agent: AgentId,
     controls: Vec<ConfigControl>,
@@ -248,6 +255,7 @@ impl HostMsg {
       HostMsg::Hidden { .. } => "hidden",
       HostMsg::Settings { .. } => "settings",
       HostMsg::Inventory { .. } => "inventory",
+      HostMsg::Shared { .. } => "shared",
       HostMsg::Controls { .. } => "controls",
       HostMsg::Files { .. } => "files",
       HostMsg::NativeSessions { .. } => "nativeSessions",
@@ -483,6 +491,10 @@ pub enum WebviewMsg {
   },
   Inventory {
     agent: AgentId,
+  },
+  Shared,
+  SharedAction {
+    action: SharedAction,
   },
   Controls {
     agent: AgentId,

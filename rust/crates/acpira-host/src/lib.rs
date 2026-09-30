@@ -21,6 +21,7 @@ pub mod node_files;
 pub mod runtime;
 pub mod session_manager;
 pub mod settings;
+pub mod shared_config;
 pub mod sidecar;
 pub mod store;
 pub mod util;
