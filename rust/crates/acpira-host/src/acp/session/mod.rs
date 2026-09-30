@@ -93,6 +93,8 @@ pub struct SessionDeps {
   pub compaction: Option<Arc<dyn Fn() -> CompactionPolicy + Send + Sync>>,
   pub pool: Option<Arc<AgentPool>>,
   pub model_shapes: Option<Arc<dyn Fn(&str) -> Option<ModelShapes> + Send + Sync>>,
+  /// The `mcpServers` entry of Acpira's own MCP server (`host_mcp.rs`), sent with session/new, load and resume
+  pub host_mcp: Option<crate::host_mcp::HostMcp>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -230,8 +232,12 @@ impl AcpSession {
       let log_prefix = format!("[{} {}] ", record.agent, record.id.chars().take(8).collect::<String>());
       let log = deps.log.clone();
       let tree_log: LogFn = Arc::new(move |line: &str| log(&format!("{log_prefix}{line}")));
-      let ctx =
-        ToolCtx { save_image: Some(image_saver(me.clone())), save_image_file: Some(file_image_saver(me.clone())), ..Default::default() };
+      let ctx = ToolCtx {
+        save_image: Some(image_saver(me.clone())),
+        save_image_file: Some(file_image_saver(me.clone())),
+        cwd: Some(record.cwd.clone()),
+        ..Default::default()
+      };
       let turns = restore_interrupted_turns(restore_command_receipts(restore_plan_snapshots(record.turns)), &record.updated_at);
       let state = NormalizeState {
         turns,
@@ -364,7 +370,8 @@ impl AcpSession {
 
   /// Params for session/new, resume and load; Claude sessions also ask for summarized thinking (see `claude_thinking`)
   pub(crate) fn session_request(&self, acp_id: Option<&str>) -> Value {
-    let mut req = json!({ "cwd": self.cwd, "mcpServers": [] });
+    let servers: Vec<Value> = self.deps.host_mcp.as_ref().and_then(|h| h.entry_for(&self.agent)).into_iter().collect();
+    let mut req = json!({ "cwd": self.cwd, "mcpServers": servers });
     if let Some(id) = acp_id {
       req["sessionId"] = json!(id);
     }
@@ -894,7 +901,20 @@ impl AcpSession {
     // commands while session/new is still in flight
     self.core.lock().state.commands = vec![];
     // Ordered: pi-acp re-sends the startup banner as a chunk right after this response, which must meet the recorded banner
-    let (r, handoff) = proc.request_ordered("session/new", self.session_request(None)).await.map_err(anyhow::Error::new)?;
+    let req = self.session_request(None);
+    let (r, handoff) = match proc.request_ordered("session/new", req.clone()).await {
+      // An agent that cannot start Acpira's MCP server must still get a session: retry once without it, and leave it out
+      // of this agent's later requests for the life of the sidecar
+      Err(e) if crate::host_mcp::has_server(&req) => {
+        self.log(&format!("session/new with the Acpira MCP server failed ({e}); retrying without it"));
+        let (r, h) = proc.request_ordered("session/new", crate::host_mcp::without_server(req)).await.map_err(anyhow::Error::new)?;
+        if let Some(h) = &self.deps.host_mcp {
+          h.refuse(&self.agent);
+        }
+        (r, h)
+      }
+      other => other.map_err(anyhow::Error::new)?,
+    };
     let mut c = self.core.lock();
     let sid = r.get("sessionId").and_then(Value::as_str).unwrap_or("").to_owned();
     c.acp_session_id = Some(sid.clone());

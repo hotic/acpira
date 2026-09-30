@@ -38,6 +38,8 @@ pub struct ToolCtx {
   pub pending_writes: HashMap<String, (String, String)>,
   pub save_image: Option<ImageSaver>,
   pub save_image_file: Option<FileImageSaver>,
+  /// The session's working directory: relative image paths in reply markdown resolve against it
+  pub cwd: Option<String>,
 }
 
 #[derive(Default, Clone)]
@@ -198,15 +200,19 @@ pub fn apply_update(s: &mut NormalizeState, u: &Value) -> bool {
       if !text.trim().is_empty() {
         clear_retry(s);
       }
-      let t = agent(s, i);
-      if let Some(AgentBlock::Text(last)) = t.blocks.last_mut()
+      let NormalizeState { turns, ctx, .. } = s;
+      if let Some(AgentBlock::Text(last)) = turns[i].as_agent_mut().and_then(|t| t.blocks.last_mut())
         && last.streaming == Some(true)
       {
+        let from = last.markdown.len();
         last.markdown.push_str(&text);
+        resolve_markdown_images(last, from, ctx);
         return true;
       }
       seal(s, i);
-      agent(s, i).blocks.push(AgentBlock::Text(TextBlock { id: None, phase: None, markdown: text, streaming: Some(true) }));
+      let mut block = TextBlock { id: None, phase: None, markdown: text, streaming: Some(true), images: None };
+      resolve_markdown_images(&mut block, 0, &s.ctx);
+      agent(s, i).blocks.push(AgentBlock::Text(block));
       true
     }
     "agent_thought_chunk" => {
@@ -1159,6 +1165,14 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   if image_gen_title || tool_name.and_then(Value::as_str).is_some_and(|n| IMAGE_GEN.is_match(n)) {
     set_verb(b, IMAGE_GEN_VERB);
   }
+  if b.verb_key.as_deref() == Some(SHOW_IMAGE_VERB) || is_show_image_call(u, title, raw) {
+    set_verb(b, SHOW_IMAGE_VERB);
+    // codex-acp reports every MCP call as `execute`; this one is no command
+    b.kind = ToolKind::Other;
+    if let Some(paths) = show_image_args(raw).map(show_image_paths).filter(|p| !p.is_empty()) {
+      b.locations = Some(paths.into_iter().map(|path| Location { path, line: None }).collect());
+    }
+  }
   if b.verb_key.is_none()
     && matches!(b.kind, ToolKind::Other | ToolKind::Think)
     && let Some(inferred) = infer_kind(title)
@@ -1185,7 +1199,7 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   {
     b.background = Some(true);
   }
-  if let Some(locs) = u.get("locations").and_then(Value::as_array) {
+  if let Some(locs) = u.get("locations").and_then(Value::as_array).filter(|_| b.verb_key.as_deref() != Some(SHOW_IMAGE_VERB)) {
     b.locations = Some(
       locs
         .iter()
@@ -1217,11 +1231,13 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   {
     ctx.pending_writes.insert(b.id.clone(), (path, content.to_owned()));
   }
-  let named = matches!(b.verb_key.as_deref(), Some("verb.todo" | "verb.ask" | "verb.wait" | "verb.kill" | IMAGE_GEN_VERB));
+  let named = matches!(b.verb_key.as_deref(), Some("verb.todo" | "verb.ask" | "verb.wait" | "verb.kill" | IMAGE_GEN_VERB | SHOW_IMAGE_VERB));
   let target = if matches!(b.verb_key.as_deref(), Some("verb.wait" | "verb.kill")) {
     shell_target(raw, ctx.as_deref())
   } else if b.verb_key.as_deref() == Some(IMAGE_GEN_VERB) {
     prompt_target(raw)
+  } else if b.verb_key.as_deref() == Some(SHOW_IMAGE_VERB) {
+    show_image_target(show_image_args(raw), b.locations.as_deref())
   } else {
     pick_target(u, b.kind)
   };
@@ -1289,6 +1305,9 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   }
   if b.verb_key.as_deref() == Some(IMAGE_GEN_VERB) && !b.status.is_open() {
     attach_saved_images(b, u, ctx.as_deref());
+  }
+  if b.verb_key.as_deref() == Some(SHOW_IMAGE_VERB) {
+    attach_shown_images(b, ctx.as_deref());
   }
   // pi-acp and the claude / codex adapters stream terminal output through _meta
   let term_out = meta.and_then(|m| m.get("terminal_output").filter(|v| !v.is_null()).or_else(|| m.get("terminal_output_delta")));
@@ -1470,6 +1489,15 @@ fn prompt_target(raw: Option<&Map<String, Value>>) -> Option<Target> {
   Some(Target { text: prompt.to_owned(), mono: false, from_title: false })
 }
 
+/// A show_image row names its caption, else the file(s) it shows
+fn show_image_target(args: Option<&Map<String, Value>>, locs: Option<&[Location]>) -> Option<Target> {
+  if let Some(caption) = args.and_then(|a| a.get("caption")).and_then(Value::as_str).map(str::trim).filter(|c| !c.is_empty()) {
+    return Some(Target { text: caption.to_owned(), mono: false, from_title: false });
+  }
+  let names: Vec<String> = locs?.iter().map(|l| basename(&l.path).to_owned()).collect();
+  (!names.is_empty()).then(|| Target { text: names.join(", "), mono: true, from_title: false })
+}
+
 /// Every string inside a JSON value, depth first
 fn json_strings<'a>(v: &'a Value, out: &mut Vec<&'a str>) {
   match v {
@@ -1478,6 +1506,105 @@ fn json_strings<'a>(v: &'a Value, out: &mut Vec<&'a str>) {
     Value::Object(o) => o.values().for_each(|x| json_strings(x, out)),
     _ => {}
   }
+}
+
+/// A Markdown image (`![alt](src)`, `![alt](<src with spaces>)`, optional `"title"`); group 1 or 2 is the source as written
+static MARKDOWN_IMAGE: LazyLock<Regex> =
+  LazyLock::new(|| Regex::new(r#"!\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|([^\s()]+))(?:\s+"[^"\n]*")?\s*\)"#).unwrap());
+/// How far back a new chunk's scan starts: an image whose `)` arrives in the chunk may have opened in an earlier one
+const MARKDOWN_IMAGE_LOOKBACK: usize = 1024;
+
+/// Local image files a reply embeds with Markdown image syntax are read into the blob store, so the webview can show them
+/// (it may only load blobs). Each source is tried once: a missing or refused file is recorded without a blob and renders as
+/// a named placeholder. Web and data URLs are left to the renderer.
+fn resolve_markdown_images(b: &mut TextBlock, from: usize, ctx: &ToolCtx) {
+  let Some(save) = ctx.save_image_file.as_ref() else { return };
+  let mut start = from.saturating_sub(MARKDOWN_IMAGE_LOOKBACK);
+  while !b.markdown.is_char_boundary(start) {
+    start -= 1;
+  }
+  let found: Vec<String> = MARKDOWN_IMAGE
+    .captures_iter(&b.markdown[start..])
+    .filter_map(|m| m.get(1).or_else(|| m.get(2)).map(|x| x.as_str().trim().to_owned()))
+    .collect();
+  for src in found {
+    if b.images.iter().flatten().any(|i| i.uri.as_deref() == Some(src.as_str())) {
+      continue;
+    }
+    let Some(path) = markdown_image_path(&src, ctx.cwd.as_deref()) else { continue };
+    let Some(mime) = image_mime_of(&path) else { continue };
+    let blob = save(&path);
+    b.images.get_or_insert_with(Vec::new).push(ImageRef { blob, mime_type: mime.to_owned(), uri: Some(src) });
+  }
+}
+
+/// The file behind a Markdown image source: file:// URLs, absolute paths, and paths relative to the session cwd.
+/// Anything with a scheme (https:, data:, blob:) is not a local file
+fn markdown_image_path(src: &str, cwd: Option<&str>) -> Option<String> {
+  if src.len() >= 5 && src[..5].eq_ignore_ascii_case("file:") {
+    return file_url_to_path(src);
+  }
+  let decoded = percent_decode(src).unwrap_or_else(|| src.to_owned());
+  let path = std::path::Path::new(&decoded);
+  if path.is_absolute() {
+    return Some(decoded);
+  }
+  if URL_SCHEME.is_match(src) || src.starts_with('#') || src.starts_with("//") {
+    return None;
+  }
+  Some(std::path::Path::new(cwd?).join(path).to_string_lossy().into_owned())
+}
+static URL_SCHEME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z][A-Za-z0-9+.-]*:").unwrap());
+
+/// Acpira's own MCP tool (`acpira mcp`, see `host_mcp.rs`) as each adapter names it: claude-agent-acp
+/// `mcp__acpira__show_image`, codex-acp `mcp.acpira.show_image` (+ rawInput `{ server, tool, arguments }`), OpenCode
+/// `acpira_show_image`, and a bare `show_image` from adapters that drop the server prefix
+static SHOW_IMAGE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(?:^|acpira[_.:/-]{1,2})show_image$").unwrap());
+pub const SHOW_IMAGE_VERB: &str = "verb.showImage";
+
+fn is_show_image_call(u: &Value, title: Option<&str>, raw: Option<&Map<String, Value>>) -> bool {
+  let named = |x: Option<&str>| x.map(str::trim).is_some_and(|x| SHOW_IMAGE.is_match(x));
+  named(title) || named(str_of(u, "name")) || named(raw.and_then(|r| r.get("tool")).and_then(Value::as_str))
+}
+
+/// The tool's own arguments: codex-acp nests them under `arguments`, the others send them as rawInput itself
+fn show_image_args(raw: Option<&Map<String, Value>>) -> Option<&Map<String, Value>> {
+  let raw = raw?;
+  raw.get("arguments").and_then(Value::as_object).or(Some(raw))
+}
+
+/// `path` or `paths` from the tool's arguments, in order
+fn show_image_paths(args: &Map<String, Value>) -> Vec<String> {
+  let one = args.get("path").and_then(Value::as_str).into_iter();
+  let many = args.get("paths").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str);
+  one.chain(many).map(str::trim).filter(|p| !p.is_empty()).map(str::to_owned).collect()
+}
+
+/// A finished show_image call: the files it named (kept as locations while it ran) become its images
+fn attach_shown_images(b: &mut ToolCallBlock, ctx: Option<&ToolCtx>) {
+  let is_image = |c: &ToolContent| matches!(c, ToolContent::Image(_));
+  if b.status != ToolStatus::Completed || b.content.as_ref().is_some_and(is_image) || b.contents.as_ref().is_some_and(|l| l.iter().any(is_image)) {
+    return;
+  }
+  let Some(save) = ctx.and_then(|c| c.save_image_file.as_ref()) else { return };
+  let images: Vec<ToolContent> = b
+    .locations
+    .iter()
+    .flatten()
+    .filter_map(|l| {
+      let path = local_path_of(&l.path)?;
+      let mime = image_mime_of(&path)?;
+      Some(ToolContent::Image(ImageRef { blob: Some(save(&path)?), mime_type: mime.to_owned(), uri: Some(l.path.clone()) }))
+    })
+    .collect();
+  if images.is_empty() {
+    return;
+  }
+  // The images come first: the tool's receipt text ("Shown to the user") is for the model, not the reader
+  let mut list = images;
+  list.extend(b.contents.take().unwrap_or_else(|| b.content.iter().cloned().collect()));
+  b.content = list.first().cloned();
+  b.contents = if list.len() > 1 { Some(list) } else { None };
 }
 
 /// An image generation tool that answers with the saved file's path instead of an image block (Grok's `image_gen` returns the

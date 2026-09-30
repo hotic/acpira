@@ -1,12 +1,13 @@
-import { cloneElement, isValidElement, memo, useEffect, useState, type ReactElement, type ReactNode } from 'react';
-import { Streamdown, defaultRehypePlugins, type Components } from 'streamdown';
+import { cloneElement, createContext, isValidElement, memo, useContext, useEffect, useState, type ComponentProps, type ReactElement, type ReactNode } from 'react';
+import { Streamdown, defaultRehypePlugins, type Components, type ExtraProps } from 'streamdown';
 import { createMathPlugin } from '@streamdown/math';
 import { mermaid as mermaidDiagram } from '@streamdown/mermaid';
-import type { TextBlock } from '@shared/transcript';
+import type { ImageRef, TextBlock } from '@shared/transcript';
 import { STREAM_MOTION, useSmoothText, useStreamMotion, type StreamMotion } from './streamMotion';
 import { CodeBlock } from './CodeBlock';
 import { InlineFileCode, Link } from './Link';
-import { rewriteFileHrefs } from './fileLinks';
+import { decodeLocalImageSrc, rewriteFileHrefs, sameImageSource } from './fileLinks';
+import { AgentImage } from './AgentImage';
 import { useTheme } from '../look';
 
 // Full Markdown via streamdown: GFM + KaTeX + Mermaid, streaming-aware (remend repairs incomplete syntax mid-stream).
@@ -29,6 +30,7 @@ export const Prose = memo(function Prose({ block, motion = STREAM_MOTION }: { bl
   // The turn heading already indicates waiting before the first visible words.
   if (!smooth.text.trim()) return null;
   return (
+    <MarkdownImages.Provider value={block.images}>
     <Streamdown
       mode={streaming || animating ? 'streaming' : 'static'}
       isAnimating={streaming || animating}
@@ -45,6 +47,7 @@ export const Prose = memo(function Prose({ block, motion = STREAM_MOTION }: { bl
     >
       {smooth.text}
     </Streamdown>
+    </MarkdownImages.Provider>
   );
 });
 
@@ -60,12 +63,28 @@ const COMPONENTS: Components = {
   },
   inlineCode: InlineFileCode,
   a: Link,
+  img: MarkdownImage,
   table: ({ children }) => (
     <div className="acp-table scroll-thin overflow-x-auto rounded-lg border border-conversation-line">
       <table>{children}</table>
     </div>
   ),
 };
+
+// The block's host-read local images; COMPONENTS is module-level, so the per-block list travels by context
+const MarkdownImages = createContext<ImageRef[] | undefined>(undefined);
+
+// A local image source resolves to the blob the host read; until then (or when the file could not be read) the card names the source.
+// Web images keep a plain <img> within the agent image height cap
+function MarkdownImage({ src, alt }: ComponentProps<'img'> & ExtraProps) {
+  const images = useContext(MarkdownImages);
+  const written = typeof src === 'string' ? decodeLocalImageSrc(src) : undefined;
+  if (written !== undefined) {
+    const hit = images?.find(i => i.uri !== undefined && sameImageSource(i.uri, written));
+    return <AgentImage image={hit ?? { mimeType: 'image/png', uri: written }} />;
+  }
+  return typeof src === 'string' ? <img src={src} alt={alt ?? ''} className="max-h-agent-image max-w-full rounded-md" /> : null;
+}
 
 // hast children → plain text (the fenced-code mapping gets elements, not a string)
 function textOf(node: ReactNode): string {

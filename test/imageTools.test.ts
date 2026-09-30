@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ToolCallBlock } from '../src/shared/transcript';
-import { isImageGenBlock, isImageGenTool, toolImages, toolTexts } from '../src/shared/imageTools';
+import { isImageGenBlock, isImageGenTool, isImageResultBlock, isShowImageTool, toolImages, toolTexts } from '../src/shared/imageTools';
 import { setLocale } from '../src/webview/i18n';
 import { foldActivity, toolVerb } from '../src/webview/chat/folding';
 import { agentTurn } from './fixtures/engine';
@@ -56,5 +56,15 @@ describe('image generation colours', () => {
     expect(light.cardBg).toBe('#f8f8f8');
     const gap = (hex: string, paper: number) => Math.abs(parseInt(hex.slice(1, 3), 16) - paper);
     expect(gap(light.colors[2]!, 248)).toBeLessThan(gap(dark.colors[2]!, 24));
+  });
+});
+
+describe('shown images (show_image)', () => {
+  it('counts as an image result beside generations, never as a generation', () => {
+    const shown = { type: 'tool_call', id: 's', kind: 'other', verb: 'Show image', verbKey: 'verb.showImage', status: 'completed' } as ToolCallBlock;
+    expect(isShowImageTool(shown)).toBe(true);
+    expect(isImageGenTool(shown)).toBe(false);
+    expect(isImageResultBlock(shown)).toBe(true);
+    expect(isImageResultBlock({ ...shown, verbKey: undefined })).toBe(false);
   });
 });

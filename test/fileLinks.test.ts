@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeFileHref, encodeFileHref, parseFileLink, parseWrappedLink, rewriteFileHrefs, toFileHref } from '../src/webview/chat/fileLinks';
+import { decodeFileHref, decodeLocalImageSrc, encodeFileHref, parseFileLink, parseWrappedLink, rewriteFileHrefs, sameImageSource, toFileHref } from '../src/webview/chat/fileLinks';
 
 describe('parseFileLink', () => {
   it.each([
@@ -87,5 +87,24 @@ describe('file href encoding', () => {
     };
     rewriteFileHrefs()(tree);
     expect(tree.children[0]!.properties.href).toBe(encodeFileHref('/repo/a.ts', 4));
+  });
+
+  it('marks local image sources path-relative (harden blocks hash image URLs) and turns their paragraph into a div', () => {
+    const img = (src: string) => ({ type: 'element', tagName: 'img', properties: { src }, children: [] });
+    const tree = { type: 'root', children: [
+      { type: 'element', tagName: 'p', properties: {}, children: [img('/tmp/my%20shot.png'), img('https://x.test/a.png')] },
+      { type: 'element', tagName: 'p', properties: {}, children: [img('data:image/png;base64,AA==')] },
+    ] };
+    rewriteFileHrefs()(tree);
+    const [first, second] = tree.children;
+    expect(first!.tagName).toBe('div');
+    expect(second!.tagName).toBe('p');
+    const local = first!.children[0]!.properties.src;
+    expect(local.startsWith('/__acpira-image__/')).toBe(true);
+    expect(decodeLocalImageSrc(local)).toBe('/tmp/my%20shot.png');
+    // The parser percent-encodes what the host kept as written
+    expect(sameImageSource(decodeLocalImageSrc(local)!, '/tmp/my shot.png')).toBe(true);
+    expect(first!.children[1]!.properties.src).toBe('https://x.test/a.png');
+    expect(second!.children[0]!.properties.src).toBe('data:image/png;base64,AA==');
   });
 });

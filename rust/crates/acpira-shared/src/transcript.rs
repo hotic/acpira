@@ -522,6 +522,9 @@ pub struct TextBlock {
   pub markdown: String,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub streaming: Option<bool>,
+  /// Local image files the markdown embeds (`![](/abs/shot.png)`), read into the blob store; `uri` is the source as written
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub images: Option<Vec<ImageRef>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

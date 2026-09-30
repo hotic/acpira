@@ -3,7 +3,7 @@ import { memo, useContext, type ReactNode } from 'react';
 import type { AsyncTaskInfo, AsyncTaskState, ToolCallBlock } from '@shared/transcript';
 import type { MsgKey } from '@shared/i18n';
 import { toolTodoEntries } from '@shared/todoTools';
-import { isImageGenTool, toolTexts } from '@shared/imageTools';
+import { isImageGenTool, isShowImageTool, toolTexts } from '@shared/imageTools';
 import { useAppearance } from '../appearance';
 import { Disclosure } from '../ui/Disclosure';
 import { EntranceOnce, Row, RowLabel, RowTarget } from '../ui/Row';
@@ -117,6 +117,12 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
       ? <Disclosure className="action-details" tone="action" lead={lead} trailing={trailing} indent={false} rail={false}
           body={<CodeSurface className="text-fg-2 whitespace-pre-wrap">{text}</CodeSurface>}>{label}</Disclosure>
       : <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
+    return grouped ? row : <div className="flex flex-col gap-gap">{row}<GeneratedImages block={block} /></div>;
+  }
+  // Shown images (Acpira's show_image tool): a plain row naming the caption or files; the images sit outside the process fold
+  // (CodexMessage) or right below the row, and the receipt text is for the model only
+  if (isShowImageTool(block)) {
+    const row = <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
     return grouped ? row : <div className="flex flex-col gap-gap">{row}<GeneratedImages block={block} /></div>;
   }
   // Search hits open on demand; read references remain visible inside the process.

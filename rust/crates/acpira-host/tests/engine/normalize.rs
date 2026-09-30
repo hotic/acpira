@@ -932,3 +932,58 @@ fn a_failed_compaction_update_carries_its_error() {
   apply(&mut s, json!({ "sessionUpdate": "compaction_update", "compactionId": "c1", "status": "failed", "error": "too large" }));
   assert_eq!(compaction_rows(&s), vec![("failed".into(), Some("too large".into()))]);
 }
+
+#[test]
+fn local_images_in_reply_markdown_are_read_once_even_when_the_syntax_spans_chunks() {
+  let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+  let mut s = state();
+  let log = seen.clone();
+  s.ctx.cwd = Some("/work".into());
+  s.ctx.save_image_file = Some(Arc::new(move |p: &str| {
+    log.lock().unwrap().push(p.to_owned());
+    (!p.contains("missing")).then(|| format!("{}.png", p.len()))
+  }));
+  let chunk = |s: &mut NormalizeState, text: &str| {
+    apply(s, json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": text } }));
+  };
+  chunk(&mut s, "Here it is: ![shot](/tmp/sh");
+  assert!(seen.lock().unwrap().is_empty());
+  chunk(&mut s, "ot.png) and ![web](https://x.test/a.png) ");
+  chunk(&mut s, "![rel](<docs/my shot.jpg> \"title\") ![again](/tmp/shot.png) ![gone](file:///tmp/missing.webp) ![text](/tmp/notes.txt)");
+  assert_eq!(*seen.lock().unwrap(), ["/tmp/shot.png", "/work/docs/my shot.jpg", "/tmp/missing.webp"]);
+  expect_match(block(&s, 0, 0), json!({ "type": "text", "images": [
+    { "uri": "/tmp/shot.png", "blob": "13.png", "mimeType": "image/png" },
+    { "uri": "docs/my shot.jpg", "mimeType": "image/jpeg" },
+    { "uri": "file:///tmp/missing.webp", "mimeType": "image/webp" },
+  ] }));
+  // A source that could not be read is recorded without a blob and not retried by later chunks
+  expect_absent(block(&s, 0, 0), "images.2.blob");
+  chunk(&mut s, " done.");
+  assert_eq!(seen.lock().unwrap().len(), 3);
+}
+
+#[test]
+fn the_host_show_image_tool_becomes_an_image_row_for_claude_and_codex_wire_shapes() {
+  let mut s = state();
+  s.ctx.save_image_file = Some(Arc::new(|p: &str| Some(format!("b-{}", p.rsplit('/').next().unwrap()))));
+  // claude-agent-acp 0.83: `name` mcp__acpira__show_image, the arguments as rawInput, no image until completion
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "c1", "name": "mcp__acpira__show_image", "title": "mcp__acpira__show_image",
+    "kind": "other", "status": "pending", "rawInput": { "path": "/tmp/a.png", "caption": "Account menu" } }));
+  expect_match(block(&s, 0, 0), json!({ "verbKey": "verb.showImage", "kind": "other", "target": "Account menu", "locations": [{ "path": "/tmp/a.png" }] }));
+  expect_absent(block(&s, 0, 0), "content");
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "c1", "status": "completed",
+    "content": [{ "type": "content", "content": { "type": "text", "text": "Shown to the user: a.png." } }] }));
+  expect_match(block(&s, 0, 0), json!({ "contents": [
+    { "type": "image", "blob": "b-a.png", "uri": "/tmp/a.png" }, { "type": "text", "text": "Shown to the user: a.png." },
+  ] }));
+  // codex-acp 1.13: `mcp.acpira.show_image`, kind execute, rawInput { server, tool, arguments }
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "x1", "title": "mcp.acpira.show_image", "kind": "execute", "status": "in_progress",
+    "rawInput": { "server": "acpira", "tool": "show_image", "arguments": { "paths": ["/tmp/b.png", "/tmp/c.jpg"] } } }));
+  expect_match(block(&s, 0, 1), json!({ "verbKey": "verb.showImage", "kind": "other", "target": "b.png, c.jpg" }));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "x1", "status": "completed" }));
+  expect_match(block(&s, 0, 1), json!({ "contents": [{ "blob": "b-b.png" }, { "blob": "b-c.jpg", "mimeType": "image/jpeg" }] }));
+  // A failed call (the server refused the path) shows no image
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "f1", "title": "acpira_show_image", "status": "failed", "rawInput": { "path": "/tmp/d.png" } }));
+  expect_match(block(&s, 0, 2), json!({ "verbKey": "verb.showImage", "status": "failed" }));
+  expect_absent(block(&s, 0, 2), "content");
+}

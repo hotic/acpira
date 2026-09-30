@@ -13,6 +13,30 @@ export const OpenBlobContext = createContext<((blob: string) => void) | undefine
 
 // Hash form survives rehype-sanitize / rehype-harden: file: is a hard block and becomes ` [blocked]`.
 export const FILE_HREF_PREFIX = '#acpira-file:';
+// Local image sources in reply markdown (`![](/abs/shot.png)`) become a path-relative marker; `Prose` resolves them to the blob
+// the host read (TextBlock.images). Not the hash form: rehype-harden passes `#` fragments for links only, while a
+// path-relative image URL survives both sanitize and harden. Web and data URLs keep their own src.
+export const LOCAL_IMAGE_PREFIX = '/__acpira-image__/';
+const WEB_IMAGE = /^(?:https?|data|blob):/i;
+
+// The source as written, from a rewritten src
+export function decodeLocalImageSrc(src: string): string | undefined {
+  if (!src.startsWith(LOCAL_IMAGE_PREFIX)) return;
+  return safeDecode(src.slice(LOCAL_IMAGE_PREFIX.length));
+}
+
+// The parser percent-encodes spaces and non-ASCII in a src; the host keeps it as written. Compare both decoded
+export function sameImageSource(a: string, b: string): boolean {
+  return safeDecode(a) === safeDecode(b);
+}
+
+function safeDecode(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
 
 const SKIP_SCHEMES = /^(?:https?|mailto|javascript|data|vbscript|blob|tel):/i;
 const WEB_TLD = /^(?:com|org|net|io|edu|gov|cn|co|dev|info|xyz|me|ai)$/i;
@@ -76,11 +100,14 @@ export function rewriteFileHrefs() {
 interface HastNode {
   type: string;
   tagName?: string;
-  properties?: { href?: unknown };
+  properties?: { href?: unknown; src?: unknown };
   children?: HastNode[];
 }
 
 function walk(node: HastNode): void {
+  // A paragraph holding a local image renders it as a block card (AgentImage), which a <p> may not contain
+  if (node.tagName === 'p' && node.children?.some(isLocalImage)) node.tagName = 'div';
+  if (isLocalImage(node)) node.properties!.src = `${LOCAL_IMAGE_PREFIX}${encodeURIComponent(node.properties!.src as string)}`;
   if (node.tagName === 'a' && typeof node.properties?.href === 'string') {
     const href = node.properties.href;
     if (!href.startsWith(FILE_HREF_PREFIX)) {
@@ -89,6 +116,11 @@ function walk(node: HastNode): void {
     }
   }
   node.children?.forEach(walk);
+}
+
+function isLocalImage(node: HastNode): boolean {
+  const src = node.properties?.src;
+  return node.tagName === 'img' && typeof src === 'string' && !!src && !src.startsWith(LOCAL_IMAGE_PREFIX) && !WEB_IMAGE.test(src);
 }
 
 function parseFileUrl(href: string): FileLink | undefined {

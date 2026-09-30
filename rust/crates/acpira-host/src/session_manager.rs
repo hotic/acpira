@@ -75,6 +75,8 @@ pub struct ManagerDeps {
   pub compaction: Arc<dyn Fn() -> CompactionPolicy + Send + Sync>,
   pub hidden: Arc<dyn Fn() -> HiddenMap + Send + Sync>,
   pub scope: Arc<dyn Fn() -> String + Send + Sync>,
+  /// Acpira's own MCP server (`acpira mcp`) for every session request; None without a known executable
+  pub host_mcp: Option<crate::host_mcp::HostMcp>,
 }
 
 #[derive(Default)]
@@ -1083,6 +1085,7 @@ impl SessionManager {
       accounts: self.deps.accounts.clone().map(|a| Arc::new(AccountHooks(a)) as Arc<dyn SessionAccountHooks>),
       compaction: Some(Arc::new(move || compaction())),
       pool: Some(self.pool.clone()),
+      host_mcp: self.deps.host_mcp.clone(),
       model_shapes: Some(Arc::new(move |agent: &str| {
         shapes_me.upgrade().and_then(|m| m.state.lock().prefs.model_shapes.as_ref().and_then(|s| s.get(agent).cloned()))
       })),

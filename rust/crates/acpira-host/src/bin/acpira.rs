@@ -4,6 +4,7 @@
 //!   acpira bridge <action> ...                   the ChatGPT event-mirror CLI
 //!   acpira agents [--json]                       the built-in agents, where each CLI was found and how it is initialized
 //!   acpira model-catalog [--out FILE]            fetch models.dev, print (or write) the trimmed model catalogue
+//!   acpira mcp                                   the MCP server handed to agents (show_image), over stdio
 //!   acpira --version
 
 use std::path::PathBuf;
@@ -36,6 +37,9 @@ fn main() {
   if args.first().map(String::as_str) == Some("--version") {
     println!("{VERSION}");
     return;
+  }
+  if args.first().map(String::as_str) == Some("mcp") {
+    std::process::exit(acpira_host::host_mcp::run(VERSION));
   }
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("tokio runtime");
   let code = rt.block_on(async move {

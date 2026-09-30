@@ -178,7 +178,7 @@ export const zhCN = {
   'composer.fusionSummary': '{leads} 个主模型，{sidekicks} 个副手',
   'composer.addAccount': '添加账号',
   'composer.accountsOf': '{agent} 账号',
-  'composer.noAccounts': '还没有账号，点「＋」添加',
+  'composer.noAccounts': '点右上角「＋」登录或导入账号。',
   'composer.notLoggedIn': '未登录',
   'agent.notInstalled': '未安装，安装命令见其设置页',
   'composer.send': '发送',
@@ -510,6 +510,7 @@ export const zhCN = {
   'verb.kill': '终止后台命令',
   // Image generation tools (codex-acp "Image generation", Grok image_gen / image_edit), recognized by name
   'verb.imagegen': '生成图片',
+  'verb.showImage': '展示图片',
   // Delegation calls: the tool that spawns a subagent (Devin run_subagent, Claude/Kimi Agent) and the one that blocks on it
   'verb.delegate': '委派',
   'verb.awaitSubagent': '等待子代理',

@@ -232,7 +232,7 @@ pub fn apply_chatgpt_event(record: &ChatGptRecord, value: &Value, now: i64) -> R
               existing.phase = Some(phase);
             }
             None => {
-              turn.blocks.push(AgentBlock::Text(TextBlock { id: Some(message_id), phase: Some(phase), markdown: text, streaming: None }))
+              turn.blocks.push(AgentBlock::Text(TextBlock { id: Some(message_id), phase: Some(phase), markdown: text, streaming: None, images: None }))
             }
           }
         }

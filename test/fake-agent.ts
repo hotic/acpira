@@ -183,6 +183,10 @@ const app = acp.agent({ name: 'fake-agent' })
       process.stderr.write('2026-01-01T00:00:00Z WARN run_acp_server: agent_client_protocol::jsonrpc::outgoing_actor: Sending error response id=Number(1) method=session/new error=Error { code: -32000: Authentication required, message: "ACP host has not authenticated." }\n');
       throw acp.RequestError.authRequired();
     }
+    // FAKE_MCP_LOG: one line per session/new with the names of the MCP servers it was handed;
+    // FAKE_MCP_REJECT: refuse any session/new that carries MCP servers (an agent that cannot start them)
+    if (process.env.FAKE_MCP_LOG) appendFileSync(process.env.FAKE_MCP_LOG, `${JSON.stringify(params.mcpServers.map(s => s.name))}\n`);
+    if (process.env.FAKE_MCP_REJECT && params.mcpServers.length) throw acp.RequestError.internalError(undefined, 'cannot start MCP servers');
     const sessionId = sessionDir ? randomUUID() : `s${++seq}`;
     sessions.add(sessionId);
     saveSession(sessionId, [], canonicalCwd(params.cwd));

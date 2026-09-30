@@ -2,7 +2,7 @@ import { Fragment, createContext, memo, useCallback, useContext, useId, useLayou
 import { Bot, Check, ChevronRight, Compass, Hand, MessageCircleQuestion, Shrink, TriangleAlert, X } from 'lucide-react';
 import type { AgentBlock, AgentTurn, CompactionBlock, FailureAction, NoticeBlock, PermissionBlock, SlashCommand, SteerBlock, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
-import { isImageGenBlock } from '@shared/imageTools';
+import { isImageResultBlock } from '@shared/imageTools';
 import { useAppearance, type Appearance } from '../appearance';
 import { getLocale, t } from '../i18n';
 import { commandSegments } from './PromptInput';
@@ -433,8 +433,8 @@ function CursorFold({ blocks }: { blocks: ToolCallBlock[] }) {
 function CodexMessage({ turn, running, working = running, onPermission, memoryKey, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; running: boolean; working?: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
   const { process, reply, permissions, notices } = splitCodexBlocks(turn.blocks);
   const hasTools = turn.blocks.some(block => block.type === 'tool_call');
-  // Generated images are results, not process detail: they stay visible however the fold is set
-  const generations = turn.blocks.filter(isImageGenBlock);
+  // Generated and shown images are results, not process detail: they stay visible however the fold is set
+  const generations = turn.blocks.filter(isImageResultBlock);
   return (
     <div className="flex flex-col gap-gap">
       <CodexFold turn={turn} blocks={process} running={working} hasTools={hasTools} memoryKey={memoryKey} lead={lead} />

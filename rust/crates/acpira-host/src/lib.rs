@@ -10,6 +10,7 @@ pub mod agents_cli;
 pub mod bridge_core;
 pub mod external;
 pub mod file_rank;
+pub mod host_mcp;
 pub mod http;
 pub mod i18n;
 pub mod inventory;

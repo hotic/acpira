@@ -292,3 +292,27 @@ async fn a_live_async_task_restores_with_observation_unknown_and_its_last_state(
   expect_match(&row["asyncTask"], json!({ "id": "t1", "state": "running", "canStop": false, "name": "sleep 120" }));
   expect_absent(&row["asyncTask"], "stopRequested");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn session_new_hands_the_agent_the_host_mcp_server_and_drops_it_for_an_agent_that_refuses_it() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let log = dir.path().join("mcp.log");
+  let lines = |log: &std::path::Path| std::fs::read_to_string(log).unwrap_or_default().lines().map(str::to_owned).collect::<Vec<_>>();
+
+  let mut h = Harness::new(&fake, json!({ "env": { "FAKE_MCP_LOG": log } }));
+  h.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new("/opt/acpira/bin/acpira"));
+  let s = started(&h, "/tmp").await;
+  expect_match(view(&s), json!({ "status": "ready" }));
+  assert_eq!(lines(&log), [r#"["acpira"]"#]);
+
+  // An agent that fails session/new with the server still gets a session, and later sessions leave the server out
+  let rejecting = dir.path().join("reject.log");
+  let mut h = Harness::new(&fake, json!({ "env": { "FAKE_MCP_LOG": rejecting, "FAKE_MCP_REJECT": "1" } }));
+  h.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new("/opt/acpira/bin/acpira"));
+  let first = started(&h, "/tmp").await;
+  expect_match(view(&first), json!({ "status": "ready" }));
+  let second = started(&h, "/tmp").await;
+  expect_match(view(&second), json!({ "status": "ready" }));
+  assert_eq!(lines(&rejecting), [r#"["acpira"]"#, "[]", "[]"]);
+}
