@@ -62,6 +62,46 @@ pub struct SessionPrefs {
 pub type SaveErrorHook = Arc<dyn Fn(&str, &str) + Send + Sync>;
 pub type LogFn = Arc<dyn Fn(&str) + Send + Sync>;
 
+/// Why a session record could not be loaded. Keep this distinction all the way to the UI: a missing file can be
+/// removed from a stale index, while a read or parse failure should stay listed so a later retry can recover it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecordLoadError {
+  InvalidId,
+  Missing,
+  StoreUnavailable,
+  Unreadable { reason: String },
+  Corrupt { reason: String },
+  IdMismatch { actual: String },
+}
+
+impl RecordLoadError {
+  pub fn code(&self) -> &'static str {
+    match self {
+      Self::InvalidId => "SESSION_RECORD_INVALID_ID",
+      Self::Missing => "SESSION_RECORD_MISSING",
+      Self::StoreUnavailable => "SESSION_STORE_UNAVAILABLE",
+      Self::Unreadable { .. } => "SESSION_RECORD_UNREADABLE",
+      Self::Corrupt { .. } => "SESSION_RECORD_CORRUPT",
+      Self::IdMismatch { .. } => "SESSION_RECORD_MISMATCH",
+    }
+  }
+
+  pub fn detail(&self) -> String {
+    match self {
+      Self::InvalidId => "the session id is invalid".into(),
+      Self::Missing => "the record file does not exist".into(),
+      Self::StoreUnavailable => "the session store is unavailable".into(),
+      Self::Unreadable { reason } => reason.clone(),
+      Self::Corrupt { reason } => reason.clone(),
+      Self::IdMismatch { actual } => format!("the file contains id {actual}"),
+    }
+  }
+
+  pub fn is_missing(&self) -> bool {
+    matches!(self, Self::Missing)
+  }
+}
+
 struct Pending {
   source: Arc<dyn RecordSource>,
   due: Instant,
@@ -210,28 +250,39 @@ impl TranscriptStore {
     Ok(ids)
   }
 
-  /// A record that fails to parse, or lacks the fields every reader relies on, counts as missing
-  pub async fn load(&self, id: &str) -> Option<SessionRecord> {
+  /// Load a record with a reason that callers can present or log. The filename is still confined to the session root.
+  pub async fn load_detailed(&self, id: &str) -> Result<SessionRecord, RecordLoadError> {
     if !is_session_id(id) {
-      return None;
+      return Err(RecordLoadError::InvalidId);
     }
     let pending = self.state.lock().pending.get(id).map(|p| p.source.clone());
     if let Some(src) = pending {
-      return Some(src.record());
+      return Ok(src.record());
     }
-    let path = confined(&self.dir, &format!("{id}.json")).await?;
-    let raw = fs::read(&path).await.ok()?;
+    let path = confined(&self.dir, &format!("{id}.json")).await.ok_or(RecordLoadError::StoreUnavailable)?;
+    let raw = match fs::read(&path).await {
+      Ok(raw) => raw,
+      Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(RecordLoadError::Missing),
+      Err(e) => return Err(RecordLoadError::Unreadable { reason: e.to_string() }),
+    };
     match serde_json::from_slice::<SessionRecord>(&raw) {
       Ok(r) if r.id == id && is_session_id(&r.id) => {
         self.state.lock().known.insert(id.to_owned());
-        Some(r)
+        Ok(r)
       }
-      Ok(_) => {
-        (self.log)(&format!("session {id}: record unreadable (not a session record)"));
-        None
-      }
-      Err(e) => {
-        (self.log)(&format!("session {id}: record unreadable ({e})"));
+      Ok(r) => Err(RecordLoadError::IdMismatch { actual: r.id }),
+      Err(e) => Err(RecordLoadError::Corrupt { reason: e.to_string() }),
+    }
+  }
+
+  /// Compatibility wrapper for callers that only need the record. Detailed callers should use `load_detailed`.
+  pub async fn load(&self, id: &str) -> Option<SessionRecord> {
+    match self.load_detailed(id).await {
+      Ok(record) => Some(record),
+      Err(error) => {
+        if !error.is_missing() {
+          (self.log)(&format!("session {id}: record unreadable ({})", error.detail()));
+        }
         None
       }
     }

@@ -59,6 +59,14 @@ const INDEX_MAX_WAIT: Duration = Duration::from_millis(2000);
 // Streamed updates coalesce into one push per session at this pace; an idle edge goes out at once
 const PUSH_QUANTUM: Duration = Duration::from_millis(16);
 
+fn safe_record_text(value: &str) -> String {
+  let mut text: String = value.chars().filter(|c| !c.is_control()).take(160).collect();
+  if value.chars().count() > 160 {
+    text.push('…');
+  }
+  text
+}
+
 pub type Sink = Arc<dyn Fn(HostMsg) + Send + Sync>;
 
 pub struct ManagerDeps {
@@ -263,6 +271,38 @@ impl SessionManager {
     if !added.is_empty() {
       self.log(&format!("PATH from the login shell adds: {}", added.join(":")));
     }
+  }
+
+  fn record_load_message(&self, id: &str, error: &RecordLoadError) -> String {
+    let reason = match error {
+      RecordLoadError::InvalidId => t("host.recordInvalidIdReason"),
+      RecordLoadError::Missing => t("host.recordMissingReason"),
+      RecordLoadError::StoreUnavailable => t("host.recordStoreUnavailableReason"),
+      RecordLoadError::Unreadable { reason } => {
+        let reason = safe_record_text(reason);
+        tp("host.recordUnreadableReason", &[("error", &reason)])
+      }
+      RecordLoadError::Corrupt { reason } => {
+        let reason = safe_record_text(reason);
+        tp("host.recordCorruptReason", &[("error", &reason)])
+      }
+      RecordLoadError::IdMismatch { actual } => {
+        let actual = safe_record_text(actual);
+        tp("host.recordMismatchReason", &[("actual", &actual)])
+      }
+    };
+    self.record_failure_message(id, error.code(), &reason)
+  }
+
+  fn record_failure_message(&self, id: &str, code: &str, reason: &str) -> String {
+    let short_id: String = id.chars().take(12).collect();
+    let session = if short_id.len() < id.len() { format!("{short_id}…") } else { short_id };
+    tp("host.recordLoadFailed", &[("reason", reason), ("code", code), ("id", &session)])
+  }
+
+  fn notify_record_load_failure(&self, id: &str, error: &RecordLoadError) {
+    self.log(&format!("session {id}: {} ({})", error.code(), error.detail()));
+    (self.deps.toast)("error", &self.record_load_message(id, error));
   }
 
   pub fn registry(&self) -> Arc<AgentRegistry> {
@@ -1207,7 +1247,8 @@ impl SessionManager {
       if let Some(c) = me.deps.chatgpt.clone().filter(|c| c.owns(&id)) {
         c.refresh().await;
         let Some(view) = c.view(&id) else {
-          (me.deps.toast)("error", &t("host.recordLost"));
+          let reason = t("host.recordMirrorMissingReason");
+          (me.deps.toast)("error", &me.record_failure_message(&id, "SESSION_MIRROR_MISSING", &reason));
           return;
         };
         me.set_active(&v, Some(id.clone()));
@@ -1218,6 +1259,7 @@ impl SessionManager {
       if v.active_id().as_deref() == Some(id.as_str()) && me.live(&id).is_some() {
         return;
       }
+      let previous = v.active_id();
       me.set_active(&v, Some(id.clone()));
       if let Some(live) = me.live(&id) {
         let (raw, running) = live.view_json();
@@ -1235,24 +1277,35 @@ impl SessionManager {
           let (raw, running) = s.view_json();
           v.emit(HostMsg::Session { session: raw, running });
           me.emit_sessions();
+        } else if v.active_id().as_deref() == Some(id.as_str()) {
+          me.set_active(&v, previous.filter(|old| old != &id));
         }
         return;
       }
       let (tx, rx) = tokio::sync::watch::channel(false);
       me.state.lock().loading.insert(id.clone(), rx);
-      me.load_session(&id).await;
+      me.load_session(&v, &id, previous).await;
       me.state.lock().loading.remove(&id);
       let _ = tx.send(true);
     })
   }
 
-  async fn load_session(self: &Arc<Self>, id: &str) {
-    let Some(record) = self.deps.store.load(id).await else {
-      (self.deps.toast)("error", &t("host.recordLost"));
-      self.state.lock().index.retain(|s| s.id != id);
-      self.emit_sessions();
-      self.save_index();
-      return;
+  async fn load_session(self: &Arc<Self>, v: &Arc<Viewer>, id: &str, previous: Option<String>) {
+    let record = match self.deps.store.load_detailed(id).await {
+      Ok(record) => record,
+      Err(error) => {
+        let missing = error.is_missing();
+        self.notify_record_load_failure(id, &error);
+        if missing {
+          self.state.lock().index.retain(|s| s.id != id);
+          self.emit_sessions();
+          self.save_index();
+          self.rehome(id).await;
+        } else if v.active_id().as_deref() == Some(id) {
+          self.set_active(v, previous.filter(|old| old != id));
+        }
+        return;
+      }
     };
     if self.live(id).is_some() {
       return;
@@ -1654,10 +1707,12 @@ impl SessionManager {
     }
     let live = self.live(source_id);
     let source = match &live {
-      Some(l) => Some(l.to_record()),
-      None => self.deps.store.load(source_id).await,
-    }
-    .ok_or_else(|| anyhow!(t("host.recordLost")))?;
+      Some(l) => l.to_record(),
+      None => match self.deps.store.load_detailed(source_id).await {
+        Ok(record) => record,
+        Err(error) => return Err(anyhow!(self.record_load_message(source_id, &error))),
+      },
+    };
     let idx = usize::try_from(turn_index)
       .ok()
       .filter(|i| matches!(source.turns.get(*i), Some(Turn::Agent(_))))
@@ -1766,15 +1821,24 @@ impl SessionManager {
 
   /// Write the session as Markdown or JSON under exports/
   pub async fn export_session(&self, id: &str, format: ExportFormat) -> Result<std::path::PathBuf> {
-    let record = match self.live(id) {
-      Some(l) => Some(l.to_record()),
-      None => self.deps.store.load(id).await,
+    let record = if self.deps.chatgpt.as_ref().is_some_and(|c| c.owns(id)) {
+      None
+    } else {
+      match self.live(id) {
+        Some(l) => Some(l.to_record()),
+        None => match self.deps.store.load_detailed(id).await {
+          Ok(record) => Some(record),
+          Err(error) => return Err(anyhow!(self.record_load_message(id, &error))),
+        },
+      }
     };
     let (title, agent, cwd, turns, json) = match record {
       Some(r) => (r.title.clone(), r.agent.clone(), r.cwd.clone(), r.turns.clone(), serde_json::to_string_pretty(&r)?),
       None => {
-        let view =
-          self.deps.chatgpt.as_ref().filter(|c| c.owns(id)).and_then(|c| c.view(id)).ok_or_else(|| anyhow!(t("host.recordLost")))?;
+        let view = self.deps.chatgpt.as_ref().filter(|c| c.owns(id)).and_then(|c| c.view(id)).ok_or_else(|| {
+          let error = RecordLoadError::Missing;
+          anyhow!(self.record_load_message(id, &error))
+        })?;
         let json = serde_json::to_string_pretty(&view)?;
         (view.title, view.agent, view.cwd, view.turns, json)
       }

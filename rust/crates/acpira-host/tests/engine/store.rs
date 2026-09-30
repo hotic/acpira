@@ -8,7 +8,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use acpira_host::store::record::SessionRecord;
-use acpira_host::store::transcript_store::{TranscriptStore, is_session_id};
+use acpira_host::store::transcript_store::{RecordLoadError, TranscriptStore, is_session_id};
 use acpira_shared::transcript::SessionSummary;
 
 fn record(id: &str, title: &str) -> Arc<SessionRecord> {
@@ -93,6 +93,18 @@ async fn unreadable_or_malformed_records_load_as_missing_with_a_log_line() {
   assert_eq!(logs.lock().unwrap().iter().filter(|l| l.contains("record unreadable")).count(), 2);
   store.flush(record("good", "T")).await.unwrap();
   assert_eq!(store.load("good").await.unwrap().id, "good");
+}
+
+#[tokio::test]
+async fn detailed_record_load_keeps_the_failure_reason() {
+  let (dir, _, store) = fixture();
+  assert_eq!(store.load_detailed("missing").await, Err(RecordLoadError::Missing));
+  std::fs::write(dir.path().join("bad.json"), "{ not json").unwrap();
+  assert!(matches!(store.load_detailed("bad").await, Err(RecordLoadError::Corrupt { .. })));
+  std::fs::write(dir.path().join("mismatch.json"), serde_json::to_string(&*record("other", "T")).unwrap()).unwrap();
+  assert_eq!(store.load_detailed("mismatch").await, Err(RecordLoadError::IdMismatch { actual: "other".into() }));
+  std::fs::create_dir(dir.path().join("directory.json")).unwrap();
+  assert!(matches!(store.load_detailed("directory").await, Err(RecordLoadError::Unreadable { .. })));
 }
 
 #[tokio::test(flavor = "multi_thread")]
