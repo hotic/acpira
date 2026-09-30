@@ -12,6 +12,8 @@ import { VscodePlatform } from './vscodePlatform';
 import { editorSelectionOf } from './editorSelection';
 
 const VIEW_ID = 'acpira.chat';
+const EDITOR_VIEW_TYPE = 'acpira.editor';
+const EDITOR_STATE_SESSION = 'acpiraSessionId';
 
 let client: SidecarClient | undefined;
 
@@ -103,15 +105,12 @@ export async function activate(context: vscode.ExtensionContext) {
     withSidebar(b => b.postShell(m));
   };
 
-  // A new tab is a new conversation: without a session id (title bar / command palette) it opens on a fresh session; a webview passing its
-  // id opens that one. The tab title follows the session it shows
-  function openEditor(sessionId?: unknown, watch?: (s: SessionView) => void): WebviewBridge {
-    const panel = vscode.window.createWebviewPanel('acpira.editor', 'Acpira', vscode.ViewColumn.Active, { retainContextWhenHidden: true });
+  const bindEditor = (panel: vscode.WebviewPanel, sessionId?: string, watch?: (s: SessionView) => void): WebviewBridge => {
     panel.iconPath = {
       light: vscode.Uri.joinPath(context.extensionUri, 'media', 'icon-light.svg'),
       dark: vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.svg'),
     };
-    const b = attach(panel.webview, 'editor', typeof sessionId === 'string' ? sessionId : undefined, s => { panel.title = s.title; watch?.(s); });
+    const b = attach(panel.webview, 'editor', sessionId, s => { panel.title = s.title; watch?.(s); });
     panels.set(b, panel);
     lastFocused = b;
     panel.onDidChangeViewState(e => { if (e.webviewPanel.active) lastFocused = b; });
@@ -122,6 +121,13 @@ export async function activate(context: vscode.ExtensionContext) {
       b.dispose();
     });
     return b;
+  };
+
+  // A new tab is a new conversation: without a session id (title bar / command palette) it opens on a fresh session; a webview passing its
+  // id opens that one. The tab title follows the session it shows
+  function openEditor(sessionId?: unknown, watch?: (s: SessionView) => void): WebviewBridge {
+    const panel = vscode.window.createWebviewPanel(EDITOR_VIEW_TYPE, 'Acpira', vscode.ViewColumn.Active, { retainContextWhenHidden: true });
+    return bindEditor(panel, typeof sessionId === 'string' ? sessionId : undefined, watch);
   }
 
   // The sidebar exists once VS Code resolves it; a command that needs it before then waits for it
@@ -151,6 +157,14 @@ export async function activate(context: vscode.ExtensionContext) {
         for (const fn of sidebarPending.splice(0)) fn(b);
       },
     }, { webviewOptions: { retainContextWhenHidden: true } }),
+    vscode.window.registerWebviewPanelSerializer(EDITOR_VIEW_TYPE, {
+      deserializeWebviewPanel(panel, state) {
+        const saved = state && typeof state === 'object' ? (state as Record<string, unknown>)[EDITOR_STATE_SESSION] : undefined;
+        const sessionId = typeof saved === 'string' ? saved : undefined;
+        bindEditor(panel, sessionId);
+        return Promise.resolve();
+      },
+    }),
 
     vscode.window.onDidChangeTextEditorSelection(e => trackSelection(e.textEditor)),
     vscode.window.onDidChangeActiveTextEditor(editor => { if (editor) trackSelection(editor); }),

@@ -37,7 +37,9 @@
     "Chat"
   ],
   "main": "./dist/extension.cjs",
-  "activationEvents": [],
+  "activationEvents": [
+    "onWebviewPanel:acpira.editor"
+  ],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
