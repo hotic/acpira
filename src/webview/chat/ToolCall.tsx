@@ -17,7 +17,7 @@ import { CodeSurface, DiffBlock } from './CodeBlock';
 import { AgentImage } from './AgentImage';
 import { GeneratedImages } from './GeneratedImage';
 import { TerminalOutput } from './Terminal';
-import { toolVerb } from './folding';
+import { toolTarget, toolVerb } from './folding';
 import { AsyncTaskStopContext, OpenToolFileContext } from './fileLinks';
 import { fileReference, toolFiles, visibleToolContents } from './toolDetails';
 import { useToolSeconds } from './useToolSeconds';
@@ -106,7 +106,7 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
     <RowLabel shimmer={running}>{toolVerb(block)}</RowLabel>
     {command
       ? <RowTarget mono><span title={command}>{command}</span></RowTarget>
-      : block.target && !(block.kind === 'read' && files.length) && <RowTarget mono={block.targetMono}>{block.target}</RowTarget>}
+      : block.target && !(block.kind === 'read' && files.length) && <RowTarget mono={block.targetMono}>{toolTarget(block)}</RowTarget>}
   </>;
   if (todos !== undefined) return <PlanDetails entries={todos} label={label} trailing={trailing} />;
   // Image generation: the row names the call and its text (codex-acp's revised prompt) opens on demand. In the process fold
