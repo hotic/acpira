@@ -18,7 +18,8 @@ use acpira_shared::export_transcript::{ExportInput, ExportLabels, export_file_na
 use acpira_shared::inventory::{AgentHealth, AgentHealthStage, AgentRuntimeInfo, HealthSource};
 use acpira_shared::model_shapes::learn_shape;
 use acpira_shared::protocol::{
-  AccountAction, AccountActionStatus, AccountActionVia, AddAccountVia, EditTurnRequest, ExportFormat, HostMsg, RawJson, WebviewMsg,
+  AccountAction, AccountActionStatus, AccountActionVia, AddAccountVia, EditTurnRequest, ExportFormat, HostMsg, RawJson, SessionHit,
+  WebviewMsg,
 };
 use acpira_shared::settings::{HiddenMap, in_workspace};
 use acpira_shared::subagents::{StateSource, SubagentState};
@@ -39,7 +40,8 @@ use crate::external::desktop_commander::desktop_commander_status;
 use crate::i18n::{t, tp};
 use crate::limits::RENAME_MAX;
 use crate::store::record::{ForkedFrom, ImportedFrom, RecordSource, SessionRecord};
-use crate::store::transcript_store::{LogFn, SessionPrefs, TranscriptStore, is_session_id, sort_index};
+use crate::store::session_search::SessionSearch;
+use crate::store::transcript_store::{LogFn, RecordLoadError, SessionPrefs, TranscriptStore, is_session_id, sort_index};
 use crate::util::{clip, local_stamp, ms_of_iso, now_iso, random_uuid};
 
 const TRASH_TTL: Duration = Duration::from_secs(30);
@@ -152,6 +154,8 @@ impl SessionManager {
         Some(Arc::new(move |agent: String, account: String| {
           let me = env_me.clone();
           Box::pin(async move {
+  // Extracted conversation text of the saved records, kept between history searches
+  search: SessionSearch,
             let m = me.upgrade()?;
             let accounts = m.deps.accounts.clone()?;
             accounts.spawn_env_for(&agent, &account).await
@@ -202,6 +206,7 @@ impl SessionManager {
       a.on_lock_change(Arc::new(move || {
         if let Some(m) = me.upgrade() {
           m.emit_agents();
+        search: SessionSearch::default(),
         }
       }));
     }
@@ -830,6 +835,12 @@ impl SessionManager {
       self.log(&format!("import flush failed: {e}"));
     }
     self.drop_empty_current(v).await;
+  /// Sessions whose saved conversation contains every term of `query`. Records reach the disk within the save debounce,
+  /// so a reply still streaming is found a moment later; ChatGPT mirrors have no record here and match by title only
+  pub async fn search_sessions(&self, query: &str) -> Vec<SessionHit> {
+    self.search.search(self.deps.store.dir().to_path_buf(), query).await
+  }
+
     let s = AcpSession::new(record, self.session_deps());
     self.state.lock().live.insert(s.id.clone(), s.clone());
     self.set_active(v, Some(s.id.clone()));

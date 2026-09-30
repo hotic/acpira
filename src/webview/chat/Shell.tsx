@@ -4,7 +4,7 @@ import type { ExternalSessionInfo, AccountInfo, AgentInfo, AuthMethodInfo, Draft
 import type { SubagentSummary } from '@shared/subagents';
 import type { ModelShapes } from '@shared/modelShapes';
 import type { HiddenMap, SessionScope } from '@shared/settings';
-import type { AccountAction, AddAccountVia, EditTurnRequest, FileHit, NativeSessionsState } from '@shared/protocol';
+import type { AccountAction, AddAccountVia, EditTurnRequest, FileHit, NativeSessionsState, SessionHit } from '@shared/protocol';
 import { AppearanceContext, appearanceDataAttrs, type Appearance } from '../appearance';
 import { lookAttrs, ThemeContext, type ShellLook, type Theme } from '../look';
 import { t } from '../i18n';
@@ -43,6 +43,8 @@ export interface ShellHandlers {
   // @ mention lookup over workspace files
   searchFiles: (query: string) => Promise<FileHit[]>;
   stop: () => void;
+  // History search over saved conversations; without it the session list matches titles only
+  searchSessions?: (query: string) => Promise<SessionHit[]>;
   permission: (sessionId: string, blockId: string, optionId: string) => void;
   // The question card was closed: answers keyed by question id, or skip
   answer?: (sessionId: string, blockId: string, answers: QuestionAnswers, skip?: boolean) => void;
@@ -339,6 +341,7 @@ export function Shell(p: ShellProps) {
       onListNative={on.listNativeSessions}
       onImportNative={on.importNativeSession}
     />
+      onSearch={on.searchSessions}
   );
 
   const composerProps: ComposerProps = useMemo(() => ({

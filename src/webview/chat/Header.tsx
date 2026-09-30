@@ -30,7 +30,7 @@ export interface HeaderProps {
   sessionScope?: SessionScope;
   // The import popover's current listing, handed on to the session list
   nativeSessions?: NativeSessionsState;
-  on: Pick<ShellHandlers, 'selectSession' | 'newSession' | 'renameSession' | 'deleteSession' | 'pinSession' | 'moveSession' | 'exportSession' | 'openInEditor' | 'selectAccount' | 'addAccount' | 'removeAccount' | 'refreshQuota' | 'unlockCredentials' | 'listNativeSessions' | 'importNativeSession'>;
+  on: Pick<ShellHandlers, 'selectSession' | 'newSession' | 'renameSession' | 'deleteSession' | 'pinSession' | 'moveSession' | 'exportSession' | 'openInEditor' | 'selectAccount' | 'addAccount' | 'removeAccount' | 'refreshQuota' | 'unlockCredentials' | 'listNativeSessions' | 'importNativeSession' | 'searchSessions'>;
   onToggleDrawer?: () => void;
   drawerOpen?: boolean;
   sessionPanel?: 'hidden' | 'left' | 'right';
@@ -90,7 +90,8 @@ export function Header({ title, sessions, agent, agents, accounts, accountId, ac
             <SessionList sessions={sessions} agents={agents} activeId={activeSessionId} workspace={workspace} scope={sessionScope}
               onSelect={id => { on.selectSession(id); setHistoryOpen(false); }}
               onRename={on.renameSession} onDelete={on.deleteSession} onPin={on.pinSession} onMove={on.moveSession} onExport={on.exportSession}
-              activeAgent={agent.id} nativeSessions={nativeSessions} onListNative={on.listNativeSessions} onImportNative={on.importNativeSession} />
+              activeAgent={agent.id} nativeSessions={nativeSessions} onListNative={on.listNativeSessions} onImportNative={on.importNativeSession}
+              onSearch={on.searchSessions} />
           </Popover.Popup></Popover.Positioner></Popover.Portal>
         </Popover.Root>}
         {hasAccountMenu(agent) && accountButton}
