@@ -79,8 +79,6 @@ export interface PlanItem {
   state: ReachState;
   // Left out on purpose last time; kept out of automatic linking until picked again
   skipped: boolean;
-  // The first lines of the agent's own content, for a conflict
-  preview?: string;
 }
 
 export interface SharedView {

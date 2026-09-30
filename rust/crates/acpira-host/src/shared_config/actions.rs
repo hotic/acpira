@@ -640,7 +640,6 @@ mod tests {
         ("grok".into(), "AGENTS.md".into(), ReachState::Conflict),
       ]
     );
-    assert_eq!(v.plan[3].preview.as_deref(), Some("# mine"));
 
     // Link the skill and Codex, keep the shared prompt over Grok's, skip Claude's prompt
     let picks = vec![

@@ -123,9 +123,6 @@ pub struct PlanItem {
   pub state: ReachState,
   /// Left out on purpose last time; kept out of automatic linking until picked again
   pub skipped: bool,
-  /// The first lines of the agent's own content, for a conflict
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub preview: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
