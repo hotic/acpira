@@ -11,6 +11,25 @@ const thought: AgentBlock = { type: 'thought', text: 'Start implementation.', st
 const reply: AgentBlock = { type: 'text', markdown: 'Implementing now.', streaming: true };
 
 describe('chronological plan sections', () => {
+  it('shows one question record instead of the matching tool across question outcomes', () => {
+    const ask: AgentBlock = { type: 'tool_call', id: 'ask', kind: 'other', verb: 'Ask', status: 'completed' };
+    for (const outcome of [undefined, 'answered', 'skipped', 'cancelled'] as const) {
+      const question: AgentBlock = { type: 'question', id: 'question', toolCallId: ask.id, questions: [], outcome };
+      const blocks = [ask, reply, question];
+      expect(splitPlanSections(blocks)).toEqual([{ key: 'start', blocks: [reply, question] }]);
+      expect(blocks).toEqual([ask, reply, question]);
+    }
+  });
+
+  it('preserves unlinked question tools and failed-tool diagnostics', () => {
+    const ask: AgentBlock = { type: 'tool_call', id: 'ask', kind: 'other', verb: 'Ask', status: 'completed' };
+    const question: AgentBlock = { type: 'question', id: 'question', questions: [], outcome: 'answered' };
+    for (const blocks of [[ask], [ask, question], [ask, { ...question, toolCallId: 'another' }],
+      [{ ...ask, status: 'failed' as const }, { ...question, toolCallId: ask.id }]]) {
+      expect(splitPlanSections(blocks)).toEqual([{ key: 'start', blocks }]);
+    }
+  });
+
   it('keeps approval continuation below the plan, including thoughts and later tools', () => {
     // Observed Grok sequence: the plan is captured on write, then exit completes
     // and the same ACP prompt keeps streaming thoughts and prose.
