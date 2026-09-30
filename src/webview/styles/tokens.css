@@ -427,6 +427,8 @@
   --spacing-msg: var(--msg-gap);
   --spacing-hdr: var(--hdr);
   --spacing-thumb: var(--thumb);
+  /* Pulls a continuation up so it sits one row gap under the turn it continues */
+  --spacing-msg-join: calc(var(--msg-gap) - var(--gap));
   --spacing-agent-image: var(--agent-image);
   --spacing-indent: calc(var(--lead) + var(--gap));
   --spacing-hit: var(--row-hit-outset);

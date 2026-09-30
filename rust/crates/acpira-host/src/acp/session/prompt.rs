@@ -476,14 +476,14 @@ impl AcpSession {
           .and_then(|id| turn.blocks.iter().position(|b| matches!(b, AgentBlock::Notice(n) if n.id == id)))
           .map(|i| (i, turn.blocks.remove(i)));
         let switch_notice = format!("account-switch:{}", random_uuid());
-        let details = turn.error.as_ref().map(|e| e.message.clone());
+        // One line in the flow: the agent's quota text stays in the log and comes back with the error if the hand-off fails
         turn.blocks.push(AgentBlock::Notice(NoticeBlock {
           id: switch_notice.clone(),
           revision: acpira_shared::num::Num(1.0),
           category: FailureCategory::Limit,
           severity: Severity::Warning,
           title: tp("host.accountSwitched", &[("from", &from), ("to", &to)]),
-          details,
+          details: None,
           actions: vec![],
         }));
         let saved = ExhaustedTurn { stop: turn.stop, error: turn.error.take(), notice, switch_notice };

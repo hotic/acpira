@@ -144,7 +144,7 @@ function NoticeRow({ block }: { block: NoticeBlock }) {
 // The top-level activity owns the only Orb; detailed rows show their own verbs with static icons.
 // Memoized: the host pushes the whole view on every stream chunk and `reuse` keeps finished turns by reference, so only the live turn renders.
 // `memoryKey` names the turn for fold memory (session + turn); without one the fold state lives only in the component.
-export const AgentMessage = memo(function AgentMessage({ turn, index, running, onPermission, compacting, memoryKey, turnIndex, last, settings, subagents, allSubagents, onInspect, actions = true, lead = 'orb', onFailureAction, blobUrl }: {
+export const AgentMessage = memo(function AgentMessage({ turn, index, running, onPermission, compacting, memoryKey, turnIndex, last, settings, subagents, allSubagents, onInspect, actions = true, lead = 'orb', onFailureAction, blobUrl, joined }: {
   turn: AgentTurn; index: number; running: boolean; onPermission: OnPermission; compacting?: boolean; memoryKey?: string; turnIndex: number; last: boolean; settings?: TurnSettings;
   // Nodes anchored to this turn plus the session-wide list (breadcrumbs/descendant counts may cross turns)
   subagents?: SubagentSummary[]; allSubagents?: SubagentSummary[]; onInspect?: (id: string) => void;
@@ -156,6 +156,8 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   onFailureAction?: (action: FailureAction) => void;
   // Previews for the attachments of prompts steered into this turn
   blobUrl?: (blob: string) => string;
+  // Continues the turn above (the hidden continue after an account switch): one row gap instead of a message gap
+  joined?: boolean;
 }) {
   const raw = compacting ? compactionForDisplay(turn, running) : turn;
   // Everything but the section split reads the turn without its delegation rows
@@ -177,7 +179,7 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
     ...(turn.error?.failureId !== undefined ? { suppressId: turn.error.failureId } : {}),
   }), [onFailureAction, last, running, turn.error?.failureId]);
   // A settled turn mounts fold bodies on first open; a live one keeps them mounted so streamed content stays in step while closed
-  return <LazyPanelContext.Provider value={!running}><EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><NoticeActionContext.Provider value={noticeActions}><div className="group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]">
+  return <LazyPanelContext.Provider value={!running}><EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><NoticeActionContext.Provider value={noticeActions}><div className={cn('group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]', joined && '-mt-msg-join')}>
     {sections.map((section, i) => {
       const lastSection = i === sections.length - 1;
       // Only the continuation owns live activity and the turn outcome. Earlier
