@@ -5,7 +5,7 @@ import { groupModels, variantLabel } from '@shared/models';
 import { composerControls, reasoningChip } from '@shared/composerControls';
 import { Button, Chip, IconButton } from '../ui/Button';
 import { Card } from '../ui/Card';
-import { t } from '../i18n';
+import { getLocale, t } from '../i18n';
 import { Popover } from '../ui/Popover';
 import { PanelFooter, PanelHeader, OptionContent } from '../ui/Panel';
 import { RadioGroup } from '../ui/RadioGroup';
@@ -13,6 +13,7 @@ import { SendButton } from '../effects/SendButton';
 import { ModelOptions } from './ModelPicker';
 import { ModelMark } from './ModelMark';
 import { Prose } from './Prose';
+import { permissionOption } from './permissionOptions';
 
 type ExecutionModel = { configId: string; value: string };
 export const PlanDocumentContext = createContext<{
@@ -72,7 +73,7 @@ export function PlanDocument({ block, permission: suppliedPermission, onChoose }
         </IconButton>
       </div>
       {!started && <div className="@container flex min-w-0 items-center justify-between gap-gap pt-gap">
-        {revise ? <Button variant="secondary" disabled={!ctx.ready} title={revise.label} onClick={() => choose(revise.id)}
+        {revise ? <Button variant="secondary" disabled={!ctx.ready} title={permissionOption(revise, getLocale(), true).label} onClick={() => choose(revise.id)}
           className="shrink-0">{t('plan.revise')}</Button> : <span />}
         <div className="ml-auto flex min-w-0 items-center gap-gap">
           {(model || extra.length > 0) && <Popover.Root open={menuOpen} onOpenChange={setMenuOpen}>
@@ -94,7 +95,7 @@ export function PlanDocument({ block, permission: suppliedPermission, onChoose }
   );
 }
 
-// Additional permission choices retain their original ACP IDs and labels. They
+// Additional permission choices retain their original ACP IDs and localize known labels. They
 // live on a separate menu page so the model list remains a homogeneous list.
 function BuildMenu({ model, hidden, extra, ready, canBuild, onSelect, onChoose, close }: {
   model?: ConfigControl;
@@ -121,7 +122,7 @@ function BuildMenu({ model, hidden, extra, ready, canBuild, onSelect, onChoose, 
     <PanelHeader lead={model ? { label: t('plan.backToExecutor'), icon: <ArrowLeft />, onClick: event => showPage(event, false) } : undefined}>{t('plan.moreApprovals')}</PanelHeader>
     <RadioGroup.Root ref={approvalList} value={null} aria-label={t('plan.moreApprovals')} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
       {extra.map(o => <RadioGroup.Item key={o.id} value={o.id} disabled={o.kind.startsWith('allow') ? !canBuild : !ready}
-        onClick={() => { onChoose(o.id); close(); }}><OptionContent>{o.label}</OptionContent></RadioGroup.Item>)}
+        onClick={() => { onChoose(o.id); close(); }}><OptionContent>{permissionOption(o, getLocale(), true).label}</OptionContent></RadioGroup.Item>)}
     </RadioGroup.Root>
   </>;
   return <>

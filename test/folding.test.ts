@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AgentTurn, NoticeBlock, PermissionBlock, QuestionBlock, ToolCallBlock } from '../src/shared/transcript';
 import { setLocale } from '../src/webview/i18n';
-import { elapsedDuration, elapsedLabel, foldActivity, splitCodexBlocks, toolVerb } from '../src/webview/chat/folding';
+import { elapsedDuration, elapsedLabel, foldActivity, splitCodexBlocks, toolTarget, toolVerb } from '../src/webview/chat/folding';
 
 const read: ToolCallBlock = { type: 'tool_call', id: 'read', kind: 'read', verb: 'Read', target: 'README.md', status: 'completed' };
 const run: ToolCallBlock = { type: 'tool_call', id: 'run', kind: 'execute', verb: 'Run', target: 'pnpm test', targetMono: true, status: 'in_progress' };
@@ -10,6 +10,17 @@ const run: ToolCallBlock = { type: 'tool_call', id: 'run', kind: 'execute', verb
 afterEach(() => setLocale('en'));
 
 describe('Codex process folding', () => {
+  it('localizes known plan-mode targets in both tool rows and activity without translating commands or paths', () => {
+    const plan: ToolCallBlock = { type: 'tool_call', id: 'plan', kind: 'switch_mode', verb: 'Switch mode', target: 'Approve Plan', status: 'pending' };
+    setLocale('zh-CN');
+    expect(toolTarget(plan)).toBe('批准计划');
+    expect(foldActivity({ role: 'agent', blocks: [plan] }).target).toBe('批准计划');
+    expect(toolTarget({ ...plan, target: 'Custom plan workflow' })).toBe('Custom plan workflow');
+    expect(toolTarget({ ...plan, targetMono: true })).toBe('Approve Plan');
+    expect(toolTarget({ ...plan, kind: 'read' })).toBe('Approve Plan');
+    setLocale('en');
+    expect(toolTarget(plan)).toBe('Approve Plan');
+  });
   it('honors explicit external message phases without changing legacy ACP tails', () => {
     const progress = { type: 'text' as const, phase: 'commentary' as const, markdown: 'Checking.' };
     const final = { type: 'text' as const, phase: 'final' as const, markdown: 'Done.' };

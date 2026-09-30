@@ -4,11 +4,11 @@ import { Button } from '../ui/Button';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { Row } from '../ui/Row';
 import { getLocale, t } from '../i18n';
-import { permissionOption, quickChoices } from './permissionOptions';
+import { permissionOption, permissionTitle, quickChoices } from './permissionOptions';
 
 // Keep common decisions visible; the menu preserves every remaining wire option.
 export function Permission({ block, onChoose }: { block: PermissionBlock; onChoose?: (optionId: string) => void }) {
-  const options = block.options.map(o => permissionOption(o, getLocale()));
+  const options = block.options.map(o => permissionOption(o, getLocale(), !!block.planId));
   // Positional quick buttons: first allow_once / reject_once in wire order, whatever the label says
   const { allow, reject } = quickChoices(options);
   const more = options.filter(o => o.id !== allow?.id && o.id !== reject?.id);
@@ -16,7 +16,7 @@ export function Permission({ block, onChoose }: { block: PermissionBlock; onChoo
   return (
     <div className="flex min-w-0 flex-col gap-gap rounded-lg border border-conversation-line bg-bg-1 p-pad">
       <Row dense lead={block.command ? <Terminal className="size-icon" strokeWidth={1.5} /> : undefined}>
-        <span className="font-medium">{block.command ? t('permission.run') : block.title}</span>
+        <span className="font-medium">{block.command ? t('permission.run') : permissionTitle(block.title, getLocale())}</span>
       </Row>
       {block.command && <pre className="m-0 whitespace-pre-wrap font-mono text-mono text-fg-1 [overflow-wrap:anywhere]">{block.command}</pre>}
       {block.description && <p className="m-0 text-3 text-fg-2 [overflow-wrap:anywhere]">{block.description}</p>}
@@ -29,9 +29,9 @@ export function Permission({ block, onChoose }: { block: PermissionBlock; onChoo
             </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
           </DropdownMenu.Root>
         )}
-        <div className="ml-auto flex items-center gap-gap">
-          {reject && <Button variant={block.defaultToNo ? 'primary' : undefined} onClick={() => onChoose?.(reject.id)}>{reject.label}</Button>}
-          {allow && <Button variant={block.defaultToNo ? undefined : 'primary'} onClick={() => onChoose?.(allow.id)}>{allow.label}</Button>}
+        <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-gap">
+          {reject && <Button className="h-auto min-h-ctl max-w-full whitespace-normal py-gap-half [overflow-wrap:anywhere]" variant={block.defaultToNo ? 'primary' : undefined} onClick={() => onChoose?.(reject.id)}>{reject.label}</Button>}
+          {allow && <Button className="h-auto min-h-ctl max-w-full whitespace-normal py-gap-half [overflow-wrap:anywhere]" variant={block.defaultToNo ? undefined : 'primary'} onClick={() => onChoose?.(allow.id)}>{allow.label}</Button>}
         </div>
       </div>
     </div>

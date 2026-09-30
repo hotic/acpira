@@ -1,6 +1,7 @@
 import type { AgentBlock, AgentTurn, NoticeBlock, TextBlock, ToolCallBlock, ToolKind } from '@shared/transcript';
 import type { MsgKey } from '@shared/i18n';
-import { t } from '../i18n';
+import { getLocale, t } from '../i18n';
+import { planApprovalTitle } from './permissionOptions';
 
 // Thinking and to-do bookkeeping between closing paragraphs do not end the reply; in a foldable turn they join
 // the process fold instead, so a summary followed by one more thought and a short coda stays visible as a whole.
@@ -45,6 +46,12 @@ export function toolVerb(block: ToolCallBlock): string {
   return t(FOLD_KEY[block.status], { verb: t(block.verbKey ?? `verb.${block.kind}`) });
 }
 
+// Only mode-switch headings are adapter UI; commands and file targets stay verbatim.
+export function toolTarget(block: ToolCallBlock): string | undefined {
+  return block.kind === 'switch_mode' && block.target && !block.targetMono
+    ? planApprovalTitle(block.target, getLocale()) : block.target;
+}
+
 export interface FoldActivity {
   kind: ToolKind | 'compaction';
   label: string;
@@ -62,7 +69,7 @@ export function foldActivity(turn: AgentTurn): FoldActivity {
   for (let i = turn.blocks.length - 1; i >= 0; i--) {
     const b = turn.blocks[i]!;
     if (b.type === 'tool_call' && !b.background && (b.status === 'pending' || b.status === 'in_progress')) {
-      return { kind: b.kind, label: toolVerb(b), target: b.target, mono: b.targetMono, active: true };
+      return { kind: b.kind, label: toolVerb(b), target: toolTarget(b), mono: b.targetMono, active: true };
     }
     if (b.type === 'compaction' && b.status === 'in_progress') return { kind: 'compaction', label: t('turns.compacting') };
   }
@@ -73,7 +80,7 @@ export function foldActivity(turn: AgentTurn): FoldActivity {
     if (b.type === 'text' && b.streaming) return { kind: 'other', label: t('host.replying'), active: true };
     // An open thought may already be followed by unreported tool-argument generation.
     if (b.type === 'thought' && b.streaming) return { kind: 'think', label: t('host.working'), active: true };
-    if (b.type === 'tool_call' && !b.background) return { kind: b.kind, label: toolVerb(b), target: b.target, mono: b.targetMono };
+    if (b.type === 'tool_call' && !b.background) return { kind: b.kind, label: toolVerb(b), target: toolTarget(b), mono: b.targetMono };
   }
   return { kind: 'other', label: t('host.working'), active: true };
 }
