@@ -125,6 +125,8 @@ export const en = {
   'session.search': 'Search sessions',
   'session.noMatch': 'No matching sessions',
   'session.none': 'No sessions yet',
+  'session.searchContent': 'Search titles and messages',
+  'session.searching': 'Searching messages…',
   'session.group.pinned': 'Pinned',
   'session.titleAria': 'Session title',
   'session.listAria': 'Sessions',

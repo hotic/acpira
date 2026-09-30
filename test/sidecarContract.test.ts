@@ -77,6 +77,28 @@ describe('sidecar session contract', () => {
     expect(s.hostMsgs('V').some(m => m.type === 'files')).toBe(false);
   });
 
+  it('searchSessions finds a saved conversation by its prompt and reply text, and always answers its seq', async () => {
+    const s = shell();
+    const id = await started(s);
+    s.view('V', { type: 'send', sessionId: id, text: 'where is the zebracorn' });
+    await s.hostMsg('V', 'session', idle(2));
+    // The record reaches the disk after the save debounce: ask until the hit shows up
+    let seq = 0;
+    const search = async (query: string) => {
+      const mine = ++seq;
+      s.view('V', { type: 'searchSessions', query, seq: mine });
+      return (await s.hostMsg('V', 'sessionHits', m => m.seq === mine)).hits;
+    };
+    let hits = await search('ZEBRACORN where');
+    for (let i = 0; i < 40 && !hits.length; i++) {
+      await new Promise(r => setTimeout(r, 100));
+      hits = await search('ZEBRACORN where');
+    }
+    expect(hits).toEqual([{ id, snippet: 'where is the zebracorn' }]);
+    expect(await search('zebracorn missing-term')).toEqual([]);
+    expect(await search('')).toEqual([]);
+  });
+
   it('a permission card answered by the webview lets the tool run; usage and the diff land in the turn', async () => {
     const s = shell();
     const id = await started(s);

@@ -1,6 +1,6 @@
 import type { ChatGptIntegrationStatus } from '@shared/chatgptIntegration';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AccountAction, EditTurnRequest, FileHit, HostMsg, InitState, NativeSessionsState, WebviewMsg } from '@shared/protocol';
+import type { AccountAction, EditTurnRequest, FileHit, HostMsg, InitState, NativeSessionsState, SessionHit, WebviewMsg } from '@shared/protocol';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl, SessionSummary, SessionView, Turn } from '@shared/transcript';
 import type { HiddenMap, SettingsView } from '@shared/settings';
 import type { AgentInventory } from '@shared/inventory';
@@ -33,7 +33,8 @@ const editTurn = (edit: EditTurnRequest) => new Promise<void>((resolve, reject) 
   post({ type: 'editTurn', requestId, edit });
 });
 
-// The one request/response pair over postMessage: file search for @ mentions. Each request gets a seq; the matching `files` reply resolves it.
+// Request/response pairs over postMessage: file search for @ mentions and the history list's conversation search. Each
+// request gets a seq; the matching `files` / `sessionHits` reply resolves it.
 // A reply that never comes (host gone) resolves empty after a while so nothing waits forever
 const FILES_TIMEOUT = 5000;
 let fileSeq = 0;
@@ -44,6 +45,17 @@ const searchFiles = (query: string) => new Promise<FileHit[]>(resolve => {
   fileWaits.set(seq, resolve);
   setTimeout(() => settleFiles(seq, []), FILES_TIMEOUT);
   post({ type: 'searchFiles', query, seq });
+});
+// The first conversation search reads every saved record, so it gets more time than a file lookup
+const SESSION_SEARCH_TIMEOUT = 15000;
+let sessionSeq = 0;
+const sessionWaits = new Map<number, (hits: SessionHit[]) => void>();
+const settleSessions = (seq: number, hits: SessionHit[]) => { sessionWaits.get(seq)?.(hits); sessionWaits.delete(seq); };
+const searchSessions = (query: string) => new Promise<SessionHit[]>(resolve => {
+  const seq = ++sessionSeq;
+  sessionWaits.set(seq, resolve);
+  setTimeout(() => settleSessions(seq, []), SESSION_SEARCH_TIMEOUT);
+  post({ type: 'searchSessions', query, seq });
 });
 
 // Root of the real webview: consumes the whole state pushed by the host, posts actions back via postMessage unchanged.
@@ -133,6 +145,7 @@ export function App() {
         case 'nativeSessions': setNativeSessions(cur => cur?.agent === m.agent ? { agent: m.agent, sessions: m.sessions, error: m.error, loading: false } : cur); break;
         case 'chatgptStatus': setChatgptStatus(m.status); break;
         case 'files': settleFiles(m.seq, m.files); break;
+        case 'sessionHits': settleSessions(m.seq, m.hits); break;
         case 'editorSelection': setEditorSelection(m.selection); break;
         case 'editorCopy': setEditorCopy(m.selection); break;
         case 'addSelection': {
@@ -173,6 +186,7 @@ export function App() {
     editTurn,
     send: (text, attachments) => post({ type: 'send', sessionId: activeId.current, text, ...(attachments.length ? { attachments } : {}) }),
     searchFiles,
+    searchSessions,
     stop: () => post({ type: 'stop', sessionId: activeId.current }),
     permission: (sessionId, blockId, optionId) => post({ type: 'permission', sessionId, blockId, optionId }),
     answer: (sessionId, blockId, answers, skip) => post({ type: 'answer', sessionId, blockId, answers, ...(skip ? { skip } : {}) }),

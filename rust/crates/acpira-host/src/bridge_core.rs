@@ -234,6 +234,11 @@ impl BridgeCore {
         };
         self.post_now(HostMsg::Files { seq, files });
       }
+      W::SearchSessions { query, seq } => {
+        // Always answer, like searchFiles: the history list holds a promise per seq
+        let hits = manager.search_sessions(&query).await;
+        self.post_now(HostMsg::SessionHits { seq, hits });
+      }
       W::ExportSession { id, format } => match manager.export_session(&id, format).await {
         Ok(path) => {
           let p = path.to_string_lossy().into_owned();

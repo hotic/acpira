@@ -47,6 +47,12 @@ export interface FileHit {
   path: string;
 }
 
+// A session whose saved conversation contains every term of a history search, with the text around the first match
+export interface SessionHit {
+  id: string;
+  snippet: string;
+}
+
 // A line range of an editor document as the IDE shell reports it: 1-based inclusive lines, the selected text verbatim
 export interface EditorSelection {
   uri: string;
@@ -92,7 +98,9 @@ export type HostMsg =
   // Reply to searchFiles; seq echoes the request so stale replies can be dropped
   | { type: 'files'; seq: number; files: FileHit[] }
   // Reply to listNativeSessions: the agent's own sessions in this workspace, with localId marking the ones already imported
-  | { type: 'nativeSessions'; agent: AgentId; sessions: NativeSessionInfo[]; error?: string };
+  | { type: 'nativeSessions'; agent: AgentId; sessions: NativeSessionInfo[]; error?: string }
+  // Reply to searchSessions; seq echoes the request so stale replies can be dropped
+  | { type: 'sessionHits'; seq: number; hits: SessionHit[] };
 
 // What the import popover currently holds for the agent it asked about
 export interface NativeSessionsState {
@@ -129,6 +137,8 @@ export type WebviewMsg =
   | { type: 'stop'; sessionId?: string }
   // @ mention: fuzzy search over workspace files, answered with a `files` message
   | { type: 'searchFiles'; query: string; seq: number }
+  // Full-text search over saved session conversations (user prompts and agent replies) for the history list
+  | { type: 'searchSessions'; query: string; seq: number }
   | { type: 'permission'; sessionId: string; blockId: string; optionId: string }
   // The question card was closed: `answers` holds the answered questions only (option ids / free text); skip tells the agent to go on with what it has
   | { type: 'answer'; sessionId: string; blockId: string; answers: QuestionAnswers; skip?: boolean }

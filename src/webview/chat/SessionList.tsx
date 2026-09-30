@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Check, ChevronDown, Ellipsis, FolderInput, Import, ListFilter, LoaderCircle, Pin, PinOff, Search } from 'lucide-react';
 import type { AgentId, AgentInfo, NativeSessionInfo, SessionSummary } from '@shared/transcript';
-import type { NativeSessionsState } from '@shared/protocol';
+import type { NativeSessionsState, SessionHit } from '@shared/protocol';
 import { inWorkspace, type SessionScope } from '@shared/settings';
 import { launchable } from '@shared/agentOrder';
 import { cn } from '../ui/cn';
@@ -13,6 +13,7 @@ import { Row } from '../ui/Row';
 import { t, useLocale } from '../i18n';
 import { AgentMark } from './AgentMark';
 import { SessionMenu } from './SessionMenu';
+import { markParts, matchesTitle, searchTerms } from './sessionSearch';
 
 // A running session shows a spinning ring (the one place a spinner is allowed: a list has no verb to shimmer); the other states are plain dots
 const STATE_DOT: Record<Exclude<NonNullable<SessionSummary['state']>, 'working'>, string> = {
@@ -20,6 +21,9 @@ const STATE_DOT: Record<Exclude<NonNullable<SessionSummary['state']>, 'working'>
   unread: 'bg-fg-2',
   error: 'bg-danger',
 };
+
+// Titles and agent names match locally on every key; the conversation search runs host-side once typing pauses
+const SEARCH_DEBOUNCE = 180;
 
 function StateMark({ state }: { state: NonNullable<SessionSummary['state']> }) {
   if (state === 'working') return <LoaderCircle className="size-3 animate-spin live-spin text-fg-2" strokeWidth={2} aria-label={t('session.state.working')} />;
@@ -52,13 +56,15 @@ export interface SessionListProps {
   onMove?: (id: string) => void;
   // Writes the session as Markdown or JSON under exports/ (absent only where the host does not offer it)
   onExport?: (id: string, format: 'markdown' | 'json') => void;
+  // Searches the saved conversations too; content hits join the title matches with a snippet under their title
+  onSearch?: (query: string) => Promise<SessionHit[]>;
 }
 
 // Session list: search and agent filters stay visible even without history; pinned sessions get their own section, the rest is one flat list.
 // Each item: vendor mark · title · time; on hover those swap for the actions — pin, a "…" menu (rename / export / delete), plus "move here" for a session from another project.
 // Deletion applies immediately, undo lives on the Toast at the shell's bottom. Scope comes from acpira.sessionScope (settings);
 // under "all" each row from another project carries that project's folder name before the time
-export function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onMove, onExport }: SessionListProps) {
+export function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onMove, onExport, onSearch }: SessionListProps) {
   const locale = useLocale();
   const [query, setQuery] = useState('');
   const [agentFilter, setAgentFilter] = useState<string>();
@@ -66,10 +72,24 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
   const nameOf = (id: string) => agents.find(a => a.id === id)?.name ?? id;
   const here = (s: SessionSummary) => !workspace || inWorkspace(s, workspace);
 
-  const q = query.trim().toLowerCase();
+  const terms = useMemo(() => searchTerms(query), [query]);
+  const q = terms.join(' ');
+  // Content hits belong to the query they answered; a reply for an older query is ignored rather than mixed in
+  const [hits, setHits] = useState<{ q: string; snippets: Map<string, string> }>();
+  useEffect(() => {
+    if (!onSearch || !q) return;
+    let live = true;
+    const timer = setTimeout(() => {
+      void onSearch(q).then(list => { if (live) setHits({ q, snippets: new Map(list.map(h => [h.id, h.snippet])) }); });
+    }, SEARCH_DEBOUNCE);
+    return () => { live = false; clearTimeout(timer); };
+  }, [q, onSearch]);
+  const snippets = hits?.q === q ? hits.snippets : undefined;
+  const searching = !!onSearch && !!q && !snippets;
   // The active session always stays listed (its row is the highlight), even when it belongs to another project
   const inScope = (s: SessionSummary) => scope === 'all' || here(s) || s.id === activeId;
-  const shown = sessions.filter(s => inScope(s) && (!agentFilter || s.agent === agentFilter) && (!q || s.title.toLowerCase().includes(q) || nameOf(s.agent).toLowerCase().includes(q)));
+  const shown = sessions.filter(s => inScope(s) && (!agentFilter || s.agent === agentFilter)
+    && (!q || matchesTitle(s.title, nameOf(s.agent), terms) || !!snippets?.has(s.id)));
 
   const now = new Date();
   const dayOf = (iso: string) => Math.floor((startOfDay(now) - startOfDay(new Date(iso))) / 86_400_000);
@@ -81,6 +101,8 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
       key={s.id}
       session={s}
       agentName={nameOf(s.agent)}
+      terms={terms}
+      snippet={snippets?.get(s.id)}
       active={s.id === activeId}
       time={fmtTime(s.updatedAt, dayOf(s.updatedAt), locale)}
       project={here(s) ? undefined : projectName(s.cwd)}
@@ -94,7 +116,7 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
       onExport={onExport ? format => onExport(s.id, format) : undefined}
     />
   );
-  const empty = q ? t('session.noMatch') : agentFilter ? t('session.noneAgent', { name: nameOf(agentFilter) }) : scope === 'workspace' && workspace ? t('session.noneWorkspace') : t('session.none');
+  const empty = searching ? t('session.searching') : q ? t('session.noMatch') : agentFilter ? t('session.noneAgent', { name: nameOf(agentFilter) }) : scope === 'workspace' && workspace ? t('session.noneWorkspace') : t('session.none');
 
   return (
     <div className={cn('flex flex-col', fill ? 'min-h-0 flex-1' : 'max-h-[60vh]')} onKeyDown={e => { if (e.key === 'Escape' && editing) { e.stopPropagation(); setEditing(undefined); } }}>
@@ -105,8 +127,8 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
             autoFocus={autoFocus}
             value={query}
             onChange={e => setQuery(e.target.value)}
-            placeholder={t('session.search')}
-            aria-label={t('session.search')}
+            placeholder={onSearch ? t('session.searchContent') : t('session.search')}
+            aria-label={onSearch ? t('session.searchContent') : t('session.search')}
             className="min-w-0 flex-1 bg-transparent text-2 text-fg-1 outline-none placeholder:text-fg-3"
           />
         </label>
@@ -261,6 +283,9 @@ function ImportSessions({ agents, agentFilter, activeAgent, native, onList, onIm
 interface ItemProps {
   session: SessionSummary;
   agentName: string;
+  // The current search: its terms are marked in the title and snippet, the snippet being the conversation hit if any
+  terms: string[];
+  snippet?: string;
   active: boolean;
   time: string;
   // Folder name of the session's project when it is not this window's; shown faint before the time
@@ -279,7 +304,7 @@ interface ItemProps {
 // One item: the whole row is clickable to select; the tail shows a status dot + time by default, swapping to actions on hover / keyboard focus. Action buttons can't nest inside a button, so the whole row is a div[role=option].
 // The hover cluster keeps the two quick toggles (move / pin); rename, export and delete live in the "…" menu, which keeps
 // the cluster alive while open — the row tracks menuOpen because a pointer inside the portaled popup is no longer a hover
-function Item({ session: s, agentName, active, time, project, editing, onSelect, onEdit, onRename, onDelete, onPin, onMove, onExport }: ItemProps) {
+function Item({ session: s, agentName, terms, snippet, active, time, project, editing, onSelect, onEdit, onRename, onDelete, onPin, onMove, onExport }: ItemProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget) return;
@@ -296,13 +321,19 @@ function Item({ session: s, agentName, active, time, project, editing, onSelect,
       onKeyDown={onKey}
       className={cn(
         'group flex min-h-row cursor-pointer items-center gap-gap rounded-md px-2 text-2 text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover',
+        snippet && !editing && 'py-1',
         active && 'bg-active text-fg-strong hover:bg-active',
       )}
     >
       <span className="flex size-lead shrink-0 items-center justify-center text-fg-3" title={agentName}><AgentMark id={s.agent} name={agentName} /></span>
       {editing
         ? <RenameInput initial={s.title} onDone={onRename} />
-        : <span className="min-w-0 flex-1 truncate">{s.title}</span>}
+        : (
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="truncate"><Marked text={s.title} terms={terms} /></span>
+            {snippet && <span className="truncate text-3 text-fg-3"><Marked text={snippet} terms={terms} /></span>}
+          </span>
+        )}
       {!editing && (
         <span className="ml-auto flex shrink-0 items-center text-3 text-fg-3 tabular-nums">
           <span className="flex items-center gap-2 group-hover:hidden group-focus-within:hidden group-data-[menu-open]:hidden">
@@ -340,6 +371,12 @@ function Item({ session: s, agentName, active, time, project, editing, onSelect,
       )}
     </div>
   );
+}
+
+// Marks every occurrence of the search terms in brighter, heavier text
+function Marked({ text, terms }: { text: string; terms: string[] }) {
+  if (!terms.length) return <>{text}</>;
+  return <>{markParts(text, terms).map((part, i) => i % 2 ? <mark key={i} className="bg-transparent font-medium text-fg-strong">{part}</mark> : part)}</>;
 }
 
 // Inline rename: ⏎ commits, Esc cancels, blur commits; the callback fires only once (the blur right after Esc doesn't count)

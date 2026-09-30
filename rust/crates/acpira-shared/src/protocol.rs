@@ -76,6 +76,13 @@ pub struct FileHit {
   pub path: String,
 }
 
+/// A session whose conversation contains every term of a history search, with the text around the first match
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionHit {
+  pub id: String,
+  pub snippet: String,
+}
+
 /// Links in agent output open on the host side; only these schemes are ever handed to openExternal
 pub fn is_safe_external_url(url: &str) -> bool {
   let Some(colon) = url.find(':') else { return false };
@@ -210,6 +217,11 @@ pub enum HostMsg {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
   },
+  /// Reply to searchSessions; seq echoes the request so stale replies can be dropped
+  SessionHits {
+    seq: i64,
+    hits: Vec<SessionHit>,
+  },
 }
 
 impl HostMsg {
@@ -239,6 +251,7 @@ impl HostMsg {
       HostMsg::Controls { .. } => "controls",
       HostMsg::Files { .. } => "files",
       HostMsg::NativeSessions { .. } => "nativeSessions",
+      HostMsg::SessionHits { .. } => "sessionHits",
     }
   }
 }
@@ -290,6 +303,12 @@ pub enum WebviewMsg {
     session_id: Option<String>,
   },
   SearchFiles {
+    query: String,
+    #[serde(deserialize_with = "crate::num::lenient_i64")]
+    seq: i64,
+  },
+  /// Full-text search over saved session conversations for the history list
+  SearchSessions {
     query: String,
     #[serde(deserialize_with = "crate::num::lenient_i64")]
     seq: i64,

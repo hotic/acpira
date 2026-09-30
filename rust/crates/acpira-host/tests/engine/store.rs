@@ -319,3 +319,41 @@ async fn two_windows_on_prefs_json_each_write_only_their_own_agent() {
   a.save_prefs(&prefs_a, &["grok".into()]).await.unwrap();
   assert_eq!(serde_json::to_value(&b.load_prefs().await.last_settings["grok"]).unwrap(), json!({ "modeId": "default", "config": { "model": "grok-4.5" } }));
 }
+
+fn conversation(id: &str, title: &str, user: &str, reply: &str) -> Arc<SessionRecord> {
+  let now = "2026-01-01T00:00:00.000Z";
+  Arc::new(serde_json::from_value(json!({ "id": id, "agent": "fake", "cwd": "/tmp", "title": title, "createdAt": now, "updatedAt": now,
+    "turns": [
+      { "role": "user", "text": user },
+      { "role": "agent", "blocks": [
+        { "type": "thought", "text": "hidden reasoning" },
+        { "type": "text", "markdown": reply },
+      ] },
+    ],
+    "controls": { "modes": [], "options": [] }, "commands": [] })).unwrap())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn history_search_reads_saved_conversations_and_follows_later_writes() {
+  use acpira_host::store::session_search::SessionSearch;
+  let (dir, _, store) = fixture();
+  store.save_after(conversation("a", "Parser", "where is the needle", "in the haystack"), Duration::ZERO);
+  store.save_after(conversation("b", "Other", "unrelated", "nothing here"), Duration::ZERO);
+  store.sync_index(&[], &HashSet::new()).await.unwrap();
+  let search = SessionSearch::default();
+  let hit_ids = |hits: &[acpira_shared::protocol::SessionHit]| sorted(hits.iter().map(|h| h.id.clone()).collect());
+
+  let hits = search.search(dir.path().to_path_buf(), "NEEDLE").await;
+  assert_eq!(hit_ids(&hits), vec!["a"]);
+  assert_eq!(hits[0].snippet, "where is the needle");
+  assert!(search.search(dir.path().to_path_buf(), "reasoning").await.is_empty(), "thoughts stay out of the index");
+  assert_eq!(hit_ids(&search.search(dir.path().to_path_buf(), "parser haystack").await), vec!["a"]);
+
+  // A record rewritten after the first search is read again; a removed one drops out
+  store.save_after(conversation("b", "Other", "unrelated", "a needle after all, with a longer reply"), Duration::ZERO);
+  store.sync_index(&[], &HashSet::new()).await.unwrap();
+  assert_eq!(hit_ids(&search.search(dir.path().to_path_buf(), "needle").await), vec!["a", "b"]);
+  std::fs::remove_file(dir.path().join("a.json")).unwrap();
+  assert_eq!(hit_ids(&search.search(dir.path().to_path_buf(), "needle").await), vec!["b"]);
+  assert!(search.search(dir.path().to_path_buf(), "   ").await.is_empty());
+}
