@@ -66,12 +66,12 @@ export function decodeAppearance(code: string, fallback: Appearance): Appearance
   return out as unknown as Appearance;
 }
 
-// Baseline: finalized as 2011102003021000
-export const BASE_APPEARANCE: Appearance = decodeAppearance('2011102003021000', {
+// Baseline: finalized as 2011102003021001
+export const BASE_APPEARANCE: Appearance = decodeAppearance('2011102003021001', {
   density: 'airy', radius: '12', surface: 'tonal', font: 'inter',
   userMessage: 'block', toolLine: 'icon', thought: 'orb', sessions: 'dropdown',
   composer: 'island', beam: 'full', beamColor: 'mono', send: 'metal',
-  accent: 'agent', motion: 'on', fold: 'codex', autoExpand: 'on',
+  accent: 'agent', motion: 'on', fold: 'codex', autoExpand: 'off',
 });
 
 // Builds an Appearance from a bag of setting values (acpira.appearance.<axis>); invalid values fall back to the baseline
