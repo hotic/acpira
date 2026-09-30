@@ -26,6 +26,17 @@ static KIMI_DONE: LazyLock<Regex> = LazyLock::new(|| {
   Regex::new(r"Compaction completed\.|Compaction cancelled\.|Compaction is blocked by the current turn;|/compact failed:").unwrap()
 });
 
+/// The session's compaction bookkeeping
+#[derive(Default)]
+pub(crate) struct CompactionState {
+  /// Usage when the last compaction ran; auto-compaction waits for another tenth of the threshold beyond it
+  pub at: Option<f64>,
+  /// The running turn's completion latch
+  pub completion: Option<CompactionCompletion>,
+  /// The last turn was a live, successfully completed user turn: a late usage report may still trigger auto-compaction
+  pub auto_eligible: bool,
+}
+
 pub fn is_compact_command(text: &str) -> bool {
   COMPACT.is_match(text.trim())
 }
@@ -137,7 +148,7 @@ impl AcpSession {
     if !policy.auto || used == 0.0 || !Self::can_compact_of(c) || c.status != SessionStatus::Ready || used < policy.at_tokens {
       return false;
     }
-    c.compacted_at.is_none_or(|at| used >= at + policy.at_tokens / 10.0)
+    c.compaction.at.is_none_or(|at| used >= at + policy.at_tokens / 10.0)
   }
 
   /// Compact before flushing so a queued follow-up is not the request that runs over budget

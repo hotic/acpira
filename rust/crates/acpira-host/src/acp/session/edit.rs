@@ -334,7 +334,7 @@ impl AcpSession {
       }
       controls.mode_id = Some(mode.clone());
       if live && self.synthetic_modes().is_some() {
-        self.core.lock().auto_approve = mode == "yolo";
+        self.core.lock().perms.auto_approve = mode == "yolo";
       }
     }
     for (id, value) in &selections {
@@ -496,8 +496,8 @@ impl AcpSession {
         c.tree.truncate(idx);
         c.state.usage = None;
         c.state.commands = vec![];
-        c.compacted_at = None;
-        c.auto_approve = self.synthetic_modes().is_some() && edit.settings.mode_id.as_deref() == Some("yolo");
+        c.compaction.at = None;
+        c.perms.auto_approve = self.synthetic_modes().is_some() && edit.settings.mode_id.as_deref() == Some("yolo");
         c.phase.editing = false;
         c.phase.running = false;
         c.phase.staging = false;

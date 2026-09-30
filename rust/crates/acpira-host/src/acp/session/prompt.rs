@@ -16,7 +16,6 @@ use crate::acp::session::edit::{FORK_HISTORY_LEAD, HistoryContext, history_conte
 use crate::acp::session::errors::{is_auth, is_session_gone, turn_error_of};
 use crate::acp::session::failure::{failure_of, failure_turn_error};
 use crate::acp::session::turn_usage::turn_usage_of;
-use crate::acp::session::usage::clear_usage_timer;
 use crate::acp::session::{AcpSession, Core, num};
 use crate::acp::transcript::normalize::{activity_of, apply_session_failure, end_turn, fail_turn};
 use crate::acp::transport::process::AgentProcess;
@@ -159,15 +158,15 @@ impl AcpSession {
       || (text.trim().is_empty() && drafts.is_empty() && staged.is_none_or(|s| s.prepared.blocks.is_empty()))
     {
       Gate::Drop
-    } else if origin != Origin::Continue && (c.switching || c.adopt_pending || c.phase.running || c.detached || (!auto && c.pending_prompt.is_some())) {
+    } else if origin != Origin::Continue && (c.switching || c.picks.adopt_pending || c.phase.running || c.peer.detached || (!auto && c.pending_prompt.is_some())) {
       Gate::Queue
     } else {
       c.switching = false;
-      c.peer_idle = false;
+      c.peer.idle = false;
       // Mid-turn /compact cannot be injected: the next user-facing request is the earliest slot, compact that first
       let compact_first = !auto && !is_compact_command(text) && self.should_auto_compact(&c);
       c.phase.running = true;
-      c.auto_compact_eligible = false;
+      c.compaction.auto_eligible = false;
       c.phase.staging = true;
       c.phase.staging_aborted = false;
       if origin == Origin::User {
@@ -192,7 +191,7 @@ impl AcpSession {
     // A fork's copied transcript has never reached the peer: its first prompt carries it as retained context
     let (proc, caps, turns_copy) = {
       let c = self.core.lock();
-      (c.proc.clone(), self.caps(&c), if !auto && c.history_pending { Some(c.state.turns.clone()) } else { None })
+      (c.proc.clone(), self.caps(&c), if !auto && c.lineage.history_pending { Some(c.state.turns.clone()) } else { None })
     };
     let mut fork_history = None;
     let mut fork_error = None;
@@ -224,8 +223,8 @@ impl AcpSession {
       self.flush_queue();
       return None;
     }
-    if c.history_pending {
-      c.history_pending = false;
+    if c.lineage.history_pending {
+      c.lineage.history_pending = false;
       match &fork_history {
         Some(h) => {
           let mut blocks = h.blocks.clone();
@@ -311,8 +310,8 @@ impl AcpSession {
   /// Record the user turn, title an untitled session after it and open the agent turn the answer streams into
   fn open_turn(&self, text: &str, origin: Origin, plan_id: Option<&str>, accepted: &mut Accepted) -> OpenTurn {
     let mut c = self.core.lock();
-    c.agent_title_muted = c.forked_from.is_some() || accepted.forked || accepted.edited_staged;
-    c.completion = Some(CompactionCompletion::new(accepted.compacting.then_some(self.agent.as_str())));
+    c.lineage.agent_title_muted = c.lineage.forked_from.is_some() || accepted.forked || accepted.edited_staged;
+    c.compaction.completion = Some(CompactionCompletion::new(accepted.compacting.then_some(self.agent.as_str())));
     c.turn_failure = None;
     c.state.turns.push(Turn::User(std::mem::take(&mut accepted.user_turn)));
     let untitled = c.state.title.as_deref().is_none_or(|x| x.is_empty() || x == t("session.untitled"));
@@ -335,7 +334,7 @@ impl AcpSession {
       proc: c.proc.clone(),
       acp_id: c.acp_session_id.clone(),
       proc_gen: c.proc_gen,
-      usage_before: c.usage_revision,
+      usage_before: c.usage.revision,
       agent_idx,
       started_at,
     }
@@ -395,11 +394,11 @@ impl AcpSession {
     if stop == TurnStop::EndTurn {
       if self.agent == "claude" {
         let c = self.core.lock();
-        if let Some(size) = c.reported_window {
+        if let Some(size) = c.usage.reported_window {
           claude_window::confirm(c.account_id.as_deref(), &c.state.controls, size);
         }
       }
-      let pending = self.core.lock().completion.as_mut().and_then(CompactionCompletion::wait);
+      let pending = self.core.lock().compaction.completion.as_mut().and_then(CompactionCompletion::wait);
       if let Some(rx) = pending {
         self.log("waiting for compaction completion");
         let _ = rx.await;
@@ -410,7 +409,7 @@ impl AcpSession {
       }
       {
         let mut c = self.core.lock();
-        let after = c.completion.as_ref().and_then(|x| x.tokens_after);
+        let after = c.compaction.completion.as_ref().and_then(|x| x.tokens_after);
         if (auto || accepted.compacting)
           && let (Some(after), Some(u)) = (after, c.state.usage.as_mut())
         {
@@ -501,9 +500,9 @@ impl AcpSession {
     let context_error = {
       let mut c = self.core.lock();
       if auto || compacting {
-        c.compacted_at = Some(c.state.usage.map(|u| u.used.0).unwrap_or(0.0));
+        c.compaction.at = Some(c.state.usage.map(|u| u.used.0).unwrap_or(0.0));
       }
-      c.auto_compact_eligible = !auto && !compacting && settled.stop == TurnStop::EndTurn;
+      c.compaction.auto_eligible = !auto && !compacting && settled.stop == TurnStop::EndTurn;
       self.touch(&mut c);
       agent_turn_mut(&mut c, turn.agent_idx, turn.started_at).is_some_and(|t| is_context_length_error(t.error.as_ref()))
     };
@@ -519,15 +518,15 @@ impl AcpSession {
   }
 
   pub(crate) fn settle(&self, c: &mut Core, stop: TurnStop, error: Option<TurnError>) {
-    if let Some(f) = c.finish_usage_refresh.take() {
+    if let Some(f) = c.usage.finish_refresh.take() {
       let _ = f.send(false);
     }
-    clear_usage_timer(c);
-    c.perm_epoch += 1;
-    if let Some(comp) = c.completion.as_mut() {
+    c.usage.clear_timer();
+    c.perms.epoch += 1;
+    if let Some(comp) = c.compaction.completion.as_mut() {
       comp.close();
     }
-    c.completion = None;
+    c.compaction.completion = None;
     // The parent prompt returned: children still reported running are disconnected, never failed
     c.tree.settle("prompt-returned");
     self.drain_terminal(c);
@@ -540,7 +539,7 @@ impl AcpSession {
     self.cancel_all_questions(c);
     c.phase.running = false;
     // A steer's detached peer turn continues this one: it keeps running until the peer reports its thread idle
-    if c.detached && !failed {
+    if c.peer.detached && !failed {
       self.reopen_for_detached(c);
     }
   }
@@ -551,10 +550,10 @@ impl AcpSession {
     if !c.phase.running {
       return;
     }
-    if let Some(f) = c.finish_usage_refresh.take() {
+    if let Some(f) = c.usage.finish_refresh.take() {
       let _ = f.send(true);
     }
-    c.perm_epoch += 1;
+    c.perms.epoch += 1;
     drop(c);
     self.log("cancel");
     let mut c = self.core.lock();
@@ -566,7 +565,7 @@ impl AcpSession {
     self.cancel_all_permissions(&mut c);
     self.cancel_all_questions(&mut c);
     // A turn parked behind a background compaction has no request left on the wire; releasing the latch lets it settle
-    if let Some(comp) = c.completion.as_mut() {
+    if let Some(comp) = c.compaction.completion.as_mut() {
       comp.close();
     }
     if let Some(sid) = c.acp_session_id.clone() {

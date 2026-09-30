@@ -55,7 +55,7 @@ impl AcpSession {
     let shapes = self.deps.model_shapes.as_ref().and_then(|f| f(&self.agent));
     let mut c = self.core.lock();
     let subagents = if c.tree.is_empty() { None } else { Some(c.tree.summaries()) };
-    let picked = (!c.picks.is_empty()).then(|| picked_controls(&c));
+    let picked = (!c.picks.values.is_empty()).then(|| picked_controls(&c));
     let queued = queue_snapshot(&c);
     let view = ViewRef {
       id: &self.id,
@@ -220,10 +220,10 @@ impl RecordSource for AcpSession {
       usage: c.state.usage.as_ref(),
       commands: &c.state.commands,
       pinned: c.pinned,
-      history_pending: c.history_pending,
-      forked_from: c.forked_from.as_ref(),
-      import_pending: c.import_pending,
-      imported_from: c.imported_from.as_ref(),
+      history_pending: c.lineage.history_pending,
+      forked_from: c.lineage.forked_from.as_ref(),
+      import_pending: c.lineage.import_pending,
+      imported_from: c.lineage.imported_from.as_ref(),
       subagents: (!c.tree.is_empty()).then(|| c.tree.record_refs()),
     };
     serde_json::to_vec(&r).unwrap_or_default()

@@ -1,7 +1,7 @@
 //! Modes and config options of a session: wire requests,
 //! the optimistic pick overlay, effort preservation across model switches, and replaying remembered choices
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
@@ -71,13 +71,13 @@ impl AcpSession {
       } else if me.synthetic_modes().is_some() {
         // yolo is host-side auto-approval: the CLI stays in default (pulled back first when coming from plan)
         let wire = if id == "yolo" { (current.as_deref() == Some("plan")).then(|| "default".to_owned()) } else { Some(id.clone()) };
-        me.core.lock().auto_approve = id == "yolo";
+        me.core.lock().perms.auto_approve = id == "yolo";
         if let Some(w) = wire {
           proc.request("session/set_mode", json!({ "sessionId": sid, "modeId": w })).await?;
         }
         let mut c = me.core.lock();
         c.state.controls.mode_id = Some(id.clone());
-        if c.auto_approve {
+        if c.perms.auto_approve {
           me.flush_permissions(&mut c);
         }
       } else {
@@ -116,7 +116,7 @@ impl AcpSession {
           }
           _ => false,
         };
-        let keep = model.is_some() && (sidekick_only || !c.adopting);
+        let keep = model.is_some() && (sidekick_only || !c.picks.adopting);
         let reasoning: Vec<(String, Option<String>)> =
           if keep { opts.iter().filter(|o| is_reasoning_control(o)).map(|o| (o.id.clone(), o.value.clone())).collect() } else { vec![] };
         (proc, c.acp_session_id.clone(), control, reasoning)
@@ -142,13 +142,13 @@ impl AcpSession {
           me.set_config(id, prev).await?;
         }
       }
-      if !me.core.lock().syncing_thought {
+      if !me.core.lock().picks.syncing_thought {
         me.sync_thought().await?;
       }
       let polled_model = {
         let c = me.core.lock();
         matches!(me.agent.as_str(), "grok" | "pi")
-          && !c.usage_notifications
+          && !c.usage.notifications
           && c.state.controls.options.iter().find(|o| o.id == config_id).and_then(|o| o.category.as_deref()) == Some("model")
       };
       if polled_model {
@@ -183,13 +183,13 @@ impl AcpSession {
             .controls
             .options
             .iter()
-            .filter(|o| is_reasoning_control(o) && o.value.is_some() && !c.picks.contains_key(&o.id))
+            .filter(|o| is_reasoning_control(o) && o.value.is_some() && !c.picks.values.contains_key(&o.id))
             .map(|o| (o.id.clone(), o.value.clone().unwrap()))
             .collect();
           for (id, v) in reasoning {
-            c.pick_seq += 1;
-            let token = c.pick_seq;
-            c.picks.insert(id.clone(), (v, token));
+            c.picks.seq += 1;
+            let token = c.picks.seq;
+            c.picks.values.insert(id.clone(), (v, token));
             held.push((id, token));
           }
         }
@@ -202,8 +202,8 @@ impl AcpSession {
     let result = self.pick(config_id, value, move || me.set_config(cid, v)).await;
     let mut c = self.core.lock();
     for (id, token) in &held {
-      if c.picks.get(id).is_some_and(|(_, t)| t == token) {
-        c.picks.remove(id);
+      if c.picks.values.get(id).is_some_and(|(_, t)| t == token) {
+        c.picks.values.remove(id);
       }
     }
     if !held.is_empty() {
@@ -231,20 +231,20 @@ impl AcpSession {
   async fn pick(self: &Arc<Self>, key: String, value: String, run: impl FnOnce() -> BoxFuture<Result<()>>) -> Result<()> {
     let token = {
       let mut c = self.core.lock();
-      c.pick_seq += 1;
-      let token = c.pick_seq;
-      c.picks.insert(key.clone(), (value, token));
+      c.picks.seq += 1;
+      let token = c.picks.seq;
+      c.picks.values.insert(key.clone(), (value, token));
       self.touch(&mut c);
       token
     };
     let _serial = self.pick_lock.lock().await;
-    if self.core.lock().picks.get(&key).is_none_or(|(_, t)| *t != token) {
+    if self.core.lock().picks.values.get(&key).is_none_or(|(_, t)| *t != token) {
       return Ok(());
     }
     let result = run().await;
     let mut c = self.core.lock();
-    if c.picks.get(&key).is_some_and(|(_, t)| *t == token) {
-      c.picks.remove(&key);
+    if c.picks.values.get(&key).is_some_and(|(_, t)| *t == token) {
+      c.picks.values.remove(&key);
       self.touch(&mut c);
     }
     result
@@ -253,7 +253,7 @@ impl AcpSession {
   /// Kimi appends the previous thinking value when the new model does not offer it, and the catalogue may narrow the
   /// current one away: push a native value instead
   pub(crate) async fn sync_thought(self: &Arc<Self>) -> Result<()> {
-    self.core.lock().syncing_thought = true;
+    self.core.lock().picks.syncing_thought = true;
     let ids: Vec<String> = self.core.lock().state.controls.options.iter().map(|o| o.id.clone()).collect();
     let mut result = Ok(());
     for id in ids {
@@ -265,7 +265,7 @@ impl AcpSession {
         break;
       }
     }
-    self.core.lock().syncing_thought = false;
+    self.core.lock().picks.syncing_thought = false;
     result
   }
 
@@ -276,34 +276,34 @@ impl AcpSession {
     let config = settings.config.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone()));
     let mode = settings.mode_id.clone().filter(|m| !m.is_empty()).map(|m| (MODE_PICK.to_owned(), m));
     let entries: Vec<(String, String)> = config.chain(mode).collect();
-    c.adopt_pending = true;
+    c.picks.adopt_pending = true;
     for (key, value) in entries {
-      c.pick_seq += 1;
-      let token = c.pick_seq;
-      c.picks.insert(key.clone(), (value, token));
-      c.holds.push((key, token));
+      c.picks.seq += 1;
+      let token = c.picks.seq;
+      c.picks.values.insert(key.clone(), (value, token));
+      c.picks.holds.push((key, token));
     }
   }
 
   /// A held key the user has picked over since: the replay leaves it to that pick
   fn superseded(&self, key: &str) -> bool {
     let c = self.core.lock();
-    c.holds.iter().any(|(k, t)| k == key && c.picks.get(k).is_none_or(|(_, cur)| cur != t))
+    c.picks.holds.iter().any(|(k, t)| k == key && c.picks.values.get(k).is_none_or(|(_, cur)| cur != t))
   }
 
   /// Drop the holds still in place (agent truth or the user's own picks show from here) and let queued prompts go
   fn release_holds(self: &Arc<Self>) {
     {
       let mut c = self.core.lock();
-      if !c.adopt_pending && c.holds.is_empty() {
+      if !c.picks.adopt_pending && c.picks.holds.is_empty() {
         return;
       }
-      for (key, token) in std::mem::take(&mut c.holds) {
-        if c.picks.get(&key).is_some_and(|(_, t)| *t == token) {
-          c.picks.remove(&key);
+      for (key, token) in std::mem::take(&mut c.picks.holds) {
+        if c.picks.values.get(&key).is_some_and(|(_, t)| *t == token) {
+          c.picks.values.remove(&key);
         }
       }
-      c.adopt_pending = false;
+      c.picks.adopt_pending = false;
       self.touch(&mut c);
     }
     self.flush_queue();
@@ -320,7 +320,7 @@ impl AcpSession {
         self.release_holds();
         return;
       }
-      c.adopting = true;
+      c.picks.adopting = true;
     }
     let serial = self.pick_lock.lock().await;
     let ids: Vec<String> = self.core.lock().state.controls.options.iter().map(|o| o.id.clone()).collect();
@@ -345,7 +345,7 @@ impl AcpSession {
         self.log(&format!("adopt {id}={value} refused: {e}"));
       }
     }
-    self.core.lock().adopting = false;
+    self.core.lock().picks.adopting = false;
     if let Some(mode) = settings.mode_id.filter(|m| !m.is_empty() && !self.superseded(MODE_PICK)) {
       let differs = {
         let c = self.core.lock();
@@ -361,6 +361,23 @@ impl AcpSession {
 }
 
 pub(crate) const MODE_PICK: &str = "\0mode";
+
+/// The optimistic overlay over the agent's controls: picks in flight, remembered choices held on screen while they are
+/// replayed, and the flags of the replays themselves
+#[derive(Default)]
+pub(crate) struct ControlPicks {
+  /// key (a config id or `MODE_PICK`) → (value, token); a request that finds its token replaced was superseded
+  pub values: HashMap<String, (String, u64)>,
+  pub seq: u64,
+  /// The pick overlay entries (key, token) that hold remembered choices on screen while they are replayed
+  pub holds: Vec<(String, u64)>,
+  /// `adopt_controls` is replaying remembered config values: a model switch does not carry the old effort over
+  pub adopting: bool,
+  /// A new session's remembered choices are on screen and still to be replayed: prompts queue until `adopt_controls` ends
+  pub adopt_pending: bool,
+  /// `sync_thought` is correcting the effort: the set_config calls it makes do not start another correction
+  pub syncing_thought: bool,
+}
 
 impl AcpSession {
   /// Model sources and catalogue-narrowed efforts over whatever the agent last sent
@@ -395,7 +412,7 @@ impl AcpSession {
       _ => "default".into(),
     });
     c.state.controls.modes = syn;
-    c.auto_approve = c.state.controls.mode_id.as_deref() == Some("yolo");
+    c.perms.auto_approve = c.state.controls.mode_id.as_deref() == Some("yolo");
   }
 
   /// Paint last-known chips before session/new returns so the composer isn't empty during start: the remembered values
@@ -409,7 +426,7 @@ impl AcpSession {
         _ => syn[0].id.clone(),
       });
       c.state.controls.modes = syn;
-      c.auto_approve = c.state.controls.mode_id.as_deref() == Some("yolo");
+      c.perms.auto_approve = c.state.controls.mode_id.as_deref() == Some("yolo");
     } else if let Some(m) = remembered_mode.filter(|m| known.modes.iter().any(|x| &x.id == m)) {
       // Protocol modes only arrive with session/new; without a remembered one the chip stays empty rather than guess
       c.state.controls.modes = known.modes.clone();
@@ -435,13 +452,13 @@ impl AcpSession {
 /// leaves agent truth showing
 pub(crate) fn picked_controls(c: &Core) -> SessionControls {
   let mut out = c.state.controls.clone();
-  if let Some((v, _)) = c.picks.get(MODE_PICK)
+  if let Some((v, _)) = c.picks.values.get(MODE_PICK)
     && out.modes.iter().any(|m| &m.id == v)
   {
     out.mode_id = Some(v.clone());
   }
   for o in &mut out.options {
-    if let Some((v, _)) = c.picks.get(&o.id)
+    if let Some((v, _)) = c.picks.values.get(&o.id)
       && o.options.iter().any(|x| &x.id == v)
     {
       o.value = Some(v.clone());

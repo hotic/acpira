@@ -55,7 +55,7 @@ impl AcpSession {
       let reject = option.as_ref().and_then(|o| o.get("kind").and_then(Value::as_str)).is_some_and(|k| k.starts_with("reject"));
       if let (Some((block, _)), true) = (&permission, reject) {
         let mut c = self.core.lock();
-        if c.perms.iter().any(|p| &p.block_id == block) {
+        if c.perms.pending.iter().any(|p| &p.block_id == block) {
           self.resolve_permission_locked(&mut c, block, option_id.as_deref().unwrap_or(""));
         }
         return Ok(());
@@ -78,7 +78,7 @@ impl AcpSession {
       }
       if let Some((block, _)) = &permission {
         let mut c = self.core.lock();
-        if c.perms.iter().any(|p| &p.block_id == block) {
+        if c.perms.pending.iter().any(|p| &p.block_id == block) {
           self.resolve_permission_locked(&mut c, block, option_id.as_deref().unwrap_or(""));
         }
         return Ok(());

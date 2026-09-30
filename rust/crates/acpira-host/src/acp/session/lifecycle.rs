@@ -14,7 +14,7 @@ use crate::acp::agents::lock_holder;
 use crate::acp::agents::model_sources::read_model_facts;
 use crate::acp::session::errors::{AccountAuthError, RestoreFailure, classify_restore_error, error_text, is_auth};
 use crate::acp::session::handlers::SessionHandlers;
-use crate::acp::session::usage::clear_usage_timer;
+use crate::acp::session::queue::{PeerTurn, PromptQueue};
 use crate::acp::session::{AcpSession, Core, StartOutcome};
 use crate::acp::transcript::normalize::{disconnect_async_tasks, runtime_info_of, seal_replay};
 use crate::acp::transport::process::{AgentProcess, AgentSpawnError, ClientHandlers};
@@ -58,10 +58,8 @@ impl AcpSession {
   pub(crate) fn drop_process(&self, c: &mut Core) -> Option<BoxFuture<()>> {
     let proc = c.proc.take()?;
     c.proc_gen += 1;
-    c.perm_epoch += 1;
-    c.detached = false;
-    c.peer_idle = false;
-    c.thread_status_seen = false;
+    c.perms.epoch += 1;
+    c.peer = PeerTurn::default();
     self.disconnect_tasks(c);
     let session_id = c.acp_session_id.clone();
     let me = self.arc();
@@ -150,11 +148,8 @@ impl AcpSession {
     let def = self.deps.registry.get(&self.agent)?.clone();
     let (gen_id, account) = {
       let mut c = self.core.lock();
-      c.usage_notifications = false;
-      c.auto_compact_eligible = false;
-      c.grok_usage_unavailable = false;
-      c.pi_stamp = None;
-      clear_usage_timer(&mut c);
+      c.usage.reset_for_process();
+      c.compaction.auto_eligible = false;
       (c.proc_gen, c.account_id.clone())
     };
     let facts = read_model_facts(&def, &self.cwd).await;
@@ -253,7 +248,7 @@ impl AcpSession {
   async fn open_session(self: &Arc<Self>) -> Result<()> {
     let (proc, acp_id, importing) = {
       let c = self.core.lock();
-      (c.proc.clone().ok_or_else(|| anyhow!("no process"))?, c.acp_session_id.clone(), c.import_pending)
+      (c.proc.clone().ok_or_else(|| anyhow!("no process"))?, c.acp_session_id.clone(), c.lineage.import_pending)
     };
     let caps = proc.caps().clone();
     if let Some(acp_id) = acp_id {
@@ -282,7 +277,7 @@ impl AcpSession {
               let mut c = self.core.lock();
               c.replaying = false;
               Self::note_startup_banner(&mut c, r.get("_meta"));
-              if method == "session/load" && c.import_pending {
+              if method == "session/load" && c.lineage.import_pending {
                 seal_replay(&mut c.state);
               }
               self.apply_controls(&mut c, r.get("modes"), r.get("configOptions"));
@@ -322,8 +317,8 @@ impl AcpSession {
       {
         // One restore pass per import; afterwards the record behaves like any other session of this agent
         let mut c = self.core.lock();
-        if c.import_pending {
-          c.import_pending = false;
+        if c.lineage.import_pending {
+          c.lineage.import_pending = false;
           self.touch(&mut c);
         }
       }
@@ -566,13 +561,11 @@ impl AcpSession {
     let proc = self.core.lock().proc.clone();
     let closing = {
       let mut c = self.core.lock();
-      clear_usage_timer(&mut c);
-      c.perm_epoch += 1;
+      c.usage.clear_timer();
+      c.perms.epoch += 1;
       c.status = SessionStatus::Closed;
-      c.queue.clear();
-      c.sending_id = None;
-      c.steering_id = None;
-      c.detached = false;
+      c.queue = PromptQueue::default();
+      c.peer.detached = false;
       c.tree.settle("disposed");
       self.drain_terminal(&mut c);
       if c.phase.running {

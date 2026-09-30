@@ -8,7 +8,6 @@ use serde_json::Value;
 use acpira_shared::transcript::*;
 
 use crate::acp::session::failure::failure_of;
-use crate::acp::session::usage::clear_usage_timer;
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::transcript::normalize::{activity_of, apply_async_task, apply_update};
 use crate::acp::transcript::plans::{capture_plan, plan_documents};
@@ -72,13 +71,13 @@ impl AcpSession {
       && !c.replaying
       && let Some(idle) = steering::thread_idle(&u)
     {
-      c.thread_status_seen = true;
+      c.peer.status_seen = true;
       if !idle {
-        c.peer_idle = false;
-      } else if c.detached {
+        c.peer.idle = false;
+      } else if c.peer.detached {
         self.end_detached(&mut c);
       } else if c.phase.running {
-        c.peer_idle = true;
+        c.peer.idle = true;
       }
     }
     // Conversation content cannot belong to a session that does not exist yet (pi-acp's banner during session/new)
@@ -95,7 +94,7 @@ impl AcpSession {
       return;
     }
     // yolo is host-side state: a mode pushed by the CLI must not drag the UI back
-    if c.auto_approve && kind == "current_mode_update" {
+    if c.perms.auto_approve && kind == "current_mode_update" {
       u["currentModeId"] = Value::from("yolo");
     }
     if c.replaying && RUNNING_KINDS.contains(&kind.as_str()) {
@@ -111,7 +110,7 @@ impl AcpSession {
       c.turn_failure = Some(f);
     }
     if !c.replaying
-      && let Some(comp) = c.completion.as_mut()
+      && let Some(comp) = c.compaction.completion.as_mut()
     {
       comp.update(&u);
     }
@@ -120,7 +119,7 @@ impl AcpSession {
       return;
     }
     if kind == "session_info_update"
-      && c.agent_title_muted
+      && c.lineage.agent_title_muted
       && let Some(title) = u.get("title").and_then(Value::as_str).filter(|x| !x.is_empty())
     {
       let head: String = title.chars().take(60).collect();
@@ -131,7 +130,7 @@ impl AcpSession {
       && kind == "usage_update"
       && let Some(size) = u.get("size").and_then(Value::as_f64)
     {
-      c.reported_window = Some(size);
+      c.usage.reported_window = Some(size);
       if let Some(w) = claude_window::correct(c.account_id.as_deref(), &c.state.controls, size, &crate::model_catalog::current()) {
         u["size"] = w.into();
       }
@@ -159,12 +158,12 @@ impl AcpSession {
       return;
     }
     if kind == "usage_update" {
-      c.usage_notifications = true;
-      c.usage_revision += 1;
-      if let Some(f) = c.finish_usage_refresh.take() {
+      c.usage.notifications = true;
+      c.usage.revision += 1;
+      if let Some(f) = c.usage.finish_refresh.take() {
         let _ = f.send(false);
       }
-      clear_usage_timer(&mut c);
+      c.usage.clear_timer();
     } else if c.phase.running {
       self.schedule_usage_poll(&mut c);
     }
@@ -174,7 +173,7 @@ impl AcpSession {
         tree.annotate_root(&u, &mut RouteCtx { turn_index, root_turns: &mut state.turns });
       }
       self.drain_terminal(&mut c);
-      c.raw_questions.remember(&u);
+      c.questions.raw.remember(&u);
       let plan = capture_plan(&mut c.state.turns, &u);
       // Kimi 0.41.0 confirms the plan exit in tool output but omits current_mode_update
       let tool_call_id = u.get("toolCallId").and_then(Value::as_str).unwrap_or("");
@@ -196,7 +195,7 @@ impl AcpSession {
     self.touch(&mut c);
     // Kimi reports usage after the prompt response: re-evaluate only the live, successfully completed user turn
     let reevaluate =
-      !c.replaying && !c.phase.running && c.auto_compact_eligible && matches!(kind.as_str(), "usage_update" | "available_commands_update");
+      !c.replaying && !c.phase.running && c.compaction.auto_eligible && matches!(kind.as_str(), "usage_update" | "available_commands_update");
     drop(c);
     if reevaluate {
       self.after_prompt(false, TurnStop::EndTurn);
