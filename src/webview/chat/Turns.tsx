@@ -34,6 +34,7 @@ import { splitPlanSections } from './planSections';
 import { TurnActions } from './TurnActions';
 import { SubagentGroup } from './subagents/SubagentGroup';
 import { breadcrumb, delegatedIds, nodesByTurn, placeNodes, subagentTitle } from './subagents/subagentState';
+import { Surface, surfaceVariants } from '../ui/Surface';
 
 // User message: color block / right-aligned bubble / plain text; ones Acpira sends automatically (/compact) render nothing,
 // since the reply's compaction row already says what happened.
@@ -54,7 +55,8 @@ export function UserMessage({ turn, blobUrl, onEdit, commands }: { turn: UserTur
     marks.unshift({ start: 0, name: turn.command });
   return (
     <div className={cn('flex w-full min-w-0 flex-col', userMessage === 'bubble' && 'self-end max-w-[88%]')}>
-      <div
+      <Surface
+        tone={userMessage !== 'plain' ? 'message' : undefined}
         onClick={onEdit ? e => {
           // Preserve text selection and attachment preview controls inside the card.
           if ((e.target as HTMLElement).closest('button, a, [role="dialog"]') || window.getSelection()?.toString()) return;
@@ -63,7 +65,7 @@ export function UserMessage({ turn, blobUrl, onEdit, commands }: { turn: UserTur
         className={cn(
           'relative flex max-h-(--user-message-max) w-full shrink-0 flex-col gap-gap px-pad text-1 text-fg-1 [overflow-wrap:anywhere]',
           // Cards stick within an exchange; an opaque surface under the translucent chip color stops replies bleeding through.
-          userMessage !== 'plain' && 'user-message-card rounded-lg py-gap bg-bg-0 bg-[linear-gradient(var(--chip),var(--chip))] shadow-[inset_0_0_0_1px_var(--conversation-line)] transition-shadow',
+          userMessage !== 'plain' && 'user-message-card py-gap bg-[linear-gradient(var(--chip),var(--chip))] transition-shadow',
           // An editable prompt opens on click; its outline firms up while the actions appear below.
           onEdit && 'cursor-pointer',
           onEdit && userMessage !== 'plain' && 'hover:shadow-[inset_0_0_0_1px_var(--conversation-line-focus)]',
@@ -77,7 +79,7 @@ export function UserMessage({ turn, blobUrl, onEdit, commands }: { turn: UserTur
           marks.length > 0 && 'py-0.5 px-1',
           'max-h-(--user-message-max) overflow-y-auto',
         )}>{marks.length ? commandSegments(shown, marks) : shown}</div>}
-      </div>
+      </Surface>
     </div>
   );
 }
@@ -86,7 +88,9 @@ export function UserMessage({ turn, blobUrl, onEdit, commands }: { turn: UserTur
 // It is not an exchange of its own, so it neither sticks nor opens the history editor
 function SteeredMessage({ block, blobUrl }: { block: SteerBlock; blobUrl?: (blob: string) => string }) {
   const turn = useMemo<UserTurn>(() => ({ role: 'user', text: block.text, ...(block.attachments ? { attachments: block.attachments } : {}) }), [block]);
-  return <div title={t('turns.steered')} className="flex min-w-0 flex-col"><UserMessage turn={turn} index={0} blobUrl={blobUrl} /></div>;
+  // A steered prompt belongs to the current exchange, but its card is still a user message.
+  // Cancel the agent content inset so it shares the same left edge as the original prompt card.
+  return <div title={t('turns.steered')} className="-mx-pad flex min-w-0 flex-col"><UserMessage turn={turn} index={0} blobUrl={blobUrl} /></div>;
 }
 
 type OnPermission = (blockId: string, optionId: string) => void;
@@ -490,19 +494,22 @@ function CodexFold({ turn, blocks, running, hasTools, memoryKey, lead }: { turn:
   if (!retired) mounted.current = true;
   if (!mounted.current && blocks.length === 0) return null;
   const head = (
-    <Collapsible.Trigger render={<Row as="button" interactive lead={leadIcon} title={(running && activity.title) || label} />}>
+    <Collapsible.Trigger render={<Row as="button" interactive lead={leadIcon} title={(running && activity.title) || label} className={running ? surfaceVariants({ tone: 'status' }) : undefined} />}>
       <RowLabel shimmer={running && activity.active}>{retired ? t('host.working') : label}</RowLabel>
       {elapsed && !retired && <span className="min-w-0 truncate text-fg-3" title={elapsed}>{elapsed}</span>}
       {blocks.length > 0 && <ChevronRight className={cn('size-3 shrink-0 self-center transition-transform', open && 'rotate-90')} strokeWidth={1.75} />}
     </Collapsible.Trigger>
   );
   return (
-    <Collapsible.Root open={open} onOpenChange={toggle} className="group flex min-w-0 flex-col" data-open={open || undefined}>
+    <Collapsible.Root open={open} onOpenChange={toggle} className={cn(
+      'group flex min-w-0 flex-col transition-[margin-bottom] duration-(--dur-open) ease-out',
+      // The root is the reply stack's flex item; an inner margin cannot cancel its sibling gap.
+      retired && blocks.length === 0 && '-mb-gap [transition-delay:var(--dur-open)]',
+    )} data-open={open || undefined}>
       {mounted.current && (
         // The clip reserves the head's hit area like the panel below; a flex column stretches the button to the full row
-        <div inert={retired} className={cn('-mx-hit grid transition-[grid-template-rows,opacity,margin-bottom] duration-(--dur-open) ease-out',
-          retired ? 'grid-rows-[0fr] opacity-0 [transition-delay:var(--dur-open),0s,var(--dur-open)]' : 'grid-rows-[1fr] opacity-100',
-          retired && blocks.length === 0 && '-mb-gap')}>
+        <div inert={retired} className={cn('-mx-hit grid transition-[grid-template-rows,opacity] duration-(--dur-open) ease-out',
+          retired ? 'grid-rows-[0fr] opacity-0 [transition-delay:var(--dur-open),0s]' : 'grid-rows-[1fr] opacity-100')}>
           <div className="flex min-h-0 flex-col overflow-hidden px-hit">{head}</div>
         </div>
       )}

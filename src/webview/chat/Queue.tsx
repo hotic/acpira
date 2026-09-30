@@ -4,6 +4,8 @@ import type { Draft, QueuedPrompt, SessionControls } from '@shared/transcript';
 import { t } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { Row, RowTarget } from '../ui/Row';
+import { cn } from '../ui/cn';
+import { surfaceVariants } from '../ui/Surface';
 import { Composer, type ComposerProps } from './Composer';
 import { AttachmentTiles, EditAttachments } from './Attachments';
 
@@ -22,7 +24,7 @@ export function Queue({ items, composer, blobUrl, on }: { items: QueuedPrompt[];
   const [editing, setEditing] = useState<string>();
   const sending = items.some(item => item.sending);
   return (
-    <div className="flex flex-col gap-gap px-page pt-2 pb-gap-half">
+    <div className="flex flex-col gap-(--dock-gap) px-page pt-gap">
       {items.map(item => (
         editing === item.id && on
           ? <QueuedEditor key={item.id} item={item} composer={composer} blobUrl={blobUrl} onSave={(text, retained, drafts) => on.edit(item.id, text, retained, drafts)} onClose={() => setEditing(undefined)} />
@@ -48,7 +50,7 @@ function QueuedRow({ item, blobUrl, sending, disabled, onEdit, onRemove, onSendN
       lead={<ListEnd className="size-icon" strokeWidth={1.5} />}
       title={item.sending ? send?.busy ?? t('queue.sending') : t('queue.title')}
       aria-busy={item.sending || undefined}
-      className="bg-(--cmp-bg) shadow-[inset_0_0_0_1px_var(--conversation-line)] rounded-lg px-pad py-1 text-1 text-fg-1"
+      className={cn(surfaceVariants({ tone: 'queue' }), 'px-pad py-1 text-1 text-fg-1')}
       trailing={(onEdit || onRemove) && <>
         {send && <IconButton title={item.sending ? send.busy : send.label} aria-label={send.label} disabled={disabled || sending} className="disabled:opacity-50" onClick={send.run}>{send.icon}</IconButton>}
         {onEdit && <IconButton title={t('queue.edit')} aria-label={t('queue.edit')} disabled={item.sending} className="disabled:opacity-50" onClick={onEdit}><Pencil /></IconButton>}
