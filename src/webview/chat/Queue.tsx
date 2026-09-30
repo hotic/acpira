@@ -24,7 +24,7 @@ export function Queue({ items, composer, blobUrl, on }: { items: QueuedPrompt[];
   const [editing, setEditing] = useState<string>();
   const sending = items.some(item => item.sending);
   return (
-    <div className="flex flex-col gap-(--dock-gap) px-page pt-gap">
+    <div className="flex flex-col gap-(--dock-gap) px-page">
       {items.map(item => (
         editing === item.id && on
           ? <QueuedEditor key={item.id} item={item} composer={composer} blobUrl={blobUrl} onSave={(text, retained, drafts) => on.edit(item.id, text, retained, drafts)} onClose={() => setEditing(undefined)} />

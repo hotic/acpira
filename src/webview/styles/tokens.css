@@ -267,25 +267,12 @@
   --image-gen-peak: #246ec8;
 }
 
-/* Container the shell lives in: sidebar base #181818 / editor base #1f1f1f, each raised two levels */
-[data-surface-host="editor"] {
-  --host-bg: var(--vscode-editor-background);
-  --bg-0: var(--host-bg, #1f1f1f);
-  --bg-1: #262626;
-  --bg-2: #2c2c2c;
-  --bg-code: #262626;
-}
-[data-theme="light"][data-surface-host="editor"],
-[data-theme="light"] [data-surface-host="editor"] {
-  --bg-0: var(--host-bg, #ffffff);
-  --bg-1: #f6f6f7;
-  --bg-2: #ececee;
-  --bg-code: #f3f3f3;
-}
+/* Sidebar and editor panels share one palette: both read the sidebar background, so a chat opened in an editor tab
+   looks the same as the sidebar under any theme (data-surface-host only drives layout, never colour) */
 
 /* A fixed theme (acpira.theme = light / dark) ignores the host palette: `initial` makes the host roles guaranteed-invalid,
    so every var(--host-*, fallback) above paints its fallback and the scheme is complete on its own */
-[data-theme-fixed], [data-theme-fixed] [data-surface-host] {
+[data-theme-fixed] {
   --host-fg: initial;
   --host-bg: initial;
   --host-border: initial;
