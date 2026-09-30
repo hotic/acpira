@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { Check, ChevronDown, Ellipsis, FolderInput, Import, ListFilter, LoaderCircle, Pin, PinOff, Search } from 'lucide-react';
 import type { AgentId, AgentInfo, NativeSessionInfo, SessionSummary } from '@shared/transcript';
 import type { NativeSessionsState, SessionHit } from '@shared/protocol';
@@ -15,19 +15,27 @@ import { AgentMark } from './AgentMark';
 import { SessionMenu } from './SessionMenu';
 import { markParts, matchesTitle, searchTerms } from './sessionSearch';
 
-// A running session shows a spinning ring (the one place a spinner is allowed: a list has no verb to shimmer); the other states are plain dots
+// A running session shows a spinning ring (the one place a spinner is allowed: a list has no verb to shimmer); the other states are plain dots.
+// Unread (a turn that finished unwatched) is a slightly larger dot in the strongest foreground with a halo rippling out of it;
+// motion=none / reduced motion drop the halo and leave the dot lit. Not the accent: its default brand amber is indistinguishable from waiting's warn
 const STATE_DOT: Record<Exclude<NonNullable<SessionSummary['state']>, 'working'>, string> = {
-  waiting: 'bg-warn',
-  unread: 'bg-fg-2',
-  error: 'bg-danger',
+  waiting: 'size-1.5 bg-warn',
+  unread: 'size-unread-dot bg-fg-strong unread-halo',
+  error: 'size-1.5 bg-danger',
 };
 
 // Titles and agent names match locally on every key; the conversation search runs host-side once typing pauses
 const SEARCH_DEBOUNCE = 180;
 
+// Ring and dots share one fixed slot so every mark sits on the same centre line, and each names its meaning on hover.
+// The ring is drawn smaller than the slot: at full size its arc outweighed even an 8 px dot
 function StateMark({ state }: { state: NonNullable<SessionSummary['state']> }) {
-  if (state === 'working') return <LoaderCircle className="size-3 animate-spin live-spin text-fg-2" strokeWidth={2} aria-label={t('session.state.working')} />;
-  return <span className={cn('size-1.5 rounded-full', STATE_DOT[state])} />;
+  const label = t(`session.state.${state}`);
+  return <span className="flex size-3 shrink-0 items-center justify-center" title={label} aria-label={label} role="img">
+    {state === 'working'
+      ? <LoaderCircle className="size-2.5 animate-spin live-spin text-fg-2" strokeWidth={2.5} />
+      : <span className={cn('rounded-full', STATE_DOT[state])} />}
+  </span>;
 }
 
 export interface SessionListProps {
@@ -95,6 +103,9 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
   const dayOf = (iso: string) => Math.floor((startOfDay(now) - startOfDay(new Date(iso))) / 86_400_000);
   const pinned = shown.filter(s => s.pinned);
   const rest = shown.filter(s => !s.pinned);
+  const times = new Map(shown.map(s => [s.id, fmtTime(s.updatedAt, dayOf(s.updatedAt), locale)]));
+  // The longest time sizes the shared time column
+  const timeCh = Math.max(0, ...[...times.values()].map(timeWidth));
 
   const renderItem = (s: SessionSummary) => (
     <Item
@@ -104,7 +115,7 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
       terms={terms}
       snippet={snippets?.get(s.id)}
       active={s.id === activeId}
-      time={fmtTime(s.updatedAt, dayOf(s.updatedAt), locale)}
+      time={times.get(s.id) ?? ''}
       project={here(s) ? undefined : projectName(s.cwd)}
       editing={editing === s.id}
       onSelect={() => onSelect(s.id)}
@@ -145,7 +156,8 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
           />
         )}
       </div>
-      <div className="scroll-thin mt-1 flex min-h-0 flex-col overflow-y-auto border-t border-line pb-1" role="listbox" aria-label={t('session.listAria')}>
+      <div className="scroll-thin mt-1 flex min-h-0 flex-col overflow-y-auto border-t border-line pb-1" role="listbox" aria-label={t('session.listAria')}
+        style={timeCh ? { '--session-time': `${timeCh}ch` } as CSSProperties : undefined}>
         {/* Empty state takes exactly one item row (pt-1 + min-h-row) so the popover keeps its height whether the filter matches 0 or 1 session */}
         {!shown.length && <div className="mt-1 flex min-h-row items-center justify-center px-2 text-2 text-fg-3">{empty}</div>}
         {pinned.length > 0 && (
@@ -339,7 +351,7 @@ function Item({ session: s, agentName, terms, snippet, active, time, project, ed
           <span className="flex items-center gap-2 group-hover:hidden group-focus-within:hidden group-data-[menu-open]:hidden">
             {project && <span className="max-w-project truncate text-fg-3/70" title={s.cwd}>{project}</span>}
             {s.state && <StateMark state={s.state} />}
-            <span>{time}</span>
+            <span className="min-w-session-time text-right">{time}</span>
           </span>
           <span className="hidden items-center gap-0.5 group-hover:flex group-focus-within:flex group-data-[menu-open]:flex">
             {onMove && (
@@ -410,6 +422,14 @@ function startOfDay(d: Date) { return new Date(d.getFullYear(), d.getMonth(), d.
 export function projectName(cwd: string): string {
   const parts = cwd.split(/[\\/]+/).filter(Boolean);
   return parts[parts.length - 1] ?? cwd;
+}
+
+// An upper bound of a formatted time's width in ch: tabular digits are 1ch, separators and spaces narrower, letters (AM / PM, CJK
+// date suffixes) wider; rounded up to a tenth so the column never clips its longest entry
+function timeWidth(text: string): number {
+  let w = 0;
+  for (const c of text) w += /\d/.test(c) ? 1 : /[\s:/.,-]/.test(c) ? 0.6 : /[\u3000-\u9fff]/.test(c) ? 2 : 1.6;
+  return Math.ceil(w * 10) / 10;
 }
 
 // Today shows the time of day, earlier shows month/day — both follow the UI locale

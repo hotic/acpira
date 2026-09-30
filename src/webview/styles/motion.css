@@ -73,6 +73,11 @@
 
 @keyframes acp-enter { from { opacity: 0; transform: translateY(var(--enter-y)); } }
 @keyframes acp-pulse { 50% { opacity: 0.3; } }
+/* Session list unread dot: the dot stays lit while a copy of it ripples outward and fades. The copy rests invisible, so the
+   kill switches below (which drop the animation) leave just the steady dot */
+.unread-halo { position: relative; }
+.unread-halo::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: inherit; opacity: 0; animation: acp-halo 2s ease-out infinite; }
+@keyframes acp-halo { from { opacity: 0.6; transform: scale(1); } to { opacity: 0; transform: scale(2.6); } }
 @keyframes acp-fade-in { from { opacity: 0; } }
 
 /* acpira.appearance.motion = none: the same kill switch as the OS preference. Two live-status signals

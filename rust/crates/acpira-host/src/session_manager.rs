@@ -136,6 +136,8 @@ struct State {
   health: HashMap<String, AgentHealth>,
   health_seen: HashMap<String, StartOutcome>,
   was_running: HashSet<String>,
+  // Sessions whose turn ended while no viewer showed them; cleared once a viewer lands on one
+  unread: HashSet<String>,
   prefs: SessionPrefs,
   probe_timer: Option<tokio::task::AbortHandle>,
   touched: HashSet<String>,
@@ -156,6 +158,8 @@ pub struct SessionManager {
   prefs_writer: tokio::sync::Mutex<()>,
   prefs_saves: parking_lot::Mutex<Vec<tokio::task::JoinHandle<()>>>,
   viewer_seq: std::sync::atomic::AtomicU64,
+  // Extracted conversation text of the saved records, kept between history searches
+  search: SessionSearch,
   me: Weak<SessionManager>,
 }
 
@@ -166,8 +170,6 @@ impl SessionManager {
       let env_me = me.clone();
       let pool = AgentPool::new(
         Arc::new(move || reg_me.upgrade().map(|m| m.registry()).unwrap_or_else(|| Arc::new(AgentRegistry::new(&Value::Null)))),
-  // Extracted conversation text of the saved records, kept between history searches
-  search: SessionSearch,
         deps.log.clone(),
         Some(Arc::new(move |agent: String, account: String| {
           let me = env_me.clone();
@@ -192,6 +194,7 @@ impl SessionManager {
           health: HashMap::new(),
           health_seen: HashMap::new(),
           was_running: HashSet::new(),
+          unread: HashSet::new(),
           prefs: SessionPrefs::default(),
           probe_timer: None,
           touched: HashSet::new(),
@@ -208,6 +211,7 @@ impl SessionManager {
         prefs_writer: tokio::sync::Mutex::new(()),
         prefs_saves: Default::default(),
         viewer_seq: Default::default(),
+        search: SessionSearch::default(),
         me: me.clone(),
       }
     });
@@ -219,7 +223,6 @@ impl SessionManager {
         }
       }));
       let me = mgr.me.clone();
-        search: SessionSearch::default(),
       a.on_lock_change(Arc::new(move || {
         if let Some(m) = me.upgrade() {
           m.emit_agents();
@@ -837,6 +840,12 @@ impl SessionManager {
     local
   }
 
+  /// Sessions whose saved conversation contains every term of `query`. Records reach the disk within the save debounce,
+  /// so a reply still streaming is found a moment later; ChatGPT mirrors have no record here and match by title only
+  pub async fn search_sessions(&self, query: &str) -> Vec<SessionHit> {
+    self.search.search(self.deps.store.dir().to_path_buf(), query).await
+  }
+
   pub async fn list_native_sessions(&self, agent: &str) -> Result<Vec<NativeSessionInfo>> {
     let registry = self.registry();
     let def = registry.get(agent)?.clone();
@@ -880,12 +889,6 @@ impl SessionManager {
   ) {
     if let Some(existing) = self.native_owners(agent).await.get(session_id).cloned() {
       self.select_session_for(v, &existing).await;
-  /// Sessions whose saved conversation contains every term of `query`. Records reach the disk within the save debounce,
-  /// so a reply still streaming is found a moment later; ChatGPT mirrors have no record here and match by title only
-  pub async fn search_sessions(&self, query: &str) -> Vec<SessionHit> {
-    self.search.search(self.deps.store.dir().to_path_buf(), query).await
-  }
-
       return;
     }
     let now = now_iso();
@@ -926,14 +929,15 @@ impl SessionManager {
   }
 
   pub fn sessions(&self) -> Vec<SessionSummary> {
-    let (index, live) = {
+    let (index, live, unread) = {
       let st = self.state.lock();
-      (st.index.clone(), st.live.clone())
+      (st.index.clone(), st.live.clone(), st.unread.clone())
     };
     let mut merged: Vec<SessionSummary> = index
       .into_iter()
       .map(|mut s| {
-        s.state = live.get(&s.id).and_then(|l| l.list_state());
+        let live_state = live.get(&s.id).and_then(|l| l.list_state());
+        s.state = live_state.or_else(|| unread.contains(&s.id).then_some(SummaryState::Unread));
         s
       })
       .collect();
@@ -972,12 +976,16 @@ impl SessionManager {
       Some(InitialView::MostRecent { most_recent: true }) => self.most_recent(),
       _ => None,
     };
+    let mut st = self.state.lock();
+    if let Some(id) = &id {
+      st.unread.remove(id);
+    }
     let v = Arc::new(Viewer {
       id: self.viewer_seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
       state: parking_lot::Mutex::new(ViewerState { active_id: id, ..Default::default() }),
       sink: Default::default(),
     });
-    self.state.lock().viewers.push(v.clone());
+    st.viewers.push(v.clone());
     v
   }
 
@@ -1026,7 +1034,11 @@ impl SessionManager {
     self.emit(HostMsg::Sessions { sessions: self.sessions() });
   }
 
+  /// Landing on a session also reads it; callers push the session list afterwards
   fn set_active(&self, v: &Viewer, id: Option<String>) {
+    if let Some(id) = &id {
+      self.state.lock().unread.remove(id);
+    }
     let mut st = v.state.lock();
     if st.active_id != id {
       st.observing = None;
@@ -1068,6 +1080,20 @@ impl SessionManager {
     }
     self.deps.store.save(s.clone() as Arc<dyn RecordSource>);
     self.save_index();
+    let running = s.is_running();
+    let idle_edge = {
+      let mut st = self.state.lock();
+      if running {
+        st.was_running.insert(id.to_owned());
+        false
+      } else {
+        st.was_running.remove(id)
+      }
+    };
+    // Decided before the list goes out, so the push that shows the turn ending already carries the unread dot
+    if idle_edge && self.viewers_on(id, None).is_empty() {
+      self.state.lock().unread.insert(id.to_owned());
+    }
     self.emit_session(&s);
     self.emit_sessions();
     if let Some(outcome) = s.start_outcome() {
@@ -1080,16 +1106,6 @@ impl SessionManager {
         );
       }
     }
-    let running = s.is_running();
-    let idle_edge = {
-      let mut st = self.state.lock();
-      if running {
-        st.was_running.insert(id.to_owned());
-        false
-      } else {
-        st.was_running.remove(id)
-      }
-    };
     if idle_edge {
       match (s.account_id(), &self.deps.accounts, &self.deps.local_accounts) {
         (Some(acc), Some(m), _) => {
@@ -1635,6 +1651,7 @@ impl SessionManager {
     let live = {
       let mut st = self.state.lock();
       st.was_running.remove(id);
+      st.unread.remove(id);
       st.health_seen.remove(id);
       st.dirty.remove(id);
       st.live.remove(id)

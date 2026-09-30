@@ -102,6 +102,35 @@ async fn permission_answers_address_the_named_session_not_the_viewers_current_on
   m.dispose().await;
 }
 
+// A turn that ends while no viewer shows its session leaves an unread dot until a viewer lands on it; one watched to the end leaves none
+#[tokio::test(flavor = "multi_thread")]
+async fn a_turn_ending_unwatched_marks_the_session_unread_until_it_is_opened() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let m = Mgr::new(dir.path(), Opts::fake(&fake));
+  m.init().await;
+  let state_of = |id: &str| m.sessions().iter().find(|s| s["id"] == id).map(|s| s["state"].clone()).unwrap_or(Value::Null);
+  m.new_session(None).await;
+  let watched = m.active_id().unwrap();
+  m.handle(json!({ "type": "send", "text": "hi" })).await;
+  assert_eq!(state_of(&watched), Value::Null);
+
+  m.new_session(None).await;
+  let perm_of = |id: &str| m.view_of(id).and_then(|x| crate::acp_session::agent_blocks(&x).into_iter().find(|b| b["type"] == "permission"));
+  let send = m.spawn_handle(json!({ "type": "send", "text": "use tool" }));
+  until(|| m.active_id().is_some_and(|x| x != watched) && perm_of(&m.active_id().unwrap()).is_some(), 8000).await;
+  let away = m.active_id().unwrap();
+  let perm = perm_of(&away).unwrap();
+  m.handle(json!({ "type": "selectSession", "id": watched })).await;
+  m.handle(json!({ "type": "permission", "sessionId": away, "blockId": perm["id"], "optionId": "allow" })).await;
+  send.await.unwrap();
+  until(|| state_of(&away) == "unread", 5000).await;
+
+  m.handle(json!({ "type": "selectSession", "id": away })).await;
+  assert_eq!(state_of(&away), Value::Null);
+  m.dispose().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn observe_subagent_streams_only_to_the_observing_viewer_until_unobserved() {
   let fake = fake_or_skip!();
