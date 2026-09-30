@@ -25,9 +25,9 @@ export class Shell {
   answers: Partial<Record<PlatformMethod, (r: PlatformRequest) => unknown>> = {};
   private listeners: ((m: SidecarMsg) => void)[] = [];
 
-  // bin: another sidecar binary than the one under test
-  constructor(readonly home: string, readonly cwd: string, bin = SIDECAR) {
-    this.proc = spawn(bin, ['--home', home], { stdio: 'pipe', env: { ...process.env, ACPIRA_HOME: '', ACPIRA_CATALOG_REFRESH: '0', ACPIRA_LOGIN_PATH: '0' } });
+  // bin: another sidecar binary than the one under test; env: extra variables (a temp HOME keeps ~/.agents out of reach)
+  constructor(readonly home: string, readonly cwd: string, bin = SIDECAR, env: Record<string, string> = {}) {
+    this.proc = spawn(bin, ['--home', home], { stdio: 'pipe', env: { ...process.env, ACPIRA_HOME: '', ACPIRA_CATALOG_REFRESH: '0', ACPIRA_LOGIN_PATH: '0', ...env } });
     createInterface({ input: this.proc.stdout }).on('line', line => {
       this.stdoutLines.push(line);
       let m: SidecarMsg;

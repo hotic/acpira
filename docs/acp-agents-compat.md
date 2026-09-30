@@ -104,8 +104,62 @@ Consequences implemented: text attachments become marked-up `text` blocks when `
 
 `scripts/probe-agent-host.ts` (new session → controls → pong → dropped text attachment → shell command, permission cards answered like a click) passed 9/9 against DSH 0.1.5-rc.2 (`reasoning_effort` current `""`, `usage_update { used: 8000, size: 300000 }`, no commands) and pi-acp 0.0.33 / pi 0.86.0 (modes hidden, `thought_level` current `medium`, 15 commands, no usage; the model's first three bash attempts were malformed commands of its own making — the tool rows showed the bash syntax errors verbatim). `scripts/probe-opencode-host.ts` against OpenCode 1.18.15 passed mode / effort switching, pong with per-turn usage, the two-file write (both permission cards `once`), `session/list` → import on a fresh store (4 turns replayed, sealed, re-listing marks it imported) and a follow-up that recalled the imported context; the write turn exposed the permission-downgrade and write-without-diff facts above, fixed afterwards. Re-run after the fixes with `--model asgard/kimi-k2.7` (the default route answered 503 "no eligible upstream channel", which OpenCode retries silently — a stuck first prompt is the gateway, not the host): 16/16, the permission cards arrive as `Edit a.txt` / `Edit b.txt` with `allow_once / allow_always / reject_once`, each write row ends with two contents (the receipt text + the synthesized all-add diff, `diffStat { add: 1, del: 0 }`) and the imported session answered `pong` to a question about its first turn (asked about "the word replied earlier" it literally answered `done`, the latest native reply — the question in the probe now names the first turn).
 
+## Client MCP servers and shared files (2026-09-30)
+
+`pnpm probe <agent> --mcp` passes one stdio server (`scripts/lib/mcp-marker.mjs`, which appends every method it receives to a marker file) in `session/new` and waits; no prompt is sent, so no model call is spent. Every agent below launched the server and sent `initialize` + `tools/list` before or right after the response, except Pi.
+
+| Agent | Version | `mcpCapabilities` | stdio server launched | Grade |
+|---|---|---|---|---|
+| Grok | 1.0.18 | http, sse | yes | verified |
+| Devin | 3000.11.3 | http, sse | yes (after `--import-local`) | verified |
+| Kimi | 0.41.0 | http, sse | yes | verified |
+| Codex | codex-acp 1.13.0 | **http only** | yes | verified |
+| Claude | claude-agent-acp 0.83.0 | http, sse | yes | verified |
+| OpenCode | 1.18.15 | http, sse | yes | verified |
+| DSH | deepseek-harness-acp 0.0.1 | http | yes | verified |
+| Pi | pi-acp 0.0.33 | none | **no** (the list is ignored) | verified |
+
+Shared skills and prompts (the Shared tab's wiring, `agent_ext.rs` `AgentExt.shared`):
+
+- Grok 1.0.18's embedded docs: skills are scanned from `.agents/skills` at each tier (user and project) and deduplicated by name, and gitignore does not apply to skill roots; its global rules file is `~/.grok/AGENTS.md` (source).
+- Kimi 0.41.0 reads `~/.agents/skills` and `.agents/skills` (source).
+- Claude Code reads no `.agents/skills` at either level, so it gets per-skill symlinks; from 2.1.277 it reads a directory's `AGENTS.md` only when that directory has no `CLAUDE.md`, hence the `@AGENTS.md` import offered for a project `CLAUDE.md` (source).
+- DSH reads `$DSH_HOME/AGENTS.md` (default `~/.dsh/AGENTS.md`) as its global instruction file (`dsh-agent-instructions`, source); an earlier note here said it had none. Pi's is `~/.pi/agent/AGENTS.md` (source).
+- No agent reads `~/.agents/AGENTS.md` natively; each global instruction file is linked (Claude: imported) to it.
+
+Project `.agents/skills`, verified 2026-10-01: a temp git project with a marker skill `zz-acpira-probe` in `.agents/skills`, then `pnpm probe <agent> --wait 6000` without a prompt, checking `available_commands_update` (or Pi's `startupInfo`) for the marker.
+
+| Agent | Version | Project `.agents/skills` | Grade |
+|---|---|---|---|
+| Grok | 1.0.18 | seen | verified |
+| Devin | 3000.11.3 | seen (with `--import-local`) | verified |
+| Kimi | 0.41.0 | seen | verified |
+| Codex | codex-acp 1.13.0 | seen | verified |
+| Claude | claude-agent-acp 0.83.0 | **not seen** (nor `~/.agents/skills`) | verified |
+| OpenCode | 1.18.15 | seen | verified |
+| Pi | pi 0.86.0, pi-acp 0.0.33 | **not seen in an untrusted project**; `~/.agents/skills` is loaded | verified |
+| DSH | dsh 0.1.5-rc.2 | no commands advertised, so not observable; `dsh-skill-filesystem` reads `.agents/skills`, `.dsh/skills`, `~/.dsh/skills`, `~/.agents/skills` | source |
+
+Project `.mcp.json`, verified 2026-10-01: a temp git project whose `.mcp.json` declares the marker server, then `pnpm probe <agent> --wait 10000` without a prompt and without `--mcp`.
+
+| Agent | Version | Launched the `.mcp.json` server | Grade |
+|---|---|---|---|
+| Claude | claude-agent-acp 0.83.0 | yes (`initialize`, `tools/list`), no approval prompt | verified |
+| Devin | 3000.11.3 (`--import-local`) | yes (`initialize`) | verified |
+| Grok | 1.0.18 | no; its docs load `.mcp.json` only until the Claude import prompt was answered, which it was on the probing machine | verified / source |
+| Kimi | 0.41.0 | no | verified |
+| Codex | codex-acp 1.13.0 | no | verified |
+| OpenCode | 1.18.15 | no | verified |
+
+The Shared tab therefore keeps project servers in `.mcp.json` and sends them over ACP to every agent except Claude and Devin. Whether Claude / Devin honour a `"disabled": true` entry in `.mcp.json` is unverified.
+
+Pi's project trust (pi 0.86.0 `core/trust-manager.js`, `core/project-trust.js`, source): project resources, `.agents/skills` included, load only when `<agent dir>/trust.json` (`PI_CODING_AGENT_DIR`, default `~/.pi/agent`) maps the project or its nearest listed ancestor to `true`, or `settings.json` has `defaultProjectTrust: "always"`. RPC mode (what pi-acp runs) never asks, so an untrusted project silently goes without its skills. Context files such as `AGENTS.md` load regardless. The store is written sorted and pretty under a `trust.json.lock` directory (proper-lockfile, 10 s stale); the Shared tab's "Trust this project" writes the same entry the same way.
+
 ## Open items (not yet verified)
 
+- Whether OpenCode deduplicates a skill seen both through `.agents/skills` and a `.claude/skills` link by real path (`OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` would switch the Claude folders off); only Claude gets skill links today, so this matters only for project `.claude/skills` links.
+- An agent actually calling a tool of a shared MCP server in a turn (needs a model call); only the launch and `tools/list` are verified.
+- Shared-config links on Windows (junction / hard-link fallbacks).
 - Permission request shapes on DSH and Pi (OpenCode's are verified above); what OpenCode's `always` actually scopes to.
 - Whether OpenCode / DSH accept `_meta`-less `session/set_config_option` for the `mode` option while a turn runs.
 - OpenCode's `question.asked` → `elicitation/create` bridge (the plan found no such path in the source): a structured question could hang a turn without a card.

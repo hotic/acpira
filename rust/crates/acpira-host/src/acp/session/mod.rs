@@ -93,6 +93,8 @@ pub struct SessionDeps {
   pub compaction: Option<Arc<dyn Fn() -> CompactionPolicy + Send + Sync>>,
   pub pool: Option<Arc<AgentPool>>,
   pub model_shapes: Option<Arc<dyn Fn(&str) -> Option<ModelShapes> + Send + Sync>>,
+  /// Shared MCP servers for session/new, load and resume; None sends none
+  pub shared_mcp: Option<crate::shared_config::McpProvider>,
   /// The `mcpServers` entry of Acpira's own MCP server (`host_mcp.rs`), sent with session/new, load and resume
   pub host_mcp: Option<crate::host_mcp::HostMcp>,
 }
@@ -368,9 +370,22 @@ impl AcpSession {
     self.deps.registry.get(&self.agent).cloned().unwrap_or_default()
   }
 
-  /// Params for session/new, resume and load; Claude sessions also ask for summarized thinking (see `claude_thinking`)
-  pub(crate) fn session_request(&self, acp_id: Option<&str>) -> Value {
-    let servers: Vec<Value> = self.deps.host_mcp.as_ref().and_then(|h| h.entry_for(&self.agent)).into_iter().collect();
+  /// Params for session/new, resume and load (and an edit's fresh session): the shared MCP servers for this agent and
+  /// cwd (`shared_config::mcp`, filtered by the process's `mcpCapabilities`) plus Acpira's own server (`host_mcp.rs`);
+  /// Claude sessions also ask for summarized thinking (see `claude_thinking`)
+  pub(crate) async fn session_request(&self, proc: &AgentProcess, acp_id: Option<&str>) -> Value {
+    let mut servers = match &self.deps.shared_mcp {
+      Some(provider) => {
+        let caps = runtime_info_of(&proc.init).mcp;
+        let (servers, line) = provider(self.agent.clone(), self.cwd.clone(), caps).await;
+        if let Some(line) = line {
+          self.log(&line);
+        }
+        servers
+      }
+      None => vec![],
+    };
+    servers.extend(self.deps.host_mcp.as_ref().and_then(|h| h.entry_for(&self.agent)));
     let mut req = json!({ "cwd": self.cwd, "mcpServers": servers });
     if let Some(id) = acp_id {
       req["sessionId"] = json!(id);
@@ -788,7 +803,7 @@ impl AcpSession {
     };
     let caps = proc.caps().clone();
     if let Some(acp_id) = acp_id {
-      let req = self.session_request(Some(&acp_id));
+      let req = self.session_request(&proc, Some(&acp_id)).await;
       let (mut gone, mut failed, mut locked, mut unresumable): (bool, Option<anyhow::Error>, bool, bool) = (false, None, false, false);
       let mut holder: Option<u32> = None;
       let attempts: [&str; 2] = if importing { ["load", "resume"] } else { ["resume", "load"] };
@@ -901,7 +916,7 @@ impl AcpSession {
     // commands while session/new is still in flight
     self.core.lock().state.commands = vec![];
     // Ordered: pi-acp re-sends the startup banner as a chunk right after this response, which must meet the recorded banner
-    let req = self.session_request(None);
+    let req = self.session_request(&proc, None).await;
     let (r, handoff) = match proc.request_ordered("session/new", req.clone()).await {
       // An agent that cannot start Acpira's MCP server must still get a session: retry once without it, and leave it out
       // of this agent's later requests for the life of the sidecar

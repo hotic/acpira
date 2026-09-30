@@ -16,6 +16,7 @@ import { SettingsShell, type SettingsHandlers } from './settings/SettingsShell';
 import { sameRange, selectionDraft, setEditorCopy, setEditorSelection } from './chat/editorContext';
 import { updateMainComposer } from './chat/useComposerDraft';
 import type { SettingsPage } from './settings/Nav';
+import type { SharedState } from './settings/SharedPage';
 
 declare global {
   interface Window { __acpira?: { host: 'sidebar' | 'editor' } }
@@ -82,6 +83,7 @@ export function App() {
   const [locale, setLoc] = useState<Locale>('en');
   const [chatgptStatus, setChatgptStatus] = useState<ChatGptIntegrationStatus>();
   const [inventories, setInventories] = useState<Partial<Record<AgentId, AgentInventory>>>({});
+  const [shared, setShared] = useState<SharedState>();
   const [controls, setControls] = useState<Partial<Record<AgentId, ConfigControl[]>>>({});
   // The import popover's listing; `agent` ties it to the request it answers so a stale reply can't overwrite a newer request
   const [nativeSessions, setNativeSessions] = useState<NativeSessionsState>();
@@ -146,6 +148,7 @@ export function App() {
         }
         case 'settings': setSettings(m.settings); setLocale(m.locale); setLoc(m.locale); break;
         case 'inventory': setInventories(inv => ({ ...inv, [m.agent]: m.inventory })); break;
+        case 'shared': setShared({ view: m.view, error: m.error }); break;
         case 'controls':
           setControls(c => ({ ...c, [m.agent]: m.controls }));
           setRefreshing(r => { if (!r.has(m.agent)) return r; const next = new Set(r); next.delete(m.agent); return next; });
@@ -263,6 +266,8 @@ export function App() {
     unlockCredentials: agent => post({ type: 'unlockCredentials', agent }),
     installAgent: agent => post({ type: 'installAgent', agent }),
     openExternal: url => post({ type: 'openExternal', url }),
+    shared: () => post({ type: 'shared' }),
+    sharedAction: action => post({ type: 'sharedAction', action }),
   }), []);
 
   cwdRef.current = session?.cwd ?? init?.cwd ?? '';
@@ -284,6 +289,7 @@ export function App() {
         accounts={accounts}
         chatgptStatus={chatgptStatus}
         inventories={inventories}
+        shared={shared}
         controls={controls}
         refreshing={refreshing}
         env={{ home: init.home, cwd: session?.cwd ?? init.cwd }}

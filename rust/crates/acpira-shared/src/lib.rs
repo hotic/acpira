@@ -20,6 +20,7 @@ pub mod num;
 pub mod plan_execution;
 pub mod protocol;
 pub mod settings;
+pub mod shared_config;
 pub mod sidecar;
 pub mod slash_commands;
 pub mod subagents;

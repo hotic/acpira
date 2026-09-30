@@ -107,6 +107,10 @@ function saveSession(id: string, prompts = readSession(id)?.prompts ?? [], cwd =
 // codex-acp canonicalizes the cwd it stores for a thread (macOS /var → /private/var); sessions created through a
 // symlinked project path land in the store under the resolved path
 const canonicalCwd = (cwd: string) => { try { return realpathSync(cwd); } catch { return cwd; } };
+// FAKE_MCP_TRACE: one line per session/new, resume and load with the mcpServers the client handed over
+function logMcp(method: string, servers: unknown) {
+  if (process.env.FAKE_MCP_TRACE) appendFileSync(process.env.FAKE_MCP_TRACE, `${method} ${JSON.stringify(servers ?? null)}\n`);
+}
 function restoreSession(id: string, cwd: string): acp.LoadSessionResponse {
   // Same gate as session/new: auth is a property of the session's cwd, not of restore in general
   if (!authed && cwd.includes('needs-auth')) throw acp.RequestError.authRequired();
@@ -151,6 +155,8 @@ const app = acp.agent({ name: 'fake-agent' })
         loadSession: true,
         sessionCapabilities: process.env.FAKE_LOAD_ONLY ? {} : { resume: {}, ...(process.env.FAKE_CLOSE_LOG ? { close: {} } : {}), ...(sessionDir ? { list: {} } : {}) },
         promptCapabilities: process.env.FAKE_PROMPT_CAPS === 'strict' ? { embeddedContext: false, image: false } : { embeddedContext: true },
+        // FAKE_MCP_TRACE: http but not sse, so a test sees the client filter client-provided servers by transport
+        ...(process.env.FAKE_MCP_TRACE ? { mcpCapabilities: { http: true, sse: false } } : {}),
       },
       ...(process.env.FAKE_STEERING ? { _meta: { steering: { supported: true } } } : {}),
       authMethods: [
@@ -164,6 +170,7 @@ const app = acp.agent({ name: 'fake-agent' })
     };
   })
   .onRequest(acp.methods.agent.session.new, async ({ params, client }) => {
+    logMcp('new', params.mcpServers);
     // FAKE_STARTUP_BANNER: pi-acp's prelude — the response carries _meta.piAcp.startupInfo and the same text is re-sent
     // as one agent_message_chunk a tick later; =early keeps the old pre-response timing (before any session exists)
     const banner = process.env.FAKE_STARTUP_BANNER ? 'pi v0.0 banner' : undefined;
@@ -212,6 +219,7 @@ const app = acp.agent({ name: 'fake-agent' })
     };
   })
   .onRequest(acp.methods.agent.session.resume, ({ params }) => {
+    logMcp('resume', (params as { mcpServers?: unknown }).mcpServers);
     if (sessionDir) return restoreSession(params.sessionId, params.cwd);
     // cwd containing "flaky-resume": while a resume.lock file sits in it, restores fail with a transport-level
     // internal error — a transient restore failure, not a missing session; removing the file makes them succeed
@@ -262,6 +270,7 @@ const app = acp.agent({ name: 'fake-agent' })
     };
   })
   .onRequest(acp.methods.agent.session.load, async ({ params, client }) => {
+    logMcp('load', params.mcpServers);
     if (!sessionDir) throw acp.RequestError.methodNotFound(acp.methods.agent.session.load);
     const restored = restoreSession(params.sessionId, params.cwd);
     // Native load replays content; an existing local transcript must not duplicate it.

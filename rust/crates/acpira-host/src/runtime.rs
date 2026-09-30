@@ -115,6 +115,7 @@ impl HostRuntime {
     };
     let (r1, r2, r3, r4, r5) = (r(&platform), r(&platform), r(&platform), r(&platform), r(&platform));
     let cwd_p = platform.clone();
+    let mcp_home = platform.clone();
     let manager = SessionManager::new(
       registry,
       ManagerDeps {
@@ -142,6 +143,7 @@ impl HostRuntime {
           Some("all") => "all".into(),
           _ => "workspace".into(),
         }),
+        shared_mcp: Some(crate::shared_config::mcp_provider(Arc::new(move || mcp_home.home()))),
         host_mcp,
       },
     );
@@ -161,6 +163,7 @@ impl HostRuntime {
       health: Arc::new(move |a| m3.agent_health(a)),
       home: Arc::new(move || phome.home()),
       cwd: Arc::new(move || pcwd.cwd()),
+      shared: crate::shared_config::SharedConfig::new(root.clone(), log.clone()),
     }));
 
     let runtime =
@@ -180,12 +183,22 @@ impl HostRuntime {
         rt.manager.refresh_index().await;
         rt.accounts.reload().await;
         rt.accounts.sync_local(None).await;
+        rt.maintain_shared().await;
       });
     }));
     tokio::spawn(crate::model_catalog::refresh(root.clone(), log.clone()));
     runtime.manager.init().await;
     set_host_locale(runtime.settings.locale());
+    let rt = runtime.clone();
+    tokio::spawn(async move { rt.maintain_shared().await });
     Ok(runtime)
+  }
+
+  /// Claude's project skill links, and user-level links once the link panel turned `auto` on (see `shared_config`)
+  async fn maintain_shared(&self) {
+    if let Err(e) = self.settings.shared_maintain().await {
+      self.platform.log(&format!("shared config: {e:#}"));
+    }
   }
 
   pub fn appearance(&self) -> Appearance {
@@ -231,6 +244,11 @@ impl HostRuntime {
     }
     if affects(Some("agentOrder")) || affects(Some("disabledAgents")) {
       self.manager.emit_agents();
+    }
+    if affects(Some("disabledAgents")) {
+      // A turned-off agent's links go away, a turned-on one's come back
+      let rt = self.clone();
+      tokio::spawn(async move { rt.maintain_shared().await });
     }
     // Checked per key: one event may carry an appearance axis and a language change together
     if SETTING_KEYS.iter().any(|k| affects(Some(k))) {

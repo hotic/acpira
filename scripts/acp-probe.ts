@@ -1,6 +1,7 @@
-import { readFile } from 'node:fs/promises';
-import { basename, extname, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { mkdtemp, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, extname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { devinAuthenticate, readDevinLogin } from './lib/devin';
 import { RawAgent, RpcError } from './lib/rawAcp';
 import { builtinAgent } from './lib/sidecarBin';
@@ -16,19 +17,22 @@ import { builtinAgent } from './lib/sidecarBin';
 // --link PATH: attach the file as a `resource_link` block (does the agent read it by itself?); --embed PATH: attach as an embedded text `resource` block
 // --elicit: answer every elicitation/create the agent sends (Devin's ask_user_question goes this way) with the first enum option of
 //   each property (or an empty string), so the turn can finish; without the flag the request is answered method-not-found, which shows what an agent does then
+// --mcp: hand a marker MCP server (`scripts/lib/mcp-marker.mjs`, stdio) over in session/new `mcpServers` and print the methods it
+//   received after --wait (default 5000 here), showing whether the agent launches client-provided servers; no prompt is needed
 // --wait MS: keep the process alive that long after session/new (and after the prompt) before killing it, to catch notifications that arrive
 //   after the response — available_commands_update lands there for every CLI, and Kimi's usage_update is asynchronous too
 const argv = process.argv.slice(2);
 const doAuth = argv.includes('--auth');
 const importLocal = argv.includes('--import-local');
 const elicit = argv.includes('--elicit');
+const withMcp = argv.includes('--mcp');
 const valued = (flag: string) => { const i = argv.indexOf(flag); return i >= 0 ? { idx: i + 1, value: argv[i + 1] } : undefined; };
 const keyEnv = valued('--api-key-env');
 const apiKey = keyEnv ? process.env[keyEnv.value ?? ''] : undefined;
 const imagePath = valued('--image')?.value;
 const linkPath = valued('--link')?.value;
 const embedPath = valued('--embed')?.value;
-const waitMs = Number(valued('--wait')?.value ?? 0);
+const waitMs = Number(valued('--wait')?.value ?? (withMcp ? 5000 : 0));
 const valueIdx = new Set([keyEnv, valued('--image'), valued('--link'), valued('--embed'), valued('--wait')].flatMap(v => (v ? [v.idx] : [])));
 const positional = argv.filter((a, i) => !a.startsWith('--') && !valueIdx.has(i));
 const [agentId = 'grok', ...rest] = positional;
@@ -100,8 +104,19 @@ if (importLocal) {
   console.log('authenticate (local login) ok');
 }
 
+// ACP wants an absolute command; node itself is the one we know resolves
+const mcpMarker = withMcp ? join(await mkdtemp(join(tmpdir(), 'acpira-mcp-')), 'marker.log') : '';
+const mcpServers = withMcp
+  ? [{
+      name: 'acpira-probe',
+      command: process.execPath,
+      args: [fileURLToPath(new URL('./lib/mcp-marker.mjs', import.meta.url))],
+      env: [{ name: 'MCP_MARKER', value: mcpMarker }],
+    }]
+  : [];
+
 async function newSession(): Promise<Obj> {
-  const req = { cwd: process.cwd(), mcpServers: [] };
+  const req = { cwd: process.cwd(), mcpServers };
   try {
     return await agent.request<Obj>('session/new', req);
   } catch (e) {
@@ -140,6 +155,10 @@ try {
     console.log('\nstop →', r.stopReason);
   }
   if (waitMs > 0) { console.log(`\nwaiting ${waitMs} ms for late notifications…`); await new Promise(r => setTimeout(r, waitMs)); }
+  if (withMcp) {
+    const log = await readFile(mcpMarker, 'utf8').catch(() => '');
+    console.log(`\n[mcp] ${log ? `marker server received:\n${log}` : 'marker server was never launched'}`);
+  }
 } catch (e) {
   console.error('session/new failed:', fail(e));
 }
