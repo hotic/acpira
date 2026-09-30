@@ -98,6 +98,8 @@
   "code.diff": "代码差异",
   "code.commandOutput": "命令输出",
   "code.copyOutput": "复制命令输出",
+  "code.toolOutput": "工具输出",
+  "code.copyToolOutput": "复制工具输出",
   "code.commandExpand": "展开完整命令",
   "code.commandCollapse": "收起命令",
   "code.copySource": "复制修改后代码",

@@ -63,7 +63,9 @@
    transition here would stall while the target moves every frame. */
 .connected-rail { position: relative; isolation: isolate; }
 .rail-segment { position: absolute; z-index: -1; width: var(--rail-width); height: calc(var(--rail-length, 0) * 1px); transform: translateX(-50%); pointer-events: none; }
-.rail-segment::before { content: ''; position: absolute; inset: 0; background: var(--rail-color); }
+/* The top end fades in over --rail-fade; a short icon-to-icon link in a dense result list fades over at most 40% of itself,
+   or the whole link would stay translucent */
+.rail-segment::before { content: ''; position: absolute; inset: 0; background: linear-gradient(to bottom, transparent, var(--rail-color) min(var(--rail-fade), 40%)); }
 .rail-segment[data-terminal]::after { content: ''; position: absolute; left: 50%; bottom: 0; width: var(--rail-dot-size); height: var(--rail-dot-size); border-radius: 50%; background: var(--rail-color); transform: translate(-50%, 50%); }
 .connected-rail:has(> .process-row-enter) > .rail-segment { animation: acp-row-part-in var(--row-enter-duration) var(--row-enter-file) ease-out both; }
 

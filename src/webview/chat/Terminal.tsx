@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
 import type { ToolCallBlock } from '@shared/transcript';
 import { useScrollFade } from '../ui/useScrollFade';
@@ -11,7 +11,46 @@ import { t } from '../i18n';
 // inside it. Height is capped by --code-output-max.
 export function TerminalOutput({ block, command }: { block: ToolCallBlock; command?: string }) {
   const text = outputOf(block);
-  const follow = block.observation !== 'unknown' && (block.status === 'in_progress' || block.status === 'pending');
+  if (!text && !command) return null;
+  return (
+    <div className="group/code-output code-output terminal-surface">
+      {command && <CommandPrompt command={command} />}
+      {/* Output under the command keeps only a half gap above it */}
+      {text && <OutputPane text={text} follow={outputFollows(block)} label={t('code.commandOutput')} copyLabel={t('code.copyOutput')}
+        className={cn('terminal-scroll whitespace-pre', command && 'pt-gap-half')}>
+        {/* npm banners are muted; a leading ✓ (vitest indents it) takes the success color */}
+        {text.trimEnd().split('\n').map((line, index, lines) => <span key={index} className={/^(?:> |Done in )/.test(line) ? 'text-fg-3' : undefined}>
+          {/^\s*✓/.test(line) ? <>{line.slice(0, line.indexOf('✓'))}<span className="text-ok">✓</span>{line.slice(line.indexOf('✓') + 1)}</> : line}{index < lines.length - 1 ? '\n' : ''}
+        </span>)}
+      </OutputPane>}
+    </div>
+  );
+}
+
+// Text a non-command tool returned (MCP results, background task reports, …) in the command card's frame and padding.
+// Unlike terminal output it wraps: these are `key: value` reports and prose, not column-aligned logs, and a horizontal
+// scrollbar under a short report cost more than it saved. A wrapped line hangs under its own start
+export function ToolOutput({ block, text }: { block: ToolCallBlock; text: string }) {
+  const body = text.trimEnd();
+  if (!body.trim()) return null;
+  return (
+    <div className="group/code-output code-output">
+      <OutputPane text={body} follow={outputFollows(block)} label={t('code.toolOutput')} copyLabel={t('code.copyToolOutput')} className="tool-output">
+        {body.split('\n').map((line, index) => <span key={index} className="tool-output-line">{line || ' '}</span>)}
+      </OutputPane>
+    </div>
+  );
+}
+
+// Live output sticks to the bottom; an announced call that is only waiting has nothing to follow yet
+const outputFollows = (block: ToolCallBlock) =>
+  block.observation !== 'unknown' && (block.status === 'in_progress' || block.status === 'pending');
+
+// The scrolling output area both cards share: capped by --code-output-max with edge fades, a copy button on hover, and
+// while `follow` it sticks to the bottom until the user scrolls up inside it
+function OutputPane({ text, follow, label, copyLabel, className, children }: {
+  text: string; follow: boolean; label: string; copyLabel: string; className?: string; children: ReactNode;
+}) {
   const ref = useRef<HTMLPreElement>(null);
   const fade = useScrollFade<HTMLPreElement>();
   const setRef = useCallback((element: HTMLPreElement | null) => {
@@ -23,27 +62,18 @@ export function TerminalOutput({ block, command }: { block: ToolCallBlock; comma
     const el = ref.current;
     if (el && follow && pinned.current) el.scrollTop = el.scrollHeight;
   }, [text, follow]);
-  if (!text && !command) return null;
   return (
-    <div className="group/code-output code-output terminal-surface">
-      {command && <CommandPrompt command={command} />}
-      {text && <div className="relative min-w-0">
-        <OutputCopy text={text} label={t('code.copyOutput')} />
-        <pre
-          ref={setRef}
-          tabIndex={0}
-          aria-label={t('code.commandOutput')}
-          onScroll={e => { const el = e.currentTarget; pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24; }}
-          className={cn('terminal-scroll scroll-fade scroll-thin m-0 max-h-code-output overflow-auto whitespace-pre px-command-x py-command-y font-mono text-mono text-fg-2 [overflow-anchor:none]',
-            // Output under the command keeps only a half gap above it
-            command && 'pt-gap-half')}
-        >
-          {/* npm banners are muted; a leading ✓ (vitest indents it) takes the success color */}
-          {text.trimEnd().split('\n').map((line, index, lines) => <span key={index} className={/^(?:> |Done in )/.test(line) ? 'text-fg-3' : undefined}>
-            {/^\s*✓/.test(line) ? <>{line.slice(0, line.indexOf('✓'))}<span className="text-ok">✓</span>{line.slice(line.indexOf('✓') + 1)}</> : line}{index < lines.length - 1 ? '\n' : ''}
-          </span>)}
-        </pre>
-      </div>}
+    <div className="relative min-w-0">
+      <OutputCopy text={text} label={copyLabel} />
+      <pre
+        ref={setRef}
+        tabIndex={0}
+        aria-label={label}
+        onScroll={e => { const el = e.currentTarget; pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24; }}
+        className={cn('scroll-fade scroll-thin m-0 max-h-code-output overflow-auto px-command-x py-command-y font-mono text-mono text-fg-2 [overflow-anchor:none]', className)}
+      >
+        {children}
+      </pre>
     </div>
   );
 }

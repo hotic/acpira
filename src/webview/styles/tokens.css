@@ -104,6 +104,8 @@
   --row-enter-file: 180ms;
   --rail-width: 1px;
   --rail-dot-size: 4px;
+  /* A rail fades in over this length below its icon, so it reads as leaving the icon rather than growing out of it */
+  --rail-fade: 14px;
   --rail-color: color-mix(in srgb, var(--fg-3) 65%, var(--bg-1));
   --rail-grow-duration: 220ms;
   --scroll-fade-size: 28px;

@@ -16,7 +16,7 @@ import { PlanDetails } from './Plan';
 import { CodeSurface, DiffBlock } from './CodeBlock';
 import { AgentImage } from './AgentImage';
 import { GeneratedImages } from './GeneratedImage';
-import { TerminalOutput } from './Terminal';
+import { TerminalOutput, ToolOutput } from './Terminal';
 import { toolTarget, toolVerb } from './folding';
 import { AsyncTaskStopContext, OpenToolFileContext } from './fileLinks';
 import { fileReference, toolFiles, visibleToolContents } from './toolDetails';
@@ -144,9 +144,10 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
     || (grouped && !block.content)) return <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
 
   // Opening a process fold reveals action rows; outputs only expand on an explicit click.
-  // A command card sits in the label column on the row's rail; the space after it stays outside the rail so the end dot meets the card
-  if (execute) return (
-    <Disclosure className="action-details data-open:mb-command-after" bodyClassName="pt-gap-half" tone="action" lead={lead} trailing={trailing} defaultOpen={!grouped && running}
+  // A command card sits in the label column on the row's rail; the space after it stays outside the rail so the end dot meets the card.
+  // A tool that returned only text gets the same card; diffs, lists and images stay full width
+  if (execute || (visibleContent.length && visibleContent.every(item => item.type === 'text'))) return (
+    <Disclosure className="action-details data-open:mb-command-after" bodyClassName="pt-gap-half" tone="action" lead={lead} trailing={trailing} defaultOpen={execute && !grouped && running}
       body={<><TaskMeta task={block.asyncTask} /><ToolBody block={block} items={visibleContent} command={command} /></>}>
       {label}
     </Disclosure>
@@ -213,6 +214,9 @@ function ToolBody({ block, items, command }: { block: ToolCallBlock; items: Retu
     const images = block.contents?.filter((i): i is Extract<typeof i, { type: 'image' }> => i.type === 'image') ?? [];
     return <div className="flex flex-col gap-gap"><TerminalOutput block={block} command={command} />{images.map((i, n) => <AgentImage key={n} image={i} />)}</div>;
   }
+  // Text-only results read as one output stream, like several text items of a command
+  const texts = items.filter((i): i is Extract<typeof i, { type: 'text' }> => i.type === 'text');
+  if (items.length && texts.length === items.length) return <ToolOutput block={block} text={texts.map(i => i.text).join('\n')} />;
   // Several content items in one update (e.g. two diffs with a receipt line between them) render stacked in wire order —
   // each diff keeps its own file path, `content` alone would only ever show the first
   if (items.length > 1) {
@@ -221,16 +225,15 @@ function ToolBody({ block, items, command }: { block: ToolCallBlock; items: Retu
         if (item.type === 'diff') return <DiffBlock key={i} lines={item.lines} source={item.source} path={item.source?.path ?? block.locations?.[0]?.path ?? block.target} />;
         if (item.type === 'list') return <ResultList key={i} items={item.items} kind={block.kind} />;
         if (item.type === 'image') return <AgentImage key={i} image={item} />;
-        return <CodeSurface key={i} className="text-fg-2 whitespace-pre">{item.text}</CodeSurface>;
+        return <ToolOutput key={i} block={block} text={item.text} />;
       })}
     </div>;
   }
   const c = items[0];
-  if (!c) return null;
+  if (!c || c.type === 'text') return null;
   if (c.type === 'diff') return <DiffBlock lines={c.lines} source={c.source} path={block.locations?.[0]?.path ?? block.target} />;
   if (c.type === 'list') return <ResultList items={c.items} kind={block.kind} />;
-  if (c.type === 'image') return <AgentImage image={c} />;
-  return <CodeSurface className="text-fg-2 whitespace-pre">{c.text}</CodeSurface>;
+  return <AgentImage image={c} />;
 }
 
 // Result rows share the parent's connected icon rail, with a faint line/host suffix.
