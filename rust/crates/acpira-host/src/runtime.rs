@@ -95,6 +95,7 @@ impl HostRuntime {
       log.clone(),
       Some(Arc::new(move |_id: &str, error: &str| save_toast("error", &tp("host.saveFailed", &[("error", error)])))),
     );
+    let host_mcp = bridge_exe.as_deref().map(crate::host_mcp::HostMcp::new);
     let chatgpt = ChatGptBridgeStore::new(root.join("bridges").join("chatgpt"), log.clone(), bridge_exe);
 
     let local_env_slot = mgr_slot.clone();
@@ -141,6 +142,7 @@ impl HostRuntime {
           Some("all") => "all".into(),
           _ => "workspace".into(),
         }),
+        host_mcp,
       },
     );
     *mgr_slot.lock() = Some(Arc::downgrade(&manager));

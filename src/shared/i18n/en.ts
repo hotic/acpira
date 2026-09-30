@@ -172,7 +172,7 @@ export const en = {
   'composer.fusionSummary': '{leads} leads, {sidekicks} sidekicks',
   'composer.addAccount': 'Add account',
   'composer.accountsOf': '{agent} accounts',
-  'composer.noAccounts': 'No accounts yet — press “+” to add one',
+  'composer.noAccounts': 'Press “+” to sign in or import an account.',
   'composer.notLoggedIn': 'Not signed in',
   'agent.notInstalled': 'Not installed — see its settings page for the install command',
   'composer.send': 'Send',
@@ -495,6 +495,7 @@ export const en = {
   'verb.kill': 'Stop background command',
   // Image generation tools (codex-acp "Image generation", Grok image_gen / image_edit), recognized by name
   'verb.imagegen': 'Generate image',
+  'verb.showImage': 'Show image',
   // Delegation calls: the tool that spawns a subagent (Devin run_subagent, Claude/Kimi Agent) and the one that blocks on it
   'verb.delegate': 'Delegate',
   'verb.awaitSubagent': 'Wait for subagent',

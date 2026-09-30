@@ -268,6 +268,9 @@ export interface TextBlock {
   phase?: 'commentary' | 'final';
   markdown: string;
   streaming?: boolean;
+  // Local image files the markdown embeds (`![](/abs/shot.png)`), read into the blob store by the host; `uri` is the source as written.
+  // An entry without `blob` was tried and could not be read
+  images?: ImageRef[];
 }
 
 export type PermissionKind = 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always';

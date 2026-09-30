@@ -1,7 +1,7 @@
 import { memo, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { ImageGeneration } from 'img-fx';
 import type { ImageRef, ToolCallBlock } from '@shared/transcript';
-import { toolImages } from '@shared/imageTools';
+import { isShowImageTool, toolImages } from '@shared/imageTools';
 import { useAppearance } from '../appearance';
 import { useTheme } from '../look';
 import { t } from '../i18n';
@@ -28,8 +28,9 @@ const idle = (fn: () => void) => {
 // Only a call first seen running in this view animates: its placeholder mosaic dissolves into the saved image and then
 // hands over to the ordinary AgentImage. History, replay and a remount after completion show the static image directly.
 // Memoized on the block reference like ToolCall; the slot keys keep the placeholder's card (and its shader) through completion.
+// Shown images (show_image) take the same place without the generation placeholder: the files already exist.
 export const GeneratedImages = memo(function GeneratedImages({ block }: { block: ToolCallBlock }) {
-  const open = block.status === 'pending' || block.status === 'in_progress';
+  const open = !isShowImageTool(block) && (block.status === 'pending' || block.status === 'in_progress');
   const [live] = useState(open);
   const images = toolImages(block);
   const slots: (ImageRef | undefined)[] = open && images.length === 0 ? [undefined] : images;

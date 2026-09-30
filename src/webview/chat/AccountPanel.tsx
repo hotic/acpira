@@ -1,11 +1,11 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
-import { Plus, X } from 'lucide-react';
+import { Check, Plus, X } from 'lucide-react';
 import type { AccountInfo, AgentInfo } from '@shared/transcript';
 import type { AddAccountVia } from '@shared/protocol';
-import { PanelHeader, OptionContent } from '../ui/Panel';
+import { PanelHeader } from '../ui/Panel';
 import { RadioGroup } from '../ui/RadioGroup';
 import { QuotaBars } from '../ui/QuotaBars';
-import { AccountLabel } from '../ui/AccountLabel';
+import { AccountIdentity, AccountLabel } from '../ui/AccountLabel';
 import { LocalAccountQuota } from '../ui/LocalAccountQuota';
 import { Button } from '../ui/Button';
 import { t } from '../i18n';
@@ -47,13 +47,7 @@ export function AccountPanel(p: AccountPanelProps) {
 
   if (p.agent.localAccount) return <div className="flex flex-col">
     <PanelHeader>{p.agent.name}</PanelHeader>
-    <div className="flex min-w-0 flex-col gap-1 px-2 py-1.5 text-2">
-      <span className="text-3 text-fg-3">{t('quota.officialAccount')}</span>
-      {/* Before a login is found the label is only the product name the header already shows */}
-      {(p.agent.localAccount.label !== p.agent.name || p.agent.localAccount.detail) && <AccountLabel label={p.agent.localAccount.label} detail={p.agent.localAccount.detail} />}
-      <LocalAccountQuota account={p.agent.localAccount} />
-      <span className="text-3 text-fg-2">{t('quota.local.desc')}</span>
-    </div>
+    <LocalAccountBody agent={p.agent} account={p.agent.localAccount} />
   </div>;
 
   const current = p.accounts.find(a => a.id === p.accountId);
@@ -66,18 +60,41 @@ export function AccountPanel(p: AccountPanelProps) {
       {p.onUnlockCredentials && <Button className="shrink-0" onClick={() => { p.onUnlockCredentials?.(p.agent.id); p.close(); }}>{t('notice.unlock')}</Button>}
     </div>}
     <RadioGroup.Root ref={list} aria-label={p.agent.name} value={p.accountId ?? ''} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
-      {!p.accounts.length && <div className="flex min-h-row items-center px-2 text-3 text-fg-3">{t('composer.noAccounts')}</div>}
+      {/* Nothing stored yet reads like a signed-out official account: the same identity row, the caption says how to fix it */}
+      {!p.accounts.length && <div className="px-2 py-1.5 text-2"><AccountIdentity caption={t('composer.noAccounts')} wrapCaption>{t('composer.notLoggedIn')}</AccountIdentity></div>}
       {p.accounts.map(a => <div key={a.id} className="group/item relative flex shrink-0 flex-col">
-        <RadioGroup.Item value={a.id} onClick={() => { p.onSelectAccount(a.id); p.close(); }}
-          className={p.accounts.some(a => a.detail || a.quota) ? 'min-h-0 py-1.5 pr-8' : 'pr-8'}>
-          <OptionContent extra={a.quota && <QuotaBars quota={a.quota} />} checked={a.id === p.accountId} checkSlot={!!current}><AccountLabel label={a.label} detail={a.detail} /></OptionContent>
+        {/* Same skeleton as the official account: identity row (avatar · name · plan · check), the quota bars below it */}
+        <RadioGroup.Item value={a.id} onClick={() => { p.onSelectAccount(a.id); p.close(); }} className="min-h-0 flex-col items-stretch gap-0 py-1.5">
+          {/* The plan goes under the name so a long email keeps the width; pr-6 leaves room for the remove button */}
+          <span className="flex min-w-0 items-center gap-2 pr-6">
+            <AccountIdentity caption={a.detail}><span title={a.label}>{a.label}</span></AccountIdentity>
+            {a.id === p.accountId ? <Check className="size-icon shrink-0 text-fg-1" strokeWidth={2} /> : current && <span className="size-icon shrink-0" aria-hidden />}
+          </span>
+          {a.quota && <QuotaBars quota={a.quota} />}
         </RadioGroup.Item>
+        {/* Centred on the identity row (py-1.5 + half the avatar), not on a row the quota bars make tall */}
         <button type="button" aria-label={t('common.removeNamed', { name: a.label })} title={t('common.remove')}
           onClick={e => { e.stopPropagation(); p.onRemoveAccount(a.id); }}
-          className="absolute right-1 top-1/2 flex size-icon-ctl -translate-y-1/2 items-center justify-center rounded-sm text-fg-3 opacity-0 transition-opacity hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 focus-visible:opacity-100 group-hover/item:opacity-100">
+          className="absolute right-1 top-3 flex size-icon-ctl items-center justify-center rounded-sm text-fg-3 opacity-0 transition-opacity hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 focus-visible:opacity-100 group-hover/item:opacity-100">
           <X className="size-3" strokeWidth={2} />
         </button>
       </div>)}
     </RadioGroup.Root>
+  </div>;
+}
+
+// Official account: one identity row (avatar · name · caption), then the quota bars and a footnote about what they count.
+// Without a known login the row itself carries the state ("Not signed in" + how to fix it), and the footnote is left out,
+// since it explains bars that are not there
+function LocalAccountBody({ agent, account }: { agent: AgentInfo; account: NonNullable<AgentInfo['localAccount']> }) {
+  // Before a login is found the label is only the product name the header already shows
+  const known = account.label !== agent.name || !!account.detail;
+  const status = t(`quota.status.${account.status}`);
+  return <div className="flex min-w-0 flex-col gap-gap px-2 py-1.5 text-2">
+    {known
+      ? <AccountIdentity caption={t('quota.officialAccount')}><AccountLabel label={account.label} detail={account.detail} /></AccountIdentity>
+      : <AccountIdentity caption={status} wrapCaption>{account.status === 'login_required' ? t('composer.notLoggedIn') : t('quota.officialAccount')}</AccountIdentity>}
+    {known && <LocalAccountQuota account={account} />}
+    {account.quota && <span className="border-t border-line pt-1.5 text-balance break-keep text-3 text-fg-3">{t('quota.local.desc')}</span>}
   </div>;
 }
