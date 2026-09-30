@@ -161,10 +161,9 @@ fn plan(all_wires: &[Wire], ledger: &Ledger) -> Vec<PlanItem> {
       if !matches!(state, ReachState::Missing | ReachState::Conflict) {
         return None;
       }
-      let own = |p: &Path| std::fs::read_to_string(p).ok().filter(|t| !t.trim().is_empty());
-      let (kind, name, preview_text) = match &w.skill {
-        Some(name) => (PlanKind::Skill, name.clone(), own(&w.at.join("SKILL.md")).map(|t| parse_frontmatter(&t).1.unwrap_or_else(|| preview(&t, 3)))),
-        None => (PlanKind::Prompt, w.at.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), own(&w.at).map(|t| preview(&t, 6))),
+      let (kind, name) = match &w.skill {
+        Some(name) => (PlanKind::Skill, name.clone()),
+        None => (PlanKind::Prompt, w.at.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
       };
       Some(PlanItem {
         at: w.at.to_string_lossy().into_owned(),
@@ -173,7 +172,6 @@ fn plan(all_wires: &[Wire], ledger: &Ledger) -> Vec<PlanItem> {
         name,
         state,
         skipped: ledger.is_skipped(&w.at),
-        preview: if state == ReachState::Conflict { preview_text } else { None },
       })
     })
     .collect()

@@ -9,7 +9,7 @@ import { RadioPills } from '../ui/Field';
 import { cn } from '../ui/cn';
 import { t } from '../i18n';
 import { AgentMark } from '../chat/AgentMark';
-import { ItemRow, Note, Section, SectionAction, SectionDescription, Select, Switch, shortPath } from './controls';
+import { ItemRow, Note, Section, SectionAction, SectionDescription, Switch, shortPath } from './controls';
 import type { SettingsHandlers } from './SettingsShell';
 
 // The Shared tab: one set of skills, MCP servers and prompts in open files, reaching every agent.
@@ -47,7 +47,6 @@ export function SharedPage({ state, agents, on }: SharedPageProps) {
 
   return (
     <>
-      <SectionDescription>{t('settings.shared.intro')}</SectionDescription>
       {error && <Section><Note><span className="truncate text-danger" title={error}>{error}</span></Note></Section>}
       <UserCard ctx={ctx} />
       {view.root && <ProjectCard ctx={ctx} />}
@@ -170,24 +169,27 @@ function LinkPanel({ ctx, onClose }: { ctx: Ctx; onClose: () => void }) {
     // A prompt row is titled by its agent already
     const desc = [p.kind === 'skill' && who, shortPath(p.at, env), p.skipped && t('settings.shared.plan.skipped')].filter(Boolean).join(t('common.metaSep'));
     const conflict = p.state === 'conflict';
+    const c = effective(p);
     return (
       <ItemRow key={p.at}
+        // A conflict row is several lines tall; its mark stays beside the name
+        className={conflict ? 'items-start' : undefined}
         lead={<AgentMark id={p.agent} name={who} />}
         title={p.kind === 'prompt' ? who : p.name}
         desc={desc}
-        // A conflict's choice sits under its preview, so a narrow sidebar keeps the name and path readable
-        extra={conflict ? <>
-          <span className="truncate text-2 text-warn">{t('settings.shared.plan.conflict')}</span>
-          <Preview text={p.preview ?? ''} />
-          <div className="pt-1">
-            <Select<Choice> label={t('settings.shared.plan.choose', { name: p.name, agent: who })} value={effective(p)} onChange={c => choose(p, c)} options={[
-              { value: 'keep_shared', label: t('settings.shared.plan.useShared'), disabled: blocked },
-              { value: 'keep_private', label: t('settings.shared.plan.useThis') },
-              { value: 'skip', label: t('settings.shared.plan.skip') },
-            ]} />
-          </div>
-        </> : undefined}
-        trailing={conflict ? undefined : <Switch checked={effective(p) === 'link'} disabled={blocked} label={t('settings.shared.plan.toggle', { name: p.name, agent: who })}
+        // The agent's own copy opens in the editor, which is where the two versions can really be compared
+        onOpen={conflict ? () => ctx.open(p.kind === 'skill' ? `${p.at}/SKILL.md` : p.at) : undefined}
+        // Under the text rather than beside it, so a narrow sidebar keeps the name and path readable;
+        // the line below says what the current pick will do, which is what the pill labels alone could not
+        extra={conflict ? <div className="flex flex-col gap-1 pt-1">
+          <RadioPills<Choice> label={t('settings.shared.plan.choose', { name: p.name, agent: who })} value={c} onChange={next => choose(p, next)} options={[
+            { value: 'keep_shared', label: t('settings.shared.plan.useShared'), disabled: blocked },
+            { value: 'keep_private', label: t('settings.shared.plan.useThis', { agent: who }) },
+            { value: 'skip', label: t('settings.shared.plan.skip') },
+          ]} />
+          {c !== 'link' && <Explain>{t(`settings.shared.plan.effect.${c}` as MsgKey, { agent: who })}</Explain>}
+        </div> : undefined}
+        trailing={conflict ? undefined : <Switch checked={c === 'link'} disabled={blocked} label={t('settings.shared.plan.toggle', { name: p.name, agent: who })}
           onChange={on => choose(p, on ? 'link' : 'skip')} />}
       />
     );
@@ -198,14 +200,16 @@ function LinkPanel({ ctx, onClose }: { ctx: Ctx; onClose: () => void }) {
       {groups.map(g => (
         <div key={g.title} className="flex flex-col">
           <Note><span className="text-fg-1">{g.title}</span></Note>
+          {/* Why the prompt switches are off comes before them, not after */}
+          {g.items[0]?.kind === 'prompt' && !promptSource && <Explain>{t('settings.shared.plan.noShared')}</Explain>}
           {g.items.map(row)}
         </div>
       ))}
-      {view.plan.some(p => p.kind === 'prompt') && !promptSource && <Note><span className="[overflow-wrap:anywhere]">{t('settings.shared.plan.noShared')}</span></Note>}
       <ItemRow title={t('settings.shared.plan.auto')} extra={<Explain>{t('settings.shared.plan.auto.desc')}</Explain>}
         trailing={<Switch checked={auto} label={t('settings.shared.plan.auto')} onChange={setAuto} />} />
       <div className="flex flex-wrap items-center justify-end gap-2 py-(--setting-row-pad)">
-        <span className="min-w-0 flex-1 text-2 text-fg-3 [overflow-wrap:anywhere]">{t('settings.shared.plan.backup')}</span>
+        {/* A line of its own, so the path is not broken up beside the buttons */}
+        <span className="min-w-0 basis-full text-2 text-fg-3 [overflow-wrap:anywhere]">{t('settings.shared.plan.backup')}</span>
         <Button onClick={onClose}>{t('settings.shared.cancel')}</Button>
         <Button variant="primary" disabled={busy} onClick={() => act({ kind: 'link', picks, auto })}>
           {count ? t('settings.shared.plan.submit', { n: count }) : t('settings.shared.plan.save')}
