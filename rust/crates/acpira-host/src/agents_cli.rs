@@ -8,6 +8,7 @@ use crate::acp::agents::registry::AgentRegistry;
 use crate::acp::agents::launch::{Os, ProcessEnv, spawn_spec};
 
 pub async fn run(args: &[String]) -> i32 {
+  crate::acp::agents::login_path::ready().await;
   let registry = AgentRegistry::new(&Value::Null);
   let mut agents = vec![];
   for id in registry.ids().to_vec() {
@@ -31,6 +32,10 @@ pub async fn run(args: &[String]) -> i32 {
   if args.iter().any(|a| a == "--json") {
     println!("{}", serde_json::to_string_pretty(&json!({ "agents": agents })).unwrap_or_default());
     return 0;
+  }
+  let added = crate::acp::agents::login_path::added();
+  if !added.is_empty() {
+    println!("PATH from the login shell adds: {}", added.join(":"));
   }
   for a in &agents {
     let found = a["binary"].as_str().unwrap_or("not found");

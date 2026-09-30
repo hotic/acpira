@@ -82,6 +82,9 @@ pub struct EnginePart {
   pub r#override: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub override_env: Option<String>,
+  /// The platform package holding the engine's native binary, when the install lacks it
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub native_missing: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

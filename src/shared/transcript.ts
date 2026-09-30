@@ -25,6 +25,8 @@ export interface AgentInfo {
   disabled?: boolean;
   // Commands a probe looked for but did not find (the agent's own command and/or extra AgentDef.requires), for the install hint
   missing?: string[];
+  // Directories searched for the agent's own command when it was not found (built-in candidates, PATH, common global bins)
+  searched?: string[];
   // How to get the CLI when none was found: the vendor's one-line install for this platform and its docs page
   install?: AgentInstall;
 }

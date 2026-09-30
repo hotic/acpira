@@ -13,7 +13,7 @@ use crate::acp::transport::process::{AgentProcess, AgentSpawnError};
 use crate::acp::agents::registry::AgentDef;
 use crate::acp::agents::model_sources::{read_model_facts, refine_controls};
 use crate::acp::transcript::normalize::{init_controls, runtime_info_of};
-use crate::acp::session::errors::is_auth;
+use crate::acp::session::errors::{error_text, is_auth};
 use crate::store::transcript_store::LogFn;
 
 pub struct ProbeResult {
@@ -57,7 +57,7 @@ pub async fn probe_agent_controls(
   .await
   .map_err(|e| ProbeFailure {
     stage: if e.downcast_ref::<AgentSpawnError>().is_some() { AgentHealthStage::SpawnFailed } else { AgentHealthStage::HandshakeFailed },
-    message: e.to_string(),
+    message: error_text(&e),
   })?;
   let mut session_id: Option<String> = None;
   let result = async {
@@ -86,6 +86,6 @@ pub async fn probe_agent_controls(
   proc.kill().await;
   result.map_err(|e| ProbeFailure {
     stage: if is_auth(&e) { AgentHealthStage::AuthRequired } else { AgentHealthStage::HandshakeFailed },
-    message: e.to_string(),
+    message: error_text(&e),
   })
 }

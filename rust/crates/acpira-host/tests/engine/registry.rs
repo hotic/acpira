@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use serde_json::json;
 
 use acpira_host::acp::agents::adapter_info::read_adapter_info;
-use acpira_host::acp::agents::registry::{AdapterDef, AdapterEngine, AgentDef, AgentRegistry, resolve_command};
+use acpira_host::acp::agents::registry::{AdapterDef, AdapterEngine, AgentDef, NativeLayout, AgentRegistry, resolve_command, search_dirs, search_paths};
 use acpira_host::acp::agents::launch::{Env, Os, resolve_executable, spawn_spec};
 use acpira_host::acp::agents::model_sources::grok_model_sources;
 
@@ -114,6 +114,31 @@ async fn a_single_lookup_finding_a_fresh_install_notifies_like_a_probe_pass() {
   assert_eq!(r.resolve_binary("ghost").await.as_deref(), Some(sb.path()));
   assert_eq!(notified.load(Ordering::SeqCst), 1);
   assert_eq!(info(&r, "ghost")["available"], true);
+}
+
+#[test]
+fn search_order_is_candidates_then_path_then_global_bins_without_duplicates() {
+  let home = acpira_host::acp::agents::registry::expand_home("~/");
+  let cands = vec!["~/.local/bin/x-acp".to_owned(), "/usr/local/bin/x-acp".to_owned()];
+  let paths = search_paths("x-acp", &cands, Os::Posix, &env(&[("PATH", "/usr/local/bin::/opt/bin")]));
+  assert_eq!(paths[0], format!("{home}.local/bin/x-acp"));
+  assert_eq!(paths[1], "/usr/local/bin/x-acp");
+  assert_eq!(paths[2], "/opt/bin/x-acp", "the PATH duplicate of a candidate and the empty entry are dropped");
+  assert_eq!(paths[3], format!("{home}.npm-global/bin/x-acp"));
+  assert_eq!(search_paths("/abs/x-acp", &cands, Os::Posix, &env(&[])), vec!["/abs/x-acp"]);
+  // Windows keeps its PATH as is: npm's global bin is on it already
+  assert!(!search_paths("x", &[], Os::Windows, &env(&[("PATH", r"C:\bin")])).iter().any(|p| p.contains(".npm-global")));
+  let dirs = search_dirs("x-acp", &cands, Os::Posix, &env(&[("PATH", "/opt/bin")]));
+  assert_eq!(&dirs[..3], &[format!("{home}.local/bin"), "/usr/local/bin".to_owned(), "/opt/bin".to_owned()]);
+}
+
+#[tokio::test]
+async fn a_missing_cli_reports_where_it_was_searched() {
+  let r = AgentRegistry::new(&json!({ "ghost": { "name": "Ghost", "command": "never-installed-acp" } }));
+  r.probe_all().await;
+  let dirs = info(&r, "ghost")["searched"].as_array().cloned().unwrap_or_default();
+  let npm = acpira_host::acp::agents::registry::expand_home("~/.npm-global/bin");
+  assert!(dirs.iter().any(|d| d == &json!(npm)), "{dirs:?}");
 }
 
 #[tokio::test]
@@ -264,7 +289,7 @@ fn codex_def(env: Option<&[(&str, &str)]>) -> AgentDef {
     id: "codex".into(),
     name: "Codex".into(),
     command: "codex-acp".into(),
-    adapter: Some(AdapterDef { package: ADAPTER_PKG.into(), engine: Some(AdapterEngine { package: ENGINE_PKG.into(), name: "Codex".into(), override_env: "CODEX_PATH".into() }) }),
+    adapter: Some(AdapterDef { package: ADAPTER_PKG.into(), engine: Some(AdapterEngine { package: ENGINE_PKG.into(), name: "Codex".into(), override_env: "CODEX_PATH".into(), native: Some(NativeLayout::CodexVendor) }) }),
     env: env.map(|e| e.iter().map(|(k, x)| (k.to_string(), x.to_string())).collect()),
     ..Default::default()
   }
@@ -364,4 +389,53 @@ async fn an_agent_without_adapter_metadata_gets_no_adapter_info() {
 fn grok_custom_endpoints_classify_without_exporting_credentials_or_context_overrides() {
   let sources = grok_model_sources("\n[model.asgard]\nmodel = \"grok-4.6\"\nname = \"grok-4.6\"\nbase_url = \"https://gateway.example/v1\"\napi_key = \"test-only-secret\"\n[model.grok-build]\ncontext_window = 250000\n");
   expect_eq(sources, json!({ "asgard": { "id": "asgard", "name": "asgard", "kind": "custom" } }));
+}
+
+#[test]
+fn native_candidates_follow_each_engines_own_resolver() {
+  use acpira_host::acp::agents::adapter_info::native_candidates;
+  let c = native_candidates(NativeLayout::ClaudeSdk, "linux", "x64").unwrap();
+  assert_eq!(c.package, "@anthropic-ai/claude-agent-sdk-linux-x64");
+  assert_eq!(c.in_node_modules, vec!["@anthropic-ai/claude-agent-sdk-linux-x64/claude", "@anthropic-ai/claude-agent-sdk-linux-x64-musl/claude"]);
+  assert_eq!(native_candidates(NativeLayout::ClaudeSdk, "win32", "arm64").unwrap().in_node_modules, vec!["@anthropic-ai/claude-agent-sdk-win32-arm64/claude.exe"]);
+  let c = native_candidates(NativeLayout::CodexVendor, "linux", "arm64").unwrap();
+  assert_eq!(c.package, "@openai/codex-linux-arm64");
+  assert_eq!(c.in_node_modules, vec!["@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/bin/codex"]);
+  assert_eq!(c.in_engine.as_deref(), Some("vendor/aarch64-unknown-linux-musl/bin/codex"));
+  assert_eq!(native_candidates(NativeLayout::CodexVendor, "win32", "x64").unwrap().in_engine.as_deref(), Some("vendor/x86_64-pc-windows-msvc/bin/codex.exe"));
+  assert!(native_candidates(NativeLayout::CodexVendor, "freebsd", "x64").is_none());
+  assert!(native_candidates(NativeLayout::ClaudeSdk, "linux", "ia32").is_none());
+}
+
+#[tokio::test]
+async fn a_missing_native_package_is_named_until_any_candidate_lands() {
+  use acpira_host::acp::agents::adapter_info::missing_native;
+  let root = tempfile::tempdir().unwrap();
+  let acp = write_package(root.path(), "@agentclientprotocol/claude-agent-acp", "0.84.0");
+  let sdk = write_package(&acp, "@anthropic-ai/claude-agent-sdk", "0.3.284");
+  // The reported install: SDK present, its linux-x64 optional package skipped
+  assert_eq!(missing_native(&sdk, NativeLayout::ClaudeSdk, "linux", "x64").await.as_deref(), Some("@anthropic-ai/claude-agent-sdk-linux-x64"));
+  // The musl variant, hoisted to the top-level node_modules, satisfies it as well
+  let musl = write_package(root.path(), "@anthropic-ai/claude-agent-sdk-linux-x64-musl", "0.3.284");
+  std::fs::write(musl.join("claude"), "").unwrap();
+  assert_eq!(missing_native(&sdk, NativeLayout::ClaudeSdk, "linux", "x64").await, None);
+
+  let codex = write_package(root.path(), ENGINE_PKG, "0.155.1");
+  assert_eq!(missing_native(&codex, NativeLayout::CodexVendor, "darwin", "arm64").await.as_deref(), Some("@openai/codex-darwin-arm64"));
+  let vendor = codex.join("vendor/aarch64-apple-darwin/bin");
+  std::fs::create_dir_all(&vendor).unwrap();
+  std::fs::write(vendor.join("codex"), "").unwrap();
+  assert_eq!(missing_native(&codex, NativeLayout::CodexVendor, "darwin", "arm64").await, None, "the engine's own vendor/ counts");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn adapter_info_flags_the_missing_native_package_and_an_override_skips_the_check() {
+  let root = tempfile::tempdir().unwrap();
+  let bin = install_adapter(root.path());
+  write_package(root.path(), ENGINE_PKG, "0.155.1");
+  let info = v(read_adapter_info(&bin, &codex_def(None)).await.unwrap());
+  assert!(info["engine"]["nativeMissing"].as_str().is_some_and(|p| p.starts_with("@openai/codex-")), "{info}");
+  let info = v(read_adapter_info(&bin, &codex_def(Some(&[("CODEX_PATH", "/opt/codex")]))).await.unwrap());
+  assert!(info["engine"]["nativeMissing"].is_null());
 }

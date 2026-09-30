@@ -26,6 +26,19 @@ pub struct AdapterEngine {
   pub package: String,
   pub name: String,
   pub override_env: String,
+  /// Where the engine keeps its per-platform native binary, when it ships one as an npm optional dependency
+  pub native: Option<NativeLayout>,
+}
+
+/// Per-platform native binaries delivered as npm optional dependencies: an install run with `omit=optional` in its npm
+/// config, or one whose optional download failed quietly (a proxy), leaves the engine without it and the agent fails
+/// its first session with "Internal error"
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeLayout {
+  /// `@anthropic-ai/claude-agent-sdk-<platform>-<arch>[-musl]/claude[.exe]`, resolved from the SDK (claude-agent-acp 0.83)
+  ClaudeSdk,
+  /// `@openai/codex-<platform>-<arch>/vendor/<triple>/bin/codex[.exe]`, else the engine's own `vendor/` (codex 0.155 `bin/codex.js`)
+  CodexVendor,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -164,14 +177,19 @@ pub fn builtin_agents() -> Vec<AgentDef> {
     AgentDef {
       requires: list(&["node"]),
       install: install(
-        "npm install -g @agentclientprotocol/codex-acp@1.13.0",
-        "npm install -g @agentclientprotocol/codex-acp@1.13.0",
+        "npm install -g --include=optional @agentclientprotocol/codex-acp@1.13.0",
+        "npm install -g --include=optional @agentclientprotocol/codex-acp@1.13.0",
         "https://github.com/agentclientprotocol/codex-acp",
       ),
       login: login("codex-acp", &["cli", "login"]),
       adapter: Some(AdapterDef {
         package: s("@agentclientprotocol/codex-acp"),
-        engine: Some(AdapterEngine { package: s("@openai/codex"), name: s("Codex"), override_env: s("CODEX_PATH") }),
+        engine: Some(AdapterEngine {
+          package: s("@openai/codex"),
+          name: s("Codex"),
+          override_env: s("CODEX_PATH"),
+          native: Some(NativeLayout::CodexVendor),
+        }),
       }),
       ..base("codex", "Codex", "codex-acp", &[], &["~/.local/bin/codex-acp", "/opt/homebrew/bin/codex-acp", "/usr/local/bin/codex-acp"])
     },
@@ -179,8 +197,8 @@ pub fn builtin_agents() -> Vec<AgentDef> {
       requires: list(&["node"]),
       login: login("claude-agent-acp", &["--cli", "auth", "login"]),
       install: install(
-        "npm install -g @agentclientprotocol/claude-agent-acp@0.84.0",
-        "npm install -g @agentclientprotocol/claude-agent-acp@0.84.0",
+        "npm install -g --include=optional @agentclientprotocol/claude-agent-acp@0.84.0",
+        "npm install -g --include=optional @agentclientprotocol/claude-agent-acp@0.84.0",
         "https://github.com/agentclientprotocol/claude-agent-acp",
       ),
       adapter: Some(AdapterDef {
@@ -189,6 +207,7 @@ pub fn builtin_agents() -> Vec<AgentDef> {
           package: s("@anthropic-ai/claude-agent-sdk"),
           name: s("Claude Agent SDK"),
           override_env: s("CLAUDE_CODE_EXECUTABLE"),
+          native: Some(NativeLayout::ClaudeSdk),
         }),
       }),
       ..base(
@@ -201,7 +220,7 @@ pub fn builtin_agents() -> Vec<AgentDef> {
     },
     AgentDef {
       login: login("opencode", &["auth", "login"]),
-      install: install("curl -fsSL https://opencode.ai/install | bash", "npm install -g opencode-ai", "https://opencode.ai/docs/acp/"),
+      install: install("curl -fsSL https://opencode.ai/install | bash", "npm install -g --include=optional opencode-ai", "https://opencode.ai/docs/acp/"),
       ..base(
         "opencode",
         "OpenCode",
@@ -274,6 +293,7 @@ pub struct AgentRegistry {
   os: Os,
   resolved: parking_lot::Mutex<HashMap<AgentId, String>>,
   missing_cmds: parking_lot::Mutex<HashMap<AgentId, Vec<String>>>,
+  searched: parking_lot::Mutex<HashMap<AgentId, Vec<String>>>,
   probed: AtomicBool,
   listeners: parking_lot::Mutex<Vec<(u64, Listener)>>,
   next_listener: std::sync::atomic::AtomicU64,
@@ -328,6 +348,7 @@ impl AgentRegistry {
       os,
       resolved: Default::default(),
       missing_cmds: Default::default(),
+      searched: Default::default(),
       probed: AtomicBool::new(false),
       listeners: Default::default(),
       next_listener: Default::default(),
@@ -343,6 +364,7 @@ impl AgentRegistry {
     let probed = self.probed.load(Ordering::Acquire);
     let resolved = self.resolved.lock();
     let missing = self.missing_cmds.lock();
+    let searched = self.searched.lock();
     self
       .order
       .iter()
@@ -354,6 +376,7 @@ impl AgentRegistry {
           name: d.name.clone(),
           available: probed.then_some(found),
           missing: if probed && !found { missing.get(id).filter(|m| !m.is_empty()).cloned() } else { None },
+          searched: if probed && !found { searched.get(id).filter(|m| !m.is_empty()).cloned() } else { None },
           install: self.install(id),
           ..Default::default()
         }
@@ -427,6 +450,8 @@ impl AgentRegistry {
     let mut missing = vec![];
     if found.is_none() {
       missing.push(def.command.clone());
+      let dirs = search_dirs(&def.command, &def.candidates, self.os, &ProcessEnv);
+      self.searched.lock().insert(id.to_owned(), dirs);
     }
     for req in &def.requires {
       if resolve_command(req, &[], self.os, &ProcessEnv).await.is_none() {
@@ -464,19 +489,43 @@ impl AgentRegistry {
   }
 }
 
-pub async fn resolve_command(command: &str, candidates: &[String], os: Os, env: &dyn Env) -> Option<String> {
+/// Global bin directories package managers use outside the usual PATH entries, tried last: an npm prefix set up to avoid
+/// sudo, pnpm / bun / volta / yarn homes. They cover a CLI installed where no rc file (or an unread one) adds the directory
+const FALLBACK_DIRS: &[&str] =
+  &["~/.npm-global/bin", "~/.local/share/pnpm", "~/Library/pnpm", "~/.bun/bin", "~/.volta/bin", "~/.yarn/bin"];
+
+/// Every path tried for `command`, in order: the definition's candidates, PATH (which includes what the login shell
+/// adds), then `FALLBACK_DIRS` on POSIX; duplicates dropped
+pub fn search_paths(command: &str, candidates: &[String], os: Os, env: &dyn Env) -> Vec<String> {
   if std::path::Path::new(command).is_absolute() {
-    return resolve_executable(command, os, env).await;
+    return vec![command.to_owned()];
   }
-  for c in candidates {
-    if let Some(hit) = resolve_executable(&expand_home(c), os, env).await {
-      return Some(hit);
-    }
-  }
+  let mut out: Vec<String> = candidates.iter().map(|c| expand_home(c)).collect();
   let sep = if os == Os::Windows { ';' } else { ':' };
-  for dir in env.get("PATH").unwrap_or_default().split(sep).filter(|d| !d.is_empty()) {
-    let p = std::path::Path::new(dir).join(command);
-    if let Some(hit) = resolve_executable(&p.to_string_lossy(), os, env).await {
+  let path = env.get("PATH").unwrap_or_default();
+  let mut dirs: Vec<String> = path.split(sep).filter(|d| !d.is_empty()).map(str::to_owned).collect();
+  if os == Os::Posix {
+    dirs.extend(FALLBACK_DIRS.iter().map(|d| expand_home(d)));
+  }
+  out.extend(dirs.iter().map(|d| std::path::Path::new(d).join(command).to_string_lossy().into_owned()));
+  let mut seen = std::collections::HashSet::new();
+  out.retain(|p| seen.insert(p.clone()));
+  out
+}
+
+/// The directories `search_paths` covers, for the not-found hint
+pub fn search_dirs(command: &str, candidates: &[String], os: Os, env: &dyn Env) -> Vec<String> {
+  let mut seen = std::collections::HashSet::new();
+  search_paths(command, candidates, os, env)
+    .iter()
+    .filter_map(|p| std::path::Path::new(p).parent().map(|d| d.to_string_lossy().into_owned()))
+    .filter(|d| seen.insert(d.clone()))
+    .collect()
+}
+
+pub async fn resolve_command(command: &str, candidates: &[String], os: Os, env: &dyn Env) -> Option<String> {
+  for p in search_paths(command, candidates, os, env) {
+    if let Some(hit) = resolve_executable(&p, os, env).await {
       return Some(hit);
     }
   }

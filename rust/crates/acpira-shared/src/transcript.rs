@@ -36,6 +36,9 @@ pub struct AgentInfo {
   pub disabled: Option<bool>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub missing: Option<Vec<String>>,
+  /// Directories searched for the agent's own command when it was not found
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub searched: Option<Vec<String>>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub install: Option<AgentInstall>,
 }

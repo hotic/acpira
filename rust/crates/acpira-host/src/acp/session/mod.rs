@@ -47,7 +47,7 @@ use crate::acp::transcript::normalize::{
 use crate::acp::transcript::plan_snapshots::restore_plan_snapshots;
 use crate::acp::session::restore_turns::restore_interrupted_turns;
 use crate::acp::transport::rpc::{BoxFuture, RpcError};
-use crate::acp::session::errors::{AccountAuthError, RestoreFailure, auth_hint_of, classify_restore_error, is_auth};
+use crate::acp::session::errors::{AccountAuthError, RestoreFailure, auth_hint_of, classify_restore_error, error_text, is_auth};
 use crate::acp::session::failure::SessionFailure;
 use crate::acp::transcript::subagent_tree::SubagentTree;
 use crate::i18n::{t, t_or, tp};
@@ -922,7 +922,7 @@ impl AcpSession {
       self.log(&format!("auth required{note}"));
     } else {
       c.status = SessionStatus::Error;
-      let text = e.to_string();
+      let text = error_text(e);
       c.error = Some(text.clone());
       let stage =
         if e.downcast_ref::<AgentSpawnError>().is_some() { AgentHealthStage::SpawnFailed } else { AgentHealthStage::HandshakeFailed };
