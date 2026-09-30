@@ -13,10 +13,51 @@ use crate::acp::transcript::normalize::{NormalizeState, activity_of, apply_updat
 use crate::acp::transcript::plans::{capture_plan, plan_documents_mut, set_plan_content};
 use crate::acp::transcript::questions::{clean_answers, form_content, form_question_count, form_questions, grok_questions, grok_response, spare_message};
 use crate::acp::transport::rpc::RpcError;
-use crate::acp::session::{AcpSession, Core, PendingPermission, PendingQuestion, QuestionReply};
+use crate::acp::session::{AcpSession, Core};
 use crate::acp::session::errors::{best_allow, permission_kind};
 use crate::i18n::{t, tp};
 use crate::limits::PLAN_PREVIEW_MAX_BYTES;
+
+pub(crate) struct PendingPermission {
+  pub tx: oneshot::Sender<Value>,
+  pub block_id: String,
+  pub options: Vec<Value>,
+  pub plan_id: Option<String>,
+  pub node_id: Option<String>,
+}
+
+pub(crate) enum QuestionReply {
+  Form { schema: Value },
+  Grok,
+}
+
+pub(crate) struct PendingQuestion {
+  pub tx: oneshot::Sender<Value>,
+  pub block_id: String,
+  pub questions: Vec<Question>,
+  pub node_id: Option<String>,
+  pub reply: QuestionReply,
+}
+
+/// Open permission cards
+#[derive(Default)]
+pub(crate) struct PermissionGate {
+  pub pending: Vec<PendingPermission>,
+  pub seq: u64,
+  /// Bumped when the turn or process a request arrived in is gone: a request still being prepared under an older epoch
+  /// is answered cancelled instead of opening a card
+  pub epoch: u64,
+  /// yolo mode: requests are answered with their best allow option instead of a card
+  pub auto_approve: bool,
+}
+
+/// Open question cards (elicitation forms, Grok interviews)
+#[derive(Default)]
+pub(crate) struct QuestionGate {
+  pub pending: Vec<PendingQuestion>,
+  pub seq: u64,
+  pub raw: crate::acp::transcript::questions::RawMemory,
+}
 
 /// Which transcript a request belongs to
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -86,7 +127,7 @@ impl AcpSession {
         self.log(&format!("permission request for unknown session {}", session_id.as_deref().unwrap_or("undefined")));
         return Ok(cancelled_permission());
       };
-      let epoch = c.perm_epoch;
+      let epoch = c.perms.epoch;
       let state = Self::target_state(&mut c, &target).expect("target resolved");
       let last_agent = matches!(state.turns.last(), Some(Turn::Agent(_))).then(|| state.turns.len() - 1);
       // The verb / command on the card come from the tool row; the request itself often carries only a title
@@ -129,7 +170,7 @@ impl AcpSession {
     }
     let rx = {
       let mut c = self.core.lock();
-      if cancel.is_cancelled() || epoch != c.perm_epoch {
+      if cancel.is_cancelled() || epoch != c.perms.epoch {
         return Ok(cancelled_permission());
       }
       // The owner may have gone terminal while the plan file was being read
@@ -137,7 +178,7 @@ impl AcpSession {
         return Ok(cancelled_permission());
       }
       let options: Vec<Value> = req.get("options").and_then(Value::as_array).cloned().unwrap_or_default();
-      let auto = c.auto_approve;
+      let auto = c.perms.auto_approve;
       let state = Self::target_state(&mut c, &target).expect("target resolved");
       let plan = captured
         .as_ref()
@@ -155,8 +196,8 @@ impl AcpSession {
           .map(|id| json!({ "outcome": { "outcome": "selected", "optionId": id } }))
           .map_err(|e| RpcError::internal(e.to_string()));
       }
-      c.perm_seq += 1;
-      let block_id = format!("perm-{}", c.perm_seq);
+      c.perms.seq += 1;
+      let block_id = format!("perm-{}", c.perms.seq);
       let state = Self::target_state(&mut c, &target).expect("target resolved");
       let tool = last_agent.and_then(|i| {
         state.turns.get(i).and_then(Turn::as_agent).and_then(|t| {
@@ -216,7 +257,7 @@ impl AcpSession {
         Self::bump_target(&mut c, &target);
       }
       let (tx, rx) = oneshot::channel();
-      c.perms.push(PendingPermission { tx, block_id: block_id.clone(), options, plan_id, node_id: target.node_id() });
+      c.perms.pending.push(PendingPermission { tx, block_id: block_id.clone(), options, plan_id, node_id: target.node_id() });
       self.touch(&mut c);
       (rx, block_id)
     };
@@ -225,8 +266,8 @@ impl AcpSession {
       r = rx => Ok(r.unwrap_or_else(|_| cancelled_permission())),
       _ = cancel.cancelled() => {
         let mut c = self.core.lock();
-        if let Some(i) = c.perms.iter().position(|p| p.block_id == block_id) {
-          c.perms.remove(i);
+        if let Some(i) = c.perms.pending.iter().position(|p| p.block_id == block_id) {
+          c.perms.pending.remove(i);
           remove_perm_blocks(&mut c, Some(&block_id));
           self.touch(&mut c);
         }
@@ -241,19 +282,19 @@ impl AcpSession {
   }
 
   pub(crate) fn resolve_permission_locked(&self, c: &mut Core, block_id: &str, option_id: &str) {
-    let Some(i) = c.perms.iter().position(|p| p.block_id == block_id) else { return };
-    let Some(option) = c.perms[i].options.iter().find(|o| o.get("optionId").and_then(Value::as_str) == Some(option_id)).cloned() else {
+    let Some(i) = c.perms.pending.iter().position(|p| p.block_id == block_id) else { return };
+    let Some(option) = c.perms.pending[i].options.iter().find(|o| o.get("optionId").and_then(Value::as_str) == Some(option_id)).cloned() else {
       return;
     };
     let allow = option.get("kind").and_then(Value::as_str).is_some_and(|k| k.starts_with("allow"));
-    if let Some(pid) = c.perms[i].plan_id.clone()
+    if let Some(pid) = c.perms.pending[i].plan_id.clone()
       && let Some(t) = state_of_block(c, block_id)
       && let Some(state) = Self::target_state(c, &t)
       && let Some(p) = plan_documents_mut(&mut state.turns).into_iter().find(|p| p.id == pid)
     {
       p.status = if allow { PlanDocStatus::Approved } else { PlanDocStatus::Rejected };
     }
-    let p = c.perms.remove(i);
+    let p = c.perms.pending.remove(i);
     remove_perm_blocks(c, Some(block_id));
     let _ = p.tx.send(json!({ "outcome": { "outcome": "selected", "optionId": option_id } }));
     self.touch(c);
@@ -262,14 +303,14 @@ impl AcpSession {
   /// Switching into yolo approves the requests already waiting in one go
   pub(crate) fn flush_permissions(&self, c: &mut Core) {
     let pending: Vec<(String, String)> =
-      c.perms.iter().filter_map(|p| best_allow(&p.options).ok().map(|o| (p.block_id.clone(), o))).collect();
+      c.perms.pending.iter().filter_map(|p| best_allow(&p.options).ok().map(|o| (p.block_id.clone(), o))).collect();
     for (block, option) in pending {
       self.resolve_permission_locked(c, &block, &option);
     }
   }
 
   pub(crate) fn cancel_all_permissions(&self, c: &mut Core) {
-    for p in c.perms.drain(..) {
+    for p in c.perms.pending.drain(..) {
       let _ = p.tx.send(cancelled_permission());
     }
     remove_perm_blocks(c, None);
@@ -277,12 +318,12 @@ impl AcpSession {
 
   pub(crate) fn cancel_permissions_for(&self, c: &mut Core, node_id: &str) {
     let mut i = 0;
-    while i < c.perms.len() {
-      if c.perms[i].node_id.as_deref() != Some(node_id) {
+    while i < c.perms.pending.len() {
+      if c.perms.pending[i].node_id.as_deref() != Some(node_id) {
         i += 1;
         continue;
       }
-      let p = c.perms.remove(i);
+      let p = c.perms.pending.remove(i);
       remove_perm_blocks(c, Some(&p.block_id));
       let _ = p.tx.send(cancelled_permission());
     }
@@ -290,7 +331,7 @@ impl AcpSession {
 
   /// The pending card approving a plan, if one is waiting: (block id, options)
   pub(crate) fn permission_by_plan(c: &Core, plan_id: &str) -> Option<(String, Vec<Value>)> {
-    c.perms.iter().find(|p| p.plan_id.as_deref() == Some(plan_id)).map(|p| (p.block_id.clone(), p.options.clone()))
+    c.perms.pending.iter().find(|p| p.plan_id.as_deref() == Some(plan_id)).map(|p| (p.block_id.clone(), p.options.clone()))
   }
 
   // Question gate
@@ -312,7 +353,7 @@ impl AcpSession {
         return json!({ "action": "cancel" });
       };
       let count = form_question_count(&schema);
-      let raw = c.raw_questions.for_call(tool_call_id.as_deref(), count);
+      let raw = c.questions.raw.for_call(tool_call_id.as_deref(), count);
       let questions = form_questions(&schema, &message, req.get("_meta"), raw.as_deref());
       if questions.is_empty() {
         return json!({ "action": "decline" });
@@ -321,7 +362,7 @@ impl AcpSession {
       let block_id = self.open_question(&mut c, &target, questions.clone(), tool_call_id, spare);
       Self::bump_target(&mut c, &target);
       let (tx, rx) = oneshot::channel();
-      c.questions.push(PendingQuestion {
+      c.questions.pending.push(PendingQuestion {
         tx,
         block_id: block_id.clone(),
         questions,
@@ -354,7 +395,7 @@ impl AcpSession {
       let block_id = self.open_question(&mut c, &target, questions.clone(), tool_call_id, None);
       Self::bump_target(&mut c, &target);
       let (tx, rx) = oneshot::channel();
-      c.questions.push(PendingQuestion {
+      c.questions.pending.push(PendingQuestion {
         tx,
         block_id: block_id.clone(),
         questions,
@@ -372,8 +413,8 @@ impl AcpSession {
       r = rx => r.unwrap_or(fallback),
       _ = cancel.cancelled() => {
         let mut c = self.core.lock();
-        if let Some(i) = c.questions.iter().position(|p| p.block_id == block_id) {
-          let p = c.questions.remove(i);
+        if let Some(i) = c.questions.pending.iter().position(|p| p.block_id == block_id) {
+          let p = c.questions.pending.remove(i);
           settle_question(&mut c, &p, QuestionOutcome::Cancelled, None);
           self.touch(&mut c);
         }
@@ -390,8 +431,8 @@ impl AcpSession {
     tool_call_id: Option<String>,
     message: Option<String>,
   ) -> String {
-    c.question_seq += 1;
-    let id = format!("q-{}", c.question_seq);
+    c.questions.seq += 1;
+    let id = format!("q-{}", c.questions.seq);
     let block = QuestionBlock {
       id: id.clone(),
       tool_call_id: tool_call_id.filter(|x| !x.is_empty()),
@@ -418,8 +459,8 @@ impl AcpSession {
   /// The card was closed: only answered questions travel; skip tells the agent to go on with what it has
   pub fn answer_questions(&self, block_id: &str, answers: &QuestionAnswers, skip: bool) {
     let mut c = self.core.lock();
-    let Some(i) = c.questions.iter().position(|p| p.block_id == block_id) else { return };
-    let p = c.questions.remove(i);
+    let Some(i) = c.questions.pending.iter().position(|p| p.block_id == block_id) else { return };
+    let p = c.questions.pending.remove(i);
     let given = clean_answers(&p.questions, answers);
     let empty = given.is_empty();
     settle_question(&mut c, &p, if skip || empty { QuestionOutcome::Skipped } else { QuestionOutcome::Answered }, Some(&given));
@@ -438,7 +479,7 @@ impl AcpSession {
   }
 
   pub(crate) fn cancel_all_questions(&self, c: &mut Core) {
-    let pending = std::mem::take(&mut c.questions);
+    let pending = std::mem::take(&mut c.questions.pending);
     for p in pending {
       settle_question(c, &p, QuestionOutcome::Cancelled, None);
       let reply = cancel_reply(&p);
@@ -448,12 +489,12 @@ impl AcpSession {
 
   pub(crate) fn cancel_questions_for(&self, c: &mut Core, node_id: &str) {
     let mut i = 0;
-    while i < c.questions.len() {
-      if c.questions[i].node_id.as_deref() != Some(node_id) {
+    while i < c.questions.pending.len() {
+      if c.questions.pending[i].node_id.as_deref() != Some(node_id) {
         i += 1;
         continue;
       }
-      let p = c.questions.remove(i);
+      let p = c.questions.pending.remove(i);
       settle_question(c, &p, QuestionOutcome::Cancelled, None);
       let reply = cancel_reply(&p);
       let _ = p.tx.send(reply);

@@ -9,11 +9,50 @@ use acpira_shared::transcript::*;
 
 use crate::acp::session::attachments::{PreparedPrompt, prepare_prompt, restore_drafts};
 use crate::acp::session::prompt::Staged;
-use crate::acp::session::{AcpSession, Core, QueuedEntry};
+use crate::acp::session::{AcpSession, Core};
 use crate::acp::transcript::normalize::push_steer;
 use crate::acp::vendors::steering;
 use crate::i18n::{t, tp};
 use crate::util::random_uuid;
+
+pub(crate) struct QueuedEntry {
+  pub id: String,
+  pub text: String,
+  pub prepared: PreparedPrompt,
+}
+
+/// Prompts parked behind the running turn, and the entry a send-now or a steer has claimed
+#[derive(Default)]
+pub(crate) struct PromptQueue {
+  pub entries: Vec<QueuedEntry>,
+  pub sending_id: Option<String>,
+  /// The queued entry whose `_session/steering` request is on the wire; the queue holds its flush until the answer
+  pub steering_id: Option<String>,
+}
+
+impl PromptQueue {
+  /// The entry is on its way out (send-now or steer) and can no longer be edited or removed
+  pub(crate) fn in_flight(&self, id: &str) -> bool {
+    self.sending_id.as_deref() == Some(id) || self.steering_id.as_deref() == Some(id)
+  }
+
+  /// Some entry is on its way out: a second send-now or steer waits
+  pub(crate) fn claimed(&self) -> bool {
+    self.sending_id.is_some() || self.steering_id.is_some()
+  }
+}
+
+/// What the peer reports about its own turns (Codex `threadStatus`); starts over with every process
+#[derive(Default)]
+pub(crate) struct PeerTurn {
+  /// The peer brackets its turns, so a turn it starts on its own has an observable end
+  pub status_seen: bool,
+  /// The running turn's peer already reported its thread idle: the prompt response is on its way and a steer would miss
+  pub idle: bool,
+  /// A steer landed after the turn it aimed at had ended and the peer started a turn of its own (Codex `startedNewTurn`):
+  /// the session stays running until the peer's thread reports idle
+  pub detached: bool,
+}
 
 impl AcpSession {
   async fn stage(&self, text: &str, drafts: &[Draft]) -> PreparedPrompt {
@@ -37,7 +76,7 @@ impl AcpSession {
       if prepared.blocks.is_empty() || !matches!(c.status, SessionStatus::Ready | SessionStatus::Starting) {
         return;
       }
-      c.queue.push(QueuedEntry { id: random_uuid(), text, prepared });
+      c.queue.entries.push(QueuedEntry { id: random_uuid(), text, prepared });
       self.bump(&mut c);
       !(c.phase.running || c.pending_prompt.is_some())
     };
@@ -53,16 +92,16 @@ impl AcpSession {
       if c.status != SessionStatus::Ready
         || c.phase.running
         || c.switching
-        || c.adopt_pending
+        || c.picks.adopt_pending
         || c.pending_prompt.is_some()
-        || c.steering_id.is_some()
-        || c.detached
-        || c.queue.is_empty()
+        || c.queue.steering_id.is_some()
+        || c.peer.detached
+        || c.queue.entries.is_empty()
       {
         return false;
       }
-      c.sending_id = None;
-      c.queue.remove(0)
+      c.queue.sending_id = None;
+      c.queue.entries.remove(0)
     };
     let me = self.clone();
     crate::util::run_prefix(me.prompt(next.text, vec![], false, Some(Staged { prepared: next.prepared, edited: false }), None));
@@ -71,12 +110,12 @@ impl AcpSession {
 
   pub fn dequeue(&self, id: &str) {
     let mut c = self.core.lock();
-    if c.sending_id.as_deref() == Some(id) || c.steering_id.as_deref() == Some(id) {
+    if c.queue.in_flight(id) {
       return;
     }
-    let before = c.queue.len();
-    c.queue.retain(|q| q.id != id);
-    if c.queue.len() != before {
+    let before = c.queue.entries.len();
+    c.queue.entries.retain(|q| q.id != id);
+    if c.queue.entries.len() != before {
       self.touch(&mut c);
     }
   }
@@ -85,13 +124,13 @@ impl AcpSession {
   pub async fn send_queued(self: &Arc<Self>, id: &str) -> Result<()> {
     let running = {
       let mut c = self.core.lock();
-      if c.sending_id.is_some() || c.steering_id.is_some() || c.status != SessionStatus::Ready {
+      if c.queue.claimed() || c.status != SessionStatus::Ready {
         return Ok(());
       }
-      let Some(i) = c.queue.iter().position(|q| q.id == id) else { return Ok(()) };
-      let entry = c.queue.remove(i);
-      c.queue.insert(0, entry);
-      c.sending_id = Some(id.to_owned());
+      let Some(i) = c.queue.entries.iter().position(|q| q.id == id) else { return Ok(()) };
+      let entry = c.queue.entries.remove(i);
+      c.queue.entries.insert(0, entry);
+      c.queue.sending_id = Some(id.to_owned());
       self.touch(&mut c);
       c.phase.running
     };
@@ -111,7 +150,7 @@ impl AcpSession {
   pub async fn steer_queued(self: &Arc<Self>, id: &str) -> Result<()> {
     let claimed = {
       let mut c = self.core.lock();
-      if c.sending_id.is_some() || c.steering_id.is_some() || c.status != SessionStatus::Ready {
+      if c.queue.claimed() || c.status != SessionStatus::Ready {
         return Ok(());
       }
       // Staging, a pre-send compaction or an account switch own the wire: the steer would land in the wrong request
@@ -120,15 +159,15 @@ impl AcpSession {
         && !c.phase.staging
         && c.pending_prompt.is_none()
         && !c.switching
-        && !c.peer_idle
-        && !c.detached
+        && !c.peer.idle
+        && !c.peer.detached
         && self.can_steer_of(&c);
-      match c.queue.iter().find(|q| q.id == id) {
+      match c.queue.entries.iter().find(|q| q.id == id) {
         None => return Ok(()),
         Some(_) if !steerable => None,
         Some(entry) => {
           let blocks = entry.prepared.blocks.clone();
-          c.steering_id = Some(id.to_owned());
+          c.queue.steering_id = Some(id.to_owned());
           self.touch(&mut c);
           Some((c.proc.clone(), c.acp_session_id.clone(), blocks))
         }
@@ -149,14 +188,14 @@ impl AcpSession {
           // the same agent turn. When the peer brackets its turns the session runs until that turn reports idle
           Some(outcome @ (steering::Outcome::Injected | steering::Outcome::StartedNewTurn)) => {
             let mut c = self.core.lock();
-            c.steering_id = None;
-            if let Some(i) = c.queue.iter().position(|q| q.id == id) {
-              let entry = c.queue.remove(i);
+            c.queue.steering_id = None;
+            if let Some(i) = c.queue.entries.iter().position(|q| q.id == id) {
+              let entry = c.queue.entries.remove(i);
               let attachments = (!entry.prepared.attachments.is_empty()).then_some(entry.prepared.attachments);
               push_steer(&mut c.state, SteerBlock { id: entry.id, text: entry.text, attachments });
             }
-            if outcome == steering::Outcome::StartedNewTurn && c.thread_status_seen {
-              c.detached = true;
+            if outcome == steering::Outcome::StartedNewTurn && c.peer.status_seen {
+              c.peer.detached = true;
               self.reopen_for_detached(&mut c);
             }
             self.bump(&mut c);
@@ -192,7 +231,7 @@ impl AcpSession {
 
   /// The detached peer turn reported its thread idle: settle it like a prompt response and let the queue move
   pub(crate) fn end_detached(self: &Arc<Self>, c: &mut Core) {
-    c.detached = false;
+    c.peer.detached = false;
     if c.phase.running {
       self.settle(c, TurnStop::EndTurn, None);
     }
@@ -205,10 +244,10 @@ impl AcpSession {
   fn release_steer(self: &Arc<Self>, id: &str, first: bool) {
     {
       let mut c = self.core.lock();
-      c.steering_id = None;
-      if first && let Some(i) = c.queue.iter().position(|q| q.id == id) {
-        let entry = c.queue.remove(i);
-        c.queue.insert(0, entry);
+      c.queue.steering_id = None;
+      if first && let Some(i) = c.queue.entries.iter().position(|q| q.id == id) {
+        let entry = c.queue.entries.remove(i);
+        c.queue.entries.insert(0, entry);
       }
       self.touch(&mut c);
     }
@@ -219,47 +258,47 @@ impl AcpSession {
   pub async fn edit_queued(self: &Arc<Self>, id: &str, text: String, retained: Vec<i64>, drafts: Vec<Draft>) -> Result<()> {
     let kept = {
       let c = self.core.lock();
-      if c.sending_id.as_deref() == Some(id) || c.steering_id.as_deref() == Some(id) {
+      if c.queue.in_flight(id) {
         return Ok(());
       }
-      let entry = c.queue.iter().find(|q| q.id == id).ok_or_else(|| anyhow!(t("queue.gone")))?;
+      let entry = c.queue.entries.iter().find(|q| q.id == id).ok_or_else(|| anyhow!(t("queue.gone")))?;
       retained.iter().filter_map(|i| usize::try_from(*i).ok().and_then(|i| entry.prepared.attachments.get(i)).cloned()).collect::<Vec<_>>()
     };
     let mut all = restore_drafts(&self.id, &kept, &self.deps.blobs).await?;
     all.extend(drafts);
     let prepared = self.stage(&text, &all).await;
     let mut c = self.core.lock();
-    if c.sending_id.as_deref() == Some(id) || c.steering_id.as_deref() == Some(id) {
+    if c.queue.in_flight(id) {
       return Err(anyhow!(t("queue.gone")));
     }
-    let Some(i) = c.queue.iter().position(|q| q.id == id) else { return Err(anyhow!(t("queue.gone"))) };
+    let Some(i) = c.queue.entries.iter().position(|q| q.id == id) else { return Err(anyhow!(t("queue.gone"))) };
     let has_content = prepared.blocks.iter().any(|b| {
       b.get("type").and_then(Value::as_str) != Some("text") || b.get("text").and_then(Value::as_str).is_some_and(|x| !x.trim().is_empty())
     });
     if !has_content {
-      c.queue.remove(i);
+      c.queue.entries.remove(i);
       self.touch(&mut c);
       return Ok(());
     }
-    c.queue[i].text = text;
-    c.queue[i].prepared = prepared;
+    c.queue.entries[i].text = text;
+    c.queue.entries[i].prepared = prepared;
     self.touch(&mut c);
     Ok(())
   }
 }
 
 pub(crate) fn queue_snapshot(c: &Core) -> Option<Vec<QueuedPrompt>> {
-  if c.queue.is_empty() {
+  if c.queue.entries.is_empty() {
     return None;
   }
   Some(
-    c.queue
+    c.queue.entries
       .iter()
       .map(|q| QueuedPrompt {
         id: q.id.clone(),
         text: q.text.clone(),
         attachments: q.prepared.attachments.clone(),
-        sending: (c.sending_id.as_deref() == Some(q.id.as_str()) || c.steering_id.as_deref() == Some(q.id.as_str())).then_some(true),
+        sending: c.queue.in_flight(&q.id).then_some(true),
       })
       .collect(),
   )

@@ -5,6 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{Value, json};
+use tokio::sync::oneshot;
+use tokio::task::AbortHandle;
 
 use acpira_shared::transcript::*;
 
@@ -13,25 +15,60 @@ use crate::acp::vendors::pi_usage;
 
 pub const USAGE_POLL_INTERVAL: Duration = Duration::from_millis(800);
 
+/// Context usage bookkeeping: whether the agent pushes `usage_update` itself, the poll of those that do not, and the
+/// per-agent state those polls keep
+#[derive(Default)]
+pub(crate) struct UsageTracker {
+  /// Bumped by every snapshot and poll: a slower read that finds it moved on is dropped
+  pub revision: u64,
+  /// This process has sent a `usage_update`, so nothing is polled
+  pub notifications: bool,
+  pub timer: Option<AbortHandle>,
+  pub inflight: bool,
+  /// Kimi's wait after end_turn for its late snapshot; true = the wait was cancelled
+  pub finish_refresh: Option<oneshot::Sender<bool>>,
+  /// Grok answered `_x.ai/session/info` with method-not-found: stop asking this process
+  pub grok_unavailable: bool,
+  pub pi_stamp: Option<pi_usage::Stamp>,
+  /// Claude's last `usage_update.size` as the adapter sent it, before `claude_window` corrected it
+  pub reported_window: Option<f64>,
+}
+
+impl UsageTracker {
+  pub(crate) fn clear_timer(&mut self) {
+    if let Some(h) = self.timer.take() {
+      h.abort();
+    }
+  }
+
+  /// A new agent process: whether it pushes usage and what its polls knew start over
+  pub(crate) fn reset_for_process(&mut self) {
+    self.notifications = false;
+    self.grok_unavailable = false;
+    self.pi_stamp = None;
+    self.clear_timer();
+  }
+}
+
 impl AcpSession {
   /// Agents that never send `usage_update` and have their context snapshot polled instead: Grok over
   /// `_x.ai/session/info`, Pi from its session file (`pi_usage`)
   fn polls_usage(&self, c: &Core) -> bool {
-    !c.usage_notifications && (self.agent == "pi" || (self.agent == "grok" && !c.grok_usage_unavailable))
+    !c.usage.notifications && (self.agent == "pi" || (self.agent == "grok" && !c.usage.grok_unavailable))
   }
 
   /// Refresh before settling a turn so auto-compaction sees the current window; Grok only fills context.used after
   /// a model round and Pi's file grows per reply, so both are polled while a prompt is on the wire
   pub(crate) async fn refresh_context_usage(self: &Arc<Self>) {
-    clear_usage_timer(&mut self.core.lock());
+    self.core.lock().usage.clear_timer();
     let _serial = self.usage_lock.lock().await;
-    self.core.lock().usage_inflight = true;
+    self.core.lock().usage.inflight = true;
     match self.agent.as_str() {
       "grok" => self.read_grok_usage().await,
       "pi" => self.read_pi_usage().await,
       _ => {}
     }
-    self.core.lock().usage_inflight = false;
+    self.core.lock().usage.inflight = false;
   }
 
   async fn read_pi_usage(self: &Arc<Self>) {
@@ -41,17 +78,17 @@ impl AcpSession {
         return;
       }
       let Some(sid) = c.acp_session_id.clone() else { return };
-      c.usage_revision += 1;
-      (sid, c.usage_revision, c.pi_stamp.clone())
+      c.usage.revision += 1;
+      (sid, c.usage.revision, c.usage.pi_stamp.clone())
     };
     let (cwd, id) = (self.cwd.clone(), sid.clone());
     let Ok(read) = tokio::task::spawn_blocking(move || pi_usage::read(&cwd, &id, stamp.as_ref())).await else { return };
     let pi_usage::Snapshot::Fresh(stamp, usage) = read else { return };
     let mut c = self.core.lock();
-    if c.acp_session_id.as_deref() != Some(sid.as_str()) || c.status != SessionStatus::Ready || c.usage_revision != revision {
+    if c.acp_session_id.as_deref() != Some(sid.as_str()) || c.status != SessionStatus::Ready || c.usage.revision != revision {
       return;
     }
-    c.pi_stamp = Some(stamp);
+    c.usage.pi_stamp = Some(stamp);
     self.apply_context_usage(&mut c, usage);
   }
 
@@ -62,15 +99,15 @@ impl AcpSession {
         return;
       }
       let (Some(proc), Some(sid)) = (c.proc.clone(), c.acp_session_id.clone()) else { return };
-      c.usage_revision += 1;
-      (proc, sid, c.usage_revision)
+      c.usage.revision += 1;
+      (proc, sid, c.usage.revision)
     };
     let r = tokio::time::timeout(Duration::from_secs(5), proc.request("_x.ai/session/info", json!({ "sessionId": sid }))).await;
     let usage = match r {
       Ok(Ok(v)) => grok_context_usage(&v, &sid),
       Ok(Err(e)) => {
         if e.code == -32601 {
-          self.core.lock().grok_usage_unavailable = true;
+          self.core.lock().usage.grok_unavailable = true;
         }
         self.log(&format!("context unavailable: {e}"));
         return;
@@ -84,7 +121,7 @@ impl AcpSession {
     if !c.proc.as_ref().is_some_and(|p| Arc::ptr_eq(p, &proc))
       || c.acp_session_id.as_deref() != Some(sid.as_str())
       || c.status != SessionStatus::Ready
-      || c.usage_revision != revision
+      || c.usage.revision != revision
     {
       return;
     }
@@ -104,19 +141,19 @@ impl AcpSession {
   }
 
   pub(crate) fn schedule_usage_poll(&self, c: &mut Core) {
-    if !self.polls_usage(c) || !c.phase.running || c.usage_timer.is_some() || c.usage_inflight {
+    if !self.polls_usage(c) || !c.phase.running || c.usage.timer.is_some() || c.usage.inflight {
       return;
     }
     let weak = self.me.clone();
     let handle = tokio::spawn(async move {
       tokio::time::sleep(USAGE_POLL_INTERVAL).await;
       let Some(me) = weak.upgrade() else { return };
-      me.core.lock().usage_timer = None;
+      me.core.lock().usage.timer = None;
       me.refresh_context_usage().await;
       let mut c = me.core.lock();
       me.schedule_usage_poll(&mut c);
     });
-    c.usage_timer = Some(handle.abort_handle());
+    c.usage.timer = Some(handle.abort_handle());
   }
 
   /// Kimi emits its context snapshot asynchronously after end_turn: park the queue until it lands (bounded).
@@ -125,11 +162,11 @@ impl AcpSession {
     let rx = {
       let mut c = self.core.lock();
       let auto = self.deps.compaction.as_ref().is_some_and(|f| f().auto);
-      if self.agent != "kimi" || !auto || c.usage_revision != revision {
+      if self.agent != "kimi" || !auto || c.usage.revision != revision {
         return false;
       }
       let (tx, rx) = tokio::sync::oneshot::channel();
-      c.finish_usage_refresh = Some(tx);
+      c.usage.finish_refresh = Some(tx);
       rx
     };
     match tokio::time::timeout(Duration::from_secs(5), rx).await {
@@ -137,7 +174,7 @@ impl AcpSession {
       Ok(Err(_)) => false,
       Err(_) => {
         self.log("context refresh unavailable after prompt");
-        self.core.lock().finish_usage_refresh = None;
+        self.core.lock().usage.finish_refresh = None;
         false
       }
     }
@@ -158,10 +195,4 @@ pub fn grok_context_usage(v: &Value, session_id: &str) -> Option<Usage> {
     return None;
   }
   Some(Usage { used: num(used), size: num(total), cost: None })
-}
-
-pub(crate) fn clear_usage_timer(c: &mut Core) {
-  if let Some(h) = c.usage_timer.take() {
-    h.abort();
-  }
 }

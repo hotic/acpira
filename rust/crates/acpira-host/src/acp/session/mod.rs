@@ -33,7 +33,6 @@ use std::sync::{Arc, Weak};
 
 use anyhow::Result;
 use serde_json::Value;
-use tokio::sync::oneshot;
 
 use acpira_shared::inventory::{AgentHealthStage, AgentRuntimeInfo};
 use acpira_shared::model_shapes::ModelShapes;
@@ -44,7 +43,11 @@ use acpira_shared::transcript::*;
 use crate::acp::agents::model_sources::ModelFacts;
 use crate::acp::agents::pool::AgentPool;
 use crate::acp::agents::registry::AgentRegistry;
-use crate::acp::session::compaction::CompactionCompletion;
+use crate::acp::session::compaction::CompactionState;
+use crate::acp::session::controls::ControlPicks;
+use crate::acp::session::gates::{PermissionGate, QuestionGate};
+use crate::acp::session::queue::{PeerTurn, PromptQueue};
+use crate::acp::session::usage::UsageTracker;
 use crate::acp::session::failure::SessionFailure;
 use crate::acp::session::images::{file_image_saver, image_saver};
 use crate::acp::session::restore_turns::restore_interrupted_turns;
@@ -114,31 +117,17 @@ pub(crate) struct Phase {
   pub edit_notifications: Vec<Value>,
 }
 
-pub(crate) struct PendingPermission {
-  pub tx: oneshot::Sender<Value>,
-  pub block_id: String,
-  pub options: Vec<Value>,
-  pub plan_id: Option<String>,
-  pub node_id: Option<String>,
-}
-
-pub(crate) enum QuestionReply {
-  Form { schema: Value },
-  Grok,
-}
-
-pub(crate) struct PendingQuestion {
-  pub tx: oneshot::Sender<Value>,
-  pub block_id: String,
-  pub questions: Vec<Question>,
-  pub node_id: Option<String>,
-  pub reply: QuestionReply,
-}
-
-pub(crate) struct QueuedEntry {
-  pub id: String,
-  pub text: String,
-  pub prepared: crate::acp::session::attachments::PreparedPrompt,
+/// Where a session came from, when that still changes what it does: a fork's copied history not yet sent, an import's
+/// first restore, and the agent's own titles being ignored
+#[derive(Default)]
+pub(crate) struct Lineage {
+  /// A fork's copied transcript has never reached the peer: its first prompt carries it as retained context
+  pub history_pending: bool,
+  pub forked_from: Option<ForkedFrom>,
+  /// An imported native session not restored yet: the first restore prefers session/load and seals the replay
+  pub import_pending: bool,
+  pub imported_from: Option<ImportedFrom>,
+  pub agent_title_muted: bool,
 }
 
 pub(crate) struct Core {
@@ -146,73 +135,36 @@ pub(crate) struct Core {
   pub updated_at: String,
   pub pinned: Option<bool>,
   pub acp_session_id: Option<String>,
+  pub proc: Option<Arc<AgentProcess>>,
+  /// Bumped with every process replacement: callbacks and answers of an older generation are ignored
   pub proc_gen: u64,
   pub task_peer: HashMap<String, String>,
   pub state: NormalizeState,
+  pub tree: SubagentTree,
   pub status: SessionStatus,
   pub error: Option<String>,
   pub auth_methods: Option<Vec<AuthMethodInfo>>,
+  pub auth_hint: Option<String>,
   pub start_outcome: Option<StartOutcome>,
+  /// The last restore met a native session lock held by an agent of another Acpira sidecar: its pid, for take_over
+  pub lock_holder: Option<u32>,
   pub phase: Phase,
   pub replaying: bool,
   pub startup_banner: Option<String>,
-  pub proc: Option<Arc<AgentProcess>>,
-  // Permission gate
-  pub perms: Vec<PendingPermission>,
-  pub perm_seq: u64,
-  pub perm_epoch: u64,
-  pub auto_approve: bool,
-  // Question gate
-  pub questions: Vec<PendingQuestion>,
-  pub question_seq: u64,
-  pub raw_questions: crate::acp::transcript::questions::RawMemory,
-  pub tree: SubagentTree,
-  // Prompt queue
-  pub queue: Vec<QueuedEntry>,
-  pub sending_id: Option<String>,
-  /// The queued entry whose `_session/steering` request is on the wire; the queue holds its flush until the answer
-  pub steering_id: Option<String>,
-  /// The peer brackets its turns (Codex `threadStatus`), so a turn it starts on its own has an observable end
-  pub thread_status_seen: bool,
-  /// The running turn's peer already reported its thread idle: the prompt response is on its way and a steer would miss
-  pub peer_idle: bool,
-  /// A steer landed after the turn it aimed at had ended and the peer started a turn of its own (Codex `startedNewTurn`):
-  /// the session stays running until the peer's thread reports idle
-  pub detached: bool,
+  pub perms: PermissionGate,
+  pub questions: QuestionGate,
+  pub queue: PromptQueue,
+  pub peer: PeerTurn,
   /// A message accepted below a pre-send compaction: visible, but not the normalizer's last turn
   pub pending_prompt: Option<Turn>,
-  pub building_plan: bool,
-  pub compacted_at: Option<f64>,
-  pub completion: Option<CompactionCompletion>,
   pub turn_failure: Option<SessionFailure>,
-  pub auth_hint: Option<String>,
-  /// The last restore met a native session lock held by an agent of another Acpira sidecar: its pid, for take_over
-  pub lock_holder: Option<u32>,
+  pub building_plan: bool,
+  pub compaction: CompactionState,
+  pub usage: UsageTracker,
   pub model_facts: ModelFacts,
-  pub usage_revision: u64,
-  pub usage_notifications: bool,
-  pub auto_compact_eligible: bool,
-  pub grok_usage_unavailable: bool,
-  pub usage_timer: Option<tokio::task::AbortHandle>,
-  pub usage_inflight: bool,
-  pub pi_stamp: Option<crate::acp::vendors::pi_usage::Stamp>,
-  /// Claude's last `usage_update.size` as the adapter sent it, before `claude_window` corrected it
-  pub reported_window: Option<f64>,
-  pub finish_usage_refresh: Option<oneshot::Sender<bool>>,
-  pub syncing_thought: bool,
-  pub adopting: bool,
-  /// A new session's remembered choices are on screen and still to be replayed: prompts queue until `adopt_controls` ends
-  pub adopt_pending: bool,
-  /// The pick overlay entries (key, token) that hold remembered choices on screen while they are replayed
-  pub holds: Vec<(String, u64)>,
-  pub picks: HashMap<String, (String, u64)>,
-  pub pick_seq: u64,
+  pub picks: ControlPicks,
+  pub lineage: Lineage,
   pub rev: i64,
-  pub history_pending: bool,
-  pub forked_from: Option<ForkedFrom>,
-  pub import_pending: bool,
-  pub imported_from: Option<ImportedFrom>,
-  pub agent_title_muted: bool,
   /// An automatic account switch is between the exhausted turn and its continue: prompts queue, manual switches wait
   pub switching: bool,
 }
@@ -266,60 +218,39 @@ impl AcpSession {
           updated_at: record.updated_at,
           pinned: record.pinned,
           acp_session_id: record.acp_session_id,
+          proc: None,
           proc_gen: 0,
           task_peer: HashMap::new(),
           state,
+          tree,
           status: SessionStatus::Starting,
           error: None,
           auth_methods: None,
+          auth_hint: None,
           start_outcome: None,
+          lock_holder: None,
           phase: Phase::default(),
           replaying: false,
           startup_banner: None,
-          proc: None,
-          perms: vec![],
-          perm_seq: 0,
-          perm_epoch: 0,
-          auto_approve: false,
-          questions: vec![],
-          question_seq: 0,
-          raw_questions: Default::default(),
-          tree,
-          queue: vec![],
-          sending_id: None,
-          steering_id: None,
-          thread_status_seen: false,
-          peer_idle: false,
-          detached: false,
+          perms: PermissionGate::default(),
+          questions: QuestionGate::default(),
+          queue: PromptQueue::default(),
+          peer: PeerTurn::default(),
           pending_prompt: None,
-          building_plan: false,
-          compacted_at: None,
-          completion: None,
           turn_failure: None,
-          auth_hint: None,
-          lock_holder: None,
+          building_plan: false,
+          compaction: CompactionState::default(),
+          usage: UsageTracker::default(),
           model_facts: ModelFacts::default(),
-          usage_revision: 0,
-          usage_notifications: false,
-          auto_compact_eligible: false,
-          grok_usage_unavailable: false,
-          usage_timer: None,
-          usage_inflight: false,
-          pi_stamp: None,
-          reported_window: None,
-          finish_usage_refresh: None,
-          syncing_thought: false,
-          adopting: false,
-          adopt_pending: false,
-          holds: vec![],
-          picks: HashMap::new(),
-          pick_seq: 0,
+          picks: ControlPicks::default(),
+          lineage: Lineage {
+            history_pending: record.history_pending,
+            agent_title_muted: record.forked_from.is_some(),
+            forked_from: record.forked_from,
+            import_pending: record.import_pending,
+            imported_from: record.imported_from,
+          },
           rev: 0,
-          history_pending: record.history_pending,
-          agent_title_muted: record.forked_from.is_some(),
-          forked_from: record.forked_from,
-          import_pending: record.import_pending,
-          imported_from: record.imported_from,
           switching: false,
         }),
         deps,

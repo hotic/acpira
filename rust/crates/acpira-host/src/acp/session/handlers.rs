@@ -99,7 +99,7 @@ impl ClientHandlers for SessionHandlers {
     c.tree.settle("connection-lost");
     s.drain_terminal(&mut c);
     s.disconnect_tasks(&mut c);
-    c.detached = false;
+    c.peer.detached = false;
     s.settle(&mut c, TurnStop::Cancelled, None);
     s.touch(&mut c);
   }
