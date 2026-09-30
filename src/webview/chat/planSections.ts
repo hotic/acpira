@@ -20,7 +20,11 @@ export interface PlanSection {
 export function splitPlanSections(blocks: AgentBlock[], placed?: ReadonlySet<string>): PlanSection[] {
   const sections: PlanSection[] = [{ key: 'start', blocks: [] }];
   const seen = new Set<string>();
+  // The question card owns both the pending interaction and its answer receipt.
+  // Match explicit IDs only; standalone tools and failed-tool diagnostics remain visible.
+  const questionTools = new Set(blocks.flatMap(b => b.type === 'question' && b.toolCallId ? [b.toolCallId] : []));
   for (const block of blocks) {
+    if (block.type === 'tool_call' && block.status !== 'failed' && questionTools.has(block.id)) continue;
     const section = sections[sections.length - 1]!;
     if (block.type === 'plan_document') {
       section.plan = block;
