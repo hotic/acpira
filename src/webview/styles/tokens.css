@@ -186,14 +186,14 @@
   /* Motion */
   --dur: 150ms;
   --dur-open: 220ms;
-  --enter-dur: 300ms;
-  --enter-stagger: 40ms;
   /* Closing a fold: eased at both ends and a little longer than opening. An ease-out close dropped over half the
      height in its first 80ms, and opening already reads longer because its rows fade in (--row-enter-duration) */
   --dur-close: 320ms;
   --ease-close: cubic-bezier(0.4, 0, 0.2, 1);
   --enter-y: 4px;
   /* Running-verb shimmer (ui/Shimmer): resting text colour and one full sweep */
+  --enter-dur: 300ms;
+  --enter-stagger: 40ms;
   --shimmer-base: #9a9a9a;
   --shimmer-cycle: 2s;
   /* Image generation card: the loader layer's fade under the dissolve, the card's top highlight and the mosaic's peak cell colour */
@@ -420,6 +420,8 @@
   --spacing-gap-half: calc(var(--gap) / 2);
   --spacing-code-output: var(--code-output-max);
   --spacing-code-line: var(--code-output-line-height);
+  --spacing-hdr: var(--hdr);
+  --spacing-thumb: var(--thumb);
   /* Command card: compact padding around the command and its output, and the space after an open card */
   --spacing-command-x: calc(var(--pad) - var(--gap) / 2);
   --spacing-command-y: calc(var(--gap) * 0.75);
@@ -429,8 +431,6 @@
   --spacing-diff-gutter: calc(var(--diff-number-width) + var(--diff-sign-width));
   --spacing-diff-hunk: calc(var(--gap) * 1.25);
   --spacing-msg: var(--msg-gap);
-  --spacing-hdr: var(--hdr);
-  --spacing-thumb: var(--thumb);
   /* Pulls a continuation up so it sits one row gap under the turn it continues */
   --spacing-msg-join: calc(var(--msg-gap) - var(--gap));
   --spacing-agent-image: var(--agent-image);

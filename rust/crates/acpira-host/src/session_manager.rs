@@ -158,12 +158,12 @@ impl SessionManager {
       let env_me = me.clone();
       let pool = AgentPool::new(
         Arc::new(move || reg_me.upgrade().map(|m| m.registry()).unwrap_or_else(|| Arc::new(AgentRegistry::new(&Value::Null)))),
+  // Extracted conversation text of the saved records, kept between history searches
+  search: SessionSearch,
         deps.log.clone(),
         Some(Arc::new(move |agent: String, account: String| {
           let me = env_me.clone();
           Box::pin(async move {
-  // Extracted conversation text of the saved records, kept between history searches
-  search: SessionSearch,
             let m = me.upgrade()?;
             let accounts = m.deps.accounts.clone()?;
             accounts.spawn_env_for(&agent, &account).await
@@ -211,10 +211,10 @@ impl SessionManager {
         }
       }));
       let me = mgr.me.clone();
+        search: SessionSearch::default(),
       a.on_lock_change(Arc::new(move || {
         if let Some(m) = me.upgrade() {
           m.emit_agents();
-        search: SessionSearch::default(),
         }
       }));
     }
@@ -840,6 +840,12 @@ impl SessionManager {
   ) {
     if let Some(existing) = self.native_owners(agent).await.get(session_id).cloned() {
       self.select_session_for(v, &existing).await;
+  /// Sessions whose saved conversation contains every term of `query`. Records reach the disk within the save debounce,
+  /// so a reply still streaming is found a moment later; ChatGPT mirrors have no record here and match by title only
+  pub async fn search_sessions(&self, query: &str) -> Vec<SessionHit> {
+    self.search.search(self.deps.store.dir().to_path_buf(), query).await
+  }
+
       return;
     }
     let now = now_iso();
@@ -868,12 +874,6 @@ impl SessionManager {
       self.log(&format!("import flush failed: {e}"));
     }
     self.drop_empty_current(v).await;
-  /// Sessions whose saved conversation contains every term of `query`. Records reach the disk within the save debounce,
-  /// so a reply still streaming is found a moment later; ChatGPT mirrors have no record here and match by title only
-  pub async fn search_sessions(&self, query: &str) -> Vec<SessionHit> {
-    self.search.search(self.deps.store.dir().to_path_buf(), query).await
-  }
-
     let s = AcpSession::new(record, self.session_deps());
     self.state.lock().live.insert(s.id.clone(), s.clone());
     self.set_active(v, Some(s.id.clone()));
