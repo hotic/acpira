@@ -1,6 +1,7 @@
 pub mod adapter_info;
 pub mod launch;
 pub mod lock_holder;
+pub mod login_path;
 pub mod model_sources;
 pub mod native_sessions;
 pub mod pool;

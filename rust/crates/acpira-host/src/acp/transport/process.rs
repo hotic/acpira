@@ -152,6 +152,11 @@ impl AgentProcess {
     #[cfg(not(windows))]
     cmd.args(&spec.args);
     cmd.current_dir(cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(false);
+    // The directories the login shell adds reach the agent too (a node-script adapter needs `node` from them);
+    // the definition's own env may still set PATH explicitly
+    if let Some(path) = crate::acp::agents::login_path::merged() {
+      cmd.env("PATH", path);
+    }
     for (k, v) in def.env.iter().flatten() {
       cmd.env(k, v);
     }

@@ -21,8 +21,12 @@ pub trait Env: Sync {
 
 pub struct ProcessEnv;
 
+/// The sidecar's own environment, except that PATH includes what the login shell adds once that is known
 impl Env for ProcessEnv {
   fn get(&self, key: &str) -> Option<String> {
+    if key == "PATH" {
+      return super::login_path::effective_path();
+    }
     std::env::var(key).ok()
   }
 }

@@ -136,7 +136,7 @@ function AgentFacts({ agent, inventory, env }: { agent: AgentInfo; inventory?: A
   const engineText = engine
     ? engine.override
       ? t('settings.fact.engineOverride', { name: engine.name, env: engine.overrideEnv ?? '', path: engine.override })
-      : `${engine.version ? t('settings.agent.version', { name: engine.name, version: engine.version }) : engine.name} · ${t('settings.fact.bundled')}`
+      : `${engine.version ? t('settings.agent.version', { name: engine.name, version: engine.version }) : engine.name} · ${engine.nativeMissing ? t('settings.fact.nativeMissing', { package: engine.nativeMissing }) : t('settings.fact.bundled')}`
     : undefined;
   return (
     <Group>
@@ -147,8 +147,14 @@ function AgentFacts({ agent, inventory, env }: { agent: AgentInfo; inventory?: A
             ? <><Dot ok /><PathText path={inventory.binary} env={env} /></>
             : <><Dot ok={false} /><span className="truncate font-sans text-2 text-fg-2">{t('settings.agent.notInstalled', { command: agent.id })}</span></>}
       </FactRow>
+      {!inventory?.binary && agent.searched?.length ? <SearchedDirs dirs={agent.searched} env={env} /> : null}
       {adapterText && <FactRow label={t('settings.fact.adapter')}><span className="truncate" title={adapter?.root}>{adapterText}</span></FactRow>}
-      {engineText && <FactRow label={t('settings.fact.engine')}><span className="truncate" title={engine?.override}>{engineText}</span></FactRow>}
+      {engineText && (
+        <FactRow label={t('settings.fact.engine')}>
+          {engine?.nativeMissing && <Dot ok={false} />}
+          <span className="truncate" title={engine?.nativeMissing ? t('settings.fact.nativeMissingHint', { package: engine.nativeMissing }) : engine?.override}>{engineText}</span>
+        </FactRow>
+      )}
       <FactRow label={t('settings.fact.version')}>{version ?? <span className="text-fg-2">{t('settings.fact.noLive')}</span>}</FactRow>
       {health && (
         <FactRow label={t('settings.fact.status')}>
@@ -159,6 +165,16 @@ function AgentFacts({ agent, inventory, env }: { agent: AgentInfo; inventory?: A
         </FactRow>
       )}
     </Group>
+  );
+}
+
+// Where the host looked for a CLI it did not find: an install outside these directories needs its directory on the login shell's PATH
+function SearchedDirs({ dirs, env }: { dirs: string[]; env: SettingsEnv }) {
+  const title = `${dirs.join('\n')}\n\n${t('settings.agent.searchedHint')}`;
+  return (
+    <FactRow label={t('settings.fact.searched')}>
+      <span className="truncate text-2 text-fg-2" title={title}>{dirs.map(d => shortPath(d, env)).join('  ')}</span>
+    </FactRow>
   );
 }
 

@@ -46,7 +46,8 @@ export interface AgentRuntimeInfo {
 export interface AdapterInfo {
   adapter?: { name: string; version?: string; root?: string };
   // `override`/`overrideEnv` when the env var redirects the bundled runtime to a different binary
-  engine?: { name: string; version?: string; override?: string; overrideEnv?: string };
+  // nativeMissing: the platform package with the engine's native binary (an npm optional dependency) is not installed
+  engine?: { name: string; version?: string; override?: string; overrideEnv?: string; nativeMissing?: string };
 }
 
 // How far launching the agent got last time: the executable was found (binary), the process spawned, the ACP handshake

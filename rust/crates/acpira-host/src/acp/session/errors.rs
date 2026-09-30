@@ -59,9 +59,23 @@ pub fn is_auth(e: &anyhow::Error) -> bool {
   AUTH_RE.is_match(&m) && AUTH_WHY.is_match(&m)
 }
 
+/// The reason under `data`: the ACP SDK answers a thrown plain Error with "Internal error" and the thrown text as
+/// `data.details` (claude-agent-acp's missing native binary, codex's missing optional dependency), other peers use
+/// message / detail / reason
 fn data_text(r: &RpcError) -> Option<String> {
   let d = r.data.as_ref()?.as_object()?;
-  ["message", "detail", "reason"].iter().find_map(|k| d.get(*k).and_then(Value::as_str).filter(|v| !v.trim().is_empty()).map(str::to_owned))
+  ["message", "details", "detail", "reason"]
+    .iter()
+    .find_map(|k| d.get(*k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(str::to_owned))
+}
+
+/// An error as shown to the user: an RPC error keeps the peer's reason from `data` next to its generic message
+pub fn error_text(e: &anyhow::Error) -> String {
+  let text = e.to_string();
+  match rpc_of(e).and_then(data_text) {
+    Some(d) if !text.contains(&d) => format!("{text}: {d}"),
+    _ => text,
+  }
 }
 
 /// What a failed session/prompt leaves on the turn
@@ -71,7 +85,7 @@ pub fn turn_error_of(e: &anyhow::Error) -> TurnError {
   let data = r.data.as_ref().and_then(Value::as_object);
   TurnError {
     message: match detail {
-      Some(d) if d != r.message => format!("{}: {d}", r.message),
+      Some(d) if !r.message.contains(&d) => format!("{}: {d}", r.message),
       _ => r.message.clone(),
     },
     code: Some(r.code),
@@ -177,4 +191,31 @@ pub fn classify_restore_error(e: &anyhow::Error) -> Option<RestoreFailure> {
     return Some(RestoreFailure::Gone);
   }
   Some(RestoreFailure::Failed)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use serde_json::json;
+
+  fn rpc(message: &str, data: Option<Value>) -> anyhow::Error {
+    anyhow::Error::new(RpcError { code: -32603, message: message.into(), data })
+  }
+
+  #[test]
+  fn the_sdk_internal_error_keeps_its_details() {
+    // claude-agent-acp 0.83 without its platform package, as the ACP SDK's errorToResult sends it
+    let why = "Claude native binary not found for linux-x64. Reinstall @anthropic-ai/claude-agent-sdk without --omit=optional, or set CLAUDE_CODE_EXECUTABLE.";
+    let e = rpc("Internal error", Some(json!({ "details": why })));
+    assert_eq!(error_text(&e), format!("Internal error: {why}"));
+    assert_eq!(turn_error_of(&e).message, format!("Internal error: {why}"));
+  }
+
+  #[test]
+  fn nothing_is_repeated_or_invented() {
+    assert_eq!(error_text(&rpc("Internal error", None)), "Internal error");
+    assert_eq!(error_text(&rpc("Internal error", Some(json!({})))), "Internal error");
+    assert_eq!(error_text(&rpc("Boom: disk full", Some(json!({ "details": "disk full" })))), "Boom: disk full");
+    assert_eq!(error_text(&anyhow::anyhow!("plain")), "plain");
+  }
 }

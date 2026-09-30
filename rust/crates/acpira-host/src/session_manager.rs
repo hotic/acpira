@@ -28,11 +28,13 @@ use acpira_shared::turn_settings::capture_turn_settings;
 
 use crate::accounts::account_manager::{AccountHooks, AccountManager, RunInTerminal, Toast};
 use crate::accounts::local::LocalAccounts;
+use crate::acp::agents::login_path;
 use crate::acp::agents::pool::AgentPool;
 use crate::acp::agents::registry::AgentRegistry;
 use crate::acp::agents::native_sessions::list_native_sessions;
 use crate::acp::agents::probe_controls::{ProbeResult, probe_agent_controls};
 use crate::acp::transport::rpc::BoxFuture;
+use crate::acp::session::errors::error_text;
 use crate::acp::session::{AcpSession, CompactionPolicy, SessionAccountHooks, SessionDeps, StartOutcome};
 use crate::external::chatgpt_events::CHATGPT_ID;
 use crate::external::chatgpt_store::ChatGptBridgeStore;
@@ -46,6 +48,10 @@ use crate::util::{clip, local_stamp, ms_of_iso, now_iso, random_uuid};
 
 const TRASH_TTL: Duration = Duration::from_secs(30);
 const PROBE_INTERVAL: Duration = Duration::from_secs(10);
+/// How long the first probe waits for the login shell's PATH before going ahead with the inherited one
+const LOGIN_PATH_WAIT: Duration = Duration::from_millis(2500);
+/// Focus-triggered login shell re-runs are at least this far apart
+const LOGIN_PATH_REFRESH: Duration = Duration::from_secs(30);
 // How long shutdown waits for agent processes to close and exit; shells escalate to SIGTERM after 3 s, so this stays below it
 const DISPOSE_GRACE: Duration = Duration::from_millis(2500);
 const INDEX_DEBOUNCE: Duration = Duration::from_millis(400);
@@ -250,6 +256,13 @@ impl SessionManager {
     (self.deps.log)(line);
   }
 
+  fn log_login_path(&self) {
+    let added = login_path::added();
+    if !added.is_empty() {
+      self.log(&format!("PATH from the login shell adds: {}", added.join(":")));
+    }
+  }
+
   pub fn registry(&self) -> Arc<AgentRegistry> {
     self.state.lock().registry.clone()
   }
@@ -272,6 +285,20 @@ impl SessionManager {
       let mut st = self.state.lock();
       st.index = index;
       st.prefs = prefs;
+    }
+    // The login shell's PATH decides where CLIs are found; a slow rc file only delays the first pass that long,
+    // the rest of the run re-probes once it is done
+    if tokio::time::timeout(LOGIN_PATH_WAIT, login_path::ready()).await.is_err() {
+      let me = self.me.clone();
+      tokio::spawn(async move {
+        login_path::ready().await;
+        if let Some(m) = me.upgrade() {
+          m.log_login_path();
+          m.reprobe().await;
+        }
+      });
+    } else {
+      self.log_login_path();
     }
     self.registry().probe_all().await;
     self.schedule_probe();
@@ -321,6 +348,10 @@ impl SessionManager {
   pub fn reprobe(self: &Arc<Self>) -> BoxFuture<()> {
     let me = self.clone();
     Box::pin(async move {
+      // Back from a terminal with something still missing: the rc files may have just gained its directory
+      if me.registry().missing() && login_path::refresh(LOGIN_PATH_REFRESH).await {
+        me.log_login_path();
+      }
       me.registry().probe_all().await;
       me.schedule_probe();
     })
@@ -1262,7 +1293,7 @@ impl SessionManager {
   pub async fn handle_for(self: &Arc<Self>, v: &Arc<Viewer>, m: WebviewMsg) {
     let kind = format!("{m:?}").split([' ', '{', '(']).next().unwrap_or("").to_owned();
     if let Err(e) = self.dispatch(v, m).await {
-      let text = e.to_string();
+      let text = error_text(&e);
       self.log(&format!("handle {} failed: {text}", lower_first(&kind)));
       (self.deps.toast)("error", &text);
     }
