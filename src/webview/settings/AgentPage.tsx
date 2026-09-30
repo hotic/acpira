@@ -9,9 +9,8 @@ import { familyHidden, groupModels, setFamilyVisible, variantLabel, type ModelFa
 import { filterModels, MODEL_PREVIEW_LIMIT, prioritizeModels, setModelsVisible } from '@shared/modelCatalog';
 import { Chip, IconButton } from '../ui/Button';
 import { Card } from '../ui/Card';
-import { QuotaBars } from '../ui/QuotaBars';
 import { AccountLabel } from '../ui/AccountLabel';
-import { LocalAccountQuota } from '../ui/LocalAccountQuota';
+import { LocalAccountQuota, SavedAccountQuota } from '../ui/LocalAccountQuota';
 import { Shimmer } from '../ui/Shimmer';
 import { Collapsible } from '../ui/Collapsible';
 import { t } from '../i18n';
@@ -102,7 +101,7 @@ export function AgentPage({ agent, accounts, inventory, controls, settings, env,
                 key={a.id}
                 lead={<KeyRound strokeWidth={1.5} />}
                 title={<AccountLabel label={a.label} detail={a.detail} />}
-                extra={a.quota && <QuotaBars quota={a.quota} />}
+                extra={(a.quota || a.quotaIssue) && <SavedAccountQuota account={a} />}
                 trailing={
                   <IconButton title={t('common.remove')} aria-label={t('common.removeNamed', { name: a.label })} onClick={() => on.removeAccount(a.id)} className="-mr-1.5 text-fg-2 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100">
                     <X strokeWidth={1.5} />

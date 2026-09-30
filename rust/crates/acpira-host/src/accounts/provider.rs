@@ -21,6 +21,19 @@ pub struct LoginFlow {
   pub collect: Box<dyn FnOnce(Cancel) -> BoxFuture<Option<AccountDraft>> + Send>,
 }
 
+/// A quota read found the stored access token past its expiry; the CLI refreshes it on its next run, so the manager
+/// reports the account as expired instead of retrying at once
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuotaTokenExpired;
+
+impl std::fmt::Display for QuotaTokenExpired {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.write_str("access token expired")
+  }
+}
+
+impl std::error::Error for QuotaTokenExpired {}
+
 pub trait AccountProvider: Send + Sync {
   fn agent(&self) -> &str;
   fn import_local(&self) -> BoxFuture<Option<AccountDraft>>;
@@ -38,6 +51,11 @@ pub trait AccountProvider: Send + Sync {
   }
   fn quota(&self, _cred: AccountCredential) -> Option<BoxFuture<Result<Option<AccountQuota>>>> {
     None
+  }
+  /// Even a forced read (turn end, focus) reuses an answer younger than this: for vendors whose quota endpoint
+  /// rate-limits per token after a few calls
+  fn quota_min_interval(&self) -> std::time::Duration {
+    std::time::Duration::ZERO
   }
   /// The account was removed: drop whatever the provider keeps outside the vault
   fn forget(&self, _cred: AccountCredential) -> Option<BoxFuture<()>> {

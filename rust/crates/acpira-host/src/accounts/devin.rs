@@ -156,7 +156,7 @@ impl AccountProvider for DevinAccountProvider {
       )
       .await?;
       if !(200..300).contains(&status) {
-        return Err(anyhow!("GetUserStatus {status}"));
+        return Err(anyhow::Error::new(crate::http::HttpStatus { status, retry_after: None }));
       }
       Ok(parse_user_status(&json))
     }))

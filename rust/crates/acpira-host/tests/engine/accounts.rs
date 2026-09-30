@@ -15,7 +15,8 @@ use acpira_host::acp::transport::cancel::Cancel;
 use acpira_host::acp::transport::rpc::BoxFuture;
 use acpira_host::acp::session::{AcpSession, SessionAccountHooks};
 use acpira_host::store::transcript_store::TranscriptStore;
-use acpira_shared::transcript::{AccountQuota, StrMap};
+use acpira_host::http::HttpStatus;
+use acpira_shared::transcript::{AccountQuota, AccountQuotaIssue, StrMap};
 
 use crate::acp_session::view;
 use crate::fake_or_skip;
@@ -299,6 +300,8 @@ struct FakeProvider {
   import_gate: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
   imports: AtomicUsize,
   quota_reads: AtomicUsize,
+  /// Reads of the `limited-key` account, which the vendor always answers with 429
+  limited_reads: AtomicUsize,
   authentications: AtomicUsize,
   auto: bool,
   /// The credential store as a keychain seen over SSH: while set, authenticate fails like a CLI that cannot read its login
@@ -346,6 +349,10 @@ impl AccountProvider for FakeProvider {
     }))
   }
   fn quota(&self, cred: AccountCredential) -> Option<BoxFuture<Result<Option<AccountQuota>>>> {
+    if cred.secret == "limited-key" {
+      self.limited_reads.fetch_add(1, Ordering::SeqCst);
+      return Some(Box::pin(async { Err(anyhow::Error::new(HttpStatus { status: 429, retry_after: None })) }));
+    }
     let reads = if cred.secret == "good-key" { Some(self.quota_reads.fetch_add(1, Ordering::SeqCst) + 1) } else { None };
     Some(Box::pin(async move {
       let reads = reads.ok_or_else(|| anyhow!("invalid api key"))?;
@@ -589,10 +596,66 @@ async fn quota_is_fetched_after_the_hand_off_and_after_turns_and_dropped_with_th
   s.accounts.reload().await;
   s.accounts.refresh_quota(&bad.id, true).await;
   assert!(s.accounts.get(&bad.id).unwrap().quota.is_none());
+  assert_eq!(s.accounts.get(&bad.id).unwrap().quota_issue, Some(AccountQuotaIssue::Unavailable));
   let good = s.accounts.list()[0].id.clone();
   m.handle(json!({ "type": "removeAccount", "id": good })).await;
   assert!(!s.accounts.list().iter().any(|a| a.quota.is_some()));
   m.dispose().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rate_limited_quota_read_is_reported_and_not_repeated_even_when_forced() {
+  let fake = fake_or_skip!();
+  let s = setup(&fake, false);
+  let a = s.store.add("fake", draft("busy@example.com", None, "limited-key", None)).await.unwrap();
+  s.accounts.reload().await;
+  s.accounts.refresh_quota(&a.id, true).await;
+  assert_eq!(s.provider.limited_reads.load(Ordering::SeqCst), 1);
+  let info = s.accounts.get(&a.id).unwrap();
+  assert!(info.quota.is_none());
+  assert_eq!(info.quota_issue, Some(AccountQuotaIssue::RateLimited));
+  assert_eq!(v(&info)["quotaIssue"], "rate_limited");
+  // turn ends, window focus and the open account view all force a read; none of them may reach the vendor during the pause
+  s.accounts.refresh_quota(&a.id, true).await;
+  s.accounts.refresh_quotas(Some("fake"), true).await;
+  assert_eq!(s.provider.limited_reads.load(Ordering::SeqCst), 1);
+  // removing the account drops the failure with it
+  s.accounts.remove(&a.id).await.unwrap();
+  assert!(s.accounts.get(&a.id).is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn windows_on_one_data_dir_share_quota_answers_and_429_pauses() {
+  // Two hosts (VS Code windows, Cursor, IDEA) over the same accounts: each has its own manager and provider
+  let dir = tempfile::tempdir().unwrap();
+  let host = || {
+    let store = Arc::new(store_in(dir.path()));
+    let provider = FakeProvider::new();
+    let accounts = AccountManager::new(store.clone(), vec![provider.clone()], log(), Arc::new(|_, _, _, _| {}), Arc::new(|_: &str, _: &str| {}));
+    (store, provider, accounts)
+  };
+  let (store1, p1, a1) = host();
+  let (store2, p2, a2) = host();
+  store1.load().await.unwrap();
+  let busy = store1.add("fake", draft("busy@example.com", None, "limited-key", None)).await.unwrap();
+  let good = store1.add("fake", draft("good@example.com", None, "good-key", None)).await.unwrap();
+  store2.load().await.unwrap();
+  a1.reload().await;
+  a2.reload().await;
+  // the first window is refused; the second one adopts the pause instead of asking again, even when forced
+  a1.refresh_quota(&busy.id, true).await;
+  a2.refresh_quota(&busy.id, true).await;
+  assert_eq!((p1.limited_reads.load(Ordering::SeqCst), p2.limited_reads.load(Ordering::SeqCst)), (1, 0));
+  assert_eq!(a2.get(&busy.id).unwrap().quota_issue, Some(AccountQuotaIssue::RateLimited));
+  // bars one window read are the other's for the usual cache age
+  a1.refresh_quota(&good.id, true).await;
+  a2.refresh_quota(&good.id, false).await;
+  assert_eq!((p1.quota_reads.load(Ordering::SeqCst), p2.quota_reads.load(Ordering::SeqCst)), (1, 0));
+  assert_eq!(v(a2.get(&good.id).unwrap().quota.unwrap())["windows"][0]["remaining"], 0.9);
+  // a removed account leaves nothing behind in the shared file
+  a1.remove(&busy.id).await.unwrap();
+  let cache: Value = serde_json::from_slice(&std::fs::read(dir.path().join("quota-cache.json")).unwrap()).unwrap();
+  assert!(cache.get(&busy.id).is_none() && cache.get(&good.id).is_some());
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -150,6 +150,11 @@ impl AccountProvider for ClaudeAccountProvider {
     Some([(SECURE_STORE_ENV.to_owned(), home.to_string_lossy().into_owned())].into())
   }
 
+  /// api/oauth/usage answers 429 after a handful of calls per token and stays there under steady polling
+  fn quota_min_interval(&self) -> Duration {
+    Duration::from_secs(3 * 60)
+  }
+
   fn quota(&self, cred: AccountCredential) -> Option<BoxFuture<Result<Option<AccountQuota>>>> {
     Some(Box::pin(async move {
       let home = account_home(&cred);
@@ -158,7 +163,7 @@ impl AccountProvider for ClaudeAccountProvider {
       let token = oauth.get("accessToken").and_then(Value::as_str).ok_or_else(|| anyhow!("no access token"))?;
       // Claude refreshes on its next run; an expired token is not refreshed here (the refresh token rotates)
       if oauth.get("expiresAt").and_then(Value::as_f64).is_some_and(|at| at > 0.0 && at <= now_ms() as f64) {
-        return Err(anyhow!("access token expired"));
+        return Err(anyhow::Error::new(super::provider::QuotaTokenExpired));
       }
       let headers = vec![
         ("Authorization".to_owned(), format!("Bearer {token}")),

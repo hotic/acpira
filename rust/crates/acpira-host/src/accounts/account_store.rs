@@ -128,6 +128,7 @@ impl StoredAccount {
       added_at: self.added_at.clone(),
       last_used_at: self.last_used_at.clone(),
       quota: self.quota.clone(),
+      quota_issue: None,
     }
   }
 }
@@ -330,6 +331,11 @@ impl AccountStore {
 
   /// accounts-dismissed.json next to accounts.json: `{ agent: [label, …] }`, the local logins the user removed and the
   /// automatic import must leave alone (a separate file, so accounts.json keeps the array older builds read)
+  /// quota-cache.json next to accounts.json (`accounts::quota_cache`)
+  pub fn quota_cache_file(&self) -> PathBuf {
+    self.file.with_file_name("quota-cache.json")
+  }
+
   fn dismissed_file(&self) -> PathBuf {
     self.file.with_file_name("accounts-dismissed.json")
   }

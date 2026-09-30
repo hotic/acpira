@@ -69,7 +69,11 @@ export interface AccountInfo {
   addedAt: string;
   lastUsedAt?: string;
   quota?: AccountQuota;
+  // Why there are no bars: the last quota read failed and the next one waits (a 429 pauses reads for minutes). Absent while quota is set
+  quotaIssue?: AccountQuotaIssue;
 }
+
+export type AccountQuotaIssue = 'rate_limited' | 'expired' | 'unavailable';
 
 // Session-level options: modes come from modes.availableModes of session/new; the rest (model / reasoning level / …) are select-type configOptions —
 // whatever ACP provides is what we show, we don't invent our own

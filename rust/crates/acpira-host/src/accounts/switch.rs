@@ -126,6 +126,7 @@ mod tests {
         on_demand_balance_usd: None,
         fetched_at: String::new(),
       }),
+      quota_issue: None,
     }
   }
 

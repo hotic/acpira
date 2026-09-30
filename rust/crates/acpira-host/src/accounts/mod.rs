@@ -7,4 +7,5 @@ pub mod devin;
 pub mod keychain;
 pub mod local;
 pub mod provider;
+pub mod quota_cache;
 pub mod switch;
