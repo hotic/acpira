@@ -62,6 +62,27 @@ async fn delete_is_soft_restore_brings_it_back_and_rename_and_pin_land_in_the_in
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_corrupt_record_stays_listed_and_reports_a_diagnostic_error() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let first = Mgr::new(dir.path(), Opts::fake(&fake));
+  first.init().await;
+  first.new_session(None).await;
+  let id = first.active_id().unwrap();
+  first.handle(json!({ "type": "send", "text": "hi" })).await;
+  first.dispose().await;
+
+  let second = Mgr::new(dir.path(), Opts::fake(&fake));
+  second.init().await;
+  assert!(second.session_ids().contains(&id));
+  std::fs::write(dir.path().join(format!("{id}.json")), "{ broken").unwrap();
+  second.m.select_session_for(&second.v, &id).await;
+  assert!(second.session_ids().contains(&id));
+  assert!(second.toasts().iter().any(|text| text.contains("SESSION_RECORD_CORRUPT")), "{:?}", second.toasts());
+  second.dispose().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn new_session_on_an_empty_session_keeps_the_process() {
   let fake = fake_or_skip!();
   let dir = tempfile::tempdir().unwrap();
