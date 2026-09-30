@@ -100,6 +100,15 @@ export function App() {
   useEffect(() => { document.documentElement.lang = locale; }, [locale]);
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
 
+  // VS Code passes this webview state to the panel serializer after a window reload. Keep the active editor session
+  // alongside the other local UI preferences so a revived tab attaches to the same conversation.
+  useEffect(() => {
+    if (!session?.id || !vscode.setState) return;
+    const previous = vscode.getState?.();
+    const state = { ...(previous && typeof previous === 'object' ? previous as Record<string, unknown> : {}), acpiraSessionId: session.id };
+    if ((previous as { acpiraSessionId?: unknown } | undefined)?.acpiraSessionId !== session.id) vscode.setState(state);
+  }, [session?.id]);
+
   useEffect(() => {
     const onMsg = (e: MessageEvent<HostMsg>) => {
       const m = e.data;

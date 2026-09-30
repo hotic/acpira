@@ -11,7 +11,9 @@ export const surfaceVariants = cva('min-w-0', {
       card: 'rounded-lg border border-card-line bg-card shadow-card',
       message: 'rounded-lg bg-bg-0 shadow-[inset_0_0_0_1px_var(--conversation-line)]',
       queue: 'rounded-md bg-(--cmp-bg) shadow-[inset_0_0_0_1px_var(--conversation-line)]',
-      status: 'rounded-md bg-code',
+      // The live process head sits directly in the transcript flow. Keep its surface transparent so
+      // the status row does not look like a code card against the surrounding conversation background.
+      status: 'rounded-md bg-transparent',
     },
   },
 });
