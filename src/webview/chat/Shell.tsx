@@ -14,7 +14,8 @@ import { DockStack } from '../ui/DockStack';
 import { Chip, IconButton } from '../ui/Button';
 import { useScrollReveal } from '../ui/useScrollReveal';
 import { useStableList } from '../ui/useStableList';
-import { followsBottom, scrollerUsable } from './promptStuck';
+import { useMergedRefs } from '../ui/mergeRefs';
+import { useBottomFollow } from './useBottomFollow';
 import { Header } from './Header';
 import { SessionList } from './SessionList';
 import { AgentMessage } from './Turns';
@@ -587,34 +588,14 @@ interface ThreadProps {
 // Entrance stagger caps out at the 12th block, so long sessions don't take seconds
 const STAGGER_CAP = 12;
 
-// Conversation flow: stick-to-bottom following only happens on transcript changes (new content / streaming growth); user actions like expand / collapse never touch the scroll position —
+// Conversation flow: stick-to-bottom following happens on transcript changes (new content / streaming growth) and on async growth
+// (images, diagrams) until the user touches the thread; user actions like expand / collapse never touch the scroll position —
 // the toggle under the mouse stays put while the content below it moves. Scrolling away from the bottom releases the follow; scrolling back to the bottom restores it
 function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands, subagents, onInspect, onPermission, onFailureAction }: ThreadProps) {
   const ref = useRef<HTMLDivElement>(null);
-  const pinned = useRef(true);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    pinned.current = true;
-    const pin = () => { if (scrollerUsable(el) && pinned.current) el.scrollTop = el.scrollHeight; };
-    pin();
-    // A hidden sidebar collapses this to no box and fires a scroll that looks like "left the bottom".
-    let lastTop = el.scrollTop;
-    const onScroll = () => {
-      if (!scrollerUsable(el)) return;
-      pinned.current = followsBottom(el, pinned.current, lastTop);
-      lastTop = el.scrollTop;
-    };
-    el.addEventListener('scroll', onScroll, { passive: true });
-    // Keep stuck to the bottom when the container itself shrinks (composer grows / panel narrows); observe only the container, not the content
-    const ro = new ResizeObserver(pin);
-    ro.observe(el);
-    return () => { ro.disconnect(); el.removeEventListener('scroll', onScroll); };
-  }, [replayKey]);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (el && scrollerUsable(el) && pinned.current) el.scrollTop = el.scrollHeight;
-  }, [turns, running]);
+  const body = useRef<HTMLDivElement>(null);
+  const bodyRef = useMergedRefs(contentRef, body);
+  useBottomFollow(ref, body, replayKey, [turns, running]);
 
   // Group the session's subagent nodes by the turn that announced them; unchanged arrays keep their
   // reference so memoized turns do not re-render on an unrelated child update
@@ -657,7 +638,7 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
   return (
     <div ref={ref} data-thread className="scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto px-page [container-type:size] [overflow-anchor:none]">
       {/* The tail clearance equals the message gap, so the last message sits as far from the composer as from the message above it */}
-      <div key={replayKey} ref={contentRef} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-(--content-w)')}>
+      <div key={replayKey} ref={bodyRef} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-(--content-w)')}>
         {exchanges.map(exchange => (
           // Positioned so the prompt's stuck-state sentinel can sit at the exchange's top edge. Paint containment gives each exchange
           // its own paint offset, so a fold opening mid-thread no longer re-walks every later exchange each frame (see docs/dev/webview.md,
