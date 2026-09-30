@@ -2,8 +2,24 @@
 
 use std::time::Duration;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use serde_json::Value;
+
+/// A non-2xx reply of `get_json`; callers downcast it to tell a rate limit or a rejected token from other failures
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HttpStatus {
+  pub status: u16,
+  /// `Retry-After` in delta-seconds form (the HTTP-date form is ignored)
+  pub retry_after: Option<Duration>,
+}
+
+impl std::fmt::Display for HttpStatus {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "Quota HTTP {}", self.status)
+  }
+}
+
+impl std::error::Error for HttpStatus {}
 
 pub async fn get_json(url: String, headers: Vec<(String, String)>, timeout: Duration) -> Result<Value> {
   tokio::task::spawn_blocking(move || {
@@ -16,7 +32,13 @@ pub async fn get_json(url: String, headers: Vec<(String, String)>, timeout: Dura
     let mut res = req.call()?;
     let status = res.status().as_u16();
     if !(200..300).contains(&status) {
-      return Err(anyhow!("Quota HTTP {status}"));
+      let retry_after = res
+        .headers()
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map(Duration::from_secs);
+      return Err(anyhow::Error::new(HttpStatus { status, retry_after }));
     }
     Ok(serde_json::from_str(&res.body_mut().read_to_string()?)?)
   })

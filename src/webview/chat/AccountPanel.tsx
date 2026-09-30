@@ -4,9 +4,8 @@ import type { AccountInfo, AgentInfo } from '@shared/transcript';
 import type { AddAccountVia } from '@shared/protocol';
 import { PanelHeader } from '../ui/Panel';
 import { RadioGroup } from '../ui/RadioGroup';
-import { QuotaBars } from '../ui/QuotaBars';
 import { AccountIdentity, AccountLabel } from '../ui/AccountLabel';
-import { LocalAccountQuota } from '../ui/LocalAccountQuota';
+import { LocalAccountQuota, SavedAccountQuota } from '../ui/LocalAccountQuota';
 import { Button } from '../ui/Button';
 import { t } from '../i18n';
 
@@ -70,7 +69,7 @@ export function AccountPanel(p: AccountPanelProps) {
             <AccountIdentity caption={a.detail}><span title={a.label}>{a.label}</span></AccountIdentity>
             {a.id === p.accountId ? <Check className="size-icon shrink-0 text-fg-1" strokeWidth={2} /> : current && <span className="size-icon shrink-0" aria-hidden />}
           </span>
-          {a.quota && <QuotaBars quota={a.quota} />}
+          <SavedAccountQuota account={a} />
         </RadioGroup.Item>
         {/* Centred on the identity row (py-1.5 + half the avatar), not on a row the quota bars make tall */}
         <button type="button" aria-label={t('common.removeNamed', { name: a.label })} title={t('common.remove')}

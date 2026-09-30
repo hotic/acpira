@@ -89,6 +89,18 @@ pub struct LocalAccountInfo {
   pub quota: Option<AccountQuota>,
 }
 
+/// Why a saved account shows no quota: the last read failed and the next one waits out a cooldown
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccountQuotaIssue {
+  /// The vendor answered 429; reads pause until its Retry-After or an exponential backoff passes
+  RateLimited,
+  /// The stored access token is past its expiry or was rejected (401 / 403)
+  Expired,
+  /// Any other failure (network, 5xx, malformed reply)
+  Unavailable,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountInfo {
@@ -102,6 +114,9 @@ pub struct AccountInfo {
   pub last_used_at: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub quota: Option<AccountQuota>,
+  /// Set only while `quota` is absent and the last read failed
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub quota_issue: Option<AccountQuotaIssue>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

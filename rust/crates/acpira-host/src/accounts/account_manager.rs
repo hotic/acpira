@@ -7,11 +7,12 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 
-use acpira_shared::transcript::{AccountInfo, AccountQuota, StrMap};
+use acpira_shared::transcript::{AccountInfo, AccountQuota, AccountQuotaIssue, StrMap};
 
 use super::account_store::AccountStore;
 use super::cli_home::{LOCAL_LOGIN, poll_until};
-use super::provider::AccountProvider;
+use super::provider::{AccountProvider, QuotaTokenExpired};
+use super::quota_cache::{QuotaCache, QuotaEntry, QuotaFailure};
 use super::switch::{SwitchStrategy, parked_until, pick_fallback};
 use crate::acp::transport::process::AgentProcess;
 use crate::acp::transport::cancel::Cancel;
@@ -23,7 +24,31 @@ use crate::util::{ms_of_iso, now_ms};
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const UNLOCK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+/// How long an unforced read (the open account view, focus) reuses the last answer
 const QUOTA_MAX_AGE_MS: i64 = 30_000;
+/// Pause after a 429 without a usable Retry-After, as Claude Code does for the same endpoint (2.1.284: 5 min, capped at
+/// 1 h); doubles per consecutive 429 because the endpoint has been seen answering 429 for hours to steady polling
+const QUOTA_RATE_LIMIT_BASE_MS: i64 = 5 * 60_000;
+const QUOTA_RATE_LIMIT_MAX_MS: i64 = 60 * 60_000;
+
+/// Classify a failed quota read. A 429 pauses reads for the vendor's Retry-After, else 5, 10, 20 … 60 min; every other
+/// failure only for the usual cache age. Reading again inside a 429 pause would keep the vendor's bucket drained
+pub fn quota_failure(err: &anyhow::Error, prev: Option<&QuotaFailure>, now: i64) -> QuotaFailure {
+  let status = err.downcast_ref::<crate::http::HttpStatus>();
+  if let Some(s) = status.filter(|s| s.status == 429) {
+    let rate_limits = prev.filter(|p| p.issue == AccountQuotaIssue::RateLimited).map_or(0, |p| p.rate_limits) + 1;
+    let backoff = QUOTA_RATE_LIMIT_BASE_MS.saturating_mul(1 << (rate_limits - 1).min(8)).min(QUOTA_RATE_LIMIT_MAX_MS);
+    // `Retry-After: 0` has been reported on this endpoint alongside persistent 429s; it is no hint at all
+    let wait = s
+      .retry_after
+      .filter(|d| !d.is_zero())
+      .map_or(backoff, |d| (d.as_millis() as i64).clamp(QUOTA_MAX_AGE_MS, QUOTA_RATE_LIMIT_MAX_MS));
+    return QuotaFailure { issue: AccountQuotaIssue::RateLimited, at_ms: now, until_ms: now + wait, rate_limits };
+  }
+  let expired = err.downcast_ref::<QuotaTokenExpired>().is_some() || status.is_some_and(|s| s.status == 401 || s.status == 403);
+  let issue = if expired { AccountQuotaIssue::Expired } else { AccountQuotaIssue::Unavailable };
+  QuotaFailure { issue, at_ms: now, until_ms: now + QUOTA_MAX_AGE_MS, rate_limits: 0 }
+}
 
 /// A cancel that fires by itself after `after`; the handle stops the timer
 fn cancel_after(after: Duration) -> (Cancel, tokio::task::JoinHandle<()>) {
@@ -49,6 +74,10 @@ pub struct AccountManager {
   toast: Toast,
   listeners: parking_lot::Mutex<Vec<(u64, Arc<dyn Fn(Vec<AccountInfo>) + Send + Sync>)>>,
   quotas: parking_lot::Mutex<HashMap<String, AccountQuota>>,
+  /// Accounts whose last quota read failed; cleared by the next successful read
+  quota_failures: parking_lot::Mutex<HashMap<String, QuotaFailure>>,
+  /// quota-cache.json: what every host on the data dir last learned, so windows do not each poll the vendor
+  quota_cache: QuotaCache,
   fetching: parking_lot::Mutex<HashMap<String, tokio::sync::watch::Receiver<bool>>>,
   /// Accounts that reported exhaustion → until when they stay out of the automatic switch (epoch ms, this host only)
   parked: parking_lot::Mutex<HashMap<String, i64>>,
@@ -69,14 +98,17 @@ impl AccountManager {
     run_in_terminal: RunInTerminal,
     toast: Toast,
   ) -> Arc<Self> {
+    let quota_cache = QuotaCache::new(store.quota_cache_file());
     Arc::new(AccountManager {
       store,
+      quota_cache,
       providers: providers.into_iter().map(|p| (p.agent().to_owned(), p)).collect(),
       log,
       run_in_terminal,
       toast,
       listeners: Default::default(),
       quotas: Default::default(),
+      quota_failures: Default::default(),
       fetching: Default::default(),
       parked: Default::default(),
       switch_policy: parking_lot::Mutex::new(Arc::new(|_: &str| SwitchStrategy::EarliestReset)),
@@ -173,54 +205,142 @@ impl AccountManager {
     if let Some(q) = self.quotas.lock().get(&a.id) {
       a.quota = Some(q.clone());
     }
+    // Last known bars win over a failed re-read; the issue only explains why there are none
+    if a.quota.is_none() {
+      a.quota_issue = self.quota_failures.lock().get(&a.id).map(|f| f.issue);
+    }
     a
   }
 
-  /// Refresh one account's quota; concurrent callers share the in-flight request, a recent result is reused unless `force`
+  /// Drop an account's quota here and in the shared cache (the account was removed or is now someone else)
+  async fn forget_quota(&self, id: &str) {
+    self.quotas.lock().remove(id);
+    self.quota_failures.lock().remove(id);
+    if let Err(e) = self.quota_cache.set(id, None).await {
+      (self.log)(&format!("quota cache: {e}"));
+    }
+  }
+
+  /// Take what another host learned if it is newer than what this one knows; true when anything changed
+  fn adopt_quota(&self, id: &str, entry: QuotaEntry) -> bool {
+    let mut quotas = self.quotas.lock();
+    let mut failures = self.quota_failures.lock();
+    let mut changed = false;
+    if let Some(q) = entry.quota
+      && quotas.get(id).is_none_or(|have| ms_of_iso(&q.fetched_at) > ms_of_iso(&have.fetched_at))
+    {
+      quotas.insert(id.to_owned(), q);
+      changed = true;
+    }
+    if let Some(f) = entry.failure
+      && failures.get(id).is_none_or(|have| f.at_ms > have.at_ms)
+    {
+      failures.insert(id.to_owned(), f);
+      changed = true;
+    }
+    // A successful read after the failure ends it
+    if let (Some(q), Some(f)) = (quotas.get(id), failures.get(id))
+      && ms_of_iso(&q.fetched_at).unwrap_or(0) > f.at_ms
+    {
+      failures.remove(id);
+      changed = true;
+    }
+    changed
+  }
+
+  async fn share_quota(&self, id: &str) {
+    let entry = QuotaEntry { quota: self.quotas.lock().get(id).cloned(), failure: self.quota_failures.lock().get(id).copied() };
+    let entry = (entry.quota.is_some() || entry.failure.is_some()).then_some(entry);
+    if let Err(e) = self.quota_cache.set(id, entry).await {
+      (self.log)(&format!("quota cache: {e}"));
+    }
+  }
+
+  /// Refresh one account's quota; concurrent callers share the in-flight request. A recent answer — this host's or one
+  /// another host left in the shared cache — is reused: for 30 s (at least the provider's floor) on unforced reads, for
+  /// the provider's floor on forced ones; a 429 pause holds against both
   pub fn refresh_quota(self: &Arc<Self>, id: &str, force: bool) -> BoxFuture<()> {
     let me = self.clone();
     let id = id.to_owned();
     Box::pin(async move {
-      let inflight = me.fetching.lock().get(&id).cloned();
+      let (tx, rx) = tokio::sync::watch::channel(false);
+      let inflight = {
+        let mut fetching = me.fetching.lock();
+        let inflight = fetching.get(&id).cloned();
+        if inflight.is_none() {
+          fetching.insert(id.clone(), rx);
+        }
+        inflight
+      };
       if let Some(mut rx) = inflight {
         let _ = rx.wait_for(|done| *done).await;
         return;
       }
-      let Some(a) = me.store.get(&id) else { return };
-      let Some(p) = me.providers.get(&a.agent).cloned() else { return };
-      // A locked store cannot hand out the token; the last known quota stays until it is unlocked
-      if me.credentials_locked(&a.agent) {
-        return;
-      }
-      if !force
-        && let Some(have) = me.quotas.lock().get(&id)
-        && now_ms() - ms_of_iso(&have.fetched_at).unwrap_or(0) < QUOTA_MAX_AGE_MS
-      {
-        return;
-      }
-      let (tx, rx) = tokio::sync::watch::channel(false);
-      me.fetching.lock().insert(id.clone(), rx);
-      let result: Result<()> = async {
-        let Some(cred) = me.store.credential(&id).await? else { return Ok(()) };
-        let Some(fut) = p.quota(cred) else { return Ok(()) };
-        match fut.await? {
-          Some(q) => {
-            me.quotas.lock().insert(id.clone(), q);
-          }
-          None => {
-            me.quotas.lock().remove(&id);
-          }
-        }
-        me.emit();
-        Ok(())
-      }
-      .await;
-      if let Err(e) = result {
-        (me.log)(&format!("quota {}: {e}", a.label));
-      }
+      me.read_quota(&id, force).await;
       me.fetching.lock().remove(&id);
       let _ = tx.send(true);
     })
+  }
+
+  async fn read_quota(self: &Arc<Self>, id: &str, force: bool) {
+    let Some(a) = self.store.get(id) else { return };
+    let Some(p) = self.providers.get(&a.agent).cloned() else { return };
+    // A locked store cannot hand out the token; the last known quota stays until it is unlocked
+    if self.credentials_locked(&a.agent) {
+      return;
+    }
+    // Another window may have read the same account (or been refused) moments ago
+    if let Some(entry) = self.quota_cache.get(id).await
+      && self.adopt_quota(id, entry)
+    {
+      self.emit();
+    }
+    // A 429 pause holds even against forced reads (turn ends, focus); other failures wait only for unforced ones
+    if let Some(f) = self.quota_failures.lock().get(id)
+      && now_ms() < f.until_ms
+      && (!force || f.issue == AccountQuotaIssue::RateLimited)
+    {
+      return;
+    }
+    let floor = p.quota_min_interval().as_millis() as i64;
+    let fresh_for = if force { floor } else { floor.max(QUOTA_MAX_AGE_MS) };
+    if let Some(have) = self.quotas.lock().get(id)
+      && now_ms() - ms_of_iso(&have.fetched_at).unwrap_or(0) < fresh_for
+    {
+      return;
+    }
+    let result: Result<Option<Option<AccountQuota>>> = async {
+      let Some(cred) = self.store.credential(id).await? else { return Ok(None) };
+      let Some(fut) = p.quota(cred) else { return Ok(None) };
+      Ok(Some(fut.await?))
+    }
+    .await;
+    match result {
+      Ok(None) => return,
+      Ok(Some(q)) => {
+        self.quota_failures.lock().remove(id);
+        match q {
+          Some(q) => self.quotas.lock().insert(id.to_owned(), q),
+          None => self.quotas.lock().remove(id),
+        };
+        self.emit();
+      }
+      Err(e) => {
+        let now = now_ms();
+        let (failure, changed) = {
+          let mut failures = self.quota_failures.lock();
+          let prev = failures.get(id).copied();
+          let failure = quota_failure(&e, prev.as_ref(), now);
+          failures.insert(id.to_owned(), failure);
+          (failure, prev.map(|p| p.issue) != Some(failure.issue))
+        };
+        (self.log)(&format!("quota {}: {e}; next read in {}s", a.label, (failure.until_ms - now) / 1000));
+        if changed {
+          self.emit();
+        }
+      }
+    }
+    self.share_quota(id).await;
   }
 
   pub async fn refresh_quotas(self: &Arc<Self>, agent: Option<&str>, force: bool) {
@@ -309,7 +429,7 @@ impl AccountManager {
         (Some(_), _) => continue,
         (None, Some(l)) => {
           (self.log)(&format!("account local login changed: {agent} {} → {}", l.label, draft.label));
-          self.quotas.lock().remove(&l.id);
+          self.forget_quota(&l.id).await;
           self.store.set_identity(&l.id, &draft.label, draft.detail.clone()).await.map(|_| l.id)
         }
         (None, None) => {
@@ -421,7 +541,7 @@ impl AccountManager {
     {
       fut.await;
     }
-    self.quotas.lock().remove(id);
+    self.forget_quota(id).await;
     self.parked.lock().remove(id);
     self.emit();
     Ok(())
@@ -478,5 +598,43 @@ impl SessionAccountHooks for AccountHooks {
 
   fn label(&self, account: String) -> Option<String> {
     self.0.get(&account).map(|a| a.label)
+  }
+}
+
+#[cfg(test)]
+mod quota_failure_tests {
+  use super::*;
+  use crate::http::HttpStatus;
+
+  fn http(status: u16, retry_after: Option<u64>) -> anyhow::Error {
+    anyhow::Error::new(HttpStatus { status, retry_after: retry_after.map(Duration::from_secs) })
+  }
+
+  #[test]
+  fn rate_limits_back_off_exponentially_and_honour_retry_after() {
+    let mut prev: Option<QuotaFailure> = None;
+    let mut waits = vec![];
+    for _ in 0..6 {
+      let f = quota_failure(&http(429, None), prev.as_ref(), 0);
+      assert_eq!(f.issue, AccountQuotaIssue::RateLimited);
+      waits.push(f.until_ms / 60_000);
+      prev = Some(f);
+    }
+    assert_eq!(waits, vec![5, 10, 20, 40, 60, 60]);
+    // the vendor's own hint wins over the backoff; `Retry-After: 0` is no hint
+    assert_eq!(quota_failure(&http(429, Some(120)), None, 0).until_ms, 120_000);
+    assert_eq!(quota_failure(&http(429, Some(0)), None, 0).until_ms, 5 * 60_000);
+    // a different failure in between restarts the streak
+    let other = quota_failure(&http(500, None), prev.as_ref(), 0);
+    assert_eq!((other.issue, other.rate_limits, other.until_ms), (AccountQuotaIssue::Unavailable, 0, QUOTA_MAX_AGE_MS));
+    assert_eq!(quota_failure(&http(429, None), Some(&other), 0).until_ms, 5 * 60_000);
+  }
+
+  #[test]
+  fn rejected_or_expired_tokens_read_as_expired() {
+    for e in [http(401, None), http(403, None), anyhow::Error::new(QuotaTokenExpired)] {
+      assert_eq!(quota_failure(&e, None, 0).issue, AccountQuotaIssue::Expired);
+    }
+    assert_eq!(quota_failure(&anyhow::anyhow!("no Claude login"), None, 0).issue, AccountQuotaIssue::Unavailable);
   }
 }
