@@ -55,6 +55,7 @@ use crate::acp::transcript::normalize::{NormalizeState, ToolCtx, runtime_info_of
 use crate::acp::transcript::plan_snapshots::restore_plan_snapshots;
 use crate::acp::transcript::subagent_tree::SubagentTree;
 use crate::acp::transport::process::AgentProcess;
+use crate::acp::vendors::Vendor;
 use crate::acp::transport::rpc::BoxFuture;
 use crate::i18n::t;
 use crate::store::record::{ForkedFrom, ImportedFrom, SessionRecord};
@@ -174,6 +175,8 @@ pub struct AcpSession {
   pub agent: String,
   pub cwd: String,
   pub created_at: String,
+  /// What the agent's adapter needs handled specially, resolved once from its id
+  pub(crate) vendor: Vendor,
   pub(crate) core: parking_lot::Mutex<Core>,
   pub(crate) deps: SessionDeps,
   pub(crate) me: Weak<AcpSession>,
@@ -210,6 +213,7 @@ impl AcpSession {
       let tree = SubagentTree::new(tree_log, ctx, record.subagents, Some(&record.updated_at));
       AcpSession {
         id: record.id,
+        vendor: Vendor::of(&record.agent),
         agent: record.agent,
         cwd: record.cwd,
         created_at: record.created_at,

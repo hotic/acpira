@@ -392,7 +392,7 @@ impl AcpSession {
       apply_session_failure(&mut self.core.lock().state, f);
     }
     if stop == TurnStop::EndTurn {
-      if self.agent == "claude" {
+      if self.vendor.corrects_window() {
         let c = self.core.lock();
         if let Some(size) = c.usage.reported_window {
           claude_window::confirm(c.account_id.as_deref(), &c.state.controls, size);
@@ -416,7 +416,7 @@ impl AcpSession {
           u.used = num(after);
         }
       }
-      if !auto && accepted.command_name.is_none() && self.wait_for_kimi_usage(turn.usage_before).await {
+      if !auto && accepted.command_name.is_none() && self.wait_for_late_usage(turn.usage_before).await {
         stop = TurnStop::Cancelled;
       }
       if self.status() != SessionStatus::Ready {

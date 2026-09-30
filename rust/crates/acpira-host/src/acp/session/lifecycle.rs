@@ -45,7 +45,7 @@ impl AcpSession {
     if let Some(id) = acp_id {
       req["sessionId"] = json!(id);
     }
-    if self.agent != "claude" {
+    if !self.vendor.summarized_thinking() {
       return req;
     }
     let def_env = self.def().env.and_then(|e| e.get("MAX_THINKING_TOKENS").cloned());
