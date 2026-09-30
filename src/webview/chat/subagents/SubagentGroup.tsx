@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Check, ChevronRight } from 'lucide-react';
+import { Check } from 'lucide-react';
 import type { SubagentSummary } from '@shared/subagents';
 import { t } from '../../i18n';
 import { Disclosure } from '../../ui/Disclosure';
@@ -40,7 +40,8 @@ export function SubagentGroup({ nodes, all, onInspect }: GroupProps) {
 }
 
 // An unframed row like the process folds ("Done ›"): state mark, title, then the live activity / waiting / result excerpt
-// one step fainter, with the chevron right after the text. The activity gives up width first, the role before the title.
+// one step fainter. No chevron: the row opens the inspector rather than dropping down, and a chevron read as a fold.
+// The activity gives up width first, the role before the title.
 // The mark fills the lead slot (--subagent-mark) so the dotted bars read; the ✓ scales back to a plain Check.
 function SubagentRow({ node, all, onInspect }: { node: SubagentSummary; all: SubagentSummary[]; onInspect: GroupProps['onInspect'] }) {
   const title = subagentTitle(node, t);
@@ -60,7 +61,6 @@ function SubagentRow({ node, all, onInspect }: { node: SubagentSummary; all: Sub
       {node.role !== undefined && node.role !== title && <span className="min-w-0 max-w-project truncate text-fg-3 [flex-shrink:4]">{node.role}</span>}
       <span className="min-w-0 truncate text-fg-3 [flex-shrink:9]">{line}</span>
       {descendants > 0 && <span className="shrink-0 text-fg-3">· {t('subagents.descendants', { n: descendants })}</span>}
-      <ChevronRight className="size-3 shrink-0 self-center" strokeWidth={1.75} />
     </Row>
   );
 }

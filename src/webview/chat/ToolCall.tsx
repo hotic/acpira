@@ -22,6 +22,8 @@ import { AsyncTaskStopContext, OpenToolFileContext } from './fileLinks';
 import { fileReference, toolFiles, visibleToolContents } from './toolDetails';
 import { useToolSeconds } from './useToolSeconds';
 import { commandDuration } from './commandDuration';
+import { useAutoFold } from './autoFold';
+import { editSpan } from './processGroups';
 
 export { OpenToolFileContext } from './fileLinks';
 
@@ -48,6 +50,7 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
   const visibleContent = visibleToolContents(block);
   const Icon = toolIcon(block);
   const todos = toolTodoEntries(block);
+  const fold = useAutoFold();
 
   const lead = toolLine === 'text' ? undefined : <Icon className="size-icon" strokeWidth={1.5} />;
 
@@ -75,7 +78,7 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
   );
 
   // The diff stat is not decoration — every harness shows it — so it escapes the toolLine axis; 'rich' adds the rest of the meta
-  const stat = block.diffStat && <span><span className="text-ok">+{block.diffStat.add}</span> <span className="text-danger">−{block.diffStat.del}</span></span>;
+  const stat = block.diffStat && <DiffStat {...block.diffStat} />;
   const glyph = <>
     {block.status === 'completed' && <Check className="size-3 text-ok" strokeWidth={2} aria-hidden="true" />}
     {block.status === 'failed' && <X className="size-3 text-danger" strokeWidth={2} aria-hidden="true" />}
@@ -102,11 +105,15 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
         </>
       : (stat || taskTag || taskStop ? <>{stat}{taskTag}{taskStop}</> : undefined);
 
+  // An edit names where it landed, first to last changed line, the way a read names its range
+  const span = block.kind === 'edit' ? editSpan([block]) : undefined;
   const label = <>
     <RowLabel shimmer={running}>{toolVerb(block)}</RowLabel>
     {command
       ? <RowTarget mono><span title={command}>{command}</span></RowTarget>
-      : block.target && !(block.kind === 'read' && files.length) && <RowTarget mono={block.targetMono}>{toolTarget(block)}</RowTarget>}
+      : block.target && !(block.kind === 'read' && files.length) && (span
+        ? <span className="flex min-w-0 items-baseline gap-1"><RowTarget mono={block.targetMono}>{toolTarget(block)}</RowTarget><Aside>{span}</Aside></span>
+        : <RowTarget mono={block.targetMono}>{toolTarget(block)}</RowTarget>)}
   </>;
   if (todos !== undefined) return <PlanDetails entries={todos} label={label} trailing={trailing} />;
   // Image generation: the row names the call and its text (codex-acp's revised prompt) opens on demand. In the process fold
@@ -127,11 +134,18 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
   }
   // Search hits open on demand; read references remain visible inside the process.
   if (files.length && block.kind === 'search') return (
-    <Disclosure className="action-details" tone="action" lead={lead} trailing={trailing} indent={false} rail="rows"
+    <Disclosure className="action-details" tone="action" lead={lead} trailing={trailing} indent={false} rail="rows" open={fold?.open} onToggle={fold?.onToggle}
       body={<ResultList items={files} kind={block.kind} />}>
       {label}
     </Disclosure>
   );
+  // A read of one file is one row: the verb, then the file reference with its range
+  if (files.length === 1 && block.kind === 'read') {
+    const { main, aside } = splitHit(files[0]!);
+    return <Row tone="action" lead={lead} trailing={trailing} title={files[0]}>
+      {label}<FileRef hit={files[0]!} aside={aside}><RowTarget mono className="text-fg-2">{main}</RowTarget></FileRef>
+    </Row>;
+  }
   // Read and search responses expose references only, including failures and empty results.
   if (files.length) return (
     <ConnectedRail enabled={toolLine !== 'text'} endAtLastRow className="action-details flex flex-col">
@@ -148,12 +162,13 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
   // A tool that returned only text gets the same card; diffs, lists and images stay full width
   if (execute || (visibleContent.length && visibleContent.every(item => item.type === 'text'))) return (
     <Disclosure className="action-details data-open:mb-command-after" bodyClassName="pt-gap-half" tone="action" lead={lead} trailing={trailing} defaultOpen={execute && !grouped && running}
+      open={fold?.open} onToggle={fold?.onToggle}
       body={<><TaskMeta task={block.asyncTask} /><ToolBody block={block} items={visibleContent} command={command} /></>}>
       {label}
     </Disclosure>
   );
   return (
-    <Disclosure className="action-details" tone="action" lead={lead} trailing={trailing} indent={false} rail={block.content?.type === 'list' ? 'rows' : false} body={<><TaskMeta task={block.asyncTask} /><ToolBody block={block} items={visibleContent} /></>}>
+    <Disclosure className="action-details" tone="action" lead={lead} trailing={trailing} indent={false} rail={block.content?.type === 'list' ? 'rows' : false} open={fold?.open} onToggle={fold?.onToggle} body={<><TaskMeta task={block.asyncTask} /><ToolBody block={block} items={visibleContent} /></>}>
       {label}
     </Disclosure>
   );
@@ -191,23 +206,6 @@ function TaskMeta({ task }: { task: AsyncTaskInfo | undefined }) {
   );
 }
 
-// Several ACP read calls form one visible list of file references.
-// The grouping array is rebuilt on every render, so compare its members rather than the array itself.
-export const ReadGroup = memo(function ReadGroup({ blocks }: { blocks: ToolCallBlock[] }) {
-  const { toolLine } = useAppearance();
-  const first = blocks[0]!;
-  return <ConnectedRail enabled={toolLine !== 'text'} endAtLastRow className="action-details read-group flex flex-col">
-    <EntranceOnce id={`${first.id}:tool`}>
-      <Row tone="action" lead={toolLine === 'text' ? undefined : <FileText className="size-icon" strokeWidth={1.5} />}>
-        <RowLabel>{toolVerb(first)}</RowLabel>
-      </Row>
-    </EntranceOnce>
-    <div className="tool-results flex flex-col">
-      {blocks.map(block => <EntranceOnce key={block.id} id={`${block.id}:files`}><ResultList items={toolFiles(block)} kind="read" rail={false} /></EntranceOnce>)}
-    </div>
-  </ConnectedRail>;
-}, (a, b) => a.blocks.length === b.blocks.length && a.blocks.every((block, i) => block === b.blocks[i]));
-
 function ToolBody({ block, items, command }: { block: ToolCallBlock; items: ReturnType<typeof visibleToolContents>; command?: string }) {
   // Command output owns the execute body; an image it produced (screenshot tools) renders below the text
   if (block.kind === 'execute') {
@@ -237,7 +235,7 @@ function ToolBody({ block, items, command }: { block: ToolCallBlock; items: Retu
 }
 
 // Result rows share the parent's connected icon rail, with a faint line/host suffix.
-function ResultList({ items, kind, rail = true }: { items: string[]; kind: ToolCallBlock['kind']; rail?: boolean }) {
+export function ResultList({ items, kind, rail = true }: { items: string[]; kind: ToolCallBlock['kind']; rail?: boolean }) {
   const { toolLine } = useAppearance();
   const Icon = kind === 'fetch' ? Globe : FileText;
   return (
@@ -261,17 +259,28 @@ function ResultList({ items, kind, rail = true }: { items: string[]; kind: ToolC
 
 // File rows have one interaction: open the reference in the editor.
 function FileResultRow({ hit, lead, aside, children }: { hit: string; lead: ReactNode; aside?: string; children: ReactNode }) {
+  return <Row tone="action" dense lead={lead} title={hit}><FileRef hit={hit} aside={aside}>{children}</FileRef></Row>;
+}
+
+function FileRef({ hit, aside, children }: { hit: string; aside?: string; children: ReactNode }) {
   const openFile = useContext(OpenToolFileContext);
   const file = fileReference(hit);
-  const asideEl = aside && <span className="shrink-0 whitespace-nowrap text-3 text-fg-3/70 tabular-nums">{aside}</span>;
-  return <Row tone="action" dense lead={lead} title={hit}>
-    {openFile ? <button type="button" title={hit} className="group/ref flex min-w-0 max-w-full items-baseline gap-1 cursor-pointer text-left"
-      onClick={() => openFile(file.path, file.line)}>
-      {/* Only the file name underlines on hover / focus; the line range beside it stays plain */}
-      <span className="flex min-w-0 group-hover/ref:underline group-focus-visible/ref:underline">{children}</span>{asideEl}
-    </button>
-      : <span className="flex min-w-0 items-baseline gap-1">{children}{asideEl}</span>}
-  </Row>;
+  const asideEl = aside && <Aside>{aside}</Aside>;
+  return openFile ? <button type="button" title={hit} className="group/ref flex min-w-0 max-w-full items-baseline gap-1 cursor-pointer text-left"
+    onClick={() => openFile(file.path, file.line)}>
+    {/* Only the file name underlines on hover / focus; the line range beside it stays plain */}
+    <span className="flex min-w-0 group-hover/ref:underline group-focus-visible/ref:underline">{children}</span>{asideEl}
+  </button>
+    : <span className="flex min-w-0 items-baseline gap-1">{children}{asideEl}</span>;
+}
+
+// A faint note beside a target: a line range, a hit's line
+export function Aside({ children }: { children: ReactNode }) {
+  return <span className="shrink-0 whitespace-nowrap text-3 text-fg-3/70 tabular-nums">{children}</span>;
+}
+
+export function DiffStat({ add, del }: { add: number; del: number }) {
+  return <span><span className="text-ok">+{add}</span> <span className="text-danger">−{del}</span></span>;
 }
 
 function splitHit(hit: string): { main: string; aside?: string } {

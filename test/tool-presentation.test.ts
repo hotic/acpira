@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { setLocale } from '../src/webview/i18n';
 import { foldActivity, toolVerb } from '../src/webview/chat/folding';
 import type { AgentTurn, ToolCallBlock } from '../src/shared/transcript';
-import { fileReference, groupReadCalls, isLineCount, toolFiles, visibleToolContents } from '../src/webview/chat/toolDetails';
+import { fileReference, isLineCount, toolFiles, visibleToolContents } from '../src/webview/chat/toolDetails';
 import { agentTurn } from './fixtures/engine';
 
 afterEach(() => setLocale('en'));
@@ -28,14 +28,6 @@ describe('ACP tool presentation', () => {
     ['src/a.ts', { path: 'src/a.ts' }],
   ])('preserves the editor destination for %s', (hit, expected) => {
     expect(fileReference(hit)).toEqual(expected);
-  });
-  it('groups consecutive reads while preserving output and action boundaries', () => {
-    const a: ToolCallBlock = { type: 'tool_call', id: 'a', kind: 'read', verb: 'Read', status: 'completed', target: 'a.ts', content: { type: 'text', text: 'source A' } };
-    const b = { ...a, id: 'b', target: 'b.ts', content: { type: 'text' as const, text: 'source B' } };
-    const failed = { ...a, id: 'failed', status: 'failed' as const };
-    const prose = { type: 'text' as const, markdown: 'Next step' };
-    expect(groupReadCalls([a, b, failed, a, prose, b])).toEqual([[a, b], failed, [a], prose, [b]]);
-    expect(groupReadCalls([a, { ...b, status: 'in_progress' }])).toEqual([[a], { ...b, status: 'in_progress' }]);
   });
   it('supports title-first notifications followed by typed actions and raw file paths', () => {
     const turn = agentTurn('read-title-first', 1);
@@ -68,6 +60,15 @@ describe('ACP tool presentation', () => {
   it.each([0, 1, 2])('preserves read ranges through later location-only updates (form %i)', form => {
     const block = agentTurn(`read-range-${form}`).blocks[0] as ToolCallBlock;
     expect(toolFiles(block)).toEqual(['/repo/AcpSession.ts:120–199']);
+  });
+
+  it('names no line for whole-file and binary reads', () => {
+    const read: ToolCallBlock = { type: 'tool_call', id: 'r', kind: 'read', verb: 'Read', status: 'completed', target: 'shot.png',
+      locations: [{ path: '/tmp/shot.png', line: 1 }] };
+    expect(toolFiles(read)).toEqual(['/tmp/shot.png']);
+    expect(toolFiles({ ...read, locations: [{ path: '/repo/a.ts', line: 1 }] })).toEqual(['/repo/a.ts']);
+    expect(toolFiles({ ...read, locations: [{ path: '/repo/a.ts', line: 40 }] })).toEqual(['/repo/a.ts:40']);
+    expect(toolFiles({ ...read, readRange: { path: '/tmp/shot.png', start: 1, end: 20 } })).toEqual(['/tmp/shot.png']);
   });
 
   it('keeps partial and unknown read ranges honest', () => {

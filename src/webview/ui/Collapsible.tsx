@@ -10,7 +10,7 @@ export const LazyPanelContext = createContext(false);
 function Panel({ children, className, ...props }: ComponentProps<typeof Base.Panel>) {
   return <Base.Panel {...props} keepMounted hidden={false}
     render={(attributes, state) => <PanelFrame {...attributes} open={state.open} />}
-    className={cnState(cn('grid min-w-0 grid-cols-[minmax(0,1fr)] transition-[grid-template-rows,opacity] duration-(--dur-open) ease-out data-[open]:grid-rows-[1fr] data-[open]:opacity-100 data-[closed]:grid-rows-[0fr] data-[closed]:opacity-0'), className)}>
+    className={cnState(cn('grid min-w-0 grid-cols-[minmax(0,1fr)] transition-[grid-template-rows,opacity] duration-(--dur-open) ease-out data-[open]:grid-rows-[1fr] data-[open]:opacity-100 data-[closed]:grid-rows-[0fr] data-[closed]:opacity-0 data-[closed]:duration-(--dur-close) data-[closed]:ease-(--ease-close)'), className)}>
     {children}
   </Base.Panel>;
 }

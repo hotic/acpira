@@ -188,6 +188,10 @@
   --dur-open: 220ms;
   --enter-dur: 300ms;
   --enter-stagger: 40ms;
+  /* Closing a fold: eased at both ends and a little longer than opening. An ease-out close dropped over half the
+     height in its first 80ms, and opening already reads longer because its rows fade in (--row-enter-duration) */
+  --dur-close: 320ms;
+  --ease-close: cubic-bezier(0.4, 0, 0.2, 1);
   --enter-y: 4px;
   /* Running-verb shimmer (ui/Shimmer): resting text colour and one full sweep */
   --shimmer-base: #9a9a9a;

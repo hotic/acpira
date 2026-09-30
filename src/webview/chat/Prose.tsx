@@ -21,12 +21,17 @@ const { raw: rehypeRaw, sanitize: rehypeSanitize, harden: rehypeHarden } = defau
 if (!rehypeRaw || !rehypeSanitize || !rehypeHarden) throw new Error('streamdown default rehype plugins missing');
 // Rewrite file:// before sanitize/harden; urlTransform runs too late and harden would paint ` [blocked]`.
 const REHYPE = [rehypeRaw, rewriteFileHrefs, rehypeSanitize, rehypeHarden];
-// `motion` is a stable module-level config (streamdown compares props by reference); the LAB passes alternatives
-export const Prose = memo(function Prose({ block, motion = STREAM_MOTION }: { block: TextBlock; motion?: StreamMotion }) {
+// `motion` is a stable module-level config (streamdown compares props by reference); the LAB passes alternatives.
+// `onBusy` hears whether the text is still being drawn (received, paced out or fading in), for a turn that waits for
+// its reply to finish on screen before folding its process away; pass a stable function
+export const Prose = memo(function Prose({ block, motion = STREAM_MOTION, onBusy }: { block: TextBlock; motion?: StreamMotion; onBusy?: (busy: boolean) => void }) {
   const smooth = useSmoothText(block.markdown, !!block.streaming, motion.pace);
   // Still draining counts as streaming: the renderer keeps its streaming mode until the visible text catches up
   const streaming = !!block.streaming || smooth.draining;
   const { animated, animating } = useStreamMotion(streaming, motion);
+  const busy = streaming || animating;
+  useEffect(() => { onBusy?.(busy); }, [busy, onBusy]);
+  useEffect(() => () => onBusy?.(false), [onBusy]);
   // The turn heading already indicates waiting before the first visible words.
   if (!smooth.text.trim()) return null;
   return (

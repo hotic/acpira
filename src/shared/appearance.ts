@@ -18,6 +18,9 @@ export interface Appearance {
   // Codex keeps one manual process fold per turn: current activity while running, elapsed time when done;
   // cursor only folds runs of read-only actions, edits and commands stay visible
   fold: 'codex' | 'cursor';
+  // A live turn opens the item it is working on (thought, read or edit group, command output) and closes it once
+  // the next begins; `off` leaves the rows inside closed and only the turn's fold follows the run
+  autoExpand: 'on' | 'off';
 }
 
 export type AxisKey = keyof Appearance;
@@ -29,7 +32,7 @@ export interface AxisDef<K extends AxisKey = AxisKey> {
   options: { value: Appearance[K]; label: string }[];
 }
 
-// Axis labels are English-source and LAB-only; the production settings page exposes just `motion` (with its own i18n labels), the rest are design decisions
+// Axis labels are English-source and LAB-only; the production settings page exposes just `motion` and `autoExpand` (with their own i18n labels), the rest are design decisions
 export const AXES: AxisDef[] = [
   { key: 'density', label: 'Density', group: 'Structure', options: [{ value: 'cozy', label: 'Cozy' }, { value: 'compact', label: 'Compact' }, { value: 'airy', label: 'Airy' }] },
   { key: 'radius', label: 'Radius', group: 'Structure', options: [{ value: '12', label: '12' }, { value: '8', label: '8' }, { value: '16', label: '16' }] },
@@ -46,6 +49,7 @@ export const AXES: AxisDef[] = [
   { key: 'accent', label: 'Accent', group: 'Ambience', options: [{ value: 'brand', label: 'Amber' }, { value: 'agent', label: 'Per-agent' }, { value: 'vscode', label: 'Follow VS Code' }] },
   { key: 'motion', label: 'Motion', group: 'Ambience', options: [{ value: 'on', label: 'On' }, { value: 'none', label: 'None' }] },
   { key: 'fold', label: 'Folding', group: 'Conversation', options: [{ value: 'codex', label: 'Whole process' }, { value: 'cursor', label: 'Read-only only' }] },
+  { key: 'autoExpand', label: 'Auto-expand details', group: 'Conversation', options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }] },
 ];
 
 // Combo code ↔ Appearance: one option index digit per axis
@@ -62,12 +66,12 @@ export function decodeAppearance(code: string, fallback: Appearance): Appearance
   return out as unknown as Appearance;
 }
 
-// Baseline: finalized as 201110200302100
-export const BASE_APPEARANCE: Appearance = decodeAppearance('201110200302100', {
+// Baseline: finalized as 2011102003021000
+export const BASE_APPEARANCE: Appearance = decodeAppearance('2011102003021000', {
   density: 'airy', radius: '12', surface: 'tonal', font: 'inter',
   userMessage: 'block', toolLine: 'icon', thought: 'orb', sessions: 'dropdown',
   composer: 'island', beam: 'full', beamColor: 'mono', send: 'metal',
-  accent: 'agent', motion: 'on', fold: 'codex',
+  accent: 'agent', motion: 'on', fold: 'codex', autoExpand: 'on',
 });
 
 // Builds an Appearance from a bag of setting values (acpira.appearance.<axis>); invalid values fall back to the baseline

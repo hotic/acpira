@@ -1,5 +1,29 @@
-import { useEffect, useLayoutEffect, useRef, type DependencyList, type RefObject } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type DependencyList, type RefObject } from 'react';
 import { followsBottom, scrollerUsable } from './promptStuck';
+
+// Whether the transcript is following its bottom, for rows that must not move under a reader who scrolled up
+// (the live turn's automatic fold closes wait for them). Subscribed per reader, so a scroll re-renders nothing else
+export class FollowState {
+  value = true;
+  private listeners = new Set<() => void>();
+  set(value: boolean) {
+    if (value === this.value) return;
+    this.value = value;
+    for (const listener of this.listeners) listener();
+  }
+  subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  };
+}
+
+export const FollowContext = createContext<FollowState | undefined>(undefined);
+const idle = () => () => {};
+
+export function useFollowing(): boolean {
+  const state = useContext(FollowContext);
+  return useSyncExternalStore(state?.subscribe ?? idle, () => state?.value ?? true);
+}
 
 // Bottom follow for a transcript scroller (the main thread and the subagent inspector's session tab).
 // Transcript changes pin the view to the bottom while following; scrolling up releases the follow and returning
@@ -10,13 +34,15 @@ import { followsBottom, scrollerUsable } from './promptStuck';
 // after the pin, which left a freshly (re)opened session parked above its tail. The content box is observed for that,
 // but only until the user touches the scroller: a fold opened by hand must stay under the pointer while content grows
 // below it. The next transcript change that pins re-arms it, since growth after a pin belongs to that change.
-export function useBottomFollow(scroller: RefObject<HTMLElement | null>, content: RefObject<HTMLElement | null>, resetKey: unknown, changes: DependencyList) {
+export function useBottomFollow(scroller: RefObject<HTMLElement | null>, content: RefObject<HTMLElement | null>, resetKey: unknown, changes: DependencyList): FollowState {
   const pinned = useRef(true);
   const untouched = useRef(true);
+  const [follow] = useState(() => new FollowState());
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
     pinned.current = true;
+    follow.set(true);
     untouched.current = true;
     const pin = () => { if (scrollerUsable(el) && pinned.current) el.scrollTop = el.scrollHeight; };
     pin();
@@ -25,6 +51,7 @@ export function useBottomFollow(scroller: RefObject<HTMLElement | null>, content
     const onScroll = () => {
       if (!scrollerUsable(el)) return;
       pinned.current = followsBottom(el, pinned.current, lastTop);
+      follow.set(pinned.current);
       lastTop = el.scrollTop;
     };
     const touched = () => { untouched.current = false; };
@@ -51,4 +78,5 @@ export function useBottomFollow(scroller: RefObject<HTMLElement | null>, content
     el.scrollTop = el.scrollHeight;
     untouched.current = true;
   }, changes);
+  return follow;
 }

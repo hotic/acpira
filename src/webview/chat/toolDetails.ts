@@ -1,4 +1,4 @@
-import type { AgentBlock, ToolCallBlock, ToolContent } from '@shared/transcript';
+import type { ToolCallBlock, ToolContent } from '@shared/transcript';
 
 const EDIT_SUCCESS_RECEIPTS = new Set(['Edit applied successfully.', 'Wrote file successfully.']);
 
@@ -13,19 +13,6 @@ export function visibleToolContents(block: ToolCallBlock): ToolContent[] {
 export function fileReference(hit: string): { path: string; line?: number } {
   const match = /^(.+?):(\d+)(?:[–-]\d+)?(?::\d+)?$/.exec(hit);
   return match ? { path: match[1]!, line: Number(match[2]) } : { path: hit };
-}
-
-// Group adjacent successful reads only; preserve ordering and visible failures.
-export function groupReadCalls(blocks: AgentBlock[]): (AgentBlock | ToolCallBlock[])[] {
-  const result: (AgentBlock | ToolCallBlock[])[] = [];
-  for (const block of blocks) {
-    if (block.type === 'tool_call' && block.kind === 'read' && block.status === 'completed' && toolFiles(block).length) {
-      const previous = result[result.length - 1];
-      if (Array.isArray(previous)) previous.push(block);
-      else result.push([block]);
-    } else result.push(block);
-  }
-  return result;
 }
 
 // Only explicit paths become file rows; prose and search patterns are not references.
@@ -43,12 +30,17 @@ function fileHit(text: string): string | undefined {
   return hit ? `${path}:${hit[2]}` : path;
 }
 
+// Files without lines: a read of one names no line range
+const LINELESS = /\.(?:png|jpe?g|gif|webp|bmp|ico|avif|heic|tiff?|pdf|zip|gz|tgz|wasm|mp[34]|mov|wav|woff2?|ttf|otf)$/i;
+
 export function toolFiles(block: ToolCallBlock): string[] {
   if (block.kind !== 'read' && block.kind !== 'search') return [];
   const files = (block.locations ?? []).map(l => {
+    if (block.kind === 'read' && LINELESS.test(l.path)) return l.path;
     const range = block.kind === 'read' && block.readRange?.path === l.path ? block.readRange : undefined;
     if (range) return `${l.path}:${range.start}${range.end !== undefined && range.end !== range.start ? `–${range.end}` : ''}`;
-    return l.line == null ? l.path : `${l.path}:${l.line}`;
+    // Claude's Read reports `line: 1` for a whole-file read (images included): where the file starts, not what was read
+    return l.line == null || (block.kind === 'read' && l.line <= 1) ? l.path : `${l.path}:${l.line}`;
   });
   if (block.kind === 'search' && block.content) {
     const lines = block.content.type === 'list' ? block.content.items
