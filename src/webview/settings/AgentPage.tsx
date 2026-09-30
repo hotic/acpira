@@ -68,7 +68,7 @@ export function AgentPage({ agent, accounts, inventory, controls, settings, env,
   return (
     <>
       <AgentFacts agent={agent} inventory={inventory} env={env} />
-      {agent.available === false && agent.install && <InstallSection agent={agent} on={on} />}
+      {agent.install && <InstallSection agent={agent} on={on} />}
 
       {agent.localAccount && <div className="flex flex-col gap-2">
         <SectionHead>{t('quota.officialAccount')}</SectionHead>
@@ -129,6 +129,9 @@ function AgentFacts({ agent, inventory, env }: { agent: AgentInfo; inventory?: A
   const adapter = inventory?.adapter?.adapter;
   const engine = inventory?.adapter?.engine;
   const health = inventory?.health;
+  const missingExecutable = agent.missing?.length
+    ? t('settings.agent.notInstalled', { command: agent.missing.join(', ') })
+    : t('settings.agent.executableMissing');
   // The adapter package version duplicates the live runtime line when initialize already reported the same number
   const adapterText = adapter && inventory?.runtime?.version !== adapter.version
     ? (adapter.version ? t('settings.agent.version', { name: adapter.name, version: adapter.version }) : adapter.name)
@@ -145,7 +148,7 @@ function AgentFacts({ agent, inventory, env }: { agent: AgentInfo; inventory?: A
           ? <Shimmer className="font-sans text-2">{t('settings.agent.probing')}</Shimmer>
           : inventory.binary
             ? <><Dot ok /><PathText path={inventory.binary} env={env} /></>
-            : <><Dot ok={false} /><span className="truncate font-sans text-2 text-fg-2">{t('settings.agent.notInstalled', { command: agent.id })}</span></>}
+            : <><Dot ok={false} /><span className="truncate font-sans text-2 text-fg-2" title={missingExecutable}>{missingExecutable}</span></>}
       </FactRow>
       {!inventory?.binary && agent.searched?.length ? <SearchedDirs dirs={agent.searched} env={env} /> : null}
       {adapterText && <FactRow label={t('settings.fact.adapter')}><span className="truncate" title={adapter?.root}>{adapterText}</span></FactRow>}
@@ -178,8 +181,7 @@ function SearchedDirs({ dirs, env }: { dirs: string[]; env: SettingsEnv }) {
   );
 }
 
-// No executable found: the vendor's install line (copyable, runnable in a host terminal) and its docs page. The section disappears on its own
-// once the host's probe finds the binary, so nothing here needs a refresh button
+// Keep installation commands reachable after detection, including agents whose CLI is already installed.
 function InstallSection({ agent, on }: { agent: AgentInfo; on: SettingsHandlers }) {
   const { command, docs } = agent.install!;
   const action = command && (
@@ -188,8 +190,7 @@ function InstallSection({ agent, on }: { agent: AgentInfo; on: SettingsHandlers 
   return (
     <div className="flex flex-col gap-2">
       <SectionHead action={action}>{t('settings.install.title', { agent: agent.name })}</SectionHead>
-      {/* The missing names ride on the description line: an agent like Pi can be installed yet still unavailable because a helper (pi-acp) is absent */}
-      <Section desc={t('settings.install.desc') + (agent.missing?.length ? `: ${agent.missing.join(', ')}` : '')}>
+      <Section desc={command ? t('settings.install.desc') : undefined}>
         {command && (
           <ItemRow
             lead={<SquareTerminal strokeWidth={1.5} />}

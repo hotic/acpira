@@ -2,6 +2,8 @@
 
 Component, token, menu, overlay, composer and chip rules. Motion, folding and layout rules are in `ui-motion-layout.md`.
 
+- Agent installation (`settings/AgentPage.tsx`) remains visible whenever the registry supplies an install command or guide, including already detected agents. The executable fact names the actual `AgentInfo.missing` commands, never the agent id; missing names do not get appended to the installation description. Install commands run in the host terminal (the remote machine under Remote SSH). Verify with `src/webview/settings/AgentPage.test.ts` and `lab/agent-install.preview.html`.
+
 - Model visibility settings (`settings/AgentPage.tsx`) share one card across all ACP agents: search and an unlabelled master switch in the header, source-aware model rows, and a Show more footer without a count inside the same surface. The master switch retains its accessible label, is on only when every family is enabled, and writes one `hiddenOptions` update for the entire agent catalog, including collapsed and search-hidden rows. `shared/modelCatalog.ts` promotes newer numeric releases within each named series/source while preserving unrelated series order and opaque option IDs. More than ten families collapse to ten; search always covers the full catalog. `Group embedded` reuses the card surface without nested cards. Verify with `test/modelCatalog.test.ts` and `test/models.test.ts`.
 - Components must not contain raw numbers: sizes, type scale, spacing, and radii all use token classes (`h-ctl`, `px-pad`, `gap-gap`, `rounded-md`, …)
 - Every "row" (thought / plan / tool / status / session item) uses `ui/Row`; command execution is a row too (command on the row, output card below), not a separate block
