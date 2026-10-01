@@ -316,3 +316,35 @@ async fn session_new_hands_the_agent_the_host_mcp_server_and_drops_it_for_an_age
   expect_match(view(&second), json!({ "status": "ready" }));
   assert_eq!(lines(&rejecting), [r#"["acpira"]"#, "[]", "[]"]);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restore_after_a_sidecar_restart_drops_the_host_mcp_server_for_an_agent_that_refuses_it() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let native = dir.path().join("native");
+  std::fs::create_dir_all(&native).unwrap();
+  let trace = dir.path().join("mcp.trace");
+  let methods = |log: &std::path::Path| {
+    std::fs::read_to_string(log)
+      .unwrap_or_default()
+      .lines()
+      .map(|l| {
+        let (m, servers) = l.split_once(' ').unwrap();
+        format!("{m} {}", serde_json::from_str::<Value>(servers).unwrap().as_array().map_or(0, Vec::len))
+      })
+      .collect::<Vec<_>>()
+  };
+  let env = json!({ "env": { "FAKE_MCP_TRACE": trace, "FAKE_MCP_REJECT": "1", "FAKE_SESSION_DIR": native } });
+  let mut h = Harness::new(&fake, env.clone());
+  h.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new("/opt/acpira/bin/acpira"));
+  let record = ran_once(&h, "/tmp").await;
+
+  // A new sidecar has not seen the refusal: the restore carries the server, fails, and retries without it
+  let mut h2 = Harness::new(&fake, env);
+  h2.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new("/opt/acpira/bin/acpira"));
+  let s = reopened(&h2, record).await;
+  prompt(&s, "again").await;
+  expect_match(view(&s), json!({ "status": "ready" }));
+  assert_eq!(methods(&trace), ["new 1", "new 0", "resume 1", "resume 0"]);
+  assert!(h2.deps.host_mcp.as_ref().unwrap().entry_for(&h2.agent).is_none());
+}
