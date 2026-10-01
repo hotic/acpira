@@ -1537,7 +1537,7 @@ fn resolve_markdown_images(b: &mut TextBlock, from: usize, ctx: &ToolCtx) {
 /// The file behind a Markdown image source: file:// URLs, absolute paths, and paths relative to the session cwd.
 /// Anything with a scheme (https:, data:, blob:) is not a local file
 fn markdown_image_path(src: &str, cwd: Option<&str>) -> Option<String> {
-  if src.len() >= 5 && src[..5].eq_ignore_ascii_case("file:") {
+  if src.get(..5).is_some_and(|p| p.eq_ignore_ascii_case("file:")) {
     return file_url_to_path(src);
   }
   let decoded = percent_decode(src).unwrap_or_else(|| src.to_owned());
