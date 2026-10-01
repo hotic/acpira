@@ -12,6 +12,7 @@ publish = false
 acpira-shared = { path = "crates/acpira-shared" }
 anyhow = "1.0.100"
 base64 = "0.22"
+flate2 = "1.1"
 libc = "0.2"
 parking_lot = "0.12"
 regex = "1.12"

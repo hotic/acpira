@@ -9,6 +9,7 @@ dependencies = [
  "acpira-shared",
  "anyhow",
  "base64 0.22.1",
+ "flate2",
  "libc",
  "parking_lot",
  "regex",

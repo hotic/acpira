@@ -540,8 +540,13 @@ fn resolve_skill(places: &Places, agents: &[String], path: &Path, keep: Keep, ba
       links::move_aside(path, backups)?;
     }
   }
-  // An agent that cannot read .agents gets its skill back as a link
-  let Some((user, project)) = agent_ext(agent).and_then(|e| e.shared.skill_links) else { return Ok(None) };
+  // An agent that cannot read .agents gets its skill back as a link; one reading this scope itself (Antigravity in a
+  // project) needs none, and a link would show it the skill twice
+  let ext = agent_ext(agent);
+  if ext.is_some_and(|e| e.reads_shared_skills(scope == SharedScope::Global)) {
+    return Ok(None);
+  }
+  let Some((user, project)) = ext.and_then(|e| e.shared.skill_links) else { return Ok(None) };
   let base = places.expand(if scope == SharedScope::Global { user } else { project }).ok_or_else(|| anyhow!("no project"))?;
   let w = Wire { agent, scope, target: shared, at: base.join(&name), kind: WireKind::Link, skill: Some(name.to_string_lossy().into_owned()) };
   wire(&w, places.root.as_deref(), backups, exclude).map(Some)
@@ -733,6 +738,25 @@ mod tests {
     // Undo puts Claude's own file back
     cfg.apply(SharedAction::Unlink, &p, &agents).await.unwrap();
     assert_eq!(std::fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap(), "# claude rules\n");
+  }
+
+  // Antigravity reads a project's .agents/skills but not ~/.agents/skills: adopting its project skill leaves no link
+  // behind in .gemini/skills, adopting a global one links it back into ~/.gemini/config/skills
+  #[tokio::test]
+  async fn an_adopted_antigravity_skill_is_linked_back_only_where_it_does_not_read_agents() {
+    let (_t, p, cfg, _) = setup();
+    let agents = vec!["antigravity".to_owned()];
+    let (home, root) = (p.home.clone(), p.root.clone().unwrap());
+    for dir in [root.join(".gemini/skills/lint"), home.join(".gemini/config/skills/notes")] {
+      std::fs::create_dir_all(&dir).unwrap();
+      std::fs::write(dir.join("SKILL.md"), "---\nname: x\n---\n").unwrap();
+    }
+    cfg.apply(SharedAction::ResolveSkill { path: s(&root.join(".gemini/skills/lint")), keep: Keep::Private }, &p, &agents).await.unwrap();
+    assert!(root.join(".agents/skills/lint/SKILL.md").exists());
+    assert!(std::fs::symlink_metadata(root.join(".gemini/skills/lint")).is_err());
+    cfg.apply(SharedAction::ResolveSkill { path: s(&home.join(".gemini/config/skills/notes")), keep: Keep::Private }, &p, &agents).await.unwrap();
+    assert!(home.join(".agents/skills/notes/SKILL.md").exists());
+    assert!(home.join(".gemini/config/skills/notes").is_symlink());
   }
 
   #[tokio::test]

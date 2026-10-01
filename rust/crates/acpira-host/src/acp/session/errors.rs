@@ -44,6 +44,20 @@ pub fn best_allow(options: &[Value]) -> anyhow::Result<String> {
   Ok(o.get("optionId").and_then(Value::as_str).unwrap_or("").to_owned())
 }
 
+/// The option auto-approval may pick without asking; `None` when the set is a list of answers rather than an approval
+/// ladder: several `allow_once` options and no `allow_always` (Antigravity's `ask_question`, where every answer is
+/// `allow_once`). Codex's "this turn" / "this turn with strict auto review" pair comes with an `allow_always`, so it
+/// stays a ladder
+pub fn auto_allow(options: &[Value]) -> Option<String> {
+  if ambiguous_allow(options) { None } else { best_allow(options).ok() }
+}
+
+/// Two or more `allow_once` options and no `allow_always`: nothing tells which one a person would have picked
+pub fn ambiguous_allow(options: &[Value]) -> bool {
+  let count = |k: &str| options.iter().filter(|o| o.get("kind").and_then(Value::as_str) == Some(k)).count();
+  count("allow_always") == 0 && count("allow_once") > 1
+}
+
 pub fn permission_kind(v: &Value) -> PermissionKind {
   serde_json::from_value(v.clone()).unwrap_or(PermissionKind::RejectOnce)
 }
@@ -209,6 +223,21 @@ mod tests {
     let e = rpc("Internal error", Some(json!({ "details": why })));
     assert_eq!(error_text(&e), format!("Internal error: {why}"));
     assert_eq!(turn_error_of(&e).message, format!("Internal error: {why}"));
+  }
+
+  #[test]
+  fn auto_approval_skips_a_list_of_answers() {
+    let o = |id: &str, kind: &str| json!({ "optionId": id, "name": id, "kind": kind });
+    // antigravity-acp 1.2.1: Allow Always / Allow / Deny
+    assert_eq!(auto_allow(&[o("allow_always", "allow_always"), o("allow", "allow_once"), o("deny", "reject_once")]).as_deref(), Some("allow_always"));
+    assert_eq!(auto_allow(&[o("allow", "allow_once"), o("deny", "reject_once")]).as_deref(), Some("allow"));
+    // ask_question answers
+    assert_eq!(auto_allow(&[o("blue", "allow_once"), o("green", "allow_once"), o("deny", "reject_once")]), None);
+    // Codex permission profile: two allow_once under an allow_always
+    assert_eq!(
+      auto_allow(&[o("turn", "allow_once"), o("strict", "allow_once"), o("session", "allow_always"), o("no", "reject_once")]).as_deref(),
+      Some("session")
+    );
   }
 
   #[test]

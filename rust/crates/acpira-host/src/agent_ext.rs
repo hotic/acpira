@@ -132,6 +132,23 @@ pub fn agent_ext(id: &str) -> Option<&'static AgentExt> {
       // dsh 0.1.5-rc.2 `dsh-agent-instructions`: one user-global file, `$DSH_HOME/AGENTS.md` (default ~/.dsh)
       shared: Shared { global_rules: Some(("~/.dsh/AGENTS.md", Link)), skill_links: None, own_skills: &["~/.dsh/skills", ".dsh/skills"], mcp: true },
     },
+    // antigravity-acp 1.2.1 source (GEMINI_HOME, default ~/.gemini): skills from <home>/config/skills,
+    // <home>/antigravity-cli/skills, .gemini/skills and .agents/skills (not ~/.agents/skills); rules GEMINI.md / AGENTS.md /
+    // .agents/rules up to the repo root plus the <home>/config customization root; <home>/config/mcp_config.json is merged
+    // with session/new `mcpServers`
+    "antigravity" => &AgentExt {
+      config: &["~/.gemini/antigravity-acp/settings.json", "~/.gemini/config/mcp_config.json"],
+      mcp: &[("~/.gemini/config/mcp_config.json", Json)],
+      skills: &["~/.gemini/config/skills", "~/.gemini/antigravity-cli/skills", ".gemini/skills", ".agents/skills"],
+      rules: &[("AGENTS.md", false), ("GEMINI.md", false), (".agents/rules", true), ("~/.gemini/config/AGENTS.md", false)],
+      steer: false,
+      shared: Shared {
+        global_rules: Some(("~/.gemini/config/AGENTS.md", Link)),
+        skill_links: Some(("~/.gemini/config/skills", ".gemini/skills")),
+        own_skills: &["~/.gemini/config/skills", ".gemini/skills"],
+        mcp: true,
+      },
+    },
     "pi" => &AgentExt {
       config: &["~/.pi/agent/settings.json", ".pi/settings.json", "~/.pi/agent/models.json"],
       mcp: &[],

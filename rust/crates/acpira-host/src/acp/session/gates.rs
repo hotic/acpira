@@ -14,7 +14,7 @@ use crate::acp::transcript::plans::{capture_plan, plan_documents_mut, set_plan_c
 use crate::acp::transcript::questions::{clean_answers, form_content, form_question_count, form_questions, grok_questions, grok_response, spare_message};
 use crate::acp::transport::rpc::RpcError;
 use crate::acp::session::{AcpSession, Core};
-use crate::acp::session::errors::{best_allow, permission_kind};
+use crate::acp::session::errors::{auto_allow, permission_kind};
 use crate::i18n::{t, tp};
 use crate::limits::PLAN_PREVIEW_MAX_BYTES;
 
@@ -29,6 +29,8 @@ pub(crate) struct PendingPermission {
 pub(crate) enum QuestionReply {
   Form { schema: Value },
   Grok,
+  /// A `session/request_permission` asked as a question (`Vendor::question_permission`): the answer is the picked option
+  Permission,
 }
 
 pub(crate) struct PendingQuestion {
@@ -47,7 +49,8 @@ pub(crate) struct PermissionGate {
   /// Bumped when the turn or process a request arrived in is gone: a request still being prepared under an older epoch
   /// is answered cancelled instead of opening a card
   pub epoch: u64,
-  /// yolo mode: requests are answered with their best allow option instead of a card
+  /// yolo mode: requests are answered with their best allow option instead of a card, unless that choice is ambiguous
+  /// (`auto_allow`)
   pub auto_approve: bool,
 }
 
@@ -120,6 +123,9 @@ impl AcpSession {
     let session_id = req.get("sessionId").and_then(Value::as_str).map(str::to_owned);
     let tool_call = req.get("toolCall").cloned().unwrap_or(Value::Null);
     let tool_call_id = tool_call.get("toolCallId").and_then(Value::as_str).unwrap_or("").to_owned();
+    if self.vendor.question_permission(&tool_call) {
+      return Ok(self.on_permission_question(req, tool_call_id, cancel).await);
+    }
     let (target, epoch, plan_file, last_agent, captured) = {
       let mut c = self.core.lock();
       let Some(target) = Self::target_for(&mut c, session_id.as_deref()) else {
@@ -184,17 +190,19 @@ impl AcpSession {
         .as_ref()
         .and_then(|id| plan_documents_mut(&mut state.turns).into_iter().find(|p| &p.id == id))
         .map(|p| (p.id.clone(), p.markdown.clone(), p.approval_tool_call_id.clone()));
-      // yolo: approve directly without a card, preferring allow_always so the same tool doesn't keep coming back
-      if auto {
+      // yolo: approve directly without a card, preferring allow_always so the same tool doesn't keep coming back. An
+      // ambiguous set (two options of the picked kind) still gets a card
+      if auto && options.is_empty() {
+        return Err(RpcError::internal(t("host.noPermissionOptions")));
+      }
+      if auto && let Some(id) = auto_allow(&options) {
         if let Some((pid, _, approval)) = &plan
           && approval.as_deref() == Some(tool_call_id.as_str())
           && let Some(p) = plan_documents_mut(&mut state.turns).into_iter().find(|p| &p.id == pid)
         {
           p.status = PlanDocStatus::Approved;
         }
-        return best_allow(&options)
-          .map(|id| json!({ "outcome": { "outcome": "selected", "optionId": id } }))
-          .map_err(|e| RpcError::internal(e.to_string()));
+        return Ok(json!({ "outcome": { "outcome": "selected", "optionId": id } }));
       }
       c.perms.seq += 1;
       let block_id = format!("perm-{}", c.perms.seq);
@@ -300,10 +308,10 @@ impl AcpSession {
     self.touch(c);
   }
 
-  /// Switching into yolo approves the requests already waiting in one go
+  /// Switching into yolo approves the requests already waiting in one go; ambiguous ones stay open
   pub(crate) fn flush_permissions(&self, c: &mut Core) {
     let pending: Vec<(String, String)> =
-      c.perms.pending.iter().filter_map(|p| best_allow(&p.options).ok().map(|o| (p.block_id.clone(), o))).collect();
+      c.perms.pending.iter().filter_map(|p| auto_allow(&p.options).map(|o| (p.block_id.clone(), o))).collect();
     for (block, option) in pending {
       self.resolve_permission_locked(c, &block, &option);
     }
@@ -408,6 +416,65 @@ impl AcpSession {
     self.await_question(rx, block_id, cancel, json!({ "outcome": "skip_interview" })).await
   }
 
+  /// A permission request that is really a question (`Vendor::question_permission`): one single-choice question whose
+  /// options are the request's, answered with the picked option id; skipping or closing the card cancels the request
+  async fn on_permission_question(self: &Arc<Self>, req: Value, tool_call_id: String, cancel: Cancel) -> Value {
+    let tool_call = req.get("toolCall").cloned().unwrap_or(Value::Null);
+    let options: Vec<QuestionOption> = req
+      .get("options")
+      .and_then(Value::as_array)
+      .into_iter()
+      .flatten()
+      .filter_map(|o| {
+        let id = o.get("optionId").and_then(Value::as_str).filter(|x| !x.is_empty())?.to_owned();
+        let label = o.get("name").and_then(Value::as_str).filter(|x| !x.trim().is_empty()).unwrap_or(&id).to_owned();
+        Some(QuestionOption { id, label, description: None })
+      })
+      .collect();
+    if options.is_empty() {
+      return cancelled_permission();
+    }
+    let session_id = req.get("sessionId").and_then(Value::as_str).map(str::to_owned);
+    let (rx, block_id) = {
+      let mut c = self.core.lock();
+      let Some(target) = Self::target_for(&mut c, session_id.as_deref()) else {
+        drop(c);
+        self.log(&format!("question request for unknown session {}", session_id.as_deref().unwrap_or("undefined")));
+        return cancelled_permission();
+      };
+      let text = tool_call
+        .get("title")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|x| !x.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| t("host.needApproval"));
+      let questions = vec![Question {
+        id: tool_call_id.clone(),
+        title: None,
+        text,
+        kind: QuestionKind::Single,
+        options,
+        other: Some(false),
+        numeric: None,
+        required: None,
+      }];
+      let block_id = self.open_question(&mut c, &target, questions.clone(), Some(tool_call_id), None);
+      Self::bump_target(&mut c, &target);
+      let (tx, rx) = oneshot::channel();
+      c.questions.pending.push(PendingQuestion {
+        tx,
+        block_id: block_id.clone(),
+        questions,
+        node_id: target.node_id(),
+        reply: QuestionReply::Permission,
+      });
+      self.touch(&mut c);
+      (rx, block_id)
+    };
+    self.await_question(rx, block_id, cancel, cancelled_permission()).await
+  }
+
   async fn await_question(self: &Arc<Self>, rx: oneshot::Receiver<Value>, block_id: String, cancel: Cancel, fallback: Value) -> Value {
     tokio::select! {
       r = rx => r.unwrap_or(fallback),
@@ -461,11 +528,19 @@ impl AcpSession {
     let mut c = self.core.lock();
     let Some(i) = c.questions.pending.iter().position(|p| p.block_id == block_id) else { return };
     let p = c.questions.pending.remove(i);
-    let given = clean_answers(&p.questions, answers);
+    let mut given = clean_answers(&p.questions, answers);
+    if matches!(p.reply, QuestionReply::Permission) {
+      // Only an offered option can answer a permission request
+      given.retain(|qid, a| p.questions.iter().any(|q| &q.id == qid && q.options.iter().any(|o| a.as_str() == Some(o.id.as_str()))));
+    }
     let empty = given.is_empty();
     settle_question(&mut c, &p, if skip || empty { QuestionOutcome::Skipped } else { QuestionOutcome::Answered }, Some(&given));
     let reply = match &p.reply {
       QuestionReply::Grok => grok_response(skip, &given),
+      QuestionReply::Permission => match given.values().next().and_then(Value::as_str).filter(|_| !skip) {
+        Some(id) => json!({ "outcome": { "outcome": "selected", "optionId": id } }),
+        None => cancelled_permission(),
+      },
       QuestionReply::Form { schema } => {
         if empty {
           json!({ "action": "decline" })
@@ -506,6 +581,7 @@ fn cancel_reply(p: &PendingQuestion) -> Value {
   match p.reply {
     QuestionReply::Grok => json!({ "outcome": "skip_interview" }),
     QuestionReply::Form { .. } => json!({ "action": "cancel" }),
+    QuestionReply::Permission => cancelled_permission(),
   }
 }
 

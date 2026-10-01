@@ -5,6 +5,8 @@
 //!   acpira agents [--json]                       the built-in agents, where each CLI was found and how it is initialized
 //!   acpira model-catalog [--out FILE]            fetch models.dev, print (or write) the trimmed model catalogue
 //!   acpira mcp                                   the MCP server handed to agents (show_image), over stdio
+//!   acpira install-agent <id> [--force] [--archive FILE]
+//!                                                download (or take FILE), verify and unpack an agent shipped as a native archive
 //!   acpira --version
 
 use std::path::PathBuf;
@@ -40,6 +42,9 @@ fn main() {
   }
   if args.first().map(String::as_str) == Some("mcp") {
     std::process::exit(acpira_host::host_mcp::run(VERSION));
+  }
+  if args.first().map(String::as_str) == Some("install-agent") {
+    std::process::exit(install_agent(&args[1..]));
   }
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("tokio runtime");
   let code = rt.block_on(async move {
@@ -101,6 +106,49 @@ async fn stdio(home: PathBuf, exe: Option<String>) -> i32 {
   let _ = end.send(String::new());
   let _ = tokio::time::timeout(std::time::Duration::from_secs(2), writer).await;
   code
+}
+
+/// `acpira install-agent <id> [--force] [--archive FILE]`: the settings page runs this in a terminal; data goes under
+/// ACPIRA_HOME / ~/.acpira. `--archive` installs a copy downloaded by hand (same digest check)
+fn install_agent(args: &[String]) -> i32 {
+  use acpira_host::acp::agents::native_release::{Installed, current_platform, install, release_of};
+  let archive = flag(args, "--archive").filter(|a| !a.is_empty()).map(|a| absolute(&PathBuf::from(a)));
+  let valued = args.iter().position(|a| a == "--archive").map(|i| i + 1);
+  let Some(id) = args.iter().enumerate().find(|(i, a)| !a.starts_with("--") && Some(*i) != valued).map(|(_, a)| a) else {
+    eprintln!("usage: acpira install-agent <id> [--force] [--archive FILE]   (agents: antigravity)");
+    return 2;
+  };
+  let Some(release) = release_of(id) else {
+    eprintln!("{id} is not installed this way (agents: antigravity)");
+    return 2;
+  };
+  let Some(platform) = current_platform() else {
+    eprintln!("unsupported platform {}-{}", std::env::consts::OS, std::env::consts::ARCH);
+    return 1;
+  };
+  if archive.is_none()
+    && let Some(asset) = release.asset(&platform)
+  {
+    println!("If the download fails on this network, fetch {} by hand and run this again with --archive <file>", asset.url);
+  }
+  let root = acpira_home();
+  println!("{} {} for {platform} → {}", release.registry_id, release.version, release.dir(&root).display());
+  let mut say = |line: &str| println!("{line}");
+  match install(release, &root, &platform, args.iter().any(|a| a == "--force"), archive.as_deref(), &mut say) {
+    Ok(Installed::Already { version, path }) => {
+      println!("{} {version} is already installed: {}", release.registry_id, path.display());
+      0
+    }
+    Ok(Installed::Fresh { version, path, .. }) => {
+      println!("Installed {} {version}: {}", release.registry_id, path.display());
+      println!("Acpira notices it on its next availability check (every 10 s while the agent is missing, and on window focus); new sessions use this version.");
+      0
+    }
+    Err(e) => {
+      eprintln!("install failed: {e:#}");
+      1
+    }
+  }
 }
 
 async fn shutdown_signal() {

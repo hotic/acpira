@@ -100,3 +100,51 @@ async fn switching_into_synthesized_yolo_approves_pending_permissions_too() {
   assert!(!blocks.iter().any(|b| b["type"] == "permission"));
   assert_eq!(blocks.iter().find(|b| b["id"] == "tc1").unwrap()["status"], "completed");
 }
+
+// Several allow_once options and no allow_always are answers, not an approval ladder: yolo leaves the card for a person
+#[tokio::test(flavor = "multi_thread")]
+async fn synthesized_yolo_leaves_an_ambiguous_permission_to_a_person() {
+  let fake = fake_or_skip!();
+  std::fs::create_dir_all("/tmp/acpira-no-modes").unwrap();
+  let h = Harness::new(&fake, json!({ "modes": syn_modes() }));
+  let s = started(&h, "/tmp/acpira-no-modes").await;
+  s.set_mode("yolo".into()).await.unwrap();
+  let p = spawn_prompt(&s, "perm-choices");
+  let perm = wait_block(&s, "permission").await;
+  assert_eq!(perm["options"].as_array().unwrap().iter().map(|o| o["id"].clone()).collect::<Vec<_>>(), [json!("staging"), json!("production"), json!("no")]);
+  s.resolve_permission(perm["id"].as_str().unwrap(), "production");
+  p.await.unwrap();
+  expect_match(agent_blocks(&view(&s)).last().unwrap(), json!({ "type": "text", "markdown": "picked production" }));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn switching_into_synthesized_yolo_keeps_an_ambiguous_card_open() {
+  let fake = fake_or_skip!();
+  std::fs::create_dir_all("/tmp/acpira-no-modes").unwrap();
+  let h = Harness::new(&fake, json!({ "modes": syn_modes() }));
+  let s = started(&h, "/tmp/acpira-no-modes").await;
+  let p = spawn_prompt(&s, "perm-choices");
+  let perm = wait_block(&s, "permission").await;
+  s.set_mode("yolo".into()).await.unwrap();
+  assert_eq!(view(&s)["running"], true);
+  assert!(agent_blocks(&view(&s)).iter().any(|b| b["type"] == "permission" && b["id"] == perm["id"]));
+  s.resolve_permission(perm["id"].as_str().unwrap(), "staging");
+  p.await.unwrap();
+  expect_match(agent_blocks(&view(&s)).last().unwrap(), json!({ "type": "text", "markdown": "picked staging" }));
+}
+
+// Antigravity's questions never ride yolo either: the question card opens and waits
+#[tokio::test(flavor = "multi_thread")]
+async fn an_antigravity_question_still_asks_under_synthesized_yolo() {
+  let fake = fake_or_skip!();
+  std::fs::create_dir_all("/tmp/acpira-no-modes").unwrap();
+  let h = Harness::for_agent(&fake, "antigravity", json!({ "modes": syn_modes() }));
+  let s = started(&h, "/tmp/acpira-no-modes").await;
+  s.set_mode("yolo".into()).await.unwrap();
+  let p = spawn_prompt(&s, "ask-agy");
+  let q = wait_block(&s, "question").await;
+  s.answer_questions(q["id"].as_str().unwrap(), &serde_json::from_value(json!({ "interaction_1a2b3c4d": "blue" })).unwrap(), false);
+  p.await.unwrap();
+  let text: String = agent_blocks(&view(&s)).iter().filter(|b| b["type"] == "text").map(|b| b["markdown"].as_str().unwrap().to_owned()).collect();
+  assert!(text.contains(r#""optionId":"blue""#), "{text}");
+}

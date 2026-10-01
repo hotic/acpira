@@ -214,3 +214,49 @@ async fn stopping_the_turn_closes_the_card_as_cancelled_and_a_late_answer_is_ign
   expect_absent(&questions(&s)[0], "answers");
   let _ = prompt;
 }
+
+// antigravity-acp 1.2.1 asks its ask_question tool over session/request_permission: an `interaction_*` tool call whose
+// options are the answers (all allow_once but deny / dont_trust / block). Under the antigravity id it is a question card
+#[tokio::test(flavor = "multi_thread")]
+async fn antigravity_asks_through_a_permission_request_and_gets_the_picked_option_back() {
+  let fake = fake_or_skip!();
+  let h = Harness::for_agent(&fake, "antigravity", json!({}));
+  let (s, p, card) = asked(&h, "ask-agy").await;
+  assert!(!agent_blocks(&view(&s)).iter().any(|b| b["type"] == "permission"));
+  assert_eq!(card["toolCallId"], "interaction_1a2b3c4d");
+  expect_match(&card["questions"][0], json!({ "id": "interaction_1a2b3c4d", "text": "Which colour should the badge be?", "kind": "single", "other": false,
+    "options": [{ "id": "blue", "label": "Blue" }, { "id": "green", "label": "Green" }, { "id": "deny", "label": "Neither" }] }));
+  // Only an offered option answers; the free-text a card cannot send here is dropped
+  s.answer_questions(card["id"].as_str().unwrap(), &answers(json!({ "interaction_1a2b3c4d": "green" })), false);
+  p.await.unwrap();
+  expect_eq(reply(&s), json!({ "outcome": { "outcome": "selected", "optionId": "green" } }));
+  expect_match(&questions(&s)[0], json!({ "outcome": "answered", "answers": { "interaction_1a2b3c4d": "green" } }));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn skipping_an_antigravity_question_cancels_the_request_instead_of_picking_an_answer() {
+  let fake = fake_or_skip!();
+  for (given, skip) in [(json!({}), true), (json!({ "interaction_1a2b3c4d": "purple" }), false), (json!({ "interaction_1a2b3c4d": "blue" }), true)] {
+    let h = Harness::for_agent(&fake, "antigravity", json!({}));
+    let (s, p, card) = asked(&h, "ask-agy").await;
+    s.answer_questions(card["id"].as_str().unwrap(), &answers(given.clone()), skip);
+    p.await.unwrap();
+    expect_eq(reply(&s), json!({ "outcome": { "outcome": "cancelled" } }));
+    assert_eq!(questions(&s)[0]["outcome"], "skipped", "{given} skip={skip}");
+  }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_same_request_from_another_agent_id_stays_a_permission_card() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  let p = spawn_prompt(&s, "ask-agy");
+  until(|| agent_blocks(&view(&s)).iter().any(|b| b["type"] == "permission"), 5000).await;
+  assert!(questions(&s).is_empty());
+  let perm = agent_blocks(&view(&s)).into_iter().find(|b| b["type"] == "permission").unwrap();
+  s.resolve_permission(perm["id"].as_str().unwrap(), "blue");
+  p.await.unwrap();
+  expect_eq(reply(&s), json!({ "outcome": { "outcome": "selected", "optionId": "blue" } }));
+}

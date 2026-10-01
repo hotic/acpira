@@ -1,15 +1,19 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, extname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { devinAuthenticate, readDevinLogin } from './lib/devin';
 import { RawAgent, RpcError } from './lib/rawAcp';
-import { builtinAgent } from './lib/sidecarBin';
+import { builtinAgent, builtinAgents, type BuiltinAgent } from './lib/sidecarBin';
 
-// Usage: pnpm probe grok [--auth] [--api-key-env VAR] [--import-local] [--image PATH] [--wait MS] [prompt]
+// Usage: pnpm probe grok [--cmd "<command line>"] [--cwd DIR] [--log FILE] [--auth] [--api-key-env VAR] [--import-local] [--image PATH] [--wait MS] [prompt]
 // Runs initialize + session/new against any agent, printing capabilities / authMethods / modes / configOptions; if a prompt is given, sends one turn and prints every update.
 // The agent is launched and initialized exactly as the Rust sidecar does it (`acpira agents --json`: same binary lookup, same
 // clientCapabilities); the wire is read raw, so nothing the agent sends is validated away.
+// --cmd: launch this command line instead of the built-in one (an agent that is not built in yet, e.g. the absolute path of
+//   agy_acp_server.par); it gets the same initialize params the sidecar sends every agent. <agent> is then only a label
+// --cwd DIR: the session/new cwd and the process cwd (default: this directory)
+// --log FILE: append every wire message both ways, untruncated, as ndjson (authenticate params with a secret are left out)
 // --auth: when session/new fails with -32000, call authenticate with the first authMethod (browser login will pop up) and retry; Devin's browser flow only authenticates this process, nothing is persisted
 // --api-key-env VAR: during authenticate, put the value of env var VAR into `_meta.api_key` (the field Devin recognizes), keeping the key off the command line
 // --import-local: hand Devin's local CLI login over through authenticate `_meta.api_key` before session/new, as the account layer does
@@ -33,18 +37,38 @@ const imagePath = valued('--image')?.value;
 const linkPath = valued('--link')?.value;
 const embedPath = valued('--embed')?.value;
 const waitMs = Number(valued('--wait')?.value ?? (withMcp ? 5000 : 0));
-const valueIdx = new Set([keyEnv, valued('--image'), valued('--link'), valued('--embed'), valued('--wait')].flatMap(v => (v ? [v.idx] : [])));
+const cmdLine = valued('--cmd')?.value;
+const cwd = resolve(valued('--cwd')?.value ?? process.cwd());
+const logFile = valued('--log')?.value;
+const valueIdx = new Set([keyEnv, valued('--image'), valued('--link'), valued('--embed'), valued('--wait'), valued('--cmd'), valued('--cwd'), valued('--log')].flatMap(v => (v ? [v.idx] : [])));
 const positional = argv.filter((a, i) => !a.startsWith('--') && !valueIdx.has(i));
 const [agentId = 'grok', ...rest] = positional;
 const promptText = rest.join(' ');
 
-const def = builtinAgent(agentId);
-console.log(`→ ${def.binary} ${def.args.join(' ')}`);
+// Whitespace splits words; single or double quotes keep spaces inside one word (no escapes, no expansion)
+function words(line: string): string[] {
+  return [...line.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map(m => m[1] ?? m[2] ?? m[3]!);
+}
+
+function explicitAgent(line: string): BuiltinAgent {
+  const [command = '', ...args] = words(line);
+  // The named built-in's initialize when there is one (Devin's opt-ins, terminal auth), else the first built-in's
+  const all = builtinAgents();
+  const initialize = (all.find(a => a.id === agentId) ?? all[0]!).initialize;
+  return { id: agentId, name: agentId, command, args, env: null, binary: command, spawn: { command, args, verbatim: false }, initialize };
+}
+const def = cmdLine ? explicitAgent(cmdLine) : builtinAgent(agentId);
+console.log(`→ ${def.binary} ${def.args.join(' ')} (cwd ${cwd})`);
+const started = Date.now();
+const elapsed = () => `${((Date.now() - started) / 1000).toFixed(2)}s`;
 
 type Obj = Record<string, unknown>;
 const show = (v: unknown) => JSON.stringify(v, null, 2);
 
-const agent = new RawAgent(def.spawn!, process.cwd(), def.env ?? {}, {
+const agent = new RawAgent(def.spawn!, cwd, def.env ?? {}, {
+  onMessage: (dir, msg, secret) => {
+    if (logFile) void appendFile(logFile, `${JSON.stringify({ t: Date.now() - started, dir, msg: secret ? { ...msg, params: '[secret]' } : msg })}\n`);
+  },
   onNotification: (method, params) => {
     if (method !== 'session/update') { console.log(`\n[${method}]`, JSON.stringify(params).slice(0, 600)); return; }
     const u = params.update as Obj;
@@ -59,7 +83,7 @@ const agent = new RawAgent(def.spawn!, process.cwd(), def.env ?? {}, {
   onRequest: (method, params) => {
     if (method === 'session/request_permission') {
       const options = (params.options ?? []) as { optionId: string; kind: string }[];
-      console.log('\n[permission]', (params.toolCall as Obj | undefined)?.title, options.map(o => `${o.optionId}(${o.kind})`).join(' / '));
+      console.log('\n[permission]', (params.toolCall as Obj | undefined)?.title, options.map(o => `${o.optionId}(${o.kind}${'name' in o ? ` "${String(o.name)}"` : ''})`).join(' / '));
       const allow = options.find(o => o.kind === 'allow_once') ?? options[0];
       return allow ? { outcome: { outcome: 'selected', optionId: allow.optionId } } : { outcome: { outcome: 'cancelled' } };
     }
@@ -91,7 +115,7 @@ try {
   await agent.kill();
   process.exit(1);
 }
-console.log('initialize →', show(init));
+console.log(`initialize (${elapsed()}) →`, show(init));
 const authMethods = (init.authMethods ?? []) as { id: string; name?: string; description?: string }[];
 const promptCaps = ((init.agentCapabilities as Obj | undefined)?.promptCapabilities ?? {}) as Obj;
 
@@ -116,7 +140,7 @@ const mcpServers = withMcp
   : [];
 
 async function newSession(): Promise<Obj> {
-  const req = { cwd: process.cwd(), mcpServers };
+  const req = { cwd, mcpServers };
   try {
     return await agent.request<Obj>('session/new', req);
   } catch (e) {
@@ -131,7 +155,7 @@ async function newSession(): Promise<Obj> {
 
 try {
   const s = await newSession();
-  console.log('session/new →', show(s));
+  console.log(`session/new (${elapsed()}) →`, show(s));
   // An attachment flag alone also sends a turn (text block omitted), to check how an agent takes a prompt with no text
   if (promptText || imagePath || linkPath || embedPath) {
     const prompt: Obj[] = promptText ? [{ type: 'text', text: promptText }] : [];

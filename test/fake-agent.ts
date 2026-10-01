@@ -2,6 +2,7 @@ import { Readable, Writable } from 'node:stream';
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
 import * as acp from '@agentclientprotocol/sdk';
 
 // Fake ACP agent: runs in a child process, plays different scripts based on the prompt text, feeding events to the AcpSession tests
@@ -32,7 +33,10 @@ import * as acp from '@agentclientprotocol/sdk';
 //   (FAKE_STOP_LOG records the request params); =orphan spawns with showInTranscript and no toolCallId, then names one;
 //   =child puts the task on a subagent session that outlives the parent's turn
 // "ask-devin" / "ask-kimi" → the ask_user_question tool call followed by an elicitation/create form shaped like that CLI's (Devin: no toolCallId, label in const,
-// description in title, allowOther; Kimi: toolCallId, question texts joined in message); "ask-grok" → the `_x.ai/ask_user_question` request; the reply echoes what came back
+// description in title, allowOther; Kimi: toolCallId, question texts joined in message); "ask-grok" → the `_x.ai/ask_user_question` request;
+// "ask-agy" → antigravity-acp 1.2.1's ask_question: an `interaction_*` tool call (title = the question, rawInput {}) and a
+// session/request_permission whose options are the answers, all allow_once but `deny`; the reply echoes what came back.
+// "perm-choices" → an ordinary tool's permission with two allow_once options and no allow_always; the reply names the pick
 // Resume: when resume doesn't know the sessionId, a cwd containing "gone" mimics Devin's session_not_found, otherwise reports unknown session;
 // "dsh-active" / "dsh-cwd" / "dsh-unresumable" / "dsh-mcp" mimic DeepSeek Harness answering bare invalidParams for an active session,
 // a cwd mismatch, an unresumable session and an MCP config error
@@ -70,6 +74,15 @@ import * as acp from '@agentclientprotocol/sdk';
 // =codex-late: a steer during "slow" ends that turn first (idle, end_turn) and then lands idle, the race the host has to absorb;
 // =codex-gap: "slow" stops after 10 chunks, reports idle and answers the prompt 600 ms later.
 // FAKE_STEER_LOG → append every steering request's text to that file
+
+// FAKE_HELPER_PIDFILE → start a helper that ignores SIGTERM in this process's group (antigravity's localharness_external
+// stand-in) and write its pid to that file; with FAKE_HELPER_EXIT the leader then exits by itself
+if (process.env.FAKE_HELPER_PIDFILE) {
+  const helper = spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1 << 30)", 'acpira-fake-helper'], { stdio: 'ignore' });
+  writeFileSync(process.env.FAKE_HELPER_PIDFILE, String(helper.pid));
+  // FAKE_HELPER_EXIT: the leader dies on its own right after starting the helper (a crash before initialize)
+  if (process.env.FAKE_HELPER_EXIT) process.exit(3);
+}
 
 if (process.env.FAKE_STUBBORN) {
   process.on('SIGTERM', () => {});
@@ -1090,6 +1103,22 @@ const app = acp.agent({ name: 'fake-agent' })
 
     // "perm-meta" → the claude / codex adapters' `_meta.permission` (version 1): card title + reason + defaultToNo,
     // and a per-option `_meta.permission.description`; the reply echoes which optionId was picked
+    if (text === 'perm-choices') {
+      await send({ sessionUpdate: 'tool_call', toolCallId: 'pa1', title: 'Deploy', kind: 'execute', status: 'pending', rawInput: { command: 'deploy' } });
+      const perm = await client.request(acp.methods.client.session.requestPermission, {
+        sessionId: sid,
+        toolCall: { toolCallId: 'pa1', title: 'Deploy' },
+        options: [
+          { optionId: 'staging', name: 'Deploy to staging', kind: 'allow_once' },
+          { optionId: 'production', name: 'Deploy to production', kind: 'allow_once' },
+          { optionId: 'no', name: 'Do not deploy', kind: 'reject_once' },
+        ],
+      });
+      const picked = perm.outcome.outcome === 'selected' ? perm.outcome.optionId : perm.outcome.outcome;
+      await send({ sessionUpdate: 'tool_call_update', toolCallId: 'pa1', status: picked === 'no' ? 'failed' : 'completed' });
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `picked ${picked}` } });
+      return { stopReason: 'end_turn' };
+    }
     if (text === 'perm-meta') {
       await send({ sessionUpdate: 'tool_call', toolCallId: 'pm1', title: 'Bash', kind: 'execute', status: 'pending', rawInput: { command: 'rm -rf build' } });
       const perm = await client.request(acp.methods.client.session.requestPermission, {
@@ -1159,9 +1188,21 @@ async function ask(text: string, sid: string, send: (u: acp.SessionUpdate) => Pr
     { header: 'Name', question: 'What should the file be called?', options: [{ label: 'report', description: 'A generic report' }, { label: 'notes', description: 'Loose notes' }] },
     { header: 'Folders', question: 'Where should it go?', options: [{ label: 'src' }, { label: 'docs' }], multiSelect: true },
   ];
-  const id = 'ask1';
+  const id = text === 'ask-agy' ? 'interaction_1a2b3c4d' : 'ask1';
   let reply: string;
-  if (text === 'ask-grok') {
+  if (text === 'ask-agy') {
+    await send({ sessionUpdate: 'tool_call', toolCallId: id, title: 'Which colour should the badge be?', kind: 'other', status: 'pending', rawInput: {} });
+    const r = await client.request(acp.methods.client.session.requestPermission, {
+      sessionId: sid,
+      toolCall: { toolCallId: id, title: 'Which colour should the badge be?', rawInput: {} },
+      options: [
+        { optionId: 'blue', name: 'Blue', kind: 'allow_once' },
+        { optionId: 'green', name: 'Green', kind: 'allow_once' },
+        { optionId: 'deny', name: 'Neither', kind: 'reject_once' },
+      ],
+    });
+    reply = JSON.stringify(r);
+  } else if (text === 'ask-grok') {
     await send({ sessionUpdate: 'tool_call', toolCallId: id, title: 'ask_user_question', rawInput: { questions } });
     const r = await client.request<Record<string, unknown>>('_x.ai/ask_user_question', { sessionId: sid, toolCallId: id, questions, mode: 'default' });
     reply = JSON.stringify(r);

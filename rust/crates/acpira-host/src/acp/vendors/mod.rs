@@ -11,6 +11,7 @@ pub mod steering;
 /// The built-in agents whose adapters the session handles specially
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Vendor {
+  Antigravity,
   Claude,
   Grok,
   Kimi,
@@ -38,6 +39,7 @@ impl UsagePoll {
 impl Vendor {
   pub fn of(agent: &str) -> Vendor {
     match agent {
+      "antigravity" => Vendor::Antigravity,
       "claude" => Vendor::Claude,
       "grok" => Vendor::Grok,
       "kimi" => Vendor::Kimi,
@@ -68,6 +70,14 @@ impl Vendor {
   /// session/new, resume and load ask for summarized thinking (`claude_thinking`)
   pub fn summarized_thinking(self) -> bool {
     self == Vendor::Claude
+  }
+
+  /// `ask_question` arrives as `session/request_permission` on an `interaction_*` tool call whose options are the
+  /// answers, all `allow_once` (antigravity-acp 1.2.1 source): it opens a question card instead of a permission card
+  pub fn question_permission(self, tool_call: &serde_json::Value) -> bool {
+    self == Vendor::Antigravity
+      && tool_call.get("toolCallId").and_then(serde_json::Value::as_str).is_some_and(|id| id.starts_with("interaction_"))
+      && tool_call.get("rawInput").is_none_or(|r| r.is_null() || r.as_object().is_some_and(|o| o.is_empty()))
   }
 
   /// Leaving plan mode shows up only in the approval tool's output, without a current_mode_update (Kimi 0.41.0)

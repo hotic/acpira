@@ -75,6 +75,67 @@ async fn kill_escalates_to_sigkill_when_the_cli_ignores_the_polite_signal() {
   assert!(t0.elapsed() >= Duration::from_millis(1500));
 }
 
+// A native release (antigravity: the .par plus the localharness_external it starts) leads its own process group: kill
+// takes a helper that ignored SIGTERM down with the leader. The same agent without a release leaves the helper behind,
+// which this test then ends itself
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_native_release_is_killed_with_its_whole_process_group() {
+  let fake = fake_or_skip!();
+  let alive = |pid: i32| unsafe { libc::kill(pid, 0) == 0 };
+  for grouped in [true, false] {
+    let (mut def, _) = fake_def(&fake);
+    if grouped {
+      def.release = Some(&acpira_host::acp::agents::native_release::ANTIGRAVITY);
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let pidfile = dir.path().join("helper.pid");
+    let rec = Recorder::default();
+    let extra = env(&[("FAKE_HELPER_PIDFILE", pidfile.to_str().unwrap())]);
+    let proc = AgentProcess::spawn(&def, &node(&fake).await, "/tmp", Arc::new(rec.clone()), Some(&extra), None).await.unwrap();
+    until(|| std::fs::read_to_string(&pidfile).is_ok_and(|s| !s.is_empty()), 5000).await;
+    let helper: i32 = std::fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
+    assert!(alive(helper));
+    proc.kill().await;
+    exited(&rec).await;
+    if grouped {
+      until(|| !alive(helper) || zombie(helper), 5000).await;
+    } else {
+      tokio::time::sleep(Duration::from_millis(300)).await;
+      assert!(alive(helper) && !zombie(helper), "without a group the helper is out of reach");
+      unsafe { libc::kill(helper, libc::SIGKILL) };
+    }
+  }
+}
+
+// The leader dying on its own (here before initialize answers) still takes its helpers along: the group is swept
+// before the leader is reaped, so the group id cannot have been handed to anyone else yet
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_native_release_that_crashes_leaves_no_helper_behind() {
+  let fake = fake_or_skip!();
+  let alive = |pid: i32| unsafe { libc::kill(pid, 0) == 0 };
+  let (mut def, _) = fake_def(&fake);
+  def.release = Some(&acpira_host::acp::agents::native_release::ANTIGRAVITY);
+  let dir = tempfile::tempdir().unwrap();
+  let pidfile = dir.path().join("helper.pid");
+  let rec = Recorder::default();
+  let extra = env(&[("FAKE_HELPER_PIDFILE", pidfile.to_str().unwrap()), ("FAKE_HELPER_EXIT", "1")]);
+  let started = AgentProcess::spawn(&def, &node(&fake).await, "/tmp", Arc::new(rec.clone()), Some(&extra), None).await;
+  assert!(started.is_err(), "the leader exits before initialize");
+  let helper: i32 = std::fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
+  until(|| !alive(helper) || zombie(helper), 5000).await;
+}
+
+/// A killed helper whose parent already exited is reaped by init; until then it shows as a zombie
+#[cfg(unix)]
+fn zombie(pid: i32) -> bool {
+  std::process::Command::new("ps")
+    .args(["-o", "stat=", "-p", &pid.to_string()])
+    .output()
+    .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim_start().starts_with('Z'))
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_air_capabilities_are_advertised_and_native_subagent_sessions_can_be_opted_out() {
   let fake = fake_or_skip!();
