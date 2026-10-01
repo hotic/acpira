@@ -963,6 +963,22 @@ fn local_images_in_reply_markdown_are_read_once_even_when_the_syntax_spans_chunk
 }
 
 #[test]
+fn a_reply_image_with_a_multibyte_relative_path_resolves_against_the_cwd() {
+  let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+  let mut s = state();
+  let log = seen.clone();
+  s.ctx.cwd = Some("/work".into());
+  s.ctx.save_image_file = Some(Arc::new(move |p: &str| {
+    log.lock().unwrap().push(p.to_owned());
+    Some("cn.png".into())
+  }));
+  // The fifth byte of `截图.png` falls inside a character: the `file:` check must not slice there
+  apply(&mut s, json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "![截图](截图.png)" } }));
+  assert_eq!(*seen.lock().unwrap(), ["/work/截图.png"]);
+  expect_match(block(&s, 0, 0), json!({ "images": [{ "uri": "截图.png", "blob": "cn.png" }] }));
+}
+
+#[test]
 fn the_host_show_image_tool_becomes_an_image_row_for_claude_and_codex_wire_shapes() {
   let mut s = state();
   s.ctx.save_image_file = Some(Arc::new(|p: &str| Some(format!("b-{}", p.rsplit('/').next().unwrap()))));
