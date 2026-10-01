@@ -217,7 +217,7 @@ pub fn builtin_agents() -> Vec<AgentDef> {
       }),
       ..base(
         "claude",
-        "Claude",
+        "Claude Code",
         "claude-agent-acp",
         &[],
         &["~/.local/bin/claude-agent-acp", "/opt/homebrew/bin/claude-agent-acp", "/usr/local/bin/claude-agent-acp"],
@@ -269,7 +269,7 @@ pub fn antigravity(platform: &str) -> AgentDef {
   AgentDef {
     release: Some(r),
     install: Some(InstallDef { posix: None, windows: None, docs: Some(s(r.docs)) }),
-    ..base("antigravity", "Google Antigravity", cmd, &args, &[])
+    ..base("antigravity", "Antigravity", cmd, &args, &[])
   }
 }
 
