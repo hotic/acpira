@@ -149,6 +149,11 @@ pub(crate) struct Core {
   pub start_outcome: Option<StartOutcome>,
   /// The last restore met a native session lock held by an agent of another Acpira sidecar: its pid, for take_over
   pub lock_holder: Option<u32>,
+  /// MCP server names the last session request carried, and those the agent could not start (left out from then on)
+  pub mcp_sent: Vec<String>,
+  pub mcp_skip: Vec<String>,
+  /// The settled turn asks for a fresh connection before anything else is sent (a server just joined `mcp_skip`)
+  pub reconnect_after_turn: bool,
   pub phase: Phase,
   pub replaying: bool,
   pub startup_banner: Option<String>,
@@ -233,6 +238,9 @@ impl AcpSession {
           auth_hint: None,
           start_outcome: None,
           lock_holder: None,
+          mcp_sent: vec![],
+          mcp_skip: vec![],
+          reconnect_after_turn: false,
           phase: Phase::default(),
           replaying: false,
           startup_banner: None,

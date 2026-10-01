@@ -41,6 +41,14 @@ impl AcpSession {
       None => vec![],
     };
     servers.extend(self.deps.host_mcp.as_ref().and_then(|h| h.entry_for(&self.agent)));
+    {
+      let mut c = self.core.lock();
+      if !c.mcp_skip.is_empty() {
+        servers.retain(|s| !c.mcp_skip.iter().any(|n| s.get("name").and_then(Value::as_str) == Some(n)));
+        self.log(&format!("MCP left out after failing to start: {}", c.mcp_skip.join(", ")));
+      }
+      c.mcp_sent = servers.iter().filter_map(|s| s.get("name").and_then(Value::as_str).map(str::to_owned)).collect();
+    }
     let mut req = json!({ "cwd": self.cwd, "mcpServers": servers });
     if let Some(id) = acp_id {
       req["sessionId"] = json!(id);
