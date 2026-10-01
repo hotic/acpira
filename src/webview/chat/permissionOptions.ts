@@ -50,6 +50,14 @@ export function quickChoices<T extends { kind: PermissionKind }>(options: T[]): 
   return { allow: options.find(o => o.kind === 'allow_once'), reject: options.find(o => o.kind === 'reject_once') };
 }
 
+// Several allow_once options and no allow_always make a list of answers, not an approval ladder (Antigravity's
+// ask_question sends every answer as allow_once): the card then lists every option as an equal button in wire order,
+// with nothing emphasized. Codex's two per-turn grants come with an allow_always and keep the usual layout. Mirrors the
+// engine's `ambiguous_allow`
+export function ambiguousChoices<T extends { kind: PermissionKind }>(options: T[]): boolean {
+  return !options.some(o => o.kind === 'allow_always') && options.filter(o => o.kind === 'allow_once').length > 1;
+}
+
 // ACP kinds do not describe command patterns or scope. Only shorten complete,
 // known CLI labels; unfamiliar choices retain their original text and IDs.
 export function permissionOption(option: Option, locale: Locale, plan = false) {

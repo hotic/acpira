@@ -4,14 +4,16 @@ import { Button } from '../ui/Button';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { Row } from '../ui/Row';
 import { getLocale, t } from '../i18n';
-import { permissionOption, permissionTitle, quickChoices } from './permissionOptions';
+import { ambiguousChoices, permissionOption, permissionTitle, quickChoices } from './permissionOptions';
 
 // Keep common decisions visible; the menu preserves every remaining wire option.
 export function Permission({ block, onChoose }: { block: PermissionBlock; onChoose?: (optionId: string) => void }) {
   const options = block.options.map(o => permissionOption(o, getLocale(), !!block.planId));
+  const flat = ambiguousChoices(options);
   // Positional quick buttons: first allow_once / reject_once in wire order, whatever the label says
-  const { allow, reject } = quickChoices(options);
-  const more = options.filter(o => o.id !== allow?.id && o.id !== reject?.id);
+  const { allow, reject } = flat ? {} : quickChoices(options);
+  const more = flat ? [] : options.filter(o => o.id !== allow?.id && o.id !== reject?.id);
+  const choice = 'h-auto min-h-ctl max-w-full whitespace-normal py-gap-half [overflow-wrap:anywhere]';
   // The adapter asked for a deny-by-default card: reject is the emphasized button, allow stays plain
   return (
     <div className="flex min-w-0 flex-col gap-gap rounded-lg border border-conversation-line bg-bg-1 p-pad">
@@ -29,10 +31,16 @@ export function Permission({ block, onChoose }: { block: PermissionBlock; onChoo
             </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
           </DropdownMenu.Root>
         )}
-        <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-gap">
-          {reject && <Button className="h-auto min-h-ctl max-w-full whitespace-normal py-gap-half [overflow-wrap:anywhere]" variant={block.defaultToNo ? 'primary' : undefined} onClick={() => onChoose?.(reject.id)}>{reject.label}</Button>}
-          {allow && <Button className="h-auto min-h-ctl max-w-full whitespace-normal py-gap-half [overflow-wrap:anywhere]" variant={block.defaultToNo ? undefined : 'primary'} onClick={() => onChoose?.(allow.id)}>{allow.label}</Button>}
-        </div>
+        {flat ? (
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-gap">
+            {options.map(o => <Button key={o.id} className={choice} title={o.detail} onClick={() => onChoose?.(o.id)}>{o.label}</Button>)}
+          </div>
+        ) : (
+          <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-gap">
+            {reject && <Button className={choice} variant={block.defaultToNo ? 'primary' : undefined} onClick={() => onChoose?.(reject.id)}>{reject.label}</Button>}
+            {allow && <Button className={choice} variant={block.defaultToNo ? undefined : 'primary'} onClick={() => onChoose?.(allow.id)}>{allow.label}</Button>}
+          </div>
+        )}
       </div>
     </div>
   );

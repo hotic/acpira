@@ -166,7 +166,7 @@ async fn an_agent_missing_a_required_helper_is_unavailable_and_says_what_is_miss
 #[test]
 fn opencode_dsh_and_pi_are_built_in_and_a_custom_entry_overrides_its_builtin() {
   let ids: Vec<String> = AgentRegistry::new(&json!({})).list().into_iter().map(|a| a.id).collect();
-  for id in ["grok", "devin", "kimi", "codex", "claude", "opencode", "dsh", "pi"] {
+  for id in ["grok", "devin", "kimi", "codex", "claude", "opencode", "dsh", "antigravity", "pi"] {
     assert!(ids.contains(&id.to_owned()), "{id}");
   }
   let r = AgentRegistry::new(&json!({ "opencode": { "name": "OC Fork", "command": "/x/oc-fork" } }));
@@ -217,6 +217,51 @@ fn install_info_follows_the_platform() {
   expect_eq(posix.install("grok"), json!({ "command": "curl -fsSL https://x.ai/cli/install.sh | bash", "docs": "https://docs.x.ai/build/overview" }));
   expect_eq(win.install("grok"), json!({ "command": "irm https://x.ai/cli/install.ps1 | iex", "docs": "https://docs.x.ai/build/overview" }));
   assert!(info(&posix, "kimi")["install"]["command"].as_str().unwrap().contains("code.kimi.com"));
+}
+
+#[test]
+fn antigravity_is_a_native_release_installed_by_this_executable() {
+  let r = AgentRegistry::with_os(&json!({}), Os::Posix);
+  let def = r.get("antigravity").unwrap();
+  let release = def.release.expect("pinned release");
+  assert_eq!((release.registry_id, release.version), ("antigravity-acp", "1.2.1"));
+  assert_eq!(def.command, if cfg!(windows) { "agy_acp_server.exe" } else { "agy_acp_server.par" });
+  assert_eq!(def.args, if cfg!(target_os = "linux") { vec!["--uid=".to_owned()] } else { vec![] });
+  assert!(def.login.is_none(), "login goes through the server's own authMethods");
+  let install = v(r.install("antigravity"));
+  assert!(install["command"].as_str().unwrap().ends_with(" install-agent antigravity"), "{install}");
+  assert_eq!(install["docs"], "https://antigravity.google/docs/ide/extensions");
+  assert!(AgentRegistry::with_os(&json!({}), Os::Windows).install("antigravity").unwrap().command.unwrap().starts_with("& '"));
+  // A custom entry under the same id is an ordinary command again
+  assert!(AgentRegistry::new(&json!({ "antigravity": { "command": "/x/agy" } })).get("antigravity").unwrap().release.is_none());
+}
+
+// The sidecar looks in $ACPIRA_HOME/agents/antigravity/<current>/ first and re-reads `current` on every pass
+#[cfg(unix)]
+#[test]
+fn the_managed_antigravity_install_is_found_through_current() {
+  use std::os::unix::fs::PermissionsExt;
+  let home = tempfile::tempdir().unwrap();
+  let binary = |home: &std::path::Path| {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_acpira")).args(["agents", "--json"]).env("ACPIRA_HOME", home).output().unwrap();
+    let j: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    j["agents"].as_array().unwrap().iter().find(|a| a["id"] == "antigravity").unwrap()["binary"].clone()
+  };
+  let dir = home.path().join("agents/antigravity");
+  for version in ["1.2.0", "1.2.1"] {
+    std::fs::create_dir_all(dir.join(version)).unwrap();
+    let launcher = dir.join(version).join("agy_acp_server.par");
+    std::fs::write(&launcher, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
+  }
+  std::fs::write(dir.join("current"), "1.2.0\n").unwrap();
+  assert_eq!(binary(home.path()), dir.join("1.2.0/agy_acp_server.par").to_string_lossy().as_ref());
+  std::fs::write(dir.join("current"), "1.2.1\n").unwrap();
+  assert_eq!(binary(home.path()), dir.join("1.2.1/agy_acp_server.par").to_string_lossy().as_ref());
+  // A `current` that names no complete install, or leaves the directory, is ignored
+  std::fs::write(dir.join("current"), "../../../bin\n").unwrap();
+  assert_ne!(binary(home.path()), json!("/bin/agy_acp_server.par"));
+  assert!(binary(home.path()).as_str().is_none_or(|b| !b.starts_with(home.path().to_str().unwrap())));
 }
 
 #[test]

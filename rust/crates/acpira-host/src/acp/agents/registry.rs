@@ -11,6 +11,7 @@ use serde_json::Value;
 use acpira_shared::transcript::{AgentId, AgentInfo, AgentInstall, SessionOption, StrMap};
 
 use crate::acp::agents::launch::{Env, Os, ProcessEnv, resolve_executable};
+use crate::acp::agents::native_release::{self, NativeRelease};
 use crate::i18n::tp;
 use crate::store::data_dir::home_dir;
 
@@ -74,6 +75,10 @@ pub struct AgentDef {
   pub subagents: bool,
   /// false opts out of the terminal-auth capability (default on)
   pub terminal_auth: bool,
+  /// A native release archive installed under `$ACPIRA_HOME/agents/<id>/` (`acpira install-agent <id>`): looked up there
+  /// first, spawned by its real path (the launcher finds its helpers next to it) in a process group of its own, so its
+  /// helper processes end with it
+  pub release: Option<&'static NativeRelease>,
 }
 
 fn s(v: &str) -> String {
@@ -239,6 +244,7 @@ pub fn builtin_agents() -> Vec<AgentDef> {
       ),
       ..base("dsh", "DSH", "dsh", &["--profile", "acp"], &["~/.local/bin/dsh", "/opt/homebrew/bin/dsh", "/usr/local/bin/dsh"])
     },
+    antigravity(native_release::current_platform().as_deref().unwrap_or("")),
     AgentDef {
       requires: list(&["pi"]),
       login: login("pi", &[]),
@@ -252,6 +258,19 @@ pub fn builtin_agents() -> Vec<AgentDef> {
       ..base("pi", "Pi", "pi-acp", &[], &["~/.local/bin/pi-acp", "/opt/homebrew/bin/pi-acp", "/usr/local/bin/pi-acp"])
     },
   ]
+}
+
+/// Google's official Antigravity ACP server (agy_acp_server 1.2.1): a native archive per platform, its launcher and
+/// arguments as the ACP Registry entry gives them; sign-in goes through ACP `authenticate` (a browser flow on the host)
+pub fn antigravity(platform: &str) -> AgentDef {
+  let r = &native_release::ANTIGRAVITY;
+  let (cmd, args) = r.launch(platform);
+  let args: Vec<&str> = args.iter().map(String::as_str).collect();
+  AgentDef {
+    release: Some(r),
+    install: Some(InstallDef { posix: None, windows: None, docs: Some(s(r.docs)) }),
+    ..base("antigravity", "Google Antigravity", cmd, &args, &[])
+  }
 }
 
 /// Custom agents from the acpira.agents setting (id → definition fragment)
@@ -333,6 +352,7 @@ impl AgentRegistry {
         subagents: c.subagents != Some(false),
         terminal_auth: c.terminal_auth != Some(false),
         ignore_modes: c.ignore_modes == Some(true),
+        release: None,
         login: login.split_first().map(|(cmd, rest)| LoginDef { command: cmd.clone(), args: rest.to_vec() }),
         install: (command.is_some() || docs.is_some()).then(|| InstallDef { posix: command.clone(), windows: command, docs }),
         adapter: None,
@@ -384,10 +404,18 @@ impl AgentRegistry {
       .collect()
   }
 
-  /// The install line for this platform (plus docs); None when the definition offers nothing usable here
+  /// The install line for this platform (plus docs); None when the definition offers nothing usable here. A native
+  /// release installs through this executable's own `install-agent`
   pub fn install(&self, id: &str) -> Option<AgentInstall> {
-    let def = self.defs.get(id)?.install.as_ref()?;
-    let command = if self.os == Os::Windows { def.windows.clone() } else { def.posix.clone() };
+    let agent = self.defs.get(id)?;
+    let def = agent.install.as_ref()?;
+    let command = match agent.release {
+      Some(r) => native_release::current_platform()
+        .filter(|p| r.asset(p).is_some())
+        .and_then(|_| native_release::install_command(&agent.id, self.os == Os::Windows)),
+      None if self.os == Os::Windows => def.windows.clone(),
+      None => def.posix.clone(),
+    };
     if command.is_none() && def.docs.is_none() {
       return None;
     }
@@ -442,15 +470,23 @@ impl AgentRegistry {
 
   async fn locate(&self, id: &str) -> Option<String> {
     let def = self.defs.get(id)?;
+    // A managed install is read fresh on every pass: `current` moves when a new version lands
+    let mut candidates = def.candidates.clone();
+    if let Some(r) = def.release {
+      candidates.insert(0, r.dir(&crate::store::data_dir::acpira_home()).join("<version>").join(&def.command).to_string_lossy().into_owned());
+      if let Some(managed) = r.managed_binary() {
+        candidates[0] = managed;
+      }
+    }
     let cached = self.resolved.lock().get(id).cloned();
     let found = match cached {
-      Some(c) if resolve_executable(&c, self.os, &ProcessEnv).await.is_some() => Some(c),
-      _ => resolve_command(&def.command, &def.candidates, self.os, &ProcessEnv).await,
+      Some(c) if def.release.is_none() && resolve_executable(&c, self.os, &ProcessEnv).await.is_some() => Some(c),
+      _ => resolve_command(&def.command, &candidates, self.os, &ProcessEnv).await,
     };
     let mut missing = vec![];
     if found.is_none() {
       missing.push(def.command.clone());
-      let dirs = search_dirs(&def.command, &def.candidates, self.os, &ProcessEnv);
+      let dirs = search_dirs(&def.command, &candidates, self.os, &ProcessEnv);
       self.searched.lock().insert(id.to_owned(), dirs);
     }
     for req in &def.requires {

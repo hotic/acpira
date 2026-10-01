@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { permissionOption, permissionTitle, planApprovalTitle, quickChoices } from '../src/webview/chat/permissionOptions';
+import { ambiguousChoices, permissionOption, permissionTitle, planApprovalTitle, quickChoices } from '../src/webview/chat/permissionOptions';
 import type { PermissionBlock } from '../src/shared/transcript';
 
 type Option = PermissionBlock['options'][number];
@@ -74,5 +74,14 @@ describe('permission option presentation', () => {
     ];
     expect(quickChoices(opts)).toEqual({ allow: opts[1], reject: opts[3] });
     expect(quickChoices([{ id: 'a', kind: 'allow_always' as const }])).toEqual({ allow: undefined, reject: undefined });
+  });
+  it('flags two allow_once options as ambiguous, so neither becomes the emphasized quick button', () => {
+    // antigravity-acp 1.2.1 ask_question: every answer is allow_once, only deny / dont_trust / block are reject_once
+    const answers = [{ id: 'blue', kind: 'allow_once' as const }, { id: 'green', kind: 'allow_once' as const }];
+    expect(ambiguousChoices(answers)).toBe(true);
+    expect(ambiguousChoices([...answers.slice(0, 1), { id: 'deny', kind: 'reject_once' as const }])).toBe(false);
+    expect(ambiguousChoices([{ id: 'allow_always', kind: 'allow_always' as const }, { id: 'allow', kind: 'allow_once' as const }, { id: 'deny', kind: 'reject_once' as const }])).toBe(false);
+    // Codex's permission profile: two per-turn grants under a session grant stay a ladder
+    expect(ambiguousChoices([...answers, { id: 'session', kind: 'allow_always' as const }])).toBe(false);
   });
 });

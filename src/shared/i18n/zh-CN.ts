@@ -288,6 +288,10 @@ export const zhCN = {
   'notice.method.codex:api-key': '用 OPENAI_API_KEY',
   'notice.method.opencode:opencode-login': '用 OpenCode 登录（终端）',
   'notice.method.pi:pi_terminal_login': '用 Pi 登录（终端）',
+  'notice.method.antigravity:oauth-personal': '用 Google 账号登录（浏览器）',
+  'notice.method.antigravity:oauth-business': '用 Gemini Enterprise 登录（浏览器）',
+  'notice.method.antigravity:gemini-api-key': '用 GEMINI_API_KEY',
+  'notice.method.antigravity:agent-platform': '用 Gemini Enterprise Agent Platform',
 
   // Conversation flow
   'turns.readFiles': '读取 {n} 个文件',

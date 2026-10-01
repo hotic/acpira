@@ -98,6 +98,7 @@ pub struct AgentProcess {
   /// The initialize response as the agent sent it
   pub init: Value,
   pub pid: Option<u32>,
+  signals: Option<Signals>,
   box_: HandlerBox,
   life: watch::Receiver<Life>,
   killed: parking_lot::Mutex<bool>,
@@ -139,6 +140,10 @@ impl AgentProcess {
     init_timeout: Option<Duration>,
   ) -> Result<Arc<AgentProcess>> {
     let box_: HandlerBox = Arc::new(parking_lot::RwLock::new(h));
+    // A native release finds its helpers next to its own path, which a symlink on PATH would hide
+    let real = def.release.and_then(|_| std::fs::canonicalize(binary).ok()).map(|p| p.to_string_lossy().into_owned());
+    let binary = real.as_deref().unwrap_or(binary);
+    let group = def.release.is_some() && cfg!(unix);
     let spec = spawn_spec(binary, &def.args, Os::current(), &ProcessEnv);
     let mut cmd = Command::new(&spec.command);
     #[cfg(windows)]
@@ -152,6 +157,10 @@ impl AgentProcess {
     #[cfg(not(windows))]
     cmd.args(&spec.args);
     cmd.current_dir(cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(false);
+    #[cfg(unix)]
+    if group {
+      cmd.process_group(0);
+    }
     // The directories the login shell adds reach the agent too (a node-script adapter needs `node` from them);
     // the definition's own env may still set PATH explicitly
     if let Some(path) = crate::acp::agents::login_path::merged() {
@@ -165,6 +174,7 @@ impl AgentProcess {
     }
     let mut child = cmd.spawn().map_err(|e| anyhow::Error::new(AgentSpawnError(e)))?;
     let pid = child.id();
+    let signals = pid.map(|pid| Signals { pid, group, reaped: Arc::new(parking_lot::Mutex::new(false)) });
     let stdin = child.stdin.take().expect("piped");
     let stdout = child.stdout.take().expect("piped");
     let stderr = child.stderr.take().expect("piped");
@@ -189,8 +199,21 @@ impl AgentProcess {
     let exit_box = box_.clone();
     let exit_conn = conn.clone();
     let (exit_info_tx, exit_info_rx) = watch::channel::<Option<(Option<i32>, Option<String>)>>(None);
+    let reaper = signals.clone();
     tokio::spawn(async move {
+      // A group leader is left unreaped until its group is swept: while it is a zombie its pid, and so the group id, cannot
+      // be reused, and helpers it left behind (crashed or not) go with it
+      if let Some(sig) = reaper.as_ref().filter(|s| s.group)
+        && leader_exited(sig.pid).await
+      {
+        let mut reaped = sig.reaped.lock();
+        sig.kill_group();
+        *reaped = true;
+      }
       let status = child.wait().await;
+      if let Some(sig) = &reaper {
+        *sig.reaped.lock() = true;
+      }
       let (code, signal) = match status {
         Ok(s) => (s.code(), signal_name(&s)),
         Err(_) => (None, None),
@@ -215,12 +238,12 @@ impl AgentProcess {
     };
     match outcome {
       Ok(init) => {
-        Ok(Arc::new(AgentProcess { def: def.clone(), conn, init, pid, box_, life: life_rx, killed: parking_lot::Mutex::new(false) }))
+        Ok(Arc::new(AgentProcess { def: def.clone(), conn, init, pid, signals, box_, life: life_rx, killed: parking_lot::Mutex::new(false) }))
       }
       Err(e) => {
         // A CLI that answered initialize with an error is still running: never leave it behind as an orphan
         conn.close();
-        terminate(pid, life_rx);
+        terminate(signals, life_rx);
         Err(e)
       }
     }
@@ -229,17 +252,15 @@ impl AgentProcess {
   fn kill_now(&self) {
     *self.killed.lock() = true;
     self.conn.close();
-    terminate(self.pid, self.life.clone());
+    terminate(self.signals.clone(), self.life.clone());
   }
 
   /// SIGKILL at once, for a host that is about to exit and cannot wait out the grace period
   pub fn kill_hard(&self) {
     *self.killed.lock() = true;
     self.conn.close();
-    if let Some(pid) = self.pid
-      && *self.life.borrow() != Life::Exited
-    {
-      send_signal(pid, true);
+    if let Some(sig) = &self.signals {
+      sig.send(true);
     }
   }
 
@@ -251,32 +272,86 @@ impl AgentProcess {
   }
 }
 
-fn terminate(pid: Option<u32>, life: watch::Receiver<Life>) {
+fn terminate(signals: Option<Signals>, life: watch::Receiver<Life>) {
   if *life.borrow() == Life::Exited {
     return;
   }
-  let Some(pid) = pid else { return };
-  send_signal(pid, false);
+  let Some(sig) = signals else { return };
+  sig.send(false);
   let mut life = life;
   tokio::spawn(async move {
     if tokio::time::timeout(KILL_GRACE, life.wait_for(|l| *l == Life::Exited)).await.is_err() {
-      send_signal(pid, true);
+      sig.send(true);
     }
   });
 }
 
+/// Where an agent's signals go. `group`: the pid leads a process group this process created (`process_group(0)` at
+/// spawn), so the whole group is signalled. Nothing is sent once the child was reaped: its pid may belong to someone
+/// else by then
+#[derive(Clone)]
+struct Signals {
+  pid: u32,
+  group: bool,
+  reaped: Arc<parking_lot::Mutex<bool>>,
+}
+
+impl Signals {
+  fn send(&self, force: bool) {
+    let reaped = self.reaped.lock();
+    if !*reaped {
+      send_signal(self.pid, self.group, force);
+    }
+  }
+
+  /// SIGKILL to the group, called by the reaper with the leader still unreaped
+  fn kill_group(&self) {
+    send_signal(self.pid, true, true);
+  }
+}
+
 #[cfg(unix)]
-fn send_signal(pid: u32, force: bool) {
-  // SAFETY: plain kill(2) on our own child's pid
+fn send_signal(pid: u32, group: bool, force: bool) {
+  let target = if group { -(pid as libc::pid_t) } else { pid as libc::pid_t };
+  // SAFETY: plain kill(2) on our own unreaped child's pid or the group it leads
   unsafe {
-    libc::kill(pid as libc::pid_t, if force { libc::SIGKILL } else { libc::SIGTERM });
+    libc::kill(target, if force { libc::SIGKILL } else { libc::SIGTERM });
   }
 }
 
 #[cfg(not(unix))]
-fn send_signal(pid: u32, _force: bool) {
+fn send_signal(pid: u32, _group: bool, _force: bool) {
   let _ =
     std::process::Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
+}
+
+/// Resolves once the child has exited, without reaping it (`waitid` with `WNOWAIT`), so the zombie keeps its pid. False
+/// when that could not be watched (no thread): the group is then left alone rather than swept while it may still run
+#[cfg(unix)]
+async fn leader_exited(pid: u32) -> bool {
+  let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+  let spawned = std::thread::Builder::new().name(format!("acpira-wait-{pid}")).spawn(move || {
+    let exited = loop {
+      // SAFETY: waitid fills a zeroed siginfo_t for our own child; WNOWAIT leaves it waitable for tokio
+      let r = unsafe {
+        let mut info: libc::siginfo_t = std::mem::zeroed();
+        libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, libc::WEXITED | libc::WNOWAIT)
+      };
+      if r == 0 {
+        break true;
+      }
+      if std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR) {
+        break false;
+      }
+    };
+    let _ = tx.send(exited);
+  });
+  spawned.is_ok() && rx.await.unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+async fn leader_exited(_pid: u32) -> bool {
+  false
 }
 
 #[cfg(unix)]

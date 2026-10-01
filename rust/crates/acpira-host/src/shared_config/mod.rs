@@ -39,7 +39,7 @@ pub fn mcp_provider(home: Arc<dyn Fn() -> String + Send + Sync>) -> McpProvider 
 }
 
 /// Built-in agents with shared wiring, in registry order
-pub const AGENTS: [&str; 8] = ["grok", "devin", "kimi", "codex", "claude", "opencode", "dsh", "pi"];
+pub const AGENTS: [&str; 9] = ["grok", "devin", "kimi", "codex", "claude", "opencode", "dsh", "antigravity", "pi"];
 
 /// Where the shared sources are, for one home and (optionally) one project
 #[derive(Clone, Debug)]
