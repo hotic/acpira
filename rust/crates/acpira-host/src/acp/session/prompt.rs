@@ -20,7 +20,8 @@ use crate::acp::session::{AcpSession, Core, num};
 use crate::acp::transcript::normalize::{activity_of, apply_session_failure, end_turn, fail_turn};
 use crate::acp::transport::process::AgentProcess;
 use crate::acp::transport::rpc::{BoxFuture, RpcError};
-use crate::acp::vendors::claude_window;
+use crate::acp::vendors::antigravity::ReplyError;
+use crate::acp::vendors::{Vendor, claude_window};
 use crate::i18n::{t, tp};
 use crate::limits::TITLE_MAX;
 use crate::util::{clip, js_num, now_ms, random_uuid};
@@ -437,6 +438,18 @@ impl AcpSession {
       cmd.mode = mode;
       cmd.options = options;
     }
+    // Antigravity reports a failed turn as the reply's last text: it becomes the turn's error
+    let failed = if stop == TurnStop::EndTurn && !auto {
+      agent_turn_mut(&mut c, agent_idx, started_at).and_then(|turn| take_reply_error(self.vendor, turn))
+    } else {
+      None
+    };
+    if let Some(e) = failed {
+      let error = self.reply_error(&mut c, e);
+      self.log(&format!("prompt failed in the reply: {}", error.message));
+      self.settle(&mut c, TurnStop::Cancelled, Some(error));
+      return Some(Settled { stop: TurnStop::Cancelled, exhausted });
+    }
     // Some CLIs acknowledge provider failures as empty end_turn responses: record the missing output
     let empty = agent_turn_mut(&mut c, agent_idx, started_at).is_some_and(|turn| {
       turn.command.is_none() && turn.blocks.iter().all(|b| matches!(b, AgentBlock::Text(x) if x.markdown.trim().is_empty()))
@@ -494,6 +507,26 @@ impl AcpSession {
     Some(Settled { stop: TurnStop::Cancelled, exhausted })
   }
 
+  /// The error card for a failure the agent sent as text. A shared MCP server it could not start is left out of this
+  /// session, and the connection is rebuilt without it once the turn is settled, so Retry can go through
+  fn reply_error(&self, c: &mut Core, e: ReplyError) -> TurnError {
+    let (message, kind) = match e {
+      ReplyError::McpFailed { server, reason } => {
+        let reason = reason.unwrap_or_else(|| "?".into());
+        let ours = c.mcp_sent.contains(&server);
+        if ours && !c.mcp_skip.contains(&server) {
+          c.mcp_skip.push(server.clone());
+          c.reconnect_after_turn = true;
+        }
+        let key = if ours { "host.agentMcpSkipped" } else { "host.agentMcpFailed" };
+        (tp(key, &[("name", &server), ("reason", &reason), ("agent", &self.def().name)]), "mcp_failed")
+      }
+      ReplyError::Region => (tp("host.regionUnsupported", &[("agent", &self.def().name)]), "region_unsupported"),
+      ReplyError::Other(text) => (text, "agent_error"),
+    };
+    TurnError { message, kind: Some(kind.into()), retryable: Some(true), ..Default::default() }
+  }
+
   /// After a settled turn: the compaction mark, then either park the queue (context overflow), switch accounts
   /// (quota exhausted) or compact / flush as usual
   fn finish_turn(self: &Arc<Self>, turn: &OpenTurn, auto: bool, compacting: bool, settled: Settled) {
@@ -512,6 +545,16 @@ impl AcpSession {
     }
     if settled.exhausted {
       tokio::spawn(self.clone().switch_after_exhaustion(turn.agent_idx, turn.started_at));
+      return;
+    }
+    // The queue flushes once the new connection is ready
+    if std::mem::take(&mut self.core.lock().reconnect_after_turn) {
+      let me = self.clone();
+      tokio::spawn(async move {
+        if let Err(e) = me.reconnect().await {
+          me.log(&format!("reconnect after the turn failed: {e}"));
+        }
+      });
       return;
     }
     self.after_prompt(auto, settled.stop);
@@ -575,6 +618,19 @@ impl AcpSession {
 }
 
 /// The agent turn a prompt opened, if the transcript still has it where it was put
+/// Cut a failure the vendor sends as text off the turn's last text block (the block goes when nothing else is left)
+fn take_reply_error(vendor: Vendor, turn: &mut AgentTurn) -> Option<ReplyError> {
+  let Some(AgentBlock::Text(x)) = turn.blocks.last_mut() else { return None };
+  let (at, e) = vendor.reply_error(&x.markdown)?;
+  let kept = x.markdown[..at].trim_end().to_owned();
+  if kept.is_empty() {
+    turn.blocks.pop();
+  } else {
+    x.markdown = kept;
+  }
+  Some(e)
+}
+
 pub(crate) fn agent_turn_mut(c: &mut Core, idx: usize, started_at: i64) -> Option<&mut AgentTurn> {
   match c.state.turns.get_mut(idx) {
     Some(Turn::Agent(a)) if a.started_at == Some(started_at) => Some(a),

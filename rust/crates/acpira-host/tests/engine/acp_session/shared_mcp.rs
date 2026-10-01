@@ -80,3 +80,38 @@ async fn without_shared_files_the_request_stays_empty() {
   assert_eq!(received(&log), [("new".to_owned(), json!([]))]);
   assert!(!h.logs().iter().any(|l| l.contains("shared MCP")));
 }
+
+// antigravity-acp stops every turn while a server it was given cannot start: that server is left out of the session and
+// the connection rebuilt, so the restored session carries the rest. One from the agent's own config is only reported
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_antigravity_cannot_start_is_left_out_after_a_reconnect() {
+  let fake = fake_or_skip!();
+  let t = tempfile::tempdir().unwrap();
+  let (home, native, log) = (t.path().join("home"), t.path().join("native"), t.path().join("mcp.log"));
+  std::fs::create_dir_all(home.join(".agents")).unwrap();
+  std::fs::create_dir_all(&native).unwrap();
+  std::fs::write(home.join(".agents/mcp.json"), r#"{ "mcpServers": { "files": { "command": "/bin/cat" }, "hilfa": { "command": "/bin/cat" } } }"#).unwrap();
+  let mut h = Harness::for_agent(&fake, "antigravity", json!({ "env": { "FAKE_MCP_TRACE": log, "FAKE_SESSION_DIR": native } }));
+  let home_s = home.to_string_lossy().into_owned();
+  h.deps.shared_mcp = Some(mcp_provider(Arc::new(move || home_s.clone())));
+  let s = started(&h, "/tmp").await;
+  let native_id = s.to_record().acp_session_id;
+  let fix = "Fix the MCP server, or remove it from your configuration and start a new session, to continue.";
+  prompt(&s, &format!("say:The MCP server 'hilfa' failed to initialize: dial tcp [::1]:4262: connect: connection refused. {fix}")).await;
+  let turn = last_turn(&view(&s));
+  expect_match(&turn, json!({ "stop": "error", "error": { "kind": "mcp_failed", "retryable": true } }));
+  let message = turn["error"]["message"].as_str().unwrap().to_owned();
+  assert!(message.contains("hilfa") && message.contains("connection refused") && message.contains("Retry"), "{message}");
+  until(|| received(&log).len() == 2 && view(&s)["status"] == "ready", 10_000).await;
+  let got = received(&log);
+  assert_eq!(got[0].1.as_array().unwrap().len(), 2);
+  assert_ne!(got[1].0, "new");
+  expect_eq(&got[1].1, json!([{ "name": "files", "command": "/bin/cat", "args": [], "env": [] }]));
+  assert_eq!(s.to_record().acp_session_id, native_id);
+
+  prompt(&s, &format!("say:The MCP server 'own' failed to initialize. {fix}")).await;
+  let message = last_turn(&view(&s))["error"]["message"].as_str().unwrap().to_owned();
+  assert!(message.contains("mcp_config.json"), "{message}");
+  tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+  assert_eq!(received(&log).len(), 2);
+}

@@ -29,6 +29,9 @@ pub fn rpc_of(e: &anyhow::Error) -> Option<&RpcError> {
 static AUTH_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)auth").unwrap());
 static AUTH_WHY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)required|login|unauthor").unwrap());
 static AUTH_WORDS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)auth|credential|login|logged|unauthor").unwrap());
+static GLOG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^([IWEFD])\d{4} \d{2}:\d{2}:\d{2}\.\d+\s+\d+\s+[\w.-]+:\d+\]").unwrap());
+/// A sign-in link printed while the browser opens (antigravity-acp `Open the following link to authenticate …: <url>`)
+static SIGN_IN_LINK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(?:open|visit|go to)\b.*\bhttps?://").unwrap());
 static GONE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)session not found").unwrap());
 static LOCKED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)already active|in use|held by|locked").unwrap());
 static UNRESUMABLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)not resumable|cannot be resumed").unwrap());
@@ -111,8 +114,16 @@ pub fn turn_error_of(e: &anyhow::Error) -> TurnError {
 
 /// A human-readable reason out of one stderr line when it is about authentication
 pub fn auth_hint_of(line: &str) -> Option<String> {
-  let text = line.trim();
+  let mut text = line.trim();
+  // absl / glog (antigravity-acp): info and debug lines are progress, not a reason; warnings and errors lose the prefix
+  if let Some(m) = GLOG.captures(text) {
+    if matches!(&m[1], "I" | "D") {
+      return None;
+    }
+    text = text[m.get(0).unwrap().end()..].trim();
+  }
   if text.is_empty()
+    || SIGN_IN_LINK.is_match(text)
     || text.contains("jsonrpc::outgoing_actor")
     || text.contains("ACP: Creating session without credentials - agent may not work")
   {
@@ -223,6 +234,24 @@ mod tests {
     let e = rpc("Internal error", Some(json!({ "details": why })));
     assert_eq!(error_text(&e), format!("Internal error: {why}"));
     assert_eq!(turn_error_of(&e).message, format!("Internal error: {why}"));
+  }
+
+  #[test]
+  fn antigravity_progress_logs_are_not_login_reasons() {
+    // antigravity-acp 1.1.1 stderr around a browser login
+    for line in [
+      "I1001 10:07:20.330541 8325766784 server.py:2390] Authenticate called with method_id='oauth-personal', kwargs={}",
+      "I1001 10:07:20.536166 6149386240 credential_manager.py:553] Credentials missing or invalid. Launching browser login flow...",
+      "I1001 10:08:55.140615 8325766784 settings.py:302] settings: path=/Users/x/.gemini/antigravity-acp/settings.json status=ok auth.type=oauth-personal",
+      "Open the following link to authenticate the ACP server: https://accounts.google.com/o/oauth2/v2/auth?response_type=code",
+    ] {
+      assert_eq!(auth_hint_of(line), None, "{line}");
+    }
+    assert_eq!(
+      auth_hint_of("E1001 10:09:01.701020 8325766784 oauth_manager.py:90] Credential refresh failed: invalid_grant").as_deref(),
+      Some("Credential refresh failed: invalid_grant")
+    );
+    assert_eq!(auth_hint_of("Error: not logged in").as_deref(), Some("Error: not logged in"));
   }
 
   #[test]

@@ -432,6 +432,11 @@ const app = acp.agent({ name: 'fake-agent' })
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: params.prompt.map(p => p.type).join(',') } });
       return { stopReason: 'end_turn' };
     }
+    // "say:<text>" → exactly that text as the reply ("||" splits it into chunks): antigravity-acp reports a failed turn this way
+    if (text.startsWith('say:')) {
+      for (const part of text.slice(4).split('||')) await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: part } });
+      return { stopReason: 'end_turn' };
+    }
     if (text === 'inspect-native-history') {
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(readSession(sid)) } });
       return { stopReason: 'end_turn' };

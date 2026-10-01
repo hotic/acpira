@@ -84,3 +84,31 @@ async fn an_idle_failure_synthesizes_its_own_turn_and_a_load_replay_does_not_dup
   let notices: Vec<Value> = agent_blocks(&view(&rec)).into_iter().filter(|b| b["type"] == "notice").collect();
   expect_match(notices, json!([{ "id": "sess-1", "revision": 1 }]));
 }
+
+// antigravity-acp 1.1.1 / 1.2.1 send a failed turn as the reply's last text and end_turn: the tail becomes the turn's
+// error, output streamed before it stays
+#[tokio::test(flavor = "multi_thread")]
+async fn an_antigravity_failure_reply_becomes_the_turn_error() {
+  let fake = fake_or_skip!();
+  let h = Harness::for_agent(&fake, "antigravity", json!({}));
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "say:Reading the file.||\n\nAgent execution error: Agent execution terminated due to error. (\"request failed (code 400): User location is not supported for the API use.\")").await;
+  let turn = last_turn(&view(&s));
+  expect_match(&turn, json!({ "stop": "error", "error": { "kind": "region_unsupported", "retryable": true } }));
+  assert!(turn["error"]["message"].as_str().unwrap().contains("User location is not supported"));
+  let texts: Vec<Value> = turn["blocks"].as_array().unwrap().iter().filter(|b| b["type"] == "text").cloned().collect();
+  assert_eq!(texts.len(), 1);
+  assert_eq!(texts[0]["markdown"], "Reading the file.");
+  expect_match(view(&s), json!({ "status": "ready", "running": false }));
+
+  prompt(&s, "say:Agent execution error: Agent execution terminated due to error. (\"request failed (code 503): overloaded\")").await;
+  let turn = last_turn(&view(&s));
+  expect_match(&turn, json!({ "stop": "error", "error": { "kind": "agent_error", "message": "request failed (code 503): overloaded" } }));
+  assert!(turn["blocks"].as_array().unwrap().iter().all(|b| b["type"] != "text"));
+
+  // The same text from another agent is a reply
+  let h = Harness::new(&fake, json!({}));
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "say:Agent execution error: boom").await;
+  expect_match(last_turn(&view(&s)), json!({ "stop": "end_turn" }));
+}

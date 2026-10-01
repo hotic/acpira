@@ -2,6 +2,7 @@
 //! the modules below hold the details of each quirk. Keyed by the built-in agent id, so a user-defined agent that
 //! launches one of these CLIs under another id gets none of them
 
+pub mod antigravity;
 pub mod claude_thinking;
 pub mod claude_window;
 pub mod grok;
@@ -78,6 +79,11 @@ impl Vendor {
     self == Vendor::Antigravity
       && tool_call.get("toolCallId").and_then(serde_json::Value::as_str).is_some_and(|id| id.starts_with("interaction_"))
       && tool_call.get("rawInput").is_none_or(|r| r.is_null() || r.as_object().is_some_and(|o| o.is_empty()))
+  }
+
+  /// A failed turn arrives as the reply's last text with `end_turn` (`antigravity::reply_error`)
+  pub fn reply_error(self, text: &str) -> Option<(usize, antigravity::ReplyError)> {
+    if self == Vendor::Antigravity { antigravity::reply_error(text) } else { None }
   }
 
   /// Leaving plan mode shows up only in the approval tool's output, without a current_mode_update (Kimi 0.41.0)
