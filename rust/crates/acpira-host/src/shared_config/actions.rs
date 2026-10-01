@@ -20,6 +20,7 @@ use super::links::{self, Spot};
 use super::view::{self, CLAUDE_GLOBAL_IMPORT, CLAUDE_PROJECT_IMPORT, Wire, WireKind};
 use super::{AGENTS, Places, mcp, pi_trust, scope_of_template};
 use crate::agent_ext::{RuleWire, agent_ext};
+use crate::store::file_lock::with_file_lock;
 use crate::store::transcript_store::LogFn;
 
 /// What a finished action asks the shell to do next
@@ -343,17 +344,17 @@ impl SharedConfig {
       }
       SharedAction::AddMcp { scope, json, name } => {
         let file = places.mcp_file(scope).ok_or_else(|| anyhow!("no project"))?;
-        blocking(move || mcp::add(&file, &json, name.as_deref()).map(|_| ())).await?;
+        locked_edit(file, move |f| mcp::add(f, &json, name.as_deref()).map(|_| ())).await?;
         Ok(Outcome::default())
       }
       SharedAction::ToggleMcp { scope, name, enabled } => {
         let file = mcp_file_of(places, scope, &name)?;
-        blocking(move || mcp::toggle(&file, &name, enabled)).await?;
+        locked_edit(file, move |f| mcp::toggle(f, &name, enabled)).await?;
         Ok(Outcome::default())
       }
       SharedAction::RemoveMcp { scope, name } => {
         let file = mcp_file_of(places, scope, &name)?;
-        blocking(move || mcp::remove(&file, &name)).await?;
+        locked_edit(file, move |f| mcp::remove(f, &name)).await?;
         Ok(Outcome::default())
       }
     }
@@ -410,6 +411,16 @@ fn rel(path: &Path, root: &Path) -> String {
 
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
   tokio::task::spawn_blocking(f).await.map_err(|e| anyhow!("{e}"))?
+}
+
+/// A read-modify-write of a shared config file, under the cross-process file lock: every window's sidecar edits the
+/// same file, and two unlocked edits would each write back a copy missing the other's change
+async fn locked_edit<T: Send + 'static>(file: PathBuf, f: impl FnOnce(&Path) -> Result<T> + Send + 'static) -> Result<T> {
+  if let Some(dir) = file.parent() {
+    tokio::fs::create_dir_all(dir).await?;
+  }
+  let at = file.clone();
+  with_file_lock(&at, move || blocking(move || f(&file))).await
 }
 
 /// Put one wire in place; whatever sits there (an identical copy, or on an explicit resolve anything) is moved aside first.
@@ -473,9 +484,8 @@ fn unlink(entries: &[Entry], log: &LogFn) {
     let r = (|| -> Result<()> {
       match e.kind {
         EntryKind::Link => {
-          let ours = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
-            || links::inspect(path, Path::new(&e.target)) == Spot::Linked;
-          if ours {
+          // Only a link that still resolves to the recorded target; one pointed elsewhere since is the user's
+          if links::inspect(path, Path::new(&e.target)) == Spot::Linked {
             links::remove_link(path)?;
           }
         }
@@ -526,6 +536,7 @@ fn resolve_skill(places: &Places, agents: &[String], path: &Path, keep: Keep, ba
   let (agent, scope) = owner_of(places, agents, path).ok_or_else(|| anyhow!("{} is not in an agent's skills folder", path.display()))?;
   let name = path.file_name().ok_or_else(|| anyhow!("no name"))?.to_owned();
   let shared = places.skills_dir(scope).ok_or_else(|| anyhow!("no project"))?.join(&name);
+  let mut private_backup = None;
   match keep {
     Keep::Private => {
       if shared.exists() {
@@ -537,7 +548,7 @@ fn resolve_skill(places: &Places, agents: &[String], path: &Path, keep: Keep, ba
       if !shared.exists() {
         bail!("no shared skill named {}", name.to_string_lossy());
       }
-      links::move_aside(path, backups)?;
+      private_backup = Some(links::move_aside(path, backups)?);
     }
   }
   // An agent that cannot read .agents gets its skill back as a link; one reading this scope itself (Antigravity in a
@@ -549,7 +560,14 @@ fn resolve_skill(places: &Places, agents: &[String], path: &Path, keep: Keep, ba
   let Some((user, project)) = ext.and_then(|e| e.shared.skill_links) else { return Ok(None) };
   let base = places.expand(if scope == SharedScope::Global { user } else { project }).ok_or_else(|| anyhow!("no project"))?;
   let w = Wire { agent, scope, target: shared, at: base.join(&name), kind: WireKind::Link, skill: Some(name.to_string_lossy().into_owned()) };
-  wire(&w, places.root.as_deref(), backups, exclude).map(Some)
+  let mut e = wire(&w, places.root.as_deref(), backups, exclude)?;
+  // The private copy set aside for the shared one comes back when this link is undone
+  if e.backup.is_none()
+    && w.at == path
+  {
+    e.backup = private_backup.as_deref().map(s);
+  }
+  Ok(Some(e))
 }
 
 fn resolve_prompt(places: &Places, agents: &[String], path: &Path, keep: Keep, backups: &Path) -> Result<Entry> {
@@ -757,6 +775,52 @@ mod tests {
     cfg.apply(SharedAction::ResolveSkill { path: s(&home.join(".gemini/config/skills/notes")), keep: Keep::Private }, &p, &agents).await.unwrap();
     assert!(home.join(".agents/skills/notes/SKILL.md").exists());
     assert!(home.join(".gemini/config/skills/notes").is_symlink());
+  }
+
+  #[tokio::test]
+  async fn undo_restores_a_private_skill_and_spares_a_repointed_link() {
+    let (_t, p, cfg, agents) = setup();
+    let home = p.home.clone();
+    // Claude's own `dig` differs from the shared one; keeping the shared one sets it aside behind a link
+    std::fs::create_dir_all(home.join(".claude/skills/dig")).unwrap();
+    std::fs::write(home.join(".claude/skills/dig/SKILL.md"), "mine").unwrap();
+    let solo = home.join(".claude/skills/solo");
+    std::fs::create_dir_all(&solo).unwrap();
+    std::fs::write(solo.join("SKILL.md"), "solo").unwrap();
+    let path = |d: &str| s(&home.join(d));
+    cfg.apply(SharedAction::ResolveSkill { path: path(".claude/skills/dig"), keep: Keep::Shared }, &p, &agents).await.unwrap();
+    assert!(home.join(".claude/skills/dig").is_symlink());
+    cfg.apply(SharedAction::ResolveSkill { path: path(".claude/skills/solo"), keep: Keep::Private }, &p, &agents).await.unwrap();
+    assert!(solo.is_symlink());
+    // The user points the solo link at a skill of their own
+    let custom = home.join("custom-solo");
+    std::fs::create_dir_all(&custom).unwrap();
+    std::fs::remove_file(&solo).unwrap();
+    std::os::unix::fs::symlink(&custom, &solo).unwrap();
+
+    cfg.apply(SharedAction::Unlink, &p, &agents).await.unwrap();
+    assert!(!home.join(".claude/skills/dig").is_symlink());
+    assert_eq!(std::fs::read_to_string(home.join(".claude/skills/dig/SKILL.md")).unwrap(), "mine");
+    assert_eq!(std::fs::read_link(&solo).unwrap(), custom);
+  }
+
+  #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+  async fn concurrent_mcp_adds_all_land() {
+    let (_t, p, cfg, agents) = setup();
+    let mut tasks = tokio::task::JoinSet::new();
+    for i in 0..16 {
+      let (p, cfg, agents) = (p.clone(), cfg.clone(), agents.clone());
+      tasks.spawn(async move {
+        let json = format!(r#"{{ "command": "srv{i}" }}"#);
+        cfg.apply(SharedAction::AddMcp { scope: SharedScope::Global, json, name: Some(format!("s{i}")) }, &p, &agents).await.unwrap();
+      });
+    }
+    while let Some(r) = tasks.join_next().await {
+      r.unwrap();
+    }
+    let text = std::fs::read_to_string(p.mcp_file(SharedScope::Global).unwrap()).unwrap();
+    let data: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(data["mcpServers"].as_object().unwrap().len(), 16);
   }
 
   #[tokio::test]
