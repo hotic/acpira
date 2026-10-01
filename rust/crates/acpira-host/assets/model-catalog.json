@@ -1,4 +1,4 @@
-{"source":"https://models.dev/api.json","etag":"W/\"06e0071dd4ae9c9da2db1fabf28eb499\"","fetchedAt":"2026-09-28T19:17:27.859Z","models":[
+{"source":"https://models.dev/api.json","etag":"W/\"fb66816ca87d408ccbb5f53896ebcc4d\"","fetchedAt":"2026-10-01T02:42:51.572Z","models":[
 {"provider":"anthropic","id":"claude-fable-5","name":"Claude Fable 5","reasoning":true,"efforts":["low","medium","high","xhigh","max"],"context":1000000},
 {"provider":"anthropic","id":"claude-fable-5-1","name":"Claude Fable 5.1","reasoning":true,"efforts":["low","medium","high","xhigh","max"],"context":1000000},
 {"provider":"anthropic","id":"claude-haiku-4-5","name":"Claude Haiku 4.5 (latest)","reasoning":true,"context":200000},
@@ -51,6 +51,7 @@
 {"provider":"openai","id":"gpt-6-astra","name":"GPT-6 Astra","reasoning":true,"efforts":["low","medium","high","xhigh","max"],"context":1050000},
 {"provider":"openai","id":"gpt-6-luna","name":"GPT-6 Luna","reasoning":true,"efforts":["none","low","medium","high","xhigh","max"],"context":1050000},
 {"provider":"openai","id":"gpt-6-sol","name":"GPT-6 Sol","reasoning":true,"efforts":["none","low","medium","high","xhigh","max"],"context":1050000},
+{"provider":"openai","id":"gpt-6.1-sol","name":"GPT-6.1 Sol","reasoning":true,"efforts":["low","medium","high","xhigh","max"],"context":1050000},
 {"provider":"openai","id":"gpt-daybreak-blue-latest","name":"Daybreak Blue","reasoning":true,"efforts":["none","low","medium","high","xhigh","max"],"context":1050000},
 {"provider":"openai","id":"gpt-daybreak-red-latest","name":"Daybreak Red","reasoning":true,"efforts":["none","low","medium","high","xhigh","max"],"context":400000},
 {"provider":"openai","id":"gpt-image-1","name":"gpt-image-1"},
@@ -152,7 +153,6 @@
 {"provider":"mistral","id":"devstral-small-2507","name":"Devstral Small","context":128000},
 {"provider":"mistral","id":"labs-devstral-small-2512","name":"Devstral Small 2","context":256000},
 {"provider":"mistral","id":"magistral-medium-latest","name":"Magistral Medium (latest)","reasoning":true,"context":128000},
-{"provider":"mistral","id":"magistral-small","name":"Magistral Small","reasoning":true,"context":128000},
 {"provider":"mistral","id":"ministral-3b-latest","name":"Ministral 3B (latest)","context":128000},
 {"provider":"mistral","id":"ministral-8b-latest","name":"Ministral 8B (latest)","context":128000},
 {"provider":"mistral","id":"mistral-embed","name":"Mistral Embed","context":8000},

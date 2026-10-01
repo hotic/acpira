@@ -9,8 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Planned
 
-- MCP server injection from Acpira settings remains planned. Agents still read their own CLI MCP config.
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
+
+## [1.8.0] - 2026-10-01
+
+### Added
+
+- **Shared skills, MCP servers and prompts**: a new Shared settings page manages user and project resources across agents. Skills live in `~/.agents/skills` and `.agents/skills`, shared user instructions in `~/.agents/AGENTS.md`, and project instructions in `AGENTS.md`. Agents that need a different location get links or imports, with explicit conflict choices, backups and undo; Pi projects can be trusted from the same page.
+- Shared MCP servers live in `~/.agents/mcp.json` and the project's `.mcp.json`, with project definitions taking precedence. New and restored sessions receive enabled servers whose transports the agent advertises; Claude Code and Devin read project `.mcp.json` themselves. Legacy project `.agents/mcp.json` remains readable. Pi's ACP adapter ignores client MCP servers. Server startup and tool discovery have been verified on the existing adapters that accept them; model tool calls remain unverified.
+- **Google Antigravity** is a built-in agent, using the official `antigravity-acp` 1.2.1 server. The settings install action downloads a pinned, SHA-256-checked native archive for the host platform; the host handles its permission-based question cards. This server uses its own login, separate from the `agy` CLI. Initialization and the unauthenticated handshake are verified on macOS arm64; logged-in turns, restore and Linux / Windows execution remain unverified.
+- **Search saved conversations** from the history list: matches include conversation text as well as titles, with highlighted snippets and the existing workspace and agent filters.
+- Sessions that finish while no chat viewer is showing them gain an unread mark, cleared when opened; waiting, working and error states share an aligned status column.
+- Local images embedded in reply Markdown render inline. Acpira also supplies an MCP `show_image` tool so an agent can display a local image outside the process fold without sending its pixels back to the model. Rendering and the host tool contract are covered by tests; real model calls to the tool remain unverified.
+- Process details gain an **Auto-expand** appearance setting, off by default. When enabled, the current thought or tool details open as work advances, with manual choices preserved and automatic closing paused while the reader is away from the bottom.
+
+### Changed
+
+- Consecutive file reads and edits share compact process rows. Edits to the same file stack their diffs, with changed-line ranges and combined counts; process folding waits for the visible reply to finish drawing.
+- Sidebar and editor chats share one palette and message surfaces, with tighter dock spacing and rails that fade in. Text tool results use the command output card.
+- Account menus share the same identity and quota layout. Quota reads reuse a cache across Acpira hosts on the same machine, respect provider rate limits and show why a read failed.
+- An automatic account switch reads as one continued reply with a single switch notice.
+- Agent discovery includes the login shell's PATH on macOS and Linux, and reports missing helper or native binaries. Install and documentation actions remain reachable for installed agents too.
+- Agent labels use **Claude Code** and **Antigravity**.
+
+### Fixed
+
+- Editor chat tabs restore their saved session after an editor restart, and remembered model and control choices appear in a session's first frame.
+- Reopened conversations stay at their tail while images and other asynchronous content arrive, until the reader interacts with the transcript.
+- Plan approval choices and mode-switch actions are localized; a question card no longer repeats the tool row it already represents.
+- Clicking an agent image opens its Lightbox preview; opening the file in an editor is available from its context menu.
+- An excluded editor-selection chip is dimmed while its file and line range remain visible.
+- Failed session-record loads report a concrete reason and error code. New and restored sessions retry without Acpira's own MCP server when an agent refuses it.
+- Antigravity failure replies become turn errors, including quota, region and MCP initialization failures. A failed shared MCP server is left out when the session reconnects, while failures from the agent's own configuration identify that configuration.
+- Shared MCP edits are locked against concurrent updates, and undo preserves unrelated skill changes. Multibyte local image paths no longer panic the file-URI check.
 
 ## [1.7.4] - 2026-09-30
 
