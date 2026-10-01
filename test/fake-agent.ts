@@ -124,6 +124,9 @@ const canonicalCwd = (cwd: string) => { try { return realpathSync(cwd); } catch 
 function logMcp(method: string, servers: unknown) {
   if (process.env.FAKE_MCP_TRACE) appendFileSync(process.env.FAKE_MCP_TRACE, `${method} ${JSON.stringify(servers ?? null)}\n`);
 }
+function rejectMcp(servers: unknown[] | undefined) {
+  if (process.env.FAKE_MCP_REJECT && servers?.length) throw acp.RequestError.internalError(undefined, 'cannot start MCP servers');
+}
 function restoreSession(id: string, cwd: string): acp.LoadSessionResponse {
   // Same gate as session/new: auth is a property of the session's cwd, not of restore in general
   if (!authed && cwd.includes('needs-auth')) throw acp.RequestError.authRequired();
@@ -204,7 +207,7 @@ const app = acp.agent({ name: 'fake-agent' })
       throw acp.RequestError.authRequired();
     }
     // FAKE_MCP_LOG: one line per session/new with the names of the MCP servers it was handed;
-    // FAKE_MCP_REJECT: refuse any session/new that carries MCP servers (an agent that cannot start them)
+    // FAKE_MCP_REJECT: refuse any session/new, resume or load that carries MCP servers (an agent that cannot start them)
     if (process.env.FAKE_MCP_LOG) appendFileSync(process.env.FAKE_MCP_LOG, `${JSON.stringify(params.mcpServers.map(s => s.name))}\n`);
     if (process.env.FAKE_MCP_REJECT && params.mcpServers.length) throw acp.RequestError.internalError(undefined, 'cannot start MCP servers');
     const sessionId = sessionDir ? randomUUID() : `s${++seq}`;
@@ -233,6 +236,7 @@ const app = acp.agent({ name: 'fake-agent' })
   })
   .onRequest(acp.methods.agent.session.resume, ({ params }) => {
     logMcp('resume', (params as { mcpServers?: unknown }).mcpServers);
+  rejectMcp((params as { mcpServers?: unknown[] }).mcpServers);
     if (sessionDir) return restoreSession(params.sessionId, params.cwd);
     // cwd containing "flaky-resume": while a resume.lock file sits in it, restores fail with a transport-level
     // internal error — a transient restore failure, not a missing session; removing the file makes them succeed
@@ -284,6 +288,7 @@ const app = acp.agent({ name: 'fake-agent' })
   })
   .onRequest(acp.methods.agent.session.load, async ({ params, client }) => {
     logMcp('load', params.mcpServers);
+    rejectMcp(params.mcpServers);
     if (!sessionDir) throw acp.RequestError.methodNotFound(acp.methods.agent.session.load);
     const restored = restoreSession(params.sessionId, params.cwd);
     // Native load replays content; an existing local transcript must not duplicate it.

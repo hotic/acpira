@@ -272,7 +272,22 @@ impl AcpSession {
             let mut c = self.core.lock();
             c.replaying = !c.state.turns.is_empty();
           }
-          match proc.request_ordered(method, req.clone()).await {
+          let mut result = proc.request_ordered(method, req.clone()).await;
+          // An agent that cannot start Acpira's MCP server fails a restore that carries it, and the refusal noted by
+          // session/new does not outlive the sidecar: retry once without it, as session/new does
+          if let Err(e) = &result
+            && crate::host_mcp::has_server(&req)
+            && !is_auth(&anyhow::Error::new(e.clone()))
+          {
+            self.log(&format!("{method} with the Acpira MCP server failed ({e}); retrying without it"));
+            result = proc.request_ordered(method, crate::host_mcp::without_server(req.clone())).await;
+            if result.is_ok()
+              && let Some(h) = &self.deps.host_mcp
+            {
+              h.refuse(&self.agent);
+            }
+          }
+          match result {
             Ok((r, handoff)) => {
               let mut c = self.core.lock();
               c.replaying = false;
