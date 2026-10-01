@@ -361,7 +361,7 @@ function ModeMenu({ modes, value, title, onSelect, onOpenChange }: {
   );
 }
 
-// The editor's live selection in the toolbar: `name (12-19)`, struck through while left out. The name truncates before the range does
+// The editor's live selection in the toolbar: `name (12-19)`, dimmed while left out. The name truncates first so the range stays readable
 function SelectionChip({ selection, cwd, on, onToggle }: { selection: EditorSelection; cwd: string; on: boolean; onToggle: () => void }) {
   const draft = selectionDraft(selection, cwd);
   const range = lineRangeLabel(draft.startLine, draft.endLine);
@@ -369,10 +369,14 @@ function SelectionChip({ selection, cwd, on, onToggle }: { selection: EditorSele
   return (
     // Splits the free width with the right-hand controls (both basis 0, this one capped at its content) and folds to its icon
     // on a narrow toolbar, so a long file name never squeezes the model name
-    <Chip caret={false} narrow="icon" aria-pressed={on} onClick={onToggle} className={cn('min-w-0 max-w-fit flex-1', !on && 'text-fg-3 line-through')}
+    <Chip caret={false} narrow="icon" aria-pressed={on} onClick={onToggle}
+      className={cn('min-w-0 max-w-fit flex-1', !on && 'opacity-50 hover:opacity-80')}
       title={`${draft.name} ${range}\n${hint}`} aria-label={`${draft.name} ${range}. ${hint}`}
-      icon={<TextSelect strokeWidth={1.5} />} meta={range}>
-      {draft.name.split('/').pop()}
+      icon={<TextSelect strokeWidth={1.5} />}>
+      <span className="flex min-w-0 gap-1">
+        <span className="min-w-0 truncate">{draft.name.split('/').pop()}</span>
+        <span className="shrink-0 text-fg-3">{range}</span>
+      </span>
     </Chip>
   );
 }
