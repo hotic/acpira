@@ -18,6 +18,7 @@ pub mod json;
 pub mod limits;
 pub mod model_catalog;
 pub mod node_files;
+pub mod platform;
 pub mod runtime;
 pub mod session_manager;
 pub mod settings;
