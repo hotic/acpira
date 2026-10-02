@@ -41,10 +41,10 @@ function Popup({ className, ref: forwardedRef, ...props }: ComponentProps<typeof
   const localRef = useRef<HTMLDivElement>(null);
   const ref = contextRef ?? localRef;
   useImperativeHandle(forwardedRef, () => ref.current!, [ref]);
-  return <Base.Popup {...props} ref={ref} className={cnState(cn(popupClass), className)} />;
+  return <Base.Popup data-palette="menu" {...props} ref={ref} className={cnState(cn(popupClass), className)} />;
 }
-export const optionClass = 'flex min-h-row w-full items-center gap-2 rounded-md px-2 text-left text-2 text-fg-1 outline-none transition-colors hover:bg-hover focus-visible:bg-hover data-[highlighted]:bg-hover disabled:text-fg-3 data-[disabled]:text-fg-3 disabled:hover:bg-transparent';
-const radioClass = 'data-[checked]:bg-active data-[checked]:text-fg-strong data-[checked]:hover:bg-active data-[checked]:data-[highlighted]:bg-active data-[checked]:focus-visible:bg-active';
+export const optionClass = 'flex min-h-row w-full items-center gap-2 rounded-md px-2 text-left text-2 text-fg-1 outline-none transition-colors enabled:hover:option-highlighted focus-visible:option-highlighted data-[highlighted]:option-highlighted disabled:text-fg-3 data-[disabled]:text-fg-3';
+const radioClass = 'data-[checked]:option-selected data-[checked]:hover:option-selected data-[checked]:data-[highlighted]:option-selected data-[checked]:focus-visible:option-selected';
 function Item({ className, ...props }: ComponentProps<typeof Base.Item>) {
   return <Base.Item render={<button type="button" />} nativeButton {...props} className={cnState(cn(optionClass), className)} />;
 }

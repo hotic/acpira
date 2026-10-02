@@ -71,7 +71,7 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
           {cur?.name ?? c.options.find(o => o.id === c.value)?.name ?? c.name}
         </Chip>
       } />
-      <Popover.Portal><Popover.Positioner side="top" align="end" width="md"><Popover.Popup>
+      <Popover.Portal><Popover.Positioner side="top" align="end" width="md"><Popover.Popup palette="menu">
         <ModelPanel families={families} cur={cur} curVar={curVar} onSelect={onSelect} close={() => setOpen(false)}
           reasoning={reasoning} modelConfig={modelConfig} hiddenConfig={hiddenConfig} onSetConfig={onSetConfig} />
       </Popover.Popup></Popover.Positioner></Popover.Portal>
@@ -86,7 +86,7 @@ export function ReasoningControl({ control: c, onSelect, onOpenChange }: OptionM
     <Popover.Trigger render={<Chip narrow="text" title={t('composer.effort')}>
       {reasoningChip(c) ?? t('composer.effort')}
     </Chip>} />
-    <Popover.Portal><Popover.Positioner side="top" align="end" width="md"><Popover.Popup>
+    <Popover.Portal><Popover.Positioner side="top" align="end" width="md"><Popover.Popup palette="menu">
       <ReasoningParams control={c} onChange={onSelect} />
     </Popover.Popup></Popover.Positioner></Popover.Portal>
   </Popover.Root>;
@@ -243,7 +243,7 @@ function OptionMenu({ control: c, end, onSelect, onOpenChange }: OptionMenuProps
     description={o.description} checked={o.id === c.value} checkSlot={!!cur}>{o.name}</OptionContent>;
   if (c.options.length >= SEARCH_FROM) return <Popover.Root open={open} onOpenChange={setOpen} onOpenLifecycle={onOpenChange}>
     <Popover.Trigger render={trigger} />
-    <Popover.Portal><Popover.Positioner side="top" align={end ? 'end' : 'start'} width="md"><Popover.Popup>
+    <Popover.Portal><Popover.Positioner side="top" align={end ? 'end' : 'start'} width="md"><Popover.Popup palette="menu">
       <Command.Root items={c.options} value={cur ?? null} itemToStringValue={o => o.id} itemToStringLabel={o => [o.name, o.description].filter(Boolean).join(' ')}
         isItemEqualToValue={(a, b) => a.id === b.id}>
         <Command.Input /><Command.Empty />

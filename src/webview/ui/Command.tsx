@@ -55,7 +55,7 @@ function List({ className, searchable = false, ref, ...props }: ComponentProps<t
 }
 function Item({ className, ...props }: ComponentProps<typeof Base.Item>) {
   return <Base.Item render={<button type="button" />} nativeButton {...props}
-    className={cnState(cn(optionClass, 'shrink-0 data-[selected]:bg-active data-[selected]:text-fg-strong data-[selected]:hover:bg-active data-[selected]:data-[highlighted]:bg-active data-[selected]:focus-visible:bg-active'), className)} />;
+    className={cnState(cn(optionClass, 'shrink-0 data-[selected]:option-selected data-[selected]:hover:option-selected data-[selected]:data-[highlighted]:option-selected data-[selected]:focus-visible:option-selected'), className)} />;
 }
 function Empty({ className, children = t('common.noMatch'), ...props }: ComponentProps<typeof Base.Empty>) {
   return <Base.Empty {...props} className={cnState(cn('flex min-h-row items-center px-2 text-3 text-fg-3 empty:hidden'), className)}>{children}</Base.Empty>;

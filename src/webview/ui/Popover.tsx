@@ -25,7 +25,7 @@ function Positioner({ width = 'md', className, side = 'bottom', align = 'start',
     {...props} className={cnState(cn('z-30', width === 'anchor' ? 'w-(--anchor-width)' : overlayWidth[width]), className)}
     style={state => ({ maxWidth: shellWidth ? shellWidth - pad * 2 : undefined, ...(typeof props.style === 'function' ? props.style(state) : props.style) })} />;
 }
-function Popup({ className, initialFocus = false, ...props }: ComponentProps<typeof Base.Popup>) {
-  return <Base.Popup initialFocus={initialFocus} {...props} className={cnState(cn(popupClass), className)} />;
+function Popup({ className, initialFocus = false, palette = 'widget', ...props }: ComponentProps<typeof Base.Popup> & { palette?: 'widget' | 'menu' | 'suggest' }) {
+  return <Base.Popup initialFocus={initialFocus} data-palette={palette} {...props} className={cnState(cn(popupClass), className)} />;
 }
 export const Popover = { Root, Trigger: Base.Trigger, Portal, Positioner, Popup, Close: Base.Close, Title: Base.Title, Description: Base.Description };

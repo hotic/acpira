@@ -15,6 +15,6 @@ function Item({ className, onKeyDownCapture, ...props }: ComponentProps<typeof B
         event.currentTarget.click();
       }
     }}
-    className={cnState(cn(optionClass, 'data-[checked]:bg-active data-[checked]:text-fg-strong data-[checked]:hover:bg-active data-[checked]:focus-visible:bg-active'), className)} />;
+    className={cnState(cn(optionClass, 'data-[checked]:option-selected data-[checked]:hover:option-selected data-[checked]:focus-visible:option-selected'), className)} />;
 }
 export const RadioGroup = { Root, Item };

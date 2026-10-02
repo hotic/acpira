@@ -1,0 +1,150 @@
+/* Resolve colors on each shell, where the host variables and fixed-theme preference meet.
+   Popup palettes are independent roles: changing one must not recolor a nested popup or an off switch. */
+.acp-shell {
+  --widget-bg: var(--bg-1);
+  --widget-fg: var(--fg-1);
+  --widget-border: var(--line);
+  --menu-bg: var(--bg-1);
+  --menu-fg: var(--fg-1);
+  --menu-border: var(--line);
+  --menu-separator: var(--line);
+  --suggest-bg: var(--bg-1);
+  --suggest-fg: var(--fg-1);
+  --suggest-border: var(--line);
+  --input-bg: var(--cmp-bg);
+  --input-fg: var(--fg-1);
+  --input-placeholder: var(--fg-3);
+  --input-border: var(--conversation-line);
+  --option-hover-bg: var(--hover);
+  --option-hover-fg: var(--fg-1);
+  --option-selected-bg: var(--active);
+  --option-selected-fg: var(--fg-strong);
+  --menu-selection-bg: var(--active);
+  --menu-selection-fg: var(--fg-strong);
+  --suggest-selection-bg: var(--hover);
+  --suggest-selection-fg: var(--fg-1);
+  --option-border: transparent;
+  --focus-outline: none;
+}
+
+/* Follow the host only in automatic mode. The original dark/light palette remains
+   complete for fixed themes and hosts that do not publish these semantic roles. */
+.acp-shell:not([data-theme-fixed]) {
+  --fg-2: var(--vscode-descriptionForeground, color-mix(in srgb, var(--fg-1) 78%, var(--bg-0)));
+  --fg-3: color-mix(in srgb, var(--fg-1) 64%, var(--bg-0));
+  --fg-strong: var(--fg-1);
+  --action-fg: var(--fg-2);
+  /* Custom cards have no native counterpart; retain the host hue with opaque tonal steps. */
+  --bg-1: color-mix(in srgb, var(--bg-0), var(--fg-1) 3%);
+  --bg-2: color-mix(in srgb, var(--bg-0), var(--fg-1) 6%);
+  --bg-code: var(--bg-1);
+  --line: color-mix(in srgb, var(--fg-1) 10%, transparent);
+  --line-strong: var(--vscode-widget-border, color-mix(in srgb, var(--fg-1) 22%, var(--bg-0)));
+  --conversation-line: color-mix(in srgb, var(--fg-1) 16%, transparent);
+  --conversation-line-focus: var(--focus);
+  --hover: color-mix(in srgb, var(--fg-1) 6%, transparent);
+  --active: color-mix(in srgb, var(--fg-1) 11%, transparent);
+  --chip: color-mix(in srgb, var(--fg-1) 8%, transparent);
+  --chip-hover: color-mix(in srgb, var(--fg-1) 12%, transparent);
+  --widget-bg: var(--vscode-editorWidget-background, var(--bg-1));
+  --widget-fg: var(--vscode-editorWidget-foreground, var(--fg-1));
+  --widget-border: var(--vscode-editorWidget-border, var(--line-strong));
+  --menu-bg: var(--vscode-menu-background, var(--widget-bg));
+  --menu-fg: var(--vscode-menu-foreground, var(--widget-fg));
+  --menu-border: var(--vscode-menu-border, var(--widget-border));
+  --menu-separator: var(--vscode-menu-separatorBackground, var(--line));
+  --suggest-bg: var(--vscode-editorSuggestWidget-background, var(--widget-bg));
+  --suggest-fg: var(--vscode-editorSuggestWidget-foreground, var(--widget-fg));
+  --suggest-border: var(--vscode-editorSuggestWidget-border, var(--widget-border));
+  --input-bg: var(--vscode-input-background, var(--bg-1));
+  --input-fg: var(--vscode-input-foreground, var(--fg-1));
+  --input-placeholder: var(--vscode-input-placeholderForeground, var(--fg-3));
+  --input-border: var(--vscode-input-border, var(--conversation-line));
+  --cmp-bg: var(--input-bg);
+  --cmp-bg-lift: var(--input-bg);
+  --option-hover-bg: var(--vscode-list-hoverBackground, var(--hover));
+  --option-hover-fg: var(--vscode-list-hoverForeground, var(--fg-1));
+  --option-selected-bg: var(--vscode-list-inactiveSelectionBackground, var(--active));
+  --option-selected-fg: var(--vscode-list-inactiveSelectionForeground, var(--fg-1));
+  --menu-selection-bg: var(--vscode-menu-selectionBackground, var(--option-selected-bg));
+  --menu-selection-fg: var(--vscode-menu-selectionForeground, var(--option-selected-fg));
+  --suggest-selection-bg: var(--vscode-editorSuggestWidget-selectedBackground, var(--option-selected-bg));
+  --suggest-selection-fg: var(--vscode-editorSuggestWidget-selectedForeground, var(--suggest-fg));
+  --shadow: 0 8px 28px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.22)), 0 1px 2px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.12));
+}
+
+/* Both high-contrast schemes need visible boundaries even when neighboring fills match. */
+:is(.vscode-high-contrast, .vscode-high-contrast-light) .acp-shell:not([data-theme-fixed]) {
+  --fg-2: var(--fg-1);
+  --fg-3: var(--fg-1);
+  --line: var(--vscode-contrastBorder, var(--fg-1));
+  --line-strong: var(--line);
+  --conversation-line: var(--line);
+  --input-border: var(--line);
+  --widget-border: var(--line);
+  --menu-border: var(--line);
+  --suggest-border: var(--line);
+  --option-border: var(--vscode-contrastActiveBorder, var(--focus));
+  --focus-outline: 1px solid var(--focus);
+}
+
+@layer components {
+  /* Portals remain inside their shell. Each surface carries its foreground and its
+     subordinate text levels, so themed light menus on dark workbenches stay readable. */
+  .popup-surface {
+    --popup-bg: var(--widget-bg);
+    --popup-fg: var(--widget-fg);
+    --popup-border: var(--widget-border);
+    --fg-1: var(--popup-fg);
+    --fg-2: color-mix(in srgb, var(--popup-fg) 78%, var(--popup-bg));
+    --fg-3: color-mix(in srgb, var(--popup-fg) 64%, var(--popup-bg));
+    --fg-strong: var(--popup-fg);
+    --hover: color-mix(in srgb, var(--popup-fg) 6%, transparent);
+    --active: color-mix(in srgb, var(--popup-fg) 11%, transparent);
+    --line: color-mix(in srgb, var(--popup-fg) 12%, transparent);
+    color: var(--popup-fg);
+    background: var(--popup-bg);
+    border-color: var(--popup-border);
+  }
+  .popup-surface[data-palette="menu"] {
+    --popup-bg: var(--menu-bg);
+    --popup-fg: var(--menu-fg);
+    --popup-border: var(--menu-border);
+    --line: var(--menu-separator);
+    --option-hover-bg: var(--menu-selection-bg);
+    --option-hover-fg: var(--menu-selection-fg);
+    --option-selected-bg: var(--menu-selection-bg);
+    --option-selected-fg: var(--menu-selection-fg);
+  }
+  .popup-surface[data-palette="suggest"] {
+    --popup-bg: var(--suggest-bg);
+    --popup-fg: var(--suggest-fg);
+    --popup-border: var(--suggest-border);
+    --option-selected-bg: var(--suggest-selection-bg);
+    --option-selected-fg: var(--suggest-selection-fg);
+  }
+  :is(.vscode-high-contrast, .vscode-high-contrast-light) .acp-shell:not([data-theme-fixed]) .popup-surface {
+    --fg-2: var(--popup-fg);
+    --fg-3: var(--popup-fg);
+    --line: var(--popup-border);
+  }
+}
+
+/* State utilities carry the paired foreground through nested labels and icons.
+   Generic --active remains neutral: off switches and parameter pills also consume it. */
+@utility option-highlighted {
+  --fg-1: var(--option-hover-fg);
+  --fg-2: color-mix(in srgb, var(--option-hover-fg) 85%, var(--option-hover-bg));
+  --fg-3: var(--fg-2);
+  color: var(--option-hover-fg);
+  background-color: var(--option-hover-bg);
+  box-shadow: inset 0 0 0 1px var(--option-border);
+}
+@utility option-selected {
+  --fg-1: var(--option-selected-fg);
+  --fg-2: color-mix(in srgb, var(--option-selected-fg) 85%, var(--option-selected-bg));
+  --fg-3: var(--fg-2);
+  color: var(--option-selected-fg);
+  background-color: var(--option-selected-bg);
+  box-shadow: inset 0 0 0 1px var(--option-border);
+}

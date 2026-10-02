@@ -36,7 +36,7 @@ export function CompletionList<T>({ anchor, items, active, keyOf, empty, onHover
         pointerEvents: attributes.style?.opacity === 0 ? 'none' : attributes.style?.pointerEvents,
       }} />}>
       {/* The popup is the list itself: cap at min(8 rows, available height) so the two max-height rules don't collide. */}
-      <Popover.Popup finalFocus={false} ref={panel} role="listbox" className="scroll-thin flex max-h-[min(var(--spacing-pop),var(--available-height))] flex-col overflow-y-auto">
+      <Popover.Popup palette="suggest" finalFocus={false} ref={panel} role="listbox" className="scroll-thin flex max-h-[min(var(--spacing-pop),var(--available-height))] flex-col overflow-y-auto">
       {!items.length && <div className="flex min-h-row items-center px-2 text-3 text-fg-3">{empty}</div>}
       {items.map((item, i) => (
         <button
@@ -51,7 +51,7 @@ export function CompletionList<T>({ anchor, items, active, keyOf, empty, onHover
           // mousedown would blur the textarea before click fires; preventing it keeps the caret where the token is
           onMouseDown={e => e.preventDefault()}
           onClick={() => onPick(item)}
-          className={cn('flex min-h-row w-full shrink-0 items-center gap-2 rounded-md px-2 text-left text-2 text-fg-1 outline-none transition-colors', i === active && 'bg-hover')}
+          className={cn('flex min-h-row w-full shrink-0 items-center gap-2 rounded-md px-2 text-left text-2 text-fg-1 outline-none transition-colors', i === active && 'option-selected')}
         >
           {children(item)}
         </button>
