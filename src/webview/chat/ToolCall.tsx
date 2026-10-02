@@ -112,7 +112,7 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
   const label = <>
     <RowLabel shimmer={running}>{toolVerb(block)}</RowLabel>
     {command
-      ? <RowTarget mono><span title={command}>{command}</span></RowTarget>
+      ? <RowTarget mono>{command}</RowTarget>
       : block.target && !(block.kind === 'read' && files.length) && (editFile
         ? <FileRef hit={editFile.path} line={editFile.line} aside={span}>{target}</FileRef>
         : span ? <span className="flex min-w-0 items-baseline gap-1">{target}<Aside>{span}</Aside></span> : target)}
