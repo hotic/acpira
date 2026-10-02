@@ -1,4 +1,5 @@
 {
+  "acpira.conf.agents.deprecated": "Agent launch configuration is now managed by Acpira in agents.json on the agent host. Open it from Acpira Settings. Local legacy values are imported once; Remote connections do not import IDE agent settings.",
   "acpira.cmd.openView": "Open Chat",
   "acpira.cmd.newSession": "New Session",
   "acpira.cmd.openInEditor": "Open in Editor",

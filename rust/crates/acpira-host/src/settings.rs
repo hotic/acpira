@@ -20,6 +20,7 @@ use crate::shared_config::{AGENTS, Outcome, Places, SharedConfig};
 use acpira_shared::shared_config::{SharedAction, SharedView};
 
 pub struct SettingsDeps {
+  pub agent_config_path: std::path::PathBuf,
   pub read: Arc<dyn Fn(&str) -> Option<Value> + Send + Sync>,
   pub write: Arc<dyn Fn(String, Value) -> BoxFuture<Result<()>> + Send + Sync>,
   pub host_language: Arc<dyn Fn() -> String + Send + Sync>,
@@ -40,6 +41,10 @@ pub struct SettingsCenter {
 }
 
 impl SettingsCenter {
+  pub fn agent_config_path(&self) -> &std::path::Path {
+    &self.deps.agent_config_path
+  }
+
   pub fn new(deps: SettingsDeps) -> Self {
     SettingsCenter { deps, listeners: Default::default(), seq: Default::default() }
   }

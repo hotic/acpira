@@ -6,6 +6,7 @@ import type { SecretVault } from './accounts/AccountStore';
 import { WorkspaceFiles } from './files';
 import type { HelloPayload } from './shell/SidecarClient';
 import { terminalLaunch } from './terminalLaunch';
+import { legacyAgents } from './legacyAgents';
 
 // Every IDE action the sidecar may ask for; VS Code implements them all
 const CAPABILITIES: PlatformMethod[] = ['openResolvedFile', 'openPlanDocument', 'revealInOS', 'searchFiles', 'writeSetting', 'openExternal', 'openInEditor', 'runInTerminal', 'toast'];
@@ -52,7 +53,7 @@ export class VscodePlatform {
     const cfg = this.cfg();
     const out: Record<string, unknown> = {};
     for (const k of this.keys) {
-      const v = cfg.get(k);
+      const v = k === 'agents' ? legacyAgents(cfg.get(k), vscode.env.remoteName) : cfg.get(k);
       if (v !== undefined) out[k] = JSON.parse(JSON.stringify(v)) as unknown;
     }
     return out;

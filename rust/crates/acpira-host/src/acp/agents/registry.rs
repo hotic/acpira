@@ -281,7 +281,7 @@ pub fn antigravity(platform: &str) -> AgentDef {
   }
 }
 
-/// Custom agents from the acpira.agents setting (id → definition fragment)
+/// Custom agents from the machine-local agents.json (id → definition fragment)
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomAgentSetting {
@@ -327,7 +327,7 @@ pub struct AgentRegistry {
 }
 
 impl AgentRegistry {
-  /// `custom` is the raw acpira.agents setting; entries without a command are skipped
+  /// `custom` is the agents.json object; entries without a command are skipped
   pub fn new(custom: &Value) -> Self {
     Self::with_os(custom, Os::current())
   }

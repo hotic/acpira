@@ -3,13 +3,29 @@
 
 use serde_json::{Value, json};
 
-use crate::acp::transport::process::initialize_request;
 use crate::acp::agents::registry::AgentRegistry;
+use crate::acp::transport::process::initialize_request;
 use crate::platform::command::{Os, spawn_spec};
+use crate::store::{agent_config, data_dir};
 
 pub async fn run(args: &[String]) -> i32 {
   crate::acp::agents::login_path::ready().await;
-  let registry = AgentRegistry::new(&Value::Null);
+  let root = args
+    .iter()
+    .position(|a| a == "--home")
+    .and_then(|i| args.get(i + 1))
+    .map(|s| data_dir::absolute(std::path::Path::new(s)))
+    .unwrap_or_else(data_dir::acpira_home);
+  let path = root.join("agents.json");
+  let custom = match agent_config::read(&path).await {
+    Ok(v) => v,
+    Err(e) if e.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) => Value::Null,
+    Err(e) => {
+      eprintln!("{}: {e}", path.display());
+      return 1;
+    }
+  };
+  let registry = AgentRegistry::new(&custom);
   let mut agents = vec![];
   for id in registry.ids().to_vec() {
     let Ok(def) = registry.get(&id) else { continue };

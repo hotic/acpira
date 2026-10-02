@@ -476,6 +476,7 @@ pub enum WebviewMsg {
     axis: String,
     value: String,
   },
+  OpenAgentConfig,
   OpenPath {
     path: String,
   },

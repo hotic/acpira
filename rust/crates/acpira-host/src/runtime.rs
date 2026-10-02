@@ -19,8 +19,8 @@ use crate::accounts::account_store::{AccountStore, FileVault};
 use crate::accounts::claude::ClaudeAccountProvider;
 use crate::accounts::codex::CodexAccountProvider;
 use crate::accounts::devin::{BinaryFn, DevinAccountProvider};
-use crate::accounts::switch::SwitchStrategy;
 use crate::accounts::local::LocalAccounts;
+use crate::accounts::switch::SwitchStrategy;
 use crate::acp::agents::registry::AgentRegistry;
 use crate::acp::session::CompactionPolicy;
 use crate::bridge_core::{BridgeCore, Post};
@@ -29,6 +29,7 @@ use crate::i18n::{set_host_locale, tp};
 use crate::session_manager::{ManagerDeps, SessionManager};
 use crate::settings::{SettingsCenter, SettingsDeps};
 use crate::sidecar::platform::{Affects, SidecarPlatform};
+use crate::store::agent_config::AgentConfig;
 use crate::store::transcript_store::{LogFn, TranscriptStore};
 
 pub struct HostRuntime {
@@ -37,6 +38,8 @@ pub struct HostRuntime {
   pub sessions_dir: PathBuf,
   platform: Arc<SidecarPlatform>,
   accounts: Arc<AccountManager>,
+  agent_config: Arc<AgentConfig>,
+  config_watch: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>,
   bridges: parking_lot::Mutex<Vec<Arc<BridgeCore>>>,
 }
 
@@ -49,11 +52,12 @@ impl HostRuntime {
     let account_store = Arc::new(AccountStore::new(root.join("accounts.json"), vault, log.clone()));
     account_store.load().await?;
 
-    let read = {
-      let p = platform.clone();
-      move |key: &str| p.read_setting(key)
-    };
-    let registry = Arc::new(AgentRegistry::new(&read("agents").unwrap_or(Value::Null)));
+    let agent_config = Arc::new(AgentConfig::new(&root));
+    if let Err(e) = agent_config.initialize(platform.read_setting("agents")).await {
+      platform.log(&format!("{}: {e}", agent_config.path().display()));
+      platform.toast("error", &format!("{}: {e}", agent_config.path().display()));
+    }
+    let registry = Arc::new(AgentRegistry::new(&agent_config.snapshot()));
 
     // The manager is created below; the providers resolve their binaries through whatever registry is current then
     let mgr_slot: Arc<parking_lot::Mutex<Option<std::sync::Weak<SessionManager>>>> = Default::default();
@@ -164,10 +168,19 @@ impl HostRuntime {
       home: Arc::new(move || phome.home()),
       cwd: Arc::new(move || pcwd.cwd()),
       shared: crate::shared_config::SharedConfig::new(root.clone(), log.clone()),
+      agent_config_path: agent_config.path().to_owned(),
     }));
 
-    let runtime =
-      Arc::new(HostRuntime { manager, settings, sessions_dir, platform: platform.clone(), accounts, bridges: Default::default() });
+    let runtime = Arc::new(HostRuntime {
+      manager,
+      settings,
+      sessions_dir,
+      platform: platform.clone(),
+      accounts,
+      agent_config,
+      config_watch: Default::default(),
+      bridges: Default::default(),
+    });
     let weak = Arc::downgrade(&runtime);
     platform.on_settings_changed(Arc::new(move |affects| {
       if let Some(rt) = weak.upgrade() {
@@ -179,6 +192,7 @@ impl HostRuntime {
       let Some(rt) = weak.upgrade() else { return };
       // Back from a terminal where a CLI was installed, or from another window sharing ~/.acpira
       tokio::spawn(async move {
+        let _ = rt.reload_agent_config().await;
         rt.manager.reprobe().await;
         rt.manager.refresh_index().await;
         rt.accounts.reload().await;
@@ -188,10 +202,39 @@ impl HostRuntime {
     }));
     tokio::spawn(crate::model_catalog::refresh(root.clone(), log.clone()));
     runtime.manager.init().await;
+    // Files may be edited from any IDE or terminal, including on volumes without reliable native watch events.
+    // Keep only a weak owner between ticks and stop the task explicitly before session teardown.
+    let weak = Arc::downgrade(&runtime);
+    *runtime.config_watch.lock() = Some(tokio::spawn(async move {
+      let mut last_error = None;
+      let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
+      loop {
+        tick.tick().await;
+        let Some(rt) = weak.upgrade() else { break };
+        match rt.reload_agent_config().await {
+          Ok(()) => last_error = None,
+          Err(e) => {
+            let error = format!("{}: {e}", rt.agent_config.path().display());
+            if last_error.as_ref() != Some(&error) {
+              rt.platform.log(&error);
+              rt.platform.toast("error", &error);
+              last_error = Some(error);
+            }
+          }
+        }
+      }
+    }));
     set_host_locale(runtime.settings.locale());
     let rt = runtime.clone();
     tokio::spawn(async move { rt.maintain_shared().await });
     Ok(runtime)
+  }
+
+  async fn reload_agent_config(&self) -> Result<()> {
+    if self.agent_config.reload().await? {
+      self.manager.set_registry(Arc::new(AgentRegistry::new(&self.agent_config.snapshot())));
+    }
+    Ok(())
   }
 
   /// Claude's project skill links, and user-level links once the link panel turned `auto` on (see `shared_config`)
@@ -235,10 +278,7 @@ impl HostRuntime {
         b.push_appearance();
       }
     }
-    if affects(Some("agents")) {
-      let custom = self.platform.read_setting("agents").unwrap_or(Value::Null);
-      self.manager.set_registry(Arc::new(AgentRegistry::new(&custom)));
-    }
+    // Agent definitions belong to agents.json. IDE settings changes must never replace this registry.
     if affects(Some("hiddenOptions")) {
       self.manager.emit_hidden();
     }
@@ -258,6 +298,9 @@ impl HostRuntime {
   }
 
   pub async fn dispose(&self) {
+    if let Some(task) = self.config_watch.lock().take() {
+      task.abort();
+    }
     let bridges: Vec<_> = self.bridges.lock().drain(..).collect();
     for b in bridges {
       b.dispose();

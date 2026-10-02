@@ -77,6 +77,7 @@ type Store = Arc<Mutex<HashMap<String, Value>>>;
 fn center(store: Store) -> SettingsCenter {
   let (r, w) = (store.clone(), store);
   SettingsCenter::new(SettingsDeps {
+    agent_config_path: std::env::temp_dir().join("acpira-bridge-agents.json"),
     read: Arc::new(move |k| r.lock().unwrap().get(k).cloned()),
     write: Arc::new(move |k, x| {
       w.lock().unwrap().insert(k, x);
