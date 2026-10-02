@@ -116,7 +116,10 @@ impl AcpSession {
   pub(crate) async fn prompt_inner(self: Arc<Self>, text: String, drafts: Vec<Draft>, origin: Origin, staged: Option<Staged>, plan_id: Option<String>) {
     let auto = origin == Origin::Compact;
     let compact_first = match self.claim(&text, &drafts, origin, staged.as_ref()) {
-      Gate::Queue => return self.enqueue(text, drafts, staged.map(|s| s.prepared)).await,
+      Gate::Queue => {
+        self.enqueue(text, drafts, staged.map(|s| s.prepared)).await;
+        return;
+      }
       Gate::Drop => {
         if origin == Origin::Continue {
           self.flush_queue();

@@ -196,7 +196,7 @@ export function App() {
 
   const on = useMemo<ShellHandlers>(() => ({
     editTurn,
-    send: (text, attachments) => post({ type: 'send', sessionId: activeId.current, text, ...(attachments.length ? { attachments } : {}) }),
+    send: (text, attachments, steer) => post({ type: 'send', sessionId: activeId.current, text, ...(attachments.length ? { attachments } : {}), ...(steer ? { steer } : {}) }),
     searchFiles,
     searchSessions,
     stop: () => post({ type: 'stop', sessionId: activeId.current }),

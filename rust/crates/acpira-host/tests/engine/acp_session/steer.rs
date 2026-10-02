@@ -198,3 +198,53 @@ async fn without_steering_support_steer_is_send_now() {
   expect_match(&view(&s)["turns"][1], json!({ "role": "agent", "stop": "cancelled" }));
   expect_match(&view(&s)["turns"][2], json!({ "role": "user", "text": "first" }));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_steered_composer_send_joins_the_running_turn_without_a_queue_row() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({ "env": { "FAKE_STEERING": "1" } }));
+  let s = started(&h, "/tmp").await;
+  let running = spawn_prompt(&s, "slow");
+  wait_turns(&s, 2).await;
+  s.steer_prompt("use pnpm".into(), vec![]).await.unwrap();
+  // Steered on the spot: no queued row left behind, the message sits in the running turn
+  let vw = view(&s);
+  assert!(vw["queued"].is_null(), "{}", vw["queued"]);
+  assert!(vw["turns"][1]["blocks"].as_array().unwrap().iter().any(|b| b["type"] == "steer" && b["text"] == "use pnpm"));
+  until(|| agent_text(&view(&s)["turns"][1]).contains("steered:use pnpm"), 5000).await;
+  running.await.unwrap();
+  until(|| !s.is_running(), 5000).await;
+  let vw = view(&s);
+  assert_eq!(user_prompts(&vw), [json!("slow")]);
+  expect_match(&vw["turns"][1], json!({ "stop": "end_turn" }));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_steered_composer_send_without_steering_support_queues_and_never_cancels_the_turn() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let s = started(&h, "/tmp").await;
+  let running = spawn_prompt(&s, "slow");
+  wait_turns(&s, 2).await;
+  s.steer_prompt("later".into(), vec![]).await.unwrap();
+  let vw = view(&s);
+  assert_eq!(vw["running"], true);
+  expect_match(&vw["queued"], json!([{ "text": "later" }]));
+  running.await.unwrap();
+  until(|| !s.is_running() && view(&s)["queued"].is_null(), 5000).await;
+  let vw = view(&s);
+  assert_eq!(user_prompts(&vw), [json!("slow"), json!("later")]);
+  expect_match(&vw["turns"][1], json!({ "stop": "end_turn" }));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_steered_composer_send_while_idle_is_an_ordinary_prompt() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({ "env": { "FAKE_STEERING": "1" } }));
+  let s = started(&h, "/tmp").await;
+  s.steer_prompt("hi".into(), vec![]).await.unwrap();
+  until(|| !s.is_running(), 5000).await;
+  let vw = view(&s);
+  assert_eq!(user_prompts(&vw), [json!("hi")]);
+  assert!(vw["turns"][1]["blocks"].as_array().unwrap().iter().all(|b| b["type"] != "steer"));
+}

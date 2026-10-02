@@ -44,6 +44,8 @@ export interface ComposerProps {
   // Workspace root: dropped and mentioned files are labeled relative to it
   cwd: string;
   onSend: (text: string, attachments: Draft[]) => void | Promise<void>;
+  // A send while running steers into the turn instead of queueing (only the placeholder changes here)
+  steer?: boolean;
   // Inline history editors keep their draft until the host accepts the resend.
   // Outside-dismiss editors omit the cancel button; `attachments` are bare chip items (with their own removal controls)
   // that open the draft row, `hasAttachments` says whether any are still retained.
@@ -265,7 +267,7 @@ export function Composer(p: ComposerProps) {
         onSelect={e => syncCaret(e.currentTarget)}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
-        placeholder={p.disabled ? t('composer.notReady') : p.running ? t('composer.placeholder.queue') : t('composer.placeholder')}
+        placeholder={p.disabled ? t('composer.notReady') : p.running ? t(p.steer ? 'composer.placeholder.steer' : 'composer.placeholder.queue') : t('composer.placeholder')}
         className={cn(
           // Match message text and attachment insets in every composer, including inline editors.
           'min-w-0 resize-none bg-transparent px-pad pt-2.5 pb-1 text-1 outline-none transition-colors',

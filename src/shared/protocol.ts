@@ -136,7 +136,8 @@ export type WebviewMsg =
   | { type: 'ready' }
   // The page's window got focus. The VS Code shell keeps it (the last-used chat is where "Add to Chat" goes); the sidecar ignores it
   | { type: 'viewFocus' }
-  | { type: 'send'; sessionId?: string; text: string; attachments?: Draft[] }
+  // steer: sent while a turn runs with steering on (SessionView.canSteer); it joins that turn instead of queueing behind it
+  | { type: 'send'; sessionId?: string; text: string; attachments?: Draft[]; steer?: boolean }
   | { type: 'stop'; sessionId?: string }
   // @ mention: fuzzy search over workspace files, answered with a `files` message
   | { type: 'searchFiles'; query: string; seq: number }
