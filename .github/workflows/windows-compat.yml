@@ -1,0 +1,41 @@
+name: Windows compatibility
+
+on:
+  push:
+    paths: ['rust/**', 'src/**', 'test/**', 'scripts/**', 'idea/**', 'package.json', 'pnpm-lock.yaml', '.github/workflows/windows-compat.yml']
+  pull_request:
+    paths: ['rust/**', 'src/**', 'test/**', 'scripts/**', 'idea/**', 'package.json', 'pnpm-lock.yaml', '.github/workflows/windows-compat.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-compat-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Native process, storage and PowerShell 5.1 regressions
+        shell: powershell
+        run: ./scripts/test-windows.ps1
+      - uses: pnpm/action-setup@v6
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm exec vitest run test/fileLinks.test.ts test/terminalLaunch.test.ts
+      - run: pnpm build

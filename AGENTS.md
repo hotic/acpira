@@ -58,5 +58,6 @@ A chat shell for VS Code / Cursor (and IntelliJ) that drives official agent CLIs
 | Historical edits and retries, model identity, plan approval / execution, permissions, controls, follow-up queue, session scope / deletion, remembered prefs, account binding, compaction, failed prompts, questions, to-do bar | `docs/dev/protocol-gotchas.md` |
 | Anything specific to Devin, Grok, Kimi, Codex, Claude, OpenCode, DeepSeek Harness, Antigravity or Pi | `docs/dev/agent-quirks.md`, then `docs/acp-agents-compat.md` (verified / source / unverified matrix) |
 | `idea/`: Kotlin modules, JCEF, native RPC, sidecar service, split mode, distribution, release | `docs/dev/intellij.md` |
+| Windows compatibility boundaries, native regression checks and remaining acceptance coverage | `docs/dev/windows-compatibility.md` |
 
 Also committed: `docs/chatgpt-bridge.md` (ChatGPT conversation mirrors). The rest of `docs/` is local only and may be absent (`HANDOFF.md`, `history-editing.md`, `compaction-queue.md`, `plan-modes.md`, `grok-controls-verification.md`).
