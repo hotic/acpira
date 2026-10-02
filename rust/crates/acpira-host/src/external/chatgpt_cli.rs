@@ -146,11 +146,15 @@ async fn confined(cwd: &str, path: &str, create: bool) -> Result<PathBuf> {
 async fn run_command(store: &Arc<ChatGptBridgeStore>, args: &Args, id: &str, cwd: &str, command: &str) -> Result<i32> {
   let call_id = random_uuid();
   store.accept(id, &args.event(json!({ "type": "tool_start", "callId": call_id, "name": "Shell", "kind": "execute", "target": command, "input": { "command": command, "cwd": cwd } }))?).await?;
-  let mut cmd = if cfg!(windows) {
-    let mut c = tokio::process::Command::new("cmd");
-    c.args(["/C", command]);
+  #[cfg(windows)]
+  let mut cmd = {
+    let mut c = tokio::process::Command::new(std::env::var_os("ComSpec").unwrap_or_else(|| "cmd.exe".into()));
+    // This input is shell source, not argv: CRT escaping would corrupt its existing quotes.
+    c.args(["/d", "/s", "/c"]).raw_arg(format!("\"{command}\""));
     c
-  } else {
+  };
+  #[cfg(not(windows))]
+  let mut cmd = {
     let mut c = tokio::process::Command::new(std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/bin/sh".into()));
     c.args(["-c", command]);
     c
@@ -159,14 +163,18 @@ async fn run_command(store: &Arc<ChatGptBridgeStore>, args: &Args, id: &str, cwd
   // A dedicated process group lets cancellation reach this command's descendants, never other sessions
   #[cfg(unix)]
   cmd.process_group(0);
-  let spawned = cmd.spawn();
-  let mut child = match spawned {
+  #[cfg(windows)]
+  let spawned = crate::platform::windows_process::spawn(&mut cmd).await;
+  #[cfg(not(windows))]
+  let spawned = cmd.spawn().map(|child| (child, ()));
+  let (mut child, _job) = match spawned {
     Ok(c) => c,
     Err(e) => {
       store.accept(id, &args.event(json!({ "type": "tool_end", "callId": call_id, "status": "failed", "detail": e.to_string() }))?).await?;
       return Ok(1);
     }
   };
+  #[cfg(unix)]
   let pid = child.id();
   // Raw bytes for the passthrough, text decoded per stream so a character split across two reads stays whole in the mirror
   let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(bool, Vec<u8>, String)>();
@@ -202,7 +210,7 @@ async fn run_command(store: &Arc<ChatGptBridgeStore>, args: &Args, id: &str, cwd
   let mut flush_tick = tokio::time::interval(Duration::from_millis(200));
   let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
   heartbeat.tick().await;
-  let terminate = |pid: Option<u32>| {
+  let terminate = || {
     #[cfg(unix)]
     if let Some(p) = pid {
       // SAFETY: signalling our own child's process group
@@ -210,15 +218,17 @@ async fn run_command(store: &Arc<ChatGptBridgeStore>, args: &Args, id: &str, cwd
         libc::kill(-(p as libc::pid_t), libc::SIGTERM);
       }
     }
-    // Windows has no process groups to signal; like child.kill() in the TS CLI, the child itself is terminated
-    #[cfg(not(unix))]
-    if let Some(p) = pid {
-      let _ = std::process::Command::new("taskkill").args(["/PID", &p.to_string(), "/F"]).output();
-    }
+    #[cfg(windows)]
+    _job.terminate();
   };
   let mut ctrl_c = std::pin::pin!(tokio::signal::ctrl_c());
+  let mut interrupted = false;
   let mut streams_open = true;
+  let mut exited = None;
   let status = loop {
+    if !streams_open && let Some(status) = exited.take() {
+      break status;
+    }
     tokio::select! {
       chunk = rx.recv(), if streams_open => match chunk {
         Some((is_err, bytes, text)) => {
@@ -226,7 +236,7 @@ async fn run_command(store: &Arc<ChatGptBridgeStore>, args: &Args, id: &str, cwd
           pending.push_str(&text);
           if pending.len() >= 32_000 && log_error.is_none() {
             let text = std::mem::take(&mut pending);
-            if let Err(e) = store.accept(id, &args.event(json!({ "type": "tool_output", "callId": call_id, "text": text }))?).await { log_error = Some(e); terminate(pid); }
+            if let Err(e) = store.accept(id, &args.event(json!({ "type": "tool_output", "callId": call_id, "text": text }))?).await { log_error = Some(e); terminate(); }
           }
         }
         None => streams_open = false,
@@ -234,19 +244,22 @@ async fn run_command(store: &Arc<ChatGptBridgeStore>, args: &Args, id: &str, cwd
       _ = flush_tick.tick() => {
         if !pending.is_empty() && log_error.is_none() {
           let text = std::mem::take(&mut pending);
-          if let Err(e) = store.accept(id, &args.event(json!({ "type": "tool_output", "callId": call_id, "text": text }))?).await { log_error = Some(e); terminate(pid); }
+          if let Err(e) = store.accept(id, &args.event(json!({ "type": "tool_output", "callId": call_id, "text": text }))?).await { log_error = Some(e); terminate(); }
         }
       }
       _ = heartbeat.tick() => {
-        if log_error.is_none() && let Err(e) = store.accept(id, &args.event(json!({ "type": "heartbeat" }))?).await { log_error = Some(e); terminate(pid); }
+        if log_error.is_none() && let Err(e) = store.accept(id, &args.event(json!({ "type": "heartbeat" }))?).await { log_error = Some(e); terminate(); }
       }
-      _ = &mut ctrl_c => terminate(pid),
-      status = child.wait(), if !streams_open => break status,
+      _ = &mut ctrl_c, if !interrupted => { interrupted = true; terminate(); },
+      status = child.wait(), if exited.is_none() && (cfg!(windows) || !streams_open) => {
+        // A descendant can hold both pipes open after the leader exits. End the owned job first,
+        // then drain the readers through EOF so the leader's final output still reaches the mirror.
+        #[cfg(windows)]
+        _job.terminate();
+        exited = Some(status);
+      }
     }
   };
-  while let Ok((_, _, text)) = rx.try_recv() {
-    pending.push_str(&text);
-  }
   if !pending.is_empty() && log_error.is_none() {
     let text = std::mem::take(&mut pending);
     if let Err(e) = store.accept(id, &args.event(json!({ "type": "tool_output", "callId": call_id, "text": text }))?).await {
@@ -493,5 +506,74 @@ mod tests {
     assert_eq!(d.push(&[b'a', 0xFF, b'b']), "a\u{FFFD}b");
     assert_eq!(d.push(&[0xE4, 0xB8]), "");
     assert_eq!(d.finish(), "\u{FFFD}");
+  }
+
+  #[cfg(windows)]
+  #[tokio::test]
+  async fn windows_bridge_reaps_descendants_and_keeps_the_final_output() {
+    use super::*;
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("fixture.cjs");
+    let receipt = dir.path().join("helper.pid");
+    // The descendant inherits both pipes: waiting for EOF before the leader deadlocks the bridge.
+    std::fs::write(
+      &script,
+      r#"
+const helper = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {stdio:'inherit', detached:true});
+require('node:fs').writeFileSync('helper.pid', String(helper.pid));
+helper.unref();
+process.stdout.write('final-output 中文🙂\n', () => process.exit(7));
+"#,
+    )
+    .unwrap();
+    struct Cleanup(PathBuf);
+    impl Drop for Cleanup {
+      fn drop(&mut self) {
+        if let Some(pid) = std::fs::read_to_string(&self.0).ok().and_then(|s| s.parse::<u32>().ok()) {
+          let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        }
+      }
+    }
+    let _cleanup = Cleanup(receipt);
+    let store = ChatGptBridgeStore::new(dir.path().join("store"), Arc::new(|_| {}), None);
+    store.init(false).await.unwrap();
+    let view = store.open("fixture", dir.path().to_str().unwrap(), "fixture").await.unwrap();
+    let args = Args::parse(&["--turn".into(), "fixture-turn".into()]).unwrap();
+    store.accept(&view.id, &args.event(json!({"type":"turn_start","text":"offline fixture"})).unwrap()).await.unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(3), run_command(&store, &args, &view.id, &view.cwd, "node fixture.cjs")).await;
+    store.dispose().await;
+    assert_eq!(result.expect("bridge waited on the orphan's pipes").unwrap(), 7);
+    let record = serde_json::to_value(store.view(&view.id).unwrap()).unwrap();
+    let record = record.to_string();
+    assert!(record.contains("final-output 中文🙂"));
+    assert!(record.contains("exit 7"));
+  }
+
+  #[cfg(windows)]
+  #[tokio::test]
+  async fn windows_bridge_preserves_an_explicitly_quoted_shell_command() {
+    use super::*;
+    use crate::acp::agents::{launch::ProcessEnv, registry::resolve_command};
+    use crate::platform::command::Os;
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("script 用户 space.cjs");
+    std::fs::write(&script, "process.stdout.write('quoted-tail '+JSON.stringify(process.argv.slice(2)), () => process.exit(7))").unwrap();
+    let node = resolve_command("node", &[], Os::Windows, &ProcessEnv).await.unwrap();
+    let command = format!("\"{node}\" \"{}\" \"two words\"", script.display());
+    let store = ChatGptBridgeStore::new(dir.path().join("store"), Arc::new(|_| {}), None);
+    store.init(false).await.unwrap();
+    let view = store.open("fixture", dir.path().to_str().unwrap(), "fixture").await.unwrap();
+    let args = Args::parse(&["--turn".into(), "fixture-turn".into()]).unwrap();
+    store.accept(&view.id, &args.event(json!({"type":"turn_start","text":"offline fixture"})).unwrap()).await.unwrap();
+    let result = run_command(&store, &args, &view.id, &view.cwd, &command).await;
+    store.dispose().await;
+    assert_eq!(result.unwrap(), 7);
+    let record = serde_json::to_value(store.view(&view.id).unwrap()).unwrap().to_string();
+    assert!(record.contains("quoted-tail"));
+    assert!(record.contains("two words"));
   }
 }

@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use serde_json::{Value, json};
 
+#[cfg(unix)]
 use acpira_host::external::chatgpt_binding::chatgpt_binding;
 use acpira_host::external::chatgpt_events::{ChatGptRecord, OUTPUT_LIMIT, STALE_AFTER_MS, apply_chatgpt_event, chatgpt_session_id, chatgpt_view, parse_chatgpt_event};
 use acpira_host::external::chatgpt_store::ChatGptBridgeStore;
@@ -14,7 +15,7 @@ use acpira_shared::transcript::SessionView;
 use crate::support::{expect_absent, expect_match, turns_in, v};
 
 struct Setup {
-  root: tempfile::TempDir,
+  _root: tempfile::TempDir,
   cwd: String,
   dir: std::path::PathBuf,
   clock: Arc<AtomicI64>,
@@ -50,7 +51,7 @@ async fn setup() -> Setup {
   let store = ChatGptBridgeStore::with_clock(dir.clone(), Arc::new(|_: &str| {}), Some("/extension/bin/acpira".into()), Arc::new(move || c.load(Ordering::SeqCst)));
   store.init(false).await.unwrap();
   let view = store.open("test-conversation-a", &cwd, "ChatGPT test").await.unwrap();
-  Setup { root, cwd, dir, clock, store, view, seq: Default::default() }
+  Setup { _root: root, cwd, dir, clock, store, view, seq: Default::default() }
 }
 
 fn err(r: anyhow::Result<impl std::fmt::Debug>) -> String {
@@ -191,7 +192,7 @@ async fn capped_output_is_marked_and_only_successful_diff_receipts_count() {
 async fn symlink_records_and_out_of_order_events_are_refused_without_touching_other_files() {
   let s = setup().await;
   assert!(err(s.send(json!({ "type": "tool_output", "callId": "x", "text": "late" })).await).contains("not active"));
-  let outside = s.root.path().join("untouched.json");
+  let outside = std::path::Path::new(&s.cwd).join("untouched.json");
   std::fs::write(&outside, "{}").unwrap();
   let id = chatgpt_session_id("symlink").unwrap();
   std::os::unix::fs::symlink(&outside, s.dir.join(format!("{id}.json"))).unwrap();
