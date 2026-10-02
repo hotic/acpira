@@ -65,23 +65,45 @@ impl AcpSession {
     PreparedPrompt { problems: vec![], ..prepared }
   }
 
-  /// Queue a prompt behind the running turn (or while starting); staged now so the row can show attachments
-  pub(crate) async fn enqueue(self: &Arc<Self>, text: String, drafts: Vec<Draft>, staged: Option<PreparedPrompt>) {
+  /// Queue a prompt behind the running turn (or while starting); staged now so the row can show attachments.
+  /// Returns the new entry's id, or None when nothing was queued
+  pub(crate) async fn enqueue(self: &Arc<Self>, text: String, drafts: Vec<Draft>, staged: Option<PreparedPrompt>) -> Option<String> {
     let prepared = match staged {
       Some(p) => p,
       None => self.stage(&text, &drafts).await,
     };
+    let id = random_uuid();
     let flush = {
       let mut c = self.core.lock();
       if prepared.blocks.is_empty() || !matches!(c.status, SessionStatus::Ready | SessionStatus::Starting) {
-        return;
+        return None;
       }
-      c.queue.entries.push(QueuedEntry { id: random_uuid(), text, prepared });
+      c.queue.entries.push(QueuedEntry { id: id.clone(), text, prepared });
       self.bump(&mut c);
       !(c.phase.running || c.pending_prompt.is_some())
     };
     if flush {
       self.flush_queue();
+    }
+    Some(id)
+  }
+
+  /// A prompt sent from the composer with steering on: while a turn runs it joins that turn over `_session/steering`
+  /// right away. It goes through the queue so a steer that cannot land (no support, the turn ending, another steer on
+  /// the wire, the peer refusing) leaves it there as an ordinary follow-up; it never cancels the running turn.
+  /// Without a running turn it is the ordinary prompt
+  pub async fn steer_prompt(self: &Arc<Self>, text: String, drafts: Vec<Draft>) -> Result<()> {
+    let running = {
+      let c = self.core.lock();
+      c.status == SessionStatus::Ready && c.phase.running
+    };
+    if !running {
+      self.prompt(text, drafts, false, None, None).await;
+      return Ok(());
+    }
+    match self.enqueue(text, drafts, None).await {
+      Some(id) => self.steer_entry(&id, false).await,
+      None => Ok(()),
     }
   }
 
@@ -148,6 +170,12 @@ impl AcpSession {
   /// block, `promptRequired` (the turn ended meanwhile) puts it first in line for the normal flush, a failure leaves it
   /// where it was. Without a running turn or steering support this is the ordinary send-now
   pub async fn steer_queued(self: &Arc<Self>, id: &str) -> Result<()> {
+    self.steer_entry(id, true).await
+  }
+
+  /// send_now: a steer that cannot go out falls back to send-now (the queue row's button); without it the entry just
+  /// stays queued (a composer send, which must not cancel the running turn)
+  async fn steer_entry(self: &Arc<Self>, id: &str, send_now: bool) -> Result<()> {
     let claimed = {
       let mut c = self.core.lock();
       if c.queue.claimed() || c.status != SessionStatus::Ready {
@@ -164,6 +192,7 @@ impl AcpSession {
         && self.can_steer_of(&c);
       match c.queue.entries.iter().find(|q| q.id == id) {
         None => return Ok(()),
+        Some(_) if !steerable && !send_now => return Ok(()),
         Some(_) if !steerable => None,
         Some(entry) => {
           let blocks = entry.prepared.blocks.clone();

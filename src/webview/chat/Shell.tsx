@@ -41,7 +41,8 @@ import { breadcrumb, nodesByTurn, subagentTitle } from './subagents/subagentStat
 // Every action the webview sends to the host; in the LAB a fake host implements these, the real build swaps in postMessage
 export interface ShellHandlers {
   editTurn?: (edit: EditTurnRequest) => Promise<void>;
-  send: (text: string, attachments: Draft[]) => void;
+  // steer: the composer sent it mid-turn with steering on, so it joins the running turn instead of queueing
+  send: (text: string, attachments: Draft[], steer?: boolean) => void;
   // @ mention lookup over workspace files
   searchFiles: (query: string) => Promise<FileHit[]>;
   // History search over saved conversations; without it the session list matches titles only
@@ -346,14 +347,16 @@ export function Shell(p: ShellProps) {
     />
   );
 
+  // With steering on, a message sent mid-turn joins that turn right away; a queued row's button steers the rest
+  const steering = !!p.steerQueued && p.running;
   const composerProps: ComposerProps = useMemo(() => ({
-    running: p.running, disabled: p.status !== 'ready' && p.status !== 'starting',
+    running: p.running, steer: steering, disabled: p.status !== 'ready' && p.status !== 'starting',
     controlsLocked: p.status !== 'ready',
     theme: p.theme, turns: p.turns, controls: p.controls, hidden: p.hidden?.[p.agent.id],
     usage: p.usage, commands: p.commands, compactAt: p.compactAt, cwd: p.cwd ?? '',
-    onSend: on.send, onSearchFiles: on.searchFiles, onNotice: notice, onStop: on.stop,
+    onSend: steering ? (text: string, attachments: Draft[]) => on.send(text, attachments, true) : on.send, onSearchFiles: on.searchFiles, onNotice: notice, onStop: on.stop,
     onSetMode: on.setMode, onSetConfig: on.setConfig, onCompact: on.compact,
-  }), [p.running, p.status, p.theme, p.turns, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact]);
+  }), [p.running, steering, p.status, p.theme, p.turns, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact]);
   // Context values above the transcript must not change on every stream push: React walks the whole memoized tree for consumers each time
   const permissions = useStableList(useMemo(() => p.turns.flatMap(t => t.role === 'agent' ? t.blocks.filter((b): b is PermissionBlock => b.type === 'permission') : []), [p.turns]));
   const planDoc = useMemo(() => ({

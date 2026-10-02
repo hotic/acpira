@@ -306,6 +306,9 @@ pub enum WebviewMsg {
     text: String,
     #[serde(default)]
     attachments: Vec<Draft>,
+    /// Sent while a turn runs with steering on: join that turn over `_session/steering` instead of waiting behind it
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    steer: Option<bool>,
   },
   Stop {
     session_id: Option<String>,
@@ -554,7 +557,9 @@ mod tests {
   #[test]
   fn parses_webview_messages() {
     let m: WebviewMsg = serde_json::from_str(r#"{"type":"send","text":"hi"}"#).unwrap();
-    assert_eq!(m, WebviewMsg::Send { session_id: None, text: "hi".into(), attachments: vec![] });
+    assert_eq!(m, WebviewMsg::Send { session_id: None, text: "hi".into(), attachments: vec![], steer: None });
+    let m: WebviewMsg = serde_json::from_str(r#"{"type":"send","text":"hi","steer":true}"#).unwrap();
+    assert!(matches!(m, WebviewMsg::Send { steer: Some(true), .. }));
     let m: WebviewMsg = serde_json::from_str(r#"{"type":"openFile","sessionId":"s","path":"a.ts","line":3}"#).unwrap();
     assert!(matches!(m, WebviewMsg::OpenFile { line: Some(3), .. }));
     let r: WebviewMsg = serde_json::from_str(r#"{"type":"ready"}"#).unwrap();

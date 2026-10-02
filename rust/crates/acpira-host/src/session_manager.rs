@@ -1419,9 +1419,13 @@ impl SessionManager {
     let valid = |id: &str| is_session_id(id);
     match m {
       W::ConnectChatgpt => self.new_session_for(v, Some(CHATGPT_ID.into()), None).await?,
-      W::Send { session_id, text, attachments } => {
+      W::Send { session_id, text, attachments, steer } => {
         if let Some(s) = self.target(v, session_id.as_deref()) {
-          s.prompt(text, attachments, false, None, None).await;
+          if steer == Some(true) {
+            s.steer_prompt(text, attachments).await?;
+          } else {
+            s.prompt(text, attachments, false, None, None).await;
+          }
         }
       }
       W::Stop { session_id } => {
