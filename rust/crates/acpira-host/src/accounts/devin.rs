@@ -39,11 +39,24 @@ impl DevinAccountProvider {
     DevinAccountProvider { scratch, binary }
   }
 
-  /// Write the credential into an isolated directory and read identity off `devin auth status`
+  /// Read identity from isolated credentials, or a matching normal CLI login on Windows.
   async fn identify(scratch: PathBuf, binary: BinaryFn, cred: &AccountCredential) -> (String, Option<String>) {
     let tail: String = cred.secret.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
     let fallback = (format!("Devin …{tail}"), None);
     let Some(bin) = binary().await else { return fallback };
+    if cfg!(windows) {
+      // Devin 3000.11.3 uses Known Folders here, ignoring XDG / APPDATA overrides. Never label one saved key using
+      // another account's global login, or write a key over that login just to ask the CLI for its identity.
+      let file = data_home().join("devin/credentials.toml");
+      if !read_credentials(&file).await.is_some_and(|current| current.secret == cred.secret) {
+        return fallback;
+      }
+      let out = run(&bin, &["auth", "status"], &[], Duration::from_secs(20)).await;
+      if read_credentials(&file).await.is_some_and(|current| current.secret == cred.secret) {
+        return out.ok().as_deref().and_then(parse_status).unwrap_or(fallback);
+      }
+      return fallback;
+    }
     let dir = scratch.join(format!("whoami-{}", random_uuid()));
     let result: Result<Option<(String, Option<String>)>> = async {
       create_private_dir(&dir.join("devin")).await?;
@@ -76,14 +89,20 @@ impl AccountProvider for DevinAccountProvider {
     Box::pin(async move {
       let bin = binary().await.ok_or_else(|| anyhow!(tp("host.notFound", &[("command", "devin"), ("agent", "Devin")])))?;
       let dir = scratch.join(format!("login-{}", random_uuid()));
-      create_private_dir(&dir).await?;
-      let file = dir.join("devin").join("credentials.toml");
+      let isolated = !cfg!(windows);
+      if isolated {
+        create_private_dir(&dir).await?;
+      }
+      let file = if isolated { dir.join("devin/credentials.toml") } else { data_home().join("devin/credentials.toml") };
+      // Windows observes the CLI's own login file. An existing login must not complete a newly opened flow.
+      let before = credential_stamp(&file).await;
       let d = dir.to_string_lossy().into_owned();
       // ACP_BACKEND makes the CLI ignore local credentials; it must be removed from the login environment
-      let env: BTreeMap<String, Option<String>> =
-        [("XDG_DATA_HOME".into(), Some(d.clone())), ("XDG_CONFIG_HOME".into(), Some(d)), ("ACP_BACKEND".into(), None)]
-          .into_iter()
-          .collect();
+      let env: BTreeMap<String, Option<String>> = if isolated {
+        [("XDG_DATA_HOME".into(), Some(d.clone())), ("XDG_CONFIG_HOME".into(), Some(d)), ("ACP_BACKEND".into(), None)].into()
+      } else {
+        [("ACP_BACKEND".into(), None)].into()
+      };
       Ok(LoginFlow {
         command: bin,
         args: vec!["auth".into(), "login".into()],
@@ -92,7 +111,7 @@ impl AccountProvider for DevinAccountProvider {
           Box::pin(async move {
             let mut found = None;
             while !cancel.is_cancelled() {
-              if let Some(c) = read_credentials(&file).await {
+              if let Some(c) = changed_credentials(&file, before.as_ref()).await {
                 found = Some(c);
                 break;
               }
@@ -108,7 +127,9 @@ impl AccountProvider for DevinAccountProvider {
               }
               None => None,
             };
-            let _ = tokio::fs::remove_dir_all(&dir).await;
+            if isolated {
+              let _ = tokio::fs::remove_dir_all(&dir).await;
+            }
             draft
           })
         }),
@@ -204,10 +225,33 @@ pub fn parse_user_status(json: &Value) -> Option<AccountQuota> {
 }
 
 pub fn data_home() -> PathBuf {
-  match std::env::var("XDG_DATA_HOME") {
-    Ok(v) if !v.is_empty() => PathBuf::from(v),
-    _ => home_dir().join(".local").join("share"),
+  #[cfg(windows)]
+  {
+    crate::platform::environment::roaming_app_data().unwrap_or_else(|| home_dir().join("AppData/Roaming"))
   }
+  #[cfg(not(windows))]
+  {
+    match std::env::var("XDG_DATA_HOME") {
+      Ok(v) if !v.is_empty() => PathBuf::from(v),
+      _ => home_dir().join(".local").join("share"),
+    }
+  }
+}
+
+type CredentialStamp = (Option<std::time::SystemTime>, Vec<u8>);
+
+async fn credential_stamp(path: &Path) -> Option<CredentialStamp> {
+  let bytes = tokio::fs::read(path).await.ok()?;
+  let modified = tokio::fs::metadata(path).await.ok()?.modified().ok();
+  Some((modified, bytes))
+}
+
+async fn changed_credentials(path: &Path, before: Option<&CredentialStamp>) -> Option<AccountCredential> {
+  let current = credential_stamp(path).await?;
+  if before == Some(&current) {
+    return None;
+  }
+  read_credentials(path).await
 }
 
 static TOML_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"((?:[^"\\]|\\.)*)"\s*$"#).unwrap());
@@ -269,8 +313,8 @@ async fn write_private(path: &Path, data: &[u8]) -> Result<()> {
 }
 
 async fn run(bin: &str, args: &[&str], env: &[(&str, &Path)], timeout: Duration) -> Result<String> {
-  let mut cmd = tokio::process::Command::new(bin);
-  cmd.args(args).env_remove("ACP_BACKEND").stdin(std::process::Stdio::null()).kill_on_drop(true);
+  let mut cmd = crate::acp::agents::launch::command(bin, &args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>());
+  cmd.env_remove("ACP_BACKEND").stdin(std::process::Stdio::null()).kill_on_drop(true);
   for (k, v) in env {
     cmd.env(k, v);
   }
@@ -284,6 +328,22 @@ async fn run(bin: &str, args: &[&str], env: &[(&str, &Path)], timeout: Duration)
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[tokio::test]
+  async fn terminal_login_waits_for_a_new_credential_write_and_keeps_the_cli_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("credentials.toml");
+    tokio::fs::write(&file, "windsurf_api_key = \"old\"\n").await.unwrap();
+    let before = credential_stamp(&file).await.unwrap();
+    assert!(changed_credentials(&file, Some(&before)).await.is_none());
+    tokio::fs::write(&file, "windsurf_api_key = \"new\"\n").await.unwrap();
+    assert_eq!(changed_credentials(&file, Some(&before)).await.unwrap().secret, "new");
+    assert!(file.exists());
+    // Reauthenticating the same account can write the same key; a new mtime still counts as completion.
+    let before = credential_stamp(&file).await.unwrap();
+    std::fs::File::options().write(true).open(&file).unwrap().set_modified(std::time::SystemTime::now() - Duration::from_secs(60)).unwrap();
+    assert_eq!(changed_credentials(&file, Some(&before)).await.unwrap().secret, "new");
+  }
 
   #[test]
   fn user_status_windows() {

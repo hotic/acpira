@@ -62,6 +62,7 @@ pub fn keychain_service(dir: Option<&str>) -> String {
   }
 }
 
+#[cfg(target_os = "macos")]
 fn keychain_account() -> String {
   std::env::var("USER").ok().filter(|u| !u.is_empty()).unwrap_or_else(|| "claude-code-user".into())
 }
