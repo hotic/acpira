@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { FileText, FolderOpen, GitBranch, Globe, Link2, Plus, Server, ShieldCheck, Sparkles, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { FileText, FolderOpen, GitBranch, Globe, Link2, Plus, Server, ShieldCheck, Sparkles, Trash2, X } from 'lucide-react';
 import type { AgentId, AgentInfo } from '@shared/transcript';
 import type { McpTransport } from '@shared/inventory';
 import type { Choice, PlanItem, PrivateSkill, Reach, ReachState, SharedAction, SharedMcp, SharedPrompt, SharedScope, SharedSkill, SharedView } from '@shared/sharedConfig';
@@ -253,7 +253,7 @@ function ProjectCard({ ctx }: { ctx: Ctx }) {
 }
 
 function SkillsTab({ ctx }: { ctx: Ctx }) {
-  const { view, act, busy, names, env, open } = ctx;
+  const { view, act, busy } = ctx;
   const [creating, setCreating] = useState<SharedScope>();
   return (
     <>
@@ -273,7 +273,7 @@ function SkillsTab({ ctx }: { ctx: Ctx }) {
               onSubmit={name => { setCreating(undefined); act({ kind: 'createSkill', scope, name }); }} />}
             {!hasPlace && <Note>{t('settings.shared.noProject')}</Note>}
             {hasPlace && !skills.length && creating !== scope && <Note>{t('settings.shared.skills.none')}</Note>}
-            {skills.map(s => <SkillRow key={s.path} skill={s} names={names} env={env} open={open} />)}
+            {skills.map(s => <SkillRow key={s.path} skill={s} ctx={ctx} />)}
           </Section>
         );
       })}
@@ -292,14 +292,39 @@ function scopeDesc(scope: SharedScope, view: SharedView, rel: string): string | 
   return view.root ? `${shortPath(view.root, { home: view.home, cwd: '' })}/${rel}` : undefined;
 }
 
-function SkillRow({ skill, names, env, open }: { skill: SharedSkill; names: Ctx['names']; env: Ctx['env']; open: Ctx['open'] }) {
+// A trash can that asks for a second click: the first arms it (danger colour, "click again" tooltip), the second deletes.
+// It disarms on its own after a moment, or when the pointer / focus leaves it
+function RemoveButton({ name, busy, onRemove }: { name: string; busy: boolean; onRemove: () => void }) {
+  const [armed, setArmed] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const disarm = () => { clearTimeout(timer.current); setArmed(false); };
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const click = () => {
+    if (armed) { disarm(); onRemove(); return; }
+    setArmed(true);
+    timer.current = setTimeout(() => setArmed(false), 3000);
+  };
+  const label = armed ? t('settings.shared.removeSkill.confirm') : t('settings.shared.removeSkill', { name });
+  return (
+    <IconButton title={label} aria-label={label} disabled={busy} onClick={click} onMouseLeave={disarm} onBlur={disarm}
+      className={cn(armed ? 'text-danger opacity-100' : 'text-fg-2 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100')}>
+      <Trash2 strokeWidth={1.5} />
+    </IconButton>
+  );
+}
+
+function SkillRow({ skill, ctx }: { skill: SharedSkill; ctx: Ctx }) {
+  const { act, busy, names, env, open } = ctx;
   const covered = [reachLine(skill.reach, 'native', names), reachLine(skill.reach, 'linked', names)].filter(Boolean).join(' · ');
   return (
     <ItemRow
       lead={<Sparkles strokeWidth={1.5} />}
       title={<span title={covered || undefined}>{skill.name}</span>}
       desc={skill.description ?? shortPath(skill.path, env)}
-      trailing={<Attention reach={skill.reach} names={names} />}
+      trailing={<>
+        <Attention reach={skill.reach} names={names} />
+        <RemoveButton name={skill.name} busy={busy} onRemove={() => act({ kind: 'removeSkill', path: skill.path })} />
+      </>}
       onOpen={() => open(`${skill.path}/SKILL.md`)}
     />
   );
@@ -321,6 +346,7 @@ function PrivateRow({ skill, ctx }: { skill: PrivateSkill; ctx: Ctx }) {
       title={skill.name}
       desc={[names([skill.agent]), scopeTitle(skill.scope), note ?? shortPath(skill.path, env)].join(t('common.metaSep'))}
       extra={<Actions busy={busy}>{buttons}</Actions>}
+      trailing={<RemoveButton name={skill.name} busy={busy} onRemove={() => act({ kind: 'removeSkill', path: skill.path })} />}
       onOpen={() => open(skill.path)}
     />
   );
@@ -337,10 +363,6 @@ function McpTab({ ctx }: { ctx: Ctx }) {
   const [adding, setAdding] = useState<SharedScope>();
   return (
     <>
-      <SectionDescription>
-        {t('settings.shared.mcp.desc')}
-        {view.noMcp.length > 0 && ` ${t('settings.shared.mcp.noMcp', { agents: ctx.names(view.noMcp) })}`}
-      </SectionDescription>
       {SCOPES.map(scope => {
         const servers = view.mcp.filter(m => m.scope === scope);
         const hasPlace = scope === 'global' || !!view.root;

@@ -210,6 +210,9 @@ pub enum SharedAction {
   /// Put `@AGENTS.md` on top of the project's CLAUDE.md, so Claude reads the shared project prompt too
   ClaudeImport,
   CreateSkill { scope: SharedScope, name: String },
+  /// Delete a skill folder: a shared one in `.agents/skills` (agents' links to it are pruned) or one in an agent's own
+  /// skills folder. The folder is moved into the backups, never removed outright
+  RemoveSkill { path: String },
   /// Create the file / directory when missing, then open it
   Open { scope: SharedScope, target: SharedTarget },
   /// `json`: `{ "mcpServers": {…} }`, a map of servers, or one server (then `name` is required)

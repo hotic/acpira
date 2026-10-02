@@ -30,7 +30,6 @@ export interface SettingsHandlers {
   // The one appearance axis the page exposes (motion); the rest stay LAB design decisions
   setAppearance: <K extends AxisKey>(axis: K, value: Appearance[K]) => void;
   openPath: (path: string) => void;
-  openAgentConfig?: () => void;
   refreshInventory: (agent: AgentId) => void;
   // The refresh button on an agent page: re-reads the inventory and the option lists, the latter from a throwaway probe process
   refreshAgent: (agent: AgentId) => void;
