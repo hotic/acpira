@@ -3,9 +3,8 @@ import type { ConfigControl } from '@shared/transcript';
 import { findFusionVariant, findVariant, fusionLabel, groupModels, optionBrand, variantLabel, visibleOptions, type ModelFamily, type ModelVariant } from '@shared/models';
 import { fastOn, fastValue, isFastControl, modelConfigChip, presentReasoning, reasoningChip, reasoningVisible } from '@shared/composerControls';
 import { t } from '../i18n';
-import { cn } from '../ui/cn';
 import { Chip } from '../ui/Button';
-import { RadioPills, SelectRow, SwitchRow } from '../ui/Field';
+import { SelectRow, StepScale, SwitchRow } from '../ui/Field';
 import { Popover } from '../ui/Popover';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { Command } from '../ui/Command';
@@ -215,18 +214,14 @@ function ReasoningParams({ control, onChange }: { control: ConfigControl; onChan
   );
 }
 
-// Shared segmented field for both embedded variants and native thought_level.
+// Shared ordinal field for embedded variants, Fusion leads and native thought_level: one row of stops for any level count
 function EffortField({ options, value, onChange, label = t('composer.effort') }: {
   options: { value: string; label: string }[];
   value: string;
   onChange: (value: string) => void;
   label?: string;
 }) {
-  // Stacked pill surfaces share the full row width with switches; only the label is inset.
-  return <div className={cn('flex min-h-row gap-2 py-1', options.length > 3 ? 'flex-col' : 'flex-wrap items-center px-2')}>
-    <span className={cn('shrink-0 text-2 text-fg-2', options.length > 3 && 'px-2')}>{label}</span>
-    <RadioPills label={label} options={options} value={value} onChange={onChange} />
-  </div>;
+  return <StepScale label={label} options={options} value={value} onChange={onChange} />;
 }
 
 // Flat configOption menu; long lists are searchable. Vendor marks only appear when at least one option has a known brand
