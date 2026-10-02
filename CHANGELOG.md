@@ -11,6 +11,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [1.8.3] - 2026-10-03
+
+### Added
+
+- Claude Code dynamic workflow agents, including ultracode runs, appear in the subagent tree with their phase, task, model and result previews. Their progress continues after the launching reply ends, and the Workflow row retains its background-task controls. Explicit Claude workflow settings remain respected.
+- The Shared settings page can remove shared and agent-private skills, moving their folders to Acpira's shared-configuration backups and removing managed links left dangling by the deletion.
+
+### Changed
+
+- With steering enabled, sending from the composer during a running turn injects the message immediately. If steering cannot be accepted, the message stays queued without cancelling the current turn. Accepted messages stay inside the running process and remain visible when its details fold.
+- Reasoning effort uses a single-row step scale across model menus and Fusion, keeping longer level lists within narrow panels.
+- Menus use one neutral pointer or keyboard highlight, with a check mark identifying the current value. The composer focus border stays neutral outside high-contrast themes. Command and subagent rows no longer show native browser tooltips.
+
+### Fixed
+
+- Files and plans opened from chat reuse an existing editor group in VS Code and Cursor; a split is created only when the chat occupies the sole group.
+- Bold Markdown closes correctly when CJK punctuation directly precedes CJK text, and receives the intended bold styling.
+- Fenced code uses language-aware highlighting only for recognized language labels. Unlabelled blocks, commit messages and plain-text fences remain uncoloured; streamed code retains the colours of completed lines while its tail arrives.
+
+### Removed
+
+- The General settings shortcut for opening agent launch configuration and the introductory MCP hints are removed. Agent launch definitions continue to use the host machine's `~/.acpira/agents.json`.
+
 ## [1.8.2] - 2026-10-02
 
 ### Changed

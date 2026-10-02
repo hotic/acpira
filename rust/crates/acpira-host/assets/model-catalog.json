@@ -1,4 +1,4 @@
-{"source":"https://models.dev/api.json","etag":"W/\"f9bd47cc829cb76c1db524090c7e0a7d\"","fetchedAt":"2026-10-02T02:39:55.441Z","models":[
+{"source":"https://models.dev/api.json","etag":"W/\"c6c4cc2f40d32afd620af482dd41e48b\"","fetchedAt":"2026-10-02T22:37:24.501Z","models":[
 {"provider":"anthropic","id":"claude-fable-5","name":"Claude Fable 5","reasoning":true,"efforts":["low","medium","high","xhigh","max"],"context":1000000},
 {"provider":"anthropic","id":"claude-fable-5-1","name":"Claude Fable 5.1","reasoning":true,"efforts":["low","medium","high","xhigh","max"],"context":1000000},
 {"provider":"anthropic","id":"claude-haiku-4-5","name":"Claude Haiku 4.5 (latest)","reasoning":true,"context":200000},
@@ -119,6 +119,7 @@
 {"provider":"xai","id":"grok-imagine-image-quality","name":"Grok Imagine Image Quality","context":16000},
 {"provider":"xai","id":"grok-imagine-video","name":"Grok Imagine Video","context":1024},
 {"provider":"xai","id":"grok-imagine-video-1.5","name":"Grok Imagine Video 1.5","context":1024},
+{"provider":"xai","id":"grok-imagine-video-1.5-lite","name":"Grok Imagine Video 1.5 Lite","context":1024},
 {"provider":"deepseek","id":"deepseek-flash","name":"DeepSeek V4.1 Flash","reasoning":true,"efforts":["low","high","max"],"toggle":true,"context":1000000},
 {"provider":"deepseek","id":"deepseek-v4-flash","name":"DeepSeek V4 Flash","reasoning":true,"efforts":["low","high","max"],"toggle":true,"context":1000000},
 {"provider":"deepseek","id":"deepseek-v4-flash-vision-exp","name":"DeepSeek V4 Flash Vision Exp","reasoning":true,"efforts":["low","high","max"],"toggle":true,"context":1000000},
