@@ -95,7 +95,7 @@ impl SharedConfig {
     let dead: Vec<Entry> = ledger
       .entries
       .iter()
-      .filter(|e| e.kind == EntryKind::Link && !Path::new(&e.target).exists() && std::fs::symlink_metadata(&e.path).is_ok_and(|m| m.file_type().is_symlink()))
+      .filter(|e| e.kind == EntryKind::Link && !Path::new(&e.target).exists() && links::is_link(Path::new(&e.path)))
       .cloned()
       .collect();
     if dead.is_empty() {
