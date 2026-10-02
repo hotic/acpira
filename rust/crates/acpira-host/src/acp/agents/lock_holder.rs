@@ -11,8 +11,9 @@ use std::time::Duration;
 
 use regex::Regex;
 
-use crate::acp::transport::process::KILL_GRACE;
 use crate::acp::session::errors::rpc_of;
+#[cfg(unix)]
+use crate::acp::transport::process::KILL_GRACE;
 use crate::store::file_lock::pid_alive;
 
 static HOLDER_PID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bPID[:\s]+(\d+)").unwrap());
@@ -24,6 +25,7 @@ pub fn holder_pid(e: &anyhow::Error) -> Option<u32> {
 }
 
 /// `ps -o ppid=,comm=` for one pid: the parent pid and the executable (a full path on macOS, the 15-char name on Linux)
+#[cfg(any(unix, test))]
 fn parse_ps(line: &str) -> Option<(u32, String)> {
   let line = line.trim();
   let (ppid, comm) = line.split_once(char::is_whitespace)?;
@@ -31,9 +33,16 @@ fn parse_ps(line: &str) -> Option<(u32, String)> {
 }
 
 fn is_sidecar(comm: &str) -> bool {
-  Path::new(comm).file_name().and_then(|n| n.to_str()).is_some_and(|n| n.trim_end_matches(".exe") == "acpira")
+  Path::new(comm).file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+    if cfg!(windows) {
+      n.eq_ignore_ascii_case("acpira.exe") || n.eq_ignore_ascii_case("acpira")
+    } else {
+      n.trim_end_matches(".exe") == "acpira"
+    }
+  })
 }
 
+#[cfg(unix)]
 async fn ps(pid: u32) -> Option<(u32, String)> {
   let out = tokio::time::timeout(
     Duration::from_millis(1500),
@@ -48,9 +57,14 @@ async fn ps(pid: u32) -> Option<(u32, String)> {
   parse_ps(String::from_utf8_lossy(&out.stdout).lines().next()?)
 }
 
+#[cfg(windows)]
+async fn ps(pid: u32) -> Option<(u32, String)> {
+  crate::platform::windows_process::process_info(pid)
+}
+
 /// The pid is alive and a direct child of an `acpira` process other than this one (never our own agents)
 pub async fn held_by_sibling(pid: u32) -> bool {
-  if cfg!(windows) || pid == std::process::id() || !pid_alive(Some(pid.into())) {
+  if pid == std::process::id() || !pid_alive(Some(pid.into())) {
     return false;
   }
   let Some((parent, _)) = ps(pid).await else { return false };
@@ -87,8 +101,30 @@ pub async fn terminate(pid: u32) {
   gone(Duration::from_secs(1)).await;
 }
 
-#[cfg(not(unix))]
-pub async fn terminate(_pid: u32) {}
+/// Hold the original process handle across the ownership check, so PID reuse cannot redirect the termination.
+#[cfg(windows)]
+pub async fn terminate(pid: u32) {
+  use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+  use windows_sys::Win32::Foundation::WAIT_TIMEOUT;
+  use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject};
+  // SAFETY: opens only the candidate process; the handle is owned before any await or early return.
+  let raw = unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, 0, pid) };
+  if raw.is_null() {
+    return;
+  }
+  let handle = unsafe { OwnedHandle::from_raw_handle(raw) };
+  if !held_by_sibling(pid).await {
+    return;
+  }
+  // SAFETY: the live handle still identifies the checked process, not a later occupant of the same PID.
+  if unsafe { TerminateProcess(handle.as_raw_handle(), 1) } == 0 {
+    return;
+  }
+  let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+  while unsafe { WaitForSingleObject(handle.as_raw_handle(), 0) } == WAIT_TIMEOUT && tokio::time::Instant::now() < deadline {
+    tokio::time::sleep(Duration::from_millis(10)).await;
+  }
+}
 
 #[cfg(test)]
 mod tests {

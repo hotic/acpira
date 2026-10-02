@@ -1,7 +1,9 @@
 //! test/AgentProcess.test.ts, test/AgentPool.test.ts and test/compaction-queue.test.ts: process lifecycle, warm pool, background compaction
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(unix)]
+use std::time::Instant;
 
 use serde_json::{Value, json};
 

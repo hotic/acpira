@@ -117,6 +117,20 @@ impl SidecarPlatform {
 
   /// Without a terminal on the shell side the command is at least shown, so a login / install can be run by hand
   pub fn run_in_terminal(&self, title: String, command: String, args: Vec<String>, env: Option<BTreeMap<String, Option<String>>>) {
+    // Both IDEs receive the same ASCII-only Windows invocation, regardless of their configured terminal dialect.
+    // Environment edits live inside the encoded child shell so null removals and quoted paths behave identically.
+    let (command, args, env) = if cfg!(windows) {
+      let mut env = env.unwrap_or_default();
+      if !env.keys().any(|key| key.eq_ignore_ascii_case("PATH"))
+        && let Some(path) = crate::acp::agents::login_path::merged()
+      {
+        env.insert("PATH".into(), Some(path));
+      }
+      let (command, args) = crate::platform::terminal::windows_launch(&command, &args, Some(&env));
+      (command, args, None)
+    } else {
+      (command, args, env)
+    };
     let wire_env = env
       .as_ref()
       .map(|e| e.iter().map(|(k, v)| (k.clone(), v.clone().map(Value::from).unwrap_or(Value::Null))).collect::<Map<String, Value>>());

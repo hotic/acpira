@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use crate::acp::transport::process::initialize_request;
 use crate::acp::agents::registry::AgentRegistry;
-use crate::acp::agents::launch::{Os, ProcessEnv, spawn_spec};
+use crate::platform::command::{Os, spawn_spec};
 
 pub async fn run(args: &[String]) -> i32 {
   crate::acp::agents::login_path::ready().await;
@@ -15,7 +15,7 @@ pub async fn run(args: &[String]) -> i32 {
     let Ok(def) = registry.get(&id) else { continue };
     let binary = registry.resolve_binary(&id).await;
     let spawn = binary.as_deref().map(|b| {
-      let s = spawn_spec(b, &def.args, Os::current(), &ProcessEnv);
+      let s = spawn_spec(b, &def.args, Os::current(), std::env::var("ComSpec").ok().as_deref());
       json!({ "command": s.command, "args": s.args, "verbatim": s.verbatim })
     });
     agents.push(json!({

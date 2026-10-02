@@ -2,14 +2,17 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::sync::Arc;
+#[cfg(unix)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde_json::json;
 
 use acpira_host::acp::agents::adapter_info::read_adapter_info;
 use acpira_host::acp::agents::registry::{AdapterDef, AdapterEngine, AgentDef, NativeLayout, AgentRegistry, resolve_command, search_dirs, search_paths};
-use acpira_host::acp::agents::launch::{Env, Os, resolve_executable, spawn_spec};
+use acpira_host::acp::agents::launch::{Env, resolve_executable};
+use acpira_host::platform::command::{Os, spawn_spec};
 use acpira_host::acp::agents::model_sources::grok_model_sources;
 
 use crate::support::{expect_eq, expect_match, v};
@@ -27,11 +30,13 @@ fn env(pairs: &[(&str, &str)]) -> MapEnv {
 }
 
 /// A fresh directory with an optional executable, so a CLI can be "installed" and "removed" under the registry's nose
+#[cfg(unix)]
 struct Sandbox {
   _dir: tempfile::TempDir,
   bin: PathBuf,
 }
 
+#[cfg(unix)]
 impl Sandbox {
   fn new() -> Sandbox {
     let dir = tempfile::tempdir().unwrap();
@@ -55,6 +60,7 @@ fn executable(path: &Path, body: &str) {
   std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
 }
 
+#[cfg(unix)]
 fn counter(r: &AgentRegistry) -> Arc<AtomicUsize> {
   let n = Arc::new(AtomicUsize::new(0));
   let c = n.clone();
@@ -150,6 +156,99 @@ async fn windows_resolves_path_entries_through_pathext_and_posix_misses_a_non_ex
   let win = resolve_command("foo", &[], Os::Windows, &env(&[("PATH", path), ("PATHEXT", ".COM;.EXE;.BAT;.CMD")])).await;
   assert_eq!(win.map(|p| p.to_lowercase()), Some(cmd.to_str().unwrap().to_lowercase()));
   assert!(resolve_command("foo", &[], Os::Posix, &env(&[("PATH", path)])).await.is_none());
+}
+
+#[tokio::test]
+async fn windows_finds_devin_installed_after_startup_without_a_path_change() {
+  let root = tempfile::tempdir().unwrap();
+  let local = root.path().join("Local AppData");
+  let bin = local.join("devin").join("cli").join("bin");
+  std::fs::create_dir_all(&bin).unwrap();
+  // The installer updates User PATH and its own process, but the running IDE keeps its inherited PATH.
+  let e = env(&[("PATH", ""), ("LOCALAPPDATA", local.to_str().unwrap())]);
+  assert!(resolve_command("devin", &[], Os::Windows, &e).await.is_none());
+  let exe = bin.join("devin.exe");
+  std::fs::write(&exe, "fake Windows executable").unwrap();
+  assert_eq!(
+    resolve_command("devin", &[], Os::Windows, &e).await.map(|p| p.to_lowercase()),
+    Some(exe.to_string_lossy().to_lowercase()),
+  );
+  assert!(search_dirs("devin", &[], Os::Windows, &e).contains(&bin.to_string_lossy().into_owned()));
+}
+
+#[tokio::test]
+async fn windows_npm_shims_resolve_to_cmd_instead_of_the_extensionless_shell_script() {
+  let root = tempfile::tempdir().unwrap();
+  let e = env(&[("PATH", root.path().to_str().unwrap())]);
+  for command in ["codex-acp", "claude-agent-acp", "pi-acp", "dsh", "opencode"] {
+    // npm's cmd-shim writes all three siblings on Windows, including the POSIX shell entry.
+    std::fs::write(root.path().join(command), "#!/bin/sh\nexec node cli.js \"$@\"\n").unwrap();
+    std::fs::write(root.path().join(format!("{command}.ps1")), "& node cli.js $args\n").unwrap();
+    let shim = root.path().join(format!("{command}.cmd"));
+    std::fs::write(&shim, "@node cli.js %*\r\n").unwrap();
+    let found = resolve_command(command, &[], Os::Windows, &e).await.expect("installed npm shim");
+    assert_eq!(found.to_lowercase(), shim.to_string_lossy().to_lowercase(), "{command}");
+    assert_eq!(spawn_spec(&found, &[], Os::Windows, e.get("ComSpec").as_deref()).command, "cmd.exe");
+  }
+}
+
+#[tokio::test]
+async fn windows_skips_a_posix_candidate_before_an_executable_on_path() {
+  let root = tempfile::tempdir().unwrap();
+  let candidate = root.path().join("devin");
+  std::fs::write(&candidate, "#!/bin/sh\nexit 0\n").unwrap();
+  let bin = root.path().join("bin");
+  std::fs::create_dir(&bin).unwrap();
+  let exe = bin.join("devin.exe");
+  std::fs::write(&exe, "fake Windows executable").unwrap();
+  let e = env(&[("PATH", bin.to_str().unwrap())]);
+  let candidates = vec![candidate.to_string_lossy().into_owned()];
+  assert_eq!(
+    resolve_command("devin", &candidates, Os::Windows, &e).await.map(|p| p.to_lowercase()),
+    Some(exe.to_string_lossy().to_lowercase()),
+  );
+  assert!(resolve_executable(candidate.to_str().unwrap(), Os::Windows, &e).await.is_none());
+}
+
+#[tokio::test]
+async fn windows_keeps_explicit_executables_and_pathext_order_while_posix_keeps_shell_scripts() {
+  let root = tempfile::tempdir().unwrap();
+  let entry = root.path().join("agent.test");
+  executable(&entry, "#!/bin/sh\nexit 0\n");
+  for ext in ["exe", "cmd", "js"] {
+    std::fs::write(root.path().join(format!("agent.test.{ext}")), "fixture").unwrap();
+  }
+  let exe = root.path().join("agent.test.exe");
+  let cmd = root.path().join("agent.test.cmd");
+  let e = env(&[("PATHEXT", ".JS;.CMD;.EXE")]);
+  // Dotted package names still resolve via PATHEXT; shell file associations are not executable launchers.
+  assert_eq!(resolve_executable(entry.to_str().unwrap(), Os::Windows, &e).await.unwrap().to_lowercase(), cmd.to_string_lossy().to_lowercase());
+  assert_eq!(resolve_executable(exe.to_str().unwrap(), Os::Windows, &e).await.as_deref(), exe.to_str());
+  assert_eq!(resolve_executable(cmd.to_str().unwrap(), Os::Windows, &e).await.as_deref(), cmd.to_str());
+  assert_eq!(resolve_executable(entry.to_str().unwrap(), Os::Windows, &env(&[("PATHEXT", "")])).await.unwrap().to_lowercase(), exe.to_string_lossy().to_lowercase());
+  assert_eq!(resolve_executable(entry.to_str().unwrap(), Os::Posix, &e).await.as_deref(), entry.to_str());
+}
+
+#[tokio::test]
+async fn windows_devin_fallback_preserves_path_precedence_and_is_platform_specific() {
+  let root = tempfile::tempdir().unwrap();
+  let local = root.path().join("local");
+  let installed = local.join("devin").join("cli").join("bin");
+  let preferred = root.path().join("preferred");
+  for dir in [&installed, &preferred] {
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(dir.join("devin.exe"), "fake Windows executable").unwrap();
+  }
+  let e = env(&[("PATH", preferred.to_str().unwrap()), ("LOCALAPPDATA", local.to_str().unwrap())]);
+  assert_eq!(
+    resolve_command("devin", &[], Os::Windows, &e).await.map(|p| p.to_lowercase()),
+    Some(preferred.join("devin.exe").to_string_lossy().to_lowercase()),
+  );
+  let installed = installed.to_string_lossy().into_owned();
+  assert!(!search_dirs("devin", &[], Os::Posix, &e).contains(&installed));
+  assert!(!search_dirs("another-agent", &[], Os::Windows, &e).contains(&installed));
+  assert!(search_paths("devin", &[], Os::Windows, &env(&[])).is_empty());
+  assert!(search_paths("devin", &[], Os::Windows, &env(&[("LOCALAPPDATA", "")])).is_empty());
 }
 
 #[cfg(unix)]
@@ -277,35 +376,6 @@ fn a_custom_install_line_applies_everywhere_docs_alone_suffice_and_nothing_means
   assert!(info(&r, "c").get("install").is_none());
 }
 
-fn args(a: &[&str]) -> Vec<String> {
-  a.iter().map(|x| x.to_string()).collect()
-}
-
-#[test]
-fn a_cmd_goes_through_the_windows_command_shell_with_cross_spawn_escaping() {
-  let spec = spawn_spec("C:\\x\\pi-acp.cmd", &args(&["--a", "b c", "q\"t"]), Os::Windows, &env(&[]));
-  assert_eq!(spec.command, "cmd.exe");
-  assert!(spec.verbatim);
-  assert_eq!(&spec.args[..3], ["/d", "/s", "/c"]);
-  // One quoted string for the whole command line; the argument with a space arrives escaped
-  assert!(spec.args[3].starts_with('"') && spec.args[3].ends_with('"'));
-  assert!(spec.args[3].contains("^\"b c^\""), "{}", spec.args[3]);
-}
-
-#[test]
-fn comspec_is_honoured_when_set() {
-  let spec = spawn_spec("C:\\x\\a.bat", &[], Os::Windows, &env(&[("ComSpec", "C:\\Windows\\System32\\cmd.exe")]));
-  assert_eq!(spec.command, "C:\\Windows\\System32\\cmd.exe");
-  assert_eq!(spec.args, ["/d", "/s", "/c", "\"C:\\x\\a.bat\""]);
-}
-
-#[test]
-fn cmd_and_bat_match_case_insensitively_and_exe_is_left_alone() {
-  assert_eq!(spawn_spec("C:\\x\\tool.CMD", &args(&["x"]), Os::Windows, &env(&[])).command, "cmd.exe");
-  let exe = spawn_spec("C:\\x\\tool.exe", &args(&["x"]), Os::Windows, &env(&[]));
-  assert_eq!((exe.command.as_str(), exe.args.clone(), exe.verbatim), ("C:\\x\\tool.exe", args(&["x"]), false));
-}
-
 #[tokio::test]
 async fn a_directory_named_like_the_command_is_skipped_for_the_cmd_next_to_it() {
   let dir = tempfile::tempdir().unwrap();
@@ -316,14 +386,6 @@ async fn a_directory_named_like_the_command_is_skipped_for_the_cmd_next_to_it() 
   let cmd = dir.path().join("foo.cmd").to_str().unwrap().to_lowercase();
   assert_eq!(resolve_executable(dir.path().join("foo").to_str().unwrap(), Os::Windows, &e).await.map(|p| p.to_lowercase()), Some(cmd.clone()));
   assert_eq!(resolve_command("foo", &[], Os::Windows, &e).await.map(|p| p.to_lowercase()), Some(cmd));
-}
-
-#[test]
-fn off_windows_everything_passes_through_unchanged() {
-  let s = spawn_spec("/usr/local/bin/pi-acp", &args(&["--a", "b c"]), Os::Posix, &env(&[]));
-  assert_eq!((s.command.as_str(), s.args.clone()), ("/usr/local/bin/pi-acp", args(&["--a", "b c"])));
-  let s = spawn_spec("C:\\x\\pi-acp.cmd", &[], Os::Posix, &env(&[]));
-  assert_eq!((s.command.as_str(), s.args.len()), ("C:\\x\\pi-acp.cmd", 0));
 }
 
 const ADAPTER_PKG: &str = "@agentclientprotocol/codex-acp";

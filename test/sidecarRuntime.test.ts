@@ -166,8 +166,15 @@ describe('sidecar runtime', () => {
     const { s, requests } = await setup();
     s.view('V', { type: 'installAgent', agent: 'fake' });
     await until(() => requests('runInTerminal').length === 1);
-    expect(requests('runInTerminal')[0]).toMatchObject({ title: expect.stringContaining('Fake'),
-      command: process.platform === 'win32' ? 'powershell' : 'bash', args: [process.platform === 'win32' ? '-Command' : '-c', 'curl -fsSL https://example.com/install.sh | sh'] });
+    const request = requests('runInTerminal')[0] as Extract<PlatformRequest, { method: 'runInTerminal' }>;
+    expect(request.title).toContain('Fake');
+    if (process.platform === 'win32') {
+      expect(request).toMatchObject({ command: 'powershell.exe', args: ['-NoLogo', '-NoProfile', '-NoExit', '-EncodedCommand', expect.any(String)] });
+      expect(Buffer.from(request.args.at(-1)!, 'base64').toString('utf16le')).toContain('curl -fsSL https://example.com/install.sh | sh');
+      expect(request.env).toBeUndefined();
+    } else {
+      expect(request).toMatchObject({ command: 'bash', args: ['-c', 'curl -fsSL https://example.com/install.sh | sh'] });
+    }
     await until(() => toasts(s).some(t => t.level === 'info'));
   });
 

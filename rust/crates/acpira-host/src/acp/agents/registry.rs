@@ -10,7 +10,8 @@ use serde_json::Value;
 
 use acpira_shared::transcript::{AgentId, AgentInfo, AgentInstall, SessionOption, StrMap};
 
-use crate::acp::agents::launch::{Env, Os, ProcessEnv, resolve_executable};
+use crate::acp::agents::launch::{Env, ProcessEnv, resolve_executable};
+use crate::platform::command::Os;
 use crate::acp::agents::native_release::{self, NativeRelease};
 use crate::i18n::tp;
 use crate::store::data_dir::home_dir;
@@ -144,7 +145,14 @@ pub fn builtin_agents() -> Vec<AgentDef> {
       login: login("devin", &["auth", "login"]),
       install: install(
         "curl -fsSL https://cli.devin.ai/install.sh | bash",
-        "irm https://cli.devin.ai/install.ps1 | iex",
+        // Keep the displayed/copied command identical to the terminal action. Strip full-line comments before joining:
+        // PowerShell's line comments would otherwise swallow the rest of the one-line command.
+        &include_str!("install-devin.ps1")
+          .lines()
+          .map(str::trim)
+          .filter(|line| !line.is_empty() && !line.starts_with('#'))
+          .collect::<Vec<_>>()
+          .join(" "),
         "https://docs.devin.ai/cli",
       ),
       // ACP_BACKEND makes the account layer the sole source of credentials
@@ -531,7 +539,7 @@ const FALLBACK_DIRS: &[&str] =
   &["~/.npm-global/bin", "~/.local/share/pnpm", "~/Library/pnpm", "~/.bun/bin", "~/.volta/bin", "~/.yarn/bin"];
 
 /// Every path tried for `command`, in order: the definition's candidates, PATH (which includes what the login shell
-/// adds), then `FALLBACK_DIRS` on POSIX; duplicates dropped
+/// adds), then platform-specific install directories; duplicates dropped
 pub fn search_paths(command: &str, candidates: &[String], os: Os, env: &dyn Env) -> Vec<String> {
   if std::path::Path::new(command).is_absolute() {
     return vec![command.to_owned()];
@@ -542,6 +550,12 @@ pub fn search_paths(command: &str, candidates: &[String], os: Os, env: &dyn Env)
   let mut dirs: Vec<String> = path.split(sep).filter(|d| !d.is_empty()).map(str::to_owned).collect();
   if os == Os::Posix {
     dirs.extend(FALLBACK_DIRS.iter().map(|d| expand_home(d)));
+  } else if command.eq_ignore_ascii_case("devin") {
+    // Devin's Windows installer updates User PATH and its child shell, not the running IDE's environment.
+    // Probe its official install directory directly so a refresh finds a new install without restarting the IDE.
+    if let Some(local) = env.get("LOCALAPPDATA").filter(|d| !d.is_empty()) {
+      dirs.push(std::path::Path::new(&local).join("devin").join("cli").join("bin").to_string_lossy().into_owned());
+    }
   }
   out.extend(dirs.iter().map(|d| std::path::Path::new(d).join(command).to_string_lossy().into_owned()));
   let mut seen = std::collections::HashSet::new();

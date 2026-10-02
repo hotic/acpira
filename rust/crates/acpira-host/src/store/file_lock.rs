@@ -165,11 +165,22 @@ pub(crate) fn pid_alive(pid: Option<i64>) -> bool {
   r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 pub(crate) fn pid_alive(pid: Option<i64>) -> bool {
-  // Without a portable liveness probe a stale-by-age lock is taken over; holders keep it for milliseconds
-  let _ = pid;
-  false
+  use windows_sys::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0};
+  use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
+  let Some(pid) = pid.filter(|p| *p > 0).and_then(|p| u32::try_from(p).ok()) else { return false };
+  // SAFETY: a non-inheritable query-only handle is closed on every successful open. No signal is sent.
+  unsafe {
+    let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+    if handle.is_null() {
+      // Access denied (another user / elevated process) is not evidence that the lock holder died.
+      return std::io::Error::last_os_error().raw_os_error() != Some(ERROR_INVALID_PARAMETER as i32);
+    }
+    let status = WaitForSingleObject(handle, 0);
+    CloseHandle(handle);
+    status != WAIT_OBJECT_0
+  }
 }
 
 /// tmp + rename so a reader in another host never sees a half-written file; mode applies to the temp file and travels with the rename
@@ -195,6 +206,40 @@ pub async fn write_atomic(path: &Path, data: &[u8], mode: Option<u32>) -> Result
 mod tests {
   use super::*;
   use std::sync::atomic::{AtomicUsize, Ordering};
+
+  #[test]
+  fn process_liveness_distinguishes_a_running_holder_from_an_exited_child() {
+    assert!(pid_alive(Some(std::process::id() as i64)));
+    assert!(!pid_alive(None));
+    assert!(!pid_alive(Some(-1)));
+    let mut child =
+      std::process::Command::new(std::env::current_exe().unwrap()).arg("--list").stdout(std::process::Stdio::null()).spawn().unwrap();
+    let pid = child.id();
+    child.wait().unwrap();
+    assert!(!pid_alive(Some(pid as i64)));
+  }
+
+  #[tokio::test]
+  async fn an_old_lock_held_by_a_live_process_is_not_stolen() {
+    let dir = tempfile::tempdir().unwrap();
+    let lock = dir.path().join("live.lock");
+    let body = format!("{}\n0123456789abcdef", std::process::id());
+    std::fs::write(&lock, &body).unwrap();
+    std::fs::write(with_suffix(&lock, ".0123456789abcdef"), &body).unwrap();
+    std::fs::File::options().write(true).open(&lock).unwrap().set_modified(SystemTime::now() - STALE * 2).unwrap();
+    assert!(!claim_stale(&lock).await);
+    assert_eq!(std::fs::read_to_string(&lock).unwrap(), body);
+  }
+
+  #[tokio::test]
+  async fn atomic_write_replaces_existing_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("用户 prefs.json");
+    write_atomic(&path, b"old", None).await.unwrap();
+    write_atomic(&path, b"new", None).await.unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"new");
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+  }
 
   #[tokio::test]
   async fn serializes_callers_and_cleans_up() {
