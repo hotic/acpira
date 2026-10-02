@@ -19,10 +19,6 @@
   --option-hover-fg: var(--fg-1);
   --option-selected-bg: var(--active);
   --option-selected-fg: var(--fg-strong);
-  --menu-selection-bg: var(--active);
-  --menu-selection-fg: var(--fg-strong);
-  --suggest-selection-bg: var(--hover);
-  --suggest-selection-fg: var(--fg-1);
   --option-border: transparent;
   --focus-outline: none;
 }
@@ -41,7 +37,8 @@
   --line: color-mix(in srgb, var(--fg-1) 10%, transparent);
   --line-strong: var(--vscode-widget-border, color-mix(in srgb, var(--fg-1) 22%, var(--bg-0)));
   --conversation-line: color-mix(in srgb, var(--fg-1) 16%, transparent);
-  --conversation-line-focus: var(--focus);
+  /* Focus stays a neutral step up, as hover and selection do; the accent is kept for high contrast. */
+  --conversation-line-focus: color-mix(in srgb, var(--fg-1) 36%, transparent);
   --hover: color-mix(in srgb, var(--fg-1) 6%, transparent);
   --active: color-mix(in srgb, var(--fg-1) 11%, transparent);
   --chip: color-mix(in srgb, var(--fg-1) 8%, transparent);
@@ -66,10 +63,6 @@
   --option-hover-fg: var(--vscode-list-hoverForeground, var(--fg-1));
   --option-selected-bg: var(--vscode-list-inactiveSelectionBackground, var(--active));
   --option-selected-fg: var(--vscode-list-inactiveSelectionForeground, var(--fg-1));
-  --menu-selection-bg: var(--vscode-menu-selectionBackground, var(--option-selected-bg));
-  --menu-selection-fg: var(--vscode-menu-selectionForeground, var(--option-selected-fg));
-  --suggest-selection-bg: var(--vscode-editorSuggestWidget-selectedBackground, var(--option-selected-bg));
-  --suggest-selection-fg: var(--vscode-editorSuggestWidget-selectedForeground, var(--suggest-fg));
   --shadow: 0 8px 28px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.22)), 0 1px 2px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.12));
 }
 
@@ -80,6 +73,7 @@
   --line: var(--vscode-contrastBorder, var(--fg-1));
   --line-strong: var(--line);
   --conversation-line: var(--line);
+  --conversation-line-focus: var(--focus);
   --input-border: var(--line);
   --widget-border: var(--line);
   --menu-border: var(--line);
@@ -106,22 +100,24 @@
     background: var(--popup-bg);
     border-color: var(--popup-border);
   }
+  /* Menus and suggestions take the host surface but keep neutral tonal states: the host's
+     menu / suggest selection colors are saturated accents that break the quiet palette. */
+  .popup-surface:is([data-palette="menu"], [data-palette="suggest"]) {
+    --option-hover-bg: var(--hover);
+    --option-hover-fg: var(--popup-fg);
+    --option-selected-bg: var(--active);
+    --option-selected-fg: var(--popup-fg);
+  }
   .popup-surface[data-palette="menu"] {
     --popup-bg: var(--menu-bg);
     --popup-fg: var(--menu-fg);
     --popup-border: var(--menu-border);
     --line: var(--menu-separator);
-    --option-hover-bg: var(--menu-selection-bg);
-    --option-hover-fg: var(--menu-selection-fg);
-    --option-selected-bg: var(--menu-selection-bg);
-    --option-selected-fg: var(--menu-selection-fg);
   }
   .popup-surface[data-palette="suggest"] {
     --popup-bg: var(--suggest-bg);
     --popup-fg: var(--suggest-fg);
     --popup-border: var(--suggest-border);
-    --option-selected-bg: var(--suggest-selection-bg);
-    --option-selected-fg: var(--suggest-selection-fg);
   }
   :is(.vscode-high-contrast, .vscode-high-contrast-light) .acp-shell:not([data-theme-fixed]) .popup-surface {
     --fg-2: var(--popup-fg);
