@@ -2,18 +2,18 @@ import { memo, useState, type ReactNode } from 'react';
 import type { ToolCallBlock } from '@shared/transcript';
 import { useAppearance } from '../appearance';
 import { Collapsible } from '../ui/Collapsible';
-import { Disclosure } from '../ui/Disclosure';
+import { Disclosure, DisclosureRow } from '../ui/Disclosure';
 import { EntranceOnce, Row, RowLabel, RowTarget } from '../ui/Row';
 import { Shimmer } from '../ui/Shimmer';
 import { t } from '../i18n';
 import { TOOL_ICON } from './icons';
 import { DiffBlock } from './CodeBlock';
 import { ToolOutput } from './Terminal';
-import { Aside, DiffStat, ResultList } from './ToolCall';
+import { Aside, DiffStat, FileRef, ResultList } from './ToolCall';
 import { toolVerb } from './folding';
 import { toolFiles, visibleToolContents } from './toolDetails';
 import { useAutoFold } from './autoFold';
-import { diffStatOf, editEntries, editSpan, fileName, filePath, groupNames, itemEntrance, type GroupKind } from './processGroups';
+import { diffStatOf, editEntries, editReference, editSpan, fileName, filePath, groupNames, itemEntrance, type GroupKind } from './processGroups';
 
 const live = (block: ToolCallBlock) => block.status === 'pending' || block.status === 'in_progress';
 
@@ -66,24 +66,26 @@ function EditEntry({ blocks }: { blocks: ToolCallBlock[] }) {
   const lead = useLead('edit');
   const stat = diffStatOf(blocks);
   const span = editSpan(blocks);
+  const file = editReference(blocks);
   const items = blocks.flatMap(block => visibleToolContents(block).map(item => ({ block, item })))
     .filter(({ item }) => item.type === 'diff' || item.type === 'text');
-  const label = <span className="flex min-w-0 items-baseline gap-1">
-    <RowTarget mono className="text-fg-2"><Shimmer active={blocks.some(live)}>{fileName(blocks[0]!)}</Shimmer></RowTarget>
+  const target = <RowTarget mono className="text-fg-2"><Shimmer active={blocks.some(live)}>{fileName(blocks[0]!)}</Shimmer></RowTarget>;
+  const label = file ? <FileRef hit={file.path} line={file.line} aside={span}>{target}</FileRef> : <span className="flex min-w-0 items-baseline gap-1">
+    {target}
     {span && <Aside>{span}</Aside>}
   </span>;
   const trailing = stat && <DiffStat {...stat} />;
   if (!items.length) return <Row tone="action" dense lead={lead} trailing={trailing} title={filePath(blocks[0]!)}>{label}</Row>;
-  return <EntryFold lead={lead} trailing={trailing} body={<div className="flex flex-col gap-gap">{items.map(({ block, item }, i) => item.type === 'diff'
+  return <EntryFold independentAction={!!file} lead={lead} trailing={trailing} body={<div className="flex flex-col gap-gap">{items.map(({ block, item }, i) => item.type === 'diff'
     ? <DiffBlock key={i} lines={item.lines} source={item.source} path={item.source?.path ?? filePath(block)} />
     : item.type === 'text' && <ToolOutput key={i} block={block} text={item.text} />)}</div>}>{label}</EntryFold>;
 }
 
 // An expandable entry with no rail root of its own, so the group's rail keeps running through its icon
-function EntryFold({ lead, trailing, body, children }: { lead?: ReactNode; trailing?: ReactNode; body: ReactNode; children: ReactNode }) {
+function EntryFold({ lead, trailing, body, children, independentAction }: { lead?: ReactNode; trailing?: ReactNode; body: ReactNode; children: ReactNode; independentAction?: boolean }) {
   const [open, setOpen] = useState(false);
   return <Collapsible.Root open={open} onOpenChange={setOpen} render={<div className="group flex min-w-0 flex-col" data-open={open || undefined} />}>
-    <Collapsible.Trigger render={<Row as="button" interactive tone="action" dense lead={lead} trailing={trailing}>{children}</Row>} />
+    <DisclosureRow independentAction={independentAction} tone="action" dense lead={lead} trailing={trailing}>{children}</DisclosureRow>
     <Collapsible.Panel className="-mx-hit [&>div]:px-hit"><div className="pt-1 pb-1.5">{body}</div></Collapsible.Panel>
   </Collapsible.Root>;
 }

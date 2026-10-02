@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentBlock, DiffLine, ToolCallBlock } from '../src/shared/transcript';
-import { DWELL_MS, editEntries, editSpan, foldStates, groupNames, groupProcess, itemSettled, type FoldInput } from '../src/webview/chat/processGroups';
+import { DWELL_MS, editEntries, editReference, editSpan, foldStates, groupNames, groupProcess, itemSettled, type FoldInput } from '../src/webview/chat/processGroups';
 
 const read = (id: string, path: string, status: ToolCallBlock['status'] = 'completed'): ToolCallBlock => ({
   type: 'tool_call', id, kind: 'read', verb: 'Read', status, target: path.split('/').pop(), locations: [{ path }],
@@ -14,6 +14,24 @@ const search: ToolCallBlock = { type: 'tool_call', id: 's', kind: 'search', verb
 const thought: AgentBlock = { type: 'thought', text: 'hm', startedAt: 5 };
 
 describe('process groups', () => {
+  it('opens edited files without a preceding read, at the first changed line', () => {
+    const block = edit('e', '/repo/my file.ts', [{ kind: 'add', newLine: 42, text: 'added' }]);
+    expect(editReference([block])).toEqual({ path: '/repo/my file.ts', line: 42 });
+    expect(editReference([block, edit('e2', '/repo/my file.ts', [{ kind: 'del', oldLine: 12, text: 'removed' }])]))
+      .toEqual({ path: '/repo/my file.ts', line: 12 });
+    expect(editReference([{ ...block, locations: undefined, target: 'edit file', content: {
+      type: 'diff', lines: [], source: { path: '/repo/new.ts', oldText: '', newText: 'new' },
+    } }])).toEqual({ path: '/repo/new.ts' });
+  });
+
+  it('uses stored locations or legacy paths and rejects ambiguous edit destinations', () => {
+    const block = edit('e', '/repo/a.ts');
+    expect(editReference([{ ...block, locations: [{ path: '/repo/a.ts', line: 9 }] }])).toEqual({ path: '/repo/a.ts', line: 9 });
+    expect(editReference([{ ...block, locations: undefined, target: 'src/a.ts:17' }])).toEqual({ path: 'src/a.ts', line: 17 });
+    expect(editReference([{ ...block, locations: undefined, target: 'Edited 2 files' }])).toBeUndefined();
+    expect(editReference([{ ...block, locations: [{ path: '/repo/a.ts' }, { path: '/repo/b.ts' }] }])).toBeUndefined();
+  });
+
   it('groups consecutive reads and consecutive edits, keyed by their first call', () => {
     const items = groupProcess([read('r1', '/a.ts'), read('r2', '/b.ts'), search, read('r3', '/c.ts'), thought, edit('e1', '/a.ts'), edit('e2', '/b.ts')]);
     expect(items.map(i => [i.type, i.id, i.type === 'group' ? i.kind : undefined])).toEqual([
