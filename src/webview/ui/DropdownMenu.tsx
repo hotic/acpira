@@ -44,11 +44,12 @@ function Popup({ className, ref: forwardedRef, ...props }: ComponentProps<typeof
   return <Base.Popup data-palette="menu" {...props} ref={ref} className={cnState(cn(popupClass), className)} />;
 }
 export const optionClass = 'flex min-h-row w-full items-center gap-2 rounded-md px-2 text-left text-2 text-fg-1 outline-none transition-colors enabled:hover:option-highlighted focus-visible:option-highlighted data-[highlighted]:option-highlighted disabled:text-fg-3 data-[disabled]:text-fg-3';
-const radioClass = 'data-[checked]:option-selected data-[checked]:hover:option-selected data-[checked]:data-[highlighted]:option-selected data-[checked]:focus-visible:option-selected';
 function Item({ className, ...props }: ComponentProps<typeof Base.Item>) {
   return <Base.Item render={<button type="button" />} nativeButton {...props} className={cnState(cn(optionClass), className)} />;
 }
+// Menus carry exactly one fill: the pointer / keyboard highlight. The checked row is marked by its check mark
+// (OptionContent) only, so a highlighted row and the current value never read as two selections at once
 function RadioItem({ className, closeOnClick = true, ...props }: ComponentProps<typeof Base.RadioItem>) {
-  return <Base.RadioItem render={<button type="button" />} nativeButton closeOnClick={closeOnClick} {...props} className={cnState(cn(optionClass, radioClass), className)} />;
+  return <Base.RadioItem render={<button type="button" />} nativeButton closeOnClick={closeOnClick} {...props} className={cnState(cn(optionClass), className)} />;
 }
 export const DropdownMenu = { Root, Trigger: Base.Trigger, Portal, Positioner, Popup, Item, RadioItem, RadioGroup: Base.RadioGroup, CheckboxItem: Base.CheckboxItem, Group: Base.Group, GroupLabel: Base.GroupLabel, Separator: Base.Separator };

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { Switch } from './Switch';
 import { Radio } from '@base-ui/react/radio';
@@ -7,7 +7,7 @@ import { DropdownMenu } from './DropdownMenu';
 import { OptionContent } from './Panel';
 import { cn } from './cn';
 
-// Neutral form controls for menu footers: switch rows, segmented single-select groups and inline dropdown rows.
+// Neutral form controls for menu footers: switch rows, segmented single-select groups, ordinal step scales and inline dropdown rows.
 
 export interface SwitchRowProps {
   label: ReactNode;
@@ -95,5 +95,61 @@ export function RadioPills<V extends string>({ label, options, value, onChange }
         </Radio.Root>
       ))}
     </RadioGroup>
+  );
+}
+
+export interface StepScaleProps<V extends string> {
+  label: string;
+  options: { value: V; label: string; disabled?: boolean }[];
+  value: V;
+  onChange: (value: V) => void;
+}
+
+// An ordinal single-select (reasoning effort) as one row of stops on a track, whatever the level count: six levels used to wrap
+// a pill group onto a second line inside a 260 px panel. The header names the current level; pointing at a stop previews its name
+// there (dimmed) before the click. The track is filled up to the current stop. Each cell draws its own half segments, so the line
+// starts and ends at the outer stops' centres without any computed geometry. Arrow keys move between stops (Base UI radio group)
+export function StepScale<V extends string>({ label, options, value, onChange }: StepScaleProps<V>) {
+  const [hover, setHover] = useState<V>();
+  const at = options.findIndex(o => o.value === value);
+  const preview = hover !== undefined && hover !== value ? options.find(o => o.value === hover) : undefined;
+  const shown = preview ?? options[at];
+  const last = options.length - 1;
+  return (
+    <div className="flex flex-col px-2 pb-1">
+      <div className="flex min-h-ctl-sm items-center gap-2 text-2">
+        <span className="min-w-0 flex-1 truncate text-fg-2">{label}</span>
+        <span className={cn('shrink-0 transition-colors', preview ? 'text-fg-3' : 'text-fg-1')} aria-hidden>{shown?.label}</span>
+      </div>
+      <RadioGroup value={value} onValueChange={v => onChange(v as V)} aria-label={label} className="flex min-w-0" onPointerLeave={() => setHover(undefined)}>
+        {options.map((o, i) => (
+          <Radio.Root render={<button type="button" />} nativeButton
+            key={o.value}
+            value={o.value}
+            disabled={o.disabled}
+            aria-label={o.label}
+            title={o.label}
+            onPointerEnter={() => setHover(o.value)}
+            onKeyDownCapture={event => {
+              // Enter activates a stop as Space does, matching RadioPills
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                event.currentTarget.click();
+              }
+            }}
+            className="group relative flex h-ctl-sm min-w-0 flex-1 items-center justify-center rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg-2 disabled:opacity-50"
+          >
+            {/* Track halves: left of the stop is filled when the stop is at or below the current one, right when strictly below */}
+            {i > 0 && <span aria-hidden className={cn('absolute left-0 right-1/2 h-0.5', i <= at ? 'bg-fg-2' : 'bg-active')} />}
+            {i < last && <span aria-hidden className={cn('absolute left-1/2 right-0 h-0.5', i < at ? 'bg-fg-2' : 'bg-active')} />}
+            <span aria-hidden className={cn(
+              'relative rounded-full transition-[background-color,transform]',
+              i === at ? 'size-3 bg-fg-1' : 'size-2 group-enabled:group-hover:scale-150',
+              i !== at && (i < at ? 'bg-fg-2' : 'bg-fg-3 group-enabled:group-hover:bg-fg-2'),
+            )} />
+          </Radio.Root>
+        ))}
+      </RadioGroup>
+    </div>
   );
 }
