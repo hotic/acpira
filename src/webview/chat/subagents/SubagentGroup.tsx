@@ -53,7 +53,6 @@ function SubagentRow({ node, all, onInspect }: { node: SubagentSummary; all: Sub
       interactive
       className="subagent-row [&>.row-lead]:size-subagent-mark [&>.row-lead>.subagent-mark]:size-subagent-mark"
       aria-label={`${title} · ${stateLabel(node, t)} · ${line}`}
-      title={node.task?.slice(0, 200)}
       onClick={() => onInspect(node.id)}
       lead={stateIcon(node)}
     >

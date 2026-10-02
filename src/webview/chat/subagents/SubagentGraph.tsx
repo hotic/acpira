@@ -72,7 +72,7 @@ function GraphBranch({ branch, onSelect, selectedId, showModel }: { branch: Bran
     <Row as="button" interactive className="subagent-graph-node" data-node-id={node.id}
       aria-current={node.id === selectedId ? 'true' : undefined}
       aria-label={[subagentTitle(node, t), stateLabel(node, t), meta].filter(Boolean).join(' · ')}
-      title={[node.task, node.model].filter(Boolean).join('\n\n')} onClick={() => onSelect(node.id)}
+      onClick={() => onSelect(node.id)}
       lead={stateIcon(node)}>
       <span className="min-w-0 truncate text-fg-1">{subagentTitle(node, t)}</span>
       {meta && <span className="min-w-0 truncate text-3 text-fg-3 tabular-nums [flex-shrink:9]">{meta}</span>}
