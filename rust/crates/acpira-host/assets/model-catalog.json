@@ -1,4 +1,4 @@
-{"source":"https://models.dev/api.json","etag":"W/\"fb66816ca87d408ccbb5f53896ebcc4d\"","fetchedAt":"2026-10-01T02:42:51.572Z","models":[
+{"source":"https://models.dev/api.json","etag":"W/\"c0f53f8c9ce16b44d85f66279ee27908\"","fetchedAt":"2026-10-02T02:17:17.815Z","models":[
 {"provider":"anthropic","id":"claude-fable-5","name":"Claude Fable 5","reasoning":true,"efforts":["low","medium","high","xhigh","max"],"context":1000000},
 {"provider":"anthropic","id":"claude-fable-5-1","name":"Claude Fable 5.1","reasoning":true,"efforts":["low","medium","high","xhigh","max"],"context":1000000},
 {"provider":"anthropic","id":"claude-haiku-4-5","name":"Claude Haiku 4.5 (latest)","reasoning":true,"context":200000},
@@ -126,7 +126,7 @@
 {"provider":"moonshotai","id":"kimi-k2.6","name":"Kimi K2.6","reasoning":true,"toggle":true,"context":262144},
 {"provider":"moonshotai","id":"kimi-k2.7-code","name":"Kimi K2.7 Code","reasoning":true,"context":262144},
 {"provider":"moonshotai","id":"kimi-k2.7-code-highspeed","name":"Kimi K2.7 Code HighSpeed","reasoning":true,"context":262144},
-{"provider":"moonshotai","id":"kimi-k3","name":"Kimi K3","reasoning":true,"efforts":["low","high","max"],"toggle":true,"context":1048576},
+{"provider":"moonshotai","id":"kimi-k3","name":"Kimi K3","reasoning":true,"efforts":["low","high","max"],"context":1048576},
 {"provider":"zhipuai","id":"glm-4.5","name":"GLM-4.5","reasoning":true,"toggle":true,"context":131072},
 {"provider":"zhipuai","id":"glm-4.5-air","name":"GLM-4.5-Air","reasoning":true,"toggle":true,"context":131072},
 {"provider":"zhipuai","id":"glm-4.5-flash","name":"GLM-4.5-Flash","reasoning":true,"toggle":true,"context":131072},
