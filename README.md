@@ -78,11 +78,25 @@ Acpira lives in the Activity Bar and drives official agent CLIs over [ACP](https
 - `opencode acp`
 - `dsh --profile acp`
 - `pi-acp`
-- any ACP-compatible command (added via the `acpira.agents` setting)
+- any ACP-compatible command (added in `~/.acpira/agents.json` on the machine running the agents; open it from Acpira Settings → General → Agent launch configuration)
 
 Acpira manages the UI, sessions, permission approvals, accounts, and context budget. Model calls, agent execution, and context compaction stay in the CLIs. Its engine is a small native binary shipped inside each platform package, shared by VS Code, Cursor, and IntelliJ IDEA; Acpira itself does not need Node.js.
 
 Store multiple accounts per agent, paste or drop images, and attach workspace files with `@`. Conversations can live in the sidebar or in editor tabs.
+
+Agent launch definitions belong to the machine running the agents. In a remote workspace, Acpira reads the remote `~/.acpira/agents.json`; local IDE Agent settings are not inherited. The file maps agent ids to definitions, for example:
+
+```json
+{
+  "opencode-custom": {
+    "name": "OpenCode (custom)",
+    "command": "opencode",
+    "args": ["acp"]
+  }
+}
+```
+
+Optional fields include `env`, `login`, `install`, `requires`, `subagents` and `terminalAuth`. Using a built-in id replaces its entire definition. Save changes to apply them to new sessions. An empty `{}` restores built-in definitions. Local legacy `acpira.agents` settings migrate only when this file does not yet exist; existing remote custom definitions can be copied into the remote file explicitly.
 
 ## Install
 

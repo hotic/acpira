@@ -209,8 +209,8 @@ describe('sidecar runtime', () => {
     expect(latest('E')?.usage).toEqual(latest('V')?.usage);
   });
 
-  it('follows settings change events: appearance pushes, agents swap the registry, other keys re-emit settings', async () => {
-    const { s, settings, change, posted } = await setup();
+  it('uses the machine agent file while appearance and other preferences still follow shell events', async () => {
+    const { s, home, settings, change, posted } = await setup();
     settings['appearance.motion'] = 'none';
     change(['appearance.motion']);
     await until(() => posted().some(m => m.type === 'appearance' && m.appearance.motion === 'none'));
@@ -219,11 +219,60 @@ describe('sidecar runtime', () => {
     await until(() => posted().some(m => m.type === 'hidden'));
     settings.agents = { fake: { name: 'Renamed', command: TSX, args: [FAKE] } };
     change(['agents']);
-    await until(() => posted().some(m => m.type === 'agents' && m.agents.find(a => a.id === 'fake')?.name === 'Renamed'));
     settings.language = 'zh-CN';
     change(['language']);
     await until(() => posted().some(m => m.type === 'settings' && m.locale === 'zh-CN'));
+    expect(posted().some(m => m.type === 'agents' && m.agents.find(a => a.id === 'fake')?.name === 'Renamed')).toBe(false);
+    const path = join(home, 'agents.json');
+    expect(JSON.parse(readFileSync(path, 'utf8')).fake.name).toBe('Fake');
+    writeFileSync(path, JSON.stringify(settings.agents));
+    await until(() => posted().some(m => m.type === 'agents' && m.agents.find(a => a.id === 'fake')?.name === 'Renamed'));
     expect(s.exitCode).toBeNull();
+  });
+
+  it('opens the sidecar-owned config and keeps it when another shell sends stale definitions', async () => {
+    const { s, home, cwd, requests } = await setup();
+    s.view('V', { type: 'openAgentConfig' });
+    await until(() => requests('openResolvedFile').length === 1);
+    expect(requests('openResolvedFile')[0]).toMatchObject({ path: join(home, 'agents.json') });
+    await s.kill();
+    const other = new Shell(home, cwd);
+    cleanups.unshift(() => other.kill());
+    await other.hello({}, { name: 'Stale IDE override', command: 'missing-cli' });
+    const init = await other.open('V');
+    expect(init.state.agents.find(a => a.id === 'fake')?.name).toBe('Fake');
+    const result = JSON.parse(execFileSync(SIDECAR, ['agents', '--json', '--home', home], {
+      encoding: 'utf8', env: { ...process.env, ACPIRA_LOGIN_PATH: '0' },
+    })) as { agents: { id: string; command: string }[] };
+    expect(result.agents.find(a => a.id === 'fake')?.command).toBe(TSX);
+  });
+
+  it.skipIf(process.platform === 'win32')('drops the reported Windows Devin override during migration on POSIX', async () => {
+    const { home } = await setup({ devin: { name: 'Devin', command: 'C:\\Users\\Spark\\AppData\\Local\\devin\\cli\\bin\\devin.exe', args: ['acp'] } });
+    const saved = JSON.parse(readFileSync(join(home, 'agents.json'), 'utf8'));
+    expect(saved.devin).toBeUndefined();
+    expect(saved.fake.command).toBe(TSX);
+    const result = JSON.parse(execFileSync(SIDECAR, ['agents', '--json', '--home', home], {
+      encoding: 'utf8', env: { ...process.env, ACPIRA_LOGIN_PATH: '0' },
+    })) as { agents: { id: string; command: string; args: string[] }[] };
+    expect(result.agents.find(a => a.id === 'devin')).toMatchObject({ command: 'devin', args: ['acp'] });
+  });
+
+  it('keeps the last valid registry during a broken edit, then applies the repaired file', async () => {
+    const { s, home, init, posted } = await setup();
+    const firstId = init.state.active!.id;
+    await s.hostMsg('V', 'session', m => m.session.id === firstId && m.session.status === 'ready');
+    // Empty sessions are intentionally reused. Seal a fake-agent turn before requesting another process.
+    s.view('V', { type: 'send', sessionId: firstId, text: 'hi' });
+    await s.hostMsg('V', 'session', m => m.session.id === firstId && !m.session.running && m.session.turns.length === 2);
+    const path = join(home, 'agents.json');
+    writeFileSync(path, '{broken');
+    await until(() => toasts(s).some(t => t.text.includes('agents.json') && t.text.includes('invalid JSON')));
+    const previousIds = new Set(posted().flatMap(m => m.type === 'session' ? [m.session.id] : []));
+    s.view('V', { type: 'newSession', agent: 'fake' });
+    await until(() => posted().some(m => m.type === 'session' && !previousIds.has(m.session.id) && m.session.status === 'ready'));
+    writeFileSync(path, JSON.stringify({ fake: { name: 'Repaired', command: TSX, args: [FAKE] } }));
+    await until(() => posted().some(m => m.type === 'agents' && m.agents.find(a => a.id === 'fake')?.name === 'Repaired'));
   });
 
   it('window focus re-probes executables and reconciles the session index', async () => {

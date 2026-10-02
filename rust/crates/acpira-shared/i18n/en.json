@@ -1,4 +1,7 @@
 {
+  "settings.agentConfig": "Agent launch configuration",
+  "settings.agentConfig.desc": "Commands, arguments and environment variables stored by Acpira on the machine running the agents. Saved changes apply to new sessions.",
+  "settings.agentConfig.open": "Open configuration",
   "chatgpt.settingsIntro": "ChatGPT is an external conversation source, not an agent launched by Acpira. Configure its transport and project binding here.",
   "chatgpt.transportDesc": "The authorized remote tool reaches this computer. Local detection does not establish cloud authorization.",
   "chatgpt.installation": "Local component",

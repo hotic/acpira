@@ -4,6 +4,9 @@ import type { MsgKey } from './keys';
 // Placeholders are {name}; punctuation inside Chinese copy is full-width
 
 export const zhCN = {
+  'settings.agentConfig': 'Agent 启动配置',
+  'settings.agentConfig.desc': '命令、参数和环境变量由 Acpira 保存在 Agent 所在机器上，保存后对新会话生效。',
+  'settings.agentConfig.open': '打开配置',
   "chatgpt.settingsIntro": "ChatGPT 是外部会话来源，不是由 Acpira 启动的 Agent。在这里配置传输通道和项目绑定。",
   "chatgpt.transportDesc": "通过已授权的远程工具访问这台电脑。本机检测不等于云端授权成功。",
   "chatgpt.installation": "本机组件",

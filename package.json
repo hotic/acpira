@@ -191,6 +191,8 @@
         "acpira.agents": {
           "type": "object",
           "default": {},
+          "scope": "machine",
+          "deprecationMessage": "%acpira.conf.agents.deprecated%",
           "markdownDescription": "%acpira.conf.agents%",
           "additionalProperties": {
             "type": "object",

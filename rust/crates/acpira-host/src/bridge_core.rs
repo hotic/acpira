@@ -273,6 +273,9 @@ impl BridgeCore {
           platform.log(&format!("settings setAppearance failed: {e}"));
         }
       }
+      W::OpenAgentConfig => {
+        platform.open_resolved_file(&self.settings.agent_config_path().to_string_lossy(), None).await?;
+      }
       W::OpenPath { path } => {
         // A path from the inventory lists: files open in the editor, directories reveal in the OS file manager
         let dir = tokio::fs::metadata(&path).await.is_ok_and(|m| m.is_dir());

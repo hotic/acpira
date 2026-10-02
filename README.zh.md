@@ -78,11 +78,25 @@ Acpira 位于活动栏，通过 [ACP](https://agentclientprotocol.com)（JSON-RP
 - `opencode acp`
 - `dsh --profile acp`
 - `pi-acp`
-- 任何兼容 ACP 的命令（通过 `acpira.agents` 添加）
+- 任何兼容 ACP 的命令（在 Agent 所在机器的 `~/.acpira/agents.json` 中添加，可从 Acpira 设置 → 常规 → Agent 启动配置打开）
 
 界面、会话、权限审批、账号与上下文预算由 Acpira 管理；模型调用、Agent 执行与上下文压缩仍由各 CLI 完成。Acpira 的引擎是随各平台安装包附带的原生小程序，VS Code、Cursor 与 IntelliJ IDEA 共用同一套实现；Acpira 本身不需要 Node.js。
 
 支持为每个 Agent 保存多个账号、粘贴或拖入图片，以及通过 `@` 附加工作区文件。对话可在侧栏或编辑器标签页中打开。
+
+Agent 启动配置保存在 Agent 所在机器上。远程工作区读取远程的 `~/.acpira/agents.json`，不继承客户端 IDE 的 Agent 配置。文件按 Agent ID 保存定义，例如：
+
+```json
+{
+  "opencode-custom": {
+    "name": "OpenCode (custom)",
+    "command": "opencode",
+    "args": ["acp"]
+  }
+}
+```
+
+可选字段包括 `env`、`login`、`install`、`requires`、`subagents` 和 `terminalAuth`。使用内置 Agent ID 会替换该 Agent 的完整定义；保存后对新会话生效，清空为 `{}` 则恢复内置定义。本地旧 `acpira.agents` 仅在文件不存在时迁移一次；远程已有自定义定义可手动复制到远程文件中。
 
 ## 安装
 

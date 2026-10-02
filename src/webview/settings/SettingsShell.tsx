@@ -30,6 +30,7 @@ export interface SettingsHandlers {
   // The one appearance axis the page exposes (motion); the rest stay LAB design decisions
   setAppearance: <K extends AxisKey>(axis: K, value: Appearance[K]) => void;
   openPath: (path: string) => void;
+  openAgentConfig?: () => void;
   refreshInventory: (agent: AgentId) => void;
   // The refresh button on an agent page: re-reads the inventory and the option lists, the latter from a throwaway probe process
   refreshAgent: (agent: AgentId) => void;
@@ -87,7 +88,7 @@ export function SettingsShell(p: SettingsShellProps) {
   useScrollReveal(root);
   const page = p.page;
   const agent = page.kind === 'agent' ? p.agents.find(a => a.id === page.id) : undefined;
-  // Ids the rail does not show (a custom agent missing from acpira.agents for now) keep their saved order / off state
+  // Ids the rail does not show (a custom agent missing from agents.json for now) keep their saved order / off state
   const unlisted = (id: AgentId) => !p.agents.some(a => a.id === id);
   const title = page.kind === 'chatgpt' ? 'ChatGPT' : agent ? t('settings.agent.title', { agent: agent.name }) : page.kind === 'appearance' ? t('settings.appearance.title')
     : page.kind === 'shared' ? t('settings.shared.title') : t('settings.general.title');

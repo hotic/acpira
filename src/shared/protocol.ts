@@ -201,6 +201,7 @@ export type WebviewMsg =
   // Settings page: write a setting (host maps it onto acpira.<key> at user scope), open a file / directory from the inventory lists,
   // rescan an agent's extension inventory, read the configOptions of its latest session
   | { type: 'setSetting'; key: SettingKey; value: unknown }
+  | { type: 'openAgentConfig' }
   // An appearance axis the page exposes (motion, autoExpand); host maps it onto acpira.appearance.<axis> and re-pushes the Appearance
   | { type: 'setAppearance'; axis: AxisKey; value: string }
   | { type: 'openPath'; path: string }
