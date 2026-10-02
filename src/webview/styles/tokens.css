@@ -75,12 +75,6 @@
   --agent-grok: #e8e8e8;
   --agent-grok-fg: #111111;
 
-  --tk-k: #7fb2e8;
-  --tk-f: #d8d2a6;
-  --tk-s: #ce9178;
-  --tk-t: #6fc9bd;
-  --tk-c: #6a8f5e;
-
   /* Fonts */
   --font: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif;
   --font-mono: var(--vscode-editor-font-family, "SF Mono", Menlo, Monaco, monospace);
@@ -259,11 +253,6 @@
   --agent-devin-fg: #ffffff;
   --agent-grok: #1a1a1a;
   --agent-grok-fg: #ffffff;
-  --tk-k: #0f5aa8;
-  --tk-f: #795e26;
-  --tk-s: #a31515;
-  --tk-t: #267f99;
-  --tk-c: #6a8f5e;
   --image-gen-peak: #246ec8;
 }
 

@@ -1,5 +1,6 @@
 import { cloneElement, createContext, isValidElement, memo, useContext, useEffect, useState, type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import { Streamdown, defaultRehypePlugins, type Components, type ExtraProps } from 'streamdown';
+import { cjk } from '@streamdown/cjk';
 import { createMathPlugin } from '@streamdown/math';
 import { mermaid as mermaidDiagram } from '@streamdown/mermaid';
 import type { ImageRef, TextBlock } from '@shared/transcript';
@@ -13,8 +14,9 @@ import { useTheme } from '../look';
 // Full Markdown via streamdown: GFM + KaTeX + Mermaid, streaming-aware (remend repairs incomplete syntax mid-stream).
 // All typography lives in styles/prose.css under .acp-prose — Tailwind never scans node_modules, so streamdown's own classes don't resolve here.
 
-// singleDollarTextMath stays off: "$5 and $10" in prose must not become math
-const PLUGINS = { math: createMathPlugin(), mermaid: mermaidDiagram };
+// singleDollarTextMath stays off: "$5 and $10" in prose must not become math.
+// cjk relaxes CommonMark's flanking rules so `**…。**范围` still closes the bold run when punctuation meets a CJK letter
+const PLUGINS = { cjk, math: createMathPlugin(), mermaid: mermaidDiagram };
 // Module-level: streamdown's top-level memo compares props by reference, so every config object must be stable
 const LINK_SAFETY = { enabled: false };
 const { raw: rehypeRaw, sanitize: rehypeSanitize, harden: rehypeHarden } = defaultRehypePlugins;
@@ -64,7 +66,7 @@ const COMPONENTS: Components = {
   code: ({ className, children }) => {
     const lang = /language-(\w+)/.exec(className ?? '')?.[1];
     const code = textOf(children).replace(/\n$/, '');
-    return lang === 'mermaid' ? <MermaidBlock chart={code} /> : <CodeBlock code={code} />;
+    return lang === 'mermaid' ? <MermaidBlock chart={code} /> : <CodeBlock code={code} lang={lang} />;
   },
   inlineCode: InlineFileCode,
   a: Link,

@@ -554,5 +554,8 @@
       "@vscode/vsce-sign",
       "keytar"
     ]
+  },
+  "dependencies": {
+    "@streamdown/cjk": "^1.0.4"
   }
 }
