@@ -27,7 +27,7 @@ tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "io-util", 
 ureq = "=3.4.2"
 uuid = { version = "1.24", features = ["v4"] }
 junction = "1.2"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_System_Registry", "Win32_System_Environment", "Win32_System_Com", "Win32_UI_Shell", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_System_Registry", "Win32_System_Environment", "Win32_System_Com", "Win32_UI_Shell", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_Storage_FileSystem"] }
 
 [profile.release]
 lto = "thin"

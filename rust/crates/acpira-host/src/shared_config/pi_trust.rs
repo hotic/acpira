@@ -11,7 +11,7 @@ use anyhow::{Context, Result, bail};
 use serde_json::{Map, Value};
 
 use super::Places;
-use crate::platform::paths::for_cli;
+use crate::platform::paths::canonical_for_cli;
 
 /// `PI_CODING_AGENT_DIR` when set, else `~/.pi/agent`
 pub fn agent_dir(places: &Places) -> PathBuf {
@@ -37,7 +37,7 @@ fn read_object(path: &Path) -> Result<Map<String, Value>> {
 pub fn trusted(places: &Places, root: &Path) -> bool {
   let dir = agent_dir(places);
   let store = read_object(&dir.join("trust.json")).unwrap_or_default();
-  let mut cur = for_cli(std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()));
+  let mut cur = canonical_for_cli(root).unwrap_or_else(|_| root.to_path_buf());
   loop {
     if let Some(Value::Bool(b)) = store.get(&*cur.to_string_lossy()) {
       return *b;
@@ -90,7 +90,7 @@ pub fn trust(places: &Places, root: &Path) -> Result<()> {
   let file = dir.join("trust.json");
   let _lock = Lock::take(&file)?;
   let mut store = read_object(&file)?;
-  let key = for_cli(std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf())).to_string_lossy().into_owned();
+  let key = canonical_for_cli(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().into_owned();
   store.insert(key, Value::Bool(true));
   // Pi writes its keys sorted; the workspace's serde_json keeps insertion order, so sort explicitly
   let sorted: std::collections::BTreeMap<String, Value> = store.into_iter().collect();
