@@ -36,30 +36,25 @@ pub async fn create_private_dir(dir: &Path) -> Result<()> {
   Ok(())
 }
 
-/// Symlink every entry of the CLI's regular home into an account home, except the files that make up the login, so
+/// Link every entry of the CLI's regular home into an account home, except the files that make up the login, so
 /// sessions, config, skills and history stay one store whichever account runs. Entries already present are left alone
-/// (a file the CLI replaced by rename stays the account's own copy). No-op off unix
+/// (a file the CLI replaced by rename stays the account's own copy). Windows falls back to junctions / hard links.
 pub fn link_shared(home: &Path, shared: &Path, keep: &[&str]) {
-  #[cfg(unix)]
-  {
-    if home == shared {
-      return;
-    }
-    let Ok(entries) = std::fs::read_dir(shared) else { return };
-    for entry in entries.flatten() {
-      let name = entry.file_name();
-      if keep.iter().any(|k| name == *k) {
-        continue;
-      }
-      let target = home.join(&name);
-      if std::fs::symlink_metadata(&target).is_err() {
-        let _ = std::os::unix::fs::symlink(entry.path(), &target);
-      }
-    }
+  if home == shared {
+    return;
   }
-  #[cfg(not(unix))]
-  {
-    let _ = (home, shared, keep);
+  let Ok(entries) = std::fs::read_dir(shared) else { return };
+  for entry in entries.flatten() {
+    let name = entry.file_name();
+    if keep.iter().any(|k| name == *k || (cfg!(windows) && name.to_string_lossy().eq_ignore_ascii_case(k))) {
+      continue;
+    }
+    let target = home.join(&name);
+    if std::fs::symlink_metadata(&target).is_err()
+      && let Err(e) = crate::platform::files::create_link(&target, &entry.path(), &entry.path())
+    {
+      eprintln!("Could not share CLI home entry {}: {e}", name.to_string_lossy());
+    }
   }
 }
 
@@ -125,7 +120,6 @@ mod tests {
     assert_eq!(jwt_claims(&token).unwrap()["email"], "a@b.io");
   }
 
-  #[cfg(unix)]
   #[test]
   fn shared_entries_are_linked_except_the_login() {
     let dir = tempfile::tempdir().unwrap();
@@ -136,8 +130,23 @@ mod tests {
     std::fs::create_dir_all(&home).unwrap();
     std::fs::write(home.join("config.toml"), "own").unwrap();
     link_shared(&home, &shared, &["auth.json"]);
-    assert!(std::fs::symlink_metadata(home.join("sessions")).unwrap().file_type().is_symlink());
+    assert!(same_file::is_same_file(home.join("sessions"), shared.join("sessions")).unwrap());
     assert!(!home.join("auth.json").exists());
     assert_eq!(std::fs::read_to_string(home.join("config.toml")).unwrap(), "own");
+  }
+
+  #[tokio::test]
+  async fn forgetting_an_account_preserves_shared_sessions() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().join("accounts");
+    let home = root.join("one");
+    let shared = t.path().join("shared");
+    std::fs::create_dir_all(shared.join("sessions")).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(shared.join("sessions/kept.json"), "{}").unwrap();
+    link_shared(&home, &shared, &["auth.json"]);
+    remove_home(&root, &home).await;
+    assert!(!home.exists());
+    assert!(shared.join("sessions/kept.json").exists());
   }
 }

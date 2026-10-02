@@ -5,6 +5,9 @@
 use std::io::{self, ErrorKind};
 use std::path::{Component, Path, PathBuf};
 
+use crate::platform::files;
+pub use crate::platform::files::{is_link, remove_link};
+
 /// What sits at the place a link to `target` should occupy
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Spot {
@@ -21,29 +24,20 @@ pub enum Spot {
 }
 
 pub fn inspect(link: &Path, target: &Path) -> Spot {
-  let Ok(meta) = std::fs::symlink_metadata(link) else { return Spot::Absent };
+  let Ok(_) = std::fs::symlink_metadata(link) else { return Spot::Absent };
   let real_target = std::fs::canonicalize(target).ok();
-  if meta.file_type().is_symlink() || is_junction(link) {
+  // File identity also recognizes Windows hard-link fallbacks and differently cased paths.
+  if same_file::is_same_file(link, target).unwrap_or(false) {
+    return Spot::Linked;
+  }
+  if is_link(link) {
     return match std::fs::canonicalize(link) {
       Err(_) => Spot::Absent,
       Ok(p) if Some(&p) == real_target.as_ref() => Spot::Linked,
       Ok(_) => Spot::Elsewhere,
     };
   }
-  // A Windows hard link is a real file that shares the target's content; equal content is all that can be checked
   if same_content(link, target) { Spot::Same } else { Spot::Differs }
-}
-
-#[cfg(windows)]
-fn is_junction(p: &Path) -> bool {
-  use std::os::windows::fs::MetadataExt;
-  // FILE_ATTRIBUTE_REPARSE_POINT
-  std::fs::symlink_metadata(p).is_ok_and(|m| m.file_attributes() & 0x400 != 0)
-}
-
-#[cfg(not(windows))]
-fn is_junction(_: &Path) -> bool {
-  false
 }
 
 /// Files compare byte for byte; directories by the same relative file list with the same bytes (dotfiles such as
@@ -105,6 +99,10 @@ fn list_files(dir: &Path, max: usize) -> Option<Vec<PathBuf>> {
 pub fn relative_to(to: &Path, from_dir: &Path) -> PathBuf {
   let a: Vec<Component> = to.components().collect();
   let b: Vec<Component> = from_dir.components().collect();
+  if a.first() != b.first() {
+    // Different Windows drives / UNC shares have no relative path between them.
+    return to.to_path_buf();
+  }
   let common = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
   let mut out = PathBuf::new();
   for _ in common..b.len() {
@@ -123,43 +121,14 @@ pub fn make_link(link: &Path, target: &Path, relative: bool) -> io::Result<()> {
     std::fs::create_dir_all(dir)?;
   }
   // A dangling link left behind is replaced
-  if std::fs::symlink_metadata(link).is_ok() && std::fs::metadata(link).is_err() {
-    std::fs::remove_file(link)?;
+  if is_link(link) && std::fs::metadata(link).is_err_and(|e| e.kind() == ErrorKind::NotFound) {
+    remove_link(link)?;
   }
   let dest = match (relative, link.parent()) {
     (true, Some(dir)) => relative_to(target, dir),
     _ => target.to_path_buf(),
   };
-  platform_link(link, target, &dest)
-}
-
-#[cfg(unix)]
-fn platform_link(link: &Path, _target: &Path, dest: &Path) -> io::Result<()> {
-  std::os::unix::fs::symlink(dest, link)
-}
-
-#[cfg(windows)]
-fn platform_link(link: &Path, target: &Path, dest: &Path) -> io::Result<()> {
-  let dir = std::fs::metadata(target)?.is_dir();
-  let symlink = if dir { std::os::windows::fs::symlink_dir(dest, link) } else { std::os::windows::fs::symlink_file(dest, link) };
-  if symlink.is_ok() {
-    return Ok(());
-  }
-  if !dir {
-    return std::fs::hard_link(target, link);
-  }
-  let status = std::process::Command::new("cmd").arg("/c").arg("mklink").arg("/J").arg(link).arg(target).status()?;
-  if status.success() { Ok(()) } else { Err(io::Error::other("mklink /J failed")) }
-}
-
-/// Remove a link (never follows it)
-pub fn remove_link(link: &Path) -> io::Result<()> {
-  let meta = std::fs::symlink_metadata(link)?;
-  if meta.file_type().is_symlink() || !meta.is_dir() {
-    return std::fs::remove_file(link);
-  }
-  // A junction is a directory entry; remove_dir drops the junction, not its target
-  std::fs::remove_dir(link)
+  files::create_link(link, target, &dest)
 }
 
 /// Move `path` into `backups` under a name derived from its full path; returns where it went
@@ -301,6 +270,43 @@ pub fn remove_import(file: &Path, line: &str) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn hard_links_are_links_not_copies() {
+    let t = tempfile::tempdir().unwrap();
+    let source = t.path().join("source.md");
+    let link = t.path().join("linked.md");
+    let copy = t.path().join("copied.md");
+    std::fs::write(&source, "shared").unwrap();
+    std::fs::hard_link(&source, &link).unwrap();
+    std::fs::copy(&source, &copy).unwrap();
+    assert_eq!(inspect(&link, &source), Spot::Linked);
+    assert_eq!(inspect(&copy, &source), Spot::Same);
+  }
+
+  #[test]
+  fn dangling_directory_links_are_replaced_without_touching_the_new_target() {
+    let t = tempfile::tempdir().unwrap();
+    let old = t.path().join("old");
+    let new = t.path().join("new");
+    let link = t.path().join("link");
+    std::fs::create_dir(&old).unwrap();
+    std::fs::create_dir(&new).unwrap();
+    std::fs::write(new.join("kept"), "x").unwrap();
+    make_link(&link, &old, false).unwrap();
+    std::fs::remove_dir(old).unwrap();
+    make_link(&link, &new, false).unwrap();
+    assert_eq!(inspect(&link, &new), Spot::Linked);
+    remove_link(&link).unwrap();
+    assert!(new.join("kept").exists());
+  }
+
+  #[cfg(windows)]
+  #[test]
+  fn links_across_drives_and_shares_keep_an_absolute_target() {
+    assert_eq!(relative_to(Path::new(r"D:\target"), Path::new(r"C:\source")), PathBuf::from(r"D:\target"));
+    assert_eq!(relative_to(Path::new(r"\\a\share\target"), Path::new(r"\\b\share\source")), PathBuf::from(r"\\a\share\target"));
+  }
 
   #[test]
   fn relative_paths() {
