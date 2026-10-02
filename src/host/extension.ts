@@ -8,11 +8,10 @@ import { setHostLocale, t } from './i18n';
 import { SidecarClient } from './shell/SidecarClient';
 import { sidecarCommands } from './shell/sidecarLocator';
 import { acpiraHome, migrateOnce } from './store/dataDir';
-import { VscodePlatform } from './vscodePlatform';
+import { EDITOR_VIEW_TYPE, VscodePlatform } from './vscodePlatform';
 import { editorSelectionOf } from './editorSelection';
 
 const VIEW_ID = 'acpira.chat';
-const EDITOR_VIEW_TYPE = 'acpira.editor';
 const EDITOR_STATE_SESSION = 'acpiraSessionId';
 
 let client: SidecarClient | undefined;

@@ -11,6 +11,27 @@ import { legacyAgents } from './legacyAgents';
 // Every IDE action the sidecar may ask for; VS Code implements them all
 const CAPABILITIES: PlatformMethod[] = ['openResolvedFile', 'openPlanDocument', 'revealInOS', 'searchFiles', 'writeSetting', 'openExternal', 'openInEditor', 'runInTerminal', 'toast'];
 
+// The view type of the chat opened as an editor tab (extension.ts creates and restores those panels)
+export const EDITOR_VIEW_TYPE = 'acpira.editor';
+
+// A group whose visible tab is the chat panel. TabInputWebview.viewType carries an internal prefix
+// ("mainThreadWebview-acpira.editor"), hence the suffix match
+function showsChat(g: vscode.TabGroup): boolean {
+  const input = g.activeTab?.input;
+  return input instanceof vscode.TabInputWebview && input.viewType.endsWith(EDITOR_VIEW_TYPE);
+}
+
+// Where files and plans opened from the chat land: as a tab in the editor group already in use, never a fresh split.
+// ViewColumn.Beside split the active group every time (with the chat in a sidebar, the code group itself got halved).
+// With the chat in a sidebar the active group is the code group; with the chat as an editor tab, the first other
+// group (preferring one that holds tabs) takes the file, and only a lone chat group opens a split beside itself
+function fileColumn(): vscode.ViewColumn {
+  const { activeTabGroup, all } = vscode.window.tabGroups;
+  if (!showsChat(activeTabGroup)) return activeTabGroup.viewColumn;
+  const other = all.find(g => !showsChat(g) && g.tabs.length > 0) ?? all.find(g => !showsChat(g));
+  return other?.viewColumn ?? vscode.ViewColumn.Beside;
+}
+
 // The VS Code / Cursor side of the sidecar's platform: the facts hello carries (workspace folder, display language, acpira.* settings),
 // the events that refresh them, and the IDE actions platformRequests ask for. The only host-side file besides
 // extension.ts, bridge.ts and files.ts that imports vscode
@@ -82,7 +103,7 @@ export class VscodePlatform {
         const at = r.line != null ? r.line - 1 : undefined;
         await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(r.path), {
           preview: true,
-          viewColumn: vscode.ViewColumn.Beside,
+          viewColumn: fileColumn(),
           ...(at != null ? { selection: new vscode.Range(at, 0, at, 0) } : {}),
         });
         return null;
@@ -90,7 +111,7 @@ export class VscodePlatform {
       case 'openPlanDocument': {
         const doc = 'path' in r.target ? await vscode.workspace.openTextDocument(vscode.Uri.file(r.target.path))
           : await vscode.workspace.openTextDocument({ language: 'markdown', content: r.target.markdown });
-        await vscode.window.showTextDocument(doc, { preview: true, viewColumn: vscode.ViewColumn.Beside });
+        await vscode.window.showTextDocument(doc, { preview: true, viewColumn: fileColumn() });
         return null;
       }
       case 'revealInOS': await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(r.path)); return null;
