@@ -4,6 +4,7 @@
 
 pub mod antigravity;
 pub mod claude_thinking;
+pub mod claude_workflow;
 pub mod claude_window;
 pub mod grok;
 pub mod pi_usage;
@@ -70,6 +71,12 @@ impl Vendor {
 
   /// session/new, resume and load ask for summarized thinking (`claude_thinking`)
   pub fn summarized_thinking(self) -> bool {
+    self == Vendor::Claude
+  }
+
+  /// session/new, resume and load ask for the raw workflow progress frames, and the CLI starts with dynamic workflows
+  /// on by default (`claude_workflow`)
+  pub fn workflows(self) -> bool {
     self == Vendor::Claude
   }
 
