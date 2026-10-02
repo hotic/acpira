@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 use acpira_shared::transcript::StrMap;
 
 use crate::acp::agents::pool::IdleHandlers;
-use crate::acp::transport::process::AgentProcess;
 use crate::acp::agents::registry::AgentDef;
+use crate::acp::transport::process::AgentProcess;
 use crate::i18n::tp;
 use crate::store::transcript_store::LogFn;
 
@@ -69,7 +69,10 @@ pub async fn list_native_sessions(
     };
     let mut sessions = list_pages(cwd.to_owned()).await?;
     // codex-acp stores the canonicalized thread cwd (macOS /var → /private/var): retry once with the resolved path
-    let real = tokio::fs::canonicalize(cwd).await.map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| cwd.to_owned());
+    let real = tokio::fs::canonicalize(cwd)
+      .await
+      .map(|p| crate::platform::paths::for_cli(p).to_string_lossy().into_owned())
+      .unwrap_or_else(|_| cwd.to_owned());
     if sessions.is_empty() && real != cwd {
       sessions = list_pages(real).await?;
     }

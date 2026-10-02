@@ -124,24 +124,21 @@ function isLocalImage(node: HastNode): boolean {
 }
 
 function parseFileUrl(href: string): FileLink | undefined {
-  let path: string | undefined;
-  let hash = '';
   try {
     const uri = new URL(href);
     if (uri.protocol !== 'file:') return;
-    path = decodeURIComponent(uri.pathname);
+    // Read line suffixes before percent decoding: a filename ending in %23L12 is not a line anchor.
+    const parsed = parsePathAndLine(uri.pathname);
+    let path = decodeURIComponent(parsed?.path ?? uri.pathname);
     if (uri.host && uri.host !== 'localhost') path = `//${uri.host}${path}`;
     else if (/^\/[A-Za-z]:/.test(path)) path = path.slice(1);
-    hash = uri.hash;
+    if (!path) return;
+    const line = lineFromHash(uri.hash) ?? parsed?.line;
+    return line != null ? { path, line } : { path };
   } catch {
-    const stripped = href.replace(/^file:\/\//i, '');
-    path = decodeURIComponent(stripped);
+    // Malformed agent output must not throw from the markdown render pass.
+    return;
   }
-  if (!path) return;
-  const fromPath = parsePathAndLine(hash ? `${path}${hash}` : path);
-  if (fromPath) return fromPath;
-  const line = lineFromHash(hash);
-  return isFilePath(path) ? { path, line } : undefined;
 }
 
 function parsePathAndLine(text: string): FileLink | undefined {
@@ -162,6 +159,7 @@ function lineFromHash(hash: string): number | undefined {
 
 function isFilePath(path: string): boolean {
   if (!path) return false;
+  if (/^\\\\[^\\]+\\[^\\]+/.test(path)) return true;
   if (/^(?:\.{0,2}\/|[A-Za-z]:[\\/]|\/)/.test(path)) return true;
   if (path.startsWith('.') && /[\\/]/.test(path)) return true;
   if (/[\\/]/.test(path) && /\.[A-Za-z][\w-]*$/.test(path)) return true;

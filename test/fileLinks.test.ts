@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { decodeFileHref, decodeLocalImageSrc, encodeFileHref, parseFileLink, parseWrappedLink, rewriteFileHrefs, sameImageSource, toFileHref } from '../src/webview/chat/fileLinks';
 
 describe('parseFileLink', () => {
+  it('keeps an encoded line-like filename literal and accepts UNC directories', () => {
+    expect(parseFileLink('file:///C:/repo/a%23L12')).toEqual({ path: 'C:/repo/a#L12' });
+    expect(parseFileLink(String.raw`\\server\share\folder`)).toEqual({ path: String.raw`\\server\share\folder` });
+  });
+
+  it('ignores malformed file URI encoding without throwing during rendering', () => {
+    expect(parseFileLink('file:///C:/repo/bad%xx.txt')).toBeUndefined();
+  });
+
   it.each([
     ['.agents/knowledge/npcs/ganzel/alena/overview.md', { path: '.agents/knowledge/npcs/ganzel/alena/overview.md' }],
     ['src/foo.ts', { path: 'src/foo.ts' }],

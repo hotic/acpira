@@ -181,7 +181,7 @@ impl BridgeCore {
         // Tool references are relative to the session they came from; a view showing another session ignores them
         let Some(active) = self.viewer.active_id().filter(|a| *a == session_id) else { return Ok(()) };
         let Some(cwd) = manager.session_cwd(&active) else { return Ok(()) };
-        let resolved = if path.starts_with("file://") {
+        let resolved = if crate::platform::file_url::is_file_url(&path) {
           file_url_to_path(&path).ok_or_else(|| anyhow::anyhow!("File URL must be absolute"))
         } else {
           Ok(normalize(&Path::new(&cwd).join(&path)).to_string_lossy().into_owned())
