@@ -11,6 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [1.8.1] - 2026-10-02
+
+### Changed
+
+- Agent launch definitions now live in `~/.acpira/agents.json` on the machine running the agents. Open the file from Settings → General → Agent launch configuration; valid edits apply to new sessions, while invalid edits preserve the last working definitions. Local legacy `acpira.agents` settings migrate once when the file is absent. Remote connections no longer import client IDE definitions; existing remote custom agents need to be copied into the remote file explicitly.
+
+### Fixed
+
+- Remote sessions no longer replace a Linux agent command with a synced Windows executable path, such as a local Devin installation. Migration also discards paths from another operating system.
+- Windows agent discovery skips npm's extensionless POSIX shims, finds installed EXE / CMD launchers and refreshes installer-added PATH entries without restarting the IDE. Adapter diagnostics also recognize project-local npm packages.
+- Windows installation and sign-in terminals preserve quoted paths, Chinese characters, empty arguments and account environment settings. Updating Devin keeps a running executable recoverable instead of failing to overwrite it; a failed installation retains or restores the previous entry.
+- Devin account import and sign-in use the Windows CLI's actual credential location. An unchanged existing login no longer completes a new sign-in flow, cancellation preserves the CLI's credentials, and saved keys are not labelled using another account's login.
+- Windows agent helpers are cleaned up when their agent exits or the sidecar is stopped. Session takeover checks process ownership before terminating a lock holder, and file locks no longer mistake a live Windows process for a stale owner.
+- Shared skills and account homes support native Windows junction and hard-link fallbacks, recognize existing hard links and remove dangling directory links without deleting their targets. Pi trust entries and native-session lookups use ordinary Windows paths at the CLI boundary.
+- File attachments, tool images and Markdown file navigation preserve Windows drive / UNC paths and literal filename punctuation. Malformed file-URL encoding no longer breaks Markdown rendering, and URI query / fragment text is excluded from filenames.
+- ChatGPT bridge commands preserve quoted Windows shell source, clean up owned helpers and drain final output before completing.
+- Clicking a file name in a single or grouped edit opens it in the editor at the first changed line, while the surrounding row still folds its details independently.
+- Automatic theme mode follows the host's menu, popup and input colors, with readable selection states and visible high-contrast boundaries. Fixed light and dark themes retain their own palettes.
+
 ## [1.8.0] - 2026-10-01
 
 ### Added
