@@ -238,20 +238,7 @@ fn quote_text(text: &str, comment: Option<&str>) -> String {
   }
 }
 
-/// url.pathToFileURL(p).href
-pub fn path_to_file_url(p: &str) -> String {
-  let path = if cfg!(windows) { format!("/{}", p.replace('\\', "/")) } else { p.to_owned() };
-  let mut out = String::from("file://");
-  for b in path.bytes() {
-    let keep = b.is_ascii_alphanumeric() || b"/-._~!$&'()*+,;=:@".contains(&b);
-    if keep {
-      out.push(b as char);
-    } else {
-      out.push_str(&format!("%{b:02X}"));
-    }
-  }
-  out
-}
+pub use crate::platform::file_url::path_to_file_url;
 
 /// encodeURIComponent
 pub fn encode_uri_component(s: &str) -> String {

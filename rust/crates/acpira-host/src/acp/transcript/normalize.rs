@@ -1700,52 +1700,16 @@ fn image_content(c: &Value, ctx: Option<&ToolCtx>) -> Option<ToolContent> {
 
 /// A local path behind a resource_link's uri
 fn local_path_of(uri: &str) -> Option<String> {
-  if uri.len() >= 5 && uri[..5].eq_ignore_ascii_case("file:") {
+  if crate::platform::file_url::is_file_url(uri) {
     return file_url_to_path(uri);
   }
   std::path::Path::new(uri).is_absolute().then(|| uri.to_owned())
 }
 
-/// fileURLToPath for the shapes agents send (file:///abs, percent-encoded)
-pub fn file_url_to_path(uri: &str) -> Option<String> {
-  let rest = uri.get(5..)?;
-  let rest = rest.strip_prefix("//")?;
-  let (host, path) = {
-    let i = rest.find('/')?;
-    (&rest[..i], &rest[i..])
-  };
-  let decoded = percent_decode(path)?;
-  if !host.is_empty() && host != "localhost" {
-    // `file://server/share/a.ts` is a UNC path, which only Windows can open
-    return cfg!(windows).then(|| format!("\\\\{host}{}", decoded.replace('/', "\\")));
-  }
-  if cfg!(windows) {
-    let p = decoded.trim_start_matches('/');
-    return Some(p.replace('/', "\\"));
-  }
-  Some(decoded)
-}
+pub use crate::platform::file_url::file_url_to_path;
 
 fn percent_decode(s: &str) -> Option<String> {
-  let bytes = s.as_bytes();
-  let mut out = Vec::with_capacity(bytes.len());
-  let mut i = 0;
-  while i < bytes.len() {
-    if bytes[i] == b'%' {
-      let h = std::str::from_utf8(bytes.get(i + 1..i + 3)?).ok()?;
-      let v = u8::from_str_radix(h, 16).ok()?;
-      // An encoded path separator is refused, as fileURLToPath does
-      if v == b'/' {
-        return None;
-      }
-      out.push(v);
-      i += 3;
-    } else {
-      out.push(bytes[i]);
-      i += 1;
-    }
-  }
-  String::from_utf8(out).ok()
+  crate::platform::file_url::percent_decode(s, cfg!(windows))
 }
 
 fn file_image_content(c: &Value, ctx: Option<&ToolCtx>) -> Option<ToolContent> {
@@ -1842,4 +1806,22 @@ pub fn tool_call_update(id: &str, fields: Value) -> Value {
     }
   }
   v
+}
+
+#[cfg(test)]
+mod local_path_tests {
+  use super::*;
+
+  #[test]
+  fn unicode_resource_paths_do_not_panic() {
+    assert_eq!(local_path_of("中文图片.png"), None);
+  }
+
+  #[test]
+  fn file_urls_do_not_include_the_query_or_fragment_in_the_filename() {
+    assert_eq!(
+      file_url_to_path("file:///C:/work/a%23b.png?raw=1#L20"),
+      Some(if cfg!(windows) { "C:\\work\\a#b.png" } else { "/C:/work/a#b.png" }.into())
+    );
+  }
 }
