@@ -4,9 +4,6 @@ import type { MsgKey } from './keys';
 // Placeholders are {name}; punctuation inside Chinese copy is full-width
 
 export const zhCN = {
-  'settings.agentConfig': 'Agent 启动配置',
-  'settings.agentConfig.desc': '命令、参数和环境变量由 Acpira 保存在 Agent 所在机器上，保存后对新会话生效。',
-  'settings.agentConfig.open': '打开配置',
   "chatgpt.settingsIntro": "ChatGPT 是外部会话来源，不是由 Acpira 启动的 Agent。在这里配置传输通道和项目绑定。",
   "chatgpt.transportDesc": "通过已授权的远程工具访问这台电脑。本机检测不等于云端授权成功。",
   "chatgpt.installation": "本机组件",
@@ -766,6 +763,8 @@ export const zhCN = {
   'settings.shared.create': '创建',
   'settings.shared.cancel': '取消',
   'settings.shared.openFolder': '打开文件夹',
+  'settings.shared.removeSkill': '删除 {name}',
+  'settings.shared.removeSkill.confirm': '再点一次删除',
   'settings.shared.skillName': 'Skill 名称',
   'settings.shared.skills.none': '暂无共享 skill',
   'settings.shared.reach.native': '原生读取：{agents}',
@@ -790,8 +789,6 @@ export const zhCN = {
   'settings.shared.mcp.native': '{agents} 自行加载，不重复下发',
   'settings.shared.mcp.shadowed': '已被本项目的同名 server 覆盖',
   'settings.shared.mcp.toggle': '启用 {name}',
-  'settings.shared.mcp.desc': '项目级配置位于根目录 .mcp.json，Claude 与 Devin 会自行读取，其余 Agent 由 Acpira 随会话下发；全局配置位于 ~/.agents/mcp.json，仅在 Acpira 会话中生效。密钥可写为 ${VAR}。',
-  'settings.shared.mcp.noMcp': '{agents} 不支持客户端 MCP。',
   'settings.shared.prompt.missing': '尚未创建',
   'settings.shared.prompt.open': '在编辑器打开',
   'settings.shared.prompt.projectDesc': '所有 Agent 都会原生读取项目的 AGENTS.md。',

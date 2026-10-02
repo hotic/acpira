@@ -137,6 +137,8 @@ export type SharedAction =
   // Put `@AGENTS.md` on top of the project's CLAUDE.md
   | { kind: 'claudeImport' }
   | { kind: 'createSkill'; scope: SharedScope; name: string }
+  // Delete a shared skill folder (agents' links to it are pruned) or one in an agent's own folder; moved into the backups
+  | { kind: 'removeSkill'; path: string }
   // Create the file / directory when missing, then open it
   | { kind: 'open'; scope: SharedScope; target: SharedTarget }
   // json: `{ "mcpServers": {…} }`, a map of servers, or one server (then name is required)

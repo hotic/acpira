@@ -318,6 +318,13 @@ impl SharedConfig {
         self.maintain(places, agents).await?;
         Ok(Outcome { open: Some(dir.join("SKILL.md")) })
       }
+      SharedAction::RemoveSkill { path } => {
+        let (p, a, b) = (places.clone(), agents.to_vec(), self.backups());
+        blocking(move || remove_skill(&p, &a, Path::new(&path), &b)).await?;
+        // Links that pointed at a deleted shared skill dangle now and are dropped here
+        self.prune().await?;
+        Ok(Outcome::default())
+      }
       SharedAction::Open { scope, target } => {
         let path = match target {
           SharedTarget::Skills => places.skills_dir(scope),
@@ -570,6 +577,21 @@ fn resolve_skill(places: &Places, agents: &[String], path: &Path, keep: Keep, ba
   Ok(Some(e))
 }
 
+/// Move one skill folder into the backups. Only a direct child of a shared skills folder or of an agent's own skills
+/// folder is accepted, so a stray path from the page can never take anything else with it
+fn remove_skill(places: &Places, agents: &[String], path: &Path, backups: &Path) -> Result<()> {
+  let parent = path.parent().ok_or_else(|| anyhow!("no parent"))?;
+  let shared = [SharedScope::Global, SharedScope::Project].into_iter().filter_map(|sc| places.skills_dir(sc)).any(|d| d == parent);
+  if !shared && owner_of(places, agents, path).is_none() {
+    bail!("{} is not in a skills folder", path.display());
+  }
+  if std::fs::symlink_metadata(path).is_err() {
+    bail!("{} no longer exists", path.display());
+  }
+  links::move_aside(path, backups)?;
+  Ok(())
+}
+
 fn resolve_prompt(places: &Places, agents: &[String], path: &Path, keep: Keep, backups: &Path) -> Result<Entry> {
   let shared = places.prompt_file(SharedScope::Global).ok_or_else(|| anyhow!("no home"))?;
   let w = view::wires(places, agents)
@@ -719,7 +741,7 @@ mod tests {
 
   #[tokio::test]
   async fn resolves_private_skills_and_prompts() {
-    let (_t, p, cfg, agents) = setup();
+    let (t, p, cfg, agents) = setup();
     let home = p.home.clone();
     // A Claude-only skill, a differing Claude copy at a link point and an identical Codex duplicate
     for (dir, body) in [(".claude/skills/solo", "solo"), (".claude/skills/dig", "changed"), (".codex/skills/dig", "---\nname: dig\ndescription: d\n---\n")] {
@@ -742,6 +764,19 @@ mod tests {
     cfg.apply(SharedAction::ResolveSkill { path: path(".codex/skills/dig"), keep: Keep::Shared }, &p, &agents).await.unwrap();
     assert!(!home.join(".codex/skills/dig").exists());
     assert!(cfg.view(p.clone(), agents.clone(), caps()).await.private_skills.is_empty());
+
+    // Deleting a shared skill backs it up and prunes the agents' links to it; a private one goes the same way
+    std::fs::create_dir_all(home.join(".codex/skills/own")).unwrap();
+    std::fs::write(home.join(".codex/skills/own/SKILL.md"), "own").unwrap();
+    cfg.apply(SharedAction::RemoveSkill { path: path(".agents/skills/solo") }, &p, &agents).await.unwrap();
+    assert!(!home.join(".agents/skills/solo").exists());
+    assert!(std::fs::symlink_metadata(home.join(".claude/skills/solo")).is_err());
+    cfg.apply(SharedAction::RemoveSkill { path: path(".codex/skills/own") }, &p, &agents).await.unwrap();
+    assert!(!home.join(".codex/skills/own").exists());
+    assert!(cfg.apply(SharedAction::RemoveSkill { path: path(".agents") }, &p, &agents).await.is_err());
+    let backups = t.path().join("data/backups/shared");
+    let kept: Vec<_> = std::fs::read_dir(&backups).unwrap().flatten().flat_map(|d| std::fs::read_dir(d.path()).unwrap().flatten()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    assert!(kept.iter().any(|n| n.ends_with(".agents_skills_solo")) && kept.iter().any(|n| n.ends_with(".codex_skills_own")));
 
     // No shared prompt yet: Grok's own file becomes it and Claude's differing one imports it, in one submit
     std::fs::write(home.join(".grok/AGENTS.md"), "# grok rules\n").unwrap();

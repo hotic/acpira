@@ -3,7 +3,6 @@ import { ACCOUNT_SWITCH_STRATEGIES, MIN_COMPACT_AT_TOKENS, SESSION_SCOPES, type 
 import { LANGUAGES, type Language } from '@shared/i18n';
 import { launchable, pickDefaultAgent } from '@shared/agentOrder';
 import { AgentMark } from '../chat/AgentMark';
-import { Chip } from '../ui/Button';
 import { t } from '../i18n';
 import { Field, NumberField, Section, Select, Switch } from './controls';
 import type { SettingsHandlers } from './SettingsShell';
@@ -28,9 +27,6 @@ export function General({ settings, agents, on }: { settings: SettingsView; agen
         <Field label={t('settings.defaultAgent')} desc={t('settings.defaultAgent.desc')}>
           <Select options={agentOptions} value={pickDefaultAgent(agents, settings.defaultAgent)} onChange={v => on.setSetting('defaultAgent', v)} label={t('settings.defaultAgent')} />
         </Field>
-        {on.openAgentConfig && <Field label={t('settings.agentConfig')} desc={t('settings.agentConfig.desc')}>
-          <Chip caret={false} aria-label={t('settings.agentConfig.open')} onClick={on.openAgentConfig}>{t('settings.agentConfig.open')}</Chip>
-        </Field>}
         <Field label={t('settings.sessionScope')} desc={t('settings.sessionScope.desc')}>
           <Select<SessionScope> options={scopes} value={settings.sessionScope} onChange={v => on.setSetting('sessionScope', v)} label={t('settings.sessionScope')} />
         </Field>

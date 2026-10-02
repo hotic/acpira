@@ -248,7 +248,6 @@ export function App() {
     setSetting: (key, value) => post({ type: 'setSetting', key, value }),
     setAppearance: (axis, value) => post({ type: 'setAppearance', axis, value }),
     openPath: path => post({ type: 'openPath', path }),
-    openAgentConfig: () => post({ type: 'openAgentConfig' }),
     // Drop the cached copy first so the page shows the scanning shimmer until the reply lands
     refreshInventory: agent => { setInventories(inv => { const { [agent]: _drop, ...rest } = inv; return rest; }); post({ type: 'inventory', agent }); },
     // The refresh button keeps the cached page visible: the file scan answers first, the probe process (a cold CLI start) replaces

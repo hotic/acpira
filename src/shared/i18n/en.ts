@@ -1,9 +1,6 @@
 // English — the source dictionary: its keys define MsgKey, every other locale must cover exactly these keys.
 // Placeholders are {name}
 export const en = {
-  'settings.agentConfig': 'Agent launch configuration',
-  'settings.agentConfig.desc': 'Commands, arguments and environment variables stored by Acpira on the machine running the agents. Saved changes apply to new sessions.',
-  'settings.agentConfig.open': 'Open configuration',
   "chatgpt.settingsIntro": "ChatGPT is an external conversation source, not an agent launched by Acpira. Configure its transport and project binding here.",
   "chatgpt.transportDesc": "The authorized remote tool reaches this computer. Local detection does not establish cloud authorization.",
   "chatgpt.installation": "Local component",
@@ -751,6 +748,8 @@ export const en = {
   'settings.shared.create': 'Create',
   'settings.shared.cancel': 'Cancel',
   'settings.shared.openFolder': 'Open folder',
+  'settings.shared.removeSkill': 'Delete {name}',
+  'settings.shared.removeSkill.confirm': 'Click again to delete',
   'settings.shared.skillName': 'Skill name',
   'settings.shared.skills.none': 'No shared skills',
   'settings.shared.reach.native': 'Read natively: {agents}',
@@ -775,8 +774,6 @@ export const en = {
   'settings.shared.mcp.native': '{agents} load it themselves; not sent again',
   'settings.shared.mcp.shadowed': 'Overridden by the project server of the same name',
   'settings.shared.mcp.toggle': 'Enable {name}',
-  'settings.shared.mcp.desc': 'Project servers live in the root’s .mcp.json, which Claude and Devin also read themselves; Acpira sends them to the other agents with each session. Global servers live in ~/.agents/mcp.json and reach Acpira sessions only. Use ${VAR} for secrets.',
-  'settings.shared.mcp.noMcp': '{agents} take no client MCP servers.',
   'settings.shared.prompt.missing': 'Not created yet',
   'settings.shared.prompt.open': 'Open in editor',
   'settings.shared.prompt.projectDesc': 'Every agent reads the project AGENTS.md natively.',
