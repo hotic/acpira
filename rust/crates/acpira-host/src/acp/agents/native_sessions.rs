@@ -69,10 +69,13 @@ pub async fn list_native_sessions(
     };
     let mut sessions = list_pages(cwd.to_owned()).await?;
     // codex-acp stores the canonicalized thread cwd (macOS /var → /private/var): retry once with the resolved path
-    let real = tokio::fs::canonicalize(cwd)
+    let list_path = cwd.to_owned();
+    let real = tokio::task::spawn_blocking(move || crate::platform::paths::canonical_for_cli(std::path::Path::new(&list_path)))
       .await
-      .map(|p| crate::platform::paths::for_cli(p).to_string_lossy().into_owned())
-      .unwrap_or_else(|_| cwd.to_owned());
+      .ok()
+      .and_then(|result| result.ok())
+      .map(|p| p.to_string_lossy().into_owned())
+      .unwrap_or_else(|| cwd.to_owned());
     if sessions.is_empty() && real != cwd {
       sessions = list_pages(real).await?;
     }

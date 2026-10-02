@@ -61,3 +61,9 @@
 - 共享盘实际权限、重定向 Known Folders、企业进程限制 / 杀毒软件、禁用 PowerShell 或 WSL interop 的自定义终端仍需对应环境验收。
 - Desktop Commander 在 Windows 上的进程识别仍报告 `unknown`；可执行文件 / 配置存在性不冒充已连接或已配对。
 - 修改目前在工作区，未发布到 Marketplace，已安装的 1.8.0 不会自动获得本轮修复。
+
+## 发版 CI 的短路径回归（2026-10-02）
+
+GitHub Windows runner 的临时目录包含 `RUNNER~1`。Node 22 的普通 `fs.realpathSync` 保留短路径，Rust `std::fs::canonicalize` 将其展开为 `runneradmin`，导致 Node 路径对照与 Pi 父目录信任用例失败。Windows 11 / Node 24.13.0 上的新建隔离目录同样复现：普通 realpath 保留 `ACPIRA~1.1-S`，native realpath 展开为长名称。`platform::paths::canonical_for_cli` 按组件解析符号链接 / junction，并保留普通路径的大小写和 8.3 拼写；Pi 信任与原生会话 cwd 重试共用该边界。新增回归对照 Node 的短路径、大小写、父目录折叠与 junction 输出。
+
+修复自验：macOS Rust 工作区 623 项通过；macOS 与 Windows GNU 目标的全部 target Clippy 通过；Windows 11 / Node 24.13.0 上 144 项库测试通过，1 项辅助进程入口忽略。新增用例显式调用 Windows 短路径 API，覆盖短名称、大小写、父目录折叠和 junction 的真实 Node realpath 对照。该结果仍不替代修复版本的 MSVC 发布 CI。
