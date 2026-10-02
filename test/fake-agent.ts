@@ -32,6 +32,8 @@ import * as acp from '@agentclientprotocol/sdk';
 //   =stop (=stop-nostop) spawns a stoppable (unstoppable) task the test stops through _session/async_task/stop
 //   (FAKE_STOP_LOG records the request params); =orphan spawns with showInTranscript and no toolCallId, then names one;
 //   =child puts the task on a subagent session that outlives the parent's turn
+// "workflow" / "workflow-stop" → a Claude dynamic workflow: a Workflow tool row, its async task, and per-agent `_claude/sdkMessage`
+//   task_progress frames that keep arriving after end_turn (=workflow-stop ends the run `stopped` while one agent still runs)
 // "ask-devin" / "ask-kimi" → the ask_user_question tool call followed by an elicitation/create form shaped like that CLI's (Devin: no toolCallId, label in const,
 // description in title, allowOther; Kimi: toolCallId, question texts joined in message); "ask-grok" → the `_x.ai/ask_user_question` request;
 // "ask-agy" → antigravity-acp 1.2.1's ask_question: an `interaction_*` tool call (title = the question, rawInput {}) and a
@@ -560,6 +562,45 @@ const app = acp.agent({ name: 'fake-agent' })
         }, 80);
       }
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'started in background' } });
+      return { stopReason: 'end_turn' };
+    }
+
+    if (text === 'workflow' || text === 'workflow-stop') {
+      // A Claude dynamic workflow (claude-agent-acp 0.83.0, Claude Code 2.1.284): the Workflow tool returns at once, the run is one
+      // AIR async task, and the per-agent progress only rides the raw SDK `task_progress` frames relayed as `_claude/sdkMessage`
+      // (sent whatever the client asked for; the real adapter needs `_meta.claudeCode.emitRawSDKMessages`). Every frame lists
+      // every agent; a queued agent has no agentId yet. =workflow-stop ends the run with the adapter's best-effort `stopped`
+      // while beta still runs
+      await send({ sessionUpdate: 'tool_call', toolCallId: 'wf-1', title: 'Workflow', kind: 'other', status: 'pending', rawInput: { script: 'export const meta = {}' } });
+      if (air('asyncTasks'))
+        await sendExt(sid, { sessionUpdate: 'async_task_spawned', asyncTaskId: 'wf-task', name: 'smoke', taskType: 'workflow', showInTranscript: false, canStop: true, toolCallId: 'wf-1' });
+      await send({ sessionUpdate: 'tool_call_update', toolCallId: 'wf-1', status: 'completed',
+        content: [{ type: 'content', content: { type: 'text', text: 'Workflow launched in background. Task ID: wf-task' } }] });
+      const agent = (index: number, label: string, state: string, extra: Record<string, unknown> = {}) => ({
+        type: 'workflow_agent', index, label, phaseIndex: 1, phaseTitle: 'Reply', model: 'claude-opus-5-5', promptPreview: `Reply ${label}`,
+        ...(state === 'queued' ? { state: 'start', queuedAt: 1 } : { state, agentId: `ag-${index}`, queuedAt: 1, startedAt: 2 }), ...extra,
+      });
+      const frame = (agents: Record<string, unknown>[]) => client.notify('_claude/sdkMessage', { sessionId: sid, message: {
+        type: 'system', subtype: 'task_progress', task_id: 'wf-task', tool_use_id: 'wf-1', summary: 'smoke',
+        workflow_progress: [{ type: 'workflow_phase', index: 1, title: 'Reply' }, ...agents, { type: 'workflow_log', text: 'noise' }],
+      } } as never);
+      await frame([agent(1, 'alpha', 'start'), agent(2, 'beta', 'queued')]);
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'workflow launched' } });
+      // The run outlives the prompt: progress, then the end of the run a tick later
+      setTimeout(() => {
+        void (async () => {
+          await frame([agent(1, 'alpha', 'done', { resultPreview: 'alpha', toolCalls: 0 }), agent(2, 'beta', 'progress', { toolCalls: 1 })]);
+          await new Promise(r => setTimeout(r, 60));
+          if (text === 'workflow-stop') {
+            await sendExt(sid, { sessionUpdate: 'async_task_state_update', asyncTaskId: 'wf-task', state: 'stopped' });
+            return;
+          }
+          await frame([agent(1, 'alpha', 'done', { resultPreview: 'alpha', toolCalls: 0 }), agent(2, 'beta', 'done', { resultPreview: 'beta', toolCalls: 1 })]);
+          // The adapter's best-effort `stopped` and its correction, in the same millisecond
+          await sendExt(sid, { sessionUpdate: 'async_task_state_update', asyncTaskId: 'wf-task', state: 'stopped' });
+          await sendExt(sid, { sessionUpdate: 'async_task_state_update', asyncTaskId: 'wf-task', state: 'completed' });
+        })();
+      }, 80);
       return { stopReason: 'end_turn' };
     }
 

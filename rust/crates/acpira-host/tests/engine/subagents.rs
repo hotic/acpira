@@ -24,6 +24,7 @@ fn lifecycle(u: Option<ExtensionUpdate>) -> Value {
       "showInTranscript": e.show_in_transcript, "canStop": e.can_stop, "outputFilePath": e.output_file_path, "toolCallId": e.tool_call_id,
       "summary": e.summary, "lastToolName": e.last_tool_name, "usage": e.usage.map(v), "state": e.state.map(v) }),
     Some(ExtensionUpdate::Ignored(kind)) => json!({ "kind": "ignored", "sessionUpdate": kind }),
+    Some(ExtensionUpdate::Workflow(w)) => json!({ "kind": "workflow", "asyncTaskId": w.async_task_id, "agents": w.agents.len() }),
     None => Value::Null,
   }
 }
@@ -646,6 +647,48 @@ async fn a_restored_live_task_keeps_its_state_but_loses_observation_and_stop_con
   expect_match(row(), json!({ "status": "cancelled", "observation": "unknown", "asyncTask": { "id": "task-1", "state": "running", "canStop": false } }));
   restored.stop_async_task("task-1").await.ok();
   expect_absent(&row()["asyncTask"], "stopRequested");
+}
+
+fn workflow_nodes(s: &AcpSession) -> Vec<Value> {
+  view(s)["subagents"].as_array().map(|a| a.iter().filter(|n| n["peer"]["agentId"].as_str().is_some_and(|k| k.starts_with("wf-task#"))).cloned().collect()).unwrap_or_default()
+}
+
+fn workflow_node(s: &AcpSession, index: u64) -> Option<Value> {
+  sub(s, "agentId", &format!("wf-task#{index}"))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_claude_workflow_lists_its_agents_as_receipt_nodes_that_outlive_the_prompt() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let s = session(&h).await;
+  prompt(&s, "workflow").await;
+  // the first frame arrived before end_turn: alpha running, beta queued, both background receipts of the announcing turn
+  expect_match(workflow_node(&s, 1).unwrap(), json!({ "visibility": "receipt", "title": "alpha", "task": "Reply alpha", "role": "Reply", "model": "claude-opus-5-5", "background": true, "turnIndex": 1 }));
+  assert_eq!(workflow_nodes(&s).len(), 2);
+  // the prompt returned while the run went on: the agents are not swept disconnected
+  until(|| workflow_node(&s, 1).is_some_and(|n| n["state"] == "completed"), 8000).await;
+  expect_match(workflow_node(&s, 1).unwrap(), json!({ "result": "alpha" }));
+  expect_match(workflow_node(&s, 2).unwrap(), json!({ "state": "running", "toolCount": 1 }));
+  // the best-effort `stopped` the adapter corrects to `completed` leaves every agent completed
+  until(|| tool_row(&s, "wf-1").is_some_and(|r| r["asyncTask"]["state"] == "completed"), 8000).await;
+  until(|| workflow_node(&s, 2).is_some_and(|n| n["state"] == "completed"), 8000).await;
+  expect_match(workflow_node(&s, 2).unwrap(), json!({ "result": "beta" }));
+  // the Workflow tool row stays a plain background tool row: no node claims it and the noise entry made no node
+  let row = tool_row(&s, "wf-1").unwrap();
+  expect_absent(&row, "subagentId");
+  assert_eq!(workflow_nodes(&s).len(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_workflow_cancels_its_running_agents_and_keeps_the_finished_ones() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let s = session(&h).await;
+  prompt(&s, "workflow-stop").await;
+  until(|| tool_row(&s, "wf-1").is_some_and(|r| r["asyncTask"]["state"] == "stopped"), 8000).await;
+  until(|| workflow_node(&s, 2).is_some_and(|n| n["state"] == "cancelled"), 8000).await;
+  expect_match(workflow_node(&s, 1).unwrap(), json!({ "state": "completed", "result": "alpha" }));
 }
 
 /// (exit code, signal) once the process is gone

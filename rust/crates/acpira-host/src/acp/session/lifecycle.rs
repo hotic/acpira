@@ -27,7 +27,8 @@ const CLOSE_GRACE: Duration = Duration::from_secs(3);
 impl AcpSession {
   /// Params for session/new, resume and load (and an edit's fresh session): the shared MCP servers for this agent and
   /// cwd (`shared_config::mcp`, filtered by the process's `mcpCapabilities`) plus Acpira's own server (`host_mcp.rs`);
-  /// Claude sessions also ask for summarized thinking (see `claude_thinking`)
+  /// Claude sessions also ask for summarized thinking (see `claude_thinking`) and the raw workflow progress frames
+  /// (`claude_workflow`)
   pub(crate) async fn session_request(&self, proc: &AgentProcess, acp_id: Option<&str>) -> Value {
     let mut servers = match &self.deps.shared_mcp {
       Some(provider) => {
@@ -53,12 +54,15 @@ impl AcpSession {
     if let Some(id) = acp_id {
       req["sessionId"] = json!(id);
     }
-    if !self.vendor.summarized_thinking() {
-      return req;
+    if self.vendor.summarized_thinking() {
+      let def_env = self.def().env.and_then(|e| e.get("MAX_THINKING_TOKENS").cloned());
+      let budget = def_env.or_else(|| std::env::var("MAX_THINKING_TOKENS").ok());
+      req = crate::acp::vendors::claude_thinking::with_thinking(req, budget.as_deref());
     }
-    let def_env = self.def().env.and_then(|e| e.get("MAX_THINKING_TOKENS").cloned());
-    let budget = def_env.or_else(|| std::env::var("MAX_THINKING_TOKENS").ok());
-    crate::acp::vendors::claude_thinking::with_thinking(req, budget.as_deref())
+    if self.vendor.workflows() {
+      req = crate::acp::vendors::claude_workflow::with_raw_progress(req);
+    }
+    req
   }
 
   /// Kill the current CLI; its exit / updates must not touch the session after this. session/close goes out first

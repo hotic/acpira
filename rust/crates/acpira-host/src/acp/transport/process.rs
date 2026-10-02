@@ -15,6 +15,7 @@ use crate::acp::agents::registry::AgentDef;
 use crate::acp::transport::cancel::Cancel;
 use crate::acp::transport::rpc::{BoxFuture, Connection, Inbound, RpcError};
 use crate::acp::vendors::grok::{GROK_ASK_QUESTION, GROK_EXIT_PLAN};
+use crate::acp::vendors::{Vendor, claude_workflow};
 use crate::i18n::tp;
 
 pub const CLIENT_NAME: &str = "acpira";
@@ -64,6 +65,11 @@ impl Inbound for Router {
   fn notification(&self, method: &str, params: Value) {
     if method == "session/update" {
       self.box_.read().clone().on_update(params);
+    } else if method == claude_workflow::SDK_MESSAGE
+      && let Some(update) = claude_workflow::workflow_update(&params)
+    {
+      // A raw SDK frame the session subscribed to; only a workflow's per-agent progress is used
+      self.box_.read().clone().on_update(update);
     }
   }
 
@@ -149,6 +155,11 @@ impl AgentProcess {
     #[cfg(unix)]
     if group {
       cmd.process_group(0);
+    }
+    // Claude Code keeps dynamic workflows off for SDK hosts by default (no Workflow tool, ultracode ignored); the terminal
+    // CLI has them on. The variable only moves that default, the user's own settings still decide (`claude_workflow`)
+    if Vendor::of(&def.id).workflows() && std::env::var_os(claude_workflow::WORKFLOWS_ENV).is_none() {
+      cmd.env(claude_workflow::WORKFLOWS_ENV, "1");
     }
     // The definition and account may override the refreshed environment for this child only.
     for (k, v) in def.env.iter().flatten() {

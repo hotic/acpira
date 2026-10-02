@@ -13,7 +13,7 @@ use acpira_shared::subagents::{
   SubagentVisibility,
 };
 use acpira_shared::transcript::{
-  AgentBlock, AgentTurn, PermissionBlock, QuestionBlock, ToolCallBlock, ToolContent, ToolStatus, Turn, TurnStop,
+  AgentBlock, AgentTurn, AsyncTaskState, PermissionBlock, QuestionBlock, ToolCallBlock, ToolContent, ToolStatus, Turn, TurnStop,
 };
 
 use crate::acp::transcript::normalize::{
@@ -22,7 +22,7 @@ use crate::acp::transcript::normalize::{
 };
 use crate::acp::session::restore_turns::restore_interrupted_turns;
 use crate::acp::session::failure::failure_of;
-use crate::acp::transport::wire::SubagentLifecycle;
+use crate::acp::transport::wire::{SubagentLifecycle, WorkflowProgress};
 use crate::i18n::t;
 use crate::util::{ms_of_iso, now_iso, now_ms, random_uuid};
 
@@ -45,6 +45,8 @@ impl RouteCtx<'_> {
 enum Dialect {
   Claude,
   Devin,
+  /// An agent of a Claude dynamic workflow (`claude_workflow.rs`)
+  Workflow,
 }
 
 struct PendingDelegation {
@@ -81,6 +83,8 @@ struct Node {
   result: Option<String>,
   meta: Option<Value>,
   dialect: Option<Dialect>,
+  /// The async task id of the workflow run a workflow agent belongs to (connection-local, never persisted)
+  workflow: Option<String>,
   state: NormalizeState,
   rev: i64,
   cached: Option<(i64, SubagentSummary)>,
@@ -189,6 +193,7 @@ impl SubagentTree {
         result: c.result,
         meta: None,
         dialect: None,
+        workflow: None,
         state,
         rev: r.rev.unwrap_or(1),
         cached: None,
@@ -348,6 +353,7 @@ impl SubagentTree {
       result: None,
       meta: None,
       dialect,
+      workflow: None,
       state,
       rev: 0,
       cached: None,
@@ -884,6 +890,80 @@ impl SubagentTree {
     self.bump(&id);
   }
 
+  /// A Claude dynamic workflow's progress (`claude_workflow.rs`): one receipt node per agent, keyed by run and position
+  /// (`<task>#<index>` in `peer.agentId`, since a queued agent has no agentId yet). The nodes hang off no delegation row:
+  /// the Workflow tool row stays the background task with its own state and stop button, so the webview lists the agents
+  /// after the announcing turn's content. The phase reads as the role, the prompt preview as the task and the result
+  /// preview as the result. True when anything changed
+  pub fn workflow_progress(&mut self, w: WorkflowProgress, ctx: &mut RouteCtx) -> bool {
+    let mut changed = false;
+    for a in w.agents {
+      let key = format!("{}#{}", w.async_task_id, a.index);
+      let i = match self.by(&self.by_agent, &key) {
+        Some(i) => i,
+        None => {
+          let peer = SubagentPeer { agent_id: Some(key.clone()), ..Default::default() };
+          let mut node = self.new_node(SubagentVisibility::Receipt, peer, ctx.turn_index, false, Some(Dialect::Workflow));
+          node.background = true;
+          node.workflow = Some(w.async_task_id.clone());
+          self.by_agent.insert(key, node.id.clone());
+          self.nodes.push(node);
+          changed = true;
+          self.nodes.len() - 1
+        }
+      };
+      let n = &mut self.nodes[i];
+      let before = (n.title.clone(), n.task.clone(), n.role.clone(), n.model.clone(), n.result.clone(), n.tool_count);
+      n.title = a.label.or(n.title.take());
+      n.task = a.prompt.or(n.task.take());
+      n.role = a.phase.or(n.role.take());
+      n.model = a.model.or(n.model.take());
+      n.result = a.result.or(n.result.take());
+      n.tool_count = a.tool_calls.unwrap_or(n.tool_count);
+      if before != (n.title.clone(), n.task.clone(), n.role.clone(), n.model.clone(), n.result.clone(), n.tool_count) {
+        n.rev += 1;
+        changed = true;
+      }
+      if terminal(a.state) && n.status != a.state {
+        let id = n.id.clone();
+        self.transition(&id, a.state);
+        changed = true;
+      }
+    }
+    changed
+  }
+
+  /// The workflow run's async task reached a terminal state: agents its last progress frame still showed running end
+  /// with it. `stopped` is held as a local verdict, because claude-agent-acp sends a best-effort `stopped` and corrects it
+  /// to `completed` / `failed` in the same millisecond, and a local terminal state yields to the agent's
+  pub fn workflow_ended(&mut self, task_id: &str, state: AsyncTaskState) {
+    let open: Vec<String> = self
+      .nodes
+      .iter()
+      .filter(|n| n.workflow.as_deref() == Some(task_id) && (n.status == SubagentState::Running || n.state_source == StateSource::Local))
+      .map(|n| n.id.clone())
+      .collect();
+    for id in open {
+      match state {
+        AsyncTaskState::Completed => self.transition(&id, SubagentState::Completed),
+        AsyncTaskState::Failed => self.transition(&id, SubagentState::Failed),
+        AsyncTaskState::Stopped => {
+          let Some(i) = self.idx(&id) else { continue };
+          let n = &mut self.nodes[i];
+          if n.status != SubagentState::Running {
+            continue;
+          }
+          n.status = SubagentState::Cancelled;
+          n.state_source = StateSource::Local;
+          seal_node(n, SubagentState::Cancelled);
+          n.rev += 1;
+          self.terminal_events.push(id);
+        }
+        AsyncTaskState::Running | AsyncTaskState::Paused => {}
+      }
+    }
+  }
+
   fn upsert_call_node(&mut self, tool_call_id: &str, visibility: SubagentVisibility, ctx: &mut RouteCtx) -> usize {
     if let Some(i) = self.by(&self.by_tool, tool_call_id) {
       return i;
@@ -907,6 +987,10 @@ impl SubagentTree {
     let prompt_returned = reason == "prompt-returned";
     for n in &mut self.nodes {
       if n.status != SubagentState::Running {
+        continue;
+      }
+      // A workflow runs in the background past the prompt that launched it; its agents end with the run (`workflow_ended`)
+      if prompt_returned && n.dialect == Some(Dialect::Workflow) {
         continue;
       }
       if prompt_returned

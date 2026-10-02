@@ -36,6 +36,19 @@ impl AcpSession {
       match ext {
         ExtensionUpdate::Ignored(k) => self.log(&format!("{k} ignored")),
         ExtensionUpdate::AsyncTask(e) => self.async_task_update(&mut c, &session_id, &e),
+        ExtensionUpdate::Workflow(w) => {
+          // Raw frames only arrive live; a workflow run under a child session is not observed, so only the root's count
+          if c.replaying || c.acp_session_id.as_deref() != Some(session_id.as_str()) {
+            self.log(&format!("workflow progress on {session_id} ignored"));
+          } else {
+            let turn_index = current_turn_index(&c);
+            let Core { tree, state, .. } = &mut *c;
+            if !tree.workflow_progress(w, &mut RouteCtx { turn_index, root_turns: &mut state.turns }) {
+              return;
+            }
+            self.drain_terminal(&mut c);
+          }
+        }
         ExtensionUpdate::Lifecycle(l) => {
           let root = c.acp_session_id.clone();
           let turn_index = current_turn_index(&c);
@@ -211,6 +224,11 @@ impl AcpSession {
     c.task_peer.insert(e.async_task_id.clone(), peer.to_owned());
     if root {
       apply_async_task(&mut c.state, e);
+      // A workflow's agents end with its run (`SubagentTree::workflow_ended`); only workflow agents carry the task id
+      if let Some(st) = e.state.filter(|s| matches!(s, AsyncTaskState::Completed | AsyncTaskState::Failed | AsyncTaskState::Stopped)) {
+        c.tree.workflow_ended(&e.async_task_id, st);
+        self.drain_terminal(c);
+      }
       return;
     }
     match c.tree.task_state(peer) {

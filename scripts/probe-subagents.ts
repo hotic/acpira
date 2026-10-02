@@ -19,6 +19,9 @@ import { builtinAgent, type SpawnSpec } from './lib/sidecarBin';
 // --devin-meta: also advertise _meta['cognition.ai/subagentSupport'] = true (a string found in the devin binary; unverified)
 // --import-local: Devin's ACP mode refuses local credentials; hand the CLI's own login (~/.local/share/devin/credentials.toml)
 //   over through `authenticate` `_meta.api_key` the way the account layer does. The key never leaves this process
+// --claude-raw: ask claude-agent-acp for the raw SDK task frames (`_meta.claudeCode.emitRawSDKMessages`: system task_started /
+//   task_progress / task_notification) as `_claude/sdkMessage` ext notifications — where a Workflow's per-agent progress lives
+// --config ID=VALUE: session/set_config_option after session/new (repeatable), e.g. --config effort=low to keep a probe cheap
 // --wait MS: keep listening this long after the prompt response (terminal updates may trail it); default 4000
 // --out FILE: where the redacted JSONL log goes; default ~/.acpira/probe/subagents-<agent>-<iso>.jsonl
 //
@@ -30,7 +33,9 @@ const argv = process.argv.slice(2);
 const flag = (f: string) => argv.includes(f);
 const valued = (f: string) => { const i = argv.indexOf(f); return i >= 0 ? { idx: i + 1, value: argv[i + 1] } : undefined; };
 const cmdOpt = valued('--cmd'), waitOpt = valued('--wait'), outOpt = valued('--out');
-const valueIdx = new Set([cmdOpt, waitOpt, outOpt].flatMap(v => (v ? [v.idx] : [])));
+// Every --config pair, in order
+const configOpts = argv.flatMap((a, i) => (a === '--config' && argv[i + 1] ? [{ idx: i + 1, value: argv[i + 1]! }] : []));
+const valueIdx = new Set([cmdOpt, waitOpt, outOpt, ...configOpts].flatMap(v => (v ? [v.idx] : [])));
 const positional = argv.filter((a, i) => !a.startsWith('--') && !valueIdx.has(i));
 const [agentId = 'devin', ...rest] = positional;
 const waitMs = Number(waitOpt?.value ?? 4000);
@@ -125,7 +130,9 @@ const agent = new RawAgent(spec, process.cwd(), agentEnv, {
       console.log(`\n${tag}[${kind}]\x1b[0m session ${short(sid)}${foreign ? ' (child)' : ''} ${JSON.stringify(redact(u)).slice(0, ext ? 800 : 240)}`);
       return;
     }
-    console.log(`\n\x1b[2m[notification ${method}]\x1b[0m ${JSON.stringify(redact(params)).slice(0, 300)}`);
+    // Raw SDK frames are the evidence --claude-raw asks for: print them in full (log lines stay redacted)
+    const raw = method === '_claude/sdkMessage';
+    console.log(`\n\x1b[${raw ? '32;1' : '2'}m[notification ${method}]\x1b[0m ${JSON.stringify(raw ? params : redact(params)).slice(0, raw ? 4000 : 300)}`);
   },
 });
 const exited = agent.exited.then(({ code, signal }) => { console.error(`exit code=${code} signal=${signal}`); });
@@ -173,9 +180,17 @@ try {
     await agent.request('authenticate', devinAuthenticate(methods[0]?.id, login), { secret: true });
     console.log('authenticate ok (local login)');
   }
-  const s = await agent.request<{ sessionId: string; [k: string]: unknown }>('session/new', { cwd: process.cwd(), mcpServers: [] });
+  const sessionMeta = flag('--claude-raw')
+    ? { _meta: { claudeCode: { emitRawSDKMessages: ['task_started', 'task_progress', 'task_notification'].map(subtype => ({ type: 'system', subtype })) } } }
+    : {};
+  const s = await agent.request<{ sessionId: string; [k: string]: unknown }>('session/new', { cwd: process.cwd(), mcpServers: [], ...sessionMeta });
   rootSessionId = s.sessionId;
   console.log(`session/new → ${s.sessionId}`);
+  for (const { value } of configOpts) {
+    const [configId = '', v = ''] = value.split('=');
+    await agent.request('session/set_config_option', { sessionId: s.sessionId, configId, value: v });
+    console.log(`set_config_option ${configId} = ${v}`);
+  }
   console.log(`\nprompt → ${promptText}\n`);
   const started = Date.now();
   const r = await agent.request<Record<string, unknown>>('session/prompt', { sessionId: s.sessionId, prompt: [{ type: 'text', text: promptText }] });
