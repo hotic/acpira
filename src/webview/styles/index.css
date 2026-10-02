@@ -1,6 +1,7 @@
-/* Webview style entry. Order matters only for the plain (unlayered) rules: tokens first, then shell defaults, prose, motion, conversation layout. */
+/* Webview style entry. Order matters only for the plain (unlayered) rules: tokens and semantic palettes first, then shell defaults, prose, motion, conversation layout. */
 @import "tailwindcss";
 @import "./tokens.css";
+@import "./palette.css";
 @import "./base.css";
 @import "./prose.css";
 @import "./motion.css";

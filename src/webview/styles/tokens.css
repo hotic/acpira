@@ -1,7 +1,7 @@
 /* Design tokens: components may only reference the variables here, no bare numbers.
    Color roles prefer the host's --vscode-* values; with no host (LAB) they fall back to Dark / Light Modern values. */
 
-:root {
+:root, .acp-shell {
   --quota-track: 7px;
   /* A refreshed quota slides the fill and blends its color instead of jumping */
   --quota-fill-duration: 600ms;

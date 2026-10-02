@@ -42,12 +42,16 @@
   box-shadow: none; padding: 0.1em 0.4em;
 }
 
-/* Focus indication works via background lift (hover / focus-visible:bg-*), no outline drawn.
+/* Standard themes indicate focus via background lift; high-contrast palettes add an explicit outline.
    Must live outside @layer: the host webview paints --vscode-focusBorder on :focus (a yellow frame in Cursor),
    and only unlayered rules beat it; Tailwind's outline-none is actually 2px transparent, which that color would tint yellow. */
 .acp-shell :focus,
 .acp-shell :focus-visible {
   outline: none !important;
+}
+.acp-shell :focus-visible {
+  outline: var(--focus-outline) !important;
+  outline-offset: -1px;
 }
 
 @utility scroll-stable { scrollbar-gutter: stable; }
