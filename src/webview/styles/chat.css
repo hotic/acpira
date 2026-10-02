@@ -118,10 +118,10 @@
     background: color-mix(in srgb, var(--fg-3) 26%, transparent);
   }
 
-  /* Narrative text separates consecutive action groups without loosening tool rows.
+  /* Narrative text (and a steered prompt's card) separates consecutive action groups without loosening tool rows.
      Use one leading margin per boundary, including adjacent prose blocks. */
-  .process-content > .acp-prose:not(:first-child),
-  .process-content > .acp-prose + * {
+  .process-content > :is(.acp-prose, .steered-message):not(:first-child),
+  .process-content > :is(.acp-prose, .steered-message) + * {
     margin-block-start: calc(var(--process-prose-gap) - var(--process-row-gap));
   }
 }

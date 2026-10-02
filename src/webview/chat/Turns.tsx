@@ -27,6 +27,7 @@ import { AgentImage } from './AgentImage';
 import { GeneratedImages } from './GeneratedImage';
 import { Permission } from './Permission';
 import { QuestionRecord } from './Questions';
+import { BlobUrlContext } from './fileLinks';
 import { PlanDocument } from './PlanDocument';
 import { TurnAttachments } from './Attachments';
 import { elapsedLabel, splitCodexBlocks } from './folding';
@@ -87,13 +88,17 @@ export function UserMessage({ turn, blobUrl, onEdit, commands }: { turn: UserTur
   );
 }
 
-// A queued prompt the user steered into the running turn: the same card as a sent message, at the point it joined the loop.
-// It is not an exchange of its own, so it neither sticks nor opens the history editor
-function SteeredMessage({ block, blobUrl }: { block: SteerBlock; blobUrl?: (blob: string) => string }) {
+// A prompt the user steered into the running turn: the same card as a sent message, inside the turn's process at the point
+// it joined the loop (the turn is still one run, so nothing before it reads as finished). Once the turn's fold closes the
+// card is lifted out under the fold head, ahead of the reply, so a closed fold never hides what the user said.
+// It is not an exchange of its own, so it neither sticks nor opens the history editor.
+// `align`: outside the process clip the card takes the prompt card's full width; inside it, the clip would shave its edges
+function SteeredMessage({ block, align }: { block: SteerBlock; align?: boolean }) {
+  const blobUrl = useContext(BlobUrlContext);
   const turn = useMemo<UserTurn>(() => ({ role: 'user', text: block.text, ...(block.attachments ? { attachments: block.attachments } : {}) }), [block]);
   // A steered prompt belongs to the current exchange, but its card is still a user message.
-  // Cancel the agent content inset so it shares the same left edge as the original prompt card.
-  return <div title={t('turns.steered')} className="-mx-pad flex min-w-0 flex-col"><UserMessage turn={turn} index={0} blobUrl={blobUrl} /></div>;
+  // Aligned, it cancels the agent content inset so it shares the same left edge as the original prompt card.
+  return <div title={t('turns.steered')} className={cn('steered-message flex min-w-0 flex-col', align && '-mx-pad')}><UserMessage turn={turn} index={0} blobUrl={blobUrl} /></div>;
 }
 
 type OnPermission = (blockId: string, optionId: string) => void;
@@ -147,7 +152,7 @@ function NoticeRow({ block }: { block: NoticeBlock }) {
 // The top-level activity owns the only Orb; detailed rows show their own verbs with static icons.
 // Memoized: the host pushes the whole view on every stream chunk and `reuse` keeps finished turns by reference, so only the live turn renders.
 // `memoryKey` names the turn for fold memory (session + turn); without one the fold state lives only in the component.
-export const AgentMessage = memo(function AgentMessage({ turn, index, running, onPermission, compacting, memoryKey, turnIndex, last, settings, subagents, allSubagents, onInspect, actions = true, lead = 'orb', onFailureAction, blobUrl, joined }: {
+export const AgentMessage = memo(function AgentMessage({ turn, index, running, onPermission, compacting, memoryKey, turnIndex, last, settings, subagents, allSubagents, onInspect, actions = true, lead = 'orb', onFailureAction, joined }: {
   turn: AgentTurn; index: number; running: boolean; onPermission: OnPermission; compacting?: boolean; memoryKey?: string; turnIndex: number; last: boolean; settings?: TurnSettings;
   // Nodes anchored to this turn plus the session-wide list (breadcrumbs/descendant counts may cross turns)
   subagents?: SubagentSummary[]; allSubagents?: SubagentSummary[]; onInspect?: (id: string) => void;
@@ -157,8 +162,6 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   lead?: 'orb' | 'static';
   // AIR sessionFailure notice actions (retry / sign in / new session), available on the last settled turn
   onFailureAction?: (action: FailureAction) => void;
-  // Previews for the attachments of prompts steered into this turn
-  blobUrl?: (blob: string) => string;
   // Continues the turn above (the hidden continue after an account switch): one row gap instead of a message gap
   joined?: boolean;
 }) {
@@ -200,7 +203,6 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
           all={allSubagents ?? subagents!} onInspect={onInspect} onPermission={onPermission} />}
         {section.plan && <PlanDocument block={section.plan}
           permission={shown.blocks.find((b): b is PermissionBlock => b.type === 'permission' && b.planId === section.plan!.id)} onChoose={onPermission} />}
-        {section.steer && <SteeredMessage block={section.steer} blobUrl={blobUrl} />}
       </Fragment>;
     })}
     {actions && !running && !compacting && turn.blocks.length > 0 && <TurnActions turn={turn} turnIndex={turnIndex} last={last} settings={settings} />}
@@ -490,6 +492,8 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
   const leadIcon = running ? activity.lead : <CompletionIcon className="size-icon" strokeWidth={1.5} />;
   const label = running ? activity.label : outcomeOf(turn) ?? t('turns.done');
   const elapsed = !running && turn.startedAt !== undefined && turn.endedAt !== undefined ? elapsedLabel(turn) : undefined;
+  // Steered prompts read inline while the fold is open; a closed fold shows them under its head instead
+  const steers = useMemo(() => blocks.filter((b): b is SteerBlock => b.type === 'steer'), [blocks]);
   const mounted = useRef(!retired);
   if (!retired) mounted.current = true;
   if (!mounted.current && blocks.length === 0) return null;
@@ -522,6 +526,9 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
             </AutoFoldContext.Provider>
           </div>
         </Collapsible.Panel>
+      )}
+      {!open && steers.length > 0 && (
+        <div className="flex flex-col gap-gap pt-gap">{steers.map(b => <SteeredMessage key={b.id} block={b} align />)}</div>
       )}
     </Collapsible.Root>
   );
@@ -588,6 +595,7 @@ function LineBlock({ block }: { block: AgentBlock }) {
   if (block.type === 'plan') return <Plan block={block} />;
   if (block.type === 'tool_call') return <ToolCall block={block} />;
   if (block.type === 'compaction') return <Compaction block={block} />;
+  if (block.type === 'steer') return <SteeredMessage block={block} />;
   if (block.type === 'image') return <AgentImage image={block} />;
   // The open card is pinned above the composer by the shell; only a resolved one has a place in the message
   if (block.type === 'question') return block.outcome ? <QuestionRecord block={block} /> : null;
@@ -612,6 +620,7 @@ function Compaction({ block }: { block: CompactionBlock }) {
 
 function Block({ block, onPermission }: { block: AgentBlock; onPermission: OnPermission }) {
   if (block.type === 'text') return <Prose block={block} />;
+  if (block.type === 'steer') return <SteeredMessage block={block} align />;
   if (block.type === 'permission') return block.planId ? null : <Permission block={block} onChoose={id => onPermission(block.id, id)} />;
   return <LineBlock block={block} />;
 }
