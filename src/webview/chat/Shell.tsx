@@ -636,7 +636,7 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
       ? <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} />
       : <AgentMessage key={ti} turn={turn} index={index} compacting={compacting} running={running && ti === activeAgentIndex && !turn.stop} onPermission={onPermission} memoryKey={memoryKey}
           turnIndex={ti} last={ti === turns.length - 1} settings={previous?.role === 'user' ? previous.settings : undefined} actions={!switchedAway} joined={switchedIn}
-          subagents={mine} allSubagents={mine ? subagents : undefined} onInspect={onInspect} onFailureAction={onFailureAction} blobUrl={blobUrl} />);
+          subagents={mine} allSubagents={mine ? subagents : undefined} onInspect={onInspect} onFailureAction={onFailureAction} />);
   });
   return (
     <div ref={ref} data-thread className="scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto px-page [container-type:size] [overflow-anchor:none]">
