@@ -33,6 +33,8 @@ Drafts, standalone tag pushes, and prereleases do not publish to the marketplace
 
 ## Validate or retry
 
+Release builds and Windows compatibility checks use Rust 1.97.1. Update both workflow toolchain inputs together after validating a newer compiler and Clippy against all targets; do not use a moving stable toolchain for a release retry.
+
 Use **Run workflow** with `ref: main` and publishing unchecked to run checks and download the resulting `extension-vsix` and `intellij-plugin` artifacts without publishing. This requires no marketplace secrets.
 
 If one marketplace fails, fix its credential or the reported error and choose **Re-run failed jobs**. The VS Code publishers use `--skip-duplicate` and the JetBrains job skips the universal version when it is already listed, so an already-published version is not uploaded again. Existing GitHub Release assets are also retained. These retries do not replace an existing version; package changes require a new version and tag.
