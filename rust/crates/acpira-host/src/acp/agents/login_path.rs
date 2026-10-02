@@ -14,6 +14,7 @@ pub const LOGIN_PATH_ENV: &str = "ACPIRA_LOGIN_PATH";
 /// Set for the shell run so rc files can skip slow or interactive parts
 pub const RESOLVING_ENV: &str = "ACPIRA_RESOLVING_ENVIRONMENT";
 /// A shell whose rc files hang (a prompt waiting for input, a slow network call) is abandoned after this
+#[cfg(not(windows))]
 const SHELL_TIMEOUT: Duration = Duration::from_secs(5);
 const MARK: &str = "__ACPIRA_LOGIN_PATH__";
 
@@ -72,15 +73,44 @@ pub fn added() -> Vec<String> {
 }
 
 async fn load() -> LoginPath {
-  if cfg!(windows) || std::env::var(LOGIN_PATH_ENV).is_ok_and(|v| v == "0") {
+  if std::env::var(LOGIN_PATH_ENV).is_ok_and(|v| v == "0") {
     return LoginPath::default();
   }
-  let Some(shell) = std::env::var("SHELL").ok().filter(|s| !s.is_empty()) else { return LoginPath::default() };
-  let inherited = std::env::var("PATH").unwrap_or_default();
-  match read_shell_path(&shell, SHELL_TIMEOUT).await {
-    Some(login) => merge(&inherited, &login),
-    None => LoginPath::default(),
+  #[cfg(windows)]
+  {
+    let inherited = std::env::var("PATH").unwrap_or_default();
+    let installed = tokio::task::spawn_blocking(crate::platform::environment::installed_path).await.unwrap_or_default();
+    merge_windows(&inherited, &installed)
   }
+  #[cfg(not(windows))]
+  {
+    let Some(shell) = std::env::var("SHELL").ok().filter(|s| !s.is_empty()) else { return LoginPath::default() };
+    let inherited = std::env::var("PATH").unwrap_or_default();
+    match read_shell_path(&shell, SHELL_TIMEOUT).await {
+      Some(login) => merge(&inherited, &login),
+      None => LoginPath::default(),
+    }
+  }
+}
+
+/// Windows installers update the User / Machine registry PATH, not an already-running IDE's environment.
+/// Retain the IDE's precedence, append new absolute entries, and compare names with Windows casing / separators.
+#[cfg(any(windows, test))]
+fn merge_windows(inherited: &str, installed: &str) -> LoginPath {
+  let key = |s: &str| s.trim_matches('"').replace('/', "\\").trim_end_matches('\\').to_ascii_lowercase();
+  let mut dirs: Vec<String> = inherited.split(';').filter(|d| !d.is_empty()).map(String::from).collect();
+  let mut known: std::collections::HashSet<String> = dirs.iter().map(|d| key(d)).collect();
+  let mut added = vec![];
+  for dir in installed.split(';').map(|d| d.trim().trim_matches('"')).filter(|d| !d.is_empty()) {
+    let bytes = dir.as_bytes();
+    let absolute =
+      dir.starts_with(r"\\") || (bytes.len() > 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && matches!(bytes[2], b'/' | b'\\'));
+    if absolute && known.insert(key(dir)) {
+      dirs.push(dir.to_owned());
+      added.push(dir.to_owned());
+    }
+  }
+  if added.is_empty() { LoginPath::default() } else { LoginPath { merged: Some(dirs.join(";")), added } }
 }
 
 /// `$SHELL -i -l -c` printing PATH between markers, since rc files may print banners of their own. bash, zsh and fish
@@ -148,6 +178,14 @@ pub fn merge(inherited: &str, login: &str) -> LoginPath {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn windows_installs_extend_the_existing_path_without_case_duplicates() {
+    let result = merge_windows(r"C:\Windows\System32;C:\Node", r"c:/node/;D:\用户\bin;\\server\share\bin;relative;C:relative");
+    assert_eq!(result.added, [r"D:\用户\bin", r"\\server\share\bin"]);
+    assert_eq!(result.merged.as_deref(), Some(r"C:\Windows\System32;C:\Node;D:\用户\bin;\\server\share\bin"));
+    assert_eq!(merge_windows(r"C:\Node", r#""c:\node\""#), LoginPath::default());
+  }
 
   #[test]
   fn parses_the_last_marked_path_among_rc_noise() {

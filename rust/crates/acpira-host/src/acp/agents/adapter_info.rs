@@ -22,9 +22,18 @@ async fn read_package(dir: &Path, name: &str) -> Option<Option<String>> {
 
 async fn adapter_root(binary: &str, pkg: &str) -> Option<PathBuf> {
   let lower = binary.to_lowercase();
-  if cfg!(windows) && (lower.ends_with(".cmd") || lower.ends_with(".ps1") || lower.ends_with(".bat")) {
-    let dir = Path::new(binary).parent()?.join("node_modules").join(pkg);
-    return read_package(&dir, pkg).await.map(|_| dir);
+  if lower.ends_with(".cmd") || lower.ends_with(".ps1") || lower.ends_with(".bat") {
+    // Global npm shims sit above node_modules; project shims sit inside node_modules/.bin.
+    // Follow Node's ancestor lookup so local installs and linked package directories work as well.
+    let mut dir = Path::new(binary).parent()?;
+    for _ in 0..MAX_UP {
+      let candidate = dir.join("node_modules").join(pkg);
+      if read_package(&candidate, pkg).await.is_some() {
+        return Some(candidate);
+      }
+      dir = dir.parent()?;
+    }
+    return None;
   }
   let mut dir = match tokio::fs::canonicalize(binary).await {
     Ok(p) => p.parent()?.to_path_buf(),
@@ -184,4 +193,25 @@ pub async fn read_adapter_info(binary: &str, def: &AgentDef) -> Option<AdapterIn
     });
   }
   Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[tokio::test]
+  async fn cmd_shims_find_both_global_and_project_local_packages() {
+    let t = tempfile::tempdir().unwrap();
+    for local in [false, true] {
+      let prefix = t.path().join(if local { "project" } else { "global" });
+      let package = prefix.join("node_modules/@example/acp");
+      let bin = if local { prefix.join("node_modules/.bin") } else { prefix.clone() };
+      std::fs::create_dir_all(&package).unwrap();
+      std::fs::create_dir_all(&bin).unwrap();
+      std::fs::write(package.join("package.json"), r#"{"name":"@example/acp","version":"1.0.0"}"#).unwrap();
+      let shim = bin.join("agent.cmd");
+      std::fs::write(&shim, "@echo off\r\n").unwrap();
+      assert_eq!(adapter_root(shim.to_str().unwrap(), "@example/acp").await, Some(package));
+    }
+  }
 }

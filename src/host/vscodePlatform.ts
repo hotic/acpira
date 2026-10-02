@@ -5,6 +5,7 @@ import type { PlatformEvent, PlatformMethod, PlatformRequest } from '@shared/sid
 import type { SecretVault } from './accounts/AccountStore';
 import { WorkspaceFiles } from './files';
 import type { HelloPayload } from './shell/SidecarClient';
+import { terminalLaunch } from './terminalLaunch';
 
 // Every IDE action the sidecar may ask for; VS Code implements them all
 const CAPABILITIES: PlatformMethod[] = ['openResolvedFile', 'openPlanDocument', 'revealInOS', 'searchFiles', 'writeSetting', 'openExternal', 'openInEditor', 'runInTerminal', 'toast'];
@@ -96,16 +97,12 @@ export class VscodePlatform {
       case 'openInEditor': this.openInEditor(r.sessionId); return null;
       case 'toast': void (r.level === 'error' ? vscode.window.showErrorMessage(r.text) : vscode.window.showInformationMessage(r.text)); return null;
       case 'runInTerminal': {
-        const t = vscode.window.createTerminal({ name: r.title, env: r.env });
+        const { text, ...launch } = terminalLaunch(r.command, r.args);
+        const t = vscode.window.createTerminal({ name: r.title, env: r.env, ...launch });
         t.show();
-        t.sendText([r.command, ...r.args].map(shellQuote).join(' '));
+        if (text !== undefined) t.sendText(text);
         return null;
       }
     }
   }
-}
-
-// Commands run in a terminal: paths with spaces (/Applications/Devin.app/…) need quoting
-function shellQuote(s: string): string {
-  return /^[\w./=:@%+-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 }

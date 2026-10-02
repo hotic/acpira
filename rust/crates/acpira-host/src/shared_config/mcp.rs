@@ -15,7 +15,8 @@ use acpira_shared::inventory::{McpCaps, McpTransport};
 use acpira_shared::shared_config::SharedScope;
 
 use super::Places;
-use crate::acp::agents::launch::{Os, ProcessEnv};
+use crate::acp::agents::launch::ProcessEnv;
+use crate::platform::command::Os;
 use crate::acp::agents::registry::resolve_command;
 use crate::agent_ext::{McpFormat, agent_ext};
 use crate::inventory::{parse_json_loose, parse_json_mcp, parse_opencode_mcp, parse_toml_mcp};
@@ -331,16 +332,20 @@ mod tests {
       } }"#,
     )
     .unwrap();
-    add(&p.mcp_file(SharedScope::Project).unwrap(), r#"{ "command": "/bin/cat" }"#, Some("dup")).unwrap();
+    let project_command = std::env::current_exe().unwrap();
+    add(&p.mcp_file(SharedScope::Project).unwrap(), &json!({ "command": project_command }).to_string(), Some("dup")).unwrap();
     unsafe { std::env::set_var("ACPIRA_TEST_MCP_ARG", "v1") };
     let caps = Some(McpCaps { http: true, sse: false });
     let (sent, log) = session_servers(&p, "codex", caps).await;
     let names: Vec<&str> = sent.iter().map(|v| v["name"].as_str().unwrap()).collect();
     assert_eq!(names, ["dup", "docs", "web"]);
-    assert_eq!(sent[0]["command"], "/bin/cat");
+    assert_eq!(sent[0]["command"], json!(project_command));
     assert_eq!(sent[1]["args"], json!(["v1"]));
     assert_eq!(sent[1]["env"], json!([{ "name": "K", "value": "v1" }]));
-    assert_eq!(sent[2], json!({ "type": "http", "name": "web", "url": "https://x/mcp", "headers": [{ "name": "Authorization", "value": "Bearer t" }] }));
+    assert_eq!(
+      sent[2],
+      json!({ "type": "http", "name": "web", "url": "https://x/mcp", "headers": [{ "name": "Authorization", "value": "Bearer t" }] })
+    );
     assert!(log.unwrap().contains("old (transport not advertised)"));
     // Pi takes no client MCP; a name the agent's own config declares is skipped
     assert!(session_servers(&p, "pi", caps).await.0.is_empty());
@@ -357,10 +362,14 @@ mod tests {
     assert!(names(&session_servers(&p, "grok", caps).await.0).contains(&"dup".to_owned()));
     // The legacy project file is still read, and edits go to the file holding the server
     std::fs::create_dir_all(root.join(".agents")).unwrap();
-    std::fs::write(root.join(".agents/mcp.json"), r#"{ "mcpServers": { "legacy": { "command": "/bin/true" }, "dup": { "command": "/bin/false" } } }"#).unwrap();
+    std::fs::write(
+      root.join(".agents/mcp.json"),
+      r#"{ "mcpServers": { "legacy": { "command": "/bin/true" }, "dup": { "command": "/bin/false" } } }"#,
+    )
+    .unwrap();
     let project: Vec<_> = all_servers(&p).into_iter().filter(|(s, _, _)| *s == SharedScope::Project).map(|(_, s, _)| s).collect();
     assert_eq!(project.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["dup", "legacy"]);
-    assert_eq!(project[0].spec["command"], "/bin/cat");
+    assert_eq!(project[0].spec["command"], json!(project_command));
     assert_eq!(project_file_of(&p, "legacy").unwrap(), root.join(".agents/mcp.json"));
     assert_eq!(project_file_of(&p, "dup").unwrap(), root.join(".mcp.json"));
   }
