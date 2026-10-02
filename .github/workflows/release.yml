@@ -48,6 +48,8 @@ jobs:
         with:
           node-version: '22'
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
@@ -65,6 +67,10 @@ jobs:
         if: matrix.runner == 'ubuntu-24.04'
         working-directory: rust
         run: cargo test --workspace --locked
+      - name: Windows compatibility regressions (PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/test-windows.ps1
       - name: Build the sidecar
         run: node scripts/build-sidecar.mjs ${{ matrix.platforms }}
       - name: Check the binary this runner can execute
