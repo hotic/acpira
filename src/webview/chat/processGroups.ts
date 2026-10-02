@@ -1,5 +1,6 @@
 import type { AgentBlock, ToolCallBlock } from '@shared/transcript';
 import { toolFiles, visibleToolContents } from './toolDetails';
+import { parseFileLink, type FileLink } from './fileLinks';
 
 // One item of a turn's process list: a block on its own, or a run of consecutive reads / edits under one head.
 // `id` names the item for its fold and entrance: a group goes by its first call, so a single call that gains a
@@ -99,6 +100,21 @@ export function foldStates({ items, now, live, autoExpand, following, doneAt, fi
 export const filePath = (block: ToolCallBlock) => block.locations?.[0]?.path
   ?? visibleToolContents(block).find(c => c.type === 'diff')?.source?.path ?? block.target ?? '';
 export const fileName = (block: ToolCallBlock) => filePath(block).split(/[\\/]/).pop() || block.target || '';
+
+// Open only an unambiguous file; a multi-file patch title is not a destination.
+export function editReference(blocks: ToolCallBlock[]): FileLink | undefined {
+  const paths = [...new Set(blocks.flatMap(block => [
+    ...(block.locations ?? []).map(location => location.path),
+    ...visibleToolContents(block).flatMap(item => item.type === 'diff' && item.source?.path ? [item.source.path] : []),
+  ]))];
+  if (paths.length > 1) return;
+  const file = paths.length ? { path: paths[0]! } : parseFileLink(blocks[0]?.target ?? '');
+  if (!file) return;
+  const span = editSpan(blocks);
+  const location = blocks.flatMap(block => block.locations ?? []).find(location => location.path === file.path && location.line != null);
+  const line = span ? Number(/^L(\d+)/.exec(span)![1]) : location?.line ?? file.line;
+  return { path: file.path, ...(line != null ? { line } : {}) };
+}
 
 // The files a group names in its head, first-seen order
 export function groupNames(blocks: ToolCallBlock[]): string[] {

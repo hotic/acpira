@@ -23,7 +23,7 @@ import { fileReference, toolFiles, visibleToolContents } from './toolDetails';
 import { useToolSeconds } from './useToolSeconds';
 import { commandDuration } from './commandDuration';
 import { useAutoFold } from './autoFold';
-import { editSpan } from './processGroups';
+import { editReference, editSpan } from './processGroups';
 
 export { OpenToolFileContext } from './fileLinks';
 
@@ -107,13 +107,15 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
 
   // An edit names where it landed, first to last changed line, the way a read names its range
   const span = block.kind === 'edit' ? editSpan([block]) : undefined;
+  const editFile = block.kind === 'edit' ? editReference([block]) : undefined;
+  const target = <RowTarget mono={block.targetMono}>{toolTarget(block)}</RowTarget>;
   const label = <>
     <RowLabel shimmer={running}>{toolVerb(block)}</RowLabel>
     {command
       ? <RowTarget mono><span title={command}>{command}</span></RowTarget>
-      : block.target && !(block.kind === 'read' && files.length) && (span
-        ? <span className="flex min-w-0 items-baseline gap-1"><RowTarget mono={block.targetMono}>{toolTarget(block)}</RowTarget><Aside>{span}</Aside></span>
-        : <RowTarget mono={block.targetMono}>{toolTarget(block)}</RowTarget>)}
+      : block.target && !(block.kind === 'read' && files.length) && (editFile
+        ? <FileRef hit={editFile.path} line={editFile.line} aside={span}>{target}</FileRef>
+        : span ? <span className="flex min-w-0 items-baseline gap-1">{target}<Aside>{span}</Aside></span> : target)}
   </>;
   if (todos !== undefined) return <PlanDetails entries={todos} label={label} trailing={trailing} />;
   // Image generation: the row names the call and its text (codex-acp's revised prompt) opens on demand. In the process fold
@@ -161,14 +163,14 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
   // A command card sits in the label column on the row's rail; the space after it stays outside the rail so the end dot meets the card.
   // A tool that returned only text gets the same card; diffs, lists and images stay full width
   if (execute || (visibleContent.length && visibleContent.every(item => item.type === 'text'))) return (
-    <Disclosure className="action-details data-open:mb-command-after" bodyClassName="pt-gap-half" tone="action" lead={lead} trailing={trailing} defaultOpen={execute && !grouped && running}
+    <Disclosure independentAction={!!editFile} className="action-details data-open:mb-command-after" bodyClassName="pt-gap-half" tone="action" lead={lead} trailing={trailing} defaultOpen={execute && !grouped && running}
       open={fold?.open} onToggle={fold?.onToggle}
       body={<><TaskMeta task={block.asyncTask} /><ToolBody block={block} items={visibleContent} command={command} /></>}>
       {label}
     </Disclosure>
   );
   return (
-    <Disclosure className="action-details" tone="action" lead={lead} trailing={trailing} indent={false} rail={block.content?.type === 'list' ? 'rows' : false} open={fold?.open} onToggle={fold?.onToggle} body={<><TaskMeta task={block.asyncTask} /><ToolBody block={block} items={visibleContent} /></>}>
+    <Disclosure independentAction={!!editFile} className="action-details" tone="action" lead={lead} trailing={trailing} indent={false} rail={block.content?.type === 'list' ? 'rows' : false} open={fold?.open} onToggle={fold?.onToggle} body={<><TaskMeta task={block.asyncTask} /><ToolBody block={block} items={visibleContent} /></>}>
       {label}
     </Disclosure>
   );
@@ -262,12 +264,12 @@ function FileResultRow({ hit, lead, aside, children }: { hit: string; lead: Reac
   return <Row tone="action" dense lead={lead} title={hit}><FileRef hit={hit} aside={aside}>{children}</FileRef></Row>;
 }
 
-function FileRef({ hit, aside, children }: { hit: string; aside?: string; children: ReactNode }) {
+export function FileRef({ hit, line, aside, children }: { hit: string; line?: number; aside?: string; children: ReactNode }) {
   const openFile = useContext(OpenToolFileContext);
   const file = fileReference(hit);
   const asideEl = aside && <Aside>{aside}</Aside>;
-  return openFile ? <button type="button" title={hit} className="group/ref flex min-w-0 max-w-full items-baseline gap-1 cursor-pointer text-left"
-    onClick={() => openFile(file.path, file.line)}>
+  return openFile ? <button type="button" title={hit} className="group/ref pointer-events-auto flex min-w-0 max-w-full items-baseline gap-1 cursor-pointer text-left"
+    onClick={() => openFile(file.path, line ?? file.line)}>
     {/* Only the file name underlines on hover / focus; the line range beside it stays plain */}
     <span className="flex min-w-0 group-hover/ref:underline group-focus-visible/ref:underline">{children}</span>{asideEl}
   </button>
