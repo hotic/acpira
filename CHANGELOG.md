@@ -11,7 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [1.8.2] - 2026-10-02
+
+### Changed
+
+- This release includes the Windows compatibility, machine-local agent configuration, file navigation and theme changes listed in 1.8.1. Version 1.8.1's marketplace publication stopped at the Windows regression checks before any packages were uploaded.
+
+### Fixed
+
+- Windows paths passed to Pi project trust and native-session lookups now match Node's regular `realpathSync`: drive / UNC paths retain their case and 8.3 short names while symbolic links and junctions resolve to their targets. A short directory name such as `RUNNER~1` no longer changes the trust key or canonical workspace spelling.
+
 ## [1.8.1] - 2026-10-02
+
+Marketplace publication did not complete. These changes are included in 1.8.2.
 
 ### Changed
 
