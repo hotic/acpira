@@ -73,8 +73,9 @@
   .diff-row[data-kind="add"] { --diff-row-bg: var(--diff-add); }
   .diff-row[data-kind="del"] { --diff-row-bg: var(--diff-del); }
   [data-diff="signs"] .diff-row { --diff-row-bg: var(--bg-code); }
-  .diff-source > span { color: var(--syntax-dark, var(--fg-1)); }
-  [data-theme="light"] .diff-source > span { color: var(--syntax-light, var(--fg-1)); }
+  /* Shiki tokens carry both theme colours; diffs and fenced code blocks pick by the active theme */
+  :is(.diff-source, .code-syntax) > span { color: var(--syntax-dark, var(--fg-1)); }
+  [data-theme="light"] :is(.diff-source, .code-syntax) > span { color: var(--syntax-light, var(--fg-1)); }
 
   /* Tool output (ToolOutput in Terminal.tsx) wraps; each line is its own block so a wrapped continuation hangs under the
      line's start and a long `key: value` report stays scannable */

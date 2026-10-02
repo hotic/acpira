@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 import type { DiffLine, DiffSource } from '@shared/transcript';
 import { cn } from '../ui/cn';
 import { diffCopyText, plainDiffRows, type CodeDiffRow } from './codeDiff';
-import { requestDiffHighlight } from './diffHighlight';
-import { codeLanguage } from './codeSyntax';
+import { requestCodeHighlight, requestDiffHighlight } from './diffHighlight';
+import { codeLanguage, fenceLanguage, type CodeToken, type Language } from './codeSyntax';
 import { OutputCopy } from './OutputCopy';
 import { t } from '../i18n';
 
@@ -17,26 +17,50 @@ export function CodeSurface({ children, className, padded = true }: { children: 
   );
 }
 
-// Lightweight token coloring for tool output that is not Markdown; streamdown handles fenced blocks in Prose
-const TOKEN = /(\/\/.*$)|('[^']*')|\b(const|let|export|async|function|return|for|of|if|await|import|from|new|type|interface)\b|\b([A-Z][A-Za-z0-9]*)\b|\b([a-z_][A-Za-z0-9_]*)(?=\()/gm;
-const CLASS = ['text-[var(--tk-c)]', 'text-[var(--tk-s)]', 'text-[var(--tk-k)]', 'text-[var(--tk-t)]', 'text-[var(--tk-f)]'];
+// Fenced Markdown code: coloured only when the fence names a known grammar (see fenceLanguage); unlabelled blocks
+// such as commit messages stay plain. Tokenizing runs in the shared highlight worker, debounced while a block streams
+const STREAM_SETTLE_MS = 120;
 
-export function highlight(code: string): ReactNode[] {
-  const out: ReactNode[] = [];
-  let last = 0, i = 0;
-  for (const m of code.matchAll(TOKEN)) {
-    const idx = m.index ?? 0;
-    if (idx > last) out.push(code.slice(last, idx));
-    const g = m.slice(1).findIndex(Boolean);
-    out.push(<span key={i++} className={CLASS[g]}>{m[0]}</span>);
-    last = idx + m[0].length;
-  }
-  if (last < code.length) out.push(code.slice(last));
-  return out;
+interface Colored { code: string; language: Language; lines: CodeToken[][] }
+
+export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
+  const language = fenceLanguage(lang);
+  const [colored, setColored] = useState<Colored>();
+  const tokenized = useRef(false);
+
+  useEffect(() => {
+    if (!language) return;
+    let current = true;
+    // The first pass runs at once; later passes only follow a streaming fence, so wait for its chunks to pause
+    const timer = setTimeout(() => {
+      requestCodeHighlight(code, language).then(lines => {
+        if (!current) return;
+        tokenized.current = true;
+        setColored({ code, language, lines });
+      }).catch(() => { /* Plain source remains when a grammar cannot load. */ });
+    }, tokenized.current ? STREAM_SETTLE_MS : 0);
+    return () => { current = false; clearTimeout(timer); };
+  }, [code, language]);
+
+  const usable = language && colored?.language === language ? colored : undefined;
+  return <CodeSurface><code className={usable ? 'code-syntax' : undefined}>{usable ? syntaxChildren(code, usable) : code}</code></CodeSurface>;
 }
 
-export function CodeBlock({ code }: { code: string }) {
-  return <CodeSurface><code>{highlight(code)}</code></CodeSurface>;
+// Coloured lines for the part of `code` that the last tokenized text covers. While a fence streams, the new text
+// extends the old one: its complete lines keep their colours and only the growing tail renders plain until the next pass
+function syntaxChildren(code: string, colored: Colored): ReactNode[] {
+  const exact = colored.code === code;
+  if (!exact && !code.startsWith(colored.code)) return [code];
+  const tail = exact ? code.length : colored.code.lastIndexOf('\n') + 1;
+  const keep = exact ? colored.lines.length : colored.code.slice(0, tail).split('\n').length - 1;
+  const out: ReactNode[] = [];
+  colored.lines.slice(0, keep).forEach((tokens, row) => {
+    if (row > 0) out.push('\n');
+    tokens.forEach((token, index) => out.push(
+      <span key={`${row}:${index}`} style={{ '--syntax-light': token.light, '--syntax-dark': token.dark } as CSSProperties}>{token.text}</span>));
+  });
+  if (!exact) out.push((keep > 0 ? '\n' : '') + code.slice(tail));
+  return out;
 }
 
 // Shared production version of the selected code-detail LAB design.

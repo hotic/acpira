@@ -34,7 +34,8 @@
 .acp-prose hr { height: 1px; margin: var(--gap) 0; border: 0; background: var(--conversation-line); }
 .acp-prose a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .acp-prose a:hover { filter: brightness(1.1); }
-.acp-prose strong { color: var(--fg-strong); font-weight: 600; }
+/* streamdown renders **bold** as <span data-streamdown="strong">, not <strong>; raw HTML <strong> still matches the tag */
+.acp-prose :is(strong, [data-streamdown="strong"]) { color: var(--fg-strong); font-weight: 600; }
 .acp-prose table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--text-2); line-height: var(--text-2-lh); }
 .acp-prose th, .acp-prose td { padding: var(--gap) var(--pad); border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 .acp-prose th { background: var(--hover); color: var(--fg-2); font-weight: 500; }
