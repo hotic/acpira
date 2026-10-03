@@ -17,7 +17,7 @@
    hairline thumb appears only while its element scrolls (useScrollReveal stamps data-scrolling) or under the pointer; focus alone shows nothing.
    Unlayered on purpose: the host webview stylesheet paints ::-webkit-scrollbar-thumb (plus :hover / :active) with --vscode-scrollbarSlider-*
    unlayered, and a layered rule would lose to it everywhere — the permanent grey bar in every scroller. */
-.acp-shell ::-webkit-scrollbar { width: 10px; height: 10px; }
+.acp-shell ::-webkit-scrollbar { width: var(--scrollbar); height: var(--scrollbar); }
 .acp-shell ::-webkit-scrollbar-thumb, .acp-shell ::-webkit-scrollbar-thumb:hover, .acp-shell ::-webkit-scrollbar-thumb:active {
   background-color: transparent; border: 3.5px solid transparent; background-clip: padding-box; border-radius: 6px;
 }

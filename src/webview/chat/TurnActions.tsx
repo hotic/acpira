@@ -15,7 +15,10 @@ import { modelLabel, replyMarkdown, toolCallCount } from './turnActionHelpers';
 export const TurnActionsContext = createContext<{ sessionId: string; controls: SessionControls; fork?: (turnIndex: number) => void } | undefined>(undefined);
 
 // The row under a finished agent reply (Cursor's trio): copy the reply · fork the session from this turn · open the
-// response statistics card. Hidden until the turn is hovered / focused, except on the last reply where it always shows
+// response statistics card. Hidden until the turn is hovered / focused, except on the last reply where it always shows.
+// The row keeps its height (hover must not shift the transcript) but stands in for the spacing around it: it hugs the reply
+// (`-mt-gap` cancels the turn's row gap, the buttons' own padding is the air) and the exchange below it starts one row gap
+// after it instead of a message gap (`Thread` in Shell.tsx keys that off `data-turn-actions`)
 export function TurnActions({ turn, turnIndex, last, settings }: { turn: AgentTurn; turnIndex: number; last: boolean; settings?: TurnSettings }) {
   const ctx = useContext(TurnActionsContext);
   const reply = replyMarkdown(turn);
@@ -25,7 +28,8 @@ export function TurnActions({ turn, turnIndex, last, settings }: { turn: AgentTu
   return (
     <div
       data-open={statsOpen || undefined}
-      className={cn('flex h-ctl-sm items-center justify-end gap-0.5',
+      data-turn-actions
+      className={cn('-mt-gap flex h-ctl-sm items-center justify-end gap-0.5',
         !last && 'opacity-0 transition-opacity duration-(--code-copy-duration) ease-out group-hover/turn:opacity-100 group-focus-within/turn:opacity-100 [@media(hover:none)]:opacity-100 motion-reduce:transition-none data-[open]:opacity-100')}
     >
       {reply && (

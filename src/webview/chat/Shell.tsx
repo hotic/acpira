@@ -202,7 +202,7 @@ export function Shell(p: ShellProps) {
   // dock resize — each frame of the fold animation — would restyle the whole transcript.
   const contentRef = useCallback((el: HTMLDivElement | null) => {
     threadContent.current = el;
-    if (el) el.style.paddingBottom = dockHeight.current ? `${dockHeight.current}px` : '';
+    if (el) el.style.paddingBottom = threadClearance(dockHeight.current);
   }, []);
   const toastRef = useCallback((el: HTMLDivElement | null) => {
     toastLayer.current = el;
@@ -216,7 +216,7 @@ export function Shell(p: ShellProps) {
       if (height === dockHeight.current) return;
       dockHeight.current = height;
       const content = threadContent.current;
-      if (content) content.style.paddingBottom = height ? `${height}px` : '';
+      if (content) content.style.paddingBottom = threadClearance(height);
       toastLayer.current?.style.setProperty('--thread-dock-height', `${height}px`);
     };
     sync();
@@ -474,7 +474,7 @@ export function Shell(p: ShellProps) {
                   <div
                     ref={planDock}
                     data-plan-dock
-                    className={cn('pointer-events-none absolute inset-x-0 bottom-0 z-10', wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--content-w)+2*var(--pad))]')}
+                    className={cn('pointer-events-none absolute inset-x-0 bottom-0 z-10', wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--content-w)+2*var(--page))]')}
                   >
                     <PlanBar key={`plan:${p.activeSessionId}`} turns={p.turns} running={p.running} />
                   </div>
@@ -484,7 +484,8 @@ export function Shell(p: ShellProps) {
                     </div>
                   )}
                 </div>
-                <div className={cn('shrink-0', wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--content-w)+2*var(--pad))]')}>
+                {/* Every surface under the thread (question, alert, notice, queue, composer) shares the DockStack rhythm; none carries its own outer margin */}
+                <DockStack className={cn(wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--content-w)+2*var(--page))]')}>
                   {question && on.answer && p.activeSessionId && <Questions key={question.id} block={question} subtitle={questionSubtitle} onAnswer={(blockId, answers, skip) => on.answer!(p.activeSessionId!, blockId, answers, skip)} />}
                   {alertTurn && (
                     <Alert
@@ -506,26 +507,24 @@ export function Shell(p: ShellProps) {
                     onUnlock={on.unlockCredentials && (() => on.unlockCredentials?.(p.agent.id))}
                     onTakeOver={p.canTakeOver ? on.takeOver : undefined}
                   />}
-                  <DockStack>
-                    {held.queued?.length && p.activeSessionId
-                      ? <Queue key={`queue:${p.activeSessionId}`} items={held.queued} composer={composerProps} blobUrl={blobUrl}
-                          on={on.dequeue && on.editQueued ? {
-                            remove: id => on.dequeue!(p.activeSessionId!, id),
-                            sendNow: on.sendQueued && (id => on.sendQueued!(p.activeSessionId!, id)),
-                            steer: p.steerQueued && p.running && on.steerQueued ? id => on.steerQueued!(p.activeSessionId!, id) : undefined,
-                            edit: (id, text, kept, drafts) => on.editQueued!(p.activeSessionId!, id, text, kept, drafts),
-                          } : undefined} />
-                      : null}
-                    {/* Sibling keys include the component role; duplicate session-only keys leave stale queue rows after reconciliation. */}
-                    {!p.external && <Composer key={`composer:${p.activeSessionId}`} {...composerProps} draftKey={p.activeSessionId} main shareSelection={p.shareEditorSelection}
-                      toolbarStart={!!p.subagents?.length && <Chip narrow="icon" caret={false} className="shrink-0" icon={<Network strokeWidth={1.5} />}
-                        aria-label={`${t('subagents.graph')} · ${t('subagents.entry', { n: p.subagents.length })}`}
-                        title={`${t('subagents.graph')} · ${t('subagents.entry', { n: p.subagents.length })}`}
-                        aria-haspopup="dialog" aria-expanded={graphOpen} onClick={() => setGraphOpen(true)}>
-                        {t('subagents.entry', { n: p.subagents.length })}
-                      </Chip>} />}
-                  </DockStack>
-                </div>
+                  {held.queued?.length && p.activeSessionId
+                    ? <Queue key={`queue:${p.activeSessionId}`} items={held.queued} composer={composerProps} blobUrl={blobUrl}
+                        on={on.dequeue && on.editQueued ? {
+                          remove: id => on.dequeue!(p.activeSessionId!, id),
+                          sendNow: on.sendQueued && (id => on.sendQueued!(p.activeSessionId!, id)),
+                          steer: p.steerQueued && p.running && on.steerQueued ? id => on.steerQueued!(p.activeSessionId!, id) : undefined,
+                          edit: (id, text, kept, drafts) => on.editQueued!(p.activeSessionId!, id, text, kept, drafts),
+                        } : undefined} />
+                    : null}
+                  {/* Sibling keys include the component role; duplicate session-only keys leave stale queue rows after reconciliation. */}
+                  {!p.external && <Composer key={`composer:${p.activeSessionId}`} {...composerProps} draftKey={p.activeSessionId} main shareSelection={p.shareEditorSelection}
+                    toolbarStart={!!p.subagents?.length && <Chip narrow="icon" caret={false} className="shrink-0" icon={<Network strokeWidth={1.5} />}
+                      aria-label={`${t('subagents.graph')} · ${t('subagents.entry', { n: p.subagents.length })}`}
+                      title={`${t('subagents.graph')} · ${t('subagents.entry', { n: p.subagents.length })}`}
+                      aria-haspopup="dialog" aria-expanded={graphOpen} onClick={() => setGraphOpen(true)}>
+                      {t('subagents.entry', { n: p.subagents.length })}
+                    </Chip>} />}
+                </DockStack>
               </div>
             </div>
             {/* The overlay inspector takes the whole column, header included, so the child's title replaces the session's */}
@@ -591,6 +590,13 @@ interface ThreadProps {
   onFailureAction?: (action: FailureAction) => void;
 }
 
+// The thread's tail clearance under the floating plan dock: the dock's height on top of the message gap, so the
+// last message sits one message gap from the first dock surface whether or not the plan is showing. Empty falls
+// back to the class (`pb-msg`)
+function threadClearance(dockHeight: number) {
+  return dockHeight ? `calc(var(--msg-gap) + ${dockHeight}px)` : '';
+}
+
 // Entrance stagger caps out at the 12th block, so long sessions don't take seconds
 const STAGGER_CAP = 12;
 
@@ -641,16 +647,18 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
           turnIndex={ti} last={ti === turns.length - 1} settings={previous?.role === 'user' ? previous.settings : undefined} actions={!switchedAway} joined={switchedIn}
           subagents={mine} allSubagents={mine ? subagents : undefined} onInspect={onInspect} onFailureAction={onFailureAction} />);
   });
+  // The right padding gives the scrollbar gutter back, so the transcript's edges line up with the header and the dock
   return (
-    <div ref={ref} data-thread className="scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto px-page [container-type:size] [overflow-anchor:none]">
+    <div ref={ref} data-thread className="scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-page pr-page-gutter [container-type:size] [overflow-anchor:none]">
       {/* The tail clearance equals the message gap, so the last message sits as far from the composer as from the message above it */}
       <div key={replayKey} ref={bodyRef} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-(--content-w)')}><FollowContext.Provider value={follow}>
         {exchanges.map(exchange => (
           // Positioned so the prompt's stuck-state sentinel can sit at the exchange's top edge. Paint containment gives each exchange
           // its own paint offset, so a fold opening mid-thread no longer re-walks every later exchange each frame (see docs/dev/webview.md,
           // transcript render budget); the clip it brings is pushed out by --hit on the sides and bottom, where row hit areas and
-          // card shadows reach past the column, and the top edge stays put for the sentinel.
-          <section key={exchange.key} className="relative -mx-hit -mb-hit flex min-w-0 flex-col gap-msg px-hit pb-hit contain-paint">
+          // card shadows reach past the column, and the top edge stays put for the sentinel. An exchange ending in a reply's action
+          // row pulls the next one up to a row gap: the row's own height already separates them (TurnActions).
+          <section key={exchange.key} className="relative -mx-hit -mb-hit flex min-w-0 flex-col gap-msg px-hit pb-hit contain-paint has-[>:last-child>[data-turn-actions]:last-child]:-mb-[calc(var(--spacing-hit)+var(--spacing-msg-join))]">
             {exchange.messages}
           </section>
         ))}

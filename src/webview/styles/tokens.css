@@ -116,6 +116,8 @@
   --pad-y: 18px;
   /* Page margin: content's distance from the shell edge (header / conversation flow / composer outline share one vertical line), larger than the card padding --pad */
   --page: 20px;
+  /* Scrollbar track width (base.css). A stable-gutter scroller that shares edges with unscrolled siblings pads its right side by --page minus this */
+  --scrollbar: 10px;
   /* The composer dock is one stack: its cards use a smaller, stable rhythm than transcript exchanges. */
   --dock-gap: 8px;
   /* Conversation column in the editor panel */
@@ -401,6 +403,7 @@
   --spacing-pad: var(--pad);
   --spacing-pad-y: var(--pad-y);
   --spacing-page: var(--page);
+  --spacing-page-gutter: calc(var(--page) - var(--scrollbar));
   --spacing-gap: var(--gap);
   --spacing-gap-half: calc(var(--gap) / 2);
   --spacing-code-output: var(--code-output-max);
