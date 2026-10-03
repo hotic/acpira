@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectDrafts, hasPayload, workbenchUris } from './drafts';
+import { collectDrafts, hasPayload, pathlessWorkbenchDrag, workbenchUris } from './drafts';
 
 // Minimal DataTransfer: lowercased types like the DOM one, no files
 function transfer(data: Record<string, string>): DataTransfer {
@@ -57,6 +57,24 @@ describe('workbench drags', () => {
     const { drafts, refused } = await collectDrafts(dt, '/w');
     expect(drafts).toEqual([]);
     expect(refused).toHaveLength(1);
+  });
+
+  it('prefers the workbench uri-list, which names every dragged item', () => {
+    // fillEditorsDragData (VS Code 1.140) puts only the first URI into text/uri-list; an extension tree also blanks that one
+    const all = 'file:///w/a.ts\r\nfile:///w/b.ts';
+    expect(workbenchUris(transfer({ 'text/uri-list': 'file:///w/a.ts', 'application/vnd.code.uri-list': all }))).toEqual(['file:///w/a.ts', 'file:///w/b.ts']);
+    const blanked = transfer({ 'text/uri-list': '', 'application/vnd.code.uri-list': all, 'application/vnd.code.tree.asgard.explorer': '' });
+    expect(hasPayload(blanked)).toBe(true);
+    expect(workbenchUris(blanked)).toEqual(['file:///w/a.ts', 'file:///w/b.ts']);
+  });
+
+  it('names the types of a workbench drag that carried no path', () => {
+    const tree = transfer({ 'application/vnd.code.tree.asgard.explorer': '{"id":"asgard.explorer"}' });
+    expect(hasPayload(tree)).toBe(false);
+    expect(pathlessWorkbenchDrag(tree)).toEqual(['application/vnd.code.tree.asgard.explorer']);
+    // Drags the composer takes, and plain text, are not reported
+    expect(pathlessWorkbenchDrag(extensionTreeDrag(['/w/a.ts']))).toBeUndefined();
+    expect(pathlessWorkbenchDrag(transfer({ 'text/plain': 'hello' }))).toBeUndefined();
   });
 
   it('ignores plain text drags', () => {

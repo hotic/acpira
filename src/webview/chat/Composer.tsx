@@ -15,7 +15,7 @@ import { OptionContent } from '../ui/Panel';
 import { WorkingBeam } from '../effects/WorkingBeam';
 import { SendButton } from '../effects/SendButton';
 import { DraftChips } from './Attachments';
-import { collectDrafts, hasPayload } from './drafts';
+import { collectDrafts, hasPayload, pathlessWorkbenchDrag } from './drafts';
 import { MentionList, mentionAt, useMentionHits } from './Mention';
 import { SlashList, commandAt, commandHint, commandMarks, completeCommand, useSlashHits } from './Slash';
 import { modeIcon } from './modeIcons';
@@ -137,12 +137,20 @@ export function Composer(p: ComposerProps) {
   };
   const takes = (dt: DataTransfer | null) => !p.disabled && hasPayload(dt);
   const onDragEnter = (e: DragEvent) => { if (!takes(e.dataTransfer)) return; e.preventDefault(); dragDepth.current++; setDragging(true); };
-  const onDragOver = (e: DragEvent) => { if (takes(e.dataTransfer)) e.preventDefault(); };
+  // A workbench drag without any readable path is still accepted (no highlight), so its drop can report what arrived instead of vanishing
+  const pathless = (dt: DataTransfer | null) => (p.disabled ? undefined : pathlessWorkbenchDrag(dt));
+  const onDragOver = (e: DragEvent) => { if (takes(e.dataTransfer) || pathless(e.dataTransfer)) e.preventDefault(); };
   const onDragLeave = (e: DragEvent) => { if (!takes(e.dataTransfer)) return; if (--dragDepth.current <= 0) { dragDepth.current = 0; setDragging(false); } };
   // Plain text drags are left to the textarea's native handling; only attachable payloads are taken over
   const onDrop = (e: DragEvent) => {
     dragDepth.current = 0;
     setDragging(false);
+    const types = pathless(e.dataTransfer);
+    if (types) {
+      e.preventDefault();
+      p.onNotice(t('attach.noPaths', { types: types.join(', ') || '—' }));
+      return;
+    }
     if (!takes(e.dataTransfer)) return;
     e.preventDefault();
     void addFrom(e.dataTransfer);

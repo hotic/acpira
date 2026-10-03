@@ -399,6 +399,7 @@ export const en = {
   'attach.tooBigText': '{name}: file exceeds {kb} KB — drag it from the Explorer or use @',
   'attach.binary': '{name}: binary files can’t go into the conversation',
   'attach.noLocalFiles': 'Only local files can be dropped here',
+  'attach.noPaths': 'This drag carried no file paths (received: {types})',
   'attach.pastedText': 'Pasted text.txt',
   'attach.view': 'View {name}',
   'attach.loading': 'Reading…',
