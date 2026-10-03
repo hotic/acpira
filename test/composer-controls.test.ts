@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { composerControls, effortOptions, familyLabel, fastOn, fastValue, isFastControl, modelConfigChip, presentReasoning, reasoningChip, reasoningVisible, thoughtCorrection } from '../src/shared/composerControls';
+import { composerControls, effortOptions, familyLabel, fastOn, fastValue, isFastControl, isUltraLevel, modelConfigChip, presentReasoning, reasoningChip, reasoningVisible, thoughtCorrection } from '../src/shared/composerControls';
 import { groupModels } from '../src/shared/models';
 import type { ConfigControl } from '../src/shared/transcript';
 
@@ -94,6 +94,12 @@ describe('shared composer controls', () => {
       { id: 'xhigh', name: 'XHigh' },
       { id: 'vendor-auto', name: 'Adaptive budget' },
     ]);
+  });
+
+  it('keeps Codex ultra as the tier past Max', () => {
+    const levels = effortOptions(['ultra', 'low', 'max', 'medium'].map(id => ({ id, name: id[0]!.toUpperCase() + id.slice(1) })));
+    expect(levels.map(o => o.id)).toEqual(['low', 'medium', 'max', 'ultra']);
+    expect(levels.map(o => isUltraLevel(o.name))).toEqual([false, false, false, true]);
   });
 
   it('settings thinking rows drop Effort without changing hide keys', () => {

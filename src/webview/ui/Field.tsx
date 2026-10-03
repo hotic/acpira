@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from 'react';
-import { ChevronDown } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { ChevronDown, Sparkles } from 'lucide-react';
 import { Switch } from './Switch';
 import { Radio } from '@base-ui/react/radio';
 import { RadioGroup } from '@base-ui/react/radio-group';
@@ -7,7 +7,7 @@ import { DropdownMenu } from './DropdownMenu';
 import { OptionContent } from './Panel';
 import { cn } from './cn';
 
-// Neutral form controls for menu footers: switch rows, segmented single-select groups, ordinal step scales and inline dropdown rows.
+// Neutral form controls for menu footers: switch rows, segmented single-select groups, ordinal segment scales, header toggles and inline dropdown rows.
 
 export interface SwitchRowProps {
   label: ReactNode;
@@ -98,58 +98,80 @@ export function RadioPills<V extends string>({ label, options, value, onChange }
   );
 }
 
-export interface StepScaleProps<V extends string> {
+export interface SegmentScaleProps<V extends string> {
   label: string;
-  options: { value: V; label: string; disabled?: boolean }[];
+  // `ultra` marks the overdrive tier past Max (Codex's `ultra` effort): it closes the row in the ultra tint with a sparkle
+  options: { value: V; label: string; disabled?: boolean; ultra?: boolean }[];
   value: V;
   onChange: (value: V) => void;
+  // Header controls at the end of the label row, e.g. the panel's Fast toggle
+  actions?: ReactNode;
 }
 
-// An ordinal single-select (reasoning effort) as one row of stops on a track, whatever the level count: six levels used to wrap
-// a pill group onto a second line inside a 260 px panel. The header names the current level; pointing at a stop previews its name
-// there (dimmed) before the click. The track is filled up to the current stop. Each cell draws its own half segments, so the line
-// starts and ends at the outer stops' centres without any computed geometry. Arrow keys move between stops (Base UI radio group)
-export function StepScale<V extends string>({ label, options, value, onChange }: StepScaleProps<V>) {
-  const [hover, setHover] = useState<V>();
-  const at = options.findIndex(o => o.value === value);
-  const preview = hover !== undefined && hover !== value ? options.find(o => o.value === hover) : undefined;
-  const shown = preview ?? options[at];
-  const last = options.length - 1;
+// An ordinal single-select (reasoning effort) as one segmented capsule with every level spelled out; the current segment is raised.
+// The header carries only the label and `actions` at its end: the raised segment already names the current level, so it is not repeated.
+// Segments size to their labels and share the spare width, so six Codex levels fit a --pop-w-lg panel on one line.
+// Arrow keys move between segments (Base UI radio group)
+export function SegmentScale<V extends string>({ label, options, value, onChange, actions }: SegmentScaleProps<V>) {
   return (
-    <div className="flex flex-col px-2 pb-1">
+    <div className="flex flex-col gap-1 px-2 pb-1">
       <div className="flex min-h-ctl-sm items-center gap-2 text-2">
         <span className="min-w-0 flex-1 truncate text-fg-2">{label}</span>
-        <span className={cn('shrink-0 transition-colors', preview ? 'text-fg-3' : 'text-fg-1')} aria-hidden>{shown?.label}</span>
+        {actions && <span className="flex shrink-0 items-center gap-1">{actions}</span>}
       </div>
-      <RadioGroup value={value} onValueChange={v => onChange(v as V)} aria-label={label} className="flex min-w-0" onPointerLeave={() => setHover(undefined)}>
-        {options.map((o, i) => (
-          <Radio.Root render={<button type="button" />} nativeButton
-            key={o.value}
-            value={o.value}
-            disabled={o.disabled}
-            aria-label={o.label}
-            title={o.label}
-            onPointerEnter={() => setHover(o.value)}
-            onKeyDownCapture={event => {
-              // Enter activates a stop as Space does, matching RadioPills
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                event.currentTarget.click();
-              }
-            }}
-            className="group relative flex h-ctl-sm min-w-0 flex-1 items-center justify-center rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg-2 disabled:opacity-50"
-          >
-            {/* Track halves: left of the stop is filled when the stop is at or below the current one, right when strictly below */}
-            {i > 0 && <span aria-hidden className={cn('absolute left-0 right-1/2 h-0.5', i <= at ? 'bg-fg-2' : 'bg-active')} />}
-            {i < last && <span aria-hidden className={cn('absolute left-1/2 right-0 h-0.5', i < at ? 'bg-fg-2' : 'bg-active')} />}
-            <span aria-hidden className={cn(
-              'relative rounded-full transition-[background-color,transform]',
-              i === at ? 'size-3 bg-fg-1' : 'size-2 group-enabled:group-hover:scale-150',
-              i !== at && (i < at ? 'bg-fg-2' : 'bg-fg-3 group-enabled:group-hover:bg-fg-2'),
-            )} />
-          </Radio.Root>
-        ))}
+      <RadioGroup value={value} onValueChange={v => onChange(v as V)} aria-label={label}
+        className="flex min-w-0 gap-0.5 rounded-md bg-hover p-0.5">
+        {options.map(o => {
+          const on = o.value === value;
+          return (
+            <Radio.Root render={<button type="button" />} nativeButton
+              key={o.value}
+              value={o.value}
+              disabled={o.disabled}
+              title={o.label}
+              onKeyDownCapture={event => {
+                // Enter activates a segment as Space does, matching RadioPills
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  event.currentTarget.click();
+                }
+              }}
+              className={cn(
+                'inline-flex h-ctl-sm min-w-0 flex-auto items-center justify-center gap-0.5 rounded-sm px-1 text-3 outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg-2 disabled:opacity-50',
+                o.ultra
+                  ? on ? 'bg-ultra/15 text-ultra' : 'text-fg-3 enabled:hover:bg-hover enabled:hover:text-ultra'
+                  : on ? 'bg-active text-fg-1' : 'text-fg-2 enabled:hover:bg-hover enabled:hover:text-fg-1',
+              )}
+            >
+              {o.ultra && <Sparkles className="size-3 shrink-0" strokeWidth={2} aria-hidden />}
+              <span className="truncate">{o.label}</span>
+            </Radio.Root>
+          );
+        })}
       </RadioGroup>
     </div>
+  );
+}
+
+export interface HeaderToggleProps {
+  label: string;
+  icon?: ReactNode;
+  pressed: boolean;
+  disabled?: boolean;
+  onChange: (pressed: boolean) => void;
+}
+
+// A small pressed/unpressed button for a field header (the Fast toggle beside the effort level): --ctl-sm tall, --r-sm, like a toolbar Chip.
+// Off it is an outlined ghost; on it is raised, and its icon takes the colour given by the caller
+export function HeaderToggle({ label, icon, pressed, disabled, onChange }: HeaderToggleProps) {
+  return (
+    <button type="button" aria-pressed={pressed} disabled={disabled} onClick={() => onChange(!pressed)}
+      className={cn(
+        'inline-flex h-ctl-sm shrink-0 items-center gap-1 rounded-sm px-1.5 text-3 outline-none ring-1 ring-inset transition-colors focus-visible:ring-fg-2 disabled:opacity-50',
+        pressed ? 'bg-active text-fg-1 ring-line-strong' : 'text-fg-3 ring-line enabled:hover:bg-hover enabled:hover:text-fg-1',
+      )}>
+      {icon}
+      {label}
+    </button>
   );
 }
