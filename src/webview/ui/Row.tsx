@@ -32,6 +32,9 @@ export function EntranceOnce({ id, children }: { id: string; children: ReactNode
   return <RowEntranceContext.Provider value={enter}>{children}</RowEntranceContext.Provider>;
 }
 
+// True while the page draws no frames (occluded window, background tab). Absent `document` (tests without a DOM) counts as visible
+const pageHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
+
 // The one shared "row": thought / plan / tool / status / session items all grow on this row.
 // Row height --row; lead slot --lead (icon 14 or Orb 20 centered); label area gap --gap; trailing meta right-aligned.
 export interface RowProps extends Omit<HTMLAttributes<HTMLElement>, 'children'> {
@@ -58,21 +61,31 @@ const rowVariants = cva('flex items-center gap-gap text-2 text-fg-2 select-none 
 export function Row({ lead, trailing, children, interactive, as = 'div', className, dense, tone, ref, ...rest }: RowProps) {
   const Tag = as;
   const live = useContext(RowEntranceContext);
-  const [enter, setEnter] = useState(live);
+  // A row mounted while the page is hidden (window occluded or behind another app, a background tab) gets no
+  // entrance: no frame is drawn while hidden, so its animation would only start on return and every row that
+  // arrived in the meantime faded in at once, while the prose beside it appeared already in place
+  const [enter, setEnter] = useState(() => live && !pageHidden());
   const self = useRef<HTMLElement>(null);
   const merged = useMergedRefs(self, ref);
   // Drop the entrance class once it has played: a hidden webview (display: none) restarts every CSS animation when
   // it is shown again, so a class left behind replays the fade on each return to the window. The rail segment
-  // beside the row shares the keyframes, so the sibling animations are awaited as well
+  // beside the row shares the keyframes, so the sibling animations are awaited as well. A page that goes hidden
+  // mid-entrance drops it at once, since the paused remainder would otherwise play out on return
   useEffect(() => {
     if (!enter) return;
+    if (pageHidden()) { setEnter(false); return; }
     const scope = self.current?.parentElement ?? self.current;
     const pending = scope?.getAnimations?.({ subtree: true })
       .filter(a => a instanceof CSSAnimation && a.animationName === 'acp-row-part-in' && a.playState !== 'finished') ?? [];
     if (!pending.length) { setEnter(false); return; }
     let disposed = false;
+    const onVisibility = () => { if (pageHidden() && !disposed) setEnter(false); };
+    document.addEventListener('visibilitychange', onVisibility);
     void Promise.allSettled(pending.map(a => a.finished)).then(() => { if (!disposed) setEnter(false); });
-    return () => { disposed = true; };
+    return () => {
+      disposed = true;
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [enter]);
   return (
     <Tag
