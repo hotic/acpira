@@ -11,6 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [1.8.4] - 2026-10-04
+
+### Changed
+
+- Conversation exports show a notification with an Open button in VS Code, Cursor and IntelliJ. The editor opens only after the button is clicked, and exporting an unchanged conversation again reuses its existing file.
+- Model menus spell out every reasoning level in a segmented scale, with Fast beside the effort heading. Model chips show compact effort and Fast badges, including a distinct Ultra badge when the agent offers that level; Fusion uses the same controls.
+- Fetch-tool results containing Markdown render as formatted prose inside the existing scrollable output card, with copying and live-output scrolling preserved.
+
+### Fixed
+
+- A prompt held while a session starts, restores remembered controls or switches accounts immediately appears as a sent message with a working reply. Its message card stays in place when the agent accepts it, while later follow-ups remain queued.
+- Dragging multiple files from VS Code or Cursor includes every path in the workbench URI list. Extension-tree drags that provide no readable path report the received formats instead of disappearing silently.
+- Steered messages keep the original prompt card's width both inside expanded process details and below a collapsed process.
+- Process rows that arrive while the chat page is hidden no longer replay their entrance animations when the page returns. Rows arriving on a visible page retain their animations.
+
+### Removed
+
+- The model menu no longer offers the 1M context switch. Changing model families or effort levels selects the standard-context variant when available.
+
 ## [1.8.3] - 2026-10-03
 
 ### Added
