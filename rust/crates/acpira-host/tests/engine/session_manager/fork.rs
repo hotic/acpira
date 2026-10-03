@@ -108,6 +108,18 @@ async fn a_session_exports_as_markdown_and_json_under_the_sibling_exports_dir() 
   assert!(md_path.starts_with(parent.path().join("exports").canonicalize().unwrap()), "{}", md_path.display());
   let md = std::fs::read_to_string(&md_path).unwrap();
   assert!(md.contains(&format!("# {title}")) && md.contains("hello world"));
+  // An unchanged transcript hands back the same file instead of writing another one
+  assert_eq!(m.m.export_session(&id, ExportFormat::Markdown).await.unwrap(), md_path);
+  let md_files = || std::fs::read_dir(parent.path().join("exports")).unwrap().filter(|e| e.as_ref().unwrap().path().extension().is_some_and(|x| x == "md")).count();
+  assert_eq!(md_files(), 1);
+  // A deleted export is written again
+  std::fs::remove_file(&md_path).unwrap();
+  let rewritten = m.m.export_session(&id, ExportFormat::Markdown).await.unwrap();
+  assert!(rewritten.exists());
+  // A new turn changes the transcript, so the next export carries it
+  m.handle(json!({ "type": "send", "text": "second-question" })).await;
+  let after = m.m.export_session(&id, ExportFormat::Markdown).await.unwrap();
+  assert!(std::fs::read_to_string(&after).unwrap().contains("second-question"));
   let json_path = m.m.export_session(&id, ExportFormat::Json).await.unwrap();
   assert_eq!(serde_json::from_str::<Value>(&std::fs::read_to_string(&json_path).unwrap()).unwrap()["id"], id.as_str());
   assert!(m.m.export_session("missing-id", ExportFormat::Json).await.is_err());

@@ -11,7 +11,7 @@ use serde_json::{Map, Value};
 use tokio::sync::oneshot;
 
 use acpira_shared::protocol::FileHit;
-use acpira_shared::sidecar::{Hello, PLATFORM_RPC_METHODS, PlanTarget, PlatformEvent, PlatformRequest, ShellEnv, SidecarMsg};
+use acpira_shared::sidecar::{Hello, PLATFORM_RPC_METHODS, PlanTarget, PlatformEvent, PlatformRequest, ShellEnv, SidecarMsg, ToastOpen};
 
 use crate::node_files::NodeFiles;
 use crate::store::data_dir::home_dir;
@@ -110,7 +110,12 @@ impl SidecarPlatform {
   }
 
   pub fn toast(&self, level: &str, text: &str) {
-    if !self.notify(PlatformRequest::Toast { level: level.to_owned(), text: text.to_owned() }) {
+    self.toast_with(level, text, None);
+  }
+
+  /// A toast with an "Open" button for `open.path`; the file opens only when the button is clicked
+  pub fn toast_with(&self, level: &str, text: &str, open: Option<ToastOpen>) {
+    if !self.notify(PlatformRequest::Toast { level: level.to_owned(), text: text.to_owned(), open }) {
       (self.stderr)(&format!("[toast:{level}] {text}"));
     }
   }

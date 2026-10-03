@@ -161,7 +161,7 @@ export type WebviewMsg =
   // Start a new session of the same agent / account / project whose transcript is this session's turns up to and including
   // `turnIndex` (an agent turn); the native context is rebuilt from that transcript on the fork's first prompt, like editTurn
   | { type: 'forkSession'; sessionId: string; turnIndex: number }
-  // Write the session as a file under the data dir's exports/ folder and open it in the editor
+  // Write the session as a file under the data dir's exports/ folder (an unchanged transcript reuses its last export); the toast offers to open it
   | { type: 'exportSession'; id: string; format: 'markdown' | 'json' }
   // Rebind the session to this account (also becomes the agent's default account)
   | { type: 'selectAccount'; sessionId?: string; id: string }

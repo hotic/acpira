@@ -10,10 +10,10 @@ use serde_json::Value;
 use acpira_shared::appearance::Appearance;
 use acpira_shared::protocol::{FileHit, HostMsg, InitState, WebviewHost, WebviewMsg, is_safe_external_url};
 use acpira_shared::settings::is_setting_key;
-use acpira_shared::sidecar::{InitialView, PlanTarget};
+use acpira_shared::sidecar::{InitialView, PlanTarget, ToastOpen};
 
 use crate::acp::transcript::normalize::file_url_to_path;
-use crate::i18n::tp;
+use crate::i18n::{t, tp};
 use crate::session_manager::{SessionManager, Viewer};
 use crate::settings::SettingsCenter;
 use crate::sidecar::platform::SidecarPlatform;
@@ -239,14 +239,13 @@ impl BridgeCore {
         let hits = manager.search_sessions(&query).await;
         self.post_now(HostMsg::SessionHits { seq, hits });
       }
+      // The file is not opened on its own: the toast names it and offers an Open button. A repeated export of an unchanged
+      // transcript names the same file (SessionManager::export_session)
       W::ExportSession { id, format } => match manager.export_session(&id, format).await {
         Ok(path) => {
           let p = path.to_string_lossy().into_owned();
-          if let Err(e) = platform.open_resolved_file(&p, None).await {
-            platform.toast("error", &e.to_string());
-          } else {
-            platform.toast("info", &tp("host.exported", &[("path", &p)]));
-          }
+          let open = ToastOpen { label: t("host.exportOpen"), path: p.clone() };
+          platform.toast_with("info", &tp("host.exported", &[("path", &p)]), Some(open));
         }
         Err(e) => platform.toast("error", &e.to_string()),
       },

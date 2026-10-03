@@ -92,7 +92,7 @@ export interface ShellHandlers {
   editQueued?: (sessionId: string, id: string, text: string, retainedAttachments: number[], attachments: Draft[]) => void;
   // Start a new session whose transcript is this session's turns through the given agent turn
   forkSession?: (sessionId: string, turnIndex: number) => void;
-  // Write the session as Markdown or JSON under the data dir's exports/ and open it in the editor
+  // Write the session as Markdown or JSON under the data dir's exports/; the toast that follows offers to open it
   exportSession?: (id: string, format: 'markdown' | 'json') => void;
   // Open the session in an editor tab
   openInEditor?: (sessionId: string) => void;

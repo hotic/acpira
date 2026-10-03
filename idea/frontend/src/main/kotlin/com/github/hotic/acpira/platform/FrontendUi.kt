@@ -3,6 +3,7 @@
 package com.github.hotic.acpira.platform
 
 import com.github.hotic.acpira.Acpira
+import com.github.hotic.acpira.connection.AcpiraConnection
 import com.github.hotic.acpira.rpc.UiRequest
 import com.github.hotic.acpira.rpc.AcpiraBackendApi
 import com.intellij.ide.vfs.virtualFile
@@ -11,13 +12,16 @@ import com.github.hotic.acpira.ui.AcpiraEditors
 import com.intellij.ide.BrowserUtil
 import com.intellij.ide.FileSelectInContext
 import com.intellij.ide.projectView.ProjectView
+import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.testFramework.LightVirtualFile
+import kotlinx.coroutines.launch
 
 // Executes backend UI requests on the frontend. File paths are resolved by a client-initiated backend RPC so the platform can
 // serialize a remote VFS handle in the requesting client session, including when the two machines have different filesystems.
@@ -30,16 +34,28 @@ object FrontendUi {
             }
             else -> onEdt(project) {
                 when (event) {
-                    is UiRequest.Toast -> NotificationGroupManager.getInstance()
-                        .getNotificationGroup(Acpira.NOTIFICATION_GROUP)
-                        .createNotification(event.text, if (event.error) NotificationType.ERROR else NotificationType.INFORMATION)
-                        .notify(project)
+                    is UiRequest.Toast -> toast(project, event)
                     is UiRequest.OpenExternal -> BrowserUtil.browse(event.url)
                     is UiRequest.OpenInEditor -> AcpiraEditors.open(project, event.sessionId)
                     else -> {}
                 }
             }
         }
+    }
+
+    // A notification; with openPath it carries an Open action that opens the file (resolved the same way as OpenFile) and expires
+    private fun toast(project: Project, event: UiRequest.Toast) {
+        val notification = NotificationGroupManager.getInstance()
+            .getNotificationGroup(Acpira.NOTIFICATION_GROUP)
+            .createNotification(event.text, if (event.error) NotificationType.ERROR else NotificationType.INFORMATION)
+        val path = event.openPath
+        if (path != null) {
+            notification.addAction(NotificationAction.createSimpleExpiring(event.openLabel ?: "Open") {
+                // The connection's scope: the file is resolved through a backend RPC, which suspends
+                project.service<AcpiraConnection>().cs.launch { openFile(project, path, null) }
+            })
+        }
+        notification.notify(project)
     }
 
     private fun onEdt(project: Project, body: () -> Unit) {

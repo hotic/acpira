@@ -162,6 +162,9 @@ pub struct SessionManager {
   viewer_seq: std::sync::atomic::AtomicU64,
   // Extracted conversation text of the saved records, kept between history searches
   search: SessionSearch,
+  // The last export per (session, format): an unchanged transcript hands back the same file instead of writing another one.
+  // Held across the write, so rapid repeated clicks run one after another and the later ones hit the cache
+  exports: tokio::sync::Mutex<HashMap<(String, ExportFormat), (u64, std::path::PathBuf)>>,
   me: Weak<SessionManager>,
 }
 
@@ -214,6 +217,7 @@ impl SessionManager {
         prefs_saves: Default::default(),
         viewer_seq: Default::default(),
         search: SessionSearch::default(),
+        exports: Default::default(),
         me: me.clone(),
       }
     });
@@ -1876,8 +1880,10 @@ impl SessionManager {
     Ok(())
   }
 
-  /// Write the session as Markdown or JSON under exports/
+  /// Write the session as Markdown or JSON under exports/. Exporting a transcript that has not changed since the last export
+  /// in the same format returns that file again (as long as it still exists) instead of writing a second copy
   pub async fn export_session(&self, id: &str, format: ExportFormat) -> Result<std::path::PathBuf> {
+    let mut exports = self.exports.lock().await;
     let record = if self.deps.chatgpt.as_ref().is_some_and(|c| c.owns(id)) {
       None
     } else {
@@ -1901,6 +1907,21 @@ impl SessionManager {
       }
     };
     let agent_name = self.agents().into_iter().find(|a| a.id == agent).map(|a| a.name).unwrap_or(agent);
+    // The fingerprint leaves out the export time stamped into the Markdown; the agent name and the label language are in it,
+    // so a renamed agent or a switched display language still writes a fresh file
+    let fingerprint = {
+      use std::hash::{Hash, Hasher};
+      let mut h = std::collections::hash_map::DefaultHasher::new();
+      (&json, &agent_name, t("export.label.user")).hash(&mut h);
+      h.finish()
+    };
+    let key = (id.to_owned(), format);
+    if let Some((hash, path)) = exports.get(&key)
+      && *hash == fingerprint
+      && tokio::fs::try_exists(path).await.unwrap_or(false)
+    {
+      return Ok(path.clone());
+    }
     let content = match format {
       ExportFormat::Json => json,
       ExportFormat::Markdown => {
@@ -1925,7 +1946,9 @@ impl SessionManager {
         )
       }
     };
-    self.deps.store.write_export(&export_file_name(&title, format == ExportFormat::Markdown, &local_stamp()), &content).await
+    let path = self.deps.store.write_export(&export_file_name(&title, format == ExportFormat::Markdown, &local_stamp()), &content).await?;
+    exports.insert(key, (fingerprint, path.clone()));
+    Ok(path)
   }
 
   /// The working directory of a session a viewer shows (live, or a ChatGPT mirror)

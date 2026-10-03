@@ -505,6 +505,7 @@ export const zhCN = {
   'host.forkContextFailed': '无法把分支的历史交给 agent（{error}），这次分支不带早先的上下文继续。',
   'host.exported': '已导出到 {path}',
   'export.label.user': '用户',
+  'host.exportOpen': '打开',
   'export.label.agent': 'Agent',
   'export.label.project': '项目',
   'export.label.exported': '导出时间',

@@ -35,7 +35,13 @@ class IdePlatform(private val project: Project, private val sidecar: SidecarServ
         try {
             when (method) {
                 "toast" -> {
-                    uiRequests.send(UiRequest.Toast(request.get("text").asString, request.get("level")?.asString == "error"))
+                    val open = request.get("open")?.takeIf { it.isJsonObject }?.asJsonObject
+                    uiRequests.send(UiRequest.Toast(
+                        request.get("text").asString,
+                        request.get("level")?.asString == "error",
+                        open?.get("label")?.asString,
+                        open?.get("path")?.asString,
+                    ))
                     done(null)
                 }
                 "openExternal" -> {

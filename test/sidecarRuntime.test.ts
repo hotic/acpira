@@ -331,17 +331,24 @@ describe('sidecar runtime', () => {
     expect(latest()!.turns).toHaveLength(4);
   });
 
-  it('exportSession writes the file under exports/ and opens it; an unknown id toasts the error', async () => {
+  it('exportSession writes the file under exports/ and toasts an Open button for it; a repeat reuses the file; an unknown id toasts the error', async () => {
     const { s, init, requests } = await setup();
     const sessionId = init.state.active!.id;
     s.view('V', { type: 'send', sessionId, text: 'hi' });
     await s.hostMsg('V', 'session', m => m.session.id === sessionId && !m.session.running && m.session.turns.length === 2);
+    // Rapid repeated clicks on an unchanged transcript name one file
     s.view('V', { type: 'exportSession', id: sessionId, format: 'markdown' });
-    await until(() => requests('openResolvedFile').length === 1);
-    const opened = (requests('openResolvedFile')[0] as Extract<PlatformRequest, { method: 'openResolvedFile' }>).path;
+    s.view('V', { type: 'exportSession', id: sessionId, format: 'markdown' });
+    await until(() => toasts(s).filter(t => t.open).length === 2);
+    const [first, second] = toasts(s).filter(t => t.open) as [Extract<PlatformRequest, { method: 'toast' }>, Extract<PlatformRequest, { method: 'toast' }>];
+    const opened = first.open!.path;
     expect(opened).toMatch(/exports[/\\][^/\\]+\.md$/);
+    expect(first).toMatchObject({ level: 'info', open: { label: expect.any(String) } });
+    expect(first.text).toContain(opened);
+    expect(second.open!.path).toBe(opened);
     expect(readFileSync(opened, 'utf8')).toContain('hello world');
-    await until(() => toasts(s).some(t => t.level === 'info' && t.text.includes(opened)));
+    // The file opens only from the toast's button, never on its own
+    expect(requests('openResolvedFile')).toHaveLength(0);
     s.view('V', { type: 'exportSession', id: 'no-such-session', format: 'json' });
     await until(() => toasts(s).some(t => t.level === 'error'));
   });
