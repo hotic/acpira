@@ -66,7 +66,7 @@ describe('PlanBar dock visibility', () => {
   it('renders the live plan over the thread without shrinking its scroll viewport', () => {
     const thread = shellSource.indexOf('<Thread key=');
     const dock = shellSource.indexOf('data-plan-dock');
-    const composer = shellSource.indexOf("<div className={cn('shrink-0'", dock);
+    const composer = shellSource.indexOf('<DockStack className=', dock);
     expect(thread).toBeGreaterThan(-1);
     expect(dock).toBeGreaterThan(thread);
     expect(composer).toBeGreaterThan(dock);
@@ -75,8 +75,11 @@ describe('PlanBar dock visibility', () => {
     // inherited custom property on the shared ancestor would restyle the whole transcript on
     // every resize frame, so no ancestor channel may exist.
     expect(shellSource).toContain('content.style.paddingBottom');
+    // The clearance keeps the message gap on top of the dock height, so the last message sits one
+    // message gap from the first dock surface with or without the plan
+    expect(shellSource).toContain('calc(var(--msg-gap) + ${dockHeight}px)');
     expect(shellSource).not.toContain('threadArea');
-    expect(planBarSource).toContain('pointer-events-none px-page pt-gap');
+    expect(planBarSource).toContain('pointer-events-none px-page pb-(--dock-gap)');
     expect(planBarSource).toContain('pointer-events-auto');
   });
 });

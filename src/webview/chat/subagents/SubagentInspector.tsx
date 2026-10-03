@@ -141,7 +141,7 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
           )}
         </div>
       </div>
-      {question !== undefined && onAnswer !== undefined && <Questions block={question} onAnswer={onAnswer} />}
+      {question !== undefined && onAnswer !== undefined && <div className="pb-gap-half"><Questions block={question} onAnswer={onAnswer} /></div>}
     </>
   );
 }

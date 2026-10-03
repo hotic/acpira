@@ -31,7 +31,7 @@ export function Alert({ turn, onRetry, onReconnect, onContinue, onDismiss, onCom
   const message = contextTooLong ? t(onCompact ? 'alert.contextLength.text' : 'alert.contextLength.unsupported')
     : stop === 'error' ? err?.message || t('alert.error.unknown') : TEXT[stop] && t(TEXT[stop]);
   return (
-    <div className="px-page pt-2 pb-gap-half">
+    <div className="px-page">
       <Card role="alert" className="flex flex-col gap-1.5 px-pad py-2.5">
         <div className="flex items-center gap-2">
           <TriangleAlert className="size-icon shrink-0 text-fg-3" strokeWidth={1.75} />

@@ -13,7 +13,7 @@ export function ExternalSessionNotice({ info }: { info: ExternalSessionInfo }) {
     try { await navigator.clipboard.writeText(info.connectionPrompt!); setCopied(true); setCopyError(false); }
     catch { setCopyError(true); }
   };
-  return <div className="px-page py-gap" data-chatgpt-mirror={info.state}>
+  return <div className="px-page pb-gap" data-chatgpt-mirror={info.state}>
     <Card className="flex flex-col gap-gap p-pad">
       <div className="flex flex-wrap items-center justify-between gap-gap">
         <span className="text-2 font-medium text-fg-strong">ChatGPT {t('chatgpt.mirror')}</span>
