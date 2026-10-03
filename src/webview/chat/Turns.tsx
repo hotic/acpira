@@ -92,13 +92,13 @@ export function UserMessage({ turn, blobUrl, onEdit, commands }: { turn: UserTur
 // it joined the loop (the turn is still one run, so nothing before it reads as finished). Once the turn's fold closes the
 // card is lifted out under the fold head, ahead of the reply, so a closed fold never hides what the user said.
 // It is not an exchange of its own, so it neither sticks nor opens the history editor.
-// `align`: outside the process clip the card takes the prompt card's full width; inside it, the clip would shave its edges
-function SteeredMessage({ block, align }: { block: SteerBlock; align?: boolean }) {
+// Inline and lifted it has the same width as the original prompt card, so opening or closing the fold never resizes it
+function SteeredMessage({ block }: { block: SteerBlock }) {
   const blobUrl = useContext(BlobUrlContext);
   const turn = useMemo<UserTurn>(() => ({ role: 'user', text: block.text, ...(block.attachments ? { attachments: block.attachments } : {}) }), [block]);
   // A steered prompt belongs to the current exchange, but its card is still a user message.
-  // Aligned, it cancels the agent content inset so it shares the same left edge as the original prompt card.
-  return <div title={t('turns.steered')} className={cn('steered-message flex min-w-0 flex-col', align && '-mx-pad')}><UserMessage turn={turn} index={0} blobUrl={blobUrl} /></div>;
+  // Cancel the agent content inset so it shares the same edges as the original prompt card.
+  return <div title={t('turns.steered')} className="steered-message -mx-pad flex min-w-0 flex-col"><UserMessage turn={turn} index={0} blobUrl={blobUrl} /></div>;
 }
 
 type OnPermission = (blockId: string, optionId: string) => void;
@@ -518,8 +518,9 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
         </div>
       )}
       {blocks.length > 0 && (
-        // Nested rows extend their hit area beyond the text column; reserve it inside the clip so its edges cannot cut off row corners.
-        <Collapsible.Panel className="-mx-hit [&>div]:px-hit">
+        // Nested rows extend their hit area beyond the text column, and a steered prompt's card spans the turn's padding like
+        // the prompt card above; the clip reserves the turn padding (wider than the hit outset) so neither loses its edges.
+        <Collapsible.Panel className="-mx-pad [&>div]:px-pad">
           <div className={cn(!retired && 'pt-1 pb-1.5')}>
             <AutoFoldContext.Provider value={store}>
               <ProcessHistory><ProcessBlocks blocks={blocks} items={items} /></ProcessHistory>
@@ -528,7 +529,7 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
         </Collapsible.Panel>
       )}
       {!open && steers.length > 0 && (
-        <div className="flex flex-col gap-gap pt-gap">{steers.map(b => <SteeredMessage key={b.id} block={b} align />)}</div>
+        <div className="flex flex-col gap-gap pt-gap">{steers.map(b => <SteeredMessage key={b.id} block={b} />)}</div>
       )}
     </Collapsible.Root>
   );
@@ -620,7 +621,7 @@ function Compaction({ block }: { block: CompactionBlock }) {
 
 function Block({ block, onPermission }: { block: AgentBlock; onPermission: OnPermission }) {
   if (block.type === 'text') return <Prose block={block} />;
-  if (block.type === 'steer') return <SteeredMessage block={block} align />;
+  if (block.type === 'steer') return <SteeredMessage block={block} />;
   if (block.type === 'permission') return block.planId ? null : <Permission block={block} onChoose={id => onPermission(block.id, id)} />;
   return <LineBlock block={block} />;
 }
