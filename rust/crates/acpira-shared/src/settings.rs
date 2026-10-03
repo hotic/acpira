@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::i18n::{Language, Locale};
+use crate::i18n::{LANGUAGE_TAGS, Language, Locale};
 use crate::transcript::AgentId;
 
 pub type HiddenMap = BTreeMap<AgentId, BTreeMap<String, Vec<String>>>;
@@ -104,7 +104,7 @@ pub fn is_hidden_map(v: &Value) -> bool {
 /// A sanitized value per key, as JSON (the webview receives it inside SettingsView)
 pub fn sanitize_setting(key: &str, value: &Value) -> Value {
   match key {
-    "language" => Value::from(one_of(value, &["auto", "zh-CN", "en"], "auto")),
+    "language" => Value::from(one_of(value, &LANGUAGE_TAGS, "auto")),
     "defaultAgent" => Value::from(value.as_str().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("grok")),
     "autoCompact" => Value::from(value.as_bool().unwrap_or(true)),
     "fontSmoothing" => Value::from(value.as_bool().unwrap_or(false)),

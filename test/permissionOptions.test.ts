@@ -59,6 +59,8 @@ describe('permission option presentation', () => {
     expect(permissionTitle('Implement this plan?', 'zh-CN')).toBe('要执行这个计划吗？');
     expect(permissionTitle('需要批准：切换模式 Approve Plan', 'zh-CN')).toBe('需要批准：批准计划');
     expect(permissionTitle('Approval needed: Switch mode Approve Plan', 'zh-CN')).toBe('需要批准：批准计划');
+    expect(permissionTitle('承認が必要：モード切り替え Approve Plan', 'en')).toBe('Approval needed: Approve Plan');
+    expect(permissionTitle('Требуется подтверждение: Approve Plan', 'de')).toBe('Genehmigung erforderlich: Plan genehmigen');
     expect(permissionTitle('需要批准：切换模式 Approve Plan', 'en')).toBe('Approval needed: Approve Plan');
     expect(permissionTitle('Approval needed: Deploy production plan', 'zh-CN')).toBe('Approval needed: Deploy production plan');
     expect(planApprovalTitle('toString', 'zh-CN')).toBe('toString');

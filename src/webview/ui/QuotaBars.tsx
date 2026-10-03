@@ -86,7 +86,8 @@ function fmtUntil(iso: string, now: number, compact = false): string {
   const ms = Math.max(0, Date.parse(iso) - now);
   const minutes = Math.ceil(ms / 60_000);
   const unit = (name: 'minutes' | 'hours' | 'days', n: number) => t(compact ? `quota.time.short.${name}` : `quota.time.${name}`, { n });
-  const separator = compact && getLocale() === 'zh-CN' ? '' : ' ';
+  // CJK short units read as one run ("1小时30分"); Korean and the alphabetic locales space them
+  const separator = compact && ['zh-CN', 'zh-TW', 'ja'].includes(getLocale()) ? '' : ' ';
   if (minutes < 60) return unit('minutes', minutes);
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return [unit('hours', hours), minutes % 60 ? unit('minutes', minutes % 60) : undefined].filter(Boolean).join(separator);
