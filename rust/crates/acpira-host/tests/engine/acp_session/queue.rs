@@ -9,6 +9,8 @@ async fn a_prompt_sent_while_starting_waits_for_ready_then_goes_out() {
   let s = Disposing(h.session("/tmp"));
   prompt(&s, "hi").await;
   assert_eq!(view(&s)["queued"].as_array().unwrap().iter().map(|q| q["text"].clone()).collect::<Vec<_>>(), [json!("hi")]);
+  // The webview shows the held entry as the sent prompt under its id; the user turn keeps that id when it lands
+  let qid = view(&s)["queued"][0]["id"].clone();
   s.start().await;
   until(|| {
     let vw = view(&s);
@@ -17,7 +19,7 @@ async fn a_prompt_sent_while_starting_waits_for_ready_then_goes_out() {
   let vw = view(&s);
   assert_eq!(vw["status"], "ready");
   expect_absent(&vw, "queued");
-  expect_match(&vw["turns"][0], json!({ "role": "user", "text": "hi" }));
+  expect_match(&vw["turns"][0], json!({ "role": "user", "text": "hi", "id": qid }));
 }
 
 #[tokio::test(flavor = "multi_thread")]
