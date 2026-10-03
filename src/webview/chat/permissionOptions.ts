@@ -1,5 +1,5 @@
 import type { PermissionBlock, PermissionKind } from '@shared/transcript';
-import { translate, type Locale, type MsgKey } from '@shared/i18n';
+import { DICTS, en, LOCALES, translate, type Locale, type MsgKey } from '@shared/i18n';
 
 type Option = PermissionBlock['options'][number];
 
@@ -20,13 +20,24 @@ export function planApprovalTitle(title: string, locale: Locale): string {
   return key ? translate(locale, key) : title;
 }
 
+const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// The host's `host.needApprovalFor` wrapper (optionally around `verb.switch_mode`) in every shipped locale,
+// since a persisted card keeps the wording of the locale it was recorded under
+const WRAPPED_TITLE = (() => {
+  const prefixes = new Set(LOCALES.map(l => {
+    const wrapper = (DICTS[l]['host.needApprovalFor'] ?? en['host.needApprovalFor']).split('{what}')[0]!;
+    return `${escape(wrapper)}(?:${escape(DICTS[l]['verb.switch_mode'] ?? en['verb.switch_mode'])} )?`;
+  }));
+  return new RegExp(`^(?:${[...prefixes].join('|')})(.+)$`);
+})();
+
 export function permissionTitle(title: string, locale: Locale): string {
   const direct = planApprovalTitle(title, locale);
   if (direct !== title || Object.hasOwn(PLAN_TITLES, title)) return direct;
   // Older cards already contain the host's localized wrapper. Rebuild that
   // wrapper at render time so persisted cards follow the current UI language.
-  const wrapped = /^(?:Approval needed: (?:Switch mode )?|需要批准：(?:切换模式 )?)(.+)$/.exec(title);
-  const heading = wrapped?.[1];
+  const heading = WRAPPED_TITLE.exec(title)?.[1];
   return heading && Object.hasOwn(PLAN_TITLES, heading)
     ? translate(locale, 'host.needApprovalFor', { what: planApprovalTitle(heading, locale) }) : title;
 }

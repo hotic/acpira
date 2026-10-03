@@ -4,14 +4,15 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 use acpira_shared::i18n::{Locale, has_key, translate};
 
-static CURRENT: AtomicU8 = AtomicU8::new(0);
+// Index into Locale::ALL; starts at en
+static CURRENT: AtomicU8 = AtomicU8::new(Locale::En as u8);
 
 pub fn set_host_locale(locale: Locale) {
-  CURRENT.store(if locale == Locale::ZhCn { 1 } else { 0 }, Ordering::Relaxed);
+  CURRENT.store(locale as u8, Ordering::Relaxed);
 }
 
 pub fn host_locale() -> Locale {
-  if CURRENT.load(Ordering::Relaxed) == 1 { Locale::ZhCn } else { Locale::En }
+  Locale::ALL.get(CURRENT.load(Ordering::Relaxed) as usize).copied().unwrap_or(Locale::En)
 }
 
 pub fn t(key: &str) -> String {

@@ -170,7 +170,14 @@
           "enum": [
             "auto",
             "zh-CN",
-            "en"
+            "zh-TW",
+            "en",
+            "ja",
+            "ko",
+            "es",
+            "de",
+            "fr",
+            "ru"
           ],
           "default": "auto",
           "description": "%acpira.conf.language%"
