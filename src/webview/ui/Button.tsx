@@ -77,13 +77,25 @@ export interface ChipProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   icon?: ReactNode;
   // Faint trailing text after the label (a model's params), truncates together with it
   meta?: string;
+  // Small badges after the label (ChipTag: a model's effort / Ultra / Fast). The label keeps its full width; badges that do not fit
+  // wrap onto a clipped second line, so the trailing ones give way first
+  tags?: ReactNode;
   // What survives below the sm container tier (the toolbar of a 380 sidebar has ~324px): 'icon' keeps just the icon, 'text' keeps just the label;
   // the caret goes first either way (as in Devin's own composer, which has none). The title keeps the full name. Needs an @container ancestor
   narrow?: 'icon' | 'text';
   children: ReactNode;
 }
 
-export function Chip({ className, children, variant = 'quiet', caret = true, icon, meta, narrow, ...rest }: ChipProps) {
+// A badge inside a Chip's `tags`: --text-4 on the active fill; `ultra` tints it, an icon (Fast's bolt) leads the text
+export function ChipTag({ tone, icon, children }: { tone?: 'ultra'; icon?: ReactNode; children: ReactNode }) {
+  return (
+    <span className={cn('inline-flex h-4 shrink-0 items-center gap-0.5 rounded-xs px-1 text-4 leading-none', tone === 'ultra' ? 'bg-ultra/15 text-ultra' : 'bg-active text-fg-2')}>
+      {icon}{children}
+    </span>
+  );
+}
+
+export function Chip({ className, children, variant = 'quiet', caret = true, icon, meta, tags, narrow, ...rest }: ChipProps) {
   return (
     <button
       type="button"
@@ -91,10 +103,11 @@ export function Chip({ className, children, variant = 'quiet', caret = true, ico
       {...rest}
     >
       {icon && <span className={cn('flex shrink-0 items-center [&_svg]:size-icon', variant === 'quiet' && 'text-fg-3')}>{icon}</span>}
-      <span className={cn('grow truncate text-left', narrow === 'icon' && '@max-sm:hidden')}>
+      <span className={cn('truncate text-left', tags ? 'shrink-0' : 'grow', narrow === 'icon' && '@max-sm:hidden')}>
         {children}
         {meta && <span className="text-fg-3"> {meta}</span>}
       </span>
+      {tags && <span className="flex h-4 min-w-0 flex-wrap items-center gap-0.5 overflow-hidden">{tags}</span>}
       {caret && <ChevronDown className={cn('size-3 shrink-0 text-fg-3', narrow && '@max-sm:hidden')} strokeWidth={1.75} />}
     </button>
   );

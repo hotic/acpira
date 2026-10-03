@@ -55,6 +55,9 @@
   --ok: #3fb950;
   --warn: #d29922;
   --danger: #f85149;
+  /* Model panel accents: Fast's bolt and the ultra effort tier (Codex `ultra`), one quiet tint each */
+  --fast: #f0b440;
+  --ultra: #b3a2f5;
   --diff-add: color-mix(in srgb, var(--ok) 6%, var(--bg-code));
   --diff-del: color-mix(in srgb, var(--danger) 8%, var(--bg-code));
   --diff-number-width: 3.7ch;
@@ -246,6 +249,8 @@
   --ok: #1f883d;
   --warn: #9a6700;
   --danger: #cf222e;
+  --fast: #b7791f;
+  --ultra: #6b52c9;
   --brand: #b7791f;
   --brand-fg: #ffffff;
   --command: #2f6fe0;
@@ -345,6 +350,8 @@
   --color-ok: var(--ok);
   --color-warn: var(--warn);
   --color-danger: var(--danger);
+  --color-fast: var(--fast);
+  --color-ultra: var(--ultra);
   --color-transparent: transparent;
   --color-current: currentColor;
 

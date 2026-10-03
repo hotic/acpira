@@ -2,7 +2,8 @@ import type { ConfigControl, SessionOption } from './transcript';
 import type { ModelFamily } from './models';
 import { groupModels } from './models';
 
-const LEVELS = ['None', 'Minimal', 'Low', 'Medium', 'High', 'XHigh', 'Max', 'Thinking'];
+// Ultra is Codex's tier past Max ("maximum reasoning with automatic task delegation"), a real reasoning_effort value
+const LEVELS = ['None', 'Minimal', 'Low', 'Medium', 'High', 'XHigh', 'Max', 'Ultra', 'Thinking'];
 const REASONING_IDS = /^(reasoning_effort|thought_level|thinking|thinking_level)$/;
 
 function compact(value: string): string {
@@ -21,6 +22,11 @@ export function effortLabel(option: SessionOption): string {
 export function effortOptions(options: SessionOption[]): SessionOption[] {
   const rank = (name: string) => { const i = LEVELS.indexOf(name); return i < 0 ? LEVELS.length : i; };
   return options.map(o => ({ ...o, name: effortLabel(o) })).sort((a, b) => rank(a.name) - rank(b.name));
+}
+
+// The overdrive tier the model panel tints (the last segment of the scale, the chip's badge)
+export function isUltraLevel(label: string | undefined): boolean {
+  return label === 'Ultra';
 }
 
 export function isReasoningControl(control: Pick<ConfigControl, 'id' | 'category'>): boolean {
