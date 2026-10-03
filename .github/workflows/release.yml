@@ -24,21 +24,77 @@ concurrency:
 
 jobs:
   # The Rust sidecar both shells ship, for six platforms, each built on a runner of its OS (Linux builds are static musl binaries).
+  # One job per platform: the release profile (thin LTO, one codegen unit) leaves most cores idle, so two targets in one job
+  # roughly double the critical path, while separate jobs build in parallel.
   sidecar:
     if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
     strategy:
       matrix:
         include:
           - runner: macos-latest
-            platforms: mac-arm64 mac-x86_64
+            platform: mac-arm64
+          - runner: macos-latest
+            platform: mac-x86_64
           - runner: ubuntu-24.04
-            platforms: linux-x86_64
+            platform: linux-x86_64
           - runner: ubuntu-24.04-arm
-            platforms: linux-arm64
+            platform: linux-arm64
           - runner: windows-latest
-            platforms: windows-x86_64 windows-arm64
+            platform: windows-x86_64
+          - runner: windows-latest
+            platform: windows-arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.97.1'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          key: ${{ matrix.platform }}
+      - name: Install musl-gcc
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      # The engine suites drive test/fake-agent.ts, which needs the repository's node_modules
+      - uses: pnpm/action-setup@v6
+        if: matrix.platform == 'linux-x86_64'
+      - name: Install node_modules for the engine suites
+        if: matrix.platform == 'linux-x86_64'
+        run: pnpm install --frozen-lockfile
+      - name: Rust tests
+        if: matrix.platform == 'linux-x86_64'
+        working-directory: rust
+        run: cargo test --workspace --locked
+      - name: Build the sidecar
+        run: node scripts/build-sidecar.mjs ${{ matrix.platform }}
+      # Cross-built targets (mac-x86_64 on Apple silicon, windows-arm64 on x64) cannot run on their runner and are skipped here
+      - name: Check the binary this runner can execute
+        shell: bash
+        run: |
+          host=$(node --input-type=module -e "import('./scripts/sidecar-targets.mjs').then(m => console.log(m.hostPlatform()))")
+          if [ "$host" != "${{ matrix.platform }}" ]; then echo "$host runner cannot execute ${{ matrix.platform }}; skipped"; exit 0; fi
+          exe="dist/sidecar/$host/acpira"; [ -f "$exe.exe" ] && exe="$exe.exe"
+          test "$("$exe" --version)" = "$(node -p "require('./package.json').version")"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sidecar-${{ matrix.platform }}
+          path: dist/sidecar/
+          if-no-files-found: error
+          retention-days: 30
+
+  # Native Windows regressions, in parallel with the sidecar builds instead of ahead of the Windows ones.
+  windows-compat:
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -54,43 +110,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-          key: ${{ matrix.runner }}
-      - name: Install musl-gcc
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
-      # The engine suites drive test/fake-agent.ts, which needs the repository's node_modules
-      - uses: pnpm/action-setup@v6
-        if: matrix.runner == 'ubuntu-24.04'
-      - name: Install node_modules for the engine suites
-        if: matrix.runner == 'ubuntu-24.04'
-        run: pnpm install --frozen-lockfile
-      - name: Rust tests
-        if: matrix.runner == 'ubuntu-24.04'
-        working-directory: rust
-        run: cargo test --workspace --locked
+          key: windows-compat
       - name: Windows compatibility regressions (PowerShell 5.1)
-        if: runner.os == 'Windows'
         shell: powershell
         run: ./scripts/test-windows.ps1
-      - name: Build the sidecar
-        run: node scripts/build-sidecar.mjs ${{ matrix.platforms }}
-      - name: Check the binary this runner can execute
-        shell: bash
-        run: |
-          host=$(node --input-type=module -e "import('./scripts/sidecar-targets.mjs').then(m => console.log(m.hostPlatform()))")
-          exe="dist/sidecar/$host/acpira"; [ -f "$exe.exe" ] && exe="$exe.exe"
-          test "$("$exe" --version)" = "$(node -p "require('./package.json').version")"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: sidecar-${{ matrix.runner }}
-          path: dist/sidecar/
-          if-no-files-found: error
-          retention-days: 30
 
   build:
     # Only stable releases are supported; manual runs default to validation only.
     if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
-    needs: sidecar
+    needs: [sidecar, windows-compat]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
