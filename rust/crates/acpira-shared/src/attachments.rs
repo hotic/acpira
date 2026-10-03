@@ -1,7 +1,7 @@
 //! Attachment helpers shared by host and webview (mirror of src/shared/attachments.ts)
 
 pub const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
-pub const MAX_TEXT_BYTES: usize = 256 * 1024;
+pub const MAX_TEXT_BYTES: usize = 1024 * 1024;
 
 const IMAGE_MIME: [(&str, &str); 5] =
   [(".png", "image/png"), (".jpg", "image/jpeg"), (".jpeg", "image/jpeg"), (".gif", "image/gif"), (".webp", "image/webp")];
