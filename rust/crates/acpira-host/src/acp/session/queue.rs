@@ -126,7 +126,7 @@ impl AcpSession {
       c.queue.entries.remove(0)
     };
     let me = self.clone();
-    crate::util::run_prefix(me.prompt(next.text, vec![], false, Some(Staged { prepared: next.prepared, edited: false }), None));
+    crate::util::run_prefix(me.prompt(next.text, vec![], false, Some(Staged { prepared: next.prepared, edited: false, id: Some(next.id) }), None));
     true
   }
 

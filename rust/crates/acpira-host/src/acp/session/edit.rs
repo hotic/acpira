@@ -470,7 +470,7 @@ impl AcpSession {
         });
         let me = self.clone();
         let text = edit.text.clone();
-        crate::util::run_prefix(me.prompt(text, drafts, false, Some(Staged { prepared, edited: false }), None));
+        crate::util::run_prefix(me.prompt(text, drafts, false, Some(Staged { prepared, edited: false, id: None }), None));
         return Ok(());
       }
       if let Some(b) = rebuilt {
@@ -508,7 +508,7 @@ impl AcpSession {
       accepted = true;
       let me = self.clone();
       let text = edit.text.clone();
-      crate::util::run_prefix(me.prompt(text, drafts, false, Some(Staged { prepared, edited: true }), None));
+      crate::util::run_prefix(me.prompt(text, drafts, false, Some(Staged { prepared, edited: true, id: None }), None));
       Ok(())
     }
     .await;

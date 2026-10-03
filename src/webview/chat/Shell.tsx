@@ -31,6 +31,7 @@ import { PlanBar } from './PlanBar';
 import { PlanDocumentContext } from './PlanDocument';
 import { planExecutionId } from '@shared/planExecution';
 import { Queue } from './Queue';
+import { heldPrompt } from './heldPrompt';
 import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, OpenBlobContext } from './fileLinks';
 import { TurnActionsContext } from './TurnActions';
 import { SubagentInspector } from './subagents/SubagentInspector';
@@ -347,6 +348,8 @@ export function Shell(p: ShellProps) {
     />
   );
 
+  // A prompt the session itself holds back (starting, replaying remembered controls) shows as sent, not as a queued row
+  const held = useMemo(() => heldPrompt(p.turns, p.running, p.status, p.queued), [p.turns, p.running, p.status, p.queued]);
   // With steering on, a message sent mid-turn joins that turn right away; a queued row's button steers the rest
   const steering = !!p.steerQueued && p.running;
   const composerProps: ComposerProps = useMemo(() => ({
@@ -365,7 +368,7 @@ export function Shell(p: ShellProps) {
     open: p.activeSessionId && on.openPlan ? (id: string) => on.openPlan!(p.activeSessionId!, id) : undefined,
   }), [p.controls, p.hidden, p.agent.id, p.running, p.status, p.theme, permissions, p.activeSessionId, on.buildPlan, on.openPlan]);
   // Stable across stream pushes (every prompt card subscribes); the composer props go through their own context to the open editor
-  const editable = !composerProps.disabled && !composerProps.running;
+  const editable = !composerProps.disabled && !composerProps.running && !held.running;
   const history = useMemo(() => on.editTurn && p.activeSessionId ? {
     sessionId: p.activeSessionId, edit: on.editTurn, editable, shapes: p.modelShapes,
     editing: editing?.sessionId === p.activeSessionId ? editing.index : undefined,
@@ -460,7 +463,7 @@ export function Shell(p: ShellProps) {
                     <HistoryComposerContext.Provider value={history?.editing !== undefined ? composerProps : undefined}>
                       <OpenToolFileContext.Provider value={openToolFile}>
                         <TurnActionsContext.Provider value={turnActions}>
-                          <Thread key={p.activeSessionId} turns={p.turns} running={p.running} wide={wide} replayKey={p.replayKey} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands}
+                          <Thread key={p.activeSessionId} turns={held.turns} running={held.running} wide={wide} replayKey={p.replayKey} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands}
                             subagents={p.subagents} onInspect={onInspect} onFailureAction={failureAction}
                             onPermission={(blockId, optionId) => { if (p.activeSessionId) on.permission(p.activeSessionId, blockId, optionId); }} />
                         </TurnActionsContext.Provider>
@@ -504,8 +507,8 @@ export function Shell(p: ShellProps) {
                     onTakeOver={p.canTakeOver ? on.takeOver : undefined}
                   />}
                   <DockStack>
-                    {p.queued?.length && p.activeSessionId
-                      ? <Queue key={`queue:${p.activeSessionId}`} items={p.queued} composer={composerProps} blobUrl={blobUrl}
+                    {held.queued?.length && p.activeSessionId
+                      ? <Queue key={`queue:${p.activeSessionId}`} items={held.queued} composer={composerProps} blobUrl={blobUrl}
                           on={on.dequeue && on.editQueued ? {
                             remove: id => on.dequeue!(p.activeSessionId!, id),
                             sendNow: on.sendQueued && (id => on.sendQueued!(p.activeSessionId!, id)),

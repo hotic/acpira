@@ -31,6 +31,8 @@ use crate::util::{clip, js_num, now_ms, random_uuid};
 pub struct Staged {
   pub prepared: PreparedPrompt,
   pub edited: bool,
+  /// The queued entry's id: the user turn keeps it, so the webview's pending bubble for that entry becomes the sent one in place
+  pub id: Option<String>,
 }
 
 /// Who sent a prompt: the user (or the queue on the user's behalf), the over-threshold /compact, or the continue that
@@ -53,6 +55,8 @@ enum Gate {
 struct Staging {
   prepared: PreparedPrompt,
   edited_staged: bool,
+  /// The id the user turn takes over from its queued entry
+  queued_id: Option<String>,
   fork_history: Option<HistoryContext>,
   fork_error: Option<String>,
 }
@@ -185,6 +189,7 @@ impl AcpSession {
   /// The payload, staged now unless the queue or an edit already did; a fork's first prompt also builds its history
   async fn stage_turn(&self, text: &str, drafts: &[Draft], staged: Option<Staged>, auto: bool) -> Staging {
     let edited_staged = staged.as_ref().is_some_and(|s| s.edited);
+    let queued_id = staged.as_ref().and_then(|s| s.id.clone());
     let prepared = match staged {
       Some(s) => s.prepared,
       None => {
@@ -208,12 +213,12 @@ impl AcpSession {
         }
       }
     }
-    Staging { prepared, edited_staged, fork_history, fork_error }
+    Staging { prepared, edited_staged, queued_id, fork_history, fork_error }
   }
 
   /// Staging is over: the user turn as it will be recorded, or None when a cancel or close came first
   fn accept(self: &Arc<Self>, text: &str, origin: Origin, plan_id: Option<&str>, staging: Staging) -> Option<Accepted> {
-    let Staging { mut prepared, edited_staged, fork_history, fork_error } = staging;
+    let Staging { mut prepared, edited_staged, queued_id, fork_history, fork_error } = staging;
     let mut edited = edited_staged;
     let mut c = self.core.lock();
     c.phase.staging = false;
@@ -268,7 +273,7 @@ impl AcpSession {
         ..Default::default()
       },
       Origin::User => UserTurn {
-        id: Some(random_uuid()),
+        id: Some(queued_id.unwrap_or_else(random_uuid)),
         text: text.to_owned(),
         settings: Some(before.clone()),
         command,
