@@ -17,7 +17,8 @@ export type PlatformRequest =
   | { method: 'openExternal'; url: string }
   | { method: 'openInEditor'; sessionId?: string }
   | { method: 'runInTerminal'; title: string; command: string; args: string[]; env?: Record<string, string | null> }
-  | { method: 'toast'; level: 'info' | 'error'; text: string };
+  // `open` adds an Open button for a file (label already localized); the shell opens it only when clicked
+  | { method: 'toast'; level: 'info' | 'error'; text: string; open?: { label: string; path: string } };
 
 export type PlatformMethod = PlatformRequest['method'];
 

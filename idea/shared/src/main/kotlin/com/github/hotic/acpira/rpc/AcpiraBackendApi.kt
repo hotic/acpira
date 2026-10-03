@@ -56,7 +56,8 @@ interface AcpiraBackendApi : RemoteApi<Unit> {
 @Serializable
 sealed interface UiRequest {
     @Serializable
-    data class Toast(val text: String, val error: Boolean) : UiRequest
+    // openLabel / openPath: an Open button on the notification that opens that file when clicked
+    data class Toast(val text: String, val error: Boolean, val openLabel: String? = null, val openPath: String? = null) : UiRequest
 
     @Serializable
     data class OpenExternal(val url: String) : UiRequest

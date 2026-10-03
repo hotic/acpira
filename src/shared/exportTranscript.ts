@@ -1,5 +1,5 @@
 // Transcript → a file the user can open or share: Markdown for reading, JSON for tooling. Pure and DOM-free so both
-// tsconfigs (host and webview) can type-check it; the host formats, writes under exports/, and opens the result
+// tsconfigs (host and webview) can type-check it; the host formats, writes under exports/, and offers the result in a toast
 
 import type { AgentBlock, ToolContent, Turn } from './transcript';
 import { attachmentLabel } from './attachments';

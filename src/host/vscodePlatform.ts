@@ -32,6 +32,27 @@ function fileColumn(): vscode.ViewColumn {
   return other?.viewColumn ?? vscode.ViewColumn.Beside;
 }
 
+// vscode.open uses the default editor for the resource (image preview, custom editors, text); openTextDocument rejects binaries
+// ("the file appears to be binary"). Lines arrive 1-based, Range is 0-based
+async function openFile(path: string, line?: number): Promise<void> {
+  const at = line != null ? line - 1 : undefined;
+  await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(path), {
+    preview: true,
+    viewColumn: fileColumn(),
+    ...(at != null ? { selection: new vscode.Range(at, 0, at, 0) } : {}),
+  });
+}
+
+// A notification; with `open` it carries a button that opens that file when clicked (dismissing it opens nothing)
+function showToast(r: Extract<PlatformRequest, { method: 'toast' }>): void {
+  const show = r.level === 'error' ? vscode.window.showErrorMessage : vscode.window.showInformationMessage;
+  if (!r.open) { void show(r.text); return; }
+  const { label, path } = r.open;
+  void show(r.text, label).then(choice => {
+    if (choice === label) openFile(path).catch((e: unknown) => void vscode.window.showErrorMessage(String(e)));
+  });
+}
+
 // The VS Code / Cursor side of the sidecar's platform: the facts hello carries (workspace folder, display language, acpira.* settings),
 // the events that refresh them, and the IDE actions platformRequests ask for. The only host-side file besides
 // extension.ts, bridge.ts and files.ts that imports vscode
@@ -97,17 +118,7 @@ export class VscodePlatform {
     switch (r.method) {
       case 'writeSetting': await this.cfg().update(r.key, r.value, vscode.ConfigurationTarget.Global); return null;
       case 'searchFiles': return this.files.search(r.query);
-      case 'openResolvedFile': {
-        // vscode.open uses the default editor for the resource (image preview, custom editors, text); openTextDocument rejects binaries
-        // ("the file appears to be binary"). Lines arrive 1-based, Range is 0-based
-        const at = r.line != null ? r.line - 1 : undefined;
-        await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(r.path), {
-          preview: true,
-          viewColumn: fileColumn(),
-          ...(at != null ? { selection: new vscode.Range(at, 0, at, 0) } : {}),
-        });
-        return null;
-      }
+      case 'openResolvedFile': await openFile(r.path, r.line); return null;
       case 'openPlanDocument': {
         const doc = 'path' in r.target ? await vscode.workspace.openTextDocument(vscode.Uri.file(r.target.path))
           : await vscode.workspace.openTextDocument({ language: 'markdown', content: r.target.markdown });
@@ -117,7 +128,7 @@ export class VscodePlatform {
       case 'revealInOS': await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(r.path)); return null;
       case 'openExternal': void vscode.env.openExternal(vscode.Uri.parse(r.url)); return null;
       case 'openInEditor': this.openInEditor(r.sessionId); return null;
-      case 'toast': void (r.level === 'error' ? vscode.window.showErrorMessage(r.text) : vscode.window.showInformationMessage(r.text)); return null;
+      case 'toast': showToast(r); return null;
       case 'runInTerminal': {
         const { text, ...launch } = terminalLaunch(r.command, r.args);
         const t = vscode.window.createTerminal({ name: r.title, env: r.env, ...launch });

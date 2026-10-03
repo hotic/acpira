@@ -477,6 +477,7 @@
   "host.forkContextFailed": "Could not hand the forked history to the agent ({error}); the fork continues without the earlier context.",
   "host.exported": "Exported to {path}",
   "export.label.user": "User",
+  "host.exportOpen": "Open",
   "export.label.agent": "Agent",
   "export.label.project": "Project",
   "export.label.exported": "Exported",

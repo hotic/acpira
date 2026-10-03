@@ -57,7 +57,17 @@ pub enum PlatformRequest {
   Toast {
     level: String,
     text: String,
+    /// A file the notification offers to open (an "Open" button); the shell opens it only when clicked
+    #[serde(skip_serializing_if = "Option::is_none")]
+    open: Option<ToastOpen>,
   },
+}
+
+/// The open-file action a toast carries: the button label (already localized) and the absolute path behind it
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ToastOpen {
+  pub label: String,
+  pub path: String,
 }
 
 impl PlatformRequest {
