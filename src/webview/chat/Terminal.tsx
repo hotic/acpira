@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
 import type { ToolCallBlock } from '@shared/transcript';
 import { useScrollFade } from '../ui/useScrollFade';
 import { cn } from '../ui/cn';
 import { OutputCopy } from './OutputCopy';
+import { Prose } from './Prose';
+import { looksLikeMarkdown } from './markdownGuess';
 import { t } from '../i18n';
 
 // Command output (Codex-style "Shell" card). The row above names the program only; the full command heads the card behind a
@@ -33,10 +35,25 @@ export function TerminalOutput({ block, command }: { block: ToolCallBlock; comma
 export function ToolOutput({ block, text }: { block: ToolCallBlock; text: string }) {
   const body = text.trimEnd();
   if (!body.trim()) return null;
+  // Fetched pages and web search summaries are usually markdown: render them like a message, inside the same capped card.
+  // The engine already cuts each text item to TOOL_OUTPUT_MAX, so the rendered document stays bounded
+  if (block.kind === 'fetch' && looksLikeMarkdown(body)) return <FetchMarkdown block={block} text={body} />;
   return (
     <div className="group/code-output code-output">
       <OutputPane text={body} follow={outputFollows(block)} label={t('code.toolOutput')} copyLabel={t('code.copyToolOutput')} className="tool-output">
         {body.split('\n').map((line, index) => <span key={index} className="tool-output-line">{line || ' '}</span>)}
+      </OutputPane>
+    </div>
+  );
+}
+
+// Markdown body of a fetch tool. The TextBlock is memoized on the text so Prose's memo holds across unrelated re-renders
+function FetchMarkdown({ block, text }: { block: ToolCallBlock; text: string }) {
+  const doc = useMemo(() => ({ type: 'text' as const, markdown: text }), [text]);
+  return (
+    <div className="group/code-output code-output">
+      <OutputPane text={text} follow={outputFollows(block)} label={t('code.toolOutput')} copyLabel={t('code.copyToolOutput')} prose>
+        <Prose block={doc} />
       </OutputPane>
     </div>
   );
@@ -48,12 +65,13 @@ const outputFollows = (block: ToolCallBlock) =>
 
 // The scrolling output area both cards share: capped by --code-output-max with edge fades, a copy button on hover, and
 // while `follow` it sticks to the bottom until the user scrolls up inside it
-function OutputPane({ text, follow, label, copyLabel, className, children }: {
-  text: string; follow: boolean; label: string; copyLabel: string; className?: string; children: ReactNode;
+// `prose` swaps the monospace <pre> for a block container that hosts rendered markdown
+function OutputPane({ text, follow, label, copyLabel, className, prose = false, children }: {
+  text: string; follow: boolean; label: string; copyLabel: string; className?: string; prose?: boolean; children: ReactNode;
 }) {
-  const ref = useRef<HTMLPreElement>(null);
-  const fade = useScrollFade<HTMLPreElement>();
-  const setRef = useCallback((element: HTMLPreElement | null) => {
+  const ref = useRef<HTMLElement>(null);
+  const fade = useScrollFade<HTMLElement>();
+  const setRef = useCallback((element: HTMLElement | null) => {
     ref.current = element;
     return fade(element);
   }, [fade]);
@@ -62,18 +80,20 @@ function OutputPane({ text, follow, label, copyLabel, className, children }: {
     const el = ref.current;
     if (el && follow && pinned.current) el.scrollTop = el.scrollHeight;
   }, [text, follow]);
+  const Pane = prose ? 'div' : 'pre';
   return (
     <div className="relative min-w-0">
       <OutputCopy text={text} label={copyLabel} />
-      <pre
+      <Pane
         ref={setRef}
         tabIndex={0}
         aria-label={label}
         onScroll={e => { const el = e.currentTarget; pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24; }}
-        className={cn('scroll-fade scroll-thin m-0 max-h-code-output overflow-auto px-command-x py-command-y font-mono text-mono text-fg-2 [overflow-anchor:none]', className)}
+        className={cn('scroll-fade scroll-thin m-0 max-h-code-output overflow-auto px-command-x py-command-y [overflow-anchor:none]',
+          prose ? 'min-w-0' : 'font-mono text-mono text-fg-2', className)}
       >
         {children}
-      </pre>
+      </Pane>
     </div>
   );
 }
