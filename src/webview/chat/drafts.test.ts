@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { MAX_FILE_BYTES, MAX_TEXT_BYTES } from '@shared/attachments';
 import { collectDrafts, hasPayload, pathlessWorkbenchDrag, workbenchUris } from './drafts';
 
 // Minimal DataTransfer: lowercased types like the DOM one, no files
@@ -79,5 +80,46 @@ describe('workbench drags', () => {
 
   it('ignores plain text drags', () => {
     expect(hasPayload(transfer({ 'text/plain': 'hello' }))).toBe(false);
+  });
+});
+
+// An OS file as the webview sees it: bytes only, `size` overridable so the caps can be hit without allocating them
+function osFile(name: string, bytes: Uint8Array | string, size?: number): File {
+  const buf = typeof bytes === 'string' ? new TextEncoder().encode(bytes) : bytes;
+  return { name, type: '', size: size ?? buf.byteLength, text: async () => new TextDecoder().decode(buf), arrayBuffer: async () => buf.buffer } as unknown as File;
+}
+const osTransfer = (files: File[]) => ({ types: ['Files'], files, getData: () => '' }) as unknown as DataTransfer;
+
+describe('OS files', () => {
+  // Node has no FileReader; this one answers readAsDataURL from the stub's bytes
+  vi.stubGlobal('FileReader', class {
+    result: string | null = null;
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    readAsDataURL(f: File) {
+      void f.arrayBuffer().then(b => { this.result = `data:;base64,${Buffer.from(b).toString('base64')}`; this.onload?.(); });
+    }
+  });
+
+  it('embeds small text and carries binaries and oversized text as bytes', async () => {
+    const mp4 = new Uint8Array([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70]);
+    const { drafts, refused } = await collectDrafts(osTransfer([
+      osFile('notes.md', '# hi'),
+      osFile('录制.mp4', mp4),
+      osFile('big.log', 'x', MAX_TEXT_BYTES + 1),
+    ]), '/w');
+    expect(refused).toEqual([]);
+    expect(drafts).toEqual([
+      { kind: 'text', name: 'notes.md', text: '# hi' },
+      { kind: 'file', uri: `attachment:///${encodeURIComponent('录制.mp4')}`, name: '录制.mp4', data: Buffer.from(mp4).toString('base64') },
+      { kind: 'file', uri: 'attachment:///big.log', name: 'big.log', data: Buffer.from('x').toString('base64') },
+    ]);
+  });
+
+  it('refuses a file over the byte cap', async () => {
+    const { drafts, refused } = await collectDrafts(osTransfer([osFile('huge.mov', new Uint8Array([0]), MAX_FILE_BYTES + 1)]), '/w');
+    expect(drafts).toEqual([]);
+    expect(refused).toHaveLength(1);
+    expect(refused[0]).toContain('huge.mov');
   });
 });

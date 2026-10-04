@@ -392,6 +392,7 @@ export const es = {
 
   'attach.tooBigImage': '{name}: la imagen supera {mb} MB',
   'attach.tooBigText': '{name}: el archivo supera {kb} KB; arrástralo desde el Explorador o usa @',
+  'attach.tooBigFile': '{name}: el archivo supera {mb} MB',
   'attach.binary': '{name}: los archivos binarios no pueden ir en la conversación',
   'attach.noLocalFiles': 'Aquí solo se pueden soltar archivos locales',
   'attach.noPaths': 'Lo arrastrado no contenía rutas de archivo (recibido: {types})',

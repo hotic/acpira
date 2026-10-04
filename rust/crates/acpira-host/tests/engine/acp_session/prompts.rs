@@ -113,6 +113,28 @@ async fn an_image_file_draft_is_sent_as_pixels_and_an_oversized_image_is_dropped
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_pasted_binary_file_is_staged_as_a_blob_and_linked() {
+  use base64::Engine;
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let s = started(&h, "/tmp").await;
+  let mp4 = base64::engine::general_purpose::STANDARD.encode(b"\0\0\0\x18ftypmp42");
+  s.prompt("echo blocks".into(), drafts(json!([
+    { "kind": "file", "uri": "attachment:///clip.MP4", "name": "clip.MP4", "data": mp4 },
+  ])), false, None, None).await;
+  let vw = view(&s);
+  let att = &vw["turns"][0]["attachments"][0];
+  let uri = att["uri"].as_str().unwrap();
+  expect_match(att, json!({ "kind": "file", "name": "clip.MP4" }));
+  let staged = h.dir.path().canonicalize().unwrap().join("sessions").join(&s.id);
+  assert!(uri.starts_with(&format!("file://{}/", staged.display())) && uri.ends_with(".mp4"), "{uri}");
+  let blob_name = uri.rsplit('/').next().unwrap();
+  assert_eq!(blob(&h, &s.id, blob_name).unwrap(), b"\0\0\0\x18ftypmp42");
+  let echoed = vw["turns"][1]["blocks"].as_array().unwrap().iter().find(|b| b["type"] == "text").cloned().unwrap();
+  assert_eq!(echoed["markdown"], format!("text · resource_link:{uri}:clip.MP4"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_failing_blob_store_does_not_lose_the_prompt() {
   let fake = fake_or_skip!();
   let mut h = Harness::new(&fake, json!({}));

@@ -384,6 +384,7 @@
   "question.noAnswer": "回答なし",
   "attach.tooBigImage": "{name}：画像が {mb} MB を超えています",
   "attach.tooBigText": "{name}：ファイルが {kb} KB を超えています。エクスプローラーからドラッグするか @ を使ってください",
+  "attach.tooBigFile": "{name}：ファイルが {mb} MB を超えています",
   "attach.binary": "{name}：バイナリファイルは会話に追加できません",
   "attach.noLocalFiles": "ここにはローカルファイルだけをドロップできます",
   "attach.noPaths": "このドラッグにはファイルパスが含まれていません（受信：{types}）",

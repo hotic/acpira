@@ -411,6 +411,7 @@ export const zhCN = {
   // Attachments / @ mention
   'attach.tooBigImage': '{name}：图片超过 {mb} MB',
   'attach.tooBigText': '{name}：文件超过 {kb} KB，从资源管理器拖入或用 @ 引用',
+  'attach.tooBigFile': '{name}：文件超过 {mb} MB',
   'attach.binary': '{name}：二进制文件放不进对话',
   'attach.noLocalFiles': '这里只能放入本地文件',
   'attach.noPaths': '这次拖拽没带文件路径（收到：{types}）',

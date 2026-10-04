@@ -738,6 +738,10 @@ pub enum Draft {
   File {
     uri: String,
     name: String,
+    /// Base64 bytes of a file the webview only holds as a blob (an OS paste / drop): staged into the session's blob dir,
+    /// whose path replaces `uri`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    data: Option<String>,
   },
   /// A line range of an editor document; lines are 1-based and inclusive
   #[serde(rename_all = "camelCase")]

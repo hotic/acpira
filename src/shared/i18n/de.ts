@@ -390,6 +390,7 @@ export const de = {
 
   'attach.tooBigImage': '{name}: Bild ist größer als {mb} MB',
   'attach.tooBigText': '{name}: Datei ist größer als {kb} KB – aus dem Explorer ziehen oder @ verwenden',
+  'attach.tooBigFile': '{name}: Datei ist größer als {mb} MB',
   'attach.binary': '{name}: Binärdateien können nicht ins Gespräch',
   'attach.noLocalFiles': 'Hier können nur lokale Dateien abgelegt werden',
   'attach.noPaths': 'Das Gezogene enthielt keine Dateipfade (empfangen: {types})',

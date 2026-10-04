@@ -383,7 +383,8 @@ export type AgentBlock = ThoughtBlock | PlanBlock | ToolCallBlock | TextBlock | 
 export type Draft =
   | { kind: 'image'; mimeType: string; data: string; name?: string }
   | { kind: 'text'; name: string; text: string }
-  | { kind: 'file'; uri: string; name: string }
+  // `data`: base64 bytes of an OS file the webview only holds as a blob (paste / Finder drop); the host stages it and links the staged path
+  | { kind: 'file'; uri: string; name: string; data?: string }
   // A line range of an editor document (the IDE's selection, its "Add to chat" action, or a paste of text copied there); lines are 1-based and inclusive
   | { kind: 'selection'; uri: string; name: string; startLine: number; endLine: number; text: string }
   // Text quoted from the conversation with the user's optional remark on it

@@ -386,6 +386,7 @@
   "question.noAnswer": "Нет ответа",
   "attach.tooBigImage": "{name}: изображение больше {mb} МБ",
   "attach.tooBigText": "{name}: файл больше {kb} КБ — перетащите его из проводника или используйте @",
+  "attach.tooBigFile": "{name}: файл больше {mb} МБ",
   "attach.binary": "{name}: двоичные файлы нельзя добавить в диалог",
   "attach.noLocalFiles": "Сюда можно перетаскивать только локальные файлы",
   "attach.noPaths": "Перетаскивание не содержало путей к файлам (получено: {types})",
