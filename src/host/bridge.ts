@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import type { HostMsg, WebviewHost, WebviewMsg } from '@shared/protocol';
 import type { SessionView } from '@shared/transcript';
 import type { SidecarClient, SidecarState, ShellView } from './shell/SidecarClient';
+import { PostQueue } from './outbox';
 
 export interface WebviewBridgeOpts {
   client: SidecarClient;
@@ -15,6 +16,7 @@ export interface WebviewBridgeOpts {
   onPageReady?: (bridge: WebviewBridge) => void;
   // The page's window got focus (`viewFocus`, kept in the shell)
   onFocus?: (bridge: WebviewBridge) => void;
+  log?: (line: string) => void;
 }
 
 // One bridge per VS Code webview: renders the HTML (CSP, bundle URIs, host flag) and relays between the webview and its view in the
@@ -28,6 +30,9 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
   // Shell messages wait until the page has been initialized: before that nothing listens, and init would overwrite them anyway
   private pageReady = false;
   private shellQueue: HostMsg[] = [];
+  // Everything bound for the page, one postMessage in flight at a time (outbox.ts)
+  private outbox: PostQueue;
+  private resyncing = false;
 
   constructor(
     private webview: vscode.Webview,
@@ -38,6 +43,14 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
     const sessions = vscode.Uri.file(opts.sessionsDir);
     webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(opts.extensionUri, 'dist', 'webview'), sessions] };
     webview.html = this.html();
+    // A session push the webview refused leaves the page's patch base behind: ask for the whole view, once until a whole
+    // view or init is delivered (a page that refuses everything is not asked again and again)
+    this.outbox = new PostQueue(m => webview.postMessage(m), opts.log, undefined, (m, delivered) => {
+      if (delivered) { if (m.type === 'session' || m.type === 'init') this.resyncing = false; return; }
+      if ((m.type !== 'session' && m.type !== 'sessionPatch') || this.resyncing) return;
+      this.resyncing = true;
+      this.send({ type: 'resync' });
+    });
     // Attachment blobs are served to the webview straight from the sessions directory, through this webview's own resource URI
     this.blobBase = webview.asWebviewUri(sessions).toString();
     this.disposables.push(webview.onDidReceiveMessage((m: WebviewMsg) => {
@@ -50,18 +63,18 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
   send(m: WebviewMsg) { this.opts.client.send(this.viewId, m); }
 
   onHostMessage(m: HostMsg) {
-    const session = m.type === 'session' ? m.session : m.type === 'init' ? m.state.active : undefined;
+    const session = m.type === 'session' ? m.session : m.type === 'sessionPatch' ? m.patch.view : m.type === 'init' ? m.state.active : undefined;
     if (session) this.opts.onSession?.(session);
-    void this.webview.postMessage(m);
+    this.outbox.push(m);
     if (m.type !== 'init') return;
     this.pageReady = true;
-    for (const q of this.shellQueue.splice(0)) void this.webview.postMessage(q);
+    for (const q of this.shellQueue.splice(0)) this.outbox.push(q);
     this.opts.onPageReady?.(this);
   }
 
   // Editor state from the extension itself (never through the sidecar): selection, copy, "Add to chat"
   postShell(m: HostMsg) {
-    if (this.pageReady) { void this.webview.postMessage(m); return; }
+    if (this.pageReady) { this.outbox.push(m); return; }
     // Only the latest live selection matters; pinned ranges all wait
     if (m.type === 'editorSelection') this.shellQueue = this.shellQueue.filter(q => q.type !== 'editorSelection');
     this.shellQueue.push(m);
@@ -70,7 +83,7 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
   // The page posts `ready` once, at load; a sidecar that came back after it initialized needs the page to start over
   onState(state: SidecarState) {
     if (state !== 'ready') return;
-    if (this.initialized) { this.pageReady = false; this.webview.html = this.html(); }
+    if (this.initialized) { this.pageReady = false; this.outbox.clear(); this.webview.html = this.html(); }
     this.initialized = true;
   }
 

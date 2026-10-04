@@ -16,7 +16,7 @@ fn session(running: bool, rev: i64, text: &str) -> HostMsg {
   let view = json!({ "id": "s", "agent": "kimi", "title": "t", "cwd": "/w", "status": "ready", "running": running, "rev": rev,
     "createdAt": "a", "updatedAt": "b", "commands": [], "controls": { "modes": [], "options": [] },
     "turns": [{ "role": "user", "id": "u1", "text": "hi" }, { "role": "agent", "blocks": [{ "type": "text", "markdown": text }] }] });
-  HostMsg::Session { session: RawJson::new(&view), running }
+  HostMsg::Session { session: RawJson::new(&view), running, parts: None }
 }
 
 fn subagent(session: &str, id: &str, rev: i64) -> HostMsg {

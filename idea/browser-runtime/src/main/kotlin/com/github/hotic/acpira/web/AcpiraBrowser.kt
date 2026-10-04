@@ -131,6 +131,7 @@ class AcpiraBrowser(
             val o = message.asJsonObject
             val session = when (o.get("type")?.asString) {
                 "session" -> o.getAsJsonObject("session")
+                "sessionPatch" -> o.getAsJsonObject("patch")?.getAsJsonObject("view")
                 "init" -> o.getAsJsonObject("state")?.getAsJsonObject("active")
                 else -> null
             }

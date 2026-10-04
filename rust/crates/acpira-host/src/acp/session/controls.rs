@@ -167,12 +167,17 @@ impl AcpSession {
   /// The composer's click path: same validation as set_config, then an optimistic overlay in front of the request
   pub async fn select_config(self: &Arc<Self>, config_id: String, value: String) -> Result<()> {
     self.editing_guard()?;
+    let mut refused = None;
     let held = {
       let mut c = self.core.lock();
       let control = c.state.controls.options.iter().find(|o| o.id == config_id).cloned();
       let ok =
         c.proc.is_some() && c.status == SessionStatus::Ready && control.as_ref().is_some_and(|x| x.options.iter().any(|o| o.id == value));
       if !ok {
+        // set_config below does nothing for a session that is not ready: the log is all that tells why the chip stayed put
+        if c.proc.is_none() || c.status != SessionStatus::Ready {
+          refused = Some(format!("setConfig {config_id}={value} ignored: session {:?}, process {}", c.status, c.proc.is_some()));
+        }
         None
       } else {
         // A model switch keeps the chosen effort: hold it on screen so the agent's interim reset never flashes
@@ -196,6 +201,9 @@ impl AcpSession {
         Some(held)
       }
     };
+    if let Some(line) = refused {
+      self.log(&line);
+    }
     let Some(held) = held else { return self.set_config(config_id, value).await };
     let me = self.clone();
     let (cid, v) = (config_id.clone(), value.clone());

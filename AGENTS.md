@@ -33,7 +33,7 @@ A chat shell for VS Code / Cursor (and IntelliJ) that drives official agent CLIs
 - Sidecar stdout carries envelopes only; logs go to stderr
 - The root `tsconfig.json` holds `references` only
 - `~/.acpira` is shared by every VS Code / Cursor window and IDEA sidecar: files are written tmp + rename, and `accounts.json`, `secrets.json` and `sessions/prefs.json` are edited under `store/fileLock.ts`
-- Every stream chunk pushes the whole `SessionView`; nothing may defeat the `shared/reuse.ts` reference reuse and `memo` chain (see the render budget in `docs/dev/webview.md`)
+- Every stream chunk pushes the session view, as a `sessionPatch` (only the changed tail) to the real webview; nothing may defeat the `shared/reuse.ts` reference reuse and `memo` chain (see the render budget and session patches in `docs/dev/webview.md`)
 - Write code comments in English
 - Components must not contain raw numbers: sizes, type scale, spacing, and radii all use token classes (`h-ctl`, `px-pad`, `gap-gap`, `rounded-md`, …)
 - Every "row" (thought / plan / tool / status / session item) uses `ui/Row`; command execution is a row too (command on the row, output card below), not a separate block
