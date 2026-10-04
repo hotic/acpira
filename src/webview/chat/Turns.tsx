@@ -621,7 +621,7 @@ function LineBlock({ block }: { block: AgentBlock }) {
 }
 
 // Context compaction is an action row like a tool call: same lead slot (the context panel's compact icon), and the
-// live status shimmers in place until the agent reports the outcome. The host turns structured compaction_update and
+// live status shimmers in place until the agent reports the outcome, while the icon's four arrows keep pushing inward. The host turns structured compaction_update and
 // adapter prose (rust `compaction_text`) into the same block, so every agent shares this one presentation.
 function Compaction({ block }: { block: CompactionBlock }) {
   const { toolLine } = useAppearance();
@@ -629,7 +629,7 @@ function Compaction({ block }: { block: CompactionBlock }) {
   const label = running ? t('turns.compacting') : block.status === 'completed' ? t('turns.compacted') : block.status === 'failed' ? t('turns.compactFailed') : t('turns.compactCancelled');
   const Icon = block.status === 'failed' ? TriangleAlert : Shrink;
   return (
-    <Row tone="action" lead={toolLine === 'text' ? undefined : <Icon className="size-icon" strokeWidth={1.5} />}>
+    <Row tone="action" lead={toolLine === 'text' ? undefined : <Icon className={cn('size-icon', running && 'compacting-icon')} strokeWidth={1.5} />}>
       <RowLabel shimmer={running}>{label}</RowLabel>
       {block.status === 'failed' && block.error && <RowTarget className="text-fg-3">{block.error}</RowTarget>}
     </Row>
