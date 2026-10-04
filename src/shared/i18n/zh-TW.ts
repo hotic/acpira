@@ -411,6 +411,7 @@ export const zhTW = {
   // Attachments / @ mention
   'attach.tooBigImage': '{name}：圖片超過 {mb} MB',
   'attach.tooBigText': '{name}：檔案超過 {kb} KB，從資源管理器拖入或用 @ 引用',
+  'attach.tooBigFile': '{name}：檔案超過 {mb} MB',
   'attach.binary': '{name}：二進位檔案放不進對話',
   'attach.noLocalFiles': '這裡只能放入本地檔案',
   'attach.noPaths': '這次拖曳沒帶檔案路徑（收到：{types}）',

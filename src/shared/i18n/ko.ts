@@ -392,6 +392,7 @@ export const ko = {
 
   'attach.tooBigImage': '{name}: 이미지가 {mb}MB를 초과합니다',
   'attach.tooBigText': '{name}: 파일이 {kb}KB를 초과합니다 — 탐색기에서 끌어 오거나 @를 사용하세요',
+  'attach.tooBigFile': '{name}: 파일이 {mb}MB를 초과합니다',
   'attach.binary': '{name}: 바이너리 파일은 대화에 넣을 수 없습니다',
   'attach.noLocalFiles': '여기에는 로컬 파일만 놓을 수 있습니다',
   'attach.noPaths': '끌어 온 항목에 파일 경로가 없습니다 (받은 형식: {types})',

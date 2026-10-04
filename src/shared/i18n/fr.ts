@@ -391,6 +391,7 @@ export const fr = {
 
   'attach.tooBigImage': '{name} : l’image dépasse {mb} Mo',
   'attach.tooBigText': '{name} : le fichier dépasse {kb} Ko — faites-le glisser depuis l’Explorateur ou utilisez @',
+  'attach.tooBigFile': '{name} : le fichier dépasse {mb} Mo',
   'attach.binary': '{name} : les fichiers binaires ne peuvent pas entrer dans la conversation',
   'attach.noLocalFiles': 'Seuls des fichiers locaux peuvent être déposés ici',
   'attach.noPaths': 'Ce glisser-déposer ne contenait aucun chemin de fichier (reçu : {types})',

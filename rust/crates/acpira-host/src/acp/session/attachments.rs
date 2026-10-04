@@ -3,7 +3,7 @@
 use base64::Engine;
 use serde_json::{Value, json};
 
-use acpira_shared::attachments::{MAX_IMAGE_BYTES, MAX_TEXT_BYTES, base64_bytes, ext_of_mime, image_mime_of};
+use acpira_shared::attachments::{MAX_FILE_BYTES, MAX_IMAGE_BYTES, MAX_TEXT_BYTES, base64_bytes, ext_of_mime, ext_of_name, image_mime_of};
 use acpira_shared::transcript::{Attachment, Draft, line_range_label};
 
 use crate::acp::agents::registry::AgentDef;
@@ -114,7 +114,19 @@ pub async fn prepare_prompt(
         // The block went out ahead of the loop; only the record is kept here
         out.attachments.push(Attachment::Quote { text: text.clone(), comment: comment.clone() });
       }
-      Draft::File { uri, name } => {
+      Draft::File { name, data: Some(data), .. } => {
+        // An OS file that exists only as bytes in the webview: parked in the blob dir, then linked like any file on disk
+        if base64_bytes(data) > MAX_FILE_BYTES {
+          out.problems.push(tp("attach.tooBigFile", &[("name", name), ("mb", &(MAX_FILE_BYTES >> 20).to_string())]));
+          continue;
+        }
+        let bytes = B64.decode(data.as_bytes()).unwrap_or_default();
+        let Some((_, path)) = stage(&mut out, blobs, session_id, &ext_of_name(name), &bytes, name).await else { continue };
+        let uri = path_to_file_url(&path);
+        out.blocks.push(json!({ "type": "resource_link", "uri": uri, "name": name }));
+        out.attachments.push(Attachment::File { uri, name: name.clone() });
+      }
+      Draft::File { uri, name, .. } => {
         if let Some((mime, bytes)) = read_image_file(uri).await {
           if no_images {
             out.problems.push(tp("host.imageUnsupported", &[("name", name)]));
@@ -156,7 +168,7 @@ pub async fn restore_drafts(session_id: &str, attachments: &[Attachment], blobs:
   let mut out = vec![];
   for a in attachments {
     match a {
-      Attachment::File { uri, name } => out.push(Draft::File { uri: uri.clone(), name: name.clone() }),
+      Attachment::File { uri, name } => out.push(Draft::File { uri: uri.clone(), name: name.clone(), data: None }),
       Attachment::Image { blob: Some(b), mime_type, name } => {
         let bytes = blobs.read_blob(session_id, b).await?;
         out.push(Draft::Image { mime_type: mime_type.clone(), data: B64.encode(bytes), name: name.clone() });

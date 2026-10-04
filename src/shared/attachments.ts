@@ -5,6 +5,8 @@ import type { Attachment, Draft } from './transcript';
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 // Text dropped from outside the workspace is embedded into the prompt, so it stays small
 export const MAX_TEXT_BYTES = 1024 * 1024;
+// Any other file (video, archive, oversized text …) the webview carries as bytes: the host stages it as a blob and sends a resource_link
+export const MAX_FILE_BYTES = 50 * 1024 * 1024;
 
 const IMAGE_MIME: Record<string, string> = {
   '.png': 'image/png',

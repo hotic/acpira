@@ -127,7 +127,7 @@ export function Composer(p: ComposerProps) {
     setReading(n => n + 1);
     try {
       const { drafts: more, refused } = await collectDrafts(dt, p.cwd);
-      if (more.length) setDrafts(d => [...d, ...more.filter(m => m.kind !== 'file' || !d.some(x => x.kind === 'file' && x.uri === m.uri))]);
+      if (more.length) setDrafts(d => [...d, ...more.filter(m => m.kind !== 'file' || !!m.data || !d.some(x => x.kind === 'file' && x.uri === m.uri))]);
       if (refused.length) p.onNotice(refused.join(t('common.listSep')));
     } catch (e) {
       p.onNotice(t('composer.attachFailed', { error: e instanceof Error ? e.message : String(e) }));

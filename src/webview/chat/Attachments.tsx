@@ -77,14 +77,15 @@ type Quote = Extract<Attachment | Draft, { kind: 'quote' }>;
 
 // Stable React key of a non-quote chip
 function chipKey(a: Named, i: number): string {
-  if (a.kind === 'file') return a.uri;
+  // Pasted OS files share the placeholder `attachment:` uri of their name, so two of them are told apart by position
+  if (a.kind === 'file') return 'data' in a && a.data ? `${a.uri}-${i}` : a.uri;
   if (a.kind === 'selection') return `${a.uri}#${a.startLine}-${a.endLine}`;
   return ('blob' in a && a.blob) || `${a.name ?? a.kind}-${i}`;
 }
 
 const isImage = (a: Named) => a.kind === 'image' || (a.kind === 'file' && !!imageMimeOf(a.name));
 const chipIcon = (a: Named) => (a.kind === 'selection' ? <TextSelect strokeWidth={1.5} /> : undefined);
-const chipTitle = (a: Named) => (a.kind === 'file' ? a.uri : a.kind === 'selection' ? `${a.uri}#L${a.startLine}-${a.endLine}` : undefined);
+const chipTitle = (a: Named) => (a.kind === 'file' ? ('data' in a && a.data ? a.name : a.uri) : a.kind === 'selection' ? `${a.uri}#L${a.startLine}-${a.endLine}` : undefined);
 
 // Quotes and everything else, each with its index in the original list
 function split<T extends Attachment | Draft>(items: T[], indices?: number[]) {

@@ -1,5 +1,5 @@
 import type { Draft } from '@shared/transcript';
-import { MAX_IMAGE_BYTES, MAX_TEXT_BYTES, imageMimeOf } from '@shared/attachments';
+import { MAX_FILE_BYTES, MAX_IMAGE_BYTES, MAX_TEXT_BYTES, imageMimeOf } from '@shared/attachments';
 import { t } from '../i18n';
 
 export interface Collected {
@@ -38,7 +38,7 @@ export function pathlessWorkbenchDrag(dt: DataTransfer | null): string[] | undef
 }
 
 // Everything a paste or drop can carry, turned into drafts. Workbench drags arrive as file: URIs and take precedence: those are handed to the host as
-// file drafts (it reads images itself). OS files only exist as blobs here (no path in a webview): accepted images go inline, small text files are embedded, the rest is refused
+// file drafts (it reads images itself). OS files only exist as blobs here (no path in a webview): accepted images go inline, small text files are embedded, anything else up to MAX_FILE_BYTES is carried as bytes
 export async function collectDrafts(dt: DataTransfer, cwd: string): Promise<Collected> {
   const out: Collected = { drafts: [], refused: [] };
   const uris = workbenchUris(dt);
@@ -53,10 +53,11 @@ export async function collectDrafts(dt: DataTransfer, cwd: string): Promise<Coll
       out.drafts.push({ kind: 'image', mimeType, data: await base64Of(f), name: f.name === 'image.png' ? undefined : f.name });
       continue;
     }
-    if (f.size > MAX_TEXT_BYTES) { out.refused.push(t('attach.tooBigText', { name: f.name, kb: MAX_TEXT_BYTES >> 10 })); continue; }
-    const text = await f.text();
-    if (text.includes('\0')) { out.refused.push(t('attach.binary', { name: f.name })); continue; }
-    out.drafts.push({ kind: 'text', name: f.name, text });
+    // Small plain text is embedded; binaries (video, archives …) and oversized text travel as bytes for the host to stage and link
+    const text = f.size <= MAX_TEXT_BYTES ? await f.text() : undefined;
+    if (text !== undefined && !text.includes('\0')) { out.drafts.push({ kind: 'text', name: f.name, text }); continue; }
+    if (f.size > MAX_FILE_BYTES) { out.refused.push(t('attach.tooBigFile', { name: f.name, mb: MAX_FILE_BYTES >> 20 })); continue; }
+    out.drafts.push({ kind: 'file', uri: `attachment:///${encodeURIComponent(f.name)}`, name: f.name, data: await base64Of(f) });
   }
   // A workbench drag that named only remote / virtual resources (or nothing readable) would otherwise drop without a trace
   if (!dt.files.length && [...dt.types].some(type => type.toLowerCase() !== 'files' && PAYLOAD_TYPES.has(type.toLowerCase()))) out.refused.push(t('attach.noLocalFiles'));
