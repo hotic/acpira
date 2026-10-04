@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronLeft, Plus, Trash2 } from 'lucide-react';
 import type { AgentId, AgentInfo, ConfigControl } from '@shared/transcript';
 import type { SettingsView } from '@shared/settings';
 import { PERSONA_MAX, sanitizePersonas, type RelayMode, type SubagentPersona } from '@shared/subagents';
 import { AgentMark } from '../chat/AgentMark';
-import { Button, IconButton } from '../ui/Button';
+import { Button, ChipTag, IconButton } from '../ui/Button';
 import { t } from '../i18n';
 import { FactRow, Field, ItemRow, Section, SectionAction, Select, Switch, type Option } from './controls';
 import type { SettingsHandlers } from './SettingsShell';
@@ -167,9 +167,15 @@ function TextBox({ value, label, placeholder, multiline, onCommit }: {
       className={`${cls} h-ctl w-(--ctl-w)`} />;
 }
 
-function metaOf(p: SubagentPersona, agents: AgentInfo[]): string {
+// The row's second line: the CLI, its model one step fainter, then the mode as a tag. Spacing and tone tell the parts
+// apart, with no separator glyph between them; the model gives up width first
+function metaOf(p: SubagentPersona, agents: AgentInfo[]): ReactNode {
   const cli = agents.find(a => a.id === p.agent)?.name ?? p.agent;
-  return [cli, p.model, p.mode === 'consult' ? t('subagents.page.consult') : t('subagents.page.work')].filter(Boolean).join(' · ');
+  return <span className="flex min-w-0 items-center gap-gap">
+    <span className="shrink-0">{cli}</span>
+    {p.model && <span className="min-w-0 truncate text-fg-3">{p.model}</span>}
+    <ChipTag>{p.mode === 'consult' ? t('subagents.page.consult') : t('subagents.page.work')}</ChipTag>
+  </span>;
 }
 
 function uniqueName(base: string, list: SubagentPersona[]): string {
