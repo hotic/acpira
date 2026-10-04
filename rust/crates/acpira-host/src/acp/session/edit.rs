@@ -229,6 +229,16 @@ pub async fn history_context(
   Ok(Some(HistoryContext { blocks: context, omitted: start }))
 }
 
+/// Bytes a rebuilt prompt spends on serialized history and text; image pixels are left out, since they are sent the same way
+/// in an ordinary prompt and a single screenshot would otherwise push every edit onto the native-continue path
+fn rebuilt_text_bytes(blocks: &[Value]) -> usize {
+  blocks
+    .iter()
+    .filter(|b| b.get("type").and_then(Value::as_str) != Some("image"))
+    .map(|b| serde_json::to_string(b).map(|s| s.len()).unwrap_or(usize::MAX))
+    .fold(0, usize::saturating_add)
+}
+
 fn context_length_hint(c: &Core) -> String {
   t(if AcpSession::can_compact_of(c) { "alert.contextLength.text" } else { "alert.contextLength.unsupported" })
 }
@@ -422,8 +432,7 @@ impl AcpSession {
           b.extend(prepared.blocks.iter().cloned());
           b
         });
-        continuing =
-          blocks.as_ref().is_none_or(|b| serde_json::to_string(b).map(|s| s.len()).unwrap_or(usize::MAX) > EDIT_CONTEXT_MAX_BYTES);
+        continuing = blocks.as_ref().is_none_or(|b| rebuilt_text_bytes(b) > EDIT_CONTEXT_MAX_BYTES);
         if !continuing {
           rebuilt = blocks;
         }
