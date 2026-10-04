@@ -1,4 +1,5 @@
 import type { AgentId } from './transcript';
+import { sanitizePersonas, type SubagentPersona } from './subagents';
 import { isLanguage, type Language, type Locale } from './i18n';
 
 // Hidden option families (acpira.hiddenOptions): agent → configOption id → source-qualified family keys (legacy family names remain readable; see models.ts) kept out of the composer menus.
@@ -60,11 +61,13 @@ export interface SettingsView {
   shareEditorSelection: boolean;
   // A queued prompt's send button steers it into the running turn on agents that support `_session/steering`
   steerQueued: boolean;
+  // Cross-harness subagents: kept in ~/.acpira/subagents.json (shared by every window and IDE), not a host setting
+  subagents: SubagentPersona[];
 }
 
 // Keys the webview may write back; the host maps them onto acpira.<key> at user scope
-export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued';
-export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued'];
+export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued' | 'subagents';
+export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued', 'subagents'];
 
 export const MIN_COMPACT_AT_TOKENS = 10_000;
 
@@ -87,6 +90,7 @@ export const DEFAULT_SETTINGS: SettingsView = {
   fontSmoothing: false,
   shareEditorSelection: true,
   steerQueued: false,
+  subagents: [],
 };
 
 // A hand-edited settings.json or a forged webview message can send anything; fall back per key so the page never sees an illegal value
@@ -125,6 +129,8 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
     case 'agentOrder':
     case 'disabledAgents':
       return idList(value) as SettingsView[K];
+    case 'subagents':
+      return sanitizePersonas(value) as SettingsView[K];
   }
 }
 

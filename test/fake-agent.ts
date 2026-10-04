@@ -421,6 +421,48 @@ const app = acp.agent({ name: 'fake-agent' })
           id: 'turn-q:error', revision: 1, category: 'limit', severity: 'error', title: "You've hit your usage limit.", actions: [] } } } } };
       throw new acp.RequestError(-32011, 'Your weekly usage quota has been exhausted.', { 'cognition.ai/errorKind': 'resource_exhausted', 'cognition.ai/retryable': false });
     }
+    // "relay:…" → a summoned child (Acpira's cross-harness subagent, acp/session/relay.rs): one read, then a reply naming
+    // the first line it was given, the round count of this native session (so rounds of one thread can be told apart) and
+    // the session's mode. "relay:perm" asks to write first; "relay:slow" takes a while (a call's deadline runs out before
+    // the reply); "relay:fail" errors instead of replying (after the slow wait when both are named); "relay:exit" exits after it
+    // "relay-call:<prompt>" → the parent side: an ask_agent call on Acpira's MCP server, as claude-agent-acp names it, left
+    // running (the test plays the hub's side afterwards); "relay-call-failed:<prompt>" → the same call ending without a
+    // round (the hub refused it), then a retry ak2 with the same arguments
+    if (text.startsWith('relay-call:')) {
+      const rawInput = { agent: 'fake-review', prompt: text.slice('relay-call:'.length) };
+      await send({ sessionUpdate: 'tool_call', toolCallId: 'ak1', title: 'mcp__acpira__ask_agent', kind: 'other', status: 'in_progress', rawInput });
+      return { stopReason: 'end_turn' };
+    }
+    if (text.startsWith('relay-call-failed:')) {
+      const rawInput = { agent: 'fake-review', prompt: text.slice('relay-call-failed:'.length) };
+      await send({ sessionUpdate: 'tool_call', toolCallId: 'ak1', title: 'mcp__acpira__ask_agent', kind: 'other', status: 'in_progress', rawInput });
+      await send({ sessionUpdate: 'tool_call_update', toolCallId: 'ak1', status: 'failed' });
+      await send({ sessionUpdate: 'tool_call', toolCallId: 'ak2', title: 'mcp__acpira__ask_agent', kind: 'other', status: 'in_progress', rawInput });
+      return { stopReason: 'end_turn' };
+    }
+    if (text.startsWith('relay:')) {
+      const first = text.split('\n')[0]!;
+      const round = (relayRounds.get(sid) ?? 0) + 1;
+      relayRounds.set(sid, round);
+      await send({ sessionUpdate: 'tool_call', toolCallId: `rr${round}`, title: 'Read file', kind: 'read', status: 'completed', locations: [{ path: '/tmp/a.ts' }] });
+      if (first.includes('perm')) {
+        await send({ sessionUpdate: 'tool_call', toolCallId: `rw${round}`, title: 'Edit a.ts', kind: 'edit', status: 'pending' });
+        const perm = await client.request(acp.methods.client.session.requestPermission, {
+          sessionId: sid,
+          toolCall: { toolCallId: `rw${round}`, title: 'Edit a.ts' },
+          options: [{ optionId: 'yes', name: 'Allow', kind: 'allow_once' }, { optionId: 'no', name: 'Reject', kind: 'reject_once' }],
+        });
+        const picked = perm.outcome.outcome === 'selected' ? perm.outcome.optionId : perm.outcome.outcome;
+        await send({ sessionUpdate: 'tool_call_update', toolCallId: `rw${round}`, status: picked === 'yes' ? 'completed' : 'failed' });
+      }
+      if (first.includes('slow')) await new Promise(r => setTimeout(r, 1500));
+      if (cancelled.has(sid)) return { stopReason: 'cancelled' };
+      if (first.includes('fail')) throw acp.RequestError.internalError(undefined, 'model overloaded');
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `reply to ${first} (round ${round}, mode ${modes.get(sid) ?? 'agent'})` } });
+      // "relay:exit" → the process goes away after its reply (the thread's next round has to reopen the session)
+      if (first.includes('exit')) setTimeout(() => process.exit(0), 50);
+      return { stopReason: 'end_turn' };
+    }
     // The peer forgot this session mid-conversation (the way a swept Devin session answers a prompt)
     if (text === 'prompt-session-gone') throw new acp.RequestError(-32016, 'Session not found', { 'cognition.ai/errorKind': 'session_not_found' });
     // Slash receipts: no prose, a state-only change, and a native rejection.
@@ -1284,6 +1326,7 @@ let authed = false;
 // The api key the last authenticate handed over (FAKE_EXHAUSTED_KEYS)
 let apiKey: string | undefined;
 const cancelled = new Set<string>();
+const relayRounds = new Map<string, number>();
 // Subagent scripts block on a child permission; a session/cancel for that child's id unblocks them
 const cancelWaiters = new Map<string, (() => void)[]>();
 // subagents-late-terminal arms a per-session queue of child states reported on later prompts

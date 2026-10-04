@@ -9,8 +9,8 @@ use serde_json::{Map, Value};
 
 use acpira_shared::num::Num;
 use acpira_shared::subagents::{
-  StateSource, SubagentControls, SubagentCore, SubagentPeer, SubagentRecord, SubagentState, SubagentSummary, SubagentUsage,
-  SubagentVisibility,
+  StateSource, SubagentControls, SubagentCore, SubagentHarness, SubagentPeer, SubagentRecord, SubagentState, SubagentSummary,
+  SubagentUsage, SubagentVisibility,
 };
 use acpira_shared::transcript::{
   AgentBlock, AgentTurn, AsyncTaskState, PermissionBlock, QuestionBlock, ToolCallBlock, ToolContent, ToolStatus, Turn, TurnStop,
@@ -85,6 +85,8 @@ struct Node {
   dialect: Option<Dialect>,
   /// The async task id of the workflow run a workflow agent belongs to (connection-local, never persisted)
   workflow: Option<String>,
+  /// A child Acpira runs itself in another CLI (`acp/session/relay.rs`); its process is the session's, not the parent agent's
+  harness: Option<SubagentHarness>,
   state: NormalizeState,
   rev: i64,
   cached: Option<(i64, SubagentSummary)>,
@@ -143,6 +145,17 @@ pub struct RecordRef<'a> {
   pub rev: i64,
 }
 
+/// A summoned round's node (`relay_open`)
+pub struct RelayOpen {
+  pub parent: Option<String>,
+  pub turn_index: usize,
+  pub harness: SubagentHarness,
+  pub role: String,
+  pub title: String,
+  pub task: String,
+  pub model: Option<String>,
+}
+
 pub enum Route {
   Consumed,
   Root,
@@ -194,6 +207,7 @@ impl SubagentTree {
         meta: None,
         dialect: None,
         workflow: None,
+        harness: c.harness,
         state,
         rev: r.rev.unwrap_or(1),
         cached: None,
@@ -354,6 +368,7 @@ impl SubagentTree {
       meta: None,
       dialect,
       workflow: None,
+      harness: None,
       state,
       rev: 0,
       cached: None,
@@ -989,8 +1004,10 @@ impl SubagentTree {
       if n.status != SubagentState::Running {
         continue;
       }
-      // A workflow runs in the background past the prompt that launched it; its agents end with the run (`workflow_ended`)
-      if prompt_returned && n.dialect == Some(Dialect::Workflow) {
+      // A workflow runs in the background past the prompt that launched it; its agents end with the run (`workflow_ended`).
+      // A summoned child is Acpira's own process: it keeps working after a tool call that returned early, and the
+      // session ends it explicitly (`relay.rs`)
+      if prompt_returned && (n.dialect == Some(Dialect::Workflow) || n.harness.is_some()) {
         continue;
       }
       if prompt_returned
@@ -1035,6 +1052,155 @@ impl SubagentTree {
     self.reindex();
   }
 
+  /// A child Acpira is about to run in another CLI: a `session` node without a peer yet (`relay_bind` adds it once
+  /// session/new answers). `parent` is another node when a summoned child summons in turn
+  /// An empty `harness.thread` starts a new thread named after this node
+  pub fn relay_open(&mut self, o: RelayOpen) -> String {
+    let RelayOpen { parent, turn_index, mut harness, role, title, task, model } = o;
+    let mut node = self.new_node(SubagentVisibility::Session, SubagentPeer::default(), turn_index, true, None);
+    if harness.thread.is_empty() {
+      harness.thread = node.id.clone();
+    }
+    node.parent_id = parent.filter(|p| self.idx(p).is_some());
+    node.title = Some(title);
+    node.task = Some(task);
+    node.role = Some(role);
+    node.model = model;
+    node.harness = Some(harness);
+    let id = node.id.clone();
+    self.nodes.push(node);
+    self.bump(&id);
+    id
+  }
+
+  /// The child's native session id is known: its updates and requests route to the node from now on, and whatever
+  /// arrived under that id before (session/new still in flight) is replayed first
+  /// `route` is the key the child's handlers stamp on its traffic (`relay:<thread>`), `native` the CLI's own session id
+  pub fn relay_bind(&mut self, id: &str, route: &str, native: &str, ctx: &mut RouteCtx) {
+    let Some(i) = self.idx(id) else { return };
+    self.nodes[i].peer.session_id = Some(route.to_owned());
+    if let Some(h) = self.nodes[i].harness.as_mut() {
+      h.session_id = Some(native.to_owned());
+    }
+    self.by_session.insert(route.to_owned(), id.to_owned());
+    self.replay_orphans(route, id, ctx);
+    self.bump(id);
+  }
+
+  /// The round ended (`result` = the child's reply, or the error shown in its place)
+  pub fn relay_end(&mut self, id: &str, state: SubagentState, result: Option<String>) {
+    let Some(i) = self.idx(id) else { return };
+    if result.is_some() {
+      self.nodes[i].result = result;
+    }
+    if self.nodes[i].status == SubagentState::Running {
+      self.transition(id, state);
+    }
+    self.bump(id);
+  }
+
+  /// The root's `ask_agent` call that summoned this node: the row hides behind the node, as a delegation row does
+  pub fn relay_link_call(&mut self, id: &str, tool_call_id: &str, ctx: &mut RouteCtx) -> bool {
+    let Some(i) = self.idx(id) else { return false };
+    if self.nodes[i].peer.tool_call_id.is_none() {
+      self.nodes[i].peer.tool_call_id = Some(tool_call_id.to_owned());
+      self.by_tool.insert(tool_call_id.to_owned(), id.to_owned());
+    }
+    let Some(block) = ctx.root_tool(tool_call_id) else { return false };
+    block.subagent_id = Some(id.to_owned());
+    self.bump(id);
+    true
+  }
+
+  /// The latest round of a thread: (node id, harness, persona name, native session id, state)
+  pub fn relay_latest(&self, thread: &str) -> Option<(String, SubagentHarness, Option<String>, Option<String>, SubagentState)> {
+    let n = self.nodes.iter().rev().find(|n| n.harness.as_ref().is_some_and(|h| h.thread == thread || n.id == thread))?;
+    let h = n.harness.clone()?;
+    let native = h.session_id.clone();
+    Some((n.id.clone(), h, n.role.clone(), native, n.status))
+  }
+
+  /// The thread a node belongs to, when it is a summoned one
+  pub fn relay_thread_of(&self, id: &str) -> Option<String> {
+    self.nodes.iter().find(|n| n.id == id).and_then(|n| n.harness.as_ref()).map(|h| h.thread.clone())
+  }
+
+  /// The oldest summoned node of `turn_index` not yet tied to the root call that summoned it, with the call's task and
+  /// a harness / persona name the call fits (`fits`: two personas asked the same thing must not swap rows)
+  pub fn relay_unlinked(&self, task: &str, turn_index: usize, fits: impl Fn(&SubagentHarness, Option<&str>) -> bool) -> Option<String> {
+    let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let want = norm(task);
+    self
+      .nodes
+      .iter()
+      .find(|n| {
+        n.turn_index == turn_index as u64
+          && n.peer.tool_call_id.is_none()
+          && n.harness.as_ref().is_some_and(|h| fits(h, n.role.as_deref()))
+          && n.task.as_deref().map(norm).as_deref() == Some(want.as_str())
+      })
+      .map(|n| n.id.clone())
+  }
+
+  /// Whether a root tool row already belongs to a node
+  pub fn relay_linked(&self, tool_call_id: &str) -> bool {
+    self.by_tool.contains_key(tool_call_id)
+  }
+
+  /// The model the child really runs (what its config options say after the persona's choice was applied)
+  pub fn relay_set_model(&mut self, id: &str, model: Option<String>) {
+    let Some(i) = self.idx(id) else { return };
+    if self.nodes[i].model != model {
+      self.nodes[i].model = model;
+      self.bump(id);
+    }
+  }
+
+  /// Mark a running summoned node cancelled-on-request, bound to its native session or not yet (a round still
+  /// connecting checks `relay_cancel_requested` before it sends the prompt)
+  pub fn relay_cancel(&mut self, id: &str) -> bool {
+    let Some(i) = self.idx(id) else { return false };
+    let n = &mut self.nodes[i];
+    if n.harness.is_none() || n.status != SubagentState::Running {
+      return false;
+    }
+    n.cancel_requested = true;
+    self.bump(id);
+    true
+  }
+
+  pub fn relay_cancel_requested(&self, id: &str) -> bool {
+    self.nodes.iter().any(|n| n.id == id && n.cancel_requested)
+  }
+
+  /// How a summoned round ended: its state, the last text the child wrote, and the error shown in its place
+  pub fn relay_outcome(&self, id: &str) -> Option<(SubagentState, String, Option<String>)> {
+    let n = self.nodes.iter().find(|n| n.id == id)?;
+    Some((n.status, self.relay_reply(id).unwrap_or_default(), n.result.clone()))
+  }
+
+  /// The live activity line of a node, as its row shows it
+  pub fn activity(&self, id: &str) -> Option<String> {
+    let n = self.nodes.iter().find(|n| n.id == id)?;
+    let turns = &n.state.turns;
+    live_activity(turns).or_else(|| latest_step(turns)).or_else(|| activity_of(turns)).map(|a| a.label)
+  }
+
+  /// The last text the child wrote in its current round
+  pub fn relay_reply(&self, id: &str) -> Option<String> {
+    let n = self.nodes.iter().find(|n| n.id == id)?;
+    let t = n.state.turns.last().and_then(Turn::as_agent)?;
+    t.blocks.iter().rev().find_map(|b| match b {
+      AgentBlock::Text(tx) if !tx.markdown.trim().is_empty() => Some(tx.markdown.clone()),
+      _ => None,
+    })
+  }
+
+  /// Running summoned nodes (the session ends their processes when it settles or closes)
+  pub fn relay_running(&self) -> Vec<String> {
+    self.nodes.iter().filter(|n| n.harness.is_some() && n.status == SubagentState::Running).map(|n| n.id.clone()).collect()
+  }
+
   fn core_of(n: &Node) -> SubagentCore {
     SubagentCore {
       id: n.id.clone(),
@@ -1057,6 +1223,7 @@ impl SubagentTree {
       activity: None,
       tool_count: n.tool_count,
       result: n.result.clone(),
+      harness: n.harness.clone(),
     }
   }
 

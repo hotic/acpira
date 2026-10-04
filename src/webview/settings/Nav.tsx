@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
-import { ArrowLeft, Layers, Palette, Settings2 } from 'lucide-react';
+import { ArrowLeft, Layers, Network, Palette, Settings2 } from 'lucide-react';
 import type { AgentId, AgentInfo } from '@shared/transcript';
 import { moveAgent } from '@shared/agentOrder';
 import { cn } from '../ui/cn';
@@ -7,10 +7,10 @@ import { Switch } from '../ui/Switch';
 import { AgentMark } from '../chat/AgentMark';
 import { t } from '../i18n';
 
-export type SettingsPage = { kind: 'chatgpt' } | { kind: 'general' } | { kind: 'appearance' } | { kind: 'shared' } | { kind: 'agent'; id: AgentInfo['id'] };
+export type SettingsPage = { kind: 'chatgpt' } | { kind: 'general' } | { kind: 'appearance' } | { kind: 'shared' } | { kind: 'subagents' } | { kind: 'agent'; id: AgentInfo['id'] };
 
 // Fixed pages first, then one page per agent; agent ids never collide with the fixed names
-const FIXED = ['general', 'appearance', 'shared', 'chatgpt'] as const;
+const FIXED = ['general', 'appearance', 'shared', 'subagents', 'chatgpt'] as const;
 type FixedId = (typeof FIXED)[number];
 type PageId = FixedId | AgentInfo['id'];
 const isFixed = (id: PageId): id is FixedId => (FIXED as readonly string[]).includes(id);
@@ -64,6 +64,7 @@ export function PageRail({ agents, page, onPage, onBack, onReorder, onDisabled }
         {item('general', t('settings.nav.general'), <Settings2 strokeWidth={1.5} />)}
         {item('appearance', t('settings.nav.appearance'), <Palette strokeWidth={1.5} />)}
         {item('shared', t('settings.nav.shared'), <Layers strokeWidth={1.5} />)}
+        {item('subagents', t('settings.nav.subagents'), <Network strokeWidth={1.5} />)}
         <AgentRows agents={agents} cur={cur} onOpen={id => onPage(toPage(id))} onReorder={onReorder} onDisabled={onDisabled} />
         {agents.some(a => a.id === 'chatgpt' && a.external) && item('chatgpt', 'ChatGPT', <AgentMark id="chatgpt" name="ChatGPT" />)}
       </nav>

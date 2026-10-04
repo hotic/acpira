@@ -100,8 +100,8 @@ export function Section({ title, desc, count, action, cards, children }: Section
 
 // A small text action for a Section's title line: quiet Chip, no caret. Its box (and hover fill) ends on the cards' right edge
 // like the page header's action, rather than overhanging it
-export function SectionAction({ icon, onClick, children, title }: { icon?: ReactNode; onClick: () => void; children: ReactNode; title?: string }) {
-  return <Chip caret={false} icon={icon} onClick={onClick} title={title} className="shrink-0">{children}</Chip>;
+export function SectionAction({ icon, onClick, children, title, disabled }: { icon?: ReactNode; onClick: () => void; children: ReactNode; title?: string; disabled?: boolean }) {
+  return <Chip caret={false} icon={icon} onClick={onClick} title={title} disabled={disabled} className="shrink-0">{children}</Chip>;
 }
 
 export function Group({ className, children, embedded = false }: { className?: string; children: ReactNode; embedded?: boolean }) {

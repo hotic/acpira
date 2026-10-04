@@ -20,6 +20,7 @@ mod normalize;
 mod plans;
 mod questions;
 mod registry;
+mod relay;
 mod session_manager;
 mod store;
 mod subagents;

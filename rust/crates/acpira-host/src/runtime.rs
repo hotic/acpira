@@ -99,7 +99,22 @@ impl HostRuntime {
       log.clone(),
       Some(Arc::new(move |_id: &str, error: &str| save_toast("error", &tp("host.saveFailed", &[("error", error)])))),
     );
-    let host_mcp = bridge_exe.as_deref().map(crate::host_mcp::HostMcp::new);
+    // Cross-harness subagents: the persona file and the loopback hub `ask_agent` calls come back through
+    let roster = Arc::new(crate::relay::roster::Roster::new(&root));
+    let hub = match crate::relay::hub::RelayHub::start(roster.clone(), log.clone()).await {
+      Ok(h) => Some(h),
+      Err(e) => {
+        log(&format!("relay: listener failed, ask_agent unavailable: {e}"));
+        None
+      }
+    };
+    let host_mcp = bridge_exe.as_deref().map(|exe| {
+      let m = crate::host_mcp::HostMcp::new(exe);
+      match &hub {
+        Some(h) => m.with_hub(h.clone()),
+        None => m,
+      }
+    });
     let chatgpt = ChatGptBridgeStore::new(root.join("bridges").join("chatgpt"), log.clone(), bridge_exe);
 
     let local_env_slot = mgr_slot.clone();
@@ -169,6 +184,7 @@ impl HostRuntime {
       cwd: Arc::new(move || pcwd.cwd()),
       shared: crate::shared_config::SharedConfig::new(root.clone(), log.clone()),
       agent_config_path: agent_config.path().to_owned(),
+      roster,
     }));
 
     let runtime = Arc::new(HostRuntime {

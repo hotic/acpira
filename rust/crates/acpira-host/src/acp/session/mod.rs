@@ -21,6 +21,7 @@ pub mod lifecycle;
 pub mod plan_build;
 pub mod prompt;
 pub mod queue;
+pub mod relay;
 pub mod restore_turns;
 pub mod tasks;
 pub mod turn_usage;
@@ -173,6 +174,8 @@ pub(crate) struct Core {
   pub rev: i64,
   /// An automatic account switch is between the exhausted turn and its continue: prompts queue, manual switches wait
   pub switching: bool,
+  /// Summoned children's processes, rounds in flight and root calls waiting for their node (`relay.rs`)
+  pub relays: crate::acp::session::relay::Relays,
 }
 
 pub struct AcpSession {
@@ -264,6 +267,7 @@ impl AcpSession {
           },
           rev: 0,
           switching: false,
+          relays: Default::default(),
         }),
         deps,
         me: me.clone(),

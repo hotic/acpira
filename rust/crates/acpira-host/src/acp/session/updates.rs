@@ -185,6 +185,7 @@ impl AcpSession {
         let Core { tree, state, .. } = &mut *c;
         tree.annotate_root(&u, &mut RouteCtx { turn_index, root_turns: &mut state.turns });
       }
+      self.relay_annotate(&mut c, &u, turn_index);
       self.drain_terminal(&mut c);
       c.questions.raw.remember(&u);
       let plan = capture_plan(&mut c.state.turns, &u);

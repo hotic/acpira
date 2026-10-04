@@ -14,7 +14,7 @@ pub const UI_FONT_SIZE: (i64, i64, i64) = (10, 20, 13);
 pub const CODE_FONT_SIZE: (i64, i64, i64) = (9, 20, 12);
 pub const MIN_COMPACT_AT_TOKENS: i64 = 10_000;
 
-pub const SETTING_KEYS: [&str; 17] = [
+pub const SETTING_KEYS: [&str; 18] = [
   "language",
   "defaultAgent",
   "agentOrder",
@@ -32,6 +32,7 @@ pub const SETTING_KEYS: [&str; 17] = [
   "fontSmoothing",
   "shareEditorSelection",
   "steerQueued",
+  "subagents",
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -57,6 +58,9 @@ pub struct SettingsView {
   pub share_editor_selection: bool,
   /// A queued prompt's send button steers it into the running turn on agents that support `_session/steering`
   pub steer_queued: bool,
+  /// Cross-harness subagents (`~/.acpira/subagents.json`, not a host setting: every window and IDE shares the file)
+  #[serde(default)]
+  pub subagents: Vec<crate::subagents::SubagentPersona>,
 }
 
 pub const ACCOUNT_SWITCH_STRATEGIES: [&str; 4] = ["off", "earliestReset", "mostRemaining", "listOrder"];
@@ -129,6 +133,7 @@ pub fn sanitize_setting(key: &str, value: &Value) -> Value {
     }
     "accountSwitch" => Value::from(one_of(value, &ACCOUNT_SWITCH_STRATEGIES, DEFAULT_ACCOUNT_SWITCH)),
     "agentOrder" | "disabledAgents" => Value::from(id_list(value)),
+    "subagents" => serde_json::to_value(crate::subagents::sanitize_personas(value)).unwrap_or(Value::Array(vec![])),
     _ => Value::Null,
   }
 }

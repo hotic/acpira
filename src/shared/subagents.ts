@@ -1,6 +1,6 @@
 // First-class subagent nodes shared by host and webview: one summary per delegated child, whatever the wire dialect
 
-import type { PermissionBlock, QuestionBlock, Turn } from './transcript';
+import type { AgentId, PermissionBlock, QuestionBlock, Turn } from './transcript';
 
 export type SubagentState = 'running' | 'completed' | 'failed' | 'cancelled' | 'disconnected';
 
@@ -33,6 +33,69 @@ export interface SubagentSummary {
   result?: string;            // final result text the parent received (receipt content / Devin summary); for 'session' visibility the child's own last text
   permissions?: PermissionBlock[];  // this child's pending permission cards, mirrored so the root view can show them with provenance
   question?: QuestionBlock;         // this child's open question card, same reason
+  harness?: SubagentHarness;  // set when Acpira itself runs the child in another CLI (a summoned persona)
+}
+
+// A summoned child: the CLI it runs in, the persona it was summoned as (its name is `role`), and its thread — every
+// round of one conversation with the same native session is a node of its own
+export interface SubagentHarness {
+  agent: AgentId;
+  persona?: string;
+  mode: RelayMode;
+  thread: string;
+  round: number;
+  sessionId?: string;  // the child CLI's own session id (peer.sessionId is Acpira's routing key)
+}
+
+export type RelayMode = 'consult' | 'work';
+
+// A cross-harness subagent defined once in the settings (~/.acpira/subagents.json): any session can summon it through
+// Acpira's MCP tool `ask_agent`, or the user names it with @name. Mirror of acpira_shared::subagents::SubagentPersona
+export interface SubagentPersona {
+  id: string;           // stable slug: the tool's `agent` value
+  name: string;
+  agent: AgentId;       // the CLI it runs in
+  model?: string;       // a value of that agent's model select; absent = the CLI's default
+  effort?: string;      // a value of its reasoning-effort select; absent = the default
+  mode: RelayMode;      // consult = the CLI's own read-only mode where it has one
+  when: string;         // tells the model when to summon it
+  brief?: string;       // appended to every task
+  enabled: boolean;
+}
+
+export const PERSONA_MAX = 32;
+const NAME_MAX = 48;
+const TEXT_MAX = 2000;
+
+// `Codex Review` → `codex-review`; empty when nothing ascii is left
+export function personaSlug(name: string): string {
+  return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+// Mirror of sanitize_personas: unnamed / agentless entries drop, text is clipped, ids are unique slugs
+export function sanitizePersonas(value: unknown): SubagentPersona[] {
+  const out: SubagentPersona[] = [];
+  const str = (v: unknown, max: number) => (typeof v === 'string' ? [...v.trim()].slice(0, max).join('') : '');
+  for (const item of Array.isArray(value) ? value.slice(0, PERSONA_MAX) : []) {
+    if (!item || typeof item !== 'object') continue;
+    const o = item as Record<string, unknown>;
+    const name = str(o.name, NAME_MAX);
+    const agent = str(o.agent, 200);
+    if (!name || !agent) continue;
+    const base = personaSlug(str(o.id, 200)) || personaSlug(name) || 'agent';
+    let id = base;
+    for (let n = 2; out.some(p => p.id === id); n++) id = `${base}-${n}`;
+    const opt = (v: unknown, max: number) => str(v, max) || undefined;
+    out.push({
+      id, name, agent,
+      model: opt(o.model, 200), effort: opt(o.effort, 200),
+      mode: o.mode === 'work' ? 'work' : 'consult',
+      when: str(o.when, TEXT_MAX),
+      brief: opt(o.brief, TEXT_MAX),
+      enabled: o.enabled !== false,
+    });
+  }
+  return out;
 }
 
 export interface SubagentRecord extends Omit<SubagentSummary, 'permissions' | 'question'> {

@@ -4,6 +4,9 @@
 //! (`normalize.rs` `attach_shown_images`). The server itself only validates the paths and answers a receipt, so no
 //! pixels travel back through the model's context.
 //!
+//! With the relay env on its entry (`relay/`), it also offers `ask_agent`: summon one of the user's cross-harness
+//! personas. That call is forwarded to the sidecar over its loopback hub and answers with the child's reply.
+//!
 //! Wire: newline-delimited JSON-RPC 2.0 over stdio (MCP stdio transport). stdout carries protocol messages only.
 
 use std::collections::HashSet;
@@ -39,16 +42,33 @@ Prefer this tool. To place an image at a specific point of a reply instead, embe
 pub struct HostMcp {
   entry: Value,
   refused: Arc<parking_lot::Mutex<HashSet<String>>>,
+  /// The relay listener (`relay/hub.rs`): with it, entries carry the env that leads `ask_agent` back to the session
+  pub hub: Option<Arc<crate::relay::hub::RelayHub>>,
 }
 
 impl HostMcp {
   pub fn new(exe: &str) -> Self {
-    HostMcp { entry: server_entry(exe), refused: Default::default() }
+    HostMcp { entry: server_entry(exe), refused: Default::default(), hub: None }
+  }
+
+  pub fn with_hub(mut self, hub: Arc<crate::relay::hub::RelayHub>) -> Self {
+    self.hub = Some(hub);
+    self
   }
 
   /// The `mcpServers` entry for this agent's requests, unless it refused the server before
   pub fn entry_for(&self, agent: &str) -> Option<Value> {
     (!self.refused.lock().contains(agent)).then(|| self.entry.clone())
+  }
+
+  /// The entry for one session's requests: with a hub, its env carries a grant for that session (and the summoned
+  /// thread whose CLI this is, one level deeper), so `ask_agent` calls reach that session and no other
+  pub fn entry_for_session(&self, agent: &str, session: &std::sync::Arc<crate::acp::session::AcpSession>, thread: Option<&str>, depth: u32) -> Option<Value> {
+    let mut entry = self.entry_for(agent)?;
+    if let Some(hub) = &self.hub {
+      entry["env"] = hub.env(session, thread, depth);
+    }
+    Some(entry)
   }
 
   pub fn refuse(&self, agent: &str) {
@@ -78,21 +98,148 @@ fn is_host_entry(s: &Value) -> bool {
   s.get("name").and_then(Value::as_str) == Some(SERVER_NAME) && s.get("args").and_then(Value::as_array).is_some_and(|a| a.first().and_then(Value::as_str) == Some("mcp"))
 }
 
-/// Serve MCP on stdin / stdout until stdin closes
+/// Serve MCP on stdin / stdout until stdin closes. `ask_agent` calls run on threads of their own (an agent may summon
+/// several children at once) and share stdout through a lock; everything else answers inline
 pub fn run(version: &str) -> i32 {
-  let stdin = std::io::stdin();
-  let mut out = std::io::stdout().lock();
-  for line in stdin.lock().lines() {
+  let relay = Relay::from_env();
+  let out = Arc::new(parking_lot::Mutex::new(std::io::stdout()));
+  let write = |out: &parking_lot::Mutex<std::io::Stdout>, v: &Value| {
+    let mut o = out.lock();
+    writeln!(o, "{v}").and_then(|_| o.flush()).is_ok()
+  };
+  for line in std::io::stdin().lock().lines() {
     let Ok(line) = line else { break };
     if line.trim().is_empty() {
       continue;
     }
+    if let Some(relay) = &relay
+      && let Ok(msg) = serde_json::from_str::<Value>(&line)
+    {
+      let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
+      if method == "initialize" {
+        relay.note_client(msg.get("params"));
+      }
+      if method == "tools/list"
+        && let Some(id) = msg.get("id").cloned()
+      {
+        let mut tools = vec![tool_def()];
+        tools.extend(relay.tool_def());
+        if !write(&out, &json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": tools } })) {
+          break;
+        }
+        continue;
+      }
+      if method == "tools/call"
+        && msg.get("params").and_then(|p| p.get("name")).and_then(Value::as_str) == Some(ASK_TOOL)
+        && let Some(id) = msg.get("id").cloned()
+      {
+        let (relay, out, params) = (relay.clone(), out.clone(), msg.get("params").cloned().unwrap_or(Value::Null));
+        std::thread::spawn(move || {
+          let result = relay.ask(&params, &mut |progress: Value| {
+            write(&out, &progress);
+          });
+          write(&out, &json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+        });
+        continue;
+      }
+    }
     let Some(reply) = handle_line(&line, version) else { continue };
-    if writeln!(out, "{reply}").and_then(|_| out.flush()).is_err() {
+    if !write(&out, &reply) {
       break;
     }
   }
   0
+}
+
+pub const ASK_TOOL: &str = "ask_agent";
+
+/// The way back to the sidecar (`relay/hub.rs`), from the env the session put on this server's entry
+#[derive(Clone)]
+struct Relay {
+  addr: String,
+  token: String,
+  /// How long one call may wait, picked from the MCP client at initialize
+  wait_secs: Arc<std::sync::atomic::AtomicU64>,
+}
+
+/// Claude Code waits for an MCP tool call far longer than a child round takes; Codex gives up after 60 s by default
+/// (`tool_timeout_sec`), and the others are not known, so they get an answer within the shorter bound
+const SHORT_WAIT: u64 = 50;
+const LONG_WAIT: u64 = 25 * 60;
+
+impl Relay {
+  fn from_env() -> Option<Relay> {
+    use crate::relay::{ENV_ADDR, ENV_TOKEN};
+    let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+    Some(Relay {
+      addr: var(ENV_ADDR)?,
+      token: var(ENV_TOKEN)?,
+      wait_secs: Arc::new(SHORT_WAIT.into()),
+    })
+  }
+
+  fn note_client(&self, params: Option<&Value>) {
+    let name = params.and_then(|p| p.get("clientInfo")).and_then(|c| c.get("name")).and_then(Value::as_str).unwrap_or("");
+    let secs = if name.to_lowercase().contains("claude") { LONG_WAIT } else { SHORT_WAIT };
+    self.wait_secs.store(secs, std::sync::atomic::Ordering::Relaxed);
+  }
+
+  fn request(&self, op: crate::relay::wire::HubOp) -> crate::relay::wire::HubRequest {
+    crate::relay::wire::HubRequest { token: self.token.clone(), op }
+  }
+
+  /// The tool, listing the personas the hub offers; none (or no hub) = no tool
+  fn tool_def(&self) -> Option<Value> {
+    use crate::relay::wire::{HubOp, HubReply};
+    let mut personas = vec![];
+    let _ = crate::relay::hub::call(&self.addr, &self.request(HubOp::List), |r| {
+      if let HubReply::Personas(p) = r {
+        personas = p;
+      }
+      false
+    });
+    (!personas.is_empty()).then(|| ask_tool_def(&personas))
+  }
+
+  fn ask(&self, params: &Value, progress: &mut dyn FnMut(Value)) -> Value {
+    use crate::relay::wire::{AskArgs, HubOp, HubReply};
+    let args = params.get("arguments").cloned().unwrap_or(Value::Null);
+    let text = |k: &str| args.get(k).and_then(Value::as_str).map(str::to_owned);
+    let ask = AskArgs {
+      agent: text("agent").unwrap_or_default(),
+      prompt: text("prompt").unwrap_or_default(),
+      title: text("title"),
+      mode: text("mode"),
+      thread: text("thread"),
+      wait_secs: Some(self.wait_secs.load(std::sync::atomic::Ordering::Relaxed)),
+    };
+    let token = params.get("_meta").and_then(|m| m.get("progressToken")).cloned();
+    let mut n = 0u64;
+    let mut end: Option<Value> = None;
+    let r = crate::relay::hub::call(&self.addr, &self.request(HubOp::Ask(ask)), |reply| match reply {
+      HubReply::Progress(message) => {
+        if let Some(t) = &token {
+          n += 1;
+          progress(json!({ "jsonrpc": "2.0", "method": "notifications/progress", "params": { "progressToken": t, "progress": n, "message": message } }));
+        }
+        true
+      }
+      HubReply::Done(text) => {
+        end = Some(json!({ "content": [{ "type": "text", "text": text }], "isError": false }));
+        false
+      }
+      HubReply::Error(text) => {
+        end = Some(tool_error(text));
+        false
+      }
+      HubReply::Personas(_) => true,
+    });
+    match (end, r) {
+      (Some(v), _) => v,
+      (None, Err(e)) => tool_error(format!("Acpira could not be reached: {e}")),
+      (None, Ok(())) => tool_error("Acpira closed the call without an answer.".into()),
+    }
+  }
 }
 
 /// One incoming message → the reply to write, if any (notifications and responses get none)
@@ -124,6 +271,46 @@ pub fn handle_line(line: &str, version: &str) -> Option<Value> {
     _ => return Some(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": format!("method not found: {method}") } })),
   };
   Some(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
+}
+
+/// `ask_agent`: the personas are the enum of `agent`, and their "when" lines are the menu the model picks from
+fn ask_tool_def(personas: &[acpira_shared::subagents::SubagentPersona]) -> Value {
+  use acpira_shared::subagents::RelayMode;
+  let lines: Vec<String> = personas
+    .iter()
+    .map(|p| {
+      let model = p.model.as_deref().map(|m| format!(" · {m}")).unwrap_or_default();
+      let mode = if p.mode == RelayMode::Consult { " · read-only" } else { "" };
+      let when = if p.when.trim().is_empty() { String::new() } else { format!(": {}", p.when.trim()) };
+      format!("- {} (@{}){when} [{}{model}{mode}]", p.id, p.name, p.agent)
+    })
+    .collect();
+  let description = format!(
+    "Summon another coding agent that runs in its own CLI on this same repository, and answer with its reply. \
+Use it when one of the agents below fits the task better (a second opinion, a review, fast mechanical edits), and always when \
+the user names one with @name. It cannot see this conversation but reads files and runs commands itself: write a short, \
+self-contained prompt that points at paths instead of pasting code. To follow up with the same agent, pass the `thread` its \
+previous answer named. If the answer says it is still working, call again with that thread and an empty prompt to wait.\n\nAgents:\n{}",
+    lines.join("\n")
+  );
+  let ids: Vec<&str> = personas.iter().map(|p| p.id.as_str()).collect();
+  json!({
+    "name": ASK_TOOL,
+    "title": "Ask another agent",
+    "description": description,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "agent": { "type": "string", "enum": ids, "description": "Which agent to summon. Not needed with `thread`." },
+        "prompt": { "type": "string", "description": "The task or question. Empty only when waiting on a thread." },
+        "title": { "type": "string", "description": "A few words naming the task, shown to the user." },
+        "mode": { "type": "string", "enum": ["consult", "work"], "description": "consult = read-only opinion; work = may edit files. Defaults to the agent's own setting." },
+        "thread": { "type": "string", "description": "Continue the conversation an earlier answer named." },
+      },
+      "required": [],
+    },
+    "annotations": { "readOnlyHint": false, "openWorldHint": false },
+  })
 }
 
 fn tool_def() -> Value {

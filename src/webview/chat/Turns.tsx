@@ -260,13 +260,26 @@ function PlacedSubagents({ nodes, all, onInspect, onPermission }: { nodes: Subag
   </div>;
 }
 
+// A summoned child's approval sits right under its row, its edge at the row's label: the row already names who asks,
+// so the card's title block and provenance line would be mostly empty space. Choices, deny-by-default and the
+// command text are the full card's
+function SummonedApproval({ block, onChoose }: { block: PermissionBlock; onChoose: (optionId: string) => void }) {
+  return (
+    <div className="ml-[calc(var(--spacing-lead)+var(--spacing-gap))] min-w-0">
+      <Permission compact block={block} onChoose={onChoose} />
+    </div>
+  );
+}
+
 // A child's pending approval shows in the turn that delegated it, labeled with the chain it came from
 function ChildPermissions({ nodes, all, onPermission }: { nodes: SubagentSummary[]; all: SubagentSummary[]; onPermission: OnPermission }) {
   const cards = nodes.flatMap(n => (n.permissions ?? []).map(b => ({ n, b })));
   if (!cards.length) return null;
   return (
     <>
-      {cards.map(({ n, b }) => (
+      {cards.map(({ n, b }) => n.harness && !b.planId
+        ? <SummonedApproval key={b.id} block={b} onChoose={id => onPermission(b.id, id)} />
+        : (
         <Fragment key={b.id}>
           <Row dense className="text-3 text-fg-3">
             <span>{t('subagents.provenance', { path: breadcrumb(n.id, all).map(x => subagentTitle(x, t)).join(' › ') })}</span>

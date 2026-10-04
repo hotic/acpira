@@ -16,7 +16,8 @@ import { WorkingBeam } from '../effects/WorkingBeam';
 import { SendButton } from '../effects/SendButton';
 import { DraftChips } from './Attachments';
 import { collectDrafts, hasPayload, pathlessWorkbenchDrag } from './drafts';
-import { MentionList, mentionAt, useMentionHits } from './Mention';
+import { MentionList, mentionAt, personaHits, personaOfHit, useMentionHits, type MentionPersona } from './Mention';
+import { SummonMenu } from './SummonMenu';
 import { SlashList, commandAt, commandHint, commandMarks, completeCommand, useSlashHits } from './Slash';
 import { modeIcon } from './modeIcons';
 import { ModelControl, OptionControl, ReasoningControl } from './ModelPicker';
@@ -65,6 +66,8 @@ export interface ComposerProps {
   // and, with `shareSelection`, offers the editor's live selection as a toolbar chip that goes out with the next prompt
   main?: boolean;
   shareSelection?: boolean;
+  // Cross-harness subagents the user defined: they lead the @ list and the toolbar's summon menu
+  personas?: MentionPersona[];
 }
 
 // Composer has three layers: attachment chips (when any), the input area, and a toolbar row below.
@@ -186,9 +189,27 @@ export function Composer(p: ComposerProps) {
   const [dismissed, setDismissed] = useState<number>();
   const span = collapsed ? mentionAt(text, caret) : undefined;
   const mentionOpen = !!span && span.start !== dismissed && !p.disabled;
-  const { hits, ready, active, setActive, move } = useMentionHits(mentionOpen ? span.query : undefined, p.onSearchFiles);
+  const personas = p.personas;
+  const search = useCallback(
+    async (q: string) => [...(personas ? personaHits(personas, q) : []), ...(await p.onSearchFiles(q))],
+    [personas, p.onSearchFiles],
+  );
+  const { hits, ready, active, setActive, move } = useMentionHits(mentionOpen ? span.query : undefined, search);
+  // `@name ` at `at` (replacing `cut` characters there): a summon is text the agent reads, not an attachment
+  const summon = (name: string, at: number, cut = 0) => {
+    const before = text.slice(0, at);
+    const lead = before && !/\s$/.test(before) ? ' ' : '';
+    const token = `${lead}@${name} `;
+    const next = before + token + text.slice(at + cut);
+    setText(next);
+    const end = at + token.length;
+    setCaret(end);
+    requestAnimationFrame(() => { textarea.current?.focus(); textarea.current?.setSelectionRange(end, end); });
+  };
   const pick = (hit: FileHit) => {
     if (!span) return;
+    const persona = personaOfHit(hit, personas);
+    if (persona) { summon(persona.name, span.start, caret - span.start); return; }
     const next = text.slice(0, span.start) + text.slice(caret);
     setText(next);
     setCaret(span.start);
@@ -287,7 +308,7 @@ export function Composer(p: ComposerProps) {
       {/* The hint sits under the text like a second, faint line: the agent's own wording for what to type after the command */}
       {hint && <div className="truncate px-pad pb-1 font-mono text-mono text-fg-3">{hint}</div>}
       {slashOpen && <SlashList anchor={fieldRef} hits={slash.hits} active={slash.active} onHover={slash.setActive} onPick={pickCommand} />}
-      {mentionOpen && <MentionList anchor={fieldRef} hits={hits} active={active} empty={span!.query.length > 0} onHover={setActive} onPick={pick} />}
+      {mentionOpen && <MentionList anchor={fieldRef} hits={hits} personas={personas} active={active} empty={span!.query.length > 0} onHover={setActive} onPick={pick} />}
       {/* The row is a container: below the sm tier (a 380 sidebar leaves ~324 here) the mode chip collapses to icon + caret so the option chips keep their room —
           the same move Cursor makes in a narrow sidebar; the editor panel is wide enough for the names */}
       {/* The row is always --ctl tall: the context ring is the one --ctl control among --ctl-sm chips, and it comes and goes with
@@ -311,6 +332,7 @@ export function Composer(p: ComposerProps) {
         </fieldset>
         {offered && <SelectionChip selection={offered} cwd={p.cwd} on={offeredOn} onToggle={() => setExcluded(offeredOn ? selectionKey(offered) : undefined)} />}
         {!p.edit && p.toolbarStart}
+        {!p.edit && p.main && !!personas?.length && <SummonMenu personas={personas} onOpenChange={onOpenChange} onPick={persona => summon(persona.name, caret)} />}
         <fieldset disabled={p.disabled || p.controlsLocked || sending} className="m-0 flex min-w-0 flex-1 items-center gap-1 border-0 p-0">
           <div className="min-w-0 flex-1" />
           {[...other, ...(!models.length ? modelConfig : [])].map(c => (
