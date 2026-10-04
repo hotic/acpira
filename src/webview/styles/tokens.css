@@ -73,6 +73,13 @@
   --brand-fg: #1b1300;
   /* Slash command / skill pills: one colour for every agent, independent of the accent axis */
   --command: #6ea8fe;
+  /* @ summon pills (a subagent persona named in the prompt): one colour, distinct from the command blue */
+  --summon: #d2a8ff;
+  /* Command / summon pills: the background's reach past the text, the gap it always leaves to a neighbour, and the width
+     one whitespace character is counted as (a little under a space in the UI fonts, so the real gap comes out wider) */
+  --mark-overhang: 4px;
+  --mark-clear: 1.5px;
+  --mark-space: 0.25em;
   --agent-devin: #6ea8fe;
   --agent-devin-fg: #0b1220;
   --agent-grok: #e8e8e8;
@@ -261,6 +268,7 @@
   --brand: #b7791f;
   --brand-fg: #ffffff;
   --command: #2f6fe0;
+  --summon: #8250df;
   --agent-devin: #2f6fe0;
   --agent-devin-fg: #ffffff;
   --agent-grok: #1a1a1a;
@@ -354,6 +362,7 @@
   --color-scrim: var(--scrim);
   --color-accent: var(--accent);
   --color-command: var(--command);
+  --color-summon: var(--summon);
   --color-accent-fg: var(--accent-fg);
   --color-btn-1: var(--btn-1-bg);
   --color-btn-1-fg: var(--btn-1-fg);

@@ -355,6 +355,8 @@ export function Shell(p: ShellProps) {
   const held = useMemo(() => heldPrompt(p.turns, p.running, p.status, p.queued), [p.turns, p.running, p.status, p.queued]);
   // With steering on, a message sent mid-turn joins that turn right away; a queued row's button steers the rest
   const steering = !!p.steerQueued && p.running;
+  // Enabled persona names for the sent messages' summon pills; memoized so the HistoryMessage memo chain holds
+  const summons = useMemo(() => p.personas?.map(x => x.name), [p.personas]);
   const composerProps: ComposerProps = useMemo(() => ({
     running: p.running, steer: steering, disabled: p.status !== 'ready' && p.status !== 'starting',
     controlsLocked: p.status !== 'ready',
@@ -466,7 +468,7 @@ export function Shell(p: ShellProps) {
                     <HistoryComposerContext.Provider value={history?.editing !== undefined ? composerProps : undefined}>
                       <OpenToolFileContext.Provider value={openToolFile}>
                         <TurnActionsContext.Provider value={turnActions}>
-                          <Thread key={p.activeSessionId} turns={held.turns} running={held.running} wide={wide} replayKey={p.replayKey} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands}
+                          <Thread key={p.activeSessionId} turns={held.turns} running={held.running} wide={wide} replayKey={p.replayKey} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands} summons={summons}
                             subagents={p.subagents} onInspect={onInspect} onFailureAction={failureAction}
                             onPermission={(blockId, optionId) => { if (p.activeSessionId) on.permission(p.activeSessionId, blockId, optionId); }} />
                         </TurnActionsContext.Provider>
@@ -587,6 +589,8 @@ interface ThreadProps {
   contentRef?: (el: HTMLDivElement | null) => void;
   // Advertised slash commands: sent user messages paint their `/name` tokens like the composer does
   commands?: SlashCommand[];
+  // Enabled subagent persona names: sent user messages paint their `@name` tokens like the composer does
+  summons?: readonly string[];
   subagents?: SubagentSummary[];
   onInspect?: (id: string) => void;
   onPermission: (blockId: string, optionId: string) => void;
@@ -606,7 +610,7 @@ const STAGGER_CAP = 12;
 // Conversation flow: stick-to-bottom following happens on transcript changes (new content / streaming growth) and on async growth
 // (images, diagrams) until the user touches the thread; user actions like expand / collapse never touch the scroll position —
 // the toggle under the mouse stays put while the content below it moves. Scrolling away from the bottom releases the follow; scrolling back to the bottom restores it
-function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands, subagents, onInspect, onPermission, onFailureAction }: ThreadProps) {
+function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands, summons, subagents, onInspect, onPermission, onFailureAction }: ThreadProps) {
   const ref = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const bodyRef = useMergedRefs(contentRef, body);
@@ -645,7 +649,7 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
     const switchedAway = next?.role === 'user' && next.autoReason === 'accountSwitch';
     const switchedIn = previous?.role === 'user' && previous.autoReason === 'accountSwitch';
     exchanges[exchanges.length - 1]!.messages.push(turn.role === 'user'
-      ? <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} />
+      ? <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} summons={summons} />
       : <AgentMessage key={ti} turn={turn} index={index} compacting={compacting} running={running && ti === activeAgentIndex && !turn.stop} onPermission={onPermission} memoryKey={memoryKey}
           turnIndex={ti} last={ti === turns.length - 1} settings={previous?.role === 'user' ? previous.settings : undefined} actions={!switchedAway} joined={switchedIn}
           subagents={mine} allSubagents={mine ? subagents : undefined} onInspect={onInspect} onFailureAction={onFailureAction} />);

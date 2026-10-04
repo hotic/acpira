@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { TextSelect, X } from 'lucide-react';
 import type { Draft, SessionControls, SessionOption, SlashCommand, Turn, Usage } from '@shared/transcript';
 import type { EditorSelection, FileHit } from '@shared/protocol';
@@ -18,7 +18,7 @@ import { DraftChips } from './Attachments';
 import { collectDrafts, hasPayload, pathlessWorkbenchDrag } from './drafts';
 import { MentionList, mentionAt, personaHits, personaOfHit, useMentionHits, type MentionPersona } from './Mention';
 import { SummonMenu } from './SummonMenu';
-import { SlashList, commandAt, commandHint, commandMarks, completeCommand, useSlashHits } from './Slash';
+import { SlashList, commandAt, commandHint, completeCommand, promptMarks, useSlashHits } from './Slash';
 import { modeIcon } from './modeIcons';
 import { ModelControl, OptionControl, ReasoningControl } from './ModelPicker';
 import { ContextRing } from './ContextUsage';
@@ -234,8 +234,10 @@ export function Composer(p: ComposerProps) {
   };
   // The input hint of the command the text names, while its arguments are still empty (the open list already shows it in the row)
   const hint = !slashOpen && p.commands ? commandHint(p.commands, text, getLocale()) : undefined;
-  // Every advertised `/name` token paints the accent mark — leading or mid-sentence alike (Cursor / Codex do the same)
-  const marks = commandMarks(p.commands ?? [], text);
+  // Every advertised `/name` token paints the command mark — leading or mid-sentence alike (Cursor / Codex do the same) —
+  // and every `@name` of an enabled persona the summon mark
+  const summons = useMemo(() => personas?.map(x => x.name) ?? [], [personas]);
+  const marks = promptMarks(p.commands ?? [], summons, text);
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return;
     if (slashOpen) {

@@ -60,6 +60,8 @@ export function commandHint(commands: readonly SlashCommand[], text: string, loc
 export interface CommandMark {
   start: number;
   name: string;
+  // `@` marks a summoned subagent persona (`@name`); absent means a `/name` command
+  sigil?: '@';
 }
 
 // Every token in the text that names an advertised command, for the composer mirror to paint: `/` at the start or after
@@ -71,4 +73,64 @@ export function commandMarks(commands: readonly SlashCommand[], text: string): C
   for (const m of text.matchAll(/(^|\s)\/(\$?[\p{L}\p{N}][\p{L}\p{N}_.:-]*)(?=\s|$)/gu))
     if (commands.some(c => c.name === m[2])) marks.push({ start: m.index + m[1]!.length, name: m[2]! });
   return marks;
+}
+
+// Characters that may continue a name, so `@code` inside `@code-review` or `@a/b` never counts as a summon of `code` / `a`
+const NAME_TAIL = /[\p{L}\p{N}_.:/@-]/u;
+
+// Every `@name` token naming a persona the ask_agent tool can summon (settings → Subagents), painted like a command. The `@`
+// sits at the start or after whitespace, like the mention list's trigger; the name must match exactly and end at whitespace,
+// the end or punctuation, so `@审查，` lights up while `@审查员` (a different name) does not. Persona names may contain
+// spaces, so the names are tried longest first instead of tokenising the text
+export function summonMarks(names: readonly string[], text: string): CommandMark[] {
+  if (!names.length || !text.includes('@')) return [];
+  const sorted = [...new Set(names)].filter(Boolean).sort((a, b) => b.length - a.length);
+  const marks: CommandMark[] = [];
+  for (let i = text.indexOf('@'); i >= 0; i = text.indexOf('@', i + 1)) {
+    if (i > 0 && !/\s/.test(text[i - 1]!)) continue;
+    const name = sorted.find(n => text.startsWith(n, i + 1) && !NAME_TAIL.test(text[i + 1 + n.length] ?? ''));
+    if (name) { marks.push({ start: i, name, sigil: '@' }); i += name.length; }
+  }
+  return marks;
+}
+
+// The composer mirror's and the sent message's marks: commands and summons together, in text order
+export function promptMarks(commands: readonly SlashCommand[], summons: readonly string[], text: string): CommandMark[] {
+  const summoned = summonMarks(summons, text);
+  const commanded = commandMarks(commands, text);
+  if (!summoned.length) return commanded;
+  // A summon owns its whole span; a `/name` inside a persona name (`@a /b` named "a /b") is not painted twice
+  const free = commanded.filter(c => !summoned.some(s => c.start > s.start && c.start <= s.start + s.name.length));
+  return [...summoned, ...free].sort((a, b) => a.start - b.start);
+}
+
+// How far a mark's pill may reach past its text on each side, as a CSS length for `--mark-room` (`.prompt-mark`).
+// The pill's background overhangs by margin / padding that cancel out, so the composer mirror keeps every glyph where the
+// textarea has it; that overhang must fit in the whitespace beside the mark or the pill touches its neighbour (one space
+// is narrower than two full overhangs). Each side's room is the whitespace run there (`--mark-space` per character) minus
+// `--mark-clear`, halved when another mark shares it; a text edge or a line break leaves the full `--mark-overhang`.
+// The pill keeps the smaller side on both, so a run of marks reads as even pills with even gaps.
+// Undefined when neither side is limited.
+export function markRoom(text: string, marks: readonly CommandMark[], i: number): string | undefined {
+  const m = marks[i]!;
+  const end = m.start + m.name.length + 1;
+  const prev = marks[i - 1];
+  const next = marks[i + 1];
+  const sides = [
+    side(text.slice(prev ? prev.start + prev.name.length + 1 : 0, m.start), 'before', !!prev),
+    side(text.slice(end, next ? next.start : text.length), 'after', !!next),
+  ].filter((x): x is string => x !== undefined);
+  return sides.length ? `min(var(--mark-overhang), ${sides.join(', ')})` : undefined;
+}
+
+// One side's room: the whitespace touching the mark in `gap` (the text up to the neighbouring mark or the text's edge)
+function side(gap: string, at: 'before' | 'after', markBeyond: boolean): string | undefined {
+  const run = (at === 'before' ? /[^\S\n]*$/ : /^[^\S\n]*/).exec(gap)![0];
+  const edge = gap.length === run.length && !markBeyond;
+  // The text's edge or a line break beyond the whitespace: nothing to touch on this line
+  const broken = at === 'before' ? gap[gap.length - run.length - 1] === '\n' : gap[run.length] === '\n';
+  if (edge || broken) return undefined;
+  const shared = markBeyond && gap.length === run.length;
+  const room = `${run.length} * var(--mark-space) - var(--mark-clear)`;
+  return shared ? `calc((${room}) / 2)` : `calc(${room})`;
 }

@@ -6,7 +6,7 @@ import { isImageResultBlock } from '@shared/imageTools';
 import { useAppearance, type Appearance } from '../appearance';
 import { getLocale, t } from '../i18n';
 import { commandSegments } from './PromptInput';
-import { commandMarks } from './slashCommands';
+import { promptMarks } from './slashCommands';
 import { absorbedNotices, hasTurnContent, turnOutcome } from './turnOutcome';
 import { EntranceOnce, Row, RowLabel, RowTarget, RowEntranceContext, EntranceScopeContext } from '../ui/Row';
 import { Button } from '../ui/Button';
@@ -48,14 +48,18 @@ import { Surface, surfaceVariants } from '../ui/Surface';
 // Sticking within the exchange is the caller's job (`HistoryMessage` wraps it), so the editor can take the card's place without a layout jump;
 // The height cap and inner scrolling stay identical before and after sticking, preserving the reading position.
 // Trailing blank lines are not displayed; the turn keeps its original text.
-export function UserMessage({ turn, blobUrl, onEdit, commands }: { turn: UserTurn; index: number; blobUrl?: (blob: string) => string; onEdit?: () => void; commands?: readonly SlashCommand[] }) {
+export function UserMessage({ turn, blobUrl, onEdit, commands, summons }: {
+  turn: UserTurn; index: number; blobUrl?: (blob: string) => string; onEdit?: () => void; commands?: readonly SlashCommand[];
+  // Names of the enabled subagent personas: their `@name` tokens get the summon pill
+  summons?: readonly string[];
+}) {
   const { userMessage } = useAppearance();
   const fade = useScrollFade<HTMLDivElement>();
   if (turn.auto) return null;
   // The same marks the composer painted while this was being typed; a recorded command keeps its pill
   // even after the agent stops advertising it
   const shown = turn.text.trimEnd();
-  const marks = commandMarks(commands ?? [], shown);
+  const marks = promptMarks(commands ?? [], summons ?? [], shown);
   if (turn.command && shown.startsWith(`/${turn.command}`) && marks[0]?.start !== 0)
     marks.unshift({ start: 0, name: turn.command });
   return (
@@ -80,7 +84,7 @@ export function UserMessage({ turn, blobUrl, onEdit, commands }: { turn: UserTur
         {turn.attachments?.length ? <TurnAttachments attachments={turn.attachments} blobUrl={blobUrl} /> : null}
         {shown && <div ref={fade} className={cn(
           'scroll-fade scroll-thin min-h-0 whitespace-pre-wrap [--scroll-fade-size:var(--text-1-lh)] [overflow-anchor:none]',
-          // A command mark's background overhangs its line box on any side; without room inside the padding box the scrollport shaves it.
+          // A command / summon mark's background overhangs its line box on any side; without room inside the padding box the scrollport shaves it.
           marks.length > 0 && 'py-0.5 px-1',
           'max-h-(--user-message-max) overflow-y-auto',
         )}>{marks.length ? commandSegments(shown, marks) : shown}</div>}
