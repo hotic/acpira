@@ -30,7 +30,9 @@ export const HistoryComposerContext = createContext<ComposerProps | undefined>(u
 // opaque base animates its own height while the returning card fades in. Automatic prompts render nothing. Keep the base outside
 // the fade so replies cannot show through the editor or the swapping content.
 // Sticky positioning never changes the card height; long prompts keep the same bounded, scrollable body.
-export const HistoryMessage = memo(function HistoryMessage(p: { turn: UserTurn; index: number; turnIndex: number; blobUrl?: (blob: string) => string; commands?: readonly SlashCommand[] }) {
+export const HistoryMessage = memo(function HistoryMessage(p: {
+  turn: UserTurn; index: number; turnIndex: number; blobUrl?: (blob: string) => string; commands?: readonly SlashCommand[]; summons?: readonly string[];
+}) {
   const context = useContext(HistoryContext);
   const { motion } = useAppearance();
   const base = useRef<HTMLDivElement>(null);

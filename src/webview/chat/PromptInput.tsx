@@ -1,24 +1,30 @@
-import { useLayoutEffect, useRef, type ReactNode, type Ref, type TextareaHTMLAttributes } from 'react';
+import { useLayoutEffect, useRef, type CSSProperties, type ReactNode, type Ref, type TextareaHTMLAttributes } from 'react';
 import { useMergedRefs } from '../ui/mergeRefs';
 import { cn } from '../ui/cn';
-import type { CommandMark } from './slashCommands';
+import { markRoom, type CommandMark } from './slashCommands';
 
-export const COMMAND_MARK = 'rounded-sm -mx-1 px-1 py-0.5 bg-command/15 text-command [box-decoration-break:clone]';
+// The pill's horizontal overhang comes from `.prompt-mark` (--mark-room, see markRoom)
+export const COMMAND_MARK = 'prompt-mark rounded-sm py-0.5 bg-command/15 text-command [box-decoration-break:clone]';
+// A summoned subagent persona (`@name`): the same pill in its own colour, so a summon never reads as a command
+export const SUMMON_MARK = 'prompt-mark rounded-sm py-0.5 bg-summon/15 text-summon [box-decoration-break:clone]';
 
 // The text broken around the marks into plain runs and <mark> pills, for the composer mirror and the sent user message alike
 export function commandSegments(value: string, marks: readonly CommandMark[]): ReactNode[] {
   const segments: ReactNode[] = [];
   let at = 0;
-  for (const m of marks) {
-    segments.push(value.slice(at, m.start), <mark key={m.start} className={COMMAND_MARK}>/{m.name}</mark>);
+  marks.forEach((m, i) => {
+    const sigil = m.sigil ?? '/';
+    const room = markRoom(value, marks, i);
+    segments.push(value.slice(at, m.start), <mark key={m.start} className={sigil === '@' ? SUMMON_MARK : COMMAND_MARK}
+      style={room ? { '--mark-room': room } as CSSProperties : undefined}>{sigil}{m.name}</mark>);
     at = m.start + m.name.length + 1;
-  }
+  });
   segments.push(value.slice(at));
   return segments;
 }
 
 // Keep the native textarea for selection, IME, undo, paste, and accessibility.
-// Its mirror paints command tokens without changing any character's geometry.
+// Its mirror paints command and summon tokens without changing any character's geometry.
 export function PromptInput({ ref, marks, className, value, onScroll, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement> & {
   ref?: Ref<HTMLTextAreaElement>; marks?: readonly CommandMark[]; value: string;
 }) {
@@ -32,7 +38,7 @@ export function PromptInput({ ref, marks, className, value, onScroll, ...props }
     mirror.current.scrollTop = input.current.scrollTop;
     mirror.current.scrollLeft = input.current.scrollLeft;
   };
-  const markKey = marks?.map(m => `${m.start}:${m.name}`).join();
+  const markKey = marks?.map(m => `${m.start}:${m.sigil ?? '/'}${m.name}`).join();
   useLayoutEffect(() => {
     sync();
     const observer = new ResizeObserver(sync);

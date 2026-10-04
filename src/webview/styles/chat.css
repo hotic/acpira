@@ -68,6 +68,12 @@
 }
 
 @layer components {
+  /* Command / summon pill: margin and padding cancel, so glyphs stay where the composer's textarea has them */
+  .prompt-mark {
+    --mark-reach: max(0px, var(--mark-room, var(--mark-overhang)));
+    margin-inline: calc(-1 * var(--mark-reach));
+    padding-inline: var(--mark-reach);
+  }
   /* Rows and sticky gutters share an opaque background during horizontal scrolling. */
   .diff-row { --diff-row-bg: var(--bg-code); }
   .diff-row[data-kind="add"] { --diff-row-bg: var(--diff-add); }

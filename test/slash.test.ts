@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SlashCommand, Turn } from '@shared/transcript';
-import { commandAt, commandHint, commandMarks, completeCommand, matchCommands } from '../src/webview/chat/slashCommands';
+import { commandAt, commandHint, commandMarks, completeCommand, markRoom, matchCommands, promptMarks, summonMarks } from '../src/webview/chat/slashCommands';
 
 import { presentCommand } from '../src/shared/commandPresentation';
 import { commandName, namedCommand, restoreCommandReceipts } from '../src/shared/slashCommands';
@@ -181,5 +181,67 @@ describe('command presentation and feedback', () => {
     expect(turnOutcome({ ...receipt, stop: 'error' }, 'zh-CN')).toBe('请求失败');
     expect(turnOutcome({ ...receipt, stop: 'cancelled' }, 'en')).toBe('Stopped');
     expect(turnOutcome({ ...receipt, stop: undefined }, 'zh-CN')).toBeUndefined();
+  });
+});
+
+describe('summonMarks', () => {
+  it('marks a persona named after @ at the start, mid-sentence or before punctuation', () => {
+    expect(summonMarks(['审查'], '@审查 你召唤一下他')).toEqual([{ start: 0, name: '审查', sigil: '@' }]);
+    expect(summonMarks(['审查'], '让 @审查 看看')).toEqual([{ start: 2, name: '审查', sigil: '@' }]);
+    expect(summonMarks(['审查'], '叫 @审查，看看')).toEqual([{ start: 2, name: '审查', sigil: '@' }]);
+    expect(summonMarks(['审查'], '@审查')).toEqual([{ start: 0, name: '审查', sigil: '@' }]);
+  });
+  it('leaves other names, glued @ and unknown personas plain', () => {
+    expect(summonMarks(['审查'], '@审查员 看看')).toEqual([]);
+    expect(summonMarks(['审查'], 'a@审查 b')).toEqual([]);
+    expect(summonMarks(['code'], '@code-review x')).toEqual([]);
+    expect(summonMarks(['审查'], '@别人 看看')).toEqual([]);
+    expect(summonMarks([], '@审查')).toEqual([]);
+  });
+  it('prefers the longest persona name and accepts names with spaces', () => {
+    expect(summonMarks(['code', 'code review'], '@code review now')).toEqual([{ start: 0, name: 'code review', sigil: '@' }]);
+    expect(summonMarks(['a', 'b'], '@a and @b')).toEqual([{ start: 0, name: 'a', sigil: '@' }, { start: 7, name: 'b', sigil: '@' }]);
+  });
+});
+
+describe('promptMarks', () => {
+  it('merges summons and commands in text order', () => {
+    expect(promptMarks(COMMANDS, ['审查'], '/review 然后 @审查 看')).toEqual([
+      { start: 0, name: 'review' }, { start: 11, name: '审查', sigil: '@' },
+    ]);
+    expect(promptMarks(COMMANDS, [], '/review x')).toEqual([{ start: 0, name: 'review' }]);
+  });
+});
+
+describe('markRoom', () => {
+  const room = (names: string[], text: string) => {
+    const marks = summonMarks(names, text);
+    return marks.map((_, i) => markRoom(text, marks, i));
+  };
+  const one = 'calc(1 * var(--mark-space) - var(--mark-clear))';
+  const shared = 'calc((1 * var(--mark-space) - var(--mark-clear)) / 2)';
+
+  it('leaves a lone mark at the text edges its full overhang', () => {
+    expect(room(['审查'], '@审查')).toEqual([undefined]);
+    expect(room(['审查'], '@审查 ')).toEqual([undefined]);
+  });
+
+  it('fits the overhang into the space beside plain text', () => {
+    expect(room(['审查'], '@审查 测试')).toEqual([`min(var(--mark-overhang), ${one})`]);
+    expect(room(['审查'], '让 @审查 看看')).toEqual([`min(var(--mark-overhang), ${one}, ${one})`]);
+    // Punctuation right against the mark leaves no whitespace at all
+    expect(room(['审查'], '@审查，看看')).toEqual(['min(var(--mark-overhang), calc(0 * var(--mark-space) - var(--mark-clear)))']);
+  });
+
+  it('splits a shared space between neighbouring marks so the pills never touch', () => {
+    expect(room(['审查', '儿子一号', '儿子二号'], '@审查 @儿子一号 @儿子二号')).toEqual([
+      `min(var(--mark-overhang), ${shared})`,
+      `min(var(--mark-overhang), ${shared}, ${shared})`,
+      `min(var(--mark-overhang), ${shared})`,
+    ]);
+  });
+
+  it('ignores neighbours on another line', () => {
+    expect(room(['a', 'b'], '@a\n@b')).toEqual([undefined, undefined]);
   });
 });
