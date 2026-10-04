@@ -22,7 +22,8 @@ export function SummonMenu({ personas, onPick, onOpenChange }: {
       </Chip>} />
       <DropdownMenu.Portal><DropdownMenu.Positioner side="top" width="md"><DropdownMenu.Popup>
         <DropdownMenu.Group className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
-          <DropdownMenu.GroupLabel className="px-2 py-1 text-3 text-fg-3">{t('summon.hint')}</DropdownMenu.GroupLabel>
+          {/* One short line above the list; a longer translation wraps at a normal leading instead of the tight text-3 one */}
+          <DropdownMenu.GroupLabel className="px-2 pt-1 pb-1.5 text-3 leading-normal text-pretty text-fg-3">{t('summon.hint')}</DropdownMenu.GroupLabel>
           {personas.map(p => (
             <DropdownMenu.Item key={p.id} onClick={() => onPick(p)}>
               <OptionContent icon={<AgentMark id={p.agent} name={p.name} />} description={p.meta}>{p.name}</OptionContent>
