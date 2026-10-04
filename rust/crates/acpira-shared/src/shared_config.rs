@@ -75,7 +75,20 @@ pub struct SharedPrompt {
   pub exists: bool,
   /// The first lines, for the card
   pub preview: String,
+  /// The whole file as it is on disk (empty when missing), for the page's plain-text editor
+  pub text: String,
   pub reach: Vec<Reach>,
+}
+
+/// An agent's own global instruction file with lines `~/.agents/AGENTS.md` does not have, offered for merging before
+/// overwrite replaces the file with a link to the shared prompt
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Takeover {
+  pub agent: AgentId,
+  /// The agent's file; the key of `SharedAction::Overwrite.merge`
+  pub path: String,
+  /// The lines only this file has, in file order (runs separated by a blank line)
+  pub unique: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,6 +159,11 @@ pub struct SharedView {
   pub pi_untrusted: bool,
   /// Whether `~/.agents/AGENTS.md` exists
   pub shared_prompt: bool,
+  /// User level is overwritten: every agent's global instruction file and skill link point is kept wired to
+  /// `~/.agents`, skipped points and conflicts included (what stood there is backed up and restored when turned off)
+  pub overwrite: bool,
+  /// Before overwrite is on: the agents' own global prompts with content of their own
+  pub takeover: Vec<Takeover>,
   pub skills: Vec<SharedSkill>,
   pub mcp: Vec<SharedMcp>,
   /// Installed agents that take no client MCP servers at all (Pi)
@@ -198,6 +216,17 @@ pub enum SharedAction {
   Link { picks: Vec<Pick>, auto: bool },
   /// Remove every user-level link Acpira made and put back what it moved aside
   Unlink,
+  /// User-level overwrite on: the unique lines of the `merge` files are appended to `~/.agents/AGENTS.md` (created
+  /// when missing), then every user-level link point is wired, whatever stood there backed up. Off: what overwrite
+  /// wired is undone and the backups go back in place
+  Overwrite {
+    on: bool,
+    #[serde(default)]
+    merge: Vec<String>,
+  },
+  /// Write a prompt file (`~/.agents/AGENTS.md` or the project's `AGENTS.md`) verbatim, in place, so links and hard
+  /// links to it keep working; refused when the file no longer holds `base`, the text the edit started from
+  SavePrompt { scope: SharedScope, text: String, base: String },
   /// Project level: make Claude's links on their own (on), or remove every project link and stop (off)
   ProjectAuto { on: bool },
   /// Leave this project's links out of `info/exclude` so they can be committed (true), or hide them again
@@ -238,5 +267,9 @@ mod tests {
     assert_eq!(a, SharedAction::ToggleMcp { scope: SharedScope::Global, name: "x".into(), enabled: false });
     let v = serde_json::to_value(SharedAction::Link { picks: vec![Pick { at: "/a".into(), choice: Choice::KeepShared }], auto: true }).unwrap();
     assert_eq!(v, serde_json::json!({ "kind": "link", "picks": [{ "at": "/a", "choice": "keep_shared" }], "auto": true }));
+    let a: SharedAction = serde_json::from_str(r#"{"kind":"overwrite","on":false}"#).unwrap();
+    assert_eq!(a, SharedAction::Overwrite { on: false, merge: vec![] });
+    let a: SharedAction = serde_json::from_str(r#"{"kind":"savePrompt","scope":"global","text":"x","base":""}"#).unwrap();
+    assert_eq!(a, SharedAction::SavePrompt { scope: SharedScope::Global, text: "x".into(), base: String::new() });
   }
 }

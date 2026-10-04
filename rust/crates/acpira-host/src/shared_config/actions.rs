@@ -1,6 +1,6 @@
 //! What the Shared tab's buttons do. Every change that puts something where an agent looks is recorded in the ledger,
 //! and anything in the way is moved into `~/.acpira/backups/shared/<time>/`, never deleted. Real files with content of
-//! their own are only touched on an explicit decision (the link panel, a resolve button).
+//! their own are only touched on an explicit decision (the link panel, a resolve button, the overwrite switch).
 //!
 //! Two levels behave differently. User level (`~/.agents` into the agents' home folders) is linked only through the
 //! link panel, item by item, and kept up to date afterwards when the panel's "auto" was on. Project level needs work for
@@ -59,8 +59,18 @@ impl SharedConfig {
   /// that got links before, unless project linking is off. Nothing that exists is replaced here
   pub async fn maintain(&self, places: &Places, agents: &[String]) -> Result<()> {
     let ledger = self.ledger.read().await;
-    if ledger.auto {
-      self.link_missing(places, agents, SharedScope::Global, &ledger).await?;
+    if ledger.overwrite {
+      self.force_global(places, agents).await?;
+    } else {
+      // Overwrite is off but some of what it did could not be undone when it was turned off: try again
+      if ledger.entries.iter().any(|e| e.overwrite)
+        && let Err(e) = self.undo(|e| e.overwrite).await
+      {
+        (self.log)(&format!("shared config: {e:#}"));
+      }
+      if ledger.auto {
+        self.link_missing(places, agents, SharedScope::Global, &ledger).await?;
+      }
     }
     if !ledger.project_manual {
       let mut roots: Vec<PathBuf> = places.root.iter().cloned().collect();
@@ -107,7 +117,8 @@ impl SharedConfig {
         let _ = links::git_unexclude(Path::new(repo), &rel(Path::new(&e.path), Path::new(repo)));
       }
     }
-    self.ledger.update(move |l| dead.iter().for_each(|e| l.drop_path(Path::new(&e.path)))).await
+    // An entry holding a backup stays: undoing it later (unlink, overwrite off) still puts the agent's own copy back
+    self.ledger.update(move |l| dead.iter().filter(|e| e.backup.is_none()).for_each(|e| l.drop_path(Path::new(&e.path)))).await
   }
 
   /// Wire every point of one scope that has nothing at it yet. At user level an exact copy of the shared skill or
@@ -155,6 +166,61 @@ impl SharedConfig {
           l.add_project(r);
         }
         made.into_iter().for_each(|e| l.put(e));
+      })
+      .await
+  }
+
+  /// Overwrite's half of `maintain`. First the agents' own user-level skills join `~/.agents/skills` (see
+  /// `adopt_private_skills`); then every user-level link point whose shared source exists ends up wired, skipped ones
+  /// and conflicts included (an import file with instructions of its own besides the import line too), whatever stood
+  /// there going to the backups. A point wired already is left alone. Every entry made here is overwrite's: one that
+  /// overwrite wired before and that changed since keeps its first backup, the state before overwrite, which is what
+  /// turning it off brings back; a link panel entry re-wired here becomes overwrite's, with what stood there as backup
+  async fn force_global(&self, places: &Places, agents: &[String]) -> Result<()> {
+    let (p, a, b, log) = (places.clone(), agents.to_vec(), self.backups(), self.log.clone());
+    let made: Vec<Entry> = blocking(move || {
+      let mut made = adopt_private_skills(&p, &a, &b, &log);
+      for w in view::wires(&p, &a) {
+        if w.scope != SharedScope::Global || !w.target.exists() || !matches!(w.overwrite_state(), ReachState::Missing | ReachState::Conflict) {
+          continue;
+        }
+        let r = (|| -> Result<Entry> {
+          // A mixed import file goes aside whole; the import line is then written on its own
+          let aside = if w.mixed_import() { Some(links::move_aside(&w.at, &b)?) } else { None };
+          let mut e = wire(&w, None, &b, false).inspect_err(|_| {
+            if let Some(a) = &aside {
+              let _ = links::move_to(a, &w.at);
+            }
+          })?;
+          if let Some(a) = aside {
+            e.backup = Some(s(&a));
+          }
+          Ok(e)
+        })();
+        match r {
+          Ok(e) => made.push(e),
+          Err(e) => log(&format!("shared config: overwrite: {e:#}")),
+        }
+      }
+      Ok(made)
+    })
+    .await?;
+    if made.is_empty() {
+      return Ok(());
+    }
+    self
+      .ledger
+      .update(move |l| {
+        for mut e in made {
+          // What drifted in meanwhile stays in the backups folder; the ledger keeps the state from before overwrite
+          if let Some(old) = l.find(Path::new(&e.path))
+            && old.overwrite
+          {
+            e.backup = old.backup.clone();
+          }
+          e.overwrite = true;
+          l.put(e);
+        }
       })
       .await
   }
@@ -225,12 +291,14 @@ impl SharedConfig {
     let chosen: Vec<Entry> = ledger.entries.iter().filter(|e| which(e)).cloned().collect();
     let log = self.log.clone();
     let c = chosen.clone();
-    blocking(move || {
-      unlink(&c, &log);
-      Ok(())
-    })
-    .await?;
-    self.ledger.update(move |l| chosen.iter().for_each(|e| l.drop_path(Path::new(&e.path)))).await
+    let failed = blocking(move || Ok(unlink(&c, &log))).await?;
+    // Only what was undone is forgotten; a failed entry keeps its backup on record for the next try
+    let done: Vec<Entry> = chosen.into_iter().filter(|e| !failed.contains(e)).collect();
+    self.ledger.update(move |l| done.iter().for_each(|e| l.drop_path(Path::new(&e.path)))).await?;
+    if !failed.is_empty() {
+      bail!("could not undo {}", failed.iter().map(|e| e.path.as_str()).collect::<Vec<_>>().join(", "));
+    }
+    Ok(())
   }
 
   pub async fn apply(&self, action: SharedAction, places: &Places, agents: &[String]) -> Result<Outcome> {
@@ -242,6 +310,37 @@ impl SharedConfig {
       SharedAction::Unlink => {
         self.undo(|e| e.project_root().is_none()).await?;
         self.ledger.update(|l| l.auto = false).await?;
+        Ok(Outcome::default())
+      }
+      SharedAction::Overwrite { on: true, merge } => {
+        let file = places.prompt_file(SharedScope::Global).ok_or_else(|| anyhow!("no home"))?;
+        let (p, a, b) = (places.clone(), agents.to_vec(), self.backups());
+        locked_edit(file, move |f| merge_prompts(&p, &a, f, &merge, &b)).await?;
+        self.ledger.update(|l| l.overwrite = true).await?;
+        self.maintain(places, agents).await?;
+        Ok(Outcome::default())
+      }
+      SharedAction::Overwrite { on: false, .. } => {
+        self.ledger.update(|l| l.overwrite = false).await?;
+        self.undo(|e| e.overwrite).await?;
+        Ok(Outcome::default())
+      }
+      SharedAction::SavePrompt { scope, text, base } => {
+        let file = places.prompt_file(scope).ok_or_else(|| anyhow!("no project"))?;
+        locked_edit(file, move |f| {
+          let now = read_text(f)?.unwrap_or_default();
+          if now != base {
+            bail!("{} changed on disk after editing began; reload it before saving", f.display());
+          }
+          if let Some(dir) = f.parent() {
+            std::fs::create_dir_all(dir)?;
+          }
+          // In place rather than tmp + rename: the agents' links (hard links on Windows) keep pointing at this file
+          Ok(std::fs::write(f, text)?)
+        })
+        .await?;
+        // A first save creates the shared prompt, which the waiting link points now have a source for
+        self.maintain(places, agents).await?;
         Ok(Outcome::default())
       }
       SharedAction::ProjectAuto { on } => {
@@ -296,7 +395,16 @@ impl SharedConfig {
         let file = root.join("CLAUDE.md");
         let f = file.clone();
         blocking(move || Ok(links::add_import(&f, CLAUDE_PROJECT_IMPORT)?)).await?;
-        let e = Entry { path: s(&file), target: s(&root.join("AGENTS.md")), kind: EntryKind::Import, backup: None, repo: None, project: Some(s(&root)), agent: Some("claude".into()) };
+        let e = Entry {
+          path: s(&file),
+          target: s(&root.join("AGENTS.md")),
+          kind: EntryKind::Import,
+          backup: None,
+          repo: None,
+          project: Some(s(&root)),
+          agent: Some("claude".into()),
+          overwrite: false,
+        };
         self.record(Some(e), places).await
       }
       SharedAction::CreateSkill { scope, name } => {
@@ -395,6 +503,8 @@ fn empty_view() -> SharedView {
     project_linked: false,
     pi_untrusted: false,
     shared_prompt: false,
+    overwrite: false,
+    takeover: vec![],
     skills: vec![],
     mcp: vec![],
     no_mcp: vec![],
@@ -434,6 +544,12 @@ async fn locked_edit<T: Send + 'static>(file: PathBuf, f: impl FnOnce(&Path) -> 
 /// `exclude`: a project link also goes into the repository's `info/exclude` (not for a project shared with the team)
 fn wire(w: &Wire, root: Option<&Path>, backups: &Path, exclude: bool) -> Result<Entry> {
   let mut backup = None;
+  // Whatever was moved aside goes back in place when the link / import line cannot be written after all
+  let undo_aside = |backup: &Option<PathBuf>| {
+    if let Some(b) = backup {
+      let _ = links::move_to(b, &w.at);
+    }
+  };
   match w.kind {
     WireKind::Link => {
       if std::fs::symlink_metadata(&w.at).is_ok() {
@@ -442,15 +558,20 @@ fn wire(w: &Wire, root: Option<&Path>, backups: &Path, exclude: bool) -> Result<
         }
         backup = Some(links::move_aside(&w.at, backups).with_context(|| format!("moving {} aside", w.at.display()))?);
       }
-      links::make_link(&w.at, &w.target, w.relative()).with_context(|| format!("linking {}", w.at.display()))?;
+      links::make_link(&w.at, &w.target, w.relative())
+        .with_context(|| format!("linking {}", w.at.display()))
+        .inspect_err(|_| undo_aside(&backup))?;
     }
     WireKind::Import => {
-      // An import file that holds a copy of the shared prompt starts over as just the import line
-      let text = std::fs::read_to_string(&w.at).unwrap_or_default();
-      if !text.trim().is_empty() && !links::has_import(&text, &view::import_forms(&w.target)) {
-        backup = Some(links::move_aside(&w.at, backups)?);
+      // An import file that holds a copy of the shared prompt starts over as just the import line. One that exists but
+      // cannot be read as text (another encoding) is content of its own and goes aside, never overwritten
+      if std::fs::symlink_metadata(&w.at).is_ok() {
+        let keep = std::fs::read_to_string(&w.at).is_ok_and(|t| t.trim().is_empty() || links::has_import(&t, &view::import_forms(&w.target)));
+        if !keep {
+          backup = Some(links::move_aside(&w.at, backups)?);
+        }
       }
-      links::add_import(&w.at, CLAUDE_GLOBAL_IMPORT)?;
+      links::add_import(&w.at, CLAUDE_GLOBAL_IMPORT).inspect_err(|_| undo_aside(&backup))?;
     }
   }
   let e = entry(w, backup.as_deref(), root);
@@ -481,15 +602,110 @@ fn entry(w: &Wire, backup: Option<&Path>, root: Option<&Path>) -> Entry {
     repo: project.clone(),
     project,
     agent: Some(w.agent.to_owned()),
+    overwrite: false,
   }
 }
 
-/// Undo recorded changes; a link that was replaced by something else meanwhile is left alone
-fn unlink(entries: &[Entry], log: &LogFn) {
-  for e in entries {
+/// Overwrite's first step: `~/.agents/AGENTS.md` exists (created empty when missing) and ends with the unique lines
+/// of each chosen agent file, each compared with the text so far, so a line two files share lands once. A changed
+/// prompt is copied to the backups first and written in place, so links to it keep working
+fn merge_prompts(places: &Places, agents: &[String], file: &Path, merge: &[String], backups: &Path) -> Result<()> {
+  let before = read_text(file)?;
+  let mut text = before.clone().unwrap_or_default();
+  let forms = view::import_forms(file);
+  let points: Vec<Wire> = view::wires(places, agents).into_iter().filter(|w| w.skill.is_none()).collect();
+  for path in merge {
+    let Some(w) = points.iter().find(|w| w.at == Path::new(path)) else { bail!("{path} is not an agent's global instruction file") };
+    let Ok(own) = std::fs::read_to_string(&w.at) else { continue };
+    let add = view::unique_lines(&own, &text, &forms);
+    if add.is_empty() {
+      continue;
+    }
+    if !text.trim().is_empty() {
+      text = format!("{}\n\n", text.trim_end());
+    }
+    text.push_str(&add);
+    text.push('\n');
+  }
+  if before.as_deref() == Some(text.as_str()) {
+    return Ok(());
+  }
+  if before.is_some() {
+    links::copy_aside(file, backups)?;
+  }
+  if let Some(dir) = file.parent() {
+    std::fs::create_dir_all(dir)?;
+  }
+  Ok(std::fs::write(file, text)?)
+}
+
+/// A prompt file's text; None when it does not exist. Any other read failure (another encoding, no permission) is an
+/// error, so content that cannot be read is never taken for an empty file and written over
+fn read_text(file: &Path) -> Result<Option<String>> {
+  match std::fs::read_to_string(file) {
+    Ok(t) => Ok(Some(t)),
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+    Err(e) => Err(anyhow!("reading {}: {e}", file.display())),
+  }
+}
+
+/// Overwrite's skill step: every user-level skill folder in an agent's own skills folder joins `~/.agents/skills`.
+/// One the shared folder lacks is moved there (`Adopted`, moved back on off), so every agent reads it from then on;
+/// one the shared folder already has, same or not, is moved into the backups (`Aside`), the shared one winning.
+/// Link points (Claude's, Antigravity's) are left to the wires, and links of any kind are left alone
+fn adopt_private_skills(places: &Places, agents: &[String], backups: &Path, log: &LogFn) -> Vec<Entry> {
+  let Some(shared_dir) = places.skills_dir(SharedScope::Global) else { return vec![] };
+  let points: Vec<PathBuf> = view::wires(places, agents).into_iter().filter(|w| w.scope == SharedScope::Global && w.skill.is_some()).map(|w| w.at).collect();
+  let shared_real = std::fs::canonicalize(&shared_dir).ok();
+  let mut out = vec![];
+  for id in AGENTS.iter().filter(|id| agents.iter().any(|a| a == *id)) {
+    let Some(ext) = agent_ext(id) else { continue };
+    for tpl in ext.shared.own_skills.iter().filter(|t| scope_of_template(t) == SharedScope::Global) {
+      let Some(dir) = places.expand(tpl) else { continue };
+      if shared_real.is_some() && std::fs::canonicalize(&dir).ok() == shared_real {
+        continue;
+      }
+      for (name, path, _) in view::skill_dirs(&dir) {
+        if links::is_link(&path) || points.contains(&path) {
+          continue;
+        }
+        let shared = shared_dir.join(&name);
+        let r = (|| -> Result<Entry> {
+          let (kind, at, target, backup) = if std::fs::symlink_metadata(&shared).is_ok() {
+            (EntryKind::Aside, &path, &shared, Some(links::move_aside(&path, backups)?))
+          } else {
+            links::move_to(&path, &shared)?;
+            (EntryKind::Adopted, &shared, &path, None)
+          };
+          Ok(Entry { path: s(at), target: s(target), kind, backup: backup.as_deref().map(s), repo: None, project: None, agent: Some((*id).to_owned()), overwrite: true })
+        })();
+        match r {
+          Ok(e) => out.push(e),
+          Err(e) => log(&format!("shared config: overwrite: taking in {}: {e:#}", path.display())),
+        }
+      }
+    }
+  }
+  out
+}
+
+/// Undo recorded changes, newest first (a link made to an adopted skill goes before the skill moves back); a link that
+/// was replaced by something else meanwhile is left alone. Returns the entries that could not be undone, which stay
+/// recorded
+fn unlink(entries: &[Entry], log: &LogFn) -> Vec<Entry> {
+  let mut failed = vec![];
+  for e in entries.iter().rev() {
     let path = Path::new(&e.path);
     let r = (|| -> Result<()> {
       match e.kind {
+        // The shared copy goes back to the agent's own folder, unless something took that place since
+        EntryKind::Adopted => {
+          let own = Path::new(&e.target);
+          if path.exists() && std::fs::symlink_metadata(own).is_err() {
+            links::move_to(path, own)?;
+          }
+        }
+        EntryKind::Aside => {}
         EntryKind::Link => {
           // Only a link that still resolves to the recorded target; one pointed elsewhere since is the user's
           if links::inspect(path, Path::new(&e.target)) == Spot::Linked {
@@ -518,8 +734,10 @@ fn unlink(entries: &[Entry], log: &LogFn) {
     })();
     if let Err(err) = r {
       log(&format!("shared config: undoing {} failed: {err:#}", e.path));
+      failed.push(e.clone());
     }
   }
+  failed
 }
 
 /// Which agent's own skills folder holds `path`, and in which scope
@@ -911,6 +1129,131 @@ mod tests {
     // Global skills never need trust
     let dig = v.skills.iter().find(|x| x.name == "dig").unwrap();
     assert!(dig.reach.iter().any(|r| r.agent == "pi" && r.state == ReachState::Native));
+  }
+
+  #[tokio::test]
+  async fn overwrite_wires_every_agent_and_turning_it_off_restores_them() {
+    let (_t, p, cfg, agents) = setup();
+    let home = p.home.clone();
+    let (codex, claude, grok) = (home.join(".codex/AGENTS.md"), home.join(".claude/CLAUDE.md"), home.join(".grok/AGENTS.md"));
+    let shared = home.join(".agents/AGENTS.md");
+    let codex_own = "# 全局指令\n\n- 称呼：老板\n\n## 提交风格\n\n默认中文\n";
+    let claude_own = "# 全局指令\n\n- 称呼：老板\n\n## Git\n\n- 不加水印\n```\nx\n```\n";
+    std::fs::write(&codex, codex_own).unwrap();
+    std::fs::write(&claude, claude_own).unwrap();
+    // Claude's differing dig sits at a link point; Claude and Codex have skills of their own, Codex a differing dig too
+    for (dir, body) in [(".claude/skills/dig", "mine"), (".claude/skills/only", "claude only"), (".codex/skills/solo", "codex solo"), (".codex/skills/dig", "codex dig")] {
+      std::fs::create_dir_all(home.join(dir)).unwrap();
+      std::fs::write(home.join(dir).join("SKILL.md"), body).unwrap();
+    }
+    // Grok's prompt was skipped in the link panel once
+    cfg.apply(SharedAction::Link { picks: vec![pick(&grok, Choice::Skip)], auto: false }, &p, &agents).await.unwrap();
+
+    // Without a shared prompt every line of the agents' own files is theirs alone
+    let v = cfg.view(p.clone(), agents.clone(), caps()).await;
+    let unique = |v: &SharedView, f: &Path| v.takeover.iter().find(|x| Path::new(&x.path) == f).map(|x| x.unique.clone());
+    assert_eq!(unique(&v, &codex).as_deref(), Some(codex_own.trim_end()));
+    assert!(unique(&v, &claude).is_some());
+
+    // Merging both: Claude adds only what Codex lacks, fences kept; then everything is wired, the skipped point too
+    let merge = vec![s(&codex), s(&claude)];
+    cfg.apply(SharedAction::Overwrite { on: true, merge }, &p, &agents).await.unwrap();
+    assert_eq!(std::fs::read_to_string(&shared).unwrap(), "# 全局指令\n\n- 称呼：老板\n\n## 提交风格\n\n默认中文\n\n## Git\n\n- 不加水印\n```\nx\n```\n");
+    assert!(codex.is_symlink() && grok.is_symlink());
+    assert_eq!(std::fs::read_to_string(&claude).unwrap(), "@~/.agents/AGENTS.md\n");
+    assert_eq!(std::fs::read_link(home.join(".claude/skills/dig")).unwrap(), home.join(".agents/skills/dig"));
+    // The agents' own skills join the shared folder (Claude gets its one back as a link); Codex's differing dig is set aside
+    assert_eq!(std::fs::read_to_string(home.join(".agents/skills/only/SKILL.md")).unwrap(), "claude only");
+    assert_eq!(std::fs::read_to_string(home.join(".agents/skills/solo/SKILL.md")).unwrap(), "codex solo");
+    assert!(home.join(".claude/skills/only").is_symlink() && home.join(".claude/skills/solo").is_symlink());
+    assert!(std::fs::symlink_metadata(home.join(".codex/skills/solo")).is_err() && std::fs::symlink_metadata(home.join(".codex/skills/dig")).is_err());
+    let v = cfg.view(p.clone(), agents.clone(), caps()).await;
+    assert!(v.overwrite && v.takeover.is_empty() && v.plan.is_empty());
+    assert!(!v.private_skills.iter().any(|x| x.scope == SharedScope::Global));
+
+    // A link replaced by a file is wired again on the next look
+    std::fs::remove_file(&codex).unwrap();
+    std::fs::write(&codex, "# drift\n").unwrap();
+    cfg.view(p.clone(), agents.clone(), caps()).await;
+    assert!(codex.is_symlink());
+
+    // The page's editor writes through to every agent; an edit started from an older text is refused
+    let base = std::fs::read_to_string(&shared).unwrap();
+    cfg.apply(SharedAction::SavePrompt { scope: SharedScope::Global, text: "# new\n".into(), base: base.clone() }, &p, &agents).await.unwrap();
+    assert_eq!(std::fs::read_to_string(&codex).unwrap(), "# new\n");
+    assert!(cfg.apply(SharedAction::SavePrompt { scope: SharedScope::Global, text: "# lost\n".into(), base }, &p, &agents).await.is_err());
+    assert_eq!(std::fs::read_to_string(&shared).unwrap(), "# new\n");
+
+    // Off: every agent gets its own file back (the first one, not the drift); the shared prompt stays
+    cfg.apply(SharedAction::Overwrite { on: false, merge: vec![] }, &p, &agents).await.unwrap();
+    assert_eq!(std::fs::read_to_string(&codex).unwrap(), codex_own);
+    assert_eq!(std::fs::read_to_string(&claude).unwrap(), claude_own);
+    assert_eq!(std::fs::read_to_string(home.join(".claude/skills/dig/SKILL.md")).unwrap(), "mine");
+    for (dir, body) in [(".claude/skills/only", "claude only"), (".codex/skills/solo", "codex solo"), (".codex/skills/dig", "codex dig")] {
+      assert!(!home.join(dir).is_symlink());
+      assert_eq!(std::fs::read_to_string(home.join(dir).join("SKILL.md")).unwrap(), body);
+    }
+    assert!(!home.join(".agents/skills/only").exists() && !home.join(".agents/skills/solo").exists());
+    assert!(std::fs::symlink_metadata(&grok).is_err());
+    assert_eq!(std::fs::read_to_string(&shared).unwrap(), "# new\n");
+    assert!(!cfg.view(p.clone(), agents.clone(), caps()).await.overwrite);
+    assert!(!cfg.ledger.read().await.entries.iter().any(|e| e.overwrite));
+  }
+
+  #[tokio::test]
+  async fn overwrite_takes_over_mixed_and_unreadable_files_and_rewired_panel_links() {
+    let (_t, p, cfg, agents) = setup();
+    let home = p.home.clone();
+    let (claude, codex, grok) = (home.join(".claude/CLAUDE.md"), home.join(".codex/AGENTS.md"), home.join(".grok/AGENTS.md"));
+    std::fs::write(home.join(".agents/AGENTS.md"), "# shared\n").unwrap();
+    // Claude imports the shared prompt but adds rules of its own; Codex's file is not UTF-8
+    let mixed = "@~/.agents/AGENTS.md\n\n- claude only rule\n";
+    std::fs::write(&claude, mixed).unwrap();
+    std::fs::write(&codex, b"\xff\xfe rules").unwrap();
+    // Grok was linked by the panel, then replaced by a file of the user's own
+    std::fs::write(&grok, "# shared\n").unwrap();
+    cfg.apply(SharedAction::Link { picks: vec![pick(&grok, Choice::Link)], auto: false }, &p, &agents).await.unwrap();
+    std::fs::remove_file(&grok).unwrap();
+    std::fs::write(&grok, "# grok own\n").unwrap();
+
+    let v = cfg.view(p.clone(), agents.clone(), caps()).await;
+    let claude_take = v.takeover.iter().find(|x| Path::new(&x.path) == claude).unwrap();
+    assert_eq!(claude_take.unique, "- claude only rule");
+    cfg.apply(SharedAction::Overwrite { on: true, merge: vec![] }, &p, &agents).await.unwrap();
+    assert_eq!(std::fs::read_to_string(&claude).unwrap(), "@~/.agents/AGENTS.md\n");
+    assert!(codex.is_symlink() && grok.is_symlink());
+
+    // Off: each file comes back as it was right before overwrite, the unreadable one byte for byte
+    cfg.apply(SharedAction::Overwrite { on: false, merge: vec![] }, &p, &agents).await.unwrap();
+    assert_eq!(std::fs::read_to_string(&claude).unwrap(), mixed);
+    assert_eq!(std::fs::read(&codex).unwrap(), b"\xff\xfe rules");
+    assert_eq!(std::fs::read_to_string(&grok).unwrap(), "# grok own\n");
+    // Saving over a prompt that cannot be read is refused rather than taken for an empty file
+    std::fs::write(home.join(".agents/AGENTS.md"), b"\xff").unwrap();
+    assert!(cfg.apply(SharedAction::SavePrompt { scope: SharedScope::Global, text: "x".into(), base: String::new() }, &p, &agents).await.is_err());
+  }
+
+  #[tokio::test]
+  async fn a_deleted_shared_skill_keeps_the_private_backup_on_record() {
+    let (_t, p, cfg, agents) = setup();
+    let home = p.home.clone();
+    std::fs::create_dir_all(home.join(".claude/skills/dig")).unwrap();
+    std::fs::write(home.join(".claude/skills/dig/SKILL.md"), "mine").unwrap();
+    cfg.apply(SharedAction::Overwrite { on: true, merge: vec![] }, &p, &agents).await.unwrap();
+    assert!(home.join(".claude/skills/dig").is_symlink());
+    cfg.apply(SharedAction::RemoveSkill { path: s(&home.join(".agents/skills/dig")) }, &p, &agents).await.unwrap();
+    assert!(std::fs::symlink_metadata(home.join(".claude/skills/dig")).is_err());
+    cfg.apply(SharedAction::Overwrite { on: false, merge: vec![] }, &p, &agents).await.unwrap();
+    assert_eq!(std::fs::read_to_string(home.join(".claude/skills/dig/SKILL.md")).unwrap(), "mine");
+  }
+
+  #[test]
+  fn unique_lines_keep_order_paragraphs_and_fences() {
+    let base = "# A\n\n- one\n```\n";
+    assert_eq!(view::unique_lines("# A\n- one\n- two\n\n@~/.agents/AGENTS.md\n\n```\ncode\n```\n", base, &[CLAUDE_GLOBAL_IMPORT.to_owned()]), "- two\n\n```\ncode\n```");
+    assert_eq!(view::unique_lines("# A\n\n- one\n", base, &[]), "");
+    // A fence with a language tag the shared prompt also has is kept, or the block would lose its opening
+    assert_eq!(view::unique_lines("~~~sh\necho new\n~~~\n", "~~~sh\necho old\n~~~\n", &[]), "~~~sh\necho new\n~~~");
   }
 
   #[tokio::test]

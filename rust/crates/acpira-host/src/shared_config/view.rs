@@ -46,6 +46,22 @@ impl Wire {
     self.scope == SharedScope::Project
   }
 
+  /// An import file that carries the shared prompt's import line and instructions of its own besides
+  pub fn mixed_import(&self) -> bool {
+    if self.kind != WireKind::Import {
+      return false;
+    }
+    let Ok(text) = std::fs::read_to_string(&self.at) else { return false };
+    let forms = import_forms(&self.target);
+    has_import(&text, &forms) && text.lines().map(str::trim).any(|l| !l.is_empty() && !forms.iter().any(|f| f == l))
+  }
+
+  /// The state overwrite goes by: an import file with instructions of its own besides the import line is a conflict,
+  /// since that agent would read more than the shared prompt
+  pub fn overwrite_state(&self) -> ReachState {
+    if self.mixed_import() { ReachState::Conflict } else { self.state() }
+  }
+
   pub fn state(&self) -> ReachState {
     match self.kind {
       WireKind::Link => match inspect(&self.at, &self.target) {
@@ -177,6 +193,44 @@ fn plan(all_wires: &[Wire], ledger: &Ledger) -> Vec<PlanItem> {
     .collect()
 }
 
+/// The lines of `text` that `base` lacks (compared trimmed, blank lines and the shared prompt's import lines ignored),
+/// in file order; runs that were apart in `text` stay apart by one blank line. Empty when nothing is new.
+/// Code fences (with or without a language tag) and lines without a letter or digit (rules, table separators) never
+/// count as known, or a merged block would lose the fences around its code
+pub fn unique_lines(text: &str, base: &str, imports: &[String]) -> String {
+  let structural = |l: &str| l.starts_with("```") || l.starts_with("~~~") || !l.chars().any(char::is_alphanumeric);
+  let known: HashSet<&str> = base.lines().map(str::trim).filter(|l| !structural(l)).collect();
+  let mut out: Vec<&str> = vec![];
+  let mut gap = false;
+  for line in text.lines() {
+    let t = line.trim();
+    if t.is_empty() || known.contains(t) || imports.iter().any(|f| f == t) {
+      gap = true;
+      continue;
+    }
+    if gap && !out.is_empty() {
+      out.push("");
+    }
+    gap = false;
+    out.push(line.trim_end());
+  }
+  out.join("\n")
+}
+
+/// The agents' own global prompts that hold lines the shared one lacks, for the overwrite panel
+fn takeover(all_wires: &[Wire]) -> Vec<Takeover> {
+  all_wires
+    .iter()
+    .filter(|w| w.skill.is_none() && w.overwrite_state() == ReachState::Conflict)
+    .filter_map(|w| {
+      let text = std::fs::read_to_string(&w.at).ok()?;
+      let base = std::fs::read_to_string(&w.target).unwrap_or_default();
+      let unique = unique_lines(&text, &base, &import_forms(&w.target));
+      (!unique.is_empty()).then(|| Takeover { agent: w.agent.to_owned(), path: w.at.to_string_lossy().into_owned(), unique })
+    })
+    .collect()
+}
+
 /// Whether the project CLAUDE.md hides the project AGENTS.md from Claude (Claude reads AGENTS.md only without it)
 pub fn claude_blocked(root: &Path) -> Option<PathBuf> {
   let file = root.join("CLAUDE.md");
@@ -278,6 +332,7 @@ pub fn build(places: &Places, agents: &[String], caps: &dyn Fn(&str) -> Option<M
       path: path.to_string_lossy().into_owned(),
       exists: text.is_some(),
       preview: text.as_deref().map(|t| preview(t, 6)).unwrap_or_default(),
+      text: text.unwrap_or_default(),
       reach,
     });
   }
@@ -303,6 +358,7 @@ pub fn build(places: &Places, agents: &[String], caps: &dyn Fn(&str) -> Option<M
       path: path.to_string_lossy().into_owned(),
       exists: text.is_some(),
       preview: text.as_deref().map(|t| preview(t, 6)).unwrap_or_default(),
+      text: text.unwrap_or_default(),
       reach,
     });
   }
@@ -319,6 +375,8 @@ pub fn build(places: &Places, agents: &[String], caps: &dyn Fn(&str) -> Option<M
     project_linked: root_str.as_deref().is_some_and(|r| ledger.entries.iter().any(|e| e.project_root() == Some(r))),
     pi_untrusted,
     shared_prompt: places.prompt_file(SharedScope::Global).is_some_and(|p| p.exists()),
+    overwrite: ledger.overwrite,
+    takeover: if ledger.overwrite { vec![] } else { takeover(&all_wires) },
     private_skills: private_skills(places, agents, &shared_dirs, &planned),
     plan: plan(&all_wires, ledger),
     skills,

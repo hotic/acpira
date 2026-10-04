@@ -131,8 +131,8 @@ pub fn make_link(link: &Path, target: &Path, relative: bool) -> io::Result<()> {
   files::create_link(link, target, &dest)
 }
 
-/// Move `path` into `backups` under a name derived from its full path; returns where it went
-pub fn move_aside(path: &Path, backups: &Path) -> io::Result<PathBuf> {
+/// A free place in `backups` for `path`, named after its full path
+fn backup_dest(path: &Path, backups: &Path) -> io::Result<PathBuf> {
   std::fs::create_dir_all(backups)?;
   let flat: String = path.to_string_lossy().chars().map(|c| if matches!(c, '/' | '\\' | ':') { '_' } else { c }).collect();
   let mut dest = backups.join(flat.trim_start_matches('_'));
@@ -141,6 +141,19 @@ pub fn move_aside(path: &Path, backups: &Path) -> io::Result<PathBuf> {
     n += 1;
     dest = backups.join(format!("{}.{n}", flat.trim_start_matches('_')));
   }
+  Ok(dest)
+}
+
+/// Copy the file at `path` into `backups`, leaving it (and every link to it) in place; returns where the copy went
+pub fn copy_aside(path: &Path, backups: &Path) -> io::Result<PathBuf> {
+  let dest = backup_dest(path, backups)?;
+  std::fs::copy(path, &dest)?;
+  Ok(dest)
+}
+
+/// Move `path` into `backups` under a name derived from its full path; returns where it went
+pub fn move_aside(path: &Path, backups: &Path) -> io::Result<PathBuf> {
+  let dest = backup_dest(path, backups)?;
   match std::fs::rename(path, &dest) {
     Ok(()) => Ok(dest),
     Err(e) if e.kind() == ErrorKind::CrossesDevices || e.raw_os_error() == Some(18) => {
