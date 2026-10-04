@@ -179,6 +179,13 @@ pub enum HostMsg {
     /// Not on the wire: an idle edge flushes the batch at once
     #[serde(skip)]
     running: bool,
+    /// Not on the wire: the same view turn by turn, from which a view that takes patches gets a `sessionPatch` instead
+    #[serde(skip)]
+    parts: Option<crate::session_patch::ViewParts>,
+  },
+  /// The changes since the view this viewer was sent last (`session_patch.rs`); only for pages that asked for patches
+  SessionPatch {
+    patch: RawJson,
   },
   Subagent {
     session_id: String,
@@ -249,6 +256,7 @@ impl HostMsg {
       HostMsg::Agents { .. } => "agents",
       HostMsg::Sessions { .. } => "sessions",
       HostMsg::Session { .. } => "session",
+      HostMsg::SessionPatch { .. } => "sessionPatch",
       HostMsg::Subagent { .. } => "subagent",
       HostMsg::Accounts { .. } => "accounts",
       HostMsg::AccountActions { .. } => "accountActions",
@@ -298,7 +306,13 @@ pub enum WebviewMsg {
     request_id: String,
     edit: EditTurnRequest,
   },
-  Ready,
+  /// `patches`: the page applies `sessionPatch` messages (the real webview always does; scripts and tests take whole views)
+  Ready {
+    #[serde(default)]
+    patches: bool,
+  },
+  /// A `sessionPatch` did not fit the view the page holds: send the whole view again
+  Resync,
   /// The page's window got focus: only the VS Code shell uses it (the "Add to Chat" target)
   ViewFocus,
   Send {
@@ -563,7 +577,9 @@ mod tests {
     let m: WebviewMsg = serde_json::from_str(r#"{"type":"openFile","sessionId":"s","path":"a.ts","line":3}"#).unwrap();
     assert!(matches!(m, WebviewMsg::OpenFile { line: Some(3), .. }));
     let r: WebviewMsg = serde_json::from_str(r#"{"type":"ready"}"#).unwrap();
-    assert_eq!(r, WebviewMsg::Ready);
+    assert_eq!(r, WebviewMsg::Ready { patches: false });
+    let r: WebviewMsg = serde_json::from_str(r#"{"type":"ready","patches":true}"#).unwrap();
+    assert_eq!(r, WebviewMsg::Ready { patches: true });
   }
 
   #[test]

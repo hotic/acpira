@@ -6,6 +6,7 @@ import type { HiddenMap, SettingsView } from '@shared/settings';
 import type { AgentInventory } from '@shared/inventory';
 import type { Locale } from '@shared/i18n';
 import { applySession, reuse } from '@shared/reuse';
+import { applySessionPatch } from '@shared/sessionPatch';
 import { BASE_APPEARANCE, type Appearance } from './appearance';
 import { LocaleContext, setLocale, t } from './i18n';
 import { Shell, type ShellHandlers } from './chat/Shell';
@@ -75,6 +76,8 @@ export function App() {
   // The session the view is showing right now, readable inside the stable handler object: every session action
   // carries it so a click rendered for one conversation can never be applied to another after a fast switch
   const activeId = useRef<string | undefined>(undefined);
+  // A whole view was asked for after a session patch did not fit; cleared when one lands
+  const resyncAsked = useRef(false);
   activeId.current = session?.id;
   // Where an editor range pinned by "Add to chat" is labeled relative to
   const cwdRef = useRef<string>('');
@@ -136,7 +139,20 @@ export function App() {
         case 'accountActions': setAccountActions(m.actions); break;
         case 'hidden': setHidden(m.hidden); break;
         // Keep unchanged turns / blocks by reference so memoized history skips re-rendering during streaming
-        case 'session': setSession(current => applySession(current, m.session)); break;
+        case 'session': resyncAsked.current = false; setSession(current => applySession(current, m.session)); break;
+        // Only the changed tail of the transcript comes over; kept turns stay the same objects, so reuse skips them at once.
+        // A patch that does not fit the held view asks for the whole view (once, until it lands); a stale one is dropped
+        case 'sessionPatch': {
+          const patch = m.patch;
+          setSession(current => {
+            const next = applySessionPatch(current, patch);
+            if (next) return applySession(current, next);
+            if (current?.id === patch.id && current.rev != null && current.rev >= (patch.view.rev ?? 0)) return current;
+            if (!resyncAsked.current) { resyncAsked.current = true; queueMicrotask(() => post({ type: 'resync' })); }
+            return current;
+          });
+          break;
+        }
         case 'subagent': {
           const key = `${m.sessionId}:${m.subagentId}`;
           setSubagentTranscripts(current => {
@@ -169,7 +185,7 @@ export function App() {
       }
     };
     window.addEventListener('message', onMsg);
-    post({ type: 'ready' });
+    post({ type: 'ready', patches: true });
     // The shell routes "Add to Chat" to the chat used last; a click into an already visible view changes no visibility it could see
     const onFocus = () => post({ type: 'viewFocus' });
     window.addEventListener('focus', onFocus);

@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use acpira_shared::appearance::Appearance;
 use acpira_shared::protocol::{FileHit, HostMsg, InitState, WebviewHost, WebviewMsg, is_safe_external_url};
+use acpira_shared::session_patch::{ViewParts, session_patch};
 use acpira_shared::settings::is_setting_key;
 use acpira_shared::sidecar::{InitialView, PlanTarget, ToastOpen};
 
@@ -80,6 +81,11 @@ pub struct BridgeCore {
   host: WebviewHost,
   blob_base: Option<String>,
   ready: std::sync::atomic::AtomicBool,
+  /// The page applies `sessionPatch` messages (it said so in `ready`)
+  patches: std::sync::atomic::AtomicBool,
+  /// The encoding of the session view this page was sent last, what the next patch is computed against; None after
+  /// anything else replaced the page's view (init, a whole view without parts, a resync)
+  sent: parking_lot::Mutex<Option<ViewParts>>,
   batch: parking_lot::Mutex<MsgBatch>,
   settings_sub: parking_lot::Mutex<Option<u64>>,
   me: Weak<BridgeCore>,
@@ -108,6 +114,8 @@ impl BridgeCore {
       host,
       blob_base,
       ready: Default::default(),
+      patches: Default::default(),
+      sent: Default::default(),
       batch: Default::default(),
       settings_sub: Default::default(),
       me: me.clone(),
@@ -148,7 +156,8 @@ impl BridgeCore {
     let (manager, platform) = (&self.manager, &self.platform);
     match m {
       W::ViewFocus => {}
-      W::Ready => {
+      W::Ready { patches } => {
+        self.patches.store(patches, std::sync::atomic::Ordering::Release);
         self.ready.store(true, std::sync::atomic::Ordering::Release);
         // A view (re)opening is a cheap moment to re-check executables and pick up sessions another window created
         let m2 = manager.clone();
@@ -170,7 +179,20 @@ impl BridgeCore {
           cwd: platform.cwd(),
           blob_base: self.blob_base.clone(),
         };
-        self.post_now(HostMsg::Init { state: Box::new(state) });
+        // The page takes init's view as a whole: the next push is whole too
+        let mut sent = self.sent.lock();
+        *sent = None;
+        (self.post)(HostMsg::Init { state: Box::new(state) });
+        drop(sent);
+        // A batched list may reach the page around init and lose to init's copy, and the manager does not repeat an
+        // unchanged list: the batch gets the current one, ordered against every other list push
+        manager.sessions_in_order(|sessions| self.queue(HostMsg::Sessions { sessions }));
+      }
+      W::Resync => {
+        *self.sent.lock() = None;
+        if let Some(m) = manager.session_msg(self.viewer.active_id().as_deref()) {
+          self.deliver(m);
+        }
       }
       W::ChatgptStatus => {
         let status = manager.chatgpt_status().await;
@@ -332,7 +354,7 @@ impl BridgeCore {
     }
     let pushed = self.batch.lock().push(m);
     match pushed {
-      Pushed::Flush(queued) => queued.into_iter().for_each(|m| (self.post)(m)),
+      Pushed::Flush(queued) => queued.into_iter().for_each(|m| self.deliver(m)),
       Pushed::Arm => {
         let weak = self.me.clone();
         tokio::spawn(async move {
@@ -349,7 +371,29 @@ impl BridgeCore {
   fn flush(&self) {
     let queued = self.batch.lock().flush();
     for m in queued {
-      (self.post)(m);
+      self.deliver(m);
+    }
+  }
+
+  /// Post a batched message; a session view goes out as the patch against the view this page holds when it can. The diff and
+  /// the post happen under one lock, so two flushes racing on different threads can never post patches out of order
+  fn deliver(&self, m: HostMsg) {
+    let HostMsg::Session { parts, .. } = &m else { return (self.post)(m) };
+    let mut sent = self.sent.lock();
+    // A snapshot older than the one already sent (a batch flushed after a resync answered with a newer view, or two flushes
+    // racing for this lock) carries nothing the page does not have, and must not become the base of the next patch
+    if let (Some(prev), Some(next)) = (sent.as_ref(), parts.as_ref())
+      && prev.0.id == next.0.id
+      && next.0.rev < prev.0.rev
+    {
+      return;
+    }
+    let next = parts.clone().filter(|_| self.patches.load(std::sync::atomic::Ordering::Acquire));
+    let patch = sent.as_ref().zip(next.as_ref()).and_then(|(prev, next)| session_patch(&prev.0, &next.0));
+    *sent = next;
+    match patch {
+      Some(patch) => (self.post)(HostMsg::SessionPatch { patch }),
+      None => (self.post)(m),
     }
   }
 

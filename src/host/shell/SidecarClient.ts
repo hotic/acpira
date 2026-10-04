@@ -177,7 +177,8 @@ export class SidecarClient {
       case 'hostMessage': {
         const a = this.views.get(m.viewId);
         if (!a) return;
-        const session = m.message.type === 'session' ? m.message.session : m.message.type === 'init' ? m.message.state.active : undefined;
+        const msg = m.message;
+        const session = msg.type === 'session' ? msg.session : msg.type === 'sessionPatch' ? msg.patch.view : msg.type === 'init' ? msg.state.active : undefined;
         if (session?.id) a.lastSessionId = session.id;
         a.view.onHostMessage(m.message);
         return;

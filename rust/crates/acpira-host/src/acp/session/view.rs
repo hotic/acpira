@@ -1,11 +1,15 @@
 //! What a session shows and stores: the list entry and state dot, the view every viewer renders, and the record the
 //! store writes, both serialized straight from `Core` without cloning the transcript
 
-use acpira_shared::protocol::RawJson;
+use std::sync::Arc;
+
+use acpira_shared::protocol::{HostMsg, RawJson};
+use acpira_shared::session_patch::{ViewParts, ViewPartsData, encode_turns, raw};
 use acpira_shared::subagents::SubagentSummary;
 use acpira_shared::model_shapes::ModelShapes;
 use acpira_shared::transcript::*;
 use serde::Serialize;
+use serde_json::value::RawValue;
 
 use crate::acp::session::controls::picked_controls;
 use crate::acp::session::queue::queue_snapshot;
@@ -52,12 +56,36 @@ impl AcpSession {
 
   /// The whole view, serialized once for every viewer showing this session
   pub fn view_json(&self) -> (RawJson, bool) {
+    let (raw, running, _) = self.view_encoded();
+    (raw, running)
+  }
+
+  /// The push every viewer of one change shares: the whole view, plus its turn-by-turn encoding that a patching viewer is
+  /// sent the difference of (`bridge_core.rs`)
+  pub fn view_msg(&self) -> HostMsg {
+    let (session, running, parts) = self.view_encoded();
+    HostMsg::Session { session, running, parts: Some(parts) }
+  }
+
+  fn view_encoded(&self) -> (RawJson, bool, ViewParts) {
     let shapes = self.deps.model_shapes.as_ref().and_then(|f| f(&self.agent));
     let mut c = self.core.lock();
+    // Each visible turn is encoded on its own, the last one also block by block when it is an agent turn; the whole view
+    // is spliced from the same fragments, so the transcript is still serialized once per change
+    let (turns, last) = {
+      let core = &mut *c;
+      match core.pending_prompt.as_mut() {
+        Some(p) => encode_turns(&core.state.turns.iter().collect::<Vec<_>>(), Some(p)),
+        None => match core.state.turns.split_last_mut() {
+          Some((last, before)) => encode_turns(&before.iter().collect::<Vec<_>>(), Some(last)),
+          None => (vec![], None),
+        },
+      }
+    };
     let subagents = if c.tree.is_empty() { None } else { Some(c.tree.summaries()) };
     let picked = (!c.picks.values.is_empty()).then(|| picked_controls(&c));
     let queued = queue_snapshot(&c);
-    let view = ViewRef {
+    let head = ViewRef {
       id: &self.id,
       agent: &self.agent,
       account_id: c.account_id.as_deref(),
@@ -67,7 +95,7 @@ impl AcpSession {
       error: c.error.as_deref(),
       can_take_over: c.status == SessionStatus::Error && c.lock_holder.is_some(),
       auth_methods: c.auth_methods.as_deref(),
-      turns: TurnsRef { turns: &c.state.turns, pending: c.pending_prompt.as_ref() },
+      turns: &[],
       running: c.phase.running,
       rev: c.rev,
       controls: picked.as_ref().unwrap_or(&c.state.controls),
@@ -80,7 +108,10 @@ impl AcpSession {
       created_at: &self.created_at,
       updated_at: &c.updated_at,
     };
-    (RawJson::new(&view), c.phase.running)
+    let encoded_head = raw(&head);
+    let full = RawJson::new(&ViewRef { turns: &turns, ..head });
+    let parts = ViewParts(Arc::new(ViewPartsData { id: self.id.clone(), rev: c.rev, head: encoded_head, turns, last }));
+    (full, c.phase.running, parts)
   }
 
   /// An owned view, for callers that inspect it (tests, plan lookups)
@@ -148,7 +179,7 @@ struct ViewRef<'a> {
   can_take_over: bool,
   #[serde(skip_serializing_if = "Option::is_none")]
   auth_methods: Option<&'a [AuthMethodInfo]>,
-  turns: TurnsRef<'a>,
+  turns: &'a [Box<RawValue>],
   running: bool,
   rev: i64,
   controls: &'a SessionControls,

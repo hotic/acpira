@@ -5,6 +5,7 @@ import type { HiddenMap, SettingKey, SettingsView } from './settings';
 import type { Locale } from './i18n';
 import type { AgentInventory } from './inventory';
 import type { SharedAction, SharedView } from './sharedConfig';
+import type { SessionPatch } from './sessionPatch';
 
 // Message contract between host ↔ webview; both sides trust only this file
 
@@ -86,6 +87,8 @@ export type HostMsg =
   | { type: 'agents'; agents: AgentInfo[] }
   | { type: 'sessions'; sessions: SessionSummary[] }
   | { type: 'session'; session: SessionView }
+  // Only to pages that said `patches` in ready: the changes since the view sent last (sessionPatch.ts)
+  | { type: 'sessionPatch'; patch: SessionPatch }
   // One observed subagent's transcript, pushed to the viewer that asked for it; rev grows with every change
   | { type: 'subagent'; sessionId: string; subagentId: string; rev: number; running: boolean; turns: Turn[] }
   | { type: 'accounts'; accounts: AccountInfo[] }
@@ -133,7 +136,10 @@ export type WebviewMsg =
   | { type: 'chatgptStatus' }
   | { type: 'connectChatgpt' }
   | { type: 'editTurn'; requestId: string; edit: EditTurnRequest }
-  | { type: 'ready' }
+  // patches: the page applies sessionPatch messages; without it every push is the whole view
+  | { type: 'ready'; patches?: boolean }
+  // A sessionPatch did not fit the view the page holds: the host sends the whole view again
+  | { type: 'resync' }
   // The page's window got focus. The VS Code shell keeps it (the last-used chat is where "Add to Chat" goes); the sidecar ignores it
   | { type: 'viewFocus' }
   // steer: sent while a turn runs with steering on (SessionView.canSteer); it joins that turn instead of queueing behind it

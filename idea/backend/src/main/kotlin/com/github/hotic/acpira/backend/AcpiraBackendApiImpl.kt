@@ -44,6 +44,7 @@ class AcpiraBackendApiImpl : AcpiraBackendApi {
                         val obj = message.asJsonObject
                         val session = when (obj.get("type")?.asString) {
                             "session" -> obj.getAsJsonObject("session")
+                            "sessionPatch" -> obj.getAsJsonObject("patch")?.getAsJsonObject("view")
                             "init" -> obj.getAsJsonObject("state")?.getAsJsonObject("active")
                             else -> null
                         }

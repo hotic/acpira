@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use tokio::fs;
 
 use acpira_shared::model_shapes::ModelShapes;
-use acpira_shared::transcript::{AgentId, SessionSummary, TurnSettings};
+use acpira_shared::transcript::{AgentId, SessionControls, SessionSummary, TurnSettings};
 
 use super::file_lock::{with_file_lock, write_atomic};
 use super::record::{RecordSource, SessionRecord};
@@ -111,6 +111,15 @@ struct Pending {
 struct State {
   pending: HashMap<String, Pending>,
   known: HashSet<String>,
+  /// Records whose content did not parse, by the file stamp they had then: the index sync (every webview ready / window
+  /// focus) passes over them until the file changes, instead of reading and failing on them again
+  unreadable: HashMap<String, FileStamp>,
+}
+
+type FileStamp = (u64, Option<SystemTime>);
+
+async fn file_stamp(path: &Path) -> Option<FileStamp> {
+  fs::metadata(path).await.ok().map(|m| (m.len(), m.modified().ok()))
 }
 
 pub struct TranscriptStore {
@@ -137,7 +146,7 @@ impl TranscriptStore {
       on_save_error,
       debounce,
       max_wait,
-      state: parking_lot::Mutex::new(State { pending: HashMap::new(), known: HashSet::new() }),
+      state: parking_lot::Mutex::new(State { pending: HashMap::new(), known: HashSet::new(), unreadable: HashMap::new() }),
       inflight: Default::default(),
       me: me.clone(),
     })
@@ -205,7 +214,23 @@ impl TranscriptStore {
       let s = match pick {
         Some(s) if !s.cwd.is_empty() => s.clone(),
         other => {
-          let Some(r) = self.load(&id).await else { continue };
+          let stamp = file_stamp(&self.dir.join(format!("{id}.json"))).await;
+          if stamp.is_some() && self.state.lock().unreadable.get(&id) == stamp.as_ref() {
+            continue;
+          }
+          let r = match self.load_detailed(&id).await {
+            Ok(r) => r,
+            Err(error) => {
+              if !error.is_missing() {
+                (self.log)(&format!("session {id}: record unreadable ({})", error.detail()));
+              }
+              // Only a file whose content is wrong is passed over: an I/O failure (permissions) may clear without the file changing
+              if let (Some(stamp), RecordLoadError::Corrupt { .. } | RecordLoadError::IdMismatch { .. }) = (stamp, &error) {
+                self.state.lock().unreadable.insert(id.clone(), stamp);
+              }
+              continue;
+            }
+          };
           let mut base = other.cloned().unwrap_or_else(|| r.summary());
           let fresh = r.summary();
           base.id = fresh.id;
@@ -273,6 +298,27 @@ impl TranscriptStore {
       Ok(r) => Err(RecordLoadError::IdMismatch { actual: r.id }),
       Err(e) => Err(RecordLoadError::Corrupt { reason: e.to_string() }),
     }
+  }
+
+  /// Only a record's controls, for the chips a new session paints before its own arrive: the transcript is skipped over
+  /// by the parser instead of built (a long record runs to tens of MB)
+  pub async fn load_controls(&self, id: &str) -> Option<SessionControls> {
+    #[derive(Deserialize)]
+    struct ControlsOnly {
+      id: String,
+      #[serde(default)]
+      controls: SessionControls,
+    }
+    if !is_session_id(id) {
+      return None;
+    }
+    let pending = self.state.lock().pending.get(id).map(|p| p.source.clone());
+    if let Some(src) = pending {
+      return Some(src.record().controls);
+    }
+    let path = confined(&self.dir, &format!("{id}.json")).await?;
+    let raw = fs::read(&path).await.ok()?;
+    serde_json::from_slice::<ControlsOnly>(&raw).ok().filter(|r| r.id == id).map(|r| r.controls)
   }
 
   /// Compatibility wrapper for callers that only need the record. Detailed callers should use `load_detailed`.

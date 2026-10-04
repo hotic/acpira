@@ -115,6 +115,41 @@ async fn rebuilding_a_lost_index_skips_broken_records() {
   assert_eq!(ids(&store.load_index().await.unwrap()), ["ok"]);
 }
 
+// A truncated record used to be re-read and logged on every index sync (each webview ready / window focus)
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unreadable_record_is_read_once_per_file_version_by_the_index_sync() {
+  let (dir, logs, store) = fixture();
+  let good = serde_json::to_string(&*record("cut", "Healed")).unwrap();
+  std::fs::write(dir.path().join("cut.json"), &good[..good.len() / 2]).unwrap();
+  let unreadable = || logs.lock().unwrap().iter().filter(|l| l.contains("record unreadable")).count();
+  for _ in 0..3 {
+    assert!(store.sync_index(&[], &HashSet::new()).await.unwrap().is_empty());
+  }
+  assert_eq!(unreadable(), 1);
+  // A rewritten file is read again
+  std::fs::write(dir.path().join("cut.json"), &good).unwrap();
+  assert_eq!(ids(&store.sync_index(&[], &HashSet::new()).await.unwrap()), ["cut"]);
+  assert_eq!(unreadable(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn load_controls_reads_only_the_controls_of_a_stored_or_pending_record() {
+  let (dir, _, store) = fixture();
+  let mut r = (*record("c", "T")).clone();
+  r.controls = serde_json::from_value(json!({ "modes": [{ "id": "plan", "name": "Plan" }], "options": [] })).unwrap();
+  store.flush(Arc::new(r.clone())).await.unwrap();
+  assert_eq!(store.load_controls("c").await.unwrap(), r.controls);
+  assert!(store.load_controls("absent").await.is_none());
+  assert!(store.load_controls("../c").await.is_none());
+  std::fs::write(dir.path().join("other.json"), serde_json::to_string(&r).unwrap()).unwrap();
+  assert!(store.load_controls("other").await.is_none(), "the inner id must match the file name");
+  // A record still waiting on its debounce answers from memory
+  let mut p = (*record("p", "T")).clone();
+  p.controls = r.controls.clone();
+  store.save(Arc::new(p));
+  assert_eq!(store.load_controls("p").await.unwrap(), r.controls);
+}
+
 // The failure that lost sessions in the wild: every window holds its own copy of the list and used to write it back whole
 #[tokio::test(flavor = "multi_thread")]
 async fn two_hosts_never_clobber_each_others_sessions_and_an_incomplete_index_heals_from_the_files() {

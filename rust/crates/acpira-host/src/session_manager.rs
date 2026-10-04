@@ -160,6 +160,8 @@ pub struct SessionManager {
   prefs_writer: tokio::sync::Mutex<()>,
   prefs_saves: parking_lot::Mutex<Vec<tokio::task::JoinHandle<()>>>,
   viewer_seq: std::sync::atomic::AtomicU64,
+  // The list as last pushed: most changes (every streamed chunk) leave it as it was, and an identical list is not sent again
+  last_sessions: parking_lot::Mutex<Option<Vec<SessionSummary>>>,
   // Extracted conversation text of the saved records, kept between history searches
   search: SessionSearch,
   // The last export per (session, format): an unchanged transcript hands back the same file instead of writing another one.
@@ -216,6 +218,7 @@ impl SessionManager {
         prefs_writer: tokio::sync::Mutex::new(()),
         prefs_saves: Default::default(),
         viewer_seq: Default::default(),
+        last_sessions: Default::default(),
         search: SessionSearch::default(),
         exports: Default::default(),
         me: me.clone(),
@@ -253,7 +256,7 @@ impl SessionManager {
             Some(view) => {
               let raw = RawJson::new(&view);
               for v in m.viewers_on(&id, None) {
-                v.emit(HostMsg::Session { session: raw.clone(), running: view.running });
+                v.emit(HostMsg::Session { session: raw.clone(), running: view.running, parts: None });
               }
             }
             None => {
@@ -759,7 +762,7 @@ impl SessionManager {
     for s in index.iter().filter(|s| s.agent == agent) {
       let options = match self.live(&s.id) {
         Some(l) => l.agent_controls().options,
-        None => self.deps.store.load(&s.id).await.map(|r| r.controls.options).unwrap_or_default(),
+        None => self.deps.store.load_controls(&s.id).await.map(|c| c.options).unwrap_or_default(),
       };
       if !options.is_empty() {
         return options;
@@ -777,7 +780,7 @@ impl SessionManager {
     for s in index.iter().filter(|s| s.agent == agent) {
       let controls = match self.live(&s.id) {
         Some(l) => l.agent_controls(),
-        None => self.deps.store.load(&s.id).await.map(|r| r.controls).unwrap_or_default(),
+        None => self.deps.store.load_controls(&s.id).await.unwrap_or_default(),
       };
       if out.modes.is_empty() && !controls.modes.is_empty() {
         out.modes = controls.modes;
@@ -994,6 +997,16 @@ impl SessionManager {
     Some((RawJson::new(&view), view.running))
   }
 
+  /// The session push for one viewer, as `emit_session` would send it
+  pub fn session_msg(&self, id: Option<&str>) -> Option<HostMsg> {
+    let id = id?;
+    if let Some(s) = self.live(id) {
+      return Some(s.view_msg());
+    }
+    let (session, running) = self.view_of(Some(id))?;
+    Some(HostMsg::Session { session, running, parts: None })
+  }
+
   fn has_view(&self, id: &str) -> bool {
     self.live(id).is_some() || self.deps.chatgpt.as_ref().is_some_and(|c| c.view(id).is_some())
   }
@@ -1041,13 +1054,12 @@ impl SessionManager {
   }
 
   fn emit_session(&self, s: &AcpSession) {
-    let mut view: Option<(RawJson, bool)> = None;
+    let mut view: Option<HostMsg> = None;
     for v in self.viewers() {
       if v.active_id().as_deref() != Some(s.id.as_str()) {
         continue;
       }
-      let (raw, running) = view.get_or_insert_with(|| s.view_json()).clone();
-      v.emit(HostMsg::Session { session: raw, running });
+      v.emit(view.get_or_insert_with(|| s.view_msg()).clone());
       let obs = v.state.lock().observing.clone();
       let Some((sid, sub)) = obs.filter(|(sid, _)| *sid == s.id) else { continue };
       if let Some((turns, rev, running)) = s.subagent_transcript(&sub) {
@@ -1066,8 +1078,23 @@ impl SessionManager {
     }
   }
 
+  /// Pages that join later get the list in their init state, so skipping an unchanged list leaves none behind. Built and
+  /// posted under one lock: two racing callers can never post an older list after a newer one
   fn emit_sessions(&self) {
-    self.emit(HostMsg::Sessions { sessions: self.sessions() });
+    let mut last = self.last_sessions.lock();
+    let sessions = self.sessions();
+    if last.as_ref() == Some(&sessions) {
+      return;
+    }
+    *last = Some(sessions.clone());
+    self.emit(HostMsg::Sessions { sessions });
+  }
+
+  /// The current list for one page, taken under the same lock as `emit_sessions`: whatever `send` queues lands after any
+  /// list already emitted and before any later one, so the page cannot end on an older list that the next emit skips
+  pub fn sessions_in_order(&self, send: impl FnOnce(Vec<SessionSummary>)) {
+    let _order = self.last_sessions.lock();
+    send(self.sessions());
   }
 
   /// Landing on a session also reads it; callers push the session list afterwards
@@ -1217,7 +1244,7 @@ impl SessionManager {
         let view = me.connect_chatgpt(None, "ChatGPT").await?;
         me.drop_empty_current(&v).await;
         me.set_active(&v, Some(view.id.clone()));
-        v.emit(HostMsg::Session { session: RawJson::new(&view), running: view.running });
+        v.emit(HostMsg::Session { session: RawJson::new(&view), running: view.running, parts: None });
         return Ok(());
       }
       let acc = if me.deps.accounts.as_ref().is_some_and(|a| a.supports(&id)) { account.or_else(|| me.default_account(&id)) } else { None };
@@ -1308,7 +1335,7 @@ impl SessionManager {
           return;
         };
         me.set_active(&v, Some(id.clone()));
-        v.emit(HostMsg::Session { session: RawJson::new(&view), running: view.running });
+        v.emit(HostMsg::Session { session: RawJson::new(&view), running: view.running, parts: None });
         me.emit_sessions();
         return;
       }
@@ -1318,8 +1345,7 @@ impl SessionManager {
       let previous = v.active_id();
       me.set_active(&v, Some(id.clone()));
       if let Some(live) = me.live(&id) {
-        let (raw, running) = live.view_json();
-        v.emit(HostMsg::Session { session: raw, running });
+        v.emit(live.view_msg());
         me.emit_sessions();
         return;
       }
@@ -1330,8 +1356,7 @@ impl SessionManager {
         if let Some(s) = me.live(&id)
           && v.active_id().as_deref() == Some(id.as_str())
         {
-          let (raw, running) = s.view_json();
-          v.emit(HostMsg::Session { session: raw, running });
+          v.emit(s.view_msg());
           me.emit_sessions();
         } else if v.active_id().as_deref() == Some(id.as_str()) {
           me.set_active(&v, previous.filter(|old| old != &id));

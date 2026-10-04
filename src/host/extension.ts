@@ -54,7 +54,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const panels = new Map<WebviewBridge, vscode.WebviewPanel>();
   const attach = (webview: vscode.Webview, host: 'sidebar' | 'editor', initial?: string | { mostRecent: true }, onSession?: (s: SessionView) => void) => {
     const b = new WebviewBridge(webview, host, {
-      client: sidecar, extensionUri: context.extensionUri, sessionsDir, onSession,
+      client: sidecar, extensionUri: context.extensionUri, sessionsDir, onSession, log: line => log.info(line),
       locale: () => platform.locale(),
       onPageReady: ready => {
         ready.postShell({ type: 'editorSelection', selection: liveSelection });
