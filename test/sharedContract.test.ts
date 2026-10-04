@@ -66,6 +66,31 @@ describe('shared config contract', () => {
     await s.hostMsg('V', 'shared', m => m.view.mcp.length === 1 && !m.error);
   });
 
+  it('saves a prompt verbatim and turns overwrite on and off', async () => {
+    const { s, home } = setup();
+    await s.hello({ client: { name: 'contract', version: '0', capabilities: [] } });
+    await s.open('V');
+
+    // The editor's text lands byte for byte, Markdown untouched
+    const text = '# Rules\n\n- no **watermark**\n\n```sh\necho hi\n```';
+    s.view('V', { type: 'sharedAction', action: { kind: 'savePrompt', scope: 'global', text, base: '' } });
+    const saved = await s.hostMsg('V', 'shared', m => !!m.view.prompts.find(p => p.scope === 'global')?.exists);
+    expect(saved.error).toBeUndefined();
+    expect(readFileSync(join(home, '.agents/AGENTS.md'), 'utf8')).toBe(text);
+    expect(saved.view.prompts.find(p => p.scope === 'global')?.text).toBe(text);
+    // An edit that started from another text is refused and the file stays
+    s.view('V', { type: 'sharedAction', action: { kind: 'savePrompt', scope: 'global', text: 'lost', base: '' } });
+    expect((await s.hostMsg('V', 'shared', m => !!m.error)).view.prompts.find(p => p.scope === 'global')?.text).toBe(text);
+
+    s.view('V', { type: 'sharedAction', action: { kind: 'overwrite', on: true, merge: [] } });
+    const on = await s.hostMsg('V', 'shared', m => m.view.overwrite);
+    expect(on.error).toBeUndefined();
+    // Whatever agents this machine has installed, every user-level link point is in place
+    expect(on.view.plan).toEqual([]);
+    s.view('V', { type: 'sharedAction', action: { kind: 'overwrite', on: false } });
+    await s.hostMsg('V', 'shared', m => !m.view.overwrite && !m.error);
+  });
+
   it('creates a skill and turns links on and off', async () => {
     const { s, home } = setup();
     await s.hello({ client: { name: 'contract', version: '0', capabilities: [] } });

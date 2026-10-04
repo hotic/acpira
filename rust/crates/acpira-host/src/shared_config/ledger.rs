@@ -15,6 +15,12 @@ pub enum EntryKind {
   Link,
   /// An `@<target>` import line at the top of the file at `path`
   Import,
+  /// Overwrite moved an agent's own skill folder (`target`) into the shared skills folder (`path`); undone by moving
+  /// it back
+  Adopted,
+  /// Overwrite moved an agent's own skill folder at `path` into `backup`, the shared one of that name winning; undone by
+  /// putting the backup back
+  Aside,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +40,9 @@ pub struct Entry {
   /// The agent the link / import is for, so turning the agent off can take its entries back
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub agent: Option<String>,
+  /// Made by overwrite (rather than the link panel), so turning overwrite off takes exactly these back
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub overwrite: bool,
 }
 
 impl Entry {
@@ -51,6 +60,9 @@ pub struct Ledger {
   /// User-level link points left out on purpose in the link panel
   #[serde(default)]
   pub skipped: Vec<String>,
+  /// User level is overwritten: every link point is kept wired, skipped ones and conflicts included
+  #[serde(default)]
+  pub overwrite: bool,
   /// Project level is off: Claude's project links are not made on their own
   #[serde(default)]
   pub project_manual: bool,

@@ -49,7 +49,19 @@ export interface SharedPrompt {
   exists: boolean;
   // The first lines, for the card
   preview: string;
+  // The whole file as it is on disk (empty when missing), for the page's plain-text editor
+  text: string;
   reach: Reach[];
+}
+
+// An agent's own global instruction file with lines ~/.agents/AGENTS.md does not have, offered for merging before
+// overwrite replaces the file with a link to the shared prompt
+export interface Takeover {
+  agent: AgentId;
+  // The agent's file; the key of the overwrite action's merge list
+  path: string;
+  // The lines only this file has, in file order (runs separated by a blank line)
+  unique: string;
 }
 
 // unique: no shared skill of this name; same: identical files; differs: a shared skill of this name has other content
@@ -99,6 +111,11 @@ export interface SharedView {
   piUntrusted: boolean;
   // Whether `~/.agents/AGENTS.md` exists
   sharedPrompt: boolean;
+  // User level is overwritten: every agent's global instruction file and skill link point is kept wired to ~/.agents,
+  // skipped points and conflicts included (what stood there is backed up and restored when turned off)
+  overwrite: boolean;
+  // Before overwrite is on: the agents' own global prompts with content of their own
+  takeover: Takeover[];
   skills: SharedSkill[];
   mcp: SharedMcp[];
   // Installed agents that take no client MCP servers at all (Pi)
@@ -126,6 +143,11 @@ export type SharedAction =
   | { kind: 'link'; picks: Pick[]; auto: boolean }
   // Remove every user-level link Acpira made and put back what it moved aside
   | { kind: 'unlink' }
+  // On: the unique lines of the merge files go to the end of ~/.agents/AGENTS.md, then every user-level link point is
+  // wired; off: what overwrite wired is undone and the backups go back in place
+  | { kind: 'overwrite'; on: boolean; merge?: string[] }
+  // Write a prompt file verbatim, in place; refused when the file no longer holds base, the text the edit started from
+  | { kind: 'savePrompt'; scope: SharedScope; text: string; base: string }
   // Project level: make Claude's links on their own (on), or remove every project link and stop (off)
   | { kind: 'projectAuto'; on: boolean }
   // Leave this project's links out of `info/exclude` so they can be committed (true), or hide them again

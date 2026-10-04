@@ -313,6 +313,9 @@
   --setting-row-detail: 64px;
   --setting-row-pad: 12px;
   --setting-header-copy: 200px;
+  /* The Shared tab's plain-text prompt editor: a few rows tall when empty, scrolling past most of the viewport */
+  --prompt-editor-min: calc(var(--setting-row) * 4);
+  --prompt-editor-max: 70dvh;
   --text-h: calc(var(--ui-font-size) + 2px);
   --text-h-lh: calc(var(--ui-font-size) + 9px);
   --content-w: 720px;

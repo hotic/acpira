@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { FileText, FolderOpen, GitBranch, Globe, Link2, Plus, Server, ShieldCheck, Sparkles, Trash2, X } from 'lucide-react';
+import { FileText, FolderOpen, GitBranch, Globe, Layers, Link2, Plus, Server, ShieldCheck, Sparkles, Trash2, X } from 'lucide-react';
 import type { AgentId, AgentInfo } from '@shared/transcript';
 import type { McpTransport } from '@shared/inventory';
 import type { Choice, PlanItem, PrivateSkill, Reach, ReachState, SharedAction, SharedMcp, SharedPrompt, SharedScope, SharedSkill, SharedView } from '@shared/sharedConfig';
@@ -111,27 +111,93 @@ const inputBox = 'min-w-0 rounded-md border border-line bg-chip px-3 text-2 text
 // A row explanation that wraps instead of truncating; these sentences are the point of the row
 const Explain = ({ children }: { children: ReactNode }) => <span className="text-2 text-fg-2 [overflow-wrap:anywhere]">{children}</span>;
 
-// User level: nothing is linked until the panel says so; afterwards new skills follow when auto is on
+// User level: nothing is linked until the panel says so; afterwards new skills follow when auto is on.
+// Overwrite replaces both: every link point stays wired to ~/.agents, and the panel and its undo step aside
 function UserCard({ ctx }: { ctx: Ctx }) {
   const { view, act, busy } = ctx;
   const [panel, setPanel] = useState(false);
+  // Turning overwrite on first shows what the agents' own files would lose, when there is anything
+  const [takeover, setTakeover] = useState(false);
   // A missing prompt link waits for a shared prompt to exist, so it is not counted as ready
   const todo = view.plan.filter(p => !p.skipped && !(p.kind === 'prompt' && p.state === 'missing' && !view.sharedPrompt)).length;
-  // The panel closes once its submit has been applied (the plan it was built from is gone)
+  const skillConflicts = view.plan.filter(p => p.kind === 'skill' && p.state === 'conflict').length;
+  // Skills in the agents' own user-level folders, which overwrite moves into ~/.agents/skills (or backs up when taken)
+  const privateSkills = view.privateSkills.filter(s => s.scope === 'global').length;
+  // The panels close once their submit has been applied (the plan they were built from is gone)
   useEffect(() => { if (!view.plan.length) setPanel(false); }, [view.plan.length]);
-  const desc = view.plan.length
-    ? t('settings.shared.user.pending', { n: todo || view.plan.length })
-    : view.userLinked ? (view.auto ? t('settings.shared.user.auto') : t('settings.shared.user.done')) : t('settings.shared.user.none');
-  const action = !panel && (
+  useEffect(() => { if (view.overwrite) setTakeover(false); }, [view.overwrite]);
+  const desc = view.overwrite
+    ? t('settings.shared.user.overwrite')
+    : view.plan.length
+      ? t('settings.shared.user.pending', { n: todo || view.plan.length })
+      : view.userLinked ? (view.auto ? t('settings.shared.user.auto') : t('settings.shared.user.done')) : t('settings.shared.user.none');
+  const action = !panel && !takeover && !view.overwrite && (
     <div className="flex shrink-0 items-center gap-1">
       {view.userLinked && <SectionAction onClick={() => { if (!busy) act({ kind: 'unlink' }); }}>{t('settings.shared.unlink')}</SectionAction>}
       {view.plan.length > 0 && <Button variant="primary" disabled={busy} onClick={() => setPanel(true)}>{t('settings.shared.link')}</Button>}
     </div>
   );
+  const turn = (on: boolean) => {
+    if (!on) {
+      setTakeover(false);
+      if (view.overwrite) act({ kind: 'overwrite', on: false });
+    } else if (view.takeover.length || skillConflicts || privateSkills) {
+      setPanel(false);
+      setTakeover(true);
+    } else {
+      act({ kind: 'overwrite', on: true, merge: [] });
+    }
+  };
   return (
     <Section title={t('settings.shared.user')} desc={desc} action={action}>
-      {panel ? <LinkPanel ctx={ctx} onClose={() => setPanel(false)} /> : null}
+      <ItemRow lead={<Layers strokeWidth={1.5} />} title={t('settings.shared.overwrite')} extra={<Explain>{t('settings.shared.overwrite.desc')}</Explain>}
+        trailing={<Switch checked={view.overwrite || takeover} disabled={busy} label={t('settings.shared.overwrite')} onChange={turn} />} />
+      {takeover && <TakeoverPanel ctx={ctx} skillConflicts={skillConflicts} privateSkills={privateSkills} onClose={() => setTakeover(false)} />}
+      {panel && <LinkPanel ctx={ctx} onClose={() => setPanel(false)} />}
     </Section>
+  );
+}
+
+// Before overwrite replaces the agents' own global prompts: the lines only they have, each file's switched on by
+// default, so nothing disappears into the backups unseen
+function TakeoverPanel({ ctx, skillConflicts, privateSkills, onClose }: { ctx: Ctx; skillConflicts: number; privateSkills: number; onClose: () => void }) {
+  const { view, act, busy, names, env } = ctx;
+  // Only the switches turned off are remembered, so a file that shows up while the panel is open starts switched on too
+  const [skip, setSkip] = useState<Record<string, boolean>>({});
+  const merging = (path: string) => !skip[path];
+  const submit = () => act({ kind: 'overwrite', on: true, merge: view.takeover.filter(x => merging(x.path)).map(x => x.path) });
+  return (
+    <>
+      {view.takeover.length > 0 && (
+        <div className="flex flex-col">
+          <Note><span className="text-fg-1">{t('settings.shared.takeover.title')}</span></Note>
+          <Explain>{t('settings.shared.takeover.desc')}</Explain>
+          {view.takeover.map(x => {
+            const who = names([x.agent]);
+            return (
+              <ItemRow key={x.path} className="items-start"
+                lead={<AgentMark id={x.agent} name={who} />}
+                title={who}
+                desc={<PathText path={x.path} env={env} onOpen={() => ctx.open(x.path)} />}
+                extra={<pre className="scroll-thin m-0 max-h-code-output overflow-auto pt-1 font-mono text-mono whitespace-pre-wrap text-fg-2 [overflow-wrap:anywhere]">{x.unique}</pre>}
+                trailing={<Switch checked={merging(x.path)} label={t('settings.shared.takeover.merge', { agent: who })}
+                  onChange={on => setSkip(m => ({ ...m, [x.path]: !on }))} />}
+              />
+            );
+          })}
+        </div>
+      )}
+      {/* Footnotes above the buttons, in one block: a group child of its own would get a divider above and below */}
+      <div className="flex flex-wrap items-center justify-end gap-2 py-(--setting-row-pad)">
+        <span className="min-w-0 basis-full text-2 text-fg-3 [overflow-wrap:anywhere]">
+          {privateSkills > 0 && <>{t('settings.shared.takeover.private', { n: privateSkills })}<br /></>}
+          {skillConflicts > 0 && <>{t('settings.shared.takeover.skills', { n: skillConflicts })}<br /></>}
+          {t('settings.shared.plan.backup')}
+        </span>
+        <Button onClick={onClose}>{t('settings.shared.cancel')}</Button>
+        <Button variant="primary" disabled={busy} onClick={submit}>{t('settings.shared.takeover.submit')}</Button>
+      </div>
+    </>
   );
 }
 
@@ -305,10 +371,15 @@ function RemoveButton({ name, busy, onRemove }: { name: string; busy: boolean; o
     timer.current = setTimeout(() => setArmed(false), 3000);
   };
   const label = armed ? t('settings.shared.removeSkill.confirm') : t('settings.shared.removeSkill', { name });
+  // The pointer is still on the button when it arms, so the armed colour must also win over the hover / focus colours,
+  // and the prompt is spelled out in the button: a native tooltip would only show after a delay
   return (
     <IconButton title={label} aria-label={label} disabled={busy} onClick={click} onMouseLeave={disarm} onBlur={disarm}
-      className={cn(armed ? 'text-danger opacity-100' : 'text-fg-2 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100')}>
+      className={cn(armed
+        ? 'w-auto gap-1 bg-danger/15 px-2 text-danger opacity-100 hover:bg-danger/20 hover:text-danger focus-visible:bg-danger/20 focus-visible:text-danger'
+        : 'text-fg-2 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100')}>
       <Trash2 strokeWidth={1.5} />
+      {armed && <span className="whitespace-nowrap text-2">{label}</span>}
     </IconButton>
   );
 }
@@ -446,6 +517,9 @@ function PromptsTab({ ctx }: { ctx: Ctx }) {
             desc={scope === 'project' ? t('settings.shared.prompt.projectDesc') : t('settings.shared.prompt.globalDesc')}
             action={prompt && <SectionAction icon={<FileText strokeWidth={1.75} />} onClick={() => act({ kind: 'open', scope, target: 'prompt' })}>{t('settings.shared.prompt.open')}</SectionAction>}>
             {!prompt ? <Note>{t('settings.shared.noProject')}</Note> : <PromptCard prompt={prompt} ctx={ctx} />}
+            {/* The user-level prompt is edited here once Acpira owns it (overwrite); the project's AGENTS.md always */}
+            {prompt && (scope === 'project' || view.overwrite) && <PromptEditor key={prompt.path} prompt={prompt} ctx={ctx} />}
+            {prompt && scope === 'global' && !view.overwrite && <Note>{t('settings.shared.prompt.locked')}</Note>}
           </Section>
         );
       })}
@@ -465,19 +539,58 @@ function Preview({ text }: { text: string }) {
 }
 
 function PromptCard({ prompt, ctx }: { prompt: SharedPrompt; ctx: Ctx }) {
-  const { names, env, open } = ctx;
+  const { view, names, env, open } = ctx;
   const lines = (['native', 'linked', 'missing', 'conflict', 'unsupported'] as const).map(s => reachLine(prompt.reach, s, names)).filter(Boolean);
+  // The editor below shows the whole text; the preview would only repeat its first lines
+  const editing = prompt.scope === 'project' || view.overwrite;
   return (
     <>
       <ItemRow
         lead={<FileText strokeWidth={1.5} />}
         title={shortPath(prompt.path, env)}
         desc={prompt.exists ? undefined : t('settings.shared.prompt.missing')}
-        extra={prompt.exists ? <Preview text={prompt.preview} /> : undefined}
+        extra={prompt.exists && !editing ? <Preview text={prompt.preview} /> : undefined}
         dim={!prompt.exists}
         onOpen={prompt.exists ? () => open(prompt.path) : undefined}
       />
       {lines.length > 0 && <Note><span className="whitespace-pre-line [overflow-wrap:anywhere]">{lines.join('\n')}</span></Note>}
     </>
+  );
+}
+
+// The prompt file's raw text in a plain textarea: Markdown is neither rendered nor reformatted, and a save writes
+// exactly what is in the box. The text the edit started from goes along, so a file changed meanwhile elsewhere
+// is refused rather than overwritten
+function PromptEditor({ prompt, ctx }: { prompt: SharedPrompt; ctx: Ctx }) {
+  const { act, busy, env } = ctx;
+  const [draft, setDraft] = useState(prompt.text);
+  const [base, setBase] = useState(prompt.text);
+  // The text of the last save sent: when the file comes back with it, that save landed, even if typing went on meanwhile
+  const sent = useRef<string | undefined>(undefined);
+  const dirty = draft !== base;
+  // A new text on disk replaces an untouched draft; the text a save sent becomes the new base, keeping what was typed
+  // after it. Only a new file text re-bases the draft, so the draft is deliberately left out of the dependencies
+  useEffect(() => {
+    if (prompt.text === sent.current) { sent.current = undefined; setBase(prompt.text); }
+    else if (!dirty || draft === prompt.text) { setDraft(prompt.text); setBase(prompt.text); }
+  }, [prompt.text]);
+  const save = () => {
+    if (!dirty || busy) return;
+    sent.current = draft;
+    act({ kind: 'savePrompt', scope: prompt.scope, text: draft, base });
+  };
+  const revert = () => { sent.current = undefined; setDraft(prompt.text); setBase(prompt.text); };
+  const label = t('settings.shared.prompt.editor', { path: shortPath(prompt.path, env) });
+  return (
+    <div className="flex flex-col gap-2 py-(--setting-row-pad)">
+      <textarea value={draft} onChange={e => setDraft(e.target.value)} aria-label={label} spellCheck={false}
+        placeholder={t('settings.shared.prompt.placeholder')}
+        onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); save(); } }}
+        className={cn(inputBox, 'scroll-thin field-sizing-content min-h-(--prompt-editor-min) max-h-(--prompt-editor-max) resize-y py-(--setting-row-pad) font-mono text-mono')} />
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {dirty && <Button disabled={busy} onClick={revert}>{t('settings.shared.prompt.revert')}</Button>}
+        <Button variant="primary" disabled={!dirty || busy} onClick={save}>{t('settings.shared.prompt.save')}</Button>
+      </div>
+    </div>
   );
 }
