@@ -88,6 +88,7 @@ export function App() {
   const [inventories, setInventories] = useState<Partial<Record<AgentId, AgentInventory>>>({});
   const [shared, setShared] = useState<SharedState>();
   const [controls, setControls] = useState<Partial<Record<AgentId, ConfigControl[]>>>({});
+  const controlsAsked = useRef(new Set<string>());
   // The import popover's listing; `agent` ties it to the request it answers so a stale reply can't overwrite a newer request
   const [nativeSessions, setNativeSessions] = useState<NativeSessionsState>();
   const [page, setPage] = useState<SettingsPage>({ kind: 'general' });
@@ -101,6 +102,11 @@ export function App() {
   // The theme setting resolved against the host; the document carries it too so color-scheme reaches native controls outside the shell
   const { theme } = resolveTheme(settings?.theme ?? 'auto', hostTheme);
   const look = useMemo(() => settings && lookFromSettings(settings), [settings]);
+  // Settings → Subagents, the enabled ones, as the composer offers them: name, CLI logo, "CLI · model"
+  const personas = useMemo(() => settings?.subagents.filter(p => p.enabled).map(p => ({
+    id: p.id, name: p.name, agent: p.agent,
+    meta: [agents.find(a => a.id === p.agent)?.name ?? p.agent, p.model].filter(Boolean).join(' · '),
+  })), [settings?.subagents, agents]);
 
   useEffect(() => { document.documentElement.lang = locale; }, [locale]);
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
@@ -124,7 +130,8 @@ export function App() {
           if (m.error) wait?.reject(new Error(m.error)); else wait?.resolve();
           break;
         }
-        case 'init': setInit(m.state); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setHidden(m.state.hidden); setSession(current => m.state.active ? applySession(current, m.state.active) : undefined); setSettings(m.state.settings); setLocale(m.state.locale); setLoc(m.state.locale); break;
+        // A sidecar that came back answers nothing it was asked before: pending controls requests go out again
+        case 'init': controlsAsked.current.clear(); setInit(m.state); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setHidden(m.state.hidden); setSession(current => m.state.active ? applySession(current, m.state.active) : undefined); setSettings(m.state.settings); setLocale(m.state.locale); setLoc(m.state.locale); break;
         case 'appearance': setAppearance(m.appearance); break;
         // An agent whose executable appeared or vanished has a stale inventory (binary path, version); drop it so the page rescans
         case 'agents': {
@@ -166,6 +173,7 @@ export function App() {
         case 'inventory': setInventories(inv => ({ ...inv, [m.agent]: m.inventory })); break;
         case 'shared': setShared({ view: m.view, error: m.error }); break;
         case 'controls':
+          controlsAsked.current.delete(m.agent);
           setControls(c => ({ ...c, [m.agent]: m.controls }));
           setRefreshing(r => { if (!r.has(m.agent)) return r; const next = new Set(r); next.delete(m.agent); return next; });
           break;
@@ -196,10 +204,19 @@ export function App() {
   const sessionId = session?.id;
   useEffect(() => setSubagentTranscripts({}), [sessionId]);
 
-  // The model lists of an agent page come from the configOptions of its latest session; ask for them on first visit
+  // The model lists of an agent page come from the configOptions of its latest session; ask for them on first visit.
+  // The subagents page picks models of the CLIs its personas run in, so it asks for each of those
+  // Requests in flight are not sent twice while another agent's reply re-runs the effect
+  const personaAgents = useMemo(() => [...new Set(settings?.subagents.map(p => p.agent))].sort().join('\n'), [settings?.subagents]);
   useEffect(() => {
-    if (view === 'settings' && page.kind === 'agent' && controls[page.id] === undefined) post({ type: 'controls', agent: page.id });
-  }, [view, page, controls]);
+    if (view !== 'settings') return;
+    const wanted = page.kind === 'agent' ? [page.id] : page.kind === 'subagents' && personaAgents ? personaAgents.split('\n') : [];
+    for (const agent of wanted) {
+      if (controls[agent] !== undefined || controlsAsked.current.has(agent)) continue;
+      controlsAsked.current.add(agent);
+      post({ type: 'controls', agent });
+    }
+  }, [view, page, controls, personaAgents]);
 
   useEffect(() => {
     if (view !== 'settings' || page.kind !== 'chatgpt') return;
@@ -262,6 +279,7 @@ export function App() {
     connectChatgpt: () => { post({ type: 'connectChatgpt' }); setView('chat'); },
     openChatgpt: id => { post({ type: 'selectSession', id }); setView('chat'); },
     setSetting: (key, value) => post({ type: 'setSetting', key, value }),
+    saveSubagents: (base, personas) => post({ type: 'setSetting', key: 'subagents', value: { base, personas } }),
     setAppearance: (axis, value) => post({ type: 'setAppearance', axis, value }),
     openPath: path => post({ type: 'openPath', path }),
     // Drop the cached copy first so the page shows the scanning shimmer until the reply lands
@@ -346,6 +364,7 @@ export function App() {
       compactAt={settings.autoCompact ? settings.compactAtTokens : undefined}
       shareEditorSelection={settings.shareEditorSelection}
       steerQueued={settings.steerQueued && !!session?.canSteer}
+      personas={personas}
       sessions={sessions}
       activeSessionId={session?.id}
       cwd={session?.cwd}

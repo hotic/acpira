@@ -69,19 +69,35 @@ impl AcpSession {
 
   /// Ask the agent to cancel one delegated child; its pending cards (and its descendants') close first
   pub async fn cancel_subagent(self: &Arc<Self>, id: &str) {
-    let (proc, peer) = {
-      let mut c = self.core.lock();
-      let Some(peer) = c.tree.cancel(id) else { return };
-      let mut ids = vec![id.to_owned()];
-      ids.extend(c.tree.descendants(id));
-      for node in ids {
-        self.cancel_permissions_for(&mut c, &node);
-        self.cancel_questions_for(&mut c, &node);
+    let mut c = self.core.lock();
+    let descendants = c.tree.descendants(id);
+    // Summoned children run in processes of their own: the node and every summoned descendant get their own cancel
+    let summoned: Vec<String> = descendants.iter().filter(|d| c.tree.relay_thread_of(d).is_some()).cloned().collect();
+    if c.tree.relay_thread_of(id).is_some() {
+      if !c.tree.relay_cancel(id) {
+        return;
       }
+      let ids: Vec<String> = std::iter::once(id.to_owned()).chain(descendants).collect();
+      for node in &ids {
+        self.cancel_permissions_for(&mut c, node);
+        self.cancel_questions_for(&mut c, node);
+      }
+      if let Some((proc, sid)) = Self::relay_target(&c, id) {
+        proc.notify("session/cancel", json!({ "sessionId": sid }));
+      }
+      self.relay_cancel(&mut c, &summoned);
       self.touch(&mut c);
-      (c.proc.clone(), peer)
-    };
-    if let Some(p) = proc {
+      return;
+    }
+    let Some(peer) = c.tree.cancel(id) else { return };
+    let ids: Vec<String> = std::iter::once(id.to_owned()).chain(descendants).collect();
+    for node in &ids {
+      self.cancel_permissions_for(&mut c, node);
+      self.cancel_questions_for(&mut c, node);
+    }
+    self.relay_cancel(&mut c, &summoned);
+    self.touch(&mut c);
+    if let Some(p) = c.proc.clone() {
       p.notify("session/cancel", json!({ "sessionId": peer }));
     }
   }

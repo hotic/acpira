@@ -597,6 +597,13 @@ impl AcpSession {
 
   pub async fn cancel(self: &Arc<Self>) {
     let mut c = self.core.lock();
+    // Summoned children outlive the tool call that started them, not the user's stop: each gets its own cancel, whatever
+    // state the root turn is in
+    let summoned = c.tree.relay_running();
+    if !summoned.is_empty() {
+      self.relay_cancel(&mut c, &summoned);
+      self.touch(&mut c);
+    }
     let Some(proc) = c.proc.clone() else { return };
     if !c.phase.running {
       return;

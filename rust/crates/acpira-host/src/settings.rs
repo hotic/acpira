@@ -30,6 +30,8 @@ pub struct SettingsDeps {
   pub home: Arc<dyn Fn() -> String + Send + Sync>,
   pub cwd: Arc<dyn Fn() -> String + Send + Sync>,
   pub shared: Arc<SharedConfig>,
+  /// The persona file behind the `subagents` key (`relay/roster.rs`)
+  pub roster: Arc<crate::relay::roster::Roster>,
 }
 
 pub type SettingsListener = Arc<dyn Fn(&SettingsView, Locale) + Send + Sync>;
@@ -75,6 +77,7 @@ impl SettingsCenter {
       font_smoothing: self.read("fontSmoothing").as_bool().unwrap_or(false),
       share_editor_selection: self.read("shareEditorSelection").as_bool().unwrap_or(true),
       steer_queued: self.read("steerQueued").as_bool().unwrap_or(false),
+      subagents: self.deps.roster.list(),
     }
   }
 
@@ -85,7 +88,11 @@ impl SettingsCenter {
 
   /// Write, then push; the value is checked like a hand edit of the settings file
   pub async fn set(&self, key: &str, value: &Value) -> Result<()> {
-    (self.deps.write)(key.to_owned(), sanitize_setting(key, value)).await?;
+    if key == "subagents" {
+      self.deps.roster.save(value).await?;
+    } else {
+      (self.deps.write)(key.to_owned(), sanitize_setting(key, value)).await?;
+    }
     self.emit();
     Ok(())
   }

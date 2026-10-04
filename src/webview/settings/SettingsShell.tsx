@@ -5,6 +5,7 @@ import { RefreshCw } from 'lucide-react';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl } from '@shared/transcript';
 import type { AgentInventory } from '@shared/inventory';
 import type { SettingKey, SettingsView } from '@shared/settings';
+import type { SubagentPersona } from '@shared/subagents';
 import type { Locale } from '@shared/i18n';
 import { AppearanceContext, appearanceDataAttrs, type Appearance, type AxisKey } from '../appearance';
 import { lookAttrs, ThemeContext, type ShellLook, type Theme } from '../look';
@@ -18,6 +19,7 @@ import { General } from './General';
 import { AppearancePage } from './Appearance';
 import { AgentPage } from './AgentPage';
 import { SharedPage, type SharedState } from './SharedPage';
+import { SubagentsPage } from './SubagentsPage';
 import type { SharedAction } from '@shared/sharedConfig';
 import { Page, PageHeader } from './controls';
 
@@ -46,6 +48,9 @@ export interface SettingsHandlers {
   // Shared tab: read the view, apply an action (the reply is the fresh view)
   shared?: () => void;
   sharedAction?: (action: SharedAction) => void;
+  // Subagents page: the list it showed and the list it wants; the host applies only the difference to the shared file,
+  // so another window's edits made meanwhile survive (relay/roster.rs). Without it the page writes the whole list
+  saveSubagents?: (base: SubagentPersona[], next: SubagentPersona[]) => void;
 }
 
 export interface SettingsEnv {
@@ -90,7 +95,7 @@ export function SettingsShell(p: SettingsShellProps) {
   // Ids the rail does not show (a custom agent missing from agents.json for now) keep their saved order / off state
   const unlisted = (id: AgentId) => !p.agents.some(a => a.id === id);
   const title = page.kind === 'chatgpt' ? 'ChatGPT' : agent ? t('settings.agent.title', { agent: agent.name }) : page.kind === 'appearance' ? t('settings.appearance.title')
-    : page.kind === 'shared' ? t('settings.shared.title') : t('settings.general.title');
+    : page.kind === 'shared' ? t('settings.shared.title') : page.kind === 'subagents' ? t('settings.nav.subagents') : t('settings.general.title');
   const busy = !!agent && !!p.refreshing?.has(agent.id);
   const action = (agent || page.kind === 'chatgpt' || page.kind === 'shared') && (
     <IconButton title={t('common.refresh')} aria-label={t('common.refresh')} aria-busy={busy || undefined} disabled={busy}
@@ -123,6 +128,7 @@ export function SettingsShell(p: SettingsShellProps) {
                   {page.kind === 'general' && <General settings={p.settings} agents={p.agents} on={p.on} />}
                   {page.kind === 'appearance' && <AppearancePage settings={p.settings} appearance={p.appearance} on={p.on} />}
                   {page.kind === 'shared' && <SharedPage state={p.shared} agents={p.agents} on={p.on} />}
+                  {page.kind === 'subagents' && <SubagentsPage settings={p.settings} agents={p.agents} controls={p.controls} on={p.on} />}
                   {agent && (
                     <AgentPage
                       key={agent.id}

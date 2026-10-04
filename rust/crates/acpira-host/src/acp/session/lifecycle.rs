@@ -41,7 +41,8 @@ impl AcpSession {
       }
       None => vec![],
     };
-    servers.extend(self.deps.host_mcp.as_ref().and_then(|h| h.entry_for(&self.agent)));
+    // The entry's env carries a grant for this session: the hub finds it when the agent calls ask_agent
+    servers.extend(self.deps.host_mcp.as_ref().and_then(|h| h.entry_for_session(&self.agent, &self.arc(), None, 0)));
     {
       let mut c = self.core.lock();
       if !c.mcp_skip.is_empty() {
@@ -578,15 +579,15 @@ impl AcpSession {
     }
   }
 
-  /// Closed like dispose, for a host about to exit: the agent process (for a hard kill if waiting runs out) and the future that
-  /// closes its ACP session and ends it
-  pub fn shutdown(self: &Arc<Self>) -> (Option<Arc<AgentProcess>>, Option<BoxFuture<()>>) {
+  /// Closed like dispose, for a host about to exit: the agent processes, summoned children's included (for a hard kill if
+  /// waiting runs out), and the future that closes its ACP session and ends them all
+  pub fn shutdown(self: &Arc<Self>) -> (Vec<Arc<AgentProcess>>, Option<BoxFuture<()>>) {
     self.close()
   }
 
-  fn close(self: &Arc<Self>) -> (Option<Arc<AgentProcess>>, Option<BoxFuture<()>>) {
+  fn close(self: &Arc<Self>) -> (Vec<Arc<AgentProcess>>, Option<BoxFuture<()>>) {
     let proc = self.core.lock().proc.clone();
-    let closing = {
+    let (children, closing) = {
       let mut c = self.core.lock();
       c.usage.clear_timer();
       c.perms.epoch += 1;
@@ -600,8 +601,30 @@ impl AcpSession {
       }
       self.cancel_all_permissions(&mut c);
       self.cancel_all_questions(&mut c);
-      self.drop_process(&mut c)
+      let children = self.relay_close(&mut c);
+      (children, self.drop_process(&mut c))
     };
-    (proc, closing)
+    let (children, mut starting) = children;
+    let mut procs: Vec<Arc<AgentProcess>> = proc.into_iter().collect();
+    procs.extend(children.iter().cloned());
+    if children.is_empty() && *starting.borrow() == 0 {
+      return (procs, closing);
+    }
+    // Summoned children end alongside the agent's own close, and starts still in flight end the process they spawn:
+    // all awaited by whoever runs the future
+    let all: BoxFuture<()> = Box::pin(async move {
+      let mut ends = tokio::task::JoinSet::new();
+      for p in children {
+        ends.spawn(async move { p.kill().await });
+      }
+      if let Some(f) = closing {
+        ends.spawn(f);
+      }
+      ends.spawn(async move {
+        let _ = starting.wait_for(|n| *n == 0).await;
+      });
+      while ends.join_next().await.is_some() {}
+    });
+    (procs, Some(all))
   }
 }

@@ -1,0 +1,114 @@
+{
+  "input": [
+    {
+      "name": "Codex Review",
+      "agent": "codex",
+      "model": " gpt-6 ",
+      "mode": "consult",
+      "when": "review diffs"
+    },
+    {
+      "name": "Codex Review",
+      "agent": "codex",
+      "mode": "work",
+      "enabled": false
+    },
+    {
+      "name": "",
+      "agent": "codex"
+    },
+    {
+      "name": "快手",
+      "agent": "opencode",
+      "mode": "nonsense"
+    },
+    "garbage",
+    {
+      "name": "  Claude  Planner! ",
+      "id": "Custom ID",
+      "agent": " claude ",
+      "effort": "   ",
+      "brief": "  keep it short  ",
+      "enabled": "yes"
+    },
+    {
+      "name": "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz",
+      "agent": "x"
+    },
+    {
+      "name": "Bad types",
+      "agent": "codex",
+      "model": 5,
+      "when": [
+        "x"
+      ],
+      "mode": 3,
+      "brief": null
+    },
+    {
+      "name": "Custom",
+      "id": "custom-id",
+      "agent": "codex"
+    }
+  ],
+  "output": [
+    {
+      "id": "codex-review",
+      "name": "Codex Review",
+      "agent": "codex",
+      "model": "gpt-6",
+      "mode": "consult",
+      "when": "review diffs",
+      "enabled": true
+    },
+    {
+      "id": "codex-review-2",
+      "name": "Codex Review",
+      "agent": "codex",
+      "mode": "work",
+      "when": "",
+      "enabled": false
+    },
+    {
+      "id": "agent",
+      "name": "快手",
+      "agent": "opencode",
+      "mode": "consult",
+      "when": "",
+      "enabled": true
+    },
+    {
+      "id": "custom-id",
+      "name": "Claude  Planner!",
+      "agent": "claude",
+      "mode": "consult",
+      "when": "",
+      "brief": "keep it short",
+      "enabled": true
+    },
+    {
+      "id": "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuv",
+      "name": "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuv",
+      "agent": "x",
+      "mode": "consult",
+      "when": "",
+      "enabled": true
+    },
+    {
+      "id": "bad-types",
+      "name": "Bad types",
+      "agent": "codex",
+      "mode": "consult",
+      "when": "",
+      "enabled": true
+    },
+    {
+      "id": "custom-id-2",
+      "name": "Custom",
+      "agent": "codex",
+      "mode": "consult",
+      "when": "",
+      "enabled": true
+    }
+  ]
+}

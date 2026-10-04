@@ -84,6 +84,34 @@
   /* The row's slot is --subagent-mark wide; the ✓ shrinks back to --icon so it matches every other Check */
   .subagent-row .subagent-mark { --check-scale: var(--subagent-check-scale); }
   .subagent-mark[data-phase="done"] { color: inherit; }
+  /* Settings list rows that open a page: the hover is a rounded fill reaching a little into the card's inset, behind the
+     row, so it is neither cut square by the list nor flush with the logo; the dividers stay where they are */
+  .settings-pick-row { position: relative; isolation: isolate; }
+  .settings-pick-row:hover, .settings-pick-row:focus-visible { background: transparent; }
+  .settings-pick-row::before {
+    content: '';
+    position: absolute;
+    inset: var(--settings-pick-inset) calc(-1 * var(--gap));
+    z-index: -1;
+    border-radius: var(--r-md);
+    background: var(--hover);
+    opacity: 0;
+    transition: opacity var(--dur);
+  }
+  .settings-pick-row:hover::before, .settings-pick-row:focus-visible::before { opacity: 1; }
+  /* A summoned child (another CLI): the state mark keeps its slot, the CLI's logo sits on its corner on a page-coloured tile */
+  .subagent-harness { position: relative; display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
+  .subagent-harness-mark {
+    position: absolute;
+    right: var(--subagent-badge-inset);
+    bottom: var(--subagent-badge-inset);
+    width: var(--subagent-badge);
+    height: var(--subagent-badge);
+    padding: 1px;
+    border-radius: var(--r-sm);
+    background: var(--page);
+    color: var(--fg-1);
+  }
   .subagent-mark[data-phase="done"] .subagent-mark-check { stroke-dashoffset: 0; }
   /* Resize edge of the docked inspector (Shell.tsx): a wide invisible grab strip centred on the pane's border line */
   .subagent-splitter {

@@ -22,6 +22,7 @@ import { AgentMessage } from './Turns';
 import { HistoryComposerContext, HistoryContext, HistoryMessage } from './HistoryMessage';
 import { QuoteToolbar } from './QuoteToolbar';
 import { Composer, type ComposerProps } from './Composer';
+import type { MentionPersona } from './Mention';
 import { Notice } from './Notice';
 import { ExternalSessionNotice } from './ExternalSessionNotice';
 import { Toast } from '../ui/Toast';
@@ -144,6 +145,8 @@ export interface ShellProps {
   shareEditorSelection?: boolean;
   // Settings `steerQueued` on an agent that can steer: a queued row's send button steers it into the running turn
   steerQueued?: boolean;
+  // Settings → Subagents, the enabled ones: offered in the composer's @ list and summon menu
+  personas?: MentionPersona[];
   sessions: SessionSummary[];
   activeSessionId?: string;
   // Workspace root of the session; attachments are labeled relative to it
@@ -358,8 +361,8 @@ export function Shell(p: ShellProps) {
     theme: p.theme, turns: p.turns, controls: p.controls, hidden: p.hidden?.[p.agent.id],
     usage: p.usage, commands: p.commands, compactAt: p.compactAt, cwd: p.cwd ?? '',
     onSend: steering ? (text: string, attachments: Draft[]) => on.send(text, attachments, true) : on.send, onSearchFiles: on.searchFiles, onNotice: notice, onStop: on.stop,
-    onSetMode: on.setMode, onSetConfig: on.setConfig, onCompact: on.compact,
-  }), [p.running, steering, p.status, p.theme, p.turns, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact]);
+    onSetMode: on.setMode, onSetConfig: on.setConfig, onCompact: on.compact, personas: p.personas,
+  }), [p.running, steering, p.status, p.theme, p.turns, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact, p.personas]);
   // Context values above the transcript must not change on every stream push: React walks the whole memoized tree for consumers each time
   const permissions = useStableList(useMemo(() => p.turns.flatMap(t => t.role === 'agent' ? t.blocks.filter((b): b is PermissionBlock => b.type === 'permission') : []), [p.turns]));
   const planDoc = useMemo(() => ({

@@ -160,6 +160,11 @@
   --subagent-mark: 20px;
   /* --icon / --subagent-mark as a plain number (JS reads it for the finish animation's landing points) */
   --subagent-check-scale: 0.7;
+  /* A summoned child's CLI logo, pinned to the state mark's lower right corner */
+  --subagent-badge: 11px;
+  --subagent-badge-inset: -3px;
+  /* How far a settings pick row's hover fill stays off its dividers */
+  --settings-pick-inset: 3px;
   /* The faint project name a session row from another project carries before its time, kept short so the title keeps the room */
   --session-project-w: 10ch;
   /* The session list's unread dot, a pixel larger than the other state dots so it holds its own beside the 10 px ring */

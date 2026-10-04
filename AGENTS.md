@@ -50,8 +50,8 @@ A chat shell for VS Code / Cursor (and IntelliJ) that drives official agent CLIs
 
 | Area | Doc |
 |---|---|
-| Shells and the sidecar protocol, runtime, bridge core, VS Code platform, session manager viewers, agent registry / order / launching / availability / native-release installs and process groups, `probeControls`, data dir and `TranscriptStore`, accounts, file lock, quota monitoring, shared config (`.agents` skills / MCP / prompts, links ledger) | `docs/dev/host-architecture.md` |
-| Prompt staging and `promptCapabilities`, tool content lists, terminal / image output, native session import, subagents, JetBrains AIR `sessionFailure` / `asyncTasks`, empty completions, attachments, turn usage, forking, export | `docs/dev/transcript-pipeline.md` |
+| Shells and the sidecar protocol, runtime, bridge core, VS Code platform, session manager viewers, subagent personas and the relay hub, agent registry / order / launching / availability / native-release installs and process groups, `probeControls`, data dir and `TranscriptStore`, accounts, file lock, quota monitoring, shared config (`.agents` skills / MCP / prompts, links ledger) | `docs/dev/host-architecture.md` |
+| Prompt staging and `promptCapabilities`, tool content lists, terminal / image output, native session import, subagents, cross-harness subagents (`ask_agent` relay), JetBrains AIR `sessionFailure` / `asyncTasks`, empty completions, attachments, turn usage, forking, export | `docs/dev/transcript-pipeline.md` |
 | `src/webview` structure and stylesheet layering, file links in markdown, slash commands, transcript render budget (memo, lazy folds, stream glyphs) | `docs/dev/webview.md` |
 | `ui/` primitives, tokens, rows, buttons, menus, overlays, model panels, composer, question card, toolbar chips, model visibility | `docs/dev/ui-conventions.md` |
 | Orb and Working label, motion, rails, sticky user prompts, scrollbars, to-do presentation, folding modes, appearance axes, rendering preferences | `docs/dev/ui-motion-layout.md` |

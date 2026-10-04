@@ -3,7 +3,11 @@ import { FileText, Image as ImageIcon } from 'lucide-react';
 import type { FileHit } from '@shared/protocol';
 import { imageMimeOf } from '@shared/attachments';
 import { t } from '../i18n';
+import { AgentMark } from './AgentMark';
 import { CompletionList } from './Completion';
+import { personaOfHit, type MentionPersona } from './personaHits';
+
+export { PERSONA_SCHEME, personaHits, personaOfHit, type MentionPersona } from './personaHits';
 
 // An @ token under the caret: where it starts in the text and what has been typed after it
 export interface MentionSpan {
@@ -41,6 +45,7 @@ export function useMentionHits(query: string | undefined, search: (q: string) =>
 interface MentionListProps {
   anchor: RefObject<HTMLElement | null>;
   hits: FileHit[];
+  personas?: MentionPersona[];
   active: number;
   empty: boolean;
   onHover: (index: number) => void;
@@ -48,9 +53,15 @@ interface MentionListProps {
 }
 
 // The file list floating over the composer: one row per hit (name bright, directory faint) in the shared completion shell
-export function MentionList({ anchor, hits, active, empty, onHover, onPick }: MentionListProps) {
+export function MentionList({ anchor, hits, personas, active, empty, onHover, onPick }: MentionListProps) {
   return <CompletionList anchor={anchor} items={hits} active={active} keyOf={h => h.uri} empty={empty ? t('mention.noFiles') : undefined} onHover={onHover} onPick={onPick}>
     {h => {
+      const persona = personaOfHit(h, personas);
+      if (persona) return <>
+        <AgentMark id={persona.agent} name={persona.name} className="size-icon shrink-0 text-fg-2" />
+        <span className="shrink-0 truncate">{persona.name}</span>
+        {persona.meta && <span className="truncate text-3 text-fg-3">{persona.meta}</span>}
+      </>;
       const cut = h.path.lastIndexOf('/');
       const Icon = imageMimeOf(h.path) ? ImageIcon : FileText;
       return <>
