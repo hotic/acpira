@@ -85,9 +85,10 @@
   .subagent-row .subagent-mark { --check-scale: var(--subagent-check-scale); }
   .subagent-mark[data-phase="done"] { color: inherit; }
   /* Settings list rows that open a page: the hover is a rounded fill reaching a little into the card's inset, behind the
-     row, so it is neither cut square by the list nor flush with the logo; the dividers stay where they are */
+     row, so it is neither cut square by the list nor flush with the logo; the dividers stay where they are. The row's own
+     square hover fill is a utility (ItemRow's hover:bg-hover), which this layer cannot override: the caller passes
+     hover:bg-transparent next to this class */
   .settings-pick-row { position: relative; isolation: isolate; }
-  .settings-pick-row:hover, .settings-pick-row:focus-visible { background: transparent; }
   .settings-pick-row::before {
     content: '';
     position: absolute;

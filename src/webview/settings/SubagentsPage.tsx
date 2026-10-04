@@ -66,7 +66,7 @@ export function SubagentsPage({ settings, agents, controls, on }: PageProps) {
         ? <p className="m-0 py-pad text-2 text-fg-2">{t('subagents.page.empty')}</p>
         : <div className="flex flex-col divide-y divide-line">
           {list.map(p => (
-            <ItemRow key={p.id} className="settings-pick-row" dim={!p.enabled} onClick={() => setOpen(p.id)}
+            <ItemRow key={p.id} className="settings-pick-row hover:bg-transparent focus-visible:bg-transparent" dim={!p.enabled} onClick={() => setOpen(p.id)}
               lead={<AgentMark id={p.agent} name={p.name} />} title={p.name} desc={metaOf(p, agents)} />
           ))}
         </div>}
@@ -131,13 +131,19 @@ function PersonaDetail({ persona: p, agents, controls, onBack, onChange, onDelet
           <span className={readOnly === null ? 'text-warn' : 'text-fg-2'}>{readOnlyText}</span>
         </FactRow>
       )}
+      {/* Free text for the model, listed next to the persona in ask_agent's description; no keyword triggers it */}
+      <Field stack label={t('subagents.page.when')} desc={t('subagents.page.whenDesc')}>
+        <TextBox multiline value={p.when} label={t('subagents.page.when')} placeholder={t('subagents.page.whenPlaceholder')}
+          onCommit={when => onChange({ when })} />
+      </Field>
     </Section>
-    <Section title={t('subagents.page.when')} desc={t('subagents.page.whenDesc')}>
-      <Field stack><TextBox multiline value={p.when} label={t('subagents.page.when')} onCommit={when => onChange({ when })} /></Field>
-    </Section>
-    <Section title={t('subagents.page.brief')} desc={t('subagents.page.briefDesc')}>
-      <Field stack><TextBox multiline value={p.brief ?? ''} label={t('subagents.page.brief')} onCommit={brief => onChange({ brief: brief || undefined })} /></Field>
-    </Section>
+    {/* The standing brief is not offered for new personas; one already stored stays visible (and clearable) because
+        the relay still appends it to every task */}
+    {p.brief && (
+      <Section title={t('subagents.page.brief')} desc={t('subagents.page.briefDesc')}>
+        <Field stack><TextBox multiline value={p.brief} label={t('subagents.page.brief')} onCommit={brief => onChange({ brief: brief || undefined })} /></Field>
+      </Section>
+    )}
     <div className="flex justify-end">
       <Button onClick={onDelete}><Trash2 className="size-icon" strokeWidth={1.5} />{t('subagents.page.delete')}</Button>
     </div>
@@ -145,16 +151,18 @@ function PersonaDetail({ persona: p, agents, controls, onBack, onChange, onDelet
 }
 
 // Local text until blur (or Enter on a one-line box), so half-typed values never round-trip through the host
-function TextBox({ value, label, multiline, onCommit }: { value: string; label: string; multiline?: boolean; onCommit: (v: string) => void }) {
+function TextBox({ value, label, placeholder, multiline, onCommit }: {
+  value: string; label: string; placeholder?: string; multiline?: boolean; onCommit: (v: string) => void;
+}) {
   const [text, setText] = useState(value);
   useEffect(() => setText(value), [value]);
   const commit = () => { if (text !== value) onCommit(text); };
-  const cls = 'w-full min-w-0 rounded-md border border-line bg-hover px-3 text-2 text-fg-1 outline-none transition-colors focus:bg-active';
+  const cls = 'w-full min-w-0 rounded-md border border-line bg-hover px-3 text-2 text-fg-1 outline-none transition-colors placeholder:text-fg-3 focus:bg-active';
   return multiline
     // Grows with its text; no manual resize handle (it could be dragged to cut a line in half)
-    ? <textarea aria-label={label} value={text} onChange={e => setText(e.target.value)} onBlur={commit}
+    ? <textarea aria-label={label} placeholder={placeholder} value={text} onChange={e => setText(e.target.value)} onBlur={commit}
       className={`${cls} resize-none py-(--setting-row-pad) [field-sizing:content]`} />
-    : <input aria-label={label} value={text} onChange={e => setText(e.target.value)} onBlur={commit}
+    : <input aria-label={label} placeholder={placeholder} value={text} onChange={e => setText(e.target.value)} onBlur={commit}
       onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setText(value); }}
       className={`${cls} h-ctl w-(--ctl-w)`} />;
 }
