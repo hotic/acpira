@@ -23,34 +23,33 @@ async fn an_oversized_edit_right_after_compaction_goes_out_as_one_request() {
   expect_absent(&turns[turns.len() - 2], "edited");
 }
 
+// Devin, 2026-10-04: editing a message that carried a ~316 KB screenshot kept the old prompt on screen, because the image's
+// base64 counted against the history byte limit and the edit fell back to continuing natively. Pixels are not history: a large
+// image, whether added in the editor, kept from the edited message or carried by an earlier one, still rebuilds the context
 #[tokio::test(flavor = "multi_thread")]
-async fn an_expanded_payload_over_the_cap_falls_back_to_one_native_prompt() {
+async fn a_large_image_does_not_turn_an_edit_into_a_native_continue() {
   let fake = fake_or_skip!();
-  for historical in [false, true] {
+  for source in ["added", "retained", "historical"] {
     let h = Harness::new(&fake, json!({}));
     let s = started(&h, "/tmp").await;
     let image = json!({ "kind": "image", "name": "large.png", "mimeType": "image/png", "data": "a".repeat(400_000) });
-    s.prompt("earlier".into(), if historical { drafts(json!([image])) } else { vec![] }, false, None, None).await;
-    prompt(&s, "original").await;
-    let before = view(&s)["turns"].clone();
+    let with_image = |on: &str| if source == on { drafts(json!([image])) } else { vec![] };
+    s.prompt("earlier".into(), with_image("historical"), false, None, None).await;
+    s.prompt("original".into(), with_image("retained"), false, None, None).await;
     let peer = s.to_record().acp_session_id;
-    let mut edit = history_edit(&s, 2, "inspect-history");
-    if !historical {
-      edit.attachments = drafts(json!([image]));
-    }
+    let mut edit = history_edit(&s, 2, "echo-blocks");
+    edit.attachments = with_image("added");
     s.edit_turn(edit).await.unwrap();
-    until(|| !s.is_running() && turn_count(&s) == 6 && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
-    assert_eq!(s.to_record().acp_session_id, peer, "historical={historical}");
+    until(|| !s.is_running() && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
+    // Rebuilt on a fresh peer: the old prompt is replaced, and the history travels with the image
+    assert_ne!(s.to_record().acp_session_id, peer, "source={source}");
     let vw = view(&s);
-    let turns = vw["turns"].as_array().unwrap();
-    assert_eq!(json!(turns[..4]), before);
-    expect_absent(&turns[4], "edited");
-    let expected = if historical {
-      json!([{ "type": "text", "text": "inspect-history" }])
-    } else {
-      json!([{ "type": "text", "text": "inspect-history" }, { "type": "image", "mimeType": "image/png", "data": "a".repeat(400_000) }])
-    };
-    expect_eq(&wire_prompt(&turns[5])["prompt"], expected);
+    assert_eq!(turns_in(&vw), 4, "source={source}");
+    expect_match(&vw["turns"][2], json!({ "text": "echo-blocks", "edited": true }));
+    // An earlier message's image is re-sent after its label, so the fake's prompt text no longer starts with `echo-blocks`
+    let reply = agent_text(&vw["turns"][3]);
+    let wire_ok = if source == "historical" { reply.ends_with(" · text · image:image/png · text") } else { reply == "resource,text,image" };
+    assert!(reply.starts_with("resource") && wire_ok, "source={source}: {reply}");
   }
 }
 
