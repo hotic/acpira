@@ -433,6 +433,16 @@ const app = acp.agent({ name: 'fake-agent' })
       await send({ sessionUpdate: 'tool_call', toolCallId: 'ak1', title: 'mcp__acpira__ask_agent', kind: 'other', status: 'in_progress', rawInput });
       return { stopReason: 'end_turn' };
     }
+    // "relay-call-stream:<prompt>" → the same call the way claude-agent-acp 0.83.0 streams it: the first tool_call names
+    // the tool with an empty rawInput, later refinements grow rawInput and leave the unchanged title out
+    if (text.startsWith('relay-call-stream:')) {
+      const prompt = text.slice('relay-call-stream:'.length);
+      await send({ sessionUpdate: 'tool_call', toolCallId: 'ak1', title: 'mcp__acpira__ask_agent', kind: 'other', status: 'pending', rawInput: {} });
+      await send({ sessionUpdate: 'tool_call_update', toolCallId: 'ak1', rawInput: { agent: 'fake-review' } });
+      await send({ sessionUpdate: 'tool_call_update', toolCallId: 'ak1', rawInput: { agent: 'fake-review', prompt: prompt.slice(0, 4) } });
+      await send({ sessionUpdate: 'tool_call_update', toolCallId: 'ak1', rawInput: { agent: 'fake-review', prompt } });
+      return { stopReason: 'end_turn' };
+    }
     if (text.startsWith('relay-call-failed:')) {
       const rawInput = { agent: 'fake-review', prompt: text.slice('relay-call-failed:'.length) };
       await send({ sessionUpdate: 'tool_call', toolCallId: 'ak1', title: 'mcp__acpira__ask_agent', kind: 'other', status: 'in_progress', rawInput });

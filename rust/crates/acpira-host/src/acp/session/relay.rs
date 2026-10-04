@@ -10,7 +10,7 @@
 //! the session closing always reaches it. The session's close hands every child process to the close future (and to the
 //! hard-kill list of a host shutdown); a process that finishes spawning after the close is ended at once
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::Weak;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -70,6 +70,9 @@ pub(crate) struct Relays {
   pub rounds: HashMap<String, watch::Receiver<RoundEnd>>,
   /// Root `ask_agent` rows seen before their round existed
   calls: Vec<PendingCall>,
+  /// Root rows recognized as `ask_agent` by name: claude-agent-acp 0.83.0 names the tool only on the first `tool_call`
+  /// (with an empty `rawInput`) and streams the arguments in later updates that omit the unchanged title
+  rows: HashSet<String>,
   /// Setup notes of a round (a model the CLI lacks, a refused mode), by node: every read of the round repeats them
   notes: HashMap<String, Vec<String>>,
   /// Starts between spawn and registration: the close waits until they are done
@@ -80,7 +83,7 @@ pub(crate) struct Relays {
 
 impl Default for Relays {
   fn default() -> Self {
-    Relays { procs: HashMap::new(), rounds: HashMap::new(), calls: vec![], notes: HashMap::new(), starting: Arc::new(watch::channel(0).0), closed: false }
+    Relays { procs: HashMap::new(), rounds: HashMap::new(), calls: vec![], rows: HashSet::new(), notes: HashMap::new(), starting: Arc::new(watch::channel(0).0), closed: false }
   }
 }
 
@@ -719,13 +722,22 @@ impl AcpSession {
     // A call ends only after the hub answered it, so one still waiting here never started a round (refused, or the hub
     // was unreachable): a retry with the same arguments must not find this row first. The ending update rarely
     // repeats the tool's name, hence before the name check
-    if matches!(u.get("status").and_then(Value::as_str), Some("completed" | "failed")) && !c.relays.calls.is_empty() {
+    let ended = matches!(u.get("status").and_then(Value::as_str), Some("completed" | "failed"));
+    let known = if ended { c.relays.rows.remove(&tool_call_id) } else { c.relays.rows.contains(&tool_call_id) };
+    if ended && !c.relays.calls.is_empty() {
       c.relays.calls.retain(|p| p.tool_call_id != tool_call_id);
       return;
     }
-    let Some(args) = ask_agent_args(u) else { return };
+    let Some(args) = ask_agent_args(u, known) else { return };
+    if !ended {
+      c.relays.rows.insert(tool_call_id.clone());
+    }
     let text = |k: &str| args.get(k).and_then(Value::as_str).map(str::trim).unwrap_or("").to_owned();
     let (prompt, agent, thread) = (text("prompt"), text("agent"), Some(text("thread")).filter(|t| !t.is_empty()));
+    // No prompt and no thread: the arguments are still streaming in (an empty `rawInput` first), not a wait call
+    if prompt.is_empty() && thread.is_none() {
+      return;
+    }
     if prompt.is_empty() {
       let name = thread.as_deref().and_then(|th| c.tree.relay_latest(th)).and_then(|(_, _, name, ..)| name);
       if let Some(block) = crate::acp::transcript::normalize::find_tool_mut(&mut c.state.turns, &tool_call_id) {
@@ -750,8 +762,10 @@ impl AcpSession {
       None => {
         // Calls of earlier turns never got a round: they are dropped rather than matched against a later one
         c.relays.calls.retain(|p| p.turn_index >= turn_index);
-        if !c.relays.calls.iter().any(|p| p.tool_call_id == tool_call_id) {
-          c.relays.calls.push(PendingCall { tool_call_id, agent, thread, prompt, turn_index });
+        // A streamed input grows field by field: the pending entry follows the latest arguments
+        match c.relays.calls.iter_mut().find(|p| p.tool_call_id == tool_call_id) {
+          Some(p) => (p.agent, p.thread, p.prompt, p.turn_index) = (agent, thread, prompt, turn_index),
+          None => c.relays.calls.push(PendingCall { tool_call_id, agent, thread, prompt, turn_index }),
         }
       }
     }
@@ -923,12 +937,14 @@ fn done_text(reply: &str, thread: &str, persona: &SubagentPersona) -> String {
 }
 
 /// The `ask_agent` arguments of a root tool update, when it is Acpira's tool (named like `show_image` per adapter)
-fn ask_agent_args(u: &Value) -> Option<Map<String, Value>> {
+/// The arguments of an `ask_agent` row. `known`: an earlier update of this row already named the tool, so this one
+/// counts even without the name
+fn ask_agent_args(u: &Value, known: bool) -> Option<Map<String, Value>> {
   static ASK: std::sync::LazyLock<regex::Regex> =
     std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)(?:^|acpira[_.:/-]{1,2})ask_agent$").unwrap());
   let raw = u.get("rawInput").and_then(Value::as_object);
   let named = |x: Option<&str>| x.map(str::trim).is_some_and(|x| ASK.is_match(x));
-  if !(named(u.get("title").and_then(Value::as_str)) || named(u.get("name").and_then(Value::as_str)) || named(raw.and_then(|r| r.get("tool")).and_then(Value::as_str))) {
+  if !known && !(named(u.get("title").and_then(Value::as_str)) || named(u.get("name").and_then(Value::as_str)) || named(raw.and_then(|r| r.get("tool")).and_then(Value::as_str))) {
     return None;
   }
   let raw = raw?;
@@ -960,9 +976,13 @@ mod tests {
     let claude = json!({ "toolCallId": "t", "title": "mcp__acpira__ask_agent", "rawInput": { "agent": "codex-review", "prompt": "look" } });
     let codex = json!({ "toolCallId": "t", "title": "mcp.acpira.ask_agent", "rawInput": { "server": "acpira", "tool": "ask_agent", "arguments": { "prompt": "look" } } });
     let other = json!({ "toolCallId": "t", "title": "mcp__acpira__show_image", "rawInput": {} });
-    assert_eq!(ask_agent_args(&claude).unwrap()["agent"], "codex-review");
-    assert_eq!(ask_agent_args(&codex).unwrap()["prompt"], "look");
-    assert!(ask_agent_args(&other).is_none());
+    assert_eq!(ask_agent_args(&claude, false).unwrap()["agent"], "codex-review");
+    assert_eq!(ask_agent_args(&codex, false).unwrap()["prompt"], "look");
+    assert!(ask_agent_args(&other, false).is_none());
+    // claude-agent-acp 0.83.0 refinements carry the grown rawInput without the title
+    let refinement = json!({ "toolCallId": "t", "rawInput": { "agent": "codex-review", "prompt": "look" } });
+    assert!(ask_agent_args(&refinement, false).is_none());
+    assert_eq!(ask_agent_args(&refinement, true).unwrap()["prompt"], "look");
   }
 
   #[test]
