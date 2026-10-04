@@ -1,4 +1,4 @@
-import { Fragment, createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Bot, Check, ChevronRight, Compass, Hand, MessageCircleQuestion, Shrink, TriangleAlert, X } from 'lucide-react';
 import type { AgentBlock, AgentTurn, CompactionBlock, FailureAction, NoticeBlock, PermissionBlock, SlashCommand, SteerBlock, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
@@ -636,17 +636,55 @@ function LineBlock({ block }: { block: AgentBlock }) {
 // Context compaction is an action row like a tool call: same lead slot (the context panel's compact icon), and the
 // live status shimmers in place until the agent reports the outcome, while the icon's four arrows keep pushing inward. The host turns structured compaction_update and
 // adapter prose (rust `compaction_text`) into the same block, so every agent shares this one presentation.
-function Compaction({ block }: { block: CompactionBlock }) {
+export function Compaction({ block }: { block: CompactionBlock }) {
   const { toolLine } = useAppearance();
-  const running = block.status === 'in_progress';
+  const row = useRef<HTMLElement>(null);
+  const phase = useCompactionPhase(block, row);
+  // A completion still waiting for the arrows' rest beat keeps the running look, so label and icon change together
+  const running = block.status === 'in_progress' || phase === 'finishing';
   const label = running ? t('turns.compacting') : block.status === 'completed' ? t('turns.compacted') : block.status === 'failed' ? t('turns.compactFailed') : t('turns.compactCancelled');
   const Icon = block.status === 'failed' ? TriangleAlert : Shrink;
   return (
-    <Row tone="action" lead={toolLine === 'text' ? undefined : <Icon className={cn('size-icon', running && 'compacting-icon')} strokeWidth={1.5} />}>
+    <Row ref={row} tone="action" className={cn(phase === 'settling' && 'compaction-settle')} lead={toolLine === 'text' ? undefined : <Icon className={cn('size-icon', running && 'compacting-icon')} strokeWidth={1.5} />}>
       <RowLabel shimmer={running}>{label}</RowLabel>
       {block.status === 'failed' && block.error && <RowTarget className="text-fg-3">{block.error}</RowTarget>}
     </Row>
   );
+}
+
+// Compaction ids seen running in this webview. Kept at module level because the row may remount between the running
+// and the completed render (the turn's process grouping changes when it ends), and a component ref would lose it.
+const compactingSeen = new Set<string>();
+// `acp-compact-in` timing in motion.css: one 1.4 s cycle, the last arrow (0.36 s delay) back at rest from 1.2 s in,
+// so every arrow sits at rest from 1.2 s to the cycle's end. The settle starts there and from that rest pose.
+const COMPACTING_CYCLE_MS = 1400;
+const COMPACTING_REST_MS = 1200;
+// `compaction-settle` length, after which the class is dropped again
+const COMPACTION_SETTLE_MS = 900;
+
+type CompactionPhase = 'idle' | 'finishing' | 'settling';
+
+// Drives the completion beat of a compaction watched while running: `finishing` lets the running loop play on until
+// all four arrows are at rest, then `settling` clamps them shut once. Restored history (never seen running) stays
+// `idle`, and the id leaves the set on its first settle, so a later remount does not replay it. The class is removed
+// afterwards: a hidden webview restarts every CSS animation when it is shown again.
+function useCompactionPhase(block: CompactionBlock, row: RefObject<HTMLElement | null>): CompactionPhase {
+  const [phase, setPhase] = useState<CompactionPhase>('idle');
+  useLayoutEffect(() => {
+    if (block.status === 'in_progress') { compactingSeen.add(block.id); return; }
+    if (!compactingSeen.delete(block.id) || block.status !== 'completed') return;
+    // The running loop on this element, if it survived to here (absent after a remount or with motion off)
+    const loop = row.current?.querySelector('.compacting-icon path')?.getAnimations()[0];
+    const at = typeof loop?.currentTime === 'number' ? loop.currentTime % COMPACTING_CYCLE_MS : undefined;
+    const wait = at === undefined || at >= COMPACTING_REST_MS ? 0 : COMPACTING_REST_MS - at;
+    setPhase(wait ? 'finishing' : 'settling');
+    const timers = [
+      setTimeout(() => setPhase('settling'), wait),
+      setTimeout(() => setPhase('idle'), wait + COMPACTION_SETTLE_MS),
+    ];
+    return () => timers.forEach(clearTimeout);
+  }, [block.id, block.status, row]);
+  return phase;
 }
 
 function Block({ block, onPermission }: { block: AgentBlock; onPermission: OnPermission }) {

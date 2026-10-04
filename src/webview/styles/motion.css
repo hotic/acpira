@@ -48,14 +48,31 @@
 [data-sd-animate][style*="sd-acpCharIn"] { display: inline-block; white-space: pre-wrap; }
 @keyframes sd-acpCharIn { from { opacity: 0; transform: translateY(var(--stream-char-y)); } to { opacity: 1; transform: none; } }
 
-/* Running compaction lead: lucide Shrink's four corner arrows (path order: bottom-right, bottom-left, top-right, top-left)
-   start pushed outward and rush back to the centre, one after another. Transform / opacity only, in the icon's own ink. */
-.compacting-icon path { transform-box: view-box; animation: acp-compact-in 1.4s cubic-bezier(.5, 0, .2, 1) infinite; }
-.compacting-icon path:nth-of-type(1) { --compact-x: 3px; --compact-y: 3px; }
-.compacting-icon path:nth-of-type(2) { --compact-x: -3px; --compact-y: 3px; animation-delay: .12s; }
-.compacting-icon path:nth-of-type(3) { --compact-x: 3px; --compact-y: -3px; animation-delay: .24s; }
-.compacting-icon path:nth-of-type(4) { --compact-x: -3px; --compact-y: -3px; animation-delay: .36s; }
+/* Compaction lead: lucide Shrink's four corner arrows (path order: bottom-right, bottom-left, top-right, top-left), each with
+   its outward offset. While running they start pushed out and rush back to the centre one after another; transform / opacity
+   only, in the icon's own ink. */
+:is(.compacting-icon, .compaction-settle > .row-lead > svg) path { transform-box: view-box; }
+:is(.compacting-icon, .compaction-settle > .row-lead > svg) path:nth-of-type(1) { --compact-x: 3px; --compact-y: 3px; }
+:is(.compacting-icon, .compaction-settle > .row-lead > svg) path:nth-of-type(2) { --compact-x: -3px; --compact-y: 3px; }
+:is(.compacting-icon, .compaction-settle > .row-lead > svg) path:nth-of-type(3) { --compact-x: 3px; --compact-y: -3px; }
+:is(.compacting-icon, .compaction-settle > .row-lead > svg) path:nth-of-type(4) { --compact-x: -3px; --compact-y: -3px; }
+.compacting-icon path { animation: acp-compact-in 1.4s cubic-bezier(.5, 0, .2, 1) infinite; }
+.compacting-icon path:nth-of-type(2) { animation-delay: .12s; }
+.compacting-icon path:nth-of-type(3) { animation-delay: .24s; }
+.compacting-icon path:nth-of-type(4) { animation-delay: .36s; }
 @keyframes acp-compact-in { 0% { transform: translate(var(--compact-x), var(--compact-y)); opacity: .3; } 60%, 100% { transform: none; opacity: 1; } }
+
+/* A watched compaction that just completed: Compaction waits for the loop's shared rest beat, then all four arrows clamp
+   inward together from that rest pose and spring back; the new label lands bright before easing to the action colour.
+   One shot; Compaction drops the class. */
+.compaction-settle > .row-lead > svg path { animation: acp-compact-snap .55s cubic-bezier(.4, 0, .2, 1) both; }
+.compaction-settle > .row-content > :first-child { animation: acp-compact-label .9s ease-out both; }
+@keyframes acp-compact-snap {
+  0%, 100% { transform: none; }
+  40% { transform: translate(calc(var(--compact-x) * -.5), calc(var(--compact-y) * -.5)); }
+  70% { transform: translate(calc(var(--compact-x) * .1), calc(var(--compact-y) * .1)); }
+}
+@keyframes acp-compact-label { from { color: var(--fg-strong); } }
 
 /* Row slots enter once, independently of the active verb's continuous shimmer. */
 .process-row-enter { --row-enter-delay: 0ms; }
