@@ -319,6 +319,28 @@ async fn the_root_ask_agent_row_is_tied_to_its_node_and_hides_behind_it() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_root_row_whose_arguments_stream_in_without_its_name_still_ties_to_its_node() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let roster = roster(h.dir.path()).await;
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  // claude-agent-acp 0.83.0: the name only on the first, empty-input tool_call; the prompt arrives in title-less refinements
+  prompt(&s, "relay-call-stream:relay: streamed").await;
+  let view = v(s.view());
+  let row = view["turns"].as_array().unwrap().iter().flat_map(|t| t["blocks"].as_array().cloned().unwrap_or_default()).find(|b| b["id"] == "ak1").unwrap();
+  // An empty input is not a wait call
+  assert!(row["verbKey"].is_null());
+  let (ok, _) = last_text(&run(&s, &roster, 0, ask("fake-review", "relay: streamed")).await);
+  assert!(ok);
+  let node = nodes(&s)[0].clone();
+  assert_eq!(node["peer"]["toolCallId"], "ak1");
+  let view = v(s.view());
+  let row = view["turns"].as_array().unwrap().iter().flat_map(|t| t["blocks"].as_array().cloned().unwrap_or_default()).find(|b| b["id"] == "ak1").unwrap();
+  assert_eq!(row["subagentId"], node["id"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_root_row_waits_for_the_round_of_its_own_persona() {
   let fake = fake_or_skip!();
   let h = Harness::new(&fake, json!({}));
