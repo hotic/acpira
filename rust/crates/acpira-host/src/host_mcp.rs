@@ -30,6 +30,12 @@ const INSTRUCTIONS: &str = "The user reads this conversation in Acpira, which ca
 When the user should see an image (a screenshot you took, a chart or diagram you rendered, a generated or downloaded picture), \
 call show_image with its absolute path instead of only printing the path.";
 
+/// Appended to the instructions when the relay env is on the entry. Server instructions reach the model even where
+/// the client defers tools behind a search, so `@name` is tied to `ask_agent` before the model goes looking for it
+const RELAY_INSTRUCTIONS: &str = "When the user writes @name for an agent listed by the ask_agent tool, that is an \
+Acpira agent, not one of your own subagents: call ask_agent for it right away, without listing agents first. \
+Several agents named = one ask_agent call each, all in the same message; they run in parallel.";
+
 const DESCRIPTION: &str = "Display local image files (PNG, JPEG, GIF, WebP) to the user, inline in the conversation. \
 Use it whenever the user should look at an image you produced or found: a screenshot, a rendered UI, a chart, a generated picture. \
 Paths must be absolute. The image is shown to the user only; it is not returned to you. \
@@ -112,12 +118,14 @@ pub fn run(version: &str) -> i32 {
     if line.trim().is_empty() {
       continue;
     }
+    let mut initialize = false;
     if let Some(relay) = &relay
       && let Ok(msg) = serde_json::from_str::<Value>(&line)
     {
       let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
       if method == "initialize" {
         relay.note_client(msg.get("params"));
+        initialize = true;
       }
       if method == "tools/list"
         && let Some(id) = msg.get("id").cloned()
@@ -143,7 +151,10 @@ pub fn run(version: &str) -> i32 {
         continue;
       }
     }
-    let Some(reply) = handle_line(&line, version) else { continue };
+    let Some(mut reply) = handle_line(&line, version) else { continue };
+    if initialize && let Some(result) = reply.get_mut("result") {
+      result["instructions"] = json!(format!("{INSTRUCTIONS}\n\n{RELAY_INSTRUCTIONS}"));
+    }
     if !write(&out, &reply) {
       break;
     }
@@ -288,7 +299,9 @@ fn ask_tool_def(personas: &[acpira_shared::subagents::SubagentPersona]) -> Value
   let description = format!(
     "Summon another coding agent that runs in its own CLI on this same repository, and answer with its reply. \
 Use it when one of the agents below fits the task better (a second opinion, a review, fast mechanical edits), and always when \
-the user names one with @name. It cannot see this conversation but reads files and runs commands itself: write a short, \
+the user names one with @name: those names are these agents, not your own subagents, so call this tool directly without \
+listing or searching for agents. To ask several agents, make one call per agent in the same message; they run in parallel. \
+It cannot see this conversation but reads files and runs commands itself: write a short, \
 self-contained prompt that points at paths instead of pasting code. To follow up with the same agent, pass the `thread` its \
 previous answer named. If the answer says it is still working, call again with that thread and an empty prompt to wait.\n\nAgents:\n{}",
     lines.join("\n")
@@ -309,7 +322,20 @@ previous answer named. If the answer says it is still working, call again with t
       },
       "required": [],
     },
-    "annotations": { "readOnlyHint": false, "openWorldHint": false },
+    // readOnlyHint doubles as the concurrency flag in Claude Code (2.1.224:
+    // `isConcurrencySafe() { return annotations?.readOnlyHint ?? false }`), so
+    // `false` made it run several ask_agent calls of one message one after
+    // another. The call itself only relays a prompt: a work-mode child's own
+    // edits still go through its CLI's permission cards, routed to Acpira.
+    "annotations": { "readOnlyHint": true, "openWorldHint": false },
+    // Claude Code defers MCP tools behind ToolSearch, which cost a summon a search step (and the model, seeing only
+    // the name, took `@name` for one of its own agents and listed those first). `anthropic/alwaysLoad` keeps this
+    // tool and its persona list in the prompt (read per tool since 2.1.224 / agent SDK 0.3.284); `searchHint` is
+    // what a client that still defers it matches
+    "_meta": {
+      "anthropic/alwaysLoad": true,
+      "anthropic/searchHint": "summon ask subagent persona @name second opinion review delegate another agent CLI",
+    },
   })
 }
 
@@ -408,6 +434,18 @@ mod tests {
     let text = bad["result"]["content"][0]["text"].as_str().unwrap();
     assert!(text.contains("not an absolute path") && text.contains("missing.png") && text.contains("not a PNG"), "{text}");
     std::fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn ask_agent_runs_concurrently_and_stays_loaded_in_claude_code() {
+    let persona: acpira_shared::subagents::SubagentPersona =
+      serde_json::from_value(json!({ "id": "son-1", "name": "Son", "agent": "codex", "mode": "work" })).unwrap();
+    let def = ask_tool_def(&[persona]);
+    assert_eq!(def["name"], ASK_TOOL);
+    assert_eq!(def["annotations"]["readOnlyHint"], true);
+    // Kept out of ToolSearch, so a summon is one step
+    assert_eq!(def["_meta"]["anthropic/alwaysLoad"], true);
+    assert!(def["description"].as_str().unwrap().contains("- son-1 (@Son)"));
   }
 
   #[test]
