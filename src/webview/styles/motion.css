@@ -48,6 +48,15 @@
 [data-sd-animate][style*="sd-acpCharIn"] { display: inline-block; white-space: pre-wrap; }
 @keyframes sd-acpCharIn { from { opacity: 0; transform: translateY(var(--stream-char-y)); } to { opacity: 1; transform: none; } }
 
+/* Running compaction lead: lucide Shrink's four corner arrows (path order: bottom-right, bottom-left, top-right, top-left)
+   start pushed outward and rush back to the centre, one after another. Transform / opacity only, in the icon's own ink. */
+.compacting-icon path { transform-box: view-box; animation: acp-compact-in 1.4s cubic-bezier(.5, 0, .2, 1) infinite; }
+.compacting-icon path:nth-of-type(1) { --compact-x: 3px; --compact-y: 3px; }
+.compacting-icon path:nth-of-type(2) { --compact-x: -3px; --compact-y: 3px; animation-delay: .12s; }
+.compacting-icon path:nth-of-type(3) { --compact-x: 3px; --compact-y: -3px; animation-delay: .24s; }
+.compacting-icon path:nth-of-type(4) { --compact-x: -3px; --compact-y: -3px; animation-delay: .36s; }
+@keyframes acp-compact-in { 0% { transform: translate(var(--compact-x), var(--compact-y)); opacity: .3; } 60%, 100% { transform: none; opacity: 1; } }
+
 /* Row slots enter once, independently of the active verb's continuous shimmer. */
 .process-row-enter { --row-enter-delay: 0ms; }
 .tool-results .process-row-enter { --row-enter-delay: var(--row-enter-file); }
