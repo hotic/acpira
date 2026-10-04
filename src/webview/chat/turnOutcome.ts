@@ -1,5 +1,22 @@
-import type { AgentTurn } from '@shared/transcript';
+import type { AgentTurn, NoticeBlock } from '@shared/transcript';
 import { translate, type Locale } from '@shared/i18n';
+
+const NO_NOTICES: NoticeBlock[] = [];
+
+// A turn that ended on its own session/prompt error (no AIR failure id behind it) already names the cause, and the
+// Notice / Alert cards own the remedy. Error-severity notices on that turn are earlier symptoms of the same failure
+// (claude-agent-acp: "The connection to Claude was lost." with `new_session`, then -32000 Authentication required),
+// so they join the outcome row as detail lines instead of standing as separate warnings with remedies of their own
+export function absorbedNotices(turn: AgentTurn): NoticeBlock[] {
+  if (turn.stop !== 'error' || !turn.error || turn.error.failureId !== undefined) return NO_NOTICES;
+  const found = turn.blocks.filter((b): b is NoticeBlock => b.type === 'notice' && b.severity === 'error');
+  return found.length ? found : NO_NOTICES;
+}
+
+// Copy / fork / stats only mean something for a turn that produced something beyond failure notices
+export function hasTurnContent(turn: AgentTurn): boolean {
+  return turn.blocks.some(b => b.type !== 'notice');
+}
 
 // An empty ACP completion is a receipt, not proof that a command took effect.
 // Errors/cancellation always win; actual prose and tool results stand on their own.
