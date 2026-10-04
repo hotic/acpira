@@ -7,8 +7,9 @@ import { useAppearance, type Appearance } from '../appearance';
 import { getLocale, t } from '../i18n';
 import { commandSegments } from './PromptInput';
 import { commandMarks } from './slashCommands';
-import { turnOutcome } from './turnOutcome';
+import { absorbedNotices, hasTurnContent, turnOutcome } from './turnOutcome';
 import { EntranceOnce, Row, RowLabel, RowTarget, RowEntranceContext, EntranceScopeContext } from '../ui/Row';
+import { Button } from '../ui/Button';
 import { Disclosure } from '../ui/Disclosure';
 import { Collapsible, LazyPanelContext } from '../ui/Collapsible';
 import { Orb } from '../effects/Orb';
@@ -110,39 +111,38 @@ interface NoticeActions {
   onAction?: (action: FailureAction) => void;
   showActions?: boolean;
   suppressId?: string;
+  // Error notices folded into the turn's outcome row (`absorbedNotices`); they render there, not as rows of their own
+  absorbed?: NoticeBlock[];
 }
 const NoticeActionContext = createContext<NoticeActions | undefined>(undefined);
 
-// One row per failure id: a warning sits in the transcript's quiet color, an error takes the warn tone.
-// Details wrap under the title; the adapter's own actions render as small buttons, in payload order
+// Lines under a row with a lead start at the label column, past the lead slot and its gap
+const UNDER_LABEL = 'pl-indent';
+
+// One row per failure id: an error marks only its glyph with the warn tone and keeps the title in body grey,
+// a warning stays in the transcript's quiet color. Details wrap under the title at the label column; the
+// adapter's own actions render as small secondary buttons, in payload order
 function NoticeRow({ block }: { block: NoticeBlock }) {
   const ctx = useContext(NoticeActionContext);
-  if (block.id === ctx?.suppressId) return null;
+  if (block.id === ctx?.suppressId || ctx?.absorbed?.includes(block)) return null;
   const error = block.severity === 'error';
   const buttons = error && ctx?.showActions && ctx.onAction ? block.actions : [];
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
-      <Row lead={<TriangleAlert className="size-icon" strokeWidth={1.5} />} className={error ? 'text-warn' : 'text-fg-3'}>
+      <Row lead={<TriangleAlert className={cn('size-icon', error && 'text-warn')} strokeWidth={1.5} />} className={error ? 'text-fg-2' : 'text-fg-3'}>
         <RowLabel className="whitespace-pre-wrap">{block.title}</RowLabel>
       </Row>
       {block.details && (
-        <Row className="text-3 text-fg-3"><span className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere]">{block.details}</span></Row>
+        <p className={cn('m-0 min-w-0 whitespace-pre-wrap text-3 text-fg-3 [overflow-wrap:anywhere]', UNDER_LABEL)}>{block.details}</p>
       )}
       {buttons.length > 0 && (
-        <Row className="text-fg-3">
-          <span className="flex flex-wrap gap-2">
-            {buttons.map(a => (
-              <button
-                key={a}
-                type="button"
-                className="rounded-md px-1.5 py-0.5 text-3 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1"
-                onClick={() => ctx?.onAction?.(a)}
-              >
-                {a === 'retry' ? t('common.retry') : a === 'new_session' ? t('notice.continueNew') : t('notice.goLogin')}
-              </button>
-            ))}
-          </span>
-        </Row>
+        <div className={cn('flex flex-wrap gap-gap pt-1', UNDER_LABEL)}>
+          {buttons.map(a => (
+            <Button key={a} variant="secondary" className="h-ctl-sm px-2 text-3" onClick={() => ctx?.onAction?.(a)}>
+              {a === 'retry' ? t('common.retry') : a === 'new_session' ? t('notice.continueNew') : t('notice.goLogin')}
+            </Button>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -165,7 +165,10 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   // Continues the turn above (the hidden continue after an account switch): one row gap instead of a message gap
   joined?: boolean;
 }) {
-  const raw = compacting ? compactionForDisplay(turn, running) : turn;
+  const absorbed = useMemo(() => absorbedNotices(turn), [turn]);
+  const base = compacting ? compactionForDisplay(turn, running) : turn;
+  // Absorbed notices leave the block list, so an empty line group cannot leave a stray gap behind
+  const raw = useMemo(() => absorbed.length ? { ...base, blocks: base.blocks.filter(b => b.type !== 'notice' || !absorbed.includes(b)) } : base, [base, absorbed]);
   // Everything but the section split reads the turn without its delegation rows
   const shown = useMemo(() => raw.blocks.some(b => b.type === 'tool_call' && b.subagentId !== undefined)
     ? { ...raw, blocks: raw.blocks.filter(b => b.type !== 'tool_call' || b.subagentId === undefined) } : raw, [raw]);
@@ -183,7 +186,8 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
     onAction: onFailureAction,
     showActions: last && !running,
     ...(turn.error?.failureId !== undefined ? { suppressId: turn.error.failureId } : {}),
-  }), [onFailureAction, last, running, turn.error?.failureId]);
+    ...(absorbed.length ? { absorbed } : {}),
+  }), [onFailureAction, last, running, turn.error?.failureId, absorbed]);
   // A settled turn mounts fold bodies on first open; a live one keeps them mounted so streamed content stays in step while closed
   return <LazyPanelContext.Provider value={!running}><EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><NoticeActionContext.Provider value={noticeActions}><div className={cn('group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]', joined && '-mt-msg-join')}>
     {sections.map((section, i) => {
@@ -205,7 +209,7 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
           permission={shown.blocks.find((b): b is PermissionBlock => b.type === 'permission' && b.planId === section.plan!.id)} onChoose={onPermission} />}
       </Fragment>;
     })}
-    {actions && !running && !compacting && turn.blocks.length > 0 && <TurnActions turn={turn} turnIndex={turnIndex} last={last} settings={settings} />}
+    {actions && !running && !compacting && hasTurnContent(turn) && <TurnActions turn={turn} turnIndex={turnIndex} last={last} settings={settings} />}
   </div></NoticeActionContext.Provider></RowEntranceContext.Provider></EntranceScopeContext.Provider></LazyPanelContext.Provider>;
 });
 
@@ -280,16 +284,29 @@ function outcomeOf(turn: AgentTurn): string | undefined {
   return turnOutcome(turn, getLocale());
 }
 
-// One faint row closing the message: a warning glyph for the short stops, none for "stopped" / "no reply"; the error's own words ride along as the target
+// One faint row closing the message: a warning glyph for the short stops, none for "stopped" / "no reply"; the error's own words ride along as the target.
+// Error notices absorbed into the outcome follow as quiet detail lines at the label column
 function Outcome({ turn }: { turn: AgentTurn }) {
   const { toolLine } = useAppearance();
+  const absorbed = useContext(NoticeActionContext)?.absorbed;
   const warn = turn.stop !== 'cancelled' && turn.stop !== 'end_turn';
   const lead = toolLine === 'text' || !warn ? undefined : <TriangleAlert className="size-icon" strokeWidth={1.5} />;
-  return (
+  const row = (
     <Row lead={lead} className="text-fg-3">
       <RowLabel>{outcomeOf(turn)}</RowLabel>
       {turn.stop === 'error' && turn.error?.message && <RowTarget className="text-fg-3">{turn.error.message}</RowTarget>}
     </Row>
+  );
+  if (!absorbed?.length) return row;
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      {row}
+      {absorbed.map(n => (
+        <p key={n.id} className={cn('m-0 min-w-0 whitespace-pre-wrap text-3 text-fg-3 [overflow-wrap:anywhere]', lead && UNDER_LABEL)}>
+          {n.details ? `${n.title}\n${n.details}` : n.title}
+        </p>
+      ))}
+    </div>
   );
 }
 
