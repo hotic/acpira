@@ -1,4 +1,4 @@
-{"source":"https://models.dev/api.json","etag":"W/\"29aeadf7241760871b26705cb2c6425e\"","fetchedAt":"2026-10-03T20:46:51.888Z","models":[
+{"source":"https://models.dev/api.json","etag":"W/\"db64142dfa465d4135b298e042533b4a\"","fetchedAt":"2026-10-05T01:29:40.513Z","models":[
 {"provider":"anthropic","id":"claude-fable-5","name":"Claude Fable 5","reasoning":true,"efforts":["low","medium","high","xhigh","max"],"context":1000000},
 {"provider":"anthropic","id":"claude-fable-5-1","name":"Claude Fable 5.1","reasoning":true,"efforts":["low","medium","high","xhigh","max"],"context":1000000},
 {"provider":"anthropic","id":"claude-haiku-4-5","name":"Claude Haiku 4.5 (latest)","reasoning":true,"context":200000},

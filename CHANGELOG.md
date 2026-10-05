@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [1.8.5] - 2026-10-05
+
+### Added
+
+- Cross-agent subagents can be defined in Settings → Subagents with an agent CLI, model, reasoning effort, Consult / Work mode and a Good at description. The composer offers them through its summon menu and `@name` completion; agents call them through Acpira's `ask_agent` tool. Child rounds run in their own CLI sessions, support parallel calls and follow-up rounds, and appear in the subagent tree with progress, approvals and cancellation. Host routing is covered by fixture-agent tests; end-to-end rounds across real CLIs remain unverified.
+- Interface language choices now include Traditional Chinese, Japanese, Korean, Spanish, German, French and Russian alongside Simplified Chinese and English. Automatic language selection follows the editor's language and Chinese script / region, and translated count labels use the locale's plural rules. The new translations have not received native-speaker review.
+- Shared settings can explicitly make `~/.agents` the source for agents' user-level instructions and skills. Before enabling overwrite, the page offers to merge unique instruction lines; private skills move into the shared folder and conflicts are backed up. Turning overwrite off restores the previous agent entries. Shared instruction text can also be edited directly on the page, with a changed-on-disk check before saving.
+
+### Changed
+
+- Pasted or dropped text attachments can contain up to 1 MB of text. Binary files and larger text files up to 50 MB are saved in the session's attachment storage and sent as file links instead of being rejected; inline images retain their separate size limit.
+- Long conversations send only their changed tail to the webview. Slow editor links combine pending updates and recover a full view after a missed delivery, reducing repeated transcript transfers during streaming and model changes.
+- Thought text renders Markdown headings, lists, emphasis and code through the reply renderer, while retaining its bounded scrolling area and streamed-tail following.
+- Subagent mentions use distinct pills in both the composer and sent messages. Persona lists and summon menus separate agent, model and mode more clearly, and Claude Code keeps `ask_agent` loaded for direct calls.
+- Running context compaction animates its Shrink icon and settles at the resting position when it completes. Reply actions and dock overlays use consistent spacing.
+
+### Fixed
+
+- Editing a message with a large image no longer counts the image's base64 bytes against the history-text limit or unexpectedly keeps the old attempt above the edited message.
+- A failed turn folds related error notices into its outcome details instead of showing repeated warning cards and remedies. Turns containing only failure notices no longer show copy, fork or statistics actions.
+- Generated session titles shorten absolute paths to filenames, collapse whitespace and cap their length so a long export path does not occupy the whole title.
+
 ## [1.8.4] - 2026-10-04
 
 ### Changed
