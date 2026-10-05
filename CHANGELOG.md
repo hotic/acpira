@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [1.8.6] - 2026-10-06
+
+### Added
+
+- VS Code and Cursor sessions on macOS and Linux now run in a persistent `acpira serve --socket` engine. Closing or reloading a window, or losing a remote connection, leaves active turns running and reconnects the next window; idle engines exit after 30 seconds, upgraded binaries drain the previous engine, and another engine can take over a session through its read-only mirror.
+
+### Changed
+
+- Closed process-detail folds release their body after the close transition, attachment text previews use a bounded least-recently-used cache, and the webview retains only the environment fields from initialization. Long-session navigation therefore keeps far less DOM and transcript data in memory.
+
 ## [1.8.5] - 2026-10-05
 
 ### Added

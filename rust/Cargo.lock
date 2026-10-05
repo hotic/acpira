@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "acpira-host"
-version = "1.8.5"
+version = "1.8.6"
 dependencies = [
  "acpira-shared",
  "anyhow",
@@ -29,7 +29,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-shared"
-version = "1.8.5"
+version = "1.8.6"
 dependencies = [
  "regex",
  "serde",
