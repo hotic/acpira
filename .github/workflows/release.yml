@@ -215,7 +215,8 @@ jobs:
         run: pnpm build
       - name: Build, verify and package the plugin
         working-directory: idea
-        run: ./gradlew test buildPlugin verifyPlugin buildPluginVariants buildMarketplacePlugin checksums --no-daemon
+        # Release classes and tests must come from the checked-out tag, including inlined Kotlin constants.
+        run: ./gradlew test buildPlugin verifyPlugin buildPluginVariants buildMarketplacePlugin checksums --rerun-tasks --no-build-cache --no-daemon
       - name: Check the plugin version against the release
         env:
           version: ${{ needs.build.outputs.version }}

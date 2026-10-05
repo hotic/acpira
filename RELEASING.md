@@ -33,6 +33,8 @@ Drafts, standalone tag pushes, and prereleases do not publish to the marketplace
 
 ## Validate or retry
 
+IntelliJ release builds rerun Gradle tasks with the build cache disabled. Dependency downloads remain cached, but production and test classes are compiled together from the selected tag so inlined Kotlin constants cannot come from different builds.
+
 Release builds and Windows compatibility checks use Rust 1.97.1. Update both workflow toolchain inputs together after validating a newer compiler and Clippy against all targets; do not use a moving stable toolchain for a release retry.
 
 Use **Run workflow** with `ref: main` and publishing unchecked to run checks and download the resulting `extension-vsix` and `intellij-plugin` artifacts without publishing. This requires no marketplace secrets.
