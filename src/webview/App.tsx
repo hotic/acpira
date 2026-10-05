@@ -60,10 +60,14 @@ const searchSessions = (query: string) => new Promise<SessionHit[]>(resolve => {
   post({ type: 'searchSessions', query, seq });
 });
 
+type InitEnv = Pick<InitState, 'host' | 'home' | 'cwd' | 'blobBase'>;
+
 // Root of the real webview: consumes the whole state pushed by the host, posts actions back via postMessage unchanged.
 // The settings page is a local view swap over the chat (Codex-style), not a separate webview
 export function App() {
-  const [init, setInit] = useState<InitState>();
+  // Only the environment fields of `init` are kept: holding the whole message would pin its `active` session view (and
+  // every other list in it) for the page's lifetime, after the session has been switched away and the lists replaced
+  const [init, setInit] = useState<InitEnv>();
   const [appearance, setAppearance] = useState<Appearance>(BASE_APPEARANCE);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
@@ -131,7 +135,7 @@ export function App() {
           break;
         }
         // A sidecar that came back answers nothing it was asked before: pending controls requests go out again
-        case 'init': controlsAsked.current.clear(); setInit(m.state); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setHidden(m.state.hidden); setSession(current => m.state.active ? applySession(current, m.state.active) : undefined); setSettings(m.state.settings); setLocale(m.state.locale); setLoc(m.state.locale); break;
+        case 'init': controlsAsked.current.clear(); setInit({ host: m.state.host, home: m.state.home, cwd: m.state.cwd, blobBase: m.state.blobBase }); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setHidden(m.state.hidden); setSession(current => m.state.active ? applySession(current, m.state.active) : undefined); setSettings(m.state.settings); setLocale(m.state.locale); setLoc(m.state.locale); break;
         case 'appearance': setAppearance(m.appearance); break;
         // An agent whose executable appeared or vanished has a stale inventory (binary path, version); drop it so the page rescans
         case 'agents': {
