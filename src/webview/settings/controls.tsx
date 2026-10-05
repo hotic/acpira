@@ -226,10 +226,12 @@ export interface ItemRowProps {
   onClick?: () => void;
   // Greyed out as a whole (disabled server, missing file)
   dim?: boolean;
+  // A lead mark that fills the whole lead slot instead of the one-line icon size, for rows whose desc makes them two lines tall
+  bigLead?: boolean;
   className?: string;
 }
 
-export function ItemRow({ lead, title, desc, extra, trailing, onOpen, reserveOpen, onClick, dim, className }: ItemRowProps) {
+export function ItemRow({ lead, title, desc, extra, trailing, onOpen, reserveOpen, onClick, dim, bigLead, className }: ItemRowProps) {
   const Tag = onClick ? 'button' : 'div';
   return (
     <Tag
@@ -241,7 +243,7 @@ export function ItemRow({ lead, title, desc, extra, trailing, onOpen, reserveOpe
         className,
       )}
     >
-      {lead !== undefined && <span className={cn('flex size-lead shrink-0 items-center justify-center text-fg-2 [&_svg]:size-icon', dim && 'opacity-60')}>{lead}</span>}
+      {lead !== undefined && <span className={cn('flex size-lead shrink-0 items-center justify-center text-fg-2', bigLead ? '[&_svg]:size-lead' : '[&_svg]:size-icon', dim && 'opacity-60')}>{lead}</span>}
       <span className="flex min-w-0 flex-1 flex-col">
         <span className={cn('truncate text-2', dim ? 'text-fg-2' : 'text-fg-1')}>{title}</span>
         {desc && <span className="truncate text-2 text-fg-2">{desc}</span>}

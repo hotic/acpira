@@ -6,7 +6,7 @@ import { PERSONA_MAX, sanitizePersonas, type RelayMode, type SubagentPersona } f
 import { AgentMark } from '../chat/AgentMark';
 import { Button, ChipTag, IconButton } from '../ui/Button';
 import { t } from '../i18n';
-import { FactRow, Field, ItemRow, Section, SectionAction, Select, Switch, type Option } from './controls';
+import { FactRow, Field, Group, ItemRow, Section, SectionAction, Select, Switch, type Option } from './controls';
 import type { SettingsHandlers } from './SettingsShell';
 
 // The read-only mode the relay finds on the CLIs whose modes are recorded (docs/acp-agents-compat.md; null = none);
@@ -64,12 +64,14 @@ export function SubagentsPage({ settings, agents, controls, on }: PageProps) {
       action={<SectionAction icon={<Plus strokeWidth={1.5} />} disabled={full || adding !== undefined} onClick={add}>{t('subagents.page.add')}</SectionAction>}>
       {list.length === 0
         ? <p className="m-0 py-pad text-2 text-fg-2">{t('subagents.page.empty')}</p>
-        : <div className="flex flex-col divide-y divide-line">
+        // The Group owns the horizontal inset, so the rows line up with the section's title and description instead of
+        // adding a second inset of their own; it does not clip, since the rows' rounded hover reaches past their edges
+        : <Group className="overflow-visible">
           {list.map(p => (
-            <ItemRow key={p.id} className="settings-pick-row hover:bg-transparent focus-visible:bg-transparent" dim={!p.enabled} onClick={() => setOpen(p.id)}
+            <ItemRow key={p.id} className="settings-pick-row hover:bg-transparent focus-visible:bg-transparent" dim={!p.enabled} bigLead onClick={() => setOpen(p.id)}
               lead={<AgentMark id={p.agent} name={p.name} />} title={p.name} desc={metaOf(p, agents)} />
           ))}
-        </div>}
+        </Group>}
     </Section>
   );
 }
@@ -173,7 +175,7 @@ function metaOf(p: SubagentPersona, agents: AgentInfo[]): ReactNode {
   const cli = agents.find(a => a.id === p.agent)?.name ?? p.agent;
   return <span className="flex min-w-0 items-center gap-gap">
     <span className="shrink-0">{cli}</span>
-    {p.model && <span className="min-w-0 truncate text-fg-3">{p.model}</span>}
+    {p.model && <span className="min-w-0 truncate text-fg-3/70">{p.model}</span>}
     <ChipTag>{p.mode === 'consult' ? t('subagents.page.consult') : t('subagents.page.work')}</ChipTag>
   </span>;
 }
