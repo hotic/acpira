@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [1.8.7] - 2026-10-06
+
+### Fixed
+
+- Windows release validation no longer rejects the persistent-engine binary for Unix-only timing constants, allowing the Windows compatibility and cross-platform package jobs to complete.
+
 ## [1.8.6] - 2026-10-06
 
 ### Added
