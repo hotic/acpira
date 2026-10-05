@@ -404,3 +404,19 @@ async fn history_search_reads_saved_conversations_and_follows_later_writes() {
   assert_eq!(hit_ids(&search.search(dir.path().to_path_buf(), "needle").await), vec!["b"]);
   assert!(search.search(dir.path().to_path_buf(), "   ").await.is_empty());
 }
+
+// A session another engine is driving (store::session_lease): this store's copy of it is never written over that engine's
+#[tokio::test(flavor = "multi_thread")]
+async fn a_write_the_guard_refuses_is_skipped_and_logged() {
+  let (dir, logs, store) = fixture();
+  store.flush(record("a", "mine")).await.unwrap();
+  let refuse = Arc::new(std::sync::atomic::AtomicBool::new(true));
+  let r = refuse.clone();
+  store.set_write_guard(Arc::new(move |_: &str| !r.load(std::sync::atomic::Ordering::SeqCst)));
+  store.flush(record("a", "stale copy")).await.unwrap();
+  assert_eq!(title_of(&dir.path().join("a.json")), "mine");
+  assert!(logs.lock().unwrap().iter().any(|l| l.contains("another engine holds it")));
+  refuse.store(false, std::sync::atomic::Ordering::SeqCst);
+  store.flush(record("a", "after")).await.unwrap();
+  assert_eq!(title_of(&dir.path().join("a.json")), "after");
+}

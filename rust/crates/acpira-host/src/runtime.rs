@@ -162,6 +162,7 @@ impl HostRuntime {
           Some("all") => "all".into(),
           _ => "workspace".into(),
         }),
+        lease_root: root.clone(),
         shared_mcp: Some(crate::shared_config::mcp_provider(Arc::new(move || mcp_home.home()))),
         host_mcp,
       },

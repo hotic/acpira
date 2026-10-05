@@ -35,6 +35,7 @@ async fn native_sessions_list_marks_imported_ones_import_replays_and_re_import_s
       model_shapes: None,
       shared_mcp: None,
       host_mcp: None,
+      claim: None,
     };
     let s = AcpSession::fresh("fake", "/tmp", deps, None);
     s.start().await;
@@ -104,6 +105,7 @@ async fn native_sessions_of_a_symlinked_project_still_list() {
         model_shapes: None,
         shared_mcp: None,
         host_mcp: None,
+        claim: None,
       };
       let s = AcpSession::fresh("fake", cwd.to_str().unwrap(), deps, None);
       s.start().await;

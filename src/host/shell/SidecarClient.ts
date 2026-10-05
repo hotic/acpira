@@ -1,7 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { Socket } from 'node:net';
 import { createInterface } from 'node:readline';
 import type { HostMsg, WebviewHost, WebviewMsg } from '@shared/protocol';
 import { SIDECAR_PROTOCOL_VERSION, type PlatformEvent, type PlatformRequest, type ShellMsg, type SidecarMsg } from '@shared/sidecar';
+import { reachEngine, type EngineEndpoint } from './engine';
 
 // One way to start the sidecar binary and a label for the log
 export interface SidecarCommand {
@@ -39,6 +41,9 @@ export interface SidecarClientOpts {
   onState?: (state: SidecarState, detail?: string) => void;
   // Delay before the nth consecutive restart
   backoff?: (attempt: number) => number;
+  // The persistent engine for a command: connect to its socket (launching it detached when nothing listens) instead of
+  // spawning a child over stdio. Disconnecting leaves it and its sessions running. Undefined: a child over stdio
+  engine?: (cmd: SidecarCommand) => EngineEndpoint | undefined;
 }
 
 const MAX_RESTARTS = 5;
@@ -51,12 +56,16 @@ interface Attached {
   lastSessionId?: string;
 }
 
-// The shell side of the sidecar protocol (src/shared/sidecar.ts) for a Node-hosted shell: spawns the process, handshakes, relays view
-// traffic and platform RPCs, and restarts with backoff. Envelopes sent before helloOk wait in an outbox; a restart re-sends hello and
-// every attachView on the session each view was showing. Each process has a generation, so a replaced process's late output and exit
-// cannot touch its successor. The VS Code extension uses it; nothing here imports vscode
+// The shell side of the sidecar protocol (src/shared/sidecar.ts) for a Node-hosted shell: spawns the process (or connects to the
+// persistent engine), handshakes, relays view traffic and platform RPCs, and restarts / reconnects with backoff. Envelopes sent before
+// helloOk wait in an outbox; a restart re-sends hello and every attachView on the session each view was showing. Each process or
+// connection has a generation, so a replaced one's late output and exit cannot touch its successor. The VS Code extension uses it;
+// nothing here imports vscode
 export class SidecarClient {
   private proc?: ChildProcessWithoutNullStreams;
+  // The connection to a persistent engine (opts.engine), instead of proc
+  private sock?: Socket;
+  private connecting = false;
   private gen = 0;
   private ready = false;
   private outbox: ShellMsg[] = [];
@@ -75,8 +84,10 @@ export class SidecarClient {
 
   get current(): { state: SidecarState; detail?: string } { return { state: this.state, detail: this.detail }; }
 
+  private get live() { return !!(this.proc || this.sock || this.connecting); }
+
   start() {
-    if (this.disposed || this.proc) return;
+    if (this.disposed || this.live) return;
     clearTimeout(this.timer);
     this.timer = undefined;
     const candidates = this.opts.commands();
@@ -85,6 +96,8 @@ export class SidecarClient {
     const gen = ++this.gen;
     this.setState('starting');
     this.lastStart = Date.now();
+    const endpoint = this.opts.engine?.(cmd);
+    if (endpoint) { void this.connect(gen, cmd, endpoint, candidates.length); return; }
     let proc: ChildProcessWithoutNullStreams;
     try {
       proc = spawn(cmd.command, cmd.args, { cwd: this.opts.cwd?.(), env: { ...process.env, ...cmd.env }, stdio: 'pipe', windowsHide: true });
@@ -103,9 +116,35 @@ export class SidecarClient {
     this.write({ type: 'hello', protocolVersion: SIDECAR_PROTOCOL_VERSION, requestId: `h${++this.helloSeq}`, ...this.opts.hello() });
   }
 
+  // The persistent engine: the same envelopes over its socket. A closed connection is handled like an exited process (reconnect
+  // with backoff), and the engine is launched again only when nothing listens any more
+  private async connect(gen: number, cmd: SidecarCommand, ep: EngineEndpoint, total: number) {
+    this.connecting = true;
+    let sock: Socket;
+    try {
+      sock = await reachEngine(cmd, ep, { cwd: this.opts.cwd?.(), cancelled: () => gen !== this.gen || this.disposed, log: this.opts.log });
+    } catch (e) {
+      if (gen !== this.gen) return;
+      this.connecting = false;
+      this.spawnFailed(gen, cmd, e, total);
+      return;
+    }
+    if (gen !== this.gen || this.disposed) { sock.destroy(); return; }
+    this.connecting = false;
+    this.sock = sock;
+    this.opts.log(`engine connected: ${ep.socket}`);
+    sock.on('error', e => this.opts.log(`engine connection: ${String(e)}`));
+    sock.on('close', () => {
+      if (this.sock === sock) this.sock = undefined;
+      this.onExit(gen, 'connection closed', total);
+    });
+    createInterface({ input: sock, crlfDelay: Infinity }).on('line', line => this.onLine(gen, line));
+    this.write({ type: 'hello', protocolVersion: SIDECAR_PROTOCOL_VERSION, requestId: `h${++this.helloSeq}`, ...this.opts.hello() });
+  }
+
   // Retry after FAILED (the status notification's button): the consecutive-failure counter and the engine choice start over
   retry() {
-    if (this.disposed || this.proc) return;
+    if (this.disposed || this.live) return;
     this.restarts = 0;
     this.candidate = 0;
     this.start();
@@ -141,8 +180,8 @@ export class SidecarClient {
   }
 
   private write(m: ShellMsg) {
-    const stdin = this.proc?.stdin;
-    if (stdin?.writable) stdin.write(`${JSON.stringify(m)}\n`);
+    const out: NodeJS.WritableStream | undefined = this.proc?.stdin ?? this.sock;
+    if (out?.writable) out.write(`${JSON.stringify(m)}\n`);
   }
 
   private attachEnvelope(a: Attached): ShellMsg {
@@ -171,7 +210,10 @@ export class SidecarClient {
       }
       case 'helloReject':
         this.opts.log(`sidecar rejected hello: ${m.reason}`);
+        // A persistent engine that is just ending: dropping the connection reconnects (and launches the next engine)
+        if (this.sock && /shutting down/.test(m.reason)) { this.sock.destroy(); return; }
         this.setState('failed', m.reason);
+        this.sock?.destroy();
         void this.stop(this.proc, 500);
         return;
       case 'hostMessage': {
@@ -204,6 +246,7 @@ export class SidecarClient {
   private spawnFailed(gen: number, cmd: SidecarCommand, e: unknown, total: number) {
     if (gen !== this.gen) return;
     this.proc = undefined;
+    this.sock = undefined;
     this.opts.log(`sidecar could not start (${cmd.label}): ${String(e)}`);
     if (this.candidate + 1 < total) { this.candidate++; this.start(); return; }
     this.setState('failed', String(e));
@@ -213,6 +256,7 @@ export class SidecarClient {
     if (gen !== this.gen) return;
     const reachedHello = this.ready;
     this.proc = undefined;
+    this.sock = undefined;
     this.ready = false;
     // The outbox is only ever non-empty before a handshake, so what it holds was never delivered: it goes to the next process
     if (this.disposed || this.state === 'failed') return;
@@ -250,17 +294,23 @@ export class SidecarClient {
     proc.kill('SIGKILL');
   }
 
+  // A child process is shut down with its agents; a persistent engine is only disconnected from, so its turns keep running and the
+  // next window picks them up
   async dispose() {
     if (this.disposed) return;
     this.disposed = true;
     clearTimeout(this.timer);
     const proc = this.proc;
+    const sock = this.sock;
     this.gen++;
     this.proc = undefined;
+    this.sock = undefined;
+    this.connecting = false;
     this.ready = false;
     this.outbox = [];
     this.views.clear();
     this.state = 'stopped';
+    if (sock) await new Promise<void>(resolve => { sock.end(resolve); setTimeout(() => { sock.destroy(); resolve(); }, 1000).unref(); });
     await this.stop(proc);
   }
 }

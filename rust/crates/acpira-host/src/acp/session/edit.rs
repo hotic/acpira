@@ -397,6 +397,9 @@ impl AcpSession {
       if edit.text.trim().is_empty() && kept.is_empty() && edit.attachments.is_empty() {
         return Err(anyhow!(t("history.empty")));
       }
+      if let Err(reason) = self.lease_turn(&mut c) {
+        return Err(anyhow!(reason));
+      }
       c.phase.editing = true;
       c.phase.running = true;
       c.phase.staging = true;

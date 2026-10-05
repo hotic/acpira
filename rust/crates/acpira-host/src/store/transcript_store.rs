@@ -131,8 +131,12 @@ pub struct TranscriptStore {
   state: parking_lot::Mutex<State>,
   // One write chain per id: concurrent writes of a record would share its temp file
   inflight: parking_lot::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+  /// Asked before every record write: false skips it (another engine drives the session, `store::session_lease`)
+  write_guard: parking_lot::RwLock<Option<WriteGuard>>,
   me: Weak<TranscriptStore>,
 }
+
+pub type WriteGuard = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 impl TranscriptStore {
   pub fn new(dir: PathBuf, log: LogFn, on_save_error: Option<SaveErrorHook>) -> Arc<Self> {
@@ -148,12 +152,18 @@ impl TranscriptStore {
       max_wait,
       state: parking_lot::Mutex::new(State { pending: HashMap::new(), known: HashSet::new(), unreadable: HashMap::new() }),
       inflight: Default::default(),
+      write_guard: Default::default(),
       me: me.clone(),
     })
   }
 
   pub fn dir(&self) -> &Path {
     &self.dir
+  }
+
+  /// Install the check every record write passes first
+  pub fn set_write_guard(&self, guard: WriteGuard) {
+    *self.write_guard.write() = Some(guard);
   }
 
   async fn ensure(&self) -> Result<()> {
@@ -427,6 +437,13 @@ impl TranscriptStore {
     }
     self.ensure().await?;
     let Some(path) = confined(&self.dir, &format!("{id}.json")).await else { return Ok(()) };
+    // A copy this engine keeps of a session another engine is driving (two workspaces with it open) must not overwrite
+    // what that engine writes; the guard is cloned out so no lock is held across the call
+    let guard = self.write_guard.read().clone();
+    if guard.is_some_and(|may_write| !may_write(&id)) {
+      (self.log)(&format!("session {id}: another engine holds it, not written"));
+      return Ok(());
+    }
     if self.knew(&id) && fs::metadata(&path).await.is_err() {
       (self.log)(&format!("session {id}: deleted by another window, not written back"));
       return Ok(());

@@ -11,7 +11,9 @@ use serde_json::{Map, Value};
 use tokio::sync::oneshot;
 
 use acpira_shared::protocol::FileHit;
-use acpira_shared::sidecar::{Hello, PLATFORM_RPC_METHODS, PlanTarget, PlatformEvent, PlatformRequest, ShellEnv, SidecarMsg, ToastOpen};
+use acpira_shared::sidecar::{
+  Hello, PLATFORM_RPC_METHODS, PlanTarget, PlatformEvent, PlatformRequest, ShellEnv, ShellEnvPatch, SidecarMsg, ToastOpen,
+};
 
 use crate::node_files::NodeFiles;
 use crate::store::data_dir::home_dir;
@@ -21,17 +23,22 @@ const RPC_TIMEOUT: Duration = Duration::from_secs(30);
 /// Whether a settings change touched acpira.<section> (None: anything)
 pub type Affects = Arc<dyn Fn(Option<&str>) -> bool + Send + Sync>;
 pub type Send_ = Arc<dyn Fn(SidecarMsg) + Send + Sync>;
+/// Sends to the shell currently serving IDE actions; the wire it went out on, None when no shell is connected
+pub type Route = Arc<dyn Fn(SidecarMsg) -> Option<u64> + Send + Sync>;
 
 struct Pending {
   method: &'static str,
+  /// The wire the request went out on: its answers can only come back there, so its closing fails the request
+  wire: u64,
   tx: oneshot::Sender<Result<Value>>,
 }
 
 pub struct SidecarPlatform {
-  send: Send_,
+  route: Route,
   stderr: Arc<dyn Fn(&str) + Send + Sync>,
   ignore_agents: bool,
-  caps: HashSet<String>,
+  /// The serving shell's capabilities; a persistent engine takes the newest hello's
+  caps: parking_lot::RwLock<HashSet<String>>,
   settings: parking_lot::RwLock<Map<String, Value>>,
   env: parking_lot::RwLock<ShellEnv>,
   pending: parking_lot::Mutex<HashMap<String, Pending>>,
@@ -43,14 +50,28 @@ pub struct SidecarPlatform {
 }
 
 impl SidecarPlatform {
+  /// One shell on one wire (stdio sidecar, harness connection, tests)
   pub fn new(send: Send_, hello: &Hello, stderr: Arc<dyn Fn(&str) + Send + Sync>, ignore_agents: bool) -> Arc<Self> {
+    Self::routed(
+      Arc::new(move |m| {
+        send(m);
+        Some(0)
+      }),
+      hello,
+      stderr,
+      ignore_agents,
+    )
+  }
+
+  /// Several shells over time (the persistent engine): `route` picks the one serving IDE actions right now
+  pub fn routed(route: Route, hello: &Hello, stderr: Arc<dyn Fn(&str) + Send + Sync>, ignore_agents: bool) -> Arc<Self> {
     Arc::new_cyclic(|me: &std::sync::Weak<SidecarPlatform>| {
       let weak = me.clone();
       SidecarPlatform {
-        send,
+        route,
         stderr,
         ignore_agents,
-        caps: hello.client.capabilities.iter().cloned().collect(),
+        caps: parking_lot::RwLock::new(hello.client.capabilities.iter().cloned().collect()),
         settings: parking_lot::RwLock::new(hello.settings.clone()),
         env: parking_lot::RwLock::new(hello.env.clone()),
         pending: Default::default(),
@@ -63,6 +84,42 @@ impl SidecarPlatform {
         closed: Default::default(),
       }
     })
+  }
+
+  fn has_cap(&self, method: &str) -> bool {
+    self.caps.read().contains(method)
+  }
+
+  /// A later shell joined a persistent engine: its capabilities, environment and settings snapshot replace the old ones,
+  /// and listeners hear about every key whose value differs (the settings may have changed while no shell was connected)
+  pub fn rebind(&self, hello: &Hello) {
+    *self.caps.write() = hello.client.capabilities.iter().cloned().collect();
+    let keys: Vec<String> = {
+      let cur = self.settings.read();
+      let mut keys: Vec<String> =
+        hello.settings.iter().filter(|(k, v)| cur.get(*k) != Some(*v)).map(|(k, _)| k.clone()).collect();
+      keys.extend(cur.keys().filter(|k| !hello.settings.contains_key(*k)).cloned());
+      keys
+    };
+    if !keys.is_empty() {
+      self.on_event(PlatformEvent::SettingsChanged { keys, settings: hello.settings.clone() });
+    }
+    let env = hello.env.clone();
+    self.on_event(PlatformEvent::EnvChanged {
+      env: ShellEnvPatch { cwd: env.cwd, host_language: Some(env.host_language), blob_base: env.blob_base },
+    });
+  }
+
+  /// The wire went away: requests waiting on its answers fail now instead of at the timeout
+  pub fn fail_wire(&self, wire: u64, reason: &str) {
+    let failed: Vec<Pending> = {
+      let mut pending = self.pending.lock();
+      let ids: Vec<String> = pending.iter().filter(|(_, p)| p.wire == wire).map(|(id, _)| id.clone()).collect();
+      ids.into_iter().filter_map(|id| pending.remove(&id)).collect()
+    };
+    for p in failed {
+      let _ = p.tx.send(Err(anyhow!("{}: {reason}", p.method)));
+    }
   }
 
   pub fn blob_base(&self) -> Option<String> {
@@ -95,7 +152,7 @@ impl SidecarPlatform {
   /// The snapshot changes at once so the push right after the write already shows it; the shell persists and echoes
   pub async fn write_setting(&self, key: &str, value: Value) -> Result<()> {
     self.settings.write().insert(key.to_owned(), value.clone());
-    if self.caps.contains("writeSetting") {
+    if self.has_cap("writeSetting") {
       self.rpc(PlatformRequest::WriteSetting { key: key.to_owned(), value }).await?;
     }
     Ok(())
@@ -157,7 +214,7 @@ impl SidecarPlatform {
   }
 
   pub async fn open_resolved_file(&self, path: &str, line: Option<i64>) -> Result<()> {
-    if self.caps.contains("openResolvedFile") {
+    if self.has_cap("openResolvedFile") {
       self.rpc(PlatformRequest::OpenResolvedFile { path: path.to_owned(), line }).await?;
     } else {
       (self.stderr)(&format!("openResolvedFile unsupported by the shell: {path}{}", line.map(|l| format!(":{l}")).unwrap_or_default()));
@@ -166,7 +223,7 @@ impl SidecarPlatform {
   }
 
   pub async fn open_plan_document(&self, target: PlanTarget) -> Result<()> {
-    if self.caps.contains("openPlanDocument") {
+    if self.has_cap("openPlanDocument") {
       self.rpc(PlatformRequest::OpenPlanDocument { target }).await?;
     } else {
       (self.stderr)("openPlanDocument unsupported by the shell");
@@ -181,7 +238,7 @@ impl SidecarPlatform {
   }
 
   pub async fn reveal_in_os(&self, path: &str) -> Result<()> {
-    if self.caps.contains("revealInOS") {
+    if self.has_cap("revealInOS") {
       self.rpc(PlatformRequest::RevealInOs { path: path.to_owned() }).await?;
     } else {
       (self.stderr)(&format!("revealInOS unsupported by the shell: {path}"));
@@ -196,7 +253,7 @@ impl SidecarPlatform {
   }
 
   pub async fn search_files(&self, query: &str) -> Result<Vec<FileHit>> {
-    if !self.caps.contains("searchFiles") {
+    if !self.has_cap("searchFiles") {
       return Ok(self.files.search(query).await);
     }
     let hits = self.rpc(PlatformRequest::SearchFiles { query: query.to_owned() }).await?;
@@ -205,11 +262,10 @@ impl SidecarPlatform {
 
   /// Fire-and-forget IDE actions; false when the shell did not declare the method
   fn notify(&self, request: PlatformRequest) -> bool {
-    if !self.caps.contains(request.method()) || self.closed.lock().is_some() {
+    if !self.has_cap(request.method()) || self.closed.lock().is_some() {
       return false;
     }
-    (self.send)(SidecarMsg::PlatformRequest { request_id: None, request });
-    true
+    (self.route)(SidecarMsg::PlatformRequest { request_id: None, request }).is_some()
   }
 
   async fn rpc(&self, request: PlatformRequest) -> Result<Value> {
@@ -218,14 +274,17 @@ impl SidecarPlatform {
     let id = format!("p{}", self.seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1);
     let (tx, rx) = oneshot::channel();
     {
-      // Checked under the pending lock: close() records the reason before it drains, so a request is either refused here or failed there
+      // Checked under the pending lock: close() records the reason before it drains, so a request is either refused here or failed there.
+      // Routed under it too, so the wire is recorded before its closing can look for the request
       let mut pending = self.pending.lock();
       if let Some(reason) = self.closed.lock().clone() {
         return Err(anyhow!("sidecar closed ({reason})"));
       }
-      pending.insert(id.clone(), Pending { method, tx });
+      let Some(wire) = (self.route)(SidecarMsg::PlatformRequest { request_id: Some(id.clone()), request }) else {
+        return Err(anyhow!("{method}: no window is connected"));
+      };
+      pending.insert(id.clone(), Pending { method, wire, tx });
     }
-    (self.send)(SidecarMsg::PlatformRequest { request_id: Some(id.clone()), request });
     match tokio::time::timeout(RPC_TIMEOUT, rx).await {
       Ok(Ok(r)) => r,
       Ok(Err(_)) => Err(anyhow!("{method}: sidecar closed")),

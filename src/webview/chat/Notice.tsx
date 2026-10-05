@@ -22,7 +22,8 @@ export interface NoticeProps {
   onAddAccount: (via: AddAccountVia) => void;
   // AgentInfo.credentialsLocked: unlock the credential store in a terminal (the sessions then reconnect by themselves)
   onUnlock?: () => void;
-  // SessionView.canTakeOver: the error is a session lock held by another Acpira instance's agent; ending it frees the session
+  // SessionView.canTakeOver: an error from a session lock held by another Acpira instance's agent (taking over ends it), or a
+  // read-only copy of a session another Acpira engine has open (taking over asks that engine to hand it over)
   onTakeOver?: () => void;
 }
 
@@ -57,7 +58,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
     : action.status === 'pending' ? t(action.via === 'import' ? 'notice.importing' : 'notice.loginWaiting')
       : action.status === 'error' ? t('notice.accountFailed', { error: action.error ?? t('notice.error.unknown') })
         : t(`notice.account.${action.status}`));
-  const takeOver = status === 'error' ? onTakeOver : undefined;
+  const takeOver = status === 'error' || status === 'readonly' ? onTakeOver : undefined;
   const others = (accounts ?? []).filter(a => a.id !== accountId);
   // The protocol names sign-in methods in English; known ones get a localized name, the rest keep what the agent sent
   const methodName = (m: AuthMethodInfo) => tOr(`notice.method.${agent.id}:${m.id}`, m.name);
@@ -79,7 +80,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
       <Card className="flex flex-col gap-gap p-pad">
         <div className="text-2 font-semibold text-fg-strong">{body.title}</div>
         <p className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{body.text}</p>
-        {takeOver && <p className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{t('notice.takeOver.text')}</p>}
+        {takeOver && status === 'error' && <p className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{t('notice.takeOver.text')}</p>}
         {feedback && <p role="status" className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{feedback}</p>}
         <fieldset disabled={busy} aria-busy={busy} className="m-0 flex min-w-0 flex-wrap justify-end gap-gap border-0 p-0 disabled:opacity-60">
           {locked && onUnlock && <Button variant="primary" onClick={onUnlock}>{t('notice.unlock')}</Button>}
@@ -96,7 +97,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
             : <Button variant="primary" onClick={() => onLogin()}>{t('notice.goLogin')}</Button>)}
           {takeOver && <Button variant="primary" onClick={takeOver}>{t('notice.takeOver')}</Button>}
           {status === 'readonly' || status === 'closed'
-            ? <Button variant="primary" onClick={() => onNewSession()}>{t('notice.continueNew')}</Button>
+            ? <Button variant={takeOver ? 'secondary' : 'primary'} onClick={() => onNewSession()}>{t('notice.continueNew')}</Button>
             : <Button variant={status === 'auth_required' || takeOver ? 'secondary' : 'primary'} onClick={onRetry}>{t('common.retry')}</Button>}
         </fieldset>
       </Card>

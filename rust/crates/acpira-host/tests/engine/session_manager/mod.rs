@@ -110,6 +110,8 @@ impl Mgr {
         scope: Arc::new(move || scope.lock().unwrap().clone()),
         shared_mcp: None,
         host_mcp: None,
+        // Inside the test's own directory (record scans only look at `<id>.json`), shared by managers on one directory
+        lease_root: dir.join("lease-home"),
       },
     );
     let v = m.attach(None);
@@ -213,6 +215,7 @@ async fn foreign_native_session(fake: &FakeAgent, native: &Path, store: &Arc<Tra
     model_shapes: None,
     shared_mcp: None,
     host_mcp: None,
+    claim: None,
   };
   let s = AcpSession::fresh("fake", cwd, deps, None);
   s.start().await;
