@@ -13,6 +13,10 @@
 /* Plan documents use the card's text scale; weight and spacing mark sections. */
 .plan-document .acp-prose :is(h1, h2, h3, h4, h5, h6) { margin-top: 0; font-size: var(--text-1); }
 .plan-document .acp-prose li { padding-block: 0; }
+/* Thought text sits one step quieter than the reply: headings stay at its own size, and bold
+   (GPT opens each reasoning section with a `**Title**` line) lifts one shade instead of jumping to the strongest foreground. */
+.acp-thought :is(h1, h2, h3, h4, h5, h6) { font-size: inherit; line-height: inherit; }
+.acp-thought :is(h1, h2, h3, h4, h5, h6, strong, [data-streamdown="strong"]) { color: var(--fg-1); }
 /* Reserve only the opening block's corner for the file action. */
 .plan-document .acp-prose > :first-child { min-height: var(--ctl-sm); padding-inline-end: calc(var(--ctl-sm) + var(--gap)); }
 /* Tailwind preflight strips list-style; restore the markers streamdown's own (ungenerated) classes would have set */
