@@ -23,10 +23,13 @@ const { raw: rehypeRaw, sanitize: rehypeSanitize, harden: rehypeHarden } = defau
 if (!rehypeRaw || !rehypeSanitize || !rehypeHarden) throw new Error('streamdown default rehype plugins missing');
 // Rewrite file:// before sanitize/harden; urlTransform runs too late and harden would paint ` [blocked]`.
 const REHYPE = [rehypeRaw, rewriteFileHrefs, rehypeSanitize, rehypeHarden];
+const REPLY_CLASS = 'acp-prose flex min-w-0 flex-col gap-gap text-1 text-fg-1';
+const THOUGHT_CLASS = 'acp-prose acp-thought flex min-w-0 flex-col gap-gap text-2 text-fg-2';
 // `motion` is a stable module-level config (streamdown compares props by reference); the LAB passes alternatives.
 // `onBusy` hears whether the text is still being drawn (received, paced out or fading in), for a turn that waits for
-// its reply to finish on screen before folding its process away; pass a stable function
-export const Prose = memo(function Prose({ block, motion = STREAM_MOTION, onBusy }: { block: TextBlock; motion?: StreamMotion; onBusy?: (busy: boolean) => void }) {
+// its reply to finish on screen before folding its process away; pass a stable function.
+// `tone="thought"` renders reasoning text: the secondary type scale and colour, with headings kept at body size (prose.css `.acp-thought`)
+export const Prose = memo(function Prose({ block, motion = STREAM_MOTION, onBusy, tone = 'reply' }: { block: TextBlock; motion?: StreamMotion; onBusy?: (busy: boolean) => void; tone?: 'reply' | 'thought' }) {
   const smooth = useSmoothText(block.markdown, !!block.streaming, motion.pace);
   // Still draining counts as streaming: the renderer keeps its streaming mode until the visible text catches up
   const streaming = !!block.streaming || smooth.draining;
@@ -50,7 +53,7 @@ export const Prose = memo(function Prose({ block, motion = STREAM_MOTION, onBusy
       rehypePlugins={REHYPE}
       plugins={PLUGINS}
       components={COMPONENTS}
-      className="acp-prose flex min-w-0 flex-col gap-gap text-1 text-fg-1"
+      className={tone === 'thought' ? THOUGHT_CLASS : REPLY_CLASS}
     >
       {smooth.text}
     </Streamdown>

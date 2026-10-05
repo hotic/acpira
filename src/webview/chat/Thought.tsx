@@ -1,6 +1,6 @@
-import { memo, useCallback, useEffect, useRef } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Brain } from 'lucide-react';
-import type { ThoughtBlock } from '@shared/transcript';
+import type { TextBlock, ThoughtBlock } from '@shared/transcript';
 import { useAppearance } from '../appearance';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
@@ -8,14 +8,12 @@ import { Disclosure } from '../ui/Disclosure';
 import { EntranceOnce } from '../ui/Row';
 import { Shimmer } from '../ui/Shimmer';
 import { useScrollFade } from '../ui/useScrollFade';
-import { StreamText } from './StreamText';
-import { useSmoothText } from './streamMotion';
+import { Prose } from './Prose';
 import { useAutoFold } from './autoFold';
 
 // ACP thought chunks have no end boundary: the next event can arrive only after
 // tool arguments finish generating. Keep the text, but never time that gap as thinking.
 // The turn heading owns the Orb; thought rows keep a static icon and shimmer only while streaming.
-// Models close a thought with blank lines; pre-wrap would render them and push the rail's end dot below the text.
 export const Thought = memo(function Thought({ block }: { block: ThoughtBlock }) {
   const { toolLine } = useAppearance();
   const live = !!block.streaming;
@@ -34,24 +32,36 @@ export const Thought = memo(function Thought({ block }: { block: ThoughtBlock })
   );
 });
 
-// The thought text: a bounded scrollport that follows the streamed tail
+// The thought text: Markdown through the reply renderer (GPT's reasoning summaries open each section with
+// `**Title**` and use lists / inline code), inside a bounded scrollport that follows the streamed tail.
+// Models close a thought with blank lines; trimming them keeps the rail's end dot level with the last line.
 function ThoughtBody({ block, className }: { block: ThoughtBlock; className?: string }) {
-  const fade = useScrollFade<HTMLParagraphElement>();
-  const ref = useRef<HTMLParagraphElement>(null);
-  const setRef = useCallback((element: HTMLParagraphElement | null) => {
+  const fade = useScrollFade<HTMLDivElement>();
+  const ref = useRef<HTMLDivElement>(null);
+  const setRef = useCallback((element: HTMLDivElement | null) => {
     ref.current = element;
     return fade(element);
   }, [fade]);
-  // Past --thought-body-max the text grows inside its own scrollport: follow the tail while streaming, and release once the reader scrolls up inside it (the command output rule)
+  // Prose memoizes on the block reference: rebuild it only when the thought itself changed
+  const text = useMemo<TextBlock>(() => ({ type: 'text', markdown: block.text.trimEnd(), streaming: block.streaming }), [block.text, block.streaming]);
+  // Past --thought-body-max the text grows inside its own scrollport: follow the tail while the text is still
+  // being drawn, and release once the reader scrolls up inside it (the command output rule)
   const pinned = useRef(true);
-  const smooth = useSmoothText(block.text.trimEnd(), !!block.streaming);
-  const streaming = !!block.streaming || smooth.draining;
+  const busy = useRef(!!block.streaming);
+  const onBusy = useCallback((value: boolean) => { busy.current = value; }, []);
   useEffect(() => {
     const el = ref.current;
-    if (el && streaming && pinned.current) el.scrollTop = el.scrollHeight;
-  }, [smooth.text, streaming]);
-  return <p ref={setRef} onScroll={e => { const el = e.currentTarget; pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24; }}
-    className={cn('max-h-(--thought-body-max) overflow-y-auto scroll-fade scroll-thin m-0 text-2 text-fg-2 whitespace-pre-wrap [overflow-wrap:anywhere]', className)}>
-    <StreamText text={smooth.text} streaming={streaming} />
-  </p>;
+    if (!el) return;
+    // Prose paces the text inside its own renders (and mounts nothing until the first characters), so follow
+    // the rendered DOM rather than this component's props
+    const observer = new MutationObserver(() => {
+      if (busy.current && pinned.current) el.scrollTop = el.scrollHeight;
+    });
+    observer.observe(el, { childList: true, characterData: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+  return <div ref={setRef} onScroll={e => { const el = e.currentTarget; pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24; }}
+    className={cn('max-h-(--thought-body-max) overflow-y-auto scroll-fade scroll-thin', className)}>
+    <Prose block={text} tone="thought" onBusy={onBusy} />
+  </div>;
 }
