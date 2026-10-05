@@ -236,8 +236,10 @@ async fn harness(args: &[String], explicit_home: Option<PathBuf>, exe: Option<St
 
 /// How long a persistent engine stays up with no connection and no running turn: long enough to survive a window
 /// reload, short enough that nothing lingers once every window is gone and the work is done
+#[cfg(unix)]
 const IDLE_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
 /// An engine ending on the same socket lets go of the lock within its dispose grace; wait a little longer than that
+#[cfg(unix)]
 const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// `acpira serve --socket PATH`: one engine per socket. The shell picks the path (workspace, data dir and this binary's
