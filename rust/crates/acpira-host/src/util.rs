@@ -113,6 +113,30 @@ pub fn clip(s: &str, n: usize) -> String {
   s.chars().take(n).collect()
 }
 
+/// Whether a whitespace-free token reads as an absolute file path or file URL (`/a/b`, `~/a`, `C:\\a`, `file:///a`)
+fn is_abs_path(tok: &str) -> bool {
+  let b = tok.as_bytes();
+  let unix = (tok.starts_with('/') || tok.starts_with("~/")) && tok[1..].contains('/');
+  let drive = b.len() > 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/');
+  unix || drive || tok.starts_with("file://")
+}
+
+/// A session title fit for one header line: absolute paths shrink to their file name, whitespace collapses, `max` chars at most.
+/// A prompt that opens with an exported transcript's path otherwise spends the whole title on `/home/…/exports/`.
+pub fn tidy_title(s: &str, max: usize) -> String {
+  let words: Vec<&str> = s
+    .split_whitespace()
+    .map(|w| {
+      if !is_abs_path(w) {
+        return w;
+      }
+      let base = w.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next().unwrap_or(w);
+      if base.is_empty() { w } else { base }
+    })
+    .collect();
+  clip(&words.join(" "), max)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -124,6 +148,18 @@ mod tests {
     assert_eq!(ms_of_iso("2026-09-21T14:13:20.123Z"), Some(1_790_000_000_123));
     assert_eq!(ms_of_iso("2026-09-21T14:13:20Z"), Some(1_790_000_000_000));
     assert_eq!(ms_of_iso("nope"), None);
+  }
+
+  #[test]
+  fn tidy_title_shortens_paths() {
+    let t = tidy_title("/home/u/.acpira/exports/着色器问题-20261004-152106.md 你看看", 40);
+    assert_eq!(t, "着色器问题-20261004-152106.md 你看看");
+    assert_eq!(tidy_title("look at C:\\work\\src\\main.rs now", 40), "look at main.rs now");
+    assert_eq!(tidy_title("file:///tmp/a/b.txt", 40), "b.txt");
+    assert_eq!(tidy_title("~/notes/todo.md\n  fix   it", 40), "todo.md fix it");
+    // A lone slash command or a relative path stays as written
+    assert_eq!(tidy_title("/compact src/a.rs", 40), "/compact src/a.rs");
+    assert_eq!(tidy_title(&"字".repeat(50), 40).chars().count(), 40);
   }
 }
 
