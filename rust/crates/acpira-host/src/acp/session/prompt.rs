@@ -48,6 +48,9 @@ pub(crate) enum Origin {
 enum Gate {
   Queue,
   Drop,
+  /// Another Acpira engine is running a turn on this session, or its lease could not be taken (`store::session_lease`):
+  /// nothing is sent, the reason is shown
+  Elsewhere(String),
   Go { compact_first: bool },
 }
 
@@ -130,6 +133,11 @@ impl AcpSession {
         }
         return;
       }
+      Gate::Elsewhere(reason) => {
+        self.log(&format!("turn refused: {reason}"));
+        self.notify(&reason);
+        return;
+      }
       Gate::Go { compact_first } => compact_first,
     };
     let staging = self.stage_turn(&text, &drafts, staged, auto).await;
@@ -168,6 +176,8 @@ impl AcpSession {
       Gate::Drop
     } else if origin != Origin::Continue && (c.switching || c.picks.adopt_pending || c.phase.running || c.peer.detached || (!auto && c.pending_prompt.is_some())) {
       Gate::Queue
+    } else if let Err(reason) = self.lease_turn(&mut c) {
+      Gate::Elsewhere(reason)
     } else {
       c.switching = false;
       c.peer.idle = false;

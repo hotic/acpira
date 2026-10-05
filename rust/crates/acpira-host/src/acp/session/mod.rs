@@ -101,6 +101,10 @@ pub struct SessionDeps {
   pub shared_mcp: Option<crate::shared_config::McpProvider>,
   /// The `mcpServers` entry of Acpira's own MCP server (`host_mcp.rs`), sent with session/new, load and resume
   pub host_mcp: Option<crate::host_mcp::HostMcp>,
+  /// Takes the session's cross-engine lease for a turn about to start (`store::session_lease`) and returns its pin; Err:
+  /// the notice to show, another engine is running one or the lease could not be taken, and this turn must not start.
+  /// None: no leases (tests)
+  pub claim: Option<Arc<dyn Fn(&str) -> Result<u64, String> + Send + Sync>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -150,6 +154,10 @@ pub(crate) struct Core {
   pub start_outcome: Option<StartOutcome>,
   /// The last restore met a native session lock held by an agent of another Acpira sidecar: its pid, for take_over
   pub lock_holder: Option<u32>,
+  /// The cross-engine lease pin the current (or just ended) turn holds; given back through `take_ended_lease`
+  pub lease_pin: Option<u64>,
+  /// A read-only copy of a session another Acpira engine has open: `takeOverSession` asks that engine to let go
+  pub elsewhere: bool,
   /// MCP server names the last session request carried, and those the agent could not start (left out from then on)
   pub mcp_sent: Vec<String>,
   pub mcp_skip: Vec<String>,
@@ -196,6 +204,29 @@ pub struct AcpSession {
 
 impl AcpSession {
   pub fn new(record: SessionRecord, deps: SessionDeps) -> Arc<AcpSession> {
+    Self::build(record, deps, true)
+  }
+
+  /// A read-only copy of a record another engine is driving right now (`store::session_lease`): turns stay as that
+  /// engine last saved them (a running turn is not sealed as interrupted), no agent is ever started, and `deps` should
+  /// not save (the record belongs to the other engine). `note` is the notice the view shows. `rev` must grow from one
+  /// copy to the next (pages drop a view whose rev is not newer) and stay below 0, where the live session opened after
+  /// the mirror starts counting
+  /// `elsewhere`: another engine has it open and can be asked to hand it over (not when the lease could not be read)
+  pub fn mirror(record: SessionRecord, deps: SessionDeps, note: String, rev: i64, elsewhere: bool) -> Arc<AcpSession> {
+    debug_assert!(rev < 0);
+    let s = Self::build(record, deps, false);
+    {
+      let mut c = s.core.lock();
+      c.status = SessionStatus::Readonly;
+      c.error = Some(note);
+      c.rev = rev;
+      c.elsewhere = elsewhere;
+    }
+    s
+  }
+
+  fn build(record: SessionRecord, deps: SessionDeps, seal: bool) -> Arc<AcpSession> {
     Arc::new_cyclic(|me: &Weak<AcpSession>| {
       let log_prefix = format!("[{} {}] ", record.agent, record.id.chars().take(8).collect::<String>());
       let log = deps.log.clone();
@@ -206,7 +237,8 @@ impl AcpSession {
         cwd: Some(record.cwd.clone()),
         ..Default::default()
       };
-      let turns = restore_interrupted_turns(restore_command_receipts(restore_plan_snapshots(record.turns)), &record.updated_at);
+      let turns = restore_command_receipts(restore_plan_snapshots(record.turns));
+      let turns = if seal { restore_interrupted_turns(turns, &record.updated_at) } else { turns };
       let state = NormalizeState {
         turns,
         controls: record.controls,
@@ -232,6 +264,8 @@ impl AcpSession {
           acp_session_id: record.acp_session_id,
           proc: None,
           proc_gen: 0,
+          lease_pin: None,
+          elsewhere: false,
           task_peer: HashMap::new(),
           state,
           tree,
@@ -348,6 +382,34 @@ impl AcpSession {
 
   pub fn title(&self) -> String {
     Self::title_of(&self.core.lock())
+  }
+
+  /// The lease check before a turn starts, called with the core locked (the hook never locks the session back) so the
+  /// pin and `running` change together. A pin a finished turn still holds (its final save is not through yet) carries over
+  pub(crate) fn lease_turn(&self, c: &mut Core) -> Result<(), String> {
+    let Some(claim) = self.deps.claim.as_ref() else { return Ok(()) };
+    if c.lease_pin.is_none() {
+      c.lease_pin = Some(claim(&self.id)?);
+    }
+    Ok(())
+  }
+
+  /// A read-only copy of a session another engine has open, which that engine can be asked to hand over
+  pub fn can_take_over_elsewhere(&self) -> bool {
+    let c = self.core.lock();
+    c.status == SessionStatus::Readonly && c.elsewhere
+  }
+
+  /// The lease pin, whatever the turn is doing: the session is closing
+  pub fn drop_lease(&self) -> Option<u64> {
+    self.core.lock().lease_pin.take()
+  }
+
+  /// The lease pin of a turn that has ended, taken out so it is released once (after the turn's final save); None while a
+  /// turn runs or when no turn holds one. A prompt waiting on its pre-send compaction is still that turn
+  pub fn take_ended_lease(&self) -> Option<u64> {
+    let mut c = self.core.lock();
+    if c.phase.running || c.pending_prompt.is_some() { None } else { c.lease_pin.take() }
   }
 
   pub fn is_running(&self) -> bool {

@@ -42,6 +42,7 @@ use crate::external::desktop_commander::desktop_commander_status;
 use crate::i18n::{t, tp};
 use crate::limits::RENAME_MAX;
 use crate::store::record::{ForkedFrom, ImportedFrom, RecordSource, SessionRecord};
+use crate::store::session_lease::{Claim, SessionLeases};
 use crate::store::session_search::SessionSearch;
 use crate::store::transcript_store::{LogFn, RecordLoadError, SessionPrefs, TranscriptStore, is_session_id, sort_index};
 use crate::util::{clip, local_stamp, ms_of_iso, now_iso, random_uuid};
@@ -58,6 +59,18 @@ const INDEX_DEBOUNCE: Duration = Duration::from_millis(400);
 const INDEX_MAX_WAIT: Duration = Duration::from_millis(2000);
 // Streamed updates coalesce into one push per session at this pace; an idle edge goes out at once
 const PUSH_QUANTUM: Duration = Duration::from_millis(16);
+// How often a mirrored session (driven by another engine) re-reads its record and checks whether the lease came free
+const MIRROR_POLL: Duration = Duration::from_secs(1);
+// How often an engine looks for takeover requests on the sessions it has open
+const TAKEOVER_POLL: Duration = Duration::from_millis(500);
+// How long a takeover waits for the other engine to let go (it polls every TAKEOVER_POLL, then stops its turn)
+const TAKEOVER_WAIT: Duration = Duration::from_secs(10);
+// How long a yielding engine gives its cancelled turn to settle before closing the session anyway
+const YIELD_SETTLE: Duration = Duration::from_secs(3);
+// How long a record edit waits for another engine's short hold on the session (its load, its own edit) to end
+const RECORD_HOLD_WAIT: Duration = Duration::from_secs(2);
+// Mirror copies count their rev up from here: always rising, always below the 0 a live session starts at
+const MIRROR_REV_BASE: i64 = -(1 << 40);
 
 fn safe_record_text(value: &str) -> String {
   let mut text: String = value.chars().filter(|c| !c.is_control()).take(160).collect();
@@ -87,6 +100,8 @@ pub struct ManagerDeps {
   pub shared_mcp: Option<crate::shared_config::McpProvider>,
   /// Acpira's own MCP server (`acpira mcp`) for every session request; None without a known executable
   pub host_mcp: Option<crate::host_mcp::HostMcp>,
+  /// ACPIRA_HOME: cross-engine session leases live under its `run/leases` (`store::session_lease`)
+  pub lease_root: std::path::PathBuf,
 }
 
 #[derive(Default)]
@@ -148,6 +163,8 @@ struct State {
   sync_running: bool,
   sync_again: bool,
   dirty: HashMap<String, bool>,
+  // Sessions another engine holds the lease of: read-only copies of their record, refreshed until the lease comes free
+  mirrors: HashMap<String, Arc<AcpSession>>,
 }
 
 pub struct SessionManager {
@@ -167,12 +184,17 @@ pub struct SessionManager {
   // The last export per (session, format): an unchanged transcript hands back the same file instead of writing another one.
   // Held across the write, so rapid repeated clicks run one after another and the later ones hit the cache
   exports: tokio::sync::Mutex<HashMap<(String, ExportFormat), (u64, std::path::PathBuf)>>,
+  // Which sessions this engine has open, visible to every other engine on the machine (`store::session_lease`)
+  leases: SessionLeases,
+  // Sessions being handed over to another engine right now (a takeover request is being honoured)
+  yielding: parking_lot::Mutex<HashSet<String>>,
   me: Weak<SessionManager>,
 }
 
 impl SessionManager {
   pub fn new(registry: Arc<AgentRegistry>, deps: ManagerDeps) -> Arc<Self> {
     let mgr = Arc::new_cyclic(|me: &Weak<SessionManager>| {
+      let leases = SessionLeases::new(&deps.lease_root, deps.log.clone());
       let reg_me = me.clone();
       let env_me = me.clone();
       let pool = AgentPool::new(
@@ -210,6 +232,7 @@ impl SessionManager {
           sync_running: false,
           sync_again: false,
           dirty: HashMap::new(),
+          mirrors: HashMap::new(),
         }),
         deps,
         pool,
@@ -221,9 +244,15 @@ impl SessionManager {
         last_sessions: Default::default(),
         search: SessionSearch::default(),
         exports: Default::default(),
+        leases,
+        yielding: Default::default(),
         me: me.clone(),
       }
     });
+    // A record another engine is driving is never overwritten from here (a stale copy of a session open in two engines)
+    let guard_me = mgr.me.clone();
+    mgr.deps.store.set_write_guard(Arc::new(move |id: &str| guard_me.upgrade().is_none_or(|m| !m.leases.held_elsewhere(id))));
+    mgr.watch_takeovers();
     if let Some(a) = &mgr.deps.accounts {
       let me = mgr.me.clone();
       a.subscribe(Arc::new(move |accounts| {
@@ -622,8 +651,11 @@ impl SessionManager {
             let trash: HashSet<String> = me.state.lock().trash.keys().cloned().collect();
             let mut merged: Vec<SessionSummary> = merged.into_iter().filter(|s| !trash.contains(&s.id)).collect();
             let live = me.live_sessions();
-            let gone: Vec<String> =
+            let mut gone: Vec<String> =
               live.iter().filter(|s| me.deps.store.knew(&s.id) && !merged.iter().any(|m| m.id == s.id)).map(|s| s.id.clone()).collect();
+            // A mirrored session deleted by the engine driving it goes the same way
+            let mirrors: Vec<String> = me.state.lock().mirrors.keys().cloned().collect();
+            gone.extend(mirrors.into_iter().filter(|id| !merged.iter().any(|m| &m.id == id)));
             for id in &gone {
               me.forget(id);
             }
@@ -990,7 +1022,7 @@ impl SessionManager {
   /// The serialized view of a session (live, or a ChatGPT mirror)
   pub fn view_of(&self, id: Option<&str>) -> Option<(RawJson, bool)> {
     let id = id?;
-    if let Some(s) = self.live(id) {
+    if let Some(s) = self.live(id).or_else(|| self.mirror_of(id)) {
       return Some(s.view_json());
     }
     let view = self.deps.chatgpt.as_ref()?.view(id)?;
@@ -1000,7 +1032,7 @@ impl SessionManager {
   /// The session push for one viewer, as `emit_session` would send it
   pub fn session_msg(&self, id: Option<&str>) -> Option<HostMsg> {
     let id = id?;
-    if let Some(s) = self.live(id) {
+    if let Some(s) = self.live(id).or_else(|| self.mirror_of(id)) {
       return Some(s.view_msg());
     }
     let (session, running) = self.view_of(Some(id))?;
@@ -1008,7 +1040,7 @@ impl SessionManager {
   }
 
   fn has_view(&self, id: &str) -> bool {
-    self.live(id).is_some() || self.deps.chatgpt.as_ref().is_some_and(|c| c.view(id).is_some())
+    self.live(id).is_some() || self.mirror_of(id).is_some() || self.deps.chatgpt.as_ref().is_some_and(|c| c.view(id).is_some())
   }
 
   fn most_recent(&self) -> Option<String> {
@@ -1153,6 +1185,13 @@ impl SessionManager {
         st.was_running.remove(id)
       }
     };
+    // The lease outlives the turn until its final record is on disk: another engine opening it must read the ended turn.
+    // Taken on any change that finds the turn over (not only the observed edge), so a pin is never left behind
+    if let Some(pin) = s.take_ended_lease() {
+      self.release_after_save(s.clone(), pin);
+    }
+    // A turn starting or ending moves this session's lease (another engine must not open it mid-turn)
+    self.sync_leases();
     // Decided before the list goes out, so the push that shows the turn ending already carries the unread dot
     if idle_edge && self.viewers_on(id, None).is_empty() {
       self.state.lock().unread.insert(id.to_owned());
@@ -1189,6 +1228,7 @@ impl SessionManager {
   fn session_deps(&self) -> SessionDeps {
     let me = self.me.clone();
     let shapes_me = self.me.clone();
+    let claim_me = self.me.clone();
     let toast = self.deps.toast.clone();
     let compaction = self.deps.compaction.clone();
     SessionDeps {
@@ -1209,6 +1249,7 @@ impl SessionManager {
         shapes_me.upgrade().and_then(|m| m.state.lock().prefs.model_shapes.as_ref().and_then(|s| s.get(agent).cloned()))
       })),
       shared_mcp: self.deps.shared_mcp.clone(),
+      claim: Some(Arc::new(move |id: &str| claim_me.upgrade().map_or(Ok(0), |m| m.claim_turn(id)))),
     }
   }
 
@@ -1349,11 +1390,17 @@ impl SessionManager {
         me.emit_sessions();
         return;
       }
+      // Already mirrored for another viewer: its poll keeps this one current too
+      if let Some(mirror) = me.mirror_of(&id) {
+        v.emit(mirror.view_msg());
+        me.emit_sessions();
+        return;
+      }
       // A load already running for this record: wait for it instead of building a second session on the same id
       let pending = me.state.lock().loading.get(&id).cloned();
       if let Some(mut rx) = pending {
         let _ = rx.wait_for(|done| *done).await;
-        if let Some(s) = me.live(&id)
+        if let Some(s) = me.live(&id).or_else(|| me.mirror_of(&id))
           && v.active_id().as_deref() == Some(id.as_str())
         {
           v.emit(s.view_msg());
@@ -1372,6 +1419,23 @@ impl SessionManager {
   }
 
   async fn load_session(self: &Arc<Self>, v: &Arc<Viewer>, id: &str, previous: Option<String>) {
+    // Claimed before the record is read and held until the agent is up: another engine can neither start a turn on the
+    // session between this look and the restore, nor finish one after the read and leave a stale running turn here
+    let claim = self.leases.claim(id);
+    // Not taken: the session is shown read-only (no agent, no saves) and opens once the lease can be had
+    let refused = match &claim {
+      Claim::Held(_) => None,
+      Claim::Elsewhere => Some((t("host.sessionElsewhere"), true)),
+      Claim::Failed(e) => {
+        self.log(&format!("session {id}: lease failed: {e}"));
+        Some((tp("host.sessionLeaseFailed", &[("error", e)]), false))
+      }
+    };
+    let pin = match claim {
+      Claim::Held(pin) => pin,
+      _ => 0,
+    };
+    let hold = LeaseHold { leases: &self.leases, id, pin };
     let record = match self.deps.store.load_detailed(id).await {
       Ok(record) => record,
       Err(error) => {
@@ -1391,10 +1455,263 @@ impl SessionManager {
     if self.live(id).is_some() {
       return;
     }
+    // Another engine is mid-turn on this session (or holds it while draining): starting an agent here would race it
+    if let Some((note, elsewhere)) = refused {
+      self.start_mirror(id, record, note, elsewhere);
+      return;
+    }
     let s = AcpSession::new(record, self.session_deps());
     self.state.lock().live.insert(id.to_owned(), s.clone());
     self.emit_session(&s);
     s.start().await;
+    // A draining engine keeps the lease of every live agent: synced before the load's own hold goes
+    self.sync_leases();
+    drop(hold);
+  }
+
+  /// Record edits (rename, pin, delete, move) hold the session's lease until they are on disk: refused while another
+  /// engine drives the session (or this one only mirrors it), since they would race that engine's saves. A short hold
+  /// (another engine opening the session or saving an edit of its own) is waited out rather than refused
+  async fn hold_record<'a>(&'a self, id: &'a str) -> Result<LeaseHold<'a>> {
+    if self.mirror_of(id).is_some() {
+      return Err(anyhow!(t("host.sessionBusyElsewhere")));
+    }
+    let deadline = tokio::time::Instant::now() + RECORD_HOLD_WAIT;
+    loop {
+      match self.leases.claim(id) {
+        Claim::Held(pin) => return Ok(LeaseHold { leases: &self.leases, id, pin }),
+        Claim::Elsewhere if tokio::time::Instant::now() < deadline => tokio::time::sleep(Duration::from_millis(50)).await,
+        Claim::Elsewhere => return Err(anyhow!(t("host.sessionBusyElsewhere"))),
+        Claim::Failed(e) => return Err(anyhow!(tp("host.sessionLeaseFailed", &[("error", &e)]))),
+      }
+    }
+  }
+
+  /// The session's `claim` hook: the lease for a turn about to start
+  fn claim_turn(&self, id: &str) -> Result<u64, String> {
+    match self.leases.claim(id) {
+      Claim::Held(pin) => Ok(pin),
+      Claim::Elsewhere => Err(t("host.sessionBusyElsewhere")),
+      Claim::Failed(e) => {
+        self.log(&format!("session {id}: lease failed: {e}"));
+        Err(tp("host.sessionLeaseFailed", &[("error", &e)]))
+      }
+    }
+  }
+
+  /// A finished turn's lease pin goes once its final record is on disk. A failed save keeps the lease (another engine
+  /// would read a record without the end of the turn) and is retried, until it lands or the session is closed here
+  fn release_after_save(&self, s: Arc<AcpSession>, pin: u64) {
+    let me = self.me.clone();
+    tokio::spawn(async move {
+      let mut wait = Duration::from_secs(1);
+      loop {
+        let Some(m) = me.upgrade() else { return };
+        let closed = m.live(&s.id).is_none_or(|live| !Arc::ptr_eq(&live, &s));
+        if closed {
+          m.leases.release(&s.id, pin);
+          return;
+        }
+        match m.deps.store.flush(s.clone() as Arc<dyn RecordSource>).await {
+          Ok(()) => {
+            m.leases.release(&s.id, pin);
+            m.sync_leases();
+            return;
+          }
+          Err(e) => m.log(&format!("session {}: final save failed, lease kept, retrying in {}s: {e}", s.id, wait.as_secs())),
+        }
+        drop(m);
+        tokio::time::sleep(wait).await;
+        wait = (wait * 2).min(Duration::from_secs(30));
+      }
+    });
+  }
+
+  fn mirror_of(&self, id: &str) -> Option<Arc<AcpSession>> {
+    self.state.lock().mirrors.get(id).cloned()
+  }
+
+  /// Hold exactly the leases of the sessions this engine has open: a session is driven from one engine at a time, every
+  /// other one shows it read-only until it takes the session over (or this engine closes it, or ends)
+  pub fn sync_leases(&self) {
+    let wanted: HashSet<String> = self.live_sessions().into_iter().map(|s| s.id.clone()).collect();
+    self.leases.sync(&wanted);
+  }
+
+  /// Watch for other engines asking to take over a session this one has open; ends with the manager
+  fn watch_takeovers(&self) {
+    let me = self.me.clone();
+    tokio::spawn(async move {
+      loop {
+        tokio::time::sleep(TAKEOVER_POLL).await;
+        let Some(m) = me.upgrade() else { return };
+        if m.state.lock().disposed {
+          return;
+        }
+        for id in m.leases.held() {
+          if m.leases.takeover_requested(&id) && m.live(&id).is_some() && m.yielding.lock().insert(id.clone()) {
+            let m2 = m.clone();
+            tokio::spawn(async move {
+              m2.yield_session(&id).await;
+              m2.yielding.lock().remove(&id);
+            });
+          }
+        }
+      }
+    });
+  }
+
+  /// Another engine takes this session over: the running turn stops, the record is written, the agent ends and the lease
+  /// goes; whoever was looking at it here keeps a read-only copy that can take it back
+  async fn yield_session(self: &Arc<Self>, id: &str) {
+    let Some(s) = self.live(id) else { return };
+    self.log(&format!("session {id}: another engine takes it over, letting go"));
+    if s.is_running() {
+      s.cancel().await;
+      let t0 = tokio::time::Instant::now();
+      while s.is_running() && t0.elapsed() < YIELD_SETTLE {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+      }
+    }
+    if let Err(e) = self.deps.store.flush(s.clone() as Arc<dyn RecordSource>).await {
+      self.log(&format!("session {id}: save before handing over failed: {e}"));
+    }
+    let record = s.to_record();
+    self.forget(id);
+    // The copy goes up before the lease goes, so the viewers never see the session vanish
+    if !self.viewers_on(id, None).is_empty() {
+      self.start_mirror(id, record, t("host.sessionTakenOver"), true);
+    }
+    self.sync_leases();
+    self.emit_sessions();
+  }
+
+  /// Take over a session another engine has open: ask it to let go, wait for the lease, then open the session here
+  async fn take_over_elsewhere(self: &Arc<Self>, id: &str) -> Result<()> {
+    self.leases.request_takeover(id).map_err(|e| anyhow!(tp("host.sessionLeaseFailed", &[("error", &e.to_string())])))?;
+    let deadline = tokio::time::Instant::now() + TAKEOVER_WAIT;
+    let pin = loop {
+      match self.leases.claim(id) {
+        Claim::Held(pin) => break pin,
+        Claim::Elsewhere if tokio::time::Instant::now() < deadline => tokio::time::sleep(Duration::from_millis(100)).await,
+        Claim::Elsewhere => {
+          self.leases.clear_takeover(id);
+          return Err(anyhow!(t("host.takeOverTimeout")));
+        }
+        Claim::Failed(e) => {
+          self.leases.clear_takeover(id);
+          return Err(anyhow!(tp("host.sessionLeaseFailed", &[("error", &e)])));
+        }
+      }
+    };
+    let hold = LeaseHold { leases: &self.leases, id, pin };
+    self.leases.clear_takeover(id);
+    self.log(&format!("session {id}: taken over from another engine"));
+    self.state.lock().mirrors.remove(id);
+    // The first viewer loads it (fresh from disk, the other engine's last word); the rest find it live
+    for v in self.viewers_on(id, None) {
+      self.select_session_for(&v, id).await;
+    }
+    drop(hold);
+    Ok(())
+  }
+
+  /// Some session is mid-turn (a permission card or question waiting on the user counts: the turn is still running)
+  pub fn busy(&self) -> bool {
+    self.live_sessions().iter().any(|s| s.is_running())
+  }
+
+  /// Sessions whose lease this engine holds (tests)
+  pub fn leased(&self) -> Vec<String> {
+    self.leases.held()
+  }
+
+  /// Inert deps for a mirror: it never saves (the record belongs to the engine holding the lease), warms or switches
+  fn mirror_deps(&self) -> SessionDeps {
+    SessionDeps {
+      on_change: Arc::new(|_: &str, _: bool| {}),
+      notify: None,
+      accounts: None,
+      compaction: None,
+      pool: None,
+      // A mirror never runs a turn
+      claim: Some(Arc::new(|_: &str| Err(t("host.sessionBusyElsewhere")))),
+      ..self.session_deps()
+    }
+  }
+
+  fn record_path(&self, id: &str) -> std::path::PathBuf {
+    self.deps.store.dir().join(format!("{id}.json"))
+  }
+
+  /// Show `record` read-only to the viewers on `id` and poll: the copy follows the record the other engine keeps saving,
+  /// and once its lease comes free the session opens here like any other (the viewers re-select it)
+  fn start_mirror(self: &Arc<Self>, id: &str, record: SessionRecord, note: String, elsewhere: bool) {
+    let mirror = AcpSession::mirror(record, self.mirror_deps(), note.clone(), MIRROR_REV_BASE, elsewhere);
+    let fresh = self.state.lock().mirrors.insert(id.to_owned(), mirror.clone()).is_none();
+    self.log(&format!("session {id}: lease not taken, mirroring its record ({note})"));
+    self.emit_session(&mirror);
+    if !fresh {
+      return;
+    }
+    let me = self.me.clone();
+    let id = id.to_owned();
+    tokio::spawn(async move {
+      let mut seen = None;
+      let mut rev = MIRROR_REV_BASE;
+      loop {
+        tokio::time::sleep(MIRROR_POLL).await;
+        let Some(m) = me.upgrade() else { return };
+        if m.state.lock().disposed {
+          return;
+        }
+        // Replaced by the session itself (taken over, deleted): this poll is done
+        if m.mirror_of(&id).is_none() {
+          return;
+        }
+        let watchers = m.viewers_on(&id, None);
+        if watchers.is_empty() {
+          // Nobody looks at it any more; a later select starts over
+          m.state.lock().mirrors.remove(&id);
+          return;
+        }
+        // Free and nobody else is about to take it (a takeover in flight frees it for the requester, not for this copy)
+        if !m.leases.held_elsewhere(&id) && !m.leases.takeover_requested(&id) {
+          m.state.lock().mirrors.remove(&id);
+          m.log(&format!("session {id}: the other engine let go, opening it here"));
+          // The first watcher loads it (fresh from disk); the rest wait on that load inside select_session_for
+          for v in watchers {
+            let (m2, id2) = (m.clone(), id.clone());
+            tokio::spawn(async move { m2.select_session_for(&v, &id2).await });
+          }
+          return;
+        }
+        // Re-read only when the other engine saved since the last look
+        let stamp = tokio::fs::metadata(m.record_path(&id)).await.and_then(|md| md.modified()).ok();
+        if stamp.is_none() || stamp == seen {
+          continue;
+        }
+        seen = stamp;
+        if let Ok(record) = m.deps.store.load_detailed(&id).await {
+          rev += 1;
+          let copy = AcpSession::mirror(record, m.mirror_deps(), note.clone(), rev, elsewhere);
+          let current = {
+            let mut st = m.state.lock();
+            match st.mirrors.get_mut(&id) {
+              Some(slot) => {
+                *slot = copy.clone();
+                true
+              }
+              None => false,
+            }
+          };
+          if !current {
+            return;
+          }
+          m.emit_session(&copy);
+        }
+      }
+    });
   }
 
   fn current(&self, v: &Viewer) -> Option<Arc<AcpSession>> {
@@ -1590,7 +1907,10 @@ impl SessionManager {
         }
       }
       W::TakeOverSession { session_id } => {
-        if let Some(s) = self.target(v, session_id.as_deref()) {
+        let id = session_id.clone().or_else(|| v.active_id());
+        if let Some(id) = id.filter(|id| self.mirror_of(id).is_some_and(|m| m.can_take_over_elsewhere())) {
+          self.take_over_elsewhere(&id).await?;
+        } else if let Some(s) = self.target(v, session_id.as_deref()) {
           s.take_over().await?;
         }
       }
@@ -1637,6 +1957,7 @@ impl SessionManager {
     if !is_session_id(id) {
       return Ok(());
     }
+    let hold = self.hold_record(id).await?;
     if let Some(c) = self.deps.chatgpt.as_ref().filter(|c| c.owns(id)) {
       return c.rename(id, title).await;
     }
@@ -1646,34 +1967,49 @@ impl SessionManager {
     }
     if let Some(live) = self.live(id) {
       live.rename(&t);
-      return Ok(());
+      return self.save_now(live, hold).await;
     }
-    self.patch_record(id, |r| r.title = t).await;
-    Ok(())
+    self.patch_record(id, |r| r.title = t).await
   }
 
   pub async fn pin_session(&self, id: &str, pinned: bool) -> Result<()> {
     if !is_session_id(id) {
       return Ok(());
     }
+    let hold = self.hold_record(id).await?;
     if let Some(c) = self.deps.chatgpt.as_ref().filter(|c| c.owns(id)) {
       return c.pin(id, pinned).await;
     }
     if let Some(live) = self.live(id) {
       live.set_pinned(pinned);
-      return Ok(());
+      return self.save_now(live, hold).await;
     }
-    self.patch_record(id, |r| r.pinned = pinned.then_some(true)).await;
-    Ok(())
+    self.patch_record(id, |r| r.pinned = pinned.then_some(true)).await
   }
 
-  async fn patch_record(&self, id: &str, patch: impl FnOnce(&mut SessionRecord)) {
-    let Some(mut r) = self.deps.store.load(id).await else { return };
+  /// A live session's edit written through now, while the edit still holds the lease (not on the debounce). A failed
+  /// write is reported, and the lease stays with the retrying save: the edit is in memory and must not land after
+  /// another engine took the session
+  async fn save_now(&self, live: Arc<AcpSession>, hold: LeaseHold<'_>) -> Result<()> {
+    match self.deps.store.flush(live.clone() as Arc<dyn RecordSource>).await {
+      Ok(()) => Ok(()),
+      Err(e) => {
+        self.log(&format!("session {}: save failed ({e})", live.id));
+        self.release_after_save(live, hold.keep());
+        Err(anyhow!(tp("host.saveFailed", &[("error", &e.to_string())])))
+      }
+    }
+  }
+
+  async fn patch_record(&self, id: &str, patch: impl FnOnce(&mut SessionRecord)) -> Result<()> {
+    let Some(mut r) = self.deps.store.load(id).await else { return Ok(()) };
     patch(&mut r);
     if let Err(e) = self.deps.store.flush(Arc::new(r.clone())).await {
       self.log(&format!("session {id}: save failed ({e})"));
+      return Err(anyhow!(tp("host.saveFailed", &[("error", &e.to_string())])));
     }
     self.replace_summary(&r);
+    Ok(())
   }
 
   /// Soft deletion with a 30-second undo window; viewers showing it move on
@@ -1681,6 +2017,7 @@ impl SessionManager {
     if !is_session_id(id) {
       return Ok(());
     }
+    let _hold = self.hold_record(id).await?;
     if let Some(c) = self.deps.chatgpt.clone().filter(|c| c.owns(id)) {
       c.delete(id).await?;
       self.rehome(id).await;
@@ -1723,9 +2060,13 @@ impl SessionManager {
       st.unread.remove(id);
       st.health_seen.remove(id);
       st.dirty.remove(id);
+      st.mirrors.remove(id);
       st.live.remove(id)
     };
     if let Some(s) = live {
+      if let Some(pin) = s.drop_lease() {
+        self.leases.release(id, pin);
+      }
       s.dispose();
     }
   }
@@ -1757,6 +2098,7 @@ impl SessionManager {
     if !is_session_id(id) {
       return Ok(());
     }
+    let _hold = self.hold_record(id).await?;
     if self.deps.chatgpt.as_ref().is_some_and(|c| c.owns(id)) {
       return Err(anyhow!(t("chatgpt.projectBound")));
     }
@@ -1779,8 +2121,7 @@ impl SessionManager {
       }
       return Ok(());
     }
-    self.patch_record(id, |r| r.cwd = cwd).await;
-    Ok(())
+    self.patch_record(id, |r| r.cwd = cwd).await
   }
 
   /// Fork from an agent turn: a fresh session whose transcript is the source's turns up to that reply
@@ -2191,6 +2532,8 @@ impl SessionManager {
       t.timer.abort();
       self.deps.store.remove(&id).await;
     }
+    self.state.lock().mirrors.clear();
+    self.leases.release_all();
     let saves: Vec<_> = self.prefs_saves.lock().drain(..).collect();
     for h in saves {
       let _ = h.await;
@@ -2300,5 +2643,27 @@ async fn flush_loop(weak: Weak<SessionManager>) {
     }
     drop(m);
     tokio::time::sleep(PUSH_QUANTUM).await;
+  }
+}
+
+/// One claim on a session's lease (`store::session_lease`), released when it drops
+struct LeaseHold<'a> {
+  leases: &'a SessionLeases,
+  id: &'a str,
+  pin: u64,
+}
+
+impl LeaseHold<'_> {
+  /// The pin outlives this hold: whoever takes it releases it
+  fn keep(mut self) -> u64 {
+    std::mem::take(&mut self.pin)
+  }
+}
+
+impl Drop for LeaseHold<'_> {
+  fn drop(&mut self) {
+    if self.pin != 0 {
+      self.leases.release(self.id, self.pin);
+    }
   }
 }

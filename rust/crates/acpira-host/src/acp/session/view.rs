@@ -93,7 +93,7 @@ impl AcpSession {
       cwd: &self.cwd,
       status: c.status,
       error: c.error.as_deref(),
-      can_take_over: c.status == SessionStatus::Error && c.lock_holder.is_some(),
+      can_take_over: (c.status == SessionStatus::Error && c.lock_holder.is_some()) || (c.status == SessionStatus::Readonly && c.elsewhere),
       auth_methods: c.auth_methods.as_deref(),
       turns: &[],
       running: c.phase.running,

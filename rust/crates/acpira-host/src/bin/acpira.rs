@@ -1,5 +1,9 @@
 //! The Acpira host binary.
 //!   acpira [--home DIR]                          the sidecar: envelope protocol over stdio (stdout carries envelopes only)
+//!   acpira serve --socket PATH [--idle-grace S] [--home DIR]
+//!                                                the persistent engine (Unix): the same protocol per socket connection;
+//!                                                sessions outlive the shells, the engine ends S seconds (default 30) after
+//!                                                the last connection left and the last turn ended
 //!   acpira --ws [PORT] [--token T] [--home DIR]  the browser harness, one sidecar per WebSocket, data in ~/.acpira/harness
 //!   acpira bridge <action> ...                   the ChatGPT event-mirror CLI
 //!   acpira agents [--json]                       the built-in agents, where each CLI was found and how it is initialized
@@ -18,7 +22,7 @@ use tokio::sync::mpsc;
 use acpira_host::agents_cli;
 use acpira_host::external::chatgpt_cli;
 use acpira_host::model_catalog;
-use acpira_host::sidecar::server::{ServerOpts, SidecarServer};
+use acpira_host::sidecar::server::{Engine, ServerOpts};
 use acpira_host::sidecar::ws::{HarnessOpts, start_harness};
 use acpira_host::store::data_dir::{absolute, acpira_home};
 use acpira_host::util::random_hex;
@@ -62,6 +66,9 @@ fn main() {
     if args.iter().any(|a| a == "--ws") {
       return harness(&args, explicit_home, exe).await;
     }
+    if args.first().map(String::as_str) == Some("serve") {
+      return serve(&args[1..], explicit_home.unwrap_or_else(acpira_home), exe).await;
+    }
     stdio(explicit_home.unwrap_or_else(acpira_home), exe).await
   });
   rt.shutdown_timeout(std::time::Duration::from_millis(200));
@@ -96,11 +103,9 @@ async fn stdio(home: PathBuf, exe: Option<String>) -> i32 {
     }
   });
   let end = out_tx.clone();
-  let server = SidecarServer::new(
-    ServerOpts { version: VERSION.into(), home, log: Arc::new(stderr), ignore_client_agents: false, bridge_exe: exe },
-    out_tx,
-  );
-  let code = server.run(line_rx).await;
+  let engine =
+    Engine::attached(ServerOpts { version: VERSION.into(), home, log: Arc::new(stderr), ignore_client_agents: false, bridge_exe: exe });
+  let code = engine.serve(out_tx, line_rx).await;
   // Let stdout drain so the last envelope (shutdownOk) reaches the shell. Waiting for every sender to drop is not enough: a task
   // that outlives the runtime may still hold one, so the writer stops at an end marker queued behind everything already sent
   let _ = end.send(String::new());
@@ -209,18 +214,15 @@ async fn harness(args: &[String], explicit_home: Option<PathBuf>, exe: Option<St
     log: Arc::new(stderr),
   };
   let on_wire = Arc::new(move |wire: acpira_host::sidecar::ws::WsWire| {
-    let server = SidecarServer::new(
-      ServerOpts {
-        version: VERSION.into(),
-        home: home.clone(),
-        log: Arc::new(stderr),
-        ignore_client_agents: true,
-        bridge_exe: exe.clone(),
-      },
-      wire.out,
-    );
+    let engine = Engine::attached(ServerOpts {
+      version: VERSION.into(),
+      home: home.clone(),
+      log: Arc::new(stderr),
+      ignore_client_agents: true,
+      bridge_exe: exe.clone(),
+    });
     tokio::spawn(async move {
-      let code = server.run(wire.lines).await;
+      let code = engine.serve(wire.out, wire.lines).await;
       stderr(&format!("harness connection closed ({code})"));
     });
   });
@@ -230,4 +232,147 @@ async fn harness(args: &[String], explicit_home: Option<PathBuf>, exe: Option<St
   }
   shutdown_signal().await;
   0
+}
+
+/// How long a persistent engine stays up with no connection and no running turn: long enough to survive a window
+/// reload, short enough that nothing lingers once every window is gone and the work is done
+const IDLE_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
+/// An engine ending on the same socket lets go of the lock within its dispose grace; wait a little longer than that
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// `acpira serve --socket PATH`: one engine per socket. The shell picks the path (workspace, data dir and this binary's
+/// identity, so an upgraded extension gets a fresh engine while the old one drains), starts this detached when nothing
+/// listens there, and reconnects to it after a reload, a dropped remote connection or a restarted IDE
+#[cfg(unix)]
+async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
+  use std::fs::{File, OpenOptions, TryLockError};
+  use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+  let Some(socket) = flag(args, "--socket").filter(|s| !s.is_empty()).map(|s| absolute(&PathBuf::from(s))) else {
+    eprintln!("usage: acpira serve --socket PATH [--idle-grace SECONDS] [--home DIR]");
+    return 2;
+  };
+  let grace = flag(args, "--idle-grace").and_then(|s| s.parse::<u64>().ok()).map(std::time::Duration::from_secs).unwrap_or(IDLE_GRACE);
+  if let Some(dir) = socket.parent()
+    && let Err(e) = private_dir(dir)
+  {
+    stderr(&format!("serve: {e}"));
+    return 1;
+  }
+  // One engine per socket: the lock is held for the engine's whole life and released by the OS when it exits
+  let lock_path = socket.with_extension("lock");
+  let lock: File = match OpenOptions::new().create(true).truncate(false).read(true).write(true).mode(0o600).open(&lock_path) {
+    Ok(f) => f,
+    Err(e) => {
+      stderr(&format!("serve: {}: {e}", lock_path.display()));
+      return 1;
+    }
+  };
+  let deadline = tokio::time::Instant::now() + LOCK_WAIT;
+  loop {
+    match lock.try_lock() {
+      Ok(()) => break,
+      Err(TryLockError::WouldBlock) if tokio::time::Instant::now() < deadline => {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+      }
+      Err(TryLockError::WouldBlock) => {
+        // Another engine owns this socket and is not going away: the shell connects to that one
+        stderr(&format!("serve: {} is served by another engine", socket.display()));
+        return 0;
+      }
+      Err(TryLockError::Error(e)) => {
+        stderr(&format!("serve: lock {}: {e}", lock_path.display()));
+        return 1;
+      }
+    }
+  }
+  // Holding the lock, whatever socket file is there was left by an engine that died without cleaning up
+  let _ = std::fs::remove_file(&socket);
+  let listener = match tokio::net::UnixListener::bind(&socket) {
+    Ok(l) => l,
+    Err(e) => {
+      stderr(&format!("serve: bind {}: {e}", socket.display()));
+      return 1;
+    }
+  };
+  let _ = std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600));
+  stderr(&format!("engine {VERSION} pid {} serving {} (home {})", std::process::id(), socket.display(), home.display()));
+
+  let engine = Engine::persistent(ServerOpts { version: VERSION.into(), home, log: Arc::new(stderr), ignore_client_agents: false, bridge_exe: exe });
+  let accept_engine = engine.clone();
+  let accept = tokio::spawn(async move {
+    loop {
+      let stream = match listener.accept().await {
+        Ok((stream, _)) => stream,
+        Err(e) => {
+          stderr(&format!("serve: accept: {e}"));
+          tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+          continue;
+        }
+      };
+      let engine = accept_engine.clone();
+      tokio::spawn(async move {
+        let (read, mut write) = stream.into_split();
+        let (line_tx, line_rx) = mpsc::unbounded_channel::<String>();
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
+        let writer = tokio::spawn(async move {
+          while let Some(line) = out_rx.recv().await {
+            if write.write_all(line.as_bytes()).await.is_err() || write.write_all(b"\n").await.is_err() {
+              break;
+            }
+          }
+          let _ = write.shutdown().await;
+        });
+        let reader = tokio::spawn(async move {
+          let mut lines = BufReader::new(read).lines();
+          while let Ok(Some(l)) = lines.next_line().await {
+            if line_tx.send(l).is_err() {
+              break;
+            }
+          }
+        });
+        let code = engine.serve(out_tx, line_rx).await;
+        // The wire's senders are gone with `serve`: the writer drains what was queued (shutdownOk last) and closes
+        reader.abort();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), writer).await;
+        if code != 0 {
+          stderr(&format!("connection ended ({code})"));
+        }
+      });
+    }
+  });
+  let reason = tokio::select! {
+    _ = engine.idle(grace) => format!("idle for {}s with no window connected", grace.as_secs()),
+    _ = shutdown_signal() => "signal".to_owned(),
+  };
+  // Stop taking connections before the teardown: a shell arriving now starts the next engine, which waits for this lock
+  accept.abort();
+  let _ = std::fs::remove_file(&socket);
+  let code = engine.stop(&reason).await;
+  drop(lock);
+  code
+}
+
+/// The socket's directory must be this user's and closed to everyone else: whoever can create files there could pose as
+/// the engine, or put a socket of theirs where the shell looks. A directory of this user's that is too open is tightened
+#[cfg(unix)]
+fn private_dir(dir: &std::path::Path) -> Result<(), String> {
+  use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+  std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+  let meta = std::fs::symlink_metadata(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+  // SAFETY: geteuid has no preconditions and cannot fail
+  let me = unsafe { libc::geteuid() };
+  if !meta.is_dir() || meta.uid() != me {
+    return Err(format!("{} must be a directory owned by this user", dir.display()));
+  }
+  if meta.mode() & 0o077 != 0 {
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| format!("{}: {e}", dir.display()))?;
+  }
+  Ok(())
+}
+
+#[cfg(not(unix))]
+async fn serve(_args: &[String], _home: PathBuf, _exe: Option<String>) -> i32 {
+  eprintln!("acpira serve needs Unix domain sockets; on this platform the shell runs the sidecar over stdio");
+  2
 }

@@ -45,9 +45,10 @@ async fn two_managers_over_one_directory_see_each_others_sessions_and_honor_dele
   c.dispose().await;
 }
 
-// The same session open in two windows: a deletion in one used to be undone by the other's next debounced save, which recreated the record
+// The same session open in two windows: a deletion in one used to be undone by the other's next debounced save, which recreated
+// the record. Now the second engine only holds a read-only copy (A has the session open), which the deletion closes
 #[tokio::test(flavor = "multi_thread")]
-async fn a_session_deleted_in_one_manager_closes_in_the_other_and_its_stale_save_does_not_revive_it() {
+async fn a_session_deleted_in_one_manager_closes_its_read_only_copy_in_the_other() {
   let fake = fake_or_skip!();
   let dir = tempfile::tempdir().unwrap();
   let a = Mgr::new(dir.path(), Opts::fake(&fake));
@@ -57,16 +58,20 @@ async fn a_session_deleted_in_one_manager_closes_in_the_other_and_its_stale_save
   a.new_session(None).await;
   a.handle(json!({ "type": "send", "text": "shared" })).await;
   let id = a.active_id().unwrap();
-  // A's reconcile lands its debounced record; B picks the session up from the disk and opens it too
+  until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
   a.m.refresh_index().await;
   b.m.refresh_index().await;
   b.m.select_session_for(&b.v, &id).await;
-  assert_eq!(b.active().unwrap()["id"], id.as_str());
-  // B changes the record (a save is now debounced) right before A deletes it
+  let shown = b.active().unwrap();
+  assert_eq!(shown["id"], id.as_str());
+  assert_eq!(shown["status"], "readonly", "{shown}");
+  assert_eq!(shown["canTakeOver"], true, "{shown}");
+  // B cannot edit what A drives; A deletes it
   b.handle(json!({ "type": "renameSession", "id": id, "title": "renamed in B" })).await;
+  assert!(b.toasts().iter().any(|t| t.contains("Another Acpira engine")), "{:?}", b.toasts());
   a.handle(json!({ "type": "deleteSession", "id": id })).await;
-  assert!(!dir.path().join(format!("{id}.json")).exists());
-  // B's next reconcile: the pending save is dropped, the session closed, the viewer moved on
+  assert!(!dir.path().join(format!("{id}.json")).exists(), "A: {:?}", a.toasts());
+  // B's next reconcile: the copy closed, the viewer moved on
   b.m.refresh_index().await;
   assert!(!dir.path().join(format!("{id}.json")).exists());
   assert!(dir.path().join("trash").join(format!("{id}.json")).exists());
@@ -82,6 +87,100 @@ async fn a_session_deleted_in_one_manager_closes_in_the_other_and_its_stale_save
   assert!(b.view_of(&id).is_none());
   a.dispose().await;
   b.dispose().await;
+}
+
+// One session, two engines: A has it open, so B shows it read-only and cannot edit it. Taking it over stops A's turn, turns
+// A's view read-only (it can take the session back) and opens the session in B with the whole transcript (store::session_lease)
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_open_in_one_manager_is_read_only_in_the_other_until_taken_over() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  // The two agents share a native session store, as real CLIs do, so B's agent can resume what A's started. A slow turn of
+  // about 7.5 s is still running when B takes over
+  let native = tempfile::tempdir().unwrap();
+  let opts = || Opts::with_agents(fake.setting(json!({ "env": { "FAKE_SESSION_DIR": native.path(), "FAKE_SLOW_STEP_MS": "150" } })), "fake");
+  let a = Mgr::new(dir.path(), opts());
+  let b = Mgr::new(dir.path(), opts());
+  a.init().await;
+  b.init().await;
+  a.new_session(None).await;
+  a.handle(json!({ "type": "send", "text": "first" })).await;
+  let id = a.active_id().unwrap();
+  until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
+  a.m.refresh_index().await;
+  b.m.refresh_index().await;
+  b.m.select_session_for(&b.v, &id).await;
+  let shown = b.active().unwrap();
+  assert_eq!(shown["status"], "readonly", "{shown}");
+  assert_eq!(shown["canTakeOver"], true);
+  assert_eq!(turns_in(&shown), 2);
+
+  // A runs a long turn; B's record edits are refused meanwhile
+  let running = a.spawn_handle(json!({ "type": "send", "text": "slow" }));
+  until(|| a.active().is_some_and(|s| s["running"] == true), 5000).await;
+  b.handle(json!({ "type": "renameSession", "id": id, "title": "renamed in B" })).await;
+  assert!(b.toasts().iter().any(|t| t.contains("Another Acpira engine")), "{:?}", b.toasts());
+
+  // B takes it over: A's turn stops and A keeps a read-only copy; B has the session live with A's turns on it
+  b.handle(json!({ "type": "takeOverSession", "sessionId": id })).await;
+  running.await.unwrap();
+  let taken = b.active().unwrap();
+  assert_eq!(taken["id"], id.as_str());
+  assert_eq!(taken["status"], "ready", "{taken} / {:?}", b.toasts());
+  assert_eq!(turns_in(&taken), 4);
+  until(|| a.active().is_some_and(|s| s["status"] == "readonly"), 3000).await;
+  let left = a.active().unwrap();
+  assert_eq!(left["canTakeOver"], true);
+  assert!(left["error"].as_str().unwrap_or_default().contains("took this session over"), "{left}");
+  assert_eq!(b.m.leased(), vec![id.clone()]);
+  assert!(a.m.leased().is_empty());
+
+  // B works on it; then A takes it back
+  b.handle(json!({ "type": "send", "text": "in B" })).await;
+  let b_turns = turns_in(&b.active().unwrap());
+  assert_eq!(b_turns, 6);
+  a.handle(json!({ "type": "takeOverSession", "sessionId": id })).await;
+  let back = a.active().unwrap();
+  assert_eq!(back["status"], "ready", "{back} / {:?}", a.toasts());
+  assert_eq!(turns_in(&back), b_turns);
+  until(|| b.active().is_some_and(|s| s["status"] == "readonly"), 3000).await;
+  a.dispose().await;
+  b.dispose().await;
+}
+
+// A lease that cannot be taken at all (its directory is unusable) is not a free pass: turns are refused with the reason, and a
+// stored session opens read-only instead of starting an agent and saving over whatever another engine might be doing
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lease_that_cannot_be_taken_refuses_turns_and_opens_stored_sessions_read_only() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let m = Mgr::new(dir.path(), Opts::fake(&fake));
+  m.init().await;
+  m.new_session(None).await;
+  m.handle(json!({ "type": "send", "text": "first" })).await;
+  let id = m.active_id().unwrap();
+  until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
+  m.dispose().await;
+
+  // The lease directory's place is taken by a file
+  std::fs::write(dir.path().join("lease-home").join("run").join("leases.tmp"), "").unwrap();
+  std::fs::remove_dir_all(dir.path().join("lease-home").join("run").join("leases")).unwrap();
+  std::fs::rename(dir.path().join("lease-home").join("run").join("leases.tmp"), dir.path().join("lease-home").join("run").join("leases")).unwrap();
+  let failed = |toasts: Vec<String>| toasts.iter().filter(|t| t.contains("Could not take this session")).count();
+
+  let m = Mgr::new(dir.path(), Opts::fake(&fake));
+  m.init().await;
+  m.m.select_session_for(&m.v, &id).await;
+  let shown = m.active().unwrap();
+  assert_eq!(shown["status"], "readonly", "{shown}");
+  assert!(shown["error"].as_str().unwrap_or_default().contains("Could not take this session"), "{shown}");
+  assert_eq!(turns_in(&shown), 2);
+  // A fresh session has no record anyone else could hold, but its turns still need the lease
+  m.new_session(None).await;
+  m.handle(json!({ "type": "send", "text": "refused" })).await;
+  assert_eq!(turns_in(&m.active().unwrap()), 0);
+  assert_eq!(failed(m.toasts()), 1, "{:?}", m.toasts());
+  m.dispose().await;
 }
 
 // Sessions belong to the workspace folder they were opened in (their cwd). Under the workspace scope a viewer left without a session

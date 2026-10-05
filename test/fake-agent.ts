@@ -76,6 +76,7 @@ import * as acp from '@agentclientprotocol/sdk';
 // =codex-late: a steer during "slow" ends that turn first (idle, end_turn) and then lands idle, the race the host has to absorb;
 // =codex-gap: "slow" stops after 10 chunks, reports idle and answers the prompt 600 ms later.
 // FAKE_STEER_LOG → append every steering request's text to that file
+// FAKE_SLOW_STEP_MS → the pause between the 50 chunks of a "slow" turn (default 40 ms, so 2 s in all)
 
 // FAKE_HELPER_PIDFILE → start a helper that ignores SIGTERM in this process's group (antigravity's localharness_external
 // stand-in) and write its pid to that file; with FAKE_HELPER_EXIT the leader then exits by itself
@@ -96,6 +97,7 @@ const sessions = new Set<string>();
 const steerable = new Set<string>();
 const steered = new Map<string, string[]>();
 const steerMode = process.env.FAKE_STEERING ?? '';
+const slowStepMs = Number(process.env.FAKE_SLOW_STEP_MS) || 40;
 const codexLike = steerMode.startsWith('codex');
 // codex-late: the steer that ends the running turn, and the moment that turn's response is out
 const lateSteer = new Map<string, { text: string; done: () => void }>();
@@ -1188,7 +1190,7 @@ const app = acp.agent({ name: 'fake-agent' })
           const next = steered.get(sid)?.shift();
           if (next !== undefined) await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `steered:${next} ` } });
           await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `${i} ` } });
-          await new Promise(r => setTimeout(r, 40));
+          await new Promise(r => setTimeout(r, slowStepMs));
         }
         if (codexLike) await client.notify(acp.methods.client.session.update, threadStatus(sid, 'idle'));
         return { stopReason: 'end_turn' };

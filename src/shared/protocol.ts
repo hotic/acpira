@@ -186,7 +186,8 @@ export type WebviewMsg =
   | { type: 'retryTurn'; sessionId?: string }
   // Drop the agent process and resume the same native session instead (prompts keep failing on the live connection)
   | { type: 'reconnect'; sessionId?: string }
-  // SessionView.canTakeOver: end the other sidecar's agent that holds the native session lock, then start over like retry
+  // SessionView.canTakeOver: end the other sidecar's agent that holds the native session lock, then start over like retry; on a
+  // read-only copy of a session another engine has open, ask that engine to hand it over and open it here
   | { type: 'takeOverSession'; sessionId?: string }
   // Follow / stop following one subagent's transcript (the `subagent` message stream); per viewer, one at a time
   | { type: 'observeSubagent'; sessionId: string; subagentId: string }

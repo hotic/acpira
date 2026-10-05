@@ -6,6 +6,7 @@ import { FileVault } from './accounts/AccountStore';
 import { WebviewBridge } from './bridge';
 import { setHostLocale, t } from './i18n';
 import { SidecarClient } from './shell/SidecarClient';
+import { engineEndpoint } from './shell/engine';
 import { sidecarCommands } from './shell/sidecarLocator';
 import { acpiraHome, migrateOnce } from './store/dataDir';
 import { EDITOR_VIEW_TYPE, VscodePlatform } from './vscodePlatform';
@@ -27,8 +28,13 @@ export async function activate(context: vscode.ExtensionContext) {
   const home = acpiraHome();
   await migrateOnce({ from: platform.legacy.from, to: home, oldVault: platform.legacy.vault, newVault: new FileVault(join(home, 'secrets.json'), l => log.info(l)), log: l => log.info(l) });
 
+  // Sessions run in a persistent engine on the machine that hosts the workspace (the SSH server for Remote-SSH): closing the
+  // window, reloading it or losing the connection leaves running turns going, and the next window for the workspace reconnects.
+  // Windows has no Unix sockets for it and keeps the child-process sidecar; ACPIRA_ENGINE=stdio opts out anywhere (debugging)
+  const persistent = process.platform !== 'win32' && process.env.ACPIRA_ENGINE !== 'stdio';
   const sidecar = client = new SidecarClient({
     commands: () => sidecarCommands({ root: context.extensionPath, env: process.env }),
+    engine: cmd => persistent ? engineEndpoint({ binary: cmd.command, home, cwd: platform.cwd() }) : undefined,
     cwd: () => platform.cwd(),
     hello: () => platform.hello(),
     onRequest: r => platform.handle(r),
@@ -218,7 +224,8 @@ export async function activate(context: vscode.ExtensionContext) {
   trackSelection(vscode.window.activeTextEditor);
 }
 
-// VS Code waits for the returned promise: the sidecar gets its shutdown and takes its agent processes with it
+// VS Code waits for the returned promise. A persistent engine is only disconnected from (its turns keep running and it ends on its own
+// once idle); a child-process sidecar gets its shutdown and takes its agent processes with it
 export function deactivate(): Promise<void> | undefined {
   const c = client;
   client = undefined;
