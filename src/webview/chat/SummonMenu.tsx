@@ -21,12 +21,19 @@ export function SummonMenu({ personas, onPick, onOpenChange }: {
         {t('summon.entry')}
       </Chip>} />
       <DropdownMenu.Portal><DropdownMenu.Positioner side="top" width="md"><DropdownMenu.Popup>
-        <DropdownMenu.Group className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
-          {/* One short line above the list; a longer translation wraps at a normal leading instead of the tight text-3 one */}
-          <DropdownMenu.GroupLabel className="px-2 pt-1 pb-1.5 text-3 leading-normal text-pretty text-fg-3">{t('summon.hint')}</DropdownMenu.GroupLabel>
+        {/* No caption above the list: what a summon does is the chip's tooltip. Two-line items get room above and below
+            their text and a small gap between them, so the names do not stack into one block */}
+        <DropdownMenu.Group className="scroll-thin flex max-h-pop flex-col gap-0.5 overflow-y-auto">
           {personas.map(p => (
-            <DropdownMenu.Item key={p.id} onClick={() => onPick(p)}>
-              <OptionContent icon={<AgentMark id={p.agent} name={p.name} />} description={p.meta}>{p.name}</OptionContent>
+            <DropdownMenu.Item key={p.id} className="py-1.5" onClick={() => onPick(p)}>
+              {/* The CLI's mark spans both lines (lead size, not the one-line icon); the CLI's name outranks the model */}
+              <AgentMark id={p.agent} name={p.name} className="size-lead shrink-0" />
+              <OptionContent extra={(p.cli || p.model) && (
+                <span className="flex min-w-0 items-center gap-gap text-3">
+                  {p.cli && <span className="shrink-0 text-fg-1">{p.cli}</span>}
+                  {p.model && <span className="min-w-0 truncate text-fg-3/70">{p.model}</span>}
+                </span>
+              )}>{p.name}</OptionContent>
             </DropdownMenu.Item>
           ))}
         </DropdownMenu.Group>

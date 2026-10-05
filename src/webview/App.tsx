@@ -102,10 +102,10 @@ export function App() {
   // The theme setting resolved against the host; the document carries it too so color-scheme reaches native controls outside the shell
   const { theme } = resolveTheme(settings?.theme ?? 'auto', hostTheme);
   const look = useMemo(() => settings && lookFromSettings(settings), [settings]);
-  // Settings → Subagents, the enabled ones, as the composer offers them: name, CLI logo, "CLI · model"
+  // Settings → Subagents, the enabled ones, as the composer offers them: name, CLI logo, CLI name and model
   const personas = useMemo(() => settings?.subagents.filter(p => p.enabled).map(p => ({
     id: p.id, name: p.name, agent: p.agent,
-    meta: [agents.find(a => a.id === p.agent)?.name ?? p.agent, p.model].filter(Boolean).join(' · '),
+    cli: agents.find(a => a.id === p.agent)?.name ?? p.agent, model: p.model || undefined,
   })), [settings?.subagents, agents]);
 
   useEffect(() => { document.documentElement.lang = locale; }, [locale]);

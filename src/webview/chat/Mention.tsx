@@ -60,7 +60,8 @@ export function MentionList({ anchor, hits, personas, active, empty, onHover, on
       if (persona) return <>
         <AgentMark id={persona.agent} name={persona.name} className="size-icon shrink-0 text-fg-2" />
         <span className="shrink-0 truncate">{persona.name}</span>
-        {persona.meta && <span className="truncate text-3 text-fg-3">{persona.meta}</span>}
+        {persona.cli && <span className="shrink-0 text-3 text-fg-2">{persona.cli}</span>}
+        {persona.model && <span className="min-w-0 truncate text-3 text-fg-3/70">{persona.model}</span>}
       </>;
       const cut = h.path.lastIndexOf('/');
       const Icon = imageMimeOf(h.path) ? ImageIcon : FileText;

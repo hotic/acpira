@@ -7,8 +7,9 @@ export interface MentionPersona {
   id: string;
   name: string;
   agent: string;
-  // Faint second part of the row: the CLI and model
-  meta?: string;
+  // Faint second part of the row: the CLI's name and the persona's model, set apart by spacing rather than a separator
+  cli?: string;
+  model?: string;
 }
 export const personaOfHit = (hit: FileHit, personas: MentionPersona[] = []) =>
   hit.uri.startsWith(PERSONA_SCHEME) ? personas.find(p => p.id === hit.uri.slice(PERSONA_SCHEME.length)) : undefined;
