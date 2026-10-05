@@ -23,16 +23,41 @@ interface Peek {
   failed?: boolean;
 }
 
-// Blob names are content hashes, so a fetched text never changes: reads are cached, failures are not
-const blobTexts = new Map<string, Promise<string>>();
+// Blob names are content hashes, so a fetched text never changes: reads are cached, failures are not. The cache is
+// least-recently-used under a total size budget; a text larger than the budget alone is read but never kept, and the
+// peek on screen holds its own copy, so an eviction never blanks an open card.
+const BLOB_TEXT_BUDGET = 2 * 1024 * 1024; // UTF-16 code units, i.e. ~4 MiB of strings
+const blobTexts = new Map<string, { text: Promise<string>; size: number }>();
+let blobTextSize = 0;
+
+function dropBlobText(url: string) {
+  const entry = blobTexts.get(url);
+  if (!entry) return;
+  blobTexts.delete(url);
+  blobTextSize -= entry.size;
+}
+
 function readBlobText(url: string): Promise<string> {
-  let pending = blobTexts.get(url);
-  if (!pending) {
-    pending = fetch(url).then(r => { if (!r.ok) throw new Error(String(r.status)); return r.text(); });
-    pending.catch(() => blobTexts.delete(url));
-    blobTexts.set(url, pending);
+  const hit = blobTexts.get(url);
+  if (hit) {
+    // Re-insert so Map order stays least-recently-used first
+    blobTexts.delete(url);
+    blobTexts.set(url, hit);
+    return hit.text;
   }
-  return pending;
+  const entry = { text: fetch(url).then(r => { if (!r.ok) throw new Error(String(r.status)); return r.text(); }), size: 0 };
+  blobTexts.set(url, entry);
+  entry.text.then(text => {
+    if (blobTexts.get(url) !== entry) return;
+    if (text.length > BLOB_TEXT_BUDGET) { dropBlobText(url); return; }
+    entry.size = text.length;
+    blobTextSize += entry.size;
+    for (const key of blobTexts.keys()) {
+      if (blobTextSize <= BLOB_TEXT_BUDGET) break;
+      if (key !== url) dropBlobText(key);
+    }
+  }, () => { if (blobTexts.get(url) === entry) dropBlobText(url); });
+  return entry.text;
 }
 
 // Shared open-a-text-attachment state for the chip rows below: `open` takes a draft's in-memory text, `openBlob` fetches a staged one
