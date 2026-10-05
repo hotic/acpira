@@ -363,8 +363,9 @@ pub fn apply_update(s: &mut NormalizeState, u: &Value) -> bool {
       true
     }
     "session_info_update" => {
-      if let Some(title) = text_of(u, "title") {
-        s.title = Some(title.to_owned());
+      // Agents title after the raw prompt (paths and all) with no length cap; hold them to the host's own title rules
+      if let Some(title) = text_of(u, "title").map(|t| crate::util::tidy_title(t, crate::limits::TITLE_MAX)).filter(|t| !t.is_empty()) {
+        s.title = Some(title);
       }
       // AIR sessionFailure rides this kind: the payload is only in _meta
       let log = s.log.clone();

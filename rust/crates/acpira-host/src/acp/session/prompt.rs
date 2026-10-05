@@ -24,7 +24,7 @@ use crate::acp::vendors::antigravity::ReplyError;
 use crate::acp::vendors::{Vendor, claude_window};
 use crate::i18n::{t, tp};
 use crate::limits::TITLE_MAX;
-use crate::util::{clip, js_num, now_ms, random_uuid};
+use crate::util::{js_num, now_ms, random_uuid};
 
 /// An already staged payload: the queue flush hands its entry over, an edited turn also marks the user turn
 #[derive(Clone)]
@@ -326,7 +326,7 @@ impl AcpSession {
     let untitled = c.state.title.as_deref().is_none_or(|x| x.is_empty() || x == t("session.untitled"));
     if origin == Origin::User && plan_id.is_none() && untitled {
       let summary = summarize_prompt(text, &accepted.prepared.attachments);
-      c.state.title = Some(clip(&summary, TITLE_MAX));
+      c.state.title = Some(crate::util::tidy_title(&summary, TITLE_MAX));
     }
     let started_at = now_ms();
     let activity = activity_of(&c.state.turns);
