@@ -348,11 +348,14 @@ pub enum WebviewMsg {
     seq: i64,
   },
   /// The whole files behind the `nth` diff of a tool call (page views carry diff sources without their texts), answered
-  /// with a `diffSource` message echoing `seq`
+  /// with a `diffSource` message echoing `seq`. `subagent_id` names the subagent transcript the diff was shown in; absent,
+  /// the session's own turns
   DiffSource {
     session_id: String,
     tool_call_id: String,
     nth: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    subagent_id: Option<String>,
     #[serde(deserialize_with = "crate::num::lenient_i64")]
     seq: i64,
   },

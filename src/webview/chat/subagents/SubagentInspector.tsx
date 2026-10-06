@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft, Square, Unplug, X } from 'lucide-react';
 import type { SubagentSummary } from '@shared/subagents';
-import type { QuestionBlock, TextBlock, Turn } from '@shared/transcript';
+import type { FullDiffSource, QuestionBlock, TextBlock, Turn } from '@shared/transcript';
 import { t } from '../../i18n';
 import { cn } from '../../ui/cn';
 import { IconButton } from '../../ui/Button';
@@ -13,6 +13,7 @@ import { Prose } from '../Prose';
 import { HistoryContext } from '../HistoryMessage';
 import { TurnActionsContext } from '../TurnActions';
 import { FollowContext, useBottomFollow } from '../useBottomFollow';
+import { DiffSourceContext } from '../fileLinks';
 import { subagentTitle } from './subagentState';
 
 interface InspectorProps {
@@ -29,6 +30,9 @@ interface InspectorProps {
   // Editor panel: the column caps at --content-w like the main thread
   wide?: boolean;
   blobUrl?: (blob: string) => string;
+  // Full diff texts from this child's transcript. Replaces the session's lookup for everything inside the inspector
+  // (undefined included), so a tool call id the child shares with its parent never resolves to the parent's diff
+  diffSource?: (toolCallId: string, nth: number) => Promise<FullDiffSource | undefined>;
 }
 
 // Read-only drill-down for one delegated child: the parent's delegation row opens this, and nothing
@@ -72,7 +76,9 @@ export function SubagentInspector(p: InspectorProps) {
           </IconButton>
         )}
       </div>
-      <SessionTab {...p} />
+      <DiffSourceContext.Provider value={p.diffSource}>
+        <SessionTab {...p} />
+      </DiffSourceContext.Provider>
     </div>
   );
 }

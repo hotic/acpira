@@ -11,12 +11,17 @@ export const CHROME_COMMANDS = ['workbench.action.closeSidebar', 'workbench.acti
 export interface ColumnPick {
   label: string;
   columns: number;
-  picked?: boolean;
 }
 
-// Quick-pick items for 2…6 columns, the default one preselected
+// Quick-pick items for 2…6 columns. The default is not marked `picked`: VS Code honours that flag only in a multi-select
+// picker, so the caller makes `defaultColumnPick` the active item instead
 export function columnPicks(): ColumnPick[] {
-  return COLUMN_CHOICES.map(n => ({ label: String(n), columns: n, ...(n === DEFAULT_COLUMNS ? { picked: true } : {}) }));
+  return COLUMN_CHOICES.map(n => ({ label: String(n), columns: n }));
+}
+
+// The item a single-select picker starts on (highlighted, taken by Enter)
+export function defaultColumnPick(picks: readonly ColumnPick[]): ColumnPick | undefined {
+  return picks.find(p => p.columns === DEFAULT_COLUMNS);
 }
 
 // `vscode.setEditorLayout` argument: one horizontal row of n equal groups (orientation 0 = horizontal)

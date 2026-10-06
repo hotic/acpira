@@ -941,10 +941,13 @@ const app = acp.agent({ name: 'fake-agent' })
       if (text === 'subagents-native-collision') {
         await announce('c1', { name: 'Child', task: 'child task' });
         await sendTo('c1', { sessionUpdate: 'tool_call', toolCallId: 'shared-id', title: 'child read', kind: 'read', status: 'in_progress' });
-        await sendTo('c1', { sessionUpdate: 'tool_call_update', toolCallId: 'shared-id', status: 'completed' });
+        // Each side's call carries its own diff, so a diff-source lookup can tell whose call it found
+        await sendTo('c1', { sessionUpdate: 'tool_call_update', toolCallId: 'shared-id', status: 'completed',
+          content: [{ type: 'diff', path: '/repo/child.ts', oldText: 'child old\n', newText: 'child new\n' }] });
         // ACP only requires tool ids unique within a session — the root's own call can reuse the same id
         await send({ sessionUpdate: 'tool_call', toolCallId: 'shared-id', title: 'root write', kind: 'edit', status: 'in_progress' });
-        await send({ sessionUpdate: 'tool_call_update', toolCallId: 'shared-id', status: 'completed' });
+        await send({ sessionUpdate: 'tool_call_update', toolCallId: 'shared-id', status: 'completed',
+          content: [{ type: 'diff', path: '/repo/root.ts', oldText: 'root old\n', newText: 'root new\n' }] });
         await announce('c1', { state: 'completed' });
         await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root done' } });
         return { stopReason: 'end_turn' };

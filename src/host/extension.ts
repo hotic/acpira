@@ -11,7 +11,7 @@ import { sidecarCommands } from './shell/sidecarLocator';
 import { acpiraHome, migrateOnce } from './store/dataDir';
 import { EDITOR_VIEW_TYPE, VscodePlatform } from './vscodePlatform';
 import { editorSelectionOf } from './editorSelection';
-import { availableChromeCommands, columnPicks, columnsLayout } from './multiOpen';
+import { availableChromeCommands, columnPicks, columnsLayout, defaultColumnPick, type ColumnPick } from './multiOpen';
 
 const VIEW_ID = 'acpira.chat';
 const EDITOR_STATE_SESSION = 'acpiraSessionId';
@@ -136,10 +136,26 @@ export async function activate(context: vscode.ExtensionContext) {
     return bindEditor(panel, typeof sessionId === 'string' ? sessionId : undefined, watch);
   }
 
+  // The column count, starting on the default: showQuickPick cannot preselect an item in single-select mode (`picked` is
+  // multi-select only), so the picker is built by hand with the default as its active item. Undefined when dismissed
+  const pickColumns = () => new Promise<ColumnPick | undefined>(resolve => {
+    const qp = vscode.window.createQuickPick<ColumnPick>();
+    qp.title = t('host.columnsTitle');
+    qp.placeholder = t('host.columnsPlaceholder');
+    qp.items = columnPicks();
+    const initial = defaultColumnPick(qp.items);
+    if (initial) qp.activeItems = [initial];
+    let chosen: ColumnPick | undefined;
+    qp.onDidAccept(() => { chosen = qp.selectedItems[0] ?? qp.activeItems[0]; qp.hide(); });
+    // Fires after an accept's hide as well as on Escape / focus loss; the picker is disposed either way
+    qp.onDidHide(() => { qp.dispose(); resolve(chosen); });
+    qp.show();
+  });
+
   // N fresh chats side by side: the side bars and panel close, every editor closes (dirty files get VS Code's usual save prompt),
   // the editor area becomes one row of N equal groups and each group gets a new tab. Cancelling the pick changes nothing
   const openEditorColumns = async () => {
-    const pick = await vscode.window.showQuickPick(columnPicks(), { title: t('host.columnsTitle'), placeHolder: t('host.columnsPlaceholder') });
+    const pick = await pickColumns();
     if (!pick) return;
     const n = pick.columns;
     try {

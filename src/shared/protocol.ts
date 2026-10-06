@@ -156,8 +156,9 @@ export type WebviewMsg =
   // Full-text search over saved session conversations (user prompts and agent replies) for the history list
   | { type: 'searchSessions'; query: string; seq: number }
   // The whole files behind the `nth` diff of a tool call (counted in `contents`, or `content` alone): page views carry
-  // diff sources without their texts. Answered with a `diffSource` message echoing seq
-  | { type: 'diffSource'; sessionId: string; toolCallId: string; nth: number; seq: number }
+  // diff sources without their texts. Answered with a `diffSource` message echoing seq. subagentId names the subagent
+  // transcript the diff was shown in (the inspector); absent, the session's own turns
+  | { type: 'diffSource'; sessionId: string; toolCallId: string; nth: number; subagentId?: string; seq: number }
   | { type: 'permission'; sessionId: string; blockId: string; optionId: string }
   // The question card was closed: `answers` holds the answered questions only (option ids / free text); skip tells the agent to go on with what it has
   | { type: 'answer'; sessionId: string; blockId: string; answers: QuestionAnswers; skip?: boolean }

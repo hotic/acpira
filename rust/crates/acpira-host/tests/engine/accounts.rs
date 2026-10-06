@@ -689,7 +689,7 @@ async fn an_invalid_key_is_auth_required_and_removing_the_account_removes_its_cr
   s.m.init().await;
   let bad = s.store.add("fake", draft("bad@example.com", None, "bad-key", None)).await.unwrap();
   s.accounts.reload().await;
-  s.m.m.new_session_for(&s.m.v, Some("fake".into()), Some(bad.id.clone())).await.unwrap();
+  s.m.m.new_session_for(&s.m.v, Some("fake".into()), Some(bad.id.clone()), None).await.unwrap();
   assert_eq!(s.m.active().unwrap()["status"], "auth_required");
   s.m.handle(json!({ "type": "removeAccount", "id": bad.id })).await;
   assert!(s.accounts.list().is_empty());
@@ -715,7 +715,7 @@ async fn a_locked_credential_store_is_reported_and_unlocking_it_reconnects_sessi
   let pushed = m.events.lock().unwrap().iter().rfind(|e| e["type"] == "agents").cloned().unwrap();
   assert_eq!(pushed["agents"].as_array().unwrap().iter().find(|a| a["id"] == "fake").unwrap()["credentialsLocked"], true);
   assert_eq!(s.provider.quota_reads.load(Ordering::SeqCst), 0);
-  m.m.new_session_for(&m.v, Some("fake".into()), Some(one.id.clone())).await.unwrap();
+  m.m.new_session_for(&m.v, Some("fake".into()), Some(one.id.clone()), None).await.unwrap();
   assert_eq!(m.active().unwrap()["status"], "auth_required");
 
   let unlock = m.spawn_handle(json!({ "type": "unlockCredentials", "agent": "fake" }));

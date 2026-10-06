@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { availableChromeCommands, columnPicks, columnsLayout } from '../src/host/multiOpen';
+import { availableChromeCommands, columnPicks, columnsLayout, defaultColumnPick } from '../src/host/multiOpen';
 
 describe('open in editor columns', () => {
-  it('offers 2 to 6 columns with 4 preselected', () => {
+  it('offers 2 to 6 columns and starts on 4', () => {
     const picks = columnPicks();
     expect(picks.map(p => p.columns)).toEqual([2, 3, 4, 5, 6]);
-    expect(picks.filter(p => p.picked).map(p => p.columns)).toEqual([4]);
+    // `picked` is multi-select only in VS Code; the default is the picker's active item instead
+    expect(picks.some(p => 'picked' in p)).toBe(false);
+    expect(defaultColumnPick(picks)).toBe(picks[2]);
   });
 
   it('lays out one row of equal-width groups', () => {

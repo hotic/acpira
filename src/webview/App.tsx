@@ -65,11 +65,11 @@ const DIFF_SOURCE_TIMEOUT = 10000;
 let diffSeq = 0;
 const diffWaits = new Map<number, (source: FullDiffSource | undefined) => void>();
 const settleDiff = (seq: number, source: FullDiffSource | undefined) => { diffWaits.get(seq)?.(source); diffWaits.delete(seq); };
-const diffSource = (sessionId: string, toolCallId: string, nth: number) => new Promise<FullDiffSource | undefined>(resolve => {
+const diffSource = (sessionId: string, toolCallId: string, nth: number, subagentId?: string) => new Promise<FullDiffSource | undefined>(resolve => {
   const seq = ++diffSeq;
   diffWaits.set(seq, resolve);
   setTimeout(() => settleDiff(seq, undefined), DIFF_SOURCE_TIMEOUT);
-  post({ type: 'diffSource', sessionId, toolCallId, nth, seq });
+  post({ type: 'diffSource', sessionId, toolCallId, nth, ...(subagentId !== undefined ? { subagentId } : {}), seq });
 });
 
 type InitEnv = Pick<InitState, 'host' | 'home' | 'cwd' | 'blobBase'>;

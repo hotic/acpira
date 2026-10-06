@@ -141,7 +141,7 @@ impl Mgr {
   }
 
   pub async fn new_session(&self, agent: Option<&str>) {
-    self.m.new_session_for(&self.v, agent.map(str::to_owned), None).await.unwrap();
+    self.m.new_session_for(&self.v, agent.map(str::to_owned), None, None).await.unwrap();
   }
 
   pub async fn handle(&self, msg: Value) {
