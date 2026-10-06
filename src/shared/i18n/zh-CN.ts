@@ -111,6 +111,7 @@ export const zhCN = {
   'code.copySource': '复制修改后代码',
   'code.copyVisible': '复制可见代码',
   'code.copied': '已复制',
+  'code.copyCode': '复制代码',
   'code.copyFailed': '复制失败，请重试',
   'common.image': '图片',
   'image.copy': '复制图片',

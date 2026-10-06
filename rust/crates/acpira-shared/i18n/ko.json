@@ -105,6 +105,7 @@
   "code.copySource": "변경된 코드 복사",
   "code.copyVisible": "보이는 코드 복사",
   "code.copied": "복사됨",
+  "code.copyCode": "코드 복사",
   "code.copyFailed": "복사하지 못했습니다. 다시 시도하세요",
   "common.image": "이미지",
   "image.copy": "이미지 복사",

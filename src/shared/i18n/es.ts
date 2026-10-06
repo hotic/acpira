@@ -109,6 +109,7 @@ export const es = {
   'code.copySource': 'Copiar código actualizado',
   'code.copyVisible': 'Copiar código visible',
   'code.copied': 'Copiado',
+  'code.copyCode': 'Copiar código',
   'code.copyFailed': 'No se pudo copiar, inténtalo de nuevo',
   'common.image': 'Imagen',
   'image.copy': 'Copiar imagen',
