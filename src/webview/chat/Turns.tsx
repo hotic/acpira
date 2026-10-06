@@ -72,7 +72,7 @@ export function UserMessage({ turn, blobUrl, onEdit, commands, summons }: {
           onEdit();
         } : undefined}
         className={cn(
-          'relative flex max-h-(--user-message-max) w-full shrink-0 flex-col gap-gap px-pad text-1 text-fg-1 [overflow-wrap:anywhere]',
+          'relative flex w-full shrink-0 flex-col px-pad text-1 text-fg-1 [overflow-wrap:anywhere]',
           // Cards stick within an exchange; an opaque surface under the translucent chip color stops replies bleeding through.
           userMessage !== 'plain' && 'user-message-card py-gap bg-[linear-gradient(var(--chip),var(--chip))] transition-shadow',
           // An editable prompt opens on click; its outline firms up while the actions appear below.
@@ -81,13 +81,15 @@ export function UserMessage({ turn, blobUrl, onEdit, commands, summons }: {
           userMessage === 'plain' && 'bg-bg-0 py-gap font-medium',
         )}
       >
-        {turn.attachments?.length ? <TurnAttachments attachments={turn.attachments} blobUrl={blobUrl} /> : null}
-        {shown && <div ref={fade} className={cn(
-          'scroll-fade scroll-thin min-h-0 whitespace-pre-wrap [--scroll-fade-size:var(--text-1-lh)] [overflow-anchor:none]',
-          // A command / summon mark's background overhangs its line box on any side; without room inside the padding box the scrollport shaves it.
-          marks.length > 0 && 'py-0.5 px-1',
-          'max-h-(--user-message-max) overflow-y-auto',
-        )}>{marks.length ? commandSegments(shown, marks) : shown}</div>}
+        {/* Attachments and text share one scrollport, so thumbnails scroll away instead of holding a fixed share of the cap */}
+        <div ref={fade} className="scroll-fade scroll-thin flex max-h-(--user-message-max) min-h-0 flex-col gap-gap overflow-y-auto [--scroll-fade-size:var(--text-1-lh)] [overflow-anchor:none]">
+          {turn.attachments?.length ? <TurnAttachments attachments={turn.attachments} blobUrl={blobUrl} /> : null}
+          {shown && <div className={cn(
+            'shrink-0 whitespace-pre-wrap',
+            // A command / summon mark's background overhangs its line box on any side; without room inside the padding box the scrollport shaves it.
+            marks.length > 0 && 'py-0.5 px-1',
+          )}>{marks.length ? commandSegments(shown, marks) : shown}</div>}
+        </div>
       </Surface>
     </div>
   );
