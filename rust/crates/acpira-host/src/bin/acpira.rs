@@ -2,8 +2,8 @@
 //!   acpira [--home DIR]                          the sidecar: envelope protocol over stdio (stdout carries envelopes only)
 //!   acpira serve --socket PATH [--idle-grace S] [--home DIR]
 //!                                                the persistent engine (Unix): the same protocol per socket connection;
-//!                                                sessions outlive the shells, the engine ends S seconds (default 30) after
-//!                                                the last connection left and the last turn ended
+//!                                                sessions outlive the shells, the engine ends S seconds (default 30,
+//!                                                10800 over SSH) after the last connection left and the last turn ended
 //!   acpira --ws [PORT] [--token T] [--home DIR]  the browser harness, one sidecar per WebSocket, data in ~/.acpira/harness
 //!   acpira bridge <action> ...                   the ChatGPT event-mirror CLI
 //!   acpira agents [--json]                       the built-in agents, where each CLI was found and how it is initialized
@@ -238,6 +238,13 @@ async fn harness(args: &[String], explicit_home: Option<PathBuf>, exe: Option<St
 /// reload, short enough that nothing lingers once every window is gone and the work is done
 #[cfg(unix)]
 const IDLE_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
+/// The same over SSH, matched to VS Code Server's reconnection grace (10800 s). A remote window comes back on a new SSH
+/// connection, which is a new macOS security session with the login keychain locked again; only the engine started
+/// (and unlocked) under the earlier connection can still read Claude Code's login, so it has to outlive the drop.
+/// Observed 2026-10-06 on acpira 1.8.7 over Remote-SSH: the engine ended 30 s after the connection dropped and the
+/// one started by the reconnected window found the keychain locked
+#[cfg(unix)]
+const REMOTE_IDLE_GRACE: std::time::Duration = std::time::Duration::from_secs(3 * 60 * 60);
 /// An engine ending on the same socket lets go of the lock within its dispose grace; wait a little longer than that
 #[cfg(unix)]
 const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -254,7 +261,7 @@ async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
     eprintln!("usage: acpira serve --socket PATH [--idle-grace SECONDS] [--home DIR]");
     return 2;
   };
-  let grace = flag(args, "--idle-grace").and_then(|s| s.parse::<u64>().ok()).map(std::time::Duration::from_secs).unwrap_or(IDLE_GRACE);
+  let grace = idle_grace(flag(args, "--idle-grace").as_deref(), over_ssh());
   if let Some(dir) = socket.parent()
     && let Err(e) = private_dir(dir)
   {
@@ -355,6 +362,20 @@ async fn serve(args: &[String], home: PathBuf, exe: Option<String>) -> i32 {
   code
 }
 
+/// Whether this engine runs inside an SSH login (sshd sets these; VS Code Server and its extension host inherit them)
+#[cfg(unix)]
+fn over_ssh() -> bool {
+  ["SSH_CONNECTION", "SSH_CLIENT"].iter().any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty()))
+}
+
+/// `--idle-grace SECONDS` when given and valid, otherwise the default for a local or a remote (SSH) engine
+#[cfg(unix)]
+fn idle_grace(flag: Option<&str>, remote: bool) -> std::time::Duration {
+  flag.and_then(|s| s.parse::<u64>().ok())
+    .map(std::time::Duration::from_secs)
+    .unwrap_or(if remote { REMOTE_IDLE_GRACE } else { IDLE_GRACE })
+}
+
 /// The socket's directory must be this user's and closed to everyone else: whoever can create files there could pose as
 /// the engine, or put a socket of theirs where the shell looks. A directory of this user's that is too open is tightened
 #[cfg(unix)]
@@ -377,4 +398,19 @@ fn private_dir(dir: &std::path::Path) -> Result<(), String> {
 async fn serve(_args: &[String], _home: PathBuf, _exe: Option<String>) -> i32 {
   eprintln!("acpira serve needs Unix domain sockets; on this platform the shell runs the sidecar over stdio");
   2
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn idle_grace_is_longer_over_ssh_unless_given() {
+    assert_eq!(idle_grace(None, false), IDLE_GRACE);
+    assert_eq!(idle_grace(None, true), REMOTE_IDLE_GRACE);
+    // An explicit grace wins in both cases; an unparsable one falls back to the default
+    assert_eq!(idle_grace(Some("1"), true), std::time::Duration::from_secs(1));
+    assert_eq!(idle_grace(Some("5"), false), std::time::Duration::from_secs(5));
+    assert_eq!(idle_grace(Some(""), true), REMOTE_IDLE_GRACE);
+  }
 }
