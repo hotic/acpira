@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ComponentProps } from 'react';
 import { Collapsible as Base } from '@base-ui/react/collapsible';
 import { cn, cnState } from './cn';
+import { cssTimeVar } from './cssTime';
 
 // Settled transcript content: a panel under `true` mounts its body only while open. Finished turns keep almost all of
 // their DOM inside closed folds; mounting it made every session switch lay out the whole history, and keeping a body
@@ -30,8 +31,9 @@ function PanelFrame({ open, children, ...attributes }: ComponentProps<'div'> & {
   useEffect(() => {
     if (open || !lazy || !kept) return;
     const el = frame.current;
-    const close = el ? Number.parseFloat(getComputedStyle(el).getPropertyValue('--dur-close')) : Number.NaN;
-    const timer = setTimeout(() => setKept(false), (Number.isFinite(close) ? close : DEFAULT_CLOSE_MS) + RELEASE_SLACK_MS);
+    // The shipped stylesheet is minified to `.32s`: read the token with its unit (cssTime.ts)
+    const close = el ? cssTimeVar(el, '--dur-close', DEFAULT_CLOSE_MS) : DEFAULT_CLOSE_MS;
+    const timer = setTimeout(() => setKept(false), close + RELEASE_SLACK_MS);
     return () => clearTimeout(timer);
   }, [open, lazy, kept]);
   // Inert replaces hidden so nested rails can keep measuring their mounted DOM.

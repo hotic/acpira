@@ -1,5 +1,6 @@
 import { useImperativeHandle, useLayoutEffect, useRef, useState, type HTMLAttributes, type ReactNode, type Ref } from 'react';
 import { cn } from './cn';
+import { cssTimeVar } from './cssTime';
 import { railStep } from './railStep';
 
 type Anchor = { x: number; top: number; bottom: number };
@@ -125,7 +126,7 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
     const root = ref.current;
     if (!retracting) return;
     if (!root || motionDisabled(root)) { setRetracting(false); return; }
-    const timer = setTimeout(() => setRetracting(false), Number.parseFloat(getComputedStyle(root).getPropertyValue('--dur-close')) || DEFAULT_CLOSE_MS);
+    const timer = setTimeout(() => setRetracting(false), cssTimeVar(root, '--dur-close', DEFAULT_CLOSE_MS) || DEFAULT_CLOSE_MS);
     return () => clearTimeout(timer);
   }, [retracting]);
   const drawn = enabled || retracting;
@@ -149,7 +150,7 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
       else if (current !== target) pending = true;
     });
     if (!pending) return;
-    const duration = Number.parseFloat(getComputedStyle(root).getPropertyValue('--rail-grow-duration')) || DEFAULT_GROW_MS;
+    const duration = cssTimeVar(root, '--rail-grow-duration', DEFAULT_GROW_MS) || DEFAULT_GROW_MS;
     const tau = duration / 4;
     // Both ends read performance.now(): the rAF timestamp is the frame's start, which on a busy main thread
     // lies before the effect that scheduled it, and this effect restarts on every measured frame of an opening panel
