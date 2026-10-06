@@ -3,6 +3,7 @@
   "acpira.cmd.openView": "Chat öffnen",
   "acpira.cmd.newSession": "Neue Sitzung",
   "acpira.cmd.openInEditor": "Im Editor öffnen",
+  "acpira.cmd.openInEditorColumns": "In Editor-Spalten öffnen",
   "acpira.cmd.openInNewWindow": "In neuem Fenster öffnen",
   "acpira.cmd.showLog": "Log anzeigen",
   "acpira.conf.defaultAgent": "Der Standard-Agent für neue Sitzungen",

@@ -11,6 +11,7 @@ import { sidecarCommands } from './shell/sidecarLocator';
 import { acpiraHome, migrateOnce } from './store/dataDir';
 import { EDITOR_VIEW_TYPE, VscodePlatform } from './vscodePlatform';
 import { editorSelectionOf } from './editorSelection';
+import { availableChromeCommands, columnPicks, columnsLayout } from './multiOpen';
 
 const VIEW_ID = 'acpira.chat';
 const EDITOR_STATE_SESSION = 'acpiraSessionId';
@@ -130,10 +131,31 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // A new tab is a new conversation: without a session id (title bar / command palette) it opens on a fresh session; a webview passing its
   // id opens that one. The tab title follows the session it shows
-  function openEditor(sessionId?: unknown, watch?: (s: SessionView) => void): WebviewBridge {
-    const panel = vscode.window.createWebviewPanel(EDITOR_VIEW_TYPE, 'Acpira', vscode.ViewColumn.Active, { retainContextWhenHidden: true });
+  function openEditor(sessionId?: unknown, watch?: (s: SessionView) => void, column: vscode.ViewColumn = vscode.ViewColumn.Active): WebviewBridge {
+    const panel = vscode.window.createWebviewPanel(EDITOR_VIEW_TYPE, 'Acpira', column, { retainContextWhenHidden: true });
     return bindEditor(panel, typeof sessionId === 'string' ? sessionId : undefined, watch);
   }
+
+  // N fresh chats side by side: the side bars and panel close, every editor closes (dirty files get VS Code's usual save prompt),
+  // the editor area becomes one row of N equal groups and each group gets a new tab. Cancelling the pick changes nothing
+  const openEditorColumns = async () => {
+    const pick = await vscode.window.showQuickPick(columnPicks(), { title: t('host.columnsTitle'), placeHolder: t('host.columnsPlaceholder') });
+    if (!pick) return;
+    const n = pick.columns;
+    try {
+      const registered = await vscode.commands.getCommands(true);
+      for (const cmd of availableChromeCommands(registered)) {
+        try { await vscode.commands.executeCommand(cmd); } catch (e) { log.warn(`${cmd} failed: ${String(e)}`); }
+      }
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.commands.executeCommand('vscode.setEditorLayout', columnsLayout(n));
+      // Created in order so the last tab ends up focused; ViewColumn i + 1 is the i-th group of the new layout
+      for (let i = 0; i < n; i++) openEditor(undefined, undefined, (i + 1) as vscode.ViewColumn);
+    } catch (e) {
+      log.error(`open in editor columns failed: ${String(e)}`);
+      void vscode.window.showErrorMessage(t('host.columnsFailed', { detail: e instanceof Error ? e.message : String(e) }));
+    }
+  };
 
   // The sidebar exists once VS Code resolves it; a command that needs it before then waits for it
   const withSidebar = (fn: (b: WebviewBridge) => void) => {
@@ -213,6 +235,7 @@ export async function activate(context: vscode.ExtensionContext) {
       }).send({ type: 'connectChatgpt' });
     }),
     vscode.commands.registerCommand('acpira.openInEditor', (sessionId?: unknown) => { openEditor(sessionId); }),
+    vscode.commands.registerCommand('acpira.openInEditorColumns', () => openEditorColumns()),
     // Same tab, then moved into a fresh auxiliary window — each call makes another floating chat window
     vscode.commands.registerCommand('acpira.openInNewWindow', (sessionId?: unknown) => {
       openEditor(sessionId);

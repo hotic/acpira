@@ -3,6 +3,7 @@
   "acpira.cmd.openView": "開啟聊天",
   "acpira.cmd.newSession": "新建工作階段",
   "acpira.cmd.openInEditor": "在編輯區開啟",
+  "acpira.cmd.openInEditorColumns": "在編輯區多欄開啟",
   "acpira.cmd.openInNewWindow": "在新視窗開啟",
   "acpira.cmd.showLog": "檢視日誌",
   "acpira.conf.defaultAgent": "新工作階段預設用哪個 agent",

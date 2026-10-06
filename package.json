@@ -81,6 +81,12 @@
         "icon": "$(open-preview)"
       },
       {
+        "command": "acpira.openInEditorColumns",
+        "title": "%acpira.cmd.openInEditorColumns%",
+        "category": "Acpira",
+        "icon": "$(split-horizontal)"
+      },
+      {
         "command": "acpira.openInNewWindow",
         "title": "%acpira.cmd.openInNewWindow%",
         "category": "Acpira",
