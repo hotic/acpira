@@ -11,7 +11,7 @@ import { DiffBlock } from './CodeBlock';
 import { ToolOutput } from './Terminal';
 import { Aside, DiffStat, FileRef, ResultList } from './ToolCall';
 import { toolVerb } from './folding';
-import { toolFiles, visibleToolContents } from './toolDetails';
+import { diffIndex, toolFiles, visibleToolContents } from './toolDetails';
 import { useAutoFold } from './autoFold';
 import { diffStatOf, editEntries, editReference, editSpan, fileName, filePath, groupNames, itemEntrance, type GroupKind } from './processGroups';
 
@@ -67,7 +67,7 @@ function EditEntry({ blocks }: { blocks: ToolCallBlock[] }) {
   const stat = diffStatOf(blocks);
   const span = editSpan(blocks);
   const file = editReference(blocks);
-  const items = blocks.flatMap(block => visibleToolContents(block).map(item => ({ block, item })))
+  const items = blocks.flatMap(block => visibleToolContents(block).map((item, i, all) => ({ block, item, nth: diffIndex(all, i) })))
     .filter(({ item }) => item.type === 'diff' || item.type === 'text');
   const target = <RowTarget mono className="text-fg-2"><Shimmer active={blocks.some(live)}>{fileName(blocks[0]!)}</Shimmer></RowTarget>;
   const label = file ? <FileRef hit={file.path} line={file.line} aside={span}>{target}</FileRef> : <span className="flex min-w-0 items-baseline gap-1">
@@ -76,8 +76,8 @@ function EditEntry({ blocks }: { blocks: ToolCallBlock[] }) {
   </span>;
   const trailing = stat && <DiffStat {...stat} />;
   if (!items.length) return <Row tone="action" dense lead={lead} trailing={trailing} title={filePath(blocks[0]!)}>{label}</Row>;
-  return <EntryFold independentAction={!!file} lead={lead} trailing={trailing} body={<div className="flex flex-col gap-gap">{items.map(({ block, item }, i) => item.type === 'diff'
-    ? <DiffBlock key={i} lines={item.lines} source={item.source} path={item.source?.path ?? filePath(block)} />
+  return <EntryFold independentAction={!!file} lead={lead} trailing={trailing} body={<div className="flex flex-col gap-gap">{items.map(({ block, item, nth }, i) => item.type === 'diff'
+    ? <DiffBlock key={i} lines={item.lines} source={item.source} path={item.source?.path ?? filePath(block)} locate={{ toolCallId: block.id, nth }} />
     : item.type === 'text' && <ToolOutput key={i} block={block} text={item.text} />)}</div>}>{label}</EntryFold>;
 }
 

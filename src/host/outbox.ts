@@ -6,13 +6,24 @@ const STATE: ReadonlySet<HostMsg['type']> = new Set(['session', 'sessionPatch', 
 
 // Queue `m` behind what is already waiting. Session state is idempotent, so a newer whole view replaces the session pushes
 // still queued, a patch folds into the push queued before it, and the session list keeps only its latest copy. Any other
-// message is a barrier: nothing is merged across it, so it still sees exactly the state that preceded it
+// message is a barrier: nothing is merged across it, so it still sees exactly the state that preceded it.
+// The page keeps the last view of recent sessions to be patched against when it switches back (webview/sessionViews.ts),
+// so a whole view drops only what it makes moot: pushes of its own session, and whole views of sessions switched away
+// from (with the patches built on them; the page then asks for that session whole when it comes back). Patches of other
+// sessions still go: dropping them would leave the page's kept copy behind the host's record of it
 export function enqueue(queue: HostMsg[], m: HostMsg): void {
   let start = queue.length;
   while (start > 0 && STATE.has(queue[start - 1]!.type)) start--;
-  if (m.type === 'session' || m.type === 'sessions') {
-    const drop = m.type === 'session' ? (t: HostMsg['type']) => t === 'session' || t === 'sessionPatch' : (t: HostMsg['type']) => t === 'sessions';
-    for (let i = queue.length - 1; i >= start; i--) if (drop(queue[i]!.type)) queue.splice(i, 1);
+  if (m.type === 'session') {
+    const dropped = new Set([m.session.id]);
+    for (let i = start; i < queue.length; i++) {
+      const q = queue[i]!;
+      if (q.type === 'session') dropped.add(q.session.id);
+      else if (q.type !== 'sessionPatch' || !dropped.has(q.patch.id)) continue;
+      queue.splice(i--, 1);
+    }
+  } else if (m.type === 'sessions') {
+    for (let i = queue.length - 1; i >= start; i--) if (queue[i]!.type === 'sessions') queue.splice(i, 1);
   } else if (m.type === 'sessionPatch') {
     for (let i = queue.length - 1; i >= start; i--) {
       const q = queue[i]!;

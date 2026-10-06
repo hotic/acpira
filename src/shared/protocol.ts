@@ -1,5 +1,5 @@
 import type { ChatGptIntegrationStatus } from './chatgptIntegration';
-import type { AccountInfo, AgentId, AgentInfo, ConfigControl, Draft, NativeSessionInfo, QuestionAnswers, SessionSummary, SessionView, Turn, TurnSettings } from './transcript';
+import type { AccountInfo, AgentId, AgentInfo, ConfigControl, Draft, FullDiffSource, NativeSessionInfo, QuestionAnswers, SessionSummary, SessionView, Turn, TurnSettings } from './transcript';
 import type { Appearance, AxisKey } from './appearance';
 import type { HiddenMap, SettingKey, SettingsView } from './settings';
 import type { Locale } from './i18n';
@@ -106,7 +106,9 @@ export type HostMsg =
   // Reply to listNativeSessions: the agent's own sessions in this workspace, with localId marking the ones already imported
   | { type: 'nativeSessions'; agent: AgentId; sessions: NativeSessionInfo[]; error?: string }
   // Reply to searchSessions; seq echoes the request so stale replies can be dropped
-  | { type: 'sessionHits'; seq: number; hits: SessionHit[] };
+  | { type: 'sessionHits'; seq: number; hits: SessionHit[] }
+  // Reply to diffSource: the whole files behind one diff, absent when the session or the diff is gone
+  | { type: 'diffSource'; seq: number; source?: FullDiffSource };
 
 // What the import popover currently holds for the agent it asked about
 export interface NativeSessionsState {
@@ -149,6 +151,9 @@ export type WebviewMsg =
   | { type: 'searchFiles'; query: string; seq: number }
   // Full-text search over saved session conversations (user prompts and agent replies) for the history list
   | { type: 'searchSessions'; query: string; seq: number }
+  // The whole files behind the `nth` diff of a tool call (counted in `contents`, or `content` alone): page views carry
+  // diff sources without their texts. Answered with a `diffSource` message echoing seq
+  | { type: 'diffSource'; sessionId: string; toolCallId: string; nth: number; seq: number }
   | { type: 'permission'; sessionId: string; blockId: string; optionId: string }
   // The question card was closed: `answers` holds the answered questions only (option ids / free text); skip tells the agent to go on with what it has
   | { type: 'answer'; sessionId: string; blockId: string; answers: QuestionAnswers; skip?: boolean }

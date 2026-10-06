@@ -200,11 +200,21 @@ pub struct AcpSession {
   pub(crate) pick_lock: tokio::sync::Mutex<()>,
   // Serializes polled usage reads (Grok, Pi) so slow replies never overwrite a newer snapshot
   pub(crate) usage_lock: tokio::sync::Mutex<()>,
+  /// Which line of views this instance's revs count in (`next_view_epoch`): a page holding a view of the same epoch can
+  /// be sent a patch, any other one gets the whole view. A reopened session counts its revs from 0 again, so rev alone
+  /// cannot tell two instances apart
+  pub(crate) epoch: u64,
+}
+
+/// A fresh view epoch: every opened session gets one, a chain of read-only copies shares one (their revs keep growing)
+pub fn next_view_epoch() -> u64 {
+  static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+  NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl AcpSession {
   pub fn new(record: SessionRecord, deps: SessionDeps) -> Arc<AcpSession> {
-    Self::build(record, deps, true)
+    Self::build(record, deps, true, next_view_epoch())
   }
 
   /// A read-only copy of a record another engine is driving right now (`store::session_lease`): turns stay as that
@@ -212,10 +222,11 @@ impl AcpSession {
   /// not save (the record belongs to the other engine). `note` is the notice the view shows. `rev` must grow from one
   /// copy to the next (pages drop a view whose rev is not newer) and stay below 0, where the live session opened after
   /// the mirror starts counting
-  /// `elsewhere`: another engine has it open and can be asked to hand it over (not when the lease could not be read)
-  pub fn mirror(record: SessionRecord, deps: SessionDeps, note: String, rev: i64, elsewhere: bool) -> Arc<AcpSession> {
+  /// `elsewhere`: another engine has it open and can be asked to hand it over (not when the lease could not be read).
+  /// `epoch` is shared by every copy of one mirror (`next_view_epoch`), so a viewer is patched from one copy to the next
+  pub fn mirror(record: SessionRecord, deps: SessionDeps, note: String, rev: i64, elsewhere: bool, epoch: u64) -> Arc<AcpSession> {
     debug_assert!(rev < 0);
-    let s = Self::build(record, deps, false);
+    let s = Self::build(record, deps, false, epoch);
     {
       let mut c = s.core.lock();
       c.status = SessionStatus::Readonly;
@@ -226,7 +237,7 @@ impl AcpSession {
     s
   }
 
-  fn build(record: SessionRecord, deps: SessionDeps, seal: bool) -> Arc<AcpSession> {
+  fn build(record: SessionRecord, deps: SessionDeps, seal: bool, epoch: u64) -> Arc<AcpSession> {
     Arc::new_cyclic(|me: &Weak<AcpSession>| {
       let log_prefix = format!("[{} {}] ", record.agent, record.id.chars().take(8).collect::<String>());
       let log = deps.log.clone();
@@ -307,6 +318,7 @@ impl AcpSession {
         me: me.clone(),
         pick_lock: tokio::sync::Mutex::new(()),
         usage_lock: tokio::sync::Mutex::new(()),
+        epoch,
       }
     })
   }

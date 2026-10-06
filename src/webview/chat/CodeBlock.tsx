@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { DiffLine, DiffSource } from '@shared/transcript';
 import { cn } from '../ui/cn';
 import { diffCopyText, plainDiffRows, type CodeDiffRow } from './codeDiff';
 import { requestCodeHighlight, requestDiffHighlight } from './diffHighlight';
 import { codeLanguage, fenceLanguage, type CodeToken, type Language } from './codeSyntax';
 import { OutputCopy } from './OutputCopy';
+import { DiffSourceContext } from './fileLinks';
 import { t } from '../i18n';
 
 // Code surface: all monospace content (code blocks / tool output / diffs) shares this one surface,
@@ -68,14 +69,23 @@ function syntaxChildren(code: string, colored: Colored): ReactNode[] {
   return out;
 }
 
-// Shared production version of the selected code-detail LAB design.
-export function DiffBlock({ lines, source, path = '' }: { lines: DiffLine[]; source?: DiffSource; path?: string }) {
+// Where a diff sits in the session: the tool call and which of its diffs (counted in `contents`, or `content` alone)
+export interface DiffLocation { toolCallId: string; nth: number }
+
+// Shared production version of the selected code-detail LAB design. A page view's diff carries its source without the
+// file texts (`omitted`): rows highlight from the visible segments, and copying asks the host for the new file
+export function DiffBlock({ lines, source, path = '', locate }: { lines: DiffLine[]; source?: DiffSource; path?: string; locate?: DiffLocation }) {
   const root = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
   const plain = useMemo(() => plainDiffRows(lines), [lines]);
   const [colored, setColored] = useState<{ lines: DiffLine[]; source?: DiffSource; path: string; rows: CodeDiffRow[] }>();
   const rows = colored?.lines === lines && colored.source === source && colored.path === path ? colored.rows : plain;
   const copyText = useMemo(() => diffCopyText(lines, source), [lines, source]);
+  const fetchSource = useContext(DiffSourceContext);
+  // Falls back to the visible lines when the host no longer has the call (the session closed, the turn was replaced)
+  const readSource = useCallback(async () => (await fetchSource!(locate!.toolCallId, locate!.nth))?.newText ?? copyText,
+    [fetchSource, locate?.toolCallId, locate?.nth, copyText]);
+  const fetchable = source?.omitted && locate && fetchSource;
   const language = codeLanguage(source?.path ?? path);
 
   useEffect(() => {
@@ -100,7 +110,8 @@ export function DiffBlock({ lines, source, path = '' }: { lines: DiffLine[]; sou
   }, [visible, lines, source, path, language]);
 
   return <div ref={root} className="group/code-output code-output diff-surface" data-language={language ?? 'plain'}>
-    <OutputCopy text={copyText} label={source !== undefined ? t('code.copySource') : t('code.copyVisible')} />
+    <OutputCopy text={copyText} label={source !== undefined && (!source.omitted || fetchable) ? t('code.copySource') : t('code.copyVisible')}
+      read={fetchable ? readSource : undefined} />
     <div className="diff-scroll scroll-thin max-h-code-output overflow-auto py-gap-half" tabIndex={0} role="region" aria-label={t('code.diff')}>
       <div className="diff-table min-w-full w-max font-mono text-mono leading-code-output">
         {rows.map((row, index) => row.kind === 'hunk' && (index === 0 || index === rows.length - 1) ? null : row.kind === 'hunk'

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Network, Paperclip, X } from 'lucide-react';
-import type { ExternalSessionInfo, AccountInfo, AgentInfo, AuthMethodInfo, Draft, FailureAction, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionControls, SessionStatus, SessionSummary, SlashCommand, Turn, Usage } from '@shared/transcript';
+import type { ExternalSessionInfo, AccountInfo, AgentInfo, AuthMethodInfo, Draft, FailureAction, FullDiffSource, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionControls, SessionStatus, SessionSummary, SlashCommand, Turn, Usage } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
 import type { ModelShapes } from '@shared/modelShapes';
 import type { HiddenMap, SessionScope } from '@shared/settings';
@@ -33,7 +33,7 @@ import { PlanDocumentContext } from './PlanDocument';
 import { planExecutionId } from '@shared/planExecution';
 import { Queue } from './Queue';
 import { heldPrompt } from './heldPrompt';
-import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, OpenBlobContext } from './fileLinks';
+import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, DiffSourceContext, OpenBlobContext } from './fileLinks';
 import { TurnActionsContext } from './TurnActions';
 import { SubagentInspector } from './subagents/SubagentInspector';
 import { InspectorSplitter, clamp, usePreferredPaneWidth, type PaneBounds } from './subagents/InspectorSplitter';
@@ -49,6 +49,8 @@ export interface ShellHandlers {
   searchFiles: (query: string) => Promise<FileHit[]>;
   // History search over saved conversations; without it the session list matches titles only
   searchSessions?: (query: string) => Promise<SessionHit[]>;
+  // The whole files behind the `nth` diff of a tool call: page views carry diff sources without their texts
+  diffSource?: (sessionId: string, toolCallId: string, nth: number) => Promise<FullDiffSource | undefined>;
   stop: () => void;
   permission: (sessionId: string, blockId: string, optionId: string) => void;
   // The question card was closed: answers keyed by question id, or skip
@@ -385,6 +387,9 @@ export function Shell(p: ShellProps) {
     ? (path: string, line?: number) => on.openFile!(p.activeSessionId!, path, line) : undefined, [p.activeSessionId, on.openFile]);
   const stopAsyncTask = useMemo(() => p.activeSessionId && on.stopAsyncTask
     ? (taskId: string) => on.stopAsyncTask!(p.activeSessionId!, taskId) : undefined, [p.activeSessionId, on.stopAsyncTask]);
+  // Diff sources of the session on screen (and of its subagents, which the host searches too)
+  const fetchDiffSource = useMemo(() => p.activeSessionId && on.diffSource
+    ? (toolCallId: string, nth: number) => on.diffSource!(p.activeSessionId!, toolCallId, nth) : undefined, [p.activeSessionId, on.diffSource]);
   // An AIR failure notice's actions map onto existing session actions: a real turn retries the prompt,
   // a session-scoped row (no live start) reconnects instead; the other two are the Notice's own verbs
   const failureAction = useMemo(() => p.activeSessionId ? (action: FailureAction) => {
@@ -406,6 +411,7 @@ export function Shell(p: ShellProps) {
       <BlobUrlContext.Provider value={blobUrl}>
       <OpenBlobContext.Provider value={openBlob}>
       <AsyncTaskStopContext.Provider value={stopAsyncTask}>
+      <DiffSourceContext.Provider value={fetchDiffSource}>
         <div
           ref={root}
           className={cn('acp-shell relative flex h-full min-h-0 w-full overflow-hidden', wide && 'acp-wide')}
@@ -571,6 +577,7 @@ export function Shell(p: ShellProps) {
           )}
         </div>
         <SubagentGraph nodes={p.subagents ?? []} sessionTitle={p.title} open={graphOpen && !!p.subagents?.length} onOpenChange={setGraphOpen} onInspect={onInspect} selectedId={inspect?.id} />
+      </DiffSourceContext.Provider>
       </AsyncTaskStopContext.Provider>
       </OpenBlobContext.Provider>
       </BlobUrlContext.Provider>

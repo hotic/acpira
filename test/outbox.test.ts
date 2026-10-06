@@ -9,7 +9,7 @@ function view(rev: number, turns: Turn[], id = 's'): SessionView {
   return { id, agent: 'fake', title: 't', cwd: '/w', status: 'ready', running: true, rev, createdAt: 'a', updatedAt: 'b', commands: [], controls: { modes: [], options: [] }, turns };
 }
 const session = (rev: number, turns: Turn[] = [user('u1')], id = 's'): HostMsg => ({ type: 'session', session: view(rev, turns, id) });
-const patch = (base: number, keep: number, turns: Turn[]): HostMsg => ({ type: 'sessionPatch', patch: { id: 's', base, view: view(base + 1, []), keep, turns } satisfies SessionPatch });
+const patch = (base: number, keep: number, turns: Turn[], id = 's'): HostMsg => ({ type: 'sessionPatch', patch: { id, base, view: view(base + 1, [], id), keep, turns } satisfies SessionPatch });
 const list = (n: number): HostMsg => ({ type: 'sessions', sessions: Array.from({ length: n }, (_, i) => ({ id: `x${i}`, title: '', agent: 'fake', cwd: '/w', updatedAt: '' })) });
 const types = (q: HostMsg[]) => q.map(m => m.type);
 
@@ -28,6 +28,17 @@ describe('webview post queue', () => {
     expect((q[0] as Extract<HostMsg, { type: 'session' }>).session.rev).toBe(1);
     expect((q[2] as Extract<HostMsg, { type: 'sessions' }>).sessions).toHaveLength(2);
     expect((q[3] as Extract<HostMsg, { type: 'session' }>).session.rev).toBe(9);
+  });
+
+  it('a whole view of another session drops the views switched away from but keeps patches the page can apply', () => {
+    const q: HostMsg[] = [];
+    // a: a patch against the copy the page keeps; b: a whole view and a patch built on it; then the page goes to c
+    enqueue(q, patch(4, 1, [user('a2')], 'a'));
+    enqueue(q, session(1, [user('b1')], 'b'));
+    enqueue(q, patch(1, 1, [user('b2')], 'b'));
+    enqueue(q, session(1, [user('c1')], 'c'));
+    expect(q.map(m => m.type === 'session' ? `session:${m.session.id}` : m.type === 'sessionPatch' ? `patch:${m.patch.id}` : m.type))
+      .toEqual(['patch:a', 'session:c']);
   });
 
   it('a patch folds into the whole view or the patch queued before it', () => {

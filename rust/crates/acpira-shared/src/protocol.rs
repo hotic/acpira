@@ -10,7 +10,8 @@ use crate::inventory::AgentInventory;
 use crate::shared_config::{SharedAction, SharedView};
 use crate::settings::{HiddenMap, SettingsView};
 use crate::transcript::{
-  AccountInfo, AgentId, AgentInfo, ConfigControl, Draft, NativeSessionInfo, QuestionAnswers, SessionSummary, Turn, TurnSettings,
+  AccountInfo, AgentId, AgentInfo, ConfigControl, DiffSource, Draft, NativeSessionInfo, QuestionAnswers, SessionSummary, Turn,
+  TurnSettings,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -236,6 +237,12 @@ pub enum HostMsg {
     seq: i64,
     hits: Vec<SessionHit>,
   },
+  /// Reply to diffSource: the whole files behind one diff, absent when the session or the diff is gone
+  DiffSource {
+    seq: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<DiffSource>,
+  },
 }
 
 impl HostMsg {
@@ -268,6 +275,7 @@ impl HostMsg {
       HostMsg::Files { .. } => "files",
       HostMsg::NativeSessions { .. } => "nativeSessions",
       HostMsg::SessionHits { .. } => "sessionHits",
+      HostMsg::DiffSource { .. } => "diffSource",
     }
   }
 }
@@ -329,6 +337,15 @@ pub enum WebviewMsg {
   },
   SearchFiles {
     query: String,
+    #[serde(deserialize_with = "crate::num::lenient_i64")]
+    seq: i64,
+  },
+  /// The whole files behind the `nth` diff of a tool call (page views carry diff sources without their texts), answered
+  /// with a `diffSource` message echoing `seq`
+  DiffSource {
+    session_id: String,
+    tool_call_id: String,
+    nth: usize,
     #[serde(deserialize_with = "crate::num::lenient_i64")]
     seq: i64,
   },

@@ -71,8 +71,9 @@ impl AcpSession {
     let shapes = self.deps.model_shapes.as_ref().and_then(|f| f(&self.agent));
     let mut c = self.core.lock();
     // Each visible turn is encoded on its own, the last one also block by block when it is an agent turn; the whole view
-    // is spliced from the same fragments, so the transcript is still serialized once per change
-    let (turns, last) = {
+    // is spliced from the same fragments, so the transcript is still serialized once per change. Diff sources go without
+    // their file texts (`encode_for_view`): the page asks for them when it needs them
+    let (turns, last) = encode_for_view(|| {
       let core = &mut *c;
       match core.pending_prompt.as_mut() {
         Some(p) => encode_turns(&core.state.turns.iter().collect::<Vec<_>>(), Some(p)),
@@ -81,7 +82,7 @@ impl AcpSession {
           None => (vec![], None),
         },
       }
-    };
+    });
     let subagents = if c.tree.is_empty() { None } else { Some(c.tree.summaries()) };
     let picked = (!c.picks.values.is_empty()).then(|| picked_controls(&c));
     let queued = queue_snapshot(&c);
@@ -110,7 +111,7 @@ impl AcpSession {
     };
     let encoded_head = raw(&head);
     let full = RawJson::new(&ViewRef { turns: &turns, ..head });
-    let parts = ViewParts(Arc::new(ViewPartsData { id: self.id.clone(), rev: c.rev, head: encoded_head, turns, last }));
+    let parts = ViewParts(Arc::new(ViewPartsData { id: self.id.clone(), epoch: self.epoch, rev: c.rev, head: encoded_head, turns, last }));
     (full, c.phase.running, parts)
   }
 
@@ -126,7 +127,31 @@ impl AcpSession {
   pub fn subagent_transcript(&self, id: &str) -> Option<(RawJson, i64, bool)> {
     let c = self.core.lock();
     let (turns, rev, running) = c.tree.transcript(id)?;
-    Some((RawJson::new(&turns), rev, running))
+    Some((encode_for_view(|| RawJson::new(&turns)), rev, running))
+  }
+
+  /// The whole files behind the `nth` diff of tool call `tool_call_id` (counted in `contents`, or `content` when that is
+  /// the only item, as the page lists them), the texts a page view leaves out. The newest matching call wins; the
+  /// session's own turns are searched before its subagents' transcripts
+  pub fn diff_source(&self, tool_call_id: &str, nth: usize) -> Option<DiffSource> {
+    let c = self.core.lock();
+    let find = |turns: &mut dyn DoubleEndedIterator<Item = &Turn>| {
+      turns.rev().filter_map(Turn::as_agent).flat_map(|t| t.blocks.iter().rev()).find_map(|b| match b {
+        AgentBlock::ToolCall(tool) if tool.id == tool_call_id => {
+          let items = tool.contents.as_deref().unwrap_or(std::slice::from_ref(tool.content.as_ref()?));
+          items
+            .iter()
+            .filter_map(|item| match item {
+              ToolContent::Diff { source, .. } => Some(source),
+              _ => None,
+            })
+            .nth(nth)?
+            .clone()
+        }
+        _ => None,
+      })
+    };
+    find(&mut visible_turns(&c)).or_else(|| c.tree.all_turns().find_map(|turns| find(&mut turns.iter())))
   }
 
   pub fn plan_document(&self, plan_id: &str) -> Option<PlanDocumentBlock> {

@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use acpira_shared::appearance::Appearance;
 use acpira_shared::protocol::{FileHit, HostMsg, InitState, WebviewHost, WebviewMsg, is_safe_external_url};
-use acpira_shared::session_patch::{ViewParts, session_patch};
+use acpira_shared::session_patch::{Delivery, SentViews};
 use acpira_shared::settings::is_setting_key;
 use acpira_shared::sidecar::{InitialView, PlanTarget, ToastOpen};
 
@@ -83,9 +83,9 @@ pub struct BridgeCore {
   ready: std::sync::atomic::AtomicBool,
   /// The page applies `sessionPatch` messages (it said so in `ready`)
   patches: std::sync::atomic::AtomicBool,
-  /// The encoding of the session view this page was sent last, what the next patch is computed against; None after
-  /// anything else replaced the page's view (init, a whole view without parts, a resync)
-  sent: parking_lot::Mutex<Option<ViewParts>>,
+  /// The session views this page holds as far as patches go: the one on screen and the last one sent of each recent
+  /// session, what the next patch of that session is computed against (`SentViews`)
+  sent: parking_lot::Mutex<SentViews>,
   batch: parking_lot::Mutex<MsgBatch>,
   settings_sub: parking_lot::Mutex<Option<u64>>,
   me: Weak<BridgeCore>,
@@ -179,17 +179,20 @@ impl BridgeCore {
           cwd: platform.cwd(),
           blob_base: self.blob_base.clone(),
         };
-        // The page takes init's view as a whole: the next push is whole too
+        // The page takes init's view as a whole and starts its cache over: the next push is whole too
         let mut sent = self.sent.lock();
-        *sent = None;
+        sent.clear();
         (self.post)(HostMsg::Init { state: Box::new(state) });
         drop(sent);
         // A batched list may reach the page around init and lose to init's copy, and the manager does not repeat an
         // unchanged list: the batch gets the current one, ordered against every other list push
         manager.sessions_in_order(|sessions| self.queue(HostMsg::Sessions { sessions }));
       }
+      // The page could not apply a patch of the session on screen: that session goes whole, the rest it keeps stay patchable
       W::Resync => {
-        *self.sent.lock() = None;
+        if let Some(id) = self.viewer.active_id() {
+          self.sent.lock().forget(&id);
+        }
         if let Some(m) = manager.session_msg(self.viewer.active_id().as_deref()) {
           self.deliver(m);
         }
@@ -260,6 +263,11 @@ impl BridgeCore {
         // Always answer, like searchFiles: the history list holds a promise per seq
         let hits = manager.search_sessions(&query).await;
         self.post_now(HostMsg::SessionHits { seq, hits });
+      }
+      // Always answered, so the page's copy never waits on a request nobody will reply to
+      W::DiffSource { session_id, tool_call_id, nth, seq } => {
+        let source = manager.diff_source(&session_id, &tool_call_id, nth);
+        self.post_now(HostMsg::DiffSource { seq, source });
       }
       // The file is not opened on its own: the toast names it and offers an Open button. A repeated export of an unchanged
       // transcript names the same file (SessionManager::export_session)
@@ -375,25 +383,18 @@ impl BridgeCore {
     }
   }
 
-  /// Post a batched message; a session view goes out as the patch against the view this page holds when it can. The diff and
-  /// the post happen under one lock, so two flushes racing on different threads can never post patches out of order
+  /// Post a batched message; a session view goes out as a patch against the last view of that session the page was sent,
+  /// the one on screen or one it keeps from before a switch (`SentViews`). The diff and the post happen under one lock, so
+  /// two flushes racing on different threads can never post patches out of order
   fn deliver(&self, m: HostMsg) {
     let HostMsg::Session { parts, .. } = &m else { return (self.post)(m) };
     let mut sent = self.sent.lock();
-    // A snapshot older than the one already sent (a batch flushed after a resync answered with a newer view, or two flushes
-    // racing for this lock) carries nothing the page does not have, and must not become the base of the next patch
-    if let (Some(prev), Some(next)) = (sent.as_ref(), parts.as_ref())
-      && prev.0.id == next.0.id
-      && next.0.rev < prev.0.rev
-    {
-      return;
-    }
-    let next = parts.clone().filter(|_| self.patches.load(std::sync::atomic::Ordering::Acquire));
-    let patch = sent.as_ref().zip(next.as_ref()).and_then(|(prev, next)| session_patch(&prev.0, &next.0));
-    *sent = next;
-    match patch {
-      Some(patch) => (self.post)(HostMsg::SessionPatch { patch }),
-      None => (self.post)(m),
+    let next = parts.as_ref().filter(|_| self.patches.load(std::sync::atomic::Ordering::Acquire));
+    match sent.deliver(next) {
+      // Older than what the page shows: it carries nothing the page does not have and must not become a patch base
+      Delivery::Stale => {}
+      Delivery::Patch(patch) => (self.post)(HostMsg::SessionPatch { patch }),
+      Delivery::Whole => (self.post)(m),
     }
   }
 
