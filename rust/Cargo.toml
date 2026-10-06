@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/acpira-shared", "crates/acpira-host"]
 
 [workspace.package]
-version = "1.8.7"
+version = "1.8.8"
 edition = "2024"
 license = "MIT"
 publish = false

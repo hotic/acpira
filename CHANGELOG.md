@@ -11,6 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [1.8.8] - 2026-10-06
+
+### Added
+
+- The session list can group sessions into user categories within each project. Sessions are filed by native drag and drop or the row menu's move-to-category submenu; categories can be created, renamed, reordered and deleted, and a deleted category leaves its sessions in the project. Categories are stored per project in `~/.acpira/sessions/categories.json` and shared across windows. Filing a session unpins it, pinning removes it from its category, and a session can only be filed under its own project.
+- An **Acpira: Open in Editor Columns** command closes the side bars, panel and open editors, then opens 2–6 chats side by side in equal editor groups. The picker starts on four columns.
+- Markdown code blocks in replies show a copy button on hover.
+
+### Changed
+
+- Sent prompt cards are capped at five lines of text, and attachments scroll with the text inside the card instead of keeping a fixed share of the height.
+- Switching back to one of the eight most recently viewed sessions sends only a patch, and session views no longer carry full diff texts. Over Remote-SSH, returning to a long session drops from a multi-second full view to a patch of about 1 KB. Copying a file from a diff fetches its text on demand.
+
+### Fixed
+
+- Folds and connected rails in the packaged extension close with their transition again instead of snapping shut, because CSS time tokens minified to seconds are now read with their unit.
+- Over Remote-SSH on macOS and Linux, the persistent engine now stays alive for 3 hours after the connection drops instead of 30 seconds, so a reconnected window can still use the engine that unlocked the login keychain. An explicit `--idle-grace` still takes precedence.
+- The subagent inspector shows a child's own diff when the child reuses its parent's tool call ID.
+
 ## [1.8.7] - 2026-10-06
 
 ### Fixed
