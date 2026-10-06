@@ -8,6 +8,7 @@ import { Composer, type ComposerProps } from './Composer';
 import { EditAttachments } from './Attachments';
 import { UserMessage } from './Turns';
 import { cn } from '../ui/cn';
+import { cssTimeVar } from '../ui/cssTime';
 
 // Every prompt card reads this, so it must stay stable across stream pushes: editability is a flag,
 // and the composer props (which change with each chunk) travel in HistoryComposerContext for the mounted editor alone
@@ -55,7 +56,7 @@ export const HistoryMessage = memo(function HistoryMessage(p: {
     if (!el || start === undefined) return;
     const end = el.offsetHeight;
     if (start === end || motion === 'none' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const duration = parseFloat(getComputedStyle(el).getPropertyValue('--dur-open')) || 0;
+    const duration = cssTimeVar(el, '--dur-open', 0);
     el.style.overflow = 'hidden';
     const animation = el.animate([{ height: `${start}px` }, { height: `${end}px` }], { duration, easing: 'cubic-bezier(0.2, 0.7, 0.2, 1)' });
     const done = () => { el.style.overflow = ''; };
