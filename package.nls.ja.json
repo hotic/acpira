@@ -3,6 +3,7 @@
   "acpira.cmd.openView": "チャットを開く",
   "acpira.cmd.newSession": "新しいセッション",
   "acpira.cmd.openInEditor": "エディターで開く",
+  "acpira.cmd.openInEditorColumns": "エディターに複数列で開く",
   "acpira.cmd.openInNewWindow": "新しいウィンドウで開く",
   "acpira.cmd.showLog": "ログを表示",
   "acpira.conf.defaultAgent": "新しいセッションで使う既定のエージェント",

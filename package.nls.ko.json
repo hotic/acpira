@@ -3,6 +3,7 @@
   "acpira.cmd.openView": "채팅 열기",
   "acpira.cmd.newSession": "새 세션",
   "acpira.cmd.openInEditor": "편집기에서 열기",
+  "acpira.cmd.openInEditorColumns": "편집기에 여러 열로 열기",
   "acpira.cmd.openInNewWindow": "새 창에서 열기",
   "acpira.cmd.showLog": "로그 보기",
   "acpira.conf.defaultAgent": "새 세션에 사용할 기본 에이전트",
