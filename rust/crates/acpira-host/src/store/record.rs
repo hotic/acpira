@@ -47,6 +47,8 @@ pub struct SessionRecord {
   pub commands: Vec<SlashCommand>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub pinned: Option<bool>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub category: Option<String>,
   #[serde(default, skip_serializing_if = "is_false")]
   pub history_pending: bool,
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -71,6 +73,7 @@ impl SessionRecord {
       cwd: self.cwd.clone(),
       updated_at: self.updated_at.clone(),
       pinned: self.pinned,
+      category: self.category.clone(),
       state: None,
     }
   }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Network, Paperclip, X } from 'lucide-react';
-import type { ExternalSessionInfo, AccountInfo, AgentInfo, AuthMethodInfo, Draft, FailureAction, FullDiffSource, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionControls, SessionStatus, SessionSummary, SlashCommand, Turn, Usage } from '@shared/transcript';
+import type { ExternalSessionInfo, AccountInfo, AgentInfo, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionStatus, SessionSummary, SlashCommand, Turn, Usage } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
 import type { ModelShapes } from '@shared/modelShapes';
 import type { HiddenMap, SessionScope } from '@shared/settings';
@@ -63,14 +63,17 @@ export interface ShellHandlers {
   setMode: (id: string) => void;
   setConfig: (configId: string, value: string) => void;
   selectSession: (id: string) => void;
-  // Without an agent the host falls back to the configured defaultAgent
-  newSession: (agent?: AgentInfo['id']) => void;
+  // Without an agent the host falls back to the configured defaultAgent; with a category the new session is filed there
+  newSession: (agent?: AgentInfo['id'], category?: string) => void;
   renameSession: (id: string, title: string) => void;
   deleteSession: (id: string) => void;
   restoreSession: (id: string) => void;
   pinSession: (id: string, pinned: boolean) => void;
   // Project scoping of the list: re-home a session into this window's workspace folder
   moveSession?: (id: string) => void;
+  // User categories of the session list: file a session (null takes it out) / edit the shared category list
+  setSessionCategory?: (id: string, category: string | null) => void;
+  categoryOp?: (op: CategoryOp, file?: string) => void;
   // Account layer: selecting an account rebinds the current session; adding an account goes through import / terminal login; removing only deletes the locally saved credential
   selectAccount: (id: string) => void;
   addAccount: (agent: AgentInfo['id'], via: AddAccountVia) => void;
@@ -150,6 +153,8 @@ export interface ShellProps {
   // Settings → Subagents, the enabled ones: offered in the composer's @ list and summon menu
   personas?: MentionPersona[];
   sessions: SessionSummary[];
+  // The session list's user categories (absent: the list shows no categories)
+  categories?: SessionCategories;
   activeSessionId?: string;
   // Workspace root of the session; attachments are labeled relative to it
   cwd?: string;
@@ -350,6 +355,10 @@ export function Shell(p: ShellProps) {
       onListNative={on.listNativeSessions}
       onImportNative={on.importNativeSession}
       onSearch={on.searchSessions}
+      categories={p.categories}
+      onFile={on.setSessionCategory}
+      onCategoryOp={on.categoryOp}
+      onNewInCategory={category => { on.newSession(p.agent.id, category); closeDrawer(); }}
     />
   );
 
@@ -448,6 +457,7 @@ export function Shell(p: ShellProps) {
             <Header
               title={p.title}
               sessions={p.sessions}
+              categories={p.categories}
               agent={p.agent}
               agents={p.agents}
               accounts={p.accounts}

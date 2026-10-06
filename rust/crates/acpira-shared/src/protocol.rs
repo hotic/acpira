@@ -10,8 +10,8 @@ use crate::inventory::AgentInventory;
 use crate::shared_config::{SharedAction, SharedView};
 use crate::settings::{HiddenMap, SettingsView};
 use crate::transcript::{
-  AccountInfo, AgentId, AgentInfo, ConfigControl, DiffSource, Draft, NativeSessionInfo, QuestionAnswers, SessionSummary, Turn,
-  TurnSettings,
+  AccountInfo, AgentId, AgentInfo, CategoryOp, ConfigControl, DiffSource, Draft, NativeSessionInfo, QuestionAnswers,
+  SessionCategories, SessionSummary, Turn, TurnSettings,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,6 +61,8 @@ pub struct InitState {
   pub account_actions: Option<Vec<AccountAction>>,
   pub hidden: HiddenMap,
   pub sessions: Vec<SessionSummary>,
+  /// User categories of the session list
+  pub categories: SessionCategories,
   /// The active session's view, serialized once
   #[serde(skip_serializing_if = "Option::is_none")]
   pub active: Option<RawJson>,
@@ -174,6 +176,10 @@ pub enum HostMsg {
   Sessions {
     sessions: Vec<SessionSummary>,
   },
+  /// The category list changed (here or in another window)
+  Categories {
+    categories: SessionCategories,
+  },
   /// The session view, already serialized once for every viewer that shows it
   Session {
     session: RawJson,
@@ -262,6 +268,7 @@ impl HostMsg {
       HostMsg::Appearance { .. } => "appearance",
       HostMsg::Agents { .. } => "agents",
       HostMsg::Sessions { .. } => "sessions",
+      HostMsg::Categories { .. } => "categories",
       HostMsg::Session { .. } => "session",
       HostMsg::SessionPatch { .. } => "sessionPatch",
       HostMsg::Subagent { .. } => "subagent",
@@ -392,6 +399,9 @@ pub enum WebviewMsg {
   },
   NewSession {
     agent: Option<AgentId>,
+    /// File the new session under this category (one of the window's project) from the start
+    #[serde(default)]
+    category: Option<String>,
   },
   RenameSession {
     id: String,
@@ -406,6 +416,20 @@ pub enum WebviewMsg {
   PinSession {
     id: String,
     pinned: bool,
+  },
+  /// File a session under a category of its own project, or take it out (`None`); filing unpins it
+  SetSessionCategory {
+    id: String,
+    #[serde(default)]
+    category: Option<String>,
+  },
+  CategoryOp {
+    #[serde(flatten)]
+    op: CategoryOp,
+    /// With a `create`: file this session under the new category once it exists (one message, since a view's
+    /// messages run concurrently and a separate filing could land before the category)
+    #[serde(default)]
+    file: Option<String>,
   },
   MoveSession {
     id: String,

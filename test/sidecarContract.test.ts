@@ -226,7 +226,20 @@ describe('sidecar session contract', () => {
     s.view('V', { type: 'deleteSession', id });
     await s.hostMsg('V', 'sessions', m => !m.sessions.some(x => x.id === id));
     s.view('V', { type: 'restoreSession', id });
-    await s.hostMsg('V', 'sessions', m => m.sessions.some(x => x.id === id && x.title === 'Renamed'));
+    const restored = await s.hostMsg('V', 'sessions', m => m.sessions.some(x => x.id === id && x.title === 'Renamed'));
+
+    // Categories: a create that files the (pinned) session in the same message unpins it; a reorder and taking it out again
+    const cwd = restored.sessions.find(x => x.id === id)!.cwd;
+    s.view('V', { type: 'categoryOp', op: 'create', id: 'c-a', name: 'A', cwd, file: id });
+    await s.hostMsg('V', 'categories', m => m.categories.categories.some(c => c.id === 'c-a' && c.name === 'A' && c.cwd === cwd));
+    await s.hostMsg('V', 'sessions', m => m.sessions.some(x => x.id === id && x.category === 'c-a' && !x.pinned));
+    s.view('V', { type: 'categoryOp', op: 'create', id: 'c-b', name: '', cwd });
+    s.view('V', { type: 'categoryOp', op: 'reorder', id: 'c-b', before: 'c-a' });
+    await s.hostMsg('V', 'categories', m => m.categories.categories.map(c => c.id).join() === 'c-b,c-a');
+    s.view('V', { type: 'categoryOp', op: 'collapseProject', cwd, collapsed: true });
+    await s.hostMsg('V', 'categories', m => m.categories.collapsedProjects.includes(cwd));
+    s.view('V', { type: 'setSessionCategory', id, category: null });
+    await s.hostMsg('V', 'sessions', m => m.sessions.some(x => x.id === id && x.category === undefined));
   });
 
   it('a record written by one sidecar reopens in the next one with its transcript', async () => {

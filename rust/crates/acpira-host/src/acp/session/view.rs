@@ -30,6 +30,7 @@ impl AcpSession {
       cwd: self.cwd.clone(),
       updated_at: c.updated_at.clone(),
       pinned: c.pinned,
+      category: c.category.clone(),
       state: None,
     }
   }
@@ -243,6 +244,8 @@ struct RecordRef<'a> {
   commands: &'a [SlashCommand],
   #[serde(skip_serializing_if = "Option::is_none")]
   pinned: Option<bool>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  category: Option<&'a str>,
   #[serde(skip_serializing_if = "std::ops::Not::not")]
   history_pending: bool,
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -276,6 +279,7 @@ impl RecordSource for AcpSession {
       usage: c.state.usage.as_ref(),
       commands: &c.state.commands,
       pinned: c.pinned,
+      category: c.category.as_deref(),
       history_pending: c.lineage.history_pending,
       forked_from: c.lineage.forked_from.as_ref(),
       import_pending: c.lineage.import_pending,

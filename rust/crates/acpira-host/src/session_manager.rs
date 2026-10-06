@@ -156,6 +156,8 @@ struct State {
   // Sessions whose turn ended while no viewer showed them; cleared once a viewer lands on one
   unread: HashSet<String>,
   prefs: SessionPrefs,
+  // The session list's user categories as last read from (or written to) categories.json
+  categories: SessionCategories,
   probe_timer: Option<tokio::task::AbortHandle>,
   touched: HashSet<String>,
   disposed: bool,
@@ -225,6 +227,7 @@ impl SessionManager {
           was_running: HashSet::new(),
           unread: HashSet::new(),
           prefs: SessionPrefs::default(),
+          categories: SessionCategories::default(),
           probe_timer: None,
           touched: HashSet::new(),
           disposed: false,
@@ -364,10 +367,12 @@ impl SessionManager {
     self.deps.store.sweep_trash(TRASH_TTL).await;
     let index = self.deps.store.load_index().await.unwrap_or_default();
     let prefs = self.deps.store.load_prefs().await;
+    let categories = self.deps.store.load_categories().await;
     {
       let mut st = self.state.lock();
       st.index = index;
       st.prefs = prefs;
+      st.categories = categories;
     }
     // The login shell's PATH decides where CLIs are found; a slow rc file only delays the first pass that long,
     // the rest of the run re-probes once it is done
@@ -568,8 +573,45 @@ impl SessionManager {
     self.state.lock().sync_due = None;
     self.sync_index().await;
     self.sync_shapes().await;
+    self.sync_categories().await;
     if let Some(c) = &self.deps.chatgpt {
       c.refresh().await;
+    }
+  }
+
+  /// Categories another window edited reach this one's list
+  async fn sync_categories(&self) {
+    let disk = self.deps.store.load_categories().await;
+    self.set_categories(disk);
+  }
+
+  /// Keep `list` and push it to every page when it differs from what they have
+  fn set_categories(&self, list: SessionCategories) {
+    {
+      let mut st = self.state.lock();
+      if st.categories == list {
+        return;
+      }
+      st.categories = list.clone();
+    }
+    self.emit(HostMsg::Categories { categories: list });
+  }
+
+  pub fn categories(&self) -> SessionCategories {
+    self.state.lock().categories.clone()
+  }
+
+  pub async fn category_op(&self, op: &CategoryOp) -> Result<()> {
+    let list = self.deps.store.update_categories(op).await?;
+    self.set_categories(list);
+    Ok(())
+  }
+
+  /// A category id the session may be filed under: one that exists and belongs to the session's project
+  fn category_for(&self, category: Option<String>, cwd: &str) -> Option<Option<String>> {
+    match category {
+      None => Some(None),
+      Some(id) => self.state.lock().categories.categories.iter().any(|c| c.id == id && c.cwd == cwd).then_some(Some(id)),
     }
   }
 
@@ -978,6 +1020,7 @@ impl SessionManager {
       usage: None,
       commands: vec![],
       pinned: None,
+      category: None,
       history_pending: false,
       forked_from: None,
       import_pending: true,
@@ -1824,11 +1867,26 @@ impl SessionManager {
         }
       }
       W::SelectSession { id } => self.select_session_for(v, &id).await,
-      W::NewSession { agent } => self.new_session_for(v, agent, None).await?,
+      W::NewSession { agent, category } => {
+        self.new_session_for(v, agent, None).await?;
+        // "New session in this category": the fresh (or kept empty) session is filed before its first prompt
+        if let Some(s) = self.current(v)
+          && let Some(Some(id)) = self.category_for(category, &s.cwd)
+        {
+          s.set_category(Some(id));
+        }
+      }
       W::RenameSession { id, title } => self.rename_session(&id, &title).await?,
       W::DeleteSession { id } => self.delete_session(&id).await?,
       W::RestoreSession { id } => self.restore_session(&id).await?,
       W::PinSession { id, pinned } => self.pin_session(&id, pinned).await?,
+      W::SetSessionCategory { id, category } => self.set_session_category(&id, category).await?,
+      W::CategoryOp { op, file } => {
+        self.category_op(&op).await?;
+        if let (CategoryOp::Create { id, .. }, Some(session)) = (&op, file) {
+          self.set_session_category(&session, Some(id.clone())).await?;
+        }
+      }
       W::MoveSession { id } => self.move_session(&id).await?,
       W::ForkSession { session_id, turn_index } => self.fork_session(v, &session_id, turn_index).await?,
       W::ObserveSubagent { session_id, subagent_id } => {
@@ -1992,7 +2050,39 @@ impl SessionManager {
       live.set_pinned(pinned);
       return self.save_now(live, hold).await;
     }
-    self.patch_record(id, |r| r.pinned = pinned.then_some(true)).await
+    self.patch_record(id, |r| {
+      r.pinned = pinned.then_some(true);
+      if pinned {
+        r.category = None;
+      }
+    })
+    .await
+  }
+
+  /// File `id` under `category` (or take it out). A category of another project, or one gone meanwhile, is ignored.
+  /// ChatGPT mirrors have no categories
+  pub async fn set_session_category(&self, id: &str, category: Option<String>) -> Result<()> {
+    if !is_session_id(id) || self.deps.chatgpt.as_ref().is_some_and(|c| c.owns(id)) {
+      return Ok(());
+    }
+    let hold = self.hold_record(id).await?;
+    if let Some(live) = self.live(id) {
+      let Some(category) = self.category_for(category, &live.cwd) else { return Ok(()) };
+      live.set_category(category);
+      return self.save_now(live, hold).await;
+    }
+    let categories = self.categories();
+    self
+      .patch_record(id, move |r| {
+        let fits = category.as_ref().is_none_or(|c| categories.categories.iter().any(|x| &x.id == c && x.cwd == r.cwd));
+        if fits {
+          if category.is_some() {
+            r.pinned = None;
+          }
+          r.category = category;
+        }
+      })
+      .await
   }
 
   /// A live session's edit written through now, while the edit still holds the lease (not on the debounce). A failed
@@ -2121,6 +2211,8 @@ impl SessionManager {
       let mut record = live.to_record();
       self.forget(id);
       record.cwd = cwd;
+      // A category belongs to the project the session leaves
+      record.category = None;
       self.deps.store.flush(Arc::new(record.clone())).await.ok();
       self.replace_summary(&record);
       for v in self.viewers_on(id, None) {
@@ -2129,7 +2221,11 @@ impl SessionManager {
       }
       return Ok(());
     }
-    self.patch_record(id, |r| r.cwd = cwd).await
+    self.patch_record(id, |r| {
+      r.cwd = cwd;
+      r.category = None;
+    })
+    .await
   }
 
   /// Fork from an agent turn: a fresh session whose transcript is the source's turns up to that reply
@@ -2198,6 +2294,8 @@ impl SessionManager {
       usage: None,
       commands: vec![],
       pinned: None,
+      // A fork stays in its source's category
+      category: source.category.clone(),
       history_pending: true,
       forked_from: Some(ForkedFrom { session_id: source.id.clone(), turn_index }),
       import_pending: false,

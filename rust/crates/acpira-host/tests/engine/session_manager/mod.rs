@@ -27,6 +27,7 @@ mod prefs;
 mod windows;
 mod fork;
 mod native;
+mod categories;
 
 type Terminal = (String, Vec<String>, Option<BTreeMap<String, Option<String>>>);
 
