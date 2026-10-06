@@ -22,6 +22,9 @@ pub struct LastTurnParts {
 #[derive(Debug)]
 pub struct ViewPartsData {
   pub id: String,
+  /// The line of views `rev` counts in (one per opened session instance, shared by a mirror's copies); never sent. A patch
+  /// is only computed between two views of the same epoch
+  pub epoch: u64,
   pub rev: i64,
   /// The view without its turns (an empty `turns` array)
   pub head: Box<RawValue>,
@@ -37,6 +40,14 @@ pub struct ViewParts(pub Arc<ViewPartsData>);
 impl PartialEq for ViewParts {
   fn eq(&self, other: &Self) -> bool {
     Arc::ptr_eq(&self.0, &other.0)
+  }
+}
+
+impl ViewPartsData {
+  /// Bytes the encoding holds, what a cache of sent views budgets by
+  pub fn size(&self) -> usize {
+    let last = self.last.as_ref().map_or(0, |l| l.head.get().len() + l.blocks.iter().map(|b| b.get().len()).sum::<usize>());
+    self.head.get().len() + self.turns.iter().map(|t| t.get().len()).sum::<usize>() + last
   }
 }
 
@@ -106,9 +117,9 @@ fn common_prefix(a: &[Box<RawValue>], b: &[Box<RawValue>]) -> usize {
 }
 
 /// The patch that turns `prev` (what the viewer holds) into `next`; None when the whole view is no larger (another
-/// session, or nothing in common)
+/// session or another instance of it, or nothing in common)
 pub fn session_patch(prev: &ViewPartsData, next: &ViewPartsData) -> Option<RawJson> {
-  if prev.id != next.id {
+  if prev.id != next.id || prev.epoch != next.epoch {
     return None;
   }
   let keep = common_prefix(&prev.turns, &next.turns);
@@ -139,6 +150,80 @@ pub fn session_patch(prev: &ViewPartsData, next: &ViewPartsData) -> Option<RawJs
   Some(RawJson::new(&patch))
 }
 
+/// Sessions whose last sent view a page keeps (`src/shared/sessionPatch.ts` `VIEW_CACHE_ENTRIES` keeps at least as many):
+/// switching back to one of them is sent as a patch against that view instead of the whole transcript again
+pub const SENT_VIEWS_MAX: usize = 8;
+/// Encoded bytes the kept views may hold per page; the view on screen stays even when it alone is larger
+pub const SENT_VIEWS_BUDGET: usize = 32 << 20;
+
+/// How one view goes to a page
+pub enum Delivery {
+  /// Older than the view on screen (two flushes racing, a batch after a resync): nothing to send
+  Stale,
+  Whole,
+  Patch(RawJson),
+}
+
+/// What a page holds, as far as patches go: the view on screen and the last view sent of each recent session. Kept in step
+/// with the page's own cache by sending through it in order; a page that cannot apply a patch asks for the whole view
+/// (`forget` then makes the next one whole)
+#[derive(Default)]
+pub struct SentViews {
+  /// The view on screen; None after anything without parts replaced it (a ChatGPT mirror, a page that does not patch)
+  current: Option<ViewParts>,
+  /// Least recently sent first, with each encoding's size
+  kept: Vec<(ViewParts, usize)>,
+  bytes: usize,
+}
+
+impl SentViews {
+  /// The page starts over (init): it holds nothing
+  pub fn clear(&mut self) {
+    *self = SentViews::default();
+  }
+
+  /// The page could not apply a patch for `id`: whatever it holds of that session is unknown
+  pub fn forget(&mut self, id: &str) {
+    if self.current.as_ref().is_some_and(|c| c.0.id == id) {
+      self.current = None;
+    }
+    if let Some(i) = self.kept.iter().position(|(v, _)| v.0.id == id) {
+      self.bytes -= self.kept.remove(i).1;
+    }
+  }
+
+  /// Record that `next` goes to the page and say how: a patch against the last view of that session the page was sent,
+  /// or the whole view. None is a view with nothing to patch against (no parts), which replaces the one on screen
+  pub fn deliver(&mut self, next: Option<&ViewParts>) -> Delivery {
+    let Some(next) = next else {
+      self.current = None;
+      return Delivery::Whole;
+    };
+    if let Some(cur) = &self.current
+      && cur.0.id == next.0.id
+      && next.0.rev < cur.0.rev
+    {
+      return Delivery::Stale;
+    }
+    let patch = self.kept.iter().find(|(v, _)| v.0.id == next.0.id).and_then(|(prev, _)| session_patch(&prev.0, &next.0));
+    self.forget(&next.0.id);
+    let size = next.0.size();
+    self.kept.push((next.clone(), size));
+    self.bytes += size;
+    self.current = Some(next.clone());
+    // The oldest go first; the one just sent stays even alone over budget, it is what the next push patches against
+    while self.kept.len() > 1 && (self.kept.len() > SENT_VIEWS_MAX || self.bytes > SENT_VIEWS_BUDGET) {
+      self.bytes -= self.kept.remove(0).1;
+    }
+    patch.map_or(Delivery::Whole, Delivery::Patch)
+  }
+
+  #[cfg(test)]
+  fn kept_ids(&self) -> Vec<&str> {
+    self.kept.iter().map(|(v, _)| v.0.id.as_str()).collect()
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -152,7 +237,7 @@ mod tests {
     let mut last = turns.pop();
     let before: Vec<&Turn> = turns.iter().collect();
     let (turns, last) = encode_turns(&before, last.as_mut());
-    ViewPartsData { id: "s".into(), rev, head: raw(&json!({ "id": "s", "rev": rev, "turns": [] })), turns, last }
+    ViewPartsData { id: "s".into(), epoch: 1, rev, head: raw(&json!({ "id": "s", "rev": rev, "turns": [] })), turns, last }
   }
 
   fn user(id: &str) -> Turn {
@@ -215,12 +300,68 @@ mod tests {
     assert_eq!((p["keep"].clone(), p["turns"].clone()), (json!(1), json!([])));
   }
 
+  fn sent(id: &str, epoch: u64, rev: i64, turns: Vec<Turn>) -> ViewParts {
+    let mut p = parts(rev, turns);
+    p.id = id.into();
+    p.epoch = epoch;
+    ViewParts(std::sync::Arc::new(p))
+  }
+
+  fn kind(d: &Delivery) -> &'static str {
+    match d {
+      Delivery::Stale => "stale",
+      Delivery::Whole => "whole",
+      Delivery::Patch(_) => "patch",
+    }
+  }
+
+  #[test]
+  fn switching_back_to_a_kept_session_is_a_patch_against_its_last_sent_view() {
+    let mut v = SentViews::default();
+    let long = vec![user("u1"), agent(&["a", "b"])];
+    assert_eq!(kind(&v.deliver(Some(&sent("a", 1, 1, long.clone())))), "whole");
+    assert_eq!(kind(&v.deliver(Some(&sent("b", 2, 1, vec![user("x")])))), "whole");
+    // back to a: only what changed since the page last saw it
+    let d = v.deliver(Some(&sent("a", 1, 2, long.clone())));
+    let Delivery::Patch(p) = &d else { panic!("expected a patch, got {}", kind(&d)) };
+    let p = value(p);
+    assert_eq!((p["base"].clone(), p["keep"].clone(), p["turns"].clone()), (json!(1), json!(2), json!([])));
+    // a reopened instance (another epoch) is sent whole even at a lower rev: it is not the view on screen
+    assert_eq!(kind(&v.deliver(Some(&sent("b", 3, 0, vec![user("x")])))), "whole");
+    // the view on screen never goes back to an older rev
+    assert_eq!(kind(&v.deliver(Some(&sent("b", 3, -1, vec![user("x")])))), "stale");
+  }
+
+  #[test]
+  fn kept_views_are_bounded_by_count_and_bytes_but_the_view_on_screen_stays() {
+    let mut v = SentViews::default();
+    for i in 0..SENT_VIEWS_MAX + 2 {
+      v.deliver(Some(&sent(&format!("s{i}"), i as u64, 1, vec![user("u")])));
+    }
+    assert_eq!(v.kept_ids().len(), SENT_VIEWS_MAX);
+    assert_eq!(v.kept_ids()[0], "s2");
+    let huge = "x".repeat(SENT_VIEWS_BUDGET + 1);
+    v.deliver(Some(&sent("big", 99, 1, vec![agent(&[huge.as_str()])])));
+    assert_eq!(v.kept_ids(), vec!["big"]);
+    // forget (a failed patch on the page) makes the next view of that session whole
+    v.forget("big");
+    assert_eq!(kind(&v.deliver(Some(&sent("big", 99, 2, vec![agent(&[huge.as_str()])])))), "whole");
+    // a view without parts replaces the one on screen but keeps the rest
+    v.deliver(Some(&sent("s9", 9, 1, vec![user("u")])));
+    assert_eq!(kind(&v.deliver(None)), "whole");
+    assert_eq!(kind(&v.deliver(Some(&sent("s9", 9, 2, vec![user("u")])))), "patch");
+  }
+
   #[test]
   fn another_session_or_nothing_in_common_is_not_patched() {
     let prev = parts(1, vec![user("u1")]);
     let mut other = parts(2, vec![user("u1")]);
     other.id = "t".into();
     assert!(session_patch(&prev, &other).is_none());
+    // the same session reopened (a new instance) counts its revs again: never patched across
+    let mut reopened = parts(2, vec![user("u1")]);
+    reopened.epoch = 2;
+    assert!(session_patch(&prev, &reopened).is_none());
     assert!(session_patch(&prev, &parts(2, vec![user("u9")])).is_none());
     // an unchanged transcript still patches (controls, usage …), with no turns at all
     let p = value(&session_patch(&prev, &parts(2, vec![user("u1")])).unwrap());

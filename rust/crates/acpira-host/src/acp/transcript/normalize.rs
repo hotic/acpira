@@ -1259,7 +1259,7 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   {
     let lines = diff_lines("", &content);
     let add = lines.iter().filter(|l| l.kind == DiffKind::Add).count() as u64;
-    let diff = ToolContent::Diff { lines, source: Some(DiffSource { path, old_text: String::new(), new_text: content }) };
+    let diff = ToolContent::Diff { lines, source: Some(DiffSource { path, old_text: String::new(), new_text: content, omitted: false }) };
     let items =
       u.get("content").and_then(Value::as_array).filter(|a| !a.is_empty()).map(|a| tool_contents(a, ctx.as_deref())).unwrap_or_default();
     let receipts: Vec<ToolContent> = items.into_iter().filter(|x| matches!(x, ToolContent::Text { text } if !text.is_empty())).collect();
@@ -1744,7 +1744,7 @@ fn tool_contents(items: &[Value], ctx: Option<&ToolCtx>) -> Vec<ToolContent> {
         let new = str_of(item, "newText").unwrap_or("").to_owned();
         out.push(ToolContent::Diff {
           lines: diff_lines(&old, &new),
-          source: Some(DiffSource { path: str_of(item, "path").unwrap_or("").to_owned(), old_text: old, new_text: new }),
+          source: Some(DiffSource { path: str_of(item, "path").unwrap_or("").to_owned(), old_text: old, new_text: new, omitted: false }),
         });
       }
       Some("content") => {

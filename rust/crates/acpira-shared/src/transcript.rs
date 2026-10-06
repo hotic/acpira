@@ -278,12 +278,53 @@ pub struct ImageRef {
   pub uri: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The whole files behind a diff. The record keeps both texts; a page is sent the path only (`omitted`), since an edit
+/// carries every byte of the file twice and a long session's view ran to megabytes of them over Remote-SSH. The page
+/// renders the diff from its `lines` and asks for the texts when it needs them (`diffSource`)
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffSource {
   pub path: String,
+  #[serde(default)]
   pub old_text: String,
+  #[serde(default)]
   pub new_text: String,
+  /// Read back from a page encoding: the texts were left out and are empty here
+  #[serde(default)]
+  pub omitted: bool,
+}
+
+thread_local! {
+  static VIEW_ENCODING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Serialize what `f` serializes the way a page gets it: diff sources without their texts. Scoped to this thread and
+/// restored on return (also when `f` panics), so a record written elsewhere is never affected
+pub fn encode_for_view<R>(f: impl FnOnce() -> R) -> R {
+  struct Restore(bool);
+  impl Drop for Restore {
+    fn drop(&mut self) {
+      VIEW_ENCODING.with(|v| v.set(self.0));
+    }
+  }
+  let _restore = Restore(VIEW_ENCODING.with(|v| v.replace(true)));
+  f()
+}
+
+impl Serialize for DiffSource {
+  fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+    use serde::ser::SerializeStruct;
+    let omit = self.omitted || VIEW_ENCODING.with(|v| v.get());
+    let mut m = s.serialize_struct("DiffSource", if omit { 2 } else { 3 })?;
+    m.serialize_field("path", &self.path)?;
+    if omit {
+      m.serialize_field("omitted", &true)?;
+    } else {
+      m.serialize_field("oldText", &self.old_text)?;
+      m.serialize_field("newText", &self.new_text)?;
+    }
+    m.end()
+  }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1132,4 +1173,26 @@ pub struct SessionView {
   pub subagents: Option<Vec<SubagentSummary>>,
   pub created_at: String,
   pub updated_at: String,
+}
+
+#[cfg(test)]
+mod diff_source_tests {
+  use super::*;
+  use serde_json::json;
+
+  #[test]
+  fn a_page_encoding_leaves_the_file_texts_out_and_a_record_keeps_them() {
+    let src = DiffSource { path: "/a.ts".into(), old_text: "old".into(), new_text: "new".into(), omitted: false };
+    let diff = ToolContent::Diff { lines: vec![], source: Some(src) };
+    assert_eq!(serde_json::to_value(&diff).unwrap()["source"], json!({ "path": "/a.ts", "oldText": "old", "newText": "new" }));
+    let page = encode_for_view(|| serde_json::to_value(&diff).unwrap());
+    assert_eq!(page["source"], json!({ "path": "/a.ts", "omitted": true }));
+    // the scope ends with the call: the next record write is whole again
+    assert_eq!(serde_json::to_value(&diff).unwrap()["source"]["newText"], "new");
+    // read back, an omitted source stays omitted rather than passing for two empty files
+    let back: ToolContent = serde_json::from_value(page).unwrap();
+    let ToolContent::Diff { source: Some(s), .. } = back else { panic!("diff expected") };
+    assert!(s.omitted && s.old_text.is_empty());
+    assert_eq!(serde_json::to_value(&s).unwrap(), json!({ "path": "/a.ts", "omitted": true }));
+  }
 }

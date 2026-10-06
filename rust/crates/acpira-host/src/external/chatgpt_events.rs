@@ -295,7 +295,7 @@ pub fn apply_chatgpt_event(record: &ChatGptRecord, value: &Value, now: i64) -> R
             );
             b.content = Some(ToolContent::Diff {
               lines: diff_lines(&old, &new),
-              source: Some(DiffSource { path: path.clone(), old_text: old, new_text: new }),
+              source: Some(DiffSource { path: path.clone(), old_text: old, new_text: new, omitted: false }),
             });
             b.locations = Some(vec![Location { path, line: None }]);
           }

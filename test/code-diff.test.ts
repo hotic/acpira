@@ -9,8 +9,18 @@ describe('production code details', () => {
     const diff = block?.type === 'tool_call' ? block.content : undefined;
     if (diff?.type !== 'diff') throw new Error('Missing diff');
     expect(diff.lines.some(line => line.kind === 'hunk')).toBe(true);
-    expect(diffCopyText(diff.lines, diff.source)).toBe(diff.source!.newText);
+    const source = diff.source;
+    if (!source || source.omitted) throw new Error('Missing source');
+    expect(diffCopyText(diff.lines, source)).toBe(source.newText);
     expect(diffCopyText(diff.lines)).not.toContain('value0 =');
+    // a page view's source comes without its texts: the visible lines stand in until the host is asked
+    expect(diffCopyText(diff.lines, { path: source.path, omitted: true })).toBe(diffCopyText(diff.lines));
+  });
+
+  it('highlights a page view whose source omits the file texts from the visible segments', async () => {
+    const { lines } = diffCase('answer');
+    const rows = await highlightDiff(lines, { path: 'answer.ts', omitted: true });
+    expect(rows.some(row => row.tokens.some(token => token.dark))).toBe(true);
   });
 
   it('preserves Python multiline grammar across omitted lines and both source sides', async () => {

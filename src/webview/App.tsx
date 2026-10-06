@@ -1,12 +1,12 @@
 import type { ChatGptIntegrationStatus } from '@shared/chatgptIntegration';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountAction, EditTurnRequest, FileHit, HostMsg, InitState, NativeSessionsState, SessionHit, WebviewMsg } from '@shared/protocol';
-import type { AccountInfo, AgentId, AgentInfo, ConfigControl, SessionSummary, SessionView, Turn } from '@shared/transcript';
+import type { AccountInfo, AgentId, AgentInfo, ConfigControl, FullDiffSource, SessionSummary, SessionView, Turn } from '@shared/transcript';
 import type { HiddenMap, SettingsView } from '@shared/settings';
 import type { AgentInventory } from '@shared/inventory';
 import type { Locale } from '@shared/i18n';
-import { applySession, reuse } from '@shared/reuse';
-import { applySessionPatch } from '@shared/sessionPatch';
+import { reuse } from '@shared/reuse';
+import { SessionViews } from './sessionViews';
 import { BASE_APPEARANCE, type Appearance } from './appearance';
 import { LocaleContext, setLocale, t } from './i18n';
 import { Shell, type ShellHandlers } from './chat/Shell';
@@ -60,6 +60,18 @@ const searchSessions = (query: string) => new Promise<SessionHit[]>(resolve => {
   post({ type: 'searchSessions', query, seq });
 });
 
+// The whole files behind a diff, which page views leave out: asked for when a diff's source is copied
+const DIFF_SOURCE_TIMEOUT = 10000;
+let diffSeq = 0;
+const diffWaits = new Map<number, (source: FullDiffSource | undefined) => void>();
+const settleDiff = (seq: number, source: FullDiffSource | undefined) => { diffWaits.get(seq)?.(source); diffWaits.delete(seq); };
+const diffSource = (sessionId: string, toolCallId: string, nth: number) => new Promise<FullDiffSource | undefined>(resolve => {
+  const seq = ++diffSeq;
+  diffWaits.set(seq, resolve);
+  setTimeout(() => settleDiff(seq, undefined), DIFF_SOURCE_TIMEOUT);
+  post({ type: 'diffSource', sessionId, toolCallId, nth, seq });
+});
+
 type InitEnv = Pick<InitState, 'host' | 'home' | 'cwd' | 'blobBase'>;
 
 // Root of the real webview: consumes the whole state pushed by the host, posts actions back via postMessage unchanged.
@@ -82,6 +94,8 @@ export function App() {
   const activeId = useRef<string | undefined>(undefined);
   // A whole view was asked for after a session patch did not fit; cleared when one lands
   const resyncAsked = useRef(false);
+  // The view on screen and the last view of each recent session, kept in step with the host's record of them
+  const views = useRef(new SessionViews()).current;
   activeId.current = session?.id;
   // Where an editor range pinned by "Add to chat" is labeled relative to
   const cwdRef = useRef<string>('');
@@ -135,7 +149,7 @@ export function App() {
           break;
         }
         // A sidecar that came back answers nothing it was asked before: pending controls requests go out again
-        case 'init': controlsAsked.current.clear(); setInit({ host: m.state.host, home: m.state.home, cwd: m.state.cwd, blobBase: m.state.blobBase }); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setHidden(m.state.hidden); setSession(current => m.state.active ? applySession(current, m.state.active) : undefined); setSettings(m.state.settings); setLocale(m.state.locale); setLoc(m.state.locale); break;
+        case 'init': controlsAsked.current.clear(); setInit({ host: m.state.host, home: m.state.home, cwd: m.state.cwd, blobBase: m.state.blobBase }); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setHidden(m.state.hidden); setSession(views.init(m.state.active)); setSettings(m.state.settings); setLocale(m.state.locale); setLoc(m.state.locale); break;
         case 'appearance': setAppearance(m.appearance); break;
         // An agent whose executable appeared or vanished has a stale inventory (binary path, version); drop it so the page rescans
         case 'agents': {
@@ -150,18 +164,15 @@ export function App() {
         case 'accountActions': setAccountActions(m.actions); break;
         case 'hidden': setHidden(m.hidden); break;
         // Keep unchanged turns / blocks by reference so memoized history skips re-rendering during streaming
-        case 'session': resyncAsked.current = false; setSession(current => applySession(current, m.session)); break;
+        case 'session': resyncAsked.current = false; setSession(views.whole(m.session)); break;
         // Only the changed tail of the transcript comes over; kept turns stay the same objects, so reuse skips them at once.
+        // Switching back to a recently shown session is a patch against the view kept from then (sessionViews.ts).
         // A patch that does not fit the held view asks for the whole view (once, until it lands); a stale one is dropped
         case 'sessionPatch': {
-          const patch = m.patch;
-          setSession(current => {
-            const next = applySessionPatch(current, patch);
-            if (next) return applySession(current, next);
-            if (current?.id === patch.id && current.rev != null && current.rev >= (patch.view.rev ?? 0)) return current;
-            if (!resyncAsked.current) { resyncAsked.current = true; queueMicrotask(() => post({ type: 'resync' })); }
-            return current;
-          });
+          const next = views.patch(m.patch);
+          if (next === 'stale') break;
+          if (next) { setSession(next); break; }
+          if (!resyncAsked.current) { resyncAsked.current = true; queueMicrotask(() => post({ type: 'resync' })); }
           break;
         }
         case 'subagent': {
@@ -186,6 +197,7 @@ export function App() {
         case 'chatgptStatus': setChatgptStatus(m.status); break;
         case 'files': settleFiles(m.seq, m.files); break;
         case 'sessionHits': settleSessions(m.seq, m.hits); break;
+        case 'diffSource': settleDiff(m.seq, m.source); break;
         case 'editorSelection': setEditorSelection(m.selection); break;
         case 'editorCopy': setEditorCopy(m.selection); break;
         case 'addSelection': {
@@ -236,6 +248,7 @@ export function App() {
     send: (text, attachments, steer) => post({ type: 'send', sessionId: activeId.current, text, ...(attachments.length ? { attachments } : {}), ...(steer ? { steer } : {}) }),
     searchFiles,
     searchSessions,
+    diffSource,
     stop: () => post({ type: 'stop', sessionId: activeId.current }),
     permission: (sessionId, blockId, optionId) => post({ type: 'permission', sessionId, blockId, optionId }),
     answer: (sessionId, blockId, answers, skip) => post({ type: 'answer', sessionId, blockId, answers, ...(skip ? { skip } : {}) }),

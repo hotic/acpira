@@ -1647,7 +1647,9 @@ impl SessionManager {
   /// Show `record` read-only to the viewers on `id` and poll: the copy follows the record the other engine keeps saving,
   /// and once its lease comes free the session opens here like any other (the viewers re-select it)
   fn start_mirror(self: &Arc<Self>, id: &str, record: SessionRecord, note: String, elsewhere: bool) {
-    let mirror = AcpSession::mirror(record, self.mirror_deps(), note.clone(), MIRROR_REV_BASE, elsewhere);
+    // One epoch for this copy and every copy the poll below makes: their revs grow, so a viewer is patched between them
+    let epoch = crate::acp::session::next_view_epoch();
+    let mirror = AcpSession::mirror(record, self.mirror_deps(), note.clone(), MIRROR_REV_BASE, elsewhere, epoch);
     let fresh = self.state.lock().mirrors.insert(id.to_owned(), mirror.clone()).is_none();
     self.log(&format!("session {id}: lease not taken, mirroring its record ({note})"));
     self.emit_session(&mirror);
@@ -1694,7 +1696,7 @@ impl SessionManager {
         seen = stamp;
         if let Ok(record) = m.deps.store.load_detailed(&id).await {
           rev += 1;
-          let copy = AcpSession::mirror(record, m.mirror_deps(), note.clone(), rev, elsewhere);
+          let copy = AcpSession::mirror(record, m.mirror_deps(), note.clone(), rev, elsewhere, epoch);
           let current = {
             let mut st = m.state.lock();
             match st.mirrors.get_mut(&id) {
@@ -1731,6 +1733,12 @@ impl SessionManager {
   pub async fn edit_turn(&self, edit: EditTurnRequest) -> Result<()> {
     let s = self.live(&edit.session_id).ok_or_else(|| anyhow!(t("history.unavailable")))?;
     s.edit_turn(edit).await
+  }
+
+  /// The whole files behind a diff a page was sent without them: the open session (or the read-only copy shown for it)
+  /// holds them. A ChatGPT mirror's view carries its sources whole and never asks
+  pub fn diff_source(&self, session_id: &str, tool_call_id: &str, nth: usize) -> Option<DiffSource> {
+    self.live(session_id).or_else(|| self.mirror_of(session_id))?.diff_source(tool_call_id, nth)
   }
 
   pub fn plan_document(&self, session_id: &str, plan_id: &str) -> Option<PlanDocumentBlock> {

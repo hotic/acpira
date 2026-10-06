@@ -9,6 +9,12 @@ export function visibleToolContents(block: ToolCallBlock): ToolContent[] {
   return items.filter(item => item.type !== 'text' || !EDIT_SUCCESS_RECEIPTS.has(item.text.trim()));
 }
 
+// Which diff of its tool call `items[i]` is, the `nth` the host looks a diff source up by: receipts are the only items
+// visibleToolContents drops, so the count matches the host's over `contents` (or `content` alone)
+export function diffIndex(items: ToolContent[], i: number): number {
+  return items.slice(0, i).filter(item => item.type === 'diff').length;
+}
+
 // Strip only a trailing location suffix; preserve drive letters and full paths.
 export function fileReference(hit: string): { path: string; line?: number } {
   const match = /^(.+?):(\d+)(?:[–-]\d+)?(?::\d+)?$/.exec(hit);

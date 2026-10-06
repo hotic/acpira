@@ -149,11 +149,16 @@ export type ToolContent =
   | { type: 'list'; items: string[] }
   | ({ type: 'image' } & ImageRef);
 
-export interface DiffSource {
+// The whole files behind a diff. Records keep both texts; a page view carries the path only (`omitted`), since an edit
+// holds every byte of the file twice and long sessions ran to megabytes of them over Remote-SSH. The page renders the
+// diff from its `lines` and asks for the texts when it needs them (WebviewMsg `diffSource`)
+export interface FullDiffSource {
   path: string;
   oldText: string;
   newText: string;
+  omitted?: undefined;
 }
+export type DiffSource = FullDiffSource | { path: string; omitted: true };
 
 export interface DiffLine {
   kind: 'hunk' | 'add' | 'del' | 'ctx';

@@ -1,8 +1,13 @@
 import { createContext } from 'react';
+import type { FullDiffSource } from '@shared/transcript';
 
 export type FileLink = { path: string; line?: number };
 
 export const OpenToolFileContext = createContext<((path: string, line?: number) => void) | undefined>(undefined);
+
+// The whole files behind the `nth` diff of a tool call on the session on screen: page views carry diff sources without
+// their texts, a copy of the source asks for them
+export const DiffSourceContext = createContext<((toolCallId: string, nth: number) => Promise<FullDiffSource | undefined>) | undefined>(undefined);
 
 // AIR asyncTasks: the stop affordance on a tool row asks the adapter to stop the task on the session that owns it
 export const AsyncTaskStopContext = createContext<((taskId: string) => void) | undefined>(undefined);

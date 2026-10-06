@@ -18,7 +18,11 @@ export function useCopyAction(source: unknown, write: () => Promise<void>): { st
   return { state, copy };
 }
 
-export function useCopied(text: string): { state: CopyState; copy: () => Promise<void> } {
-  const write = useCallback(() => navigator.clipboard.writeText(text), [text]);
+// `read`, when given, supplies the text at click time (fetched from the host): the clipboard is handed the pending text at
+// once, inside the click's user activation, which a write after the fetch would have outlived
+export function useCopied(text: string, read?: () => Promise<string>): { state: CopyState; copy: () => Promise<void> } {
+  const write = useCallback(() => read
+    ? navigator.clipboard.write([new ClipboardItem({ 'text/plain': read().then(value => new Blob([value], { type: 'text/plain' })) })])
+    : navigator.clipboard.writeText(text), [text, read]);
   return useCopyAction(text, write);
 }

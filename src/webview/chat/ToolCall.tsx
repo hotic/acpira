@@ -19,7 +19,7 @@ import { GeneratedImages } from './GeneratedImage';
 import { TerminalOutput, ToolOutput } from './Terminal';
 import { toolTarget, toolVerb } from './folding';
 import { AsyncTaskStopContext, OpenToolFileContext } from './fileLinks';
-import { fileReference, toolFiles, visibleToolContents } from './toolDetails';
+import { diffIndex, fileReference, toolFiles, visibleToolContents } from './toolDetails';
 import { useToolSeconds } from './useToolSeconds';
 import { commandDuration } from './commandDuration';
 import { useAutoFold } from './autoFold';
@@ -222,7 +222,8 @@ function ToolBody({ block, items, command }: { block: ToolCallBlock; items: Retu
   if (items.length > 1) {
     return <div className="flex flex-col gap-gap">
       {items.map((item, i) => {
-        if (item.type === 'diff') return <DiffBlock key={i} lines={item.lines} source={item.source} path={item.source?.path ?? block.locations?.[0]?.path ?? block.target} />;
+        if (item.type === 'diff') return <DiffBlock key={i} lines={item.lines} source={item.source} path={item.source?.path ?? block.locations?.[0]?.path ?? block.target}
+          locate={{ toolCallId: block.id, nth: diffIndex(items, i) }} />;
         if (item.type === 'list') return <ResultList key={i} items={item.items} kind={block.kind} />;
         if (item.type === 'image') return <AgentImage key={i} image={item} />;
         return <ToolOutput key={i} block={block} text={item.text} />;
@@ -231,7 +232,7 @@ function ToolBody({ block, items, command }: { block: ToolCallBlock; items: Retu
   }
   const c = items[0];
   if (!c || c.type === 'text') return null;
-  if (c.type === 'diff') return <DiffBlock lines={c.lines} source={c.source} path={block.locations?.[0]?.path ?? block.target} />;
+  if (c.type === 'diff') return <DiffBlock lines={c.lines} source={c.source} path={block.locations?.[0]?.path ?? block.target} locate={{ toolCallId: block.id, nth: 0 }} />;
   if (c.type === 'list') return <ResultList items={c.items} kind={block.kind} />;
   return <AgentImage image={c} />;
 }

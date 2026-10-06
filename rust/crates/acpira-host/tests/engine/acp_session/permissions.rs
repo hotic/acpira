@@ -23,6 +23,13 @@ async fn permission_card_approve_then_the_tool_completes_with_a_normalized_diff_
   let tc2 = blocks.iter().find(|b| b["id"] == "tc2").unwrap();
   expect_match(tc2, json!({ "kind": "edit", "target": "a.ts", "diffStat": { "add": 2, "del": 1 } }));
   expect_eq(&vw["usage"], json!({ "used": 1234, "size": 100000, "cost": 0.01 }));
+  // The page's view leaves the edit's file texts out; the full source is fetched on demand by tool call id + diff index
+  let acpira_shared::protocol::HostMsg::Session { session, .. } = s.view_msg() else { panic!("not a session view") };
+  let page = v(&session);
+  let sent = agent_blocks(&page).into_iter().find(|b| b["id"] == "tc2").unwrap();
+  expect_eq(&sent["content"]["source"], json!({ "path": "/repo/a.ts", "omitted": true }));
+  expect_eq(s.diff_source("tc2", 0).unwrap(), json!({ "path": "/repo/a.ts", "oldText": "a\nb\nc\n", "newText": "a\nB\nc\nd\n" }));
+  assert!(s.diff_source("tc2", 1).is_none() && s.diff_source("tc1", 0).is_none());
 }
 
 // OpenCode's write: the permission request embeds a low-fidelity copy of the call (kind 'other', the parent dir as
