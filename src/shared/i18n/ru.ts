@@ -110,6 +110,7 @@ export const ru = {
   'code.copySource': 'Копировать изменённый код',
   'code.copyVisible': 'Копировать видимый код',
   'code.copied': 'Скопировано',
+  'code.copyCode': 'Копировать код',
   'code.copyFailed': 'Не удалось скопировать, попробуйте снова',
   'common.image': 'Изображение',
   'image.copy': 'Копировать изображение',

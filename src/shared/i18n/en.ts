@@ -107,6 +107,7 @@ export const en = {
   'code.copySource': 'Copy updated code',
   'code.copyVisible': 'Copy visible code',
   'code.copied': 'Copied',
+  'code.copyCode': 'Copy code',
   'code.copyFailed': 'Copy failed, try again',
   'common.image': 'Image',
   'image.copy': 'Copy image',

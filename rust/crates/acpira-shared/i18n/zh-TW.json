@@ -105,6 +105,7 @@
   "code.copySource": "複製修改後程式碼",
   "code.copyVisible": "複製可見程式碼",
   "code.copied": "已複製",
+  "code.copyCode": "複製程式碼",
   "code.copyFailed": "複製失敗，請重試",
   "common.image": "圖片",
   "image.copy": "複製圖片",

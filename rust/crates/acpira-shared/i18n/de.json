@@ -105,6 +105,7 @@
   "code.copySource": "Geänderten Code kopieren",
   "code.copyVisible": "Sichtbaren Code kopieren",
   "code.copied": "Kopiert",
+  "code.copyCode": "Code kopieren",
   "code.copyFailed": "Kopieren fehlgeschlagen, bitte erneut versuchen",
   "common.image": "Bild",
   "image.copy": "Bild kopieren",

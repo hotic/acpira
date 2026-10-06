@@ -19,8 +19,11 @@ describe('markdown prose', () => {
   it('leaves an unlabelled fence uncoloured', () => {
     const commit = "fix(webview): keep a steered message inside the running turn's stream\n\n- the fold's clip no longer shaves it";
     const html = renderToStaticMarkup(createElement(CodeBlock, { code: commit }));
-    expect(html).not.toContain('<span');
+    // Only the <code> body matters: the hover copy button beside it renders its own status span
+    const body = /<code[^>]*>[\s\S]*<\/code>/.exec(html)?.[0] ?? '';
+    expect(body).not.toContain('<span');
     expect(html).not.toContain('code-syntax');
+    expect(html).toContain('aria-label="Copy code"');
     expect(html).toContain('turn&#x27;s stream');
   });
 });

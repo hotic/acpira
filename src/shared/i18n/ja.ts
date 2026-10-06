@@ -109,6 +109,7 @@ export const ja = {
   'code.copySource': '変更後のコードをコピー',
   'code.copyVisible': '表示中のコードをコピー',
   'code.copied': 'コピーしました',
+  'code.copyCode': 'コードをコピー',
   'code.copyFailed': 'コピーに失敗しました。もう一度お試しください',
   'common.image': '画像',
   'image.copy': '画像をコピー',

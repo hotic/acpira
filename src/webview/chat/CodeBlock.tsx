@@ -43,7 +43,12 @@ export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   }, [code, language]);
 
   const usable = language && colored?.language === language ? colored : undefined;
-  return <CodeSurface><code className={usable ? 'code-syntax' : undefined}>{usable ? syntaxChildren(code, usable) : code}</code></CodeSurface>;
+  // The wrapper carries the hover group and anchors the copy button outside the scrolling <pre>,
+  // so the button stays pinned to the top-right corner while long lines scroll sideways
+  return <div className="group/code-output relative min-w-0">
+    <OutputCopy text={code} label={t('code.copyCode')} />
+    <CodeSurface><code className={usable ? 'code-syntax' : undefined}>{usable ? syntaxChildren(code, usable) : code}</code></CodeSurface>
+  </div>;
 }
 
 // Coloured lines for the part of `code` that the last tokenized text covers. While a fence streams, the new text
