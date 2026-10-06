@@ -1078,8 +1078,52 @@ pub struct SessionSummary {
   pub updated_at: String,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub pinned: Option<bool>,
+  /// The user category (`SessionCategory.id`) the session is filed under; pinned and filed are exclusive. An id no
+  /// category carries any more (deleted in some window) reads as unfiled
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub category: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub state: Option<SummaryState>,
+}
+
+/// A user-made group of sessions inside one project (`cwd`), shown between the project and its sessions
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionCategory {
+  pub id: String,
+  pub name: String,
+  pub cwd: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub collapsed: Option<bool>,
+}
+
+/// Every category in list order, plus the projects folded in the "all projects" list. Shared by every window
+/// (`sessions/categories.json`)
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionCategories {
+  #[serde(default)]
+  pub categories: Vec<SessionCategory>,
+  #[serde(default)]
+  pub collapsed_projects: Vec<String>,
+}
+
+/// One edit of the category list, applied under the file lock to what is on disk so concurrent windows compose
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum CategoryOp {
+  /// The page picks the id, so it can file a session or start renaming the new row right away
+  Create { id: String, name: String, cwd: String },
+  Rename { id: String, name: String },
+  Delete { id: String },
+  Collapse { id: String, collapsed: bool },
+  /// Move `id` before `before` (same project), or to the end of its project's categories
+  Reorder {
+    id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    before: Option<String>,
+  },
+  CollapseProject { cwd: String, collapsed: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

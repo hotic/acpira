@@ -140,6 +140,7 @@ pub(crate) struct Core {
   pub account_id: Option<String>,
   pub updated_at: String,
   pub pinned: Option<bool>,
+  pub category: Option<String>,
   pub acp_session_id: Option<String>,
   pub proc: Option<Arc<AgentProcess>>,
   /// Bumped with every process replacement: callbacks and answers of an older generation are ignored
@@ -272,6 +273,7 @@ impl AcpSession {
           account_id: record.account_id,
           updated_at: record.updated_at,
           pinned: record.pinned,
+          category: record.category,
           acp_session_id: record.acp_session_id,
           proc: None,
           proc_gen: 0,
@@ -340,6 +342,7 @@ impl AcpSession {
         usage: None,
         commands: vec![],
         pinned: None,
+        category: None,
         history_pending: false,
         forked_from: None,
         import_pending: false,
@@ -483,9 +486,23 @@ impl AcpSession {
     self.touch(&mut c);
   }
 
+  /// Pinned and filed are exclusive: pinning takes the session out of its category
   pub fn set_pinned(&self, pinned: bool) {
     let mut c = self.core.lock();
     c.pinned = pinned.then_some(true);
+    if pinned {
+      c.category = None;
+    }
+    self.touch(&mut c);
+  }
+
+  /// Filing keeps the session's time (the list order does not jump) and unpins it
+  pub fn set_category(&self, category: Option<String>) {
+    let mut c = self.core.lock();
+    if category.is_some() {
+      c.pinned = None;
+    }
+    c.category = category;
     self.touch(&mut c);
   }
 }

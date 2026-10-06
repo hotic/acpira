@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Ellipsis, History, PanelLeft, PanelRight, Plus, Settings2, UserRound } from 'lucide-react';
-import type { AccountInfo, AgentInfo, SessionSummary } from '@shared/transcript';
+import type { AccountInfo, AgentInfo, SessionCategories, SessionSummary } from '@shared/transcript';
 import type { NativeSessionsState } from '@shared/protocol';
 import type { SessionScope } from '@shared/settings';
 import { launchable } from '@shared/agentOrder';
@@ -19,6 +19,7 @@ import type { ShellHandlers } from './Shell';
 export interface HeaderProps {
   title: string;
   sessions: SessionSummary[];
+  categories?: SessionCategories;
   agent: AgentInfo;
   agents: AgentInfo[];
   // Accounts across all agents; the panel filters to the current agent's
@@ -30,7 +31,7 @@ export interface HeaderProps {
   sessionScope?: SessionScope;
   // The import popover's current listing, handed on to the session list
   nativeSessions?: NativeSessionsState;
-  on: Pick<ShellHandlers, 'selectSession' | 'newSession' | 'renameSession' | 'deleteSession' | 'pinSession' | 'moveSession' | 'exportSession' | 'openInEditor' | 'selectAccount' | 'addAccount' | 'removeAccount' | 'refreshQuota' | 'unlockCredentials' | 'listNativeSessions' | 'importNativeSession' | 'searchSessions'>;
+  on: Pick<ShellHandlers, 'selectSession' | 'newSession' | 'renameSession' | 'deleteSession' | 'pinSession' | 'moveSession' | 'exportSession' | 'openInEditor' | 'selectAccount' | 'addAccount' | 'removeAccount' | 'refreshQuota' | 'unlockCredentials' | 'listNativeSessions' | 'importNativeSession' | 'searchSessions' | 'setSessionCategory' | 'categoryOp'>;
   onToggleDrawer?: () => void;
   drawerOpen?: boolean;
   sessionPanel?: 'hidden' | 'left' | 'right';
@@ -43,7 +44,7 @@ export interface HeaderProps {
 // A narrow session panel gets a drawer toggle; collapsed navigation uses the history popover.
 // The person icon is the account layer's home (login state, switching, adding) for the current agent only; agents without accounts have no person icon.
 // The plus menu lists the enabled agents in the configured order (acpira.agentOrder / acpira.disabledAgents)
-export function Header({ title, sessions, agent, agents, accounts, accountId, activeSessionId, workspace, sessionScope, nativeSessions, on, onToggleDrawer, onOpenSettings, drawerOpen, sessionPanel = 'hidden', sessionPanelDocked = false }: HeaderProps) {
+export function Header({ title, sessions, categories, agent, agents, accounts, accountId, activeSessionId, workspace, sessionScope, nativeSessions, on, onToggleDrawer, onOpenSettings, drawerOpen, sessionPanel = 'hidden', sessionPanelDocked = false }: HeaderProps) {
   const [accountOpen, setAccountOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const account = accounts?.find(a => a.id === accountId);
@@ -91,7 +92,9 @@ export function Header({ title, sessions, agent, agents, accounts, accountId, ac
               onSelect={id => { on.selectSession(id); setHistoryOpen(false); }}
               onRename={on.renameSession} onDelete={on.deleteSession} onPin={on.pinSession} onMove={on.moveSession} onExport={on.exportSession}
               activeAgent={agent.id} nativeSessions={nativeSessions} onListNative={on.listNativeSessions} onImportNative={on.importNativeSession}
-              onSearch={on.searchSessions} />
+              onSearch={on.searchSessions}
+              categories={categories} onFile={on.setSessionCategory} onCategoryOp={on.categoryOp}
+              onNewInCategory={category => { on.newSession(agent.id, category); setHistoryOpen(false); }} />
           </Popover.Popup></Popover.Positioner></Popover.Portal>
         </Popover.Root>}
         {hasAccountMenu(agent) && accountButton}

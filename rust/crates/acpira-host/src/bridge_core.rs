@@ -172,6 +172,7 @@ impl BridgeCore {
           account_actions: Some(manager.account_actions()),
           hidden: manager.hidden(),
           sessions: manager.sessions(),
+          categories: manager.categories(),
           active: manager.view_of(self.viewer.active_id().as_deref()).map(|(raw, _)| raw),
           settings: self.settings.view(),
           locale: self.settings.locale(),

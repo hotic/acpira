@@ -1,5 +1,5 @@
 import type { ChatGptIntegrationStatus } from './chatgptIntegration';
-import type { AccountInfo, AgentId, AgentInfo, ConfigControl, Draft, FullDiffSource, NativeSessionInfo, QuestionAnswers, SessionSummary, SessionView, Turn, TurnSettings } from './transcript';
+import type { AccountInfo, AgentId, AgentInfo, CategoryOp, ConfigControl, Draft, FullDiffSource, NativeSessionInfo, QuestionAnswers, SessionCategories, SessionSummary, SessionView, Turn, TurnSettings } from './transcript';
 import type { Appearance, AxisKey } from './appearance';
 import type { HiddenMap, SettingKey, SettingsView } from './settings';
 import type { Locale } from './i18n';
@@ -32,6 +32,8 @@ export interface InitState {
   accountActions?: AccountAction[];
   hidden: HiddenMap;
   sessions: SessionSummary[];
+  // User categories of the session list (absent from an older host)
+  categories?: SessionCategories;
   active?: SessionView;
   // The settings page swaps in over the chat, so every webview carries the settings view and the resolved locale from the start
   settings: SettingsView;
@@ -86,6 +88,8 @@ export type HostMsg =
   | { type: 'appearance'; appearance: Appearance }
   | { type: 'agents'; agents: AgentInfo[] }
   | { type: 'sessions'; sessions: SessionSummary[] }
+  // The category list changed (here or in another window)
+  | { type: 'categories'; categories: SessionCategories }
   | { type: 'session'; session: SessionView }
   // Only to pages that said `patches` in ready: the changes since the view sent last (sessionPatch.ts)
   | { type: 'sessionPatch'; patch: SessionPatch }
@@ -162,11 +166,16 @@ export type WebviewMsg =
   | { type: 'setMode'; sessionId?: string; id: string }
   | { type: 'setConfig'; sessionId?: string; configId: string; value: string }
   | { type: 'selectSession'; id: string }
-  | { type: 'newSession'; agent?: AgentId }
+  // `category`: file the new session under that category (of the window's project) from the start
+  | { type: 'newSession'; agent?: AgentId; category?: string }
   | { type: 'renameSession'; id: string; title: string }
   | { type: 'deleteSession'; id: string }
   | { type: 'restoreSession'; id: string }
   | { type: 'pinSession'; id: string; pinned: boolean }
+  // File a session under a category of its own project, or take it out (null); filing unpins it
+  | { type: 'setSessionCategory'; id: string; category: string | null }
+  // `file` with a create: file that session under the new category in the same step
+  | ({ type: 'categoryOp'; file?: string } & CategoryOp)
   // Re-home a session into this window's workspace folder: its cwd becomes the folder (the agent works there from the next open on)
   | { type: 'moveSession'; id: string }
   // Start a new session of the same agent / account / project whose transcript is this session's turns up to and including

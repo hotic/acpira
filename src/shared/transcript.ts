@@ -514,8 +514,36 @@ export interface SessionSummary {
   // ISO timestamp; the webview formats it itself
   updatedAt: string;
   pinned?: boolean;
+  // The user category (SessionCategory.id) the session is filed under; pinned and filed are exclusive. An id no category
+  // carries any more (deleted in some window) reads as unfiled
+  category?: string;
   state?: 'working' | 'waiting' | 'unread' | 'error';
 }
+
+// A user-made group of sessions inside one project (cwd), shown between the project and its sessions
+export interface SessionCategory {
+  id: string;
+  name: string;
+  cwd: string;
+  collapsed?: boolean;
+}
+
+// Every category in list order, plus the projects folded in the "all projects" list; shared by every window
+export interface SessionCategories {
+  categories: SessionCategory[];
+  collapsedProjects: string[];
+}
+
+// One edit of the category list, applied by the host to what is on disk so concurrent windows compose.
+// The page picks a new category's id, so it can file a session or start renaming the new row right away
+export type CategoryOp =
+  | { op: 'create'; id: string; name: string; cwd: string }
+  | { op: 'rename'; id: string; name: string }
+  | { op: 'delete'; id: string }
+  | { op: 'collapse'; id: string; collapsed: boolean }
+  // Move `id` before `before` (same project), or to the end of its project's categories
+  | { op: 'reorder'; id: string; before?: string }
+  | { op: 'collapseProject'; cwd: string; collapsed: boolean };
 
 // One entry of an agent's own session list (ACP session/list), for the history list's "Import from <agent>"
 export interface NativeSessionInfo {

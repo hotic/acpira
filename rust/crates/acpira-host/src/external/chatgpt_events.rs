@@ -418,6 +418,7 @@ pub fn chatgpt_summary(r: &ChatGptRecord, now: i64) -> SessionSummary {
     cwd: r.cwd.clone(),
     updated_at: r.updated_at.clone(),
     pinned: r.pinned,
+    category: None,
     state: if v.running {
       Some(SummaryState::Working)
     } else if stale {

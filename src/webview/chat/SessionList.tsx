@@ -1,19 +1,22 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
-import { Check, ChevronDown, Ellipsis, FolderInput, Import, ListFilter, LoaderCircle, Pin, PinOff, Search } from 'lucide-react';
-import type { AgentId, AgentInfo, NativeSessionInfo, SessionSummary } from '@shared/transcript';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { Check, ChevronDown, ChevronRight, Ellipsis, Folder, FolderInput, FolderOpen, Import, Inbox, ListFilter, LoaderCircle, Pencil, Pin, PinOff, Search, SquarePen, Trash2 } from 'lucide-react';
+import type { AgentId, AgentInfo, CategoryOp, NativeSessionInfo, SessionCategories, SessionCategory, SessionSummary } from '@shared/transcript';
 import type { NativeSessionsState, SessionHit } from '@shared/protocol';
 import { inWorkspace, type SessionScope } from '@shared/settings';
 import { launchable } from '@shared/agentOrder';
 import { cn } from '../ui/cn';
 import { Command } from '../ui/Command';
+import { DropdownMenu } from '../ui/DropdownMenu';
 import { IconButton } from '../ui/Button';
 import { OptionContent, PanelHeader } from '../ui/Panel';
 import { Popover } from '../ui/Popover';
 import { Row } from '../ui/Row';
 import { t, useLocale } from '../i18n';
 import { AgentMark } from './AgentMark';
+import { CategoryAddIcon } from './CategoryIcon';
 import { SessionMenu } from './SessionMenu';
 import { markParts, matchesTitle, searchTerms } from './sessionSearch';
+import { buildSessionTree, canFile, categoryOf, draggable, type CategoryNode, type ProjectNode } from './sessionTree';
 
 // A running session shows a spinning ring (the one place a spinner is allowed: a list has no verb to shimmer); the other states are plain dots.
 // Unread (a turn that finished unwatched) is a slightly larger dot in the strongest foreground with a halo rippling out of it;
@@ -66,19 +69,58 @@ export interface SessionListProps {
   onExport?: (id: string, format: 'markdown' | 'json') => void;
   // Searches the saved conversations too; content hits join the title matches with a snippet under their title
   onSearch?: (query: string) => Promise<SessionHit[]>;
+  // User categories (shared by every window through the host). With onFile + onCategoryOp the list shows them, files
+  // sessions by drag or the row menu, and offers "new category"; without them it is the plain pinned + flat list
+  categories?: SessionCategories;
+  onFile?: (id: string, category: string | null) => void;
+  // `file`: with a create, the session to file under the new category in the same step
+  onCategoryOp?: (op: CategoryOp, file?: string) => void;
+  // "New session in this category" (only offered for the window's own project, where a new session starts)
+  onNewInCategory?: (category: string) => void;
 }
 
-// Session list: search and agent filters stay visible even without history; pinned sessions get their own section, the rest is one flat list.
-// Each item: vendor mark · title · time; on hover those swap for the actions — pin, a "…" menu (rename / export / delete), plus "move here" for a session from another project.
-// Deletion applies immediately, undo lives on the Toast at the shell's bottom. Scope comes from acpira.sessionScope (settings);
-// under "all" each row from another project carries that project's folder name before the time
-export function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onMove, onExport, onSearch }: SessionListProps) {
+// The drag payload's type: only rows of this list carry it, so files or text dragged in are left alone
+const DRAG_TYPE = 'application/x-acpira-session';
+// The drop target's frame: a thin light outline drawn inset (never shifts layout) around the whole block, header and children
+const FRAME = 'ring-1 ring-inset ring-fg-1/70';
+
+type Held = { kind: 'session' | 'category'; id: string };
+type Over =
+  | { kind: 'category'; id: string; refused: boolean }
+  | { kind: 'loose'; cwd: string; refused: boolean }
+  // Reordering categories: the dragged one goes before `before` (absent: after the project's last)
+  | { kind: 'gap'; cwd: string; before?: string };
+
+const sameOver = (a?: Over, b?: Over) => JSON.stringify(a) === JSON.stringify(b);
+const newCategoryId = () => `c-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+// What a collapsed group still tells about its sessions: the most urgent state inside
+const STATE_RANK: NonNullable<SessionSummary['state']>[] = ['working', 'waiting', 'error', 'unread'];
+function aggregate(sessions: SessionSummary[]): SessionSummary['state'] {
+  return STATE_RANK.find(state => sessions.some(s => s.state === state));
+}
+
+// Session list: search and agent filters stay visible even without history; pinned sessions get their own section on top.
+// Below them the sessions are a tree (sessionTree.ts): under the workspace scope the window's project, its user categories
+// then its loose sessions; under "all" one collapsible group per project (folder glyph), each holding its categories (inbox
+// glyph) and loose sessions. Each item: vendor mark · title · time; on hover those swap for the actions — pin, a "…" menu
+// (rename / move to category / export / delete), plus "move here" for a session from another project.
+// Sessions file by native HTML5 drag (the browser's own translucent drag image) into a category of their own project or back
+// to its loose area; pinned rows are locked and do not drag; category headers drag to reorder within their project.
+// Deletion applies immediately, undo lives on the Toast at the shell's bottom
+export function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onMove, onExport, onSearch, categories: categoryState, onFile, onCategoryOp, onNewInCategory }: SessionListProps) {
   const locale = useLocale();
   const [query, setQuery] = useState('');
   const [agentFilter, setAgentFilter] = useState<string>();
   const [editing, setEditing] = useState<string>();
+  // A category being renamed; set right after creating one, before the host has pushed it back
+  const [editingCategory, setEditingCategory] = useState<string>();
+  const [held, setHeld] = useState<Held>();
+  const [over, setOver] = useState<Over>();
   const nameOf = (id: string) => agents.find(a => a.id === id)?.name ?? id;
   const here = (s: SessionSummary) => !workspace || inWorkspace(s, workspace);
+  const filing = !!onFile && !!onCategoryOp;
+  const categories = filing ? categoryState?.categories ?? [] : [];
 
   const terms = useMemo(() => searchTerms(query), [query]);
   const q = terms.join(' ');
@@ -99,13 +141,77 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
   const shown = sessions.filter(s => inScope(s) && (!agentFilter || s.agent === agentFilter)
     && (!q || matchesTitle(s.title, nameOf(s.agent), terms) || !!snippets?.has(s.id)));
 
+  const filtering = !!q || !!agentFilter;
+  const grouped = scope === 'all' && !!workspace;
+  const tree = buildSessionTree({
+    shown, categories, collapsedProjects: filing ? categoryState?.collapsedProjects ?? [] : [],
+    workspace, grouped, filtering,
+  });
+  // Under the workspace scope only the window's own categories show (a foreign active session stays loose)
+  const visibleCategories = tree.projects.some(p => p.categories.length > 0);
+
   const now = new Date();
   const dayOf = (iso: string) => Math.floor((startOfDay(now) - startOfDay(new Date(iso))) / 86_400_000);
-  const pinned = shown.filter(s => s.pinned);
-  const rest = shown.filter(s => !s.pinned);
   const times = new Map(shown.map(s => [s.id, fmtTime(s.updatedAt, dayOf(s.updatedAt), locale)]));
   // The longest time sizes the shared time column
   const timeCh = Math.max(0, ...[...times.values()].map(timeWidth));
+
+  // Creating a category opens its name for editing as soon as the host pushes it back
+  const createCategory = (cwd: string, file?: string) => {
+    const id = newCategoryId();
+    onCategoryOp?.({ op: 'create', id, name: '', cwd }, file);
+    if (grouped && categoryState?.collapsedProjects.includes(cwd)) onCategoryOp?.({ op: 'collapseProject', cwd, collapsed: false });
+    setEditingCategory(id);
+  };
+
+  // ---- Native drag and drop. One handler pair on the list: the hovered zone comes from the event target's nearest
+  // [data-drop] ("category:<id>" / "loose:<cwd>") or, for a category being reordered, [data-category]
+  const resolve = (h: Held, target: Element, y: number): Over | undefined => {
+    if (h.kind === 'category') {
+      const moving = categories.find(c => c.id === h.id);
+      const block = target.closest<HTMLElement>('[data-category]');
+      const hovered = categories.find(c => c.id === block?.dataset.category);
+      if (!moving || !block || !hovered || hovered.cwd !== moving.cwd || hovered.id === moving.id) return undefined;
+      const box = block.getBoundingClientRect();
+      const siblings = categories.filter(c => c.cwd === hovered.cwd && c.id !== moving.id);
+      const next = siblings[siblings.indexOf(hovered) + 1];
+      return { kind: 'gap', cwd: hovered.cwd, before: y > box.top + box.height / 2 ? next?.id : hovered.id };
+    }
+    const session = sessions.find(s => s.id === h.id);
+    const zone = target.closest<HTMLElement>('[data-drop]')?.dataset.drop;
+    if (!session || !zone) return undefined;
+    const split = zone.indexOf(':');
+    const [kind, ref] = [zone.slice(0, split), zone.slice(split + 1)];
+    if (kind === 'category') {
+      const c = categories.find(x => x.id === ref);
+      return c && { kind: 'category', id: ref, refused: !canFile(session, c) };
+    }
+    return { kind: 'loose', cwd: ref, refused: !canFile(session, { cwd: ref }) };
+  };
+  const begin = (h: Held) => (e: DragEvent) => {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData(DRAG_TYPE, h.id);
+    setHeld(h);
+  };
+  const end = () => { setHeld(undefined); setOver(undefined); };
+  const onDragOver = (e: DragEvent) => {
+    if (!held || !e.dataTransfer.types.includes(DRAG_TYPE)) return;
+    const next = resolve(held, e.target as Element, e.clientY);
+    const ok = !!next && !(next.kind !== 'gap' && next.refused);
+    if (ok) e.preventDefault();
+    e.dataTransfer.dropEffect = ok ? 'move' : 'none';
+    if (!sameOver(next, over)) setOver(next);
+  };
+  const onDrop = (e: DragEvent) => {
+    if (!held) return;
+    e.preventDefault();
+    const session = held.kind === 'session' ? sessions.find(s => s.id === held.id) : undefined;
+    if (session && over?.kind === 'category' && !over.refused && session.category !== over.id) onFile?.(session.id, over.id);
+    if (session && over?.kind === 'loose' && !over.refused && categoryOf(session, categories)) onFile?.(session.id, null);
+    if (held.kind === 'category' && over?.kind === 'gap') onCategoryOp?.({ op: 'reorder', id: held.id, ...(over.before ? { before: over.before } : {}) });
+    end();
+  };
+  const heldSession = held?.kind === 'session' ? sessions.find(s => s.id === held.id) : undefined;
 
   const renderItem = (s: SessionSummary) => (
     <Item
@@ -116,8 +222,12 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
       snippet={snippets?.get(s.id)}
       active={s.id === activeId}
       time={times.get(s.id) ?? ''}
-      project={here(s) ? undefined : projectName(s.cwd)}
+      // Grouped, a row's project is its group, so only pinned rows (which sit above every group) name theirs
+      project={here(s) || (grouped && !s.pinned) ? undefined : projectName(s.cwd)}
       editing={editing === s.id}
+      dragging={held?.kind === 'session' && held.id === s.id}
+      onDragStart={filing && draggable(s) && (grouped || here(s)) && editing !== s.id ? begin({ kind: 'session', id: s.id }) : undefined}
+      onDragEnd={end}
       onSelect={() => onSelect(s.id)}
       onEdit={() => setEditing(s.id)}
       onRename={t => { setEditing(undefined); if (t.trim() && t.trim() !== s.title) onRename(s.id, t); }}
@@ -125,8 +235,97 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
       onPin={() => onPin(s.id, !s.pinned)}
       onMove={onMove && workspace && !s.external && !here(s) ? () => onMove(s.id) : undefined}
       onExport={onExport ? format => onExport(s.id, format) : undefined}
+      categories={categories.filter(c => c.cwd === s.cwd)}
+      onFile={filing && !s.external ? category => onFile!(s.id, category) : undefined}
+      onNewCategory={filing && !s.external ? () => createCategory(s.cwd, s.id) : undefined}
     />
   );
+
+  // A category: its header and, open, its sessions indented under it. The whole block is one drop zone and lights up as one;
+  // a collapsed category stays collapsed under a drag (no spring-open), so its frame is just the header
+  const renderCategory = (node: CategoryNode, siblings: CategoryNode[]) => {
+    const c = node.category;
+    const hot = over?.kind === 'category' && over.id === c.id;
+    const refused = hot && over.refused;
+    const gapBefore = over?.kind === 'gap' && over.before === c.id;
+    const gapAfter = over?.kind === 'gap' && !over.before && over.cwd === c.cwd && siblings.at(-1) === node;
+    return (
+      <div key={c.id} role="group" aria-label={c.name} data-category={c.id} data-drop={`category:${c.id}`}
+        className={cn('relative flex flex-col rounded-lg transition-shadow', hot && !refused && FRAME)}>
+        {gapBefore && <InsertLine edge="top" />}
+        <GroupHeader
+          icon={<Inbox className="size-icon" strokeWidth={1.5} />}
+          name={c.name}
+          count={node.sessions.length}
+          open={node.open}
+          state={node.open ? undefined : aggregate(node.sessions)}
+          refused={refused}
+          dragging={held?.kind === 'category' && held.id === c.id}
+          editing={editingCategory === c.id}
+          onDragStart={!filtering && editingCategory !== c.id ? begin({ kind: 'category', id: c.id }) : undefined}
+          onDragEnd={end}
+          onToggle={() => onCategoryOp?.({ op: 'collapse', id: c.id, collapsed: node.open })}
+          onRename={name => { setEditingCategory(undefined); if (name.trim() && name.trim() !== c.name) onCategoryOp?.({ op: 'rename', id: c.id, name }); }}
+          onNewSession={onNewInCategory && c.cwd === workspace ? () => onNewInCategory(c.id) : undefined}
+          menu={<>
+            <DropdownMenu.Item onClick={() => setEditingCategory(c.id)}><OptionContent icon={<Pencil strokeWidth={1.5} />}>{t('session.category.rename')}</OptionContent></DropdownMenu.Item>
+            {onNewInCategory && c.cwd === workspace && <DropdownMenu.Item onClick={() => onNewInCategory(c.id)}><OptionContent icon={<SquarePen strokeWidth={1.5} />}>{t('session.category.newSession')}</OptionContent></DropdownMenu.Item>}
+            <DropdownMenu.Separator className="my-1 h-px bg-line" />
+            <DropdownMenu.Item className="text-danger" onClick={() => onCategoryOp?.({ op: 'delete', id: c.id })}>
+              <OptionContent icon={<Trash2 strokeWidth={1.5} />} description={t('session.category.deleteHint')}>{t('session.category.delete')}</OptionContent>
+            </DropdownMenu.Item>
+          </>}
+        />
+        {node.open && (
+          <div className="ml-indent flex flex-col">
+            {node.sessions.length
+              ? node.sessions.map(renderItem)
+              : <div className="flex min-h-row items-center px-2 text-3 text-fg-3">{t('session.category.empty')}</div>}
+          </div>
+        )}
+        {gapAfter && <InsertLine edge="bottom" />}
+      </div>
+    );
+  };
+
+  // A project's body: its categories, then its loose sessions (the zone that takes a session out of its category)
+  const renderBody = (p: ProjectNode) => {
+    const looseHot = over?.kind === 'loose' && over.cwd === p.cwd && !over.refused;
+    // A filed session of this project being dragged needs somewhere to land even when nothing is loose
+    const strip = !p.loose.length && !!heldSession && heldSession.cwd === p.cwd && !!categoryOf(heldSession, categories);
+    return <>
+      {p.categories.map(n => renderCategory(n, p.categories))}
+      {(p.loose.length > 0 || strip) && (
+        <div data-drop={`loose:${p.cwd}`} className={cn('flex flex-col rounded-lg transition-shadow', looseHot && FRAME)}>
+          {p.loose.map(renderItem)}
+          {strip && <div className="flex min-h-row items-center px-2 text-3 text-fg-3">{t('session.category.remove')}</div>}
+        </div>
+      )}
+    </>;
+  };
+
+  const renderProject = (p: ProjectNode, i: number) => {
+    const all = [...p.categories.flatMap(n => n.sessions), ...p.loose];
+    return (
+      <div key={p.cwd} role="group" aria-label={projectName(p.cwd)} className={cn('flex flex-col', i > 0 && 'mt-2')}>
+        <GroupHeader
+          project
+          icon={p.open ? <FolderOpen className="size-icon" strokeWidth={1.5} /> : <Folder className="size-icon" strokeWidth={1.5} />}
+          name={projectName(p.cwd)}
+          title={p.cwd}
+          badge={p.current ? t('session.project.current') : undefined}
+          count={p.count}
+          open={p.open}
+          state={p.open ? undefined : aggregate(all)}
+          onToggle={filing ? () => onCategoryOp?.({ op: 'collapseProject', cwd: p.cwd, collapsed: p.open }) : undefined}
+          onNewCategory={filing ? () => createCategory(p.cwd) : undefined}
+        />
+        {p.open && <div className="ml-indent flex flex-col">{renderBody(p)}</div>}
+      </div>
+    );
+  };
+
+  const rest = tree.projects.some(p => p.loose.length || p.categories.length);
   const empty = searching ? t('session.searching') : q ? t('session.noMatch') : agentFilter ? t('session.noneAgent', { name: nameOf(agentFilter) }) : scope === 'workspace' && workspace ? t('session.noneWorkspace') : t('session.none');
 
   return (
@@ -146,23 +345,31 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
       </div>
       <div className="flex min-w-0 shrink-0 items-center gap-1 px-1 pt-1">
         <ChannelFilter agents={agents} value={agentFilter} onChange={setAgentFilter} />
-        {onListNative && onImportNative && (
-          <ImportSessions
-            agents={agents} agentFilter={agentFilter} activeAgent={activeAgent}
-            native={nativeSessions}
-            onList={onListNative}
-            onImport={onImportNative}
-            onSelect={onSelect}
-          />
-        )}
+        <span className="ml-auto flex shrink-0 items-center">
+          {filing && workspace && (
+            <IconButton title={t('session.category.new')} aria-label={t('session.category.new')} onClick={() => createCategory(workspace)}>
+              <CategoryAddIcon />
+            </IconButton>
+          )}
+          {onListNative && onImportNative && (
+            <ImportSessions
+              agents={agents} agentFilter={agentFilter} activeAgent={activeAgent}
+              native={nativeSessions}
+              onList={onListNative}
+              onImport={onImportNative}
+              onSelect={onSelect}
+            />
+          )}
+        </span>
       </div>
       <div className="scroll-thin mt-1 flex min-h-0 flex-col overflow-y-auto border-t border-line pb-1" role="listbox" aria-label={t('session.listAria')}
-        style={timeCh ? { '--session-time': `${timeCh}ch` } as CSSProperties : undefined}>
+        style={timeCh ? { '--session-time': `${timeCh}ch` } as CSSProperties : undefined}
+        onDragOver={onDragOver} onDrop={onDrop}>
         {/* Empty state takes exactly one item row (pt-1 + min-h-row) so the popover keeps its height whether the filter matches 0 or 1 session */}
-        {!shown.length && <div className="mt-1 flex min-h-row items-center justify-center px-2 text-2 text-fg-3">{empty}</div>}
-        {pinned.length > 0 && (
+        {!shown.length && !visibleCategories && <div className="mt-1 flex min-h-row items-center justify-center px-2 text-2 text-fg-3">{empty}</div>}
+        {tree.pinned.length > 0 && (
           <div className="flex flex-col pt-1" role="group" aria-label={t('session.group.pinned')}>
-            {pinned.map(renderItem)}
+            {tree.pinned.map(renderItem)}
           </div>
         )}
         {/* Keep the divider mounted so both pinning and unpinning can transition. */}
@@ -170,11 +377,113 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
           role="presentation"
           className={cn(
             'shrink-0 bg-linear-to-r from-transparent via-line to-transparent transition-[height,margin,opacity,scale] duration-(--dur-open) ease-out',
-            pinned.length > 0 && rest.length > 0 ? 'my-1 h-px scale-x-100 opacity-100' : 'my-0 h-0 scale-x-0 opacity-0',
+            tree.pinned.length > 0 && rest ? 'my-1 h-px scale-x-100 opacity-100' : 'my-0 h-0 scale-x-0 opacity-0',
           )}
         />
-        {rest.length > 0 && <div className="flex flex-col pt-1">{rest.map(renderItem)}</div>}
+        {rest && (
+          <div className="flex flex-col pt-1">
+            {tree.grouped ? tree.projects.map(renderProject) : tree.projects.map(p => <Fragment key={p.cwd}>{renderBody(p)}</Fragment>)}
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+// Where a reordered category will land: a short accent line on the block's edge, positioned absolutely so nothing shifts
+function InsertLine({ edge }: { edge: 'top' | 'bottom' }) {
+  return <div role="presentation" className={cn('pointer-events-none absolute inset-x-2 z-10 h-0.5 rounded-full bg-accent', edge === 'top' ? '-top-px' : '-bottom-px')} />;
+}
+
+// Header of a project or a category. A project: folder glyph, heavier name, the "current" badge, a "new category" action.
+// A category: the inbox glyph, a "new session here" action and a "…" menu. The row toggles; on hover the glyph turns into
+// the chevron, and collapsed it still shows the most urgent state inside. Refused (a session of another project hovering):
+// dimmed, saying why
+function GroupHeader({ project, icon, name, title, badge, count, open, state, refused, dragging, editing, onDragStart, onDragEnd, onToggle, onRename, onNewSession, onNewCategory, menu }: {
+  project?: boolean;
+  icon: ReactNode;
+  name: string;
+  title?: string;
+  badge?: string;
+  count: number;
+  open: boolean;
+  state?: SessionSummary['state'];
+  refused?: boolean;
+  dragging?: boolean;
+  editing?: boolean;
+  onDragStart?: (e: DragEvent) => void;
+  onDragEnd?: () => void;
+  onToggle?: () => void;
+  onRename?: (name: string) => void;
+  onNewSession?: () => void;
+  onNewCategory?: () => void;
+  menu?: ReactNode;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const act = 'inline-flex size-lead items-center justify-center rounded-sm text-fg-3 transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1';
+  const actions = !editing && (onNewSession || onNewCategory || menu);
+  return (
+    <div
+      role="button"
+      aria-expanded={open}
+      tabIndex={0}
+      title={title}
+      data-menu-open={menuOpen || undefined}
+      draggable={!!onDragStart}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onClick={() => { if (!editing) onToggle?.(); }}
+      onKeyDown={e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onToggle?.(); } }}
+      className={cn(
+        'group flex min-h-row items-center gap-gap rounded-md px-2 text-2 transition-colors hover:bg-hover focus-visible:bg-hover',
+        onToggle && 'cursor-pointer',
+        project ? 'font-semibold text-fg-strong' : 'text-fg-1',
+        refused && 'cursor-not-allowed opacity-50',
+        dragging && 'opacity-40',
+      )}
+    >
+      <span className="flex size-lead shrink-0 items-center justify-center text-fg-3">
+        <span className={cn('flex', onToggle && 'group-hover:hidden group-focus-visible:hidden')}>{icon}</span>
+        {onToggle && (
+          <span className="hidden group-hover:flex group-focus-visible:flex">
+            {open ? <ChevronDown className="size-icon" strokeWidth={1.5} /> : <ChevronRight className="size-icon" strokeWidth={1.5} />}
+          </span>
+        )}
+      </span>
+      {editing && onRename
+        ? <RenameInput initial={name} label={t('session.category.rename')} onDone={onRename} />
+        : <span className="min-w-0 truncate">{name}</span>}
+      {badge && !editing && <span className="shrink-0 rounded-sm bg-active px-1 text-3 font-normal text-fg-3">{badge}</span>}
+      {!editing && (
+        <span className="ml-auto flex shrink-0 items-center text-3 font-normal text-fg-3 tabular-nums">
+          <span className={cn('flex items-center gap-2', actions && 'group-hover:hidden group-focus-within:hidden group-data-[menu-open]:hidden')}>
+            {refused && <span className="text-danger">{t('session.category.sameProject')}</span>}
+            {state && <StateMark state={state} />}
+            <span className="text-right">{count}</span>
+          </span>
+          {actions && (
+            <span className="hidden items-center gap-0.5 group-hover:flex group-focus-within:flex group-data-[menu-open]:flex"
+              onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
+              {onNewCategory && (
+                <button type="button" title={t('session.category.new')} aria-label={t('session.category.new')} onClick={onNewCategory} className={act}>
+                  <CategoryAddIcon />
+                </button>
+              )}
+              {onNewSession && (
+                <button type="button" title={t('session.category.newSession')} aria-label={t('session.category.newSession')} onClick={onNewSession} className={act}>
+                  <SquarePen className="size-3" strokeWidth={1.5} />
+                </button>
+              )}
+              {menu && (
+                <DropdownMenu.Root onOpenChange={setMenuOpen}>
+                  <DropdownMenu.Trigger render={<button type="button" title={t('session.more')} aria-label={t('session.more')} className={act}><Ellipsis className="size-3" strokeWidth={1.5} /></button>} />
+                  <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="end" width="md"><DropdownMenu.Popup>{menu}</DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
+                </DropdownMenu.Root>
+              )}
+            </span>
+          )}
+        </span>
+      )}
     </div>
   );
 }
@@ -311,12 +620,20 @@ interface ItemProps {
   // Present only for a session from another project: re-home it into this window's workspace
   onMove?: () => void;
   onExport?: (format: 'markdown' | 'json') => void;
+  // Native drag: present when the row may be filed by dragging (not pinned, not a ChatGPT mirror)
+  dragging?: boolean;
+  onDragStart?: (e: DragEvent) => void;
+  onDragEnd?: () => void;
+  // The "move to category" submenu: the session's own project's categories
+  categories?: SessionCategory[];
+  onFile?: (category: string | null) => void;
+  onNewCategory?: () => void;
 }
 
 // One item: the whole row is clickable to select; the tail shows a status dot + time by default, swapping to actions on hover / keyboard focus. Action buttons can't nest inside a button, so the whole row is a div[role=option].
 // The hover cluster keeps the two quick toggles (move / pin); rename, export and delete live in the "…" menu, which keeps
 // the cluster alive while open — the row tracks menuOpen because a pointer inside the portaled popup is no longer a hover
-function Item({ session: s, agentName, terms, snippet, active, time, project, editing, onSelect, onEdit, onRename, onDelete, onPin, onMove, onExport }: ItemProps) {
+function Item({ session: s, agentName, terms, snippet, active, time, project, editing, onSelect, onEdit, onRename, onDelete, onPin, onMove, onExport, dragging, onDragStart, onDragEnd, categories, onFile, onNewCategory }: ItemProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget) return;
@@ -328,13 +645,18 @@ function Item({ session: s, agentName, terms, snippet, active, time, project, ed
       role="option"
       aria-selected={active}
       tabIndex={0}
+      data-session={s.id}
       data-menu-open={menuOpen || undefined}
+      draggable={!!onDragStart}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       onClick={() => { if (!editing) onSelect(); }}
       onKeyDown={onKey}
       className={cn(
         'group flex min-h-row cursor-pointer items-center gap-gap rounded-md px-2 text-2 text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover',
         snippet && !editing && 'py-1',
         active && 'bg-active text-fg-strong hover:bg-active',
+        dragging && 'opacity-40',
       )}
     >
       <span className="flex size-lead shrink-0 items-center justify-center text-fg-3" title={agentName}><AgentMark id={s.agent} name={agentName} /></span>
@@ -376,6 +698,9 @@ function Item({ session: s, agentName, terms, snippet, active, time, project, ed
                 onMove={onMove}
                 onExport={onExport}
                 onDelete={onDelete}
+                categories={categories}
+                onFile={onFile}
+                onNewCategory={onNewCategory}
               />
             </span>
           </span>
@@ -392,7 +717,7 @@ function Marked({ text, terms }: { text: string; terms: string[] }) {
 }
 
 // Inline rename: ⏎ commits, Esc cancels, blur commits; the callback fires only once (the blur right after Esc doesn't count)
-function RenameInput({ initial, onDone }: { initial: string; onDone: (title: string) => void }) {
+function RenameInput({ initial, label = t('session.titleAria'), onDone }: { initial: string; label?: string; onDone: (title: string) => void }) {
   const ref = useRef<HTMLInputElement>(null);
   const done = useRef(false);
   const [value, setValue] = useState(initial);
@@ -410,7 +735,7 @@ function RenameInput({ initial, onDone }: { initial: string; onDone: (title: str
         if (e.key === 'Escape') finish(initial);
       }}
       onBlur={() => finish(value)}
-      aria-label={t('session.titleAria')}
+      aria-label={label}
       className="min-w-0 flex-1 rounded-sm bg-active px-1 text-2 text-fg-1 outline-none"
     />
   );

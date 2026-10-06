@@ -1,5 +1,5 @@
 //! Session persistence: `<dir>/index.json` caches the summary list,
-//! `<dir>/prefs.json` the per-agent memory, `<dir>/<id>.json` the full record, `<dir>/<id>/` its blobs, `<dir>/trash/`
+//! `<dir>/prefs.json` the per-agent memory, `<dir>/categories.json` the session list's user categories, `<dir>/<id>.json` the full record, `<dir>/<id>/` its blobs, `<dir>/trash/`
 //! the soft-deleted ones during their undo window. The directory is shared by every host, so the index is reconciled
 //! with the record files before every write, and every file is written tmp + rename. Record writes are debounced per
 //! session and serialized from the live session at write time
@@ -16,20 +16,20 @@ use sha2::{Digest, Sha256};
 use tokio::fs;
 
 use acpira_shared::model_shapes::ModelShapes;
-use acpira_shared::transcript::{AgentId, SessionControls, SessionSummary, TurnSettings};
+use acpira_shared::transcript::{AgentId, CategoryOp, SessionCategories, SessionCategory, SessionControls, SessionSummary, TurnSettings};
 
 use super::file_lock::{with_file_lock, write_atomic};
 use super::record::{RecordSource, SessionRecord};
 use crate::i18n::tp;
 
-const META_FILES: [&str; 2] = ["index.json", "prefs.json"];
+const META_FILES: [&str; 3] = ["index.json", "prefs.json", "categories.json"];
 const TRASH_DIR: &str = "trash";
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(400);
 const SAVE_MAX_WAIT: Duration = Duration::from_millis(2000);
 
 /// Session ids name files and directories under the store root: plain tokens only
 pub fn is_session_id(id: &str) -> bool {
-  !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') && !matches!(id, "index" | "prefs" | "trash")
+  !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') && !matches!(id, "index" | "prefs" | "categories" | "trash")
 }
 
 fn is_blob_name(name: &str) -> bool {
@@ -207,6 +207,27 @@ impl TranscriptStore {
     .await
   }
 
+  pub async fn load_categories(&self) -> SessionCategories {
+    match fs::read(self.dir.join("categories.json")).await {
+      Ok(raw) => serde_json::from_slice(&raw).unwrap_or_default(),
+      Err(_) => SessionCategories::default(),
+    }
+  }
+
+  /// categories.json is shared by every host: the op is applied under its lock to what is on disk, so two windows'
+  /// edits compose instead of the later write replacing the earlier one. Returns the list as written
+  pub async fn update_categories(&self, op: &CategoryOp) -> Result<SessionCategories> {
+    self.ensure().await?;
+    let file = self.dir.join("categories.json");
+    with_file_lock(&file, || async {
+      let mut disk = self.load_categories().await;
+      apply_category_op(&mut disk, op);
+      write_atomic(&file, serde_json::to_string_pretty(&disk)?.as_bytes(), None).await?;
+      Ok(disk)
+    })
+    .await
+  }
+
   /// Merge this host's view of the list with what is on disk, write the result and return it. The record files are the
   /// truth; where both have an entry, `mine` wins only for ids in `own`. Debounced records are written first
   pub async fn sync_index(&self, mine: &[SessionSummary], own: &HashSet<String>) -> Result<Vec<SessionSummary>> {
@@ -251,6 +272,7 @@ impl TranscriptStore {
           base.cwd = fresh.cwd;
           base.updated_at = fresh.updated_at;
           base.pinned = fresh.pinned;
+          base.category = fresh.category;
           base
         }
       };
@@ -581,6 +603,49 @@ pub fn sort_index(list: &mut [SessionSummary]) {
   list.sort_by(|a, b| b.pinned.unwrap_or(false).cmp(&a.pinned.unwrap_or(false)).then_with(|| b.updated_at.cmp(&a.updated_at)));
 }
 
+/// One category edit on the list. Edits naming a category that is gone (deleted in another window) do nothing; a blank
+/// name keeps the old one. Reordering only moves a category among its own project's categories
+pub fn apply_category_op(list: &mut SessionCategories, op: &CategoryOp) {
+  let name_of = |name: &str| Some(crate::util::clip(name.trim(), crate::limits::RENAME_MAX)).filter(|n| !n.is_empty());
+  let cats = &mut list.categories;
+  match op {
+    CategoryOp::Create { id, name, cwd } => {
+      if cats.iter().all(|c| &c.id != id) {
+        let name = name_of(name).unwrap_or_else(|| crate::i18n::t("session.category.untitled"));
+        cats.push(SessionCategory { id: id.clone(), name, cwd: cwd.clone(), collapsed: None });
+      }
+    }
+    CategoryOp::Rename { id, name } => {
+      if let (Some(c), Some(name)) = (cats.iter_mut().find(|c| &c.id == id), name_of(name)) {
+        c.name = name;
+      }
+    }
+    CategoryOp::Delete { id } => cats.retain(|c| &c.id != id),
+    CategoryOp::Collapse { id, collapsed } => {
+      if let Some(c) = cats.iter_mut().find(|c| &c.id == id) {
+        c.collapsed = collapsed.then_some(true);
+      }
+    }
+    CategoryOp::Reorder { id, before } => {
+      let Some(from) = cats.iter().position(|c| &c.id == id) else { return };
+      let moving = cats.remove(from);
+      let at = before
+        .as_ref()
+        .and_then(|b| cats.iter().position(|c| &c.id == b && c.cwd == moving.cwd))
+        // No anchor: right after the project's last category (its end of the group), else the end of the list
+        .or_else(|| cats.iter().rposition(|c| c.cwd == moving.cwd).map(|i| i + 1))
+        .unwrap_or(cats.len());
+      cats.insert(at, moving);
+    }
+    CategoryOp::CollapseProject { cwd, collapsed } => {
+      list.collapsed_projects.retain(|p| p != cwd);
+      if *collapsed {
+        list.collapsed_projects.push(cwd.clone());
+      }
+    }
+  }
+}
+
 /// Resolves `root/name` and refuses anything that is not still under `root` after following symlinks; a missing target
 /// is allowed when its parent stays inside the root
 async fn confined(root: &Path, name: &str) -> Option<PathBuf> {
@@ -614,6 +679,31 @@ async fn move_record(from: &Path, to: &Path, id: &str) {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn category_reorder_stays_inside_the_project_and_ops_on_missing_ids_do_nothing() {
+    let mut list = SessionCategories::default();
+    let create = |id: &str, cwd: &str| CategoryOp::Create { id: id.into(), name: id.into(), cwd: cwd.into() };
+    for op in [create("a1", "/a"), create("b1", "/b"), create("a2", "/a"), create("a3", "/a"), create("a1", "/b")] {
+      apply_category_op(&mut list, &op);
+    }
+    let ids = |l: &SessionCategories| l.categories.iter().map(|c| c.id.clone()).collect::<Vec<_>>();
+    // A repeated create keeps the first one
+    assert_eq!(ids(&list), ["a1", "b1", "a2", "a3"]);
+    assert_eq!(list.categories[0].cwd, "/a");
+    // No anchor: after the project's last category
+    apply_category_op(&mut list, &CategoryOp::Reorder { id: "a1".into(), before: None });
+    assert_eq!(ids(&list), ["b1", "a2", "a3", "a1"]);
+    // An anchor of another project is not followed
+    apply_category_op(&mut list, &CategoryOp::Reorder { id: "a1".into(), before: Some("b1".into()) });
+    assert_eq!(ids(&list), ["b1", "a2", "a3", "a1"]);
+    apply_category_op(&mut list, &CategoryOp::Reorder { id: "a1".into(), before: Some("a2".into()) });
+    assert_eq!(ids(&list), ["b1", "a1", "a2", "a3"]);
+    let before = list.clone();
+    apply_category_op(&mut list, &CategoryOp::Rename { id: "gone".into(), name: "x".into() });
+    apply_category_op(&mut list, &CategoryOp::Reorder { id: "gone".into(), before: None });
+    assert_eq!(list, before);
+  }
 
   fn record(id: &str, updated: &str) -> SessionRecord {
     serde_json::from_value(serde_json::json!({ "id": id, "agent": "grok", "cwd": "/w", "title": "t", "createdAt": updated, "updatedAt": updated, "turns": [], "controls": { "modes": [], "options": [] }, "commands": [] })).unwrap()

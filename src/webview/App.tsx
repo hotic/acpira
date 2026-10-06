@@ -1,7 +1,7 @@
 import type { ChatGptIntegrationStatus } from '@shared/chatgptIntegration';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountAction, EditTurnRequest, FileHit, HostMsg, InitState, NativeSessionsState, SessionHit, WebviewMsg } from '@shared/protocol';
-import type { AccountInfo, AgentId, AgentInfo, ConfigControl, FullDiffSource, SessionSummary, SessionView, Turn } from '@shared/transcript';
+import type { AccountInfo, AgentId, AgentInfo, ConfigControl, FullDiffSource, SessionCategories, SessionSummary, SessionView, Turn } from '@shared/transcript';
 import type { HiddenMap, SettingsView } from '@shared/settings';
 import type { AgentInventory } from '@shared/inventory';
 import type { Locale } from '@shared/i18n';
@@ -82,6 +82,7 @@ export function App() {
   const [init, setInit] = useState<InitEnv>();
   const [appearance, setAppearance] = useState<Appearance>(BASE_APPEARANCE);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [categories, setCategories] = useState<SessionCategories>();
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [accountActions, setAccountActions] = useState<AccountAction[]>([]);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
@@ -149,7 +150,7 @@ export function App() {
           break;
         }
         // A sidecar that came back answers nothing it was asked before: pending controls requests go out again
-        case 'init': controlsAsked.current.clear(); setInit({ host: m.state.host, home: m.state.home, cwd: m.state.cwd, blobBase: m.state.blobBase }); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setHidden(m.state.hidden); setSession(views.init(m.state.active)); setSettings(m.state.settings); setLocale(m.state.locale); setLoc(m.state.locale); break;
+        case 'init': controlsAsked.current.clear(); setInit({ host: m.state.host, home: m.state.home, cwd: m.state.cwd, blobBase: m.state.blobBase }); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setCategories(m.state.categories); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setHidden(m.state.hidden); setSession(views.init(m.state.active)); setSettings(m.state.settings); setLocale(m.state.locale); setLoc(m.state.locale); break;
         case 'appearance': setAppearance(m.appearance); break;
         // An agent whose executable appeared or vanished has a stale inventory (binary path, version); drop it so the page rescans
         case 'agents': {
@@ -160,6 +161,7 @@ export function App() {
           break;
         }
         case 'sessions': setSessions(m.sessions); break;
+        case 'categories': setCategories(m.categories); break;
         case 'accounts': setAccounts(m.accounts); break;
         case 'accountActions': setAccountActions(m.actions); break;
         case 'hidden': setHidden(m.hidden); break;
@@ -259,12 +261,14 @@ export function App() {
     setMode: id => post({ type: 'setMode', sessionId: activeId.current, id }),
     setConfig: (configId, value) => post({ type: 'setConfig', sessionId: activeId.current, configId, value }),
     selectSession: id => post({ type: 'selectSession', id }),
-    newSession: agent => post({ type: 'newSession', ...(agent ? { agent } : {}) }),
+    newSession: (agent, category) => post({ type: 'newSession', ...(agent ? { agent } : {}), ...(category ? { category } : {}) }),
     renameSession: (id, title) => post({ type: 'renameSession', id, title }),
     deleteSession: id => post({ type: 'deleteSession', id }),
     restoreSession: id => post({ type: 'restoreSession', id }),
     pinSession: (id, pinned) => post({ type: 'pinSession', id, pinned }),
     moveSession: id => post({ type: 'moveSession', id }),
+    setSessionCategory: (id, category) => post({ type: 'setSessionCategory', id, category }),
+    categoryOp: (op, file) => post({ type: 'categoryOp', ...op, ...(file ? { file } : {}) }),
     selectAccount: id => post({ type: 'selectAccount', sessionId: activeId.current, id }),
     addAccount: (agent, via) => post({ type: 'addAccount', agent, via }),
     removeAccount: id => post({ type: 'removeAccount', id }),
@@ -383,6 +387,7 @@ export function App() {
       steerQueued={settings.steerQueued && !!session?.canSteer}
       personas={personas}
       sessions={sessions}
+      categories={categories}
       activeSessionId={session?.id}
       cwd={session?.cwd}
       workspace={init.cwd}

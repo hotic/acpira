@@ -52,4 +52,8 @@ function Item({ className, ...props }: ComponentProps<typeof Base.Item>) {
 function RadioItem({ className, closeOnClick = true, ...props }: ComponentProps<typeof Base.RadioItem>) {
   return <Base.RadioItem render={<button type="button" />} nativeButton closeOnClick={closeOnClick} {...props} className={cnState(cn(optionClass), className)} />;
 }
-export const DropdownMenu = { Root, Trigger: Base.Trigger, Portal, Positioner, Popup, Item, RadioItem, RadioGroup: Base.RadioGroup, CheckboxItem: Base.CheckboxItem, Group: Base.Group, GroupLabel: Base.GroupLabel, Separator: Base.Separator };
+// A row that opens a nested menu (hover, click or arrow key); its popup goes through the same Portal / Positioner / Popup
+function SubmenuTrigger({ className, ...props }: ComponentProps<typeof Base.SubmenuTrigger>) {
+  return <Base.SubmenuTrigger {...props} className={cnState(cn(optionClass), className)} />;
+}
+export const DropdownMenu = { Root, Trigger: Base.Trigger, Portal, Positioner, Popup, Item, RadioItem, RadioGroup: Base.RadioGroup, CheckboxItem: Base.CheckboxItem, Group: Base.Group, GroupLabel: Base.GroupLabel, Separator: Base.Separator, SubmenuRoot: Base.SubmenuRoot, SubmenuTrigger };
