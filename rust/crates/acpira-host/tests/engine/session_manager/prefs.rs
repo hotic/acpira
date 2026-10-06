@@ -160,7 +160,7 @@ async fn remembered_choices_show_from_the_first_frame_and_a_prompt_waits_for_the
   m.events.lock().unwrap().clear();
 
   let (mgr, viewer) = (m.m.clone(), m.v.clone());
-  let opening = tokio::spawn(async move { mgr.new_session_for(&viewer, None, None).await.unwrap() });
+  let opening = tokio::spawn(async move { mgr.new_session_for(&viewer, None, None, None).await.unwrap() });
   until(|| m.active_id().is_some_and(|id| id != first) && m.active().is_some_and(|a| a["status"] == "ready"), 5000).await;
   // the replay is still in flight here: the prompt queues behind it
   m.handle(json!({ "type": "send", "text": "inspect-history" })).await;

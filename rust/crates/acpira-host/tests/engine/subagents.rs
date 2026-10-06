@@ -393,6 +393,11 @@ async fn a_root_call_reusing_a_native_childs_tool_id_stays_on_the_root() {
   expect_match(&child_tool, json!({ "kind": "read", "status": "completed" }));
   assert_eq!(c1["toolCount"], 1);
   assert_eq!(root.iter().filter(|b| b["type"] == "tool_call" && b["id"] == "shared-id").count(), 1);
+  // A diff's full texts come from the transcript it was shown in: the root's turns, or the named child's
+  let c1_id = c1["id"].as_str().unwrap();
+  expect_match(s.diff_source("shared-id", 0, None).unwrap(), json!({ "path": "/repo/root.ts", "newText": "root new\n" }));
+  expect_match(s.diff_source("shared-id", 0, Some(c1_id)).unwrap(), json!({ "path": "/repo/child.ts", "newText": "child new\n" }));
+  assert!(s.diff_source("shared-id", 0, Some("no-such-child")).is_none());
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -28,8 +28,8 @@ async fn permission_card_approve_then_the_tool_completes_with_a_normalized_diff_
   let page = v(&session);
   let sent = agent_blocks(&page).into_iter().find(|b| b["id"] == "tc2").unwrap();
   expect_eq(&sent["content"]["source"], json!({ "path": "/repo/a.ts", "omitted": true }));
-  expect_eq(s.diff_source("tc2", 0).unwrap(), json!({ "path": "/repo/a.ts", "oldText": "a\nb\nc\n", "newText": "a\nB\nc\nd\n" }));
-  assert!(s.diff_source("tc2", 1).is_none() && s.diff_source("tc1", 0).is_none());
+  expect_eq(s.diff_source("tc2", 0, None).unwrap(), json!({ "path": "/repo/a.ts", "oldText": "a\nb\nc\n", "newText": "a\nB\nc\nd\n" }));
+  assert!(s.diff_source("tc2", 1, None).is_none() && s.diff_source("tc1", 0, None).is_none());
 }
 
 // OpenCode's write: the permission request embeds a low-fidelity copy of the call (kind 'other', the parent dir as

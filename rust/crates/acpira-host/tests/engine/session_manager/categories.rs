@@ -113,3 +113,33 @@ async fn a_category_edit_in_one_window_reaches_the_other_on_refresh() {
   one.dispose().await;
   two.dispose().await;
 }
+
+// "New session in this category" files the new session itself: switching back to an older session while the new one is still
+// starting (here: replaying remembered choices on a slow agent) leaves the older one where it was
+#[tokio::test(flavor = "multi_thread")]
+async fn a_switch_while_a_new_session_starts_does_not_file_the_session_switched_to() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let m = Mgr::new(dir.path(), Opts::with_agents(fake.setting(json!({ "env": { "FAKE_CONFIG_DELAY_MS": "300" } })), "fake"));
+  m.init().await;
+  m.handle(json!({ "type": "categoryOp", "op": "create", "id": "c-ui", "name": "UI", "cwd": "/tmp" })).await;
+  m.new_session(None).await;
+  // A remembered pick makes the next start replay it, one slow request
+  m.handle(json!({ "type": "setConfig", "configId": "model", "value": "m2" })).await;
+  m.handle(json!({ "type": "send", "text": "hi" })).await;
+  let old = m.active_id().unwrap();
+  m.handle(json!({ "type": "pinSession", "id": old, "pinned": true })).await;
+  until(|| summary_of(&m, &old)["pinned"] == true, 2000).await;
+
+  let opening = m.spawn_handle(json!({ "type": "newSession", "agent": "fake", "category": "c-ui" }));
+  until(|| m.active_id().is_some_and(|id| id != old), 5000).await;
+  let new = m.active_id().unwrap();
+  m.handle(json!({ "type": "selectSession", "id": old })).await;
+  opening.await.unwrap();
+
+  assert_eq!(m.active_id().as_deref(), Some(old.as_str()));
+  expect_match(summary_of(&m, &old), json!({ "pinned": true }));
+  assert!(summary_of(&m, &old).get("category").is_none());
+  until(|| summary_of(&m, &new)["category"] == "c-ui", 2000).await;
+  m.dispose().await;
+}

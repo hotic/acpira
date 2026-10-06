@@ -1307,7 +1307,7 @@ impl SessionManager {
     match active {
       Some(id) => self.select_session_for(v, &id).await,
       None => {
-        if let Err(e) = self.new_session_for(v, None, None).await {
+        if let Err(e) = self.new_session_for(v, None, None, None).await {
           self.log(&format!("new session failed: {e}"));
         }
       }
@@ -1319,6 +1319,7 @@ impl SessionManager {
     v: &'a Arc<Viewer>,
     agent: Option<String>,
     account: Option<String>,
+    category: Option<String>,
   ) -> BoxFuture<Result<()>> {
     let me = self.clone();
     let v = v.clone();
@@ -1333,15 +1334,24 @@ impl SessionManager {
       }
       let acc = if me.deps.accounts.as_ref().is_some_and(|a| a.supports(&id)) { account.or_else(|| me.default_account(&id)) } else { None };
       let cwd = (me.deps.cwd)();
+      // "New session in this category": filed on the session itself before anything awaits, so a switch made while it
+      // spawns can never move the filing onto whichever session the viewer shows by then
+      let category = me.category_for(category, &cwd).flatten();
       if let Some(cur) = me.current(&v)
         && keep_empty(&cur, &id, acc.as_deref(), &cwd)
       {
+        if category.is_some() {
+          cur.set_category(category);
+        }
         return Ok(());
       }
       me.drop_empty_current(&v).await;
       // Inheritable settings are snapped before the session starts spawning
       let last = me.last_settings(&id);
       let s = AcpSession::fresh(&id, &cwd, me.session_deps(), acc);
+      if category.is_some() {
+        s.set_category(category);
+      }
       s.preview_controls(&me.known_start_controls(&id).await, last.as_ref());
       if let Some(last) = &last {
         s.hold_settings(last);
@@ -1780,8 +1790,8 @@ impl SessionManager {
 
   /// The whole files behind a diff a page was sent without them: the open session (or the read-only copy shown for it)
   /// holds them. A ChatGPT mirror's view carries its sources whole and never asks
-  pub fn diff_source(&self, session_id: &str, tool_call_id: &str, nth: usize) -> Option<DiffSource> {
-    self.live(session_id).or_else(|| self.mirror_of(session_id))?.diff_source(tool_call_id, nth)
+  pub fn diff_source(&self, session_id: &str, tool_call_id: &str, nth: usize, subagent: Option<&str>) -> Option<DiffSource> {
+    self.live(session_id).or_else(|| self.mirror_of(session_id))?.diff_source(tool_call_id, nth, subagent)
   }
 
   pub fn plan_document(&self, session_id: &str, plan_id: &str) -> Option<PlanDocumentBlock> {
@@ -1815,7 +1825,7 @@ impl SessionManager {
     }
     let valid = |id: &str| is_session_id(id);
     match m {
-      W::ConnectChatgpt => self.new_session_for(v, Some(CHATGPT_ID.into()), None).await?,
+      W::ConnectChatgpt => self.new_session_for(v, Some(CHATGPT_ID.into()), None, None).await?,
       W::Send { session_id, text, attachments, steer } => {
         if let Some(s) = self.target(v, session_id.as_deref()) {
           if steer == Some(true) {
@@ -1867,15 +1877,7 @@ impl SessionManager {
         }
       }
       W::SelectSession { id } => self.select_session_for(v, &id).await,
-      W::NewSession { agent, category } => {
-        self.new_session_for(v, agent, None).await?;
-        // "New session in this category": the fresh (or kept empty) session is filed before its first prompt
-        if let Some(s) = self.current(v)
-          && let Some(Some(id)) = self.category_for(category, &s.cwd)
-        {
-          s.set_category(Some(id));
-        }
-      }
+      W::NewSession { agent, category } => self.new_session_for(v, agent, None, category).await?,
       W::RenameSession { id, title } => self.rename_session(&id, &title).await?,
       W::DeleteSession { id } => self.delete_session(&id).await?,
       W::RestoreSession { id } => self.restore_session(&id).await?,
@@ -2182,7 +2184,7 @@ impl SessionManager {
         match me.most_recent() {
           Some(next) => me.select_session_for(&v, &next).await,
           None => {
-            if let Err(e) = me.new_session_for(&v, None, None).await {
+            if let Err(e) = me.new_session_for(&v, None, None, None).await {
               me.log(&format!("new session failed: {e}"));
             }
           }

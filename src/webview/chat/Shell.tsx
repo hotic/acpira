@@ -50,7 +50,8 @@ export interface ShellHandlers {
   // History search over saved conversations; without it the session list matches titles only
   searchSessions?: (query: string) => Promise<SessionHit[]>;
   // The whole files behind the `nth` diff of a tool call: page views carry diff sources without their texts
-  diffSource?: (sessionId: string, toolCallId: string, nth: number) => Promise<FullDiffSource | undefined>;
+  // subagentId: the diff sits in that subagent's transcript (the inspector), not in the session's own turns
+  diffSource?: (sessionId: string, toolCallId: string, nth: number, subagentId?: string) => Promise<FullDiffSource | undefined>;
   stop: () => void;
   permission: (sessionId: string, blockId: string, optionId: string) => void;
   // The question card was closed: answers keyed by question id, or skip
@@ -396,9 +397,14 @@ export function Shell(p: ShellProps) {
     ? (path: string, line?: number) => on.openFile!(p.activeSessionId!, path, line) : undefined, [p.activeSessionId, on.openFile]);
   const stopAsyncTask = useMemo(() => p.activeSessionId && on.stopAsyncTask
     ? (taskId: string) => on.stopAsyncTask!(p.activeSessionId!, taskId) : undefined, [p.activeSessionId, on.stopAsyncTask]);
-  // Diff sources of the session on screen (and of its subagents, which the host searches too)
+  // Diff sources of the session on screen; the inspector's diffs are looked up in the inspected subagent's transcript,
+  // since a child may reuse its parent's tool call ids
   const fetchDiffSource = useMemo(() => p.activeSessionId && on.diffSource
     ? (toolCallId: string, nth: number) => on.diffSource!(p.activeSessionId!, toolCallId, nth) : undefined, [p.activeSessionId, on.diffSource]);
+  const inspectId = inspect?.id;
+  const fetchSubagentDiffSource = useMemo(() => p.activeSessionId && on.diffSource && inspectId !== undefined
+    ? (toolCallId: string, nth: number) => on.diffSource!(p.activeSessionId!, toolCallId, nth, inspectId) : undefined,
+  [p.activeSessionId, on.diffSource, inspectId]);
   // An AIR failure notice's actions map onto existing session actions: a real turn retries the prompt,
   // a session-scoped row (no live start) reconnects instead; the other two are the Notice's own verbs
   const failureAction = useMemo(() => p.activeSessionId ? (action: FailureAction) => {
@@ -562,6 +568,7 @@ export function Shell(p: ShellProps) {
                   onAnswer={on.answer ? (blockId, answers, skip) => on.answer!(p.activeSessionId!, blockId, answers, skip) : undefined}
                   wide={wide}
                   blobUrl={blobUrl}
+                  diffSource={fetchSubagentDiffSource}
                 />
               </div>
             )}
@@ -582,6 +589,7 @@ export function Shell(p: ShellProps) {
                 onPermission={(blockId, optionId) => on.permission(p.activeSessionId!, blockId, optionId)}
                 wide={wide}
                 blobUrl={blobUrl}
+                diffSource={fetchSubagentDiffSource}
               />
             </aside>
           )}

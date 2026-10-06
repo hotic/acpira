@@ -132,9 +132,10 @@ impl AcpSession {
   }
 
   /// The whole files behind the `nth` diff of tool call `tool_call_id` (counted in `contents`, or `content` when that is
-  /// the only item, as the page lists them), the texts a page view leaves out. The newest matching call wins; the
-  /// session's own turns are searched before its subagents' transcripts
-  pub fn diff_source(&self, tool_call_id: &str, nth: usize) -> Option<DiffSource> {
+  /// the only item, as the page lists them), the texts a page view leaves out. The newest matching call wins. Only the
+  /// transcript the diff was shown in is searched: the session's own turns, or subagent `subagent`'s when given, since a
+  /// child's tool call ids may repeat the parent's (or another child's)
+  pub fn diff_source(&self, tool_call_id: &str, nth: usize, subagent: Option<&str>) -> Option<DiffSource> {
     let c = self.core.lock();
     let find = |turns: &mut dyn DoubleEndedIterator<Item = &Turn>| {
       turns.rev().filter_map(Turn::as_agent).flat_map(|t| t.blocks.iter().rev()).find_map(|b| match b {
@@ -152,7 +153,10 @@ impl AcpSession {
         _ => None,
       })
     };
-    find(&mut visible_turns(&c)).or_else(|| c.tree.all_turns().find_map(|turns| find(&mut turns.iter())))
+    match subagent {
+      Some(id) => find(&mut c.tree.transcript(id)?.0.iter()),
+      None => find(&mut visible_turns(&c)),
+    }
   }
 
   pub fn plan_document(&self, plan_id: &str) -> Option<PlanDocumentBlock> {

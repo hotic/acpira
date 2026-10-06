@@ -266,8 +266,8 @@ impl BridgeCore {
         self.post_now(HostMsg::SessionHits { seq, hits });
       }
       // Always answered, so the page's copy never waits on a request nobody will reply to
-      W::DiffSource { session_id, tool_call_id, nth, seq } => {
-        let source = manager.diff_source(&session_id, &tool_call_id, nth);
+      W::DiffSource { session_id, tool_call_id, nth, subagent_id, seq } => {
+        let source = manager.diff_source(&session_id, &tool_call_id, nth, subagent_id.as_deref());
         self.post_now(HostMsg::DiffSource { seq, source });
       }
       // The file is not opened on its own: the toast names it and offers an Open button. A repeated export of an unchanged

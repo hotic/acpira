@@ -28,7 +28,7 @@ async fn viewers_hold_independent_active_sessions_and_only_get_their_sessions_ev
   m.handle_on(&a, json!({ "type": "send", "text": "hi" })).await;
   m.m.select_session_for(&b, &sa).await;
   assert_eq!(turns_len(m.active_of(&b)), 2);
-  m.m.new_session_for(&b, None, None).await.unwrap();
+  m.m.new_session_for(&b, None, None, None).await.unwrap();
   assert!(m.session_ids().contains(&sa));
   assert_eq!(a.active_id().as_deref(), Some(sa.as_str()));
   assert_ne!(b.active_id().as_deref(), Some(sa.as_str()));
