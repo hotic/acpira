@@ -202,14 +202,9 @@ export function Dot({ ok }: { ok: boolean }) {
   return <span aria-hidden className={cn('inline-block size-(--dot) shrink-0 rounded-full', ok ? 'bg-ok' : 'bg-fg-3')} />;
 }
 
-// Filesystem path shortened for display: inside the workspace → relative, under home → ~/…
-export function shortPath(path: string, env: { home: string; cwd: string }): string {
-  const strip = (root: string) => (root && (path === root || path.startsWith(root.endsWith('/') ? root : `${root}/`)) ? path.slice(root.length).replace(/^\//, '') : undefined);
-  const rel = strip(env.cwd);
-  if (rel !== undefined) return rel || '.';
-  const home = strip(env.home);
-  return home !== undefined ? `~/${home}` : path;
-}
+// Path display lives in a DOM-free module so the shared test suites can load it; re-exported for the pages
+import { shortPath } from './paths';
+export { pathSep, shortPath } from './paths';
 
 export interface ItemRowProps {
   lead?: ReactNode;

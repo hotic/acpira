@@ -5,7 +5,7 @@ use std::path::Path;
 use serde_json::json;
 
 use acpira_host::agent_ext::agent_ext;
-use acpira_host::inventory::{McpEntry, ScanEnv, ScanInput, expand_path, parse_frontmatter, parse_json_loose, parse_json_mcp, parse_opencode_mcp, parse_toml_mcp, scan_inventory, scope_of};
+use acpira_host::inventory::{McpEntry, ScanEnv, ScanInput, expand_path, native_tail, parse_frontmatter, parse_json_loose, parse_json_mcp, parse_opencode_mcp, parse_toml_mcp, scan_inventory, scope_of};
 use acpira_shared::inventory::AgentInventory;
 
 use crate::support::{expect_eq, expect_match, v};
@@ -76,11 +76,12 @@ impl Fixture {
   async fn scan(&self, agent: &str, binary: Option<&str>) -> AgentInventory {
     scan_inventory(ScanInput { agent: agent.into(), ext: agent_ext(agent), binary: binary.map(str::to_owned), runtime: None, adapter: None, health: None }, &self.env()).await
   }
+  // Native separators, as the scanner spells expanded templates
   fn home(&self, rel: &str) -> String {
-    Path::new(&self.home).join(rel).to_string_lossy().into_owned()
+    Path::new(&self.home).join(native_tail(rel)).to_string_lossy().into_owned()
   }
   fn cwd(&self, rel: &str) -> String {
-    Path::new(&self.cwd).join(rel).to_string_lossy().into_owned()
+    Path::new(&self.cwd).join(native_tail(rel)).to_string_lossy().into_owned()
   }
 }
 
@@ -186,7 +187,8 @@ async fn devin_scans_jsonc_mcp_config_shared_skills_and_only_markdown_rules() {
     ]),
   );
   assert_eq!(inv.skills.iter().map(|s| s.name.clone()).collect::<Vec<_>>(), ["hallmark"]);
-  let dir_rules: Vec<String> = inv.rules.iter().filter(|r| r.path.contains(".devin/rules")).map(|r| r.path.rsplit('/').next().unwrap().to_owned()).collect();
+  let dir_rules: Vec<String> =
+    inv.rules.iter().filter(|r| r.path.contains(&f.cwd(".devin/rules"))).map(|r| Path::new(&r.path).file_name().unwrap().to_string_lossy().into_owned()).collect();
   assert_eq!(dir_rules, ["style.md"]);
 }
 
@@ -210,7 +212,7 @@ async fn opencode_reads_the_mcp_object_from_project_opencode_json() {
 async fn dsh_counts_bundles_and_named_flat_files_as_skills() {
   let f = fixture();
   let inv = f.scan("dsh", None).await;
-  let dsh: Vec<_> = inv.skills.iter().filter(|s| s.path.contains(".dsh/skills")).collect();
+  let dsh: Vec<_> = inv.skills.iter().filter(|s| s.path.contains(&f.home(".dsh/skills"))).collect();
   assert_eq!(dsh.iter().map(|s| s.name.clone()).collect::<Vec<_>>(), ["bundled", "flat-skill"]);
   assert_eq!(dsh.iter().find(|s| s.name == "flat-skill").unwrap().path, f.home(".dsh/skills/flat-file.md"));
 }
