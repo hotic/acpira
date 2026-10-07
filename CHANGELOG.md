@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [1.8.10] - 2026-10-07
+
+### Fixed
+
+- One-shot login terminals no longer persist across VS Code reloads, so authentication commands are not rerun on startup.
+
 ## [1.8.9] - 2026-10-07
 
 ### Added
