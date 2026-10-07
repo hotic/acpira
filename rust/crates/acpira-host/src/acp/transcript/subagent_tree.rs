@@ -235,6 +235,11 @@ impl SubagentTree {
     self.nodes.is_empty()
   }
 
+  /// Some subagent (a background workflow agent or a summoned child included) is still working
+  pub fn any_running(&self) -> bool {
+    self.nodes.iter().any(|n| n.status == SubagentState::Running)
+  }
+
   fn idx(&self, id: &str) -> Option<usize> {
     self.nodes.iter().position(|n| n.id == id)
   }

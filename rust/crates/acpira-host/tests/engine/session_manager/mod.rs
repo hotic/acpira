@@ -28,6 +28,7 @@ mod windows;
 mod fork;
 mod native;
 mod categories;
+mod idle;
 
 type Terminal = (String, Vec<String>, Option<BTreeMap<String, Option<String>>>);
 

@@ -71,6 +71,15 @@ const YIELD_SETTLE: Duration = Duration::from_secs(3);
 const RECORD_HOLD_WAIT: Duration = Duration::from_secs(2);
 // Mirror copies count their rev up from here: always rising, always below the 0 a live session starts at
 const MIRROR_REV_BASE: i64 = -(1 << 40);
+// A live session no viewer shows and with nothing in flight gives its agent process back after this long; opening it
+// again resumes the native session (`release_idle`). Claude Code runs one CLI per session (150–300 MB each), so a window
+// that went through a dozen conversations otherwise keeps a dozen of them alive until it closes
+const IDLE_RELEASE: Duration = Duration::from_secs(20 * 60);
+// Background sessions beyond the most recently seen IDLE_KEEP go sooner, once they have sat unseen for IDLE_KEEP_MIN
+const IDLE_KEEP: usize = 4;
+const IDLE_KEEP_MIN: Duration = Duration::from_secs(2 * 60);
+// How often the idle sessions are looked at
+const IDLE_SWEEP: Duration = Duration::from_secs(30);
 
 fn safe_record_text(value: &str) -> String {
   let mut text: String = value.chars().filter(|c| !c.is_control()).take(160).collect();
@@ -169,6 +178,10 @@ struct State {
   dirty: HashMap<String, bool>,
   // Sessions another engine holds the lease of: read-only copies of their record, refreshed until the lease comes free
   mirrors: HashMap<String, Arc<AcpSession>>,
+  // Since when each live session has been unseen with nothing in flight (`release_idle`)
+  idle_since: HashMap<String, tokio::time::Instant>,
+  // Controls of sessions whose process was released while idle, replayed when the session opens again
+  released: HashMap<String, TurnSettings>,
 }
 
 pub struct SessionManager {
@@ -238,6 +251,8 @@ impl SessionManager {
           sync_again: false,
           dirty: HashMap::new(),
           mirrors: HashMap::new(),
+          idle_since: HashMap::new(),
+          released: HashMap::new(),
         }),
         deps,
         pool,
@@ -305,6 +320,8 @@ impl SessionManager {
     mgr.watch_registry(&reg);
     let weak = mgr.me.clone();
     tokio::spawn(async move { flush_loop(weak).await });
+    let weak = mgr.me.clone();
+    tokio::spawn(async move { idle_loop(weak).await });
     mgr
   }
 
@@ -1518,9 +1535,19 @@ impl SessionManager {
       return;
     }
     let s = AcpSession::new(record, self.session_deps());
-    self.state.lock().live.insert(id.to_owned(), s.clone());
+    let released = {
+      let mut st = self.state.lock();
+      st.live.insert(id.to_owned(), s.clone());
+      st.released.remove(id)
+    };
     self.emit_session(&s);
     s.start().await;
+    // A session whose process was released while idle gets back the controls it had (the agent may resume on its defaults)
+    if let Some(settings) = released
+      && s.status() == SessionStatus::Ready
+    {
+      s.adopt_controls(settings).await;
+    }
     // A draining engine keeps the lease of every live agent: synced before the load's own hold goes
     self.sync_leases();
     drop(hold);
@@ -2166,6 +2193,8 @@ impl SessionManager {
       st.health_seen.remove(id);
       st.dirty.remove(id);
       st.mirrors.remove(id);
+      st.idle_since.remove(id);
+      st.released.remove(id);
       st.live.remove(id)
     };
     if let Some(s) = live {
@@ -2605,6 +2634,89 @@ impl SessionManager {
     (self.deps.toast)("info", &tp("host.installThenDetect", &[("agent", &def.name)]));
   }
 
+  /// End the agent processes of sessions nobody looks at: a live session no viewer shows, with nothing in flight
+  /// (`AcpSession::releasable`), goes once it has been like that for `after`; beyond the `keep` most recently seen ones,
+  /// once it has been like that for IDLE_KEEP_MIN (or `after`, when shorter). Its record is written, its lease released
+  /// and the list entry stays; opening it again resumes the native session like after a window reload and replays its
+  /// controls (`load_session`). Returns the ids released
+  pub async fn release_idle(self: &Arc<Self>, after: Duration, keep: usize) -> Vec<String> {
+    let now = tokio::time::Instant::now();
+    let live = self.live_sessions();
+    let shown: HashSet<String> = self.viewers().iter().filter_map(|v| v.active_id()).collect();
+    let yielding = self.yielding.lock().clone();
+    // Read outside the manager lock: a session reports its changes into the manager while holding its own lock
+    let quiet: Vec<(Arc<AcpSession>, bool)> = live
+      .into_iter()
+      .map(|s| {
+        let quiet = !shown.contains(&s.id) && !yielding.contains(&s.id) && s.releasable();
+        (s, quiet)
+      })
+      .collect();
+    let mut idle: Vec<(tokio::time::Instant, Arc<AcpSession>)> = vec![];
+    {
+      let mut st = self.state.lock();
+      if st.disposed {
+        return vec![];
+      }
+      let ids: HashSet<String> = st.live.keys().cloned().collect();
+      st.idle_since.retain(|id, _| ids.contains(id));
+      for (s, quiet) in quiet {
+        if quiet {
+          idle.push((*st.idle_since.entry(s.id.clone()).or_insert(now), s));
+        } else {
+          st.idle_since.remove(&s.id);
+        }
+      }
+    }
+    // Most recently seen first: the first `keep` of them only go after the full wait
+    idle.sort_by_key(|(since, _)| std::cmp::Reverse(*since));
+    let mut released = vec![];
+    for (i, (since, s)) in idle.into_iter().enumerate() {
+      let unseen = now.duration_since(since);
+      if (unseen >= after || (i >= keep && unseen >= IDLE_KEEP_MIN.min(after))) && self.release(&s).await {
+        released.push(s.id.clone());
+      }
+    }
+    if !released.is_empty() {
+      self.sync_leases();
+      self.emit_sessions();
+    }
+    released
+  }
+
+  /// Close one idle session's agent process; false when a viewer landed on it or it changed meanwhile
+  async fn release(&self, s: &Arc<AcpSession>) -> bool {
+    let settings = capture_turn_settings(&s.agent_controls());
+    if let Err(e) = self.deps.store.flush(s.clone() as Arc<dyn RecordSource>).await {
+      self.log(&format!("session {}: idle release skipped, save failed: {e}", s.id));
+      return false;
+    }
+    if !s.releasable() {
+      return false;
+    }
+    {
+      // A viewer selecting the session sets its active id before it looks the session up here: either this check sees
+      // the viewer, or the lookup finds the session gone and loads it from the record just written
+      let mut st = self.state.lock();
+      let current = st.live.get(&s.id).is_some_and(|l| Arc::ptr_eq(l, s));
+      if !current || st.viewers.iter().any(|v| v.active_id().as_deref() == Some(s.id.as_str())) {
+        return false;
+      }
+      st.live.remove(&s.id);
+      st.was_running.remove(&s.id);
+      st.health_seen.remove(&s.id);
+      st.dirty.remove(&s.id);
+      st.idle_since.remove(&s.id);
+      st.released.insert(s.id.clone(), settings);
+    }
+    if let Some(pin) = s.drop_lease() {
+      self.leases.release(&s.id, pin);
+    }
+    s.dispose();
+    self.log(&format!("session {}: idle, agent process released", s.id));
+    true
+  }
+
   pub async fn dispose(self: &Arc<Self>) {
     {
       let mut st = self.state.lock();
@@ -2756,6 +2868,18 @@ async fn flush_loop(weak: Weak<SessionManager>) {
     }
     drop(m);
     tokio::time::sleep(PUSH_QUANTUM).await;
+  }
+}
+
+/// Every IDLE_SWEEP, background sessions with nothing in flight give their agent process back (`release_idle`)
+async fn idle_loop(weak: Weak<SessionManager>) {
+  loop {
+    tokio::time::sleep(IDLE_SWEEP).await;
+    let Some(m) = weak.upgrade() else { return };
+    if m.state.lock().disposed {
+      return;
+    }
+    m.release_idle(IDLE_RELEASE, IDLE_KEEP).await;
   }
 }
 
