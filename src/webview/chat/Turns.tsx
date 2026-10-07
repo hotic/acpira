@@ -25,7 +25,7 @@ import { AutoFoldContext, AutoFoldItem, AutoFoldStore } from './autoFold';
 import { useFollowing } from './useBottomFollow';
 import { Prose } from './Prose';
 import { AgentImage } from './AgentImage';
-import { GeneratedImages } from './GeneratedImage';
+import { GeneratedImages, ImageInFoldContext } from './GeneratedImage';
 import { Permission } from './Permission';
 import { QuestionRecord } from './Questions';
 import { BlobUrlContext } from './fileLinks';
@@ -481,15 +481,12 @@ function CursorFold({ blocks }: { blocks: ToolCallBlock[] }) {
 function CodexMessage({ turn, running, working = running, onPermission, memoryKey, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; running: boolean; working?: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
   const { process, reply, permissions, notices } = splitCodexBlocks(turn.blocks);
   const hasTools = turn.blocks.some(block => block.type === 'tool_call');
-  // Generated and shown images are results, not process detail: they stay visible however the fold is set
-  const generations = turn.blocks.filter(isImageResultBlock);
   // The process folds away only once the reply has finished drawing, not when its last chunk arrived
   const [replyBusy, setReplyBusy] = useState(false);
   return (
     <div className="flex flex-col gap-gap">
       <CodexFold turn={turn} blocks={process} running={working} replyBusy={replyBusy && reply.length > 0} hasTools={hasTools} memoryKey={memoryKey} lead={lead} />
       {notices.map(b => <NoticeRow key={b.id} block={b} />)}
-      {generations.map(b => <GeneratedImages key={b.id} block={b} />)}
       {subagents !== undefined && subagents.length > 0 && onInspect !== undefined && (
         <>
           <SubagentGroup nodes={subagents} all={allSubagents ?? subagents} onInspect={onInspect} />
@@ -524,6 +521,7 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
   // the way the Working row used to: fade, then collapse. A compaction status stays as a flat line.
   const retired = !running && !hasTools && !blocks.some(b => b.type !== 'compaction');
   const open = retired || (manual ?? auto);
+  const imageResults = useMemo(() => blocks.filter(isImageResultBlock), [blocks]);
   const activity = liveActivity(turn, lead);
   const CompletionIcon = turn.stop === 'cancelled' ? X : outcomeOf(turn) ? TriangleAlert : Check;
   const leadIcon = running ? activity.lead : <CompletionIcon className="size-icon" strokeWidth={1.5} />;
@@ -555,28 +553,35 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
         </div>
       )}
       {blocks.length > 0 && (
-        <AutoFoldContext.Provider value={store}>
-          {parts.map((part, i) => {
-            // A steered prompt keeps the process prose gap open or closed: between two parts while they show, under
-            // the head (or the previous card) once they have folded away
-            if (part.type === 'steer') return (
-              <div key={part.id} className="flex min-w-0 flex-col pt-(--process-prose-gap)">
-                <EntranceOnce id={itemEntrance(part.id)}><SteeredMessage block={part.block} /></EntranceOnce>
-              </div>
-            );
-            // The padding folds with its part: the head's offset on the first, the prose gap after a card, the tail on the last
-            const body = (
-              <div className={cn(!retired && (i === 0 ? 'pt-1' : 'pt-(--process-prose-gap)'), !retired && i === parts.length - 1 && 'pb-1.5')}>
-                <ProcessHistory><ProcessBlocks blocks={blocks} items={part.items} /></ProcessHistory>
-              </div>
-            );
-            // Nested rows extend their hit area beyond the text column; the clip reserves the turn padding (wider than
-            // the hit outset) so they keep their edges. The first part is the root's panel, the rest follow it
-            return i === parts.findIndex(p => p.type === 'items')
-              ? <Collapsible.Panel key={part.id} className="-mx-pad [&>div]:px-pad">{body}</Collapsible.Panel>
-              : <Collapsible.Section key={part.id} open={open} className="-mx-pad [&>div]:px-pad">{body}</Collapsible.Section>;
-          })}
-        </AutoFoldContext.Provider>
+        <ImageInFoldContext.Provider value={open}>
+          <AutoFoldContext.Provider value={store}>
+            {parts.map((part, i) => {
+              // A steered prompt keeps the process prose gap open or closed: between two parts while they show, under
+              // the head (or the previous card) once they have folded away
+              if (part.type === 'steer') return (
+                <div key={part.id} className="flex min-w-0 flex-col pt-(--process-prose-gap)">
+                  <EntranceOnce id={itemEntrance(part.id)}><SteeredMessage block={part.block} /></EntranceOnce>
+                </div>
+              );
+              // The padding folds with its part: the head's offset on the first, the prose gap after a card, the tail on the last
+              const body = (
+                <div className={cn(!retired && (i === 0 ? 'pt-1' : 'pt-(--process-prose-gap)'), !retired && i === parts.length - 1 && 'pb-1.5')}>
+                  <ProcessHistory><ProcessBlocks blocks={blocks} items={part.items} /></ProcessHistory>
+                </div>
+              );
+              // Nested rows extend their hit area beyond the text column; the clip reserves the turn padding (wider than
+              // the hit outset) so they keep their edges. The first part is the root's panel, the rest follow it
+              return i === parts.findIndex(p => p.type === 'items')
+                ? <Collapsible.Panel key={part.id} className="-mx-pad [&>div]:px-pad">{body}</Collapsible.Panel>
+                : <Collapsible.Section key={part.id} open={open} className="-mx-pad [&>div]:px-pad">{body}</Collapsible.Section>;
+            })}
+          </AutoFoldContext.Provider>
+        </ImageInFoldContext.Provider>
+      )}
+      {!open && imageResults.length > 0 && (
+        <div className="flex min-w-0 flex-col gap-gap pt-gap">
+          {imageResults.map(block => <GeneratedImages key={block.id} block={block} />)}
+        </div>
       )}
     </Collapsible.Root>
   );
