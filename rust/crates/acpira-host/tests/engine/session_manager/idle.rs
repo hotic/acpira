@@ -75,7 +75,7 @@ async fn a_running_background_session_keeps_its_process_until_the_turn_ends() {
   assert!(m.m.release_idle(Duration::ZERO, 0).await.is_empty(), "a running turn is never cut");
   m.handle(json!({ "type": "stop", "sessionId": a })).await;
   sending.await.unwrap();
-  until(|| m.sessions().iter().any(|s| s["id"] == a.as_str() && s["state"].is_null()), 5000).await;
+  until(|| m.sessions().iter().any(|s| s["id"] == a.as_str() && s["state"] == "unread"), 5000).await;
   assert_eq!(m.m.release_idle(Duration::ZERO, 0).await, vec![a.clone()]);
   m.dispose().await;
 }
