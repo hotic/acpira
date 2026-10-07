@@ -7,13 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- Claude's settings page has a **Plan mode auto-approve** switch (`acpira.planAutoApprove`). Claude Code 2.1.284 asks for every tool call in Plan mode over ACP; with the switch on, those requests are approved once without a card. Plan approvals and requests the adapter marks as risky still ask, and no lasting allow rule is written.
-
 ### Planned
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
+
+## [1.8.9] - 2026-10-07
+
+### Added
+
+- Claude's settings page has a **Plan mode auto-approve** switch (`acpira.planAutoApprove`). Claude Code 2.1.284 asks for every tool call in Plan mode over ACP; with the switch on, those requests are approved once without a card. Plan approvals and requests the adapter marks as risky still ask, and no lasting allow rule is written.
+- Background sessions with no viewer and no work in flight release their agent process after being idle. Reopening resumes the native session, restores its controls and keeps the existing session entry and unread state.
+
+### Changed
+
+- Claude plan approvals show the revised plan document, and the plan card now has a titled status header, a scrollable body and an action bar that keeps approval controls visible.
+- Streamed Markdown settles completed blocks behind the live tail. Generated images stay beside their tool row, and steered prompts move with the process fold while it opens and closes.
+- Windows shared configuration and transcript exports preserve ordinary drive and UNC path spelling. Account subscription plans refresh after an account upgrade.
+
+### Fixed
+
+- Claude authentication keeps saved account credentials ahead of inherited host API variables, detects missing credentials before retrying, stops repeated unauthorized retries while preserving partial output and surfaces the peer's reason when resume fails.
+- Reopening an idle session waits for its previous agent process to close before resuming it.
+- Sidecar framing splits only on newline boundaries, so Unicode line-separator characters remain part of a JSON message.
+- Command rows show the verbatim command before output arrives.
+
+### Removed
+
+- The session list no longer shows the category deletion hint.
 
 ## [1.8.8] - 2026-10-06
 
