@@ -43,7 +43,10 @@ impl AcpSession {
           } else {
             let turn_index = current_turn_index(&c);
             let Core { tree, state, .. } = &mut *c;
-            if !tree.workflow_progress(w, &mut RouteCtx { turn_index, root_turns: &mut state.turns }) {
+            let changed = tree.workflow_progress(w, &mut RouteCtx { turn_index, root_turns: &mut state.turns });
+            // An agent with an id has a sidechain log to follow (`workflow_logs.rs`)
+            self.schedule_workflow_logs(&mut c);
+            if !changed {
               return;
             }
             self.drain_terminal(&mut c);
@@ -229,6 +232,8 @@ impl AcpSession {
       if let Some(st) = e.state.filter(|s| matches!(s, AsyncTaskState::Completed | AsyncTaskState::Failed | AsyncTaskState::Stopped)) {
         c.tree.workflow_ended(&e.async_task_id, st);
         self.drain_terminal(c);
+        // The agents it ended still get their last lines read
+        self.schedule_workflow_logs(c);
       }
       return;
     }

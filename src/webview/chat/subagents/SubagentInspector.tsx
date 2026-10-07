@@ -14,7 +14,7 @@ import { HistoryContext } from '../HistoryMessage';
 import { TurnActionsContext } from '../TurnActions';
 import { FollowContext, useBottomFollow } from '../useBottomFollow';
 import { DiffSourceContext } from '../fileLinks';
-import { subagentTitle } from './subagentState';
+import { receiptOnly, subagentTitle } from './subagentState';
 
 interface InspectorProps {
   node: SubagentSummary;
@@ -95,7 +95,7 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
       <div ref={scroll} className="scroll-thin min-h-0 min-w-0 flex-1 overflow-y-auto px-page">
         <div ref={body} className={cn('mx-auto flex min-w-0 flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-(--content-w)')}>
           {node.task !== undefined && <TaskCard task={node.task} />}
-          {node.visibility === 'receipt' ? (
+          {receiptOnly(node) ? (
             <>
               <p className="m-0 px-pad text-2 text-fg-3">{t('subagents.receiptOnly')}</p>
               {node.result !== undefined && (

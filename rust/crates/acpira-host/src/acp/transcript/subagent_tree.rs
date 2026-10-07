@@ -3,7 +3,7 @@
 //! receipt), lifecycle, early-update buffering and record round trips. All mutations are synchronous. Nodes are found
 //! through peer-id → node-id maps; the root transcript is reached through `RouteCtx`
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::{Map, Value};
 
@@ -104,6 +104,11 @@ fn rec(v: Option<&Value>) -> Option<&Map<String, Value>> {
 
 fn s(v: Option<&Value>) -> Option<String> {
   v.and_then(Value::as_str).filter(|x| !x.is_empty()).map(str::to_owned)
+}
+
+/// Any block at all: a node starts with one empty agent turn
+fn has_content(turns: &[Turn]) -> bool {
+  turns.iter().any(|t| t.as_agent().is_none_or(|a| !a.blocks.is_empty()))
 }
 
 fn tool_count(turns: &[Turn]) -> u64 {
@@ -933,6 +938,14 @@ impl SubagentTree {
         }
       };
       let n = &mut self.nodes[i];
+      // The agent's own id names its sidechain log (`claude_workflow_log.rs`); a queued agent gets it once it starts
+      if n.peer.sidechain_id.is_none()
+        && let Some(agent_id) = a.agent_id
+      {
+        n.peer.sidechain_id = Some(agent_id);
+        n.rev += 1;
+        changed = true;
+      }
       let before = (n.title.clone(), n.task.clone(), n.role.clone(), n.model.clone(), n.result.clone(), n.tool_count);
       n.title = a.label.or(n.title.take());
       n.task = a.prompt.or(n.task.take());
@@ -982,6 +995,50 @@ impl SubagentTree {
         AsyncTaskState::Running | AsyncTaskState::Paused => {}
       }
     }
+  }
+
+  /// Workflow agents whose sidechain log is due a read (`session/workflow_logs.rs`): running ones, a live one that just
+  /// ended (its last lines), and a restored one a viewer asked for (`wanted`) whose record holds no process. `done` are
+  /// the nodes whose final read already ran. (node id, the agent's own id, running)
+  pub fn workflow_log_targets(&self, wanted: &HashSet<String>, done: &HashSet<String>) -> Vec<(String, String, bool)> {
+    self
+      .nodes
+      .iter()
+      .filter(|n| !done.contains(&n.id))
+      .filter_map(|n| {
+        let agent_id = n.peer.sidechain_id.clone()?;
+        let running = n.status == SubagentState::Running;
+        let due = if n.restored {
+          !running && wanted.contains(&n.id) && !has_content(&n.state.turns)
+        } else {
+          n.dialect == Some(Dialect::Workflow)
+        };
+        due.then(|| (n.id.clone(), agent_id, running))
+      })
+      .collect()
+  }
+
+  /// Updates read from a workflow agent's sidechain log. They land past the terminal gate (the last lines are read once
+  /// the agent ended), and a terminal node's turn is sealed again so nothing is left streaming or open. True when the
+  /// transcript changed
+  pub fn workflow_log(&mut self, id: &str, updates: &[Value]) -> bool {
+    let Some(i) = self.idx(id) else { return false };
+    let n = &mut self.nodes[i];
+    let mut changed = false;
+    for u in updates {
+      changed |= apply_update(&mut n.state, u);
+    }
+    if !changed {
+      return false;
+    }
+    if terminal(n.status) {
+      let stop = if matches!(n.status, SubagentState::Cancelled | SubagentState::Disconnected) { TurnStop::Cancelled } else { TurnStop::EndTurn };
+      end_turn(&mut n.state, stop);
+    }
+    // The progress frame counts the agent's tool calls too; the log may be behind it or ahead
+    n.tool_count = n.tool_count.max(tool_count(&n.state.turns));
+    n.rev += 1;
+    true
   }
 
   fn upsert_call_node(&mut self, tool_call_id: &str, visibility: SubagentVisibility, ctx: &mut RouteCtx) -> usize {
@@ -1228,6 +1285,7 @@ impl SubagentTree {
       activity: None,
       tool_count: n.tool_count,
       result: n.result.clone(),
+      has_process: (n.visibility == SubagentVisibility::Receipt && has_content(&n.state.turns)).then_some(true),
       harness: n.harness.clone(),
     }
   }

@@ -88,6 +88,12 @@ export function descendantCount(id: string, all: SubagentSummary[]): number {
   return count;
 }
 
+// The inspector shows the receipt-only note (task + result, no process) unless a receipt node gained a transcript of
+// its own (a Claude workflow agent whose sidechain log the host reads)
+export function receiptOnly(node: SubagentSummary): boolean {
+  return node.visibility === 'receipt' && !node.hasProcess;
+}
+
 export function isWaiting(node: SubagentSummary): boolean {
   return !!node.permissions?.length || !!node.question;
 }
