@@ -1,5 +1,5 @@
 import { cloneElement, createContext, isValidElement, memo, useContext, useEffect, useState, type ComponentProps, type ReactElement, type ReactNode } from 'react';
-import { Streamdown, defaultRehypePlugins, type Components, type ExtraProps } from 'streamdown';
+import { Block, Streamdown, defaultRehypePlugins, parseMarkdownIntoBlocks, type BlockProps, type Components, type ExtraProps } from 'streamdown';
 import { cjk } from '@streamdown/cjk';
 import { createMathPlugin } from '@streamdown/math';
 import { mermaid as mermaidDiagram } from '@streamdown/mermaid';
@@ -35,12 +35,14 @@ export const Prose = memo(function Prose({ block, motion = STREAM_MOTION, onBusy
   const streaming = !!block.streaming || smooth.draining;
   const { animated, animating } = useStreamMotion(streaming, motion);
   const busy = streaming || animating;
+  const [blocks] = useState(createLiveBlocks);
   useEffect(() => { onBusy?.(busy); }, [busy, onBusy]);
   useEffect(() => () => onBusy?.(false), [onBusy]);
   // The turn heading already indicates waiting before the first visible words.
   if (!smooth.text.trim()) return null;
   return (
     <MarkdownImages.Provider value={block.images}>
+    <LiveBlocks.Provider value={blocks}>
     <Streamdown
       mode={streaming || animating ? 'streaming' : 'static'}
       isAnimating={streaming || animating}
@@ -53,13 +55,57 @@ export const Prose = memo(function Prose({ block, motion = STREAM_MOTION, onBusy
       rehypePlugins={REHYPE}
       plugins={PLUGINS}
       components={COMPONENTS}
+      BlockComponent={SettlingBlock}
+      parseMarkdownIntoBlocksFn={blocks.parse}
       className={tone === 'thought' ? THOUGHT_CLASS : REPLY_CLASS}
     >
       {smooth.text}
     </Streamdown>
+    </LiveBlocks.Provider>
     </MarkdownImages.Provider>
   );
 });
+
+// streamdown's animate plugin wraps every character of an animated block in its own span and keeps a plugin per
+// block, so while a turn streams every block it has ever animated stays one span per character: a minute of
+// Claude thinking left ~14k spans in the live thought, and each 32 ms reveal tick paid style, pre-paint,
+// compositing-input and layout work over all of them (the main thread saturated and the renderer grew to GBs).
+// Only the streaming tail needs the entrance; a block two or more behind it has long finished fading and renders
+// as plain text again. The block just before the tail keeps its spans so its last glyphs finish their fade.
+const ANIMATED_TAIL_BLOCKS = 2;
+
+interface LiveBlocksState { count: number; parse: (markdown: string) => string[] }
+
+// Per Prose instance: streamdown memoizes its block split on this function's identity, and the blocks render
+// right after the split in the same pass, so they read the current count from it
+function createLiveBlocks(): LiveBlocksState {
+  const state: LiveBlocksState = {
+    count: 0,
+    parse: markdown => {
+      const blocks = parseMarkdownIntoBlocks(markdown);
+      state.count = blocks.length;
+      return blocks;
+    },
+  };
+  return state;
+}
+
+const LiveBlocks = createContext<LiveBlocksState | undefined>(undefined);
+
+// One stripped plugin list per animated list, so a settled block keeps a stable `rehypePlugins` and Block's memo holds
+const settledPlugins = new WeakMap<object, BlockProps['rehypePlugins']>();
+
+function SettlingBlock(props: BlockProps) {
+  const live = useContext(LiveBlocks);
+  const { animatePlugin, rehypePlugins } = props;
+  if (!live || !animatePlugin || !rehypePlugins || props.index >= live.count - ANIMATED_TAIL_BLOCKS) return <Block {...props} />;
+  let plain = settledPlugins.get(rehypePlugins);
+  if (!plain) {
+    plain = rehypePlugins.filter(plugin => plugin !== animatePlugin.rehypePlugin);
+    settledPlugins.set(rehypePlugins, plain);
+  }
+  return <Block {...props} animatePlugin={null} rehypePlugins={plain} />;
+}
 
 // streamdown routes fenced code through `code` and inline through `inlineCode`, telling them apart by a `data-block`
 // marker that its default `pre` cloneElements onto the code child — so the `pre` override below must replicate that
