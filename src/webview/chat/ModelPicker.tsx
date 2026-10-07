@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Zap } from 'lucide-react';
 import type { ConfigControl } from '@shared/transcript';
 import { findFusionVariant, findVariant, fusionLabel, groupModels, optionBrand, visibleOptions, type ModelFamily, type ModelVariant } from '@shared/models';
-import { fastOn, fastValue, isFastControl, isUltraLevel, modelConfigChip, presentReasoning, reasoningChip, reasoningVisible } from '@shared/composerControls';
+import { chipTags, fastOn, fastValue, isFastControl, isUltraLevel, presentReasoning, reasoningChip, reasoningVisible } from '@shared/composerControls';
 import { t } from '../i18n';
 import { Chip, ChipTag } from '../ui/Button';
 import { HeaderToggle, SegmentScale, SelectRow, SwitchRow } from '../ui/Field';
@@ -59,7 +59,7 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
   const families = useMemo(() => groupModels(c.options), [c.options]);
   const cur = families.find(f => f.variants.some(v => v.id === c.value));
   const curVar = cur?.variants.find(v => v.id === c.value);
-  const tags = chipTags(cur, curVar, reasoning, modelConfig);
+  const tags = chipTags(cur, curVar, reasoning, modelConfig, t('composer.standard'));
   // A Fusion pair is too long for the chip: it reads "Fusion" plus the lead's badges and keeps the pair in the tooltip and the panel
   const title = [cur?.name ?? c.name, curVar?.lead ? fusionLabel(curVar) : tags.map(tag => tag.label).join(' ')].filter(Boolean).join(' ');
   return (
@@ -76,30 +76,6 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
       </Popover.Popup></Popover.Positioner></Popover.Portal>
     </Popover.Root>
   );
-}
-
-interface ChipTagItem { label: string; ultra?: boolean; fast?: boolean }
-
-// The chip's badges, in the order they give way when the toolbar is narrow: effort (or Ultra), then Fast, then the rest.
-// Provider identity stays in the expanded list; the chip reads as one model name plus its parameters
-function chipTags(cur: ModelFamily | undefined, curVar: ModelVariant | undefined, reasoning: ConfigControl[], modelConfig: ConfigControl[]): ChipTagItem[] {
-  const tags: ChipTagItem[] = [];
-  const fast: ChipTagItem = { label: 'Fast', fast: true };
-  if (cur && curVar && (curVar.lead || cur.efforts.length > 1 || curVar.effort || curVar.fast || curVar.long)) {
-    const effort = curVar.effort || (!curVar.lead && cur.efforts.length > 1 ? t('composer.standard') : '');
-    if (effort) tags.push({ label: effort });
-    if (curVar.fast) tags.push(fast);
-    if (curVar.long) tags.push({ label: '1M' });
-  }
-  for (const control of reasoning) {
-    const level = reasoningChip(control);
-    if (level) tags.push({ label: level, ultra: isUltraLevel(level) });
-  }
-  for (const control of modelConfig) {
-    const label = modelConfigChip(control);
-    if (label) tags.push(isFastControl(control) ? fast : { label });
-  }
-  return tags;
 }
 
 function FastIcon() {

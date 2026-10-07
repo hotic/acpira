@@ -28,8 +28,8 @@ const CLOSE_GRACE: Duration = Duration::from_secs(3);
 impl AcpSession {
   /// Params for session/new, resume and load (and an edit's fresh session): the shared MCP servers for this agent and
   /// cwd (`shared_config::mcp`, filtered by the process's `mcpCapabilities`) plus Acpira's own server (`host_mcp.rs`);
-  /// Claude sessions also ask for summarized thinking (see `claude_thinking`) and the raw workflow progress frames
-  /// (`claude_workflow`)
+  /// Claude sessions also ask for summarized thinking (see `claude_thinking`), the raw workflow progress frames
+  /// (`claude_workflow`) and, while Ultra is the effort, ultracode (`claude_ultracode`)
   pub(crate) async fn session_request(&self, proc: &AgentProcess, acp_id: Option<&str>) -> Value {
     let mut servers = match &self.deps.shared_mcp {
       Some(provider) => {
@@ -64,7 +64,8 @@ impl AcpSession {
     if self.vendor.workflows() {
       req = crate::acp::vendors::claude_workflow::with_raw_progress(req);
     }
-    req
+    // After thinking and the raw progress filter: all three merge into the same `_meta.claudeCode`
+    self.with_ultracode(req)
   }
 
   /// Kill the current CLI; its exit / updates must not touch the session after this. session/close goes out first
@@ -163,6 +164,8 @@ impl AcpSession {
     let (gen_id, account) = {
       let mut c = self.core.lock();
       c.usage.reset_for_process();
+      // The settings files may have changed since the last connection
+      c.ultracode.workflows = None;
       c.compaction.auto_eligible = false;
       (c.proc_gen, c.account_id.clone())
     };
@@ -527,7 +530,7 @@ impl AcpSession {
   }
 
   pub(crate) fn busy(c: &Core) -> bool {
-    c.phase.running || c.phase.editing || c.phase.staging || c.switching || c.status == SessionStatus::Starting
+    c.phase.running || c.phase.editing || c.phase.staging || c.switching || c.ultracode.rebuilding || c.status == SessionStatus::Starting
   }
 
   /// The agent process can be ended now and the session reopened later without losing anything: ready, nothing in

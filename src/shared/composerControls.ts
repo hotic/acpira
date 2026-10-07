@@ -1,8 +1,9 @@
 import type { ConfigControl, SessionOption } from './transcript';
-import type { ModelFamily } from './models';
+import type { ModelFamily, ModelVariant } from './models';
 import { groupModels } from './models';
 
-// Ultra is Codex's tier past Max ("maximum reasoning with automatic task delegation"), a real reasoning_effort value
+// Ultra is the tier past Max: Codex's real reasoning_effort value ("maximum reasoning with automatic task delegation"), and
+// on Claude the host's level for ultracode (xhigh + dynamic workflow orchestration), appended by the engine
 const LEVELS = ['None', 'Minimal', 'Low', 'Medium', 'High', 'XHigh', 'Max', 'Ultra', 'Thinking'];
 const REASONING_IDS = /^(reasoning_effort|thought_level|thinking|thinking_level)$/;
 
@@ -113,6 +114,32 @@ export function modelConfigChip(control: ConfigControl): string | undefined {
   // A boolean shows its name only while on — an off toggle adds no chip clutter
   if (control.type === 'boolean') return control.value === 'true' ? control.name : undefined;
   return control.options.find(option => option.id === control.value)?.name;
+}
+
+export interface ChipTagItem { label: string; ultra?: boolean; fast?: boolean }
+
+// The model chip's badges, in the order they give way when the toolbar is narrow: effort (or Ultra), then Fast, then the
+// rest. Provider identity stays in the expanded list; the chip reads as one model name plus its parameters. `standard` is
+// the localized name of an embedded family's level-less variant
+export function chipTags(cur: ModelFamily | undefined, curVar: ModelVariant | undefined, reasoning: ConfigControl[], modelConfig: ConfigControl[], standard: string): ChipTagItem[] {
+  const tags: ChipTagItem[] = [];
+  const fast: ChipTagItem = { label: 'Fast', fast: true };
+  if (cur && curVar && (curVar.lead || cur.efforts.length > 1 || curVar.effort || curVar.fast || curVar.long)) {
+    const effort = curVar.effort || (!curVar.lead && cur.efforts.length > 1 ? standard : '');
+    if (effort) tags.push({ label: effort });
+    if (curVar.fast) tags.push(fast);
+    if (curVar.long) tags.push({ label: '1M' });
+  }
+  // Codex's real `ultra` effort and Claude's host-made Ultra level (ultracode) read the same: an Ultra badge
+  for (const control of reasoning) {
+    const level = reasoningChip(control);
+    if (level) tags.push({ label: level, ultra: isUltraLevel(level) });
+  }
+  for (const control of modelConfig) {
+    const label = modelConfigChip(control);
+    if (label) tags.push(isFastControl(control) ? fast : { label });
+  }
+  return tags;
 }
 
 // Settings rows reuse composer labels; hide/show keys stay on the original ACP names.

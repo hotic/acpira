@@ -14,7 +14,9 @@ use acpira_shared::transcript::*;
 use crate::acp::agents::model_sources::refine_controls;
 use crate::acp::transcript::normalize::{apply_config_options, config_option_set_value, init_controls};
 use crate::acp::transport::rpc::BoxFuture;
+use crate::acp::session::ultracode::UltraPick;
 use crate::acp::session::{AcpSession, Core};
+use crate::acp::vendors::claude_ultracode;
 use crate::i18n::{t, t_or};
 
 /// pi-acp 0.0.33 advertises its thinking levels twice, as modes and as the thought_level select: such modes select nothing
@@ -90,8 +92,29 @@ impl AcpSession {
     })
   }
 
-  /// Any configOption (model / reasoning level / boolean toggles); the response is the full configOptions set
+  /// Any configOption (model / reasoning level / boolean toggles); the response is the full configOptions set. On
+  /// Claude, picking the host's Ultra level or leaving it switches ultracode instead (`session/ultracode.rs`): Ultra
+  /// never reaches the wire as an effort value
   pub fn set_config(self: &Arc<Self>, config_id: String, value: String) -> BoxFuture<Result<()>> {
+    let me = self.clone();
+    Box::pin(async move {
+      me.editing_guard()?;
+      let pick = {
+        let mut c = me.core.lock();
+        me.ultracode_pick(&mut c, &config_id, &value)
+      };
+      match pick {
+        UltraPick::Wire => me.set_config_wire(config_id, value).await,
+        UltraPick::Done => Ok(()),
+        UltraPick::Target(wire) => me.set_config_wire(config_id, wire).await,
+        UltraPick::Switch(on, level) => me.set_ultracode(on, level).await,
+      }
+    })
+  }
+
+  /// set_config_option itself, with a value the agent offers. A model switch keeps the effort (Ultra too, as its wire
+  /// target) when the new model has it, and leaves Ultra when the new model has no effort to map it to
+  pub(crate) fn set_config_wire(self: &Arc<Self>, config_id: String, value: String) -> BoxFuture<Result<()>> {
     let me = self.clone();
     Box::pin(async move {
       me.editing_guard()?;
@@ -130,17 +153,26 @@ impl AcpSession {
       for (id, prev) in reasoning {
         let Some(prev) = prev else { continue };
         let restore = {
-          let c = me.core.lock();
-          c.state
-            .controls
-            .options
-            .iter()
-            .find(|o| o.id == id)
-            .is_some_and(|cur| cur.value.as_ref() != Some(&prev) && cur.options.iter().any(|o| o.id == prev))
+          let mut c = me.core.lock();
+          me.wire_pick(&mut c, &id, &prev).filter(|(wire, current)| {
+            current.as_ref() != Some(wire)
+              && c.state.controls.options.iter().find(|o| o.id == id).is_some_and(|cur| cur.options.iter().any(|o| &o.id == wire))
+          })
         };
-        if restore {
-          me.set_config(id, prev).await?;
+        if let Some((wire, _)) = restore {
+          me.set_config_wire(id, wire).await?;
         }
+      }
+      // A model without an effort to map Ultra to: ultracode goes off, the effort falls back like any narrowed-away value
+      let leave_ultra = {
+        let mut c = me.core.lock();
+        control.category.as_deref() == Some("model")
+          && c.ultracode.on
+          && me.ultracode_available(&mut c)
+          && claude_ultracode::effort_index(&c.state.controls.options).is_none()
+      };
+      if leave_ultra {
+        me.set_ultracode(false, None).await?;
       }
       if !me.core.lock().picks.syncing_thought {
         me.sync_thought().await?;
@@ -267,7 +299,7 @@ impl AcpSession {
     for id in ids {
       let next = self.core.lock().state.controls.options.iter().find(|o| o.id == id).and_then(thought_correction);
       if let Some(next) = next
-        && let Err(e) = self.set_config(id, next).await
+        && let Err(e) = self.set_config_wire(id, next).await
       {
         result = Err(e);
         break;
@@ -284,6 +316,8 @@ impl AcpSession {
     let config = settings.config.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone()));
     let mode = settings.mode_id.clone().filter(|m| !m.is_empty()).map(|m| (MODE_PICK.to_owned(), m));
     let entries: Vec<(String, String)> = config.chain(mode).collect();
+    // The first session request already carries a remembered Ultra, so the replay only has to set its wire effort
+    self.seed_ultracode(&mut c, Some(settings));
     c.picks.adopt_pending = true;
     for (key, value) in entries {
       c.picks.seq += 1;
@@ -331,30 +365,41 @@ impl AcpSession {
       c.picks.adopting = true;
     }
     let serial = self.pick_lock.lock().await;
+    let effort = self.core.lock().state.controls.options.iter().find(|o| acpira_shared::composer_controls::is_reasoning_control(o)).map(|o| o.id.clone());
+    if !effort.is_some_and(|id| self.superseded(&id)) {
+      self.adopt_ultracode(&settings).await;
+    }
+    self.replay_settings(&settings, |key| self.superseded(key)).await;
+    self.core.lock().picks.adopting = false;
+    drop(serial);
+    self.release_holds();
+  }
+
+  /// Set the given values again, one request per difference in control order (model before effort), then the mode;
+  /// values the agent no longer offers are skipped, a refused one is logged and the rest go on. Claude's Ultra goes out
+  /// as its wire target and is compared with the agent's own effort. `skip` leaves a key (a config id or `MODE_PICK`)
+  /// alone. The caller holds the pick lock
+  pub(crate) async fn replay_settings(self: &Arc<Self>, settings: &TurnSettings, skip: impl Fn(&str) -> bool) {
+    let adopting = std::mem::replace(&mut self.core.lock().picks.adopting, true);
     let ids: Vec<String> = self.core.lock().state.controls.options.iter().map(|o| o.id.clone()).collect();
     for id in ids {
       let Some(value) = settings.config.get(&id).filter(|v| !v.is_empty()).cloned() else { continue };
-      if self.superseded(&id) {
+      if skip(&id) {
         continue;
       }
       let differs = {
-        let c = self.core.lock();
-        c.state
-          .controls
-          .options
-          .iter()
-          .find(|o| o.id == id)
-          .is_some_and(|ctl| ctl.value.as_ref() != Some(&value) && ctl.options.iter().any(|o| o.id == value))
+        let mut c = self.core.lock();
+        self.wire_pick(&mut c, &id, &value).filter(|(wire, current)| {
+          current.as_ref() != Some(wire) && c.state.controls.options.iter().find(|o| o.id == id).is_some_and(|ctl| ctl.options.iter().any(|o| &o.id == wire))
+        })
       };
-      if !differs {
-        continue;
-      }
-      if let Err(e) = self.set_config(id.clone(), value.clone()).await {
+      let Some((value, _)) = differs else { continue };
+      if let Err(e) = self.set_config_wire(id.clone(), value.clone()).await {
         self.log(&format!("adopt {id}={value} refused: {e}"));
       }
     }
-    self.core.lock().picks.adopting = false;
-    if let Some(mode) = settings.mode_id.filter(|m| !m.is_empty() && !self.superseded(MODE_PICK)) {
+    self.core.lock().picks.adopting = adopting;
+    if let Some(mode) = settings.mode_id.clone().filter(|m| !m.is_empty() && !skip(MODE_PICK)) {
       let differs = {
         let c = self.core.lock();
         c.state.controls.mode_id.as_ref() != Some(&mode) && c.state.controls.modes.iter().any(|m| m.id == mode)
@@ -363,8 +408,6 @@ impl AcpSession {
         self.log(&format!("adopt mode {mode} refused: {e}"));
       }
     }
-    drop(serial);
-    self.release_holds();
   }
 }
 
@@ -388,9 +431,10 @@ pub(crate) struct ControlPicks {
 }
 
 impl AcpSession {
-  /// Model sources and catalogue-narrowed efforts over whatever the agent last sent
+  /// Model sources and catalogue-narrowed efforts over whatever the agent last sent, plus Claude's Ultra level
   pub(crate) fn refine_controls(&self, c: &mut Core) {
     refine_controls(&self.agent, &mut c.state.controls.options, &c.model_facts);
+    self.place_ultracode(c);
   }
 
   pub(crate) fn synthetic_modes(&self) -> Option<Vec<SessionOption>> {
@@ -427,6 +471,7 @@ impl AcpSession {
   /// over the options and modes an earlier session of this agent showed
   pub fn preview_controls(&self, known: &SessionControls, settings: Option<&TurnSettings>) {
     let mut c = self.core.lock();
+    self.seed_ultracode(&mut c, settings);
     let remembered_mode = settings.and_then(|s| s.mode_id.clone());
     if let Some(syn) = self.synthetic_modes().filter(|s| !s.is_empty()) {
       c.state.controls.mode_id = Some(match remembered_mode {

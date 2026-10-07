@@ -69,6 +69,7 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // FAKE_MIRROR_MODES → pi-acp 0.0.33's shape: session/new's modes are the effort levels (`Thinking: <id>`, the thought_level ids)
 // and every effort pick is echoed as current_mode_update before the set answers;
 // FAKE_BOOL → offer a `type: 'boolean'` model_config option, but only to clients advertising clientCapabilities.session.configOptions.boolean;
+// FAKE_NO_EFFORT_MODEL → while that model is current, configOptions carry no effort select
 // FAKE_EFFORTS → comma-separated extra effort options (`unavailable` is offered yet refused on set, like every `unavailable` value);
 // FAKE_SPEED → Devin-shaped per-model controls (3000.11.3): m1 offers a `speed` Standard / Fast select and every effort, while any
 // other model drops `speed` entirely and narrows effort to `high` (SWE-2 has no speed control and only medium / high / max);
@@ -86,6 +87,11 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // =codex-gap: "slow" stops after 10 chunks, reports idle and answers the prompt 600 ms later.
 // FAKE_STEER_LOG → append every steering request's text to that file
 // FAKE_SLOW_STEP_MS → the pause between the 50 chunks of a "slow" turn (default 40 ms, so 2 s in all)
+// FAKE_META_LOG → append `{ method, meta }` (the request's `_meta`) for every session/new, resume and load
+// FAKE_REBUILD → claude-agent-acp 0.87.0's getOrCreateSession: a resume of a live session whose
+// `_meta.claudeCode.options.settings` changed recreates it, which resets model / effort / Fast to the defaults and keeps
+// the live mode; the response carries modes and configOptions. FAKE_REBUILD_FAIL=ultracode fails such a recreate when it
+// asks for ultracode, =always fails every recreate (the session stays torn down either way)
 
 // FAKE_HELPER_PIDFILE → start a helper that ignores SIGTERM in this process's group (antigravity's localharness_external
 // stand-in) and write its pid to that file; with FAKE_HELPER_EXIT the leader then exits by itself
@@ -134,6 +140,12 @@ function saveSession(id: string, prompts = readSession(id)?.prompts ?? [], cwd =
 // symlinked project path land in the store under the resolved path
 const canonicalCwd = (cwd: string) => { try { return realpathSync(cwd); } catch { return cwd; } };
 // FAKE_MCP_TRACE: one line per session/new, resume and load with the mcpServers the client handed over
+function logMeta(method: string, meta: unknown) {
+  if (process.env.FAKE_META_LOG) appendFileSync(process.env.FAKE_META_LOG, `${JSON.stringify({ method, meta: meta ?? null })}\n`);
+}
+// FAKE_REBUILD: the settings each live session was built with, the part of the adapter's fingerprint the host changes
+const builtWith = new Map<string, string>();
+const settingsOf = (meta: unknown) => JSON.stringify((meta as { claudeCode?: { options?: { settings?: unknown } } } | undefined)?.claudeCode?.options?.settings ?? null);
 function logMcp(method: string, servers: unknown) {
   if (process.env.FAKE_MCP_TRACE) appendFileSync(process.env.FAKE_MCP_TRACE, `${method} ${JSON.stringify(servers ?? null)}\n`);
 }
@@ -225,6 +237,8 @@ const app = acp.agent({ name: 'fake-agent' })
     if (process.env.FAKE_MCP_REJECT && params.mcpServers.length) throw acp.RequestError.internalError(undefined, 'cannot start MCP servers');
     const sessionId = sessionDir ? randomUUID() : `s${++seq}`;
     sessions.add(sessionId);
+    logMeta('new', params._meta);
+    builtWith.set(sessionId, settingsOf(params._meta));
     saveSession(sessionId, [], canonicalCwd(params.cwd));
     // FAKE_IDLE_FAILURE: a session-scoped failure lands while no prompt is in flight — it must synthesize
     // its own transcript row (the prompt-triggered failure-idle script appends into the last agent turn)
@@ -249,6 +263,21 @@ const app = acp.agent({ name: 'fake-agent' })
   })
   .onRequest(acp.methods.agent.session.resume, ({ params }) => {
     logMcp('resume', (params as { mcpServers?: unknown }).mcpServers);
+    logMeta('resume', params._meta);
+    if (process.env.FAKE_REBUILD && builtWith.has(params.sessionId)) {
+      const settings = settingsOf(params._meta);
+      if (!sessions.has(params.sessionId) || builtWith.get(params.sessionId) !== settings) {
+        // teardownSession first, then createSession({ resume }): a failing create leaves the session torn down
+        sessions.delete(params.sessionId);
+        const fail = process.env.FAKE_REBUILD_FAIL;
+        if (fail === 'always' || (fail === 'ultracode' && settings.includes('"ultracode":true'))) throw acp.RequestError.internalError(undefined, 'createSession failed');
+        sessions.add(params.sessionId);
+        builtWith.set(params.sessionId, settings);
+        Object.assign(config, { model: 'm1', effort: 'high', fast: 'false' });
+      }
+      return { modes: { currentModeId: modes.get(params.sessionId) ?? 'agent', availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }] },
+        configOptions: configOptions() };
+    }
   rejectMcp((params as { mcpServers?: unknown[] }).mcpServers);
     if (sessionDir) return restoreSession(params.sessionId, params.cwd);
     // cwd containing "flaky-resume": while a resume.lock file sits in it, restores fail with a transport-level
@@ -301,6 +330,7 @@ const app = acp.agent({ name: 'fake-agent' })
   })
   .onRequest(acp.methods.agent.session.load, async ({ params, client }) => {
     logMcp('load', params.mcpServers);
+    logMeta('load', params._meta);
     rejectMcp(params.mcpServers);
     if (!sessionDir) throw acp.RequestError.methodNotFound(acp.methods.agent.session.load);
     const restored = restoreSession(params.sessionId, params.cwd);
@@ -1427,11 +1457,13 @@ function mirrorModes() {
 function configOptions(): acp.SessionConfigOption[] {
   const speed = process.env.FAKE_SPEED;
   const narrow = speed && config.model !== 'm1';
+  // FAKE_NO_EFFORT_MODEL: that model takes no effort level, so its configOptions carry no effort select
+  const effortless = !!process.env.FAKE_NO_EFFORT_MODEL && config.model === process.env.FAKE_NO_EFFORT_MODEL;
   return [
-    { id: 'effort', name: 'Reasoning', category: 'thought_level', type: 'select', currentValue: config.effort!, options: [
+    ...(effortless ? [] : [{ id: 'effort', name: 'Reasoning', category: 'thought_level' as const, type: 'select' as const, currentValue: config.effort!, options: [
       ...(narrow ? [] : [{ value: 'low', name: 'Low' }]), { value: 'high', name: 'High' },
       ...(process.env.FAKE_EFFORTS ?? '').split(',').map(s => s.trim()).filter(Boolean).map(value => ({ value, name: value })),
-    ] },
+    ] }]),
     ...(speed && !narrow ? [{ id: 'speed', name: 'Speed', category: 'model_config' as const, type: 'select' as const, currentValue: config.speed ?? 'standard',
       options: [{ value: 'standard', name: 'Standard' }, { value: 'fast', name: 'Fast' }] }] : []),
     { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: config.model!, options: [

@@ -25,6 +25,7 @@ pub mod relay;
 pub mod restore_turns;
 pub mod tasks;
 pub mod turn_usage;
+pub mod ultracode;
 pub mod updates;
 pub mod usage;
 pub mod view;
@@ -188,6 +189,8 @@ pub(crate) struct Core {
   pub switching: bool,
   /// Summoned children's processes, rounds in flight and root calls waiting for their node (`relay.rs`)
   pub relays: crate::acp::session::relay::Relays,
+  /// Claude's host-made Ultra effort level (`ultracode.rs`)
+  pub ultracode: crate::acp::session::ultracode::UltracodeState,
   /// Claude workflow agents' sidechain logs being read into their nodes (`workflow_logs.rs`)
   pub workflow_logs: crate::acp::session::workflow_logs::WorkflowLogs,
 }
@@ -252,6 +255,11 @@ impl AcpSession {
         save_image: Some(image_saver(me.clone())),
         save_image_file: Some(file_image_saver(me.clone())),
         cwd: Some(record.cwd.clone()),
+        ..Default::default()
+      };
+      // A reopened session whose effort shows Ultra asks for ultracode from its first request
+      let ultracode = crate::acp::session::ultracode::UltracodeState {
+        on: crate::acp::vendors::claude_ultracode::shown_on(&record.controls.options),
         ..Default::default()
       };
       let turns = restore_command_receipts(restore_plan_snapshots(record.turns));
@@ -320,6 +328,7 @@ impl AcpSession {
           rev: 0,
           switching: false,
           relays: Default::default(),
+          ultracode,
           workflow_logs: Default::default(),
         }),
         deps,

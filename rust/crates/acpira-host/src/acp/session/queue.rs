@@ -8,7 +8,7 @@ use serde_json::Value;
 use acpira_shared::transcript::*;
 
 use crate::acp::session::attachments::{PreparedPrompt, prepare_prompt, restore_drafts};
-use crate::acp::session::prompt::Staged;
+use crate::acp::session::prompt::{Origin, Staged};
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::transcript::normalize::push_steer;
 use crate::acp::vendors::steering;
@@ -65,6 +65,23 @@ impl AcpSession {
     PreparedPrompt { problems: vec![], ..prepared }
   }
 
+  /// The prompt a failed ultracode rebuild left without a native session (`rebuild_before_prompt`): its claim is undone
+  /// and a user's prompt waits at the head of the queue, which flushes once Retry has the session Ready again
+  pub(crate) async fn park_after_failed_rebuild(&self, text: String, drafts: Vec<Draft>, origin: Origin, staged: Option<Staged>) {
+    let parked = match (origin, staged) {
+      (Origin::User, Some(s)) => Some((s.id, s.prepared)),
+      (Origin::User, None) => Some((None, self.stage(&text, &drafts).await)),
+      _ => None,
+    };
+    let mut c = self.core.lock();
+    c.phase.running = false;
+    c.phase.staging = false;
+    if let Some((id, prepared)) = parked.filter(|(_, p)| !p.blocks.is_empty()) {
+      c.queue.entries.insert(0, QueuedEntry { id: id.unwrap_or_else(random_uuid), text, prepared });
+    }
+    self.touch(&mut c);
+  }
+
   /// Queue a prompt behind the running turn (or while starting); staged now so the row can show attachments.
   /// Returns the new entry's id, or None when nothing was queued
   pub(crate) async fn enqueue(self: &Arc<Self>, text: String, drafts: Vec<Draft>, staged: Option<PreparedPrompt>) -> Option<String> {
@@ -115,6 +132,7 @@ impl AcpSession {
         || c.phase.running
         || c.switching
         || c.picks.adopt_pending
+        || c.ultracode.rebuilding
         || c.pending_prompt.is_some()
         || c.queue.steering_id.is_some()
         || c.peer.detached
