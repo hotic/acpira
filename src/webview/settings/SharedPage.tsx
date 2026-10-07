@@ -9,7 +9,7 @@ import { RadioPills } from '../ui/Field';
 import { cn } from '../ui/cn';
 import { t } from '../i18n';
 import { AgentMark } from '../chat/AgentMark';
-import { ItemRow, Note, PathText, Section, SectionAction, SectionDescription, Switch, shortPath } from './controls';
+import { ItemRow, Note, PathText, Section, SectionAction, SectionDescription, Switch, pathSep, shortPath } from './controls';
 import type { SettingsHandlers } from './SettingsShell';
 
 // The Shared tab: one set of skills, MCP servers and prompts in open files, reaching every agent.
@@ -354,8 +354,11 @@ function SkillsTab({ ctx }: { ctx: Ctx }) {
 
 // Where a scope's source lives (`rel` under home or the project root), shortened
 function scopeDesc(scope: SharedScope, view: SharedView, rel: string): string | undefined {
-  if (scope === 'global') return `~/${rel}`;
-  return view.root ? `${shortPath(view.root, { home: view.home, cwd: '' })}/${rel}` : undefined;
+  // `rel` is written with slashes; a Windows home shows it with backslashes like every other path on the page
+  const sep = pathSep(view.home);
+  const tail = rel.replace(/\//g, sep);
+  if (scope === 'global') return `~${sep}${tail}`;
+  return view.root ? `${shortPath(view.root, { home: view.home, cwd: '' })}${sep}${tail}` : undefined;
 }
 
 // A trash can that asks for a second click: the first arms it (danger colour, "click again" tooltip), the second deletes.

@@ -10,6 +10,8 @@ use serde_json::{Map, Value};
 use acpira_shared::inventory::*;
 
 use crate::agent_ext::{AgentExt, McpFormat};
+pub use crate::platform::paths::native_tail;
+use crate::platform::paths::{native, native_str, wire_path};
 use crate::util::now_iso;
 
 pub struct ScanEnv {
@@ -21,8 +23,10 @@ pub struct ScanEnv {
 
 impl ScanEnv {
   /// `$CONFIG` from the process environment: XDG config home (%APPDATA% on Windows), else ~/.config
+  /// Home, cwd and `$CONFIG` are taken in native separators, so every path joined onto them is spelled one way
   pub fn new(home: String, cwd: String) -> Self {
-    let config = config_home(&home);
+    let (home, cwd) = (native_str(&home), native_str(&cwd));
+    let config = native(&config_home(&home));
     Self { home, cwd, config }
   }
 }
@@ -92,15 +96,15 @@ fn config_home(home: &str) -> PathBuf {
 /// `~/x` → home; `$CONFIG/x` → XDG config home; relative → workspace; absolute stays
 pub fn expand_path(template: &str, env: &ScanEnv) -> String {
   let p = if let Some(rest) = template.strip_prefix("~/") {
-    Path::new(&env.home).join(rest)
+    Path::new(&env.home).join(native_tail(rest))
   } else if let Some(rest) = template.strip_prefix("$CONFIG/") {
-    env.config.join(rest)
+    env.config.join(native_tail(rest))
   } else if Path::new(template).is_absolute() {
     PathBuf::from(template)
   } else {
-    Path::new(&env.cwd).join(template)
+    Path::new(&env.cwd).join(native_tail(template))
   };
-  p.to_string_lossy().into_owned()
+  wire_path(&p)
 }
 
 pub fn scope_of(template: &str) -> InventoryScope {
@@ -345,13 +349,13 @@ async fn read_skills(template: &str, env: &ScanEnv) -> Vec<InventorySkill> {
     let name = d.file_name().to_string_lossy().into_owned();
     let Ok(ft) = d.file_type().await else { continue };
     if ft.is_dir() || ft.is_symlink() {
-      let path = Path::new(&dir).join(&name).join("SKILL.md").to_string_lossy().into_owned();
+      let path = wire_path(&Path::new(&dir).join(&name).join("SKILL.md"));
       if let Ok(text) = tokio::fs::read_to_string(&path).await {
         let fm = parse_frontmatter(&text);
         found.push(InventorySkill { name: fm.0.unwrap_or(name), description: fm.1, path, scope });
       }
     } else if ft.is_file() && name.to_lowercase().ends_with(".md") {
-      let path = Path::new(&dir).join(&name).to_string_lossy().into_owned();
+      let path = wire_path(&Path::new(&dir).join(&name));
       if let Ok(text) = tokio::fs::read_to_string(&path).await {
         let fm = parse_frontmatter(&text);
         if let Some(n) = fm.0 {
@@ -422,7 +426,7 @@ async fn read_rules(template: &str, dir: bool, env: &ScanEnv) -> Vec<InventoryFi
   for n in names {
     let p = Path::new(&path).join(&n);
     let size = tokio::fs::metadata(&p).await.map(|m| m.len()).ok();
-    out.push(InventoryFile { path: p.to_string_lossy().into_owned(), scope, exists: true, size });
+    out.push(InventoryFile { path: wire_path(&p), scope, exists: true, size });
   }
   out
 }

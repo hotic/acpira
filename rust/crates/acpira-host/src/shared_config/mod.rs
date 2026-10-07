@@ -24,7 +24,7 @@ use acpira_shared::inventory::McpCaps;
 use acpira_shared::shared_config::SharedScope;
 
 use crate::acp::transport::rpc::BoxFuture;
-use crate::inventory::ScanEnv;
+use crate::inventory::{ScanEnv, native_tail};
 
 /// What a session asks for when it builds session/new, load or resume: (agent, cwd, the agent's MCP caps) →
 /// (ACP `mcpServers`, a log line naming what was sent and skipped)
@@ -54,10 +54,11 @@ pub struct Places {
 impl Places {
   /// `cwd` is the workspace (or a session's cwd); the project root is the nearest ancestor holding `.git`
   pub fn new(home: &str, cwd: &str) -> Self {
+    // Native separators from the start (a harness home may arrive as `S:/x`), so every link point is spelled one way
     let env = ScanEnv::new(home.to_owned(), cwd.to_owned());
     // Without a workspace the shells report home as the cwd; home is never a project (its `.agents` is the user level)
-    let root = project_root(cwd).filter(|r| r.as_path() != Path::new(home));
-    Places { home: PathBuf::from(home), config: env.config, root }
+    let root = project_root(&env.cwd).filter(|r| r.as_path() != Path::new(&env.home));
+    Places { home: PathBuf::from(env.home), config: env.config, root }
   }
 
   /// The directory a scope's `.agents` lives in
@@ -97,11 +98,11 @@ impl Places {
   /// A path template of `agent_ext` (`~/`, `$CONFIG/`, or project-relative); None for a project path without a project
   pub fn expand(&self, template: &str) -> Option<PathBuf> {
     if let Some(rest) = template.strip_prefix("~/") {
-      Some(self.home.join(rest))
+      Some(self.home.join(native_tail(rest)))
     } else if let Some(rest) = template.strip_prefix("$CONFIG/") {
-      Some(self.config.join(rest))
+      Some(self.config.join(native_tail(rest)))
     } else {
-      self.root.as_ref().map(|r| r.join(template))
+      self.root.as_ref().map(|r| r.join(native_tail(template)))
     }
   }
 
@@ -163,5 +164,20 @@ mod tests {
     let h = home.to_string_lossy();
     assert_eq!(Places::new(&h, &h).root, None);
     assert_eq!(Places::new(&h, &root.to_string_lossy()).root, Some(root));
+  }
+
+  #[test]
+  fn templates_expand_in_native_separators_and_old_ledger_paths_still_match() {
+    let places = Places { home: PathBuf::from("/h"), config: PathBuf::from("/h/.config"), root: Some(PathBuf::from("/r")) };
+    let sep = std::path::MAIN_SEPARATOR;
+    let at = places.expand("~/.claude/skills").unwrap();
+    assert_eq!(at.to_string_lossy(), format!("/h{sep}.claude{sep}skills"));
+    assert_eq!(places.expand(".claude/skills").unwrap().to_string_lossy(), format!("/r{sep}.claude{sep}skills"));
+    // An entry recorded with the template's `/` before is still the same link point
+    let mut l = ledger::Ledger { skipped: vec!["/h/.claude/skills".into()], ..Default::default() };
+    l.entries.push(ledger::Entry { path: "/h/.claude/skills".into(), target: "/t".into(), kind: ledger::EntryKind::Link, backup: None, repo: None, project: None, agent: None, overwrite: false });
+    assert!(l.find(&at).is_some() && l.is_skipped(&at));
+    l.drop_path(&at);
+    assert!(l.entries.is_empty());
   }
 }

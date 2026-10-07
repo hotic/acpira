@@ -14,6 +14,7 @@ use super::mcp::{all_servers, native_names};
 use super::{AGENTS, Places, pi_trust, preview, scope_of_template};
 use crate::agent_ext::{RuleWire, agent_ext};
 use crate::inventory::parse_frontmatter;
+use crate::platform::paths::wire_path;
 
 /// The import line Claude's global CLAUDE.md gets
 pub const CLAUDE_GLOBAL_IMPORT: &str = "@~/.agents/AGENTS.md";
@@ -142,7 +143,7 @@ pub fn wires(places: &Places, agents: &[String]) -> Vec<Wire> {
 }
 
 fn reach_of(w: &Wire) -> Reach {
-  Reach { agent: w.agent.to_owned(), state: w.state(), path: Some(w.at.to_string_lossy().into_owned()) }
+  Reach { agent: w.agent.to_owned(), state: w.state(), path: Some(wire_path(&w.at)) }
 }
 
 /// Native readers of a skill scope, as Reach entries; Pi reads project skills only in a project it trusts
@@ -182,7 +183,7 @@ fn plan(all_wires: &[Wire], ledger: &Ledger) -> Vec<PlanItem> {
         None => (PlanKind::Prompt, w.at.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
       };
       Some(PlanItem {
-        at: w.at.to_string_lossy().into_owned(),
+        at: wire_path(&w.at),
         agent: w.agent.to_owned(),
         kind,
         name,
@@ -226,7 +227,7 @@ fn takeover(all_wires: &[Wire]) -> Vec<Takeover> {
       let text = std::fs::read_to_string(&w.at).ok()?;
       let base = std::fs::read_to_string(&w.target).unwrap_or_default();
       let unique = unique_lines(&text, &base, &import_forms(&w.target));
-      (!unique.is_empty()).then(|| Takeover { agent: w.agent.to_owned(), path: w.at.to_string_lossy().into_owned(), unique })
+      (!unique.is_empty()).then(|| Takeover { agent: w.agent.to_owned(), path: wire_path(&w.at), unique })
     })
     .collect()
 }
@@ -264,7 +265,7 @@ fn private_skills(places: &Places, agents: &[String], shared: &[(SharedScope, St
         if matches == PrivateMatch::Same && ext.shared.skill_links.is_some() {
           continue;
         }
-        out.push(PrivateSkill { name, description, path: path.to_string_lossy().into_owned(), agent: id.to_owned(), scope, matches });
+        out.push(PrivateSkill { name, description, path: wire_path(&path), agent: id.to_owned(), scope, matches });
       }
     }
   }
@@ -282,7 +283,7 @@ pub fn build(places: &Places, agents: &[String], caps: &dyn Fn(&str) -> Option<M
       let mut reach = native_reach(agents, scope == SharedScope::Global, pi_untrusted);
       reach.extend(all_wires.iter().filter(|w| w.scope == scope && w.skill.as_deref() == Some(&name)).map(reach_of));
       shared_dirs.push((scope, name.clone(), path.clone()));
-      skills.push(SharedSkill { name, description, path: path.to_string_lossy().into_owned(), scope, reach });
+      skills.push(SharedSkill { name, description, path: wire_path(&path), scope, reach });
     }
   }
 
@@ -322,14 +323,14 @@ pub fn build(places: &Places, agents: &[String], caps: &dyn Fn(&str) -> Option<M
       for a in agents {
         let Some((id, _)) = ext_of(a) else { continue };
         reach.push(match (id, claude_blocked(root)) {
-          ("claude", Some(file)) => Reach { agent: id.into(), state: ReachState::Conflict, path: Some(file.to_string_lossy().into_owned()) },
+          ("claude", Some(file)) => Reach { agent: id.into(), state: ReachState::Conflict, path: Some(wire_path(&file)) },
           _ => Reach { agent: id.into(), state: ReachState::Native, path: None },
         });
       }
     }
     prompts.push(SharedPrompt {
       scope: SharedScope::Project,
-      path: path.to_string_lossy().into_owned(),
+      path: wire_path(&path),
       exists: text.is_some(),
       preview: text.as_deref().map(|t| preview(t, 6)).unwrap_or_default(),
       text: text.unwrap_or_default(),
@@ -344,7 +345,7 @@ pub fn build(places: &Places, agents: &[String], caps: &dyn Fn(&str) -> Option<M
       match all_wires.iter().find(|w| w.skill.is_none() && w.agent == id) {
         Some(w) => {
           if text.is_some() {
-            reach.push(Reach { agent: id.into(), state: w.state(), path: Some(w.at.to_string_lossy().into_owned()) });
+            reach.push(Reach { agent: id.into(), state: w.state(), path: Some(wire_path(&w.at)) });
           }
         }
         None if ext.shared.global_rules.is_none() && text.is_some() => {
@@ -355,7 +356,7 @@ pub fn build(places: &Places, agents: &[String], caps: &dyn Fn(&str) -> Option<M
     }
     prompts.push(SharedPrompt {
       scope: SharedScope::Global,
-      path: path.to_string_lossy().into_owned(),
+      path: wire_path(&path),
       exists: text.is_some(),
       preview: text.as_deref().map(|t| preview(t, 6)).unwrap_or_default(),
       text: text.unwrap_or_default(),
@@ -364,10 +365,10 @@ pub fn build(places: &Places, agents: &[String], caps: &dyn Fn(&str) -> Option<M
   }
 
   let planned: HashSet<PathBuf> = all_wires.iter().filter(|w| w.scope == SharedScope::Global && w.skill.is_some()).map(|w| w.at.clone()).collect();
-  let root_str = places.root.as_ref().map(|r| r.to_string_lossy().into_owned());
+  let root_str = places.root.as_ref().map(|r| wire_path(r));
   SharedView {
     root: root_str.clone(),
-    home: places.home.to_string_lossy().into_owned(),
+    home: wire_path(&places.home),
     auto: ledger.auto,
     user_linked: ledger.entries.iter().any(|e| e.project_root().is_none()),
     project_auto: !ledger.project_manual,

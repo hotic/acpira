@@ -271,7 +271,7 @@ impl SharedConfig {
       .update(move |l| {
         l.auto = auto;
         for pick in &picks {
-          l.skipped.retain(|x| *x != pick.at);
+          l.skipped.retain(|x| Path::new(x) != Path::new(&pick.at));
           if pick.choice == Choice::Skip {
             l.skipped.push(pick.at.clone());
           }
@@ -846,10 +846,17 @@ fn resolve_prompt(places: &Places, agents: &[String], path: &Path, keep: Keep, b
   wire(&w, None, backups, false)
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
   use super::*;
   use acpira_shared::shared_config::PrivateMatch;
+  use links::Spot;
+
+  // A link point wired to `target` in whatever form the platform made: a symlink, or on Windows without symlink
+  // rights a junction (directories) or a hard link (files). `is_symlink` alone would only hold on some machines
+  fn wired(at: &Path, target: &Path) -> bool {
+    links::inspect(at, target) == Spot::Linked
+  }
 
   fn setup() -> (tempfile::TempDir, Places, Arc<SharedConfig>, Vec<String>) {
     let t = tempfile::tempdir().unwrap();
@@ -888,6 +895,9 @@ mod tests {
 
     // Looking is enough for the project: Claude's link to .agents/skills appears, out of git status
     let v = cfg.view(p.clone(), agents.clone(), caps()).await;
+    assert!(wired(&root.join(".claude/skills/release"), &root.join(".agents/skills/release")));
+    // Relative on unix, so a moved repository keeps its links (a Windows junction is always absolute)
+    #[cfg(unix)]
     assert_eq!(std::fs::read_link(root.join(".claude/skills/release")).unwrap(), PathBuf::from("../../.agents/skills/release"));
     assert_eq!(std::fs::read_to_string(root.join(".git/info/exclude")).unwrap(), "/.claude/skills/release\n");
     assert!(v.project_auto && v.project_linked && !v.user_linked && !v.auto);
@@ -912,9 +922,9 @@ mod tests {
       pick(&home.join(".claude/CLAUDE.md"), Choice::Skip),
     ];
     cfg.apply(SharedAction::Link { picks, auto: true }, &p, &agents).await.unwrap();
-    assert_eq!(std::fs::read_link(home.join(".claude/skills/dig")).unwrap(), home.join(".agents/skills/dig"));
-    assert!(std::fs::symlink_metadata(home.join(".codex/AGENTS.md")).unwrap().file_type().is_symlink());
-    assert!(std::fs::symlink_metadata(home.join(".grok/AGENTS.md")).unwrap().file_type().is_symlink());
+    let shared = home.join(".agents/AGENTS.md");
+    assert!(wired(&home.join(".claude/skills/dig"), &home.join(".agents/skills/dig")));
+    assert!(wired(&home.join(".codex/AGENTS.md"), &shared) && wired(&home.join(".grok/AGENTS.md"), &shared));
     assert!(!home.join(".claude/CLAUDE.md").exists());
     let v = cfg.view(p.clone(), agents.clone(), caps()).await;
     assert!(v.auto && v.user_linked);
@@ -925,7 +935,7 @@ mod tests {
     std::fs::create_dir_all(home.join(".agents/skills/new")).unwrap();
     std::fs::write(home.join(".agents/skills/new/SKILL.md"), "x").unwrap();
     cfg.view(p.clone(), agents.clone(), caps()).await;
-    assert!(home.join(".claude/skills/new").is_symlink());
+    assert!(wired(&home.join(".claude/skills/new"), &home.join(".agents/skills/new")));
     assert!(!home.join(".claude/CLAUDE.md").exists());
     // A link to a deleted skill goes away
     std::fs::remove_dir_all(home.join(".agents/skills/new")).unwrap();
@@ -944,8 +954,8 @@ mod tests {
     assert!(std::fs::symlink_metadata(home.join(".claude/skills/dig")).is_err());
     assert_eq!(std::fs::read_to_string(home.join(".grok/AGENTS.md")).unwrap(), "# mine\n");
     assert_eq!(std::fs::read_to_string(home.join(".codex/AGENTS.md")).unwrap(), "# shared\n");
-    assert!(!std::fs::symlink_metadata(home.join(".codex/AGENTS.md")).unwrap().file_type().is_symlink());
-    assert!(root.join(".claude/skills/release").is_symlink());
+    assert!(!wired(&home.join(".codex/AGENTS.md"), &shared));
+    assert!(wired(&root.join(".claude/skills/release"), &root.join(".agents/skills/release")));
     assert!(!cfg.view(p.clone(), agents.clone(), caps()).await.auto);
 
     // Project level off removes the project links and keeps them away
@@ -975,10 +985,10 @@ mod tests {
     let path = |d: &str| s(&home.join(d));
     cfg.apply(SharedAction::ResolveSkill { path: path(".claude/skills/solo"), keep: Keep::Private }, &p, &agents).await.unwrap();
     assert!(home.join(".agents/skills/solo/SKILL.md").exists());
-    assert!(home.join(".claude/skills/solo").is_symlink());
+    assert!(wired(&home.join(".claude/skills/solo"), &home.join(".agents/skills/solo")));
     cfg.apply(SharedAction::Link { picks: vec![pick(&home.join(".claude/skills/dig"), Choice::KeepPrivate)], auto: false }, &p, &agents).await.unwrap();
     assert_eq!(std::fs::read_to_string(home.join(".agents/skills/dig/SKILL.md")).unwrap(), "changed");
-    assert!(home.join(".claude/skills/dig").is_symlink());
+    assert!(wired(&home.join(".claude/skills/dig"), &home.join(".agents/skills/dig")));
     cfg.apply(SharedAction::ResolveSkill { path: path(".codex/skills/dig"), keep: Keep::Shared }, &p, &agents).await.unwrap();
     assert!(!home.join(".codex/skills/dig").exists());
     assert!(cfg.view(p.clone(), agents.clone(), caps()).await.private_skills.is_empty());
@@ -1004,7 +1014,7 @@ mod tests {
     let picks = vec![pick(&home.join(".claude/CLAUDE.md"), Choice::KeepShared), pick(&home.join(".grok/AGENTS.md"), Choice::KeepPrivate)];
     cfg.apply(SharedAction::Link { picks, auto: false }, &p, &agents).await.unwrap();
     assert_eq!(std::fs::read_to_string(home.join(".agents/AGENTS.md")).unwrap(), "# grok rules\n");
-    assert!(home.join(".grok/AGENTS.md").is_symlink());
+    assert!(wired(&home.join(".grok/AGENTS.md"), &home.join(".agents/AGENTS.md")));
     assert_eq!(std::fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap(), "@~/.agents/AGENTS.md\n");
     // Undo puts Claude's own file back
     cfg.apply(SharedAction::Unlink, &p, &agents).await.unwrap();
@@ -1027,7 +1037,7 @@ mod tests {
     assert!(std::fs::symlink_metadata(root.join(".gemini/skills/lint")).is_err());
     cfg.apply(SharedAction::ResolveSkill { path: s(&home.join(".gemini/config/skills/notes")), keep: Keep::Private }, &p, &agents).await.unwrap();
     assert!(home.join(".agents/skills/notes/SKILL.md").exists());
-    assert!(home.join(".gemini/config/skills/notes").is_symlink());
+    assert!(wired(&home.join(".gemini/config/skills/notes"), &home.join(".agents/skills/notes")));
   }
 
   #[tokio::test]
@@ -1042,19 +1052,19 @@ mod tests {
     std::fs::write(solo.join("SKILL.md"), "solo").unwrap();
     let path = |d: &str| s(&home.join(d));
     cfg.apply(SharedAction::ResolveSkill { path: path(".claude/skills/dig"), keep: Keep::Shared }, &p, &agents).await.unwrap();
-    assert!(home.join(".claude/skills/dig").is_symlink());
+    assert!(wired(&home.join(".claude/skills/dig"), &home.join(".agents/skills/dig")));
     cfg.apply(SharedAction::ResolveSkill { path: path(".claude/skills/solo"), keep: Keep::Private }, &p, &agents).await.unwrap();
-    assert!(solo.is_symlink());
+    assert!(wired(&solo, &home.join(".agents/skills/solo")));
     // The user points the solo link at a skill of their own
     let custom = home.join("custom-solo");
     std::fs::create_dir_all(&custom).unwrap();
-    std::fs::remove_file(&solo).unwrap();
-    std::os::unix::fs::symlink(&custom, &solo).unwrap();
+    crate::platform::files::remove_link(&solo).unwrap();
+    crate::platform::files::create_link(&solo, &custom, &custom).unwrap();
 
     cfg.apply(SharedAction::Unlink, &p, &agents).await.unwrap();
-    assert!(!home.join(".claude/skills/dig").is_symlink());
+    assert!(!links::is_link(&home.join(".claude/skills/dig")));
     assert_eq!(std::fs::read_to_string(home.join(".claude/skills/dig/SKILL.md")).unwrap(), "mine");
-    assert_eq!(std::fs::read_link(&solo).unwrap(), custom);
+    assert!(wired(&solo, &custom));
   }
 
   #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1083,10 +1093,13 @@ mod tests {
     let root = p.root.clone().unwrap();
     std::fs::write(home.join(".agents/AGENTS.md"), "# shared\n").unwrap();
     std::fs::write(home.join(".codex/AGENTS.md"), "# shared\n").unwrap();
+    let (dig, release, codex, shared) = (home.join(".claude/skills/dig"), root.join(".claude/skills/release"), home.join(".codex/AGENTS.md"), home.join(".agents/AGENTS.md"));
+    let dig_ok = || wired(&dig, &home.join(".agents/skills/dig"));
+    let release_ok = || wired(&release, &root.join(".agents/skills/release"));
     let picks = vec![pick(&home.join(".claude/skills/dig"), Choice::Link), pick(&home.join(".codex/AGENTS.md"), Choice::Link)];
     cfg.view(p.clone(), agents.clone(), caps()).await;
     cfg.apply(SharedAction::Link { picks, auto: true }, &p, &agents).await.unwrap();
-    assert!(root.join(".claude/skills/release").is_symlink() && home.join(".claude/skills/dig").is_symlink());
+    assert!(release_ok() && dig_ok());
 
     // Claude off: its user and project links go, Codex's stays
     cfg.retire(&["claude".into()]).await;
@@ -1094,17 +1107,17 @@ mod tests {
     let v = cfg.view(p.clone(), on, caps()).await;
     assert!(std::fs::symlink_metadata(home.join(".claude/skills/dig")).is_err());
     assert!(std::fs::symlink_metadata(root.join(".claude/skills/release")).is_err());
-    assert!(home.join(".codex/AGENTS.md").is_symlink());
+    assert!(wired(&codex, &shared));
     assert!(!v.plan.iter().any(|x| x.agent == "claude"));
     // The identical Codex copy that was moved aside comes back when Codex is turned off
     cfg.retire(&["codex".into()]).await;
     assert_eq!(std::fs::read_to_string(home.join(".codex/AGENTS.md")).unwrap(), "# shared\n");
-    assert!(!home.join(".codex/AGENTS.md").is_symlink());
+    assert!(!wired(&codex, &shared));
 
     // Back on: auto links them again
     cfg.view(p.clone(), agents.clone(), caps()).await;
-    assert!(home.join(".claude/skills/dig").is_symlink() && root.join(".claude/skills/release").is_symlink());
-    assert!(home.join(".codex/AGENTS.md").is_symlink());
+    assert!(dig_ok() && release_ok());
+    assert!(wired(&codex, &shared));
   }
 
   #[tokio::test]
@@ -1159,13 +1172,13 @@ mod tests {
     let merge = vec![s(&codex), s(&claude)];
     cfg.apply(SharedAction::Overwrite { on: true, merge }, &p, &agents).await.unwrap();
     assert_eq!(std::fs::read_to_string(&shared).unwrap(), "# 全局指令\n\n- 称呼：老板\n\n## 提交风格\n\n默认中文\n\n## Git\n\n- 不加水印\n```\nx\n```\n");
-    assert!(codex.is_symlink() && grok.is_symlink());
+    assert!(wired(&codex, &shared) && wired(&grok, &shared));
     assert_eq!(std::fs::read_to_string(&claude).unwrap(), "@~/.agents/AGENTS.md\n");
-    assert_eq!(std::fs::read_link(home.join(".claude/skills/dig")).unwrap(), home.join(".agents/skills/dig"));
+    assert!(wired(&home.join(".claude/skills/dig"), &home.join(".agents/skills/dig")));
     // The agents' own skills join the shared folder (Claude gets its one back as a link); Codex's differing dig is set aside
     assert_eq!(std::fs::read_to_string(home.join(".agents/skills/only/SKILL.md")).unwrap(), "claude only");
     assert_eq!(std::fs::read_to_string(home.join(".agents/skills/solo/SKILL.md")).unwrap(), "codex solo");
-    assert!(home.join(".claude/skills/only").is_symlink() && home.join(".claude/skills/solo").is_symlink());
+    assert!(wired(&home.join(".claude/skills/only"), &home.join(".agents/skills/only")) && wired(&home.join(".claude/skills/solo"), &home.join(".agents/skills/solo")));
     assert!(std::fs::symlink_metadata(home.join(".codex/skills/solo")).is_err() && std::fs::symlink_metadata(home.join(".codex/skills/dig")).is_err());
     let v = cfg.view(p.clone(), agents.clone(), caps()).await;
     assert!(v.overwrite && v.takeover.is_empty() && v.plan.is_empty());
@@ -1175,7 +1188,7 @@ mod tests {
     std::fs::remove_file(&codex).unwrap();
     std::fs::write(&codex, "# drift\n").unwrap();
     cfg.view(p.clone(), agents.clone(), caps()).await;
-    assert!(codex.is_symlink());
+    assert!(wired(&codex, &shared));
 
     // The page's editor writes through to every agent; an edit started from an older text is refused
     let base = std::fs::read_to_string(&shared).unwrap();
@@ -1190,7 +1203,7 @@ mod tests {
     assert_eq!(std::fs::read_to_string(&claude).unwrap(), claude_own);
     assert_eq!(std::fs::read_to_string(home.join(".claude/skills/dig/SKILL.md")).unwrap(), "mine");
     for (dir, body) in [(".claude/skills/only", "claude only"), (".codex/skills/solo", "codex solo"), (".codex/skills/dig", "codex dig")] {
-      assert!(!home.join(dir).is_symlink());
+      assert!(!links::is_link(&home.join(dir)));
       assert_eq!(std::fs::read_to_string(home.join(dir).join("SKILL.md")).unwrap(), body);
     }
     assert!(!home.join(".agents/skills/only").exists() && !home.join(".agents/skills/solo").exists());
@@ -1221,7 +1234,8 @@ mod tests {
     assert_eq!(claude_take.unique, "- claude only rule");
     cfg.apply(SharedAction::Overwrite { on: true, merge: vec![] }, &p, &agents).await.unwrap();
     assert_eq!(std::fs::read_to_string(&claude).unwrap(), "@~/.agents/AGENTS.md\n");
-    assert!(codex.is_symlink() && grok.is_symlink());
+    let shared = home.join(".agents/AGENTS.md");
+    assert!(wired(&codex, &shared) && wired(&grok, &shared));
 
     // Off: each file comes back as it was right before overwrite, the unreadable one byte for byte
     cfg.apply(SharedAction::Overwrite { on: false, merge: vec![] }, &p, &agents).await.unwrap();
@@ -1240,7 +1254,7 @@ mod tests {
     std::fs::create_dir_all(home.join(".claude/skills/dig")).unwrap();
     std::fs::write(home.join(".claude/skills/dig/SKILL.md"), "mine").unwrap();
     cfg.apply(SharedAction::Overwrite { on: true, merge: vec![] }, &p, &agents).await.unwrap();
-    assert!(home.join(".claude/skills/dig").is_symlink());
+    assert!(wired(&home.join(".claude/skills/dig"), &home.join(".agents/skills/dig")));
     cfg.apply(SharedAction::RemoveSkill { path: s(&home.join(".agents/skills/dig")) }, &p, &agents).await.unwrap();
     assert!(std::fs::symlink_metadata(home.join(".claude/skills/dig")).is_err());
     cfg.apply(SharedAction::Overwrite { on: false, merge: vec![] }, &p, &agents).await.unwrap();

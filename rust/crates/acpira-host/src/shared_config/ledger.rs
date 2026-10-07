@@ -77,25 +77,24 @@ pub struct Ledger {
 }
 
 impl Ledger {
+  // Recorded paths are compared as paths, not strings: entries written before link points were spelled with native
+  // separators hold Windows paths like `C:\Users\me\.claude/skills\x`, the same point as `C:\Users\me\.claude\skills\x`
   pub fn find(&self, path: &Path) -> Option<&Entry> {
-    let p = path.to_string_lossy();
-    self.entries.iter().find(|e| e.path == p)
+    self.entries.iter().find(|e| Path::new(&e.path) == path)
   }
 
   /// Record (or replace) the entry for its path
   pub fn put(&mut self, e: Entry) {
-    self.entries.retain(|x| x.path != e.path);
+    self.entries.retain(|x| Path::new(&x.path) != Path::new(&e.path));
     self.entries.push(e);
   }
 
   pub fn drop_path(&mut self, path: &Path) {
-    let p = path.to_string_lossy();
-    self.entries.retain(|e| e.path != p);
+    self.entries.retain(|e| Path::new(&e.path) != path);
   }
 
   pub fn is_skipped(&self, path: &Path) -> bool {
-    let p = path.to_string_lossy();
-    self.skipped.iter().any(|x| *x == p)
+    self.skipped.iter().any(|x| Path::new(x) == path)
   }
 
   pub fn is_shared_project(&self, root: &Path) -> bool {

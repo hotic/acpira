@@ -25,7 +25,8 @@ describe('shared config contract', () => {
     writeFileSync(join(home, '.agents/skills/demo/SKILL.md'), '---\nname: demo\ndescription: A demo skill\n---\n\nBody\n');
     writeFileSync(join(home, '.agents/mcp.json'), JSON.stringify({ mcpServers: { files: { command: 'echo', args: ['g'] } } }));
     writeFileSync(join(root, 'AGENTS.md'), '# Project rules\n\nBe brief.\n');
-    const s = new Shell(data, root, undefined, { HOME: home, USERPROFILE: home });
+    // `$CONFIG` (Devin's global AGENTS.md) is %APPDATA% on Windows and XDG_CONFIG_HOME elsewhere: both stay in the temp home
+    const s = new Shell(data, root, undefined, { HOME: home, USERPROFILE: home, APPDATA: join(home, 'AppData', 'Roaming'), XDG_CONFIG_HOME: join(home, '.config') });
     shells.push(s);
     return { s, home, root };
   }
