@@ -1,6 +1,8 @@
 //! Devin accounts: the CLI login is a PKCE exchange for a long-lived API key in
 //! $XDG_DATA_HOME/devin/credentials.toml; ACP mode ignores that file, so the key is handed over in authenticate's
-//! `_meta.api_key`. Quota comes from the Windsurf seat-management service (a Connect RPC answering JSON)
+//! `_meta.api_key`. Quota comes from the Windsurf seat-management service (a Connect RPC answering JSON), and so does the
+//! current plan (`planStatus.planInfo.planName` "Max" next to `teamsTier` `TEAMS_TIER_DEVIN_MAX`, checked live on
+//! 2026-10-07): `devin auth status` is only asked at login
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -15,7 +17,7 @@ use acpira_shared::num::Num;
 use acpira_shared::transcript::{AccountQuota, QuotaWindow};
 
 use super::account_store::{AccountCredential, AccountDraft};
-use super::provider::{AccountProvider, LoginFlow};
+use super::provider::{AccountProvider, LoginFlow, QuotaRead};
 use crate::acp::transport::process::AgentProcess;
 use crate::acp::transport::rpc::BoxFuture;
 use crate::i18n::tp;
@@ -157,7 +159,7 @@ impl AccountProvider for DevinAccountProvider {
     }))
   }
 
-  fn quota(&self, cred: AccountCredential) -> Option<BoxFuture<Result<Option<AccountQuota>>>> {
+  fn quota(&self, cred: AccountCredential) -> Option<BoxFuture<Result<QuotaRead>>> {
     Some(Box::pin(async move {
       let base = cred
         .meta
@@ -179,9 +181,18 @@ impl AccountProvider for DevinAccountProvider {
       if !(200..300).contains(&status) {
         return Err(anyhow::Error::new(crate::http::HttpStatus { status, retry_after: None }));
       }
-      Ok(parse_user_status(&json))
+      Ok(QuotaRead { quota: parse_user_status(&json), plan: devin_plan(&json) })
     }))
   }
+}
+
+/// GetUserStatus → the plan label: planName "Max" → "Devin Max", the shape `devin auth status` prints as its tier
+pub fn devin_plan(json: &Value) -> Option<String> {
+  let name = json.pointer("/userStatus/planStatus/planInfo/planName")?.as_str()?.trim();
+  if name.is_empty() {
+    return None;
+  }
+  Some(if name.to_ascii_lowercase().starts_with("devin") { name.to_owned() } else { format!("Devin {name}") })
 }
 
 /// GetUserStatus → the windows the plan exposes; proto3 omits zero values, so on a quota-billed plan a missing
@@ -357,5 +368,10 @@ mod tests {
     assert_eq!(q.windows[0].remaining.0, 0.0);
     assert_eq!(q.on_demand_balance_usd.map(|n| n.0), Some(-2.5));
     assert_eq!(parse_status("  Email:  a@b\n  Tier:  Pro\n"), Some(("a@b".into(), Some("Pro".into()))));
+    let plan = |name: &str| devin_plan(&json!({ "userStatus": { "planStatus": { "planInfo": { "planName": name, "teamsTier": "TEAMS_TIER_DEVIN_MAX" } } } }));
+    assert_eq!(plan("Max").as_deref(), Some("Devin Max"));
+    assert_eq!(plan("Devin Pro").as_deref(), Some("Devin Pro"));
+    assert_eq!(plan(" "), None);
+    assert_eq!(devin_plan(&json!({ "userStatus": {} })), None);
   }
 }

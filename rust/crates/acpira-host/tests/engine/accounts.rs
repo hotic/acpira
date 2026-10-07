@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use acpira_host::accounts::account_manager::AccountManager;
 use acpira_host::accounts::account_store::{AccountCredential, AccountDraft, AccountStore, FileVault, account_secret_key};
 use acpira_host::accounts::devin::{DevinAccountProvider, parse_status, parse_user_status, read_credentials, toml_of};
-use acpira_host::accounts::provider::{AccountProvider, LoginFlow};
+use acpira_host::accounts::provider::{AccountProvider, LoginFlow, QuotaRead};
 use acpira_host::acp::transport::process::AgentProcess;
 use acpira_host::acp::transport::cancel::Cancel;
 use acpira_host::acp::transport::rpc::BoxFuture;
@@ -306,6 +306,8 @@ struct FakeProvider {
   auto: bool,
   /// The credential store as a keychain seen over SSH: while set, authenticate fails like a CLI that cannot read its login
   locked: AtomicBool,
+  /// The plan the vendor reports on quota reads of the local login (secret `local`)
+  plan: Mutex<Option<String>>,
 }
 
 impl FakeProvider {
@@ -348,7 +350,11 @@ impl AccountProvider for FakeProvider {
       Ok(())
     }))
   }
-  fn quota(&self, cred: AccountCredential) -> Option<BoxFuture<Result<Option<AccountQuota>>>> {
+  fn quota(&self, cred: AccountCredential) -> Option<BoxFuture<Result<QuotaRead>>> {
+    if cred.secret == "local" {
+      let plan = self.plan.lock().unwrap().clone();
+      return Some(Box::pin(async move { Ok(QuotaRead { quota: None, plan }) }));
+    }
     if cred.secret == "limited-key" {
       self.limited_reads.fetch_add(1, Ordering::SeqCst);
       return Some(Box::pin(async { Err(anyhow::Error::new(HttpStatus { status: 429, retry_after: None })) }));
@@ -356,7 +362,8 @@ impl AccountProvider for FakeProvider {
     let reads = if cred.secret == "good-key" { Some(self.quota_reads.fetch_add(1, Ordering::SeqCst) + 1) } else { None };
     Some(Box::pin(async move {
       let reads = reads.ok_or_else(|| anyhow!("invalid api key"))?;
-      Ok(Some(serde_json::from_value(json!({ "windows": [{ "id": "weekly", "remaining": 1.0 - reads as f64 / 10.0, "resetsAt": "2026-09-14T00:00:00.000Z" }], "fetchedAt": acpira_host::util::now_iso() }))?))
+      let quota: AccountQuota = serde_json::from_value(json!({ "windows": [{ "id": "weekly", "remaining": 1.0 - reads as f64 / 10.0, "resetsAt": "2026-09-14T00:00:00.000Z" }], "fetchedAt": acpira_host::util::now_iso() }))?;
+      Ok(Some(quota).into())
     }))
   }
   fn credentials_locked(&self) -> Option<BoxFuture<bool>> {
@@ -895,9 +902,19 @@ async fn the_local_login_is_listed_by_itself_follows_a_relogin_and_stays_removed
   // nothing changed: no push
   accounts.sync_local(None).await;
   assert_eq!(pushed.load(Ordering::SeqCst), after_add);
-  // a plan change and then a re-login as someone else update the same account
-  set_local(Some("me@x.io"), Some("Claude Max"));
+  // a plan change reaches the account through the vendor's quota answer, and the CLI store's login-time plan (Claude
+  // Code keeps `subscriptionType` through refreshes) does not undo it on the next sync
+  *provider.plan.lock().unwrap() = Some("Claude Max 20x".into());
+  accounts.refresh_quota(&id, true).await;
+  assert_eq!(labels(), [("me@x.io".to_owned(), Some("Claude Max 20x".to_owned()))]);
   accounts.sync_local(None).await;
+  assert_eq!(labels(), [("me@x.io".to_owned(), Some("Claude Max 20x".to_owned()))]);
+  // the same plan again changes nothing on disk
+  let before = std::fs::read_to_string(dir.path().join("accounts.json")).unwrap();
+  accounts.refresh_quota(&id, true).await;
+  assert_eq!(std::fs::read_to_string(dir.path().join("accounts.json")).unwrap(), before);
+  *provider.plan.lock().unwrap() = None;
+  // a re-login as someone else updates the same account
   set_local(Some("other@x.io"), None);
   accounts.sync_local(None).await;
   assert_eq!(labels(), [("other@x.io".to_owned(), None)]);

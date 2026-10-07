@@ -11,7 +11,7 @@ use acpira_shared::transcript::{AccountInfo, AccountQuota, AccountQuotaIssue, St
 
 use super::account_store::AccountStore;
 use super::cli_home::{LOCAL_LOGIN, poll_until};
-use super::provider::{AccountProvider, QuotaTokenExpired};
+use super::provider::{AccountProvider, QuotaRead, QuotaTokenExpired};
 use super::quota_cache::{QuotaCache, QuotaEntry, QuotaFailure};
 use super::switch::{SwitchStrategy, parked_until, pick_fallback};
 use crate::acp::transport::process::AgentProcess;
@@ -309,7 +309,7 @@ impl AccountManager {
     {
       return;
     }
-    let result: Result<Option<Option<AccountQuota>>> = async {
+    let result: Result<Option<QuotaRead>> = async {
       let Some(cred) = self.store.credential(id).await? else { return Ok(None) };
       let Some(fut) = p.quota(cred) else { return Ok(None) };
       Ok(Some(fut.await?))
@@ -317,12 +317,21 @@ impl AccountManager {
     .await;
     match result {
       Ok(None) => return,
-      Ok(Some(q)) => {
+      Ok(Some(read)) => {
         self.quota_failures.lock().remove(id);
-        match q {
+        match read.quota {
           Some(q) => self.quotas.lock().insert(id.to_owned(), q),
           None => self.quotas.lock().remove(id),
         };
+        // The vendor names the plan the login is on now: an upgrade shows without logging in again
+        if let Some(plan) = read.plan
+          && self.store.get(id).is_some_and(|cur| cur.detail.as_deref() != Some(plan.as_str()))
+        {
+          (self.log)(&format!("account plan changed: {} {} → {plan}", a.agent, a.label));
+          if let Err(e) = self.store.set_detail(id, Some(plan)).await {
+            (self.log)(&format!("account plan {}: {e}", a.label));
+          }
+        }
         self.emit();
       }
       Err(e) => {
@@ -402,7 +411,7 @@ impl AccountManager {
 
   /// Keep the CLI's own login in the list without a "+" click, for providers whose local login stays in the CLI's store
   /// (`auto_import`): a login appears as an account, a re-login as another identity renames that account (the CLI
-  /// store it points at now holds the new one), and nothing happens when the login is gone, when an account with that
+  /// store it points at now holds the new one), the plan of the same identity follows the quota read, and nothing happens when the login is gone, when an account with that
   /// label already exists (e.g. the same identity in a private home) or when the user removed it (`dismissed`, cleared
   /// by importing it again)
   pub async fn sync_local(self: &Arc<Self>, agent: Option<&str>) {
@@ -420,11 +429,13 @@ impl AccountManager {
       let local = self.local_account(&agent).await;
       let same_label = self.store.list(Some(&agent)).into_iter().find(|a| a.label == draft.label);
       let result = match (same_label, local) {
+        // Same identity: the plan is the quota read's to update (the local store may keep the login-time plan, Claude
+        // Code's credentials do), so a known detail is never overwritten from here, only a missing one filled in
         (Some(a), Some(l)) if a.id == l.id => {
-          if a.detail == draft.detail {
+          if a.detail.is_some() || draft.detail.is_none() {
             continue;
           }
-          self.store.set_identity(&a.id, &draft.label, draft.detail.clone()).await.map(|_| a.id)
+          self.store.set_detail(&a.id, draft.detail.clone()).await.map(|_| a.id)
         }
         (Some(_), _) => continue,
         (None, Some(l)) => {

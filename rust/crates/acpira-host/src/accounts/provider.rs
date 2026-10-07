@@ -34,6 +34,21 @@ impl std::fmt::Display for QuotaTokenExpired {
 
 impl std::error::Error for QuotaTokenExpired {}
 
+/// One quota read: the windows, and the plan the vendor's answer says the login is on now. A login only captures the
+/// plan once (Claude Code even keeps the login-time `subscriptionType` through token refreshes), so this is what keeps
+/// an account's detail current after an upgrade or downgrade; None leaves the detail as it is
+#[derive(Debug, Clone, Default)]
+pub struct QuotaRead {
+  pub quota: Option<AccountQuota>,
+  pub plan: Option<String>,
+}
+
+impl From<Option<AccountQuota>> for QuotaRead {
+  fn from(quota: Option<AccountQuota>) -> Self {
+    QuotaRead { quota, plan: None }
+  }
+}
+
 pub trait AccountProvider: Send + Sync {
   fn agent(&self) -> &str;
   fn import_local(&self) -> BoxFuture<Option<AccountDraft>>;
@@ -49,7 +64,7 @@ pub trait AccountProvider: Send + Sync {
   fn authenticate(&self, _proc: Arc<AgentProcess>, _cred: AccountCredential) -> Option<BoxFuture<Result<()>>> {
     None
   }
-  fn quota(&self, _cred: AccountCredential) -> Option<BoxFuture<Result<Option<AccountQuota>>>> {
+  fn quota(&self, _cred: AccountCredential) -> Option<BoxFuture<Result<QuotaRead>>> {
     None
   }
   /// Even a forced read (turn end, focus) reuses an answer younger than this: for vendors whose quota endpoint

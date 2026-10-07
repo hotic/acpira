@@ -329,6 +329,19 @@ impl AccountStore {
       .await
   }
 
+  /// The plan a quota read reported; only the detail changes, so a rename that raced the read is kept
+  pub async fn set_detail(&self, id: &str, detail: Option<String>) -> Result<()> {
+    let id = id.to_owned();
+    self
+      .mutate(move |items| {
+        if let Some(a) = items.iter_mut().find(|x| x.id == id) {
+          a.detail = detail;
+        }
+        Ok(())
+      })
+      .await
+  }
+
   /// accounts-dismissed.json next to accounts.json: `{ agent: [label, …] }`, the local logins the user removed and the
   /// automatic import must leave alone (a separate file, so accounts.json keeps the array older builds read)
   /// quota-cache.json next to accounts.json (`accounts::quota_cache`)

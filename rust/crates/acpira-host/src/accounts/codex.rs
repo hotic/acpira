@@ -3,7 +3,8 @@
 //! saved account is therefore a private CODEX_HOME under ~/.acpira/accounts/codex/ holding only its own auth.json; every
 //! other entry is a symlink into the regular Codex home, so threads, config and skills stay one store and a switched
 //! session resumes its own thread. The imported local login keeps using the regular home. Quota comes from the ChatGPT
-//! usage endpoint the Codex CLI reads (`GET chatgpt.com/backend-api/wham/usage`, verified 2026-09-26 on a Pro plan)
+//! usage endpoint the Codex CLI reads (`GET chatgpt.com/backend-api/wham/usage`, verified 2026-09-26 on a Pro plan),
+//! whose `plan_type` also keeps the account's plan current: the id_token's `chatgpt_plan_type` is only read at login
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -18,7 +19,7 @@ use acpira_shared::transcript::{AccountQuota, QuotaWindow};
 use super::account_store::{AccountCredential, AccountDraft};
 use super::cli_home::{LOCAL_LOGIN, account_home, create_private_dir, home_meta, json_file, jwt_claims, link_shared, plan_label, poll_until, remove_home};
 use super::devin::BinaryFn;
-use super::provider::{AccountProvider, LoginFlow};
+use super::provider::{AccountProvider, LoginFlow, QuotaRead};
 use crate::acp::transport::rpc::BoxFuture;
 use crate::i18n::tp;
 use crate::store::data_dir::home_dir;
@@ -112,7 +113,7 @@ impl AccountProvider for CodexAccountProvider {
     Some([("CODEX_HOME".to_owned(), home.to_string_lossy().into_owned())].into())
   }
 
-  fn quota(&self, cred: AccountCredential) -> Option<BoxFuture<Result<Option<AccountQuota>>>> {
+  fn quota(&self, cred: AccountCredential) -> Option<BoxFuture<Result<QuotaRead>>> {
     Some(Box::pin(async move {
       let home = account_home(&cred).unwrap_or_else(default_home);
       let auth = json_file(&home.join("auth.json")).await.ok_or_else(|| anyhow!("no auth.json"))?;
@@ -122,7 +123,8 @@ impl AccountProvider for CodexAccountProvider {
       if let Some(id) = tokens.get("account_id").and_then(Value::as_str) {
         headers.push(("ChatGPT-Account-Id".to_owned(), id.to_owned()));
       }
-      Ok(parse_codex_usage(&crate::http::get_json(USAGE_URL.into(), headers, Duration::from_secs(10)).await?))
+      let usage = crate::http::get_json(USAGE_URL.into(), headers, Duration::from_secs(10)).await?;
+      Ok(QuotaRead { quota: parse_codex_usage(&usage), plan: codex_plan(&usage) })
     }))
   }
 
@@ -143,6 +145,11 @@ fn window_id(seconds: f64) -> String {
     h if (27 * 24..=31 * 24).contains(&h) => "monthly".into(),
     h => format!("{h}h"),
   }
+}
+
+/// wham/usage → the plan the login is on now ("pro" → "ChatGPT Pro", the label the id_token gives at login)
+pub fn codex_plan(v: &Value) -> Option<String> {
+  v.get("plan_type").and_then(Value::as_str).and_then(|p| plan_label("ChatGPT", p))
 }
 
 /// wham/usage → the primary / secondary rate-limit windows (used_percent 0..100, reset_at unix seconds)
@@ -182,6 +189,8 @@ mod tests {
     assert_eq!(q.windows[0].id, "weekly");
     assert!((q.windows[0].remaining.0 - 0.01).abs() < 1e-9);
     assert_eq!(q.windows[0].resets_at.as_deref(), Some("2026-09-30T02:58:02.000Z"));
+    assert_eq!(codex_plan(&json!({ "plan_type": "pro", "rate_limit": {} })).as_deref(), Some("ChatGPT Pro"));
+    assert_eq!(codex_plan(&json!({ "rate_limit": {} })), None);
     let q = parse_codex_usage(&json!({ "rate_limit": { "primary_window": { "used_percent": 20, "limit_window_seconds": 18000 },
       "secondary_window": { "used_percent": 100, "limit_window_seconds": 604800, "reset_at": 1 } } }))
     .unwrap();

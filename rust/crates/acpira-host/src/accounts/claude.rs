@@ -7,7 +7,11 @@
 //! at the account directory, which also keeps the new identity (`.claude.json` oauthAccount) out of the user's config.
 //! Claude refreshes its tokens in place; Acpira only reads them. Quota: `GET api.anthropic.com/api/oauth/usage` with the
 //! `oauth-2025-04-20` beta (shape checked against a live Pro reply on 2026-09-27; the endpoint rate-limits hard and
-//! often answers 429 `rate_limit_error` in between)
+//! often answers 429 `rate_limit_error` in between). Plan: the credentials' `subscriptionType` is written at login and
+//! kept through token refreshes (Claude Code 2.1.292 only re-fetches the profile while a field is missing), so a Pro → Max
+//! upgrade never reaches it; every quota read also asks `GET api/oauth/profile`, the call Claude Code makes for it
+//! (`organization.organization_type` `claude_max` + `rate_limit_tier` `default_claude_max_20x` for a token issued on Pro
+//! before the upgrade, checked live on 2026-10-07)
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -23,13 +27,14 @@ use super::account_store::{AccountCredential, AccountDraft};
 use super::cli_home::{LOCAL_LOGIN, account_home, create_private_dir, home_meta, json_file, plan_label, poll_until, remove_home, sha8};
 use super::devin::BinaryFn;
 use super::keychain;
-use super::provider::{AccountProvider, LoginFlow};
+use super::provider::{AccountProvider, LoginFlow, QuotaRead};
 use crate::acp::transport::rpc::BoxFuture;
 use crate::i18n::tp;
 use crate::store::data_dir::home_dir;
 use crate::util::{iso_of_ms, ms_of_iso, now_iso, now_ms, random_uuid};
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
+const PROFILE_URL: &str = "https://api.anthropic.com/api/oauth/profile";
 const SECURE_STORE_ENV: &str = "CLAUDE_SECURESTORAGE_CONFIG_DIR";
 
 pub struct ClaudeAccountProvider {
@@ -95,7 +100,8 @@ async fn draft_of(dir: Option<&Path>, secret: String, meta: Option<BTreeMap<Stri
   oauth.get("accessToken").and_then(Value::as_str).filter(|t| !t.is_empty())?;
   let account = json_file(&global_config(dir)).await.and_then(|c| c.get("oauthAccount").cloned());
   let label = account.as_ref().and_then(|a| a.get("emailAddress")).and_then(Value::as_str).filter(|e| !e.is_empty())?.to_owned();
-  let detail = oauth.get("subscriptionType").and_then(Value::as_str).and_then(|p| plan_label("Claude", p));
+  let tier = oauth.get("rateLimitTier").and_then(Value::as_str);
+  let detail = oauth.get("subscriptionType").and_then(Value::as_str).and_then(|p| claude_plan(p, tier));
   Some(AccountDraft { label, detail, secret, meta })
 }
 
@@ -156,7 +162,7 @@ impl AccountProvider for ClaudeAccountProvider {
     Duration::from_secs(3 * 60)
   }
 
-  fn quota(&self, cred: AccountCredential) -> Option<BoxFuture<Result<Option<AccountQuota>>>> {
+  fn quota(&self, cred: AccountCredential) -> Option<BoxFuture<Result<QuotaRead>>> {
     Some(Box::pin(async move {
       let home = account_home(&cred);
       let creds = read_credentials(home.as_deref()).await.ok_or_else(|| anyhow!("no Claude login"))?;
@@ -166,12 +172,15 @@ impl AccountProvider for ClaudeAccountProvider {
       if oauth.get("expiresAt").and_then(Value::as_f64).is_some_and(|at| at > 0.0 && at <= now_ms() as f64) {
         return Err(anyhow::Error::new(super::provider::QuotaTokenExpired));
       }
-      let headers = vec![
-        ("Authorization".to_owned(), format!("Bearer {token}")),
-        ("anthropic-beta".to_owned(), "oauth-2025-04-20".to_owned()),
-        ("User-Agent".to_owned(), "acpira".to_owned()),
-      ];
-      Ok(parse_claude_usage(&crate::http::get_json(USAGE_URL.into(), headers, Duration::from_secs(10)).await?))
+      let profile_headers = vec![("Authorization".to_owned(), format!("Bearer {token}")), ("User-Agent".to_owned(), "acpira".to_owned())];
+      let mut usage_headers = profile_headers.clone();
+      usage_headers.push(("anthropic-beta".to_owned(), "oauth-2025-04-20".to_owned()));
+      let (usage, profile) = tokio::join!(
+        crate::http::get_json(USAGE_URL.into(), usage_headers, Duration::from_secs(10)),
+        crate::http::get_json(PROFILE_URL.into(), profile_headers, Duration::from_secs(10))
+      );
+      // The plan is decoration: a failed profile read keeps the detail, the usage answer decides the read
+      Ok(QuotaRead { quota: parse_claude_usage(&usage?), plan: profile.ok().as_ref().and_then(parse_claude_profile) })
     }))
   }
 
@@ -200,6 +209,28 @@ impl AccountProvider for ClaudeAccountProvider {
   fn unlock_command(&self) -> Option<(String, Vec<String>)> {
     cfg!(target_os = "macos").then(keychain::unlock_command)
   }
+}
+
+/// "max" / "claude_max" (the credentials' subscriptionType, the profile's organization_type) → "Claude Max", with the
+/// usage multiplier of a rate-limit tier like `default_claude_max_20x` → "Claude Max 20x"
+pub fn claude_plan(kind: &str, tier: Option<&str>) -> Option<String> {
+  let kind = kind.trim();
+  let kind = kind.strip_prefix("claude_").unwrap_or(kind);
+  let label = plan_label("Claude", kind)?;
+  let multiplier = tier
+    .and_then(|t| t.rsplit_once('_'))
+    .map(|(_, last)| last)
+    .filter(|m| m.len() > 1 && m.ends_with('x') && m[..m.len() - 1].chars().all(|c| c.is_ascii_digit()));
+  Some(match multiplier {
+    Some(m) => format!("{label} {m}"),
+    None => label,
+  })
+}
+
+/// api/oauth/profile → the plan label; None when the organization has no type (the detail stays)
+pub fn parse_claude_profile(v: &Value) -> Option<String> {
+  let org = v.get("organization")?;
+  claude_plan(org.get("organization_type")?.as_str()?, org.get("rate_limit_tier").and_then(Value::as_str))
 }
 
 /// ISO timestamps with a numeric UTC offset (`+00:00`, the shape the usage service sends) as well as `Z`
@@ -264,5 +295,19 @@ mod tests {
     assert_eq!(ms_of_offset_iso("2026-09-26T20:00:00.5+02:00"), ms_of_iso("2026-09-26T18:00:00.500Z"));
     assert_eq!(keychain_service(None), "Claude Code-credentials");
     assert_eq!(keychain_service(Some("abc")), "Claude Code-credentials-ba7816bf");
+  }
+
+  #[test]
+  fn plan_labels() {
+    assert_eq!(claude_plan("pro", Some("default_claude_ai")).as_deref(), Some("Claude Pro"));
+    assert_eq!(claude_plan("max", Some("default_claude_max_5x")).as_deref(), Some("Claude Max 5x"));
+    assert_eq!(claude_plan("max", None).as_deref(), Some("Claude Max"));
+    assert_eq!(claude_plan("", None), None);
+    // A live profile (2026-10-07) of a token issued on Pro, read after the upgrade to Max
+    let live = json!({ "account": { "has_claude_max": true, "has_claude_pro": false },
+      "organization": { "organization_type": "claude_max", "rate_limit_tier": "default_claude_max_20x", "billing_type": "apple_subscription" } });
+    assert_eq!(parse_claude_profile(&live).as_deref(), Some("Claude Max 20x"));
+    assert_eq!(parse_claude_profile(&json!({ "organization": { "organization_type": null } })), None);
+    assert_eq!(parse_claude_profile(&json!({ "error": { "type": "rate_limit_error" } })), None);
   }
 }
