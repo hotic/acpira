@@ -5,7 +5,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde_json::Value;
 
-use acpira_shared::transcript::{AgentBlock, PlanDocStatus, PlanDocumentBlock, Turn};
+use acpira_shared::transcript::{AgentBlock, PlanDocStatus, PlanDocumentBlock, ToolKind, Turn};
 
 use crate::json::str_of;
 
@@ -58,6 +58,14 @@ pub fn is_plan_approval(u: &Value) -> bool {
     || (str_of(u, "kind") == Some("switch_mode") && u.get("rawInput").and_then(|r| r.get("plan")).is_some_and(Value::is_string))
 }
 
+/// Kind of the tool row with this id in the latest agent turn
+fn tool_kind_of(turns: &[Turn], tool_call_id: &str) -> Option<ToolKind> {
+  turns.iter().rev().find_map(Turn::as_agent)?.blocks.iter().find_map(|b| match b {
+    AgentBlock::ToolCall(tc) if tc.id == tool_call_id => Some(tc.kind),
+    _ => None,
+  })
+}
+
 fn find_plan(turns: &mut [Turn], f: impl Fn(&PlanDocumentBlock) -> bool) -> Option<&mut PlanDocumentBlock> {
   plan_documents_mut(turns).into_iter().find(|p| f(p))
 }
@@ -84,13 +92,19 @@ pub fn capture_plan(turns: &mut [Turn], u: &Value) -> Option<String> {
   let ready_s = |k: &str| ready.and_then(|x| x.get(k)).and_then(Value::as_str).map(str::to_owned);
   let path = meta_s("cognition.ai/planFilePath")
     .or_else(|| ready_s("plan_file_path"))
+    .or_else(|| r("planFilePath"))
     .or_else(|| saved.as_ref().map(|s| s.0.clone()))
     .or_else(|| r("file_path"))
     .or_else(|| r("path"))
     .or_else(|| diff.and_then(|d| str_of(d, "path")).map(str::to_owned))
     .or_else(|| u.get("locations").and_then(Value::as_array).and_then(|l| l.first()).and_then(|l| str_of(l, "path")).map(str::to_owned));
   let tool_call_id = str_of(u, "toolCallId").unwrap_or("").to_owned();
-  let exit = is_plan_approval(u) || plan_documents(turns).iter().any(|p| p.approval_tool_call_id.as_deref() == Some(tool_call_id.as_str()));
+  // claude-agent-acp 0.84.0 drops fields that repeat the client's copy (`kind` after the first tool_call), and
+  // its AIR-shaped permission toolCall carries only id / title / rawInput: the row already applied holds the kind
+  let switch_row = r("plan").is_some() && tool_kind_of(turns, &tool_call_id) == Some(ToolKind::SwitchMode);
+  let exit = is_plan_approval(u)
+    || switch_row
+    || plan_documents(turns).iter().any(|p| p.approval_tool_call_id.as_deref() == Some(tool_call_id.as_str()));
   let write = meta.and_then(|m| m.get("cognition.ai/isPlanFileEdit")) == Some(&Value::Bool(true))
     || meta_s("cognition.ai/inferenceToolName").as_deref() == Some("write_plan");
   let known_path = path.as_deref().is_some_and(|p| KNOWN_PATH.is_match(p));

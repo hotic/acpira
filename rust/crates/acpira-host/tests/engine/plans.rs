@@ -84,6 +84,31 @@ fn a_codex_switch_mode_carrying_a_plan_is_the_plan_review_approval() {
 }
 
 #[test]
+fn claude_exit_plan_mode_is_recognised_after_the_adapter_drops_the_repeated_kind() {
+  // claude-agent-acp 0.84.0 (AIR client): the streamed tool_call carries the kind but no input, the refinement
+  // carries the plan but drops the unchanged kind / title, and the permission toolCall is id / title / rawInput only
+  let mut s = NormalizeState::new(vec![]);
+  apply_update(&mut s, &json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "Plan:" } }));
+  let call = json!({ "sessionUpdate": "tool_call", "toolCallId": "toolu_exit", "title": "Approve Plan", "kind": "switch_mode", "status": "pending", "content": [] });
+  apply_update(&mut s, &call);
+  assert!(capture_plan(&mut s.turns, &call).is_none());
+  let input = json!({ "plan": "# Windows port\n\nSteps.", "planFilePath": "C:\\Users\\me\\.claude\\plans\\jaunty-wall.md" });
+  let refinement = json!({ "sessionUpdate": "tool_call_update", "toolCallId": "toolu_exit", "rawInput": input,
+    "content": [{ "type": "content", "content": { "type": "text", "text": "# Windows port\n\nSteps." } }] });
+  apply_update(&mut s, &refinement);
+  let id = capture_plan(&mut s.turns, &refinement).unwrap();
+  let permission = json!({ "toolCallId": "toolu_exit", "title": "Approve Plan", "rawInput": input });
+  assert_eq!(capture_plan(&mut s.turns, &permission).as_deref(), Some(id.as_str()));
+  expect_match(plan(&s.turns), json!({ "title": "Windows port", "markdown": "# Windows port\n\nSteps.", "status": "ready",
+    "approvalToolCallId": "toolu_exit", "path": "C:\\Users\\me\\.claude\\plans\\jaunty-wall.md" }));
+  assert_eq!(plan_documents(&s.turns).len(), 1);
+  // A plan body on a row of another kind is not an approval
+  let other = json!({ "sessionUpdate": "tool_call", "toolCallId": "toolu_other", "title": "Write", "kind": "edit" });
+  apply_update(&mut s, &other);
+  assert!(capture_plan(&mut s.turns, &json!({ "toolCallId": "toolu_other", "rawInput": { "plan": "x" } })).is_none());
+}
+
+#[test]
 fn arbitrary_markdown_edits_are_not_implementation_plans() {
   let mut t = agent_turn();
   assert!(capture_plan(&mut t, &json!({ "toolCallId": "write", "title": "Write", "rawInput": { "path": "/repo/plan.md", "content": "# Notes" } })).is_none());
