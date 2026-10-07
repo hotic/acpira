@@ -436,6 +436,7 @@ export const de = {
   'host.retryingBare': 'Modellanfrage fehlgeschlagen; neuer Versuch…',
   'host.importGone': 'Der Agent hat diese Sitzung nicht mehr',
   'host.importNoHistory': 'Nativer Kontext wiederhergestellt; der Agent hat keine früheren Nachrichten wiedergegeben',
+  'host.claudeAuthRejected': 'Claude hat die Zugangsdaten wiederholt abgelehnt (HTTP 401). Prüfe deinen API-Schlüssel oder melde dich erneut an.',
   'host.noAuthMethod': 'Der Agent hat keine Anmeldemethode angeboten',
   'host.terminalAuthMethod': 'Die Anmeldemethode {id} läuft in einem Terminal, nicht über authenticate',
   'host.noCompact': 'Dieser Agent hat kein /compact',

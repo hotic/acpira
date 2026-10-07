@@ -458,6 +458,7 @@ export const zhCN = {
   'host.retryingBare': '模型请求失败，正在重试……',
   'host.importGone': 'agent 已没有这个会话',
   'host.importNoHistory': '已恢复原生上下文，agent 没有回放此前的消息',
+  'host.claudeAuthRejected': 'Claude 连续拒绝认证（HTTP 401）。请检查 API Key 配置或重新登录。',
   'host.noAuthMethod': 'agent 没有给出登录方式',
   'host.terminalAuthMethod': '登录方式 {id} 需要在终端中运行，不走 authenticate',
   'host.noCompact': '这个 agent 没有 /compact',

@@ -5,6 +5,15 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import * as acp from '@agentclientprotocol/sdk';
 
+// Claude's read-only credential probe is separate from ACP: session/new can succeed while signed out.
+if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
+  const status = process.env.FAKE_CLAUDE_AUTH_FILE
+    ? readFileSync(process.env.FAKE_CLAUDE_AUTH_FILE, 'utf8')
+    : JSON.stringify({ loggedIn: true, authMethod: 'api_key', apiProvider: 'firstParty' });
+  process.stdout.write(status);
+  process.exit(status.includes('"loggedIn":false') ? 1 : 0);
+}
+
 // Fake ACP agent: runs in a child process, plays different scripts based on the prompt text, feeding events to the AcpSession tests
 // Scripts: default → thought + text; "tool" → tool call + permission request; "slow" → streams slowly, waits for cancel; "auth" → session/new fails with -32000;
 // "big" → reports a very large usage; "/compact" → compaction_update in_progress → completed, usage drops;
@@ -404,6 +413,22 @@ const app = acp.agent({ name: 'fake-agent' })
       await client.notify(acp.methods.client.session.update, { sessionId: sid,
         update: { sessionUpdate: 'subagent_update', subagentSessionId: 'c1', state } } as unknown as acp.SessionNotification);
       if (!late.length) lateTerminal.delete(sid);
+    }
+    if (text.startsWith('claude-auth-retry')) {
+      const retry = (sessionId: string, attempt: number, status = 401) => client.notify('_claude/sdkMessage', { sessionId, message: {
+        type: 'system', subtype: 'api_retry', attempt, max_retries: 10, retry_delay_ms: 1000,
+        error_status: status, error: status === 401 ? 'authentication_failed' : 'rate_limit',
+      } });
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'partial answer' } });
+      await retry(sid, 1);
+      await retry('unrelated-child', 2);
+      await retry(sid, 2, 429);
+      if (text === 'claude-auth-retry') {
+        await retry(sid, 2);
+        // The real CLI keeps retrying silently; the host must end the turn without waiting for a prompt response.
+        return new Promise<never>(() => {});
+      }
+      return { stopReason: 'end_turn' };
     }
     // Kimi's ACP adapter can acknowledge a failed provider turn as an empty end_turn.
     if (text.startsWith('empty-response') && !failed.has(text)) {

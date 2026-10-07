@@ -424,6 +424,7 @@
   "host.retryingBare": "La solicitud al modelo falló; reintentando…",
   "host.importGone": "El agente ya no tiene esta sesión",
   "host.importNoHistory": "Contexto nativo restaurado; el agente no reprodujo mensajes anteriores",
+  "host.claudeAuthRejected": "Claude ha rechazado repetidamente las credenciales (HTTP 401). Comprueba tu clave de API o vuelve a iniciar sesión.",
   "host.noAuthMethod": "El agente no ofreció ningún método de inicio de sesión",
   "host.terminalAuthMethod": "El método de inicio de sesión {id} se ejecuta en una terminal, no mediante authenticate",
   "host.noCompact": "Este agente no tiene /compact",

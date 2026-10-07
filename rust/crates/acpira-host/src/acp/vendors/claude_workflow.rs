@@ -4,7 +4,7 @@
 //! progress the CLI draws its own agent rows from: the SDK's `system` / `task_progress` frame carries `workflow_progress`
 //! (`workflow_phase` and `workflow_agent` entries). The adapter does forward raw SDK frames as the `_claude/sdkMessage` ext
 //! notification when the session asks through `_meta.claudeCode.emitRawSDKMessages`, so the host subscribes to
-//! `task_progress` only and turns each frame into a synthetic `workflow_progress` session update (`wire.rs`), which
+//! `task_progress` and turns each frame into a synthetic `workflow_progress` session update (`wire.rs`), which
 //! `SubagentTree::workflow_progress` keeps as one receipt node per agent.
 //!
 //! Observed 2026-10-02 with claude-agent-acp 0.83.0 / Claude Code 2.1.284 (`probe-subagents.ts claude --claude-raw`):
@@ -26,9 +26,12 @@ pub const WORKFLOWS_ENV: &str = "CLAUDE_CODE_WORKFLOWS";
 /// The synthetic session update kind (`wire.rs` decodes it)
 pub const WORKFLOW_KIND: &str = "workflow_progress";
 
-/// Ask for the raw `task_progress` frames only: everything else the adapter already maps
+/// Ask for workflow progress and authentication retries (the adapter hides 401 retry notices).
 pub fn with_raw_progress(mut req: Value) -> Value {
-  req["_meta"]["claudeCode"]["emitRawSDKMessages"] = json!([{ "type": "system", "subtype": "task_progress" }]);
+  req["_meta"]["claudeCode"]["emitRawSDKMessages"] = json!([
+    { "type": "system", "subtype": "task_progress" },
+    { "type": "system", "subtype": "api_retry" },
+  ]);
   req
 }
 
@@ -74,6 +77,7 @@ mod tests {
     let req = with_raw_progress(json!({ "cwd": "/w", "_meta": { "claudeCode": { "options": { "thinking": { "type": "adaptive" } } } } }));
     assert_eq!(req["_meta"]["claudeCode"]["options"]["thinking"]["type"], "adaptive");
     assert_eq!(req["_meta"]["claudeCode"]["emitRawSDKMessages"][0]["subtype"], "task_progress");
+    assert_eq!(req["_meta"]["claudeCode"]["emitRawSDKMessages"][1]["subtype"], "api_retry");
     let bare = with_raw_progress(json!({ "cwd": "/w" }));
     assert_eq!(bare["_meta"]["claudeCode"]["emitRawSDKMessages"][0]["type"], "system");
   }

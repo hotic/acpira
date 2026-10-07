@@ -15,7 +15,7 @@ use crate::acp::agents::registry::AgentDef;
 use crate::acp::transport::cancel::Cancel;
 use crate::acp::transport::rpc::{BoxFuture, Connection, Inbound, RpcError};
 use crate::acp::vendors::grok::{GROK_ASK_QUESTION, GROK_EXIT_PLAN};
-use crate::acp::vendors::{Vendor, claude_workflow};
+use crate::acp::vendors::{Vendor, claude_auth, claude_workflow};
 use crate::i18n::tp;
 
 pub const CLIENT_NAME: &str = "acpira";
@@ -31,6 +31,7 @@ pub fn client_version() -> &'static str {
 /// implement all of them
 pub trait ClientHandlers: Send + Sync + 'static {
   fn on_update(&self, params: Value);
+  fn on_auth_retry(&self, _params: Value) {}
   fn on_permission(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>>;
   fn on_elicitation(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>>;
   fn on_grok_question(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>>;
@@ -65,11 +66,13 @@ impl Inbound for Router {
   fn notification(&self, method: &str, params: Value) {
     if method == "session/update" {
       self.box_.read().clone().on_update(params);
-    } else if method == claude_workflow::SDK_MESSAGE
-      && let Some(update) = claude_workflow::workflow_update(&params)
-    {
-      // A raw SDK frame the session subscribed to; only a workflow's per-agent progress is used
-      self.box_.read().clone().on_update(update);
+    } else if method == claude_workflow::SDK_MESSAGE {
+      let handler = self.box_.read().clone();
+      if let Some(update) = claude_workflow::workflow_update(&params) {
+        handler.on_update(update);
+      } else if claude_auth::repeated_auth_retry(&params) {
+        handler.on_auth_retry(params);
+      }
     }
   }
 

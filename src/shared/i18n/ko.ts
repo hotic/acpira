@@ -438,6 +438,7 @@ export const ko = {
   'host.retryingBare': '모델 요청 실패, 다시 시도 중…',
   'host.importGone': '에이전트에 이 세션이 더 이상 없습니다',
   'host.importNoHistory': '네이티브 컨텍스트를 복원했습니다. 에이전트가 이전 메시지를 재생하지 않았습니다',
+  'host.claudeAuthRejected': 'Claude가 인증 정보를 반복해서 거부했습니다(HTTP 401). API 키 설정을 확인하거나 다시 로그인하세요.',
   'host.noAuthMethod': '에이전트가 로그인 방법을 제공하지 않았습니다',
   'host.terminalAuthMethod': '로그인 방법 {id}은(는) authenticate가 아니라 터미널에서 실행됩니다',
   'host.noCompact': '이 에이전트에는 /compact가 없습니다',
