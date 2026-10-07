@@ -96,8 +96,9 @@ export function UserMessage({ turn, blobUrl, onEdit, commands, summons }: {
 }
 
 // A prompt the user steered into the running turn: the same card as a sent message, inside the turn's process at the point
-// it joined the loop (the turn is still one run, so nothing before it reads as finished). Once the turn's fold closes the
-// card is lifted out under the fold head, ahead of the reply, so a closed fold never hides what the user said.
+// it joined the loop (the turn is still one run, so nothing before it reads as finished). The fold's body is split around
+// the card and only the parts between fold, so a closed fold never hides what the user said and the card slides under
+// the fold head with the closing parts instead of being drawn a second time outside them.
 // It is not an exchange of its own, so it neither sticks nor opens the history editor.
 // Inline and lifted it has the same width as the original prompt card, so opening or closing the fold never resizes it
 function SteeredMessage({ block }: { block: SteerBlock }) {
@@ -528,8 +529,8 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
   const leadIcon = running ? activity.lead : <CompletionIcon className="size-icon" strokeWidth={1.5} />;
   const label = running ? activity.label : outcomeOf(turn) ?? t('turns.done');
   const elapsed = !running && turn.startedAt !== undefined && turn.endedAt !== undefined ? elapsedLabel(turn) : undefined;
-  // Steered prompts read inline while the fold is open; a closed fold shows them under its head instead
-  const steers = useMemo(() => blocks.filter((b): b is SteerBlock => b.type === 'steer'), [blocks]);
+  // Steered prompts stay visible between the folding parts of the process
+  const parts = useMemo(() => splitAtSteers(items), [items]);
   const mounted = useRef(!retired);
   if (!retired) mounted.current = true;
   if (!mounted.current && blocks.length === 0) return null;
@@ -554,21 +555,46 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
         </div>
       )}
       {blocks.length > 0 && (
-        // Nested rows extend their hit area beyond the text column, and a steered prompt's card spans the turn's padding like
-        // the prompt card above; the clip reserves the turn padding (wider than the hit outset) so neither loses its edges.
-        <Collapsible.Panel className="-mx-pad [&>div]:px-pad">
-          <div className={cn(!retired && 'pt-1 pb-1.5')}>
-            <AutoFoldContext.Provider value={store}>
-              <ProcessHistory><ProcessBlocks blocks={blocks} items={items} /></ProcessHistory>
-            </AutoFoldContext.Provider>
-          </div>
-        </Collapsible.Panel>
-      )}
-      {!open && steers.length > 0 && (
-        <div className="flex flex-col gap-gap pt-gap">{steers.map(b => <SteeredMessage key={b.id} block={b} />)}</div>
+        <AutoFoldContext.Provider value={store}>
+          {parts.map((part, i) => {
+            // A steered prompt keeps the process prose gap open or closed: between two parts while they show, under
+            // the head (or the previous card) once they have folded away
+            if (part.type === 'steer') return (
+              <div key={part.id} className="flex min-w-0 flex-col pt-(--process-prose-gap)">
+                <EntranceOnce id={itemEntrance(part.id)}><SteeredMessage block={part.block} /></EntranceOnce>
+              </div>
+            );
+            // The padding folds with its part: the head's offset on the first, the prose gap after a card, the tail on the last
+            const body = (
+              <div className={cn(!retired && (i === 0 ? 'pt-1' : 'pt-(--process-prose-gap)'), !retired && i === parts.length - 1 && 'pb-1.5')}>
+                <ProcessHistory><ProcessBlocks blocks={blocks} items={part.items} /></ProcessHistory>
+              </div>
+            );
+            // Nested rows extend their hit area beyond the text column; the clip reserves the turn padding (wider than
+            // the hit outset) so they keep their edges. The first part is the root's panel, the rest follow it
+            return i === parts.findIndex(p => p.type === 'items')
+              ? <Collapsible.Panel key={part.id} className="-mx-pad [&>div]:px-pad">{body}</Collapsible.Panel>
+              : <Collapsible.Section key={part.id} open={open} className="-mx-pad [&>div]:px-pad">{body}</Collapsible.Section>;
+          })}
+        </AutoFoldContext.Provider>
       )}
     </Collapsible.Root>
   );
+}
+
+type FoldPart = { type: 'items'; id: string; items: ProcessItem[] } | { type: 'steer'; id: string; block: SteerBlock };
+
+// The turn's process cut at each steered prompt: runs of items fold, the prompts between them stay. A part is keyed by
+// its first item, so a prompt steered into a live turn leaves the earlier part mounted and starts a new one after it
+function splitAtSteers(items: ProcessItem[]): FoldPart[] {
+  const out: FoldPart[] = [];
+  for (const item of items) {
+    const last = out[out.length - 1];
+    if (item.type === 'block' && item.block.type === 'steer') out.push({ type: 'steer', id: item.id, block: item.block });
+    else if (last?.type === 'items') last.items.push(item);
+    else out.push({ type: 'items', id: item.id, items: [item] });
+  }
+  return out;
 }
 
 // The outer fold's close (--dur-close) and a frame or two: rows inside hold still until it has finished
