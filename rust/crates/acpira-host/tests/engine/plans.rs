@@ -109,6 +109,55 @@ fn claude_exit_plan_mode_is_recognised_after_the_adapter_drops_the_repeated_kind
 }
 
 #[test]
+fn a_revised_claude_plan_shows_the_whole_new_document_on_the_next_approval() {
+  // claude-agent-acp 0.84.0: after "No, keep planning" the model edits the plan file (the Edit diff is old_string /
+  // new_string, a hunk) and calls ExitPlanMode again with the whole revised file in rawInput.plan
+  let path = "/Users/me/.claude/plans/jaunty-wall.md";
+  let exit = |s: &mut NormalizeState, id: &str, plan: &str| -> Option<String> {
+    let call = json!({ "sessionUpdate": "tool_call", "toolCallId": id, "title": "Approve Plan", "kind": "switch_mode", "status": "pending", "content": [] });
+    apply_update(s, &call);
+    let refinement = json!({ "sessionUpdate": "tool_call_update", "toolCallId": id, "rawInput": { "plan": plan, "planFilePath": path } });
+    apply_update(s, &refinement);
+    capture_plan(&mut s.turns, &refinement)
+  };
+  let mut s = NormalizeState::new(vec![]);
+  apply_update(&mut s, &json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "Plan:" } }));
+  let first = "# Port
+
+1. Store
+2. Shelf";
+  let id = exit(&mut s, "toolu_exit", first).unwrap();
+  plan_documents_mut(&mut s.turns)[0].status = serde_json::from_value(json!("rejected")).unwrap();
+  // The hunk of an Edit to the plan file is not the document
+  let edit = json!({ "sessionUpdate": "tool_call", "toolCallId": "toolu_edit", "title": "Edit jaunty-wall.md", "kind": "edit", "status": "completed",
+    "rawInput": { "file_path": path, "old_string": "2. Shelf", "new_string": "2. Shelf
+3. Hotkey" }, "locations": [{ "path": path }],
+    "content": [{ "type": "diff", "path": path, "oldText": "2. Shelf", "newText": "2. Shelf
+3. Hotkey" }] });
+  apply_update(&mut s, &edit);
+  capture_plan(&mut s.turns, &edit);
+  expect_match(plan(&s.turns), json!({ "markdown": first, "status": "rejected" }));
+  // The second approval brings the whole revised file and asks again
+  let revised = "# Port
+
+1. Store
+2. Shelf
+3. Hotkey";
+  assert_eq!(exit(&mut s, "toolu_exit2", revised).as_deref(), Some(id.as_str()));
+  expect_match(plan(&s.turns), json!({ "markdown": revised, "status": "ready", "approvalToolCallId": "toolu_exit2", "path": path }));
+  assert_eq!(plan_documents(&s.turns).len(), 1);
+  // A Write creating the file again (no old text) is the whole document
+  let rewrite = "# Port
+
+Rewritten.";
+  let write = json!({ "sessionUpdate": "tool_call", "toolCallId": "toolu_write", "title": "Write jaunty-wall.md", "kind": "edit", "status": "in_progress",
+    "locations": [{ "path": path }], "content": [{ "type": "diff", "path": path, "oldText": null, "newText": rewrite }] });
+  apply_update(&mut s, &write);
+  capture_plan(&mut s.turns, &write);
+  expect_match(plan(&s.turns), json!({ "markdown": rewrite, "status": "draft" }));
+}
+
+#[test]
 fn arbitrary_markdown_edits_are_not_implementation_plans() {
   let mut t = agent_turn();
   assert!(capture_plan(&mut t, &json!({ "toolCallId": "write", "title": "Write", "rawInput": { "path": "/repo/plan.md", "content": "# Notes" } })).is_none());

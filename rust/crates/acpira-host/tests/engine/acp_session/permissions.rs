@@ -170,9 +170,11 @@ async fn plan_auto_approve_answers_tool_requests_in_plan_mode_only() {
   p.await.unwrap();
   s.set_mode("plan".into()).await.unwrap();
   prompt(&s, "use tool").await;
+  // The fake agent reuses its tool ids across turns, so tc1 / tc2 fold into the first turn's rows; the reply
+  // ("tests passed" only follows an allow) and the absent card are what show the request was answered
   let blocks = view(&s)["turns"][3]["blocks"].as_array().unwrap().clone();
   assert!(!blocks.iter().any(|b| b["type"] == "permission"));
-  assert_eq!(blocks.iter().find(|b| b["id"] == "tc1").unwrap()["status"], "completed");
+  assert!(blocks.iter().any(|b| b["type"] == "text" && b["markdown"] == "tests passed"), "{blocks:?}");
 }
 
 // The plan's own approval and an adapter safety ask (defaultToNo) are never answered by plan auto-approval
