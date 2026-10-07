@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { onNdjsonLines } from '../src/host/shell/ndjson';
 import type { HostMsg, WebviewMsg } from '../src/shared/protocol';
 import { sidecarBin } from '../scripts/lib/sidecarBin';
 import { SIDECAR_PROTOCOL_VERSION, type PlatformMethod, type PlatformRequest, type ShellMsg, type SidecarMsg } from '../src/shared/sidecar';
@@ -28,7 +29,7 @@ export class Shell {
   // bin: another sidecar binary than the one under test; env: extra variables (a temp HOME keeps ~/.agents out of reach)
   constructor(readonly home: string, readonly cwd: string, bin = SIDECAR, env: Record<string, string> = {}) {
     this.proc = spawn(bin, ['--home', home], { stdio: 'pipe', env: { ...process.env, ACPIRA_HOME: '', ACPIRA_CATALOG_REFRESH: '0', ACPIRA_LOGIN_PATH: '0', ...env } });
-    createInterface({ input: this.proc.stdout }).on('line', line => {
+    onNdjsonLines(this.proc.stdout, line => {
       this.stdoutLines.push(line);
       let m: SidecarMsg;
       try { m = JSON.parse(line) as SidecarMsg; } catch { return; }
