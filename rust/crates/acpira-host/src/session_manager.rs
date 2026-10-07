@@ -94,6 +94,8 @@ pub struct ManagerDeps {
   pub accounts: Option<Arc<AccountManager>>,
   pub local_accounts: Option<Arc<LocalAccounts>>,
   pub compaction: Arc<dyn Fn() -> CompactionPolicy + Send + Sync>,
+  /// Agents whose plan mode answers tool permission requests itself (`acpira.planAutoApprove`)
+  pub plan_auto_approve: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
   pub hidden: Arc<dyn Fn() -> HiddenMap + Send + Sync>,
   pub scope: Arc<dyn Fn() -> String + Send + Sync>,
   /// Shared MCP servers handed to every session (`shared_config::mcp_provider`); None in tests that do not need them
@@ -1274,6 +1276,7 @@ impl SessionManager {
     let claim_me = self.me.clone();
     let toast = self.deps.toast.clone();
     let compaction = self.deps.compaction.clone();
+    let plan_auto = self.deps.plan_auto_approve.clone();
     SessionDeps {
       registry: self.registry(),
       log: self.deps.log.clone(),
@@ -1286,6 +1289,7 @@ impl SessionManager {
       notify: Some(Arc::new(move |text: &str| toast("info", text))),
       accounts: self.deps.accounts.clone().map(|a| Arc::new(AccountHooks(a)) as Arc<dyn SessionAccountHooks>),
       compaction: Some(Arc::new(move || compaction())),
+      plan_auto_approve: Some(Arc::new(move |agent: &str| plan_auto().iter().any(|a| a == agent))),
       pool: Some(self.pool.clone()),
       host_mcp: self.deps.host_mcp.clone(),
       model_shapes: Some(Arc::new(move |agent: &str| {
@@ -1686,6 +1690,7 @@ impl SessionManager {
       notify: None,
       accounts: None,
       compaction: None,
+      plan_auto_approve: None,
       pool: None,
       // A mirror never runs a turn
       claim: Some(Arc::new(|_: &str| Err(t("host.sessionBusyElsewhere")))),

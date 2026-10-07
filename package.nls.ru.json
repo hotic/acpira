@@ -28,6 +28,7 @@
   "acpira.conf.fontSmoothing": "Отображать текст с -webkit-font-smoothing: antialiased (тоньше линии; только macOS)",
   "acpira.conf.shareEditorSelection": "Передавать в чат текущее выделение редактора: оно появляется чипом рядом с режимом и уходит со следующим сообщением",
   "acpira.conf.steerQueued": "У агентов с поддержкой (Claude, Codex) кнопка отправки сообщения в очереди вставляет его в текущий ход, а не останавливает этот ход",
+  "acpira.conf.planAutoApprove": "Агенты, чей режим Plan одобряет запросы инструментов без карточки разрешения (id агентов, например claude); одобрение плана и запросы, помеченные как рискованные, по-прежнему спрашивают",
   "acpira.conf.appearance.density": "Плотность",
   "acpira.conf.appearance.radius": "Скругление углов",
   "acpira.conf.appearance.surface": "Поверхность: hairline тонкие линии / tonal слои без рамок / stroke контуры",

@@ -351,6 +351,15 @@
           "default": false,
           "description": "%acpira.conf.steerQueued%"
         },
+        "acpira.planAutoApprove": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "application",
+          "description": "%acpira.conf.planAutoApprove%"
+        },
         "acpira.appearance.density": {
           "type": "string",
           "enum": [

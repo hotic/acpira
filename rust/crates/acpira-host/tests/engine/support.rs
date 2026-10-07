@@ -203,6 +203,7 @@ impl Harness {
       notify: None,
       accounts: None,
       compaction,
+      plan_auto_approve: None,
       pool: None,
       model_shapes: None,
       shared_mcp: None,

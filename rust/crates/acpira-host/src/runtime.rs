@@ -132,7 +132,7 @@ impl HostRuntime {
       let p = p.clone();
       move |k: &str| p.read_setting(k)
     };
-    let (r1, r2, r3, r4, r5) = (r(&platform), r(&platform), r(&platform), r(&platform), r(&platform));
+    let (r1, r2, r3, r4, r5, r6) = (r(&platform), r(&platform), r(&platform), r(&platform), r(&platform), r(&platform));
     let cwd_p = platform.clone();
     let mcp_home = platform.clone();
     let manager = SessionManager::new(
@@ -155,6 +155,7 @@ impl HostRuntime {
           at_tokens: r3("compactAtTokens").and_then(|v| v.as_f64()).unwrap_or(300_000.0),
           auto: r3("autoCompact").and_then(|v| v.as_bool()).unwrap_or(true),
         }),
+        plan_auto_approve: Arc::new(move || id_list(&r6("planAutoApprove").unwrap_or(Value::Null))),
         hidden: Arc::new(move || {
           r4("hiddenOptions").filter(is_hidden_map).and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default()
         }),
