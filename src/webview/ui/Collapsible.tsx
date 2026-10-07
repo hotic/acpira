@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, type ComponentProps } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { Collapsible as Base } from '@base-ui/react/collapsible';
 import { cn, cnState } from './cn';
 import { cssTimeVar } from './cssTime';
@@ -14,12 +14,21 @@ export const LazyPanelContext = createContext(false);
 const DEFAULT_CLOSE_MS = 320;
 const RELEASE_SLACK_MS = 80;
 
+const PANEL = 'grid min-w-0 grid-cols-[minmax(0,1fr)] transition-[grid-template-rows,opacity] duration-(--dur-open) ease-out data-[open]:grid-rows-[1fr] data-[open]:opacity-100 data-[closed]:grid-rows-[0fr] data-[closed]:opacity-0 data-[closed]:duration-(--dur-close) data-[closed]:ease-(--ease-close)';
+
 function Panel({ children, className, ...props }: ComponentProps<typeof Base.Panel>) {
   return <Base.Panel {...props} keepMounted hidden={false}
     render={(attributes, state) => <PanelFrame {...attributes} open={state.open} />}
-    className={cnState(cn('grid min-w-0 grid-cols-[minmax(0,1fr)] transition-[grid-template-rows,opacity] duration-(--dur-open) ease-out data-[open]:grid-rows-[1fr] data-[open]:opacity-100 data-[closed]:grid-rows-[0fr] data-[closed]:opacity-0 data-[closed]:duration-(--dur-close) data-[closed]:ease-(--ease-close)'), className)}>
+    className={cnState(PANEL, className)}>
     {children}
   </Base.Panel>;
+}
+
+// A further part of a root's panel, for a body broken by content that stays visible while it is closed (a steered
+// prompt between process segments): each part closes on the panel's own curve, so the visible content slides with
+// them instead of being drawn twice. Base UI tracks one panel per root, so a section follows `open` directly.
+function Section({ open, className, children }: { open: boolean; className?: string; children: ReactNode }) {
+  return <PanelFrame open={open} className={cn(PANEL, className)} data-open={open ? '' : undefined} data-closed={open ? undefined : ''}>{children}</PanelFrame>;
 }
 
 function PanelFrame({ open, children, ...attributes }: ComponentProps<'div'> & { open: boolean }) {
@@ -43,4 +52,4 @@ function PanelFrame({ open, children, ...attributes }: ComponentProps<'div'> & {
   </div>;
 }
 
-export const Collapsible = { Root: Base.Root, Trigger: Base.Trigger, Panel };
+export const Collapsible = { Root: Base.Root, Trigger: Base.Trigger, Panel, Section };
