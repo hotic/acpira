@@ -272,7 +272,7 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
             {onNewInCategory && c.cwd === workspace && <DropdownMenu.Item onClick={() => onNewInCategory(c.id)}><OptionContent icon={<SquarePen strokeWidth={1.5} />}>{t('session.category.newSession')}</OptionContent></DropdownMenu.Item>}
             <DropdownMenu.Separator className="my-1 h-px bg-line" />
             <DropdownMenu.Item className="text-danger" onClick={() => onCategoryOp?.({ op: 'delete', id: c.id })}>
-              <OptionContent icon={<Trash2 strokeWidth={1.5} />} description={t('session.category.deleteHint')}>{t('session.category.delete')}</OptionContent>
+              <OptionContent icon={<Trash2 strokeWidth={1.5} />}>{t('session.category.delete')}</OptionContent>
             </DropdownMenu.Item>
           </>}
         />
