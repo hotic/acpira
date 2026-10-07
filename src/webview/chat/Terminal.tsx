@@ -16,9 +16,11 @@ export function TerminalOutput({ block, command }: { block: ToolCallBlock; comma
   if (!text && !command) return null;
   return (
     <div className="group/code-output code-output terminal-surface">
+      {/* The copy button belongs to the whole card (top-right corner), not to the output pane under the command */}
+      {text && <OutputCopy text={text} label={t('code.copyOutput')} />}
       {command && <CommandPrompt command={command} />}
       {/* Output under the command keeps only a half gap above it */}
-      {text && <OutputPane text={text} follow={outputFollows(block)} label={t('code.commandOutput')} copyLabel={t('code.copyOutput')}
+      {text && <OutputPane text={text} follow={outputFollows(block)} label={t('code.commandOutput')}
         className={cn('terminal-scroll whitespace-pre', command && 'pt-gap-half')}>
         {/* npm banners are muted; a leading ✓ (vitest indents it) takes the success color */}
         {text.trimEnd().split('\n').map((line, index, lines) => <span key={index} className={/^(?:> |Done in )/.test(line) ? 'text-fg-3' : undefined}>
@@ -63,11 +65,12 @@ function FetchMarkdown({ block, text }: { block: ToolCallBlock; text: string }) 
 const outputFollows = (block: ToolCallBlock) =>
   block.observation !== 'unknown' && (block.status === 'in_progress' || block.status === 'pending');
 
-// The scrolling output area both cards share: capped by --code-output-max with edge fades, a copy button on hover, and
-// while `follow` it sticks to the bottom until the user scrolls up inside it
+// The scrolling output area both cards share: capped by --code-output-max with edge fades, a copy button on hover when
+// `copyLabel` is given (the command card puts its own at the card corner instead), and while `follow` it sticks to the
+// bottom until the user scrolls up inside it
 // `prose` swaps the monospace <pre> for a block container that hosts rendered markdown
 function OutputPane({ text, follow, label, copyLabel, className, prose = false, children }: {
-  text: string; follow: boolean; label: string; copyLabel: string; className?: string; prose?: boolean; children: ReactNode;
+  text: string; follow: boolean; label: string; copyLabel?: string; className?: string; prose?: boolean; children: ReactNode;
 }) {
   const ref = useRef<HTMLElement>(null);
   const fade = useScrollFade<HTMLElement>();
@@ -83,7 +86,7 @@ function OutputPane({ text, follow, label, copyLabel, className, prose = false, 
   const Pane = prose ? 'div' : 'pre';
   return (
     <div className="relative min-w-0">
-      <OutputCopy text={text} label={copyLabel} />
+      {copyLabel && <OutputCopy text={text} label={copyLabel} />}
       <Pane
         ref={setRef}
         tabIndex={0}
