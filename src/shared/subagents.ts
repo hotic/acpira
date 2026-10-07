@@ -27,10 +27,13 @@ export interface SubagentSummary {
   endedAt?: number;
   model?: string;             // only when reported (Devin subagent_started.model, Claude toolResponse.resolvedModel / rawInput.model)
   usage?: { used: number; size: number };  // only when a usage_update was attributed to this child
-  peer: { sessionId?: string; agentId?: string; toolCallId?: string };  // the agent's own identifiers (diagnostics + replay re-association)
+  // the agent's own identifiers (diagnostics + replay re-association); sidechainId = a Claude workflow agent's own agentId,
+  // which names the CLI's sidechain transcript its process is read from (agentId is then the run-and-position key)
+  peer: { sessionId?: string; agentId?: string; toolCallId?: string; sidechainId?: string };
   activity?: string;          // latest activity label maintained host-side
   toolCount: number;
   result?: string;            // final result text the parent received (receipt content / Devin summary); for 'session' visibility the child's own last text
+  hasProcess?: boolean;       // a receipt node whose transcript has content of its own (a Claude workflow agent's sidechain log)
   permissions?: PermissionBlock[];  // this child's pending permission cards, mirrored so the root view can show them with provenance
   question?: QuestionBlock;         // this child's open question card, same reason
   harness?: SubagentHarness;  // set when Acpira itself runs the child in another CLI (a summoned persona)

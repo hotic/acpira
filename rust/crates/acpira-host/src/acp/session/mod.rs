@@ -28,6 +28,7 @@ pub mod turn_usage;
 pub mod updates;
 pub mod usage;
 pub mod view;
+pub mod workflow_logs;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
@@ -187,6 +188,8 @@ pub(crate) struct Core {
   pub switching: bool,
   /// Summoned children's processes, rounds in flight and root calls waiting for their node (`relay.rs`)
   pub relays: crate::acp::session::relay::Relays,
+  /// Claude workflow agents' sidechain logs being read into their nodes (`workflow_logs.rs`)
+  pub workflow_logs: crate::acp::session::workflow_logs::WorkflowLogs,
 }
 
 pub struct AcpSession {
@@ -317,6 +320,7 @@ impl AcpSession {
           rev: 0,
           switching: false,
           relays: Default::default(),
+          workflow_logs: Default::default(),
         }),
         deps,
         me: me.clone(),

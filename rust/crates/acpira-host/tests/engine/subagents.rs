@@ -696,6 +696,70 @@ async fn a_stopped_workflow_cancels_its_running_agents_and_keeps_the_finished_on
   expect_match(workflow_node(&s, 1).unwrap(), json!({ "state": "completed", "result": "alpha" }));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workflow_agent_gains_the_process_its_sidechain_log_holds() {
+  use acpira_host::acp::vendors::claude_workflow_log::project_dir_name;
+  let fake = fake_or_skip!();
+  // A private CLAUDE_CONFIG_DIR through the agent entry's env, the way a user points Claude elsewhere
+  let config = tempfile::tempdir().unwrap();
+  let h = Harness::new(&fake, json!({ "env": { "CLAUDE_CONFIG_DIR": config.path().to_string_lossy() } }));
+  let s = session(&h).await;
+  let sid = s.to_record().acp_session_id.expect("session id");
+  // alpha (agentId ag-1) wrote the trimmed real log; beta (ag-2) wrote none
+  let run = config.path().join("projects").join(project_dir_name("/tmp")).join(&sid).join("subagents").join("workflows").join("wf_1");
+  std::fs::create_dir_all(&run).unwrap();
+  let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../test/fixtures/claude-workflow-agent.jsonl");
+  std::fs::copy(&fixture, run.join("agent-ag-1.jsonl")).unwrap();
+  prompt(&s, "workflow").await;
+  until(|| workflow_node(&s, 1).is_some_and(|n| n["state"] == "completed" && n["hasProcess"] == true), 8000).await;
+  let alpha = workflow_node(&s, 1).unwrap();
+  // The receipt summary stays: title, phase, result preview; the agent's own id names its log
+  expect_match(alpha.clone(), json!({ "visibility": "receipt", "title": "alpha", "role": "Reply", "result": "alpha", "peer": { "sidechainId": "ag-1" } }));
+  let blocks = child_blocks(&s, alpha["id"].as_str().unwrap());
+  let kinds: Vec<&str> = blocks.iter().map(|b| b["type"].as_str().unwrap()).collect();
+  assert_eq!(kinds, ["thought", "tool_call", "thought", "tool_call", "tool_call", "tool_call", "text"], "{blocks:#?}");
+  expect_match(blocks[1].clone(), json!({ "kind": "execute", "status": "completed" }));
+  assert!(blocks[1]["content"]["text"].as_str().unwrap().starts_with("39392d4"));
+  expect_match(blocks[5].clone(), json!({ "kind": "read", "status": "failed" }));
+  expect_match(blocks[6].clone(), json!({ "markdown": "The ultra toggle is wired end to end." }));
+  assert!(blocks.iter().all(|b| b["streaming"] != true), "a finished node streams nothing");
+  assert!(alpha["toolCount"].as_u64().unwrap() >= 4);
+  // No log: beta keeps the receipt only
+  until(|| workflow_node(&s, 2).is_some_and(|n| n["state"] == "completed"), 8000).await;
+  until(|| h.logs.lock().unwrap().iter().any(|l| l.contains("workflow agent ag-2 has no sidechain log")), 8000).await;
+  expect_absent(workflow_node(&s, 2).unwrap(), "hasProcess");
+  // Reopened from the record, alpha keeps the process it had; nothing is read twice
+  let restored = Disposing(AcpSession::new(s.to_record(), h.deps.clone()));
+  let again = workflow_node(&restored, 1).unwrap();
+  expect_match(again.clone(), json!({ "hasProcess": true, "peer": { "sidechainId": "ag-1" } }));
+  restored.observe_subagent(again["id"].as_str().unwrap());
+  assert_eq!(child_blocks(&restored, again["id"].as_str().unwrap()).len(), blocks.len());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restored_workflow_agent_without_a_process_reads_its_log_once_when_opened() {
+  use acpira_host::acp::vendors::claude_workflow_log::project_dir_name;
+  let fake = fake_or_skip!();
+  let config = tempfile::tempdir().unwrap();
+  let h = Harness::new(&fake, json!({ "env": { "CLAUDE_CONFIG_DIR": config.path().to_string_lossy() } }));
+  let s = session(&h).await;
+  let sid = s.to_record().acp_session_id.expect("session id");
+  prompt(&s, "workflow").await;
+  until(|| workflow_node(&s, 2).is_some_and(|n| n["state"] == "completed"), 8000).await;
+  until(|| h.logs.lock().unwrap().iter().filter(|l| l.contains("has no sidechain log")).count() == 2, 8000).await;
+  // The log appears only after the run (written elsewhere, a copied store): the restored node reads it on open
+  let run = config.path().join("projects").join(project_dir_name("/tmp")).join(&sid).join("subagents").join("workflows").join("wf_1");
+  std::fs::create_dir_all(&run).unwrap();
+  let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../test/fixtures/claude-workflow-agent.jsonl");
+  std::fs::copy(&fixture, run.join("agent-ag-2.jsonl")).unwrap();
+  let restored = Disposing(AcpSession::new(s.to_record(), h.deps.clone()));
+  let beta = workflow_node(&restored, 2).unwrap();
+  expect_absent(&beta, "hasProcess");
+  restored.observe_subagent(beta["id"].as_str().unwrap());
+  until(|| workflow_node(&restored, 2).is_some_and(|n| n["hasProcess"] == true), 8000).await;
+  assert_eq!(child_blocks(&restored, beta["id"].as_str().unwrap()).len(), 7);
+}
+
 /// (exit code, signal) once the process is gone
 pub type Exit = Arc<Mutex<Option<(Option<i32>, Option<String>)>>>;
 

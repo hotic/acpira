@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { translate, type MsgKey, type Params } from '../src/shared/i18n';
 import type { SubagentSummary } from '../src/shared/subagents';
 import type { PermissionBlock, QuestionBlock } from '../src/shared/transcript';
-import { breadcrumb, countsLabel, delegatedIds, placeNodes, descendantCount, elapsedMs, elapsedText, flattenTree, nodesByTurn, partitionRows, rootRows, secondLine, stateLabel, subagentTitle } from '../src/webview/chat/subagents/subagentState';
+import { breadcrumb, countsLabel, delegatedIds, placeNodes, descendantCount, elapsedMs, elapsedText, flattenTree, nodesByTurn, partitionRows, receiptOnly, rootRows, secondLine, stateLabel, subagentTitle } from '../src/webview/chat/subagents/subagentState';
 
 const zh = (key: MsgKey, params?: Params) => translate('zh-CN', key, params);
 const en = (key: MsgKey, params?: Params) => translate('en', key, params);
@@ -179,5 +179,14 @@ describe('placing nodes at their delegation', () => {
     const { byId, rest } = placeNodes([a, child, grand, loose], placed);
     expect(byId.get('pa')?.map(n => n.id)).toEqual(['pa', 'pa1', 'pa2']);
     expect(rest.map(n => n.id)).toEqual(['px']);
+  });
+});
+
+describe('receiptOnly', () => {
+  it('keeps the receipt note until a receipt node carries a process of its own', () => {
+    expect(receiptOnly(node({ visibility: 'receipt' }))).toBe(true);
+    expect(receiptOnly(node({ visibility: 'receipt', hasProcess: true, peer: { agentId: 'wf#1', sidechainId: 'a1' } }))).toBe(false);
+    expect(receiptOnly(node({ visibility: 'nested' }))).toBe(false);
+    expect(receiptOnly(node({ visibility: 'session' }))).toBe(false);
   });
 });

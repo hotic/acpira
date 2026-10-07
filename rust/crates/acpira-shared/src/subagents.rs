@@ -50,6 +50,10 @@ pub struct SubagentPeer {
   pub agent_id: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub tool_call_id: Option<String>,
+  /// A Claude workflow agent's own `agentId`: it names the CLI's sidechain transcript the node's process is read from
+  /// (`peer.agentId` is the run-and-position key)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub sidechain_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -98,6 +102,10 @@ pub struct SubagentCore {
   pub tool_count: u64,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub result: Option<String>,
+  /// A receipt node whose transcript has content of its own (a Claude workflow agent read from the CLI's sidechain log):
+  /// the inspector shows that process instead of the receipt-only note
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub has_process: Option<bool>,
   /// Set when Acpira itself ran the child in another CLI (a summoned persona, `relay`)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub harness: Option<SubagentHarness>,

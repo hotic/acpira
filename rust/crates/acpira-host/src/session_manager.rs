@@ -1938,6 +1938,10 @@ impl SessionManager {
           vs.observing = Some((session_id.clone(), subagent_id.clone()));
           vs.last_subagent_rev = None;
         }
+        if let Some(s) = self.live(&session_id) {
+          // A restored Claude workflow agent without a process reads its sidechain log once (`workflow_logs.rs`)
+          s.observe_subagent(&subagent_id);
+        }
         if let Some((turns, rev, running)) = self.live(&session_id).and_then(|s| s.subagent_transcript(&subagent_id)) {
           v.state.lock().last_subagent_rev = Some(rev);
           v.emit(HostMsg::Subagent { session_id, subagent_id, rev, running, turns });
