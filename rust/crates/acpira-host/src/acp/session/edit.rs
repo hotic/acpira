@@ -297,7 +297,18 @@ impl AcpSession {
     {
       return Err(anyhow!(tp("history.optionUnavailable", &[("name", m)])));
     }
-    let mut selections: Vec<(String, String)> = settings.config.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    // Claude's Ultra is no effort value of the agent: its wire target goes out (or nothing, when the select has none) and
+    // the session request carries ultracode
+    let mut selections: Vec<(String, String)> = settings
+      .config
+      .iter()
+      .filter_map(|(k, v)| {
+        if !self.vendor.ultracode() || v != crate::acp::vendors::claude_ultracode::LEVEL_ID {
+          return Some((k.clone(), v.clone()));
+        }
+        crate::acp::vendors::claude_ultracode::wire_value(&controls.options, k, v).map(|wire| (k.clone(), wire))
+      })
+      .collect();
     selections.sort_by_key(|(id, _)| !Self::is_model_id(controls, id));
     let mut settled: HashSet<String> = HashSet::new();
     for (config_id, value) in &selections {
@@ -409,6 +420,7 @@ impl AcpSession {
       (user, proc)
     };
     let mut accepted = false;
+    let mut ultracode_before = None;
     let result: Result<()> = async {
       let idx = edit.turn_index as usize;
       let prefix: Vec<Turn> = self.core.lock().state.turns[..idx].to_vec();
@@ -468,6 +480,9 @@ impl AcpSession {
             c.state.turns.truncate(idx);
             c.tree.truncate(idx);
           }
+          // The edited turn's ultracode: the prompt below rebuilds the native session with it first when it differs
+          // from what that session was built with (`claim`)
+          self.seed_ultracode(&mut c, Some(&edit.settings));
           c.phase.editing = false;
           c.phase.running = false;
           c.phase.staging = false;
@@ -487,6 +502,12 @@ impl AcpSession {
       }
       if let Some(b) = rebuilt {
         prepared.blocks = b;
+      }
+      // The fresh session is built with the edited turn's ultracode; the live one keeps its own if the edit fails
+      {
+        let mut c = self.core.lock();
+        ultracode_before = Some((c.ultracode.on, c.ultracode.sent));
+        self.seed_ultracode(&mut c, Some(&edit.settings));
       }
       let req = self.session_request(&proc, None).await;
       let fresh = proc.request("session/new", req).await?;
@@ -527,6 +548,10 @@ impl AcpSession {
     if !accepted {
       let (notes, sid) = {
         let mut c = self.core.lock();
+        if let Some((on, sent)) = ultracode_before {
+          c.ultracode.on = on;
+          c.ultracode.sent = sent;
+        }
         c.phase.editing = false;
         c.phase.running = false;
         c.phase.staging = false;

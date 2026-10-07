@@ -18,10 +18,10 @@ pub fn thinking_option(max_thinking_tokens: Option<&str>) -> Option<Value> {
   }
 }
 
-/// Attach the thinking option to a session/new, resume or load request
+/// Attach the thinking option to a session/new, resume or load request, merging into whatever `_meta` already holds
 pub fn with_thinking(mut req: Value, max_thinking_tokens: Option<&str>) -> Value {
   if let Some(thinking) = thinking_option(max_thinking_tokens) {
-    req["_meta"] = json!({ "claudeCode": { "options": { "thinking": thinking } } });
+    req["_meta"]["claudeCode"]["options"]["thinking"] = thinking;
   }
   req
 }
@@ -43,5 +43,13 @@ mod tests {
     assert_eq!(thinking_option(Some("8000")), Some(json!({ "type": "enabled", "budgetTokens": 8000, "display": "summarized" })));
     assert_eq!(thinking_option(Some("junk")), Some(json!({ "type": "adaptive", "display": "summarized" })));
     assert!(with_thinking(json!({ "cwd": "/w" }), Some("0")).get("_meta").is_none());
+  }
+
+  #[test]
+  fn thinking_merges_into_an_existing_meta() {
+    let req = with_thinking(json!({ "cwd": "/w", "_meta": { "claudeCode": { "options": { "settings": { "ultracode": true } } }, "x": 1 } }), None);
+    assert_eq!(req["_meta"]["claudeCode"]["options"]["settings"]["ultracode"], true);
+    assert_eq!(req["_meta"]["claudeCode"]["options"]["thinking"]["type"], "adaptive");
+    assert_eq!(req["_meta"]["x"], 1);
   }
 }

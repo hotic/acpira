@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { composerControls, effortOptions, familyLabel, fastOn, fastValue, isFastControl, isUltraLevel, modelConfigChip, presentReasoning, reasoningChip, reasoningVisible, thoughtCorrection } from '../src/shared/composerControls';
+import { chipTags, composerControls, effortOptions, familyLabel, fastOn, fastValue, isFastControl, isUltraLevel, modelConfigChip, presentReasoning, reasoningChip, reasoningVisible, thoughtCorrection } from '../src/shared/composerControls';
 import { groupModels } from '../src/shared/models';
 import type { ConfigControl } from '../src/shared/transcript';
 
@@ -165,5 +165,27 @@ describe('shared composer controls', () => {
     ] };
     const custom = { ...model, id: 'custom', category: 'custom' };
     expect(composerControls([model, custom])).toEqual({ models: [model], reasoning: [], modelConfig: [], collaboration: [], other: [custom] });
+  });
+  // Claude's ultracode is the Ultra level the engine appends to the effort select: the Codex Ultra path draws it
+  it('reads Claude\'s host-made Ultra level like Codex\'s, as the last segment and the chip badge', () => {
+    const effort: ConfigControl = { id: 'effort', name: 'Effort', category: 'thought_level', value: 'ultra', options: [
+      { id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }, { id: 'xhigh', name: 'Extra high' }, { id: 'max', name: 'Max' }, { id: 'ultra', name: 'Ultra' },
+    ] };
+    const fast: ConfigControl = { id: 'fast', name: 'Fast mode', category: 'model_config', type: 'boolean', value: 'true',
+      options: [{ id: 'false', name: 'Off' }, { id: 'true', name: 'On' }] };
+    const model: ConfigControl = { id: 'model', name: 'Model', category: 'model', value: 'opus', options: [{ id: 'opus', name: 'Opus 5.5' }] };
+    // The last segment, tinted (the wire id stays `ultra`; the engine never sends it)
+    const p = presentReasoning(effort);
+    expect(p.efforts.map(o => o.name)).toEqual(['Low', 'Medium', 'High', 'XHigh', 'Max', 'Ultra']);
+    expect(p.efforts.map(o => isUltraLevel(o.name))).toEqual([false, false, false, false, false, true]);
+    expect(p.value).toBe('ultra');
+    expect(reasoningChip(effort)).toBe('Ultra');
+    expect(thoughtCorrection(effort)).toBeUndefined();
+    expect(composerControls([model, effort, fast])).toEqual({ models: [model], reasoning: [effort], modelConfig: [fast], collaboration: [], other: [] });
+    const cur = groupModels(model.options)[0];
+    const curVar = cur?.variants[0];
+    // Opus 5.5 [Ultra] [Fast]: Ultra in place of the effort badge
+    expect(chipTags(cur, curVar, [effort], [fast], 'Standard')).toEqual([{ label: 'Ultra', ultra: true }, { label: 'Fast', fast: true }]);
+    expect(chipTags(cur, curVar, [{ ...effort, value: 'high' }], [{ ...fast, value: 'false' }], 'Standard')).toEqual([{ label: 'High', ultra: false }]);
   });
 });

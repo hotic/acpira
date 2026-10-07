@@ -51,7 +51,8 @@ enum Gate {
   /// Another Acpira engine is running a turn on this session, or its lease could not be taken (`store::session_lease`):
   /// nothing is sent, the reason is shown
   Elsewhere(String),
-  Go { compact_first: bool },
+  /// `rebuild`: an ultracode switch is still to be applied and was reserved for this prompt (`ultracode.rs`)
+  Go { compact_first: bool, rebuild: bool },
 }
 
 /// The staged payload, plus a fork's history context (or why it could not be built)
@@ -138,7 +139,15 @@ impl AcpSession {
         self.notify(&reason);
         return;
       }
-      Gate::Go { compact_first } => compact_first,
+      Gate::Go { compact_first, rebuild } => {
+        // The switch reaches the native session before the prompt does; still staging, so a stop meanwhile drops the
+        // prompt in `accept`
+        if rebuild && !self.rebuild_before_prompt().await {
+          self.park_after_failed_rebuild(text, drafts, origin, staged).await;
+          return;
+        }
+        compact_first
+      }
     };
     let staging = self.stage_turn(&text, &drafts, staged, auto).await;
     let Some(mut accepted) = self.accept(&text, origin, plan_id.as_deref(), staging) else { return };
@@ -174,7 +183,14 @@ impl AcpSession {
       || (text.trim().is_empty() && drafts.is_empty() && staged.is_none_or(|s| s.prepared.blocks.is_empty()))
     {
       Gate::Drop
-    } else if origin != Origin::Continue && (c.switching || c.picks.adopt_pending || c.phase.running || c.peer.detached || (!auto && c.pending_prompt.is_some())) {
+    } else if origin != Origin::Continue
+      && (c.switching
+        || c.picks.adopt_pending
+        || c.ultracode.rebuilding
+        || c.phase.running
+        || c.peer.detached
+        || (!auto && c.pending_prompt.is_some()))
+    {
       Gate::Queue
     } else if let Err(reason) = self.lease_turn(&mut c) {
       Gate::Elsewhere(reason)
@@ -192,7 +208,9 @@ impl AcpSession {
       } else {
         self.touch(&mut c);
       }
-      Gate::Go { compact_first }
+      // An Ultra pick made while the last turn or its background work ran: the earliest slot is ahead of this prompt
+      let rebuild = self.reserve_ultracode_rebuild(&mut c, true);
+      Gate::Go { compact_first, rebuild }
     }
   }
 

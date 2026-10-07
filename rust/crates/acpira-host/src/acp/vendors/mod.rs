@@ -5,6 +5,7 @@
 pub mod antigravity;
 pub mod claude_auth;
 pub mod claude_thinking;
+pub mod claude_ultracode;
 pub mod claude_workflow;
 pub mod claude_workflow_log;
 pub mod claude_window;
@@ -80,6 +81,12 @@ impl Vendor {
   /// on by default (`claude_workflow`)
   pub fn workflows(self) -> bool {
     self == Vendor::Claude
+  }
+
+  /// The host offers ultracode as an "Ultra" effort level past Max, applied through the session settings
+  /// (`claude_ultracode`); it needs dynamic workflows, so it is never offered without `workflows`
+  pub fn ultracode(self) -> bool {
+    self == Vendor::Claude && self.workflows()
   }
 
   /// `ask_question` arrives as `session/request_permission` on an `interaction_*` tool call whose options are the
