@@ -1,4 +1,4 @@
-import { memo, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { ImageGeneration } from 'img-fx';
 import type { ImageRef, ToolCallBlock } from '@shared/transcript';
 import { isShowImageTool, toolImages } from '@shared/imageTools';
@@ -17,6 +17,10 @@ const REVEAL_TIMEOUT_MS = 6000;
 // The card takes the image's shape (the --dur-open width transition) before the dissolve starts on the final crop
 const SHAPE_MS = 260;
 
+// The process fold keeps image results at their tool position while it is open. Once the fold closes,
+// the owner renders them outside the panel so a collapsed turn still leaves the result visible.
+export const ImageInFoldContext = createContext(true);
+
 const reducedMotion = () => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 const idle = (fn: () => void) => {
   if (typeof requestIdleCallback === 'function') { const id = requestIdleCallback(fn, { timeout: 300 }); return () => cancelIdleCallback(id); }
@@ -24,9 +28,10 @@ const idle = (fn: () => void) => {
   return () => clearTimeout(id);
 };
 
-// The images of one image generation call, outside the process fold so a collapsed history does not hide them.
-// Only a call first seen running in this view animates: its placeholder mosaic dissolves into the saved image and then
-// hands over to the ordinary AgentImage. History, replay and a remount after completion show the static image directly.
+// The images of one image generation call stay beside their tool row while the process fold is open; a collapsed
+// history moves them outside the panel so the result remains visible. Only a call first seen running in this view
+// animates: its placeholder mosaic dissolves into the saved image and then hands over to the ordinary AgentImage.
+// History, replay and a remount after completion show the static image directly.
 // Memoized on the block reference like ToolCall; the slot keys keep the placeholder's card (and its shader) through completion.
 // Shown images (show_image) take the same place without the generation placeholder: the files already exist.
 // Their row names the files, so the images carry no path caption.

@@ -15,7 +15,7 @@ import { toolIcon } from './icons';
 import { PlanDetails } from './Plan';
 import { CodeSurface, DiffBlock } from './CodeBlock';
 import { AgentImage } from './AgentImage';
-import { GeneratedImages } from './GeneratedImage';
+import { GeneratedImages, ImageInFoldContext } from './GeneratedImage';
 import { TerminalOutput, ToolOutput } from './Terminal';
 import { toolTarget, toolVerb } from './folding';
 import { AsyncTaskStopContext, OpenToolFileContext } from './fileLinks';
@@ -39,6 +39,7 @@ export const ToolCall = memo(function ToolCall({ block, grouped = false }: { blo
 
 function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boolean }) {
   const { toolLine } = useAppearance();
+  const imageInFold = useContext(ImageInFoldContext);
   // Announced calls can wait behind another tool; only execution shimmers.
   const running = block.status === 'in_progress' && block.observation !== 'unknown';
   const execute = block.kind === 'execute';
@@ -118,21 +119,21 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
         : span ? <span className="flex min-w-0 items-baseline gap-1">{target}<Aside>{span}</Aside></span> : target)}
   </>;
   if (todos !== undefined) return <PlanDetails entries={todos} label={label} trailing={trailing} />;
-  // Image generation: the row names the call and its text (codex-acp's revised prompt) opens on demand. In the process fold
-  // the images render outside it (CodexMessage); elsewhere they sit right below the row
+  // Image generation: the row names the call and its text (codex-acp's revised prompt) opens on demand. In the
+  // process fold the images stay below this row while it is open; the fold owner moves them outside when it closes.
   if (isImageGenTool(block)) {
     const text = toolTexts(block);
     const row = text
       ? <Disclosure className="action-details" tone="action" lead={lead} trailing={trailing} indent={false} rail={false}
           body={<CodeSurface className="text-fg-2 whitespace-pre-wrap">{text}</CodeSurface>}>{label}</Disclosure>
       : <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
-    return grouped ? row : <div className="flex flex-col gap-gap">{row}<GeneratedImages block={block} /></div>;
+    return <div className="flex flex-col gap-gap">{row}{(!grouped || imageInFold) && <GeneratedImages block={block} />}</div>;
   }
-  // Shown images (Acpira's show_image tool): a plain row naming the caption or files; the images sit outside the process fold
-  // (CodexMessage) or right below the row, and the receipt text is for the model only
+  // Shown images (Acpira's show_image tool): a plain row naming the caption or files; the images stay below this row in
+  // an open process fold and move outside it when closed, and the receipt text is for the model only.
   if (isShowImageTool(block)) {
     const row = <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
-    return grouped ? row : <div className="flex flex-col gap-gap">{row}<GeneratedImages block={block} /></div>;
+    return <div className="flex flex-col gap-gap">{row}{(!grouped || imageInFold) && <GeneratedImages block={block} />}</div>;
   }
   // Search hits open on demand; read references remain visible inside the process.
   if (files.length && block.kind === 'search') return (
