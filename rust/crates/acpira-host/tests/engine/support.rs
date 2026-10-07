@@ -114,13 +114,24 @@ pub struct FakeAgent {
 impl FakeAgent {
   /// None when the repository's node_modules are not installed (a Rust-only checkout): the calling test is skipped
   pub fn locate() -> Option<FakeAgent> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().ok()?;
+    // Drive spelling, not `\\?\` verbatim: node cannot resolve its main module through a verbatim path
+    let root = acpira_host::platform::paths::canonical_for_cli(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")).ok()?;
     let fake = FakeAgent { script: root.join("test/fake-agent.ts"), loader: root.join("node_modules/tsx/dist/loader.mjs"), root };
     if fake.loader.is_file() && fake.script.is_file() {
       Some(fake)
     } else {
       eprintln!("skipped: {} is missing (run `pnpm install` in the repository root)", fake.loader.display());
       None
+    }
+  }
+
+  /// The loader as `--import` takes it: a module specifier, so on Windows a drive path (read as a URL scheme `s:`) goes as
+  /// a file URL
+  pub fn loader_arg(&self) -> String {
+    if cfg!(windows) {
+      acpira_host::platform::file_url::path_to_file_url(&self.loader.to_string_lossy())
+    } else {
+      self.loader.to_string_lossy().into_owned()
     }
   }
 
@@ -134,7 +145,7 @@ impl FakeAgent {
     let mut entry = serde_json::json!({
       "name": "Fake",
       "command": "node",
-      "args": ["--import", self.loader.to_string_lossy(), self.script.to_string_lossy()],
+      "args": ["--import", self.loader_arg(), self.script.to_string_lossy()],
       "login": "echo login",
     });
     if let (Some(e), Value::Object(x)) = (entry.as_object_mut(), extra) {

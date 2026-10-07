@@ -16,7 +16,7 @@ use crate::acp::session::errors::{AccountAuthError, RestoreFailure, classify_res
 use crate::acp::session::handlers::SessionHandlers;
 use crate::acp::session::queue::{PeerTurn, PromptQueue};
 use crate::acp::session::{AcpSession, Core, StartOutcome};
-use crate::acp::transcript::normalize::{disconnect_async_tasks, runtime_info_of, seal_replay};
+use crate::acp::transcript::normalize::{disconnect_async_tasks, has_live_async_task, runtime_info_of, seal_replay};
 use crate::acp::transport::process::{AgentProcess, AgentSpawnError, ClientHandlers};
 use crate::acp::transport::rpc::BoxFuture;
 use crate::acp::vendors::{Vendor, claude_auth};
@@ -530,6 +530,30 @@ impl AcpSession {
   }
 
   /// Re-authenticate a replacement process, then resume / load the same native session
+  /// The agent process can be ended now and the session reopened later without losing anything: ready, nothing in
+  /// flight (turn, edit, compaction, plan build, queued prompt, open card, background task, subagent, summoned round)
+  /// and the native session restorable through session/resume or session/load (`SessionManager::release_idle`)
+  pub fn releasable(&self) -> bool {
+    let c = self.core.lock();
+    let Some(proc) = c.proc.as_ref().filter(|p| p.alive()) else { return false };
+    let caps = proc.caps();
+    let restorable =
+      crate::json::truthy(caps.get("sessionCapabilities").and_then(|s| s.get("resume"))) || crate::json::truthy(caps.get("loadSession"));
+    restorable
+      && c.status == SessionStatus::Ready
+      && c.acp_session_id.is_some()
+      && !Self::busy(&c)
+      && !c.building_plan
+      && c.pending_prompt.is_none()
+      && c.compaction.completion.is_none()
+      && c.queue.entries.is_empty()
+      && c.perms.pending.is_empty()
+      && c.questions.pending.is_empty()
+      && c.relays.rounds.is_empty()
+      && !c.tree.any_running()
+      && !has_live_async_task(&c.state)
+  }
+
   pub async fn rebind_account(self: &Arc<Self>, account_id: &str) -> Result<()> {
     {
       let mut c = self.core.lock();

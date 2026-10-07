@@ -626,6 +626,11 @@ pub fn async_task_live(b: &ToolCallBlock) -> bool {
   b.async_task.as_ref().is_some_and(|a| b.observation != Some(Observation::Unknown) && !task_terminal(a.state))
 }
 
+/// Some background task of this transcript is still running and observed: ending the process would orphan it
+pub fn has_live_async_task(s: &NormalizeState) -> bool {
+  s.turns.iter().filter_map(Turn::as_agent).any(|t| t.blocks.iter().any(|b| matches!(b, AgentBlock::ToolCall(tc) if async_task_live(tc))))
+}
+
 fn block_by_task(turns: &[Turn], task_id: &str) -> Option<(usize, usize)> {
   for (ti, t) in turns.iter().enumerate() {
     let Turn::Agent(a) = t else { continue };

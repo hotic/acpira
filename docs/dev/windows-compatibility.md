@@ -54,6 +54,7 @@
 ## 覆盖边界
 
 - 终端边界收敛时新增的组合压力输入暴露了既有 CMD 限制（2026-10-02，Windows 11 / PowerShell 5.1.26100.8115 / Node 24.13.0）：参数中先有嵌入双引号，后有 `& %ACPIRA_LITERAL_TEST% !bang! ^` 这样的单个参数时，`%*` shim 的第二次解析会截断参数并尝试执行其余文本。迁移前后的 `spawn_spec` 输出逐字节相同，原生执行均复现失败；双重转义可修好该 shim，但会给使用 `%~1` 的普通批处理传入额外的 `^"`。本次结构收敛保留既有规则；该缺口尚未修复，后续需明确区分转发型 shim 与自行读取参数的批处理，不能全局增加转义层数。九种内置登录参数不触发此组合。
+- 本机直接跑 Rust engine 套件（2026-10-07，Windows 11 / Node 24.13.0，仓库在 `S:`）：`canonicalize` 给出的 `\\?\S:\…` 让 node 解析主模块失败（`EISDIR lstat 'S:'`），`--import S:\…\loader.mjs` 又被当成 `s:` URL scheme，假 Agent 全部起不来。`tests/engine/support.rs` 改用 `platform::paths::canonical_for_cli` 定位仓库，`FakeAgent::loader_arg` 在 Windows 传 file URL。之后全量剩 18 项 Windows 专属失败（registry 无扩展名候选、`/tmp` 的 verbatim 拼写、图片 / 附件路径、Devin 终端登录等），本轮未处理。
 - SSH 离线测试覆盖进程、参数、环境、文件系统和协议握手；未完成每家厂商的真实浏览器 OAuth，也不替代两种 IDE 内的按钮、终端交互和浏览器回跳验收。
 - Windows arm64 的打包与目标定义已审查，当前原生执行主机为 x64；需 arm64 主机补测。
 - MCP 的本机路径解析和配置合并已验证；各厂商 Windows 版本如何启动其接收的 stdio MCP command，尚未逐家运行真实 CLI 验收。
