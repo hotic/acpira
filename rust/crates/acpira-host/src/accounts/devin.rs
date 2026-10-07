@@ -50,7 +50,7 @@ impl DevinAccountProvider {
       // Devin 3000.11.3 uses Known Folders here, ignoring XDG / APPDATA overrides. Never label one saved key using
       // another account's global login, or write a key over that login just to ask the CLI for its identity.
       let file = data_home().join("devin/credentials.toml");
-      if !read_credentials(&file).await.is_some_and(|current| current.secret == cred.secret) {
+      if read_credentials(&file).await.is_none_or(|current| current.secret != cred.secret) {
         return fallback;
       }
       let out = run(&bin, &["auth", "status"], &[], Duration::from_secs(20)).await;

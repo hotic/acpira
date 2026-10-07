@@ -425,7 +425,7 @@ impl SessionManager {
   fn default_agent(&self) -> String {
     let preferred = (self.deps.default_agent)();
     let agents = self.agents();
-    if !agents.iter().find(|a| a.id == preferred).is_some_and(|a| a.disabled == Some(true)) {
+    if agents.iter().find(|a| a.id == preferred).is_none_or(|a| a.disabled != Some(true)) {
       return preferred;
     }
     let open: Vec<&AgentInfo> = agents.iter().filter(|a| a.external != Some(true) && a.disabled != Some(true)).collect();
