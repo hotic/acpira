@@ -21,7 +21,7 @@ export function Permission({ block, onChoose, compact }: { block: PermissionBloc
   const menu = more.length > 0 && (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger render={<Button className={compact ? choice : undefined}>{t('permission.more')}<ChevronDown className="size-icon shrink-0" strokeWidth={1.5} /></Button>} />
-      <DropdownMenu.Portal><DropdownMenu.Positioner width="md" side="top" collisionAvoidance={{ side: 'flip', align: 'shift' }}><DropdownMenu.Popup>
+      <DropdownMenu.Portal><DropdownMenu.Positioner width="xl" side="top" collisionAvoidance={{ side: 'flip', align: 'shift' }}><DropdownMenu.Popup>
         <PermissionMenu options={more} onChoose={id => onChoose?.(id)} />
       </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
     </DropdownMenu.Root>

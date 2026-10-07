@@ -186,6 +186,8 @@
   --question-body-max: min(calc(var(--row) * 8), 35dvh);
   --question-section-gap: 6px;
   --question-top-pad: 12px;
+  /* Plan cards scroll their body past this height so the approval bar stays next to the plan */
+  --plan-body-max: min(calc(var(--row) * 14), 55dvh);
   --question-option-pad: 4px;
   --question-description-gap: 2px;
   --question-focus-width: 2px;
@@ -452,6 +454,7 @@
   --spacing-pop: calc(var(--pop-rows) * var(--row));
   --spacing-plan: calc(var(--plan-rows) * var(--row-dense));
   --spacing-question-body: var(--question-body-max);
+  --spacing-plan-body: var(--plan-body-max);
   --spacing-pop-sm: var(--pop-w-sm);
   --spacing-pop-md: var(--pop-w-md);
   --spacing-pop-lg: var(--pop-w-lg);
