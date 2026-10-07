@@ -532,6 +532,44 @@ const app = acp.agent({ name: 'fake-agent' })
       return { stopReason: 'end_turn' };
     }
     if (text.startsWith('ask-')) return ask(text, sid, send, client);
+    // claude-agent-acp 0.84.0 as an AIR client: the streamed ExitPlanMode tool_call has the kind but no input, the
+    // refinement brings the plan but drops the unchanged kind / title, and the permission toolCall is id / title / rawInput
+    if (text === 'claude-plan') {
+      const plan = [
+        '# Paste Local Windows port', '',
+        '## Context', '',
+        'The macOS app is Swift + AppKit. The Windows build takes over `Win+V`, shows the same bottom shelf of cards and syncs history through iCloud Drive.', '',
+        '## Approach', '',
+        '| Option | Memory | Latency |', '|---|---|---|', '| WPF | 50–90 MB | <50 ms |', '| WebView2 | 150–250 MB | warm-up |', '',
+        '## Steps', '',
+        '1. Write the shared protocol doc and golden fixtures',
+        '2. Port the SQLite store and fingerprinting',
+        '3. Build the shelf window and card renderer',
+        '4. Hook `Win+V` with a low-level keyboard hook',
+        '5. Run both test suites against the fixtures', '',
+        '## Verification', '',
+        '- `dotnet test` passes on the fixtures',
+        '- A clip copied on the Mac shows up on Windows within one sync cycle',
+      ].join('\n');
+      const input = { plan, planFilePath: '/Users/test/.claude/plans/demo.md' };
+      await send({ sessionUpdate: 'tool_call', toolCallId: 'toolu_exit', title: 'Approve Plan', kind: 'switch_mode', status: 'pending', content: [] });
+      await send({ sessionUpdate: 'tool_call_update', toolCallId: 'toolu_exit', rawInput: input,
+        content: [{ type: 'content', content: { type: 'text', text: input.plan } }] });
+      const r = await client.request(acp.methods.client.session.requestPermission, {
+        sessionId: sid, toolCall: { toolCallId: 'toolu_exit', title: 'Approve Plan', rawInput: input },
+        options: [
+          { optionId: 'exit-plan-clear-bypass', name: 'Yes, clear context (11% used) and bypass permissions', kind: 'allow_always' },
+          { optionId: 'exit-plan-bypass', name: 'Yes, and bypass permissions', kind: 'allow_always' },
+          { optionId: 'exit-plan-auto', name: 'Yes, and use auto mode', kind: 'allow_always' },
+          { optionId: 'exit-plan-default', name: 'Yes, manually approve edits', kind: 'allow_once' },
+          { optionId: 'reject', name: 'No, keep planning', kind: 'reject_once' },
+        ],
+      });
+      const approved = r.outcome.outcome === 'selected' && r.outcome.optionId !== 'reject';
+      await send({ sessionUpdate: 'tool_call_update', toolCallId: 'toolu_exit', status: approved ? 'completed' : 'failed' });
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: approved ? 'APPROVED' : 'REJECTED' } });
+      return { stopReason: cancelled.has(sid) ? 'cancelled' : 'end_turn' };
+    }
     if (text.startsWith('plan-')) {
       const path = '/Users/test/.devin/plans/demo.md';
       const markdown = '# Demo plan\n\nCreate hello.txt.';
