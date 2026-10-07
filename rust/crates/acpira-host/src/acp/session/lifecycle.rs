@@ -338,8 +338,9 @@ impl AcpSession {
             }
             Err(e) => {
               self.core.lock().replaying = false;
-              self.log(&format!("{method} failed: {e}"));
               let e = anyhow::Error::new(e);
+              // error_text keeps the peer's reason from `data` (codex-acp sends a bare "Internal error" plus details)
+              self.log(&format!("{method} failed: {}", error_text(&e)));
               if is_auth(&e) {
                 return Err(e);
               }
@@ -385,11 +386,11 @@ impl AcpSession {
         let mut c = self.core.lock();
         if unresumable {
           c.status = SessionStatus::Readonly;
-          c.error = Some(tp("host.notResumable", &[("error", &failed.map(|e| e.to_string()).unwrap_or_default())]));
+          c.error = Some(tp("host.notResumable", &[("error", &failed.map(|e| error_text(&e)).unwrap_or_default())]));
           return Ok(());
         }
         if let Some(f) = failed {
-          return Err(anyhow!(tp(if locked { "host.sessionLocked" } else { "host.resumeFailed" }, &[("error", &f.to_string())])));
+          return Err(anyhow!(tp(if locked { "host.sessionLocked" } else { "host.resumeFailed" }, &[("error", &error_text(&f))])));
         }
         c.status = SessionStatus::Readonly;
         c.error = Some(t("host.cannotResume"));
@@ -529,7 +530,6 @@ impl AcpSession {
     c.phase.running || c.phase.editing || c.phase.staging || c.switching || c.status == SessionStatus::Starting
   }
 
-  /// Re-authenticate a replacement process, then resume / load the same native session
   /// The agent process can be ended now and the session reopened later without losing anything: ready, nothing in
   /// flight (turn, edit, compaction, plan build, queued prompt, open card, background task, subagent, summoned round)
   /// and the native session restorable through session/resume or session/load (`SessionManager::release_idle`)
@@ -554,6 +554,7 @@ impl AcpSession {
       && !has_live_async_task(&c.state)
   }
 
+  /// Re-authenticate a replacement process, then resume / load the same native session
   pub async fn rebind_account(self: &Arc<Self>, account_id: &str) -> Result<()> {
     {
       let mut c = self.core.lock();
