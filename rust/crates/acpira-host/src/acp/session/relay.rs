@@ -944,7 +944,7 @@ fn ask_agent_args(u: &Value, known: bool) -> Option<Map<String, Value>> {
     std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)(?:^|acpira[_.:/-]{1,2})ask_agent$").unwrap());
   let raw = u.get("rawInput").and_then(Value::as_object);
   let named = |x: Option<&str>| x.map(str::trim).is_some_and(|x| ASK.is_match(x));
-  if !known && !(named(u.get("title").and_then(Value::as_str)) || named(u.get("name").and_then(Value::as_str)) || named(raw.and_then(|r| r.get("tool")).and_then(Value::as_str))) {
+  if !(known || named(u.get("title").and_then(Value::as_str)) || named(u.get("name").and_then(Value::as_str)) || named(raw.and_then(|r| r.get("tool")).and_then(Value::as_str))) {
     return None;
   }
   let raw = raw?;
