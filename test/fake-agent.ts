@@ -62,7 +62,7 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // auth method (only to clients that advertise clientCapabilities.auth.terminal, like claude-agent-acp), require auth on every
 // session/new, and append each authenticate call's methodId to the file so a test can prove the method never went over the wire;
 // FAKE_CLOSE_LOG → advertise sessionCapabilities.close and append the
-// sessionId to that file on session/close; FAKE_PROMPT_CAPS=strict → advertise promptCapabilities { embeddedContext: false, image: false };
+// sessionId to that file on session/close; FAKE_CLOSE_DELAY_MS → session/close takes that long before it logs and answers; FAKE_PROMPT_CAPS=strict → advertise promptCapabilities { embeddedContext: false, image: false };
 // FAKE_STARTUP_BANNER → pi-acp's startup banner: the session/new response carries _meta.piAcp.startupInfo and the same
 // text is re-sent as one agent_message_chunk a tick later; =early instead sends it before session/new returns;
 // FAKE_MODELS → comma-separated extra model options appended to the model configOption (read at spawn, so a second spawn sees new values);
@@ -361,7 +361,10 @@ const app = acp.agent({ name: 'fake-agent' })
     }, 20);
     return { stopped: true };
   })
-  .onRequest(acp.methods.agent.session.close, ({ params }) => {
+  .onRequest(acp.methods.agent.session.close, async ({ params }) => {
+    // FAKE_CLOSE_DELAY_MS: a slow close, so a test can reopen the session while the old process is still on it
+    const delay = Number(process.env.FAKE_CLOSE_DELAY_MS ?? 0);
+    if (delay) await new Promise(r => setTimeout(r, delay));
     // FAKE_CLOSE_LOG: the test watches this file to see session/close land before the process dies
     const log = process.env.FAKE_CLOSE_LOG;
     if (log) appendFileSync(log, `${params.sessionId}\n`);

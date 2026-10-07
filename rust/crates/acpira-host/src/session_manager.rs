@@ -182,6 +182,8 @@ struct State {
   idle_since: HashMap<String, tokio::time::Instant>,
   // Controls of sessions whose process was released while idle, replayed when the session opens again
   released: HashMap<String, TurnSettings>,
+  // Released sessions whose old agent process is still closing: reopening one waits for it (`release`)
+  closing: HashMap<String, tokio::sync::watch::Receiver<bool>>,
 }
 
 pub struct SessionManager {
@@ -253,6 +255,7 @@ impl SessionManager {
           mirrors: HashMap::new(),
           idle_since: HashMap::new(),
           released: HashMap::new(),
+          closing: HashMap::new(),
         }),
         deps,
         pool,
@@ -1493,6 +1496,12 @@ impl SessionManager {
   }
 
   async fn load_session(self: &Arc<Self>, v: &Arc<Viewer>, id: &str, previous: Option<String>) {
+    // An idle release still closing this session's old agent process: a new one must not resume the native session
+    // while the old one may still write to it
+    let closing = self.state.lock().closing.get(id).cloned();
+    if let Some(mut rx) = closing {
+      let _ = rx.wait_for(|done| *done).await;
+    }
     // Claimed before the record is read and held until the agent is up: another engine can neither start a turn on the
     // session between this look and the restore, nor finish one after the read and leave a stale running turn here
     let claim = self.leases.claim(id);
@@ -2684,8 +2693,10 @@ impl SessionManager {
     released
   }
 
-  /// Close one idle session's agent process; false when a viewer landed on it or it changed meanwhile
-  async fn release(&self, s: &Arc<AcpSession>) -> bool {
+  /// Close one idle session's agent process; false when a viewer landed on it or it changed meanwhile. Until the old
+  /// process has closed the native session and exited, this engine keeps the lease (no other engine resumes it) and a
+  /// reopen here waits (`load_session`)
+  async fn release(self: &Arc<Self>, s: &Arc<AcpSession>) -> bool {
     let settings = capture_turn_settings(&s.agent_controls());
     if let Err(e) = self.deps.store.flush(s.clone() as Arc<dyn RecordSource>).await {
       self.log(&format!("session {}: idle release skipped, save failed: {e}", s.id));
@@ -2694,6 +2705,7 @@ impl SessionManager {
     if !s.releasable() {
       return false;
     }
+    let (closed_tx, closed_rx) = tokio::sync::watch::channel(false);
     {
       // A viewer selecting the session sets its active id before it looks the session up here: either this check sees
       // the viewer, or the lookup finds the session gone and loads it from the record just written
@@ -2708,11 +2720,29 @@ impl SessionManager {
       st.dirty.remove(&s.id);
       st.idle_since.remove(&s.id);
       st.released.insert(s.id.clone(), settings);
+      st.closing.insert(s.id.clone(), closed_rx);
     }
+    // A pin of its own holds the lease across the close; the session's turn pin (if any) can go now
+    let close_pin = match self.leases.claim(&s.id) {
+      Claim::Held(pin) => Some(pin),
+      _ => None,
+    };
     if let Some(pin) = s.drop_lease() {
       self.leases.release(&s.id, pin);
     }
-    s.dispose();
+    let (_, closing) = s.shutdown();
+    let me = self.clone();
+    let id = s.id.clone();
+    tokio::spawn(async move {
+      if let Some(f) = closing {
+        f.await;
+      }
+      if let Some(pin) = close_pin {
+        me.leases.release(&id, pin);
+      }
+      me.state.lock().closing.remove(&id);
+      let _ = closed_tx.send(true);
+    });
     self.log(&format!("session {}: idle, agent process released", s.id));
     true
   }
