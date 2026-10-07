@@ -156,9 +156,11 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
       <EntranceOnce id={`${block.id}:files`}><ResultList items={files} kind={block.kind} /></EntranceOnce>
     </ConnectedRail>
   );
-  // File-less responses must not fall through to the generic raw-output disclosure.
+  // File-less responses must not fall through to the generic raw-output disclosure. A verbatim command is the exception
+  // to the no-content rule: its card already holds the command, so a running one opens before any output arrives and
+  // the output streams into the open card (the process fold's auto-open relies on this too)
   if (block.kind === 'read' || block.kind === 'search' || (block.kind === 'edit' && !visibleContent.length && !task)
-    || (grouped && !block.content)) return <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
+    || (grouped && !block.content && !command)) return <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
 
   // Opening a process fold reveals action rows; outputs only expand on an explicit click.
   // A command card sits in the label column on the row's rail; the space after it stays outside the rail so the end dot meets the card.
