@@ -1,5 +1,5 @@
 import { createContext, useContext, useLayoutEffect, useRef, useState, type MouseEvent } from 'react';
-import { ArrowLeft, ArrowUpRight } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, ListTodo } from 'lucide-react';
 import type { ConfigControl, PermissionBlock, PlanDocumentBlock, SessionControls } from '@shared/transcript';
 import { groupModels, variantLabel } from '@shared/models';
 import { composerControls, reasoningChip } from '@shared/composerControls';
@@ -9,7 +9,9 @@ import { getLocale, t } from '../i18n';
 import { Popover } from '../ui/Popover';
 import { PanelFooter, PanelHeader, OptionContent } from '../ui/Panel';
 import { RadioGroup } from '../ui/RadioGroup';
-import { SendButton } from '../effects/SendButton';
+import { Row } from '../ui/Row';
+import { cn } from '../ui/cn';
+import { useScrollFade } from '../ui/useScrollFade';
 import { ModelOptions } from './ModelPicker';
 import { ModelMark } from './ModelMark';
 import { Prose } from './Prose';
@@ -63,36 +65,62 @@ export function PlanDocument({ block, permission: suppliedPermission, onChoose }
     if (option?.kind.startsWith('allow')) ctx.build?.(block.id, choice, optionId);
     else if (permission) onChoose(permission.id, optionId);
   };
+  const canBuild = !busy && !!ctx.build && !!block.markdown;
+  // The header carries the title, so a body that opens with the same `# Title` drops that line
+  const { title, body } = planHeading(block);
+  const status = permission && !started ? t('plan.pendingApproval') : t(`plan.status.${block.status}`);
+  const fade = useScrollFade<HTMLDivElement>();
   return (
-    <Card className="plan-document flex min-w-0 flex-col px-pad py-gap" data-plan-document={block.id}>
-      <div className="relative min-w-0">
-        <Prose block={{ type: 'text', markdown: block.markdown }} />
-        <IconButton size="sm" className="absolute right-0 top-0" title={t('plan.openFile')} aria-label={t('plan.openFile')}
+    <Card className="plan-document flex min-w-0 flex-col overflow-hidden" data-plan-document={block.id} data-plan-status={block.status}>
+      {/* Header: what this is, where it stands, and the file behind it */}
+      <div className="flex min-w-0 items-center gap-gap py-gap-half pr-gap-half pl-pad">
+        <Row dense className="min-w-0 flex-1" lead={<ListTodo className="size-icon" strokeWidth={1.5} />}>
+          <h3 className="m-0 min-w-0 truncate text-2 font-medium text-fg-strong" title={title}>{title}</h3>
+        </Row>
+        <span className={cn('shrink-0 text-3', permission && !started ? 'text-fg-1' : 'text-fg-3')}>{status}</span>
+        <IconButton size="sm" className="shrink-0" title={t('plan.openFile')} aria-label={t('plan.openFile')}
           onClick={() => ctx.open?.(block.id)} disabled={!ctx.open}>
           <ArrowUpRight strokeWidth={1.5} />
         </IconButton>
       </div>
-      {!started && <div className="@container flex min-w-0 items-center justify-between gap-gap pt-gap">
+      {/* Body: indented to the header's label column; a long plan scrolls inside the card so the actions stay in reach */}
+      {body && <div ref={fade} className="scroll-fade scroll-thin max-h-plan-body overflow-y-auto pt-gap-half pr-pad pb-pad pl-pad">
+        <div className="pl-indent"><Prose block={{ type: 'text', markdown: body }} /></div>
+      </div>}
+      {!started && <div className="@container flex min-w-0 items-center justify-between gap-gap border-t border-line py-gap-half pr-gap-half pl-pad">
         {revise ? <Button variant="secondary" disabled={!ctx.ready} title={permissionOption(revise, getLocale(), true).label} onClick={() => choose(revise.id)}
-          className="shrink-0">{t('plan.revise')}</Button> : <span />}
+          className="h-ctl-sm shrink-0">{t('plan.revise')}</Button> : <span />}
         <div className="ml-auto flex min-w-0 items-center gap-gap">
           {(model || extra.length > 0) && <Popover.Root open={menuOpen} onOpenChange={setMenuOpen}>
             <Popover.Trigger render={<Chip aria-label={t('plan.approvalsAria')} title={executor ?? t('plan.moreApprovals')}
               narrow="text" meta={meta} icon={family && <ModelMark family={family.name} brand={family.brand} />} data-plan-executor>
               {family?.name ?? executor ?? t('plan.approvals')}
             </Chip>} />
-            <Popover.Portal><Popover.Positioner side="top" align="end" width="md"><Popover.Popup>
+            <Popover.Portal><Popover.Positioner side="top" align="end" width={extra.length > 0 ? 'xl' : 'md'}><Popover.Popup>
               <BuildMenu model={model && { ...model, value: choice?.value ?? model.value }}
-                hidden={model && ctx.hidden?.[model.id]} extra={extra} ready={ctx.ready} canBuild={!busy && !!ctx.build && !!block.markdown}
+                hidden={model && ctx.hidden?.[model.id]} extra={extra} ready={ctx.ready} canBuild={canBuild}
                 onSelect={value => model && setSelected({ configId: model.id, value })} onChoose={choose} close={() => setMenuOpen(false)} />
             </Popover.Popup></Popover.Positioner></Popover.Portal>
           </Popover.Root>}
-          <SendButton running={false} filled={!busy && !!ctx.build && !!block.markdown} theme={ctx.theme}
-            onClick={() => ctx.build?.(block.id, choice, primary?.id)} />
+          {/* The one primary action of the card: start with the chosen executor */}
+          <Button variant="primary" className="h-ctl-sm shrink-0" disabled={!canBuild} data-plan-build
+            onClick={() => ctx.build?.(block.id, choice, primary?.id)}>
+            {primary ? permissionOption(primary, getLocale(), true).label : t('plan.build')}
+          </Button>
         </div>
       </div>}
     </Card>
   );
+}
+
+const LEADING_H1 = /^#[ \t]+(.+?)[ \t]*#*[ \t]*(?:\r?\n|$)/;
+
+// Header title and remaining body: the engine names a plan after its first `# heading` ("Plan" when it has none)
+function planHeading(block: PlanDocumentBlock) {
+  const markdown = block.markdown.trimStart();
+  const h1 = LEADING_H1.exec(markdown);
+  const body = h1 && h1[1] === block.title ? markdown.slice(h1[0].length).trim() : markdown.trim();
+  return { title: block.title && block.title !== 'Plan' ? block.title : t('plan.title'), body };
 }
 
 // Additional permission choices retain their original ACP IDs and localize known labels. They
