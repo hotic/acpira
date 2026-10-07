@@ -164,6 +164,21 @@ impl AgentProcess {
     if Vendor::of(&def.id).workflows() && std::env::var_os(claude_workflow::WORKFLOWS_ENV).is_none() {
       cmd.env(claude_workflow::WORKFLOWS_ENV, "1");
     }
+    // A saved Claude account carries its OAuth store through the account env. Do not let a
+    // stale host-level API credential or gateway override that account at request time.
+    if def.id == "claude" && extra_env.is_some() {
+      for key in [
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_DEFAULT_FABLE_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      ] {
+        cmd.env_remove(key);
+      }
+    }
     // The definition and account may override the refreshed environment for this child only.
     for (k, v) in def.env.iter().flatten() {
       cmd.env(k, v);
