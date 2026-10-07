@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline';
 import type { HostMsg, WebviewHost, WebviewMsg } from '@shared/protocol';
 import { SIDECAR_PROTOCOL_VERSION, type PlatformEvent, type PlatformRequest, type ShellMsg, type SidecarMsg } from '@shared/sidecar';
 import { reachEngine, type EngineEndpoint } from './engine';
+import { onNdjsonLines } from './ndjson';
 
 // One way to start the sidecar binary and a label for the log
 export interface SidecarCommand {
@@ -111,7 +112,7 @@ export class SidecarClient {
     proc.on('exit', (code, signal) => this.onExit(gen, code ?? signal ?? 'unknown', candidates.length));
     // A sidecar that died leaves a broken pipe behind; the exit handler takes it from there
     proc.stdin.on('error', e => this.opts.log(`sidecar stdin: ${String(e)}`));
-    createInterface({ input: proc.stdout, crlfDelay: Infinity }).on('line', line => this.onLine(gen, line));
+    onNdjsonLines(proc.stdout, line => this.onLine(gen, line));
     createInterface({ input: proc.stderr, crlfDelay: Infinity }).on('line', line => this.opts.log(`sidecar: ${line}`));
     this.write({ type: 'hello', protocolVersion: SIDECAR_PROTOCOL_VERSION, requestId: `h${++this.helloSeq}`, ...this.opts.hello() });
   }
@@ -138,7 +139,7 @@ export class SidecarClient {
       if (this.sock === sock) this.sock = undefined;
       this.onExit(gen, 'connection closed', total);
     });
-    createInterface({ input: sock, crlfDelay: Infinity }).on('line', line => this.onLine(gen, line));
+    onNdjsonLines(sock, line => this.onLine(gen, line));
     this.write({ type: 'hello', protocolVersion: SIDECAR_PROTOCOL_VERSION, requestId: `h${++this.helloSeq}`, ...this.opts.hello() });
   }
 

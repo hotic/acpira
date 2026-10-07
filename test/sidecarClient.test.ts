@@ -100,6 +100,24 @@ describe('SidecarClient', () => {
   });
 
   // An env fact that changes while the handshake runs (the hello in flight predates it) still lands before the views attach
+  it('keeps an envelope whole when its text holds U+2028 / U+2029', async () => {
+    // serde_json writes both separators raw; a reader that ends lines there drops every session view carrying them
+    const home = tmp('acpira-client-home-');
+    const logs: string[] = [];
+    const c = client([engine(home)], { logs });
+    const view = new View('V', 'sidebar', { mostRecent: true });
+    c.attach(view);
+    c.send('V', { type: 'ready' });
+    c.start();
+    const id = (await view.next('init')).state.active!.id;
+    await view.next('session', m => m.session.id === id && m.session.status === 'ready');
+    const text = 'line sep arated';
+    c.send('V', { type: 'send', sessionId: id, text });
+    const done = await view.next('session', m => m.session.id === id && !m.session.running && m.session.turns.length === 2);
+    expect(JSON.stringify(done.session.turns)).toContain(JSON.stringify(text).slice(1, -1));
+    expect(logs.filter(l => l.includes('not an envelope'))).toEqual([]);
+  });
+
   it('delivers an environment change made during the handshake before the views attach', async () => {
     const home = tmp('acpira-client-home-');
     const c = client([engine(home)], { blobBase: undefined });
