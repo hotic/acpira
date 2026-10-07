@@ -59,8 +59,8 @@ export function AccountPanel(p: AccountPanelProps) {
       {p.onUnlockCredentials && <Button className="shrink-0" onClick={() => { p.onUnlockCredentials?.(p.agent.id); p.close(); }}>{t('notice.unlock')}</Button>}
     </div>}
     <RadioGroup.Root ref={list} aria-label={p.agent.name} value={p.accountId ?? ''} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
-      {/* Nothing stored yet reads like a signed-out official account: the same identity row, the caption says how to fix it */}
-      {!p.accounts.length && <div className="px-2 py-1.5 text-2"><AccountIdentity caption={t('composer.noAccounts')} wrapCaption>{t('composer.notLoggedIn')}</AccountIdentity></div>}
+      {/* Stored accounts do not describe CLI credentials: a local API key can work with an empty account list. */}
+      {!p.accounts.length && <div className="px-2 py-1.5 text-2"><AccountIdentity caption={t('composer.noAccounts')} wrapCaption>{t('settings.agent.accounts.none')}</AccountIdentity></div>}
       {p.accounts.map(a => <div key={a.id} className="group/item relative flex shrink-0 flex-col">
         {/* Same skeleton as the official account: identity row (avatar · name · plan · check), the quota bars below it */}
         <RadioGroup.Item value={a.id} onClick={() => { p.onSelectAccount(a.id); p.close(); }} className="min-h-0 flex-col items-stretch gap-0 py-1.5">

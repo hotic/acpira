@@ -446,6 +446,7 @@ export const ru = {
   'host.retryingBare': 'Запрос к модели не удался; повтор…',
   'host.importGone': 'У агента больше нет этой сессии',
   'host.importNoHistory': 'Нативный контекст восстановлен; агент не воспроизвёл прежних сообщений',
+  'host.claudeAuthRejected': 'Claude неоднократно отклонил учётные данные (HTTP 401). Проверьте API-ключ или войдите снова.',
   'host.noAuthMethod': 'Агент не предложил способа входа',
   'host.terminalAuthMethod': 'Способ входа {id} выполняется в терминале, а не через authenticate',
   'host.noCompact': 'У этого агента нет /compact',

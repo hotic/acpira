@@ -443,6 +443,7 @@ export const ja = {
   'host.retryingBare': 'モデルへのリクエストに失敗しました。再試行中…',
   'host.importGone': 'エージェント側にこのセッションはもうありません',
   'host.importNoHistory': 'ネイティブのコンテキストを復元しました。エージェントは過去のメッセージを再生しませんでした',
+  'host.claudeAuthRejected': 'Claude が認証情報を繰り返し拒否しました（HTTP 401）。API キーの設定を確認するか、再度サインインしてください。',
   'host.noAuthMethod': 'エージェントからサインイン方法が提示されませんでした',
   'host.terminalAuthMethod': 'サインイン方法 {id} は authenticate ではなくターミナルで実行します',
   'host.noCompact': 'このエージェントには /compact がありません',

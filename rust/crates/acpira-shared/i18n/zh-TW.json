@@ -430,6 +430,7 @@
   "host.retryingBare": "模型請求失敗，正在重試……",
   "host.importGone": "agent 已沒有這個工作階段",
   "host.importNoHistory": "已恢復原生上下文，agent 沒有回放此前的訊息",
+  "host.claudeAuthRejected": "Claude 連續拒絕驗證（HTTP 401）。請檢查 API Key 設定或重新登入。",
   "host.noAuthMethod": "agent 沒有給出登入方式",
   "host.terminalAuthMethod": "登入方式 {id} 需要在終端中執行，不走 authenticate",
   "host.noCompact": "這個 agent 沒有 /compact",

@@ -19,6 +19,7 @@ use crate::acp::session::{AcpSession, Core, StartOutcome};
 use crate::acp::transcript::normalize::{disconnect_async_tasks, runtime_info_of, seal_replay};
 use crate::acp::transport::process::{AgentProcess, AgentSpawnError, ClientHandlers};
 use crate::acp::transport::rpc::BoxFuture;
+use crate::acp::vendors::{Vendor, claude_auth};
 use crate::i18n::{t, tp};
 use crate::util::now_iso;
 
@@ -235,12 +236,32 @@ impl AcpSession {
     self.handoff().await
   }
 
-  /// With an account bound, hand the credential over before opening the session; failure = login required
+  /// Hand over a bound account and check Claude's native credential state before opening the session. Claude's
+  /// session/new also succeeds while signed out; this check applies to local credentials and every login retry too.
   pub(crate) async fn handoff(self: &Arc<Self>) -> Result<()> {
     let (account, proc) = {
       let c = self.core.lock();
       (c.account_id.clone(), c.proc.clone())
     };
+    if self.vendor == Vendor::Claude {
+      let def = self.def();
+      if let Some(binary) = self.deps.registry.resolve_binary(&self.agent).await {
+        let env = match (&account, &self.deps.accounts) {
+          (Some(a), Some(h)) => h.spawn_env(self.agent.clone(), a.clone()).await,
+          _ => None,
+        };
+        match claude_auth::authenticated(&def, &binary, &self.cwd, env.as_ref()).await {
+          Ok(Some(false)) => {
+            self.log("Claude auth status: signed out");
+            return Err(anyhow::Error::new(crate::acp::transport::rpc::RpcError::new(-32000, "Authentication required")));
+          }
+          Ok(Some(true)) => {}
+          // A legacy/custom wrapper, timeout or unreadable store says nothing conclusive: keep the ACP login path.
+          Ok(None) => self.log("Claude auth status unavailable; deferring to ACP"),
+          Err(e) => self.log(&format!("Claude auth status probe failed; deferring to ACP: {e}")),
+        }
+      }
+    }
     let (Some(account), Some(hooks), Some(proc)) = (account, self.deps.accounts.clone(), proc) else { return Ok(()) };
     match hooks.authenticate(self.agent.clone(), account, proc).await {
       Ok(()) => {

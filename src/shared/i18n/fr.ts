@@ -437,6 +437,7 @@ export const fr = {
   'host.retryingBare': 'La requête au modèle a échoué ; nouvel essai…',
   'host.importGone': 'L’agent n’a plus cette session',
   'host.importNoHistory': 'Contexte natif restauré ; l’agent n’a rejoué aucun message précédent',
+  'host.claudeAuthRejected': 'Claude a rejeté les identifiants à plusieurs reprises (HTTP 401). Vérifiez votre clé API ou reconnectez-vous.',
   'host.noAuthMethod': 'L’agent n’a proposé aucune méthode de connexion',
   'host.terminalAuthMethod': 'La méthode de connexion {id} s’exécute dans un terminal, pas via authenticate',
   'host.noCompact': 'Cet agent n’a pas de /compact',

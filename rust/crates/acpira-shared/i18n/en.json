@@ -430,6 +430,7 @@
   "host.retryingBare": "Model request failed; retrying…",
   "host.importGone": "The agent no longer has this session",
   "host.importNoHistory": "Native context restored; the agent replayed no earlier messages",
+  "host.claudeAuthRejected": "Claude repeatedly rejected the credentials (HTTP 401). Check your API key or sign in again.",
   "host.noAuthMethod": "The agent offered no sign-in method",
   "host.terminalAuthMethod": "Sign-in method {id} runs in a terminal, not over authenticate",
   "host.noCompact": "This agent has no /compact",

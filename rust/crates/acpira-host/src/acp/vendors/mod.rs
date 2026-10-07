@@ -3,6 +3,7 @@
 //! launches one of these CLIs under another id gets none of them
 
 pub mod antigravity;
+pub mod claude_auth;
 pub mod claude_thinking;
 pub mod claude_workflow;
 pub mod claude_window;

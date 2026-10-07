@@ -67,3 +67,9 @@
 GitHub Windows runner 的临时目录包含 `RUNNER~1`。Node 22 的普通 `fs.realpathSync` 保留短路径，Rust `std::fs::canonicalize` 将其展开为 `runneradmin`，导致 Node 路径对照与 Pi 父目录信任用例失败。Windows 11 / Node 24.13.0 上的新建隔离目录同样复现：普通 realpath 保留 `ACPIRA~1.1-S`，native realpath 展开为长名称。`platform::paths::canonical_for_cli` 按组件解析符号链接 / junction，并保留普通路径的大小写和 8.3 拼写；Pi 信任与原生会话 cwd 重试共用该边界。新增回归对照 Node 的短路径、大小写、父目录折叠与 junction 输出。
 
 修复自验：macOS Rust 工作区 623 项通过；macOS 与 Windows GNU 目标的全部 target Clippy 通过；Windows 11 / Node 24.13.0 上 144 项库测试通过，1 项辅助进程入口忽略。新增用例显式调用 Windows 短路径 API，覆盖短名称、大小写、父目录折叠和 junction 的真实 Node realpath 对照。该结果仍不替代修复版本的 MSVC 发布 CI。
+
+## Claude 认证状态与静默重试（2026-10-07）
+
+Windows 11 / claude-agent-acp 0.84.0 / Claude Code 2.1.284 的真实会话记录出现 7 次 `401 API key is invalid`。用户级 `ANTHROPIC_API_KEY` 仍被 CLI 采用，未保存 Acpira 账号时的「未登录」文案不代表缺少 CLI 凭据。适配器忽略 `api_retry` 中的认证警告，持续等待期间界面没有错误。修复详见 `agent-quirks.md`：明确未认证时在启动阶段拦截，连续 401 结束回合，账号空列表改为「尚未添加账号」。
+
+原生 Windows x64 验收通过：GNU 目标编译的临时 smoke 程序调用已安装的 `.cmd` 适配器，隔离配置与凭据目录、仅在测试进程中清除认证环境，未发送 prompt 即进入 `auth_required`；离线 Node fixture 回放连续 401 后，运行状态结束且已有输出保留。未安装替换用户的扩展，未改动用户级环境变量，未发送真实模型请求；不替代正式 MSVC 发布构建。
