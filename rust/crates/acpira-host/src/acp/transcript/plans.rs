@@ -144,12 +144,20 @@ pub fn capture_plan(turns: &mut [Turn], u: &Value) -> Option<String> {
   }
   let has_markdown =
     id.as_ref().and_then(|i| plan_documents(turns).into_iter().find(|p| &p.id == i)).is_some_and(|p| !p.markdown.is_empty());
+  // An ordinary edit that reached a plan only through its path (Claude's Edit / Write of `planFilePath`): its diff is a
+  // hunk (claude-agent-acp 0.84.0 sends old_string / new_string, or the structuredPatch hunks of a rewrite), so only a
+  // diff without old text holds the whole document
+  let generic = !exit && !write && !known_path;
+  let whole_diff = diff.filter(|d| !generic || d.get("oldText").is_none_or(Value::is_null));
+  // Claude's ExitPlanMode carries the whole plan file next to its path; Devin's exit `plan` is a summary that must not
+  // replace the saved document
+  let full_plan = exit && (!has_markdown || r("planFilePath").is_some());
   let markdown = r("planContent")
     .or_else(|| ready_s("plan_content"))
     .or_else(|| saved.as_ref().map(|s| s.1.clone()))
-    .or_else(|| diff.and_then(|d| str_of(d, "newText")).map(str::to_owned))
+    .or_else(|| whole_diff.and_then(|d| str_of(d, "newText")).map(str::to_owned))
     .or_else(|| r("content"))
-    .or_else(|| if exit && !has_markdown { r("plan") } else { None });
+    .or_else(|| if full_plan { r("plan") } else { None });
   let id = match id {
     Some(i) => i,
     None => {
@@ -180,6 +188,10 @@ pub fn capture_plan(turns: &mut [Turn], u: &Value) -> Option<String> {
     }
   }
   if exit {
+    // A new approval request for a plan already answered (Claude's revision after "No, keep planning") asks again
+    if p.approval_tool_call_id.as_ref().is_some_and(|a| a != &tool_call_id) {
+      p.status = PlanDocStatus::Draft;
+    }
     p.approval_tool_call_id = Some(tool_call_id);
     if !p.markdown.is_empty() && p.status == PlanDocStatus::Draft {
       p.status = PlanDocStatus::Ready;
