@@ -131,7 +131,9 @@ export class VscodePlatform {
       case 'toast': showToast(r); return null;
       case 'runInTerminal': {
         const { text, ...launch } = terminalLaunch(r.command, r.args);
-        const t = vscode.window.createTerminal({ name: r.title, env: r.env, ...launch });
+        // One-shot terminals (logins, unlocks, installs) must not be persisted: on Windows the command is the shell
+        // itself, so a revived terminal re-runs it on the next window open (a stale `claude auth login` opens claude.ai)
+        const t = vscode.window.createTerminal({ name: r.title, env: r.env, isTransient: true, ...launch });
         t.show();
         if (text !== undefined) t.sendText(text);
         return null;
