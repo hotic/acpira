@@ -594,7 +594,9 @@ impl TranscriptStore {
     fs::create_dir_all(&dir).await?;
     let path = confined(&dir, name).await.ok_or_else(illegal)?;
     write_atomic(&path, content.as_bytes(), None).await?;
-    Ok(path)
+    // canonicalize() hands back `\\?\C:\…` on Windows; the path is shown to the user and opened by the IDE, so use the
+    // ordinary drive / UNC spelling
+    Ok(crate::platform::paths::for_cli(path))
   }
 }
 

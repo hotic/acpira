@@ -104,8 +104,10 @@ async fn a_session_exports_as_markdown_and_json_under_the_sibling_exports_dir() 
   m.handle(json!({ "type": "send", "text": "hi" })).await;
   let title = m.active().unwrap()["title"].as_str().unwrap().to_owned();
   let md_path = m.m.export_session(&id, ExportFormat::Markdown).await.unwrap();
-  // writeExport returns the realpath'd target, so resolve the expectation the same way
-  assert!(md_path.starts_with(parent.path().join("exports").canonicalize().unwrap()), "{}", md_path.display());
+  // writeExport returns the realpath'd target in its ordinary spelling (no `\\?\` on Windows), so resolve the expectation the same way
+  let exports = acpira_host::platform::paths::for_cli(parent.path().join("exports").canonicalize().unwrap());
+  assert!(md_path.starts_with(&exports), "{}", md_path.display());
+  assert!(!md_path.to_string_lossy().starts_with(r"\\?\"), "{}", md_path.display());
   let md = std::fs::read_to_string(&md_path).unwrap();
   assert!(md.contains(&format!("# {title}")) && md.contains("hello world"));
   // An unchanged transcript hands back the same file instead of writing another one
