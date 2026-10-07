@@ -155,3 +155,44 @@ async fn an_antigravity_question_still_asks_under_synthesized_yolo() {
   let text: String = agent_blocks(&view(&s)).iter().filter(|b| b["type"] == "text").map(|b| b["markdown"].as_str().unwrap().to_owned()).collect();
   assert!(text.contains(r#""optionId":"blue""#), "{text}");
 }
+
+// acpira.planAutoApprove: in plan mode an ordinary tool request is answered with its allow_once and no card opens
+#[tokio::test(flavor = "multi_thread")]
+async fn plan_auto_approve_answers_tool_requests_in_plan_mode_only() {
+  let fake = fake_or_skip!();
+  let mut h = Harness::new(&fake, json!({}));
+  h.deps.plan_auto_approve = Some(std::sync::Arc::new(|_: &str| true));
+  let s = started(&h, "/tmp").await;
+  // Outside plan mode the card still opens
+  let p = spawn_prompt(&s, "use tool");
+  let perm = wait_block(&s, "permission").await;
+  s.resolve_permission(perm["id"].as_str().unwrap(), "allow");
+  p.await.unwrap();
+  s.set_mode("plan".into()).await.unwrap();
+  prompt(&s, "use tool").await;
+  let blocks = view(&s)["turns"][3]["blocks"].as_array().unwrap().clone();
+  assert!(!blocks.iter().any(|b| b["type"] == "permission"));
+  assert_eq!(blocks.iter().find(|b| b["id"] == "tc1").unwrap()["status"], "completed");
+}
+
+// The plan's own approval and an adapter safety ask (defaultToNo) are never answered by plan auto-approval
+#[tokio::test(flavor = "multi_thread")]
+async fn plan_auto_approve_leaves_plan_approval_and_safety_asks_to_a_person() {
+  let fake = fake_or_skip!();
+  let mut h = Harness::new(&fake, json!({}));
+  h.deps.plan_auto_approve = Some(std::sync::Arc::new(|_: &str| true));
+  let s = started(&h, "/tmp").await;
+  s.set_mode("plan".into()).await.unwrap();
+  let p = spawn_prompt(&s, "perm-meta");
+  let perm = wait_block(&s, "permission").await;
+  s.resolve_permission(perm["id"].as_str().unwrap(), "no-diff");
+  p.await.unwrap();
+  expect_match(agent_blocks(&view(&s)).last().unwrap(), json!({ "type": "text", "markdown": "picked no-diff" }));
+  let p = spawn_prompt(&s, "plan-review");
+  let perm = wait_block(&s, "permission").await;
+  assert!(perm["planId"].is_string(), "{perm}");
+  s.resolve_permission(perm["id"].as_str().unwrap(), "reject_once");
+  p.await.unwrap();
+  let text: String = agent_blocks(&view(&s)).iter().filter(|b| b["type"] == "text").map(|b| b["markdown"].as_str().unwrap().to_owned()).collect();
+  assert!(text.contains("REJECTED"), "{text}");
+}

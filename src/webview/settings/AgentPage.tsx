@@ -3,7 +3,7 @@ import { BookOpen, Check, ChevronDown, ChevronUp, Copy, FileText, Globe, KeyRoun
 import type { AccountInfo, AgentInfo, ConfigControl } from '@shared/transcript';
 import type { AgentHealthStage, AgentInventory, InventoryFile, InventoryMcp, InventorySkill, McpTransport } from '@shared/inventory';
 import type { MsgKey } from '@shared/i18n';
-import type { SettingsView } from '@shared/settings';
+import { PLAN_AUTO_APPROVE_AGENTS, type SettingsView } from '@shared/settings';
 import { familyLabel, isReasoningControl } from '@shared/composerControls';
 import { familyHidden, groupModels, setFamilyVisible, variantLabel, type ModelFamily } from '@shared/models';
 import { filterModels, MODEL_PREVIEW_LIMIT, prioritizeModels, setModelsVisible } from '@shared/modelCatalog';
@@ -113,6 +113,8 @@ export function AgentPage({ agent, accounts, inventory, controls, settings, env,
         </div>
       )}
 
+      {PLAN_AUTO_APPROVE_AGENTS.includes(agent.id) && <PermissionsSection agent={agent} settings={settings} on={on} />}
+
       {block('models')}
       <NativeBlock agent={agent} count={inventory ? counts.mcp + counts.skills + counts.rules : undefined}>
         {NATIVE.map(id => (
@@ -145,6 +147,24 @@ function NativeBlock({ agent, count, children }: { agent: AgentInfo; count?: num
         <div className="flex flex-col gap-(--section-gap) pt-2">{children}</div>
       </Collapsible.Panel>
     </Collapsible.Root>
+  );
+}
+
+// Host-side permission handling for this agent; only Plan mode auto-approval so far
+function PermissionsSection({ agent, settings, on }: { agent: AgentInfo; settings: SettingsView; on: SettingsHandlers }) {
+  const enabled = settings.planAutoApprove.includes(agent.id);
+  const toggle = (v: boolean) => on.setSetting('planAutoApprove', v
+    ? [...settings.planAutoApprove, agent.id]
+    : settings.planAutoApprove.filter(id => id !== agent.id));
+  return (
+    <div className="flex flex-col gap-2">
+      <SectionHead>{t('settings.agent.permissions')}</SectionHead>
+      <Section>
+        <Field label={t('settings.planAutoApprove')} desc={t('settings.planAutoApprove.desc', { agent: agent.name })}>
+          <Switch checked={enabled} onChange={toggle} label={t('settings.planAutoApprove')} />
+        </Field>
+      </Section>
+    </div>
   );
 }
 

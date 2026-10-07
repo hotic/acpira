@@ -82,6 +82,19 @@ fn cancelled_permission() -> Value {
   json!({ "outcome": { "outcome": "cancelled" } })
 }
 
+/// `_meta.permission.defaultToNo` (claude-agent-acp / codex-acp): the adapter's own safety asks lean to No
+fn default_to_no(req: &Value) -> Option<bool> {
+  let meta = req.get("_meta").and_then(|m| m.get("permission")).filter(|p| p.is_object());
+  (meta.and_then(|m| m.get("defaultToNo")) == Some(&Value::Bool(true))).then_some(true)
+}
+
+/// The one `allow_once` option; none or several (answers rather than a yes) leave the request to a person
+fn single_allow_once(options: &[Value]) -> Option<String> {
+  let mut once = options.iter().filter(|o| o.get("kind").and_then(Value::as_str) == Some("allow_once"));
+  let id = once.next()?.get("optionId").and_then(Value::as_str)?.to_owned();
+  once.next().is_none().then_some(id)
+}
+
 impl AcpSession {
   /// A request addresses a session id: root → root state, a live child peer id → that node's transcript
   pub(crate) fn target_for(c: &mut Core, session_id: Option<&str>) -> Option<Target> {
@@ -174,6 +187,8 @@ impl AcpSession {
         }
       }
     }
+    // Read outside the session lock: the setting lives with the shell
+    let plan_auto_on = self.deps.plan_auto_approve.as_ref().is_some_and(|f| f(&self.agent));
     let rx = {
       let mut c = self.core.lock();
       if cancel.is_cancelled() || epoch != c.perms.epoch {
@@ -204,6 +219,20 @@ impl AcpSession {
         }
         return Ok(json!({ "outcome": { "outcome": "selected", "optionId": id } }));
       }
+      // Plan mode under acpira.planAutoApprove: Claude Code 2.1.284 (unlike 2.1.7) no longer skips prompts in plan mode under the SDK,
+      // so read-only probes would each ask. Answer with the single allow_once (never allow_always, which would write a
+      // lasting rule into the CLI's settings); the plan's own approval and a request the adapter marks default-to-no
+      // still get a card
+      let in_plan = c.state.controls.mode_id.as_deref() == Some("plan");
+      if plan_auto_on
+        && in_plan
+        && captured.is_none()
+        && tool_call.get("kind").and_then(Value::as_str) != Some("switch_mode")
+        && default_to_no(&req) != Some(true)
+        && let Some(id) = single_allow_once(&options)
+      {
+        return Ok(json!({ "outcome": { "outcome": "selected", "optionId": id } }));
+      }
       c.perms.seq += 1;
       let block_id = format!("perm-{}", c.perms.seq);
       let state = Self::target_state(&mut c, &target).expect("target resolved");
@@ -221,7 +250,7 @@ impl AcpSession {
       let meta_str = |v: Option<&Value>| v.and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
       let meta_title = if v1 { meta_str(meta.and_then(|m| m.get("title"))) } else { None };
       let meta_desc = if v1 { meta_str(meta.and_then(|m| m.get("description"))) } else { None };
-      let default_to_no = (meta.and_then(|m| m.get("defaultToNo")) == Some(&Value::Bool(true))).then_some(true);
+      let default_to_no = default_to_no(&req);
       let title = meta_title.unwrap_or_else(|| match &tool {
         Some(tc) => {
           let target =
@@ -650,5 +679,27 @@ pub(crate) fn remove_perm_blocks(c: &mut Core, only: Option<&str>) {
   }
   for id in bumped {
     c.tree.bump(&id);
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn plan_auto_approval_takes_only_a_lone_allow_once() {
+    let opts = |kinds: &[(&str, &str)]| kinds.iter().map(|(id, k)| json!({ "optionId": id, "kind": k })).collect::<Vec<_>>();
+    // Claude's Bash ask: Yes / Yes, don't ask again / No → Yes, never the lasting rule
+    assert_eq!(single_allow_once(&opts(&[("yes", "allow_once"), ("always", "allow_always"), ("no", "reject_once")])).as_deref(), Some("yes"));
+    // Answers rather than a yes, or no plain yes at all, stay with a person
+    assert_eq!(single_allow_once(&opts(&[("staging", "allow_once"), ("prod", "allow_once"), ("no", "reject_once")])), None);
+    assert_eq!(single_allow_once(&opts(&[("always", "allow_always"), ("no", "reject_once")])), None);
+  }
+
+  #[test]
+  fn default_to_no_reads_the_adapter_permission_meta() {
+    assert_eq!(default_to_no(&json!({ "_meta": { "permission": { "version": 1, "defaultToNo": true } } })), Some(true));
+    assert_eq!(default_to_no(&json!({ "_meta": { "permission": { "defaultToNo": false } } })), None);
+    assert_eq!(default_to_no(&json!({})), None);
   }
 }

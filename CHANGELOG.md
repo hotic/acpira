@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Claude's settings page has a **Plan mode auto-approve** switch (`acpira.planAutoApprove`). Claude Code 2.1.284 asks for every tool call in Plan mode over ACP; with the switch on, those requests are approved once without a card. Plan approvals and requests the adapter marks as risky still ask, and no lasting allow rule is written.
+
 ### Planned
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.

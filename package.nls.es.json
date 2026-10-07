@@ -28,6 +28,7 @@
   "acpira.conf.fontSmoothing": "Renderizar el texto con -webkit-font-smoothing: antialiased (trazos más finos; solo macOS)",
   "acpira.conf.shareEditorSelection": "Ofrecer al chat la selección actual del editor: aparece como una ficha junto al modo y se envía con el siguiente mensaje",
   "acpira.conf.steerQueued": "En los agentes que lo admiten (Claude, Codex), el botón de enviar de un mensaje en cola lo intercala en el turno en curso en lugar de detener ese turno",
+  "acpira.conf.planAutoApprove": "Agentes cuyo modo Plan aprueba las solicitudes de herramientas sin tarjeta de permiso (ids de agente, p. ej. claude); las aprobaciones de plan y las solicitudes marcadas como arriesgadas siguen preguntando",
   "acpira.conf.appearance.density": "Densidad",
   "acpira.conf.appearance.radius": "Radio de las esquinas",
   "acpira.conf.appearance.surface": "Superficie: hairline líneas finas / tonal capas sin bordes / stroke contornos",

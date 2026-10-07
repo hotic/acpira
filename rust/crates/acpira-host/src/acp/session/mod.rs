@@ -95,6 +95,8 @@ pub struct SessionDeps {
   pub notify: Option<LogFn>,
   pub accounts: Option<Arc<dyn SessionAccountHooks>>,
   pub compaction: Option<Arc<dyn Fn() -> CompactionPolicy + Send + Sync>>,
+  /// Whether an agent's plan mode answers tool permission requests itself (`acpira.planAutoApprove`); None: never
+  pub plan_auto_approve: Option<Arc<dyn Fn(&str) -> bool + Send + Sync>>,
   pub pool: Option<Arc<AgentPool>>,
   pub model_shapes: Option<Arc<dyn Fn(&str) -> Option<ModelShapes> + Send + Sync>>,
   /// Shared MCP servers for session/new, load and resume; None sends none

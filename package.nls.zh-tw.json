@@ -28,6 +28,7 @@
   "acpira.conf.fontSmoothing": "用 -webkit-font-smoothing: antialiased 渲染文字（筆畫更細，僅 macOS 生效）",
   "acpira.conf.shareEditorSelection": "把編輯器裡目前選取的程式碼帶進聊天：模式旁顯示一個標籤，隨下一條訊息發出",
   "acpira.conf.steerQueued": "在支援引導的 agent（Claude、Codex）上，排隊訊息的傳送按鈕改為引導：把訊息插進正在執行的回合，而不是先中斷它",
+  "acpira.conf.planAutoApprove": "Plan 模式下不跳出權限卡、直接放行工具請求的 agent（agent id，例如 claude）；計畫審核與 agent 標記為高風險的請求仍會詢問",
   "acpira.conf.appearance.density": "密度",
   "acpira.conf.appearance.radius": "圓角",
   "acpira.conf.appearance.surface": "表面：hairline 細線 / tonal 無邊分層 / stroke 描邊",

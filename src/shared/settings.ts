@@ -61,15 +61,21 @@ export interface SettingsView {
   shareEditorSelection: boolean;
   // A queued prompt's send button steers it into the running turn on agents that support `_session/steering`
   steerQueued: boolean;
+  // Agents whose Plan mode approves tool requests without a card (plan approvals and adapter safety asks still ask)
+  planAutoApprove: AgentId[];
   // Cross-harness subagents: kept in ~/.acpira/subagents.json (shared by every window and IDE), not a host setting
   subagents: SubagentPersona[];
 }
 
 // Keys the webview may write back; the host maps them onto acpira.<key> at user scope
-export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued' | 'subagents';
-export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued', 'subagents'];
+export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued' | 'planAutoApprove' | 'subagents';
+export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued', 'planAutoApprove', 'subagents'];
 
 export const MIN_COMPACT_AT_TOKENS = 10_000;
+
+// Agents whose settings page offers the Plan mode auto-approval switch: Claude Code 2.1.284 asks for every tool call in
+// Plan mode under the SDK (docs/dev/agent-quirks.md)
+export const PLAN_AUTO_APPROVE_AGENTS: readonly AgentId[] = ['claude'];
 
 export const DEFAULT_SETTINGS: SettingsView = {
   language: 'auto',
@@ -90,6 +96,7 @@ export const DEFAULT_SETTINGS: SettingsView = {
   fontSmoothing: false,
   shareEditorSelection: true,
   steerQueued: false,
+  planAutoApprove: [],
   subagents: [],
 };
 
@@ -128,6 +135,7 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
       return (oneOf(value, ACCOUNT_SWITCH_STRATEGIES) ?? fallback) as SettingsView[K];
     case 'agentOrder':
     case 'disabledAgents':
+    case 'planAutoApprove':
       return idList(value) as SettingsView[K];
     case 'subagents':
       return sanitizePersonas(value) as SettingsView[K];
