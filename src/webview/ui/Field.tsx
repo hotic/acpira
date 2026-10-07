@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { ChevronDown, Sparkles } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { Switch } from './Switch';
 import { Radio } from '@base-ui/react/radio';
 import { RadioGroup } from '@base-ui/react/radio-group';
@@ -100,7 +100,7 @@ export function RadioPills<V extends string>({ label, options, value, onChange }
 
 export interface SegmentScaleProps<V extends string> {
   label: string;
-  // `ultra` marks the overdrive tier past Max (Codex's `ultra` effort): it closes the row in the ultra tint with a sparkle
+  // `ultra` marks the overdrive tier past Max (Codex's `ultra` effort): it closes the row in the ultra tint, text only
   options: { value: V; label: string; disabled?: boolean; ultra?: boolean }[];
   value: V;
   onChange: (value: V) => void;
@@ -143,7 +143,6 @@ export function SegmentScale<V extends string>({ label, options, value, onChange
                   : on ? 'bg-active text-fg-1' : 'text-fg-2 enabled:hover:bg-hover enabled:hover:text-fg-1',
               )}
             >
-              {o.ultra && <Sparkles className="size-3 shrink-0" strokeWidth={2} aria-hidden />}
               <span className="truncate">{o.label}</span>
             </Radio.Root>
           );
