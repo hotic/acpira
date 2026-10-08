@@ -189,6 +189,11 @@ impl AcpSession {
         self.touch(&mut c);
         return;
       }
+      // The stopped cycle's own result: nothing more of it follows, the next cycle may open
+      if c.peer.autonomous_blocked && !c.phase.running && claude_autonomous::cycle_ended(&u) {
+        c.peer.autonomous_blocked = false;
+        self.log("stopped autonomous cycle settled");
+      }
     } else if c.phase.running {
       self.schedule_usage_poll(&mut c);
     }

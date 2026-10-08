@@ -95,14 +95,21 @@ pub async fn run(hook: &Hook, root: &Path, payload: &Value, env: &[(&str, String
     Ok(c) => c,
     Err(e) => return Verdict::Broken(format!("could not start `{}`: {e}", hook.run)),
   };
-  if let Some(mut stdin) = child.stdin.take() {
-    // A hook that never reads its stdin closes the pipe early: that is not a failure
-    let _ = stdin.write_all(payload.to_string().as_bytes()).await;
-    let _ = stdin.shutdown().await;
-  }
+  // The payload goes in while the output is read, both under the timeout: a hook that never reads a payload larger than
+  // the pipe buffer (or fills its stdout before reading) must not stall the write past it
+  let stdin = child.stdin.take();
+  let input = payload.to_string().into_bytes();
+  let feed = async move {
+    if let Some(mut stdin) = stdin {
+      // A hook that never reads its stdin closes the pipe early: that is not a failure
+      let _ = stdin.write_all(&input).await;
+      let _ = stdin.shutdown().await;
+    }
+  };
   #[cfg(unix)]
   let pid = child.id();
-  match tokio::time::timeout(hook.timeout, child.wait_with_output()).await {
+  let finished = async move { tokio::join!(feed, child.wait_with_output()).1 };
+  match tokio::time::timeout(hook.timeout, finished).await {
     Ok(Ok(out)) => verdict_of(out.status.code(), &clip(&out.stdout), &clip(&out.stderr)),
     Ok(Err(e)) => Verdict::Broken(format!("`{}` failed: {e}", hook.run)),
     Err(_) => {
@@ -137,5 +144,21 @@ mod tests {
     }
     assert!(matches!(verdict_of(Some(1), "", "Traceback"), Verdict::Broken(m) if m.contains("Traceback")));
     assert!(matches!(verdict_of(None, "", ""), Verdict::Broken(_)));
+  }
+
+  // A hook that never reads stdin while a payload larger than any pipe buffer waits there: the timeout still ends it
+  #[tokio::test]
+  async fn the_timeout_covers_a_payload_the_hook_never_reads() {
+    #[cfg(windows)]
+    let command = "ping -n 30 127.0.0.1 >nul".to_owned();
+    #[cfg(not(windows))]
+    let command = "sleep 30".to_owned();
+    let hook = Hook { run: command, timeout: std::time::Duration::from_millis(500) };
+    let payload = serde_json::json!({ "blob": "x".repeat(4 << 20) });
+    let dir = std::env::temp_dir();
+    let t0 = std::time::Instant::now();
+    let verdict = tokio::time::timeout(std::time::Duration::from_secs(20), run(&hook, &dir, &payload, &[])).await.expect("the hook's own timeout");
+    assert!(matches!(&verdict, Verdict::Broken(m) if m.contains("timed out")), "{verdict:?}");
+    assert!(t0.elapsed() < std::time::Duration::from_secs(10), "{:?}", t0.elapsed());
   }
 }

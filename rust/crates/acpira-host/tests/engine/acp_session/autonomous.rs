@@ -75,3 +75,15 @@ async fn review_an_autonomous_result_after_stop_does_not_reopen_the_cancelled_tu
   until(|| !s.is_running(), 5000).await;
   expect_match(&view(&s)["turns"][1], json!({ "stop": "cancelled" }));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_background_task_s_cycle_opens_after_the_first_one_s_result() {
+  let fake = fake_or_skip!();
+  let h = Harness::for_agent(&fake, "claude", json!({ "env": { "FAKE_AUTONOMOUS_TWICE": "1" } }));
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "autonomous").await;
+  // The first cycle settles on its result; the second one reopens the turn until its own result
+  until(|| s.is_running() && agent_text(&view(&s)["turns"][1]).contains("second"), 5000).await;
+  until(|| !s.is_running(), 5000).await;
+  expect_match(&view(&s)["turns"][1], json!({ "stop": "end_turn", "usage": { "context": { "used": 30 } } }));
+}

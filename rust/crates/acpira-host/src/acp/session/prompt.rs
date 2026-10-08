@@ -145,6 +145,8 @@ impl AcpSession {
         }
         return;
       }
+      // A reservation (the gate's follow-up, the switch's continue) was let go in `claim`; the queue stays where it is,
+      // since every entry it sent would be refused the same way
       Gate::Elsewhere(reason) => {
         self.log(&format!("turn refused: {reason}"));
         self.notify(&reason);
@@ -191,11 +193,7 @@ impl AcpSession {
     let mut c = self.core.lock();
     if origin.reserved() && (c.status != SessionStatus::Ready || c.phase.running) {
       // The switch (or the gate) reserved the session for this prompt; anything else taking it first makes it moot
-      if origin == Origin::Gate {
-        c.hooks.gating = false;
-      } else {
-        c.switching = false;
-      }
+      self.release_reservation(&mut c, origin);
       Gate::Drop
     } else if c.status == SessionStatus::Starting {
       Gate::Queue
@@ -214,6 +212,10 @@ impl AcpSession {
     {
       Gate::Queue
     } else if let Err(reason) = self.lease_turn(&mut c) {
+      // A reservation that cannot start must not hold the queue (and its turn's lease) for good
+      if origin.reserved() {
+        self.release_reservation(&mut c, origin);
+      }
       Gate::Elsewhere(reason)
     } else {
       c.switching = false;
@@ -240,6 +242,16 @@ impl AcpSession {
       let rebuild = self.reserve_ultracode_rebuild(&mut c, true);
       Gate::Go { compact_first, rebuild }
     }
+  }
+
+  /// A reserved prompt (`Origin::reserved`) is not going out: the session stops holding the queue for it
+  fn release_reservation(&self, c: &mut Core, origin: Origin) {
+    if origin == Origin::Gate {
+      c.hooks.gating = false;
+    } else {
+      c.switching = false;
+    }
+    self.touch(c);
   }
 
   /// The payload, staged now unless the queue or an edit already did; a fork's first prompt also builds its history
@@ -599,7 +611,8 @@ impl AcpSession {
   }
 
   /// After a settled turn: the compaction mark, then either park the queue (context overflow), switch accounts
-  /// (quota exhausted), hand a finished turn to the workspace gate, or compact / flush as usual
+  /// (quota exhausted), hand a finished turn to the workspace gate, or compact / flush as usual. A turn that does not
+  /// reach the gate leaves its span to the next one that does (`hooks.rs`)
   fn finish_turn(self: &Arc<Self>, turn: &OpenTurn, auto: bool, compacting: bool, settled: Settled) {
     let context_error = {
       let mut c = self.core.lock();
@@ -629,7 +642,7 @@ impl AcpSession {
       return;
     }
     // The gate flushes the queue (or sends its findings back) once it has decided
-    if !auto && !compacting && settled.stop == TurnStop::EndTurn && self.hooks_after_turn(turn.agent_idx, turn.started_at) {
+    if !auto && !compacting && settled.stop == TurnStop::EndTurn && self.hooks_after_turn() {
       return;
     }
     self.after_prompt(auto, settled.stop);

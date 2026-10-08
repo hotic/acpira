@@ -192,7 +192,7 @@ impl AcpSession {
     };
     // The workspace gate sees an announced edit before anyone approves it, yolo included
     if let Some((kind, paths)) = edit
-      && self.hooks_check_edit(kind, paths, tool_call.get("rawInput").cloned()).await.is_some()
+      && self.hooks_check_edit(&tool_call_id, kind, paths, tool_call.get("rawInput").cloned()).await.is_some()
     {
       return Ok(rejected_permission(&req));
     }
