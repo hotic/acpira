@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Install buttons now pin `claude-agent-acp` 0.87.0 (Claude Agent SDK 0.3.287), `codex-acp` 2.1.1 (Codex 0.159.3) and Antigravity's `agy-acp-server` 1.3.0, with new SHA-256 digests for all six archives. Codex adds a **Workspace access** permission mode, and Claude adds a **Fast** switch.
 - Retrying a failed turn with output continues the existing native session instead of sending the original prompt a second time; an empty attempt is still sent again.
-- Claude's asynchronous workflow follow-ups reopen the last turn as running work and settle their own response before queued prompts continue.
+- When a Claude background task finishes after the turn ended, the follow-up the model streams reopens that turn as running work: prompts sent meanwhile queue until its result arrives, and Stop ends it.
 
 ### Fixed
 
@@ -34,7 +34,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Image previews and the Lightbox now use Acpira's image menu for Copy image and Open in editor instead of the webview's native context menu.
 - The quote toolbar stays below the composer and prompt cards, and disappears when its quote scrolls out of the thread.
 - Command output cards keep their copy button in the card corner.
-- Deleting a session closes its agent process immediately; undo resumes the same native session.
 
 ## [1.8.10] - 2026-10-07
 
