@@ -7,13 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- Install buttons now pin `claude-agent-acp` 0.87.0 (Claude Agent SDK 0.3.287), `codex-acp` 2.1.1 (Codex 0.159) and Antigravity's `agy-acp-server` 1.3.0, with new SHA-256 digests for all six archives. Codex adds a **Workspace access** permission mode, and Claude adds a **Fast** switch.
-
 ### Planned
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
+
+## [1.9.0] - 2026-10-09
+
+### Added
+
+- **Workspace hooks**: a project's `.agents/hooks.json` gates every agent the same way, whatever its CLI does with hooks of its own. `context` files go with a session's first prompt; `beforeEdit` checks each edit before its permission card (auto-approval included) and again over the files a turn changed without asking; `afterTurn` reviews a finished turn. Hook scripts answer like Claude Code hooks (exit 2, or a JSON deny / block with a reason), so existing ones work unchanged. A blocked turn's findings go back to the agent as a hidden follow-up for up to `rounds` rounds (2 by default) while queued prompts wait; a hook that times out or fails only shows a warning. Agents learn the format from Acpira's MCP `workspace_hooks` tool, which also checks the project's file. Covered by fixture-agent tests; real CLIs remain unverified.
+- Claude sessions expose an **Ultra** effort level after Max when dynamic workflows are available. It maps to the model's `xhigh` level (or its highest available level) and can be switched while keeping the native session.
+- Claude workflow subagents show their live process transcript in the inspector when the CLI writes a sidechain log.
+- Sessions can move between projects by drag and drop or the session menu, including filing the session in a category in the destination project.
+- Quote comments accept pasted images and add them to the main composer after the quoted text.
+
+### Changed
+
+- Install buttons now pin `claude-agent-acp` 0.87.0 (Claude Agent SDK 0.3.287), `codex-acp` 2.1.1 (Codex 0.159.3) and Antigravity's `agy-acp-server` 1.3.0, with new SHA-256 digests for all six archives. Codex adds a **Workspace access** permission mode, and Claude adds a **Fast** switch.
+- Retrying a failed turn with output continues the existing native session instead of sending the original prompt a second time; an empty attempt is still sent again.
+- Claude's asynchronous workflow follow-ups reopen the last turn as running work and settle their own response before queued prompts continue.
+
+### Fixed
+
+- Late autonomous or nested workflow packets no longer reopen a cancelled or completed root turn.
+- A Claude workflow subagent's final transcript entry appears even when its log file ends without a trailing newline.
+- Image previews and the Lightbox now use Acpira's image menu for Copy image and Open in editor instead of the webview's native context menu.
+- The quote toolbar stays below the composer and prompt cards, and disappears when its quote scrolls out of the thread.
+- Command output cards keep their copy button in the card corner.
+- Deleting a session closes its agent process immediately; undo resumes the same native session.
 
 ## [1.8.10] - 2026-10-07
 
