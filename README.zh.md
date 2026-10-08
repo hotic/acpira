@@ -152,10 +152,10 @@ Acpira 可为 Devin、Codex、Claude 保存多份登录，并在创建会话时�
 
 ## 路线图
 
-- 更多 Agent 接入：通过 ACP 或适配器支持 Antigravity、Cursor CLI 等。
+- 更多 Agent 接入：通过 ACP 或适配器支持 Cursor CLI 等。
 - 统一模型配置入口，自动同步到不同 Agent。
-- 统一管理 Skills 与 MCP，而不只是目前的只读查看。
-- 跨 Harness 共享提示词与项目指令。
+- 从 Git 仓库、URL 安装 Skills 到共享集合。
+- 在共享提示词之上为单个 Agent 追加专属指令。
 - 长期方向：独立桌面端。
 
 具体方向见 [ROADMAP.md](ROADMAP.md#简体中文)。
