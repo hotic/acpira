@@ -103,7 +103,7 @@ impl AcpSession {
       }
       c.queue.entries.push(QueuedEntry { id: id.clone(), text, prepared });
       self.bump(&mut c);
-      !(c.phase.running || c.pending_prompt.is_some())
+      !(c.phase.running || c.pending_prompt.is_some() || c.hooks.gating)
     };
     if flush {
       self.flush_queue();
@@ -137,6 +137,7 @@ impl AcpSession {
       if c.status != SessionStatus::Ready
         || c.phase.running
         || c.switching
+        || c.hooks.gating
         || c.picks.adopt_pending
         || c.ultracode.rebuilding
         || c.pending_prompt.is_some()

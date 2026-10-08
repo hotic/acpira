@@ -16,6 +16,7 @@ export interface ExportLabels {
   autoCompact: string;
   autoContinue: string;
   autoRetry: string;
+  autoGate: string;
   error: string;
 }
 
@@ -30,6 +31,7 @@ export const EXPORT_LABELS_EN: ExportLabels = {
   autoCompact: 'Automatic /compact',
   autoContinue: 'Continued automatically after an account switch',
   autoRetry: 'Retried: continued from where the failed turn stopped',
+  autoGate: 'Sent back by the workspace gate',
   error: 'Error',
 };
 
@@ -62,7 +64,10 @@ export function exportMarkdown(input: ExportInput, labels: ExportLabels = EXPORT
 
 function userTurn(turn: Extract<Turn, { role: 'user' }>, labels: ExportLabels): string {
   if (turn.auto) {
-    const label = turn.autoReason === 'accountSwitch' ? labels.autoContinue : turn.autoReason === 'retry' ? labels.autoRetry : labels.autoCompact;
+    const label = turn.autoReason === 'accountSwitch' ? labels.autoContinue
+      : turn.autoReason === 'retry' ? labels.autoRetry
+      : turn.autoReason === 'gate' ? labels.autoGate
+      : labels.autoCompact;
     return `_${label}_`;
   }
   const out = [`### ${labels.user}`];

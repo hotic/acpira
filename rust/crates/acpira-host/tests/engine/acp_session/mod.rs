@@ -31,6 +31,7 @@ mod failures;
 mod shared_mcp;
 mod ultracode;
 mod autonomous;
+mod hooks;
 
 // Grok-style synthesized modes: not provided by the protocol, declared in the registry
 fn syn_modes() -> Value {

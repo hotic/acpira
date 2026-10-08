@@ -4,6 +4,9 @@
 //! (`normalize.rs` `attach_shown_images`). The server itself only validates the paths and answers a receipt, so no
 //! pixels travel back through the model's context.
 //!
+//! `workspace_hooks` explains `.agents/hooks.json` (`hooks/`, the gates Acpira runs for every agent) and checks a
+//! project's copy, so whichever model the user asks to add a gate writes one Acpira can read.
+//!
 //! With the relay env on its entry (`relay/`), it also offers `ask_agent`: summon one of the user's cross-harness
 //! personas. That call is forwarded to the sidecar over its loopback hub and answers with the child's reply.
 //!
@@ -23,12 +26,13 @@ use crate::limits::MAX_OUT_IMAGE_BYTES;
 /// Server name in `mcpServers`; adapters prefix the tool with it (`mcp__acpira__show_image`, `mcp.acpira.show_image`)
 pub const SERVER_NAME: &str = "acpira";
 pub const TOOL_NAME: &str = "show_image";
+pub const HOOKS_TOOL: &str = "workspace_hooks";
 /// Answered when the client does not name a protocol version
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
 const INSTRUCTIONS: &str = "The user reads this conversation in Acpira, which can display images inline. \
 When the user should see an image (a screenshot you took, a chart or diagram you rendered, a generated or downloaded picture), \
-call show_image with its absolute path instead of only printing the path.";
+call show_image with its absolute path instead of only printing the path. Project gates and reviews live in `.agents/hooks.json`, which Acpira runs for every agent: before writing or changing that file (or a hook script it names), call workspace_hooks for the format, and again afterwards to check it.";
 
 /// Appended to the instructions when the relay env is on the entry. Server instructions reach the model even where
 /// the client defers tools behind a search, so `@name` is tied to `ask_agent` before the model goes looking for it
@@ -130,7 +134,7 @@ pub fn run(version: &str) -> i32 {
       if method == "tools/list"
         && let Some(id) = msg.get("id").cloned()
       {
-        let mut tools = vec![tool_def()];
+        let mut tools = vec![tool_def(), hooks_tool_def()];
         tools.extend(relay.tool_def());
         if !write(&out, &json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": tools } })) {
           break;
@@ -270,14 +274,16 @@ pub fn handle_line(line: &str, version: &str) -> Option<Value> {
       "instructions": INSTRUCTIONS,
     }),
     "ping" => json!({}),
-    "tools/list" => json!({ "tools": [tool_def()] }),
+    "tools/list" => json!({ "tools": [tool_def(), hooks_tool_def()] }),
     "tools/call" => {
       let name = params.get("name").and_then(Value::as_str).unwrap_or("");
-      if name != TOOL_NAME {
-        return Some(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32602, "message": format!("unknown tool: {name}") } }));
-      }
       let empty = Map::new();
-      call_show_image(params.get("arguments").and_then(Value::as_object).unwrap_or(&empty))
+      let args = params.get("arguments").and_then(Value::as_object).unwrap_or(&empty);
+      match name {
+        TOOL_NAME => call_show_image(args),
+        HOOKS_TOOL => call_workspace_hooks(args),
+        _ => return Some(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32602, "message": format!("unknown tool: {name}") } })),
+      }
     }
     _ => return Some(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": format!("method not found: {method}") } })),
   };
@@ -354,6 +360,37 @@ fn tool_def() -> Value {
     },
     "annotations": { "readOnlyHint": true, "openWorldHint": false },
   })
+}
+
+fn hooks_tool_def() -> Value {
+  json!({
+    "name": HOOKS_TOOL,
+    "title": "Workspace hooks",
+    "description": "Explain the format of `.agents/hooks.json`, the gates and reviews Acpira runs for every agent in a project (context files sent with the first prompt, a check before each edit, a check when a turn ends that can send findings back), and report whether the project's current file is valid. Call it before writing or changing that file or the scripts it runs, and again afterwards to check the result.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "cwd": { "type": "string", "description": "Absolute path of the project (or any directory inside it)." },
+      },
+      "required": ["cwd"],
+    },
+    "annotations": { "readOnlyHint": true, "openWorldHint": false },
+  })
+}
+
+/// The format guide plus the state of the project's own file
+fn call_workspace_hooks(args: &Map<String, Value>) -> Value {
+  let cwd = args.get("cwd").and_then(Value::as_str).map(str::trim).unwrap_or("");
+  let status = if cwd.is_empty() {
+    "Pass `cwd` (the project's absolute path) to have its current file checked.".to_owned()
+  } else {
+    crate::hooks::describe(cwd)
+  };
+  json!({ "content": [{ "type": "text", "text": format!("{}
+
+## This project
+
+{status}", crate::hooks::GUIDE) }], "isError": false })
 }
 
 /// Validate the named files; the host shows them once the call completes. Failures go back to the model as a tool error
@@ -433,6 +470,31 @@ mod tests {
     assert_eq!(bad["result"]["isError"], true);
     let text = bad["result"]["content"][0]["text"].as_str().unwrap();
     assert!(text.contains("not an absolute path") && text.contains("missing.png") && text.contains("not a PNG"), "{text}");
+    std::fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn workspace_hooks_explains_the_format_and_checks_the_project_file() {
+    let list = call(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }));
+    assert_eq!(list["result"]["tools"][1]["name"], HOOKS_TOOL);
+    let init = call(json!({ "jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {} }));
+    assert!(init["result"]["instructions"].as_str().unwrap().contains("workspace_hooks"));
+
+    let dir = std::env::temp_dir().join(format!("acpira-mcp-hooks-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join(".git")).unwrap();
+    std::fs::create_dir_all(dir.join(".agents")).unwrap();
+    let ask = |id: u32| {
+      let r = call(json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": { "name": HOOKS_TOOL, "arguments": { "cwd": dir } } }));
+      assert_eq!(r["result"]["isError"], false);
+      r["result"]["content"][0]["text"].as_str().unwrap().to_owned()
+    };
+    let none = ask(3);
+    assert!(none.contains("\"beforeEdit\"") && none.contains("permissionDecision") && none.contains("has no `.agents/hooks.json` yet"), "{none}");
+    std::fs::write(dir.join(".agents/hooks.json"), r#"{ "afterTurn": "x", "context": ["NOPE.md"] }"#).unwrap();
+    let valid = ask(4);
+    assert!(valid.contains("is valid") && valid.contains("NOPE.md"), "{valid}");
+    std::fs::write(dir.join(".agents/hooks.json"), r#"{ "afterturn": "x" }"#).unwrap();
+    assert!(ask(5).contains("is invalid"));
     std::fs::remove_dir_all(&dir).ok();
   }
 

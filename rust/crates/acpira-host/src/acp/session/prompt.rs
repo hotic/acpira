@@ -36,13 +36,23 @@ pub struct Staged {
 }
 
 /// Who sent a prompt: the user (or the queue on the user's behalf), the over-threshold /compact, the continue that
-/// follows an automatic account switch, or the continue a Retry sends after a failed turn that already did some work
+/// follows an automatic account switch, the continue a Retry sends after a failed turn that already did some work, or
+/// the workspace gate sending what blocked the last turn back to the agent (`hooks.rs`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Origin {
   User,
   Compact,
   Continue,
   Retry,
+  Gate,
+}
+
+impl Origin {
+  /// Sent into a session something reserved for it (the account switch, the gate): it goes ahead of the queue, and is
+  /// dropped when anything else took the session first
+  fn reserved(self) -> bool {
+    matches!(self, Origin::Continue | Origin::Gate)
+  }
 }
 
 /// Where `claim` sends a prompt: onto the wire (after an over-budget /compact first), behind the running turn, or nowhere
@@ -130,7 +140,7 @@ impl AcpSession {
         return;
       }
       Gate::Drop => {
-        if origin == Origin::Continue {
+        if origin.reserved() {
           self.flush_queue();
         }
         return;
@@ -150,7 +160,12 @@ impl AcpSession {
         compact_first
       }
     };
-    let staging = self.stage_turn(&text, &drafts, staged, auto).await;
+    // The workspace hooks' snapshot is taken before anything reaches the agent; a first prompt carries their context
+    let context = self.hooks_before_turn(origin).await;
+    let mut staging = self.stage_turn(&text, &drafts, staged, auto).await;
+    if !context.is_empty() {
+      staging.prepared.blocks.splice(0..0, context);
+    }
     let Some(mut accepted) = self.accept(&text, origin, plan_id.as_deref(), staging) else { return };
     if compact_first && !self.compact_before(&accepted.user_turn).await {
       return;
@@ -174,9 +189,13 @@ impl AcpSession {
   fn claim(&self, text: &str, drafts: &[Draft], origin: Origin, staged: Option<&Staged>) -> Gate {
     let auto = origin == Origin::Compact;
     let mut c = self.core.lock();
-    if origin == Origin::Continue && (c.status != SessionStatus::Ready || c.phase.running) {
-      // The switch reserved the session for this prompt; anything else taking it first means the continue is moot
-      c.switching = false;
+    if origin.reserved() && (c.status != SessionStatus::Ready || c.phase.running) {
+      // The switch (or the gate) reserved the session for this prompt; anything else taking it first makes it moot
+      if origin == Origin::Gate {
+        c.hooks.gating = false;
+      } else {
+        c.switching = false;
+      }
       Gate::Drop
     } else if c.status == SessionStatus::Starting {
       Gate::Queue
@@ -184,8 +203,9 @@ impl AcpSession {
       || (text.trim().is_empty() && drafts.is_empty() && staged.is_none_or(|s| s.prepared.blocks.is_empty()))
     {
       Gate::Drop
-    } else if origin != Origin::Continue
+    } else if !origin.reserved()
       && (c.switching
+        || c.hooks.gating
         || c.picks.adopt_pending
         || c.ultracode.rebuilding
         || c.phase.running
@@ -197,6 +217,9 @@ impl AcpSession {
       Gate::Elsewhere(reason)
     } else {
       c.switching = false;
+      if origin == Origin::Gate {
+        c.hooks.gating = false;
+      }
       c.peer.idle = false;
       if origin != Origin::Compact {
         // A new attempt may observe another autonomous cycle; late packets from the prior one are ignored.
@@ -297,12 +320,16 @@ impl AcpSession {
     let command_name = command_name(text).map(str::to_owned);
     let user_turn = match origin {
       Origin::Compact => UserTurn { text: text.to_owned(), auto: Some(true), ..Default::default() },
-      Origin::Continue | Origin::Retry => UserTurn {
+      Origin::Continue | Origin::Retry | Origin::Gate => UserTurn {
         id: Some(random_uuid()),
         text: text.to_owned(),
         settings: Some(before.clone()),
         auto: Some(true),
-        auto_reason: Some(if origin == Origin::Retry { AutoReason::Retry } else { AutoReason::AccountSwitch }),
+        auto_reason: Some(match origin {
+          Origin::Retry => AutoReason::Retry,
+          Origin::Gate => AutoReason::Gate,
+          _ => AutoReason::AccountSwitch,
+        }),
         ..Default::default()
       },
       Origin::User => UserTurn {
@@ -572,7 +599,7 @@ impl AcpSession {
   }
 
   /// After a settled turn: the compaction mark, then either park the queue (context overflow), switch accounts
-  /// (quota exhausted) or compact / flush as usual
+  /// (quota exhausted), hand a finished turn to the workspace gate, or compact / flush as usual
   fn finish_turn(self: &Arc<Self>, turn: &OpenTurn, auto: bool, compacting: bool, settled: Settled) {
     let context_error = {
       let mut c = self.core.lock();
@@ -599,6 +626,10 @@ impl AcpSession {
           me.log(&format!("reconnect after the turn failed: {e}"));
         }
       });
+      return;
+    }
+    // The gate flushes the queue (or sends its findings back) once it has decided
+    if !auto && !compacting && settled.stop == TurnStop::EndTurn && self.hooks_after_turn(turn.agent_idx, turn.started_at) {
       return;
     }
     self.after_prompt(auto, settled.stop);
