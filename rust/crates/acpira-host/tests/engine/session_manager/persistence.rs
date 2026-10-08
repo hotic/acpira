@@ -153,12 +153,13 @@ async fn deleting_a_session_closes_its_agent_process_at_once() {
   m.handle(json!({ "type": "deleteSession", "id": a })).await;
   assert!(m.view_of(&a).is_none());
   until(|| closed(&a_acp), 5000).await;
-  assert!(!m.m.leased().contains(&a));
+  // The finished turn's pin goes from its post-save task, which may still be in flight when the process is gone
+  until(|| !m.m.leased().contains(&a), 5000).await;
   // The one on screen: the viewer moves on and the process still goes
   m.handle(json!({ "type": "deleteSession", "id": b })).await;
   assert_ne!(m.active_id().as_deref(), Some(b.as_str()));
   until(|| closed(&b_acp), 5000).await;
-  assert!(!m.m.leased().contains(&b));
+  until(|| !m.m.leased().contains(&b), 5000).await;
   // Undo brings the entry back; opening it resumes the same native session
   m.handle(json!({ "type": "restoreSession", "id": a })).await;
   m.m.select_session_for(&m.v, &a).await;
