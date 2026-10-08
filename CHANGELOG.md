@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Install buttons now pin `claude-agent-acp` 0.87.0 (Claude Agent SDK 0.3.287), `codex-acp` 2.1.1 (Codex 0.159) and Antigravity's `agy-acp-server` 1.3.0, with new SHA-256 digests for all six archives. Codex adds a **Workspace access** permission mode, and Claude adds a **Fast** switch.
+
 ### Planned
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.

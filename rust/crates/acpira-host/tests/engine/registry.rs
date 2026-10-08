@@ -323,7 +323,7 @@ fn antigravity_is_a_native_release_installed_by_this_executable() {
   let r = AgentRegistry::with_os(&json!({}), Os::Posix);
   let def = r.get("antigravity").unwrap();
   let release = def.release.expect("pinned release");
-  assert_eq!((release.registry_id, release.version), ("antigravity-acp", "1.2.1"));
+  assert_eq!((release.registry_id, release.version), ("antigravity-acp", "1.3.0"));
   assert_eq!(def.command, if cfg!(windows) { "agy_acp_server.exe" } else { "agy_acp_server.par" });
   assert_eq!(def.args, if cfg!(target_os = "linux") { vec!["--uid=".to_owned()] } else { vec![] });
   assert!(def.login.is_none(), "login goes through the server's own authMethods");

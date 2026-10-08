@@ -190,8 +190,8 @@ pub fn builtin_agents() -> Vec<AgentDef> {
     AgentDef {
       requires: list(&["node"]),
       install: install(
-        "npm install -g --include=optional @agentclientprotocol/codex-acp@1.13.0",
-        "npm install -g --include=optional @agentclientprotocol/codex-acp@1.13.0",
+        "npm install -g --include=optional @agentclientprotocol/codex-acp@2.1.1",
+        "npm install -g --include=optional @agentclientprotocol/codex-acp@2.1.1",
         "https://github.com/agentclientprotocol/codex-acp",
       ),
       login: login("codex-acp", &["cli", "login"]),
@@ -210,8 +210,8 @@ pub fn builtin_agents() -> Vec<AgentDef> {
       requires: list(&["node"]),
       login: login("claude-agent-acp", &["--cli", "auth", "login"]),
       install: install(
-        "npm install -g --include=optional @agentclientprotocol/claude-agent-acp@0.84.0",
-        "npm install -g --include=optional @agentclientprotocol/claude-agent-acp@0.84.0",
+        "npm install -g --include=optional @agentclientprotocol/claude-agent-acp@0.87.0",
+        "npm install -g --include=optional @agentclientprotocol/claude-agent-acp@0.87.0",
         "https://github.com/agentclientprotocol/claude-agent-acp",
       ),
       adapter: Some(AdapterDef {
@@ -268,7 +268,7 @@ pub fn builtin_agents() -> Vec<AgentDef> {
   ]
 }
 
-/// Google's official Antigravity ACP server (agy_acp_server 1.2.1): a native archive per platform, its launcher and
+/// Google's official Antigravity ACP server (agy_acp_server 1.3.0): a native archive per platform, its launcher and
 /// arguments as the ACP Registry entry gives them; sign-in goes through ACP `authenticate` (a browser flow on the host)
 pub fn antigravity(platform: &str) -> AgentDef {
   let r = &native_release::ANTIGRAVITY;
