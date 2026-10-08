@@ -14,9 +14,9 @@ import { Row } from '../ui/Row';
 import { t, useLocale } from '../i18n';
 import { AgentMark } from './AgentMark';
 import { CategoryAddIcon } from './CategoryIcon';
-import { SessionMenu } from './SessionMenu';
+import { SessionContextMenu, SessionMenu, type MoveProject, type SessionMenuItemsProps } from './SessionMenu';
 import { markParts, matchesTitle, searchTerms } from './sessionSearch';
-import { buildSessionTree, canFile, categoryOf, draggable, type CategoryNode, type ProjectNode } from './sessionTree';
+import { buildSessionTree, categoryOf, draggable, dropAction, type CategoryNode, type MoveTarget, type ProjectNode } from './sessionTree';
 
 // A running session shows a spinning ring (the one place a spinner is allowed: a list has no verb to shimmer); the other states are plain dots.
 // Unread (a turn that finished unwatched) is a slightly larger dot in the strongest foreground with a halo rippling out of it;
@@ -64,7 +64,9 @@ export interface SessionListProps {
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
   onPin: (id: string, pinned: boolean) => void;
-  onMove?: (id: string) => void;
+  // Re-home a session: into this window's workspace (no target: the "move here" action) or, dragged onto another project's
+  // group under "all", into that project (and its category when dropped on one)
+  onMove?: (id: string, to?: MoveTarget) => void;
   // Writes the session as Markdown or JSON under exports/ (absent only where the host does not offer it)
   onExport?: (id: string, format: 'markdown' | 'json') => void;
   // Searches the saved conversations too; content hits join the title matches with a snippet under their title
@@ -86,8 +88,9 @@ const FRAME = 'ring-1 ring-inset ring-fg-1/70';
 
 type Held = { kind: 'session' | 'category'; id: string };
 type Over =
-  | { kind: 'category'; id: string; refused: boolean }
-  | { kind: 'loose'; cwd: string; refused: boolean }
+  | { kind: 'category'; id: string; cwd: string }
+  // A project's loose area; for a session of another project, anywhere on that project's group (header included)
+  | { kind: 'loose'; cwd: string }
   // Reordering categories: the dragged one goes before `before` (absent: after the project's last)
   | { kind: 'gap'; cwd: string; before?: string };
 
@@ -106,7 +109,8 @@ function aggregate(sessions: SessionSummary[]): SessionSummary['state'] {
 // glyph) and loose sessions. Each item: vendor mark · title · time; on hover those swap for the actions — pin, a "…" menu
 // (rename / move to category / export / delete), plus "move here" for a session from another project.
 // Sessions file by native HTML5 drag (the browser's own translucent drag image) into a category of their own project or back
-// to its loose area; pinned rows are locked and do not drag; category headers drag to reorder within their project.
+// to its loose area; under "all", dropped on another project's group (or one of its categories) they move to that project.
+// Pinned rows are locked and do not drag; category headers drag to reorder within their project.
 // Deletion applies immediately, undo lives on the Toast at the shell's bottom
 export function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onMove, onExport, onSearch, categories: categoryState, onFile, onCategoryOp, onNewInCategory }: SessionListProps) {
   const locale = useLocale();
@@ -147,6 +151,20 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
     shown, categories, collapsedProjects: filing ? categoryState?.collapsedProjects ?? [] : [],
     workspace, grouped, filtering,
   });
+  // Every project the list knows (the sessions' folders and the categories' own), the window's first, then the most recently
+  // used: the "move to project" destinations. Taken from all sessions, not the filtered view, so a search does not hide one
+  const projects = useMemo<MoveProject[]>(() => {
+    const latest = new Map<string, string>();
+    for (const s of sessions) if (s.cwd && (latest.get(s.cwd) ?? '') < s.updatedAt) latest.set(s.cwd, s.updatedAt);
+    for (const c of categoryState?.categories ?? []) if (c.cwd && !latest.has(c.cwd)) latest.set(c.cwd, '');
+    const cwds = [...latest.keys()].sort((a, b) => Number(b === workspace) - Number(a === workspace) || latest.get(b)!.localeCompare(latest.get(a)!));
+    const names = cwds.map(projectName);
+    return cwds.map((cwd, i) => {
+      const name = names[i]!;
+      const shared = names.indexOf(name) !== names.lastIndexOf(name);
+      return { cwd, name, current: cwd === workspace, ...(shared ? { hint: cwd.slice(0, cwd.lastIndexOf(name)).replace(/[\\/]+$/, '') || cwd } : {}) };
+    });
+  }, [sessions, categoryState, workspace]);
   // Under the workspace scope only the window's own categories show (a foreign active session stays loose)
   const visibleCategories = tree.projects.some(p => p.categories.length > 0);
 
@@ -177,17 +195,17 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
       const next = siblings[siblings.indexOf(hovered) + 1];
       return { kind: 'gap', cwd: hovered.cwd, before: y > box.top + box.height / 2 ? next?.id : hovered.id };
     }
-    const session = sessions.find(s => s.id === h.id);
     const zone = target.closest<HTMLElement>('[data-drop]')?.dataset.drop;
-    if (!session || !zone) return undefined;
+    if (!zone) return undefined;
     const split = zone.indexOf(':');
     const [kind, ref] = [zone.slice(0, split), zone.slice(split + 1)];
     if (kind === 'category') {
       const c = categories.find(x => x.id === ref);
-      return c && { kind: 'category', id: ref, refused: !canFile(session, c) };
+      return c && { kind: 'category', id: ref, cwd: c.cwd };
     }
-    return { kind: 'loose', cwd: ref, refused: !canFile(session, { cwd: ref }) };
+    return { kind: 'loose', cwd: ref };
   };
+  const heldSession = held?.kind === 'session' ? sessions.find(s => s.id === held.id) : undefined;
   const begin = (h: Held) => (e: DragEvent) => {
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData(DRAG_TYPE, h.id);
@@ -197,7 +215,8 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
   const onDragOver = (e: DragEvent) => {
     if (!held || !e.dataTransfer.types.includes(DRAG_TYPE)) return;
     const next = resolve(held, e.target as Element, e.clientY);
-    const ok = !!next && !(next.kind !== 'gap' && next.refused);
+    // Moving to another project needs the host's move; without it only same-project zones take the drop
+    const ok = !!next && (next.kind === 'gap' || !heldSession || heldSession.cwd === next.cwd || !!onMove);
     if (ok) e.preventDefault();
     e.dataTransfer.dropEffect = ok ? 'move' : 'none';
     if (!sameOver(next, over)) setOver(next);
@@ -205,13 +224,13 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
   const onDrop = (e: DragEvent) => {
     if (!held) return;
     e.preventDefault();
-    const session = held.kind === 'session' ? sessions.find(s => s.id === held.id) : undefined;
-    if (session && over?.kind === 'category' && !over.refused && session.category !== over.id) onFile?.(session.id, over.id);
-    if (session && over?.kind === 'loose' && !over.refused && categoryOf(session, categories)) onFile?.(session.id, null);
+    const zone = heldSession && over && over.kind !== 'gap' ? { cwd: over.cwd, ...(over.kind === 'category' ? { category: over.id } : {}) } : undefined;
+    const action = heldSession && zone ? dropAction(heldSession, zone, categories) : undefined;
+    if (action?.kind === 'file') onFile?.(heldSession!.id, action.category);
+    if (action?.kind === 'move') onMove?.(heldSession!.id, action.to);
     if (held.kind === 'category' && over?.kind === 'gap') onCategoryOp?.({ op: 'reorder', id: held.id, ...(over.before ? { before: over.before } : {}) });
     end();
   };
-  const heldSession = held?.kind === 'session' ? sessions.find(s => s.id === held.id) : undefined;
 
   const renderItem = (s: SessionSummary) => (
     <Item
@@ -234,6 +253,8 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
       onDelete={() => { setEditing(undefined); onDelete(s.id); }}
       onPin={() => onPin(s.id, !s.pinned)}
       onMove={onMove && workspace && !s.external && !here(s) ? () => onMove(s.id) : undefined}
+      projects={projects.filter(p => p.cwd !== s.cwd)}
+      onMoveTo={onMove && !s.external ? cwd => onMove(s.id, { cwd }) : undefined}
       onExport={onExport ? format => onExport(s.id, format) : undefined}
       categories={categories.filter(c => c.cwd === s.cwd)}
       onFile={filing && !s.external ? category => onFile!(s.id, category) : undefined}
@@ -246,12 +267,11 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
   const renderCategory = (node: CategoryNode, siblings: CategoryNode[]) => {
     const c = node.category;
     const hot = over?.kind === 'category' && over.id === c.id;
-    const refused = hot && over.refused;
     const gapBefore = over?.kind === 'gap' && over.before === c.id;
     const gapAfter = over?.kind === 'gap' && !over.before && over.cwd === c.cwd && siblings.at(-1) === node;
     return (
       <div key={c.id} role="group" aria-label={c.name} data-category={c.id} data-drop={`category:${c.id}`}
-        className={cn('relative flex flex-col rounded-lg transition-shadow', hot && !refused && FRAME)}>
+        className={cn('relative flex flex-col rounded-lg transition-shadow', hot && FRAME)}>
         {gapBefore && <InsertLine edge="top" />}
         <GroupHeader
           icon={<Inbox className="size-icon" strokeWidth={1.5} />}
@@ -259,7 +279,6 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
           count={node.sessions.length}
           open={node.open}
           state={node.open ? undefined : aggregate(node.sessions)}
-          refused={refused}
           dragging={held?.kind === 'category' && held.id === c.id}
           editing={editingCategory === c.id}
           onDragStart={!filtering && editingCategory !== c.id ? begin({ kind: 'category', id: c.id }) : undefined}
@@ -290,7 +309,8 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
 
   // A project's body: its categories, then its loose sessions (the zone that takes a session out of its category)
   const renderBody = (p: ProjectNode) => {
-    const looseHot = over?.kind === 'loose' && over.cwd === p.cwd && !over.refused;
+    // Only a session of this project lights the loose area; one from elsewhere frames the whole project group
+    const looseHot = over?.kind === 'loose' && over.cwd === p.cwd && heldSession?.cwd === p.cwd;
     // A filed session of this project being dragged needs somewhere to land even when nothing is loose
     const strip = !p.loose.length && !!heldSession && heldSession.cwd === p.cwd && !!categoryOf(heldSession, categories);
     return <>
@@ -306,8 +326,11 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
 
   const renderProject = (p: ProjectNode, i: number) => {
     const all = [...p.categories.flatMap(n => n.sessions), ...p.loose];
+    // A session of another project dropped anywhere on the group (its categories keep their own zones) moves here
+    const incoming = !!onMove && !!heldSession && heldSession.cwd !== p.cwd && over?.kind === 'loose' && over.cwd === p.cwd;
     return (
-      <div key={p.cwd} role="group" aria-label={projectName(p.cwd)} className={cn('flex flex-col', i > 0 && 'mt-2')}>
+      <div key={p.cwd} role="group" aria-label={projectName(p.cwd)} data-drop={`loose:${p.cwd}`}
+        className={cn('flex flex-col rounded-lg transition-shadow', i > 0 && 'mt-2', incoming && FRAME)}>
         <GroupHeader
           project
           icon={p.open ? <FolderOpen className="size-icon" strokeWidth={1.5} /> : <Folder className="size-icon" strokeWidth={1.5} />}
@@ -397,9 +420,8 @@ function InsertLine({ edge }: { edge: 'top' | 'bottom' }) {
 
 // Header of a project or a category. A project: folder glyph, heavier name, the "current" badge, a "new category" action.
 // A category: the inbox glyph, a "new session here" action and a "…" menu. The row toggles; on hover the glyph turns into
-// the chevron, and collapsed it still shows the most urgent state inside. Refused (a session of another project hovering):
-// dimmed, saying why
-function GroupHeader({ project, icon, name, title, badge, count, open, state, refused, dragging, editing, onDragStart, onDragEnd, onToggle, onRename, onNewSession, onNewCategory, menu }: {
+// the chevron, and collapsed it still shows the most urgent state inside
+function GroupHeader({ project, icon, name, title, badge, count, open, state, dragging, editing, onDragStart, onDragEnd, onToggle, onRename, onNewSession, onNewCategory, menu }: {
   project?: boolean;
   icon: ReactNode;
   name: string;
@@ -408,7 +430,6 @@ function GroupHeader({ project, icon, name, title, badge, count, open, state, re
   count: number;
   open: boolean;
   state?: SessionSummary['state'];
-  refused?: boolean;
   dragging?: boolean;
   editing?: boolean;
   onDragStart?: (e: DragEvent) => void;
@@ -438,7 +459,6 @@ function GroupHeader({ project, icon, name, title, badge, count, open, state, re
         'group flex min-h-row items-center gap-gap rounded-md px-2 text-2 transition-colors hover:bg-hover focus-visible:bg-hover',
         onToggle && 'cursor-pointer',
         project ? 'font-semibold text-fg-strong' : 'text-fg-1',
-        refused && 'cursor-not-allowed opacity-50',
         dragging && 'opacity-40',
       )}
     >
@@ -457,7 +477,6 @@ function GroupHeader({ project, icon, name, title, badge, count, open, state, re
       {!editing && (
         <span className="ml-auto flex shrink-0 items-center text-3 font-normal text-fg-3 tabular-nums">
           <span className={cn('flex items-center gap-2', actions && 'group-hover:hidden group-focus-within:hidden group-data-[menu-open]:hidden')}>
-            {refused && <span className="text-danger">{t('session.category.sameProject')}</span>}
             {state && <StateMark state={state} />}
             <span className="text-right">{count}</span>
           </span>
@@ -619,6 +638,9 @@ interface ItemProps {
   onPin: () => void;
   // Present only for a session from another project: re-home it into this window's workspace
   onMove?: () => void;
+  // The menus' "move to project" submenu: the other projects and the pick
+  projects?: MoveProject[];
+  onMoveTo?: (cwd: string) => void;
   onExport?: (format: 'markdown' | 'json') => void;
   // Native drag: present when the row may be filed by dragging (not pinned, not a ChatGPT mirror)
   dragging?: boolean;
@@ -632,15 +654,17 @@ interface ItemProps {
 
 // One item: the whole row is clickable to select; the tail shows a status dot + time by default, swapping to actions on hover / keyboard focus. Action buttons can't nest inside a button, so the whole row is a div[role=option].
 // The hover cluster keeps the two quick toggles (move / pin); rename, export and delete live in the "…" menu, which keeps
-// the cluster alive while open — the row tracks menuOpen because a pointer inside the portaled popup is no longer a hover
-function Item({ session: s, agentName, terms, snippet, active, time, project, editing, onSelect, onEdit, onRename, onDelete, onPin, onMove, onExport, dragging, onDragStart, onDragEnd, categories, onFile, onNewCategory }: ItemProps) {
+// the cluster alive while open — the row tracks menuOpen because a pointer inside the portaled popup is no longer a hover.
+// Right-clicking the row opens the same menu at the pointer (not while renaming, where the input keeps the native one)
+function Item({ session: s, agentName, terms, snippet, active, time, project, editing, onSelect, onEdit, onRename, onDelete, onPin, onMove, projects, onMoveTo, onExport, dragging, onDragStart, onDragEnd, categories, onFile, onNewCategory }: ItemProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget) return;
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(); }
   };
   const act = 'inline-flex size-lead items-center justify-center rounded-sm text-fg-3 transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1';
-  return (
+  const menu: SessionMenuItemsProps = { session: s, onRename: onEdit, onPin, onMove, projects, onMoveTo, onExport, onDelete, categories, onFile, onNewCategory };
+  const row = (
     <div
       role="option"
       aria-selected={active}
@@ -687,20 +711,12 @@ function Item({ session: s, agentName, terms, snippet, active, time, project, ed
             {/* The row selects on click and synthetic events bubble through the menu's portal; keep both from reaching the option */}
             <span onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
               <SessionMenu
-                session={s}
+                {...menu}
                 align="end"
                 onOpenChange={setMenuOpen}
                 trigger={<button type="button" title={t('session.more')} aria-label={t('session.more')} className={act}>
                   <Ellipsis className="size-3" strokeWidth={1.5} />
                 </button>}
-                onRename={onEdit}
-                onPin={onPin}
-                onMove={onMove}
-                onExport={onExport}
-                onDelete={onDelete}
-                categories={categories}
-                onFile={onFile}
-                onNewCategory={onNewCategory}
               />
             </span>
           </span>
@@ -708,6 +724,7 @@ function Item({ session: s, agentName, terms, snippet, active, time, project, ed
       )}
     </div>
   );
+  return editing ? row : <SessionContextMenu {...menu} onOpenChange={setMenuOpen}>{row}</SessionContextMenu>;
 }
 
 // Marks every occurrence of the search terms in brighter, heavier text

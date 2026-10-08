@@ -23,6 +23,8 @@ async fn a_prompt_error_ends_the_turn_with_a_typed_error_and_retry_turn_sends_it
   assert!(vw["turns"][1]["blocks"].as_array().unwrap().iter().any(|b| b["type"] == "text"));
 }
 
+/// A failed turn that already did work is carried on by a hidden continue, never by sending the message again; a continue
+/// that fails too is retried over a fresh connection on the same native session
 #[tokio::test(flavor = "multi_thread")]
 async fn retry_preserves_output_completed_tools_and_the_native_session_after_quota_errors() {
   let fake = fake_or_skip!();
@@ -40,7 +42,8 @@ async fn retry_preserves_output_completed_tools_and_the_native_session_after_quo
       s.prompt(text.into(), drafts(json!([{ "kind": "text", "name": "plan.txt", "text": "Retain this plan on retry." }])), false, None, None).await;
     }
     let peer = s.to_record().acp_session_id;
-    for expected in ["error", "end_turn"] {
+    let continue_text = acpira_host::i18n::t("host.retryContinuePrompt");
+    for (expected, reconnects) in [("error", 0), ("end_turn", 1)] {
       let before = v(&s.to_record().turns);
       let n = before.as_array().unwrap().len();
       expect_match(before.as_array().unwrap().last().unwrap(), json!({ "stop": "error", "blocks": [
@@ -54,13 +57,29 @@ async fn retry_preserves_output_completed_tools_and_the_native_session_after_quo
       let vw = view(&s);
       assert_eq!(json!(vw["turns"].as_array().unwrap()[..n]), before, "edited={edited}");
       assert_eq!(turns_in(&vw), n + 2);
+      expect_match(turn_at(&vw, -2), json!({ "role": "user", "auto": true, "autoReason": "retry", "text": continue_text }));
       expect_match(last_turn(&vw), json!({ "stop": expected }));
-      if !edited {
-        expect_match(turn_at(&vw, -2), json!({ "attachments": [{ "kind": "text", "name": "plan.txt" }] }));
-      }
+      // The first retry stays on the live process; retrying the continue that failed reconnects first
+      let logs = h.logs();
+      assert_eq!(logs.iter().filter(|l| l.contains("retried turn failed again")).count(), reconnects, "edited={edited}: {logs:#?}");
       let restored = Disposing(AcpSession::new(s.to_record(), h.deps.clone()));
       assert_eq!(json!(view(&restored)["turns"].as_array().unwrap()[..n]), before);
     }
+    if !edited {
+      expect_match(turn_at(&view(&s), 2), json!({ "role": "user", "text": text, "attachments": [{ "kind": "text", "name": "plan.txt" }] }));
+    }
+    // The native session received the message once, then only the continues
+    prompt(&s, "inspect-native-history").await;
+    let echoed: Value = serde_json::from_str(last_turn(&view(&s))["blocks"][0]["markdown"].as_str().unwrap()).unwrap();
+    let texts: Vec<String> = echoed["prompts"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .map(|p| p.as_array().unwrap().iter().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("
+"))
+      .collect();
+    assert_eq!(texts.iter().filter(|t| t.contains(text)).count(), 1, "edited={edited}: {texts:#?}");
+    assert_eq!(texts.iter().filter(|t| **t == continue_text).count(), 2, "edited={edited}: {texts:#?}");
   }
 }
 

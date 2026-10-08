@@ -434,8 +434,14 @@ pub enum WebviewMsg {
     #[serde(default)]
     file: Option<String>,
   },
+  /// Re-home a session into `cwd` (absent: the window's workspace folder), filed under `category` when it is one of
+  /// that project's
   MoveSession {
     id: String,
+    #[serde(default)]
+    cwd: Option<String>,
+    #[serde(default)]
+    category: Option<String>,
   },
   ForkSession {
     session_id: String,

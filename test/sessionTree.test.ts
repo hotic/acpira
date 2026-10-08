@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionCategory, SessionSummary } from '../src/shared/transcript';
-import { buildSessionTree, canFile, categoryOf, draggable } from '../src/webview/chat/sessionTree';
+import { buildSessionTree, categoryOf, draggable, dropAction } from '../src/webview/chat/sessionTree';
 
 const WS = '/work/acpira';
 const OTHER = '/work/bot';
@@ -53,11 +53,22 @@ describe('session tree', () => {
     expect(tree.projects[0]!.categories.map(n => [n.category.id, n.open])).toEqual([['ssh', true]]);
   });
 
-  it('drags only unpinned local sessions, and only into their own project', () => {
+  it('drags only unpinned local sessions', () => {
     expect(draggable(s('a'))).toBe(true);
     expect(draggable(s('a', { pinned: true }))).toBe(false);
     expect(draggable(s('a', { external: true }))).toBe(false);
-    expect(canFile(s('a'), { cwd: WS })).toBe(true);
-    expect(canFile(s('a'), { cwd: OTHER })).toBe(false);
+  });
+
+  it('files a dropped session within its own project and moves it into another', () => {
+    // Own project: into a category, out of one, or nothing to do
+    expect(dropAction(s('a'), { cwd: WS, category: 'ui' }, categories)).toEqual({ kind: 'file', category: 'ui' });
+    expect(dropAction(s('a', { category: 'ui' }), { cwd: WS, category: 'ui' }, categories)).toBeUndefined();
+    expect(dropAction(s('a', { category: 'ui' }), { cwd: WS }, categories)).toEqual({ kind: 'file', category: null });
+    expect(dropAction(s('a'), { cwd: WS }, categories)).toBeUndefined();
+    // A dangling category id reads as unfiled, so the loose area has nothing to undo
+    expect(dropAction(s('a', { category: 'gone' }), { cwd: WS }, categories)).toBeUndefined();
+    // Another project: its group moves the session there, one of its categories files it there too
+    expect(dropAction(s('a', { category: 'ui' }), { cwd: OTHER }, categories)).toEqual({ kind: 'move', to: { cwd: OTHER } });
+    expect(dropAction(s('a'), { cwd: OTHER, category: 'rel' }, categories)).toEqual({ kind: 'move', to: { cwd: OTHER, category: 'rel' } });
   });
 });

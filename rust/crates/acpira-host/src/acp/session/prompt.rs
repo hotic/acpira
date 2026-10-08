@@ -35,13 +35,14 @@ pub struct Staged {
   pub id: Option<String>,
 }
 
-/// Who sent a prompt: the user (or the queue on the user's behalf), the over-threshold /compact, or the continue that
-/// follows an automatic account switch
+/// Who sent a prompt: the user (or the queue on the user's behalf), the over-threshold /compact, the continue that
+/// follows an automatic account switch, or the continue a Retry sends after a failed turn that already did some work
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Origin {
   User,
   Compact,
   Continue,
+  Retry,
 }
 
 /// Where `claim` sends a prompt: onto the wire (after an over-budget /compact first), behind the running turn, or nowhere
@@ -292,12 +293,12 @@ impl AcpSession {
     let command_name = command_name(text).map(str::to_owned);
     let user_turn = match origin {
       Origin::Compact => UserTurn { text: text.to_owned(), auto: Some(true), ..Default::default() },
-      Origin::Continue => UserTurn {
+      Origin::Continue | Origin::Retry => UserTurn {
         id: Some(random_uuid()),
         text: text.to_owned(),
         settings: Some(before.clone()),
         auto: Some(true),
-        auto_reason: Some(AutoReason::AccountSwitch),
+        auto_reason: Some(if origin == Origin::Retry { AutoReason::Retry } else { AutoReason::AccountSwitch }),
         ..Default::default()
       },
       Origin::User => UserTurn {
@@ -365,6 +366,9 @@ impl AcpSession {
       ..Default::default()
     }));
     let agent_idx = c.state.turns.len() - 1;
+    if std::mem::take(&mut c.retry_pending) {
+      c.retried_turn = Some(started_at);
+    }
     self.touch(&mut c);
     self.schedule_usage_poll(&mut c);
     OpenTurn {

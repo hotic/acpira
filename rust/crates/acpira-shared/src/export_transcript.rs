@@ -12,6 +12,7 @@ pub struct ExportLabels {
   pub compacted: String,
   pub auto_compact: String,
   pub auto_continue: String,
+  pub auto_retry: String,
   pub error: String,
 }
 
@@ -61,7 +62,11 @@ pub fn export_markdown(input: &ExportInput, labels: &ExportLabels, blob_path: &d
 
 fn user_turn(turn: &UserTurn, labels: &ExportLabels) -> String {
   if turn.auto == Some(true) {
-    let label = if turn.auto_reason == Some(AutoReason::AccountSwitch) { &labels.auto_continue } else { &labels.auto_compact };
+    let label = match turn.auto_reason {
+      Some(AutoReason::AccountSwitch) => &labels.auto_continue,
+      Some(AutoReason::Retry) => &labels.auto_retry,
+      _ => &labels.auto_compact,
+    };
     return format!("_{label}_");
   }
   let mut out = vec![format!("### {}", labels.user)];
@@ -258,6 +263,7 @@ mod tests {
       compacted: "Compacted".into(),
       auto_compact: "Automatic /compact".into(),
       auto_continue: "Continued".into(),
+      auto_retry: "Retried".into(),
       error: "Error".into(),
     };
     let md = user_turn(&turn, &labels);
@@ -287,6 +293,7 @@ mod tests {
       compacted: "Compacted".into(),
       auto_compact: "Automatic /compact".into(),
       auto_continue: "Continued".into(),
+      auto_retry: "Retried".into(),
       error: "Error".into(),
     };
     let md = agent_turn(&turn, "Fake", &labels, &|_| None);

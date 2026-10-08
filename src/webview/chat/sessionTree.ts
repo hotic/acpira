@@ -87,10 +87,24 @@ export function buildSessionTree({ shown, categories, collapsedProjects, workspa
   return { pinned, grouped, projects: order.map(cwd => node(cwd, byProject.get(cwd)!)) };
 }
 
-// Where a dragged session may land: a category of its own project or its own project's loose area.
-// Pinned sessions are locked and ChatGPT mirrors have no categories, so neither is dragged at all
-export function canFile(s: SessionSummary, target: { cwd: string }): boolean {
-  return s.cwd === target.cwd;
+// Where a session is moved to: another project's folder, optionally one of that project's categories
+export interface MoveTarget {
+  cwd: string;
+  category?: string;
+}
+
+// What dropping a session on a zone (a project's category, or its loose area / header when `category` is absent) does.
+// Within its own project it is filed (null takes it out of its category); onto another project it moves there, filed under
+// that project's category when dropped on one. Undefined: the drop changes nothing.
+// Pinned sessions are locked and ChatGPT mirrors are bound to their project, so neither is dragged at all
+export type DropAction =
+  | { kind: 'file'; category: string | null }
+  | { kind: 'move'; to: MoveTarget };
+
+export function dropAction(s: SessionSummary, target: MoveTarget, categories: SessionCategory[]): DropAction | undefined {
+  if (s.cwd !== target.cwd) return { kind: 'move', to: target };
+  if (target.category) return target.category === categoryOf(s, categories)?.id ? undefined : { kind: 'file', category: target.category };
+  return categoryOf(s, categories) ? { kind: 'file', category: null } : undefined;
 }
 
 export function draggable(s: SessionSummary): boolean {

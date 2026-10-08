@@ -419,14 +419,15 @@ export interface UserTurn {
   edited?: true;
   // Internal execution instruction; the plan card represents it in the UI.
   planId?: string;
-  // Sent automatically by Acpira (/compact over threshold, or the continue after an account switch); never rendered as a bubble
+  // Sent automatically by Acpira (/compact over threshold, the continue after an account switch or after a Retry); never rendered as a bubble
   auto?: boolean;
   // Why an automatic turn was sent; absent on an automatic turn means the over-threshold /compact
   autoReason?: AutoReason;
 }
 
 // `accountSwitch`: the previous turn ran out of account quota and the session moved to another account
-export type AutoReason = 'compact' | 'accountSwitch';
+// `retry`: the previous turn failed after doing part of the work; Retry asked the agent to carry on instead of resending the message
+export type AutoReason = 'compact' | 'accountSwitch' | 'retry';
 
 export interface TurnSettings {
   modeId?: string;

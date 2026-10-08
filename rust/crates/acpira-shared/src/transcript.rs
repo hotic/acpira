@@ -894,6 +894,9 @@ pub enum AutoReason {
   Compact,
   /// The previous turn ran out of account quota and the session moved to another account
   AccountSwitch,
+  /// The previous turn failed after doing part of the work and the user pressed Retry: the agent carries on from its own
+  /// context instead of receiving the message again
+  Retry,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

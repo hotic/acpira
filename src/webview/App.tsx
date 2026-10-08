@@ -266,7 +266,7 @@ export function App() {
     deleteSession: id => post({ type: 'deleteSession', id }),
     restoreSession: id => post({ type: 'restoreSession', id }),
     pinSession: (id, pinned) => post({ type: 'pinSession', id, pinned }),
-    moveSession: id => post({ type: 'moveSession', id }),
+    moveSession: (id, to) => post({ type: 'moveSession', id, ...to }),
     setSessionCategory: (id, category) => post({ type: 'setSessionCategory', id, category }),
     categoryOp: (op, file) => post({ type: 'categoryOp', ...op, ...(file ? { file } : {}) }),
     selectAccount: id => post({ type: 'selectAccount', sessionId: activeId.current, id }),

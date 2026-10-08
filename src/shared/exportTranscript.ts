@@ -15,6 +15,7 @@ export interface ExportLabels {
   compacted: string;
   autoCompact: string;
   autoContinue: string;
+  autoRetry: string;
   error: string;
 }
 
@@ -28,6 +29,7 @@ export const EXPORT_LABELS_EN: ExportLabels = {
   compacted: 'Context compacted',
   autoCompact: 'Automatic /compact',
   autoContinue: 'Continued automatically after an account switch',
+  autoRetry: 'Retried: continued from where the failed turn stopped',
   error: 'Error',
 };
 
@@ -59,7 +61,10 @@ export function exportMarkdown(input: ExportInput, labels: ExportLabels = EXPORT
 }
 
 function userTurn(turn: Extract<Turn, { role: 'user' }>, labels: ExportLabels): string {
-  if (turn.auto) return `_${turn.autoReason === 'accountSwitch' ? labels.autoContinue : labels.autoCompact}_`;
+  if (turn.auto) {
+    const label = turn.autoReason === 'accountSwitch' ? labels.autoContinue : turn.autoReason === 'retry' ? labels.autoRetry : labels.autoCompact;
+    return `_${label}_`;
+  }
   const out = [`### ${labels.user}`];
   // Quotes lead, as they do in the prompt: blockquotes with the remark under each
   for (const q of turn.attachments ?? []) {
