@@ -1,5 +1,11 @@
 # Acpira
 
+[![CI](https://img.shields.io/github/actions/workflow/status/hotic/acpira/windows-compat.yml?branch=main&label=CI&logo=github)](https://github.com/hotic/acpira/actions/workflows/windows-compat.yml)
+[![VS Marketplace](https://vsmarketplacebadges.dev/version/hotic.acpira.svg?label=VS%20Marketplace&color=007ACC)](https://marketplace.visualstudio.com/items?itemName=hotic.acpira)
+[![Open VSX](https://img.shields.io/open-vsx/v/hotic/acpira?label=Open%20VSX&color=C160EF)](https://open-vsx.org/extension/hotic/acpira)
+[![JetBrains Plugin](https://img.shields.io/jetbrains/plugin/v/34192?label=JetBrains&color=FE315D)](https://plugins.jetbrains.com/plugin/34192-acpira)
+[![License](https://img.shields.io/github/license/hotic/acpira)](LICENSE)
+
 **原生的 Agent Harness，讲究的交互体验。**
 
 在 VS Code、Cursor 与 IntelliJ IDEA 中使用 Grok、Devin、Kimi Code、Codex、Claude、OpenCode、Pi 及其他 ACP Agent。保留各自的执行引擎，清晰查看执行过程、审批操作，在任务进行时继续安排下一步。
