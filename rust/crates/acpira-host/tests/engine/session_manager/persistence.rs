@@ -126,6 +126,48 @@ async fn delete_session_ignores_path_like_ids() {
   m.dispose().await;
 }
 
+// Deleting a session ends its agent process right away (session/close, then the kill), the one on screen and a
+// background one alike, without waiting for the undo window or the idle release; undo reopens it through the ordinary
+// restore
+#[tokio::test(flavor = "multi_thread")]
+async fn deleting_a_session_closes_its_agent_process_at_once() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let native = dir.path().join("native");
+  std::fs::create_dir(&native).unwrap();
+  let close_log = dir.path().join("close.log");
+  let env = json!({ "env": { "FAKE_SESSION_DIR": native, "FAKE_CLOSE_LOG": close_log } });
+  let m = Mgr::new(&dir.path().join("sessions"), Opts::with_agents(fake.setting(env), "fake"));
+  m.init().await;
+  let acp_id = |id: &str| m.sessions().iter().find(|s| s["id"] == id).unwrap()["acpSessionId"].as_str().unwrap().to_owned();
+  let closed = |acp: &str| std::fs::read_to_string(&close_log).unwrap_or_default().lines().any(|l| l == acp);
+  m.new_session(None).await;
+  m.handle(json!({ "type": "send", "text": "hi" })).await;
+  let a = m.active_id().unwrap();
+  let a_acp = acp_id(&a);
+  m.new_session(None).await;
+  m.handle(json!({ "type": "send", "text": "hello" })).await;
+  let b = m.active_id().unwrap();
+  let b_acp = acp_id(&b);
+  // A background session: gone from the live map, its native session closed and its lease returned
+  m.handle(json!({ "type": "deleteSession", "id": a })).await;
+  assert!(m.view_of(&a).is_none());
+  until(|| closed(&a_acp), 5000).await;
+  assert!(!m.m.leased().contains(&a));
+  // The one on screen: the viewer moves on and the process still goes
+  m.handle(json!({ "type": "deleteSession", "id": b })).await;
+  assert_ne!(m.active_id().as_deref(), Some(b.as_str()));
+  until(|| closed(&b_acp), 5000).await;
+  assert!(!m.m.leased().contains(&b));
+  // Undo brings the entry back; opening it resumes the same native session
+  m.handle(json!({ "type": "restoreSession", "id": a })).await;
+  m.m.select_session_for(&m.v, &a).await;
+  assert_eq!(m.active().unwrap()["status"], "ready", "{:#?}", m.logs());
+  assert_eq!(acp_id(&a), a_acp);
+  assert_eq!(turns_len(m.active()), 2);
+  m.dispose().await;
+}
+
 // An index summary written before acpSessionId existed is patched once and the debounced index write persists it,
 // so the next listing (or another window) does not re-read the record
 #[tokio::test(flavor = "multi_thread")]
