@@ -2483,6 +2483,7 @@ impl SessionManager {
           auto_compact: t("export.label.autoCompact"),
           auto_continue: t("export.label.autoContinue"),
           auto_retry: t("export.label.autoRetry"),
+          auto_gate: t("export.label.autoGate"),
           error: t("export.label.error"),
         };
         let store = self.deps.store.clone();

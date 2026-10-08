@@ -530,7 +530,13 @@ impl AcpSession {
   }
 
   pub(crate) fn busy(c: &Core) -> bool {
-    c.phase.running || c.phase.editing || c.phase.staging || c.switching || c.ultracode.rebuilding || c.status == SessionStatus::Starting
+    c.phase.running
+      || c.phase.editing
+      || c.phase.staging
+      || c.switching
+      || c.hooks.gating
+      || c.ultracode.rebuilding
+      || c.status == SessionStatus::Starting
   }
 
   /// The agent process can be ended now and the session reopened later without losing anything: ready, nothing in

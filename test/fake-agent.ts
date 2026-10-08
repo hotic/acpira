@@ -23,6 +23,7 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // "tool-downgrade" / "tool-downgrade-late" → OpenCode's write: a permission request whose embedded toolCall is a low-fidelity copy
 // (kind 'other', dir title, file+dir locations, rawInput.filepath) racing the real in_progress update
 // "perm-meta" → permission request with the adapters' `_meta.permission` (title / description / defaultToNo, per-option details);
+// "hook-write:<path>" / "hook-perm-write:<path>" / "hook-read:<path>" / "…hook-fix:<path>…" → workspace hook scripts (edits on disk, see below);
 // "image" → an image chunk splitting a text run plus a tool image content item;
 // "subagents-*" → first-class subagent dialects: =native sends RFD `subagent_update` announcements plus child updates under each
 //   child's own sessionId (c1 requests a permission, c2 cannot be cancelled); =nested announces a grandchild on c1's stream;
@@ -550,6 +551,46 @@ const app = acp.agent({ name: 'fake-agent' })
     // "say:<text>" → exactly that text as the reply ("||" splits it into chunks): antigravity-acp reports a failed turn this way
     if (text.startsWith('say:')) {
       for (const part of text.slice(4).split('||')) await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: part } });
+      return { stopReason: 'end_turn' };
+    }
+    // Workspace hooks (tests/engine/acp_session/hooks.rs). A prompt holding "hook-fix:<path>" anywhere (the gate's findings)
+    // rewrites that file to "fixed\n"; "hook-write:<path>" writes "bad\n" the way an agent's own tool does, without asking;
+    // "hook-perm-write:<path>" announces the edit in a permission request first and writes only when allowed;
+    // "hook-read:<path>" reports a read row. Each replies with what happened
+    const hookFix = /hook-fix:(\S+)/.exec(text);
+    if (hookFix) {
+      writeFileSync(hookFix[1]!, 'fixed\n');
+      await send({ sessionUpdate: 'tool_call', toolCallId: `fix-${randomUUID()}`, title: 'edit', kind: 'edit', status: 'completed', locations: [{ path: hookFix[1]! }] });
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'fixed' } });
+      return { stopReason: 'end_turn' };
+    }
+    if (text.startsWith('hook-read:')) {
+      const path = text.slice('hook-read:'.length).trim();
+      await send({ sessionUpdate: 'tool_call', toolCallId: `r-${randomUUID()}`, title: 'read', kind: 'read', status: 'completed', locations: [{ path }] });
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'read' } });
+      return { stopReason: 'end_turn' };
+    }
+    if (text.startsWith('hook-write:') || text.startsWith('hook-perm-write:')) {
+      const path = text.slice(text.indexOf(':') + 1).trim();
+      const toolCallId = `w-${randomUUID()}`;
+      const call: acp.ToolCall = { toolCallId, title: 'write', kind: 'edit', status: 'pending', locations: [{ path }], rawInput: { path, content: 'bad\n' } };
+      await send({ sessionUpdate: 'tool_call', ...call });
+      let allowed = true;
+      if (text.startsWith('hook-perm-write:')) {
+        const request: acp.RequestPermissionRequest = {
+          sessionId: sid,
+          toolCall: call,
+          options: [
+            { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+            { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+          ],
+        };
+        const perm = await client.request(acp.methods.client.session.requestPermission, request);
+        allowed = perm.outcome.outcome === 'selected' && perm.outcome.optionId === 'allow';
+      }
+      if (allowed) writeFileSync(path, 'bad\n');
+      await send({ sessionUpdate: 'tool_call_update', toolCallId, status: allowed ? 'completed' : 'failed' });
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: allowed ? 'wrote' : 'rejected' } });
       return { stopReason: 'end_turn' };
     }
     if (text === 'inspect-native-history') {

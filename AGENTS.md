@@ -56,7 +56,7 @@ A chat shell for VS Code / Cursor (and IntelliJ) that drives official agent CLIs
 | `src/webview` structure and stylesheet layering, file links in markdown, slash commands, transcript render budget (memo, lazy folds, stream glyphs) | `docs/dev/webview.md` |
 | `ui/` primitives, tokens, rows, buttons, menus, overlays, model panels, composer, question card, toolbar chips, model visibility | `docs/dev/ui-conventions.md` |
 | Orb and Working label, motion, rails, sticky user prompts, scrollbars, to-do presentation, folding modes, appearance axes, rendering preferences | `docs/dev/ui-motion-layout.md` |
-| Historical edits and retries, model identity, plan approval / execution, permissions, controls, follow-up queue, session scope / deletion, remembered prefs, account binding, compaction, failed prompts, questions, to-do bar | `docs/dev/protocol-gotchas.md` |
+| Historical edits and retries, model identity, plan approval / execution, permissions, controls, follow-up queue, workspace hooks (`.agents/hooks.json`), session scope / deletion, remembered prefs, account binding, compaction, failed prompts, questions, to-do bar | `docs/dev/protocol-gotchas.md` |
 | Anything specific to Devin, Grok, Kimi, Codex, Claude, OpenCode, DeepSeek Harness, Antigravity or Pi | `docs/dev/agent-quirks.md`, then `docs/acp-agents-compat.md` (verified / source / unverified matrix) |
 | `idea/`: Kotlin modules, JCEF, native RPC, sidecar service, split mode, distribution, release | `docs/dev/intellij.md` |
 | Windows compatibility boundaries, native regression checks and remaining acceptance coverage | `docs/dev/windows-compatibility.md` |

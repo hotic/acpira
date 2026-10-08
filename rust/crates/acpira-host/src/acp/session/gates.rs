@@ -15,6 +15,7 @@ use crate::acp::transcript::questions::{clean_answers, form_content, form_questi
 use crate::acp::transport::rpc::RpcError;
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::session::errors::{auto_allow, permission_kind};
+use crate::acp::session::hooks::edit_paths;
 use crate::i18n::{t, tp};
 use crate::limits::PLAN_PREVIEW_MAX_BYTES;
 
@@ -82,6 +83,16 @@ fn cancelled_permission() -> Value {
   json!({ "outcome": { "outcome": "cancelled" } })
 }
 
+/// The request's own reject (once before always); without one the request is cancelled
+fn rejected_permission(req: &Value) -> Value {
+  let options = req.get("options").and_then(Value::as_array).cloned().unwrap_or_default();
+  let pick = |kind: &str| options.iter().find(|o| o.get("kind").and_then(Value::as_str) == Some(kind)).and_then(|o| o.get("optionId")).cloned();
+  match pick("reject_once").or_else(|| pick("reject_always")) {
+    Some(id) => json!({ "outcome": { "outcome": "selected", "optionId": id } }),
+    None => cancelled_permission(),
+  }
+}
+
 /// `_meta.permission.defaultToNo` (claude-agent-acp / codex-acp): the adapter's own safety asks lean to No
 fn default_to_no(req: &Value) -> Option<bool> {
   let meta = req.get("_meta").and_then(|m| m.get("permission")).filter(|p| p.is_object());
@@ -139,7 +150,7 @@ impl AcpSession {
     if self.vendor.question_permission(&tool_call) {
       return Ok(self.on_permission_question(req, tool_call_id, cancel).await);
     }
-    let (target, epoch, plan_file, last_agent, captured) = {
+    let (target, epoch, plan_file, last_agent, captured, edit) = {
       let mut c = self.core.lock();
       let Some(target) = Self::target_for(&mut c, session_id.as_deref()) else {
         drop(c);
@@ -159,6 +170,15 @@ impl AcpSession {
         })
       });
       apply_update(state, &permission_tool_update(existing.as_ref(), &tool_call));
+      // The row as the request left it (a low-fidelity request may not say it edits; the row already knows)
+      let edit = last_agent.and_then(|i| {
+        state.turns[i].as_agent().and_then(|t| {
+          t.blocks.iter().find_map(|b| match b {
+            AgentBlock::ToolCall(tc) if tc.id == tool_call_id => Some((tc.kind, edit_paths(tc))),
+            _ => None,
+          })
+        })
+      });
       let plan_id = capture_plan(&mut state.turns, &tool_call);
       let plan_file = plan_id.as_ref().and_then(|id| {
         plan_documents_mut(&mut state.turns)
@@ -168,8 +188,14 @@ impl AcpSession {
           .and_then(|p| p.path.clone())
           .map(|path| (id.clone(), path))
       });
-      (target, epoch, plan_file, last_agent, plan_id)
+      (target, epoch, plan_file, last_agent, plan_id, edit)
     };
+    // The workspace gate sees an announced edit before anyone approves it, yolo included
+    if let Some((kind, paths)) = edit
+      && self.hooks_check_edit(kind, paths, tool_call.get("rawInput").cloned()).await.is_some()
+    {
+      return Ok(rejected_permission(&req));
+    }
     // A resumed Devin session may send only the plan path: load that exact file before presenting approval
     if let Some((plan_id, path)) = plan_file
       && let Ok(meta) = tokio::fs::metadata(&path).await

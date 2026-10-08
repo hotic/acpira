@@ -16,6 +16,7 @@ pub mod errors;
 pub mod failure;
 pub mod gates;
 pub mod handlers;
+pub mod hooks;
 pub mod images;
 pub mod lifecycle;
 pub mod plan_build;
@@ -197,6 +198,8 @@ pub(crate) struct Core {
   pub ultracode: crate::acp::session::ultracode::UltracodeState,
   /// Claude workflow agents' sidechain logs being read into their nodes (`workflow_logs.rs`)
   pub workflow_logs: crate::acp::session::workflow_logs::WorkflowLogs,
+  /// The project's workspace hooks: the running turn's snapshot, rejected edits and the gate's rounds (`hooks.rs`)
+  pub hooks: crate::acp::session::hooks::HookState,
 }
 
 pub struct AcpSession {
@@ -336,6 +339,7 @@ impl AcpSession {
           relays: Default::default(),
           ultracode,
           workflow_logs: Default::default(),
+          hooks: Default::default(),
         }),
         deps,
         me: me.clone(),

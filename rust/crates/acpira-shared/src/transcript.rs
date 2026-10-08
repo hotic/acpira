@@ -897,6 +897,8 @@ pub enum AutoReason {
   /// The previous turn failed after doing part of the work and the user pressed Retry: the agent carries on from its own
   /// context instead of receiving the message again
   Retry,
+  /// The workspace gate (`.agents/hooks.json`) blocked the previous turn: its findings go back to the agent
+  Gate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

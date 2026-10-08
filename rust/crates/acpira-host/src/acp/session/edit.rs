@@ -586,7 +586,7 @@ impl AcpSession {
       else {
         return Ok(());
       };
-      // Only the continues (Retry's own, an account switch's) are retried among automatic turns; /compact is not
+      // Only the continues (Retry's own, an account switch's, the gate's) are retried among automatic turns; /compact is not
       if user.auto == Some(true) && !is_continue(user) {
         return Ok(());
       }
@@ -665,7 +665,8 @@ impl AcpSession {
   }
 }
 
-/// A hidden turn that asks the agent to carry on from its own context: Retry's, or the one after an account switch
+/// A hidden turn that asks the agent to carry on from its own context: Retry's, the one after an account switch, or the
+/// workspace gate's findings
 fn is_continue(user: &UserTurn) -> bool {
-  user.auto == Some(true) && matches!(user.auto_reason, Some(AutoReason::Retry | AutoReason::AccountSwitch))
+  user.auto == Some(true) && matches!(user.auto_reason, Some(AutoReason::Retry | AutoReason::AccountSwitch | AutoReason::Gate))
 }
