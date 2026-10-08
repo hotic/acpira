@@ -724,8 +724,16 @@ const app = acp.agent({ name: 'fake-agent' })
       setTimeout(() => {
         void (async () => {
           await send({ sessionUpdate: 'usage_update', used: 10, size: 1000 });
+          if (process.env.FAKE_AUTONOMOUS_CHILD) {
+            await send({ sessionUpdate: 'tool_call', toolCallId: 'background-child-tool', title: 'Read child.ts', kind: 'read', status: 'in_progress',
+              _meta: { claudeCode: { parentToolUseId: 'background-agent-call' } } });
+            return;
+          }
           await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' followup' } });
           await new Promise(r => setTimeout(r, 300));
+          if (process.env.FAKE_AUTONOMOUS_AFTER_STOP) {
+            await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' queued tail after cancel' } });
+          }
           if (text === 'autonomous-hang') return;
           await send({ sessionUpdate: 'usage_update', used: 20, size: 1000, _meta: { '_claude/origin': { kind: 'task-notification' } } } as never);
         })();

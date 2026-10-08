@@ -56,6 +56,8 @@ pub(crate) struct PeerTurn {
   /// `vendors::claude_autonomous`): its result's `usage_update` ends it, and a stop settles it locally since no prompt
   /// response will
   pub autonomous: bool,
+  /// Late packets from a settled autonomous cycle must not reopen its turn. A new prompt clears this latch.
+  pub autonomous_blocked: bool,
 }
 
 impl AcpSession {
@@ -285,6 +287,9 @@ impl AcpSession {
   pub(crate) fn end_detached(self: &Arc<Self>, c: &mut Core, stop: TurnStop) {
     c.peer.detached = false;
     let autonomous = std::mem::take(&mut c.peer.autonomous);
+    if autonomous {
+      c.peer.autonomous_blocked = true;
+    }
     if c.phase.running {
       self.settle(c, stop, None);
     }
@@ -300,6 +305,7 @@ impl AcpSession {
       || c.replaying
       || c.phase.running
       || c.peer.detached
+      || c.peer.autonomous_blocked
       || c.status != SessionStatus::Ready
       || !claude_autonomous::CYCLE_START_KINDS.contains(&kind)
       || !matches!(c.state.turns.last(), Some(Turn::Agent(_)))
