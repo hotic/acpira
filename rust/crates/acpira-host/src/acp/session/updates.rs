@@ -13,7 +13,7 @@ use crate::acp::transcript::normalize::{activity_of, apply_async_task, apply_upd
 use crate::acp::transcript::plans::{capture_plan, plan_documents};
 use crate::acp::transcript::subagent_tree::{Route, RouteCtx};
 use crate::acp::transport::wire::{ExtensionUpdate, extension_of};
-use crate::acp::vendors::{claude_window, steering};
+use crate::acp::vendors::{claude_autonomous, claude_window, steering};
 
 const RUNNING_KINDS: [&str; 6] =
   ["user_message_chunk", "agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update", "plan"];
@@ -91,7 +91,7 @@ impl AcpSession {
       if !idle {
         c.peer.idle = false;
       } else if c.peer.detached {
-        self.end_detached(&mut c);
+        self.end_detached(&mut c, TurnStop::EndTurn);
       } else if c.phase.running {
         c.peer.idle = true;
       }
@@ -160,6 +160,8 @@ impl AcpSession {
       c.startup_banner = None;
       return;
     }
+    // Claude's task-notification followups stream with no prompt on the wire: show them running
+    self.open_autonomous(&mut c, &kind);
     let turn_index = current_turn_index(&c);
     let routed = {
       let Core { tree, state, .. } = &mut *c;
@@ -180,6 +182,12 @@ impl AcpSession {
         let _ = f.send(false);
       }
       c.usage.clear_timer();
+      // The autonomous cycle's result: its snapshot is stamped on the turn above, now it settles
+      if c.peer.autonomous && claude_autonomous::cycle_ended(&u) {
+        self.end_detached(&mut c, TurnStop::EndTurn);
+        self.touch(&mut c);
+        return;
+      }
     } else if c.phase.running {
       self.schedule_usage_poll(&mut c);
     }

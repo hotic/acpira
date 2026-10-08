@@ -642,7 +642,7 @@ impl AcpSession {
       c.perms.epoch += 1;
       c.status = SessionStatus::Closed;
       c.queue = PromptQueue::default();
-      c.peer.detached = false;
+      c.peer = PeerTurn::default();
       c.tree.settle("disposed");
       self.drain_terminal(&mut c);
       if c.phase.running {

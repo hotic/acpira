@@ -9,6 +9,7 @@ use acpira_shared::transcript::*;
 
 use crate::acp::session::AcpSession;
 use crate::acp::session::errors::auth_hint_of;
+use crate::acp::session::queue::PeerTurn;
 use crate::acp::transport::cancel::Cancel;
 use crate::acp::transport::process::ClientHandlers;
 use crate::acp::transport::rpc::{BoxFuture, RpcError};
@@ -127,7 +128,7 @@ impl ClientHandlers for SessionHandlers {
     c.tree.settle("connection-lost");
     s.drain_terminal(&mut c);
     s.disconnect_tasks(&mut c);
-    c.peer.detached = false;
+    c.peer = PeerTurn::default();
     s.settle(&mut c, TurnStop::Cancelled, None);
     s.touch(&mut c);
   }

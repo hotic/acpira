@@ -4,6 +4,7 @@
 
 pub mod antigravity;
 pub mod claude_auth;
+pub mod claude_autonomous;
 pub mod claude_thinking;
 pub mod claude_ultracode;
 pub mod claude_workflow;
@@ -69,6 +70,12 @@ impl Vendor {
 
   /// The adapter's `usage_update.size` is corrected from the catalogue and confirmed after a clean turn (`claude_window`)
   pub fn corrects_window(self) -> bool {
+    self == Vendor::Claude
+  }
+
+  /// The adapter streams turns of its own after `end_turn` (task-notification followups) and ends each with an
+  /// origin-stamped `usage_update` (`claude_autonomous`)
+  pub fn autonomous_cycles(self) -> bool {
     self == Vendor::Claude
   }
 

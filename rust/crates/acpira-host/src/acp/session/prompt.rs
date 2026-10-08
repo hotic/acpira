@@ -661,6 +661,11 @@ impl AcpSession {
     if let Some(sid) = c.acp_session_id.clone() {
       proc.notify("session/cancel", json!({ "sessionId": sid }));
     }
+    // An autonomous cycle has no prompt response to settle it: the stop does
+    if c.peer.autonomous {
+      self.end_detached(&mut c, TurnStop::Cancelled);
+      self.touch(&mut c);
+    }
   }
 }
 

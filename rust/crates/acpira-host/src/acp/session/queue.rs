@@ -11,7 +11,7 @@ use crate::acp::session::attachments::{PreparedPrompt, prepare_prompt, restore_d
 use crate::acp::session::prompt::{Origin, Staged};
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::transcript::normalize::push_steer;
-use crate::acp::vendors::steering;
+use crate::acp::vendors::{claude_autonomous, steering};
 use crate::i18n::{t, tp};
 use crate::util::random_uuid;
 
@@ -52,6 +52,10 @@ pub(crate) struct PeerTurn {
   /// A steer landed after the turn it aimed at had ended and the peer started a turn of its own (Codex `startedNewTurn`):
   /// the session stays running until the peer's thread reports idle
   pub detached: bool,
+  /// The detached turn is one the peer started with nothing on the wire (a Claude autonomous cycle,
+  /// `vendors::claude_autonomous`): its result's `usage_update` ends it, and a stop settles it locally since no prompt
+  /// response will
+  pub autonomous: bool,
 }
 
 impl AcpSession {
@@ -276,15 +280,36 @@ impl AcpSession {
     }
   }
 
-  /// The detached peer turn reported its thread idle: settle it like a prompt response and let the queue move
-  pub(crate) fn end_detached(self: &Arc<Self>, c: &mut Core) {
+  /// The detached peer turn reported its thread idle (or, for an autonomous cycle, its result or a stop): settle it like a
+  /// prompt response and let the queue move
+  pub(crate) fn end_detached(self: &Arc<Self>, c: &mut Core, stop: TurnStop) {
     c.peer.detached = false;
+    let autonomous = std::mem::take(&mut c.peer.autonomous);
     if c.phase.running {
-      self.settle(c, TurnStop::EndTurn, None);
+      self.settle(c, stop, None);
     }
-    self.log("detached turn ended (thread idle)");
+    self.log(if autonomous { "autonomous cycle ended" } else { "detached turn ended (thread idle)" });
     let me = self.clone();
-    tokio::spawn(async move { me.after_prompt(false, TurnStop::EndTurn) });
+    tokio::spawn(async move { me.after_prompt(false, stop) });
+  }
+
+  /// Turn content with nothing on the wire from a peer that runs cycles of its own (Claude's task-notification
+  /// followups): the session shows the last agent turn running again until the cycle's result arrives
+  pub(crate) fn open_autonomous(&self, c: &mut Core, kind: &str) {
+    if !self.vendor.autonomous_cycles()
+      || c.replaying
+      || c.phase.running
+      || c.peer.detached
+      || c.status != SessionStatus::Ready
+      || !claude_autonomous::CYCLE_START_KINDS.contains(&kind)
+      || !matches!(c.state.turns.last(), Some(Turn::Agent(_)))
+    {
+      return;
+    }
+    c.peer.detached = true;
+    c.peer.autonomous = true;
+    self.reopen_for_detached(c);
+    self.log(&format!("autonomous cycle started ({kind})"));
   }
 
   /// The steer did not join the turn: the entry is queued again, first in line when the turn it missed has already ended
