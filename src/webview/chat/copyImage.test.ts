@@ -39,6 +39,17 @@ describe('copyImage', () => {
     expect(new Uint8Array(await written[0]!.arrayBuffer())).toEqual(PNG_BYTES);
   });
 
+  it('decodes a data: URL in place instead of fetching it', async () => {
+    const { written } = stubClipboard();
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+
+    await copyImage(`data:image/png;base64,${btoa(String.fromCharCode(...PNG_BYTES))}`, 'image/png');
+    expect(fetch).not.toHaveBeenCalled();
+    expect(written[0]?.type).toBe('image/png');
+    expect(new Uint8Array(await written[0]!.arrayBuffer())).toEqual(PNG_BYTES);
+  });
+
   it('converts a JPEG mislabelled as PNG instead of trusting the declared type', async () => {
     const { written } = stubClipboard();
     const close = vi.fn();

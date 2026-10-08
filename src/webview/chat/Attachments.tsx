@@ -6,13 +6,23 @@ import { t } from '../i18n';
 import { cn } from '../ui/cn';
 import { Lightbox } from './Lightbox';
 import { TextPeek } from './TextPeek';
-import { OpenToolFileContext, parseFileLink } from './fileLinks';
+import { OpenBlobContext, OpenToolFileContext, parseFileLink } from './fileLinks';
 import { QuoteChip } from './Quotes';
 
-// An image open in the Lightbox: the source to show and the name for labels
+// An image open in the Lightbox: the source to show, the name for labels, and what its right-click menu needs
+// (the MIME type for Copy image, an editor opener when the pixels are a stored blob)
 interface Preview {
   src: string;
   name?: string;
+  mimeType?: string;
+  openInEditor?: () => void;
+}
+
+// The Lightbox state for an attachment image shown from `src`; a sent image's blob also opens in an editor tab
+function previewOf(a: Named, src: string, openBlob?: (blob: string) => void): Preview {
+  if (a.kind !== 'image') return { src, name: a.name };
+  const blob = 'blob' in a ? a.blob : undefined;
+  return { src, name: a.name, mimeType: a.mimeType, openInEditor: blob && openBlob ? () => openBlob(blob) : undefined };
 }
 
 // A text chip opened for reading; `url` doubles as the race token — a blob answer lands only while its peek is still the one on screen
@@ -156,12 +166,12 @@ export function DraftChips({ drafts, before, onRemove, onUpdate }: {
             icon={chipIcon(d)}
             title={chipTitle(d)}
             src={d.kind === 'image' ? `data:${d.mimeType};base64,${d.data}` : undefined}
-            onPreview={src => setPreview({ src, name: d.name })}
+            onPreview={src => setPreview(previewOf(d, src))}
             onOpen={openFor(d, { openFile, peek })}
           />
         </Removable>
       ))}
-      {preview && <Lightbox src={preview.src} name={preview.name} onClose={() => setPreview(null)} />}
+      {preview && <Lightbox {...preview} onClose={() => setPreview(null)} />}
       {peek.card}
     </div>
   );
@@ -173,6 +183,7 @@ export function TurnAttachments({ attachments, blobUrl }: { attachments: Attachm
   const [preview, setPreview] = useState<Preview | null>(null);
   const peek = useTextPeek();
   const openFile = useContext(OpenToolFileContext);
+  const openBlob = useContext(OpenBlobContext);
   const { quotes, named } = split(attachments);
   return (
     <div className="flex shrink-0 flex-wrap items-start gap-gap">
@@ -186,11 +197,11 @@ export function TurnAttachments({ attachments, blobUrl }: { attachments: Attachm
           icon={chipIcon(a)}
           src={a.kind === 'image' && blobUrl && a.blob ? blobUrl(a.blob) : undefined}
           title={chipTitle(a)}
-          onPreview={src => setPreview({ src, name: a.name })}
+          onPreview={src => setPreview(previewOf(a, src, openBlob))}
           onOpen={openFor(a, { blobUrl, openFile, peek })}
         />
       ))}
-      {preview && <Lightbox src={preview.src} name={preview.name} onClose={() => setPreview(null)} />}
+      {preview && <Lightbox {...preview} onClose={() => setPreview(null)} />}
       {peek.card}
     </div>
   );
@@ -200,6 +211,7 @@ export function TurnAttachments({ attachments, blobUrl }: { attachments: Attachm
 export function AttachmentTiles({ attachments, blobUrl }: { attachments: Attachment[]; blobUrl?: (blob: string) => string }) {
   const [preview, setPreview] = useState<Preview | null>(null);
   const peek = useTextPeek();
+  const openBlob = useContext(OpenBlobContext);
   return (
     <span className="flex shrink-0 self-center items-center gap-1">
       {split(attachments).quotes.length > 0 && <QuoteChip quotes={split(attachments).quotes.map(q => q.item)} />}
@@ -207,14 +219,14 @@ export function AttachmentTiles({ attachments, blobUrl }: { attachments: Attachm
         const key = chipKey(a, i);
         const src = a.kind === 'image' && blobUrl && a.blob ? blobUrl(a.blob) : undefined;
         return src
-          ? <button key={key} type="button" title={a.name} aria-label={t('common.previewImage', { name: a.name ?? t('common.image') })} onClick={() => setPreview({ src, name: a.name })}
+          ? <button key={key} type="button" title={a.name} aria-label={t('common.previewImage', { name: a.name ?? t('common.image') })} onClick={() => setPreview(previewOf(a, src, openBlob))}
               className="flex size-lead shrink-0 cursor-zoom-in overflow-hidden rounded-xs outline-none hover:ring-1 hover:ring-fg-3 focus-visible:ring-1 focus-visible:ring-focus">
               <img src={src} alt="" className="size-full object-cover" />
             </button>
           : <AttachmentTag key={key} name={attachmentLabel(a)} image={isImage(a)} icon={chipIcon(a)} title={chipTitle(a)}
               onOpen={openFor(a, { blobUrl, peek })} />;
       })}
-      {preview && <Lightbox src={preview.src} name={preview.name} onClose={() => setPreview(null)} />}
+      {preview && <Lightbox {...preview} onClose={() => setPreview(null)} />}
       {peek.card}
     </span>
   );
@@ -228,6 +240,7 @@ export function EditAttachments({ attachments, retained, blobUrl, disabled, onRe
   const [preview, setPreview] = useState<Preview | null>(null);
   const peek = useTextPeek();
   const openFile = useContext(OpenToolFileContext);
+  const openBlob = useContext(OpenBlobContext);
   if (!retained.length) return null;
   const { quotes, named } = split(attachments, retained);
   return (
@@ -243,11 +256,11 @@ export function EditAttachments({ attachments, retained, blobUrl, disabled, onRe
           <AttachmentTag thumbnail name={attachmentLabel(attachment)} src={src}
             image={isImage(attachment)} icon={chipIcon(attachment)}
             title={chipTitle(attachment)}
-            onPreview={src => setPreview({ src, name: attachment.name })}
+            onPreview={src => setPreview(previewOf(attachment, src, openBlob))}
             onOpen={openFor(attachment, { blobUrl, openFile, peek })} />
         </Removable>;
       })}
-      {preview && <Lightbox src={preview.src} name={preview.name} onClose={() => setPreview(null)} />}
+      {preview && <Lightbox {...preview} onClose={() => setPreview(null)} />}
       {peek.card}
     </>
   );
