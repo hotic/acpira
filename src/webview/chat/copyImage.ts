@@ -2,14 +2,26 @@ const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 export async function copyImage(src: string, mimeType: string): Promise<void> {
   // Pass the pending image to ClipboardItem before the user gesture expires while the blob loads.
-  const png = fetch(src).then(async response => {
-    if (!response.ok) throw new Error(`Image request failed: ${response.status}`);
-    const blob = await response.blob();
+  const png = readImage(src).then(async blob => {
     // Trust the bytes rather than the declared MIME type: the clipboard rejects a PNG entry that does not decode as PNG
     if (await isPng(blob)) return new Blob([blob], { type: 'image/png' });
     return toPng(await decode(blob, mimeType));
   });
   await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+}
+
+// A composer draft previews from a data: URL, which the webview CSP's connect-src keeps fetch() from reading,
+// so those bytes are decoded in place; everything else (blob store resources) is fetched
+async function readImage(src: string): Promise<Blob> {
+  const inline = /^data:([^;,]*)(;base64)?,(.*)$/s.exec(src);
+  if (inline) {
+    const [, type = '', base64, payload = ''] = inline;
+    const text = base64 ? atob(payload) : decodeURIComponent(payload);
+    return new Blob([Uint8Array.from(text, c => c.charCodeAt(0))], { type });
+  }
+  const response = await fetch(src);
+  if (!response.ok) throw new Error(`Image request failed: ${response.status}`);
+  return response.blob();
 }
 
 async function isPng(blob: Blob): Promise<boolean> {
