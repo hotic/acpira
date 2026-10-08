@@ -1,5 +1,11 @@
 # Acpira
 
+[![CI](https://img.shields.io/github/actions/workflow/status/hotic/acpira/windows-compat.yml?branch=main&label=CI&logo=github)](https://github.com/hotic/acpira/actions/workflows/windows-compat.yml)
+[![VS Marketplace](https://vsmarketplacebadges.dev/version/hotic.acpira.svg?label=VS%20Marketplace&color=007ACC)](https://marketplace.visualstudio.com/items?itemName=hotic.acpira)
+[![Open VSX](https://img.shields.io/open-vsx/v/hotic/acpira?label=Open%20VSX&color=C160EF)](https://open-vsx.org/extension/hotic/acpira)
+[![JetBrains Plugin](https://img.shields.io/jetbrains/plugin/v/34192?label=JetBrains&color=FE315D)](https://plugins.jetbrains.com/plugin/34192-acpira)
+[![License](https://img.shields.io/github/license/hotic/acpira)](LICENSE)
+
 **Native harnesses. One considered interface.**
 
 Bring Grok, Devin, Kimi Code, Codex, Claude, OpenCode, Pi, and other ACP agents into VS Code, Cursor, and IntelliJ IDEA. Keep their execution engines, with clear execution history, inline approvals, and follow-ups that keep work moving.
