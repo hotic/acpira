@@ -152,10 +152,10 @@ Each agent has a settings page with its install and sign-in state, adapter versi
 
 ## Roadmap
 
-- More agent integrations: Antigravity, Cursor CLI, and others through ACP or adapters.
+- More agent integrations: Cursor CLI and others through ACP or adapters.
 - One place to configure models and sync settings to different agents.
-- Shared Skills and MCP management, beyond today's read-only view.
-- Shared prompts and project instructions across harnesses.
+- Installing skills from Git repositories and URLs into the shared set.
+- Per-agent instructions on top of the shared prompt.
 - Longer term: a standalone desktop app.
 
 See [ROADMAP.md](ROADMAP.md) for the planned directions.
