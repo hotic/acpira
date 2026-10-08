@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Workspace hooks**: a project's `.agents/hooks.json` gates every agent the same way, whatever its CLI does with hooks of its own. `context` files go with a session's first prompt; `beforeEdit` checks each edit before its permission card (auto-approval included) and again over the files a turn changed without asking; `afterTurn` reviews a finished turn. Hook scripts answer like Claude Code hooks (exit 2, or a JSON deny / block with a reason), so existing ones work unchanged. A blocked turn's findings go back to the agent as a hidden follow-up for up to `rounds` rounds (2 by default) while queued prompts wait; a hook that times out or fails only shows a warning. Agents learn the format from Acpira's MCP `workspace_hooks` tool, which also checks the project's file. Covered by fixture-agent tests; real CLIs remain unverified.
+- **Workspace hooks**: a project's `.agents/hooks.json` gates every agent the same way, whatever its CLI does with hooks of its own. `context` files go with a session's first prompt; `beforeEdit` checks each edit before its permission card (auto-approval included) and again over the files a turn changed without asking; `afterTurn` reviews a finished turn. Hook scripts answer like Claude Code hooks (exit 2, or a JSON deny / block with a reason), so existing ones work unchanged. A blocked turn's findings go back to the agent as a hidden follow-up for up to `rounds` rounds (2 by default) while queued prompts wait; a hook that times out or fails only shows a warning. A turn that is stopped, fails or runs out of quota is reviewed together with the next turn that finishes, Claude's background follow-up cycles go through the same gate, and an edit `beforeEdit` already passed at its permission card is not checked a second time. An unreadable `hooks.json` is reported instead of being treated as absent. Agents learn the format from Acpira's MCP `workspace_hooks` tool, which also checks the project's file. Covered by fixture-agent tests; real CLIs remain unverified.
 - Claude sessions expose an **Ultra** effort level after Max when dynamic workflows are available. It maps to the model's `xhigh` level (or its highest available level) and can be switched while keeping the native session.
 - Claude workflow subagents show their live process transcript in the inspector when the CLI writes a sidechain log.
 - Sessions can move between projects by drag and drop or the session menu, including filing the session in a category in the destination project.
@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Late autonomous or nested workflow packets no longer reopen a cancelled or completed root turn.
+- Late autonomous or nested workflow packets no longer reopen a cancelled or completed root turn, while a second background task in the same turn still reopens it for its own follow-up.
 - A Claude workflow subagent's final transcript entry appears even when its log file ends without a trailing newline.
 - Image previews and the Lightbox now use Acpira's image menu for Copy image and Open in editor instead of the webview's native context menu.
 - The quote toolbar stays below the composer and prompt cards, and disappears when its quote scrolls out of the thread.
