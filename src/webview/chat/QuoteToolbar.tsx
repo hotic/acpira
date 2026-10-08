@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { MessageSquarePlus } from 'lucide-react';
 import type { Draft } from '@shared/transcript';
 import { t } from '../i18n';
-import { Popover } from '../ui/Popover';
+import { cn } from '../ui/cn';
+import { Popover, ShellLayerContext } from '../ui/Popover';
 import { CommentEditor } from './Quotes';
 import { updateMainComposer } from './useComposerDraft';
 
@@ -71,6 +72,41 @@ export function QuoteToolbar({ root }: { root: RefObject<HTMLElement | null> }) 
 
   useEffect(() => () => paint(), []);
 
+  // The toolbar belongs to the transcript, so it lives in a clip layer over the thread instead of the shell layer: the composer
+  // dock below and the header above are outside the layer, and its top edge follows the bottom of the prompt card of the exchange
+  // holding the quote (stuck or not), so neither the composer nor the prompt card is ever covered by it
+  const layer = useRef<HTMLDivElement>(null);
+  const range = picked?.range;
+  useLayoutEffect(() => {
+    const el = layer.current;
+    const region = el?.offsetParent;
+    const thread = root.current?.closest<HTMLElement>('[data-thread]');
+    if (!el || !region || !thread || !range) return;
+    const start = range.startContainer;
+    const prompt = (start instanceof Element ? start : start.parentElement)?.closest('[data-exchange]')?.querySelector<HTMLElement>('[data-sticky-prompt]');
+    // A quote taken from the prompt itself has nothing above it to give way to
+    const cover = prompt && !prompt.contains(start) ? prompt : undefined;
+    if (!cover) return;
+    // Runs before the positioner's own scroll update reads the layer's offset
+    const place = () => {
+      const edge = cover.getBoundingClientRect().bottom;
+      el.style.top = `${Math.max(0, edge - region.getBoundingClientRect().top)}px`;
+      // A quote gone under the card hides the bare button like one scrolled out of the thread (data-anchor-hidden below)
+      el.toggleAttribute('data-covered', !added && range.getBoundingClientRect().bottom <= edge);
+    };
+    place();
+    thread.addEventListener('scroll', place, { passive: true });
+    const observer = new ResizeObserver(place);
+    observer.observe(thread);
+    observer.observe(cover);
+    return () => {
+      thread.removeEventListener('scroll', place);
+      observer.disconnect();
+      el.style.top = '';
+      el.removeAttribute('data-covered');
+    };
+  }, [range, root, added]);
+
   const close = () => {
     paint();
     setAdded(undefined);
@@ -90,26 +126,32 @@ export function QuoteToolbar({ root }: { root: RefObject<HTMLElement | null> }) 
     close();
   };
 
-  const range = picked?.range;
   return (
-    <Popover.Root open={!!picked} onOpenChange={next => { if (!next) close(); }}>
-      <Popover.Portal>
-        <Popover.Positioner side="top" align="center" width={added ? 'xl' : 'anchor'} className={added ? undefined : 'w-auto'}
-          anchor={range ? { getBoundingClientRect: () => range.getBoundingClientRect(), contextElement: range.startContainer.parentElement ?? undefined } : null}>
-          <Popover.Popup data-quote-toolbar>
-            {added
-              ? <CommentEditor className="w-full" onSave={comment} onCancel={() => { document.getSelection()?.removeAllRanges(); close(); }} />
-              : <button type="button"
-                  // Pressing the button must not collapse the selection it acts on
-                  onMouseDown={e => e.preventDefault()}
-                  onClick={add}
-                  className="inline-flex h-ctl-sm items-center gap-1 rounded-sm px-2 text-3 font-medium text-fg-1 outline-none hover:bg-hover focus-visible:bg-hover [&_svg]:size-icon [&_svg]:text-fg-3">
-                  <MessageSquarePlus strokeWidth={1.5} />
-                  {t('quote.add')}
-                </button>}
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
+    <>
+      {/* Sits under the plan dock and toasts (later siblings at the same z) and under every shell-layer overlay */}
+      <div ref={layer} data-quote-layer className="pointer-events-none absolute inset-0 z-10 overflow-hidden data-[covered]:invisible" />
+      <ShellLayerContext.Provider value={layer}>
+        <Popover.Root open={!!picked} onOpenChange={next => { if (!next) close(); }}>
+          <Popover.Portal>
+            {/* The bare button leaves once the quote has scrolled out of the thread; the comment field keeps its focus and is only clipped */}
+            <Popover.Positioner side="top" align="center" width={added ? 'xl' : 'anchor'} className={cn('pointer-events-auto', !added && 'w-auto data-[anchor-hidden]:invisible')}
+              anchor={range ? { getBoundingClientRect: () => range.getBoundingClientRect(), contextElement: range.startContainer.parentElement ?? undefined } : null}>
+              <Popover.Popup data-quote-toolbar>
+                {added
+                  ? <CommentEditor className="w-full" onSave={comment} onCancel={() => { document.getSelection()?.removeAllRanges(); close(); }} />
+                  : <button type="button"
+                      // Pressing the button must not collapse the selection it acts on
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={add}
+                      className="inline-flex h-ctl-sm items-center gap-1 rounded-sm px-2 text-3 font-medium text-fg-1 outline-none hover:bg-hover focus-visible:bg-hover [&_svg]:size-icon [&_svg]:text-fg-3">
+                      <MessageSquarePlus strokeWidth={1.5} />
+                      {t('quote.add')}
+                    </button>}
+              </Popover.Popup>
+            </Popover.Positioner>
+          </Popover.Portal>
+        </Popover.Root>
+      </ShellLayerContext.Provider>
+    </>
   );
 }

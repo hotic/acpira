@@ -690,7 +690,7 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
           // transcript render budget); the clip it brings is pushed out by --hit on the sides and bottom, where row hit areas and
           // card shadows reach past the column, and the top edge stays put for the sentinel. An exchange ending in a reply's action
           // row pulls the next one up to a row gap: the row's own height already separates them (TurnActions).
-          <section key={exchange.key} className="relative -mx-hit -mb-hit flex min-w-0 flex-col gap-msg px-hit pb-hit contain-paint has-[>:last-child>[data-turn-actions]:last-child]:-mb-[calc(var(--spacing-hit)+var(--spacing-msg-join))]">
+          <section key={exchange.key} data-exchange className="relative -mx-hit -mb-hit flex min-w-0 flex-col gap-msg px-hit pb-hit contain-paint has-[>:last-child>[data-turn-actions]:last-child]:-mb-[calc(var(--spacing-hit)+var(--spacing-msg-join))]">
             {exchange.messages}
           </section>
         ))}
