@@ -475,6 +475,19 @@ impl LogCursor {
     self.feed(&buf)
   }
 
+  /// Flush a final JSONL record when the agent has stopped and the file ended without a newline.
+  ///
+  /// While a workflow is running, an unterminated line may still be in flight and must stay buffered. Once the
+  /// workflow task has ended, the final read is the last chance to consume a valid record from a file that does not
+  /// end in `\n`.
+  pub fn finish(&mut self) -> Vec<Value> {
+    if self.stopped || self.skipping || self.partial.is_empty() {
+      return vec![];
+    }
+    let line = std::mem::take(&mut self.partial);
+    self.parser.line(&line)
+  }
+
   /// Complete lines of `bytes` (after what an earlier read left) → updates
   pub fn feed(&mut self, bytes: &[u8]) -> Vec<Value> {
     let mut out = vec![];
@@ -576,6 +589,15 @@ mod tests {
     let cut = all.len() - 20;
     assert_eq!(cursor.feed(&all[..cut]).len(), 10);
     assert_eq!(kinds(&cursor.feed(&all[cut..])), ["agent_message_chunk"]);
+  }
+
+  #[test]
+  fn a_final_line_without_a_newline_is_flushed_when_the_agent_ends() {
+    let mut cursor = LogCursor::new("/w");
+    let line = FIXTURE.lines().last().unwrap();
+    assert!(cursor.feed(line.as_bytes()).is_empty());
+    assert_eq!(kinds(&cursor.finish()), ["agent_message_chunk"]);
+    assert!(cursor.finish().is_empty());
   }
 
   #[test]

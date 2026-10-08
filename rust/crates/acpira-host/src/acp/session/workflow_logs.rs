@@ -110,6 +110,11 @@ impl AcpSession {
                 break;
               }
             }
+            // A finished JSONL file may omit its final newline. The running poll keeps that partial record buffered,
+            // while the final read can safely flush it after the workflow task has ended.
+            if !j.running {
+              updates.extend(j.cursor.finish());
+            }
           }
           (j, updates)
         })
