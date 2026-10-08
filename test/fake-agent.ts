@@ -17,6 +17,7 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // Fake ACP agent: runs in a child process, plays different scripts based on the prompt text, feeding events to the AcpSession tests
 // Scripts: default → thought + text; "tool" → tool call + permission request; "slow" → streams slowly, waits for cancel; "auth" → session/new fails with -32000;
 // "big" → reports a very large usage; "/compact" → compaction_update in_progress → completed, usage drops;
+// "autonomous" → claude-agent-acp's task-notification followup streaming after end_turn and ending with an origin-stamped usage_update ("autonomous-hang": no end);
 // "fail" → session/prompt rejects with a typed upstream error the way Devin does (once: the same prompt succeeds when sent again);
 // "refuse" → stopReason refusal with no output; "truncate" → some text, then stopReason max_tokens; "mode:<id>" → current_mode_update to that mode;
 // "tool-downgrade" / "tool-downgrade-late" → OpenCode's write: a permission request whose embedded toolCall is a low-fidelity copy
@@ -712,6 +713,23 @@ const app = acp.agent({ name: 'fake-agent' })
         }, 80);
       }
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'started in background' } });
+      return { stopReason: 'end_turn' };
+    }
+
+    if (text === 'autonomous' || text === 'autonomous-hang') {
+      // claude-agent-acp 0.84.0's autonomous cycle: the turn ends while a background Bash runs, its task notification wakes the
+      // model with no prompt on the wire, and the followup streams as plain updates until its result's usage_update, stamped
+      // `_claude/origin`. =autonomous-hang never sends that result (the cycle only ends by a stop)
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'waiting in background' } });
+      setTimeout(() => {
+        void (async () => {
+          await send({ sessionUpdate: 'usage_update', used: 10, size: 1000 });
+          await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' followup' } });
+          await new Promise(r => setTimeout(r, 300));
+          if (text === 'autonomous-hang') return;
+          await send({ sessionUpdate: 'usage_update', used: 20, size: 1000, _meta: { '_claude/origin': { kind: 'task-notification' } } } as never);
+        })();
+      }, 80);
       return { stopReason: 'end_turn' };
     }
 
