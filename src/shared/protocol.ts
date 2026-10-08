@@ -177,8 +177,9 @@ export type WebviewMsg =
   | { type: 'setSessionCategory'; id: string; category: string | null }
   // `file` with a create: file that session under the new category in the same step
   | ({ type: 'categoryOp'; file?: string } & CategoryOp)
-  // Re-home a session into this window's workspace folder: its cwd becomes the folder (the agent works there from the next open on)
-  | { type: 'moveSession'; id: string }
+  // Re-home a session into another project folder: `cwd` (absent: this window's workspace folder) becomes its cwd and the agent
+  // works there from the next open on; `category`, one of that project's, files it there in the same step
+  | { type: 'moveSession'; id: string; cwd?: string; category?: string }
   // Start a new session of the same agent / account / project whose transcript is this session's turns up to and including
   // `turnIndex` (an agent turn); the native context is rebuilt from that transcript on the fork's first prompt, like editTurn
   | { type: 'forkSession'; sessionId: string; turnIndex: number }

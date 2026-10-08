@@ -17,7 +17,8 @@ import { useStableList } from '../ui/useStableList';
 import { useMergedRefs } from '../ui/mergeRefs';
 import { FollowContext, useBottomFollow } from './useBottomFollow';
 import { Header } from './Header';
-import { SessionList } from './SessionList';
+import { SessionList, projectName } from './SessionList';
+import type { MoveTarget } from './sessionTree';
 import { AgentMessage } from './Turns';
 import { HistoryComposerContext, HistoryContext, HistoryMessage } from './HistoryMessage';
 import { QuoteToolbar } from './QuoteToolbar';
@@ -70,8 +71,9 @@ export interface ShellHandlers {
   deleteSession: (id: string) => void;
   restoreSession: (id: string) => void;
   pinSession: (id: string, pinned: boolean) => void;
-  // Project scoping of the list: re-home a session into this window's workspace folder
-  moveSession?: (id: string) => void;
+  // Project scoping of the list: re-home a session into another project (absent: this window's workspace folder), optionally
+  // filed under one of that project's categories
+  moveSession?: (id: string, to?: MoveTarget) => void;
   // User categories of the session list: file a session (null takes it out) / edit the shared category list
   setSessionCategory?: (id: string, category: string | null) => void;
   categoryOp?: (op: CategoryOp, file?: string) => void;
@@ -313,11 +315,11 @@ export function Shell(p: ShellProps) {
       on.deleteSession(id);
       pushToast({ key: id, text: t('session.deleted', { title }), undo: () => { on.restoreSession(id); dropToast(id); } });
     },
-    // A moved session leaves a "this project" list at once (or loses its project tag under "all"); the toast says where it went
-    moveSession: on.moveSession && (id => {
+    // A moved session leaves a "this project" list at once (or changes group under "all"); the toast says where it went
+    moveSession: on.moveSession && ((id, to) => {
       const title = p.sessions.find(s => s.id === id)?.title ?? t('session.fallbackTitle');
-      on.moveSession!(id);
-      pushToast({ key: `m${id}`, text: t('session.moved', { title }) });
+      on.moveSession!(id, to);
+      pushToast({ key: `m${id}`, text: to && to.cwd !== p.workspace ? t('session.movedTo', { title, project: projectName(to.cwd) }) : t('session.moved', { title }) });
     }),
   }), [on, p.sessions, pushToast, dropToast]);
   const blobUrl = useMemo(() => (p.blobBase && p.activeSessionId ? (blob: string) => `${p.blobBase}/${p.activeSessionId}/${blob}` : undefined), [p.blobBase, p.activeSessionId]);

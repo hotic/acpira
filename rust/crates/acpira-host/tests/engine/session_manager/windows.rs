@@ -258,5 +258,26 @@ async fn the_workspace_scope_keeps_most_recent_and_deletion_picks_inside_the_fol
   m.handle(json!({ "type": "stop" })).await;
   sending.await.unwrap();
   assert_eq!(m.active().unwrap()["cwd"], proj("d"));
+
+  // An explicit destination (dragged onto another project's group): the live idle d1 moves into project F, filed under F's
+  // category in the same step; a category of another project leaves it unfiled
+  let f = proj("f");
+  m.handle(json!({ "type": "categoryOp", "op": "create", "id": "c-f", "name": "F", "cwd": f })).await;
+  m.handle(json!({ "type": "categoryOp", "op": "create", "id": "c-g", "name": "G", "cwd": proj("g") })).await;
+  m.handle(json!({ "type": "moveSession", "id": d1, "cwd": f, "category": "c-f" })).await;
+  assert_eq!(m.active_id().as_deref(), Some(d1.as_str()));
+  expect_match(m.sessions().into_iter().find(|s| s["id"] == d1.as_str()).unwrap(), json!({ "cwd": f, "category": "c-f" }));
+  // The stored a1 moves out of B into G, while c-f belongs to F: it lands there unfiled
+  let g = proj("g");
+  m.handle(json!({ "type": "moveSession", "id": a1, "cwd": g, "category": "c-f" })).await;
+  let moved = m.sessions().into_iter().find(|s| s["id"] == a1.as_str()).unwrap();
+  assert_eq!(moved["cwd"], g);
+  assert!(moved.get("category").is_none_or(Value::is_null), "{moved}");
+  assert_eq!(store.load(&a1).await.unwrap().cwd, g);
+  // A folder that no longer exists refuses, and the record stays where it was
+  let gone = dir.path().join("proj").join("never").to_string_lossy().into_owned();
+  m.handle(json!({ "type": "moveSession", "id": a1, "cwd": gone })).await;
+  assert!(m.toasts().iter().any(|t| t.contains("never")), "{:?}", m.toasts());
+  assert_eq!(store.load(&a1).await.unwrap().cwd, g);
   m.dispose().await;
 }

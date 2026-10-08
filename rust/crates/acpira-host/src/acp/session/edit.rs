@@ -17,7 +17,7 @@ use crate::acp::transport::process::AgentProcess;
 use crate::acp::session::attachments::{PromptCaps, prepare_prompt, restore_drafts};
 use crate::acp::transcript::normalize::{apply_config_options, config_option_set_value};
 use crate::acp::session::{AcpSession, Core};
-use crate::acp::session::prompt::Staged;
+use crate::acp::session::prompt::{Origin, Staged};
 use crate::i18n::{t, tp};
 use crate::json::{len16, slice16};
 use crate::limits::EDIT_CONTEXT_MAX_BYTES;
@@ -568,10 +568,14 @@ impl AcpSession {
     result
   }
 
-  /// An empty edited failure may not have reached the peer, so its context is rebuilt; once output exists the whole
-  /// attempt stays and the same native session continues
+  /// Retry the last turn that stopped on an error. Once the attempt produced output the peer already holds the message and
+  /// the work done so far, so the attempt stays and a hidden continue prompt carries the task on (sending the message
+  /// again would have the agent start over on top of its own partial work). An empty attempt may never have reached the
+  /// peer: it is dropped and the message sent again, an empty edited failure rebuilding its context. A continue that fails
+  /// is retried with another continue. Retrying a turn a Retry itself opened restarts the connection first (`reconnect`:
+  /// a live process that keeps failing on its old session, Grok's -32603, needs a fresh one), so a single Retry covers both
   pub async fn retry_turn(self: &Arc<Self>) -> Result<()> {
-    let (user, agent, len, turn_id_check, plan_id) = {
+    let (user, agent, len, turn_id_check, plan_id, again) = {
       let c = self.core.lock();
       if c.phase.running || c.status != SessionStatus::Ready {
         return Ok(());
@@ -582,7 +586,8 @@ impl AcpSession {
       else {
         return Ok(());
       };
-      if user.auto == Some(true) {
+      // Only the continues (Retry's own, an account switch's) are retried among automatic turns; /compact is not
+      if user.auto == Some(true) && !is_continue(user) {
         return Ok(());
       }
       if is_context_length_error(agent.error.as_ref()) {
@@ -592,9 +597,37 @@ impl AcpSession {
         return Ok(());
       }
       let plan_id = plan_execution_id(&Turn::User(user.clone()), len.checked_sub(3).and_then(|i| c.state.turns.get(i)));
-      (user.clone(), agent.clone(), len, agent.started_at, plan_id)
+      let again = agent.started_at.is_some() && c.retried_turn == agent.started_at;
+      (user.clone(), agent.clone(), len, agent.started_at, plan_id, again)
     };
     let has_output = agent.blocks.iter().any(|b| !matches!(b, AgentBlock::Text(x) if x.markdown.trim().is_empty()));
+    let continuing = has_output || is_continue(&user);
+    if again {
+      self.log("retry: the retried turn failed again, reconnecting first");
+      self.reconnect().await?;
+      if self.status() != SessionStatus::Ready {
+        return Ok(());
+      }
+    }
+    if continuing {
+      {
+        let mut c = self.core.lock();
+        let same = matches!(c.state.turns.last(), Some(Turn::Agent(a)) if a.started_at == turn_id_check && *a == agent);
+        if c.phase.running || c.status != SessionStatus::Ready || !same {
+          return Ok(());
+        }
+        // A continue that failed before doing anything leaves no trace; the turn it continues keeps its own error row
+        if !has_output {
+          let keep = c.state.turns.len() - 2;
+          c.state.turns.truncate(keep);
+          c.tree.truncate(keep);
+        }
+        c.retry_pending = true;
+      }
+      self.clone().prompt_inner(t("host.retryContinuePrompt"), vec![], Origin::Retry, None, None).await;
+      self.core.lock().retry_pending = false;
+      return Ok(());
+    }
     if user.edited && !has_output {
       let settings = user.settings.clone().unwrap_or_else(|| capture_turn_settings(&self.core.lock().state.controls));
       let n = user.attachments.as_ref().map(Vec::len).unwrap_or(0);
@@ -621,13 +654,18 @@ impl AcpSession {
       if c.phase.running || c.status != SessionStatus::Ready || !same {
         return Ok(());
       }
-      if !has_output {
-        let keep = c.state.turns.len() - 2;
-        c.state.turns.truncate(keep);
-        c.tree.truncate(keep);
-      }
+      let keep = c.state.turns.len() - 2;
+      c.state.turns.truncate(keep);
+      c.tree.truncate(keep);
+      c.retry_pending = true;
     }
     self.prompt(user.text, drafts, false, None, plan_id).await;
+    self.core.lock().retry_pending = false;
     Ok(())
   }
+}
+
+/// A hidden turn that asks the agent to carry on from its own context: Retry's, or the one after an account switch
+fn is_continue(user: &UserTurn) -> bool {
+  user.auto == Some(true) && matches!(user.auto_reason, Some(AutoReason::Retry | AutoReason::AccountSwitch))
 }

@@ -1930,7 +1930,7 @@ impl SessionManager {
           self.set_session_category(&session, Some(id.clone())).await?;
         }
       }
-      W::MoveSession { id } => self.move_session(&id).await?,
+      W::MoveSession { id, cwd, category } => self.move_session(&id, cwd, category).await?,
       W::ForkSession { session_id, turn_index } => self.fork_session(v, &session_id, turn_index).await?,
       W::ObserveSubagent { session_id, subagent_id } => {
         {
@@ -2240,19 +2240,35 @@ impl SessionManager {
     })
   }
 
-  /// Re-home a session into this window's workspace folder
-  pub async fn move_session(self: &Arc<Self>, id: &str) -> Result<()> {
+  /// Re-home a session into another project folder: `to` (a project the list shows), or this window's workspace folder
+  /// without one. `category` files it under one of the destination project's categories in the same step; any other id
+  /// leaves it unfiled there
+  pub async fn move_session(self: &Arc<Self>, id: &str, to: Option<String>, category: Option<String>) -> Result<()> {
     if !is_session_id(id) {
       return Ok(());
     }
-    let _hold = self.hold_record(id).await?;
+    let hold = self.hold_record(id).await?;
     if self.deps.chatgpt.as_ref().is_some_and(|c| c.owns(id)) {
       return Err(anyhow!(t("chatgpt.projectBound")));
     }
-    let cwd = (self.deps.cwd)();
+    let cwd = match to {
+      // The agent is spawned in the folder from the next open on, so a project whose folder is gone cannot take it
+      Some(dir) if !std::path::Path::new(&dir).is_dir() => {
+        return Err(anyhow!(tp("host.moveFolderMissing", &[("folder", &dir)])));
+      }
+      Some(dir) => dir,
+      None => (self.deps.cwd)(),
+    };
+    // A category belongs to the project the session leaves; only one of the destination's survives the move
+    let category = self.category_for(category, &cwd).flatten();
     if let Some(live) = self.live(id) {
       if live.cwd == cwd {
-        return Ok(());
+        // Already there: a category given is still a filing
+        if category.is_none() {
+          return Ok(());
+        }
+        live.set_category(category);
+        return self.save_now(live, hold).await;
       }
       if live.is_running() {
         return Err(anyhow!(t("host.moveWhileRunning")));
@@ -2260,8 +2276,11 @@ impl SessionManager {
       let mut record = live.to_record();
       self.forget(id);
       record.cwd = cwd;
-      // A category belongs to the project the session leaves
-      record.category = None;
+      // Filing unpins, as everywhere else
+      if category.is_some() {
+        record.pinned = None;
+      }
+      record.category = category;
       self.deps.store.flush(Arc::new(record.clone())).await.ok();
       self.replace_summary(&record);
       for v in self.viewers_on(id, None) {
@@ -2270,11 +2289,18 @@ impl SessionManager {
       }
       return Ok(());
     }
-    self.patch_record(id, |r| {
-      r.cwd = cwd;
-      r.category = None;
-    })
-    .await
+    self
+      .patch_record(id, |r| {
+        if r.cwd == cwd && category.is_none() {
+          return;
+        }
+        r.cwd = cwd;
+        if category.is_some() {
+          r.pinned = None;
+        }
+        r.category = category;
+      })
+      .await
   }
 
   /// Fork from an agent turn: a fresh session whose transcript is the source's turns up to that reply
@@ -2456,6 +2482,7 @@ impl SessionManager {
           compacted: t("export.label.compacted"),
           auto_compact: t("export.label.autoCompact"),
           auto_continue: t("export.label.autoContinue"),
+          auto_retry: t("export.label.autoRetry"),
           error: t("export.label.error"),
         };
         let store = self.deps.store.clone();

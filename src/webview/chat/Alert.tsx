@@ -9,9 +9,8 @@ import { t } from '../i18n';
 
 export interface AlertProps {
   turn: AgentTurn;
-  // Send the same prompt again (error) / rebuild the connection and resume the session (error) / ask the agent to carry on (limits)
+  // Carry the failed turn on, or send an empty attempt again; a second failure reconnects first (error) / ask the agent to carry on (limits)
   onRetry: () => void;
-  onReconnect: () => void;
   onContinue: () => void;
   onDismiss: () => void;
   onCompact?: () => void;
@@ -20,9 +19,9 @@ export interface AlertProps {
 }
 
 // A turn stopped short (the same card Cursor pins above its composer, in our own tones): one row holds a colorless glyph, what happened,
-// the copyable detail, and the action — send it again or reconnect and resume for an error, carry on for a limit, nothing for a refusal —
+// the copyable detail, and the action — retry for an error, carry on for a limit, nothing for a refusal —
 // with ✕ hiding the card (the transcript keeps the row); the agent's words sit below in small type when there are any
-export function Alert({ turn, onRetry, onReconnect, onContinue, onDismiss, onCompact, onNewSession }: AlertProps) {
+export function Alert({ turn, onRetry, onContinue, onDismiss, onCompact, onNewSession }: AlertProps) {
   const stop = turn.stop as ShortStop;
   const err = turn.error;
   const contextTooLong = stop === 'error' && isContextLengthError(err);
@@ -38,10 +37,9 @@ export function Alert({ turn, onRetry, onReconnect, onContinue, onDismiss, onCom
           <span className="shrink-0 text-2 font-medium text-fg-1">{t(contextTooLong ? 'alert.contextLength.title' : TITLE[stop])}</span>
           {copyable && <CopyDetail text={copyable} label={detail} />}
           <span className="flex-1" />
-          {/* An AIR sessionFailure names its own remedies; 'login' has no button here because the Notice
-              card owns sign-in, and Reconnect is host guesswork the payload did not ask for */}
-          {stop === 'error' && !contextTooLong && err?.actions === undefined && <Button variant="secondary" title={t('alert.reconnectHint')} onClick={onReconnect}>{t('alert.reconnect')}</Button>}
-          {stop === 'error' && !contextTooLong && (err?.actions === undefined || err.actions.includes('retry')) && <Button variant="primary" onClick={onRetry}>{t('common.retry')}</Button>}
+          {/* An AIR sessionFailure names its own remedies; 'login' has no button here because the Notice card owns sign-in.
+              Retry is the only remedy otherwise: it continues where the turn stopped and reconnects by itself on a repeat failure */}
+          {stop === 'error' && !contextTooLong && (err?.actions === undefined || err.actions.includes('retry')) && <Button variant="primary" title={t('alert.retryHint')} onClick={onRetry}>{t('common.retry')}</Button>}
           {stop === 'error' && !contextTooLong && err?.actions?.includes('new_session') === true && onNewSession && <Button variant="secondary" onClick={onNewSession}>{t('notice.continueNew')}</Button>}
           {(stop === 'max_tokens' || stop === 'max_turn_requests') && <Button variant="primary" onClick={onContinue}>{t('alert.continue')}</Button>}
           <IconButton aria-label={t('common.close')} onClick={onDismiss} className="-my-1 -mr-1.5"><X strokeWidth={1.5} /></IconButton>

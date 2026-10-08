@@ -796,14 +796,17 @@ const app = acp.agent({ name: 'fake-agent' })
     if (text === 'context-too-long' && compactions === 0) {
       throw new acp.RequestError(-32013, 'The prompt to the model was too long. Try reducing the size of your context (including any rules, skills, etc.).', { 'cognition.ai/errorKind': 'internal', 'cognition.ai/retryable': true });
     }
-    // Typed upstream failure, once per distinct prompt text, before anything is streamed — the retry of the same prompt then runs the normal script
-    if (text.includes('fail') && (failed.get(text) ?? 0) < (text.includes('fail-twice') ? 2 : 1)) {
-      failed.set(text, (failed.get(text) ?? 0) + 1);
+    // Typed upstream failure, once per distinct prompt text, before anything is streamed — the retry of the same prompt then runs the normal script.
+    // Retry's hidden continue (the en host prompt) stands for the prompt that failed last in this session and shares its failure count
+    const failKey = text.startsWith(RETRY_CONTINUE_PREFIX) ? lastFailed.get(sid) ?? text : text;
+    if (failKey.includes('fail') && (failed.get(failKey) ?? 0) < (failKey.includes('fail-twice') ? 2 : 1)) {
+      failed.set(failKey, (failed.get(failKey) ?? 0) + 1);
+      lastFailed.set(sid, failKey);
       // A quota failure can arrive after useful output and completed workspace actions.
-      if (text.includes('fail-after-output')) {
+      if (failKey.includes('fail-after-output')) {
         await send({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'Checked the existing implementation.' } });
         await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Completed part of the requested work.' } });
-        const toolCallId = `before-quota-${failed.get(text)}`;
+        const toolCallId = `before-quota-${failed.get(failKey)}`;
         await send({ sessionUpdate: 'tool_call', toolCallId, title: 'Write completed.txt', kind: 'edit', status: 'in_progress' });
         await send({ sessionUpdate: 'tool_call_update', toolCallId, status: 'completed' });
       }
@@ -1444,6 +1447,9 @@ const cancelWaiters = new Map<string, (() => void)[]>();
 const lateTerminal = new Map<string, string[]>();
 // Prompts that have already failed once, so a retry of the same text goes through
 const failed = new Map<string, number>();
+// The prompt text that failed last, per session: what Retry's hidden continue picks up
+const lastFailed = new Map<string, string>();
+const RETRY_CONTINUE_PREFIX = 'The previous turn was cut off by an error.';
 
 // two select-type configOptions: reasoning level intentionally listed before model, verifying the client sorts by category
 const config: Record<string, string> = { model: 'm1', effort: 'high' };

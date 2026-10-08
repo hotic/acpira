@@ -168,6 +168,10 @@ pub(crate) struct Core {
   pub mcp_skip: Vec<String>,
   /// The settled turn asks for a fresh connection before anything else is sent (a server just joined `mcp_skip`)
   pub reconnect_after_turn: bool,
+  /// A Retry is sending its prompt: the agent turn that prompt opens becomes `retried_turn`
+  pub retry_pending: bool,
+  /// The agent turn (its start) the last Retry opened; retrying that turn again restarts the connection first
+  pub retried_turn: Option<i64>,
   pub phase: Phase,
   pub replaying: bool,
   pub startup_banner: Option<String>,
@@ -304,6 +308,8 @@ impl AcpSession {
           mcp_sent: vec![],
           mcp_skip: vec![],
           reconnect_after_turn: false,
+          retry_pending: false,
+          retried_turn: None,
           phase: Phase::default(),
           replaying: false,
           startup_banner: None,
