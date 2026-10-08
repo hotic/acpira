@@ -160,8 +160,6 @@ impl AcpSession {
       c.startup_banner = None;
       return;
     }
-    // Claude's task-notification followups stream with no prompt on the wire: show them running
-    self.open_autonomous(&mut c, &kind);
     let turn_index = current_turn_index(&c);
     let routed = {
       let Core { tree, state, .. } = &mut *c;
@@ -172,6 +170,9 @@ impl AcpSession {
       self.touch(&mut c);
       return;
     }
+    // Claude's task-notification followups stream with no prompt on the wire: show them running only after routing
+    // child updates. A nested tool from a detached child can look like ordinary content, but it must not reopen the root.
+    self.open_autonomous(&mut c, &kind);
     if !apply_update(&mut c.state, &u) {
       return;
     }

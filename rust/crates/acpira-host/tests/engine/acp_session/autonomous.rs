@@ -50,3 +50,28 @@ async fn another_agent_s_late_prose_does_not_reopen_the_turn() {
   assert!(!s.is_running());
   expect_match(&view(&s)["turns"][1], json!({ "stop": "end_turn" }));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn review_a_late_nested_child_tool_does_not_open_a_root_autonomous_cycle() {
+  let fake = fake_or_skip!();
+  let h = Harness::for_agent(&fake, "claude", json!({ "env": { "FAKE_AUTONOMOUS_CHILD": "1" } }));
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "autonomous").await;
+  tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+  assert!(!s.is_running(), "nested child traffic must not reopen the finished root: {}", view(&s));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn review_an_autonomous_result_after_stop_does_not_reopen_the_cancelled_turn() {
+  let fake = fake_or_skip!();
+  let h = Harness::for_agent(&fake, "claude", json!({ "env": { "FAKE_AUTONOMOUS_AFTER_STOP": "1" } }));
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "autonomous").await;
+  until(|| s.is_running(), 5000).await;
+  s.cancel().await;
+  expect_match(&view(&s)["turns"][1], json!({ "stop": "cancelled" }));
+  // This packet represents queued output that the adapter flushes after receiving session/cancel.
+  until(|| agent_text(&view(&s)["turns"][1]).contains("queued tail"), 5000).await;
+  until(|| !s.is_running(), 5000).await;
+  expect_match(&view(&s)["turns"][1], json!({ "stop": "cancelled" }));
+}

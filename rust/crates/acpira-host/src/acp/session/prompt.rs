@@ -198,6 +198,10 @@ impl AcpSession {
     } else {
       c.switching = false;
       c.peer.idle = false;
+      if origin != Origin::Compact {
+        // A new attempt may observe another autonomous cycle; late packets from the prior one are ignored.
+        c.peer.autonomous_blocked = false;
+      }
       // Mid-turn /compact cannot be injected: the next user-facing request is the earliest slot, compact that first
       let compact_first = !auto && !is_compact_command(text) && self.should_auto_compact(&c);
       c.phase.running = true;
