@@ -119,9 +119,12 @@ export function QuoteToolbar({ root }: { root: RefObject<HTMLElement | null> }) 
     paint(picked.range);
     setAdded(quote);
   };
-  const comment = (value: string) => {
+  // Pasted screenshots join the prompt as ordinary image attachments, right after the quote they were pasted on
+  const comment = (value: string, images: Draft[]) => {
     const quote = added;
-    if (quote && value) updateMainComposer(d => d.map(x => (x === quote ? { ...quote, comment: value } : x)));
+    if (quote && (value || images.length)) {
+      updateMainComposer(d => d.flatMap(x => (x === quote ? [value ? { ...quote, comment: value } : quote, ...images] : [x])));
+    }
     document.getSelection()?.removeAllRanges();
     close();
   };
@@ -138,7 +141,7 @@ export function QuoteToolbar({ root }: { root: RefObject<HTMLElement | null> }) 
               anchor={range ? { getBoundingClientRect: () => range.getBoundingClientRect(), contextElement: range.startContainer.parentElement ?? undefined } : null}>
               <Popover.Popup data-quote-toolbar>
                 {added
-                  ? <CommentEditor className="w-full" onSave={comment} onCancel={() => { document.getSelection()?.removeAllRanges(); close(); }} />
+                  ? <CommentEditor className="w-full" acceptImages onSave={comment} onCancel={() => { document.getSelection()?.removeAllRanges(); close(); }} />
                   : <button type="button"
                       // Pressing the button must not collapse the selection it acts on
                       onMouseDown={e => e.preventDefault()}
