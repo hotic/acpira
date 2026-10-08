@@ -302,7 +302,7 @@ function AttachmentTag({ name = 'image.png', src, image, icon, title, thumbnail,
 
 // Wraps a chip with a remove button riding its top-right corner — a badge over the edge, so it never lands on the
 // label (and keeps the thumbnail's corner visible too). Shown on hover / focus, inert while hidden.
-function Removable({ label, onRemove, disabled, children }: { label: string; onRemove?: () => void; disabled?: boolean; children: ReactNode }) {
+export function Removable({ label, onRemove, disabled, children }: { label: string; onRemove?: () => void; disabled?: boolean; children: ReactNode }) {
   return (
     <span className="group/chip relative inline-flex max-w-full min-w-0">
       {children}
