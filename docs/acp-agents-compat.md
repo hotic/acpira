@@ -43,9 +43,9 @@ Regression check (2026-09-23, initialize only, vs. without `auth.terminal`): gro
 
 | Agent | CLI | ACP layer | Client SDK |
 |---|---|---|---|
-| Codex | bundled `@openai/codex` 0.155.1 (`CODEX_PATH` overrides) | `codex-acp` 1.13.0 (`@agentclientprotocol/codex-acp`) | `@agentclientprotocol/sdk` 1.4.0 |
-| Claude | bundled `@anthropic-ai/claude-agent-sdk` 0.3.280 + native `claude` binary (`CLAUDE_CODE_EXECUTABLE` overrides) | `claude-agent-acp` 0.81.0 (`@agentclientprotocol/claude-agent-acp`) | same |
-| OpenCode | `opencode` 1.18.15 (Homebrew) | built in (`opencode acp`), `agentInfo` `OpenCode 1.18.15` | same |
+| Codex | bundled `@openai/codex` 0.155.1 (`CODEX_PATH` overrides); 0.159.3 under 2.1.1 | `codex-acp` 1.13.0 (`@agentclientprotocol/codex-acp`); the install line pins 2.1.1 since 2026-10-08 | `@agentclientprotocol/sdk` 1.4.0 |
+| Claude | bundled `@anthropic-ai/claude-agent-sdk` 0.3.280 + native `claude` binary (`CLAUDE_CODE_EXECUTABLE` overrides); 0.3.287 under 0.87.0 | `claude-agent-acp` 0.81.0 (`@agentclientprotocol/claude-agent-acp`); the install line pins 0.87.0 since 2026-10-08 | same |
+| OpenCode | `opencode` 1.18.15 (Homebrew); 1.18.35 (npm, Windows) handshakes the same | built in (`opencode acp`), `agentInfo` `OpenCode 1.18.15` | same |
 | DeepSeek Harness | `dsh` 0.1.5-rc.2 (`@deepseek-ai/dsh`) | `dsh --profile acp`, `agentInfo` `deepseek-harness-acp 0.0.1` (the ACP package version, not the CLI's) | same |
 | Pi | `pi` 0.86.0 (`@earendil-works/pi-coding-agent`) | `pi-acp` 0.0.33 (svkozak/pi-acp; spawns `pi --mode rpc`) | same |
 
@@ -161,7 +161,7 @@ Google's official ACP server (`agy_acp_server`, ACP Registry id `antigravity-acp
 
 | Fact | Antigravity 1.2.1 | Grade |
 |---|---|---|
-| package | darwin / linux zips hold `agy_acp_server.par` + `localharness_external`, windows zips `agy_acp_server.exe` + `localharness_external.exe`; the registry passes `--uid=` on Linux only. SHA-256 of all six archives is pinned in `native_release.rs` | verified |
+| package | darwin / linux zips hold `agy_acp_server.par` + `localharness_external`, windows zips `agy_acp_server.exe` + `localharness_external.exe`; the registry passes `--uid=` on Linux only. SHA-256 of all six archives is pinned in `native_release.rs`. 1.3.0 (registry 2026-10-08) keeps this layout and launch; `native_release.rs` now pins it, and on Windows x64 its initialize matched the 1.2.1 row below | verified |
 | harness lookup | `ANTIGRAVITY_HARNESS_PATH`, else `dirname(argv[0])`, else `dirname(sys.executable)`: a symlink on PATH loses the harness, so the host spawns the real path | source |
 | data | `GEMINI_HOME` (default `~/.gemini`); the server's own `<home>/antigravity-acp/` holds `settings.json`, `acp_token.json`, `conversations/`, `trusted_workspaces.json` | source |
 | `initialize` | ~4.2 s cold; `agentInfo { name: antigravity-acp, title: Google Antigravity, version: 1.2.1 }`; `loadSession`, `promptCapabilities { image, audio, embeddedContext }`, `mcpCapabilities { http, sse }`, `sessionCapabilities { list, resume }`, `auth.logout` | verified |

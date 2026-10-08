@@ -38,42 +38,42 @@ pub struct NativeRelease {
   pub docs: &'static str,
 }
 
-/// agy-acp-server 1.2.1 as listed in the ACP Registry on 2026-10-01; digests computed from the downloads that day
+/// agy-acp-server 1.3.0 as listed in the ACP Registry on 2026-10-08; digests computed from the downloads that day
 pub static ANTIGRAVITY: NativeRelease = NativeRelease {
   agent: "antigravity",
   registry_id: "antigravity-acp",
-  version: "1.2.1",
+  version: "1.3.0",
   hosts: &["dl.google.com"],
   assets: &[
     NativeAsset {
       platform: "darwin-aarch64",
-      url: "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.2.1-darwin-arm64.zip",
-      sha256: "0fab9938812e6b32b3b543e65e4f3a0025ceef755413db13542d9a9b81ea803c",
+      url: "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.3.0-darwin-arm64.zip",
+      sha256: "7cd97045f7b4fe81175a107cdf16f9c51484e3c78a5162cae415338bb6aa5b88",
     },
     NativeAsset {
       platform: "darwin-x86_64",
-      url: "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.2.1-darwin-x86_64.zip",
-      sha256: "d09bf99bdea7b82021e1afcff829da35e4aa583d8f0984ef364dc3a7c064e07e",
+      url: "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.3.0-darwin-x86_64.zip",
+      sha256: "bb23956b89984bf5d354af2c3725e6c57f0cc1b7228e77a0e91c9c2bc1d47646",
     },
     NativeAsset {
       platform: "linux-x86_64",
-      url: "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.2.1-linux-x86_64.zip",
-      sha256: "9fbf0bd584a26478161f637cabd75113f72541c842d148f578ef1a6a9edcb843",
+      url: "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.3.0-linux-x86_64.zip",
+      sha256: "9fb60956af0a9d76220a4db91ca9ac88e2a2372ad68f985ab5fceace6b825b96",
     },
     NativeAsset {
       platform: "linux-aarch64",
-      url: "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.2.1-linux-arm64.zip",
-      sha256: "7e7ef4088bc185e1af4204029e0f4ec4210af20724f3ff262186ac0bcea6aa0e",
+      url: "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.3.0-linux-arm64.zip",
+      sha256: "500b0bc0fb858e88f4df404d4cedf80bf9298c178291e39e383d6c50b111cbdf",
     },
     NativeAsset {
       platform: "windows-x86_64",
-      url: "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.2.1-windows-x86_64.zip",
-      sha256: "9b82493819bc14613baa76264d55ad307ddd8ab4a8d6e110edb32da35498c07b",
+      url: "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.3.0-windows-x86_64.zip",
+      sha256: "65215e0688681fa3116e048a9eab27ef53af1bbd6f3da3f1c52bd4911d8b17f9",
     },
     NativeAsset {
       platform: "windows-aarch64",
-      url: "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.2.1-windows-arm64.zip",
-      sha256: "21db37ae246284053212f2670e05c4de8d6ee9488b000bf304e1fe4ea191f7b8",
+      url: "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.3.0-windows-arm64.zip",
+      sha256: "4a0f469720e9beb9438a979f543fdbfad5022ebe0992c052c590bd78b3144ca3",
     },
   ],
   posix_cmd: "agy_acp_server.par",
