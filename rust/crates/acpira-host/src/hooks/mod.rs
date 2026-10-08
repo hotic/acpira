@@ -29,6 +29,9 @@ pub const HOOKS_FILE: &str = ".agents/hooks.json";
 
 const BEFORE_EDIT_TIMEOUT: Duration = Duration::from_secs(30);
 const AFTER_TURN_TIMEOUT: Duration = Duration::from_secs(120);
+/// The longest timeout a hooks file may ask for; a larger one is cut to this (`Duration::from_secs_f64` panics past its
+/// range, and a gate that waits longer holds the queue for good anyway)
+pub const MAX_TIMEOUT: Duration = Duration::from_secs(3600);
 /// Automatic follow-ups one user prompt may trigger before the gate gives up and leaves the rest to the user
 const DEFAULT_ROUNDS: u32 = 2;
 /// A context file larger than this is cut (the agent can still read the rest itself)
@@ -94,7 +97,10 @@ fn hook_of(raw: Option<RawHook>, default_timeout: Duration) -> (Option<Hook>, Op
     None => (None, None),
     Some(RawHook::Command(run)) => (Some(Hook { run, timeout: default_timeout }).filter(|h| !h.run.trim().is_empty()), None),
     Some(RawHook::Full { run, timeout, rounds }) => {
-      let timeout = timeout.filter(|t| t.is_finite() && *t > 0.0).map(Duration::from_secs_f64).unwrap_or(default_timeout);
+      let timeout = timeout
+        .filter(|t| t.is_finite() && *t > 0.0)
+        .map(|t| Duration::from_secs_f64(t.min(MAX_TIMEOUT.as_secs_f64())))
+        .unwrap_or(default_timeout);
       (Some(Hook { run, timeout }).filter(|h| !h.run.trim().is_empty()), rounds)
     }
   }
@@ -122,10 +128,15 @@ pub fn parse(root: &Path, text: &str) -> Result<HooksConfig, String> {
 }
 
 /// The hooks of the project `cwd` belongs to. None: the project declares none; Err: the file is there but unusable
+/// (unreadable or not UTF-8 included: a gate the project asked for is never dropped without a word)
 pub fn load(cwd: &str) -> Option<Result<HooksConfig, String>> {
   let root = project_root(cwd)?;
   let path = root.join(HOOKS_FILE);
-  let text = std::fs::read_to_string(&path).ok()?;
+  let text = match std::fs::read_to_string(&path) {
+    Ok(text) => text,
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+    Err(e) => return Some(Err(format!("{}: {e}", path.display()))),
+  };
   Some(parse(&root, &text).map_err(|e| format!("{}: {e}", path.display())))
 }
 
@@ -155,7 +166,7 @@ takes effect from the next turn. An unknown key makes the whole file invalid (re
 ```
 
 A hook is a bare command string or `{ "run": "...", "timeout": seconds }` (`rounds` only on afterTurn). Defaults:
-beforeEdit 30 s, afterTurn 120 s. Commands run through `/bin/sh -c` (`cmd /c` on Windows) in the project root, with
+beforeEdit 30 s, afterTurn 120 s; at most 3600 s. Commands run through `/bin/sh -c` (`cmd /c` on Windows) in the project root, with
 `ACPIRA_PROJECT_DIR` and `CLAUDE_PROJECT_DIR` set to the root,
 `ACPIRA_SESSION_ID` and `ACPIRA_AGENT` to the session's. A hook that times out, crashes or prints something
 unreadable lets the edit / turn through and shows the user a warning.
@@ -165,6 +176,8 @@ unreadable lets the edit / turn through and shows the user a warning.
 beforeEdit: `hook_event_name: "PreToolUse"`, `session_id`, `agent` (Acpira's agent id), `cwd` (the root),
 `tool_name` (`Edit` | `Delete` | `Move`), `tool_input` (the tool's raw input plus `file_path`), `files` (absolute paths
 of every target), `read_files` (absolute paths the session's tools have read), `phase` (`"permission"` | `"audit"`).
+The audit leaves out files whose every edit already passed the hook in a permission request. A turn that ends without
+finishing (stopped, failed, out of quota) is not gated; its changes are audited with the next turn that finishes.
 
 afterTurn: `hook_event_name: "Stop"`, `session_id`, `agent`, `cwd`, `stop_hook_active` (true on a follow-up round),
 `round`, `turn_files` (changed by this turn), `changed_files` (changed by the session so far), `read_files`.
@@ -260,6 +273,32 @@ mod tests {
     assert_eq!(c.rounds, 1);
     assert_eq!(c.after_turn.unwrap().timeout, Duration::from_secs(90));
     assert_eq!(c.watch.len(), 3);
+  }
+
+  #[test]
+  fn a_huge_timeout_is_capped_rather_than_a_panic() {
+    for t in ["1e20", "1e308", "4000"] {
+      let c = parse(Path::new("/w"), &format!(r#"{{ "afterTurn": {{ "run": "x", "timeout": {t} }} }}"#)).unwrap();
+      assert_eq!(c.after_turn.unwrap().timeout, MAX_TIMEOUT, "{t}");
+    }
+    let c = parse(Path::new("/w"), r#"{ "beforeEdit": { "run": "x", "timeout": 0.25 } }"#).unwrap();
+    assert_eq!(c.before_edit.unwrap().timeout, Duration::from_millis(250));
+  }
+
+  #[test]
+  fn an_unreadable_hooks_file_is_an_error_not_an_open_gate() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join(".git")).unwrap();
+    let cwd = root.to_string_lossy().into_owned();
+    assert!(load(&cwd).is_none(), "no file: no hooks");
+    std::fs::create_dir_all(root.join(".agents")).unwrap();
+    std::fs::write(root.join(HOOKS_FILE), [&b"{ \"afterTurn\": \""[..], &[0xff], &b"\" }"[..]].concat()).unwrap();
+    assert!(matches!(load(&cwd), Some(Err(e)) if e.contains("hooks.json")), "not UTF-8");
+    // A directory where the file should be cannot be read either
+    std::fs::remove_file(root.join(HOOKS_FILE)).unwrap();
+    std::fs::create_dir(root.join(HOOKS_FILE)).unwrap();
+    assert!(matches!(load(&cwd), Some(Err(_))));
   }
 
   #[test]

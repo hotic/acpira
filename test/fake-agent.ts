@@ -23,7 +23,7 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // "tool-downgrade" / "tool-downgrade-late" → OpenCode's write: a permission request whose embedded toolCall is a low-fidelity copy
 // (kind 'other', dir title, file+dir locations, rawInput.filepath) racing the real in_progress update
 // "perm-meta" → permission request with the adapters' `_meta.permission` (title / description / defaultToNo, per-option details);
-// "hook-write:<path>" / "hook-perm-write:<path>" / "hook-read:<path>" / "…hook-fix:<path>…" → workspace hook scripts (edits on disk, see below);
+// "hook-write:<path>" / "hook-perm-write:<path>" / "hook-write-stop:<path>" / "hook-read:<path>" / "…hook-fix:<path>…" → workspace hook scripts (edits on disk, see below);
 // "image" → an image chunk splitting a text run plus a tool image content item;
 // "subagents-*" → first-class subagent dialects: =native sends RFD `subagent_update` announcements plus child updates under each
 //   child's own sessionId (c1 requests a permission, c2 cannot be cancelled); =nested announces a grandchild on c1's stream;
@@ -556,6 +556,7 @@ const app = acp.agent({ name: 'fake-agent' })
     // Workspace hooks (tests/engine/acp_session/hooks.rs). A prompt holding "hook-fix:<path>" anywhere (the gate's findings)
     // rewrites that file to "fixed\n"; "hook-write:<path>" writes "bad\n" the way an agent's own tool does, without asking;
     // "hook-perm-write:<path>" announces the edit in a permission request first and writes only when allowed;
+    // "hook-write-stop:<path>" writes like hook-write but ends the turn with max_tokens (a turn the gate does not see);
     // "hook-read:<path>" reports a read row. Each replies with what happened
     const hookFix = /hook-fix:(\S+)/.exec(text);
     if (hookFix) {
@@ -570,7 +571,7 @@ const app = acp.agent({ name: 'fake-agent' })
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'read' } });
       return { stopReason: 'end_turn' };
     }
-    if (text.startsWith('hook-write:') || text.startsWith('hook-perm-write:')) {
+    if (text.startsWith('hook-write:') || text.startsWith('hook-perm-write:') || text.startsWith('hook-write-stop:')) {
       const path = text.slice(text.indexOf(':') + 1).trim();
       const toolCallId = `w-${randomUUID()}`;
       const call: acp.ToolCall = { toolCallId, title: 'write', kind: 'edit', status: 'pending', locations: [{ path }], rawInput: { path, content: 'bad\n' } };
@@ -591,7 +592,7 @@ const app = acp.agent({ name: 'fake-agent' })
       if (allowed) writeFileSync(path, 'bad\n');
       await send({ sessionUpdate: 'tool_call_update', toolCallId, status: allowed ? 'completed' : 'failed' });
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: allowed ? 'wrote' : 'rejected' } });
-      return { stopReason: 'end_turn' };
+      return { stopReason: text.startsWith('hook-write-stop:') ? 'max_tokens' : 'end_turn' };
     }
     if (text === 'inspect-native-history') {
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(readSession(sid)) } });
@@ -760,7 +761,9 @@ const app = acp.agent({ name: 'fake-agent' })
     if (text === 'autonomous' || text === 'autonomous-hang') {
       // claude-agent-acp 0.84.0's autonomous cycle: the turn ends while a background Bash runs, its task notification wakes the
       // model with no prompt on the wire, and the followup streams as plain updates until its result's usage_update, stamped
-      // `_claude/origin`. =autonomous-hang never sends that result (the cycle only ends by a stop)
+      // `_claude/origin`. =autonomous-hang never sends that result (the cycle only ends by a stop). FAKE_AUTONOMOUS_WRITE=<path>:
+      // the cycle writes "bad\n" there through an edit row; FAKE_AUTONOMOUS_TWICE: a second background task's cycle follows
+      // the first one's result; FAKE_AUTONOMOUS_DELAY: ms between the turn's end and the cycle (default 80)
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'waiting in background' } });
       setTimeout(() => {
         void (async () => {
@@ -770,6 +773,11 @@ const app = acp.agent({ name: 'fake-agent' })
               _meta: { claudeCode: { parentToolUseId: 'background-agent-call' } } });
             return;
           }
+          const written = process.env.FAKE_AUTONOMOUS_WRITE;
+          if (written) {
+            writeFileSync(written, 'bad\n');
+            await send({ sessionUpdate: 'tool_call', toolCallId: 'autonomous-write', title: 'write', kind: 'edit', status: 'completed', locations: [{ path: written }] });
+          }
           await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' followup' } });
           await new Promise(r => setTimeout(r, 300));
           if (process.env.FAKE_AUTONOMOUS_AFTER_STOP) {
@@ -777,8 +785,14 @@ const app = acp.agent({ name: 'fake-agent' })
           }
           if (text === 'autonomous-hang') return;
           await send({ sessionUpdate: 'usage_update', used: 20, size: 1000, _meta: { '_claude/origin': { kind: 'task-notification' } } } as never);
+          if (process.env.FAKE_AUTONOMOUS_TWICE) {
+            await new Promise(r => setTimeout(r, 200));
+            await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' second' } });
+            await new Promise(r => setTimeout(r, 300));
+            await send({ sessionUpdate: 'usage_update', used: 30, size: 1000, _meta: { '_claude/origin': { kind: 'task-notification' } } } as never);
+          }
         })();
-      }, 80);
+      }, Number(process.env.FAKE_AUTONOMOUS_DELAY ?? 80));
       return { stopReason: 'end_turn' };
     }
 

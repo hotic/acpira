@@ -56,7 +56,9 @@ pub(crate) struct PeerTurn {
   /// `vendors::claude_autonomous`): its result's `usage_update` ends it, and a stop settles it locally since no prompt
   /// response will
   pub autonomous: bool,
-  /// Late packets from a settled autonomous cycle must not reopen its turn. A new prompt clears this latch.
+  /// A stopped autonomous cycle has not sent its result yet: what the adapter still flushes of it must not reopen the
+  /// turn. Its result (`claude_autonomous::cycle_ended`) or a new prompt clears this latch; a cycle that ended on its own
+  /// sets nothing, so a second background task's cycle opens like the first
   pub autonomous_blocked: bool,
 }
 
@@ -284,11 +286,11 @@ impl AcpSession {
   }
 
   /// The detached peer turn reported its thread idle (or, for an autonomous cycle, its result or a stop): settle it like a
-  /// prompt response and let the queue move
+  /// prompt response, hand a finished one to the workspace gate and let the queue move
   pub(crate) fn end_detached(self: &Arc<Self>, c: &mut Core, stop: TurnStop) {
     c.peer.detached = false;
     let autonomous = std::mem::take(&mut c.peer.autonomous);
-    if autonomous {
+    if autonomous && stop == TurnStop::Cancelled {
       c.peer.autonomous_blocked = true;
     }
     if c.phase.running {
@@ -296,7 +298,7 @@ impl AcpSession {
     }
     self.log(if autonomous { "autonomous cycle ended" } else { "detached turn ended (thread idle)" });
     let me = self.clone();
-    tokio::spawn(async move { me.after_prompt(false, stop) });
+    tokio::spawn(async move { me.hooks_after_detached(stop) });
   }
 
   /// Turn content with nothing on the wire from a peer that runs cycles of its own (Claude's task-notification

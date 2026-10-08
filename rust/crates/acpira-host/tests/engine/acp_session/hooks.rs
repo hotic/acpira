@@ -2,6 +2,7 @@
 //! turn's own edits, `afterTurn` sending its findings back as automatic follow-ups
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
 
@@ -186,6 +187,9 @@ async fn an_edit_the_hook_denies_is_rejected_and_its_reason_goes_back_to_the_age
   decisions(&h, 4).await;
   assert_eq!(std::fs::read_to_string(&guarded).unwrap(), "bad\n");
   assert_eq!(view(&s)["turns"].as_array().unwrap().iter().filter(|t| t["autoReason"] == "gate").count(), 1);
+  // The edit beforeEdit passed in its permission request is not audited a second time when the turn ends
+  let audits: Vec<Value> = p.payloads("before.log").into_iter().filter(|x| x["phase"] == "audit").collect();
+  assert!(audits.is_empty(), "{audits:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -300,4 +304,95 @@ async fn a_broken_hooks_file_leaves_the_session_working_and_is_logged() {
   prompt(&s, "say:still").await;
   assert_eq!(turns_in(&view(&s)), 4);
   assert_eq!(count(&h, "afterturn"), 2, "logged each turn: {:?}", h.logs());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_turn_that_ends_without_finishing_is_gated_with_the_next_one() {
+  let fake = fake_or_skip!();
+  if !git_or_skip() {
+    return;
+  }
+  let p = Project::new(json!({ "afterTurn": "after.cjs" }));
+  let h = Harness::new(&fake, json!({}));
+  let s = started(&h, &p.cwd()).await;
+  let file = p.file("a.txt");
+  // max_tokens: no gate after this turn, but its edit stays in the open span
+  prompt(&s, &format!("hook-write-stop:{file}")).await;
+  assert!(p.payloads("after.log").is_empty());
+  prompt(&s, "say:next").await;
+  decisions(&h, 2).await;
+  assert_eq!(std::fs::read_to_string(&file).unwrap(), "fixed\n");
+  let stops = p.payloads("after.log");
+  let turn: Vec<String> = stops[0]["turn_files"].as_array().unwrap().iter().map(|f| f.as_str().unwrap().replace('\\', "/")).collect();
+  assert_eq!(turn.len(), 1, "{turn:?}");
+  assert!(turn[0].ends_with("/a.txt"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_turn_keeps_its_lease_while_the_gate_decides() {
+  let fake = fake_or_skip!();
+  if !git_or_skip() {
+    return;
+  }
+  let p = Project::new(json!({ "afterTurn": { "run": "always.cjs", "rounds": 1 } }));
+  let mut h = Harness::new(&fake, json!({}));
+  let claims = Arc::new(AtomicUsize::new(0));
+  let n = claims.clone();
+  h.deps.claim = Some(Arc::new(move |_| {
+    n.fetch_add(1, Ordering::SeqCst);
+    Ok(7)
+  }));
+  let s = started(&h, &p.cwd()).await;
+  prompt(&s, "hello").await;
+  // The turn has ended and the gate runs its script: the lease is not given back yet
+  assert_eq!(s.take_ended_lease(), None);
+  until(|| count(&h, "hooks: gate gave up") == 1, 20_000).await;
+  // The follow-up ran on the same pin, and the pin is free once the gate let go
+  assert_eq!(claims.load(Ordering::SeqCst), 1);
+  assert_eq!(s.take_ended_lease(), Some(7));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_gate_follow_up_that_cannot_take_the_lease_lets_the_queue_go() {
+  let fake = fake_or_skip!();
+  if !git_or_skip() {
+    return;
+  }
+  let p = Project::new(json!({ "afterTurn": { "run": "always.cjs", "rounds": 1 } }));
+  let mut h = Harness::new(&fake, json!({}));
+  let claims = Arc::new(AtomicUsize::new(0));
+  let n = claims.clone();
+  h.deps.claim = Some(Arc::new(move |_| if n.fetch_add(1, Ordering::SeqCst) == 0 { Ok(7) } else { Err("held elsewhere".into()) }));
+  let s = started(&h, &p.cwd()).await;
+  prompt(&s, "hello").await;
+  // The session closes its lease meanwhile: the follow-up has to claim again, and is refused
+  assert_eq!(s.drop_lease(), Some(7));
+  until(|| count(&h, "turn refused") == 1, 20_000).await;
+  // The gate's reservation went with it: the next prompt is refused too rather than parked behind a gate that never ends
+  prompt(&s, "say:x").await;
+  assert_eq!(count(&h, "turn refused"), 2);
+  assert!(view(&s)["queued"].is_null(), "{}", view(&s));
+  assert_eq!(turns_in(&view(&s)), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_autonomous_cycle_s_edits_go_through_the_gate() {
+  let fake = fake_or_skip!();
+  if !git_or_skip() {
+    return;
+  }
+  let p = Project::new(json!({ "afterTurn": "after.cjs" }));
+  let file = p.file("a.txt");
+  // The cycle starts well after the prompt's own gate began, so normally only the cycle's end can catch the write (a gate
+  // still deciding by then runs again over the cycle instead)
+  let env = json!({ "FAKE_AUTONOMOUS_WRITE": file, "FAKE_AUTONOMOUS_DELAY": "3000" });
+  let h = Harness::for_agent(&fake, "claude", json!({ "env": env }));
+  let s = started(&h, &p.cwd()).await;
+  prompt(&s, "autonomous").await;
+  // Its result hands the cycle to the gate, whose follow-up fixes the file
+  until(|| std::fs::read_to_string(&file).is_ok_and(|t| t == "fixed\n"), 30_000).await;
+  until(|| !s.is_running(), 20_000).await;
+  let vw = view(&s);
+  let gates = vw["turns"].as_array().unwrap().iter().filter(|t| t["autoReason"] == "gate").count();
+  assert_eq!(gates, 1, "{vw}");
 }
