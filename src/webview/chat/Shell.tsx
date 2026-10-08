@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Network, Paperclip, X } from 'lucide-react';
-import type { ExternalSessionInfo, AccountInfo, AgentInfo, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionStatus, SessionSummary, SlashCommand, Turn, Usage } from '@shared/transcript';
+import type { ExternalSessionInfo, AccountInfo, AgentInfo, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
 import type { ModelShapes } from '@shared/modelShapes';
 import type { HiddenMap, SessionScope } from '@shared/settings';
@@ -91,7 +91,6 @@ export interface ShellHandlers {
   // Send the last user turn again after its agent turn ended in error
   retryTurn: () => void;
   // Drop the agent process and resume the same native session (a live connection whose prompts keep failing)
-  reconnect: () => void;
   // SessionView.canTakeOver: end the other Acpira instance's agent holding the session lock, then start over
   takeOver?: () => void;
   // Queued prompts: drop one / replace one in place (kept attachments by index plus new drafts)
@@ -520,7 +519,6 @@ export function Shell(p: ShellProps) {
                     <Alert
                       turn={alertTurn}
                       onRetry={on.retryTurn}
-                      onReconnect={on.reconnect}
                       onCompact={p.commands?.some(c => c.name === 'compact') ? on.compact : undefined}
                       onContinue={() => on.send(t('alert.continueText'), [])}
                       onDismiss={() => setDismissedAlert(alertKey)}
@@ -670,11 +668,11 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
     // Session-wide nodes only reach turns that announce one; handing the list to every
     // memoized turn would re-render all of them on each child activity tick.
     const mine = turn.role === 'agent' ? byTurn.get(ti) : undefined;
-    // An automatic account switch continues the exhausted turn: the pair reads as one reply, with the switch notice as
-    // the only seam, so the exhausted half drops its action row and the continuation joins it
+    // An automatic account switch or a Retry continues the cut-off turn: the pair reads as one reply, with the switch
+    // notice or the error row as the only seam, so the cut-off half drops its action row and the continuation joins it
     const next = turns[ti + 1];
-    const switchedAway = next?.role === 'user' && next.autoReason === 'accountSwitch';
-    const switchedIn = previous?.role === 'user' && previous.autoReason === 'accountSwitch';
+    const switchedAway = next?.role === 'user' && isContinue(next);
+    const switchedIn = previous?.role === 'user' && isContinue(previous);
     exchanges[exchanges.length - 1]!.messages.push(turn.role === 'user'
       ? <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} summons={summons} />
       : <AgentMessage key={ti} turn={turn} index={index} compacting={compacting} running={running && ti === activeAgentIndex && !turn.stop} onPermission={onPermission} memoryKey={memoryKey}
@@ -699,4 +697,9 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
       </FollowContext.Provider></div>
     </div>
   );
+}
+
+// A hidden turn that carries the turn before it on (after an account switch, or Retry after a failure with output)
+function isContinue(turn: UserTurn): boolean {
+  return turn.auto === true && (turn.autoReason === 'accountSwitch' || turn.autoReason === 'retry');
 }
