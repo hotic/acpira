@@ -81,6 +81,8 @@ pub struct BridgeCore {
   host: WebviewHost,
   blob_base: Option<String>,
   ready: std::sync::atomic::AtomicBool,
+  /// A session view was pushed before the page was ready: the session it opens has a view to put into init
+  view_shown: tokio::sync::Notify,
   /// The page applies `sessionPatch` messages (it said so in `ready`)
   patches: std::sync::atomic::AtomicBool,
   /// The session views this page holds as far as patches go: the one on screen and the last one sent of each recent
@@ -114,6 +116,7 @@ impl BridgeCore {
       host,
       blob_base,
       ready: Default::default(),
+      view_shown: Default::default(),
       patches: Default::default(),
       sent: Default::default(),
       batch: Default::default(),
@@ -158,12 +161,27 @@ impl BridgeCore {
       W::ViewFocus => {}
       W::Ready { patches } => {
         self.patches.store(patches, std::sync::atomic::Ordering::Release);
-        self.ready.store(true, std::sync::atomic::Ordering::Release);
         // A view (re)opening is a cheap moment to re-check executables and pick up sessions another window created
         let m2 = manager.clone();
         tokio::spawn(async move { m2.reprobe().await });
         manager.refresh_index().await;
-        manager.ensure_active_for(&self.viewer).await;
+        // Init waits for the session on screen to have a view, not for its agent: a stored session is shown as soon as
+        // its record is read, while starting the agent and resuming can take seconds, and the page stays blank until init
+        let ensure = {
+          let (m, v) = (manager.clone(), self.viewer.clone());
+          tokio::spawn(async move { m.ensure_active_for(&v).await })
+        };
+        tokio::select! {
+          _ = ensure => {}
+          _ = self.view_shown.notified() => {}
+        }
+        // A page's first pushes start only now: init below carries everything they would have, and opening a long session
+        // during the awaits above used to send its whole view once before init and once inside it
+        self.ready.store(true, std::sync::atomic::Ordering::Release);
+        let (active, active_parts) = match manager.session_msg(self.viewer.active_id().as_deref()) {
+          Some(HostMsg::Session { session, parts, .. }) => (Some(session), parts),
+          _ => (None, None),
+        };
         let state = InitState {
           host: self.host,
           appearance: (self.appearance)(),
@@ -173,16 +191,20 @@ impl BridgeCore {
           hidden: manager.hidden(),
           sessions: manager.sessions(),
           categories: manager.categories(),
-          active: manager.view_of(self.viewer.active_id().as_deref()).map(|(raw, _)| raw),
+          active,
           settings: self.settings.view(),
           locale: self.settings.locale(),
           home: platform.home(),
           cwd: platform.cwd(),
           blob_base: self.blob_base.clone(),
         };
-        // The page takes init's view as a whole and starts its cache over: the next push is whole too
+        // The page takes init's view as a whole and starts its cache over, keeping that view as the one on screen: it
+        // becomes the base the next push of that session patches against, instead of a second copy of the transcript
         let mut sent = self.sent.lock();
         sent.clear();
+        if let Some(parts) = active_parts.as_ref().filter(|_| self.patches.load(std::sync::atomic::Ordering::Acquire)) {
+          sent.deliver(Some(parts));
+        }
         (self.post)(HostMsg::Init { state: Box::new(state) });
         drop(sent);
         // A batched list may reach the page around init and lose to init's copy, and the manager does not repeat an
@@ -359,6 +381,11 @@ impl BridgeCore {
 
   fn queue(&self, m: HostMsg) {
     if !self.ready.load(std::sync::atomic::Ordering::Acquire) {
+      // Dropped: init carries the current state. A session view means the one being opened can go into init now
+      // (`notify_one` keeps the wake-up when the ready handler is not waiting yet)
+      if matches!(m, HostMsg::Session { .. }) {
+        self.view_shown.notify_one();
+      }
       return;
     }
     let pushed = self.batch.lock().push(m);
