@@ -237,7 +237,6 @@ export const en = {
   'usage.usedPctShort': '{pct}% used',
   'usage.about': '~{n}',
   'usage.used': 'Used {n}',
-  'usage.cost': ', cost ${n}',
   'usage.limit': 'Limit {n}',
   'usage.budget': 'Auto-compact {n}',
   'usage.reported': 'Latest agent report; may update only after a model call.',

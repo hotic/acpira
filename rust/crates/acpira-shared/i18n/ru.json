@@ -227,7 +227,6 @@
   "usage.usedPct": "Контекст занят на {pct}%",
   "usage.usedPctShort": "Занято {pct}%",
   "usage.used": "Занято {n}",
-  "usage.cost": ", стоимость ${n}",
   "usage.limit": "Лимит {n}",
   "usage.budget": "Автосжатие при {n}",
   "usage.reported": "Последний отчёт агента; может обновляться только после вызова модели.",

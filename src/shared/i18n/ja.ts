@@ -238,7 +238,6 @@ export const ja = {
   'usage.usedPctShort': '{pct}% 使用',
   'usage.about': '約 {n}',
   'usage.used': '使用 {n}',
-  'usage.cost': '、費用 ${n}',
   'usage.limit': '上限 {n}',
   'usage.budget': '自動圧縮 {n}',
   'usage.reported': 'エージェントの最新報告です。モデル呼び出しの後にしか更新されないことがあります。',

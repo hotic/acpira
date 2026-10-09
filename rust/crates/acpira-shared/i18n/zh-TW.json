@@ -231,7 +231,6 @@
   "usage.usedPctShort": "已用 {pct}%",
   "usage.about": "約 {n}",
   "usage.used": "已用 {n}",
-  "usage.cost": "，費用 ${n}",
   "usage.limit": "上限 {n}",
   "usage.budget": "自動壓縮 {n}",
   "usage.reported": "Agent 最近上報；可能僅在模型呼叫結束後更新。",

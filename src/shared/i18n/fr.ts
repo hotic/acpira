@@ -231,7 +231,6 @@ export const fr = {
   'usage.usedPct': 'Contexte utilisé à {pct} %',
   'usage.usedPctShort': '{pct} % utilisé',
   'usage.used': 'Utilisé {n}',
-  'usage.cost': ', coût ${n}',
   'usage.limit': 'Limite {n}',
   'usage.budget': 'Compactage auto {n}',
   'usage.reported': 'Dernier rapport de l’agent ; peut ne se mettre à jour qu’après un appel au modèle.',

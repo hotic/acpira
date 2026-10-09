@@ -236,7 +236,6 @@ export const ko = {
   'usage.usedPctShort': '{pct}% 사용',
   'usage.about': '약 {n}',
   'usage.used': '사용 {n}',
-  'usage.cost': ', 비용 ${n}',
   'usage.limit': '한도 {n}',
   'usage.budget': '자동 압축 {n}',
   'usage.reported': '에이전트의 최신 보고이며, 모델 호출 후에만 갱신될 수 있습니다.',

@@ -224,7 +224,6 @@
   "usage.usedPct": "Contexto: {pct} % usado",
   "usage.usedPctShort": "{pct} % usado",
   "usage.used": "Usado {n}",
-  "usage.cost": ", coste ${n}",
   "usage.limit": "Límite {n}",
   "usage.budget": "Compactación automática {n}",
   "usage.reported": "Último informe del agente; puede que solo se actualice tras una llamada al modelo.",

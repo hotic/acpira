@@ -245,7 +245,6 @@ export const zhCN = {
   'usage.usedPctShort': '已用 {pct}%',
   'usage.about': '约 {n}',
   'usage.used': '已用 {n}',
-  'usage.cost': '，费用 ${n}',
   'usage.limit': '上限 {n}',
   'usage.budget': '自动压缩 {n}',
   'usage.reported': 'Agent 最近上报；可能仅在模型调用结束后更新。',
