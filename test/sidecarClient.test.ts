@@ -6,7 +6,7 @@ import type { HostMsg } from '../src/shared/protocol';
 import type { PlatformRequest } from '../src/shared/sidecar';
 import { SidecarClient, type SidecarCommand, type SidecarState, type ShellView } from '../src/host/shell/SidecarClient';
 import { sidecarCommands } from '../src/host/shell/sidecarLocator';
-import { FAKE, SIDECAR, TSX } from './sidecarShell';
+import { FAKE, SIDECAR, NODE } from './sidecarShell';
 
 // The VS Code shell's sidecar client against the real Rust sidecar: handshake, outbox, platform RPCs, restart with re-attach,
 // fallback to the next command and shutdown
@@ -57,7 +57,7 @@ function client(commands: SidecarCommand[], over: { requests?: PlatformRequest[]
     hello: () => ({
       client: { name: 'client-test', version: '0', capabilities: ['toast'] },
       env: { hostLanguage: 'en', cwd, blobBase: 'blobBase' in over ? over.blobBase : 'https://blobs.test' },
-      settings: { defaultAgent: 'fake', agents: { fake: { name: 'Fake', command: TSX, args: [FAKE] } } },
+      settings: { defaultAgent: 'fake', agents: { fake: { name: 'Fake', command: NODE, args: [FAKE] } } },
     }),
     onRequest: r => { over.requests?.push(r); },
     log: line => over.logs?.push(line),

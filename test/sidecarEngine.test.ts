@@ -6,7 +6,7 @@ import type { HostMsg } from '../src/shared/protocol';
 import type { AgentTurn, SessionView } from '../src/shared/transcript';
 import { SidecarClient, type SidecarCommand, type SidecarState, type ShellView } from '../src/host/shell/SidecarClient';
 import { engineEndpoint, type EngineEndpoint } from '../src/host/shell/engine';
-import { FAKE, SIDECAR, TSX } from './sidecarShell';
+import { FAKE, SIDECAR, NODE } from './sidecarShell';
 
 // The persistent engine (`acpira serve --socket`) through the VS Code shell's client: a turn outlives the window that started
 // it, the next window for the workspace reconnects to it, an idle engine with no window ends on its own, and a session another
@@ -75,7 +75,7 @@ function client(ep: EngineEndpoint, cwd: string, home: string, logs: string[] = 
     hello: () => ({
       client: { name: 'engine-test', version: '0', capabilities: ['toast'] },
       env: { hostLanguage: 'en', cwd },
-      settings: { defaultAgent: 'fake', agents: { fake: { name: 'Fake', command: TSX, args: [FAKE], env: agentEnv } } },
+      settings: { defaultAgent: 'fake', agents: { fake: { name: 'Fake', command: NODE, args: [FAKE], env: agentEnv } } },
     }),
     onRequest: () => undefined,
     log: line => {

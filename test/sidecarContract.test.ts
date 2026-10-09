@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AgentBlock, AgentTurn, SessionView, Turn } from '../src/shared/transcript';
 import { FAKE, Shell } from './sidecarShell';
@@ -15,8 +14,6 @@ const lastAgent = (v: SessionView): AgentTurn | undefined => {
   return t?.role === 'agent' ? t : undefined;
 };
 const blocks = (v: SessionView): AgentBlock[] => lastAgent(v)?.blocks ?? [];
-// Run the fake agent on node directly (not the tsx wrapper): a SIGKILL must reach the process that ignores SIGTERM, not its parent
-const LOADER = fileURLToPath(new URL('../node_modules/tsx/dist/loader.mjs', import.meta.url));
 const pidsWith = (mark: string): string[] => {
   try { return execFileSync('pgrep', ['-f', mark], { encoding: 'utf8' }).split('\n').filter(Boolean); } catch { return []; }
 };
@@ -56,7 +53,7 @@ describe('sidecar session contract', () => {
   it.skipIf(process.platform === 'win32')('shutdown ends every agent process first, even one that ignores SIGTERM', async () => {
     const mark = `acpira-stubborn-${randomUUID()}`;
     const s = shell();
-    await started(s, { command: process.execPath, args: ['--import', LOADER, FAKE, mark], env: { FAKE_STUBBORN: '1' } });
+    await started(s, { command: process.execPath, args: [FAKE, mark], env: { FAKE_STUBBORN: '1' } });
     expect(pidsWith(mark).length).toBeGreaterThan(0);
     await s.kill();
     expect(s.exitCode).toBe(0);
