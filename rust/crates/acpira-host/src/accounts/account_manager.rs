@@ -124,6 +124,11 @@ impl AccountManager {
     self.locked.lock().contains(agent)
   }
 
+  /// Some agent's credential store was locked at the last check
+  pub fn any_credentials_locked(&self) -> bool {
+    !self.locked.lock().is_empty()
+  }
+
   /// Called whenever an agent's credential store turns locked or unlocked
   pub fn on_lock_change(&self, f: Arc<dyn Fn() + Send + Sync>) {
     self.lock_listeners.lock().push(f);

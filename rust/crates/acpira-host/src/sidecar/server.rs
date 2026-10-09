@@ -71,6 +71,8 @@ pub struct Engine {
   next_wire: AtomicU64,
   /// Wires coming and going wake `idle`
   changed: tokio::sync::Notify,
+  /// This process's `SSH_CONNECTION`: the SSH login, and so the macOS security session, the engine was started in
+  ssh_connection: Option<String>,
 }
 
 /// What one shell message did to its wire
@@ -100,6 +102,7 @@ impl Engine {
       closing: Default::default(),
       next_wire: AtomicU64::new(1),
       changed: tokio::sync::Notify::new(),
+      ssh_connection: std::env::var("SSH_CONNECTION").ok().filter(|s| !s.is_empty()),
     })
   }
 
@@ -192,8 +195,12 @@ impl Engine {
     loop {
       // Woken early when a wire comes or goes; a turn ending is caught by the next tick
       let _ = tokio::time::timeout(Duration::from_secs(1), self.changed.notified()).await;
-      if self.inner.lock().done {
-        return;
+      {
+        let inner = self.inner.lock();
+        // Sealed by a hello that retired this engine (`retires_for`)
+        if inner.done || inner.sealed {
+          return;
+        }
       }
       if let Some(rt) = self.runtime() {
         rt.manager.sync_leases();
@@ -288,6 +295,31 @@ impl Engine {
     if inner.wires.contains_key(&wire) {
       inner.active = Some(wire);
     }
+  }
+
+  /// A window from another SSH login joins a persistent engine whose keychain is locked. Unlock state belongs to the
+  /// security session, and the window's terminal unlocks its own session, never this engine's: the engine could not read
+  /// the login however often the user typed the password. With no other window on it and no turn running it retires, so
+  /// the window's shell starts the next engine in the window's own session. Called under `init`, before the wire joins.
+  /// Observed 2026-10-10 on acpira 1.9.0 over Remote-SSH: an engine left by an earlier connection stayed locked while
+  /// the window's terminal unlocked the keychain, and the unlock notice waited out its 5 minutes
+  async fn retires_for(&self, hello: &Hello, rt: &HostRuntime) -> bool {
+    if !self.persistent || !other_login(self.ssh_connection.as_deref(), hello.client.ssh_connection.as_deref()) {
+      return false;
+    }
+    if !self.inner.lock().wires.is_empty() || self.busy() || !rt.credentials_locked().await {
+      return false;
+    }
+    let mut inner = self.inner.lock();
+    // A wire that joined meanwhile keeps the engine
+    if !inner.wires.is_empty() {
+      return false;
+    }
+    inner.sealed = true;
+    drop(inner);
+    self.log("retiring: a window from another SSH login joined while the keychain is locked for this engine's session");
+    self.changed.notify_waiters();
+    true
   }
 
   fn hello_ok(&self, request_id: String, sessions_dir: String) -> SidecarMsg {
@@ -437,6 +469,15 @@ impl Wire {
         return Flow::Leave(1);
       }
       let created = match engine.runtime() {
+        Some(rt) if engine.retires_for(&m, &rt).await => {
+          // The shell reconnects on "shutting down" and launches the next engine once this one has gone
+          self.send(SidecarMsg::HelloReject {
+            request_id: m.request_id,
+            protocol_version: SIDECAR_PROTOCOL_VERSION,
+            reason: "the engine is shutting down (keychain locked for its SSH login)".into(),
+          });
+          return Flow::Leave(1);
+        }
         Some(rt) => {
           // A later window joins the running engine: its environment and settings snapshot become current. Bound first:
           // the change handlers it fires may call back into the platform, which takes `inner`
@@ -488,6 +529,12 @@ impl Wire {
   }
 }
 
+/// The window and the engine run under two different SSH logins, so in two security sessions. A side that reports no
+/// login (a local window, an older shell, a test) never counts as another one
+fn other_login(engine: Option<&str>, window: Option<&str>) -> bool {
+  matches!((engine, window), (Some(e), Some(w)) if e != w)
+}
+
 fn write(out: &mpsc::UnboundedSender<String>, m: &SidecarMsg) {
   if let Ok(line) = serde_json::to_string(m) {
     let _ = out.send(line);
@@ -503,5 +550,20 @@ fn shell_kind(m: &ShellMsg) -> &'static str {
     ShellMsg::PlatformResponse { .. } => "platformResponse",
     ShellMsg::PlatformEvent { .. } => "platformEvent",
     ShellMsg::Shutdown => "shutdown",
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::other_login;
+
+  #[test]
+  fn only_two_different_ssh_logins_count_as_another_login() {
+    let (a, b) = (Some("10.0.0.2 52502 10.0.0.1 22"), Some("10.0.0.2 61822 10.0.0.1 22"));
+    assert!(other_login(a, b));
+    assert!(!other_login(a, a));
+    assert!(!other_login(a, None));
+    assert!(!other_login(None, b));
+    assert!(!other_login(None, None));
   }
 }

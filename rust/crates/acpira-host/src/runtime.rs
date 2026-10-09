@@ -269,6 +269,12 @@ impl HostRuntime {
     }
   }
 
+  /// Whether some agent's credential store (the macOS keychain) is locked for this engine right now, checked afresh
+  pub async fn credentials_locked(&self) -> bool {
+    self.accounts.check_locks(None).await;
+    self.accounts.any_credentials_locked()
+  }
+
   pub fn appearance(&self) -> Appearance {
     appearance_from_settings(|k| self.platform.read_setting(&format!("appearance.{k}")))
   }

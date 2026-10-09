@@ -84,7 +84,7 @@ export class VscodePlatform {
 
   hello(): HelloPayload {
     return {
-      client: { name: vscode.env.appName, version: String((this.context.extension.packageJSON as { version?: unknown }).version ?? '0'), capabilities: CAPABILITIES },
+      client: { name: vscode.env.appName, version: String((this.context.extension.packageJSON as { version?: unknown }).version ?? '0'), capabilities: CAPABILITIES, sshConnection: process.env.SSH_CONNECTION || undefined },
       env: { cwd: this.cwd(), hostLanguage: vscode.env.language },
       settings: this.snapshot(),
     };
