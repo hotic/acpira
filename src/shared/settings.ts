@@ -23,6 +23,10 @@ export const DIFF_MARKERS: DiffMarkers[] = ['color', 'signs'];
 export const UI_FONT_SIZE = { min: 10, max: 20, default: 13 } as const;
 export const CODE_FONT_SIZE = { min: 9, max: 20, default: 12 } as const;
 
+// Share of all logical cores every agent process and its descendants may use together (%); 100 lifts the cap. Windows only:
+// the engine applies it to the job object all agents run in, below normal priority either way
+export const AGENT_CPU_CAP = { min: 10, max: 100, default: 80 } as const;
+
 // Which sessions the list shows: those opened in the current workspace folder (a session's cwd), or every session on this machine
 export type SessionScope = 'workspace' | 'all';
 export const SESSION_SCOPES: SessionScope[] = ['workspace', 'all'];
@@ -65,11 +69,13 @@ export interface SettingsView {
   planAutoApprove: AgentId[];
   // Cross-harness subagents: kept in ~/.acpira/subagents.json (shared by every window and IDE), not a host setting
   subagents: SubagentPersona[];
+  // CPU hard cap over every agent process tree, percent of all cores (AGENT_CPU_CAP)
+  agentCpuCap: number;
 }
 
 // Keys the webview may write back; the host maps them onto acpira.<key> at user scope
-export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued' | 'planAutoApprove' | 'subagents';
-export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued', 'planAutoApprove', 'subagents'];
+export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued' | 'planAutoApprove' | 'subagents' | 'agentCpuCap';
+export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued', 'planAutoApprove', 'subagents', 'agentCpuCap'];
 
 export const MIN_COMPACT_AT_TOKENS = 10_000;
 
@@ -98,6 +104,7 @@ export const DEFAULT_SETTINGS: SettingsView = {
   steerQueued: false,
   planAutoApprove: [],
   subagents: [],
+  agentCpuCap: AGENT_CPU_CAP.default,
 };
 
 // A hand-edited settings.json or a forged webview message can send anything; fall back per key so the page never sees an illegal value
@@ -121,6 +128,8 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
       return clampSize(value, UI_FONT_SIZE) as SettingsView[K];
     case 'codeFontSize':
       return clampSize(value, CODE_FONT_SIZE) as SettingsView[K];
+    case 'agentCpuCap':
+      return clampSize(value, AGENT_CPU_CAP) as SettingsView[K];
     case 'theme':
       return (oneOf(value, THEMES) ?? fallback) as SettingsView[K];
     case 'diffMarkers':
@@ -152,7 +161,7 @@ function oneOf<T extends string>(v: unknown, list: readonly T[]): T | undefined 
   return typeof v === 'string' && (list as readonly string[]).includes(v) ? v as T : undefined;
 }
 
-// Whole pixels within the bounds; anything else is the default
+// Whole numbers within the bounds; anything else is the default
 function clampSize(v: unknown, bounds: { min: number; max: number; default: number }): number {
   if (typeof v !== 'number' || !Number.isFinite(v)) return bounds.default;
   return Math.min(bounds.max, Math.max(bounds.min, Math.round(v)));

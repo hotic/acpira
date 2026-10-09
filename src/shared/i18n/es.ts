@@ -627,6 +627,8 @@ export const es = {
   'settings.shareEditorSelection.desc': 'Las líneas seleccionadas en el editor aparecen como una ficha junto al modo y se envían con el siguiente mensaje. Haz clic en la ficha para excluirlas.',
   'settings.steerQueued': 'Intercalar mensajes en cola',
   'settings.steerQueued.desc': 'En los agentes que lo admiten (Claude, Codex), un mensaje enviado mientras se ejecuta un turno se intercala de inmediato entre sus pasos en lugar de quedar en cola o detenerlo; el botón de enviar de un mensaje en cola también pasa a Intercalar. Los demás agentes siguen usando la cola y Enviar ahora.',
+  'settings.agentCpuCap': 'Límite de CPU de los agentes',
+  'settings.agentCpuCap.desc': 'Los agentes y sus procesos hijos se ejecutan con prioridad baja y, en conjunto, usan como máximo esta parte de la CPU. 100 % = sin límite. Solo Windows.',
   'settings.agent.permissions': 'Permisos',
   'settings.planAutoApprove': 'Aprobar automáticamente en modo Plan',
   'settings.planAutoApprove.desc': 'Mientras la sesión está en modo Plan, las solicitudes de herramientas de {agent} (comandos de shell, lectura de archivos) se aprueban una vez sin tarjeta. La aprobación del propio plan y las solicitudes que el agente marca como arriesgadas siguen preguntando. Nunca escribe una regla de permiso permanente.',

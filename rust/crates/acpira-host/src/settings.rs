@@ -79,6 +79,7 @@ impl SettingsCenter {
       steer_queued: self.read("steerQueued").as_bool().unwrap_or(false),
       plan_auto_approve: list("planAutoApprove"),
       subagents: self.deps.roster.list(),
+      agent_cpu_cap: self.read("agentCpuCap").as_i64().unwrap_or(acpira_shared::settings::AGENT_CPU_CAP.2),
     }
   }
 

@@ -1,5 +1,5 @@
 import type { AgentInfo } from '@shared/transcript';
-import { ACCOUNT_SWITCH_STRATEGIES, MIN_COMPACT_AT_TOKENS, SESSION_SCOPES, type AccountSwitchStrategy, type SessionScope, type SettingsView } from '@shared/settings';
+import { ACCOUNT_SWITCH_STRATEGIES, AGENT_CPU_CAP, MIN_COMPACT_AT_TOKENS, SESSION_SCOPES, type AccountSwitchStrategy, type SessionScope, type SettingsView } from '@shared/settings';
 import { LANGUAGES, type Language } from '@shared/i18n';
 import { launchable, pickDefaultAgent } from '@shared/agentOrder';
 import { AgentMark } from '../chat/AgentMark';
@@ -38,6 +38,17 @@ export function General({ settings, agents, on }: { settings: SettingsView; agen
         </Field>
         <Field label={t('settings.steerQueued')} desc={t('settings.steerQueued.desc')}>
           <Switch checked={settings.steerQueued} onChange={v => on.setSetting('steerQueued', v)} label={t('settings.steerQueued')} />
+        </Field>
+        <Field label={t('settings.agentCpuCap')} desc={t('settings.agentCpuCap.desc')}>
+          <NumberField
+            value={settings.agentCpuCap}
+            min={AGENT_CPU_CAP.min}
+            max={AGENT_CPU_CAP.max}
+            step={10}
+            unit="%"
+            label={t('settings.agentCpuCap')}
+            onCommit={v => on.setSetting('agentCpuCap', v)}
+          />
         </Field>
       </Section>
 

@@ -28,6 +28,7 @@
   "acpira.conf.fontSmoothing": "Text mit -webkit-font-smoothing: antialiased darstellen (dünnere Striche; nur macOS)",
   "acpira.conf.shareEditorSelection": "Die aktuelle Editor-Auswahl dem Chat anbieten: Sie erscheint als Chip neben dem Modus und wird mit der nächsten Nachricht gesendet",
   "acpira.conf.steerQueued": "Bei Agenten mit Steuerung (Claude, Codex) steuert die Senden-Schaltfläche einer wartenden Nachricht diese in den laufenden Durchlauf ein, statt ihn zu stoppen",
+  "acpira.conf.agentCpuCap": "Agenten und ihre Kindprozesse laufen mit niedriger Priorität und nutzen zusammen höchstens diesen CPU-Anteil. 100 % = keine Grenze. Nur Windows.",
   "acpira.conf.planAutoApprove": "Agenten, deren Plan-Modus Werkzeuganfragen ohne Berechtigungskarte genehmigt (Agent-IDs, z. B. claude); Plangenehmigungen und als riskant markierte Anfragen fragen weiterhin nach",
   "acpira.conf.appearance.density": "Dichte",
   "acpira.conf.appearance.radius": "Eckenradius",

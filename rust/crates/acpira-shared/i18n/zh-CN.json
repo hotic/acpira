@@ -618,6 +618,8 @@
   "settings.shareEditorSelection.desc": "编辑器里选中的行会在模式旁显示为标签，随下一条消息发出。点标签可以把它排除。",
   "settings.steerQueued": "排队消息改为引导",
   "settings.steerQueued.desc": "在支持引导的 agent 上（Claude、Codex），回合运行中发出的消息直接穿插进当前回合，不排队、也不中断它；已排队消息的发送按钮同样变成“引导”。其他 agent 仍是排队，按钮仍是“直接发送”。",
+  "settings.agentCpuCap": "Agent CPU 上限",
+  "settings.agentCpuCap.desc": "agent 及其子进程以低优先级运行，合计 CPU 占用不超过此比例，100% 为不限制。仅 Windows。",
   "settings.agent.permissions": "权限",
   "settings.planAutoApprove": "Plan 模式自动批准",
   "settings.planAutoApprove.desc": "会话处于 Plan 模式时，{agent} 的工具请求（运行命令、读文件）直接按“允许一次”放行，不弹权限卡。计划本身的审批，以及 agent 标记为高风险的请求，仍然会询问。不会写入永久允许规则。",

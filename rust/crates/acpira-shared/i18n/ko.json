@@ -602,6 +602,8 @@
   "settings.shareEditorSelection.desc": "편집기에서 선택한 줄이 모드 옆에 칩으로 표시되고 다음 메시지와 함께 전송됩니다. 칩을 클릭하면 제외됩니다.",
   "settings.steerQueued": "대기 중인 메시지 끼워 넣기",
   "settings.steerQueued.desc": "끼워 넣기를 지원하는 에이전트(Claude, Codex)에서는 턴이 실행되는 동안 보낸 메시지가 대기열에 들어가거나 턴을 멈추지 않고 곧바로 단계 사이에 끼어듭니다. 대기 중인 메시지의 보내기 버튼도 끼워 넣기로 바뀝니다. 다른 에이전트는 계속 대기열과 지금 보내기를 사용합니다.",
+  "settings.agentCpuCap": "에이전트 CPU 상한",
+  "settings.agentCpuCap.desc": "에이전트와 하위 프로세스를 낮은 우선순위로 실행하고 합계 CPU 사용량을 이 비율로 제한합니다. 100%면 제한 없음. Windows 전용.",
   "settings.agent.permissions": "권한",
   "settings.planAutoApprove": "Plan 모드에서 자동 승인",
   "settings.planAutoApprove.desc": "세션이 Plan 모드일 때 {agent}의 도구 요청(명령 실행, 파일 읽기)을 카드 없이 \"한 번 허용\"으로 승인합니다. 계획 자체의 승인과 에이전트가 위험하다고 표시한 요청은 계속 확인합니다. 영구 허용 규칙은 기록하지 않습니다.",
