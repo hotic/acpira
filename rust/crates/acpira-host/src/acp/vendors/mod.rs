@@ -12,6 +12,8 @@ pub mod claude_workflow_log;
 pub mod claude_window;
 pub mod grok;
 pub mod kimi_failure;
+pub mod logged_failure;
+pub mod pi_failure;
 pub mod pi_usage;
 pub mod steering;
 
@@ -32,6 +34,15 @@ pub enum UsagePoll {
   /// `_x.ai/session/info`
   Grok,
   /// The session file (`pi_usage`)
+  Pi,
+}
+
+/// Where a CLI that swallows turn failures keeps them (`Vendor::failure_log`)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FailureLog {
+  /// `wire.jsonl` under `KIMI_CODE_HOME` (`kimi_failure`)
+  Kimi,
+  /// pi's session file (`pi_failure`)
   Pi,
 }
 
@@ -110,9 +121,13 @@ impl Vendor {
     if self == Vendor::Antigravity { antigravity::reply_error(text) } else { None }
   }
 
-  /// A failed turn arrives as an empty `end_turn`; the cause is only in the CLI's own session log (`kimi_failure`)
-  pub fn swallows_failures(self) -> bool {
-    self == Vendor::Kimi
+  /// A failed turn arrives as an empty `end_turn`; the cause is only in the CLI's own session log (`logged_failure`)
+  pub fn failure_log(self) -> Option<FailureLog> {
+    match self {
+      Vendor::Kimi => Some(FailureLog::Kimi),
+      Vendor::Pi => Some(FailureLog::Pi),
+      _ => None,
+    }
   }
 
   /// Leaving plan mode shows up only in the approval tool's output, without a current_mode_update (Kimi 0.41.0)

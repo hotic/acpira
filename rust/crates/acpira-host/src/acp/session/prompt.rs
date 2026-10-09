@@ -21,7 +21,7 @@ use crate::acp::transcript::normalize::{activity_of, apply_session_failure, end_
 use crate::acp::transport::process::AgentProcess;
 use crate::acp::transport::rpc::{BoxFuture, RpcError};
 use crate::acp::vendors::antigravity::ReplyError;
-use crate::acp::vendors::{Vendor, claude_window, kimi_failure};
+use crate::acp::vendors::{FailureLog, Vendor, claude_window, kimi_failure, logged_failure, pi_failure, pi_usage};
 use crate::i18n::{t, tp};
 use crate::limits::TITLE_MAX;
 use crate::util::{js_num, now_ms, random_uuid};
@@ -598,15 +598,25 @@ impl AcpSession {
     Some(Settled { stop: TurnStop::Cancelled, exhausted })
   }
 
-  /// The failure a CLI that swallows them (`Vendor::swallows_failures`) logged for this turn in its own session store
-  async fn logged_failure(&self, turn: &OpenTurn) -> Option<kimi_failure::Failure> {
-    if !self.vendor.swallows_failures() {
-      return None;
-    }
+  /// The failure a CLI that swallows them (`Vendor::failure_log`) logged for this turn in its own session store
+  async fn logged_failure(&self, turn: &OpenTurn) -> Option<logged_failure::Failure> {
+    let log = self.vendor.failure_log()?;
     let session_id = turn.acp_id.clone()?;
-    let home = kimi_failure::home_of(self.def().env.and_then(|e| e.get(kimi_failure::HOME_ENV).cloned()));
+    // The agent entry's own env first: a store moved for this entry is where the CLI wrote
+    let env = |key: &str| self.def().env.and_then(|e| e.get(key).cloned()).or_else(|| std::env::var(key).ok());
     let since = turn.started_at;
-    tokio::task::spawn_blocking(move || kimi_failure::read(&home, &session_id, since)).await.ok().flatten()
+    let read: Box<dyn FnOnce() -> Option<logged_failure::Failure> + Send> = match log {
+      FailureLog::Kimi => {
+        let home = kimi_failure::home_of(env(kimi_failure::HOME_ENV));
+        Box::new(move || kimi_failure::read(&home, &session_id, since))
+      }
+      FailureLog::Pi => {
+        let agent_dir = pi_usage::agent_dir_of(env(pi_usage::AGENT_DIR_ENV));
+        let cwd = self.cwd.clone();
+        Box::new(move || pi_failure::read(&agent_dir, &cwd, &session_id, since))
+      }
+    };
+    tokio::task::spawn_blocking(read).await.ok().flatten()
   }
 
   /// The error card for a failure the agent sent as text. A shared MCP server it could not start is left out of this
