@@ -294,11 +294,13 @@ function InstallProgressRow({ install, env }: { install: AgentInstallProgress; e
   ].filter(Boolean).join(' · ');
   const log = status !== 'success' && install.log.length > 0;
   return (
+    // Top-aligned: the log below makes this row tall, and the status icon belongs to the status line
     <ItemRow
+      className="items-start"
       lead={lead}
       title={status === 'running' ? <Shimmer className="font-sans text-2">{label}</Shimmer> : <span className={cn('text-2', status === 'failed' ? 'text-danger' : 'text-fg-1')}>{label}</span>}
-      desc={facts || undefined}
-      extra={(install.error || log) && <>
+      extra={(facts || install.error || log) && <>
+        {facts && <p className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{facts}</p>}
         {install.error && <p className="m-0 pt-1 text-2 text-danger [overflow-wrap:anywhere]">{install.error}</p>}
         {log && <InstallLog lines={install.log} />}
       </>}
