@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [1.9.1] - 2026-10-10
+
+### Added
+
+- **Session goal** for Codex and Claude: when the agent advertises the goal extension, a one-line goal strip hangs off the composer with the goal's status, its objective and the pause / resume / clear buttons the agent offers. Each status or objective change leaves a milestone row in the transcript, the goal is saved with the session and shown again when it reopens, and the newest typed prompt offers **Set as goal**. Built from the codex-acp and claude-agent-acp sources and covered by fixture-agent tests; real CLIs remain unverified.
+- On Windows, agents and everything they start run below normal priority, together capped at a share of total CPU so heavy builds and test runs no longer freeze the desktop. The new `acpira.agentCpuCap` setting (10–100%, default 80) applies live, 100 lifts the cap, and `ACPIRA_AGENT_CPU_CAP` overrides it. Agent work that used every core may now run somewhat slower.
+
+### Changed
+
+- Opening a session shows its transcript as soon as the record is loaded instead of waiting for the agent to start and resume, and a long session's view is sent once instead of three times.
+- The context card no longer shows the session cost, and its compact button stays in place whenever the agent supports `/compact`, disabled while a turn runs.
+- Setting descriptions on the settings page and in VS Code's settings are shorter in all nine languages.
+
+### Fixed
+
+- A steer sent while Claude compacts its context now waits for the compaction to end instead of aborting it and making it start over. If the turn ends first, the held messages go out as ordinary follow-ups.
+- Kimi and Pi turns that failed upstream (a provider error, an unknown model, a timeout) show the error the CLI logged instead of a generic empty-reply card, because both CLIs report such failures over ACP as an empty completion.
+- Reopening a Claude session that was created but never prompted starts a fresh session instead of showing a resume error whose Retry could never succeed. A session with turns stays read-only as before.
+- On macOS and Linux, a window that joins over a different SSH login no longer stays on an engine whose keychain is locked: when no other window is connected and no turn runs, that engine retires and the window starts one in its own login session.
+- The keychain unlock notice keeps its buttons usable while it waits and says to reload the window if nothing happens after the password.
+- Merging an agent's own prompt file into the shared `AGENTS.md` no longer leaves orphan structural lines behind, such as a table separator row whose table rows were all known.
+
 ## [1.9.0] - 2026-10-09
 
 ### Added
