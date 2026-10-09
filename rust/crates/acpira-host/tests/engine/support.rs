@@ -131,8 +131,17 @@ fn bundle(root: &std::path::Path) -> Option<PathBuf> {
       let out = dir.join("fake-agent.mjs");
       // Built aside and renamed into place: another test process may be starting agents from the current copy
       let tmp = dir.join(format!("fake-agent.{}.mjs", std::process::id()));
-      let status = std::process::Command::new("node")
-        .arg(&esbuild)
+      // esbuild's install script swaps bin/esbuild for the native binary where it can (macOS / Linux); elsewhere it
+      // stays the node launcher
+      let script = std::fs::read(&esbuild).is_ok_and(|b| b.starts_with(b"#!"));
+      let mut cmd = if script {
+        let mut c = std::process::Command::new("node");
+        c.arg(&esbuild);
+        c
+      } else {
+        std::process::Command::new(&esbuild)
+      };
+      let status = cmd
         .arg(&source)
         .args(BUNDLE_FLAGS)
         .arg(format!("--outfile={}", tmp.display()))

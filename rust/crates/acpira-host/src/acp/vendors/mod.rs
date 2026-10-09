@@ -11,6 +11,7 @@ pub mod claude_workflow;
 pub mod claude_workflow_log;
 pub mod claude_window;
 pub mod grok;
+pub mod kimi_failure;
 pub mod pi_usage;
 pub mod steering;
 
@@ -107,6 +108,11 @@ impl Vendor {
   /// A failed turn arrives as the reply's last text with `end_turn` (`antigravity::reply_error`)
   pub fn reply_error(self, text: &str) -> Option<(usize, antigravity::ReplyError)> {
     if self == Vendor::Antigravity { antigravity::reply_error(text) } else { None }
+  }
+
+  /// A failed turn arrives as an empty `end_turn`; the cause is only in the CLI's own session log (`kimi_failure`)
+  pub fn swallows_failures(self) -> bool {
+    self == Vendor::Kimi
   }
 
   /// Leaving plan mode shows up only in the approval tool's output, without a current_mode_update (Kimi 0.41.0)
