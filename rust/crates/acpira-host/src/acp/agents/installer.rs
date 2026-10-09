@@ -567,15 +567,6 @@ impl Installs {
           return;
         }
       };
-      {
-        let mut l = log.lock();
-        if let Some(url) = &plan.proxy {
-          l.push(format!("# proxy {url}"));
-        }
-        if let Some(dir) = &plan.prefix {
-          l.push(format!("# npm prefix {dir} (the global prefix is not writable)"));
-        }
-      }
       me.set(&agent, |e| {
         e.progress.proxy = plan.proxy.clone();
         e.progress.prefix = plan.prefix.clone();
