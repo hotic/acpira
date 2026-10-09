@@ -277,7 +277,7 @@
   "notice.locked.text": "Le trousseau de ce Mac est verrouillé pour la session distante actuelle (par exemple SSH), la connexion enregistrée est donc illisible. Déverrouillez-le dans le terminal avec le mot de passe de session de ce Mac ; les sessions se reconnectent d’elles-mêmes, sans nouvelle connexion.",
   "notice.locked.short": "Trousseau verrouillé : connexions et quota illisibles dans cette session distante",
   "notice.unlock": "Déverrouiller le trousseau",
-  "notice.unlockWaiting": "Saisissez dans le terminal le mot de passe de session de ce Mac pour déverrouiller le trousseau…",
+  "notice.unlockWaiting": "Saisissez dans le terminal le mot de passe de session de ce Mac pour déverrouiller le trousseau… Si rien ne se passe ensuite, rechargez la fenêtre.",
   "notice.unlock.cancelled": "Le trousseau est toujours verrouillé. Appuyez sur « Déverrouiller le trousseau » pour réessayer.",
   "notice.unlockFailed": "Impossible de déverrouiller le trousseau : {error}",
   "notice.terminalLogin": "Se connecter dans le terminal",

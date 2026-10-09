@@ -303,7 +303,7 @@ export const zhCN = {
   'notice.locked.text': '这台 Mac 的钥匙串在当前远程会话（如 SSH）中处于锁定状态，已保存的登录读不出来。在终端输入这台 Mac 的登录密码解锁后，会话会自动重连，不需要重新登录。',
   'notice.locked.short': '钥匙串已锁定：当前远程会话读不到登录和额度',
   'notice.unlock': '解锁钥匙串',
-  'notice.unlockWaiting': '请在终端输入这台 Mac 的登录密码解锁钥匙串…',
+  'notice.unlockWaiting': '请在终端输入这台 Mac 的登录密码解锁钥匙串…输完仍没有反应，请重新加载窗口。',
   'notice.unlock.cancelled': '钥匙串仍处于锁定状态，可重新点击「解锁钥匙串」。',
   'notice.unlockFailed': '解锁钥匙串失败：{error}',
   'notice.terminalLogin': '在终端登录',

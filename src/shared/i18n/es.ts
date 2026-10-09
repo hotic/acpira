@@ -287,7 +287,7 @@ export const es = {
   'notice.locked.text': 'El llavero de este Mac está bloqueado en la sesión remota actual (por ejemplo, SSH), así que no se puede leer el inicio de sesión guardado. Desbloquéalo en la terminal con la contraseña de inicio de sesión de este Mac; las sesiones se reconectan solas, sin volver a iniciar sesión.',
   'notice.locked.short': 'Llavero bloqueado: en esta sesión remota no se pueden leer los inicios de sesión ni la cuota',
   'notice.unlock': 'Desbloquear llavero',
-  'notice.unlockWaiting': 'Introduce en la terminal la contraseña de inicio de sesión de este Mac para desbloquear el llavero…',
+  'notice.unlockWaiting': 'Introduce en la terminal la contraseña de inicio de sesión de este Mac para desbloquear el llavero… Si después no pasa nada, recarga la ventana.',
   'notice.unlock.cancelled': 'El llavero sigue bloqueado. Pulsa «Desbloquear llavero» para intentarlo de nuevo.',
   'notice.unlockFailed': 'No se pudo desbloquear el llavero: {error}',
   'notice.terminalLogin': 'Iniciar sesión en la terminal',

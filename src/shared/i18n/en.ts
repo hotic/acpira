@@ -294,7 +294,7 @@ export const en = {
   'notice.locked.text': 'This Mac’s keychain is locked for the current remote session (such as SSH), so the saved sign-in cannot be read. Unlock it in the terminal with this Mac’s login password; sessions reconnect by themselves, no new sign-in needed.',
   'notice.locked.short': 'Keychain locked: sign-ins and quota are unreadable in this remote session',
   'notice.unlock': 'Unlock keychain',
-  'notice.unlockWaiting': 'Enter this Mac’s login password in the terminal to unlock the keychain…',
+  'notice.unlockWaiting': 'Enter this Mac’s login password in the terminal to unlock the keychain… If nothing happens after that, reload the window.',
   'notice.unlock.cancelled': 'The keychain is still locked. Press “Unlock keychain” to try again.',
   'notice.unlockFailed': 'Could not unlock the keychain: {error}',
   'notice.terminalLogin': 'Sign in in terminal',
