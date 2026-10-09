@@ -107,12 +107,17 @@ pub struct ShellEnvPatch {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ClientInfo {
   pub name: String,
   #[serde(default)]
   pub version: String,
   #[serde(default)]
   pub capabilities: Vec<String>,
+  /// The shell process's `SSH_CONNECTION` (a remote workspace): which SSH login, and so which macOS security session,
+  /// the window runs in
+  #[serde(default)]
+  pub ssh_connection: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
