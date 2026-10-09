@@ -125,10 +125,18 @@ impl AcpSession {
     {
       c.turn_failure = Some(f);
     }
+    let mut compaction_over = false;
     if !c.replaying
       && let Some(comp) = c.compaction.completion.as_mut()
     {
+      let was = comp.running();
       comp.update(&u);
+      compaction_over = was && !comp.running();
+    }
+    // The agent's own mid-turn compaction ended: the steers it held back go in now
+    if compaction_over && c.phase.running && !c.queue.steer_after_compaction.is_empty() {
+      let me = self.clone();
+      tokio::spawn(async move { me.steer_after_compaction().await });
     }
     // A user_message_chunk echoed mid-turn is the one just sent
     if c.phase.running && kind == "user_message_chunk" {

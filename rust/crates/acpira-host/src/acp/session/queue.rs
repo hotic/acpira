@@ -8,6 +8,7 @@ use serde_json::Value;
 use acpira_shared::transcript::*;
 
 use crate::acp::session::attachments::{PreparedPrompt, prepare_prompt, restore_drafts};
+use crate::acp::session::compaction::CompactionCompletion;
 use crate::acp::session::prompt::{Origin, Staged};
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::transcript::normalize::push_steer;
@@ -28,6 +29,9 @@ pub(crate) struct PromptQueue {
   pub sending_id: Option<String>,
   /// The queued entry whose `_session/steering` request is on the wire; the queue holds its flush until the answer
   pub steering_id: Option<String>,
+  /// Entries asked to steer while a compaction ran (a steer then aborts it on claude-agent-acp): they steer in once that
+  /// compaction is over, or go out as ordinary follow-ups when the turn ends first
+  pub steer_after_compaction: Vec<String>,
 }
 
 impl PromptQueue {
@@ -208,6 +212,15 @@ impl AcpSession {
       if c.queue.claimed() || c.status != SessionStatus::Ready {
         return Ok(());
       }
+      // A compaction under way: a steer would abort it (claude-agent-acp fails it `aborted` and starts over), and the
+      // send-now fallback would cancel it. The entry waits in the queue and steers in once the compaction is over
+      if c.phase.running && c.compaction.completion.as_ref().is_some_and(CompactionCompletion::running) {
+        if c.queue.entries.iter().any(|q| q.id == id) && !c.queue.steer_after_compaction.iter().any(|x| x == id) {
+          self.log("steer held: compaction under way");
+          c.queue.steer_after_compaction.push(id.to_owned());
+        }
+        return Ok(());
+      }
       // Staging, a pre-send compaction or an account switch own the wire: the steer would land in the wrong request
       // A peer that already reported its thread idle has finished the turn: the steer would start a turn of its own
       let steerable = c.phase.running
@@ -270,6 +283,17 @@ impl AcpSession {
       }
     }
     Ok(())
+  }
+
+  /// The compaction that held steers back is over and the turn runs on: they steer in, in the order they were asked for.
+  /// One that cannot land now stays queued as an ordinary follow-up
+  pub(crate) async fn steer_after_compaction(self: &Arc<Self>) {
+    let ids = std::mem::take(&mut self.core.lock().queue.steer_after_compaction);
+    for id in ids {
+      if let Err(e) = self.steer_entry(&id, false).await {
+        self.log(&format!("held steer failed: {e}"));
+      }
+    }
   }
 
   /// A detached peer turn shows as the agent turn it continues, running again, once the prompt that turn belonged to has

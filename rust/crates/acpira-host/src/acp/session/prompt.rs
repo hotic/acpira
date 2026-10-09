@@ -658,6 +658,8 @@ impl AcpSession {
       comp.close();
     }
     c.compaction.completion = None;
+    // Steers held behind a compaction missed this turn: the queue sends them as ordinary follow-ups
+    c.queue.steer_after_compaction.clear();
     // The parent prompt returned: children still reported running are disconnected, never failed
     c.tree.settle("prompt-returned");
     self.drain_terminal(c);

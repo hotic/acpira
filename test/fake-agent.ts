@@ -87,6 +87,8 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // idle steer ignores the opt-in and runs a turn of its own (`startedNewTurn`, then active, `detached:<text>`, idle).
 // =codex-late: a steer during "slow" ends that turn first (idle, end_turn) and then lands idle, the race the host has to absorb;
 // =codex-gap: "slow" stops after 10 chunks, reports idle and answers the prompt 600 ms later.
+// A "slow compacting" turn compacts on its own from chunk 3 to chunk 15 (compaction_update in_progress … completed); a
+// steer arriving meanwhile fails that compaction `aborted`, the way claude-agent-acp does
 // FAKE_STEER_LOG → append every steering request's text to that file
 // FAKE_SLOW_STEP_MS → the pause between the 50 chunks of a "slow" turn (default 40 ms, so 2 s in all)
 // FAKE_META_LOG → append `{ method, meta }` (the request's `_meta`) for every session/new, resume and load
@@ -113,6 +115,8 @@ const sessions = new Set<string>();
 // FAKE_STEERING: the sessions with a "slow" prompt in flight and the steered texts it has yet to answer
 const steerable = new Set<string>();
 const steered = new Map<string, string[]>();
+// "slow compacting": the session's mid-turn compaction still under way
+const compactingMidTurn = new Map<string, string>();
 const steerMode = process.env.FAKE_STEERING ?? '';
 const slowStepMs = Number(process.env.FAKE_SLOW_STEP_MS) || 40;
 const codexLike = steerMode.startsWith('codex');
@@ -370,6 +374,13 @@ const app = acp.agent({ name: 'fake-agent' })
       // The turn wraps up before the steer is looked at: its idle and response go out first
       await new Promise<void>(done => lateSteer.set(sid, { text, done }));
     } else if (mode !== 'idle' && steerable.has(sid)) {
+      // claude-agent-acp: a message steered in while it compacts aborts the compaction
+      const compaction = compactingMidTurn.get(sid);
+      if (compaction) {
+        compactingMidTurn.delete(sid);
+        await client.notify(acp.methods.client.session.update, { sessionId: sid,
+          update: { sessionUpdate: 'compaction_update', compactionId: compaction, status: 'failed', error: 'aborted' } } as unknown as acp.SessionNotification);
+      }
       steered.set(sid, [...steered.get(sid) ?? [], text]);
       return { outcome: 'injected' };
     }
@@ -1369,6 +1380,17 @@ const app = acp.agent({ name: 'fake-agent' })
             return { stopReason: 'end_turn' };
           }
           if (grokUsage) usedTokens += 1000;
+          // "slow compacting": the agent's own compaction runs from chunk 3 to 15 unless a steer aborts it
+          if (text.includes('compacting') && i === 3) {
+            const id = `auto-${sid}`;
+            compactingMidTurn.set(sid, id);
+            await send({ sessionUpdate: 'compaction_update', compactionId: id, status: 'in_progress' });
+          }
+          if (i === 15 && compactingMidTurn.has(sid)) {
+            const id = compactingMidTurn.get(sid)!;
+            compactingMidTurn.delete(sid);
+            await send({ sessionUpdate: 'compaction_update', compactionId: id, status: 'completed' });
+          }
           // A steered message is answered inside this turn, before the loop carries on
           const next = steered.get(sid)?.shift();
           if (next !== undefined) await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `steered:${next} ` } });
@@ -1380,6 +1402,7 @@ const app = acp.agent({ name: 'fake-agent' })
       } finally {
         steerable.delete(sid);
         steered.delete(sid);
+        compactingMidTurn.delete(sid);
         // codex-late: the steer is looked at only once this turn's response is on the wire
         const pending = late.get(sid);
         if (pending) {
