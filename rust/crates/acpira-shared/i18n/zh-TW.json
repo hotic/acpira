@@ -285,7 +285,7 @@
   "notice.locked.text": "這台 Mac 的鑰匙串在目前遠端工作階段（如 SSH）中處於鎖定狀態，已儲存的登入讀不出來。在終端輸入這台 Mac 的登入密碼解鎖後，工作階段會自動重連，不需要重新登入。",
   "notice.locked.short": "鑰匙串已鎖定：目前遠端工作階段讀不到登入和額度",
   "notice.unlock": "解鎖鑰匙串",
-  "notice.unlockWaiting": "請在終端輸入這台 Mac 的登入密碼解鎖鑰匙串…",
+  "notice.unlockWaiting": "請在終端輸入這台 Mac 的登入密碼解鎖鑰匙串…輸入後仍沒有反應，請重新載入視窗。",
   "notice.unlock.cancelled": "鑰匙串仍處於鎖定狀態，可重新點選「解鎖鑰匙串」。",
   "notice.unlockFailed": "解鎖鑰匙串失敗：{error}",
   "notice.terminalLogin": "在終端登入",

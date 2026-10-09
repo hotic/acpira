@@ -290,7 +290,7 @@ export const de = {
   'notice.locked.text': 'Der Schlüsselbund dieses Macs ist in der aktuellen Remote-Sitzung (etwa SSH) gesperrt, daher kann die gespeicherte Anmeldung nicht gelesen werden. Im Terminal mit dem Anmeldepasswort dieses Macs entsperren; Sitzungen verbinden sich dann von selbst neu, eine neue Anmeldung ist nicht nötig.',
   'notice.locked.short': 'Schlüsselbund gesperrt: Anmeldungen und Kontingent sind in dieser Remote-Sitzung nicht lesbar',
   'notice.unlock': 'Schlüsselbund entsperren',
-  'notice.unlockWaiting': 'Im Terminal das Anmeldepasswort dieses Macs eingeben, um den Schlüsselbund zu entsperren…',
+  'notice.unlockWaiting': 'Im Terminal das Anmeldepasswort dieses Macs eingeben, um den Schlüsselbund zu entsperren… Passiert danach nichts, das Fenster neu laden.',
   'notice.unlock.cancelled': 'Der Schlüsselbund ist noch gesperrt. „Schlüsselbund entsperren“ drücken, um es erneut zu versuchen.',
   'notice.unlockFailed': 'Schlüsselbund konnte nicht entsperrt werden: {error}',
   'notice.terminalLogin': 'Im Terminal anmelden',

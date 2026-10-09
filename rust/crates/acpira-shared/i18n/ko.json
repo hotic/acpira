@@ -284,7 +284,7 @@
   "notice.locked.text": "현재 원격 세션(SSH 등)에서는 이 Mac의 키체인이 잠겨 있어 저장된 로그인을 읽을 수 없습니다. 터미널에서 이 Mac의 로그인 암호로 잠금을 해제하면 세션이 자동으로 다시 연결되며, 다시 로그인할 필요는 없습니다.",
   "notice.locked.short": "키체인 잠김: 이 원격 세션에서는 로그인과 사용량을 읽을 수 없음",
   "notice.unlock": "키체인 잠금 해제",
-  "notice.unlockWaiting": "터미널에 이 Mac의 로그인 암호를 입력해 키체인 잠금을 해제하세요…",
+  "notice.unlockWaiting": "터미널에 이 Mac의 로그인 암호를 입력해 키체인 잠금을 해제하세요… 입력 후에도 반응이 없으면 창을 다시 로드하세요.",
   "notice.unlock.cancelled": "키체인이 아직 잠겨 있습니다. “키체인 잠금 해제”를 눌러 다시 시도하세요.",
   "notice.unlockFailed": "키체인 잠금을 해제하지 못했습니다: {error}",
   "notice.terminalLogin": "터미널에서 로그인",

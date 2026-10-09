@@ -49,7 +49,9 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
   const withAccounts = !!agent.accounts;
   const locked = status === 'auth_required' && withAccounts && !!agent.credentialsLocked;
   const action = status === 'auth_required' && accountAction?.agent === agent.id ? accountAction : undefined;
-  const busy = action?.status === 'pending';
+  // An unlock waits up to 5 minutes on a terminal the user may have finished long ago: the buttons stay usable meanwhile
+  // (a second unlock while one is pending is ignored by the host)
+  const busy = action?.status === 'pending' && action.via !== 'unlock';
   const unlockFeedback = (a: AccountAction) => a.status === 'pending' ? t('notice.unlockWaiting')
     : a.status === 'error' ? t('notice.unlockFailed', { error: a.error ?? t('notice.error.unknown') })
       // Success needs no line: the sessions reconnect and this bar goes away
