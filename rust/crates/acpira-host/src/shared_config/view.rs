@@ -197,15 +197,32 @@ fn plan(all_wires: &[Wire], ledger: &Ledger) -> Vec<PlanItem> {
 /// The lines of `text` that `base` lacks (compared trimmed, blank lines and the shared prompt's import lines ignored),
 /// in file order; runs that were apart in `text` stay apart by one blank line. Empty when nothing is new.
 /// Code fences (with or without a language tag) and lines without a letter or digit (rules, table separators) never
-/// count as known, or a merged block would lose the fences around its code
+/// count as known, or a merged block would lose the fences around its code. They only travel with new text, though:
+/// a paragraph (a run of non-blank lines, a fenced block counted whole) without one new content line adds nothing,
+/// so a table whose rows are all known does not leave its separator row behind on its own
 pub fn unique_lines(text: &str, base: &str, imports: &[String]) -> String {
-  let structural = |l: &str| l.starts_with("```") || l.starts_with("~~~") || !l.chars().any(char::is_alphanumeric);
+  let fence = |l: &str| l.starts_with("```") || l.starts_with("~~~");
+  let structural = |l: &str| fence(l) || !l.chars().any(char::is_alphanumeric);
   let known: HashSet<&str> = base.lines().map(str::trim).filter(|l| !structural(l)).collect();
+  let fresh = |t: &str| !t.is_empty() && !known.contains(t) && !imports.iter().any(|f| f == t);
+  let lines: Vec<&str> = text.lines().collect();
+  // keep[i]: line i is new and its paragraph holds at least one new line that is not structural
+  let mut keep = vec![false; lines.len()];
+  let (mut start, mut in_fence) = (0, false);
+  for i in 0..=lines.len() {
+    let t = lines.get(i).map(|l| l.trim());
+    if let Some(t) = t.filter(|t| !t.is_empty() || in_fence) {
+      in_fence ^= fence(t);
+      continue;
+    }
+    let adds = (start..i).any(|j| fresh(lines[j].trim()) && !structural(lines[j].trim()));
+    (start..i).for_each(|j| keep[j] = adds && fresh(lines[j].trim()));
+    start = i + 1;
+  }
   let mut out: Vec<&str> = vec![];
   let mut gap = false;
-  for line in text.lines() {
-    let t = line.trim();
-    if t.is_empty() || known.contains(t) || imports.iter().any(|f| f == t) {
+  for (line, keep) in lines.iter().zip(keep) {
+    if !keep {
       gap = true;
       continue;
     }
