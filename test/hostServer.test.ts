@@ -137,7 +137,8 @@ describe('sidecar (stdio envelopes)', () => {
       { env: { FAKE_AUTH_REJECT: '1' }, login: 'fake-login --now', install: { command: 'curl -fsSL https://example.com/i.sh | sh' } },
     );
     const init = await s.open('V');
-    expect(init.state.active?.status).toBe('auth_required');
+    // Init no longer waits for the agent to start: the auth wall comes as a session push unless init already carried it
+    if (init.state.active?.status !== 'auth_required') await s.hostMsg('V', 'session', m => m.session.status === 'auth_required');
     s.view('V', { type: 'login' });
     const term = await s.next((m): m is Extract<SidecarMsg, { type: 'platformRequest' }> => m.type === 'platformRequest' && m.request.method === 'runInTerminal');
     expect(term.request).toMatchObject({ method: 'runInTerminal', command: 'fake-login', args: ['--now'] });
