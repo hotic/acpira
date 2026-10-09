@@ -202,7 +202,9 @@ describe('persistent engine', { timeout: 60_000 }, () => {
     const opened = await w.session(s => s.id === id && s.status === 'ready');
     // The old engine was gone by then: it ended after its one-second grace, and only then did the new one start an agent
     expect(alive(oldPid)).toBe(false);
-    expect(w.messages.some(m => m.type === 'session' && m.session.id === id && m.session.status === 'readonly')).toBe(true);
+    // The read-only copy can reach the page inside init, which no longer waits for the agent, or as a later push
+    const shown = w.messages.map(m => m.type === 'session' ? m.session : m.type === 'init' ? m.state.active : undefined);
+    expect(shown.some(s => s?.id === id && s.status === 'readonly')).toBe(true);
     expect(opened.turns).toHaveLength(2);
   });
 });
