@@ -27,7 +27,7 @@
   "acpira.conf.diffMarkers": "差异标记：color 给改动行上底色，signs 只靠 +/- 前缀",
   "acpira.conf.fontSmoothing": "用 -webkit-font-smoothing: antialiased 渲染文字（笔画更细，仅 macOS 生效）",
   "acpira.conf.shareEditorSelection": "把编辑器里当前选中的代码带进聊天：模式旁显示一个标签，随下一条消息发出",
-  "acpira.conf.steerQueued": "在支持引导的 agent（Claude、Codex）上，排队消息的发送按钮改为引导：把消息插进正在运行的回合，而不是先中断它",
+  "acpira.conf.steerQueued": "回合运行中发出的消息直接插进当前回合，不再排队。仅 Claude、Codex 支持。",
   "acpira.conf.agentCpuCap": "agent 及其子进程以低优先级运行，合计 CPU 占用不超过此比例，100% 为不限制。仅 Windows。",
   "acpira.conf.planAutoApprove": "Plan 模式下不弹权限卡、直接放行工具请求的 agent（agent id，例如 claude）；计划审批和 agent 标记为高风险的请求仍会询问",
   "acpira.conf.appearance.density": "密度",

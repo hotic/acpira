@@ -27,7 +27,7 @@
   "acpira.conf.diffMarkers": "差分の表示：color は変更行に色を付け、signs は +/- の記号だけで示します",
   "acpira.conf.fontSmoothing": "-webkit-font-smoothing: antialiased でテキストを描画します（線が細くなります。macOS のみ）",
   "acpira.conf.shareEditorSelection": "エディターの現在の選択範囲をチャットに渡します：モードの横にチップとして表示され、次のメッセージと一緒に送られます",
-  "acpira.conf.steerQueued": "割り込みに対応したエージェント（Claude、Codex）では、キューにあるメッセージの送信ボタンでターンを止めずに実行中のターンへ割り込ませます",
+  "acpira.conf.steerQueued": "ターン実行中に送ったメッセージをキューに入れず、そのターンに割り込ませます。Claude と Codex のみ。",
   "acpira.conf.agentCpuCap": "エージェントとその子プロセスを低い優先度で動かし、CPU 使用率の合計をこの割合までに抑えます。100% で上限なし。Windows のみ。",
   "acpira.conf.planAutoApprove": "Plan モードで権限カードを出さずにツール要求を承認するエージェント（エージェント ID、例: claude）。プランの承認とエージェントが危険と示した要求は引き続き確認します",
   "acpira.conf.appearance.density": "密度",
