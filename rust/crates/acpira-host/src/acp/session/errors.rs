@@ -188,6 +188,11 @@ pub fn classify_restore_error(e: &anyhow::Error) -> Option<RestoreFailure> {
   if is_session_gone(e) {
     return Some(RestoreFailure::Gone);
   }
+  // ACP's resourceNotFound (-32002, "Resource not found: <sessionId>"): claude-agent-acp answers a resume this way when
+  // Claude Code never wrote the conversation (a session/new that was never prompted) or no longer has it
+  if rpc_of(e).is_some_and(|r| r.code == -32002) {
+    return Some(RestoreFailure::Gone);
+  }
   if is_session_locked(e) {
     return Some(RestoreFailure::Locked);
   }
