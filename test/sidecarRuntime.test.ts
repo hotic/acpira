@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { EditTurnRequest, HostMsg } from '../src/shared/protocol';
 import type { PlatformRequest, SidecarMsg } from '../src/shared/sidecar';
 import { captureTurnSettings } from '../src/shared/turnSettings';
-import { FAKE, SIDECAR, Shell, TSX } from './sidecarShell';
+import { FAKE, SIDECAR, Shell, NODE } from './sidecarShell';
 
 // The runtime behind the envelope protocol (settings snapshot and events, platform RPCs, view routing) as a shell sees it:
 // what the VS Code and IntelliJ shells both rely on
@@ -30,7 +30,7 @@ describe('sidecar runtime', () => {
     const home = mkdtempSync(join(tmpdir(), 'acpira-runtime-'));
     const cwd = mkdtempSync(join(tmpdir(), 'acpira-runtime-ws-'));
     const settings: Record<string, unknown> = {
-      agents: { fake: { name: 'Fake', command: TSX, args: [FAKE], install: { command: 'curl -fsSL https://example.com/install.sh | sh' } }, ...extraAgents },
+      agents: { fake: { name: 'Fake', command: NODE, args: [FAKE], install: { command: 'curl -fsSL https://example.com/install.sh | sh' } }, ...extraAgents },
       defaultAgent: 'fake',
     };
     const s = new Shell(home, cwd);
@@ -217,7 +217,7 @@ describe('sidecar runtime', () => {
     settings.hiddenOptions = { fake: { model: ['x'] } };
     change(['hiddenOptions']);
     await until(() => posted().some(m => m.type === 'hidden'));
-    settings.agents = { fake: { name: 'Renamed', command: TSX, args: [FAKE] } };
+    settings.agents = { fake: { name: 'Renamed', command: NODE, args: [FAKE] } };
     change(['agents']);
     settings.language = 'zh-CN';
     change(['language']);
@@ -244,14 +244,14 @@ describe('sidecar runtime', () => {
     const result = JSON.parse(execFileSync(SIDECAR, ['agents', '--json', '--home', home], {
       encoding: 'utf8', env: { ...process.env, ACPIRA_LOGIN_PATH: '0' },
     })) as { agents: { id: string; command: string }[] };
-    expect(result.agents.find(a => a.id === 'fake')?.command).toBe(TSX);
+    expect(result.agents.find(a => a.id === 'fake')?.command).toBe(NODE);
   });
 
   it.skipIf(process.platform === 'win32')('drops the reported Windows Devin override during migration on POSIX', async () => {
     const { home } = await setup({ devin: { name: 'Devin', command: 'C:\\Users\\Spark\\AppData\\Local\\devin\\cli\\bin\\devin.exe', args: ['acp'] } });
     const saved = JSON.parse(readFileSync(join(home, 'agents.json'), 'utf8'));
     expect(saved.devin).toBeUndefined();
-    expect(saved.fake.command).toBe(TSX);
+    expect(saved.fake.command).toBe(NODE);
     const result = JSON.parse(execFileSync(SIDECAR, ['agents', '--json', '--home', home], {
       encoding: 'utf8', env: { ...process.env, ACPIRA_LOGIN_PATH: '0' },
     })) as { agents: { id: string; command: string; args: string[] }[] };
@@ -271,7 +271,7 @@ describe('sidecar runtime', () => {
     const previousIds = new Set(posted().flatMap(m => m.type === 'session' ? [m.session.id] : []));
     s.view('V', { type: 'newSession', agent: 'fake' });
     await until(() => posted().some(m => m.type === 'session' && !previousIds.has(m.session.id) && m.session.status === 'ready'));
-    writeFileSync(path, JSON.stringify({ fake: { name: 'Repaired', command: TSX, args: [FAKE] } }));
+    writeFileSync(path, JSON.stringify({ fake: { name: 'Repaired', command: NODE, args: [FAKE] } }));
     await until(() => posted().some(m => m.type === 'agents' && m.agents.find(a => a.id === 'fake')?.name === 'Repaired'));
   });
 

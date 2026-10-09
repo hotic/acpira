@@ -1,13 +1,14 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { fileURLToPath } from 'node:url';
+import { FAKE } from './fakeAgentBundle';
 import { onNdjsonLines } from '../src/host/shell/ndjson';
 import type { HostMsg, WebviewMsg } from '../src/shared/protocol';
 import { sidecarBin } from '../scripts/lib/sidecarBin';
 import { SIDECAR_PROTOCOL_VERSION, type PlatformMethod, type PlatformRequest, type ShellMsg, type SidecarMsg } from '../src/shared/sidecar';
 
-export const FAKE = fileURLToPath(new URL('./fake-agent.ts', import.meta.url));
-export const TSX = fileURLToPath(new URL('../node_modules/.bin/tsx', import.meta.url));
+export { FAKE };
+// The fake agent's command: node runs the bundle test/globalSetup.ts builds
+export const NODE = process.execPath;
 // The Rust sidecar under test: ACPIRA_SIDECAR_BIN, or the workspace debug build test/globalSetup.ts brings up to date
 export const SIDECAR = sidecarBin();
 
@@ -78,7 +79,7 @@ export class Shell {
       type: 'hello', protocolVersion: SIDECAR_PROTOCOL_VERSION, requestId: 'h1',
       client: { name: 'test-shell', version: '0.0.0', capabilities: [] },
       env: { hostLanguage: 'en', cwd: this.cwd, blobBase: 'https://acpira.local/blobs' },
-      settings: { defaultAgent: 'fake', agents: { fake: { name: 'Fake', command: TSX, args: [FAKE], ...agentOver } } },
+      settings: { defaultAgent: 'fake', agents: { fake: { name: 'Fake', command: NODE, args: [FAKE], ...agentOver } } },
       ...over,
     };
     this.send(m);

@@ -104,11 +104,46 @@ use acpira_host::acp::agents::registry::AgentRegistry;
 use acpira_host::acp::session::{AcpSession, CompactionPolicy, SessionDeps};
 use acpira_host::store::transcript_store::TranscriptStore;
 
-/// test/fake-agent.ts, run by node through the tsx loader directly (not the tsx wrapper, so a SIGKILL reaches the agent itself)
+/// test/fake-agent.ts, bundled into one ES module that node runs directly (a SIGKILL reaches the agent itself)
 pub struct FakeAgent {
   pub root: PathBuf,
+  /// The bundle, built once per test process
   pub script: PathBuf,
-  pub loader: PathBuf,
+}
+
+/// esbuild's flags for the fake agent; test/globalSetup.ts builds the vitest copy with the same ones
+const BUNDLE_FLAGS: [&str; 4] = ["--bundle", "--platform=node", "--format=esm", "--log-level=warning"];
+
+/// One file per spawn instead of tsx transpiling the script and resolving the SDK's modules: with dozens of agents
+/// starting in parallel that start-up dominated the suite, and on Windows every opened file also goes through the
+/// antivirus filter. None when node_modules are not installed.
+fn bundle(root: &std::path::Path) -> Option<PathBuf> {
+  static BUNDLE: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+  BUNDLE
+    .get_or_init(|| {
+      let esbuild = root.join("node_modules/esbuild/bin/esbuild");
+      let source = root.join("test/fake-agent.ts");
+      if !esbuild.is_file() || !source.is_file() {
+        eprintln!("skipped: {} is missing (run `pnpm install` in the repository root)", esbuild.display());
+        return None;
+      }
+      let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+      let out = dir.join("fake-agent.mjs");
+      // Built aside and renamed into place: another test process may be starting agents from the current copy
+      let tmp = dir.join(format!("fake-agent.{}.mjs", std::process::id()));
+      let status = std::process::Command::new("node")
+        .arg(&esbuild)
+        .arg(&source)
+        .args(BUNDLE_FLAGS)
+        .arg(format!("--outfile={}", tmp.display()))
+        .status()
+        .expect("node runs esbuild");
+      assert!(status.success(), "esbuild could not bundle {}", source.display());
+      // node opens the running copy with delete sharing, so the rename replaces it; should it still fail, this process
+      // keeps its own copy
+      Some(if std::fs::rename(&tmp, &out).is_ok() { out } else { tmp })
+    })
+    .clone()
 }
 
 impl FakeAgent {
@@ -116,23 +151,13 @@ impl FakeAgent {
   pub fn locate() -> Option<FakeAgent> {
     // Drive spelling, not `\\?\` verbatim: node cannot resolve its main module through a verbatim path
     let root = acpira_host::platform::paths::canonical_for_cli(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")).ok()?;
-    let fake = FakeAgent { script: root.join("test/fake-agent.ts"), loader: root.join("node_modules/tsx/dist/loader.mjs"), root };
-    if fake.loader.is_file() && fake.script.is_file() {
-      Some(fake)
-    } else {
-      eprintln!("skipped: {} is missing (run `pnpm install` in the repository root)", fake.loader.display());
-      None
-    }
+    let script = bundle(&root)?;
+    Some(FakeAgent { root, script })
   }
 
-  /// The loader as `--import` takes it: a module specifier, so on Windows a drive path (read as a URL scheme `s:`) goes as
-  /// a file URL
-  pub fn loader_arg(&self) -> String {
-    if cfg!(windows) {
-      acpira_host::platform::file_url::path_to_file_url(&self.loader.to_string_lossy())
-    } else {
-      self.loader.to_string_lossy().into_owned()
-    }
+  /// The fake agent's arguments after `node`
+  pub fn args(&self) -> Vec<String> {
+    vec![self.script.to_string_lossy().into_owned()]
   }
 
   /// The acpira.agents entry for the fake agent under id `fake`, merged with `extra` (env, modes, ignoreModes, …)
@@ -145,7 +170,7 @@ impl FakeAgent {
     let mut entry = serde_json::json!({
       "name": "Fake",
       "command": "node",
-      "args": ["--import", self.loader_arg(), self.script.to_string_lossy()],
+      "args": self.args(),
       "login": "echo login",
     });
     if let (Some(e), Value::Object(x)) = (entry.as_object_mut(), extra) {

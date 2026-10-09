@@ -270,7 +270,7 @@ async fn a_terminal_auth_method_runs_the_agent_binary_in_a_terminal_and_never_re
   assert_eq!(terminals.len(), 1);
   let (command, args, env) = &terminals[0];
   assert_eq!(command, &node);
-  assert_eq!(args, &vec!["--import".to_owned(), fake.loader_arg(), fake.script.to_string_lossy().into_owned(), "--login".to_owned()]);
+  assert_eq!(args, &[fake.args(), vec!["--login".to_owned()]].concat());
   let env: BTreeMap<String, Option<String>> = env.clone().unwrap();
   let want: BTreeMap<String, Option<String>> = [("FAKE_TERMINAL_AUTH", auth_log.to_string_lossy().as_ref()), ("FAKE_OTHER", "agent"), ("FAKE_FLAG", "method"), ("FAKE_LOGIN", "1")]
     .into_iter().map(|(k, x)| (k.to_owned(), Some(x.to_owned()))).collect();
