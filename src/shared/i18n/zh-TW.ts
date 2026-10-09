@@ -651,6 +651,8 @@ export const zhTW = {
   'settings.shareEditorSelection.desc': '編輯器裡選取的行會在模式旁顯示為標籤，隨下一條訊息發出。點標籤可以把它排除。',
   'settings.steerQueued': '排隊訊息改為引導',
   'settings.steerQueued.desc': '在支援引導的 agent 上（Claude、Codex），回合執行中發出的訊息直接穿插進目前回合，不排隊、也不中斷它；已排隊訊息的傳送按鈕同樣變成「引導」。其他 agent 仍是排隊，按鈕仍是「直接傳送」。',
+  'settings.agentCpuCap': 'Agent CPU 上限',
+  'settings.agentCpuCap.desc': 'agent 及其子程序以低優先順序執行，合計 CPU 佔用不超過此比例，100% 為不限制。僅 Windows。',
   'settings.agent.permissions': '權限',
   'settings.planAutoApprove': 'Plan 模式自動核准',
   'settings.planAutoApprove.desc': '工作階段處於 Plan 模式時，{agent} 的工具請求（執行命令、讀取檔案）直接以「允許一次」放行，不跳出權限卡。計畫本身的審核，以及 agent 標記為高風險的請求，仍會詢問。不會寫入永久允許規則。',

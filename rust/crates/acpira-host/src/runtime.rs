@@ -243,9 +243,16 @@ impl HostRuntime {
       }
     }));
     set_host_locale(runtime.settings.locale());
+    runtime.apply_cpu_cap();
     let rt = runtime.clone();
     tokio::spawn(async move { rt.maintain_shared().await });
     Ok(runtime)
+  }
+
+  /// The `agentCpuCap` setting onto the job every agent process runs in (Windows only; elsewhere the setting is inert)
+  fn apply_cpu_cap(&self) {
+    #[cfg(windows)]
+    crate::platform::windows_process::set_cpu_cap(self.settings.view().agent_cpu_cap as u32);
   }
 
   async fn reload_agent_config(&self) -> Result<()> {
@@ -302,6 +309,9 @@ impl HostRuntime {
     }
     if affects(Some("agentOrder")) || affects(Some("disabledAgents")) {
       self.manager.emit_agents();
+    }
+    if affects(Some("agentCpuCap")) {
+      self.apply_cpu_cap();
     }
     if affects(Some("disabledAgents")) {
       // A turned-off agent's links go away, a turned-on one's come back

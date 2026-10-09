@@ -624,6 +624,8 @@ export const de = {
   'settings.shareEditorSelection.desc': 'Im Editor markierte Zeilen erscheinen als Chip neben dem Modus und werden mit der nächsten Nachricht gesendet. Ein Klick auf den Chip lässt sie weg.',
   'settings.steerQueued': 'Wartende Nachrichten einsteuern',
   'settings.steerQueued.desc': 'Bei Agenten mit Steuerung (Claude, Codex) wird eine während eines Durchlaufs gesendete Nachricht sofort zwischen dessen Schritten eingefügt, statt eingereiht zu werden oder den Durchlauf zu stoppen; auch die Senden-Schaltfläche einer wartenden Nachricht wird zu „Einsteuern“. Andere Agenten behalten Warteschlange und „Jetzt senden“.',
+  'settings.agentCpuCap': 'CPU-Grenze für Agenten',
+  'settings.agentCpuCap.desc': 'Agenten und ihre Kindprozesse laufen mit niedriger Priorität und nutzen zusammen höchstens diesen CPU-Anteil. 100 % = keine Grenze. Nur Windows.',
   'settings.agent.permissions': 'Berechtigungen',
   'settings.planAutoApprove': 'Im Plan-Modus automatisch genehmigen',
   'settings.planAutoApprove.desc': 'Solange die Sitzung im Plan-Modus ist, werden Werkzeuganfragen von {agent} (Shell-Befehle, Dateilesen) ohne Karte einmalig genehmigt. Die Genehmigung des Plans selbst und Anfragen, die der Agent als riskant markiert, fragen weiterhin nach. Es wird keine dauerhafte Erlaubnisregel geschrieben.',

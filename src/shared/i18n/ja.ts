@@ -627,6 +627,8 @@ export const ja = {
   'settings.shareEditorSelection.desc': 'エディターで選択した行がモードの横にチップとして表示され、次のメッセージと一緒に送られます。チップをクリックすると除外できます。',
   'settings.steerQueued': 'キューのメッセージを割り込ませる',
   'settings.steerQueued.desc': '割り込みに対応したエージェント（Claude、Codex）では、ターンの実行中に送ったメッセージがキューに入ったりターンを止めたりせず、すぐにステップの合間に割り込みます。キューにあるメッセージの送信ボタンも「割り込み」になります。その他のエージェントは従来どおりキューと「今すぐ送信」です。',
+  'settings.agentCpuCap': 'エージェントの CPU 上限',
+  'settings.agentCpuCap.desc': 'エージェントとその子プロセスを低い優先度で動かし、CPU 使用率の合計をこの割合までに抑えます。100% で上限なし。Windows のみ。',
   'settings.agent.permissions': '権限',
   'settings.planAutoApprove': 'Plan モードで自動承認',
   'settings.planAutoApprove.desc': 'セッションが Plan モードの間、{agent} のツール要求（コマンド実行、ファイル読み取り）はカードを出さずに「今回のみ許可」で承認します。プラン自体の承認と、エージェントが危険と示した要求は引き続き確認します。永続的な許可ルールは書き込みません。',

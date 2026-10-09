@@ -84,6 +84,43 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
   .expect("agent exited but its helper is still running");
 }
 
+fn priority_class(pid: u32) -> u32 {
+  use windows_sys::Win32::Foundation::CloseHandle;
+  use windows_sys::Win32::System::Threading::{GetPriorityClass, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+  // SAFETY: only reads this test's own processes; a successful handle is always closed.
+  unsafe {
+    let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+    assert!(!handle.is_null(), "process {pid} is gone");
+    let class = GetPriorityClass(handle);
+    CloseHandle(handle);
+    class
+  }
+}
+
+#[tokio::test]
+async fn an_agent_and_what_it_spawns_run_below_normal_priority() {
+  use windows_sys::Win32::System::Threading::BELOW_NORMAL_PRIORITY_CLASS;
+  // The helper asks for normal priority itself: the job's priority limit must still hold it below normal
+  let mut cmd = tokio::process::Command::new("node");
+  cmd
+    .args([
+      "-e",
+      "const h = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {stdio:'ignore'});        try { require('node:os').setPriority(h.pid, 0) } catch {} console.log(h.pid); setInterval(()=>{},1000)",
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::null());
+  let (mut child, job) = acpira_host::platform::windows_process::spawn(&mut cmd).await.unwrap();
+  let mut line = String::new();
+  use tokio::io::AsyncBufReadExt;
+  tokio::io::BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).await.unwrap();
+  let helper = Cleanup(line.trim().parse().unwrap());
+  assert_eq!(priority_class(child.id().unwrap()), BELOW_NORMAL_PRIORITY_CLASS);
+  assert_eq!(priority_class(helper.0), BELOW_NORMAL_PRIORITY_CLASS);
+  job.terminate();
+  child.wait().await.unwrap();
+}
+
 #[tokio::test]
 async fn job_fixture_host() {
   let Ok(receipt) = std::env::var("ACPIRA_JOB_FIXTURE_RECEIPT") else { return };

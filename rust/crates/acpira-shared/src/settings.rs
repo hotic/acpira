@@ -13,8 +13,10 @@ pub type HiddenMap = BTreeMap<AgentId, BTreeMap<String, Vec<String>>>;
 pub const UI_FONT_SIZE: (i64, i64, i64) = (10, 20, 13);
 pub const CODE_FONT_SIZE: (i64, i64, i64) = (9, 20, 12);
 pub const MIN_COMPACT_AT_TOKENS: i64 = 10_000;
+/// Share of all logical cores every agent of an engine may use together, in percent; 100 lifts the cap (Windows only)
+pub const AGENT_CPU_CAP: (i64, i64, i64) = (10, 100, 80);
 
-pub const SETTING_KEYS: [&str; 19] = [
+pub const SETTING_KEYS: [&str; 20] = [
   "language",
   "defaultAgent",
   "agentOrder",
@@ -34,6 +36,7 @@ pub const SETTING_KEYS: [&str; 19] = [
   "steerQueued",
   "planAutoApprove",
   "subagents",
+  "agentCpuCap",
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -65,6 +68,13 @@ pub struct SettingsView {
   /// Cross-harness subagents (`~/.acpira/subagents.json`, not a host setting: every window and IDE shares the file)
   #[serde(default)]
   pub subagents: Vec<crate::subagents::SubagentPersona>,
+  /// CPU hard cap over every agent process and its descendants, percent of all cores (`AGENT_CPU_CAP`, Windows job objects)
+  #[serde(default = "default_agent_cpu_cap")]
+  pub agent_cpu_cap: i64,
+}
+
+fn default_agent_cpu_cap() -> i64 {
+  AGENT_CPU_CAP.2
 }
 
 pub const ACCOUNT_SWITCH_STRATEGIES: [&str; 4] = ["off", "earliestReset", "mostRemaining", "listOrder"];
@@ -124,6 +134,7 @@ pub fn sanitize_setting(key: &str, value: &Value) -> Value {
     }
     "uiFontSize" => Value::from(clamp_size(value, UI_FONT_SIZE)),
     "codeFontSize" => Value::from(clamp_size(value, CODE_FONT_SIZE)),
+    "agentCpuCap" => Value::from(clamp_size(value, AGENT_CPU_CAP)),
     "theme" => Value::from(one_of(value, &["auto", "light", "dark"], "auto")),
     "diffMarkers" => Value::from(one_of(value, &["color", "signs"], "color")),
     "sessionScope" => Value::from(one_of(value, &["workspace", "all"], "workspace")),
@@ -145,4 +156,19 @@ pub fn sanitize_setting(key: &str, value: &Value) -> Value {
 /// Whether a session belongs to the workspace shown
 pub fn in_workspace(cwd: &str, workspace: &str) -> bool {
   cwd == workspace
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn the_agent_cpu_cap_is_a_whole_percentage_between_10_and_100_and_80_otherwise() {
+    assert_eq!(sanitize_setting("agentCpuCap", &Value::from(60)), Value::from(60));
+    assert_eq!(sanitize_setting("agentCpuCap", &Value::from(72.6)), Value::from(73));
+    assert_eq!(sanitize_setting("agentCpuCap", &Value::from(0)), Value::from(10));
+    assert_eq!(sanitize_setting("agentCpuCap", &Value::from(250)), Value::from(100));
+    assert_eq!(sanitize_setting("agentCpuCap", &Value::from("50")), Value::from(80));
+    assert!(is_setting_key("agentCpuCap"));
+  }
 }

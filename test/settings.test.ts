@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CODE_FONT_SIZE, DEFAULT_SETTINGS, inWorkspace, sanitizeSetting, UI_FONT_SIZE } from '../src/shared/settings';
+import { AGENT_CPU_CAP, CODE_FONT_SIZE, DEFAULT_SETTINGS, inWorkspace, sanitizeSetting, UI_FONT_SIZE } from '../src/shared/settings';
 
 // settings.json is hand-editable and the setSetting message can come from any webview script: every appearance value is checked before it is used
 describe('sanitizeSetting (appearance)', () => {
@@ -19,6 +19,15 @@ describe('sanitizeSetting (appearance)', () => {
     expect(sanitizeSetting('uiFontSize', '14')).toBe(UI_FONT_SIZE.default);
     expect(sanitizeSetting('codeFontSize', NaN)).toBe(CODE_FONT_SIZE.default);
     expect(sanitizeSetting('codeFontSize', 0)).toBe(CODE_FONT_SIZE.min);
+  });
+
+  it('the agent CPU cap is a whole percentage between 10 and 100, 80 otherwise', () => {
+    expect(sanitizeSetting('agentCpuCap', 60)).toBe(60);
+    expect(sanitizeSetting('agentCpuCap', 72.6)).toBe(73);
+    expect(sanitizeSetting('agentCpuCap', 0)).toBe(AGENT_CPU_CAP.min);
+    expect(sanitizeSetting('agentCpuCap', 250)).toBe(AGENT_CPU_CAP.max);
+    expect(sanitizeSetting('agentCpuCap', '50')).toBe(80);
+    expect(DEFAULT_SETTINGS.agentCpuCap).toBe(80);
   });
 
   it('fontSmoothing is a boolean', () => {

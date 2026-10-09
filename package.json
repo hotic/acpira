@@ -351,6 +351,14 @@
           "default": false,
           "description": "%acpira.conf.steerQueued%"
         },
+        "acpira.agentCpuCap": {
+          "type": "number",
+          "default": 80,
+          "minimum": 10,
+          "maximum": 100,
+          "scope": "machine",
+          "description": "%acpira.conf.agentCpuCap%"
+        },
         "acpira.planAutoApprove": {
           "type": "array",
           "items": {
