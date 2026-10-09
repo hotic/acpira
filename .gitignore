@@ -36,3 +36,11 @@ output/
 
 # JetBrains project files (the plugin source lives in idea/, its own .idea is ignored there)
 .idea/
+
+# iOS app (ios/): per-user Xcode state, build output, SwiftPM state, fixtures exported from private sessions
+xcuserdata/
+*.xcuserstate
+ios/build/
+ios/Packages/*/.build/
+ios/Packages/*/.swiftpm/
+ios/Fixtures/local/
