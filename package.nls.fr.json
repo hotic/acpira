@@ -29,6 +29,7 @@
   "acpira.conf.shareEditorSelection": "Proposer au chat la sélection actuelle de l’éditeur : elle apparaît comme une puce à côté du mode et part avec le prochain message",
   "acpira.conf.steerQueued": "Les messages envoyés pendant un tour s’y insèrent au lieu d’attendre. Claude et Codex uniquement.",
   "acpira.conf.agentCpuCap": "Les agents et leurs processus enfants tournent en basse priorité et utilisent au total au plus cette part du CPU. 100 % = sans limite. Windows uniquement.",
+  "acpira.conf.proxy": "Proxy réseau des agents (y compris leurs requêtes au modèle), des installations et des téléchargements. auto utilise 127.0.0.1:7890 lorsqu’il écoute, sinon l’environnement système ; off n’ajoute aucun proxy ; ou saisissez une URL de proxy comme http://127.0.0.1:7890.",
   "acpira.conf.planAutoApprove": "Agents dont le mode Plan approuve les demandes d’outils sans carte d’autorisation (identifiants d’agents, p. ex. claude) ; les approbations de plan et les demandes signalées comme risquées continuent de demander",
   "acpira.conf.appearance.density": "Densité",
   "acpira.conf.appearance.radius": "Rayon des angles",

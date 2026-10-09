@@ -72,7 +72,7 @@ async fn probing_binaries_marks_the_fake_agent_available_and_an_uninstalled_one_
 }
 
 // A CLI installed while the window is open: the registry's notification re-pushes agents to every viewer, and the poll keeps looking while
-// something is missing; the install action runs the vendor line through the shell in a host terminal
+// something is missing; the terminal fallback runs the vendor line through the shell in a host terminal
 #[tokio::test(flavor = "multi_thread")]
 async fn a_cli_appearing_after_init_reaches_the_viewers_and_install_agent_runs_the_vendor_line() {
   let dir = tempfile::tempdir().unwrap();
@@ -104,7 +104,8 @@ async fn a_cli_appearing_after_init_reaches_the_viewers_and_install_agent_runs_t
   until(|| last() == Some(json!(false)), 15_000).await;
   make();
   until(|| last() == Some(json!(true)), 15_000).await;
-  m.handle_on(&viewer, json!({ "type": "installAgent", "agent": "ghost" })).await;
+  // The terminal fallback of the settings page (the in-app install is covered below)
+  m.handle_on(&viewer, json!({ "type": "installInTerminal", "agent": "ghost" })).await;
   let (shell, flag) = if cfg!(windows) { ("powershell", "-Command") } else { ("bash", "-c") };
   let terminals = m.terminals.lock().unwrap().clone();
   assert_eq!(terminals.iter().map(|(c, a, _)| (c.clone(), a.clone())).collect::<Vec<_>>(), [(shell.to_owned(), vec![flag.to_owned(), "curl -fsSL https://example.com/i.sh | bash".to_owned()])]);
@@ -279,5 +280,67 @@ async fn a_terminal_auth_method_runs_the_agent_binary_in_a_terminal_and_never_re
   tokio::time::sleep(std::time::Duration::from_millis(150)).await;
   assert!(!auth_log.exists());
   expect_match(m.m.agent_health("fake").unwrap(), json!({ "stage": "auth_required", "source": "session" }));
+  m.dispose().await;
+}
+
+// The settings page's Install button: the line runs in the background on the engine's machine, every viewer sees its log and
+// outcome as `agentInstalls`, the new executable is looked for at once and a toast says it is there. A failing line ends as
+// `failed` with its exit code and log; a second click while one runs starts nothing
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn install_agent_runs_the_line_in_the_background_and_reports_its_log_and_outcome() {
+  let dir = tempfile::tempdir().unwrap();
+  let bin = dir.path().join("made-cli");
+  let store_dir = tempfile::tempdir().unwrap();
+  let line = format!("echo fetching; sleep 0.3; printf '#!/bin/sh\\nexit 0\\n' > '{0}'; chmod +x '{0}'; echo installed", bin.display());
+  let m = Mgr::new(store_dir.path(), Opts::with_agents(json!({
+    "made": { "name": "Made", "command": bin, "install": { "command": line } },
+    "broken": { "name": "Broken", "command": "/nonexistent/broken-cli", "install": { "command": "echo about to fail >&2; exit 7" } },
+  }), "made"));
+  m.init().await;
+  let viewer = m.m.attach(None);
+  let seen = record_events(&viewer);
+  let install_of = |agent: &str| {
+    seen.lock().unwrap().iter().rfind(|e| e["type"] == "agentInstalls").and_then(|e| e["installs"].as_array().unwrap().iter().find(|i| i["agent"] == agent).cloned())
+  };
+  m.handle_on(&viewer, json!({ "type": "installAgent", "agent": "made" })).await;
+  until(|| install_of("made").is_some_and(|i| i["status"] == "running"), 5_000).await;
+  m.handle_on(&viewer, json!({ "type": "installAgent", "agent": "made" })).await;
+  until(|| install_of("made").is_some_and(|i| i["status"] == "success"), 15_000).await;
+  let done = install_of("made").unwrap();
+  let log: Vec<String> = serde_json::from_value(done["log"].clone()).unwrap();
+  assert!(log.iter().any(|l| l == "fetching") && log.iter().any(|l| l == "installed"), "{log:?}");
+  assert_eq!(log.iter().filter(|l| l.starts_with("$ ")).count(), 1, "one run only: {log:?}");
+  until(|| m.m.agents().iter().any(|a| a.id == "made" && a.available == Some(true)), 5_000).await;
+  until(|| m.toasts().iter().any(|text| text.contains("Made")), 5_000).await;
+
+  m.handle_on(&viewer, json!({ "type": "installAgent", "agent": "broken" })).await;
+  until(|| install_of("broken").is_some_and(|i| i["status"] == "failed"), 15_000).await;
+  let failed = install_of("broken").unwrap();
+  assert!(failed["error"].as_str().unwrap().contains('7'), "{failed}");
+  assert!(failed["log"].as_array().unwrap().iter().any(|l| l == "about to fail"), "{failed}");
+  // Both runs stay listed for the next page that opens
+  assert_eq!(m.m.agent_installs().len(), 2);
+  m.dispose().await;
+}
+
+// Cancel ends the install and its children; the run is reported as cancelled
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn cancel_install_stops_a_running_install() {
+  let store_dir = tempfile::tempdir().unwrap();
+  let m = Mgr::new(store_dir.path(), Opts::with_agents(json!({
+    "slow": { "name": "Slow", "command": "/nonexistent/slow-cli", "install": { "command": "echo started; sleep 60" } },
+  }), "slow"));
+  m.init().await;
+  let viewer = m.m.attach(None);
+  let seen = record_events(&viewer);
+  let status = || seen.lock().unwrap().iter().rfind(|e| e["type"] == "agentInstalls").map(|e| e["installs"][0]["status"].clone());
+  m.handle_on(&viewer, json!({ "type": "installAgent", "agent": "slow" })).await;
+  until(|| m.m.agent_installs().first().is_some_and(|i| i.log.iter().any(|l| l == "started")), 5_000).await;
+  let started = std::time::Instant::now();
+  m.handle_on(&viewer, json!({ "type": "cancelInstall", "agent": "slow" })).await;
+  until(|| status() == Some(json!("cancelled")), 10_000).await;
+  assert!(started.elapsed() < std::time::Duration::from_secs(10));
   m.dispose().await;
 }

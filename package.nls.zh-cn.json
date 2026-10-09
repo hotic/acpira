@@ -29,6 +29,7 @@
   "acpira.conf.shareEditorSelection": "把编辑器里当前选中的代码带进聊天：模式旁显示一个标签，随下一条消息发出",
   "acpira.conf.steerQueued": "回合运行中发出的消息直接插进当前回合，不再排队。仅 Claude、Codex 支持。",
   "acpira.conf.agentCpuCap": "agent 及其子进程以低优先级运行，合计 CPU 占用不超过此比例，100% 为不限制。仅 Windows。",
+  "acpira.conf.proxy": "agent（含模型请求）、安装和下载使用的网络代理。auto：127.0.0.1:7890 在监听时走它，否则沿用系统环境变量；off：不加代理；也可以填代理地址，例如 http://127.0.0.1:7890。",
   "acpira.conf.planAutoApprove": "Plan 模式下不弹权限卡、直接放行工具请求的 agent（agent id，例如 claude）；计划审批和 agent 标记为高风险的请求仍会询问",
   "acpira.conf.appearance.density": "密度",
   "acpira.conf.appearance.radius": "圆角",

@@ -73,7 +73,12 @@ impl HostRuntime {
     let claude = ClaudeAccountProvider::new(root.join("accounts").join("claude"), binary_of("claude"));
     let terminal = {
       let p = platform.clone();
-      Arc::new(move |title, command, args, env| p.run_in_terminal(title, command, args, env))
+      // Login and install terminals take the same network route as the agents; the caller's own variables win
+      Arc::new(move |title, command, args, env: Option<std::collections::BTreeMap<String, Option<String>>>| {
+        let mut merged = crate::net_proxy::terminal_env();
+        merged.extend(env.unwrap_or_default());
+        p.run_in_terminal(title, command, args, (!merged.is_empty()).then_some(merged))
+      })
     };
     let toast = {
       let p = platform.clone();
@@ -244,6 +249,14 @@ impl HostRuntime {
     }));
     set_host_locale(runtime.settings.locale());
     runtime.apply_cpu_cap();
+    crate::net_proxy::set_setting(&runtime.settings.view().proxy);
+    // Whether npm's global prefix is writable decides the copyable install line of the npm agents (installer.rs)
+    let rt = runtime.clone();
+    tokio::spawn(async move {
+      if crate::acp::agents::installer::probe_npm_prefix(crate::platform::command::Os::current()).await == Some(true) {
+        rt.manager.emit_agents();
+      }
+    });
     let rt = runtime.clone();
     tokio::spawn(async move { rt.maintain_shared().await });
     Ok(runtime)
@@ -318,6 +331,11 @@ impl HostRuntime {
     }
     if affects(Some("agentCpuCap")) {
       self.apply_cpu_cap();
+    }
+    if affects(Some("proxy")) {
+      // Agents started from now on take the new route; running ones keep the environment they were spawned with
+      crate::net_proxy::set_setting(&self.settings.view().proxy);
+      self.manager.invalidate_warm_pool();
     }
     if affects(Some("disabledAgents")) {
       // A turned-off agent's links go away, a turned-on one's come back

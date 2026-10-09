@@ -59,6 +59,8 @@ pub struct InitState {
   pub accounts: Vec<AccountInfo>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub account_actions: Option<Vec<AccountAction>>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub agent_installs: Option<Vec<AgentInstallProgress>>,
   pub hidden: HiddenMap,
   pub sessions: Vec<SessionSummary>,
   /// User categories of the session list
@@ -153,6 +155,36 @@ pub struct AccountAction {
   pub error: Option<String>,
 }
 
+/// Where an in-app agent install stands
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentInstallStatus {
+  Running,
+  Success,
+  Failed,
+  Cancelled,
+}
+
+/// One agent's in-app install (the registry's install line run by the engine itself, no terminal). Host-owned like
+/// AccountAction: it survives webview remounts and every panel shows the same run
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentInstallProgress {
+  pub agent: AgentId,
+  pub status: AgentInstallStatus,
+  /// The last lines of the installer's output, ANSI sequences removed, carriage-return progress collapsed
+  pub log: Vec<String>,
+  /// The proxy the installer was routed through; absent when it used the inherited environment
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub proxy: Option<String>,
+  /// npm's global prefix was not writable, so packages went to this user directory instead
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub prefix: Option<String>,
+  /// Why it failed, already localized
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum HostMsg {
@@ -206,6 +238,9 @@ pub enum HostMsg {
   },
   AccountActions {
     actions: Vec<AccountAction>,
+  },
+  AgentInstalls {
+    installs: Vec<AgentInstallProgress>,
   },
   Hidden {
     hidden: HiddenMap,
@@ -274,6 +309,7 @@ impl HostMsg {
       HostMsg::Subagent { .. } => "subagent",
       HostMsg::Accounts { .. } => "accounts",
       HostMsg::AccountActions { .. } => "accountActions",
+      HostMsg::AgentInstalls { .. } => "agentInstalls",
       HostMsg::Hidden { .. } => "hidden",
       HostMsg::Settings { .. } => "settings",
       HostMsg::Inventory { .. } => "inventory",
@@ -477,6 +513,14 @@ pub enum WebviewMsg {
     method_id: Option<String>,
   },
   InstallAgent {
+    agent: AgentId,
+  },
+  /// Stop the agent's in-app install (its whole process tree)
+  CancelInstall {
+    agent: AgentId,
+  },
+  /// The same install line in an IDE terminal: the fallback when an installer needs a person at the keyboard
+  InstallInTerminal {
     agent: AgentId,
   },
   Retry {

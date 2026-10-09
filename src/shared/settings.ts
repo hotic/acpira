@@ -27,6 +27,24 @@ export const CODE_FONT_SIZE = { min: 9, max: 20, default: 12 } as const;
 // the engine applies it to the job object all agents run in, below normal priority either way
 export const AGENT_CPU_CAP = { min: 10, max: 100, default: 80 } as const;
 
+// Network route of agents (their model requests), installers and the engine's downloads: `auto` uses a local proxy on
+// 127.0.0.1:7890 while one listens there and the inherited environment otherwise, `off` adds nothing, anything else is a proxy URL
+export const DEFAULT_PROXY = 'auto';
+export const AUTO_PROXY_URL = 'http://127.0.0.1:7890';
+
+// A proxy URL with a supported scheme and a host, trailing slash dropped; a bare `host:port` reads as `http://host:port`
+export function proxyUrl(raw: string): string | undefined {
+  const v = raw.trim().replace(/\/+$/, '');
+  const withScheme = v.includes('://') ? v : `http://${v}`;
+  const i = withScheme.indexOf('://');
+  const scheme = withScheme.slice(0, i).toLowerCase();
+  const rest = withScheme.slice(i + 3);
+  const authority = rest.includes('@') ? rest.slice(rest.lastIndexOf('@') + 1) : rest;
+  const okScheme = ['http', 'https', 'socks5', 'socks5h'].includes(scheme);
+  const okHost = authority !== '' && !authority.startsWith(':') && !rest.includes('/') && !/\s/.test(rest);
+  return okScheme && okHost ? withScheme : undefined;
+}
+
 // Which sessions the list shows: those opened in the current workspace folder (a session's cwd), or every session on this machine
 export type SessionScope = 'workspace' | 'all';
 export const SESSION_SCOPES: SessionScope[] = ['workspace', 'all'];
@@ -71,11 +89,13 @@ export interface SettingsView {
   subagents: SubagentPersona[];
   // CPU hard cap over every agent process tree, percent of all cores (AGENT_CPU_CAP)
   agentCpuCap: number;
+  // `auto`, `off` or a proxy URL (DEFAULT_PROXY)
+  proxy: string;
 }
 
 // Keys the webview may write back; the host maps them onto acpira.<key> at user scope
-export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued' | 'planAutoApprove' | 'subagents' | 'agentCpuCap';
-export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued', 'planAutoApprove', 'subagents', 'agentCpuCap'];
+export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued' | 'planAutoApprove' | 'subagents' | 'agentCpuCap' | 'proxy';
+export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued', 'planAutoApprove', 'subagents', 'agentCpuCap', 'proxy'];
 
 export const MIN_COMPACT_AT_TOKENS = 10_000;
 
@@ -105,6 +125,7 @@ export const DEFAULT_SETTINGS: SettingsView = {
   planAutoApprove: [],
   subagents: [],
   agentCpuCap: AGENT_CPU_CAP.default,
+  proxy: DEFAULT_PROXY,
 };
 
 // A hand-edited settings.json or a forged webview message can send anything; fall back per key so the page never sees an illegal value
@@ -148,6 +169,13 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
       return idList(value) as SettingsView[K];
     case 'subagents':
       return sanitizePersonas(value) as SettingsView[K];
+    case 'proxy': {
+      const raw = typeof value === 'string' ? value.trim() : '';
+      const lower = raw.toLowerCase();
+      if (lower === '' || lower === 'auto') return DEFAULT_PROXY as SettingsView[K];
+      if (lower === 'off' || lower === 'none' || lower === 'direct') return 'off' as SettingsView[K];
+      return (proxyUrl(raw) ?? DEFAULT_PROXY) as SettingsView[K];
+    }
   }
 }
 

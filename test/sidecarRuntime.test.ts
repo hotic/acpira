@@ -162,9 +162,9 @@ describe('sidecar runtime', () => {
     expect(await s.hostMsg('V', 'files', m => m.seq === 8)).toEqual({ type: 'files', seq: 8, files: [] });
   });
 
-  it('installAgent runs the registry install line through the shell terminal', async () => {
+  it('installInTerminal runs the registry install line through the shell terminal', async () => {
     const { s, requests } = await setup();
-    s.view('V', { type: 'installAgent', agent: 'fake' });
+    s.view('V', { type: 'installInTerminal', agent: 'fake' });
     await until(() => requests('runInTerminal').length === 1);
     const request = requests('runInTerminal')[0] as Extract<PlatformRequest, { method: 'runInTerminal' }>;
     expect(request.title).toContain('Fake');

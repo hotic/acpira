@@ -60,11 +60,13 @@ async fn is_executable(p: &Path) -> bool {
   tokio::fs::metadata(p).await.is_ok()
 }
 
-/// The executable, native argv and refreshed PATH used by both ACP sessions and account status probes.
+/// The executable, native argv, refreshed PATH and network proxy used by both ACP sessions and account status probes.
+/// The proxy goes in first: a definition's or account's own env set afterwards still wins
 pub fn command(binary: &str, args: &[String]) -> tokio::process::Command {
   let mut cmd = native_command::command(binary, args);
   if let Some(path) = super::login_path::merged() {
     cmd.env("PATH", path);
   }
+  crate::net_proxy::apply(&mut cmd);
   cmd
 }

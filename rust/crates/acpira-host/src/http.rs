@@ -23,8 +23,11 @@ impl std::error::Error for HttpStatus {}
 
 pub async fn get_json(url: String, headers: Vec<(String, String)>, timeout: Duration) -> Result<Value> {
   tokio::task::spawn_blocking(move || {
-    let agent: ureq::Agent =
-      ureq::Agent::config_builder().timeout_global(Some(timeout)).max_redirects(0).http_status_as_error(false).build().into();
+    let agent: ureq::Agent = crate::net_proxy::ureq_config(
+      ureq::Agent::config_builder().timeout_global(Some(timeout)).max_redirects(0).http_status_as_error(false),
+    )
+    .build()
+    .into();
     let mut req = agent.get(&url).header("accept", "application/json");
     for (k, v) in &headers {
       req = req.header(k.as_str(), v.as_str());
@@ -47,7 +50,8 @@ pub async fn get_json(url: String, headers: Vec<(String, String)>, timeout: Dura
 
 pub async fn post_json(url: String, headers: Vec<(String, String)>, body: Value, timeout: Duration) -> Result<(u16, Value)> {
   tokio::task::spawn_blocking(move || {
-    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(timeout)).http_status_as_error(false).build().into();
+    let agent: ureq::Agent =
+      crate::net_proxy::ureq_config(ureq::Agent::config_builder().timeout_global(Some(timeout)).http_status_as_error(false)).build().into();
     let mut req = agent.post(&url).header("content-type", "application/json");
     for (k, v) in &headers {
       req = req.header(k.as_str(), v.as_str());

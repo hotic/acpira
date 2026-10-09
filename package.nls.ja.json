@@ -29,6 +29,7 @@
   "acpira.conf.shareEditorSelection": "エディターの現在の選択範囲をチャットに渡します：モードの横にチップとして表示され、次のメッセージと一緒に送られます",
   "acpira.conf.steerQueued": "ターン実行中に送ったメッセージをキューに入れず、そのターンに割り込ませます。Claude と Codex のみ。",
   "acpira.conf.agentCpuCap": "エージェントとその子プロセスを低い優先度で動かし、CPU 使用率の合計をこの割合までに抑えます。100% で上限なし。Windows のみ。",
+  "acpira.conf.proxy": "エージェント（モデルへのリクエストを含む）、インストール、ダウンロードに使うネットワークプロキシ。auto は 127.0.0.1:7890 が待ち受けていればそれを使い、そうでなければシステムの環境変数に従います。off はプロキシを追加しません。http://127.0.0.1:7890 のようなプロキシ URL も指定できます。",
   "acpira.conf.planAutoApprove": "Plan モードで権限カードを出さずにツール要求を承認するエージェント（エージェント ID、例: claude）。プランの承認とエージェントが危険と示した要求は引き続き確認します",
   "acpira.conf.appearance.density": "密度",
   "acpira.conf.appearance.radius": "角の丸み",

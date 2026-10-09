@@ -422,6 +422,11 @@ impl AgentRegistry {
         .filter(|p| r.asset(p).is_some())
         .and_then(|_| native_release::install_command(&agent.id, self.os == Os::Windows)),
       None if self.os == Os::Windows => def.windows.clone(),
+      // npm's global prefix is not writable here (a system Node on a shared server): the copyable line goes to ~/.local,
+      // where the in-app install puts it too
+      None if super::installer::npm_prefix_blocked() => {
+        def.posix.as_deref().map(|l| if super::installer::is_npm_global(l) { super::installer::with_user_prefix(l) } else { l.to_owned() })
+      }
       None => def.posix.clone(),
     };
     if command.is_none() && def.docs.is_none() {
@@ -535,8 +540,16 @@ impl AgentRegistry {
 
 /// Global bin directories package managers use outside the usual PATH entries, tried last: an npm prefix set up to avoid
 /// sudo, pnpm / bun / volta / yarn homes. They cover a CLI installed where no rc file (or an unread one) adds the directory
-const FALLBACK_DIRS: &[&str] =
-  &["~/.npm-global/bin", "~/.local/share/pnpm", "~/Library/pnpm", "~/.bun/bin", "~/.volta/bin", "~/.yarn/bin"];
+const FALLBACK_DIRS: &[&str] = &[
+  "~/.npm-global/bin",
+  // npm's user prefix of the in-app install when the global one is not writable (`installer::USER_PREFIX`)
+  "~/.local/bin",
+  "~/.local/share/pnpm",
+  "~/Library/pnpm",
+  "~/.bun/bin",
+  "~/.volta/bin",
+  "~/.yarn/bin",
+];
 
 /// Every path tried for `command`, in order: the definition's candidates, PATH (which includes what the login shell
 /// adds), then platform-specific install directories; duplicates dropped

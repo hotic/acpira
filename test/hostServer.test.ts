@@ -130,7 +130,7 @@ describe('sidecar (stdio envelopes)', () => {
     expect(await s.exited()).toBe(0);
   });
 
-  it('login falls back to the shell terminal when the agent refuses authenticate; installAgent runs the install line there', async () => {
+  it('login falls back to the shell terminal when the agent refuses authenticate; installInTerminal runs the install line there', async () => {
     const s = shell('needs-auth-');
     await s.hello(
       { client: { name: 'test-shell', version: '0', capabilities: ['runInTerminal', 'toast'] } },
@@ -144,7 +144,7 @@ describe('sidecar (stdio envelopes)', () => {
     expect(term.request).toMatchObject({ method: 'runInTerminal', command: 'fake-login', args: ['--now'] });
     await s.next((m): m is Extract<SidecarMsg, { type: 'platformRequest' }> => m.type === 'platformRequest' && m.request.method === 'toast');
 
-    s.view('V', { type: 'installAgent', agent: 'fake' });
+    s.view('V', { type: 'installInTerminal', agent: 'fake' });
     const install = await s.next((m): m is Extract<SidecarMsg, { type: 'platformRequest' }> => m.type === 'platformRequest' && m.request.method === 'runInTerminal' && m.request.command === 'bash');
     expect(install.request).toMatchObject({ command: 'bash', args: ['-c', 'curl -fsSL https://example.com/i.sh | sh'] });
   });
