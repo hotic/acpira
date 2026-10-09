@@ -188,6 +188,7 @@ impl BridgeCore {
           agents: manager.agents(),
           accounts: manager.accounts(),
           account_actions: Some(manager.account_actions()),
+          agent_installs: Some(manager.agent_installs()),
           hidden: manager.hidden(),
           sessions: manager.sessions(),
           categories: manager.categories(),

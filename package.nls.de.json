@@ -29,6 +29,7 @@
   "acpira.conf.shareEditorSelection": "Die aktuelle Editor-Auswahl dem Chat anbieten: Sie erscheint als Chip neben dem Modus und wird mit der nächsten Nachricht gesendet",
   "acpira.conf.steerQueued": "Während eines Durchlaufs gesendete Nachrichten fließen direkt in ihn ein, statt zu warten. Nur Claude und Codex.",
   "acpira.conf.agentCpuCap": "Agenten und ihre Kindprozesse laufen mit niedriger Priorität und nutzen zusammen höchstens diesen CPU-Anteil. 100 % = keine Grenze. Nur Windows.",
+  "acpira.conf.proxy": "Netzwerk-Proxy für Agents (einschließlich ihrer Modellanfragen), Installationen und Downloads. auto nutzt 127.0.0.1:7890, wenn dort ein Proxy lauscht, sonst die Systemumgebung; off fügt keinen Proxy hinzu; oder eine Proxy-URL wie http://127.0.0.1:7890 eingeben.",
   "acpira.conf.planAutoApprove": "Agenten, deren Plan-Modus Werkzeuganfragen ohne Berechtigungskarte genehmigt (Agent-IDs, z. B. claude); Plangenehmigungen und als riskant markierte Anfragen fragen weiterhin nach",
   "acpira.conf.appearance.density": "Dichte",
   "acpira.conf.appearance.radius": "Eckenradius",

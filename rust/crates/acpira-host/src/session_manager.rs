@@ -207,6 +207,8 @@ pub struct SessionManager {
   leases: SessionLeases,
   // Sessions being handed over to another engine right now (a takeover request is being honoured)
   yielding: parking_lot::Mutex<HashSet<String>>,
+  // In-app agent installs (`acp/agents/installer.rs`), pushed to every webview as `agentInstalls`
+  installs: Arc<crate::acp::agents::installer::Installs>,
   me: Weak<SessionManager>,
 }
 
@@ -216,6 +218,12 @@ impl SessionManager {
       let leases = SessionLeases::new(&deps.lease_root, deps.log.clone());
       let reg_me = me.clone();
       let env_me = me.clone();
+      let install_me = me.clone();
+      let installs = crate::acp::agents::installer::Installs::new(Arc::new(move |list| {
+        if let Some(m) = install_me.upgrade() {
+          m.emit(HostMsg::AgentInstalls { installs: list });
+        }
+      }));
       let pool = AgentPool::new(
         Arc::new(move || reg_me.upgrade().map(|m| m.registry()).unwrap_or_else(|| Arc::new(AgentRegistry::new(&Value::Null)))),
         deps.log.clone(),
@@ -269,6 +277,7 @@ impl SessionManager {
         exports: Default::default(),
         leases,
         yielding: Default::default(),
+        installs,
         me: me.clone(),
       }
     });
@@ -776,6 +785,16 @@ impl SessionManager {
       me.reprobe().await;
       me.emit_agents();
     });
+  }
+
+  /// Agents started from now on get a fresh process (the network route changed); running sessions keep theirs
+  pub fn invalidate_warm_pool(&self) {
+    self.pool.invalidate(None);
+  }
+
+  /// Every agent's latest in-app install, for the init state
+  pub fn agent_installs(&self) -> Vec<acpira_shared::protocol::AgentInstallProgress> {
+    self.installs.list()
   }
 
   pub fn agents(&self) -> Vec<AgentInfo> {
@@ -2068,6 +2087,8 @@ impl SessionManager {
         self.login(s, method_id.as_deref()).await?;
       }
       W::InstallAgent { agent } => self.install(&agent),
+      W::CancelInstall { agent } => self.installs.cancel(&agent),
+      W::InstallInTerminal { agent } => self.install_in_terminal(&agent),
       _ => {}
     }
     Ok(())
@@ -2674,8 +2695,48 @@ impl SessionManager {
     Ok(())
   }
 
-  /// Run the vendor's install line in a terminal; the poll notices the new executable
+  /// Run the registry's install line in the background on this engine's machine (`installer`): progress and log go to
+  /// every webview, and a finished install is looked for at once instead of on the next poll
   fn install(&self, agent: &str) {
+    let registry = self.registry();
+    let Ok(def) = registry.get(agent) else { return };
+    let Some(command) = registry.install(agent).and_then(|i| i.command) else { return };
+    let name = def.name.clone();
+    let messages = crate::acp::agents::installer::Messages {
+      node_missing: t("host.installNeedsNode"),
+      failed: Box::new(|code| match code {
+        Some(code) => tp("host.installFailedCode", &[("code", &code.to_string())]),
+        None => t("host.installFailed"),
+      }),
+      spawn: Box::new(|why| tp("host.installSpawnFailed", &[("error", why)])),
+    };
+    let me = self.me.clone();
+    let id = agent.to_owned();
+    let os = crate::platform::command::Os::current();
+    self.installs.start(agent, command, os, messages, move |ok| {
+      let Some(m) = me.upgrade() else { return };
+      tokio::spawn(async move {
+        // The installer may have just written the rc file that puts its directory on PATH
+        if ok && login_path::refresh(LOGIN_PATH_REFRESH).await {
+          m.log_login_path();
+        }
+        let found = m.registry().resolve_binary(&id).await.is_some();
+        m.emit_agents();
+        let key = match (ok, found) {
+          (true, true) => Some(("info", "host.installDone")),
+          (true, false) => Some(("info", "host.installDoneNotFound")),
+          _ => None,
+        };
+        if let Some((level, key)) = key {
+          (m.deps.toast)(level, &tp(key, &[("agent", &name)]));
+        }
+      });
+    });
+  }
+
+  /// The install line in an IDE terminal, for an installer that wants a person at the keyboard; the poll notices the
+  /// new executable
+  fn install_in_terminal(&self, agent: &str) {
     let registry = self.registry();
     let Ok(def) = registry.get(agent) else { return };
     let Some(command) = registry.install(agent).and_then(|i| i.command) else { return };
@@ -2789,6 +2850,7 @@ impl SessionManager {
   }
 
   pub async fn dispose(self: &Arc<Self>) {
+    self.installs.cancel_all();
     {
       let mut st = self.state.lock();
       st.disposed = true;

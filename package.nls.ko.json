@@ -29,6 +29,7 @@
   "acpira.conf.shareEditorSelection": "현재 편집기 선택 영역을 채팅에 제공합니다. 모드 옆에 칩으로 표시되고 다음 메시지와 함께 전송됩니다",
   "acpira.conf.steerQueued": "턴 실행 중 보낸 메시지를 대기열에 넣지 않고 진행 중인 턴에 끼워 넣습니다. Claude, Codex만 지원합니다.",
   "acpira.conf.agentCpuCap": "에이전트와 하위 프로세스를 낮은 우선순위로 실행하고 합계 CPU 사용량을 이 비율로 제한합니다. 100%면 제한 없음. Windows 전용.",
+  "acpira.conf.proxy": "에이전트(모델 요청 포함), 설치, 다운로드에 쓰는 네트워크 프록시. auto는 127.0.0.1:7890이 수신 중이면 그것을 쓰고, 아니면 시스템 환경 변수를 따릅니다. off는 프록시를 추가하지 않습니다. http://127.0.0.1:7890 같은 프록시 URL도 입력할 수 있습니다.",
   "acpira.conf.planAutoApprove": "Plan 모드에서 권한 카드 없이 도구 요청을 승인할 에이전트(에이전트 ID, 예: claude). 계획 승인과 에이전트가 위험하다고 표시한 요청은 계속 확인합니다",
   "acpira.conf.appearance.density": "밀도",
   "acpira.conf.appearance.radius": "모서리 둥글기",

@@ -1,6 +1,6 @@
 import type { ChatGptIntegrationStatus } from '@shared/chatgptIntegration';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AccountAction, EditTurnRequest, FileHit, HostMsg, InitState, NativeSessionsState, SessionHit, WebviewMsg } from '@shared/protocol';
+import type { AccountAction, AgentInstallProgress, EditTurnRequest, FileHit, HostMsg, InitState, NativeSessionsState, SessionHit, WebviewMsg } from '@shared/protocol';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl, FullDiffSource, SessionCategories, SessionSummary, SessionView, Turn } from '@shared/transcript';
 import type { HiddenMap, SettingsView } from '@shared/settings';
 import type { AgentInventory } from '@shared/inventory';
@@ -85,6 +85,8 @@ export function App() {
   const [categories, setCategories] = useState<SessionCategories>();
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [accountActions, setAccountActions] = useState<AccountAction[]>([]);
+  // In-app agent installs, host-owned: every panel shows the same run
+  const [agentInstalls, setAgentInstalls] = useState<AgentInstallProgress[]>([]);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [hidden, setHidden] = useState<HiddenMap>({});
   const [session, setSession] = useState<SessionView>();
@@ -150,7 +152,7 @@ export function App() {
           break;
         }
         // A sidecar that came back answers nothing it was asked before: pending controls requests go out again
-        case 'init': controlsAsked.current.clear(); setInit({ host: m.state.host, home: m.state.home, cwd: m.state.cwd, blobBase: m.state.blobBase }); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setCategories(m.state.categories); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setHidden(m.state.hidden); setSession(views.init(m.state.active)); setSettings(m.state.settings); setLocale(m.state.locale); setLoc(m.state.locale); break;
+        case 'init': controlsAsked.current.clear(); setInit({ host: m.state.host, home: m.state.home, cwd: m.state.cwd, blobBase: m.state.blobBase }); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setCategories(m.state.categories); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setAgentInstalls(m.state.agentInstalls ?? []); setHidden(m.state.hidden); setSession(views.init(m.state.active)); setSettings(m.state.settings); setLocale(m.state.locale); setLoc(m.state.locale); break;
         case 'appearance': setAppearance(m.appearance); break;
         // An agent whose executable appeared or vanished has a stale inventory (binary path, version); drop it so the page rescans
         case 'agents': {
@@ -164,6 +166,7 @@ export function App() {
         case 'categories': setCategories(m.categories); break;
         case 'accounts': setAccounts(m.accounts); break;
         case 'accountActions': setAccountActions(m.actions); break;
+        case 'agentInstalls': setAgentInstalls(m.installs); break;
         case 'hidden': setHidden(m.hidden); break;
         // Keep unchanged turns / blocks by reference so memoized history skips re-rendering during streaming
         case 'session': resyncAsked.current = false; setSession(views.whole(m.session)); break;
@@ -320,6 +323,8 @@ export function App() {
     refreshQuota: agent => post({ type: 'refreshQuota', agent }),
     unlockCredentials: agent => post({ type: 'unlockCredentials', agent }),
     installAgent: agent => post({ type: 'installAgent', agent }),
+    cancelInstall: agent => post({ type: 'cancelInstall', agent }),
+    installInTerminal: agent => post({ type: 'installInTerminal', agent }),
     openExternal: url => post({ type: 'openExternal', url }),
     shared: () => post({ type: 'shared' }),
     sharedAction: action => post({ type: 'sharedAction', action }),
@@ -342,6 +347,7 @@ export function App() {
         settings={settings}
         agents={agents}
         accounts={accounts}
+        installs={agentInstalls}
         chatgptStatus={chatgptStatus}
         inventories={inventories}
         shared={shared}

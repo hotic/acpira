@@ -15,8 +15,10 @@ pub const CODE_FONT_SIZE: (i64, i64, i64) = (9, 20, 12);
 pub const MIN_COMPACT_AT_TOKENS: i64 = 10_000;
 /// Share of all logical cores every agent of an engine may use together, in percent; 100 lifts the cap (Windows only)
 pub const AGENT_CPU_CAP: (i64, i64, i64) = (10, 100, 80);
+/// The `proxy` setting's default: the local 127.0.0.1:7890 proxy while it listens, the inherited environment otherwise
+pub const DEFAULT_PROXY: &str = "auto";
 
-pub const SETTING_KEYS: [&str; 20] = [
+pub const SETTING_KEYS: [&str; 21] = [
   "language",
   "defaultAgent",
   "agentOrder",
@@ -37,6 +39,7 @@ pub const SETTING_KEYS: [&str; 20] = [
   "planAutoApprove",
   "subagents",
   "agentCpuCap",
+  "proxy",
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -71,10 +74,39 @@ pub struct SettingsView {
   /// CPU hard cap over every agent process and its descendants, percent of all cores (`AGENT_CPU_CAP`, Windows job objects)
   #[serde(default = "default_agent_cpu_cap")]
   pub agent_cpu_cap: i64,
+  /// Network route of agents, installers and downloads: `auto`, `off` or a proxy URL (`proxy_setting`)
+  #[serde(default = "default_proxy")]
+  pub proxy: String,
 }
 
 fn default_agent_cpu_cap() -> i64 {
   AGENT_CPU_CAP.2
+}
+
+fn default_proxy() -> String {
+  DEFAULT_PROXY.into()
+}
+
+/// A proxy URL with a supported scheme and a host, trailing slash dropped; a bare `host:port` reads as `http://host:port`
+pub fn proxy_url(raw: &str) -> Option<String> {
+  let v = raw.trim().trim_end_matches('/');
+  let with_scheme = if v.contains("://") { v.to_owned() } else { format!("http://{v}") };
+  let (scheme, rest) = with_scheme.split_once("://")?;
+  let ok_scheme = matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https" | "socks5" | "socks5h");
+  // The authority must carry a host; credentials (`user:pass@`) are allowed, a path is not
+  let authority = rest.rsplit_once('@').map_or(rest, |(_, h)| h);
+  let ok_host = !authority.is_empty() && !authority.starts_with(':') && !rest.contains('/') && !rest.contains(char::is_whitespace);
+  (ok_scheme && ok_host).then_some(with_scheme)
+}
+
+/// The `proxy` setting: `auto`, `off` or a normalized proxy URL; anything else reads as `auto`
+pub fn proxy_setting(value: &Value) -> String {
+  let raw = value.as_str().unwrap_or("").trim();
+  match raw.to_ascii_lowercase().as_str() {
+    "" | "auto" => DEFAULT_PROXY.into(),
+    "off" | "none" | "direct" => "off".into(),
+    _ => proxy_url(raw).unwrap_or_else(|| DEFAULT_PROXY.into()),
+  }
 }
 
 pub const ACCOUNT_SWITCH_STRATEGIES: [&str; 4] = ["off", "earliestReset", "mostRemaining", "listOrder"];
@@ -135,6 +167,7 @@ pub fn sanitize_setting(key: &str, value: &Value) -> Value {
     "uiFontSize" => Value::from(clamp_size(value, UI_FONT_SIZE)),
     "codeFontSize" => Value::from(clamp_size(value, CODE_FONT_SIZE)),
     "agentCpuCap" => Value::from(clamp_size(value, AGENT_CPU_CAP)),
+    "proxy" => Value::from(proxy_setting(value)),
     "theme" => Value::from(one_of(value, &["auto", "light", "dark"], "auto")),
     "diffMarkers" => Value::from(one_of(value, &["color", "signs"], "color")),
     "sessionScope" => Value::from(one_of(value, &["workspace", "all"], "workspace")),
@@ -170,5 +203,21 @@ mod tests {
     assert_eq!(sanitize_setting("agentCpuCap", &Value::from(250)), Value::from(100));
     assert_eq!(sanitize_setting("agentCpuCap", &Value::from("50")), Value::from(80));
     assert!(is_setting_key("agentCpuCap"));
+  }
+
+  #[test]
+  fn the_proxy_setting_is_auto_off_or_a_normalized_url() {
+    let p = |v: Value| sanitize_setting("proxy", &v);
+    assert_eq!(p(Value::Null), Value::from("auto"));
+    assert_eq!(p(Value::from(" AUTO ")), Value::from("auto"));
+    assert_eq!(p(Value::from("Direct")), Value::from("off"));
+    assert_eq!(p(Value::from("http://127.0.0.1:7897/")), Value::from("http://127.0.0.1:7897"));
+    assert_eq!(p(Value::from("127.0.0.1:7890")), Value::from("http://127.0.0.1:7890"));
+    assert_eq!(p(Value::from("socks5h://u:p@proxy:1080")), Value::from("socks5h://u:p@proxy:1080"));
+    for bad in ["ftp://x:21", "http://:8080", "http://host:1/path", "not a proxy"] {
+      assert_eq!(p(Value::from(bad)), Value::from("auto"), "{bad}");
+    }
+    assert_eq!(p(Value::from(7890)), Value::from("auto"));
+    assert!(is_setting_key("proxy"));
   }
 }

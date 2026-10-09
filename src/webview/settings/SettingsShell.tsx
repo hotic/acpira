@@ -4,6 +4,7 @@ import { useRef } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl } from '@shared/transcript';
 import type { AgentInventory } from '@shared/inventory';
+import type { AgentInstallProgress } from '@shared/protocol';
 import type { SettingKey, SettingsView } from '@shared/settings';
 import type { SubagentPersona } from '@shared/subagents';
 import type { Locale } from '@shared/i18n';
@@ -42,8 +43,12 @@ export interface SettingsHandlers {
   refreshQuota?: (agent: AgentId) => void;
   // AgentInfo.credentialsLocked: unlock the credential store in a host terminal
   unlockCredentials?: (agent: AgentId) => void;
-  // Run the agent's install line in a host terminal; docs links open in the browser
+  // Run the agent's install line in the background on the engine's machine; docs links open in the browser
   installAgent: (agent: AgentId) => void;
+  // Stop that install
+  cancelInstall?: (agent: AgentId) => void;
+  // The same install line in a host terminal (an installer that needs a person at the keyboard)
+  installInTerminal?: (agent: AgentId) => void;
   openExternal: (url: string) => void;
   // Shared tab: read the view, apply an action (the reply is the fresh view)
   shared?: () => void;
@@ -69,6 +74,8 @@ export interface SettingsShellProps {
   settings: SettingsView;
   agents: AgentInfo[];
   accounts: AccountInfo[];
+  // Every agent's latest in-app install (host-owned)
+  installs?: AgentInstallProgress[];
   inventories: Partial<Record<AgentId, AgentInventory>>;
   chatgptStatus?: ChatGptIntegrationStatus;
   // The Shared tab's last view; undefined until the page asked for it
@@ -134,6 +141,7 @@ export function SettingsShell(p: SettingsShellProps) {
                       key={agent.id}
                       agent={agent}
                       accounts={p.accounts.filter(a => a.agent === agent.id)}
+                      install={p.installs?.find(i => i.agent === agent.id)}
                       inventory={p.inventories[agent.id]}
                       controls={p.controls[agent.id]}
                       settings={p.settings}

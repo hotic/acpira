@@ -1,5 +1,6 @@
+import { useEffect, useState, type KeyboardEvent } from 'react';
 import type { AgentInfo } from '@shared/transcript';
-import { ACCOUNT_SWITCH_STRATEGIES, AGENT_CPU_CAP, MIN_COMPACT_AT_TOKENS, SESSION_SCOPES, type AccountSwitchStrategy, type SessionScope, type SettingsView } from '@shared/settings';
+import { ACCOUNT_SWITCH_STRATEGIES, AGENT_CPU_CAP, AUTO_PROXY_URL, MIN_COMPACT_AT_TOKENS, proxyUrl, SESSION_SCOPES, type AccountSwitchStrategy, type SessionScope, type SettingsView } from '@shared/settings';
 import { LANGUAGES, type Language } from '@shared/i18n';
 import { launchable, pickDefaultAgent } from '@shared/agentOrder';
 import { AgentMark } from '../chat/AgentMark';
@@ -50,6 +51,9 @@ export function General({ settings, agents, on }: { settings: SettingsView; agen
             onCommit={v => on.setSetting('agentCpuCap', v)}
           />
         </Field>
+        <Field label={t('settings.proxy')} desc={t('settings.proxy.desc')}>
+          <ProxyField value={settings.proxy} onCommit={v => on.setSetting('proxy', v)} />
+        </Field>
       </Section>
 
       <Section title={t('settings.compaction.title')}>
@@ -68,5 +72,59 @@ export function General({ settings, agents, on }: { settings: SettingsView; agen
         </Field>
       </Section>
     </>
+  );
+}
+
+type ProxyChoice = 'auto' | 'off' | 'custom';
+
+// The `proxy` setting: Auto / Off, or Custom with a URL field. Picking Custom shows the field without writing anything; a URL
+// is written on Enter or blur once it parses (proxyUrl), otherwise the field goes back to the saved value
+function ProxyField({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
+  const saved: ProxyChoice = value === 'auto' || value === 'off' ? value : 'custom';
+  const [choice, setChoice] = useState<ProxyChoice>(saved);
+  const [text, setText] = useState(saved === 'custom' ? value : '');
+  // A change from elsewhere (another window, settings.json) wins; picking Custom alone changes nothing saved, so it stays shown
+  useEffect(() => {
+    setChoice(saved);
+    if (saved === 'custom') setText(value);
+  }, [saved, value]);
+  const choices: { value: ProxyChoice; label: string }[] = [
+    { value: 'auto', label: t('settings.proxy.auto') },
+    { value: 'off', label: t('settings.proxy.off') },
+    { value: 'custom', label: t('settings.proxy.custom') },
+  ];
+  const pick = (next: ProxyChoice) => {
+    setChoice(next);
+    if (next !== 'custom') onCommit(next);
+    else if (proxyUrl(text)) onCommit(proxyUrl(text)!);
+  };
+  const commit = () => {
+    const url = proxyUrl(text);
+    if (!url) { setText(saved === 'custom' ? value : ''); return; }
+    setText(url);
+    if (url !== value) onCommit(url);
+  };
+  const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+    if (e.key === 'Escape') setText(saved === 'custom' ? value : '');
+  };
+  return (
+    <div className="flex items-center gap-2">
+      {choice === 'custom' && (
+        <label className="inline-flex h-ctl items-center rounded-md border border-line bg-hover px-3 text-2 text-fg-1 transition-colors focus-within:bg-active">
+          <input
+            aria-label={t('settings.proxy.url')}
+            placeholder={AUTO_PROXY_URL}
+            spellCheck={false}
+            value={text}
+            onChange={e => setText(e.target.value)}
+            onBlur={commit}
+            onKeyDown={onKey}
+            className="w-(--ctl-w) min-w-0 bg-transparent font-mono text-mono outline-none placeholder:text-fg-3"
+          />
+        </label>
+      )}
+      <Select<ProxyChoice> options={choices} value={choice} onChange={pick} label={t('settings.proxy')} />
+    </div>
   );
 }

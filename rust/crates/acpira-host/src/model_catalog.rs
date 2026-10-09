@@ -37,8 +37,11 @@ pub fn cache_path(root: &Path) -> PathBuf {
 /// Download models.dev and trim it; None when the server answers 304 to `etag`
 pub async fn fetch(etag: Option<String>) -> Result<Option<CatalogFile>> {
   tokio::task::spawn_blocking(move || {
-    let agent: ureq::Agent =
-      ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(60))).http_status_as_error(false).build().into();
+    let agent: ureq::Agent = crate::net_proxy::ureq_config(
+      ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(60))).http_status_as_error(false),
+    )
+    .build()
+    .into();
     let mut req = agent.get(MODELS_DEV_URL).header("accept", "application/json");
     if let Some(tag) = &etag {
       req = req.header("if-none-match", tag.as_str());

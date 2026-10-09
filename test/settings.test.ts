@@ -30,6 +30,19 @@ describe('sanitizeSetting (appearance)', () => {
     expect(DEFAULT_SETTINGS.agentCpuCap).toBe(80);
   });
 
+  // Mirrors acpira_shared::settings::proxy_setting: the engine and the page must agree on what a value means
+  it('the proxy is auto, off or a normalized proxy URL; anything else reads as auto', () => {
+    expect(DEFAULT_SETTINGS.proxy).toBe('auto');
+    expect(sanitizeSetting('proxy', undefined)).toBe('auto');
+    expect(sanitizeSetting('proxy', ' AUTO ')).toBe('auto');
+    expect(sanitizeSetting('proxy', 'Direct')).toBe('off');
+    expect(sanitizeSetting('proxy', 'http://127.0.0.1:7897/')).toBe('http://127.0.0.1:7897');
+    expect(sanitizeSetting('proxy', '127.0.0.1:7890')).toBe('http://127.0.0.1:7890');
+    expect(sanitizeSetting('proxy', 'socks5h://u:p@proxy:1080')).toBe('socks5h://u:p@proxy:1080');
+    for (const bad of ['ftp://x:21', 'http://:8080', 'http://host:1/path', 'not a proxy']) expect(sanitizeSetting('proxy', bad)).toBe('auto');
+    expect(sanitizeSetting('proxy', 7890)).toBe('auto');
+  });
+
   it('fontSmoothing is a boolean', () => {
     expect(sanitizeSetting('fontSmoothing', true)).toBe(true);
     expect(sanitizeSetting('fontSmoothing', 'yes')).toBe(DEFAULT_SETTINGS.fontSmoothing);

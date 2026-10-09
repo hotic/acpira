@@ -359,6 +359,12 @@
           "scope": "machine",
           "description": "%acpira.conf.agentCpuCap%"
         },
+        "acpira.proxy": {
+          "type": "string",
+          "default": "auto",
+          "scope": "machine",
+          "description": "%acpira.conf.proxy%"
+        },
         "acpira.planAutoApprove": {
           "type": "array",
           "items": {

@@ -189,6 +189,9 @@ pub fn install(
       None => {
         let to = stage.join("archive.zip");
         say(&format!("Downloading {}", asset.url));
+        if let Some(proxy) = crate::net_proxy::current() {
+          say(&format!("  via proxy {proxy}"));
+        }
         let sha = download(asset.url, &to, say)?;
         (to, sha)
       }
@@ -290,12 +293,14 @@ fn copy_hashed(from: &Path, to: &Path) -> Result<String> {
 
 /// Streams the body to `to` while hashing it; returns the hex SHA-256
 fn download(url: &str, to: &Path, say: &mut dyn FnMut(&str)) -> Result<String> {
-  let agent: ureq::Agent = ureq::Agent::config_builder()
-    .timeout_connect(Some(std::time::Duration::from_secs(30)))
-    .timeout_recv_body(Some(std::time::Duration::from_secs(600)))
-    .http_status_as_error(false)
-    .build()
-    .into();
+  let agent: ureq::Agent = crate::net_proxy::ureq_config(
+    ureq::Agent::config_builder()
+      .timeout_connect(Some(std::time::Duration::from_secs(30)))
+      .timeout_recv_body(Some(std::time::Duration::from_secs(600)))
+      .http_status_as_error(false),
+  )
+  .build()
+  .into();
   let mut res = agent.get(url).call().with_context(|| format!("download {url}"))?;
   let status = res.status().as_u16();
   if !(200..300).contains(&status) {

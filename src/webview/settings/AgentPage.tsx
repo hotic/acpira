@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { BookOpen, Check, ChevronDown, ChevronUp, Copy, FileText, Globe, KeyRound, LockKeyhole, Plus, Search, Server, SlidersHorizontal, Sparkles, SquareTerminal, X } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { BookOpen, Ban, Check, ChevronDown, ChevronUp, CircleAlert, Copy, Download, FileText, Globe, KeyRound, LoaderCircle, LockKeyhole, Plus, Search, Server, SlidersHorizontal, Sparkles, SquareTerminal, X } from 'lucide-react';
 import type { AccountInfo, AgentInfo, ConfigControl } from '@shared/transcript';
+import type { AgentInstallProgress } from '@shared/protocol';
 import type { AgentHealthStage, AgentInventory, InventoryFile, InventoryMcp, InventorySkill, McpTransport } from '@shared/inventory';
 import type { MsgKey } from '@shared/i18n';
 import { PLAN_AUTO_APPROVE_AGENTS, type SettingsView } from '@shared/settings';
@@ -12,6 +13,7 @@ import { Card } from '../ui/Card';
 import { AccountLabel } from '../ui/AccountLabel';
 import { LocalAccountQuota, SavedAccountQuota } from '../ui/LocalAccountQuota';
 import { Shimmer } from '../ui/Shimmer';
+import { cn } from '../ui/cn';
 import { Collapsible } from '../ui/Collapsible';
 import { t } from '../i18n';
 import { ModelMark } from '../chat/ModelMark';
@@ -26,6 +28,8 @@ export interface AgentPageProps {
   agent: AgentInfo;
   // Accounts of this agent only
   accounts: AccountInfo[];
+  // This agent's latest in-app install, if any
+  install?: AgentInstallProgress;
   inventory?: AgentInventory;
   // The select-type configOptions this agent offered in its latest session; undefined until one has been opened
   controls?: ConfigControl[];
@@ -37,7 +41,7 @@ export interface AgentPageProps {
 // One agent: a card of facts (the page heading carries the name), accounts when it has an account layer, then five stacked sections: the option families
 // shown in the composer menus, and the extension inventory. Everything read from the CLI's own files is read-only here — rows open the file,
 // Acpira never writes it. Only the option families have switches
-export function AgentPage({ agent, accounts, inventory, controls, settings, env, on }: AgentPageProps) {
+export function AgentPage({ agent, accounts, install, inventory, controls, settings, env, on }: AgentPageProps) {
   useEffect(() => { if (!inventory) on.refreshInventory(agent.id); }, [agent.id, inventory, on]);
   // Re-read when the page opens and whenever the set of accounts changes (a login finishes while this page is already open)
   const accountKey = accounts.map(a => a.id).join();
@@ -76,7 +80,7 @@ export function AgentPage({ agent, accounts, inventory, controls, settings, env,
   return (
     <>
       <AgentFacts agent={agent} inventory={inventory} env={env} />
-      {agent.install && <InstallSection agent={agent} on={on} />}
+      {agent.install && <InstallSection agent={agent} install={install} env={env} on={on} />}
 
       {agent.localAccount && <div className="flex flex-col gap-2">
         <SectionHead>{t('quota.officialAccount')}</SectionHead>
@@ -234,26 +238,89 @@ function SearchedDirs({ dirs, env }: { dirs: string[]; env: SettingsEnv }) {
   );
 }
 
-// Keep installation commands reachable after detection, including agents whose CLI is already installed.
-function InstallSection({ agent, on }: { agent: AgentInfo; on: SettingsHandlers }) {
+// Keep installation commands reachable after detection, including agents whose CLI is already installed. Install runs the
+// line in the background on the engine's machine (the remote host of a Remote window) and streams its log here; the
+// command row keeps a copy button and a terminal fallback for installers that want a person at the keyboard.
+function InstallSection({ agent, install, env, on }: { agent: AgentInfo; install?: AgentInstallProgress; env: SettingsEnv; on: SettingsHandlers }) {
   const { command, docs } = agent.install!;
-  const action = command && (
-    <SectionAction icon={<SquareTerminal strokeWidth={1.75} />} onClick={() => on.installAgent(agent.id)}>{t('settings.install.run')}</SectionAction>
-  );
+  const running = install?.status === 'running';
+  const action = command && (running
+    ? <SectionAction icon={<X strokeWidth={1.75} />} onClick={() => on.cancelInstall?.(agent.id)} disabled={!on.cancelInstall}>{t('settings.install.cancel')}</SectionAction>
+    : <SectionAction icon={<Download strokeWidth={1.75} />} onClick={() => on.installAgent(agent.id)}>{t('settings.install.run')}</SectionAction>);
   return (
     <div className="flex flex-col gap-2">
       <SectionHead action={action}>{t('settings.install.title', { agent: agent.name })}</SectionHead>
       <Section desc={command ? t('settings.install.desc') : undefined}>
+        {command && install && <InstallProgressRow install={install} env={env} />}
         {command && (
           <ItemRow
             lead={<SquareTerminal strokeWidth={1.5} />}
             title={<span className="font-mono text-mono text-fg-1" title={command}>{command}</span>}
-            trailing={<CopyButton text={command} />}
+            trailing={<>
+              {on.installInTerminal && (
+                <IconButton title={t('settings.install.terminal')} aria-label={t('settings.install.terminal')} onClick={() => on.installInTerminal?.(agent.id)} disabled={running} className="text-fg-2">
+                  <SquareTerminal strokeWidth={1.5} />
+                </IconButton>
+              )}
+              <CopyButton text={command} />
+            </>}
           />
         )}
         {docs && <ItemRow lead={<BookOpen strokeWidth={1.5} />} title={t('settings.install.docs')} desc={hostOf(docs)} onOpen={() => on.openExternal(docs)} />}
       </Section>
     </div>
+  );
+}
+
+const INSTALL_STATUS: Record<AgentInstallProgress['status'], MsgKey> = {
+  running: 'settings.install.running',
+  success: 'settings.install.success',
+  failed: 'settings.install.failed',
+  cancelled: 'settings.install.cancelled',
+};
+
+// The latest in-app install: status, the route it took (proxy, npm prefix), the failure and the log tail. The log stays
+// open while it runs and after a failure or cancel; a success folds down to its status line
+function InstallProgressRow({ install, env }: { install: AgentInstallProgress; env: SettingsEnv }) {
+  const { status } = install;
+  const lead = status === 'running' ? <LoaderCircle strokeWidth={1.5} className="animate-spin live-spin" />
+    : status === 'success' ? <Check strokeWidth={1.5} className="text-ok" />
+    : status === 'failed' ? <CircleAlert strokeWidth={1.5} className="text-danger" />
+    : <Ban strokeWidth={1.5} className="text-fg-2" />;
+  const label = t(INSTALL_STATUS[status]);
+  const facts = [
+    install.proxy && t('settings.install.proxy', { proxy: install.proxy }),
+    install.prefix && t('settings.install.prefix', { dir: shortPath(install.prefix, env) }),
+  ].filter(Boolean).join(' · ');
+  const log = status !== 'success' && install.log.length > 0;
+  return (
+    <ItemRow
+      lead={lead}
+      title={status === 'running' ? <Shimmer className="font-sans text-2">{label}</Shimmer> : <span className={cn('text-2', status === 'failed' ? 'text-danger' : 'text-fg-1')}>{label}</span>}
+      desc={facts || undefined}
+      extra={(install.error || log) && <>
+        {install.error && <p className="m-0 pt-1 text-2 text-danger [overflow-wrap:anywhere]">{install.error}</p>}
+        {log && <InstallLog lines={install.log} />}
+      </>}
+    />
+  );
+}
+
+// The log tail, kept scrolled to the newest line unless the reader scrolled up
+function InstallLog({ lines }: { lines: string[] }) {
+  const box = useRef<HTMLPreElement>(null);
+  const pinned = useRef(true);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (el && pinned.current) el.scrollTop = el.scrollHeight;
+  }, [lines]);
+  return (
+    <pre
+      ref={box}
+      aria-label={t('settings.install.log')}
+      onScroll={e => { const el = e.currentTarget; pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 4; }}
+      className="scroll-thin m-0 max-h-code-output overflow-auto pt-1 font-mono text-mono whitespace-pre-wrap text-fg-2 [overflow-wrap:anywhere]"
+    >{lines.join('\n')}</pre>
   );
 }
 

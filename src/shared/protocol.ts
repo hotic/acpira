@@ -30,6 +30,7 @@ export interface InitState {
   agents: AgentInfo[];
   accounts: AccountInfo[];
   accountActions?: AccountAction[];
+  agentInstalls?: AgentInstallProgress[];
   hidden: HiddenMap;
   sessions: SessionSummary[];
   // User categories of the session list (absent from an older host)
@@ -97,6 +98,8 @@ export type HostMsg =
   | { type: 'subagent'; sessionId: string; subagentId: string; rev: number; running: boolean; turns: Turn[] }
   | { type: 'accounts'; accounts: AccountInfo[] }
   | { type: 'accountActions'; actions: AccountAction[] }
+  // Every agent's latest in-app install, on each change (throttled while output streams)
+  | { type: 'agentInstalls'; installs: AgentInstallProgress[] }
   | { type: 'hidden'; hidden: HiddenMap }
   // The settings view plus the resolved locale (a language change swaps both at once)
   | { type: 'settings'; settings: SettingsView; locale: Locale }
@@ -133,6 +136,21 @@ export interface AccountAction {
   agent: AgentId;
   via: AccountActionVia;
   status: 'pending' | 'success' | 'missing' | 'cancelled' | 'error';
+  error?: string;
+}
+
+// One agent's in-app install: the registry's install line run by the engine itself on its own machine (no terminal).
+// Host-owned like AccountAction, so a remounted page or a second panel shows the same run
+export interface AgentInstallProgress {
+  agent: AgentId;
+  status: 'running' | 'success' | 'failed' | 'cancelled';
+  // The last lines of the installer's output, ANSI removed, carriage-return progress collapsed
+  log: string[];
+  // The proxy the installer went through; absent when it used the inherited environment
+  proxy?: string;
+  // npm's global prefix was not writable, so packages went to this user directory
+  prefix?: string;
+  // Why it failed, already localized
   error?: string;
 }
 
@@ -195,8 +213,12 @@ export type WebviewMsg =
   | { type: 'refreshQuota'; agent: AgentId }
   | { type: 'compact'; sessionId?: string }
   | { type: 'login'; sessionId?: string; methodId?: string }
-  // Settings page of an agent without an executable: run its vendor install line (AgentInfo.install) in a host terminal
+  // Settings page: run the agent's install line (AgentInfo.install) in the background on the engine's machine
   | { type: 'installAgent'; agent: AgentId }
+  // Stop that install and its whole process tree
+  | { type: 'cancelInstall'; agent: AgentId }
+  // The same install line in an IDE terminal, for an installer that needs a person at the keyboard
+  | { type: 'installInTerminal'; agent: AgentId }
   | { type: 'retry'; sessionId?: string }
   // Send the last user turn again after its agent turn ended in error / a short stop; both turns are dropped from the transcript first
   | { type: 'retryTurn'; sessionId?: string }

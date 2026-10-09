@@ -1,4 +1,5 @@
 pub mod adapter_info;
+pub mod installer;
 pub mod launch;
 pub mod lock_holder;
 pub mod login_path;
