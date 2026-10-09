@@ -697,6 +697,10 @@ impl AcpSession {
       Some(e) => fail_turn(&mut c.state, e),
       None => end_turn(&mut c.state, stop),
     }
+    // A met goal shows on the dock only until the turn that met it ends; a later prompt must not bring it back
+    if c.state.goal.as_ref().is_some_and(|g| g.status == GoalStatus::Complete) {
+      c.state.goal = None;
+    }
     self.cancel_all_permissions(c);
     self.cancel_all_questions(c);
     c.phase.running = false;

@@ -15,6 +15,7 @@ pub mod edit;
 pub mod errors;
 pub mod failure;
 pub mod gates;
+pub mod goal;
 pub mod handlers;
 pub mod hooks;
 pub mod images;
@@ -280,6 +281,7 @@ impl AcpSession {
         ctx: ctx.clone(),
         log: Some(tree_log.clone()),
         agent: Some(record.agent.clone()),
+        goal: record.goal,
         ..Default::default()
       };
       let tree = SubagentTree::new(tree_log, ctx, record.subagents, Some(&record.updated_at));
@@ -373,6 +375,7 @@ impl AcpSession {
         import_pending: false,
         imported_from: None,
         subagents: None,
+        goal: None,
       },
       deps,
     )
@@ -480,6 +483,11 @@ impl AcpSession {
   /// A queued prompt can join the running turn over `_session/steering` (see `vendors::steering::supported`)
   pub(crate) fn can_steer_of(&self, c: &Core) -> bool {
     c.proc.as_ref().is_some_and(|p| crate::acp::vendors::steering::supported(&p.init))
+  }
+
+  /// The goal controls the running agent advertises (`vendors::goal::actions`)
+  pub(crate) fn goal_actions_of(c: &Core) -> Option<Vec<GoalAction>> {
+    c.proc.as_ref().and_then(|p| crate::acp::vendors::goal::actions(&p.init))
   }
 
   pub fn runtime_info(&self) -> Option<AgentRuntimeInfo> {

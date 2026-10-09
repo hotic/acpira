@@ -746,6 +746,76 @@ pub struct SteerBlock {
   pub attachments: Option<Vec<Attachment>>,
 }
 
+/// A goal's state as the agent reports it (the AIR goal snapshot). Codex sends every status; Claude only `active`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalStatus {
+  Active,
+  Paused,
+  Blocked,
+  /// Codex's `usageLimited` / `budgetLimited`
+  Limited,
+  Complete,
+}
+
+/// The session's current goal: the agent keeps working toward `objective` across turns until it judges it met.
+/// Counters are whatever the agent reports: Claude its stop-hook rounds, Codex time and tokens against a budget
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionGoal {
+  pub objective: String,
+  pub status: GoalStatus,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub iterations: Option<Num>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub token_budget: Option<Num>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub tokens_used: Option<Num>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub time_used_seconds: Option<Num>,
+  /// Epoch ms of the agent's last goal change: `timeUsedSeconds` counts up to here
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub updated_at: Option<Num>,
+}
+
+/// A goal control the agent advertises at initialize. `set` is also what `/goal <objective>` does
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalAction {
+  Set,
+  Pause,
+  Resume,
+  Clear,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalEvent {
+  Set,
+  Paused,
+  Resumed,
+  Blocked,
+  Limited,
+  Complete,
+  Cleared,
+}
+
+/// A goal milestone in the transcript: the dock strip shows the present, these rows keep the history.
+/// The counters are the snapshot's at that moment
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoalBlock {
+  pub event: GoalEvent,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub objective: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub iterations: Option<Num>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub tokens_used: Option<Num>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub time_used_seconds: Option<Num>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentBlock {
@@ -760,6 +830,7 @@ pub enum AgentBlock {
   Image(ImageBlock),
   Notice(NoticeBlock),
   Steer(SteerBlock),
+  Goal(GoalBlock),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1218,6 +1289,12 @@ pub struct SessionView {
   /// The agent takes `_session/steering` and honours its idle fallback: a queued prompt can join the running turn
   #[serde(default, skip_serializing_if = "is_false")]
   pub can_steer: bool,
+  /// The agent's current goal (AIR goal extension); a completed one stays only until its turn ends
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub goal: Option<SessionGoal>,
+  /// The goal controls the running agent advertises; absent when it has no goal support (or no process yet)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub goal_actions: Option<Vec<GoalAction>>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub subagents: Option<Vec<SubagentSummary>>,
   pub created_at: String,

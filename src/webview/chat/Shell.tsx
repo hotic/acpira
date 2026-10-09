@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Network, Paperclip, X } from 'lucide-react';
-import type { ExternalSessionInfo, AccountInfo, AgentInfo, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@shared/transcript';
+import type { ExternalSessionInfo, AccountInfo, AgentInfo, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
 import type { ModelShapes } from '@shared/modelShapes';
 import type { HiddenMap, SessionScope } from '@shared/settings';
@@ -33,6 +33,8 @@ import { PlanBar } from './PlanBar';
 import { PlanDocumentContext } from './PlanDocument';
 import { planExecutionId } from '@shared/planExecution';
 import { Queue } from './Queue';
+import { GoalStrip, SetGoalAction } from './Goal';
+import { lastTypedPrompt } from './goalText';
 import { heldPrompt } from './heldPrompt';
 import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, DiffSourceContext, OpenBlobContext } from './fileLinks';
 import { TurnActionsContext } from './TurnActions';
@@ -114,6 +116,8 @@ export interface ShellHandlers {
   cancelSubagent?: (sessionId: string, subagentId: string) => void;
   // Ask the adapter to stop one AIR async task on this session (host resolves the owning peer session)
   stopAsyncTask?: (sessionId: string, taskId: string) => void;
+  // Goal extension controls (SessionView.goalActions); `set` carries the objective
+  goal?: (sessionId: string, action: GoalAction, objective?: string) => void;
 }
 
 export interface ShellProps {
@@ -140,6 +144,9 @@ export interface ShellProps {
   turns: Turn[];
   running: boolean;
   queued?: QueuedPrompt[];
+  // The session goal and the controls the agent advertised for it (SessionView.goal / goalActions)
+  goal?: SessionGoal;
+  goalActions?: GoalAction[];
   controls: SessionControls;
   // Remembered per-model parameters, so a model switch in the history editor shows that model's own
   modelShapes?: ModelShapes;
@@ -396,6 +403,11 @@ export function Shell(p: ShellProps) {
   } : undefined, [on.editTurn, p.activeSessionId, editable, editing, p.modelShapes]);
   const openToolFile = useMemo(() => p.activeSessionId && on.openFile
     ? (path: string, line?: number) => on.openFile!(p.activeSessionId!, path, line) : undefined, [p.activeSessionId, on.openFile]);
+  const goalAction = useMemo(() => p.activeSessionId && on.goal
+    ? (action: GoalAction) => on.goal!(p.activeSessionId!, action) : undefined, [p.activeSessionId, on.goal]);
+  // "Set as goal" under the last prompt: only where the agent takes `set` and no goal is running yet
+  const setGoal = useMemo(() => p.activeSessionId && on.goal && !p.external && !p.goal && p.goalActions?.includes('set')
+    ? (objective: string) => on.goal!(p.activeSessionId!, 'set', objective) : undefined, [p.activeSessionId, on.goal, p.external, p.goal, p.goalActions]);
   const stopAsyncTask = useMemo(() => p.activeSessionId && on.stopAsyncTask
     ? (taskId: string) => on.stopAsyncTask!(p.activeSessionId!, taskId) : undefined, [p.activeSessionId, on.stopAsyncTask]);
   // Diff sources of the session on screen; the inspector's diffs are looked up in the inspected subagent's transcript,
@@ -492,7 +504,7 @@ export function Shell(p: ShellProps) {
                       <OpenToolFileContext.Provider value={openToolFile}>
                         <TurnActionsContext.Provider value={turnActions}>
                           <Thread key={p.activeSessionId} turns={held.turns} running={held.running} wide={wide} replayKey={p.replayKey} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands} summons={summons}
-                            subagents={p.subagents} onInspect={onInspect} onFailureAction={failureAction}
+                            onSetGoal={setGoal} subagents={p.subagents} onInspect={onInspect} onFailureAction={failureAction}
                             onPermission={(blockId, optionId) => { if (p.activeSessionId) on.permission(p.activeSessionId, blockId, optionId); }} />
                         </TurnActionsContext.Provider>
                       </OpenToolFileContext.Provider>
@@ -543,6 +555,8 @@ export function Shell(p: ShellProps) {
                           edit: (id, text, kept, drafts) => on.editQueued!(p.activeSessionId!, id, text, kept, drafts),
                         } : undefined} />
                     : null}
+                  {/* The goal strip always hugs the composer: every other dock surface stacks above it */}
+                  {!p.external && p.goal && <GoalStrip key={`goal:${p.activeSessionId}`} goal={p.goal} actions={p.goalActions} running={p.running} onAction={goalAction} />}
                   {/* Sibling keys include the component role; duplicate session-only keys leave stale queue rows after reconciliation. */}
                   {!p.external && <Composer key={`composer:${p.activeSessionId}`} {...composerProps} draftKey={p.activeSessionId} main shareSelection={p.shareEditorSelection}
                     toolbarStart={!!p.subagents?.length && <Chip narrow="icon" caret={false} className="shrink-0" icon={<Network strokeWidth={1.5} />}
@@ -620,6 +634,8 @@ interface ThreadProps {
   onInspect?: (id: string) => void;
   onPermission: (blockId: string, optionId: string) => void;
   onFailureAction?: (action: FailureAction) => void;
+  // Offers "Set as goal" under the last typed prompt (absent: no goal can be set now)
+  onSetGoal?: (objective: string) => void;
 }
 
 // The thread's tail clearance under the floating plan dock: the dock's height on top of the message gap, so the
@@ -635,7 +651,7 @@ const STAGGER_CAP = 12;
 // Conversation flow: stick-to-bottom following happens on transcript changes (new content / streaming growth) and on async growth
 // (images, diagrams) until the user touches the thread; user actions like expand / collapse never touch the scroll position —
 // the toggle under the mouse stays put while the content below it moves. Scrolling away from the bottom releases the follow; scrolling back to the bottom restores it
-function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands, summons, subagents, onInspect, onPermission, onFailureAction }: ThreadProps) {
+function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands, summons, subagents, onInspect, onPermission, onFailureAction, onSetGoal }: ThreadProps) {
   const ref = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const bodyRef = useMergedRefs(contentRef, body);
@@ -654,6 +670,8 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
   let activeAgentIndex = turns.length - 1;
   while (activeAgentIndex >= 0 && turns[activeAgentIndex]?.role !== 'agent') activeAgentIndex--;
   const exchanges: { key: number; messages: ReactNode[] }[] = [];
+  // The prompt "Set as goal" hangs under: the last one the user typed, unless it was a slash command
+  const goalPrompt = onSetGoal ? lastTypedPrompt(turns) : undefined;
   turns.forEach((turn, ti) => {
     const previous = turns[ti - 1];
     if (planExecutionId(turn, previous)) return;
@@ -673,6 +691,13 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
     const next = turns[ti + 1];
     const switchedAway = next?.role === 'user' && isContinue(next);
     const switchedIn = previous?.role === 'user' && isContinue(previous);
+    if (ti === goalPrompt && turn.role === 'user') {
+      exchanges[exchanges.length - 1]!.messages.push(
+        <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} summons={summons} />,
+        <SetGoalAction key="set-goal" onSet={() => onSetGoal?.(turn.text.trim())} />,
+      );
+      return;
+    }
     exchanges[exchanges.length - 1]!.messages.push(turn.role === 'user'
       ? <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} summons={summons} />
       : <AgentMessage key={ti} turn={turn} index={index} compacting={compacting} running={running && ti === activeAgentIndex && !turn.stop} onPermission={onPermission} memoryKey={memoryKey}

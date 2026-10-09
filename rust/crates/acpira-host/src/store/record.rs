@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use acpira_shared::subagents::SubagentRecord;
-use acpira_shared::transcript::{AgentId, SessionControls, SessionSummary, SlashCommand, Turn, Usage};
+use acpira_shared::transcript::{AgentId, SessionControls, SessionGoal, SessionSummary, SlashCommand, Turn, Usage};
 
 fn is_false(v: &bool) -> bool {
   !*v
@@ -59,6 +59,9 @@ pub struct SessionRecord {
   pub imported_from: Option<ImportedFrom>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub subagents: Option<Vec<SubagentRecord>>,
+  /// The agent's goal when the record was written (`vendors::goal`); the agent's own snapshot replaces it once connected
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub goal: Option<SessionGoal>,
 }
 
 impl SessionRecord {

@@ -1,4 +1,4 @@
-import type { AgentBlock, AgentTurn, NoticeBlock, TextBlock, ToolCallBlock, ToolKind } from '@shared/transcript';
+import type { AgentBlock, AgentTurn, GoalBlock, NoticeBlock, TextBlock, ToolCallBlock, ToolKind } from '@shared/transcript';
 import type { MsgKey } from '@shared/i18n';
 import { getLocale, t } from '../i18n';
 import { planApprovalTitle } from './permissionOptions';
@@ -16,7 +16,12 @@ export function splitCodexBlocks(blocks: AgentBlock[]) {
   const permissions = blocks.filter(b => b.type === 'permission');
   // AIR sessionFailure notices are status rows, not process detail: they never fold away under tools
   const notices = blocks.filter((b): b is NoticeBlock => b.type === 'notice');
-  const content = blocks.filter(b => b.type !== 'permission' && b.type !== 'notice' && (b.type !== 'question' || !!b.outcome));
+  // Goal milestones are status rows too: the ones before any other content (a `/goal` prompt's own "Goal set") open
+  // the turn above the fold, the rest follow it with the notices
+  const firstOther = blocks.findIndex(b => b.type !== 'goal');
+  const goalsLead = blocks.filter((b, i): b is GoalBlock => b.type === 'goal' && (firstOther < 0 || i < firstOther));
+  const goals = blocks.filter((b, i): b is GoalBlock => b.type === 'goal' && firstOther >= 0 && i > firstOther);
+  const content = blocks.filter(b => b.type !== 'permission' && b.type !== 'notice' && b.type !== 'goal' && (b.type !== 'question' || !!b.outcome));
   const foldable = content.some(b => b.type === 'tool_call');
   let end = content.length;
   while (end > 0 && (content[end - 1]!.type === 'text' || (foldable && TAIL_PROCESS.has(content[end - 1]!.type)))) end--;
@@ -29,6 +34,8 @@ export function splitCodexBlocks(blocks: AgentBlock[]) {
       (b.phase === 'final' || (i >= end && b.phase !== 'commentary'))),
     permissions,
     notices,
+    goalsLead,
+    goals,
   };
 }
 

@@ -9,7 +9,7 @@ use acpira_host::store::record::SessionRecord;
 use acpira_host::store::transcript_store::blob_name;
 use acpira_host::util::iso_of_ms;
 use acpira_shared::attachments::MAX_IMAGE_BYTES;
-use acpira_shared::transcript::{Draft, Turn};
+use acpira_shared::transcript::{Draft, GoalAction, Turn};
 
 use crate::fake_or_skip;
 use crate::support::{Disposing, FakeAgent, Harness, expect_absent, expect_eq, expect_match, turns_in, until, v};
@@ -21,6 +21,7 @@ mod controls;
 mod retry;
 mod queue;
 mod steer;
+mod goal;
 mod compaction;
 mod lifecycle;
 mod auth;

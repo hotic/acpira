@@ -106,6 +106,8 @@ impl AcpSession {
       commands: &c.state.commands,
       queued,
       can_steer: self.can_steer_of(&c),
+      goal: c.state.goal.as_ref(),
+      goal_actions: Self::goal_actions_of(&c),
       subagents: subagents.as_deref(),
       created_at: &self.created_at,
       updated_at: &c.updated_at,
@@ -223,6 +225,10 @@ struct ViewRef<'a> {
   #[serde(skip_serializing_if = "std::ops::Not::not")]
   can_steer: bool,
   #[serde(skip_serializing_if = "Option::is_none")]
+  goal: Option<&'a SessionGoal>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  goal_actions: Option<Vec<GoalAction>>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   subagents: Option<&'a [SubagentSummary]>,
   created_at: &'a str,
   updated_at: &'a str,
@@ -260,6 +266,8 @@ struct RecordRef<'a> {
   imported_from: Option<&'a ImportedFrom>,
   #[serde(skip_serializing_if = "Option::is_none")]
   subagents: Option<Vec<crate::acp::transcript::subagent_tree::RecordRef<'a>>>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  goal: Option<&'a SessionGoal>,
 }
 
 impl RecordSource for AcpSession {
@@ -289,6 +297,7 @@ impl RecordSource for AcpSession {
       import_pending: c.lineage.import_pending,
       imported_from: c.lineage.imported_from.as_ref(),
       subagents: (!c.tree.is_empty()).then(|| c.tree.record_refs()),
+      goal: c.state.goal.as_ref(),
     };
     serde_json::to_vec(&r).unwrap_or_default()
   }

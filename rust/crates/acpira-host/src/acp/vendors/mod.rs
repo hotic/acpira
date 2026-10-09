@@ -10,6 +10,7 @@ pub mod claude_ultracode;
 pub mod claude_workflow;
 pub mod claude_workflow_log;
 pub mod claude_window;
+pub mod goal;
 pub mod grok;
 pub mod kimi_failure;
 pub mod logged_failure;
@@ -22,6 +23,7 @@ pub mod steering;
 pub enum Vendor {
   Antigravity,
   Claude,
+  Codex,
   Grok,
   Kimi,
   Pi,
@@ -59,6 +61,7 @@ impl Vendor {
     match agent {
       "antigravity" => Vendor::Antigravity,
       "claude" => Vendor::Claude,
+      "codex" => Vendor::Codex,
       "grok" => Vendor::Grok,
       "kimi" => Vendor::Kimi,
       "pi" => Vendor::Pi,
@@ -131,6 +134,12 @@ impl Vendor {
   }
 
   /// Leaving plan mode shows up only in the approval tool's output, without a current_mode_update (Kimi 0.41.0)
+  /// `_session/goal` `clear` starts a turn of the agent's own (claude-agent-acp runs it as the `/goal clear` command);
+  /// codex-acp only clears the goal (`goal::starts_turn`)
+  pub fn goal_clear_starts_turn(self) -> bool {
+    self != Vendor::Codex
+  }
+
   pub fn plan_exit_in_tool_output(self) -> bool {
     self == Vendor::Kimi
   }

@@ -507,6 +507,13 @@ pub enum WebviewMsg {
     session_id: String,
     task_id: String,
   },
+  /// A goal control (SessionView.goalActions): the engine sends turn-starting ones as a `/goal …` prompt, the rest as `_session/goal`
+  Goal {
+    session_id: String,
+    action: crate::transcript::GoalAction,
+    #[serde(default)]
+    objective: Option<String>,
+  },
   Dequeue {
     session_id: String,
     id: String,

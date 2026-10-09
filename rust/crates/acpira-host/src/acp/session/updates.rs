@@ -9,11 +9,11 @@ use acpira_shared::transcript::*;
 
 use crate::acp::session::failure::failure_of;
 use crate::acp::session::{AcpSession, Core};
-use crate::acp::transcript::normalize::{activity_of, apply_async_task, apply_update};
+use crate::acp::transcript::normalize::{activity_of, apply_async_task, apply_goal, apply_update};
 use crate::acp::transcript::plans::{capture_plan, plan_documents};
 use crate::acp::transcript::subagent_tree::{Route, RouteCtx};
 use crate::acp::transport::wire::{ExtensionUpdate, extension_of};
-use crate::acp::vendors::{claude_autonomous, claude_window, steering};
+use crate::acp::vendors::{claude_autonomous, claude_window, goal, steering};
 
 const RUNNING_KINDS: [&str; 6] =
   ["user_message_chunk", "agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update", "plan"];
@@ -167,6 +167,13 @@ impl AcpSession {
       self.log("startup banner ignored");
       c.startup_banner = None;
       return;
+    }
+    // A goal snapshot (codex-acp / claude-agent-acp goal extension); a replayed history restores it without rows
+    if kind == "session_info_update"
+      && let Some(next) = goal::snapshot_of(&u)
+    {
+      let mark = !c.replaying;
+      apply_goal(&mut c.state, next, mark);
     }
     let turn_index = current_turn_index(&c);
     let routed = {
