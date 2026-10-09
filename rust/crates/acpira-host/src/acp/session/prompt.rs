@@ -21,7 +21,7 @@ use crate::acp::transcript::normalize::{activity_of, apply_session_failure, end_
 use crate::acp::transport::process::AgentProcess;
 use crate::acp::transport::rpc::{BoxFuture, RpcError};
 use crate::acp::vendors::antigravity::ReplyError;
-use crate::acp::vendors::{Vendor, claude_window};
+use crate::acp::vendors::{Vendor, claude_window, kimi_failure};
 use crate::i18n::{t, tp};
 use crate::limits::TITLE_MAX;
 use crate::util::{js_num, now_ms, random_uuid};
@@ -508,53 +508,61 @@ impl AcpSession {
       }
     }
     self.refresh_context_usage().await;
+    // The guard lives in this block: an empty completion reads the CLI's session log afterwards, across an await
+    {
+      let mut c = self.core.lock();
+      if !turn.live(&c) {
+        return None;
+      }
+      let controls = c.state.controls.clone();
+      if stop == TurnStop::EndTurn
+        && let Some(turn) = agent_turn_mut(&mut c, agent_idx, started_at)
+        && let Some(cmd) = turn.command.as_mut()
+      {
+        let (mode, options) = command_changes(&accepted.before, &controls);
+        cmd.mode = mode;
+        cmd.options = options;
+      }
+      // Antigravity reports a failed turn as the reply's last text: it becomes the turn's error
+      let failed = if stop == TurnStop::EndTurn && !auto {
+        agent_turn_mut(&mut c, agent_idx, started_at).and_then(|turn| take_reply_error(self.vendor, turn))
+      } else {
+        None
+      };
+      if let Some(e) = failed {
+        let error = self.reply_error(&mut c, e);
+        self.log(&format!("prompt failed in the reply: {}", error.message));
+        self.settle(&mut c, TurnStop::Cancelled, Some(error));
+        return Some(Settled { stop: TurnStop::Cancelled, exhausted });
+      }
+      // Some CLIs acknowledge provider failures as empty end_turn responses: record the missing output
+      let empty = stop == TurnStop::EndTurn
+        && !auto
+        && agent_turn_mut(&mut c, agent_idx, started_at).is_some_and(|turn| {
+          turn.command.is_none() && turn.blocks.iter().all(|b| matches!(b, AgentBlock::Text(x) if x.markdown.trim().is_empty()))
+        });
+      if !empty {
+        self.settle(&mut c, stop, None);
+        return Some(Settled { stop, exhausted });
+      }
+    }
+    // Kimi answers a failed turn with an empty end_turn: its own session log still holds the cause
+    let error = match self.logged_failure(turn).await {
+      Some(f) => {
+        self.log(&format!("prompt failed (from the CLI's session log): {}", f.message));
+        TurnError { message: f.message, kind: f.code, retryable: f.retryable, ..Default::default() }
+      }
+      None => {
+        self.log("prompt empty: end_turn without output or error details");
+        TurnError { message: t("host.emptyResponse"), kind: Some("empty_response".into()), retryable: Some(true), ..Default::default() }
+      }
+    };
     let mut c = self.core.lock();
     if !turn.live(&c) {
       return None;
     }
-    let controls = c.state.controls.clone();
-    if stop == TurnStop::EndTurn
-      && let Some(turn) = agent_turn_mut(&mut c, agent_idx, started_at)
-      && let Some(cmd) = turn.command.as_mut()
-    {
-      let (mode, options) = command_changes(&accepted.before, &controls);
-      cmd.mode = mode;
-      cmd.options = options;
-    }
-    // Antigravity reports a failed turn as the reply's last text: it becomes the turn's error
-    let failed = if stop == TurnStop::EndTurn && !auto {
-      agent_turn_mut(&mut c, agent_idx, started_at).and_then(|turn| take_reply_error(self.vendor, turn))
-    } else {
-      None
-    };
-    if let Some(e) = failed {
-      let error = self.reply_error(&mut c, e);
-      self.log(&format!("prompt failed in the reply: {}", error.message));
-      self.settle(&mut c, TurnStop::Cancelled, Some(error));
-      return Some(Settled { stop: TurnStop::Cancelled, exhausted });
-    }
-    // Some CLIs acknowledge provider failures as empty end_turn responses: record the missing output
-    let empty = agent_turn_mut(&mut c, agent_idx, started_at).is_some_and(|turn| {
-      turn.command.is_none() && turn.blocks.iter().all(|b| matches!(b, AgentBlock::Text(x) if x.markdown.trim().is_empty()))
-    });
-    if stop == TurnStop::EndTurn && !auto && empty {
-      drop(c);
-      self.log("prompt empty: end_turn without output or error details");
-      let mut c = self.core.lock();
-      stop = TurnStop::Cancelled;
-      self.settle(
-        &mut c,
-        stop,
-        Some(TurnError {
-          message: t("host.emptyResponse"),
-          kind: Some("empty_response".into()),
-          retryable: Some(true),
-          ..Default::default()
-        }),
-      );
-    } else {
-      self.settle(&mut c, stop, None);
-    }
+    stop = TurnStop::Cancelled;
+    self.settle(&mut c, stop, Some(error));
     Some(Settled { stop, exhausted })
   }
 
@@ -588,6 +596,17 @@ impl AcpSession {
       c.error = Some(err.to_string());
     }
     Some(Settled { stop: TurnStop::Cancelled, exhausted })
+  }
+
+  /// The failure a CLI that swallows them (`Vendor::swallows_failures`) logged for this turn in its own session store
+  async fn logged_failure(&self, turn: &OpenTurn) -> Option<kimi_failure::Failure> {
+    if !self.vendor.swallows_failures() {
+      return None;
+    }
+    let session_id = turn.acp_id.clone()?;
+    let home = kimi_failure::home_of(self.def().env.and_then(|e| e.get(kimi_failure::HOME_ENV).cloned()));
+    let since = turn.started_at;
+    tokio::task::spawn_blocking(move || kimi_failure::read(&home, &session_id, since)).await.ok().flatten()
   }
 
   /// The error card for a failure the agent sent as text. A shared MCP server it could not start is left out of this

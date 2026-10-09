@@ -169,3 +169,35 @@ async fn an_empty_completion_reports_missing_output_and_retries_on_the_same_nati
     expect_match(last_turn(&view(&s)), json!({ "stop": "end_turn" }));
   }
 }
+
+/// Kimi answers a failed turn with an empty end_turn and logs the cause in its own session store: the card shows it
+#[tokio::test(flavor = "multi_thread")]
+async fn a_kimi_empty_completion_reports_the_failure_from_its_session_log() {
+  let fake = fake_or_skip!();
+  let kimi_home = tempfile::tempdir().unwrap();
+  let home = kimi_home.path().to_string_lossy().into_owned();
+  let h = Harness::for_agent(&fake, "kimi", json!({ "env": { "KIMI_CODE_HOME": home } }));
+  let s = started(&h, "/tmp").await;
+  let native = s.to_record().acp_session_id.unwrap();
+  let dir = kimi_home.path().join("sessions").join("wd_tmp_0123abcd").join(&native).join("agents").join("main");
+  std::fs::create_dir_all(&dir).unwrap();
+  // Stamped ahead of the prompt so it counts as this turn's end; an older line would belong to the previous turn
+  let ended = json!({
+    "type": "turn.ended", "agentId": "main", "turnId": 0, "reason": "failed",
+    "error": { "code": "provider.api_error", "message": "400 unsupported Ollama model: deepseek-v4-flash", "name": "APIStatusError", "retryable": false },
+    "time": acpira_host::util::now_ms() + 60_000,
+  });
+  std::fs::write(dir.join("wire.jsonl"), format!("{ended}\n")).unwrap();
+  prompt(&s, "empty-response").await;
+  expect_match(view(&s), json!({ "status": "ready", "running": false }));
+  let last = last_turn(&view(&s));
+  expect_match(
+    &last,
+    json!({ "stop": "error", "error": { "message": "400 unsupported Ollama model: deepseek-v4-flash", "kind": "provider.api_error", "retryable": false } }),
+  );
+  assert!(h.logs().iter().any(|l| l.contains("from the CLI's session log")));
+  // Nothing logged for a later turn (only an older line): the generic card
+  std::fs::write(dir.join("wire.jsonl"), format!("{}\n", json!({ "type": "turn.ended", "agentId": "main", "reason": "failed", "time": 1 }))).unwrap();
+  prompt(&s, "empty-response-whitespace").await;
+  expect_match(last_turn(&view(&s)), json!({ "stop": "error", "error": { "kind": "empty_response", "retryable": true } }));
+}
