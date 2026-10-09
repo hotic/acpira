@@ -13,9 +13,9 @@ export function absorbedNotices(turn: AgentTurn): NoticeBlock[] {
   return found.length ? found : NO_NOTICES;
 }
 
-// Copy / fork / stats only mean something for a turn that produced something beyond failure notices
+// Copy / fork / stats only mean something for a turn that produced something beyond failure notices and goal milestones
 export function hasTurnContent(turn: AgentTurn): boolean {
-  return turn.blocks.some(b => b.type !== 'notice');
+  return turn.blocks.some(b => b.type !== 'notice' && b.type !== 'goal');
 }
 
 // An empty ACP completion is a receipt, not proof that a command took effect.

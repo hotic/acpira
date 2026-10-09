@@ -292,6 +292,7 @@ export function App() {
     unobserveSubagent: (sessionId, subagentId) => post({ type: 'unobserveSubagent', sessionId, subagentId }),
     cancelSubagent: (sessionId, subagentId) => post({ type: 'cancelSubagent', sessionId, subagentId }),
     stopAsyncTask: (sessionId, taskId) => post({ type: 'stopAsyncTask', sessionId, taskId }),
+    goal: (sessionId, action, objective) => post({ type: 'goal', sessionId, action, ...(objective !== undefined ? { objective } : {}) }),
   }), []);
 
   const settingsOn = useMemo<SettingsHandlers>(() => ({
@@ -377,6 +378,8 @@ export function App() {
       turns={session?.turns ?? []}
       running={session?.running ?? false}
       queued={session?.queued}
+      goal={session?.goal}
+      goalActions={session?.goalActions}
       controls={session?.controls ?? { modes: [], options: [] }}
       modelShapes={session?.modelShapes}
       usage={session?.usage}

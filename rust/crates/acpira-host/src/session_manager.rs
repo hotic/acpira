@@ -1048,6 +1048,7 @@ impl SessionManager {
       import_pending: true,
       imported_from: Some(ImportedFrom { session_id: session_id.to_owned() }),
       subagents: None,
+      goal: None,
     };
     if let Err(e) = self.deps.store.flush(Arc::new(record.clone())).await {
       self.log(&format!("import flush failed: {e}"));
@@ -1968,6 +1969,13 @@ impl SessionManager {
           s.stop_async_task(&task_id).await?;
         }
       }
+      W::Goal { session_id, action, objective } => {
+        if valid(&session_id)
+          && let Some(s) = self.live(&session_id)
+        {
+          s.control_goal(action, objective).await?;
+        }
+      }
       W::ImportNativeSession { agent, session_id, cwd, title, updated_at } => {
         self.import_native_session(v, &agent, &session_id, &cwd, title.as_deref(), updated_at.as_deref()).await
       }
@@ -2376,6 +2384,7 @@ impl SessionManager {
       import_pending: false,
       imported_from: None,
       subagents: (!subagents.is_empty()).then_some(subagents),
+      goal: None,
     };
     // Attachment blobs are re-saved under the fork's own blob dir (content-hash names keep the same file name)
     let fork_id = record.id.clone();
@@ -2866,6 +2875,7 @@ fn session_id_of(m: &WebviewMsg) -> Option<String> {
     | W::UnobserveSubagent { session_id, .. }
     | W::CancelSubagent { session_id, .. }
     | W::StopAsyncTask { session_id, .. }
+    | W::Goal { session_id, .. }
     | W::Dequeue { session_id, .. }
     | W::SendQueued { session_id, .. }
     | W::SteerQueued { session_id, .. }
@@ -2900,6 +2910,7 @@ fn is_execution(m: &WebviewMsg) -> bool {
       | W::EditQueued { .. }
       | W::Login { .. }
       | W::StopAsyncTask { .. }
+      | W::Goal { .. }
   )
 }
 

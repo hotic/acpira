@@ -381,7 +381,34 @@ export interface SteerBlock {
   attachments?: Attachment[];
 }
 
-export type AgentBlock = ThoughtBlock | PlanBlock | ToolCallBlock | TextBlock | PermissionBlock | CompactionBlock | PlanDocumentBlock | QuestionBlock | ImageBlock | NoticeBlock | SteerBlock;
+// The agent's goal (AIR goal extension, codex-acp / claude-agent-acp): it keeps working toward `objective` across turns until it
+// judges it met. Counters are whatever the agent reports: Claude its stop-hook rounds, Codex time and tokens against a budget.
+// `limited` is Codex's usageLimited / budgetLimited
+export type GoalStatus = 'active' | 'paused' | 'blocked' | 'limited' | 'complete';
+export interface SessionGoal {
+  objective: string;
+  status: GoalStatus;
+  iterations?: number;
+  tokenBudget?: number;
+  tokensUsed?: number;
+  timeUsedSeconds?: number;
+  // Epoch ms of the agent's last goal change: timeUsedSeconds counts up to here
+  updatedAt?: number;
+}
+// A goal control the agent advertises at initialize; `set` is also what `/goal <objective>` does
+export type GoalAction = 'set' | 'pause' | 'resume' | 'clear';
+export type GoalEvent = 'set' | 'paused' | 'resumed' | 'blocked' | 'limited' | 'complete' | 'cleared';
+// A goal milestone: the dock strip shows the present, these rows keep the history. Counters are the snapshot's at that moment
+export interface GoalBlock {
+  type: 'goal';
+  event: GoalEvent;
+  objective?: string;
+  iterations?: number;
+  tokensUsed?: number;
+  timeUsedSeconds?: number;
+}
+
+export type AgentBlock = ThoughtBlock | PlanBlock | ToolCallBlock | TextBlock | PermissionBlock | CompactionBlock | PlanDocumentBlock | QuestionBlock | ImageBlock | NoticeBlock | SteerBlock | GoalBlock;
 
 // What the composer attaches to a prompt before the host has seen it: images and dropped text carry their payload (base64 / text),
 // files carry a URI (Explorer drag / @ mention) that the host resolves — image files become `image`, everything else stays a link
@@ -611,6 +638,10 @@ export interface SessionView {
   queued?: QueuedPrompt[];
   // The agent takes `_session/steering` and honours its idle fallback: a queued prompt can join the running turn
   canSteer?: boolean;
+  // The agent's current goal; a completed one stays only until its turn ends
+  goal?: SessionGoal;
+  // The goal controls the running agent advertises; absent when it has no goal support (or no process yet)
+  goalActions?: GoalAction[];
   // Delegated child nodes announced during this session; each carries its own transcript via the `subagent` message
   subagents?: SubagentSummary[];
   createdAt: string;

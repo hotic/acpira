@@ -90,6 +90,11 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // A "slow compacting" turn compacts on its own from chunk 3 to chunk 15 (compaction_update in_progress … completed); a
 // steer arriving meanwhile fails that compaction `aborted`, the way claude-agent-acp does
 // FAKE_STEER_LOG → append every steering request's text to that file
+// FAKE_GOAL → the goal extension: =codex is codex-acp 1.13.0 (`_meta.goal`, set / pause / resume / clear), =claude is
+// claude-agent-acp (`_meta.jetbrains.air.goal`, set / clear, only to AIR clients). A `/goal <objective|pause|resume|clear>`
+// prompt publishes the matching snapshot (session_info_update at the same key, null = cleared) and answers `goal:<arg>`;
+// a "goal-done" prompt publishes the goal complete. `_session/goal` pause / clear publish the snapshot with no turn;
+// FAKE_GOAL_LOG appends every request's action
 // FAKE_SLOW_STEP_MS → the pause between the 50 chunks of a "slow" turn (default 40 ms, so 2 s in all)
 // FAKE_META_LOG → append `{ method, meta }` (the request's `_meta`) for every session/new, resume and load
 // FAKE_REBUILD → claude-agent-acp 0.87.0's getOrCreateSession: a resume of a live session whose
@@ -118,6 +123,15 @@ const steered = new Map<string, string[]>();
 // "slow compacting": the session's mid-turn compaction still under way
 const compactingMidTurn = new Map<string, string>();
 const steerMode = process.env.FAKE_STEERING ?? '';
+const goalMode = process.env.FAKE_GOAL ?? '';
+// The goal snapshot per session, published at the dialect's key
+const goals = new Map<string, { objective: string; status: string; tokensUsed: number; timeUsedSeconds: number } | null>();
+const goalMeta = (goal: unknown) => goalMode === 'codex' ? { goal } : { jetbrains: { air: { version: 1, goal } } };
+const goalCap = () => goalMode === 'codex'
+  ? { goal: { version: 1, controlMethod: '_session/goal', actions: ['set', 'pause', 'resume', 'clear'] } }
+  : goalMode === 'claude' && airCaps.length ? { jetbrains: { air: { version: 1, goal: { version: 1, controlMethod: '_session/goal', actions: ['set', 'clear'] } } } } : {};
+const publishGoal = (client: acp.AgentContext, sessionId: string) => client.notify(acp.methods.client.session.update, { sessionId,
+  update: { sessionUpdate: 'session_info_update', _meta: goalMeta(goals.get(sessionId) ?? null) } } as unknown as acp.SessionNotification);
 const slowStepMs = Number(process.env.FAKE_SLOW_STEP_MS) || 40;
 const codexLike = steerMode.startsWith('codex');
 // codex-late: the steer that ends the running turn, and the moment that turn's response is out
@@ -205,7 +219,9 @@ const app = acp.agent({ name: 'fake-agent' })
         // FAKE_MCP_TRACE: http but not sse, so a test sees the client filter client-provided servers by transport
         ...(process.env.FAKE_MCP_TRACE ? { mcpCapabilities: { http: true, sse: false } } : {}),
       },
-      ...(process.env.FAKE_STEERING ? { _meta: { steering: { supported: true } } } : {}),
+      // Only a fake with an extension to advertise answers with `_meta` at all
+      ...(process.env.FAKE_STEERING || Object.keys(goalCap()).length
+        ? { _meta: { ...(process.env.FAKE_STEERING ? { steering: { supported: true } } : {}), ...goalCap() } } : {}),
       authMethods: [
         { id: 'fake.login', name: 'Fake login', description: 'run fake login' },
         // Terminal methods are only offered to clients that can run them (claude-agent-acp gates its logins the same way)
@@ -394,6 +410,16 @@ const app = acp.agent({ name: 'fake-agent' })
     }, 20);
     return { outcome: 'startedNewTurn' };
   })
+  .onRequest('_session/goal', value => value as { sessionId: string; action: string; objective?: string }, async ({ params, client }) => {
+    if (!goalMode) throw acp.RequestError.methodNotFound('_session/goal');
+    if (process.env.FAKE_GOAL_LOG) appendFileSync(process.env.FAKE_GOAL_LOG, `${params.action}\n`);
+    const goal = goals.get(params.sessionId);
+    if (params.action === 'pause' && goal) goals.set(params.sessionId, { ...goal, status: 'paused' });
+    else if (params.action === 'clear') goals.set(params.sessionId, null);
+    else return {};
+    await publishGoal(client, params.sessionId);
+    return {};
+  })
   .onRequest('_session/async_task/stop', value => value as { sessionId: string; asyncTaskId: string }, ({ params, client }) => {
     // FAKE_STOP_LOG: every stop request is appended so a test can assert the params — and prove none was sent
     if (process.env.FAKE_STOP_LOG) appendFileSync(process.env.FAKE_STOP_LOG, `${params.sessionId} ${params.asyncTaskId}\n`);
@@ -452,6 +478,19 @@ const app = acp.agent({ name: 'fake-agent' })
     const text = params.prompt.map(p => (p.type === 'text' ? p.text : '')).join('');
     const send = (update: acp.SessionUpdate) => client.notify(acp.methods.client.session.update, { sessionId: sid, update });
     cancelled.delete(sid);
+    // The goal extension: `/goal …` changes the snapshot, "goal-done" meets it
+    const goalCommand = goalMode ? /^\/goal\s+([\s\S]+)$/.exec(text.trim()) : null;
+    if (goalCommand || (goalMode && text === 'goal-done')) {
+      const arg = goalCommand?.[1]!.trim() ?? 'done';
+      const goal = goals.get(sid);
+      if (arg === 'clear') goals.set(sid, null);
+      else if (arg === 'pause' || arg === 'resume' || arg === 'done') {
+        if (goal) goals.set(sid, { ...goal, status: arg === 'pause' ? 'paused' : arg === 'done' ? 'complete' : 'active', timeUsedSeconds: goal.timeUsedSeconds + 5 });
+      } else goals.set(sid, { objective: arg, status: 'active', tokensUsed: 1200, timeUsedSeconds: 0 });
+      await publishGoal(client, sid);
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `goal:${arg}` } });
+      return { stopReason: 'end_turn' };
+    }
     // A subagent that kept running past its parent's turn reports on the next prompt's stream — the only channel left
     const late = lateTerminal.get(sid);
     if (late?.length) {

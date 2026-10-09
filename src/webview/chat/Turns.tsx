@@ -32,6 +32,7 @@ import { BlobUrlContext } from './fileLinks';
 import { PlanDocument } from './PlanDocument';
 import { TurnAttachments } from './Attachments';
 import { elapsedLabel, splitCodexBlocks } from './folding';
+import { GoalRow } from './Goal';
 import { rememberFold, rememberedFold } from './foldMemory';
 import { ProcessHistory } from './ProcessHistory';
 import { compactionForDisplay } from './compactionDisplay';
@@ -388,7 +389,7 @@ function Activity({ turn, running, leadKind = 'orb' }: { turn: AgentTurn; runnin
   );
 }
 
-const LINE_TYPES = new Set(['thought', 'plan', 'tool_call', 'compaction', 'notice']);
+const LINE_TYPES = new Set(['thought', 'plan', 'tool_call', 'compaction', 'notice', 'goal']);
 type Group = { kind: 'lines'; blocks: AgentBlock[] } | { kind: 'block'; block: AgentBlock };
 
 function groupBlocks(blocks: AgentBlock[]): Group[] {
@@ -479,12 +480,13 @@ function CursorFold({ blocks }: { blocks: ToolCallBlock[] }) {
 // Permission cards stay outside; the latest reply remains visible while it streams.
 // `working` is false while a /compact reply shows only its compaction row, which retires the head the same way a settled turn does
 function CodexMessage({ turn, running, working = running, onPermission, memoryKey, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; running: boolean; working?: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
-  const { process, reply, permissions, notices } = splitCodexBlocks(turn.blocks);
+  const { process, reply, permissions, notices, goalsLead, goals } = splitCodexBlocks(turn.blocks);
   const hasTools = turn.blocks.some(block => block.type === 'tool_call');
   // The process folds away only once the reply has finished drawing, not when its last chunk arrived
   const [replyBusy, setReplyBusy] = useState(false);
   return (
     <div className="flex flex-col gap-gap">
+      {goalsLead.map((b, i) => <GoalRow key={`goal${i}`} block={b} />)}
       <CodexFold turn={turn} blocks={process} running={working} replyBusy={replyBusy && reply.length > 0} hasTools={hasTools} memoryKey={memoryKey} lead={lead} />
       {notices.map(b => <NoticeRow key={b.id} block={b} />)}
       {subagents !== undefined && subagents.length > 0 && onInspect !== undefined && (
@@ -494,6 +496,8 @@ function CodexMessage({ turn, running, working = running, onPermission, memoryKe
         </>
       )}
       {reply.map((block, i) => <Prose key={i} block={block} onBusy={i === reply.length - 1 ? setReplyBusy : undefined} />)}
+      {/* Later milestones (paused / met / cleared …) close the reply they followed */}
+      {goals.map((b, i) => <GoalRow key={`goal${i}`} block={b} />)}
       {permissions.filter(block => !block.planId).map(block => <Permission key={block.id} block={block} onChoose={id => onPermission(block.id, id)} />)}
       {!running && outcomeOf(turn) && <Outcome turn={turn} />}
     </div>
@@ -659,6 +663,7 @@ function ProcessBlocks({ blocks, items }: { blocks: AgentBlock[]; items?: Proces
 
 function LineBlock({ block }: { block: AgentBlock }) {
   if (block.type === 'notice') return <NoticeRow block={block} />;
+  if (block.type === 'goal') return <GoalRow block={block} />;
   if (block.type === 'thought') return <Thought block={block} />;
   if (block.type === 'plan') return <Plan block={block} />;
   if (block.type === 'tool_call') return <ToolCall block={block} />;

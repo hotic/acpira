@@ -162,7 +162,7 @@ fn block(b: &AgentBlock, labels: &ExportLabels, blob_path: &dyn Fn(&str) -> Opti
       let content: Vec<String> = items.into_iter().filter_map(|c| tool_content(c, blob_path)).filter(|s| !s.is_empty()).collect();
       if content.is_empty() { head } else { format!("{head}\n{}", content.join("\n")) }
     }
-    AgentBlock::Permission(_) | AgentBlock::Steer(_) => return None,
+    AgentBlock::Permission(_) | AgentBlock::Steer(_) | AgentBlock::Goal(_) => return None,
     AgentBlock::Question(q) => {
       q.outcome?;
       q.questions

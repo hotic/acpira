@@ -1,5 +1,5 @@
 import type { ChatGptIntegrationStatus } from './chatgptIntegration';
-import type { AccountInfo, AgentId, AgentInfo, CategoryOp, ConfigControl, Draft, FullDiffSource, NativeSessionInfo, QuestionAnswers, SessionCategories, SessionSummary, SessionView, Turn, TurnSettings } from './transcript';
+import type { AccountInfo, AgentId, AgentInfo, CategoryOp, ConfigControl, Draft, FullDiffSource, GoalAction, NativeSessionInfo, QuestionAnswers, SessionCategories, SessionSummary, SessionView, Turn, TurnSettings } from './transcript';
 import type { Appearance, AxisKey } from './appearance';
 import type { HiddenMap, SettingKey, SettingsView } from './settings';
 import type { Locale } from './i18n';
@@ -212,6 +212,9 @@ export type WebviewMsg =
   | { type: 'cancelSubagent'; sessionId: string; subagentId: string }
   // Ask the adapter to stop one AIR async task (sent as _session/async_task/stop under the session id that owns it)
   | { type: 'stopAsyncTask'; sessionId: string; taskId: string }
+  // A goal control (SessionView.goalActions): the engine sends turn-starting ones (set / resume, Claude's clear) as a
+  // `/goal …` prompt, which queues behind a running turn like any prompt, and the rest as `_session/goal`
+  | { type: 'goal'; sessionId: string; action: GoalAction; objective?: string }
   // Queued prompts (waiting for the running turn): drop one, or replace one in place — kept attachments by index, new drafts alongside
   | { type: 'dequeue'; sessionId: string; id: string }
   | { type: 'sendQueued'; sessionId: string; id: string }

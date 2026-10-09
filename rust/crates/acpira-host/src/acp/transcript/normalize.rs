@@ -64,6 +64,8 @@ pub struct NormalizeState {
   pub log: Option<Log>,
   /// The agent id, for adapter strings that stand for structured events (`compaction_text`)
   pub agent: Option<String>,
+  /// The agent's current goal (`vendors::goal`), persisted with the record
+  pub goal: Option<SessionGoal>,
 }
 
 impl NormalizeState {
@@ -592,6 +594,24 @@ pub fn apply_session_failure(s: &mut NormalizeState, f: &SessionFailure) -> bool
     actions: f.actions.clone(),
   });
   push_standalone(s, notice);
+  true
+}
+
+/// A goal snapshot replaces the session's goal; a status or objective change also leaves a row on the last agent turn
+/// (the live one, or the last settled one for a control sent while idle). `mark` is off while a history replays
+pub fn apply_goal(s: &mut NormalizeState, next: Option<SessionGoal>, mark: bool) -> bool {
+  if s.goal == next {
+    return false;
+  }
+  let block = if mark { crate::acp::vendors::goal::event_of(s.goal.as_ref(), next.as_ref()) } else { None };
+  s.goal = next;
+  if let Some(b) = block {
+    if matches!(s.turns.last(), Some(Turn::Agent(_))) {
+      let i = s.turns.len() - 1;
+      seal(s, i);
+    }
+    push_standalone(s, AgentBlock::Goal(b));
+  }
   true
 }
 
