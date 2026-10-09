@@ -201,3 +201,27 @@ async fn a_kimi_empty_completion_reports_the_failure_from_its_session_log() {
   prompt(&s, "empty-response-whitespace").await;
   expect_match(last_turn(&view(&s)), json!({ "stop": "error", "error": { "kind": "empty_response", "retryable": true } }));
 }
+
+/// pi-acp settles a turn whose model call failed with an empty end_turn; pi wrote the failed reply to its session file
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pi_empty_completion_reports_the_error_from_its_session_file() {
+  let fake = fake_or_skip!();
+  let agent_dir = tempfile::tempdir().unwrap();
+  let dir = agent_dir.path().to_string_lossy().into_owned();
+  let h = Harness::for_agent(&fake, "pi", json!({ "env": { "PI_CODING_AGENT_DIR": dir } }));
+  let s = started(&h, "/tmp").await;
+  let native = s.to_record().acp_session_id.unwrap();
+  // pi's default directory for cwd /tmp
+  let sessions = agent_dir.path().join("sessions").join("--tmp--");
+  std::fs::create_dir_all(&sessions).unwrap();
+  let reply = json!({
+    "type": "message", "id": "b", "parentId": "a",
+    "message": { "role": "assistant", "content": [], "stopReason": "error", "errorMessage": "502: upstream connection closed", "timestamp": acpira_host::util::now_ms() + 60_000 },
+  });
+  std::fs::write(sessions.join(format!("2026-10-09T00-00-00-000Z_{native}.jsonl")), format!("{reply}\n")).unwrap();
+  prompt(&s, "empty-response").await;
+  expect_match(view(&s), json!({ "status": "ready", "running": false }));
+  let last = last_turn(&view(&s));
+  expect_match(&last, json!({ "stop": "error", "error": { "message": "502: upstream connection closed" } }));
+  expect_absent(&last, "error.kind");
+}

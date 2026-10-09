@@ -3,45 +3,21 @@
 //! `end_turn` and no output, so the prompt looks like an empty success. The real error is only in Kimi's own session
 //! log: `<KIMI_CODE_HOME>/sessions/<workdir>/<acp session id>/agents/main/wire.jsonl` gets a
 //! `{"type":"turn.ended","reason":"failed","error":{code,message,name,details:{statusCode},retryable},"time":ms}` line.
-//! An empty `end_turn` from Kimi reads that line back so the error card shows the cause instead of the generic text.
+//! An empty `end_turn` from Kimi reads that line back (`logged_failure`).
 //! Upstream: MoonshotAI/kimi-code#1813 / #3107, fix PR #3161 (open as of 2026-10-09)
 
-use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use serde_json::Value;
 
+use crate::acp::vendors::logged_failure::{Failure, LastTurn, poll, read_tail};
 use crate::store::data_dir::home_dir;
 
 pub const HOME_ENV: &str = "KIMI_CODE_HOME";
-/// Only the end of a long session's log matters: the failed turn's lines are the last few
-const TAIL_BYTES: u64 = 256 * 1024;
-/// The log line and the ACP answer are written independently: give the line a moment to land
-const POLL_ATTEMPTS: u32 = 10;
-const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-/// What Kimi recorded about a failed turn
-#[derive(Debug, Clone, PartialEq)]
-pub struct Failure {
-  pub message: String,
-  /// Kimi's error code (`provider.api_error`, `provider.timeout`, …)
-  pub code: Option<String>,
-  pub retryable: Option<bool>,
-}
-
-/// How the last main-agent turn in the log ended
-#[derive(Debug, PartialEq)]
-enum LastTurn {
-  /// No `turn.ended` at or after the prompt yet (not flushed, or the log is missing)
-  Pending,
-  Ended(Option<Failure>),
-}
-
-/// `KIMI_CODE_HOME` (the agent entry's own env first, then the engine's) or `~/.kimi-code`, like Kimi's own lookup
-pub fn home_of(entry_value: Option<String>) -> PathBuf {
-  let value = entry_value.or_else(|| std::env::var(HOME_ENV).ok()).filter(|s| !s.trim().is_empty());
-  match value {
+/// The `KIMI_CODE_HOME` value (with `~` expanded) or `~/.kimi-code`, like Kimi's own lookup
+pub fn home_of(value: Option<String>) -> PathBuf {
+  match value.filter(|s| !s.trim().is_empty()) {
     Some(d) if d == "~" => home_dir(),
     Some(d) => d.strip_prefix("~/").map(|rest| home_dir().join(rest)).unwrap_or_else(|| PathBuf::from(d)),
     None => home_dir().join(".kimi-code"),
@@ -51,17 +27,7 @@ pub fn home_of(entry_value: Option<String>) -> PathBuf {
 /// The failure Kimi logged for the turn that started at `since_ms` (epoch ms), if that turn failed. Blocking file IO
 /// with a short poll: run it off the async threads
 pub fn read(home: &Path, session_id: &str, since_ms: i64) -> Option<Failure> {
-  for attempt in 0..POLL_ATTEMPTS {
-    if attempt > 0 {
-      std::thread::sleep(POLL_INTERVAL);
-    }
-    let Some(path) = wire_file(home, session_id) else { continue };
-    let Some(text) = read_tail(&path) else { continue };
-    if let LastTurn::Ended(failure) = last_turn(&text, since_ms) {
-      return failure;
-    }
-  }
-  None
+  poll(|| Some(last_turn(&read_tail(&wire_file(home, session_id)?)?, since_ms)))
 }
 
 /// The session's main-agent log: the workdir level is a hashed name, so every workdir is looked into
@@ -75,16 +41,6 @@ fn wire_file(home: &Path, session_id: &str) -> Option<PathBuf> {
     .filter_map(|e| e.ok())
     .map(|e| e.path().join(session_id).join("agents").join("main").join("wire.jsonl"))
     .find(|p| p.is_file())
-}
-
-/// The last `TAIL_BYTES` of the file; a line cut at the start fails to parse and is skipped
-fn read_tail(path: &Path) -> Option<String> {
-  let mut file = std::fs::File::open(path).ok()?;
-  let len = file.metadata().ok()?.len();
-  file.seek(SeekFrom::Start(len.saturating_sub(TAIL_BYTES))).ok()?;
-  let mut bytes = Vec::new();
-  file.read_to_end(&mut bytes).ok()?;
-  Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// The last main-agent `turn.ended` line, if it was written at or after `since_ms` (an older one is the previous turn's)
