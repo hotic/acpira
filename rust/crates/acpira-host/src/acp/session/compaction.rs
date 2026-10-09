@@ -103,6 +103,12 @@ impl CompactionCompletion {
     }
   }
 
+  /// A compaction is under way in this turn: the turn is a /compact, or the agent reported one of its own (a
+  /// `compaction_update` mid-turn) that has not ended yet
+  pub fn running(&self) -> bool {
+    self.agent.is_some() || !self.pending.is_empty()
+  }
+
   /// None when nothing is pending; otherwise a receiver that fires on completion or close
   pub fn wait(&mut self) -> Option<oneshot::Receiver<()>> {
     if !self.manual && self.pending.is_empty() {

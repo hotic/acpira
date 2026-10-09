@@ -237,6 +237,43 @@ async fn a_steered_composer_send_without_steering_support_queues_and_never_cance
   expect_match(&vw["turns"][1], json!({ "stop": "end_turn" }));
 }
 
+fn compaction_of(turn: &Value) -> Option<Value> {
+  turn["blocks"].as_array().into_iter().flatten().find(|b| b["type"] == "compaction").cloned()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_steer_during_the_agents_own_compaction_waits_for_it_and_never_aborts_it() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({ "env": { "FAKE_STEERING": "1" } }));
+  let s = started(&h, "/tmp").await;
+  let running = spawn_prompt(&s, "slow compacting");
+  until(|| compaction_of(&view(&s)["turns"][1]).is_some_and(|b| b["status"] == "in_progress"), 5000).await;
+  // Both the composer's steer and the queue row's Steer button wait: no steer on the wire, no cancel
+  s.steer_prompt("use pnpm".into(), vec![]).await.unwrap();
+  prompt(&s, "then lint").await;
+  let id = view(&s)["queued"][1]["id"].as_str().unwrap().to_owned();
+  s.steer_queued(&id).await.unwrap();
+  let vw = view(&s);
+  assert_eq!(vw["running"], true);
+  expect_match(&vw["queued"], json!([{ "text": "use pnpm" }, { "text": "then lint" }]));
+  expect_match(compaction_of(&vw["turns"][1]).unwrap(), json!({ "status": "in_progress" }));
+  // Once the compaction completes they steer in, in the order they were sent
+  until(|| agent_text(&view(&s)["turns"][1]).contains("steered:then lint"), 5000).await;
+  running.await.unwrap();
+  until(|| !s.is_running(), 5000).await;
+  let vw = view(&s);
+  assert!(vw["queued"].is_null(), "{}", vw["queued"]);
+  assert_eq!(user_prompts(&vw), [json!("slow compacting")]);
+  let blocks = vw["turns"][1]["blocks"].as_array().unwrap();
+  let compaction = blocks.iter().position(|b| b["type"] == "compaction").unwrap();
+  expect_match(&blocks[compaction], json!({ "status": "completed" }));
+  expect_absent(&blocks[compaction], "error");
+  let steers: Vec<(usize, Value)> = blocks.iter().enumerate().filter(|(_, b)| b["type"] == "steer").map(|(i, b)| (i, b["text"].clone())).collect();
+  assert_eq!(steers.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>(), [json!("use pnpm"), json!("then lint")]);
+  assert!(steers.iter().all(|(i, _)| *i > compaction));
+  expect_match(&vw["turns"][1], json!({ "stop": "end_turn" }));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_steered_composer_send_while_idle_is_an_ordinary_prompt() {
   let fake = fake_or_skip!();
