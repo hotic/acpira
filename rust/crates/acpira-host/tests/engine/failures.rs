@@ -41,6 +41,14 @@ fn devins_typed_errors_classify_as_gone_and_locked() {
 }
 
 #[test]
+fn claudes_resource_not_found_means_gone() {
+  // claude-agent-acp 0.87.0 resuming a session Claude Code never persisted (created, never prompted)
+  let id = "cda05527-7c68-4771-9248-4f6ba0ff42a0";
+  let e = rpc(-32002, &format!("Resource not found: {id}"), Some(json!({ "uri": id })));
+  assert_eq!(classify_restore_error(&e), Some(RestoreFailure::Gone));
+}
+
+#[test]
 fn method_not_found_means_no_restore_path() {
   assert_eq!(classify_restore_error(&anyhow::Error::new(RpcError::method_not_found("session/resume"))), None);
 }
