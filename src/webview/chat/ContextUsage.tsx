@@ -40,7 +40,8 @@ export function ContextRing({ usage, turns, canCompact, compactAt, running, disa
           canCompact={canCompact}
           overAt={over && compactAt ? compactAt : undefined}
           pending={over && canCompact ? (running ? t('usage.pendingAfterTurn') : t('usage.pendingBeforeSend')) : undefined}
-          onCompact={canCompact && !running && !disabled ? () => { onCompact(); setOpen(false); } : undefined}
+          compactDisabled={running || disabled}
+          onCompact={() => { onCompact(); setOpen(false); }}
         />
       </Popover.Popup></Popover.Positioner></Popover.Portal>
     </Popover.Root>
@@ -58,9 +59,9 @@ type BudgetTone = keyof typeof BUDGET_TONE;
 
 // Only the agent-reported context and its model-window bar: ACP exposes no authoritative category split,
 // and a transcript-based estimate cannot describe a window whose compacted contents stay inside the agent
-function UsagePanel({ usage, pct, compactAt, canCompact, overAt, pending, onCompact }: {
+function UsagePanel({ usage, pct, compactAt, canCompact, overAt, pending, compactDisabled, onCompact }: {
   usage: Usage; pct: number;
-  compactAt?: number; canCompact: boolean; overAt?: number; pending?: string; onCompact?: () => void;
+  compactAt?: number; canCompact: boolean; overAt?: number; pending?: string; compactDisabled?: boolean; onCompact: () => void;
 }) {
   const locale = useLocale();
   const fmt = new Intl.NumberFormat(locale).format;
@@ -72,17 +73,19 @@ function UsagePanel({ usage, pct, compactAt, canCompact, overAt, pending, onComp
   const tip = compactAt ? [t('usage.budget', { n: fmt(compactAt) }), status, policyHint].filter(Boolean).join('\n') : undefined;
   return (
     <div className="flex flex-col gap-1 p-1 tabular-nums">
+      {/* The compact button stays put whenever the agent supports /compact and is only disabled mid-turn, so the title row never reflows */}
       <div className="flex h-ctl items-center justify-between pl-2">
         <span className="text-2 font-medium text-fg-1">{t('usage.title')}</span>
-        {onCompact && (
-          <IconButton title={t('usage.compact')} aria-label={t('usage.compact')} onClick={onCompact}>
+        {canCompact && (
+          <IconButton title={t('usage.compact')} aria-label={t('usage.compact')} disabled={compactDisabled} onClick={onCompact}
+            className="disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-fg-2">
             <Shrink strokeWidth={1.75} />
           </IconButton>
         )}
       </div>
-      <div className="flex items-baseline justify-between px-2 text-3" title={`${mark}\n${t('usage.reported')}`}>
+      <div className="flex items-baseline justify-between gap-2 px-2 text-3" title={`${mark}\n${t('usage.reported')}`}>
         <span className="text-fg-2">{t('usage.usedPctShort', { pct: Math.round(pct * 100) })}</span>
-        <span className="text-fg-3">{fmt(usage.used)} / {fmt(usage.size)}{usage.cost !== undefined ? t('usage.cost', { n: usage.cost.toFixed(2) }) : ''}</span>
+        <span className="text-fg-3">{fmt(usage.used)} / {fmt(usage.size)}</span>
       </div>
       <div className="mx-2 mb-1 flex items-center gap-2">
         <div className="relative h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-active">

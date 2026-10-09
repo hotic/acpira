@@ -233,7 +233,6 @@ export const de = {
   'usage.usedPct': 'Kontext zu {pct} % belegt',
   'usage.usedPctShort': '{pct} % belegt',
   'usage.used': 'Belegt {n}',
-  'usage.cost': ', Kosten ${n}',
   'usage.limit': 'Limit {n}',
   'usage.budget': 'Auto-Komprimierung {n}',
   'usage.reported': 'Letzter Bericht des Agenten; wird eventuell erst nach einem Modellaufruf aktualisiert.',
