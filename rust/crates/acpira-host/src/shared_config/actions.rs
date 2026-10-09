@@ -1268,6 +1268,10 @@ mod tests {
     assert_eq!(view::unique_lines("# A\n\n- one\n", base, &[]), "");
     // A fence with a language tag the shared prompt also has is kept, or the block would lose its opening
     assert_eq!(view::unique_lines("~~~sh\necho new\n~~~\n", "~~~sh\necho old\n~~~\n", &[]), "~~~sh\necho new\n~~~");
+    // A known table leaves no separator row behind; a fenced block with a blank line inside still counts as one paragraph
+    let table = "| a | b |\n|---|---|\n| x | y |\n";
+    assert_eq!(view::unique_lines(&format!("{table}\n---\n\n- new\n"), table, &[]), "- new");
+    assert_eq!(view::unique_lines("```\nold\n\nnew\n```\n", "old\n", &[]), "```\n\nnew\n```");
   }
 
   #[tokio::test]
