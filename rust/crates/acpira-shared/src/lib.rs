@@ -19,6 +19,7 @@ pub mod models;
 pub mod num;
 pub mod plan_execution;
 pub mod protocol;
+pub mod providers;
 pub mod session_patch;
 pub mod settings;
 pub mod shared_config;

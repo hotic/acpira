@@ -289,6 +289,11 @@ impl Connection {
   pub fn is_closed(&self) -> bool {
     self.shared.closed.load(Ordering::Acquire)
   }
+
+  /// Resolves once the connection closed (the peer's end of the stream, a read error, or `close`)
+  pub async fn closed(&self) {
+    self.shared.close_signal.cancelled().await
+  }
 }
 
 async fn read_line<R: AsyncBufReadExt + Unpin>(r: &mut R, buf: &mut Vec<u8>) -> std::io::Result<usize> {

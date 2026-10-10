@@ -3,9 +3,27 @@
 version = 4
 
 [[package]]
+name = "acpira-agent"
+version = "1.9.1"
+dependencies = [
+ "acpira-rpc",
+ "acpira-shared",
+ "anyhow",
+ "libc",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "ureq",
+ "uuid",
+]
+
+[[package]]
 name = "acpira-host"
 version = "1.9.1"
 dependencies = [
+ "acpira-agent",
  "acpira-rpc",
  "acpira-shared",
  "anyhow",

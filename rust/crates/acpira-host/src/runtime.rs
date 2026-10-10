@@ -39,6 +39,8 @@ pub struct HostRuntime {
   platform: Arc<SidecarPlatform>,
   accounts: Arc<AccountManager>,
   agent_config: Arc<AgentConfig>,
+  /// The engine binary and data root the built-in agent is launched with; None when the binary path is unknown
+  self_agent: Option<(String, PathBuf)>,
   config_watch: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>,
   bridges: parking_lot::Mutex<Vec<Arc<BridgeCore>>>,
 }
@@ -57,7 +59,8 @@ impl HostRuntime {
       platform.log(&format!("{}: {e}", agent_config.path().display()));
       platform.toast("error", &format!("{}: {e}", agent_config.path().display()));
     }
-    let registry = Arc::new(AgentRegistry::new(&agent_config.snapshot()));
+    let self_agent = bridge_exe.clone().map(|exe| (exe, root.clone()));
+    let registry = Arc::new(registry_of(&agent_config.snapshot(), self_agent.as_ref()));
 
     // The manager is created below; the providers resolve their binaries through whatever registry is current then
     let mgr_slot: Arc<parking_lot::Mutex<Option<std::sync::Weak<SessionManager>>>> = Default::default();
@@ -201,6 +204,7 @@ impl HostRuntime {
       platform: platform.clone(),
       accounts,
       agent_config,
+      self_agent,
       config_watch: Default::default(),
       bridges: Default::default(),
     });
@@ -270,7 +274,7 @@ impl HostRuntime {
 
   async fn reload_agent_config(&self) -> Result<()> {
     if self.agent_config.reload().await? {
-      self.manager.set_registry(Arc::new(AgentRegistry::new(&self.agent_config.snapshot())));
+      self.manager.set_registry(Arc::new(registry_of(&self.agent_config.snapshot(), self.self_agent.as_ref())));
     }
     Ok(())
   }
@@ -358,5 +362,14 @@ impl HostRuntime {
       b.dispose();
     }
     self.manager.dispose().await;
+  }
+}
+
+/// The registry for an agents.json snapshot, with the built-in agent first when the engine binary is known
+fn registry_of(custom: &Value, self_agent: Option<&(String, PathBuf)>) -> AgentRegistry {
+  let registry = AgentRegistry::new(custom);
+  match self_agent {
+    Some((exe, root)) => registry.with_self_agent(exe, root),
+    None => registry,
   }
 }

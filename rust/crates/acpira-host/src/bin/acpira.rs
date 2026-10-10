@@ -9,6 +9,7 @@
 //!   acpira agents [--json]                       the built-in agents, where each CLI was found and how it is initialized
 //!   acpira model-catalog [--out FILE]            fetch models.dev, print (or write) the trimmed model catalogue
 //!   acpira mcp                                   the MCP server handed to agents (show_image), over stdio
+//!   acpira agent [--home DIR]                    the built-in agent: ACP over stdio, model sources from DIR/providers.json
 //!   acpira install-agent <id> [--force] [--archive FILE]
 //!                                                download (or take FILE), verify and unpack an agent shipped as a native archive
 //!   acpira --version
@@ -63,6 +64,9 @@ fn main() {
     }
     let explicit_home = flag(&args, "--home").filter(|h| !h.is_empty()).map(|h| absolute(&PathBuf::from(h)));
     let exe = std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned());
+    if args.first().map(String::as_str) == Some("agent") {
+      return acpira_agent::run(tokio::io::stdin(), tokio::io::stdout(), explicit_home.unwrap_or_else(acpira_home), VERSION).await;
+    }
     if args.iter().any(|a| a == "--ws") {
       return harness(&args, explicit_home, exe).await;
     }

@@ -1,0 +1,24 @@
+[package]
+name = "acpira-agent"
+description = "Acpira's built-in agent: an ACP server (`acpira agent`) running its own turn loop against API-key, OpenAI-compatible and local models"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+acpira-rpc.workspace = true
+acpira-shared.workspace = true
+anyhow.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+ureq.workspace = true
+uuid.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
