@@ -88,6 +88,21 @@ fn claudes_custom_answer_boxes_fold_into_their_questions_and_answers_split_back(
 }
 
 #[test]
+fn claudes_air_custom_answer_marker_folds_in_too() {
+  // claude-agent-acp 0.83.0 marks the companion only for AIR clients, under `_meta.jetbrains.air`
+  let schema = json!({ "type": "object", "properties": {
+    "question_0": { "type": "string", "title": "范围", "description": "往回看几个月？", "oneOf": [{ "const": "1 个月", "title": "1 个月" }] },
+    "question_0_custom": { "type": "string", "title": "Other",
+      "description": "Type your own answer, or add a note to the option you chose above (optional).",
+      "_meta": { "jetbrains": { "air": { "customAnswer": { "questionId": "question_0", "isCustomAnswer": true } } } } },
+    "question_1": { "type": "string", "title": "目录", "description": "改哪个目录？", "oneOf": [{ "const": "src", "title": "src" }] },
+  } });
+  assert_eq!(form_question_count(&schema), 2);
+  expect_match(v(form_questions(&schema, "Please answer the following questions.", None, None)),
+    json!([{ "id": "question_0", "other": true }, { "id": "question_1" }]));
+}
+
+#[test]
 fn codexs_note_field_folds_in_and_typed_text_picks_its_other_choice() {
   let schema = json!({ "type": "object", "required": ["q"], "properties": {
     "q": { "type": "string", "title": "Which one?", "oneOf": [{ "const": "A", "title": "A" }, { "const": "None of the above", "title": "None of the above" }], "_meta": { "codex": { "isOther": true } } },

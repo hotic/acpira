@@ -110,7 +110,7 @@ const CODEX_OTHER_OPTION: &str = "None of the above";
 const GENERIC_MESSAGES: [&str; 2] = ["Please answer the following questions.", "Codex needs your input to continue."];
 
 /// A free-text property an adapter puts beside a choice question: Claude's per-question "Other" box
-/// (`_meta._askUserQuestionCustomAnswer`), Codex's note field (`_meta.codex.role = user_note`)
+/// (`_meta._askUserQuestionCustomAnswer`, or `_meta.jetbrains.air.customAnswer`), Codex's note field (`_meta.codex.role = user_note`)
 struct Companion {
   key: String,
   /// The choice the parent must carry when the typed text is the answer
@@ -122,7 +122,11 @@ fn companions(props: &Map<String, Value>) -> HashMap<String, Companion> {
   let mut out = HashMap::new();
   for (key, prop) in props {
     let Some(meta) = prop.get("_meta") else { continue };
-    let claude = meta.get("_askUserQuestionCustomAnswer").filter(|m| m.get("isCustomAnswer") == Some(&Value::Bool(true)));
+    // claude-agent-acp 0.81.0 marks it at the top of `_meta`; 0.83.0 marks it only for AIR clients
+    // (which Acpira advertises), under `_meta.jetbrains.air.customAnswer`
+    let air = meta.get("jetbrains").and_then(|j| j.get("air")).and_then(|a| a.get("customAnswer"));
+    let claude =
+      meta.get("_askUserQuestionCustomAnswer").or(air).filter(|m| m.get("isCustomAnswer") == Some(&Value::Bool(true)));
     let codex = meta.get("codex").filter(|m| m.get("role").and_then(Value::as_str) == Some("user_note"));
     let (parent, sentinel) = match (claude, codex) {
       (Some(m), _) => (m.get("questionId"), None),
