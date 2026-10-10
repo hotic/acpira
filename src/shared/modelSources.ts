@@ -37,6 +37,12 @@ export function applyModelSources(agent: string, controls: ConfigControl[], conf
         else if (/^grok-\d/.test(option.id) || option.id === 'grok-build') option.source = { id: 'grok', name: 'Grok', kind: 'official' };
       } else if (agent === 'pi' || agent === 'opencode') {
         providerPrefixed(option, configured);
+      } else if (agent === 'acpira') {
+        // The built-in agent picks `provider/model` and puts the provider's display name in the description
+        const slash = option.id.indexOf('/');
+        if (slash < 1 || slash === option.id.length - 1) continue;
+        const provider = option.id.slice(0, slash);
+        option.source = { id: provider, name: option.description?.trim() || provider, kind: 'custom' };
       } else if ((agent === 'codex' || agent === 'claude') && configured[ALL]) {
         option.source = configured[ALL];
       }
