@@ -23,8 +23,8 @@ export interface ModelSpec {
 export const MODELS: Record<string, ModelSpec> = {
   'glm-5.3': { id: 'glm-5.3', api: 'chat', catalog: 'glm-5.3', context: 200_000, output: 32_000 },
   'qwen3.8-max': { id: 'qwen3.8-max', api: 'chat', catalog: 'qwen3.8-max', context: 200_000, output: 32_000 },
-  // The dashed id: this gateway routes the dotted `claude-sonnet-5.5` to an upstream that cuts the stream when a reply
-  // holds parallel tool calls (2026-10-11), the dashed one to a route that does not
+  // The dashed id, which Claude Code recognises; the gateway answers both spellings from the same upstream, which cuts a
+  // reply holding more than one tool call (docs/dev/builtin-agent.md, real providers)
   'claude-sonnet-5.5': { id: 'claude-sonnet-5-5', api: 'anthropic', catalog: 'claude-sonnet-5-5', context: 200_000, output: 32_000 },
   'gpt-6.1-sol': { id: 'gpt-6.1-sol', api: 'responses', catalog: 'gpt-6.1-sol', context: 400_000, output: 32_000 },
 };

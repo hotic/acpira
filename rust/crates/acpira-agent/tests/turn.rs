@@ -257,6 +257,30 @@ async fn an_interrupted_stream_is_retried_and_only_the_retry_counts() {
 }
 
 #[tokio::test]
+async fn a_reply_cut_at_its_second_tool_call_is_retried_one_call_at_a_time() {
+  // The gateway ends the stream as soon as a second parallel tool call starts (seen on a Claude route, 2026-10-11)
+  let (h, server, sid) = setup(json!([{ "id": "m1" }])).await;
+  server.push(Reply::Sse(vec![
+    mock::delta(json!({ "role": "assistant", "tool_calls": [{ "index": 0, "id": "c1", "type": "function", "function": { "name": "list", "arguments": "{}" } }] })),
+    mock::delta(json!({ "tool_calls": [{ "index": 1, "id": "c2", "type": "function", "function": { "name": "list", "arguments": "" } }] })),
+    json!({ "error": { "message": "response stream interrupted" } }),
+  ]));
+  server.push(mock::tools(&[("c3", "list", json!({}))]));
+  server.push(mock::text("done"));
+  assert_eq!(prompt(&h, &sid, "look around").await["stopReason"], "end_turn");
+  let reqs = server.requests();
+  assert_eq!(reqs.len(), 3);
+  assert!(reqs[0].body.get("parallel_tool_calls").is_none());
+  assert_eq!((reqs[1].body["parallel_tool_calls"].as_bool(), reqs[2].body["parallel_tool_calls"].as_bool()), (Some(false), Some(false)));
+
+  // Kept for the model in a new session too
+  let other = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
+  server.push(mock::text("hi"));
+  prompt(&h, &other, "hello").await;
+  assert_eq!(server.requests()[3].body["parallel_tool_calls"], false);
+}
+
+#[tokio::test]
 async fn a_bad_request_is_not_retried() {
   let (h, server, sid) = setup(json!([{ "id": "m1" }])).await;
   server.push(Reply::Status(400, r#"{"error":{"message":"unknown parameter"}}"#.into()));
