@@ -21,6 +21,8 @@ export interface HostOpts {
   agents?: Record<string, unknown>;
   // Further acpira.* settings for the hello snapshot
   settings?: Record<string, unknown>;
+  // Extra environment for the sidecar and so every agent it spawns (a temp HOME isolates their configs)
+  env?: Record<string, string>;
 }
 
 type SubagentMsg = Extract<HostMsg, { type: 'subagent' }>;
@@ -30,8 +32,8 @@ export class Host {
   sessionsDir = '';
   private views = 0;
 
-  private constructor(readonly home: string, readonly cwd: string) {
-    this.shell = new Shell(home, cwd, sidecarBin({ build: true }));
+  private constructor(readonly home: string, readonly cwd: string, env: Record<string, string> = {}) {
+    this.shell = new Shell(home, cwd, sidecarBin({ build: true }), env);
     this.shell.answers = {
       toast: r => { if (r.method === 'toast') console.log(`toast ${r.level}: ${r.text}`); return null; },
       searchFiles: () => [],
@@ -43,7 +45,7 @@ export class Host {
   }
 
   static async start(o: HostOpts): Promise<Host> {
-    const host = new Host(o.home ?? mkdtempSync(join(tmpdir(), 'acpira-probe-home-')), o.cwd);
+    const host = new Host(o.home ?? mkdtempSync(join(tmpdir(), 'acpira-probe-home-')), o.cwd, o.env);
     const ok = await host.shell.hello({
       client: { name: 'acpira-probe', version: '0', capabilities: ['toast', 'searchFiles', 'writeSetting', 'revealInOS', 'openResolvedFile', 'openPlanDocument'] },
       env: { hostLanguage: 'en', cwd: o.cwd },

@@ -1,0 +1,5 @@
+{
+  "name": "semver-lite",
+  "private": true,
+  "scripts": { "test": "node --test" }
+}
