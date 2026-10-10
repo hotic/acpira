@@ -309,3 +309,30 @@ async fn the_todo_tool_feeds_the_to_do_bar_and_search_tools_run_without_cards() 
   assert_eq!(tool_result(&server, 1, 1), "src/lib.rs\n");
   assert!(tool_result(&server, 1, 0).contains("  src/\n    lib.rs"));
 }
+
+#[tokio::test]
+async fn a_turn_over_the_anthropic_format_replays_its_blocks_and_marks_cache_breakpoints() {
+  let h = Harness::start().await;
+  let server = MockModel::start();
+  h.providers_in("anthropic", &server.base_url(), json!([{ "id": "claude-mock", "output": 4096 }]));
+  let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
+  std::fs::write(h.cwd().join("a.txt"), "alpha\n").unwrap();
+  server.push(mock::messages(&[json!({ "type": "text", "text": "Looking." }), json!({ "type": "tool_use", "id": "toolu_1", "name": "read", "input": { "path": "a.txt" } })], "tool_use", 0));
+  server.push(mock::messages(&[json!({ "type": "text", "text": "It says alpha." })], "end_turn", 90));
+  let r = prompt(&h, &sid, "what is in a.txt?").await;
+  assert_eq!(r["stopReason"], "end_turn");
+  assert_eq!((r["usage"]["inputTokens"].as_u64(), r["usage"]["cachedReadTokens"].as_u64()), (Some(200), Some(90)));
+  let reqs = server.requests();
+  assert_eq!(reqs[0].body["max_tokens"], 4096);
+  let msgs = reqs[1].body["messages"].as_array().unwrap();
+  assert_eq!(msgs[1]["content"], json!([{ "type": "text", "text": "Looking." }, { "type": "tool_use", "id": "toolu_1", "name": "read", "input": { "path": "a.txt" } }]));
+  assert_eq!(msgs[2]["content"][0]["tool_use_id"], "toolu_1");
+  assert!(msgs[2]["content"][0]["content"].as_str().unwrap().contains("alpha"));
+  // The previous request's end and this one's carry the markers; the earlier marker moved with the prefix
+  assert!(msgs[0]["content"][0].get("cache_control").is_some() && msgs[2]["content"][0].get("cache_control").is_some());
+  assert_eq!(reqs[1].body["system"][0]["cache_control"], json!({ "type": "ephemeral" }));
+  // Apart from the markers, the second request starts with the first one
+  let strip = |v: &serde_json::Value| v.to_string().replace(",\"cache_control\":{\"type\":\"ephemeral\"}", "");
+  assert_eq!(strip(&reqs[0].body["messages"][0]), strip(&msgs[0]));
+  assert_eq!(reqs[0].body["tools"], reqs[1].body["tools"]);
+}

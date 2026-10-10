@@ -1,6 +1,7 @@
 //! Per-family request differences as data: how thinking is switched, whether earlier reasoning goes back into the
 //! history, and how the provider caches prompts. A model matches by its pinned `family`, else by the first rule whose
-//! pattern its id (or its source's preset / host) contains. Adding a family is a table row, not a code path.
+//! pattern its id (or its source's preset / host) contains. Adding a family is a table row, not a code path. Each
+//! family covers both wire formats: OpenAI Chat's thinking switch, Anthropic Messages' thinking style and breakpoints.
 //! Wire facts here are from the providers' public docs as of 2026-10; the ones not yet seen on a real wire are marked
 
 use serde_json::{Map, Value, json};
@@ -40,45 +41,85 @@ pub enum ReasoningEcho {
 pub enum CacheKind {
   /// Automatic on a repeated prefix
   ImplicitPrefix,
-  /// Only where the request marks a breakpoint (Anthropic `cache_control`)
+  /// Only where the request marks a breakpoint (Anthropic `cache_control`), at the family's `breakpoints`
   Breakpoints,
+}
+
+/// Where an Anthropic Messages request marks `cache_control` (at most four per request)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Breakpoint {
+  /// The system prompt, which also covers the tools before it
+  System,
+  /// The last block of the request: what the next request reads back
+  LastMessage,
+  /// The last block of the user message before the latest assistant message: where the previous request ended, so a
+  /// long tool round still reads the prefix cached last time
+  PreviousRequest,
+}
+
+/// How an Anthropic Messages request switches thinking (the format's own shape, which compatible servers follow)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnthropicThinking {
+  /// `thinking: { type: "enabled", budget_tokens }`, the budget from the effort level
+  Budget,
+  /// `thinking: { type: "adaptive" }`, the level as `output_config: { effort }` (Claude 4.6 and later)
+  Adaptive,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Family {
   pub name: &'static str,
+  /// The thinking switch on OpenAI Chat bodies
   pub thinking: ThinkingParam,
+  /// The thinking switch on Anthropic Messages bodies
+  pub anthropic: AnthropicThinking,
   pub echo: ReasoningEcho,
   pub cache: CacheKind,
+  /// Where `cache_control` goes when `cache` is `Breakpoints`
+  pub breakpoints: &'static [Breakpoint],
   /// How long a cached prefix lives, in seconds, when the provider says
   pub cache_ttl: Option<u32>,
 }
 
-pub const GENERIC: Family =
-  Family { name: "generic", thinking: ThinkingParam::ReasoningEffort, echo: ReasoningEcho::Never, cache: CacheKind::ImplicitPrefix, cache_ttl: None };
+/// A family with these differences and the rest as `GENERIC`
+const fn family(name: &'static str, thinking: ThinkingParam, echo: ReasoningEcho) -> Family {
+  Family { name, thinking, echo, ..GENERIC }
+}
+
+pub const GENERIC: Family = Family {
+  name: "generic",
+  thinking: ThinkingParam::ReasoningEffort,
+  anthropic: AnthropicThinking::Budget,
+  echo: ReasoningEcho::Never,
+  cache: CacheKind::ImplicitPrefix,
+  breakpoints: &[],
+  cache_ttl: None,
+};
+
+/// Claude: breakpoint caching with a five-minute default lifetime, signed thinking that goes back whole
+const CLAUDE: Family = Family {
+  name: "claude",
+  thinking: ThinkingParam::ReasoningEffort,
+  anthropic: AnthropicThinking::Adaptive,
+  echo: ReasoningEcho::Always,
+  cache: CacheKind::Breakpoints,
+  breakpoints: &[Breakpoint::System, Breakpoint::PreviousRequest, Breakpoint::LastMessage],
+  cache_ttl: Some(300),
+};
 
 /// (patterns matched against the lowercase model id, then the preset / base URL; family)
 const RULES: &[(&[&str], Family)] = &[
+  (&["deepseek"], family("deepseek", ThinkingParam::ThinkingType, ReasoningEcho::CurrentTurn)),
+  (&["kimi", "moonshot"], family("kimi", ThinkingParam::None, ReasoningEcho::Always)),
+  (&["glm", "zhipu", "bigmodel", "z.ai"], family("glm", ThinkingParam::ThinkingType, ReasoningEcho::CurrentTurn)),
+  (&["qwen", "qwq", "dashscope"], family("qwen", ThinkingParam::EnableThinking, ReasoningEcho::Never)),
+  (&["minimax"], family("minimax", ThinkingParam::None, ReasoningEcho::ThinkTags)),
+  // Claude models before 4.6 take a thinking budget, not adaptive thinking (Anthropic docs, 2026-10; not seen on a wire)
   (
-    &["deepseek"],
-    Family { name: "deepseek", thinking: ThinkingParam::ThinkingType, echo: ReasoningEcho::CurrentTurn, cache: CacheKind::ImplicitPrefix, cache_ttl: None },
+    &["claude-3", "claude-haiku-4", "claude-sonnet-4-2", "claude-sonnet-4-5", "claude-opus-4-2", "claude-opus-4-1", "claude-opus-4-5"],
+    Family { name: "claude-budget", anthropic: AnthropicThinking::Budget, ..CLAUDE },
   ),
-  (
-    &["kimi", "moonshot"],
-    Family { name: "kimi", thinking: ThinkingParam::None, echo: ReasoningEcho::Always, cache: CacheKind::ImplicitPrefix, cache_ttl: None },
-  ),
-  (
-    &["glm", "zhipu", "bigmodel", "z.ai"],
-    Family { name: "glm", thinking: ThinkingParam::ThinkingType, echo: ReasoningEcho::CurrentTurn, cache: CacheKind::ImplicitPrefix, cache_ttl: None },
-  ),
-  (
-    &["qwen", "qwq", "dashscope"],
-    Family { name: "qwen", thinking: ThinkingParam::EnableThinking, echo: ReasoningEcho::Never, cache: CacheKind::ImplicitPrefix, cache_ttl: None },
-  ),
-  (
-    &["minimax"],
-    Family { name: "minimax", thinking: ThinkingParam::None, echo: ReasoningEcho::ThinkTags, cache: CacheKind::ImplicitPrefix, cache_ttl: None },
-  ),
+  (&["claude", "anthropic"], CLAUDE),
 ];
 
 /// OpenRouter's request shape wins over the model's own family for the thinking switch (it translates per upstream)
@@ -172,6 +213,14 @@ mod tests {
     assert_eq!(resolve(&any, &pinned).name, "kimi");
     let or = resolve(&provider("openrouter", "https://openrouter.ai/api/v1"), &ProviderModel::new("deepseek/deepseek-chat"));
     assert_eq!((or.name, or.thinking, or.echo), ("deepseek", ThinkingParam::OpenRouter, ReasoningEcho::Never));
+    // Claude: the id decides between budget and adaptive thinking; another vendor's Anthropic endpoint keeps its family
+    let anthropic = provider("anthropic", "https://api.anthropic.com/v1");
+    let opus = resolve(&anthropic, &ProviderModel::new("claude-opus-5-5"));
+    assert_eq!((opus.name, opus.anthropic, opus.cache, opus.cache_ttl), ("claude", AnthropicThinking::Adaptive, CacheKind::Breakpoints, Some(300)));
+    assert_eq!(resolve(&anthropic, &ProviderModel::new("claude-haiku-4-5-20251001")).anthropic, AnthropicThinking::Budget);
+    assert_eq!(resolve(&anthropic, &ProviderModel::new("claude-sonnet-4-20250514")).name, "claude-budget");
+    let ds = resolve(&provider("custom", "https://api.deepseek.com/anthropic/v1"), &ProviderModel::new("deepseek-chat"));
+    assert_eq!((ds.name, ds.cache), ("deepseek", CacheKind::ImplicitPrefix));
   }
 
   #[test]

@@ -99,7 +99,7 @@ fn settle(st: &mut SessionState) {
   let text = std::mem::take(&mut st.partial_text);
   let reasoning = std::mem::take(&mut st.partial_reasoning);
   if !text.is_empty() {
-    st.items.push(Item::Assistant { text, reasoning, tool_calls: vec![] });
+    st.items.push(Item::Assistant { text, reasoning, tool_calls: vec![], native: None });
   }
   let answered: std::collections::HashSet<String> = st
     .items
@@ -194,6 +194,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       items: session.state.lock().items.clone(),
       tools: s.specs.clone(),
       max_tokens: max_tokens(&s.model),
+      output_limit: s.model.output,
       sampling: s.model.sampling.clone(),
       thinking: s.model.thinking,
       effort: s.effort.clone(),
@@ -241,7 +242,12 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       let mut st = session.state.lock();
       st.partial_text.clear();
       st.partial_reasoning.clear();
-      st.items.push(Item::Assistant { text: reply.text.clone(), reasoning: reply.reasoning.clone(), tool_calls: reply.tool_calls.clone() });
+      st.items.push(Item::Assistant {
+        text: reply.text.clone(),
+        reasoning: reply.reasoning.clone(),
+        tool_calls: reply.tool_calls.clone(),
+        native: reply.native.clone(),
+      });
     }
     match stop {
       _ if !reply.tool_calls.is_empty() && stop != StopReason::MaxTokens => match run_tools(server, session, &s, &reply.tool_calls, &mut ids, &mut corrections).await {
@@ -670,6 +676,7 @@ mod tests {
         ToolCall { id: "a".into(), name: "read".into(), arguments: "{}".into() },
         ToolCall { id: "b".into(), name: "bash".into(), arguments: "{}".into() },
       ],
+      native: None,
     });
     st.items.push(Item::ToolResult { call_id: "a".into(), name: "read".into(), content: "ok".into(), is_error: false });
     settle(&mut st);

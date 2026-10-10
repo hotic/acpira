@@ -19,7 +19,7 @@ pub fn body(req: &Request, family: &Family) -> Value {
   for (i, item) in req.items.iter().enumerate() {
     match item {
       Item::User(parts) => messages.push(json!({ "role": "user", "content": user_content(parts) })),
-      Item::Assistant { text, reasoning, tool_calls } => {
+      Item::Assistant { text, reasoning, tool_calls, .. } => {
         let echo = !reasoning.is_empty()
           && match family.echo {
             ReasoningEcho::Never => false,
@@ -386,6 +386,7 @@ mod tests {
       items,
       tools: vec![],
       max_tokens: None,
+      output_limit: None,
       sampling: Sampling::default(),
       thinking: Thinking::Auto,
       effort: None,
@@ -397,6 +398,7 @@ mod tests {
       text: text.into(),
       reasoning: reasoning.into(),
       tool_calls: calls.iter().map(|(id, name)| ToolCall { id: (*id).into(), name: (*name).into(), arguments: "{}".into() }).collect(),
+      native: None,
     }
   }
 
