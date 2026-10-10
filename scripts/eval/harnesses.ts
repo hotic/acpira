@@ -9,8 +9,10 @@ import type { AgentId } from '@shared/transcript';
 export type Api = 'chat' | 'anthropic' | 'responses';
 
 export interface ModelSpec {
-  // The gateway's model id
+  // The upstream's model id
   id: string;
+  // Which upstream the proxy forwards to (meter.ts UPSTREAMS): the gateway unless set
+  upstream?: 'gw' | 'ds';
   // The wire a model is reached on where the harness gets to choose (OpenCode, Pi); Codex always uses Responses, Claude
   // Code and the built-in agent's Anthropic format always use Messages
   api: Api;
@@ -28,6 +30,13 @@ export const MODELS: Record<string, ModelSpec> = {
   // stream at a tool call with empty input (docs/dev/builtin-agent.md, real providers)
   'claude-sonnet-5.5': { id: 'claude-sonnet-5-5', api: 'anthropic', catalog: 'claude-sonnet-5-5', context: 200_000, output: 32_000 },
   'gpt-6.1-sol': { id: 'gpt-6.1-sol', api: 'responses', catalog: 'gpt-6.1-sol', context: 400_000, output: 32_000 },
+  // Served through Antigravity on the gateway; its Chat answers carry reasoning_content, its Responses answers no
+  // encrypted reasoning (2026-10-11)
+  'gemini-3.8-flash': { id: 'gemini-3.8-flash', api: 'chat', catalog: 'gemini-3.8-flash', context: 1_048_576, output: 65_536 },
+  // Devin's SWE model; not in the catalogue, so priced as Kimi K3. The gateway reports no cache reads for it
+  'swe-2': { id: 'swe-2', api: 'responses', catalog: 'kimi-k3', context: 262_144, output: 32_000 },
+  // DeepSeek's own API (deepseek-flash is V4.1 Flash), whose usage reports real cache hits
+  'deepseek-flash': { id: 'deepseek-flash', upstream: 'ds', api: 'chat', catalog: 'deepseek-flash', context: 1_000_000, output: 32_000 },
 };
 
 export const DUMMY_KEY = 'eval-dummy-key';
@@ -52,12 +61,15 @@ const json = (path: string, value: unknown) => {
   writeFileSync(path, JSON.stringify(value, null, 2) + '\n');
 };
 
-function acpira({ model, base, acpiraHome }: HarnessCtx, efforts?: string[]): HarnessSetup {
+const FORMATS: Record<Api, string> = { chat: 'openai-chat', responses: 'openai-responses', anthropic: 'anthropic' };
+
+// The built-in agent on the model's own wire, or on `api` when given (the Chat-versus-Responses comparison)
+function acpira({ model, base, acpiraHome }: HarnessCtx, efforts?: string[], api?: Api): HarnessSetup {
   json(join(acpiraHome, 'providers.json'), {
     version: 1,
     providers: [{
       id: 'evalgw', name: 'Eval gateway', preset: 'custom',
-      format: model.api === 'anthropic' ? 'anthropic' : 'openai-chat',
+      format: FORMATS[api ?? model.api],
       baseUrl: `${base}/v1`,
       models: [{ id: model.id, enabled: true, ...(efforts ? { efforts } : {}) }],
     }],
@@ -71,6 +83,8 @@ export const HARNESSES: Record<string, (c: HarnessCtx) => HarnessSetup> = {
   // The built-in agent at a fixed effort: a model whose only level is this one starts there (the default is high)
   'acpira-medium': c => acpira(c, ['medium']),
   'acpira-low': c => acpira(c, ['low']),
+  'acpira-chat': c => acpira(c, undefined, 'chat'),
+  'acpira-responses': c => acpira(c, undefined, 'responses'),
 
   opencode({ model, base, home }) {
     const npm = model.api === 'anthropic' ? '@ai-sdk/anthropic' : model.api === 'responses' ? '@ai-sdk/openai' : '@ai-sdk/openai-compatible';

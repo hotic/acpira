@@ -38,6 +38,12 @@ function gatewayKey(): string {
   return m[1]!;
 }
 
+// DeepSeek's own key, only when a model goes there: EVAL_DS_KEY, or the file EVAL_DS_KEY_FILE names; never printed
+function deepseekKey(): string | undefined {
+  if (process.env.EVAL_DS_KEY) return process.env.EVAL_DS_KEY;
+  return process.env.EVAL_DS_KEY_FILE ? readFileSync(process.env.EVAL_DS_KEY_FILE, 'utf8').trim() : undefined;
+}
+
 interface Task { id: string; kind: string; prompt: string; verify: string; timeoutMin: number }
 
 function loadTask(id: string): Task {
@@ -99,7 +105,7 @@ async function runOne(o: { task: Task; harness: string; model: string; rep: numb
   cpSync(join(TASKS_DIR, o.task.id, 'repo'), work, { recursive: true });
   sh('git init -q && git add -A && git -c user.name=eval -c user.email=eval@localhost commit -qm "Initial state"', work);
 
-  const setup = HARNESSES[o.harness]!({ model: MODELS[o.model]!, base: `${o.meterUrl}/r/${runId}/gw`, home, acpiraHome });
+  const setup = HARNESSES[o.harness]!({ model: MODELS[o.model]!, base: `${o.meterUrl}/r/${runId}/${MODELS[o.model]!.upstream ?? 'gw'}`, home, acpiraHome });
   const started = Date.now();
   const host = await Host.start({
     cwd: work, home: acpiraHome, defaultAgent: setup.agent,
@@ -196,7 +202,10 @@ async function main() {
   // A run already in results.ndjson is skipped, so an interrupted matrix resumes where it stopped
   const resultsFile = join(root, 'results.ndjson');
   const done = new Set(existsSync(resultsFile) ? readFileSync(resultsFile, 'utf8').split('\n').filter(Boolean).map(l => (JSON.parse(l) as { runId: string }).runId) : []);
-  const meter = await startMeter({ log: join(root, 'calls.ndjson'), key: gatewayKey(), dump: process.argv.includes('--dump') ? join(root, 'bodies') : undefined });
+  const upstream = MODELS[model]!.upstream ?? 'gw';
+  const keys: Record<string, string> = upstream === 'ds' ? { ds: deepseekKey() ?? '' } : { gw: gatewayKey() };
+  if (!Object.values(keys)[0]) throw new Error('no DeepSeek key (EVAL_DS_KEY or EVAL_DS_KEY_FILE)');
+  const meter = await startMeter({ log: join(root, 'calls.ndjson'), keys, dump: process.argv.includes('--dump') ? join(root, 'bodies') : undefined });
   console.log(`results in ${root}`);
   try {
     for (let rep = 1; rep <= reps; rep++) {
