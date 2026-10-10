@@ -185,7 +185,7 @@ describe('shared composer controls', () => {
     const cur = groupModels(model.options)[0];
     const curVar = cur?.variants[0];
     // Opus 5.5 [Ultra] [Fast]: Ultra in place of the effort badge
-    expect(chipTags(cur, curVar, [effort], [fast], 'Standard')).toEqual([{ label: 'Ultra', ultra: true }, { label: 'Fast', fast: true }]);
-    expect(chipTags(cur, curVar, [{ ...effort, value: 'high' }], [{ ...fast, value: 'false' }], 'Standard')).toEqual([{ label: 'High', ultra: false }]);
+    expect(chipTags(cur, curVar, [effort], [fast], 'Standard')).toEqual([{ label: 'Ultra', short: 'U', ultra: true }, { label: 'Fast', short: '', fast: true }]);
+    expect(chipTags(cur, curVar, [{ ...effort, value: 'high' }], [{ ...fast, value: 'false' }], 'Standard')).toEqual([{ label: 'High', short: 'H', ultra: false }]);
   });
 });
