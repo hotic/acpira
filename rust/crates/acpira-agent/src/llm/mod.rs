@@ -115,6 +115,9 @@ pub struct Reply {
   pub reasoning: String,
   pub tool_calls: Vec<ToolCall>,
   pub native: Option<Native>,
+  /// The provider's error when the stream broke after these tool calls had finished: the reply keeps them and drops
+  /// only the call that was still streaming
+  pub cut: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

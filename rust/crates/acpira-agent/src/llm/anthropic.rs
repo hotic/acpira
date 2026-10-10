@@ -278,12 +278,40 @@ impl Assembler {
       "message_stop" => self.done = true,
       "error" => {
         let message = v.pointer("/error/message").and_then(Value::as_str).unwrap_or("the provider reported an error");
+        if self.salvage(message) {
+          return Ok(());
+        }
         return Err(LlmError::Api(message.to_owned()));
       }
       // ping and event types added later
       _ => {}
     }
     Ok(())
+  }
+
+  /// Keep a reply cut while a later tool call was streaming: blocks stream strictly in order, so every block before the
+  /// last started one is complete. Some gateways end the stream as soon as a second tool call starts (seen on a Claude
+  /// route, 2026-10-11, whatever `disable_parallel_tool_use` says), and a retry makes the same calls again; running the
+  /// finished calls moves the turn on instead. Only when at least one finished tool call precedes an unfinished one
+  fn salvage(&mut self, message: &str) -> bool {
+    let Some(last) = self.blocks.iter().rposition(|b| !b.is_null()) else { return false };
+    if self.blocks[last]["type"] != "tool_use" || !self.blocks[..last].iter().any(|b| b["type"] == "tool_use") {
+      return false;
+    }
+    self.blocks.truncate(last);
+    self.inputs.remove(&last);
+    // The finished blocks never got their stop: their inputs go into the replayed blocks here
+    for (i, raw) in &self.inputs {
+      if let Some(block) = self.blocks.get_mut(*i)
+        && !raw.trim().is_empty()
+      {
+        block["input"] = input_of(raw);
+      }
+    }
+    self.reply.cut = Some(message.to_owned());
+    self.stop = Some("tool_use".into());
+    self.done = true;
+    true
   }
 
   fn text(&mut self, t: &str, emit: &mut dyn FnMut(Event)) {

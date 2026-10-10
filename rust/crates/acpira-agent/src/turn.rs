@@ -305,7 +305,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
         Ok((reply, stop, usage)) => break (reply, stop, usage, started),
         Err(e) => e,
       };
-      log_request(session, &s, started, attempt, None, None, false, Some(&e.to_string()));
+      log_request(session, &s, started, attempt, None, None, false, Some(&e.to_string()), None);
       if attempt >= MAX_ATTEMPTS || !retriable(&e) {
         return Err(describe(s.provider.display_name(), &e));
       }
@@ -331,7 +331,16 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     // A call always has input, so a reported 0 is a provider gap (a gateway's streamed usage): estimate it instead
     let estimated = usage.is_some_and(|u| u.input == 0);
     let usage = usage.map(|u| if estimated { Usage { input: approx, ..u } } else { u });
-    log_request(session, &s, started, attempt, Some(&stop), usage.as_ref(), estimated, None);
+    log_request(session, &s, started, attempt, Some(&stop), usage.as_ref(), estimated, None, reply.cut.as_deref());
+    if reply.cut.is_some() {
+      // The call that was still streaming is lost: its row is settled, and later requests ask for one call per reply
+      for (_, acp) in ids.extract_if(|id, _| !reply.tool_calls.iter().any(|c| &c.id == id)) {
+        server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": acp, "status": "failed" }));
+      }
+      if !request.serial_tools {
+        server.serial_tools.lock().insert(s.pick.clone());
+      }
+    }
     if let Some(u) = usage {
       let mut st = stats.lock();
       st.usage.input += u.input;
@@ -510,6 +519,7 @@ fn log_request(
   usage: Option<&Usage>,
   input_estimated: bool,
   error: Option<&str>,
+  cut: Option<&str>,
 ) {
   let mut ev = request_event(s);
   ev["ms"] = json!(started.elapsed().as_millis() as u64);
@@ -531,6 +541,10 @@ fn log_request(
   }
   if let Some(e) = error {
     ev["error"] = Value::String(e.to_owned());
+  }
+  // A reply kept up to the call that was streaming when the provider broke it off (`Assembler::salvage`)
+  if let Some(c) = cut {
+    ev["cut"] = Value::String(c.to_owned());
   }
   session.store.append(ev);
 }
