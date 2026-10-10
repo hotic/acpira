@@ -70,7 +70,16 @@ The bash tool runs `powershell.exe -NoProfile -NonInteractive -Command` there, n
 
 Verified 2026-10-10 on Windows 11 (PowerShell 5.1.26100.8115, code page 936), with the agent crate's test binaries cross-built for `x86_64-pc-windows-gnu` and run over SSH: all unit tests (including the Windows-only Chinese output and cancel tests in `tools/bash.rs`) and every integration suite against the scripted server passed. The engine scenarios in `builtin_agent.rs` were not run on Windows.
 
+## Real providers
+
+Verified 2026-10-11 (acpira 1.9.1) through an OpenAI-compatible gateway, one `openai-chat` source with `scripts/probe-agent-host.ts acpira --home DIR` (DIR holds `providers.json` and `secrets.json`; a `--home` root is kept after the run). `--shell --attach` and `--write --plan` run separately, since the click-through approver stands down under `--write` / `--plan` until the scenario has answered its own card.
+
+- `minimax-m3` and `gpt-6-luna`: all checks passed (pong, text attachment, a `bash` row with its plain-text output, an edit behind a permission card, a plan card linked to its plan document and rejected without a write). `glm-5.3-flash` passed the same checks; in one run it answered the shell prompt with the expected text without calling `bash`.
+- Streaming text and reasoning, tool calls, usage and cost records all came through. `gpt-6-luna` reported cache reads (10752 of 16166 input tokens over 8 calls); `glm-5.3-flash` reported none on a 2.3k-token prefix, and this gateway returns `prompt_tokens: 0` for `minimax-m3`, so its input count is 0 in the log.
+- Switching to Plan mode adds `exit_plan` to the tools, which changes the request prefix (logged as a `view` event with `changed: ["tools"]`), so the first Plan call does not hit the cache.
+- The plan card's permission title reads `Approval needed: Switch mode Exit plan mode` (host verb + tool title); the webview does not show the title of a card bound to a plan, so it only shows in probe output.
+
 ## Not verified yet
 
-- A run against a real provider key (`scripts/probe-agent-host.ts acpira --write --plan`); it spends model calls and needs the repository owner's consent.
+- The Anthropic Messages format against a real endpoint, and the DeepSeek / Kimi variants against their own models (the gateway had no usable route for them at the time).
 - Release binary size and the agent's RSS during a turn have not been measured.

@@ -19,6 +19,7 @@ import { builtinAgent } from './lib/sidecarBin';
 //   --failure    expects the first prompt to fail: asserts the structured AIR sessionFailure view instead of pong
 //   --env K=V    repeatable: extra env for the agent process (e.g. ANTHROPIC_BASE_URL=http://127.0.0.1:9)
 //   --raw        dump the last agent turn's blocks as JSON after each scenario
+//   --home DIR   use DIR as the data root instead of a fresh temp one (the built-in agent reads providers.json there)
 // Point the CLI's own store elsewhere first when its sessions must not pile up (DSH_HOME=…, PI_CODING_AGENT_DIR=…).
 const [agentId = 'opencode', ...flags] = process.argv.slice(2);
 const attach = flags.includes('--attach');
@@ -38,7 +39,8 @@ for (let i = 0; i < flags.length; i++) {
   i++;
 }
 const project = mkdtempSync(join(tmpdir(), `acpira-${agentId}-project-`));
-const store = mkdtempSync(join(tmpdir(), `acpira-${agentId}-store-`));
+const homeAt = flags.indexOf('--home');
+const store = homeAt >= 0 && flags[homeAt + 1] ? flags[homeAt + 1]! : mkdtempSync(join(tmpdir(), `acpira-${agentId}-store-`));
 const checks: [string, boolean, string?][] = [];
 const check = (name: string, ok: boolean, detail?: string) => { checks.push([name, ok, detail]); console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` · ${detail}` : ''}`); };
 const until = async (pred: () => boolean, ms: number, what: string) => {
@@ -58,15 +60,18 @@ if (agents) console.log('env overrides:', Object.keys(env).join(', '));
 // The Rust sidecar driven over the envelope protocol, the way the webview drives it (scripts/lib/host.ts)
 const host = await Host.start({ cwd: project, home: store, defaultAgent: agentId, agents });
 const m = await host.view();
-// --write / --plan answer their permission cards deliberately, so the click-through approver stands down there
-const autoApprove = !write && !plan;
+// --write / --plan answer their permission cards deliberately, so the click-through approver stands down until the
+// scenario has its card; after that it clicks through the rest (an agent checking its own write runs a command),
+// except plan approval cards under --plan
+let clickThrough = !write && !plan;
 const approver = setInterval(() => {
-  if (!autoApprove) return;
+  if (!clickThrough) return;
   const cur = m.active();
   const turn = cur ? lastAgent(cur) : undefined;
   for (const b of turn?.blocks ?? []) {
     if (b.type !== 'permission') continue;
     const p = b as PermissionBlock;
+    if (plan && p.planId) continue;
     const opt = p.options.find(o => o.kind === 'allow_once') ?? p.options[0];
     if (!opt) continue;
     console.log(`approving: ${p.title} → ${opt.id}(${opt.kind}) · ${p.options.map(o => `${o.id}(${o.kind})`).join(' ')}`);
@@ -179,16 +184,18 @@ try {
     if (!quick.allow) throw new Error('no allow_once option to click');
     console.log(`clicking quick allow → ${quick.allow.id}`);
     void m.handle({ type: 'permission', sessionId: m.active()!.id, blockId: perm.id, optionId: quick.allow.id });
+    clickThrough = true;
     await send;
     await until(() => existsSync(target), 15_000, 'note.txt');
-    check('note.txt contents are exactly "acpira"', readFileSync(target, 'utf8') === 'acpira', readFileSync(target, 'utf8'));
+    // A trailing newline is a text file's usual ending, not a different content
+    check('note.txt contents are exactly "acpira"', readFileSync(target, 'utf8').replace(/\r?\n$/, '') === 'acpira', JSON.stringify(readFileSync(target, 'utf8')));
     rmSync(target, { force: true });
     dump(m.active()!);
   }
 
   if (plan) {
-    // Claude's plan mode is a mode; Codex exposes planning as the collaboration_mode config option
-    if (agentId === 'claude' && v.controls.modes.some(x => x.id === 'plan')) {
+    // Claude's and the built-in agent's plan mode is a mode; Codex exposes planning as the collaboration_mode config option
+    if ((agentId === 'claude' || agentId === 'acpira') && v.controls.modes.some(x => x.id === 'plan')) {
       await m.handle({ type: 'setMode', id: 'plan' });
       console.log('mode set to', m.active()!.controls.modeId);
     }
@@ -196,6 +203,7 @@ try {
       await m.handle({ type: 'setConfig', configId: 'collaboration_mode', value: 'plan' });
       console.log('collaboration_mode set to', m.active()!.controls.options.find(o => o.id === 'collaboration_mode')?.value);
     }
+    clickThrough = true;
     const send = m.handle({ type: 'send', text: 'Plan (do not implement) adding a file hello.txt that says hi, then request approval to implement.' });
     await until(() => {
       const a = lastAgent(m.active()!);
@@ -203,7 +211,7 @@ try {
     }, 180_000, 'plan document + pending permission');
     let agent = lastAgent(m.active()!)!;
     const doc = agent.blocks.find(b => b.type === 'plan_document') as PlanDocumentBlock;
-    const perm = agent.blocks.find(b => b.type === 'permission') as PermissionBlock;
+    const perm = (agent.blocks.find(b => b.type === 'permission' && !!(b as PermissionBlock).planId) ?? agent.blocks.find(b => b.type === 'permission')) as PermissionBlock;
     console.log('plan:', JSON.stringify({ doc: { id: doc.id, title: doc.title, status: doc.status }, perm: { id: perm.id, planId: perm.planId, title: perm.title, options: perm.options.map(o => `${o.id}(${o.kind})`) } }));
     check('plan_document linked to the pending permission', !!perm.planId && perm.planId === doc.id, `planId=${perm.planId} doc=${doc.id}`);
     const reject = quickPair(perm).reject ?? perm.options.find(o => o.kind.startsWith('reject'));
@@ -299,6 +307,7 @@ try {
 const failed = checks.filter(c => !c[1]);
 console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);
 console.log('log tail:\n' + host.logs.filter(l => !/^stderr: /.test(l) || /error|warn|fail/i.test(l)).slice(-15).join('\n'));
-rmSync(store, { recursive: true, force: true });
+// A --home root is the caller's and stays, session logs included
+if (homeAt < 0) rmSync(store, { recursive: true, force: true });
 rmSync(project, { recursive: true, force: true });
 process.exit(failed.length ? 1 : 0);
