@@ -20,7 +20,7 @@ pub const MAX_TIMEOUT_MS: u64 = 600_000;
 const DRAIN_GRACE: Duration = Duration::from_millis(200);
 const FLUSH_EVERY: Duration = Duration::from_millis(50);
 
-fn shell() -> (String, Vec<&'static str>) {
+pub fn shell() -> (String, Vec<&'static str>) {
   #[cfg(windows)]
   {
     ("powershell.exe".into(), vec!["-NoProfile", "-NonInteractive", "-Command"])
