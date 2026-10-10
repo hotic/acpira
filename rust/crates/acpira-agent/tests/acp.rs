@@ -39,18 +39,22 @@ async fn a_model_added_by_id_takes_its_levels_from_the_catalogue() {
   // Entered by hand, so without the levels discovery would have filled in
   h.providers(
     "http://127.0.0.1:1",
-    json!([{ "id": "claude-sonnet-5-5" }, { "id": "glm-5.3", "thinking": "off" }, { "id": "gpt-6.1-sol" }]),
+    json!([{ "id": "claude-sonnet-5-5" }, { "id": "glm-5.3", "thinking": "off" }, { "id": "gpt-6.1-sol" }, { "id": "gemini-3.8-flash" }]),
   );
   let s = h.new_session().await;
   let sid = s["sessionId"].as_str().unwrap();
   let effort = &s["configOptions"][1];
-  // Claude starts at medium, the other families at high (the family's preferred level)
+  // Claude starts at medium, Gemini at low, the other families at high (the family's preferred level)
   assert_eq!((effort["id"].as_str(), effort["currentValue"].as_str()), (Some("effort"), Some("medium")));
   let levels: Vec<&str> = effort["options"].as_array().unwrap().iter().map(|o| o["value"].as_str().unwrap()).collect();
   assert!(levels.contains(&"max"), "{levels:?}");
   let r = h.conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "effort", "value": "max" })).await.unwrap();
   assert_eq!(r["configOptions"][1]["currentValue"], "max");
   // Thinking switched off keeps the select away
+  let r = h.conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "model", "value": "mock/glm-5.3" })).await.unwrap();
+  assert_eq!(r["configOptions"][1]["id"], "approval");
+  let r = h.conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "model", "value": "mock/gemini-3.8-flash" })).await.unwrap();
+  assert_eq!(r["configOptions"][1]["currentValue"], "low");
   let r = h.conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "model", "value": "mock/glm-5.3" })).await.unwrap();
   assert_eq!(r["configOptions"][1]["id"], "approval");
   let r = h.conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "model", "value": "mock/gpt-6.1-sol" })).await.unwrap();

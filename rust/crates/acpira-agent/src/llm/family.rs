@@ -126,6 +126,9 @@ const RULES: &[(&[&str], Family)] = &[
     Family { name: "claude-budget", anthropic: AnthropicThinking::Budget, ..CLAUDE },
   ),
   (&["claude", "anthropic"], CLAUDE),
+  // Gemini starts at low effort: on the long-task eval (scripts/eval, 2026-10-11, gemini-3.8-flash) high and medium
+  // spent five to six times low's output in one long thinking step per task (up to 31k tokens) without passing more
+  (&["gemini"], Family { name: "gemini", effort: "low", ..GENERIC }),
 ];
 
 /// OpenRouter's request shape wins over the model's own family for the thinking switch (it translates per upstream)
