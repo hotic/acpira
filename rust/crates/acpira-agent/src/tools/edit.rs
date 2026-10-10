@@ -1,5 +1,6 @@
-//! `write` (a whole file) and `edit` (replace one exact snippet). The edit is computed while preparing, so the permission
-//! card shows the real result; at run time it is re-applied to whatever the file holds then. Matching tolerates the
+//! `write` (a whole file) and `edit` (replace exact snippets: one, or several to the same file applied in order, which
+//! saves a model round trip per extra change). The edit is computed while preparing, so the permission card shows the
+//! real result; at run time it is re-applied to whatever the file holds then. Matching tolerates the
 //! two slips models make most: LF written for a CRLF file, and trailing whitespace
 
 use std::path::{Path, PathBuf};
@@ -35,7 +36,8 @@ pub fn spec() -> ToolSpec {
   ToolSpec {
     name: super::EDIT.into(),
     description: "Replace an exact snippet of an existing file. old_string must match the file text exactly (copy it from read output, \
-                  without the line-number prefix) and be unique, unless replace_all is set."
+                  without the line-number prefix) and be unique, unless replace_all is set. For several changes to one file, give \
+                  edits instead: they apply in order, each to the result of the previous one, and all or none are made."
       .into(),
     parameters: json!({
       "type": "object",
@@ -44,8 +46,17 @@ pub fn spec() -> ToolSpec {
         "old_string": { "type": "string", "description": "The exact text to replace" },
         "new_string": { "type": "string", "description": "The replacement text" },
         "replace_all": { "type": "boolean", "description": "Replace every occurrence (default false)" },
+        "edits": {
+          "type": "array",
+          "description": "Several replacements in this file, instead of old_string / new_string",
+          "items": {
+            "type": "object",
+            "properties": { "old_string": { "type": "string" }, "new_string": { "type": "string" }, "replace_all": { "type": "boolean" } },
+            "required": ["old_string", "new_string"],
+          },
+        },
       },
-      "required": ["path", "old_string", "new_string"],
+      "required": ["path"],
     }),
   }
 }
@@ -69,19 +80,35 @@ pub fn prepare_write(args: &Value, cwd: &Path) -> Result<Action, String> {
     return Err(format!("{} is a directory", path.display()));
   }
   let before = read_text(&path)?;
-  Ok(Action::Write { path, before, after, edit: None })
+  Ok(Action::Write { path, before, after, edits: vec![] })
+}
+
+fn edit_of(v: &Value) -> Result<Edit, String> {
+  Ok(Edit {
+    old: str_arg(v, "old_string")?.to_owned(),
+    new: str_arg(v, "new_string")?.to_owned(),
+    all: v.get("replace_all").and_then(Value::as_bool).unwrap_or(false),
+  })
 }
 
 pub fn prepare(args: &Value, cwd: &Path) -> Result<Action, String> {
   let path = path_arg(args, cwd)?;
-  let edit = Edit {
-    old: str_arg(args, "old_string")?.to_owned(),
-    new: str_arg(args, "new_string")?.to_owned(),
-    all: args.get("replace_all").and_then(Value::as_bool).unwrap_or(false),
+  let edits = match args.get("edits").and_then(Value::as_array).filter(|a| !a.is_empty()) {
+    Some(list) => list.iter().map(edit_of).collect::<Result<Vec<_>, _>>()?,
+    None => vec![edit_of(args)?],
   };
   let before = read_text(&path)?.ok_or_else(|| format!("File not found: {} (use write to create it)", path.display()))?;
-  let after = apply(&before, &edit).map_err(|e| format!("{e} in {}", path.display()))?;
-  Ok(Action::Write { path, before: Some(before), after, edit: Some(edit) })
+  let after = apply_all(&before, &edits).map_err(|e| format!("{e} in {}", path.display()))?;
+  Ok(Action::Write { path, before: Some(before), after, edits })
+}
+
+/// The file with every edit applied in order; the first that does not apply fails the whole call
+pub fn apply_all(content: &str, edits: &[Edit]) -> Result<String, String> {
+  let mut out = content.to_owned();
+  for (i, e) in edits.iter().enumerate() {
+    out = apply(&out, e).map_err(|err| if edits.len() > 1 { format!("edits[{i}]: {err}") } else { err })?;
+  }
+  Ok(out)
 }
 
 /// The file with the edit applied
@@ -145,19 +172,20 @@ fn unique_trimmed_match(content: &str, old: &str) -> Option<(usize, usize)> {
   found
 }
 
-pub fn run(path: &PathBuf, before: Option<String>, after: String, edit: Option<Edit>, ctx: &Ctx) -> Output {
+pub fn run(path: &PathBuf, before: Option<String>, after: String, edits: Vec<Edit>, ctx: &Ctx) -> Output {
   // The file may have changed while the card waited: an edit is re-applied to the current text
   let current = match read_text(path) {
     Ok(c) => c,
     Err(e) => return Output::error(e),
   };
-  let (before, after) = match (&edit, current) {
-    (Some(e), Some(now)) if Some(&now) != before.as_ref() => match apply(&now, e) {
+  let edited = !edits.is_empty();
+  let (before, after) = match current {
+    Some(now) if edited && Some(&now) != before.as_ref() => match apply_all(&now, &edits) {
       Ok(a) => (Some(now), a),
       Err(err) => return Output::error(format!("The file changed since the edit was prepared and the edit no longer applies: {err}")),
     },
-    (Some(_), None) => return Output::error(format!("{} was deleted before the edit ran", path.display())),
-    (_, now) => (now.or(before), after),
+    None if edited => return Output::error(format!("{} was deleted before the edit ran", path.display())),
+    now => (now.or(before), after),
   };
   if let Some(dir) = path.parent()
     && let Err(e) = std::fs::create_dir_all(dir)
@@ -168,10 +196,11 @@ pub fn run(path: &PathBuf, before: Option<String>, after: String, edit: Option<E
     return Output::error(format!("Cannot write {}: {e}", path.display()));
   }
   let name = shown(path, &ctx.cwd);
-  let model = match (&edit, &before) {
-    (Some(_), _) => format!("Edited {name}."),
-    (None, Some(_)) => format!("Replaced {name} ({} lines).", after.lines().count()),
-    (None, None) => format!("Created {name} ({} lines).", after.lines().count()),
+  let model = match (edited, &before) {
+    (true, _) if edits.len() > 1 => format!("Edited {name} ({} changes).", edits.len()),
+    (true, _) => format!("Edited {name}."),
+    (false, Some(_)) => format!("Replaced {name} ({} lines).", after.lines().count()),
+    (false, None) => format!("Created {name} ({} lines).", after.lines().count()),
   };
   Output { model, is_error: false, content: vec![diff_content(path, before.as_deref(), &after)], raw_output: None }
 }
@@ -193,6 +222,18 @@ mod tests {
   }
 
   #[test]
+  fn several_edits_apply_in_order_or_not_at_all() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("x.txt"), "a b c\n").unwrap();
+    let args = json!({ "path": "x.txt", "edits": [{ "old_string": "a", "new_string": "x" }, { "old_string": "x b", "new_string": "y" }] });
+    let Action::Write { after, edits, .. } = prepare(&args, dir.path()).unwrap() else { panic!() };
+    assert_eq!((after.as_str(), edits.len()), ("y c\n", 2));
+    let bad = json!({ "path": "x.txt", "edits": [{ "old_string": "a", "new_string": "x" }, { "old_string": "zzz", "new_string": "y" }] });
+    let Err(e) = prepare(&bad, dir.path()) else { panic!() };
+    assert!(e.starts_with("edits[1]: old_string not found"), "{e}");
+  }
+
+  #[test]
   fn crlf_files_take_lf_snippets() {
     assert_eq!(apply("one\r\ntwo\r\nthree\r\n", &e("one\ntwo", "1\n2")).unwrap(), "1\r\n2\r\nthree\r\n");
   }
@@ -208,14 +249,14 @@ mod tests {
     let dir = tempfile::tempdir().unwrap();
     let f = dir.path().join("x.txt");
     std::fs::write(&f, "alpha beta\n").unwrap();
-    let Action::Write { path, before, after, edit } =
+    let Action::Write { path, before, after, edits } =
       prepare(&json!({ "path": "x.txt", "old_string": "beta", "new_string": "gamma" }), dir.path()).unwrap()
     else {
       panic!()
     };
     std::fs::write(&f, "first line\nalpha beta\n").unwrap();
     let ctx = Ctx { cwd: dir.path().to_owned(), outputs: dir.path().join("o"), call_id: "c".into(), progress: Box::new(|_| {}) };
-    let out = run(&path, before, after, edit, &ctx);
+    let out = run(&path, before, after, edits, &ctx);
     assert!(!out.is_error, "{}", out.model);
     assert_eq!(std::fs::read_to_string(&f).unwrap(), "first line\nalpha gamma\n");
   }
