@@ -22,7 +22,6 @@ fn request() -> Request {
     sampling: Sampling::default(),
     thinking: Thinking::Auto,
     effort: None,
-    serial_tools: false,
   }
 }
 

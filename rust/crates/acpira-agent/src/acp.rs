@@ -83,9 +83,6 @@ pub struct Server {
   pub catalog: crate::catalog::CatalogCache,
   pub version: String,
   pub http: ureq::Agent,
-  /// Models (by pick) whose route broke a reply holding several tool calls: their requests ask for one per reply from
-  /// then on, for every session of this process (`turn.rs`, the retry)
-  pub serial_tools: parking_lot::Mutex<std::collections::HashSet<String>>,
   conn: OnceLock<Connection>,
   sessions: parking_lot::Mutex<HashMap<String, Arc<Session>>>,
 }
@@ -97,7 +94,6 @@ impl Server {
       config: ConfigCache::new(home),
       version: version.into(),
       http: crate::llm::default_http(),
-      serial_tools: Default::default(),
       conn: OnceLock::new(),
       sessions: Default::default(),
     })
