@@ -14,6 +14,7 @@ use acpira_shared::providers::split_pick;
 
 use crate::config::{Config, ConfigCache};
 use crate::llm::Item;
+use crate::permission::{Approval, Rule};
 
 pub const PROTOCOL_VERSION: i64 = 1;
 pub const AGENT_NAME: &str = "acpira";
@@ -36,6 +37,9 @@ pub struct SessionState {
   pub partial_reasoning: String,
   /// The running turn's cancel signal
   pub turn: Option<Cancel>,
+  pub approval: Approval,
+  /// Rules the user added from permission cards ("always allow"), for this session only
+  pub allowed: Vec<Rule>,
 }
 
 pub struct Session {
@@ -149,6 +153,9 @@ impl Server {
           st.effort = default_effort(&config, st.model.as_deref());
         }
       }
+      "approval" => {
+        st.approval = Approval::parse(value).ok_or_else(|| RpcError::new(-32602, format!("Unknown approval level: {value}")))?;
+      }
       "effort" => {
         if !efforts_of(&config, st.model.as_deref()).iter().any(|e| e == value) {
           return Err(RpcError::new(-32602, format!("Unknown effort: {value}")));
@@ -191,28 +198,32 @@ fn default_effort(config: &Config, pick: Option<&str>) -> Option<String> {
   efforts.iter().find(|e| *e == "high").or(efforts.last()).cloned()
 }
 
-/// The full configOptions set: the model select (every usable model, labelled with its source) and, when the current
-/// model offers levels, the effort select
+/// The full configOptions set: the model select (every usable model, labelled with its source), the effort select when
+/// the current model offers levels, and the approval level
 pub fn config_options(config: &Config, st: &SessionState) -> Vec<Value> {
   let mut out = vec![];
   let current = st.model.as_deref().filter(|p| config.find(p).is_some()).map(str::to_owned).or_else(|| config.default_pick());
-  let Some(current) = current else { return out };
-  let options: Vec<Value> = config
-    .providers
-    .usable()
-    .map(|(p, m)| {
-      json!({ "value": acpira_shared::providers::model_pick(&p.id, &m.id), "name": m.display_name(), "description": p.display_name() })
-    })
-    .collect();
-  out.push(json!({ "id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": current, "options": options }));
-  let efforts = efforts_of(config, Some(&current));
-  if !efforts.is_empty() {
-    let value = st.effort.clone().filter(|e| efforts.contains(e)).or_else(|| default_effort(config, Some(&current))).unwrap_or_default();
-    out.push(json!({
-      "id": "effort", "name": "Effort", "category": "thought_level", "type": "select", "currentValue": value,
-      "options": efforts.iter().map(|e| json!({ "value": e, "name": title_case(e) })).collect::<Vec<_>>(),
-    }));
+  if let Some(current) = current {
+    let options: Vec<Value> = config
+      .providers
+      .usable()
+      .map(|(p, m)| json!({ "value": acpira_shared::providers::model_pick(&p.id, &m.id), "name": m.display_name(), "description": p.display_name() }))
+      .collect();
+    out.push(json!({ "id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": current, "options": options }));
+    let efforts = efforts_of(config, Some(&current));
+    if !efforts.is_empty() {
+      let value = st.effort.clone().filter(|e| efforts.contains(e)).or_else(|| default_effort(config, Some(&current))).unwrap_or_default();
+      out.push(json!({
+        "id": "effort", "name": "Effort", "category": "thought_level", "type": "select", "currentValue": value,
+        "options": efforts.iter().map(|e| json!({ "value": e, "name": title_case(e) })).collect::<Vec<_>>(),
+      }));
+    }
   }
+  // How much runs without a permission card; applies from the next turn
+  out.push(json!({
+    "id": "approval", "name": "Approval", "type": "select", "currentValue": st.approval.id(),
+    "options": Approval::ALL.iter().map(|a| json!({ "value": a.id(), "name": a.name(), "description": a.description() })).collect::<Vec<_>>(),
+  }));
   out
 }
 
