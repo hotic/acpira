@@ -45,7 +45,7 @@ pub fn run(path: &PathBuf, offset: usize, limit: usize, _ctx: &Ctx) -> Output {
     Err(e) => return Output::error(format!("Cannot read {}: {e}", path.display())),
   };
   if meta.is_dir() {
-    return Output::error(format!("{} is a directory; list it with bash (ls) instead", path.display()));
+    return Output::error(format!("{} is a directory; list it with the list tool instead", path.display()));
   }
   let bytes = match std::fs::read(path) {
     Ok(b) => b,

@@ -9,6 +9,7 @@ pub mod config;
 pub mod llm;
 #[cfg(feature = "mock")]
 pub mod mock;
+pub mod permission;
 pub mod prompt;
 pub mod tools;
 pub mod turn;

@@ -201,3 +201,111 @@ async fn a_rejected_key_says_so() {
   let e = h.conn.request("session/prompt", json!({ "sessionId": sid, "prompt": [{ "type": "text", "text": "hi" }] })).await.unwrap_err();
   assert!(e.message.contains("rejected the API key") && e.message.contains("bad key"), "{}", e.message);
 }
+
+fn tool_result(server: &MockModel, request: usize, nth_from_end: usize) -> String {
+  let msgs = server.requests()[request].body["messages"].as_array().unwrap().clone();
+  msgs[msgs.len() - 1 - nth_from_end]["content"].as_str().unwrap().to_owned()
+}
+
+async fn approval(h: &Harness, sid: &str, level: &str) {
+  h.conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "approval", "value": level })).await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn always_allow_covers_the_command_pattern_for_the_rest_of_the_session() {
+  let (h, server, sid) = setup(json!([{ "id": "m1" }])).await;
+  *h.client.answer.lock() = Answer::Always;
+  server.push(mock::tools(&[("c1", "bash", json!({ "command": "ls -a" }))]));
+  server.push(mock::tools(&[("c2", "bash", json!({ "command": "ls -l" }))]));
+  server.push(mock::tools(&[("c3", "bash", json!({ "command": "pwd" }))]));
+  server.push(mock::text("done"));
+  prompt(&h, &sid, "look").await;
+  let perms = h.client.permissions.lock().clone();
+  assert_eq!(perms.len(), 2, "ls -l rode on the first answer, pwd asked");
+  assert_eq!(perms[0]["options"][1]["name"], "Always allow `ls *` in this session");
+  assert_eq!(perms[1]["toolCall"]["title"], "pwd");
+}
+
+#[tokio::test]
+async fn full_access_runs_commands_but_edits_to_agent_config_still_ask() {
+  let (h, server, sid) = setup(json!([{ "id": "m1" }])).await;
+  approval(&h, &sid, "full").await;
+  server.push(mock::tools(&[
+    ("c1", "write", json!({ "path": "notes.txt", "content": "hi\n" })),
+    ("c2", "write", json!({ "path": ".agents/hooks.json", "content": "{}" })),
+  ]));
+  server.push(mock::text("done"));
+  prompt(&h, &sid, "write").await;
+  let perms = h.client.permissions.lock().clone();
+  assert_eq!(perms.len(), 1);
+  assert_eq!(perms[0]["toolCall"]["title"], "Write .agents/hooks.json");
+  assert!(h.cwd().join("notes.txt").exists() && h.cwd().join(".agents/hooks.json").exists());
+}
+
+#[tokio::test]
+async fn auto_edit_writes_without_a_card_and_a_reject_still_stops_commands() {
+  let (h, server, sid) = setup(json!([{ "id": "m1" }])).await;
+  approval(&h, &sid, "auto-edit").await;
+  *h.client.answer.lock() = Answer::Reject;
+  server.push(mock::tools(&[("c1", "write", json!({ "path": "a.txt", "content": "x" })), ("c2", "bash", json!({ "command": "echo hi" }))]));
+  let r = prompt(&h, &sid, "go").await;
+  assert_eq!(r["stopReason"], "end_turn");
+  assert!(h.cwd().join("a.txt").exists());
+  let perms = h.client.permissions.lock().clone();
+  assert_eq!((perms.len(), perms[0]["toolCall"]["kind"].as_str()), (1, Some("execute")));
+}
+
+#[tokio::test]
+async fn misnamed_tools_are_recovered_twice_a_turn_then_refused() {
+  let (h, server, sid) = setup(json!([{ "id": "m1" }])).await;
+  std::fs::write(h.cwd().join("a.txt"), "alpha\n").unwrap();
+  server.push(mock::tools(&[
+    ("c1", "read_file", json!({ "path": "a.txt" })),
+    ("c2", "functions.Read", json!({ "path": "a.txt" })),
+    ("c3", "ReadFile", json!({ "path": "a.txt" })),
+  ]));
+  server.push(mock::text("ok"));
+  prompt(&h, &sid, "read").await;
+  let first = tool_result(&server, 1, 2);
+  assert!(first.starts_with("(\"read_file\" was taken as the read tool") && first.contains("     1\talpha"), "{first}");
+  assert!(tool_result(&server, 1, 1).contains("alpha"));
+  let third = tool_result(&server, 1, 0);
+  assert!(third.starts_with("Unknown tool \"ReadFile\" (did you mean \"read\"?)"), "{third}");
+  // The cards show the real tool, and the history keeps the name the model used
+  assert!(h.updates().iter().any(|u| u["sessionUpdate"] == "tool_call" && u["title"] == "read"));
+  assert_eq!(server.requests()[1].body["messages"][2]["tool_calls"][0]["function"]["name"], "read_file");
+}
+
+#[tokio::test]
+async fn bad_arguments_come_back_with_what_was_received() {
+  let (h, server, sid) = setup(json!([{ "id": "m1" }])).await;
+  server.push(mock::tools(&[("c1", "grep", json!({ "query": "x" }))]));
+  server.push(mock::text("ok"));
+  prompt(&h, &sid, "find").await;
+  let r = tool_result(&server, 1, 0);
+  assert!(r.contains("Missing required string argument \"pattern\"") && r.contains("Received arguments: {\"query\":\"x\"}"), "{r}");
+}
+
+#[tokio::test]
+async fn the_todo_tool_feeds_the_to_do_bar_and_search_tools_run_without_cards() {
+  let (h, server, sid) = setup(json!([{ "id": "m1" }])).await;
+  std::fs::create_dir_all(h.cwd().join("src")).unwrap();
+  std::fs::write(h.cwd().join("src/lib.rs"), "pub fn answer() -> u32 { 42 }\n").unwrap();
+  server.push(mock::tools(&[
+    ("c1", "todo", json!({ "todos": [{ "content": "find it", "status": "in_progress" }, { "content": "fix it", "status": "pending" }] })),
+    ("c2", "grep", json!({ "pattern": "fn answer" })),
+    ("c3", "glob", json!({ "pattern": "*.rs" })),
+    ("c4", "list", json!({})),
+  ]));
+  server.push(mock::text("ok"));
+  prompt(&h, &sid, "plan").await;
+  assert!(h.client.permissions.lock().is_empty());
+  let ups = h.updates();
+  let todo = ups.iter().find(|u| u["toolCallId"] == "call-1" && u["status"] == "completed").unwrap();
+  assert_eq!(todo["rawOutput"]["todos"][0], json!({ "content": "find it", "status": "in_progress" }));
+  assert!(ups.iter().any(|u| u["toolCallId"] == "call-1" && u["title"] == "todo"));
+  assert!(tool_result(&server, 1, 2).contains("src/lib.rs:1: pub fn answer()"));
+  assert_eq!(tool_result(&server, 1, 1), "src/lib.rs\n");
+  assert!(tool_result(&server, 1, 0).contains("  src/\n    lib.rs"));
+}

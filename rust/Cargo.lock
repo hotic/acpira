@@ -12,6 +12,7 @@ dependencies = [
  "anyhow",
  "libc",
  "parking_lot",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

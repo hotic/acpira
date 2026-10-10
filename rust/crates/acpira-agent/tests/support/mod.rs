@@ -14,6 +14,8 @@ use acpira_rpc::rpc::{BoxFuture, Connection, Inbound, RpcError};
 #[derive(Clone, Copy, PartialEq)]
 pub enum Answer {
   Allow,
+  /// The allow_always option
+  Always,
   Reject,
   /// Never answer (the turn stays parked on the card)
   Hold,
@@ -42,6 +44,7 @@ impl Inbound for Client {
       }
       let kind = match answer {
         Answer::Allow => "allow_once",
+        Answer::Always => "allow_always",
         Answer::Reject => "reject_once",
         Answer::Hold => {
           cancel.cancelled().await;
