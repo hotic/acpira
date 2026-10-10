@@ -34,7 +34,7 @@ export interface Meter {
   stop(): Promise<void>;
 }
 
-const UPSTREAMS: Record<string, string> = { gw: 'https://ai.sacredcraft.cn' };
+const UPSTREAMS: Record<string, string> = { gw: 'https://ai.sacredcraft.cn', ds: 'https://api.deepseek.com' };
 
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 
@@ -118,17 +118,18 @@ function withUsage(path: string, body: Buffer): Buffer {
   }
 }
 
-// Starts the proxy; `log` (optional) gets one ndjson line per call, `key` replaces whatever credentials a harness sends,
-// `dump` keeps every request body
-export function startMeter(opts: { log?: string; key?: string; dump?: string } = {}): Promise<Meter> {
-  const { log, key, dump } = opts;
+// Starts the proxy; `log` (optional) gets one ndjson line per call, `keys` (by upstream) replace whatever credentials a
+// harness sends, `dump` keeps every request body
+export function startMeter(opts: { log?: string; keys?: Record<string, string>; dump?: string } = {}): Promise<Meter> {
+  const { log, keys, dump } = opts;
   let seq = 0;
   const calls: Call[] = [];
   const server = http.createServer((req, res) => {
     const m = /^\/r\/([^/]+)\/([^/]+)(\/.*)$/.exec(req.url ?? '');
     const upstream = m && UPSTREAMS[m[2]!];
     if (!m || !upstream) { res.writeHead(404).end('unknown route'); return; }
-    const [, run, , path] = m as unknown as [string, string, string, string];
+    const [, run, route, path] = m as unknown as [string, string, string, string];
+    const key = keys?.[route];
     const chunks: Buffer[] = [];
     req.on('data', c => chunks.push(c));
     req.on('end', () => {
