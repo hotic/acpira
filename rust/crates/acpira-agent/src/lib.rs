@@ -5,6 +5,9 @@
 
 pub mod acp;
 pub mod config;
+pub mod llm;
+#[cfg(feature = "mock")]
+pub mod mock;
 
 use std::path::PathBuf;
 use std::sync::Arc;

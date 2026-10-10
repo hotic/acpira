@@ -6,6 +6,10 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# The scripted model server tests use (this crate's and the engine's)
+mock = []
+
 [dependencies]
 acpira-rpc.workspace = true
 acpira-shared.workspace = true
@@ -21,4 +25,5 @@ uuid.workspace = true
 libc.workspace = true
 
 [dev-dependencies]
+acpira-agent = { path = ".", features = ["mock"] }
 tempfile.workspace = true
