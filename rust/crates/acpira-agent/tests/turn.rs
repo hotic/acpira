@@ -429,6 +429,40 @@ async fn a_turn_over_the_anthropic_format_replays_its_blocks_and_marks_cache_bre
 }
 
 #[tokio::test]
+async fn a_reply_cut_during_its_second_tool_call_runs_the_first() {
+  // The gateway pattern: the first call's input complete, the second call started, then an error event and no stops
+  let h = Harness::start().await;
+  let server = MockModel::start();
+  h.providers_in("anthropic", &server.base_url(), json!([{ "id": "claude-mock", "output": 4096 }]));
+  let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
+  std::fs::write(h.cwd().join("a.txt"), "alpha\n").unwrap();
+  server.push(Reply::Sse(vec![
+    json!({ "type": "message_start", "message": { "id": "m", "type": "message", "role": "assistant", "content": [], "usage": { "input_tokens": 100, "output_tokens": 0 } } }),
+    json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "tool_use", "id": "toolu_1", "name": "read", "input": {} } }),
+    json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "input_json_delta", "partial_json": "{\"path\": \"a." } }),
+    json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "input_json_delta", "partial_json": "txt\"}" } }),
+    json!({ "type": "content_block_start", "index": 1, "content_block": { "type": "tool_use", "id": "toolu_2", "name": "list", "input": {} } }),
+    json!({ "type": "error", "error": { "type": "api_error", "message": "response stream interrupted" } }),
+  ]));
+  server.push(mock::messages(&[json!({ "type": "text", "text": "It says alpha." })], "end_turn", 0));
+  let r = prompt(&h, &sid, "what is in a.txt?").await;
+  assert_eq!(r["stopReason"], "end_turn");
+  let reqs = server.requests();
+  assert_eq!(reqs.len(), 2, "no retry: the finished call ran");
+  let msgs = reqs[1].body["messages"].as_array().unwrap();
+  assert_eq!(msgs[1]["content"], json!([{ "type": "tool_use", "id": "toolu_1", "name": "read", "input": { "path": "a.txt" } }]));
+  assert!(msgs[2]["content"][0]["content"].as_str().unwrap().contains("alpha"));
+  assert_eq!(reqs[1].body["tool_choice"]["disable_parallel_tool_use"], true);
+  // The lost call's row is settled, and the log says why the reply is short
+  let ups = h.updates();
+  let lost = ups.iter().find(|u| u["sessionUpdate"] == "tool_call" && u["title"].as_str().is_some_and(|t| t.to_lowercase().contains("list"))).expect("the second call's row");
+  assert!(ups.iter().any(|u| u["sessionUpdate"] == "tool_call_update" && u["toolCallId"] == lost["toolCallId"] && u["status"] == "failed"));
+  let log = std::fs::read_to_string(h.home().join("agent").join("sessions").join(format!("{sid}.jsonl"))).unwrap();
+  let first = log.lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).find(|e| e["type"] == "request").unwrap();
+  assert_eq!((first["cut"].as_str(), first["stop"].as_str()), (Some("response stream interrupted"), Some("ToolUse")));
+}
+
+#[tokio::test]
 async fn the_prompt_variant_follows_the_model_and_is_recorded_per_turn() {
   let (h, server, sid) = setup(json!([{ "id": "deepseek-chat" }, { "id": "claude-x" }])).await;
   server.push(mock::text("one"));
