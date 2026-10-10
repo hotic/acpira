@@ -22,6 +22,7 @@ fn request() -> Request {
     sampling: Sampling::default(),
     thinking: Thinking::Auto,
     effort: None,
+    cache_key: None,
   }
 }
 

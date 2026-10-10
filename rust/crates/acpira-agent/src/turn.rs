@@ -252,6 +252,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       sampling: s.sampling.clone(),
       thinking: s.thinking,
       effort: s.effort.clone(),
+      cache_key: Some(session.id.clone()),
     };
     log_view(session, &s, &request);
     let approx = approx_input(&request);

@@ -305,6 +305,7 @@ function ProviderForm({ provider, presets, busy, onSave, onCancel }: {
   const field = cn(inputBox, 'h-ctl w-full');
   const formats = [
     { value: 'openai-chat', label: t('settings.providers.format.openai') },
+    { value: 'openai-responses', label: t('settings.providers.format.responses') },
     { value: 'anthropic', label: t('settings.providers.format.anthropic') },
   ];
   const local = !!chosen?.local;

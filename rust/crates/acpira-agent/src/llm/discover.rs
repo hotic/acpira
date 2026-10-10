@@ -331,6 +331,7 @@ pub async fn test(http: ureq::Agent, provider: &Provider, model: &ProviderModel,
     sampling: Default::default(),
     thinking: Thinking::Off,
     effort: None,
+    cache_key: None,
   };
   let started = Instant::now();
   let mut rx = super::stream(http, endpoint, request);

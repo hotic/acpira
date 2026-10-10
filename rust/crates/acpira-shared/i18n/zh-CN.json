@@ -670,6 +670,7 @@
   "settings.providers.preset.custom": "自定义",
   "settings.providers.format": "API 格式",
   "settings.providers.format.openai": "OpenAI Chat Completions",
+  "settings.providers.format.responses": "OpenAI Responses",
   "settings.providers.format.anthropic": "Anthropic Messages",
   "settings.providers.fullUrl": "按完整地址使用",
   "settings.providers.fullUrl.placeholder": "完整地址，例如 https://example.com/v1/chat/completions",
