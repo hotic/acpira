@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use serde_json::{Value, json};
@@ -12,6 +13,7 @@ use acpira_rpc::rpc::{BoxFuture, Connection, Inbound, RpcError};
 use acpira_shared::providers::split_pick;
 
 use crate::config::{Config, ConfigCache};
+use crate::llm::Item;
 
 pub const PROTOCOL_VERSION: i64 = 1;
 pub const AGENT_NAME: &str = "acpira";
@@ -25,6 +27,13 @@ pub struct SessionState {
   /// `<provider>/<model>`; None until a model exists
   pub model: Option<String>,
   pub effort: Option<String>,
+  /// Fixed for the session's life (prompt caches key on it)
+  pub system: String,
+  /// The conversation as the model sees it
+  pub items: Vec<Item>,
+  /// Text and reasoning of the model call in flight, kept if the turn is cancelled mid-stream
+  pub partial_text: String,
+  pub partial_reasoning: String,
   /// The running turn's cancel signal
   pub turn: Option<Cancel>,
 }
@@ -33,18 +42,38 @@ pub struct Session {
   pub id: String,
   pub cwd: PathBuf,
   pub state: parking_lot::Mutex<SessionState>,
+  tool_seq: AtomicU64,
+}
+
+impl Session {
+  /// A tool call id unique in this session
+  pub fn next_tool_id(&self) -> String {
+    format!("call-{}", self.tool_seq.fetch_add(1, Ordering::Relaxed) + 1)
+  }
 }
 
 pub struct Server {
   pub config: ConfigCache,
   pub version: String,
+  pub http: ureq::Agent,
   conn: OnceLock<Connection>,
   sessions: parking_lot::Mutex<HashMap<String, Arc<Session>>>,
 }
 
 impl Server {
   pub fn new(home: PathBuf, version: impl Into<String>) -> Arc<Server> {
-    Arc::new(Server { config: ConfigCache::new(home), version: version.into(), conn: OnceLock::new(), sessions: Default::default() })
+    Arc::new(Server {
+      config: ConfigCache::new(home),
+      version: version.into(),
+      http: crate::llm::default_http(),
+      conn: OnceLock::new(),
+      sessions: Default::default(),
+    })
+  }
+
+  /// The session's own directory under the data root (spilled tool outputs)
+  pub fn session_dir(&self, id: &str) -> PathBuf {
+    self.config.home().join("agent").join("sessions").join(id)
   }
 
   pub fn attach(&self, conn: Connection) {
@@ -80,7 +109,7 @@ impl Server {
     let cwd = params.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty()).ok_or_else(|| RpcError::new(-32602, "cwd is required"))?;
     let config = self.config.get();
     let id = uuid::Uuid::new_v4().to_string();
-    let mut state = SessionState { mode: MODE_AGENT.to_owned(), ..Default::default() };
+    let mut state = SessionState { mode: MODE_AGENT.to_owned(), system: crate::prompt::system_prompt(std::path::Path::new(cwd)), ..Default::default() };
     state.model = config.default_pick();
     state.effort = default_effort(&config, state.model.as_deref());
     let response = json!({
@@ -88,7 +117,7 @@ impl Server {
       "modes": modes_of(&state),
       "configOptions": config_options(&config, &state),
     });
-    self.sessions.lock().insert(id.clone(), Arc::new(Session { id, cwd: PathBuf::from(cwd), state: parking_lot::Mutex::new(state) }));
+    self.sessions.lock().insert(id.clone(), Arc::new(Session { id, cwd: PathBuf::from(cwd), state: parking_lot::Mutex::new(state), tool_seq: AtomicU64::new(0) }));
     Ok(response)
   }
 
@@ -140,9 +169,6 @@ impl Server {
     }
   }
 
-  async fn prompt(self: Arc<Self>, _params: Value, _cancel: Cancel) -> Result<Value, RpcError> {
-    Err(RpcError::internal("The built-in agent cannot run turns yet"))
-  }
 }
 
 /// (id, name, description)
@@ -221,7 +247,7 @@ impl Inbound for Handler {
         "session/new" => server.new_session(&params),
         "session/set_mode" => server.set_mode(&params),
         "session/set_config_option" => server.set_config_option(&params),
-        "session/prompt" => server.prompt(params, cancel).await,
+        "session/prompt" => crate::turn::run(server, params, cancel).await,
         _ => Err(RpcError::method_not_found(&method)),
       }
     })

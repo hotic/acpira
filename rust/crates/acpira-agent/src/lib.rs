@@ -4,10 +4,14 @@
 //! OpenCode (modes, permission rules, tool fault tolerance)
 
 pub mod acp;
+pub mod budget;
 pub mod config;
 pub mod llm;
 #[cfg(feature = "mock")]
 pub mod mock;
+pub mod prompt;
+pub mod tools;
+pub mod turn;
 
 use std::path::PathBuf;
 use std::sync::Arc;
