@@ -5,6 +5,7 @@
 
 pub mod acp;
 pub mod budget;
+pub mod catalog;
 pub mod config;
 pub mod llm;
 #[cfg(feature = "mock")]

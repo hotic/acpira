@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 
 use acpira_rpc::cancel::Cancel;
 use acpira_rpc::rpc::RpcError;
+use acpira_shared::model_catalog::Cost;
 use acpira_shared::providers::{Provider, ProviderModel, Sampling, Thinking};
 
 use crate::acp::{Server, Session, SessionState};
@@ -134,6 +135,8 @@ struct Setup {
   provider: Provider,
   model: ProviderModel,
   endpoint: Endpoint,
+  /// List prices from the catalogue, when it knows the model
+  cost: Option<Cost>,
   effort: Option<String>,
   /// The model's sampling over its prompt variant's defaults
   sampling: Sampling,
@@ -184,11 +187,15 @@ fn setup(server: &Server, session: &Session) -> Result<Setup, String> {
     mode: mode.rules(&server.plan_file(&session.id), &session.cwd),
     guard: Guard::new(server.config.home(), &session.cwd, user_home().as_deref()),
   };
+  // Limits the configuration leaves open come from the catalogue, marked estimated (never sent as max_tokens)
+  let mut model = model.clone();
+  let cost = crate::catalog::complete(&mut model, &server.catalog.get());
   Ok(Setup {
     pick,
     provider: provider.clone(),
-    model: model.clone(),
+    model,
     endpoint,
+    cost,
     effort,
     sampling,
     thinking,
@@ -353,6 +360,10 @@ fn log_request(session: &Session, s: &Setup, started: std::time::Instant, stop: 
   });
   if let Some(u) = usage {
     ev["usage"] = json!({ "input": u.input, "output": u.output, "cacheRead": u.cache_read, "cacheWrite": u.cache_write, "reasoning": u.reasoning });
+    // At list prices: an estimate, not the bill (discounts, tiers and gateways' markups are not known here)
+    if let Some(c) = &s.cost {
+      ev["cost"] = json!(c.estimate(u.input, u.output, u.cache_read, u.cache_write));
+    }
   }
   if let Some(stop) = stop {
     ev["stop"] = Value::String(format!("{stop:?}"));

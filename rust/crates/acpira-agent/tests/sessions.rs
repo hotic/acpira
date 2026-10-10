@@ -113,3 +113,19 @@ async fn a_view_change_is_recorded_when_the_model_switches_mid_session() {
   assert_eq!(views[0]["changed"], json!(["model"]));
   assert_eq!((views[0]["from"]["model"].clone(), views[0]["to"]["model"].clone()), (json!("mock/m1"), json!("mock/m2")));
 }
+
+#[tokio::test]
+async fn a_catalogued_model_gets_its_window_and_a_priced_request_record() {
+  let h = Harness::start().await;
+  let server = MockModel::start();
+  // A hand-entered id with no limits: the catalogue knows it by its normalized name
+  h.providers(&server.base_url(), json!([{ "id": "Claude-Opus-4.6" }]));
+  let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
+  server.push(mock::text("ok"));
+  prompt(&h, &sid, "hi").await;
+  assert!(h.updates().iter().any(|u| u["sessionUpdate"] == "usage_update" && u["size"] == 1_000_000));
+  // The catalogue's output limit is an estimate: it is not sent as max_tokens
+  assert!(server.requests()[0].body.get("max_tokens").is_none());
+  let req = events(&h, &sid).into_iter().find(|e| e["type"] == "request").unwrap();
+  assert!(req["cost"].as_f64().is_some_and(|c| c > 0.0), "{req}");
+}
