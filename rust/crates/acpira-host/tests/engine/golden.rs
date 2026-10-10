@@ -13,20 +13,20 @@ use acpira_shared::transcript::{Draft, Turn};
 
 use crate::support::{expect_eq, v};
 
-fn fixture(name: &str) -> PathBuf {
+pub(crate) fn fixture(name: &str) -> PathBuf {
   PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../test/fixtures").join(name)
 }
 
-fn read(name: &str) -> Value {
+pub(crate) fn read(name: &str) -> Value {
   serde_json::from_str(&std::fs::read_to_string(fixture(name)).unwrap()).unwrap()
 }
 
-fn update_mode() -> bool {
+pub(crate) fn update_mode() -> bool {
   std::env::var("ACPIRA_UPDATE_FIXTURES").is_ok_and(|x| x == "1")
 }
 
 /// One-space indentation, as the fixtures were first written
-fn write(name: &str, value: &Value) {
+pub(crate) fn write(name: &str, value: &Value) {
   use serde::Serialize;
   let mut out = Vec::new();
   let mut ser = serde_json::Serializer::with_formatter(&mut out, serde_json::ser::PrettyFormatter::with_indent(b" "));

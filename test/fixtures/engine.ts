@@ -9,6 +9,10 @@ interface DiffCase { name: string; oldText: string; newText: string; lines: Diff
 const load = <T>(file: string): T[] => JSON.parse(readFileSync(new URL(file, import.meta.url), 'utf8')) as T[];
 const normalize = load<NormalizeCase>('./engine-normalize.json');
 const diffs = load<DiffCase>('./engine-diff.json');
+// The built-in agent end to end (rust/crates/acpira-host/tests/engine/builtin_agent.rs): the whole transcript of a
+// scenario, with the data root, project and session id written as /acpira, /repo and SESSION
+interface BuiltinCase { name: string; turns: Turn[] }
+const builtin = load<BuiltinCase>('./engine-builtin.json');
 
 function find<T extends { name: string }>(list: T[], name: string): T {
   const hit = list.find(c => c.name === name);
@@ -30,4 +34,8 @@ export function agentTurn(name: string, step = -1): AgentTurn {
 
 export function diffCase(name: string): DiffCase {
   return structuredClone(find(diffs, name));
+}
+
+export function builtinTurns(name: string): Turn[] {
+  return structuredClone(find(builtin, name).turns);
 }
