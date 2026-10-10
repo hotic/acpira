@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use crate::permission::{BASH, Decision, EDIT, Rule, path_target};
-use crate::tools::{BASH as T_BASH, EDIT as T_EDIT, EXIT_PLAN, GLOB, GREP, LIST, READ, TODO, WRITE};
+use crate::tools::{BASH as T_BASH, EDIT as T_EDIT, EXIT_PLAN, GLOB, GREP, JOB, LIST, READ, TODO, WRITE};
 
 pub const AGENT: &str = "agent";
 pub const PLAN: &str = "plan";
@@ -23,7 +23,7 @@ pub struct Mode {
 }
 
 /// The tools every mode offers, in request order
-pub const TOOLS: &[&str] = &[READ, WRITE, T_EDIT, T_BASH, GREP, GLOB, LIST, TODO, EXIT_PLAN];
+pub const TOOLS: &[&str] = &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN];
 
 pub const MODES: &[Mode] = &[
   Mode {

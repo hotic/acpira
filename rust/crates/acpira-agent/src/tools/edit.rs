@@ -255,7 +255,7 @@ mod tests {
       panic!()
     };
     std::fs::write(&f, "first line\nalpha beta\n").unwrap();
-    let ctx = Ctx { cwd: dir.path().to_owned(), outputs: dir.path().join("o"), call_id: "c".into(), progress: Box::new(|_| {}) };
+    let ctx = Ctx { cwd: dir.path().to_owned(), outputs: dir.path().join("o"), call_id: "c".into(), progress: Box::new(|_| {}), jobs: Default::default() };
     let out = run(&path, before, after, edits, &ctx);
     assert!(!out.is_error, "{}", out.model);
     assert_eq!(std::fs::read_to_string(&f).unwrap(), "first line\nalpha gamma\n");

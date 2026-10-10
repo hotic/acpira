@@ -577,7 +577,7 @@ fn kind_of(name: &str, tools: &[&'static str]) -> &'static str {
   match shown_name(name, tools) {
     tools::READ | tools::LIST => "read",
     tools::WRITE | tools::EDIT => "edit",
-    tools::BASH => "execute",
+    tools::BASH | tools::JOB => "execute",
     tools::GREP | tools::GLOB => "search",
     tools::EXIT_PLAN => "switch_mode",
     _ => "other",
@@ -604,10 +604,19 @@ impl Rules {
 
   /// The decision with one more session rule: an "always allow" answer is offered only when it would take effect
   fn decide_with(&self, session: &Session, action: &Action, extra: Option<&Rule>) -> Decision {
-    let (key, target) = action.permission(&session.cwd);
     let mut allowed = session.state.lock().allowed.clone();
     allowed.extend(extra.cloned());
-    let d = permission::evaluate(&[&self.defaults, &self.approval, &allowed, &self.mode], key, &target);
+    // The strictest decision over every target the call touches
+    let d = action
+      .permissions(&session.cwd)
+      .iter()
+      .map(|(key, target)| permission::evaluate(&[&self.defaults, &self.approval, &allowed, &self.mode], key, target))
+      .max_by_key(|d| match d {
+        Decision::Allow => 0,
+        Decision::Ask => 1,
+        Decision::Deny => 2,
+      })
+      .unwrap_or(Decision::Ask);
     match action {
       Action::Write { path, .. } if d == Decision::Allow && self.guard.protects(path) => Decision::Ask,
       _ => d,
@@ -877,6 +886,7 @@ fn ctx_for(server: &Arc<Server>, session: &Arc<Session>, acp: &str) -> Ctx {
     cwd: session.cwd.clone(),
     outputs: server.session_dir(&session.id).join("outputs"),
     call_id: acp.to_owned(),
+    jobs: session.jobs.clone(),
     progress: Box::new(move |mut u: Value| {
       u["sessionUpdate"] = "tool_call_update".into();
       u["toolCallId"] = id.clone().into();

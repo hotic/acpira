@@ -31,6 +31,7 @@ pub const READ: &str = "read";
 pub const EDIT: &str = "edit";
 pub const BASH: &str = "bash";
 pub const TODO: &str = "todo";
+pub const JOB: &str = "job";
 
 /// The approval level: how much runs without a card
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -91,6 +92,7 @@ pub fn defaults(outputs: &Path) -> Vec<Rule> {
     Rule::new("*", "*", Decision::Ask),
     Rule::new(READ, "*", Decision::Allow),
     Rule::new(TODO, "*", Decision::Allow),
+    Rule::new(JOB, "*", Decision::Allow),
     Rule::new(READ, &format!("{}/*", slashed(outputs)), Decision::Allow),
   ]
 }

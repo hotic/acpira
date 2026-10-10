@@ -2,7 +2,7 @@
 //! cancelled turn, or a dropped future kills the whole group. Output streams to the tool card as
 //! `_meta.terminal_output_delta` while it runs; the model gets stdout and stderr interleaved, fitted to the budget
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -49,6 +49,7 @@ pub fn spec() -> ToolSpec {
         "command": { "type": "string", "description": "The command line" },
         "workdir": { "type": "string", "description": "Directory to run in (default: the session folder)" },
         "timeout": { "type": "integer", "description": "Timeout in milliseconds" },
+        "background": { "type": "boolean", "description": "Start it in the background and return at once with a job id (dev servers, watchers, long builds); check it with job" },
       },
       "required": ["command"],
     }),
@@ -65,7 +66,8 @@ pub fn prepare(args: &Value, cwd: &Path) -> Result<Action, String> {
     return Err(format!("workdir {} is not a directory", workdir.display()));
   }
   let timeout_ms = num_arg(args, "timeout").filter(|t| *t > 0).unwrap_or(DEFAULT_TIMEOUT_MS).min(MAX_TIMEOUT_MS);
-  Ok(Action::Bash { command, workdir, timeout_ms })
+  let background = args.get("background").or_else(|| args.get("run_in_background")).and_then(Value::as_bool).unwrap_or(false);
+  Ok(Action::Bash { command, workdir, timeout_ms, background })
 }
 
 /// Kills the command's process group when dropped while armed
@@ -90,7 +92,7 @@ impl Drop for Group {
 }
 
 #[cfg(unix)]
-fn kill_tree(pid: u32) {
+pub(crate) fn kill_tree(pid: u32) {
   // SAFETY: kill has no memory preconditions; a negative pid addresses the group the child leads
   unsafe {
     libc::kill(-(pid as i32), libc::SIGKILL);
@@ -98,7 +100,7 @@ fn kill_tree(pid: u32) {
 }
 
 #[cfg(windows)]
-fn kill_tree(pid: u32) {
+pub(crate) fn kill_tree(pid: u32) {
   use std::os::windows::process::CommandExt;
   const CREATE_NO_WINDOW: u32 = 0x0800_0000;
   let _ = std::process::Command::new("taskkill")
@@ -111,10 +113,10 @@ fn kill_tree(pid: u32) {
 
 /// Decodes a byte stream as UTF-8 without splitting a character across chunks
 #[derive(Default)]
-struct Utf8Tail(Vec<u8>);
+pub(crate) struct Utf8Tail(Vec<u8>);
 
 impl Utf8Tail {
-  fn push(&mut self, bytes: &[u8]) -> String {
+  pub(crate) fn push(&mut self, bytes: &[u8]) -> String {
     self.0.extend_from_slice(bytes);
     let valid = match std::str::from_utf8(&self.0) {
       Ok(_) => self.0.len(),
@@ -127,7 +129,7 @@ impl Utf8Tail {
     out
   }
 
-  fn finish(&mut self) -> String {
+  pub(crate) fn finish(&mut self) -> String {
     let out = String::from_utf8_lossy(&self.0).into_owned();
     self.0.clear();
     out
@@ -140,7 +142,8 @@ impl Utf8Tail {
 #[cfg(windows)]
 const UTF8_PRELUDE: &str = "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding; ";
 
-pub async fn run(command: &str, workdir: &PathBuf, timeout_ms: u64, ctx: &Ctx) -> Output {
+/// The command line under the shell, in a process group of its own, output piped, no stdin, pagers off
+pub(crate) fn command(command: &str, workdir: &Path) -> tokio::process::Command {
   #[cfg(windows)]
   let full = format!("{UTF8_PRELUDE}{command}");
   #[cfg(windows)]
@@ -153,9 +156,13 @@ pub async fn run(command: &str, workdir: &PathBuf, timeout_ms: u64, ctx: &Ctx) -
   cmd.process_group(0);
   #[cfg(windows)]
   cmd.creation_flags(0x0800_0000 | 0x0000_0200);
-  let mut child = match cmd.spawn() {
+  cmd
+}
+
+pub async fn run(command_line: &str, workdir: &Path, timeout_ms: u64, ctx: &Ctx) -> Output {
+  let mut child = match command(command_line, workdir).spawn() {
     Ok(c) => c,
-    Err(e) => return Output::error(format!("Cannot start {sh}: {e}")),
+    Err(e) => return Output::error(format!("Cannot start {}: {e}", shell().0)),
   };
   let mut group = Group(child.id());
   let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -268,6 +275,7 @@ mod tests {
       outputs: dir.join("outputs"),
       call_id: "b1".into(),
       progress: Box::new(move |u| seen.lock().push_str(u["_meta"]["terminal_output_delta"]["data"].as_str().unwrap_or(""))),
+      jobs: Default::default(),
     }
   }
 
@@ -275,11 +283,11 @@ mod tests {
   async fn output_exit_code_and_streaming() {
     let dir = tempfile::tempdir().unwrap();
     let seen = Arc::new(parking_lot::Mutex::new(String::new()));
-    let out = run("echo out; echo err >&2; exit 3", &dir.path().to_owned(), 5_000, &ctx(dir.path(), seen.clone())).await;
+    let out = run("echo out; echo err >&2; exit 3", dir.path(), 5_000, &ctx(dir.path(), seen.clone())).await;
     assert!(out.is_error);
     assert!(out.model.contains("out") && out.model.contains("err") && out.model.ends_with("[exit code 3]"), "{}", out.model);
     assert!(seen.lock().contains("out"));
-    let quiet = run("true", &dir.path().to_owned(), 5_000, &ctx(dir.path(), seen)).await;
+    let quiet = run("true", dir.path(), 5_000, &ctx(dir.path(), seen)).await;
     assert_eq!(quiet.model, "(no output)");
   }
 
@@ -291,7 +299,7 @@ mod tests {
     // The grandchild would write the marker after the timeout if it survived the kill
     let cmd = format!("(sleep 1; touch {}) & sleep 30", marker.display());
     let started = std::time::Instant::now();
-    let out = run(&cmd, &dir.path().to_owned(), 300, &ctx(dir.path(), seen)).await;
+    let out = run(&cmd, dir.path(), 300, &ctx(dir.path(), seen)).await;
     assert!(started.elapsed() < Duration::from_secs(5));
     assert!(out.model.contains("timed out"), "{}", out.model);
     tokio::time::sleep(Duration::from_millis(1500)).await;
@@ -315,13 +323,13 @@ mod windows_tests {
 
   fn ctx(dir: &Path) -> Ctx {
     let seen = Arc::new(parking_lot::Mutex::new(String::new()));
-    Ctx { cwd: dir.to_owned(), outputs: dir.join("outputs"), call_id: "b1".into(), progress: Box::new(move |u| seen.lock().push_str(u.to_string().as_str())) }
+    Ctx { cwd: dir.to_owned(), outputs: dir.join("outputs"), call_id: "b1".into(), progress: Box::new(move |u| seen.lock().push_str(u.to_string().as_str())), jobs: Default::default() }
   }
 
   #[tokio::test]
   async fn chinese_output_is_decoded_from_powershell_and_native_commands() {
     let dir = tempfile::tempdir().unwrap();
-    let out = run("Write-Output '中文输出'; cmd /c echo 原生命令", &dir.path().to_owned(), 15_000, &ctx(dir.path())).await;
+    let out = run("Write-Output '中文输出'; cmd /c echo 原生命令", dir.path(), 15_000, &ctx(dir.path())).await;
     assert!(out.model.contains("中文输出") && out.model.contains("原生命令"), "{:?}", out.model);
   }
 
@@ -335,7 +343,7 @@ mod windows_tests {
       marker.display()
     );
     let ctx = ctx(dir.path());
-    let cut = tokio::time::timeout(Duration::from_millis(1500), run(&cmd, &dir.path().to_owned(), 60_000, &ctx)).await;
+    let cut = tokio::time::timeout(Duration::from_millis(1500), run(&cmd, dir.path(), 60_000, &ctx)).await;
     assert!(cut.is_err(), "the command was still running when the turn was cancelled");
     tokio::time::sleep(Duration::from_secs(5)).await;
     assert!(!marker.exists(), "the child process outlived the cancel");
