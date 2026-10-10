@@ -109,6 +109,29 @@ fn claude_exit_plan_mode_is_recognised_after_the_adapter_drops_the_repeated_kind
 }
 
 #[test]
+fn the_builtin_agents_exit_plan_is_the_plan_approval() {
+  // acpira-agent's exit_plan: the streamed call, its prepared presentation, then the update and permission toolCall
+  // that carry the plan file with `acpira/planApproval` (crates/acpira-agent/src/turn.rs `exit_plan`)
+  let mut s = NormalizeState::new(vec![]);
+  let call = json!({ "sessionUpdate": "tool_call", "toolCallId": "call-3", "title": "exit_plan", "kind": "switch_mode", "status": "pending" });
+  apply_update(&mut s, &call);
+  assert!(capture_plan(&mut s.turns, &call).is_none());
+  let prepared = json!({ "sessionUpdate": "tool_call_update", "toolCallId": "call-3", "title": "Exit plan mode", "kind": "switch_mode", "rawInput": {} });
+  apply_update(&mut s, &prepared);
+  assert!(capture_plan(&mut s.turns, &prepared).is_none());
+  let input = json!({ "plan": "# Add src.txt\n\n1. Write it.", "planFilePath": "/h/.acpira/agent/sessions/s1/plan.md" });
+  let meta = json!({ "acpira/planApproval": true });
+  let update = json!({ "sessionUpdate": "tool_call_update", "toolCallId": "call-3", "title": "Exit plan mode", "kind": "switch_mode", "rawInput": input, "_meta": meta });
+  apply_update(&mut s, &update);
+  let id = capture_plan(&mut s.turns, &update).unwrap();
+  let permission = json!({ "toolCallId": "call-3", "title": "Exit plan mode", "kind": "switch_mode", "status": "pending", "rawInput": input, "_meta": meta });
+  assert_eq!(capture_plan(&mut s.turns, &permission).as_deref(), Some(id.as_str()));
+  expect_match(plan(&s.turns), json!({ "title": "Add src.txt", "markdown": "# Add src.txt\n\n1. Write it.", "status": "ready",
+    "approvalToolCallId": "call-3", "path": "/h/.acpira/agent/sessions/s1/plan.md" }));
+  assert_eq!(plan_documents(&s.turns).len(), 1);
+}
+
+#[test]
 fn a_revised_claude_plan_shows_the_whole_new_document_on_the_next_approval() {
   // claude-agent-acp 0.84.0: after "No, keep planning" the model edits the plan file (the Edit diff is old_string /
   // new_string, a hunk) and calls ExitPlanMode again with the whole revised file in rawInput.plan

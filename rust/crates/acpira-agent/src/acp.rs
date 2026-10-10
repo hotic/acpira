@@ -14,17 +14,18 @@ use acpira_shared::providers::split_pick;
 
 use crate::config::{Config, ConfigCache};
 use crate::llm::Item;
+use crate::modes;
 use crate::permission::{Approval, Rule};
 
 pub const PROTOCOL_VERSION: i64 = 1;
 pub const AGENT_NAME: &str = "acpira";
 
-pub const MODE_AGENT: &str = "agent";
-
 /// What a session remembers between turns
 #[derive(Default)]
 pub struct SessionState {
   pub mode: String,
+  /// The mode the model was last told about (`modes::Mode::overlay`)
+  pub announced: String,
   /// `<provider>/<model>`; None until a model exists
   pub model: Option<String>,
   pub effort: Option<String>,
@@ -75,9 +76,14 @@ impl Server {
     })
   }
 
-  /// The session's own directory under the data root (spilled tool outputs)
+  /// The session's own directory under the data root (spilled tool outputs, the plan)
   pub fn session_dir(&self, id: &str) -> PathBuf {
     self.config.home().join("agent").join("sessions").join(id)
+  }
+
+  /// The file Plan mode writes its plan to
+  pub fn plan_file(&self, id: &str) -> PathBuf {
+    self.session_dir(id).join("plan.md")
   }
 
   pub fn attach(&self, conn: Connection) {
@@ -113,7 +119,7 @@ impl Server {
     let cwd = params.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty()).ok_or_else(|| RpcError::new(-32602, "cwd is required"))?;
     let config = self.config.get();
     let id = uuid::Uuid::new_v4().to_string();
-    let mut state = SessionState { mode: MODE_AGENT.to_owned(), system: crate::prompt::system_prompt(std::path::Path::new(cwd)), ..Default::default() };
+    let mut state = SessionState { mode: modes::AGENT.to_owned(), announced: modes::AGENT.to_owned(), system: crate::prompt::system_prompt(std::path::Path::new(cwd)), ..Default::default() };
     state.model = config.default_pick();
     state.effort = default_effort(&config, state.model.as_deref());
     let response = json!({
@@ -128,7 +134,7 @@ impl Server {
   fn set_mode(&self, params: &Value) -> Result<Value, RpcError> {
     let session = self.session(str_param(params, "sessionId")?)?;
     let mode = str_param(params, "modeId")?;
-    if !MODES.iter().any(|(id, _, _)| *id == mode) {
+    if modes::find(mode).is_none() {
       return Err(RpcError::new(-32602, format!("Unknown mode: {mode}")));
     }
     session.state.lock().mode = mode.to_owned();
@@ -178,13 +184,10 @@ impl Server {
 
 }
 
-/// (id, name, description)
-pub const MODES: &[(&str, &str, &str)] = &[(MODE_AGENT, "Agent", "Reads, edits and runs commands, asking before each change")];
-
 fn modes_of(st: &SessionState) -> Value {
   json!({
     "currentModeId": st.mode,
-    "availableModes": MODES.iter().map(|(id, name, description)| json!({ "id": id, "name": name, "description": description })).collect::<Vec<_>>(),
+    "availableModes": modes::MODES.iter().map(|m| json!({ "id": m.id, "name": m.name, "description": m.description })).collect::<Vec<_>>(),
   })
 }
 
