@@ -164,7 +164,8 @@ pub fn command_pattern(command: &str) -> String {
   }
 }
 
-/// Files that configure the agent itself: its model sources and keys, prompt overrides and the workspace hooks. Edits
+/// Files that configure the agent itself: its model sources and keys, prompt overrides and the workspace hooks (in the
+/// session folder and at its project root). Edits
 /// to them ask even under full access, so a model cannot widen its own permissions or reroute its own calls
 pub struct Guard {
   files: Vec<PathBuf>,
@@ -179,6 +180,11 @@ impl Guard {
       cwd.join(".agents").join("hooks.json"),
     ];
     let mut dirs = vec![home.join("agent").join("config"), cwd.join(".agents").join("acpira")];
+    // The project's own files when the session folder is below its root (`prompt::project_root`)
+    if let Some(root) = crate::prompt::project_root(cwd, user_home).filter(|r| r != cwd) {
+      dirs.push(root.join(".agents").join("acpira"));
+      files.push(root.join(".agents").join("hooks.json"));
+    }
     if let Some(u) = user_home {
       dirs.push(u.join(".agents").join("acpira"));
       files.push(u.join(".agents").join("hooks.json"));

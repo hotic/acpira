@@ -14,11 +14,11 @@ use serde_json::{Value, json};
 
 use acpira_rpc::cancel::Cancel;
 use acpira_rpc::rpc::RpcError;
-use acpira_shared::providers::{Provider, ProviderModel};
+use acpira_shared::providers::{Provider, ProviderModel, Sampling, Thinking};
 
 use crate::acp::{Server, Session, SessionState};
 use crate::llm::{self, Endpoint, Event, Item, LlmError, Part, Request, StopReason, ToolCall, ToolSpec, Usage};
-use crate::modes;
+use crate::{modes, prompt};
 use crate::permission::{self, Decision, Guard, Rule};
 use crate::tools::names::{self, Resolved};
 use crate::tools::{self, Action, Ctx, Output};
@@ -57,6 +57,8 @@ struct Stats {
   calls: u64,
   /// The model of the last call
   pick: Option<String>,
+  /// (variant, version, digest) of the last call's system prompt
+  prompt: Option<(String, String, String)>,
 }
 
 pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<Value, RpcError> {
@@ -89,6 +91,9 @@ pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<V
       "thoughtTokens": u.reasoning, "cachedReadTokens": u.cache_read, "cachedWriteTokens": u.cache_write,
     });
     response["_meta"] = json!({ "modelId": s.pick, "usage": { "modelCalls": s.calls } });
+    if let Some((variant, version, digest)) = &s.prompt {
+      response["_meta"]["acpira/prompt"] = json!({ "variant": variant, "version": version, "digest": digest });
+    }
   }
   Ok(response)
 }
@@ -125,6 +130,12 @@ struct Setup {
   model: ProviderModel,
   endpoint: Endpoint,
   effort: Option<String>,
+  /// The model's sampling over its prompt variant's defaults
+  sampling: Sampling,
+  thinking: Thinking,
+  system: String,
+  /// (variant, version, digest) of the system prompt
+  prompt: (String, String, String),
   tools: &'static [&'static str],
   specs: Vec<ToolSpec>,
   rules: Rules,
@@ -143,6 +154,23 @@ fn setup(server: &Server, session: &Session) -> Result<Setup, String> {
   let (provider, model) = config.find(&pick).ok_or_else(|| format!("The model {pick} is no longer configured; pick another one."))?;
   let endpoint = Endpoint::of(provider, model, config.api_key(&provider.id))
     .ok_or_else(|| format!("{}: the API format \"{}\" is not supported", provider.display_name(), provider.format))?;
+  // The prompt changes only when the model now matches another variant (a view change at a turn boundary)
+  let places = prompt::Places::new(&session.cwd, user_home().as_deref());
+  let composed = {
+    let variant = prompt::variant_name(&places, Some((provider, model)));
+    let mut st = session.state.lock();
+    if st.prompt.variant != variant || st.prompt.text.is_empty() {
+      st.prompt = prompt::compose(&places, Some((provider, model)));
+    }
+    st.prompt.clone()
+  };
+  let defaults = &composed.sampling;
+  let sampling = Sampling {
+    temperature: model.sampling.temperature.or(defaults.temperature),
+    top_p: model.sampling.top_p.or(defaults.top_p),
+    top_k: model.sampling.top_k.or(defaults.top_k),
+  };
+  let thinking = if model.thinking == Thinking::Auto { composed.thinking.unwrap_or(Thinking::Auto) } else { model.thinking };
   // Frozen for the turn like the rest; what the user allows on a card applies at once (`SessionState::allowed`)
   let rules = Rules {
     defaults: permission::defaults(&server.session_dir(&session.id).join("outputs")),
@@ -156,6 +184,10 @@ fn setup(server: &Server, session: &Session) -> Result<Setup, String> {
     model: model.clone(),
     endpoint,
     effort,
+    sampling,
+    thinking,
+    system: composed.text,
+    prompt: (composed.variant, composed.version, composed.digest),
     tools: mode.tools,
     specs: tools::specs(mode.tools),
     rules,
@@ -164,7 +196,6 @@ fn setup(server: &Server, session: &Session) -> Result<Setup, String> {
 
 async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stats: &Arc<parking_lot::Mutex<Stats>>) -> Result<Stop, String> {
   let mut s = setup(server, session)?;
-  let system = session.state.lock().system.clone();
   let mut parts = prompt_parts(params.get("prompt").unwrap_or(&Value::Null), s.model.takes_images());
   {
     let mut st = session.state.lock();
@@ -186,17 +217,21 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       return Ok(Stop::MaxTurnRequests);
     }
     step += 1;
-    stats.lock().pick = Some(s.pick.clone());
+    {
+      let mut st = stats.lock();
+      st.pick = Some(s.pick.clone());
+      st.prompt = Some(s.prompt.clone());
+    }
     let context = s.model.context.unwrap_or(DEFAULT_CONTEXT);
     let request = Request {
       model: s.model.id.clone(),
-      system: system.clone(),
+      system: s.system.clone(),
       items: session.state.lock().items.clone(),
       tools: s.specs.clone(),
       max_tokens: max_tokens(&s.model),
       output_limit: s.model.output,
-      sampling: s.model.sampling.clone(),
-      thinking: s.model.thinking,
+      sampling: s.sampling.clone(),
+      thinking: s.thinking,
       effort: s.effort.clone(),
     };
     let mut rx = llm::stream(server.http.clone(), s.endpoint.clone(), request);
@@ -297,7 +332,7 @@ fn kind_of(name: &str, tools: &[&'static str]) -> &'static str {
   }
 }
 
-fn user_home() -> Option<std::path::PathBuf> {
+pub fn user_home() -> Option<std::path::PathBuf> {
   std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(std::path::PathBuf::from)
 }
 

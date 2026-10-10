@@ -29,8 +29,8 @@ pub struct SessionState {
   /// `<provider>/<model>`; None until a model exists
   pub model: Option<String>,
   pub effort: Option<String>,
-  /// Fixed for the session's life (prompt caches key on it)
-  pub system: String,
+  /// The system prompt, fixed while the model's variant stays the same (prompt caches key on it)
+  pub prompt: crate::prompt::Composed,
   /// The conversation as the model sees it
   pub items: Vec<Item>,
   /// Text and reasoning of the model call in flight, kept if the turn is cancelled mid-stream
@@ -119,8 +119,10 @@ impl Server {
     let cwd = params.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty()).ok_or_else(|| RpcError::new(-32602, "cwd is required"))?;
     let config = self.config.get();
     let id = uuid::Uuid::new_v4().to_string();
-    let mut state = SessionState { mode: modes::AGENT.to_owned(), announced: modes::AGENT.to_owned(), system: crate::prompt::system_prompt(std::path::Path::new(cwd)), ..Default::default() };
+    let mut state = SessionState { mode: modes::AGENT.to_owned(), announced: modes::AGENT.to_owned(), ..Default::default() };
     state.model = config.default_pick();
+    let places = crate::prompt::Places::new(std::path::Path::new(cwd), crate::turn::user_home().as_deref());
+    state.prompt = crate::prompt::compose(&places, state.model.as_deref().and_then(|p| config.find(p)));
     state.effort = default_effort(&config, state.model.as_deref());
     let response = json!({
       "sessionId": id,

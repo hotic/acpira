@@ -336,3 +336,22 @@ async fn a_turn_over_the_anthropic_format_replays_its_blocks_and_marks_cache_bre
   assert_eq!(strip(&reqs[0].body["messages"][0]), strip(&msgs[0]));
   assert_eq!(reqs[0].body["tools"], reqs[1].body["tools"]);
 }
+
+#[tokio::test]
+async fn the_prompt_variant_follows_the_model_and_is_recorded_per_turn() {
+  let (h, server, sid) = setup(json!([{ "id": "deepseek-chat" }, { "id": "claude-x" }])).await;
+  server.push(mock::text("one"));
+  server.push(mock::text("two"));
+  server.push(mock::text("three"));
+  let r = prompt(&h, &sid, "hi").await;
+  assert_eq!(r["_meta"]["acpira/prompt"]["variant"], "deepseek");
+  assert_eq!(r["_meta"]["acpira/prompt"]["version"], "1");
+  prompt(&h, &sid, "again").await;
+  h.conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "model", "value": "mock/claude-x" })).await.unwrap();
+  let r = prompt(&h, &sid, "now you").await;
+  assert_eq!(r["_meta"]["acpira/prompt"]["variant"], "claude");
+  let system = |i: usize| server.requests()[i].body["messages"][0]["content"].as_str().unwrap().to_owned();
+  assert_eq!(system(0), system(1), "the same variant keeps the same system prompt");
+  assert!(system(0).contains("## Tool calls") && !system(0).contains("## Scope"));
+  assert!(system(2).contains("## Scope") && !system(2).contains("## Tool calls"));
+}
