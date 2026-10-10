@@ -5,7 +5,7 @@
 export const PROVIDERS_FILE = 'providers.json';
 
 // `openai-chat` (OpenAI Chat Completions and compatibles) | `anthropic` (Messages); anything else is listed but not used
-export type ApiFormat = 'openai-chat' | 'anthropic';
+export type ApiFormat = 'openai-chat' | 'openai-responses' | 'anthropic';
 
 // Whether a model reasons: auto leaves the provider's default, on / off send the family's switch
 export type Thinking = 'auto' | 'on' | 'off';

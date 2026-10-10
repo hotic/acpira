@@ -34,6 +34,8 @@ pub struct ProvidersFile {
 pub enum ApiFormat {
   /// OpenAI Chat Completions and everything compatible with it
   OpenaiChat,
+  /// OpenAI Responses (what Codex speaks; carries a reasoning model's encrypted thinking between steps)
+  OpenaiResponses,
   /// Anthropic Messages
   Anthropic,
 }
@@ -42,6 +44,7 @@ impl ApiFormat {
   pub fn parse(s: &str) -> Option<ApiFormat> {
     match s {
       "openai-chat" | "" => Some(ApiFormat::OpenaiChat),
+      "openai-responses" => Some(ApiFormat::OpenaiResponses),
       "anthropic" => Some(ApiFormat::Anthropic),
       _ => None,
     }
@@ -50,6 +53,7 @@ impl ApiFormat {
   pub fn as_str(self) -> &'static str {
     match self {
       ApiFormat::OpenaiChat => "openai-chat",
+      ApiFormat::OpenaiResponses => "openai-responses",
       ApiFormat::Anthropic => "anthropic",
     }
   }
@@ -65,7 +69,7 @@ pub struct Provider {
   /// The preset it was created from (`deepseek`, `ollama`, … or `custom`)
   #[serde(default)]
   pub preset: String,
-  /// `openai-chat` | `anthropic`; anything else is listed but not used
+  /// `openai-chat` | `openai-responses` | `anthropic`; anything else is listed but not used
   #[serde(default = "openai_chat")]
   pub format: String,
   /// The API root (`https://api.deepseek.com/v1`), or the full endpoint when `full_url` is on

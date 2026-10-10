@@ -1,12 +1,13 @@
 //! Model clients. One provider-neutral conversation model (`Item`), one streaming entry point (`stream`), and one module
-//! per wire format. HTTP is blocking ureq on the blocking pool: the caller hands in the `ureq::Agent` (the agent process
-//! uses the default, which reads the proxy variables the engine injects; the host passes its own proxy-aware one). A
-//! dropped receiver ends the reading thread at its next chunk
+//! per wire format (OpenAI Chat, OpenAI Responses, Anthropic Messages). HTTP is blocking ureq on the blocking pool: the
+//! caller hands in the `ureq::Agent` (the agent process uses the default, which reads the proxy variables the engine
+//! injects; the host passes its own proxy-aware one). A dropped receiver ends the reading thread at its next chunk
 
 pub mod anthropic;
 pub mod discover;
 pub mod family;
 pub mod openai_chat;
+pub mod openai_responses;
 pub mod presets;
 pub mod sse;
 
@@ -84,6 +85,8 @@ pub struct Request {
   pub sampling: Sampling,
   pub thinking: Thinking,
   pub effort: Option<String>,
+  /// Groups requests for the provider's prompt cache (the session id; Responses' `prompt_cache_key`)
+  pub cache_key: Option<String>,
 }
 
 /// Token usage of one call. `input` counts every prompt token, cached ones included
@@ -173,6 +176,7 @@ impl Endpoint {
     } else {
       match format {
         ApiFormat::OpenaiChat => format!("{base}/chat/completions"),
+        ApiFormat::OpenaiResponses => format!("{base}/responses"),
         ApiFormat::Anthropic => format!("{base}/messages"),
       }
     };
@@ -205,6 +209,7 @@ pub fn stream(http: ureq::Agent, endpoint: Endpoint, request: Request) -> mpsc::
   tokio::task::spawn_blocking(move || {
     let result = match endpoint.format {
       ApiFormat::OpenaiChat => openai_chat::stream(&http, &endpoint, &request, &tx),
+      ApiFormat::OpenaiResponses => openai_responses::stream(&http, &endpoint, &request, &tx),
       ApiFormat::Anthropic => anthropic::stream(&http, &endpoint, &request, &tx),
     };
     if let Err(e) = result {

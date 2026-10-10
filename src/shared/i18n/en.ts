@@ -696,6 +696,7 @@ export const en = {
   'settings.providers.preset.custom': 'Custom',
   'settings.providers.format': 'API format',
   'settings.providers.format.openai': 'OpenAI Chat Completions',
+  'settings.providers.format.responses': 'OpenAI Responses',
   'settings.providers.format.anthropic': 'Anthropic Messages',
   'settings.providers.fullUrl': 'Use as the full endpoint URL',
   'settings.providers.fullUrl.placeholder': 'Full endpoint URL, e.g. https://example.com/v1/chat/completions',
