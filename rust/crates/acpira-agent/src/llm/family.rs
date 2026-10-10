@@ -13,7 +13,7 @@ use acpira_shared::providers::{Provider, ProviderModel, Thinking};
 pub enum ThinkingParam {
   /// No switch; the model id decides (Kimi's -thinking models)
   None,
-  /// `thinking: { type: "enabled" | "disabled" }` (GLM, DeepSeek V3.2)
+  /// `thinking: { type: "enabled" | "disabled" }` plus `reasoning_effort` for the level (GLM, DeepSeek)
   ThinkingType,
   /// `enable_thinking: bool` (Qwen on DashScope)
   EnableThinking,
@@ -178,6 +178,13 @@ pub fn apply_thinking(body: &mut Map<String, Value>, family: &Family, thinking: 
       if let Some(on) = on {
         body.insert("thinking".into(), json!({ "type": if on { "enabled" } else { "disabled" } }));
       }
+      // The level rides next to the switch: DeepSeek's own API takes reasoning_effort (none … max; low / high / max
+      // gave 1.8k / 3.4k / 4.3k reasoning tokens on one prompt, deepseek-flash, 2026-10-11). GLM's is not seen on a wire
+      if on != Some(false)
+        && let Some(e) = effort
+      {
+        body.insert("reasoning_effort".into(), Value::from(e));
+      }
     }
     ThinkingParam::EnableThinking => {
       if let Some(on) = on {
@@ -248,5 +255,12 @@ mod tests {
     let mut b = Map::new();
     apply_thinking(&mut b, &GENERIC, Thinking::Auto, Some("low"));
     assert_eq!(b["reasoning_effort"], "low");
+    // DeepSeek: the level goes next to the switch, and not at all with thinking off
+    let mut b = Map::new();
+    apply_thinking(&mut b, &by_name("deepseek").unwrap(), Thinking::Auto, Some("low"));
+    assert_eq!(Value::Object(b), json!({ "reasoning_effort": "low" }));
+    let mut b = Map::new();
+    apply_thinking(&mut b, &by_name("deepseek").unwrap(), Thinking::Off, Some("low"));
+    assert_eq!(Value::Object(b), json!({ "thinking": { "type": "disabled" } }));
   }
 }
