@@ -255,6 +255,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     };
     log_view(session, &s, &request);
     let started = std::time::Instant::now();
+    let mut unfinished = Unfinished { session, event: Some(request_event(&s)), started };
     let mut rx = llm::stream(server.http.clone(), s.endpoint.clone(), request);
     // Model tool-call id → ACP tool call id: providers reuse ids across calls, ACP needs them unique per session
     let mut ids: HashMap<String, String> = HashMap::new();
@@ -271,7 +272,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
         }
         Ok(Event::ToolCallStart { id, name }) => {
           let acp = session.next_tool_id();
-          server.update(&session.id, json!({ "sessionUpdate": "tool_call", "toolCallId": acp, "title": shown_name(&name, s.tools), "kind": kind_of(&name, s.tools), "status": "pending" }));
+          server.update(&session.id, json!({ "sessionUpdate": "tool_call", "toolCallId": acp, "title": call_title(&name, s.tools), "kind": kind_of(&name, s.tools), "status": "pending" }));
           ids.insert(id, acp);
         }
         Ok(Event::Done { reply, stop, usage }) => {
@@ -279,6 +280,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
           break;
         }
         Err(e) => {
+          unfinished.event = None;
           log_request(session, &s, started, None, None, Some(&e.to_string()));
           return Err(describe(s.provider.display_name(), &e));
         }
@@ -286,9 +288,11 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     }
     let Some((reply, stop, usage)) = finished else {
       let e = LlmError::Protocol("the stream ended without a result".into());
+      unfinished.event = None;
       log_request(session, &s, started, None, None, Some(&e.to_string()));
       return Err(describe(s.provider.display_name(), &e));
     };
+    unfinished.event = None;
     log_request(session, &s, started, Some(&stop), usage.as_ref(), None);
     if let Some(u) = usage {
       let mut st = stats.lock();
@@ -346,9 +350,9 @@ fn log_view(session: &Session, s: &Setup, request: &Request) {
   }
 }
 
-/// One `request` event per model call
-fn log_request(session: &Session, s: &Setup, started: std::time::Instant, stop: Option<&StopReason>, usage: Option<&Usage>, error: Option<&str>) {
-  let mut ev = json!({
+/// What every `request` event carries: the model, its source and the prompt and policies the call was built with
+fn request_event(s: &Setup) -> Value {
+  json!({
     "type": "request",
     "model": s.pick,
     "source": s.provider.id,
@@ -356,8 +360,31 @@ fn log_request(session: &Session, s: &Setup, started: std::time::Instant, stop: 
     "prompt": { "variant": s.prompt.0, "version": s.prompt.1, "digest": s.prompt.2 },
     // Context policies in effect; only the tool output budget exists so far
     "policies": { "outputBudget": { "lines": crate::budget::MAX_LINES, "bytes": crate::budget::MAX_BYTES } },
-    "ms": started.elapsed().as_millis() as u64,
-  });
+  })
+}
+
+/// A model call still open when the turn's future is dropped (a cancel) is logged on the way out with stop
+/// `Cancelled`, so the log keeps one record per call, including the ones a provider may bill without an answer
+struct Unfinished<'a> {
+  session: &'a Session,
+  event: Option<Value>,
+  started: std::time::Instant,
+}
+
+impl Drop for Unfinished<'_> {
+  fn drop(&mut self) {
+    if let Some(mut ev) = self.event.take() {
+      ev["ms"] = json!(self.started.elapsed().as_millis() as u64);
+      ev["stop"] = json!("Cancelled");
+      self.session.store.append(ev);
+    }
+  }
+}
+
+/// One `request` event per model call
+fn log_request(session: &Session, s: &Setup, started: std::time::Instant, stop: Option<&StopReason>, usage: Option<&Usage>, error: Option<&str>) {
+  let mut ev = request_event(s);
+  ev["ms"] = json!(started.elapsed().as_millis() as u64);
   if let Some(u) = usage {
     ev["usage"] = json!({ "input": u.input, "output": u.output, "cacheRead": u.cache_read, "cacheWrite": u.cache_write, "reasoning": u.reasoning });
     // At list prices: an estimate, not the bill (discounts, tiers and gateways' markups are not known here)
@@ -395,6 +422,17 @@ fn shown_name<'a>(name: &'a str, tools: &[&'static str]) -> &'a str {
     Resolved::Unknown(_) => name,
   }
 }
+
+/// The title a tool call starts with: the tool's name, except Plan mode's exit, which shows as the plan step the
+/// webview already knows (`Exit plan mode`, localized there) from the first update on
+fn call_title<'a>(name: &'a str, tools: &[&'static str]) -> &'a str {
+  match shown_name(name, tools) {
+    tools::EXIT_PLAN => EXIT_PLAN_TITLE,
+    n => n,
+  }
+}
+
+const EXIT_PLAN_TITLE: &str = "Exit plan mode";
 
 /// ACP ToolKind for a tool name, before its arguments are known
 fn kind_of(name: &str, tools: &[&'static str]) -> &'static str {
@@ -526,7 +564,7 @@ async fn run_tools(
       Some(a) => a,
       None => {
         let a = session.next_tool_id();
-        server.update(&session.id, json!({ "sessionUpdate": "tool_call", "toolCallId": a, "title": shown_name(&call.name, tool_names), "kind": kind_of(&call.name, tool_names), "status": "pending" }));
+        server.update(&session.id, json!({ "sessionUpdate": "tool_call", "toolCallId": a, "title": call_title(&call.name, tool_names), "kind": kind_of(&call.name, tool_names), "status": "pending" }));
         a
       }
     };
@@ -665,7 +703,7 @@ async fn exit_plan(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, p
   }
   let raw_input = json!({ "plan": text, "planFilePath": path });
   let meta = json!({ "acpira/planApproval": true });
-  let title = "Exit plan mode";
+  let title = EXIT_PLAN_TITLE;
   server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "title": title, "kind": "switch_mode", "rawInput": raw_input, "_meta": meta }));
   let request = json!({
     "sessionId": session.id,
@@ -692,7 +730,7 @@ async fn exit_plan(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, p
   }
   server.update(&session.id, json!({ "sessionUpdate": "current_mode_update", "currentModeId": modes::AGENT }));
   let model = format!("The user approved the plan. {} Carry out the plan now, keeping the to-do list current.", modes::get(modes::AGENT).overlay(&path));
-  (Output { model, is_error: false, content: vec![], raw_output: Some(json!({ "approved": true })) }, Some(true))
+  (Output { model, is_error: false, content: vec![], raw_output: None }, Some(true))
 }
 
 fn ctx_for(server: &Arc<Server>, session: &Arc<Session>, acp: &str) -> Ctx {

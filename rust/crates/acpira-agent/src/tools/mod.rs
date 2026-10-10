@@ -167,7 +167,7 @@ impl Action {
       },
       Action::Bash { command, .. } => Presentation { title: command.clone(), kind: "execute", locations: vec![], content: vec![] },
       Action::Grep { pattern, path, include } => {
-        let scope = [Some(shown(path, cwd)).filter(|s| s != &cwd.to_string_lossy()), include.clone()].into_iter().flatten().collect::<Vec<_>>().join(" ");
+        let scope = [(path != cwd).then(|| shown(path, cwd)), include.clone()].into_iter().flatten().collect::<Vec<_>>().join(" ");
         let title = if scope.is_empty() { format!("grep \"{pattern}\"") } else { format!("grep \"{pattern}\" in {scope}") };
         Presentation { title, kind: "search", locations: vec![path.clone()], content: vec![] }
       }
@@ -202,9 +202,11 @@ impl Action {
   }
 }
 
-/// A path as the title shows it: relative inside the session folder
+/// A path as titles and tool results show it: relative inside the session folder, with forward slashes on Windows
+/// too, where a joined path otherwise mixes them (`src/util\b.rs`) and Windows accepts `/` when the model sends it back
 pub fn shown(path: &Path, cwd: &Path) -> String {
-  path.strip_prefix(cwd).ok().filter(|p| !p.as_os_str().is_empty()).unwrap_or(path).to_string_lossy().into_owned()
+  let s = path.strip_prefix(cwd).ok().filter(|p| !p.as_os_str().is_empty()).unwrap_or(path).to_string_lossy().into_owned();
+  if cfg!(windows) { s.replace('\\', "/") } else { s }
 }
 
 /// A model-given path made absolute against the session folder
