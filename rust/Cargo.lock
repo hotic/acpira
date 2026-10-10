@@ -6,6 +6,7 @@ version = 4
 name = "acpira-agent"
 version = "1.9.1"
 dependencies = [
+ "acpira-agent",
  "acpira-rpc",
  "acpira-shared",
  "anyhow",
