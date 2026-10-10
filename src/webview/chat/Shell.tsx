@@ -15,6 +15,7 @@ import { Chip, IconButton } from '../ui/Button';
 import { useScrollReveal } from '../ui/useScrollReveal';
 import { useStableList } from '../ui/useStableList';
 import { useMergedRefs } from '../ui/mergeRefs';
+import { QuietEntranceContext } from '../ui/Row';
 import { FollowContext, useBottomFollow } from './useBottomFollow';
 import { Header } from './Header';
 import { SessionList, projectName } from './SessionList';
@@ -656,6 +657,9 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
   const body = useRef<HTMLDivElement>(null);
   const bodyRef = useMergedRefs(contentRef, body);
   const follow = useBottomFollow(ref, body, replayKey, [turns, running]);
+  // The transcript's first commit restores what the session already holds: its rows appear in place, without entrances
+  const opening = useRef(true);
+  useLayoutEffect(() => { opening.current = false; }, []);
 
   // Group the session's subagent nodes by the turn that announced them; unchanged arrays keep their
   // reference so memoized turns do not re-render on an unrelated child update
@@ -708,7 +712,7 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
   return (
     <div ref={ref} data-thread className="scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-page pr-page-gutter [container-type:size] [overflow-anchor:none]">
       {/* The tail clearance equals the message gap, so the last message sits as far from the composer as from the message above it */}
-      <div key={replayKey} ref={bodyRef} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-(--content-w)')}><FollowContext.Provider value={follow}>
+      <div key={replayKey} ref={bodyRef} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-(--content-w)')}><FollowContext.Provider value={follow}><QuietEntranceContext.Provider value={opening}>
         {exchanges.map(exchange => (
           // Positioned so the prompt's stuck-state sentinel can sit at the exchange's top edge. Paint containment gives each exchange
           // its own paint offset, so a fold opening mid-thread no longer re-walks every later exchange each frame (see docs/dev/webview.md,
@@ -719,7 +723,7 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
             {exchange.messages}
           </section>
         ))}
-      </FollowContext.Provider></div>
+      </QuietEntranceContext.Provider></FollowContext.Provider></div>
     </div>
   );
 }

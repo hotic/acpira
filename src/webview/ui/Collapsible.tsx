@@ -6,8 +6,8 @@ import { cssTimeVar } from './cssTime';
 // Settled transcript content: a panel under `true` mounts its body only while open. Finished turns keep almost all of
 // their DOM inside closed folds; mounting it made every session switch lay out the whole history, and keeping a body
 // once opened let an expand / collapse pass over a long session pin every fold's DOM for the page's lifetime.
-// A closed body is released after the close transition; under `false` (a live turn) bodies stay mounted so a closed
-// thought still streams in step.
+// A closed body is released after the close transition; under `false` (a live turn's unfinished items, see
+// `ProcessBlocks`) bodies stay mounted so a closed thought still streams in step.
 export const LazyPanelContext = createContext(false);
 
 // Fallback for --dur-close when the variable cannot be read, plus a frame or two for the transition to finish

@@ -14,18 +14,24 @@ const ENTERED_CAP = 4000;
 // The live turn and its name, set once per message: `RowEntranceContext` gets narrowed below by EntranceOnce,
 // and agents may number tool calls per session, so ids alone repeat across turns
 export const EntranceScopeContext = createContext<{ live: boolean; scope: string }>({ live: false, scope: '' });
+// True while a commit mounts rows that were already there before the reader saw them: a thread's first commit (a
+// session opened mid-turn) or a live turn's earlier items mounted after its tail (`chat/tailWindow.ts`). Those rows
+// skip their entrance. Opening a 700-block live turn used to start one entrance per row, and every row then queried
+// the animations of its whole list, which held the main thread for ~4 s
+export const QuietEntranceContext = createContext<{ readonly current: boolean }>({ current: false });
 
 // Rows under `id` enter only with the first mount of that identity in a live turn. Rows that mount later under
 // the same instance (a branch that changes shape as the tool progresses) stay still; content that genuinely
 // appears later gets its own EntranceOnce
 export function EntranceOnce({ id, children }: { id: string; children: ReactNode }) {
   const { live, scope } = useContext(EntranceScopeContext);
+  const quiet = useContext(QuietEntranceContext);
   const [enter, setEnter] = useState(() => {
     const key = `${scope}\u0000${id}`;
     const fresh = !entered.has(key);
     if (entered.size >= ENTERED_CAP) entered.clear();
     entered.add(key);
-    return live && fresh;
+    return live && fresh && !quiet.current;
   });
   // Rows read the context once, at their own mount: the ones mounted with this commit keep their entrance
   useEffect(() => { if (enter) setEnter(false); }, [enter]);
@@ -61,10 +67,11 @@ const rowVariants = cva('flex items-center gap-gap text-2 text-fg-2 select-none 
 export function Row({ lead, trailing, children, interactive, as = 'div', className, dense, tone, ref, ...rest }: RowProps) {
   const Tag = as;
   const live = useContext(RowEntranceContext);
+  const quiet = useContext(QuietEntranceContext);
   // A row mounted while the page is hidden (window occluded or behind another app, a background tab) gets no
   // entrance: no frame is drawn while hidden, so its animation would only start on return and every row that
   // arrived in the meantime faded in at once, while the prose beside it appeared already in place
-  const [enter, setEnter] = useState(() => live && !pageHidden());
+  const [enter, setEnter] = useState(() => live && !quiet.current && !pageHidden());
   const self = useRef<HTMLElement>(null);
   const merged = useMergedRefs(self, ref);
   // Drop the entrance class once it has played: a hidden webview (display: none) restarts every CSS animation when

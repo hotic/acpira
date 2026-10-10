@@ -51,9 +51,12 @@ export function groupProcess(blocks: AgentBlock[]): ProcessItem[] {
 // Whether an item has finished: none of its calls pending or running, its thought no longer streaming.
 // A command parked in the background runs on its own and does not hold its row open
 export function itemSettled(item: ProcessItem): boolean {
-  const blocks = item.type === 'group' ? item.blocks : [item.block];
-  return blocks.every(b => b.type === 'thought' ? !b.streaming
-    : b.type !== 'tool_call' || b.background || (b.status !== 'pending' && b.status !== 'in_progress'));
+  return item.type === 'group' ? item.blocks.every(blockSettled) : blockSettled(item.block);
+}
+
+export function blockSettled(b: AgentBlock): boolean {
+  return b.type === 'thought' ? !b.streaming
+    : b.type !== 'tool_call' || !!b.background || (b.status !== 'pending' && b.status !== 'in_progress');
 }
 
 // A quick action stays open at least this long after it finished, so it never flicks open and shut
