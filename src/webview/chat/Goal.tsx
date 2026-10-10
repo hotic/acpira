@@ -110,10 +110,12 @@ export function GoalRow({ block }: { block: GoalBlock }) {
 }
 
 // Under the last sent prompt (Codex's "Set as goal"): turns that prompt into the session goal in one click. The thread
-// only offers it on agents advertising `set` while no goal is set
+// only offers it on agents advertising `set` while no goal is set. The strip takes the place of the message gap: it cancels
+// the gaps on both sides and is exactly the button's height, so the button touches neither the prompt nor the reply and
+// the reply sits one button height under the prompt instead of one message gap (tuned in lab/set-goal-tune, 2026-10-10)
 export function SetGoalAction({ onSet }: { onSet: () => void }) {
   return (
-    <div data-set-goal className="-mt-msg flex h-ctl-sm items-center justify-end">
+    <div data-set-goal className="-my-msg flex h-ctl-sm items-center justify-end">
       <button type="button" title={t('goal.setFromPromptHint')} onClick={onSet}
         className="flex h-ctl-sm items-center gap-1 rounded-md px-1.5 text-3 text-fg-3 transition-colors hover:bg-hover hover:text-fg-1">
         <GoalIcon className="size-icon" strokeWidth={1.5} />{t('goal.setFromPrompt')}
