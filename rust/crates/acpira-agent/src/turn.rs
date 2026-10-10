@@ -14,10 +14,11 @@ use serde_json::{Value, json};
 
 use acpira_rpc::cancel::Cancel;
 use acpira_rpc::rpc::RpcError;
-use acpira_shared::providers::ProviderModel;
+use acpira_shared::providers::{Provider, ProviderModel};
 
 use crate::acp::{Server, Session, SessionState};
-use crate::llm::{self, Endpoint, Event, Item, LlmError, Part, Request, StopReason, ToolCall, Usage};
+use crate::llm::{self, Endpoint, Event, Item, LlmError, Part, Request, StopReason, ToolCall, ToolSpec, Usage};
+use crate::modes;
 use crate::permission::{self, Decision, Guard, Rule};
 use crate::tools::names::{self, Resolved};
 use crate::tools::{self, Action, Ctx, Output};
@@ -50,10 +51,12 @@ impl Stop {
 }
 
 /// Token totals over the turn's model calls
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 struct Stats {
   usage: Usage,
   calls: u64,
+  /// The model of the last call
+  pick: Option<String>,
 }
 
 pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<Value, RpcError> {
@@ -67,7 +70,6 @@ pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<V
     st.turn = Some(cancel.clone());
   }
   let stats = Arc::new(parking_lot::Mutex::new(Stats::default()));
-  let pick = session.state.lock().model.clone();
   let result = tokio::select! {
     r = body(&server, &session, &params, &stats) => r,
     _ = cancel.cancelled() => Ok(Stop::Cancelled),
@@ -78,7 +80,7 @@ pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<V
     settle(&mut st);
   }
   let stop = result.map_err(|e| RpcError::new(-32603, e))?;
-  let s = *stats.lock();
+  let s = stats.lock().clone();
   let mut response = json!({ "stopReason": stop.wire() });
   if s.calls > 0 {
     let u = s.usage;
@@ -86,7 +88,7 @@ pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<V
       "inputTokens": u.input, "outputTokens": u.output, "totalTokens": u.input + u.output,
       "thoughtTokens": u.reasoning, "cachedReadTokens": u.cache_read, "cachedWriteTokens": u.cache_write,
     });
-    response["_meta"] = json!({ "modelId": pick, "usage": { "modelCalls": s.calls } });
+    response["_meta"] = json!({ "modelId": s.pick, "usage": { "modelCalls": s.calls } });
   }
   Ok(response)
 }
@@ -115,53 +117,88 @@ fn settle(st: &mut SessionState) {
   }
 }
 
-async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stats: &Arc<parking_lot::Mutex<Stats>>) -> Result<Stop, String> {
+/// What the model calls of a turn use: read from the session at the start, and again after an approved plan switched
+/// the mode (the user may have picked the model to build with on the plan card)
+struct Setup {
+  pick: String,
+  provider: Provider,
+  model: ProviderModel,
+  endpoint: Endpoint,
+  effort: Option<String>,
+  tools: &'static [&'static str],
+  specs: Vec<ToolSpec>,
+  rules: Rules,
+}
+
+fn setup(server: &Server, session: &Session) -> Result<Setup, String> {
   let config = server.config.get();
   if let Some(e) = &config.error {
     return Err(e.clone());
   }
-  let (pick, effort, system) = {
+  let (pick, effort, mode, approval) = {
     let st = session.state.lock();
-    (st.model.clone().or_else(|| config.default_pick()), st.effort.clone(), st.system.clone())
+    (st.model.clone().or_else(|| config.default_pick()), st.effort.clone(), modes::get(&st.mode), st.approval)
   };
   let pick = pick.ok_or("No model is configured. Add a model source in Acpira's settings (Agents → Acpira).")?;
   let (provider, model) = config.find(&pick).ok_or_else(|| format!("The model {pick} is no longer configured; pick another one."))?;
   let endpoint = Endpoint::of(provider, model, config.api_key(&provider.id))
     .ok_or_else(|| format!("{}: the API format \"{}\" is not supported", provider.display_name(), provider.format))?;
-  let parts = prompt_parts(params.get("prompt").unwrap_or(&Value::Null), model.takes_images());
-  let approval = {
-    let mut st = session.state.lock();
-    st.items.push(Item::User(parts));
-    st.approval
-  };
   // Frozen for the turn like the rest; what the user allows on a card applies at once (`SessionState::allowed`)
   let rules = Rules {
     defaults: permission::defaults(&server.session_dir(&session.id).join("outputs")),
-    mode: vec![],
     approval: approval.rules(),
+    mode: mode.rules(&server.plan_file(&session.id), &session.cwd),
     guard: Guard::new(server.config.home(), &session.cwd, user_home().as_deref()),
   };
-  let mut corrections = 0u32;
+  Ok(Setup {
+    pick,
+    provider: provider.clone(),
+    model: model.clone(),
+    endpoint,
+    effort,
+    tools: mode.tools,
+    specs: tools::specs(mode.tools),
+    rules,
+  })
+}
 
-  let tool_specs = tools::specs();
-  let context = model.context.unwrap_or(DEFAULT_CONTEXT);
+async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stats: &Arc<parking_lot::Mutex<Stats>>) -> Result<Stop, String> {
+  let mut s = setup(server, session)?;
+  let system = session.state.lock().system.clone();
+  let mut parts = prompt_parts(params.get("prompt").unwrap_or(&Value::Null), s.model.takes_images());
+  {
+    let mut st = session.state.lock();
+    // A mode entered since the model last heard about it is announced in the user message: the system prompt stays fixed
+    if st.mode != st.announced {
+      let overlay = modes::get(&st.mode).overlay(&server.plan_file(&session.id));
+      st.announced = st.mode.clone();
+      match parts.first_mut() {
+        Some(Part::Text(t)) => *t = format!("<mode>\n{overlay}\n</mode>\n\n{t}"),
+        _ => parts.insert(0, Part::Text(format!("<mode>\n{overlay}\n</mode>"))),
+      }
+    }
+    st.items.push(Item::User(parts));
+  }
+  let mut corrections = 0u32;
   let mut step = 0u32;
   loop {
-    if model.max_steps.is_some_and(|max| step >= max) {
+    if s.model.max_steps.is_some_and(|max| step >= max) {
       return Ok(Stop::MaxTurnRequests);
     }
     step += 1;
+    stats.lock().pick = Some(s.pick.clone());
+    let context = s.model.context.unwrap_or(DEFAULT_CONTEXT);
     let request = Request {
-      model: model.id.clone(),
+      model: s.model.id.clone(),
       system: system.clone(),
       items: session.state.lock().items.clone(),
-      tools: tool_specs.clone(),
-      max_tokens: max_tokens(model),
-      sampling: model.sampling.clone(),
-      thinking: model.thinking,
-      effort: effort.clone(),
+      tools: s.specs.clone(),
+      max_tokens: max_tokens(&s.model),
+      sampling: s.model.sampling.clone(),
+      thinking: s.model.thinking,
+      effort: s.effort.clone(),
     };
-    let mut rx = llm::stream(server.http.clone(), endpoint.clone(), request);
+    let mut rx = llm::stream(server.http.clone(), s.endpoint.clone(), request);
     // Model tool-call id → ACP tool call id: providers reuse ids across calls, ACP needs them unique per session
     let mut ids: HashMap<String, String> = HashMap::new();
     let mut finished = None;
@@ -177,25 +214,25 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
         }
         Ok(Event::ToolCallStart { id, name }) => {
           let acp = session.next_tool_id();
-          server.update(&session.id, json!({ "sessionUpdate": "tool_call", "toolCallId": acp, "title": shown_name(&name), "kind": kind_of(&name), "status": "pending" }));
+          server.update(&session.id, json!({ "sessionUpdate": "tool_call", "toolCallId": acp, "title": shown_name(&name, s.tools), "kind": kind_of(&name, s.tools), "status": "pending" }));
           ids.insert(id, acp);
         }
         Ok(Event::Done { reply, stop, usage }) => {
           finished = Some((reply, stop, usage));
           break;
         }
-        Err(e) => return Err(describe(provider.display_name(), &e)),
+        Err(e) => return Err(describe(s.provider.display_name(), &e)),
       }
     }
-    let (reply, stop, usage) = finished.ok_or_else(|| describe(provider.display_name(), &LlmError::Protocol("the stream ended without a result".into())))?;
+    let (reply, stop, usage) = finished.ok_or_else(|| describe(s.provider.display_name(), &LlmError::Protocol("the stream ended without a result".into())))?;
     if let Some(u) = usage {
-      let mut s = stats.lock();
-      s.usage.input += u.input;
-      s.usage.output += u.output;
-      s.usage.cache_read += u.cache_read;
-      s.usage.cache_write += u.cache_write;
-      s.usage.reasoning += u.reasoning;
-      s.calls += 1;
+      let mut st = stats.lock();
+      st.usage.input += u.input;
+      st.usage.output += u.output;
+      st.usage.cache_read += u.cache_read;
+      st.usage.cache_write += u.cache_write;
+      st.usage.reasoning += u.reasoning;
+      st.calls += 1;
       server.update(&session.id, json!({ "sessionUpdate": "usage_update", "used": u.input + u.output, "size": context }));
     } else {
       stats.lock().calls += 1;
@@ -207,11 +244,12 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       st.items.push(Item::Assistant { text: reply.text.clone(), reasoning: reply.reasoning.clone(), tool_calls: reply.tool_calls.clone() });
     }
     match stop {
-      _ if !reply.tool_calls.is_empty() && stop != StopReason::MaxTokens => {
-        if !run_tools(server, session, &rules, &reply.tool_calls, &mut ids, &mut corrections).await {
-          return Ok(Stop::EndTurn);
-        }
-      }
+      _ if !reply.tool_calls.is_empty() && stop != StopReason::MaxTokens => match run_tools(server, session, &s, &reply.tool_calls, &mut ids, &mut corrections).await {
+        Flow::Continue => {}
+        Flow::Stop => return Ok(Stop::EndTurn),
+        // The approved plan is carried out in this turn, with Agent mode's tools and rules
+        Flow::Switched => s = setup(server, session)?,
+      },
       StopReason::MaxTokens => return Ok(Stop::MaxTokens),
       StopReason::Refusal => return Ok(Stop::Refusal),
       _ => return Ok(Stop::EndTurn),
@@ -234,20 +272,21 @@ fn describe(source: &str, e: &LlmError) -> String {
 }
 
 /// The tool a model-given name stands for, for display before the call is prepared
-fn shown_name(name: &str) -> &str {
-  match names::resolve(name) {
+fn shown_name<'a>(name: &'a str, tools: &[&'static str]) -> &'a str {
+  match names::resolve(name, tools) {
     Resolved::Exact(n) | Resolved::Corrected(n) => n,
     Resolved::Unknown(_) => name,
   }
 }
 
 /// ACP ToolKind for a tool name, before its arguments are known
-fn kind_of(name: &str) -> &'static str {
-  match shown_name(name) {
+fn kind_of(name: &str, tools: &[&'static str]) -> &'static str {
+  match shown_name(name, tools) {
     tools::READ | tools::LIST => "read",
     tools::WRITE | tools::EDIT => "edit",
     tools::BASH => "execute",
     tools::GREP | tools::GLOB => "search",
+    tools::EXIT_PLAN => "switch_mode",
     _ => "other",
   }
 }
@@ -256,19 +295,26 @@ fn user_home() -> Option<std::path::PathBuf> {
   std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(std::path::PathBuf::from)
 }
 
-/// The permission layers of a turn
+/// The permission layers of a turn, evaluated in this order: the mode last, so its restrictions hold under any approval
+/// level and over what the user allowed earlier
 struct Rules {
   defaults: Vec<Rule>,
-  mode: Vec<Rule>,
   approval: Vec<Rule>,
+  mode: Vec<Rule>,
   guard: Guard,
 }
 
 impl Rules {
   fn decide(&self, session: &Session, action: &Action) -> Decision {
+    self.decide_with(session, action, None)
+  }
+
+  /// The decision with one more session rule: an "always allow" answer is offered only when it would take effect
+  fn decide_with(&self, session: &Session, action: &Action, extra: Option<&Rule>) -> Decision {
     let (key, target) = action.permission(&session.cwd);
-    let allowed = session.state.lock().allowed.clone();
-    let d = permission::evaluate(&[&self.defaults, &self.mode, &self.approval, &allowed], key, &target);
+    let mut allowed = session.state.lock().allowed.clone();
+    allowed.extend(extra.cloned());
+    let d = permission::evaluate(&[&self.defaults, &self.approval, &allowed, &self.mode], key, &target);
     match action {
       Action::Write { path, .. } if d == Decision::Allow && self.guard.protects(path) => Decision::Ask,
       _ => d,
@@ -337,15 +383,25 @@ struct Prepared {
   note: Option<String>,
 }
 
-/// Run one round of tool calls; false when the user rejected one (the turn ends after the round)
+/// How a tool round leaves the turn
+enum Flow {
+  Continue,
+  /// The user rejected an action or did not approve the plan: the turn ends after the round
+  Stop,
+  /// A plan was approved: the session is in Agent mode and the turn goes on under it
+  Switched,
+}
+
+/// Run one round of tool calls
 async fn run_tools(
   server: &Arc<Server>,
   session: &Arc<Session>,
-  rules: &Rules,
+  setup: &Setup,
   calls: &[ToolCall],
   ids: &mut HashMap<String, String>,
   corrections: &mut u32,
-) -> bool {
+) -> Flow {
+  let (rules, tool_names) = (&setup.rules, setup.tools);
   let cwd = session.cwd.clone();
   let mut prepared = vec![];
   for call in calls {
@@ -353,20 +409,20 @@ async fn run_tools(
       Some(a) => a,
       None => {
         let a = session.next_tool_id();
-        server.update(&session.id, json!({ "sessionUpdate": "tool_call", "toolCallId": a, "title": shown_name(&call.name), "kind": kind_of(&call.name), "status": "pending" }));
+        server.update(&session.id, json!({ "sessionUpdate": "tool_call", "toolCallId": a, "title": shown_name(&call.name, tool_names), "kind": kind_of(&call.name, tool_names), "status": "pending" }));
         a
       }
     };
     let args: Result<Value, String> = serde_json::from_str::<Value>(&call.arguments)
       .map_err(|e| format!("The arguments are not valid JSON ({e}). Received: {}", crate::budget::cut(&call.arguments, 2000)))
       .and_then(|v| if v.is_object() { Ok(v) } else { Err(format!("The arguments must be a JSON object. Received: {}", crate::budget::cut(&call.arguments, 2000))) });
-    let (name, note) = match names::resolve(&call.name) {
+    let (name, note) = match names::resolve(&call.name, tool_names) {
       Resolved::Exact(n) => (Ok(n), None),
       Resolved::Corrected(n) if *corrections < MAX_CORRECTIONS => {
         *corrections += 1;
         (Ok(n), Some(format!("(\"{}\" was taken as the {n} tool; call tools by their exact names.)", call.name)))
       }
-      Resolved::Corrected(n) => (Err(format!("Unknown tool \"{}\" (did you mean \"{n}\"?). Tool names must match exactly: {}.", call.name, names::ALL.join(", "))), None),
+      Resolved::Corrected(n) => (Err(format!("Unknown tool \"{}\" (did you mean \"{n}\"?). Tool names must match exactly: {}.", call.name, tool_names.join(", "))), None),
       Resolved::Unknown(message) => (Err(message), None),
     };
     // A bad argument goes back with what was received, so the model can see its own mistake
@@ -392,6 +448,7 @@ async fn run_tools(
   }
 
   let mut rejected = false;
+  let mut switched = false;
   let mut i = 0;
   while i < prepared.len() {
     // Consecutive read-only calls the rules allow run together
@@ -426,6 +483,18 @@ async fn run_tools(
         continue;
       }
     };
+    // The plan approval card is this call's permission
+    if let Action::ExitPlan { plan } = &action {
+      server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": "in_progress" }));
+      let (out, approved) = exit_plan(server, session, p, plan.as_deref()).await;
+      finish(server, session, p, out);
+      match approved {
+        Some(true) => switched = true,
+        Some(false) => rejected = true,
+        None => {}
+      }
+      continue;
+    }
     match rules.decide(session, &action) {
       Decision::Allow => {}
       Decision::Deny => {
@@ -433,7 +502,7 @@ async fn run_tools(
         finish(server, session, p, Output::error(format!("Not allowed: the permission rules deny {key} on {target}. Do not retry it.")));
         continue;
       }
-      Decision::Ask => match ask(server, session, p, &action).await {
+      Decision::Ask => match ask(server, session, rules, p, &action).await {
         Answer::Once => {}
         Answer::Always(pattern) => {
           let (key, _) = action.permission(&cwd);
@@ -450,7 +519,62 @@ async fn run_tools(
     let out = action.run(ctx_for(server, session, &p.acp)).await;
     finish(server, session, p, out);
   }
-  !rejected
+  if rejected {
+    Flow::Stop
+  } else if switched {
+    Flow::Switched
+  } else {
+    Flow::Continue
+  }
+}
+
+/// Plan mode's exit: the plan file goes to the user on the host's plan approval card (`acpira/planApproval`, and the
+/// `switch_mode` + `rawInput.plan` shape with `planFilePath`, which `transcript/plans.rs` takes as the whole document).
+/// Some(true) when approved, Some(false) when not, None when there was nothing to ask about
+async fn exit_plan(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, plan: Option<&str>) -> (Output, Option<bool>) {
+  if session.state.lock().mode != modes::PLAN {
+    return (Output::error("The session is not in Plan mode, so there is no plan to submit."), None);
+  }
+  let path = server.plan_file(&session.id);
+  if let Some(text) = plan {
+    let written = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|_| std::fs::write(&path, text));
+    if let Err(e) = written {
+      return (Output::error(format!("Could not write the plan to {}: {e}", path.display())), None);
+    }
+  }
+  let text = std::fs::read_to_string(&path).unwrap_or_default();
+  if text.trim().is_empty() {
+    return (Output::error(format!("There is no plan yet. Write it to {} (or pass it as \"plan\"), then call exit_plan again.", path.display())), None);
+  }
+  let raw_input = json!({ "plan": text, "planFilePath": path });
+  let meta = json!({ "acpira/planApproval": true });
+  let title = "Exit plan mode";
+  server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "title": title, "kind": "switch_mode", "rawInput": raw_input, "_meta": meta }));
+  let request = json!({
+    "sessionId": session.id,
+    "toolCall": { "toolCallId": p.acp, "title": title, "kind": "switch_mode", "status": "pending", "rawInput": raw_input, "_meta": meta },
+    // The webview localizes these two labels on a plan card
+    "options": [
+      { "optionId": "approved", "name": "Build", "kind": "allow_once" },
+      { "optionId": "rejected", "name": "Revise", "kind": "reject_once" },
+    ],
+  });
+  let answer = server.conn().request("session/request_permission", request).await;
+  let approved = answer.is_ok_and(|r| {
+    r.pointer("/outcome/outcome").and_then(Value::as_str) == Some("selected") && r.pointer("/outcome/optionId").and_then(Value::as_str) == Some("approved")
+  });
+  if !approved {
+    let out = Output::error("The user did not approve the plan yet. Stop here and wait for their feedback, then revise the plan file and call exit_plan again.");
+    return (out, Some(false));
+  }
+  {
+    let mut st = session.state.lock();
+    st.mode = modes::AGENT.to_owned();
+    st.announced = modes::AGENT.to_owned();
+  }
+  server.update(&session.id, json!({ "sessionUpdate": "current_mode_update", "currentModeId": modes::AGENT }));
+  let model = format!("The user approved the plan. {} Carry out the plan now, keeping the to-do list current.", modes::get(modes::AGENT).overlay(&path));
+  (Output { model, is_error: false, content: vec![], raw_output: Some(json!({ "approved": true })) }, Some(true))
 }
 
 fn ctx_for(server: &Arc<Server>, session: &Arc<Session>, acp: &str) -> Ctx {
@@ -475,13 +599,17 @@ enum Answer {
 }
 
 /// Ask the user through ACP
-async fn ask(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, action: &Action) -> Answer {
+async fn ask(server: &Arc<Server>, session: &Arc<Session>, rules: &Rules, p: &Prepared, action: &Action) -> Answer {
   let pres = action.describe(&session.cwd);
   let raw_input = match action {
     Action::Bash { command, .. } => json!({ "command": command }),
     _ => serde_json::from_str(&p.call.arguments).unwrap_or(Value::Null),
   };
-  let always = action.always();
+  // Offered only when the rule would hold: a mode rule or the guard can still ask after it
+  let always = action.always().filter(|(pattern, _)| {
+    let rule = Rule::new(action.permission(&session.cwd).0, pattern, Decision::Allow);
+    rules.decide_with(session, action, Some(&rule)) == Decision::Allow
+  });
   let mut options = vec![json!({ "optionId": "allow", "name": "Allow", "kind": "allow_once" })];
   if let Some((_, label)) = &always {
     options.push(json!({ "optionId": "always", "name": label, "kind": "allow_always" }));

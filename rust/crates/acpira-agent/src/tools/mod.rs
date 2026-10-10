@@ -6,6 +6,7 @@ pub mod bash;
 pub mod edit;
 pub mod files;
 pub mod names;
+pub mod plan;
 pub mod read;
 pub mod search;
 pub mod todo;
@@ -39,6 +40,8 @@ pub enum Action {
   Glob { pattern: String, path: PathBuf },
   List { path: PathBuf, ignore: Vec<String> },
   Todo { todos: Vec<todo::Todo> },
+  /// Plan mode's approval request; the turn runs it itself
+  ExitPlan { plan: Option<String> },
 }
 
 /// How a call reads on the tool card and in the permission request
@@ -84,10 +87,25 @@ pub const GREP: &str = "grep";
 pub const GLOB: &str = "glob";
 pub const LIST: &str = "list";
 pub const TODO: &str = "todo";
+pub const EXIT_PLAN: &str = "exit_plan";
 
-/// The tool set of a turn, in `names::ALL` order
-pub fn specs() -> Vec<ToolSpec> {
-  vec![read::spec(), edit::write_spec(), edit::spec(), bash::spec(), search::grep_spec(), search::glob_spec(), search::list_spec(), todo::spec()]
+/// The specs of these tools, in the given order (a mode's tool set)
+pub fn specs(names: &[&str]) -> Vec<ToolSpec> {
+  names
+    .iter()
+    .filter_map(|n| match *n {
+      READ => Some(read::spec()),
+      WRITE => Some(edit::write_spec()),
+      EDIT => Some(edit::spec()),
+      BASH => Some(bash::spec()),
+      GREP => Some(search::grep_spec()),
+      GLOB => Some(search::glob_spec()),
+      LIST => Some(search::list_spec()),
+      TODO => Some(todo::spec()),
+      EXIT_PLAN => Some(plan::spec()),
+      _ => None,
+    })
+    .collect()
 }
 
 /// Validate a call of a tool by its real name (`names::resolve` first); the error goes back to the model as the result
@@ -101,6 +119,7 @@ pub fn prepare(name: &str, args: &Value, cwd: &Path) -> Result<Action, String> {
     GLOB => search::prepare_glob(args, cwd),
     LIST => search::prepare_list(args, cwd),
     TODO => todo::prepare(args),
+    EXIT_PLAN => plan::prepare(args),
     other => Err(format!("Unknown tool \"{other}\". Available tools: {}.", names::ALL.join(", "))),
   }
 }
@@ -108,7 +127,7 @@ pub fn prepare(name: &str, args: &Value, cwd: &Path) -> Result<Action, String> {
 impl Action {
   /// Changes nothing on disk: such calls run side by side
   pub fn read_only(&self) -> bool {
-    !matches!(self, Action::Write { .. } | Action::Bash { .. })
+    !matches!(self, Action::Write { .. } | Action::Bash { .. } | Action::ExitPlan { .. })
   }
 
   /// The permission key and the target the rules match (`permission.rs`)
@@ -119,6 +138,8 @@ impl Action {
       Action::Write { path, .. } => (perm::EDIT, path_target(path, cwd)),
       Action::Bash { command, .. } => (perm::BASH, command.clone()),
       Action::Todo { .. } => (perm::TODO, "*".to_owned()),
+      // Never evaluated: the approval card is the permission
+      Action::ExitPlan { .. } => ("plan", "*".to_owned()),
     }
   }
 
@@ -154,6 +175,8 @@ impl Action {
       Action::List { path, .. } => Presentation { title: format!("List {}", shown(path, cwd)), kind: "read", locations: vec![path.clone()], content: vec![] },
       // The host knows a to-do update by this exact title
       Action::Todo { .. } => Presentation { title: TODO.to_owned(), kind: "other", locations: vec![], content: vec![] },
+      // The webview localizes this exact heading
+      Action::ExitPlan { .. } => Presentation { title: "Exit plan mode".to_owned(), kind: "switch_mode", locations: vec![], content: vec![] },
     }
   }
 

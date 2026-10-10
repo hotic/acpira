@@ -1,6 +1,6 @@
 //! Permission rules, after OpenCode's semantics: a rule is (permission, pattern, decision), rules come in layers
-//! (defaults, the mode, the approval level, what the user allowed during the session) and the last rule that matches
-//! wins. A path pattern is matched against the workspace-relative path (absolute outside the workspace), a command
+//! (defaults, the approval level, what the user allowed during the session, then the mode, whose restrictions hold
+//! over everything before it) and the last rule that matches wins. A path pattern is matched against the workspace-relative path (absolute outside the workspace), a command
 //! pattern against the whole command line. Edits to the agent's own configuration always ask, whatever the layers say
 
 use std::path::{Path, PathBuf};
