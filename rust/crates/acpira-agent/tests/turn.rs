@@ -225,6 +225,50 @@ async fn a_rejected_key_says_so() {
   assert!(e.message.contains("rejected the API key") && e.message.contains("bad key"), "{}", e.message);
 }
 
+#[tokio::test]
+async fn an_interrupted_stream_is_retried_and_only_the_retry_counts() {
+  // A gateway ending a 200 stream with an error event after some output (seen on a Claude route, 2026-10-11)
+  let (h, server, sid) = setup(json!([{ "id": "m1" }])).await;
+  server.push(Reply::Sse(vec![
+    mock::delta(json!({ "role": "assistant", "content": "half an ans" })),
+    json!({ "error": { "message": "response stream interrupted" } }),
+  ]));
+  server.push(mock::text("the whole answer"));
+  let started = Instant::now();
+  let r = prompt(&h, &sid, "hi").await;
+  assert_eq!(r["stopReason"], "end_turn");
+  assert!(started.elapsed() >= Duration::from_millis(900), "the retry waits about a second");
+  assert_eq!(server.requests().len(), 2);
+  let ups = h.updates();
+  let notice = ups.iter().find(|u| u["sessionUpdate"] == "session_info_update").expect("a retry notice");
+  let failure = &notice["_meta"]["jetbrains"]["air"]["sessionFailure"];
+  assert_eq!((failure["severity"].as_str(), failure["category"].as_str()), (Some("warning"), Some("service")));
+  assert!(failure["title"].as_str().unwrap().contains("attempt 2 of 4"), "{failure}");
+
+  // The next request carries the retried answer only, and the log keeps both attempts
+  server.push(mock::text("ok"));
+  prompt(&h, &sid, "next").await;
+  let msgs = server.requests()[2].body["messages"].as_array().unwrap().clone();
+  assert_eq!(msgs[2], json!({ "role": "assistant", "content": "the whole answer" }));
+  let log = std::fs::read_to_string(h.home().join("agent").join("sessions").join(format!("{sid}.jsonl"))).unwrap();
+  let reqs: Vec<Value> = log.lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).filter(|e| e["type"] == "request").collect();
+  assert!(reqs[0]["error"].as_str().unwrap().contains("interrupted") && reqs[0].get("attempt").is_none());
+  assert_eq!((reqs[1]["attempt"].as_u64(), reqs[1].get("error")), (Some(2), None));
+}
+
+#[tokio::test]
+async fn a_bad_request_is_not_retried() {
+  let (h, server, sid) = setup(json!([{ "id": "m1" }])).await;
+  server.push(Reply::Status(400, r#"{"error":{"message":"unknown parameter"}}"#.into()));
+  let e = prompt_err(&h, &sid).await;
+  assert!(e.contains("unknown parameter"), "{e}");
+  assert_eq!(server.requests().len(), 1);
+}
+
+async fn prompt_err(h: &Harness, sid: &str) -> String {
+  h.conn.request("session/prompt", json!({ "sessionId": sid, "prompt": [{ "type": "text", "text": "hi" }] })).await.unwrap_err().message
+}
+
 fn tool_result(server: &MockModel, request: usize, nth_from_end: usize) -> String {
   let msgs = server.requests()[request].body["messages"].as_array().unwrap().clone();
   msgs[msgs.len() - 1 - nth_from_end]["content"].as_str().unwrap().to_owned()
