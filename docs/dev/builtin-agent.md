@@ -12,14 +12,14 @@ Acpira's own agent (`acpira`), for models that have no official harness of their
 ## ACP surface
 
 - `initialize` advertises `loadSession`, `sessionCapabilities.list` and `resume`, and image plus embedded-context prompts.
-- Modes are `agent` and `plan`. Config options are the model select (every usable model, value `<source id>/<model id>`, the source's display name as description), an effort select when the current model has levels (default `high`, else the strongest), and the approval level: `ask` (edits and commands ask), `auto-edit` (edits run, commands ask) and `full` (everything runs). Edits to the agent's own configuration always ask, even under `full`: `providers.json`, `secrets.json`, the prompt override folders and `.agents/hooks.json`.
+- Modes are `agent` and `plan`. Both offer the same tools (`modes::TOOLS`, `exit_plan` included; outside Plan mode it answers with an error), so a mode switch never changes the request prefix. Config options are the model select (every usable model, value `<source id>/<model id>`, the source's display name as description), an effort select when the current model has levels (default `high`, else the strongest), and the approval level: `ask` (edits and commands ask), `auto-edit` (edits run, commands ask) and `full` (everything runs). Edits to the agent's own configuration always ask, even under `full`: `providers.json`, `secrets.json`, the prompt override folders and `.agents/hooks.json`.
 - Permission rules follow OpenCode's semantics: layers of (permission, pattern, decision) rules (defaults, approval level, what the user allowed in the session, then the mode), last match wins. Reading the session's `outputs/` never asks.
 - The host labels the model options by source (`model_sources.rs`, the `acpira` arm), so two sources offering a model with the same name stay two rows in the picker.
 - Cancelling ends the turn with `cancelled` at once and sends nothing afterwards. The tool's process group is killed; a model call still waiting for its first chunk is dropped.
 
 ## Plan mode
 
-Plan mode allows writing only the session's `plan.md`, whatever the approval level. `exit_plan` sends the plan through `session/request_permission` with `_meta["acpira/planApproval"]` and a `switch_mode` tool call carrying `rawInput.plan` and `planFilePath`, so the host's existing plan card takes it unchanged. The tool call is titled `Exit plan mode` from its first update, which the webview localizes. Approving switches to Agent mode inside the same turn and the model carries the plan out with Agent mode's tools. Refusing ends the turn and the plan stays in place for revision. The mode change reaches the model as a reminder in the next user message, never as a system prompt change.
+Plan mode allows writing only the session's `plan.md`, whatever the approval level. The model writes the plan there with `write` / `edit`; `exit_plan` takes no arguments (a `plan` argument is still accepted from models that pass one) and sends the plan through `session/request_permission` with `_meta["acpira/planApproval"]` and a `switch_mode` tool call carrying `rawInput.plan` and `planFilePath`, so the host's existing plan card takes it unchanged. The tool call is titled `Exit plan mode` from its first update, which the webview localizes. Approving switches to Agent mode inside the same turn and the model carries the plan out with Agent mode's tools. Refusing ends the turn and the plan stays in place for revision. The mode change reaches the model as a reminder in the next user message, never as a system prompt change.
 
 ## Session log
 
@@ -32,7 +32,7 @@ Plan mode allows writing only the session's `plan.md`, whatever the approval lev
 | `update` | A `session/update` as sent, for replay; streamed text and terminal output merged per block |
 | `state` | Mode, model, effort and approval after a change |
 | `prompt` | The system prompt whenever it was composed: variant, version, digest, text |
-| `request` | One per model call: model, source, format, prompt variant / version / digest, `policies.outputBudget`, usage (input, output, cacheRead, cacheWrite, reasoning), `cost` at list prices, `ms`, then `stop` or `error`. A call cut off by a cancel is recorded with stop `Cancelled` |
+| `request` | One per model call: model, source, format, prompt variant / version / digest, `policies.outputBudget`, usage (input, output, cacheRead, cacheWrite, reasoning), `cost` at list prices, `ms`, then `stop` or `error`. A call cut off by a cancel is recorded with stop `Cancelled`. A provider that reports 0 prompt tokens gets an estimate from the request's size (about four bytes a token, a thousand per image), marked `usage.inputEstimated` |
 | `view` | `changed` (any of `model`, `prompt`, `tools`), `from`, `to`: the request prefix changed between two calls |
 
 - The file is created on the first event that needs it; the `session` and `prompt` prelude waits until then, so an unused session leaves nothing behind.
@@ -43,6 +43,7 @@ Plan mode allows writing only the session's `plan.md`, whatever the approval lev
 
 ## Requests, prompt caching and cost
 
+- The base prompt (`prompt/builtin/base.md`, version 2) is original text: working habits, tool use, honesty (a command is reported only after a tool ran it, even when its output is predictable), care with irreversible actions and the user's uncommitted changes, and answer style.
 - The system prompt is composed once per session from the base, a family variant, the user's and the project's same-name files under `.agents/acpira/prompts/`, AGENTS.md and the environment. It is composed again only when a model switch selects another variant.
 - Between two ordinary calls the request prefix stays byte for byte: earlier messages, tools and model do not change. Anything that does change it is a `view` event in the log. The engine scenarios assert exactly this pairing.
 - Tool output above 2000 lines or 50 KB (OpenCode's limits) is saved under `outputs/`; the model gets a preview, what was cut, and the path. Command output keeps head and tail. The tool card shows the whole output.
@@ -74,12 +75,14 @@ Verified 2026-10-10 on Windows 11 (PowerShell 5.1.26100.8115, code page 936), wi
 
 Verified 2026-10-11 (acpira 1.9.1) through an OpenAI-compatible gateway, one `openai-chat` source with `scripts/probe-agent-host.ts acpira --home DIR` (DIR holds `providers.json` and `secrets.json`; a `--home` root is kept after the run). `--shell --attach` and `--write --plan` run separately, since the click-through approver stands down under `--write` / `--plan` until the scenario has answered its own card.
 
-- `minimax-m3` and `gpt-6-luna`: all checks passed (pong, text attachment, a `bash` row with its plain-text output, an edit behind a permission card, a plan card linked to its plan document and rejected without a write). `glm-5.3-flash` passed the same checks; in one run it answered the shell prompt with the expected text without calling `bash`.
-- Streaming text and reasoning, tool calls, usage and cost records all came through. `gpt-6-luna` reported cache reads (10752 of 16166 input tokens over 8 calls); `glm-5.3-flash` reported none on a 2.3k-token prefix, and this gateway returns `prompt_tokens: 0` for `minimax-m3`, so its input count is 0 in the log.
-- Switching to Plan mode adds `exit_plan` to the tools, which changes the request prefix (logged as a `view` event with `changed: ["tools"]`), so the first Plan call does not hit the cache.
-- The plan card's permission title reads `Approval needed: Switch mode Exit plan mode` (host verb + tool title); the webview does not show the title of a card bound to a plan, so it only shows in probe output.
+- `minimax-m3`, `gpt-6-luna` and `glm-5.3-flash` pass every check: pong, text attachment, a `bash` row with its plain-text output, an edit behind a permission card, a plan card titled `Approval needed: Exit plan mode` linked to its plan document and rejected without a write. Streaming text and reasoning, tool calls, usage and cost records all come through.
+- Honesty: right after a "reply with only that word" turn, asked to run `echo acpira-shell-ok`, `glm-5.3-flash` answered without running it 2 times in 15 under the version 1 base prompt and 0 in 15 under version 2 (a command with unpredictable output: 10 of 10 ran under both).
+- Caches: `gpt-6-luna` and `glm-5.3` report cache reads on a repeated prefix; `glm-5.3-flash` only once the prefix passes roughly 2.5k tokens (none at 2.3k, 2176 at 3.1k). Entering Plan mode kept `gpt-6-luna`'s cache (1792 read on the first Plan call; 0 before the tool set was shared between modes).
+- This gateway streams `minimax-m3` usage with every prompt count at 0 (its non-streamed answers carry real counts), so those calls are logged with `inputEstimated`.
+- Anthropic Messages: `claude-sonnet-5.5` on the gateway's `/v1/messages` passes the same checks, picks the `claude` variant, and reads the cache from the second call on (about 4100 of 4200 input tokens). Signed thinking blocks replay correctly within a tool loop (a captured request replayed with and without them both succeeded).
+- The same endpoint sometimes ends a Claude stream with an SSE `error` event (`response stream interrupted`, `api_error`) right as a tool call starts. It follows the request, not chance: one captured request failed on 9 of 9 replays whenever the answer was a `write` then `exit_plan`, and none of 5 once `exit_plan` lost its optional `plan` parameter. After that change it still happened in 1 of 3 Plan runs (a `list` call after thinking). The turn ends with the error and the `request` record keeps it; retrying an interrupted stream is P1 work.
 
 ## Not verified yet
 
-- The Anthropic Messages format against a real endpoint, and the DeepSeek / Kimi variants against their own models (the gateway had no usable route for them at the time).
+- The DeepSeek and Kimi variants against their own models (the gateway had no usable route for them on 2026-10-11).
 - Release binary size and the agent's RSS during a turn have not been measured.
