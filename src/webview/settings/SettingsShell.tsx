@@ -22,7 +22,7 @@ import { AgentPage } from './AgentPage';
 import { SharedPage, type SharedState } from './SharedPage';
 import { SubagentsPage } from './SubagentsPage';
 import type { SharedAction } from '@shared/sharedConfig';
-import type { ProviderAction } from '@shared/providers';
+import type { ProviderAction, ProviderProbe } from '@shared/providers';
 import type { ProvidersState } from './ProvidersSection';
 import { Page, PageHeader } from './controls';
 
@@ -58,6 +58,8 @@ export interface SettingsHandlers {
   // The built-in agent's model sources: read them, apply an edit (the reply is the fresh view)
   providers?: () => void;
   providerAction?: (action: ProviderAction) => void;
+  // A network question about a source; the answer lands in ProvidersState.probes under this id
+  providerProbe?: (id: string, probe: ProviderProbe) => void;
   // Subagents page: the list it showed and the list it wants; the host applies only the difference to the shared file,
   // so another window's edits made meanwhile survive (relay/roster.rs). Without it the page writes the whole list
   saveSubagents?: (base: SubagentPersona[], next: SubagentPersona[]) => void;

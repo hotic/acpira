@@ -194,7 +194,8 @@ export function App() {
         case 'settings': setSettings(m.settings); setLocale(m.locale); setLoc(m.locale); break;
         case 'inventory': setInventories(inv => ({ ...inv, [m.agent]: m.inventory })); break;
         case 'shared': setShared({ view: m.view, error: m.error }); break;
-        case 'providers': setProviders({ view: m.view, error: m.error }); break;
+        case 'providers': setProviders(s => ({ view: m.view, error: m.error, probes: s?.probes })); break;
+        case 'providerProbed': setProviders(s => s && ({ ...s, probes: { ...s.probes, [m.id]: m.outcome } })); break;
         case 'controls':
           controlsAsked.current.delete(m.agent);
           setControls(c => ({ ...c, [m.agent]: m.controls }));
@@ -333,6 +334,7 @@ export function App() {
     sharedAction: action => post({ type: 'sharedAction', action }),
     providers: () => post({ type: 'providers' }),
     providerAction: action => post({ type: 'providerAction', action }),
+    providerProbe: (id, probe) => post({ type: 'providerProbe', id, probe }),
   }), []);
 
   cwdRef.current = session?.cwd ?? init?.cwd ?? '';

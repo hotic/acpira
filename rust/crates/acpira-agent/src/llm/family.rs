@@ -125,6 +125,11 @@ const RULES: &[(&[&str], Family)] = &[
 /// OpenRouter's request shape wins over the model's own family for the thinking switch (it translates per upstream)
 const OPENROUTER: &str = "openrouter";
 
+/// Every family a model can be pinned to, the generic one first (the settings page's family select)
+pub fn names() -> Vec<&'static str> {
+  std::iter::once(GENERIC.name).chain(RULES.iter().map(|(_, f)| f.name)).collect()
+}
+
 pub fn by_name(name: &str) -> Option<Family> {
   if name == GENERIC.name {
     return Some(GENERIC);

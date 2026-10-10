@@ -240,6 +240,76 @@ pub struct ProvidersView {
   pub providers: Vec<ProviderView>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub error: Option<String>,
+  /// What a new source can start from (the agent's table, `acpira_agent::llm::presets`)
+  #[serde(default)]
+  pub presets: Vec<Preset>,
+  /// The families a model can be pinned to (`acpira_agent::llm::family::names`)
+  #[serde(default)]
+  pub families: Vec<String>,
+}
+
+/// A known service a new source can start from; `custom` has an empty URL
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Preset {
+  pub id: String,
+  pub name: String,
+  pub format: String,
+  pub base_url: String,
+  /// Where the service hands out API keys
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub key_url: Option<String>,
+  /// Runs on this machine and takes no key (Ollama, LM Studio)
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub local: bool,
+}
+
+/// A network question from the settings page; none of them changes providers.json. `key`: a key typed into the form
+/// and not saved yet; absent uses the stored key of the source with this id
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ProviderProbe {
+  /// The source's models with their metadata (free: reads the model list)
+  Models {
+    provider: Provider,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key: Option<String>,
+  },
+  /// Whether the address and key work (free: reads the model list)
+  Check {
+    provider: Provider,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key: Option<String>,
+  },
+  /// One tiny real call to a model (spends a few tokens)
+  Test {
+    provider: Provider,
+    model: ProviderModel,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key: Option<String>,
+  },
+  /// Model servers running on this machine
+  Local,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ProbeOutcome {
+  Models { models: Vec<ProviderModel> },
+  Check { count: usize },
+  Test { ms: u64, text: String },
+  Local { servers: Vec<LocalSource> },
+  Failed { error: String },
+}
+
+/// A local model server found by `ProviderProbe::Local`, ready to save as a source
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalSource {
+  pub preset: String,
+  pub name: String,
+  pub base_url: String,
+  pub models: Vec<ProviderModel>,
 }
 
 /// An edit from the settings page; the reply is the fresh view

@@ -5,8 +5,11 @@ import type { AgentInfo } from '@shared/transcript';
 import type { AgentInventory } from '@shared/inventory';
 import type { AgentInstallProgress } from '@shared/protocol';
 import { DEFAULT_SETTINGS } from '@shared/settings';
+import { newModel, type ProviderModel, type ProviderView } from '@shared/providers';
 import { setLocale, t } from '../i18n';
 import { AgentPage } from './AgentPage';
+import { fmtTokens, ModelRow, parseTokens } from './ProviderModel';
+import type { ProvidersState } from './ProvidersSection';
 import type { SettingsHandlers } from './SettingsShell';
 
 const handlers: SettingsHandlers = {
@@ -118,5 +121,59 @@ describe('in-app agent install', () => {
   it('offers no terminal fallback when the host has none', () => {
     expect(renderAgent(agent)).not.toContain('Run in terminal');
     expect(renderAgent(agent, {}, undefined, withTerminal)).toContain('Run in terminal');
+  });
+});
+
+describe('built-in agent model sources', () => {
+  const model = (id: string, extra: Partial<ProviderModel> = {}): ProviderModel => ({ ...newModel(id), ...extra });
+  const sources: ProviderView[] = [
+    { id: 'deepseek', name: 'DeepSeek', preset: 'deepseek', format: 'openai-chat', baseUrl: 'https://api.deepseek.com/v1', fullUrl: false, enabled: true, hasKey: true,
+      models: [model('deepseek-v4-flash', { name: 'DeepSeek V4 Flash', context: 1_000_000, output: 393_216, efforts: ['low', 'high', 'max'], estimated: ['output'] })] },
+    { id: 'openrouter', name: 'OpenRouter', preset: 'openrouter', format: 'openai-chat', baseUrl: 'https://openrouter.ai/api/v1', fullUrl: false, enabled: false, hasKey: false,
+      models: [model('moonshotai/kimi-k3', { input: ['text', 'image'], context: 262_144 })] },
+  ];
+  const state: ProvidersState = { view: { providers: sources, presets: [], families: ['generic', 'deepseek'] } };
+  const builtin: AgentInfo = { id: 'acpira', name: 'Acpira', available: true };
+  const render = () => renderToStaticMarkup(createElement(AgentPage, {
+    agent: builtin, accounts: [], settings: DEFAULT_SETTINGS, env: { home: '/preview', cwd: '/preview/project' }, on: { ...handlers, providers: vi.fn(), providerProbe: vi.fn() },
+    providers: state, controls: [],
+  }));
+
+  it('groups the models under their sources instead of the generic model list', () => {
+    const markup = render();
+    expect(markup).toContain('>DeepSeek<');
+    expect(markup).toContain('>OpenRouter<');
+    expect(markup).toContain('https://api.deepseek.com/v1');
+    // A source without a key says so; one with a key does not
+    expect(markup.split('No API key').length - 1).toBe(1);
+    expect(markup).toContain('DeepSeek V4 Flash');
+    const sep = t('common.metaSep');
+    expect(markup).toContain(['Context 1M', 'Output 384k', 'Levels: 3'].join(sep));
+    expect(markup).toContain(['Context 256k', 'Images'].join(sep));
+    // Guessed values carry the marker with the field names in its hint
+    expect(markup).toContain('>Unconfirmed<');
+    expect(markup).toContain('not reported by the endpoint: output.');
+    expect(markup).not.toContain(t('settings.models.desc', { agent: 'Acpira' }));
+  });
+
+  it('opens the editor of a model in place with its values', () => {
+    const markup = renderToStaticMarkup(createElement(ModelRow, {
+      model: sources[0]!.models[0]!, families: ['generic', 'deepseek'], open: true,
+      onToggleOpen: vi.fn(), onChange: vi.fn(), onRemove: vi.fn(), onTest: vi.fn(),
+      test: { pending: false, outcome: { kind: 'failed', error: 'HTTP 401: Invalid API key' } },
+    }));
+    expect(markup).toContain('value="DeepSeek V4 Flash"');
+    expect(markup).toContain('value="1M"');
+    expect(markup).toContain('value="384k"');
+    expect(markup).toContain('value="low, high, max"');
+    expect(markup).toContain('Match automatically');
+    expect(markup).toContain('HTTP 401: Invalid API key');
+    expect(markup).toContain(t('settings.providers.model.test.hint'));
+  });
+
+  it('writes and reads token counts the way the quick values do', () => {
+    expect([131_072, 1_048_576, 1_000_000, 393_216, 128_000, 512].map(fmtTokens)).toEqual(['128k', '1M', '1M', '384k', '128k', '512']);
+    expect(['128k', '1M', '131072', ' 32K ', '1.5m'].map(parseTokens)).toEqual([131_072, 1_048_576, 131_072, 32_768, 1_572_864]);
+    expect(['', 'abc', '0', '-5'].map(parseTokens)).toEqual([undefined, undefined, undefined, undefined]);
   });
 });

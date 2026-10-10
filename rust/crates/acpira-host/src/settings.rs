@@ -185,6 +185,10 @@ impl SettingsCenter {
     self.deps.providers.apply(action).await
   }
 
+  pub async fn provider_probe(&self, probe: acpira_shared::providers::ProviderProbe) -> acpira_shared::providers::ProbeOutcome {
+    self.deps.providers.probe(probe).await
+  }
+
   pub fn subscribe(&self, f: SettingsListener) -> u64 {
     let id = self.seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     self.listeners.lock().push((id, f));

@@ -63,6 +63,46 @@ export interface ProviderView extends Provider {
 export interface ProvidersView {
   providers: ProviderView[];
   error?: string;
+  // What a new source can start from (the agent's table, rust/crates/acpira-agent/src/llm/presets.rs)
+  presets: Preset[];
+  // The families a model can be pinned to (llm/family.rs), the generic one first
+  families: string[];
+}
+
+// A known service a new source can start from; `custom` has an empty URL
+export interface Preset {
+  id: string;
+  name: string;
+  format: ApiFormat | (string & {});
+  baseUrl: string;
+  // Where the service hands out API keys
+  keyUrl?: string;
+  // Runs on this machine and takes no key (Ollama, LM Studio)
+  local?: boolean;
+}
+
+// A network question from the settings page; none changes providers.json. key: typed into the form and not saved yet;
+// absent uses the stored key of the source with this id
+export type ProviderProbe =
+  | { kind: 'models'; provider: Provider; key?: string }
+  | { kind: 'check'; provider: Provider; key?: string }
+  // One tiny real call: spends a few tokens
+  | { kind: 'test'; provider: Provider; model: ProviderModel; key?: string }
+  | { kind: 'local' };
+
+export type ProbeOutcome =
+  | { kind: 'models'; models: ProviderModel[] }
+  | { kind: 'check'; count: number }
+  | { kind: 'test'; ms: number; text: string }
+  | { kind: 'local'; servers: LocalSource[] }
+  | { kind: 'failed'; error: string };
+
+// A model server running on this machine, ready to save as a source
+export interface LocalSource {
+  preset: string;
+  name: string;
+  baseUrl: string;
+  models: ProviderModel[];
 }
 
 // key: absent keeps the stored key, empty removes it

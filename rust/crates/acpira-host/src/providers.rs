@@ -1,6 +1,8 @@
 //! The built-in agent's model sources as the settings page edits them: `<root>/providers.json` (contract in
 //! `acpira_shared::providers`) plus each source's API key in the vault. Every edit re-reads the file under its lock, so
-//! another window's change made meanwhile survives; a file that does not parse is reported and never overwritten
+//! another window's change made meanwhile survives; a file that does not parse is reported and never overwritten. The
+//! page's network questions (list a source's models, check it, test a model, find local servers) are answered here by
+//! the agent crate's discovery code, so paths, headers and field names exist once
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -8,8 +10,10 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow, bail};
 use tokio::fs;
 
+use acpira_agent::llm::discover;
 use acpira_shared::providers::{
-  PROVIDERS_FILE, PROVIDERS_VERSION, Provider, ProviderAction, ProviderView, ProvidersFile, ProvidersView, provider_secret_key,
+  LocalSource, PROVIDERS_FILE, PROVIDERS_VERSION, ProbeOutcome, Provider, ProviderAction, ProviderProbe, ProviderView, ProvidersFile,
+  ProvidersView, provider_secret_key,
 };
 
 use crate::accounts::account_store::FileVault;
@@ -37,14 +41,66 @@ impl ProviderStore {
   pub async fn view(&self) -> ProvidersView {
     let file = match self.read().await {
       Ok(f) => f,
-      Err(error) => return ProvidersView { providers: vec![], error: Some(error) },
+      Err(error) => return ProvidersView { providers: vec![], error: Some(error), ..tables() },
     };
     let mut providers = Vec::with_capacity(file.providers.len());
     for provider in file.providers {
       let has_key = self.vault.get(&provider_secret_key(&provider.id)).await.ok().flatten().is_some_and(|k| !k.is_empty());
       providers.push(ProviderView { provider, has_key });
     }
-    ProvidersView { providers, error: None }
+    ProvidersView { providers, error: None, ..tables() }
+  }
+
+  /// The key a probe uses: one typed into the form, else the stored key of the source with that id
+  async fn key_for(&self, provider: &Provider, typed: Option<String>) -> Option<String> {
+    if let Some(k) = typed.map(|k| k.trim().to_owned()).filter(|k| !k.is_empty()) {
+      return Some(k);
+    }
+    if provider.id.is_empty() {
+      return None;
+    }
+    self.vault.get(&provider_secret_key(&provider.id)).await.ok().flatten().filter(|k| !k.is_empty())
+  }
+
+  /// Answer one of the settings page's network questions; nothing is written
+  pub async fn probe(&self, probe: ProviderProbe) -> ProbeOutcome {
+    let catalog = crate::model_catalog::current();
+    let failed = |e: String| ProbeOutcome::Failed { error: e };
+    let blocking = |f: Box<dyn FnOnce() -> ProbeOutcome + Send>| async move { tokio::task::spawn_blocking(f).await.unwrap_or_else(|e| failed(e.to_string())) };
+    match probe {
+      ProviderProbe::Models { provider, key } => {
+        let key = self.key_for(&provider, key).await;
+        blocking(Box::new(move || match discover::discover(&http(), &normalized(provider), key.as_deref(), &catalog) {
+          Ok(models) => ProbeOutcome::Models { models },
+          Err(e) => failed(e.to_string()),
+        }))
+        .await
+      }
+      ProviderProbe::Check { provider, key } => {
+        let key = self.key_for(&provider, key).await;
+        blocking(Box::new(move || match discover::check(&http(), &normalized(provider), key.as_deref()) {
+          Ok(count) => ProbeOutcome::Check { count },
+          Err(e) => failed(e.to_string()),
+        }))
+        .await
+      }
+      ProviderProbe::Test { provider, model, key } => {
+        let key = self.key_for(&provider, key).await;
+        match discover::test(http(), &normalized(provider), &model, key.as_deref()).await {
+          Ok(t) => ProbeOutcome::Test { ms: t.ms, text: t.text },
+          Err(e) => failed(e.to_string()),
+        }
+      }
+      ProviderProbe::Local => {
+        blocking(Box::new(move || ProbeOutcome::Local {
+          servers: discover::probe_local(&catalog)
+            .into_iter()
+            .map(|s| LocalSource { preset: s.preset.into(), name: s.name.into(), base_url: s.base_url, models: s.models })
+            .collect(),
+        }))
+        .await
+      }
+    }
   }
 
   pub async fn apply(&self, action: ProviderAction) -> Result<()> {
@@ -85,6 +141,34 @@ impl ProviderStore {
     })
     .await
   }
+}
+
+/// The agent's tables the page builds its forms from
+fn tables() -> ProvidersView {
+  ProvidersView {
+    presets: acpira_agent::llm::presets::presets(),
+    families: acpira_agent::llm::family::names().into_iter().map(str::to_owned).collect(),
+    ..Default::default()
+  }
+}
+
+/// The engine's HTTP client for discovery: its proxy, a bounded wait (a test call answers in seconds)
+fn http() -> ureq::Agent {
+  crate::net_proxy::ureq_config(
+    ureq::Agent::config_builder()
+      .http_status_as_error(false)
+      .timeout_connect(Some(std::time::Duration::from_secs(15)))
+      .timeout_global(Some(std::time::Duration::from_secs(90)))
+      .user_agent(format!("acpira/{}", env!("CARGO_PKG_VERSION"))),
+  )
+  .build()
+  .into()
+}
+
+/// A form draft as the file would hold it (trimmed URL)
+fn normalized(mut p: Provider) -> Provider {
+  p.base_url = p.base_url.trim().trim_end_matches('/').to_owned();
+  p
 }
 
 /// Validate and insert / replace one entry; returns its id
