@@ -278,6 +278,10 @@ impl AcpSession {
       let meta_desc = if v1 { meta_str(meta.and_then(|m| m.get("description"))) } else { None };
       let default_to_no = default_to_no(&req);
       let title = meta_title.unwrap_or_else(|| match &tool {
+        // A mode switch names itself ("Exit plan mode"), so the verb would only repeat it
+        Some(tc) if tc.kind == ToolKind::SwitchMode && tc.target.as_deref().is_some_and(|x| !x.is_empty()) => {
+          tp("host.needApprovalFor", &[("what", tc.target.as_deref().unwrap_or_default())])
+        }
         Some(tc) => {
           let target =
             if tc.kind != ToolKind::Execute { tc.target.as_ref().map(|x| format!(" {x}")).unwrap_or_default() } else { String::new() };
