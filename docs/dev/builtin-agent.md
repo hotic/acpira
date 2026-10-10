@@ -12,7 +12,7 @@ Acpira's own agent (`acpira`), for models that have no official harness of their
 ## ACP surface
 
 - `initialize` advertises `loadSession`, `sessionCapabilities.list` and `resume`, and image plus embedded-context prompts.
-- Modes are `agent` and `plan`. Both offer the same tools (`modes::TOOLS`, `exit_plan` included; outside Plan mode it answers with an error), so a mode switch never changes the request prefix. Config options are the model select (every usable model, value `<source id>/<model id>`, the source's display name as description), an effort select when the current model has levels (default `high`, else the strongest; a model added by id with none takes the catalogue's, as discovery would have filled them, unless its thinking is off. Without a level and with thinking on `auto` no thinking switch is sent at all, which on Claude means no thinking), and the approval level: `ask` (edits and commands ask), `auto-edit` (edits run, commands ask) and `full` (everything runs). Edits to the agent's own configuration always ask, even under `full`: `providers.json`, `secrets.json`, the prompt override folders and `.agents/hooks.json`.
+- Modes are `agent` and `plan`. Both offer the same tools (`modes::TOOLS`, `exit_plan` included; outside Plan mode it answers with an error), so a mode switch never changes the request prefix. Config options are the model select (every usable model, value `<source id>/<model id>`, the source's display name as description), an effort select when the current model has levels (default: the family's preferred level, `medium` for Claude and `high` for the rest, else the strongest, see the harness comparison below; a model added by id with none takes the catalogue's, as discovery would have filled them, unless its thinking is off. Without a level and with thinking on `auto` no thinking switch is sent at all, which on Claude means no thinking), and the approval level: `ask` (edits and commands ask), `auto-edit` (edits run, commands ask) and `full` (everything runs). Edits to the agent's own configuration always ask, even under `full`: `providers.json`, `secrets.json`, the prompt override folders and `.agents/hooks.json`.
 - Permission rules follow OpenCode's semantics: layers of (permission, pattern, decision) rules (defaults, approval level, what the user allowed in the session, then the mode), last match wins. Reading the session's `outputs/` never asks.
 - The host labels the model options by source (`model_sources.rs`, the `acpira` arm), so two sources offering a model with the same name stay two rows in the picker.
 - Cancelling ends the turn with `cancelled` at once and sends nothing afterwards. The tool's process group is killed; a model call still waiting for its first chunk is dropped.
@@ -83,7 +83,35 @@ Verified 2026-10-11 (acpira 1.9.1) through an OpenAI-compatible gateway, one `op
 - Anthropic Messages: `claude-sonnet-5.5` on the gateway's `/v1/messages` passes the same checks, picks the `claude` variant, and reads the cache from the second call on (about 4100 of 4200 input tokens). Signed thinking blocks replay correctly within a tool loop (a captured request replayed with and without them both succeeded).
 - The same endpoint ends a Claude stream with an SSE `error` event (`response stream interrupted`, `api_error`) right after a `tool_use` block that streams no `input_json_delta`, i.e. a call with empty input (2026-10-11, `claude-sonnet-5.5` and `claude-sonnet-5-5` alike, both answered by the same upstream). It cut every reply opening with an argument-free `list` call, alone or next to another call, so a plain retry failed the same way 4 times running; `disable_parallel_tool_use` changed nothing. Replays of such a request with `list.path` required (the model then passes `"."`) or without `list` succeeded 2 of 2 each. Hence `list` requires `path`, and a cut after a finished call keeps that call (above). The other harnesses never hit it: none of their Claude calls had empty input. The earlier Plan-mode failures (a `write` then `exit_plan` with only an optional `plan` parameter, and a `list` call after thinking) fit the same cause.
 
+## Harness comparison
+
+`scripts/eval/run.ts` runs five tasks (`conf-bugs` eight bug reports, `inv-lots` a feature, `log-perf` a speed fix, `semver-port` a JavaScript-to-Python port, `calc-lang` an interpreter) in a fresh home per run, through a metering proxy in front of the gateway; hidden tests are copied in only after the run. Cost is at catalogue list prices per run, averaged over the five tasks; 1 to 3 runs per cell, 2026-10-11 (acpira 1.9.1), so a single task's difference is noise and only the totals carry signal.
+
+| Model | Harness | Passed | $ / run | Requests / run |
+|---|---|---|---|---|
+| claude-sonnet-5.5 | acpira, effort high | 10/10 | 0.179 | 6.8 |
+| | acpira, effort medium | 10/10 | 0.118 | 6.3 |
+| | acpira, effort low | 10/10 | 0.090 | 4.8 |
+| | OpenCode (sends low) | 5/5 | 0.129 | 6.0 |
+| | Claude Code (sends medium) | 5/5 | 0.180 | 22.4 |
+| | Pi | 5/5 | 0.179 | 5.4 |
+| gpt-6.1-sol | acpira, effort high | 13/15 | 0.363 | 28 |
+| | acpira, effort medium | 2/5 | 0.149 | 18.8 |
+| | Codex | 5/5 | 0.305 | 16.8 |
+| | OpenCode (sends low) | 1/5 | 0.149 | 18.4 |
+| | Pi | 3/4 | 0.204 | 17.0 |
+| deepseek-v4-pro | acpira | 23/29 | 0.095 | 19.7 |
+| | Kimi Code | 4/4 | 0.114 | 12.3 |
+| | OpenCode | 3/5 | 0.076 | 13.4 |
+| | Pi | 5/5 | 0.146 | 28.0 |
+
+- Effort is the largest cost lever on Claude: output tokens fall from 12.7k to 8.0k a run at medium, with every task passing. Claude sessions therefore start at medium (`Family::effort`). On GPT, medium and low lose tasks that high passes, so the other families keep high.
+- GPT-6.1 makes one tool call per reply under every harness; `parallel_tool_calls: true` on a replayed request changed nothing, and a prompt line asking for to-do updates next to other calls left its share of to-do-only replies at 18%. Codex needs fewer requests because one shell call reads several files (`cat` chained with `&&`), one `apply_patch` changes several, and its Responses requests carry the encrypted reasoning forward; acpira speaks Chat Completions to GPT and re-reasons each step (26k output a run against Codex's 18k).
+- DeepSeek's acpira failures are its own: a `semver-port` that returns floats for version numbers (copying JavaScript's number type, 5 runs) and one missed `f(1)(2)` call chain in `calc-lang`. Its long request chains are single `bash` calls smoke-testing the result, also model behaviour.
+- `glm-5.3` and `qwen3.8-max` have only `conf-bugs` and part of `inv-lots`: their gateway routes went down mid-run. On GLM, acpira echoes the running turn's reasoning (the `glm` family, as Zhipu documents for agentic use), which was 61% of the last `inv-lots` request; Pi and OpenCode echo none. This gateway's Qwen usage counts only ~1.7k prompt tokens for requests of about 43k characters, so Qwen costs there are not comparable.
+- Two hidden-test ambiguities were fixed in the task text, not graded around: `calc-lang` accepts `end of input` quoted or not, and `conf-bugs`' README now says an inherited `[DEFAULT]` value is interpolated in the inheriting section (GPT under three harnesses had read it the other way).
+
 ## Not verified yet
 
-- The DeepSeek and Kimi variants against their own models (the gateway had no usable route for them on 2026-10-11).
+- The Kimi variant against a Kimi model (the gateway had no usable route on 2026-10-11). The DeepSeek variant ran on `deepseek-v4-pro` in the harness comparison above.
 - Release binary size and the agent's RSS during a turn have not been measured.

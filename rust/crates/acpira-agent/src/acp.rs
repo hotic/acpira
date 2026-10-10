@@ -351,10 +351,11 @@ fn efforts_of(config: &Config, catalog: &Catalog, pick: Option<&str>) -> Vec<Str
   crate::catalog::lookup(catalog, &m.id).filter(|c| c.reasoning).map(|c| c.efforts.clone()).unwrap_or_default()
 }
 
-/// `high` when offered, else the last (strongest) level
+/// The model family's preferred level when offered, else the last (strongest) level
 fn default_effort(config: &Config, catalog: &Catalog, pick: Option<&str>) -> Option<String> {
   let efforts = efforts_of(config, catalog, pick);
-  efforts.iter().find(|e| *e == "high").or(efforts.last()).cloned()
+  let preferred = pick.and_then(|p| config.find(p)).map(|(p, m)| crate::llm::family::resolve(p, m).effort);
+  efforts.iter().find(|e| Some(e.as_str()) == preferred).or(efforts.last()).cloned()
 }
 
 /// The full configOptions set: the model select (every usable model, labelled with its source), the effort select when
