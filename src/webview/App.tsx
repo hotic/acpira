@@ -18,6 +18,7 @@ import { sameRange, selectionDraft, setEditorCopy, setEditorSelection } from './
 import { updateMainComposer } from './chat/useComposerDraft';
 import type { SettingsPage } from './settings/Nav';
 import type { SharedState } from './settings/SharedPage';
+import type { ProvidersState } from './settings/ProvidersSection';
 
 declare global {
   interface Window { __acpira?: { host: 'sidebar' | 'editor' } }
@@ -108,6 +109,7 @@ export function App() {
   const [chatgptStatus, setChatgptStatus] = useState<ChatGptIntegrationStatus>();
   const [inventories, setInventories] = useState<Partial<Record<AgentId, AgentInventory>>>({});
   const [shared, setShared] = useState<SharedState>();
+  const [providers, setProviders] = useState<ProvidersState>();
   const [controls, setControls] = useState<Partial<Record<AgentId, ConfigControl[]>>>({});
   const controlsAsked = useRef(new Set<string>());
   // The import popover's listing; `agent` ties it to the request it answers so a stale reply can't overwrite a newer request
@@ -192,6 +194,7 @@ export function App() {
         case 'settings': setSettings(m.settings); setLocale(m.locale); setLoc(m.locale); break;
         case 'inventory': setInventories(inv => ({ ...inv, [m.agent]: m.inventory })); break;
         case 'shared': setShared({ view: m.view, error: m.error }); break;
+        case 'providers': setProviders({ view: m.view, error: m.error }); break;
         case 'controls':
           controlsAsked.current.delete(m.agent);
           setControls(c => ({ ...c, [m.agent]: m.controls }));
@@ -328,6 +331,8 @@ export function App() {
     openExternal: url => post({ type: 'openExternal', url }),
     shared: () => post({ type: 'shared' }),
     sharedAction: action => post({ type: 'sharedAction', action }),
+    providers: () => post({ type: 'providers' }),
+    providerAction: action => post({ type: 'providerAction', action }),
   }), []);
 
   cwdRef.current = session?.cwd ?? init?.cwd ?? '';
@@ -351,6 +356,7 @@ export function App() {
         chatgptStatus={chatgptStatus}
         inventories={inventories}
         shared={shared}
+        providers={providers}
         controls={controls}
         refreshing={refreshing}
         env={{ home: init.home, cwd: session?.cwd ?? init.cwd }}

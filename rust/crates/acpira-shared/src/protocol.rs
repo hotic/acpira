@@ -7,6 +7,7 @@ use crate::appearance::Appearance;
 use crate::chatgpt_integration::ChatGptIntegrationStatus;
 use crate::i18n::Locale;
 use crate::inventory::AgentInventory;
+use crate::providers::{ProviderAction, ProvidersView};
 use crate::shared_config::{SharedAction, SharedView};
 use crate::settings::{HiddenMap, SettingsView};
 use crate::transcript::{
@@ -259,6 +260,12 @@ pub enum HostMsg {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
   },
+  /// The built-in agent's model sources; `error` when the action that triggered this reply failed
+  Providers {
+    view: ProvidersView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+  },
   Controls {
     agent: AgentId,
     controls: Vec<ConfigControl>,
@@ -314,6 +321,7 @@ impl HostMsg {
       HostMsg::Settings { .. } => "settings",
       HostMsg::Inventory { .. } => "inventory",
       HostMsg::Shared { .. } => "shared",
+      HostMsg::Providers { .. } => "providers",
       HostMsg::Controls { .. } => "controls",
       HostMsg::Files { .. } => "files",
       HostMsg::NativeSessions { .. } => "nativeSessions",
@@ -614,6 +622,11 @@ pub enum WebviewMsg {
   Shared,
   SharedAction {
     action: SharedAction,
+  },
+  /// The built-in agent's model sources: read them, or apply an edit and get the view back
+  Providers,
+  ProviderAction {
+    action: ProviderAction,
   },
   Controls {
     agent: AgentId,

@@ -17,6 +17,7 @@ use crate::acp::transport::rpc::BoxFuture;
 use crate::agent_ext::agent_ext;
 use crate::inventory::{ScanEnv, ScanInput, scan_inventory};
 use crate::shared_config::{AGENTS, Outcome, Places, SharedConfig};
+use acpira_shared::providers::{ProviderAction, ProvidersView};
 use acpira_shared::shared_config::{SharedAction, SharedView};
 
 pub struct SettingsDeps {
@@ -32,6 +33,8 @@ pub struct SettingsDeps {
   pub shared: Arc<SharedConfig>,
   /// The persona file behind the `subagents` key (`relay/roster.rs`)
   pub roster: Arc<crate::relay::roster::Roster>,
+  /// The built-in agent's model sources (providers.json + their keys)
+  pub providers: Arc<crate::providers::ProviderStore>,
 }
 
 pub type SettingsListener = Arc<dyn Fn(&SettingsView, Locale) + Send + Sync>;
@@ -172,6 +175,14 @@ impl SettingsCenter {
     self.deps.shared.retire(&self.disabled_agents()).await;
     let agents = self.installed_agents().await;
     self.deps.shared.maintain(&self.places(), &agents).await
+  }
+
+  pub async fn providers_view(&self) -> ProvidersView {
+    self.deps.providers.view().await
+  }
+
+  pub async fn provider_action(&self, action: ProviderAction) -> Result<()> {
+    self.deps.providers.apply(action).await
   }
 
   pub fn subscribe(&self, f: SettingsListener) -> u64 {

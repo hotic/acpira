@@ -9,7 +9,7 @@ import { RadioPills } from '../ui/Field';
 import { cn } from '../ui/cn';
 import { t } from '../i18n';
 import { AgentMark } from '../chat/AgentMark';
-import { ItemRow, Note, PathText, Section, SectionAction, SectionDescription, Switch, pathSep, shortPath } from './controls';
+import { inputBox, ItemRow, Note, PathText, Section, SectionAction, SectionDescription, Switch, pathSep, shortPath } from './controls';
 import type { SettingsHandlers } from './SettingsShell';
 
 // The Shared tab: one set of skills, MCP servers and prompts in open files, reaching every agent.
@@ -105,8 +105,6 @@ function NameForm({ label, onSubmit, onCancel, busy }: { label: string; onSubmit
     </div>
   );
 }
-
-const inputBox = 'min-w-0 rounded-md border border-line bg-chip px-3 text-2 text-fg-1 outline-none placeholder:text-fg-3 focus:border-line-strong';
 
 // A row explanation that wraps instead of truncating; these sentences are the point of the row
 const Explain = ({ children }: { children: ReactNode }) => <span className="text-2 text-fg-2 [overflow-wrap:anywhere]">{children}</span>;

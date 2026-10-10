@@ -61,6 +61,9 @@ export function SectionDescription({ children }: { children: ReactNode }) {
 // Titled subgroups own one surface. Their lists inherit it and use separators instead of nested cards.
 const InsetGroupContext = createContext(false);
 
+// A text field on a settings card (inline forms)
+export const inputBox = 'min-w-0 rounded-md border border-line bg-chip px-3 text-2 text-fg-1 outline-none placeholder:text-fg-3 focus:border-line-strong';
+
 // Settings rows share typography and vertical padding. Detail rows reserve two text lines; wrapped content can grow.
 // Inside a Group (or as a section header) the surface owns the horizontal inset, so the row drops its own.
 const GroupContext = createContext(false);
