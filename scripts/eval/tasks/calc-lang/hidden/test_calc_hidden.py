@@ -177,14 +177,18 @@ class Errors(unittest.TestCase):
     def test_return_outside(self):
         self.assertEqual(err("print 1\nreturn 2"), "line 2: return outside function")
 
+    def assertEndOfInput(self, src):
+        # SPEC.md's "(`end of input` instead of a quoted token)" reads either way: quoted or not
+        self.assertIn(err(src), ("line 1: unexpected token 'end of input'", "line 1: unexpected token end of input"))
+
     def test_syntax_errors(self):
-        self.assertEqual(err("print 1 +"), "line 1: unexpected token 'end of input'")
-        self.assertEqual(err("print (1 + 2"), "line 1: unexpected token 'end of input'")
+        self.assertEndOfInput("print 1 +")
+        self.assertEndOfInput("print (1 + 2")
         self.assertEqual(err("let = 3"), "line 1: unexpected token '='")
         self.assertEqual(err("print 1 < 2 < 3"), "line 1: unexpected token '<'")
         self.assertEqual(err('print "abc'), "line 1: unterminated string")
         self.assertEqual(err("print 1\nprint 2 $ 3"), "line 2: unexpected character '$'")
-        self.assertEqual(err("if 1 then print 2"), "line 1: unexpected token 'end of input'")
+        self.assertEndOfInput("if 1 then print 2")
 
     def test_error_stops_program(self):
         with self.assertRaises(CalcError):

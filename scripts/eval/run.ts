@@ -18,6 +18,9 @@ import { type Call, startMeter } from './meter';
 // ACPIRA_SIDECAR_BIN pins the engine under test (otherwise the workspace's debug build, rebuilt before every run)
 
 const TASKS_DIR = resolve(import.meta.dirname, 'tasks');
+// The gateway itself out of capacity (seen 2026-10-11 on every model in turn): a run that failed with one of these says
+// nothing about the harness, so it goes to infra.ndjson instead and is run again on the next launch
+const OUTAGE = /no eligible upstream channel|no route configured for model|rate limited or quota exhausted/;
 const VERIFY_TIMEOUT_MS = 300_000;
 
 function arg(name: string, fallback?: string): string | undefined {
@@ -89,6 +92,9 @@ async function runOne(o: { task: Task; harness: string; model: string; rep: numb
   const acpiraHome = join(dir, 'acpira');
   // A run interrupted before it reported leaves its tree behind; start over from the task's repo
   rmSync(dir, { recursive: true, force: true });
+  // Its dumped bodies too: the numbering restarts with each runner process
+  const bodies = join(o.root, 'bodies');
+  for (const f of existsSync(bodies) ? readdirSync(bodies) : []) if (f.startsWith(`${runId}.`)) rmSync(join(bodies, f));
   for (const d of [work, home, acpiraHome]) mkdirSync(d, { recursive: true });
   cpSync(join(TASKS_DIR, o.task.id, 'repo'), work, { recursive: true });
   sh('git init -q && git add -A && git -c user.name=eval -c user.email=eval@localhost commit -qm "Initial state"', work);
@@ -169,7 +175,9 @@ async function runOne(o: { task: Task; harness: string; model: string; rep: numb
     input: sum('input'), cacheRead: sum('cacheRead'), cacheWrite: sum('cacheWrite'), output: sum('output'), reasoning: sum('reasoning'),
     harnessUsage: v?.usage,
   };
-  appendFileSync(join(o.root, 'results.ndjson'), JSON.stringify(result) + '\n');
+  const outage = !result.pass && mine.some(c => c.error && OUTAGE.test(c.error));
+  appendFileSync(join(o.root, outage ? 'infra.ndjson' : 'results.ndjson'), JSON.stringify(result) + '\n');
+  if (outage) console.log(`[${runId}] gateway outage: recorded in infra.ndjson, not counted`);
   console.log(`[${runId}] pass=${result.pass} tests=${counts.passed}/${counts.total} wall=${wallS}s requests=${result.requests} in=${result.input} cached=${result.cacheRead} out=${result.output} stop=${result.stop}${failure ? ` failure=${failure}` : ''}`);
   return result;
 }
