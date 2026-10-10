@@ -34,7 +34,8 @@ pub struct Ctx {
 pub enum Action {
   Read { path: PathBuf, offset: usize, limit: usize },
   /// The whole file replaced (`write`) or a computed edit (`edit`): `before` None for a new file
-  Write { path: PathBuf, before: Option<String>, after: String, edit: Option<edit::Edit> },
+  /// `edits` empty for a whole-file write
+  Write { path: PathBuf, before: Option<String>, after: String, edits: Vec<edit::Edit> },
   Bash { command: String, workdir: PathBuf, timeout_ms: u64 },
   Grep { pattern: String, path: PathBuf, include: Option<String> },
   Glob { pattern: String, path: PathBuf },
@@ -195,7 +196,7 @@ impl Action {
   pub async fn run(self, ctx: Ctx) -> Output {
     match self {
       Action::Read { path, offset, limit } => read::run(&path, offset, limit, &ctx),
-      Action::Write { path, before, after, edit } => edit::run(&path, before, after, edit, &ctx),
+      Action::Write { path, before, after, edits } => edit::run(&path, before, after, edits, &ctx),
       Action::Bash { command, workdir, timeout_ms } => bash::run(&command, &workdir, timeout_ms, &ctx).await,
       read_only => read_only.run_sync(ctx),
     }
