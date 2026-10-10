@@ -134,7 +134,17 @@ impl Utf8Tail {
   }
 }
 
+/// Windows PowerShell 5.1 writes piped output in the OEM code page (GBK on a Chinese system), which the UTF-8 decoder
+/// below turns into mojibake. Switching the console's output code page first makes PowerShell and the native commands
+/// it starts (they share its hidden console) write UTF-8; `$OutputEncoding` covers text piped into native commands
+#[cfg(windows)]
+const UTF8_PRELUDE: &str = "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding; ";
+
 pub async fn run(command: &str, workdir: &PathBuf, timeout_ms: u64, ctx: &Ctx) -> Output {
+  #[cfg(windows)]
+  let full = format!("{UTF8_PRELUDE}{command}");
+  #[cfg(windows)]
+  let command = full.as_str();
   let (sh, flags) = shell();
   let mut cmd = tokio::process::Command::new(&sh);
   cmd.args(&flags).arg(command).current_dir(workdir).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -294,5 +304,40 @@ mod tests {
     let bytes = "中文".as_bytes();
     assert_eq!(d.push(&bytes[..2]), "");
     assert_eq!(d.push(&bytes[2..]), "中文");
+  }
+}
+
+// Run on a Windows machine (cross-built test binary); PowerShell is the shell there
+#[cfg(all(test, windows))]
+mod windows_tests {
+  use super::*;
+  use std::sync::Arc;
+
+  fn ctx(dir: &Path) -> Ctx {
+    let seen = Arc::new(parking_lot::Mutex::new(String::new()));
+    Ctx { cwd: dir.to_owned(), outputs: dir.join("outputs"), call_id: "b1".into(), progress: Box::new(move |u| seen.lock().push_str(u.to_string().as_str())) }
+  }
+
+  #[tokio::test]
+  async fn chinese_output_is_decoded_from_powershell_and_native_commands() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = run("Write-Output '中文输出'; cmd /c echo 原生命令", &dir.path().to_owned(), 15_000, &ctx(dir.path())).await;
+    assert!(out.model.contains("中文输出") && out.model.contains("原生命令"), "{:?}", out.model);
+  }
+
+  #[tokio::test]
+  async fn a_cancelled_command_takes_its_children_with_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("child-alive");
+    // The child would create the marker after the cancel if it survived
+    let cmd = format!(
+      "Start-Process -NoNewWindow powershell -ArgumentList '-NoProfile','-Command','Start-Sleep 3; New-Item -ItemType File \"{}\"'; Start-Sleep 30",
+      marker.display()
+    );
+    let ctx = ctx(dir.path());
+    let cut = tokio::time::timeout(Duration::from_millis(1500), run(&cmd, &dir.path().to_owned(), 60_000, &ctx)).await;
+    assert!(cut.is_err(), "the command was still running when the turn was cancelled");
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert!(!marker.exists(), "the child process outlived the cancel");
   }
 }
