@@ -26,6 +26,11 @@ pub async fn run(args: &[String]) -> i32 {
     }
   };
   let registry = AgentRegistry::new(&custom);
+  let exe = std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned());
+  let registry = match exe {
+    Some(exe) => registry.with_self_agent(&exe, &root),
+    None => registry,
+  };
   let mut agents = vec![];
   for id in registry.ids().to_vec() {
     let Ok(def) = registry.get(&id) else { continue };

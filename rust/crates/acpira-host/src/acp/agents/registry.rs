@@ -281,6 +281,18 @@ pub fn antigravity(platform: &str) -> AgentDef {
   }
 }
 
+pub const SELF_AGENT_ID: &str = "acpira";
+
+/// The built-in agent: no install, no login, launched as `<engine> agent --home <root>`
+pub fn self_agent(exe: &str, root: &std::path::Path) -> AgentDef {
+  AgentDef {
+    // The agent has no subagents and no login of its own
+    subagents: false,
+    terminal_auth: false,
+    ..base(SELF_AGENT_ID, "Acpira", exe, &["agent", "--home", &root.to_string_lossy()], &[])
+  }
+}
+
 /// Custom agents from the machine-local agents.json (id → definition fragment)
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -381,6 +393,19 @@ impl AgentRegistry {
       listeners: Default::default(),
       next_listener: Default::default(),
     }
+  }
+
+  /// Put the built-in agent (`acpira agent`, served by this very executable) first, unless agents.json defines that id
+  /// itself. `exe` is the engine binary, `root` the data root it serves (passed as `--home`, so every launch path —
+  /// warm pool, cold start, controls probe — reads the same definition)
+  pub fn with_self_agent(mut self, exe: &str, root: &std::path::Path) -> Self {
+    if self.defs.contains_key(SELF_AGENT_ID) {
+      return self;
+    }
+    let def = self_agent(exe, root);
+    self.order.insert(0, def.id.clone());
+    self.defs.insert(def.id.clone(), def);
+    self
   }
 
   pub fn ids(&self) -> &[AgentId] {
@@ -622,5 +647,17 @@ mod tests {
     assert_eq!(r.install("mine"), Some(AgentInstall { command: None, docs: Some("https://x".into()) }));
     assert_eq!(r.install("grok").unwrap().command.unwrap(), "curl -fsSL https://x.ai/cli/install.sh | bash");
     assert!(r.list()[0].available.is_none(), "not probed yet");
+  }
+
+  #[test]
+  fn the_built_in_agent_comes_first_unless_agents_json_defines_it() {
+    let root = std::path::Path::new("/data/acpira");
+    let r = AgentRegistry::with_os(&json!({}), Os::Posix).with_self_agent("/x/acpira", root);
+    assert_eq!(r.ids()[0], SELF_AGENT_ID);
+    let d = r.get(SELF_AGENT_ID).unwrap();
+    assert_eq!((d.command.as_str(), d.args.clone()), ("/x/acpira", vec!["agent".to_owned(), "--home".into(), "/data/acpira".into()]));
+    let custom = AgentRegistry::with_os(&json!({ "acpira": { "command": "/y/other" } }), Os::Posix).with_self_agent("/x/acpira", root);
+    assert_eq!(custom.get(SELF_AGENT_ID).unwrap().command, "/y/other");
+    assert_ne!(custom.ids()[0], SELF_AGENT_ID);
   }
 }
