@@ -242,7 +242,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       st.prompt = Some(s.prompt.clone());
     }
     let context = s.model.context.unwrap_or(DEFAULT_CONTEXT);
-    let request = Request {
+    let mut request = Request {
       model: s.model.id.clone(),
       system: s.system.clone(),
       items: session.state.lock().items.clone(),
@@ -252,6 +252,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       sampling: s.sampling.clone(),
       thinking: s.thinking,
       effort: s.effort.clone(),
+      serial_tools: server.serial_tools.lock().contains(&s.pick),
     };
     log_view(session, &s, &request);
     let approx = approx_input(&request);
@@ -307,6 +308,13 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       log_request(session, &s, started, attempt, None, None, false, Some(&e.to_string()));
       if attempt >= MAX_ATTEMPTS || !retriable(&e) {
         return Err(describe(s.provider.display_name(), &e));
+      }
+      // Some gateways cut a reply as soon as its second tool call starts (seen on a Claude route, 2026-10-11), and the
+      // model makes the same parallel calls again on a plain retry: the retry and every later request of this model ask
+      // for one call per reply, kept on so the cached prefix is invalidated once rather than on every switch
+      if ids.len() > 1 && !request.serial_tools {
+        request.serial_tools = true;
+        server.serial_tools.lock().insert(s.pick.clone());
       }
       // The failed attempt's output is dropped: its tool rows are settled and the next attempt streams afresh
       for acp in ids.drain().map(|(_, acp)| acp) {

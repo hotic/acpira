@@ -84,6 +84,8 @@ pub struct Request {
   pub sampling: Sampling,
   pub thinking: Thinking,
   pub effort: Option<String>,
+  /// At most one tool call per reply: for a route that breaks a reply holding several (`turn.rs`, the retry)
+  pub serial_tools: bool,
 }
 
 /// Token usage of one call. `input` counts every prompt token, cached ones included

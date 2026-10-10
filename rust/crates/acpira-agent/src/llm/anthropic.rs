@@ -107,6 +107,9 @@ pub fn body(req: &Request, family: &Family, origin: &str) -> Value {
   body.insert("messages".into(), Value::Array(messages));
   if !req.tools.is_empty() {
     body.insert("tools".into(), req.tools.iter().map(|t| json!({ "name": t.name, "description": t.description, "input_schema": t.parameters })).collect());
+    if req.serial_tools {
+      body.insert("tool_choice".into(), json!({ "type": "auto", "disable_parallel_tool_use": true }));
+    }
   }
   body.insert("stream".into(), Value::Bool(true));
   let thinking = apply_thinking(&mut body, family, req.thinking, req.effort.as_deref(), max_tokens);
@@ -430,6 +433,7 @@ mod tests {
       sampling: Sampling::default(),
       thinking: Thinking::Auto,
       effort: None,
+      serial_tools: false,
     }
   }
 
@@ -469,8 +473,11 @@ mod tests {
     assert_eq!(b["tools"][0], json!({ "name": "read", "description": "Read", "input_schema": { "type": "object" } }));
     assert_eq!(b["max_tokens"], DEFAULT_MAX_TOKENS);
     // Another model: no thinking, the call rebuilt from its arguments
-    let other = body(&req(items), &claude(), "https://other/v1/messages m");
+    let other = body(&req(items.clone()), &claude(), "https://other/v1/messages m");
     assert_eq!(other["messages"][1]["content"], json!([{ "type": "tool_use", "id": "t1", "name": "read", "input": { "path": "a" } }]));
+    assert!(b.get("tool_choice").is_none());
+    let serial = body(&Request { serial_tools: true, ..req(items) }, &claude(), ORIGIN);
+    assert_eq!(serial["tool_choice"], json!({ "type": "auto", "disable_parallel_tool_use": true }));
   }
 
   #[test]
