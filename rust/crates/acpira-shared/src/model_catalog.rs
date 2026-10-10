@@ -1,6 +1,9 @@
 //! The official model catalogue (models.dev trimmed to first-party vendors) and the reasoning levels it allows. Identity is
 //! resolved from opaque option ids / names by exact normalized match only; the catalogue narrows which effort options are
-//! displayed, the remaining option ids stay the agent's wire values
+//! displayed, the remaining option ids stay the agent's wire values. The built-in agent fills a hand-entered model's
+//! limits from it and prices its requests with it. The snapshot built into the binary is `assets/model-catalog.json`
+//! (`acpira model-catalog --out <file>`); the engine refreshes it daily into `<root>/catalog/models.json`, which the
+//! built-in agent reads too
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::LazyLock;
@@ -14,6 +17,11 @@ use crate::model_shapes::is_model_control;
 use crate::transcript::{ConfigControl, SessionOption, SourceKind};
 
 pub const MODELS_DEV_URL: &str = "https://models.dev/api.json";
+
+/// The trimmed shape's version: a cached file below it lacks fields this build reads and is fetched again
+pub const FORMAT: u32 = 2;
+
+const SNAPSHOT: &str = include_str!("../assets/model-catalog.json");
 
 /// First-party vendors in priority order: an id listed by several keeps the first, so resellers (alibaba) come last
 pub const VENDORS: &[&str] =
@@ -79,6 +87,41 @@ pub struct CatalogModel {
   pub toggle: bool,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub context: Option<u64>,
+  /// Output limit in tokens (`limit.output`)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub output: Option<u64>,
+  /// Takes tool definitions (`tool_call`)
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub tools: bool,
+  /// Accepts images (`modalities.input`)
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub images: bool,
+  /// List prices, USD per million tokens
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub cost: Option<Cost>,
+}
+
+/// USD per million tokens; a cache price the vendor does not list is None
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Cost {
+  pub input: f64,
+  pub output: f64,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub cache_read: Option<f64>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub cache_write: Option<f64>,
+}
+
+impl Cost {
+  /// The list price of one call in USD. `input` counts every prompt token, cached ones included; cached tokens are
+  /// billed at their own price where the vendor lists one, else as plain input
+  pub fn estimate(&self, input: u64, output: u64, cache_read: u64, cache_write: u64) -> f64 {
+    let plain = input.saturating_sub(cache_read + cache_write) as f64;
+    let read = cache_read as f64 * self.cache_read.unwrap_or(self.input);
+    let write = cache_write as f64 * self.cache_write.unwrap_or(self.input);
+    (plain * self.input + read + write + output as f64 * self.output) / 1_000_000.0
+  }
 }
 
 impl CatalogModel {
@@ -100,6 +143,9 @@ impl CatalogModel {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogFile {
+  /// `FORMAT` of the build that wrote it (0 before the field existed)
+  #[serde(default)]
+  pub format: u32,
   pub source: String,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub etag: Option<String>,
@@ -110,14 +156,25 @@ pub struct CatalogFile {
 impl CatalogFile {
   /// One model per line, so a snapshot refresh reviews as a line diff
   pub fn to_json(&self) -> String {
-    let head = serde_json::json!({ "source": self.source, "etag": self.etag, "fetchedAt": self.fetched_at });
+    let head = serde_json::json!({ "format": self.format, "source": self.source, "etag": self.etag, "fetchedAt": self.fetched_at });
     let head = head.to_string();
     let lines: Vec<String> = self.models.iter().map(|m| serde_json::to_string(m).unwrap_or_default()).collect();
     format!("{},\"models\":[\n{}\n]}}\n", &head[..head.len() - 1], lines.join(",\n"))
   }
+
+  /// The catalogue built into the binary
+  pub fn snapshot() -> CatalogFile {
+    serde_json::from_str(SNAPSHOT).unwrap_or_default()
+  }
+
+  /// A cached copy this build can use in place of the snapshot: same format, newer, not empty
+  pub fn supersedes(&self, other: &CatalogFile) -> bool {
+    self.format >= FORMAT && !self.models.is_empty() && self.fetched_at > other.fetched_at
+  }
 }
 
-/// The catalogue subset of models.dev's `api.json`: first-party vendors, reasoning options, context window
+/// The catalogue subset of models.dev's `api.json`: first-party vendors, reasoning options, limits, tool calling, image
+/// input and list prices
 pub fn trim_models_dev(api: &Value, fetched_at: &str, etag: Option<String>) -> CatalogFile {
   let mut models = vec![];
   for vendor in VENDORS {
@@ -126,6 +183,7 @@ pub fn trim_models_dev(api: &Value, fetched_at: &str, etag: Option<String>) -> C
     ids.sort();
     for id in ids {
       let m = &list[id];
+      let limit = |k: &str| m.get("limit").and_then(|l| l.get(k)).and_then(Value::as_f64).filter(|c| *c >= 1.0).map(|c| c as u64);
       let options: Vec<&Value> = m.get("reasoning_options").and_then(Value::as_array).map(|a| a.iter().collect()).unwrap_or_default();
       let of = |t: &'static str| options.iter().filter(move |o| o.get("type").and_then(Value::as_str) == Some(t));
       let efforts = of("effort")
@@ -140,11 +198,18 @@ pub fn trim_models_dev(api: &Value, fetched_at: &str, etag: Option<String>) -> C
         reasoning: m.get("reasoning") == Some(&Value::Bool(true)),
         efforts,
         toggle: of("toggle").next().is_some(),
-        context: m.get("limit").and_then(|l| l.get("context")).and_then(Value::as_f64).filter(|c| *c >= 1.0).map(|c| c as u64),
+        context: limit("context"),
+        output: limit("output"),
+        tools: m.get("tool_call") == Some(&Value::Bool(true)),
+        images: m.pointer("/modalities/input").and_then(Value::as_array).is_some_and(|a| a.iter().any(|v| v == "image")),
+        cost: m.get("cost").and_then(|c| {
+          let price = |k: &str| c.get(k).and_then(Value::as_f64).filter(|p| *p >= 0.0);
+          Some(Cost { input: price("input")?, output: price("output")?, cache_read: price("cache_read"), cache_write: price("cache_write") })
+        }),
       });
     }
   }
-  CatalogFile { source: MODELS_DEV_URL.into(), etag, fetched_at: fetched_at.into(), models }
+  CatalogFile { format: FORMAT, source: MODELS_DEV_URL.into(), etag, fetched_at: fetched_at.into(), models }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -238,6 +303,33 @@ mod tests {
       "openrouter": { "models": { "gemini-3.8-flash": { "name": "x", "reasoning_options": [{ "type": "effort", "values": ["max"] }] } } }
     });
     Catalog::new(trim_models_dev(&api, "2026-09-26T00:00:00Z", None))
+  }
+
+  #[test]
+  fn limits_tools_images_and_prices_are_kept_and_priced() {
+    let api = json!({ "deepseek": { "models": {
+      "deepseek-v4-pro": { "name": "DeepSeek V4 Pro", "tool_call": true, "limit": { "context": 1000000, "output": 384000 },
+        "modalities": { "input": ["text", "image"], "output": ["text"] },
+        "cost": { "input": 2.0, "output": 8.0, "cache_read": 0.2 } },
+      "deepseek-ocr": { "name": "OCR", "cost": { "input": 1.0 } } } } });
+    let file = trim_models_dev(&api, "2026-10-10T00:00:00Z", None);
+    let pro = file.models.iter().find(|m| m.id == "deepseek-v4-pro").unwrap();
+    assert_eq!((pro.context, pro.output, pro.tools, pro.images), (Some(1000000), Some(384000), true, true));
+    let cost = pro.cost.unwrap();
+    assert_eq!(cost.cache_write, None);
+    // 1M prompt tokens, 400k of them read from cache and 100k written (billed as plain input), 100k output
+    let usd = cost.estimate(1_000_000, 100_000, 400_000, 100_000);
+    assert!((usd - (0.5 * 2.0 + 0.4 * 0.2 + 0.1 * 2.0 + 0.1 * 8.0)).abs() < 1e-9, "{usd}");
+    let ocr = file.models.iter().find(|m| m.id == "deepseek-ocr").unwrap();
+    assert_eq!((ocr.cost, ocr.tools, ocr.images), (None, false, false), "half a price is no price");
+    // Serialized and parsed back unchanged, in the current format
+    let back: CatalogFile = serde_json::from_str(&file.to_json()).unwrap();
+    assert_eq!(back, file);
+    assert_eq!(back.format, FORMAT);
+    let snapshot = CatalogFile::snapshot();
+    assert_eq!(snapshot.format, FORMAT, "regenerate the snapshot with pnpm catalog:update");
+    assert!(back.supersedes(&CatalogFile { fetched_at: "2026-01-01".into(), ..snapshot.clone() }));
+    assert!(!CatalogFile { format: 1, ..back }.supersedes(&CatalogFile { fetched_at: "2026-01-01".into(), ..snapshot }));
   }
 
   fn opt(id: &str, name: &str) -> SessionOption {

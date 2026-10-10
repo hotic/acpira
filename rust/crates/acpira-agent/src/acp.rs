@@ -79,6 +79,7 @@ impl Session {
 
 pub struct Server {
   pub config: ConfigCache,
+  pub catalog: crate::catalog::CatalogCache,
   pub version: String,
   pub http: ureq::Agent,
   conn: OnceLock<Connection>,
@@ -88,6 +89,7 @@ pub struct Server {
 impl Server {
   pub fn new(home: PathBuf, version: impl Into<String>) -> Arc<Server> {
     Arc::new(Server {
+      catalog: crate::catalog::CatalogCache::new(&home),
       config: ConfigCache::new(home),
       version: version.into(),
       http: crate::llm::default_http(),
