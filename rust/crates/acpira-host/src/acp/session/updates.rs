@@ -168,6 +168,16 @@ impl AcpSession {
       c.startup_banner = None;
       return;
     }
+    // Claude Code's "Goal set: …" answer to the `/goal` command just sent repeats the goal row
+    if kind == "agent_message_chunk"
+      && self.vendor.echoes_goal_command()
+      && u.get("content").and_then(|x| x.get("type")).and_then(Value::as_str) == Some("text")
+      && let Some(text) = u["content"].get("text").and_then(Value::as_str)
+      && last_sent_text(&c.state.turns).is_some_and(|sent| goal::is_command_echo(text, sent))
+    {
+      self.log("goal command echo ignored");
+      return;
+    }
     // A goal snapshot (codex-acp / claude-agent-acp goal extension); a replayed history restores it without rows
     if kind == "session_info_update"
       && let Some(next) = goal::snapshot_of(&u)
@@ -278,6 +288,24 @@ impl AcpSession {
       }
     }
   }
+}
+
+/// The newest text the host sent the agent: the last steer into the current agent turn, else the prompt that opened it
+fn last_sent_text(turns: &[Turn]) -> Option<&str> {
+  for t in turns.iter().rev() {
+    match t {
+      Turn::User(u) => return Some(&u.text),
+      Turn::Agent(a) => {
+        if let Some(s) = a.blocks.iter().rev().find_map(|b| match b {
+          AgentBlock::Steer(s) => Some(s.text.as_str()),
+          _ => None,
+        }) {
+          return Some(s);
+        }
+      }
+    }
+  }
+  None
 }
 
 /// The root agent turn a new subagent anchors to: the live one, or the index the next update is about to open
