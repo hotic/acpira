@@ -5,6 +5,7 @@ import type { MsgKey } from '@shared/i18n';
 import { t } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { Row, RowLabel, RowTarget } from '../ui/Row';
+import { Shimmer } from '../ui/Shimmer';
 import { cn } from '../ui/cn';
 import { goalDuration, goalSpend } from './goalText';
 
@@ -41,11 +42,12 @@ const EVENT_STATUS: Record<GoalEvent, GoalStatus> = {
   complete: 'complete',
 };
 
-// Status glyph: the goal mark (accent while it runs), warn for blocked / limited, a check once met
-function GoalGlyph({ status, quiet }: { status: GoalStatus; quiet?: boolean }) {
+// Status glyph: the goal mark (accent while it runs), warn for blocked / limited, a check once met. `live` (the strip
+// while the goal is active and a turn runs) waves the mark's flag around its pole (`.goal-live` in motion.css)
+function GoalGlyph({ status, quiet, live }: { status: GoalStatus; quiet?: boolean; live?: boolean }) {
   if (status === 'complete') return <CircleCheck className="size-icon text-ok" strokeWidth={1.5} />;
   if (status === 'blocked' || status === 'limited') return <TriangleAlert className="size-icon text-warn" strokeWidth={1.5} />;
-  return <GoalIcon className={cn('size-icon', status === 'active' && !quiet && 'text-accent')} strokeWidth={1.5} />;
+  return <GoalIcon className={cn('size-icon', status === 'active' && !quiet && 'text-accent', live && 'goal-live')} strokeWidth={1.5} />;
 }
 
 // One short fact for the strip: elapsed time (Codex) or stop-hook rounds (Claude); the spend goes to the hover title
@@ -64,6 +66,7 @@ export const GoalStrip = memo(function GoalStrip({ goal, actions, running, onAct
   const can = (a: GoalAction) => !!onAction && !!actions?.includes(a);
   const meta = stripMeta(goal);
   const muted = goal.status === 'paused' || goal.status === 'complete';
+  const live = goal.status === 'active' && running;
   const title = [goal.objective, goalSpend(goal)].filter(Boolean).join('\n');
   const button = (action: GoalAction, key: MsgKey, icon: React.ReactNode) => (
     <IconButton size="sm" title={t(key)} aria-label={t(key)} onClick={() => onAction?.(action)}>{icon}</IconButton>
@@ -74,7 +77,7 @@ export const GoalStrip = memo(function GoalStrip({ goal, actions, running, onAct
         <Row
           dense
           title={title}
-          lead={<GoalGlyph status={goal.status} />}
+          lead={<GoalGlyph status={goal.status} live={live} />}
           trailing={<>
             {meta && <span className="whitespace-nowrap">{meta}</span>}
             <span className="flex items-center gap-0.5">
@@ -84,8 +87,12 @@ export const GoalStrip = memo(function GoalStrip({ goal, actions, running, onAct
             </span>
           </>}
         >
-          <RowLabel shimmer={goal.status === 'active' && running} className="text-fg-1">{t(STATUS_KEY[goal.status])}</RowLabel>
-          <span className={cn('min-w-0 truncate', muted ? 'text-fg-3' : 'text-fg-2')}>{goal.objective.split('\n')[0]}</span>
+          {/* Label and objective share one line and one shimmer, so the sweep crosses the whole goal while a turn runs
+              (like the to-do title) instead of two glints at different speeds; the line truncates as a whole */}
+          <Shimmer active={live} className="min-w-0 truncate">
+            <span className="mr-2 text-fg-1">{t(STATUS_KEY[goal.status])}</span>
+            <span className={muted ? 'text-fg-3' : 'text-fg-2'}>{goal.objective.split('\n')[0]}</span>
+          </Shimmer>
         </Row>
       </div>
     </div>

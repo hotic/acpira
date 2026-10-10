@@ -17,6 +17,10 @@
   animation: acp-shimmer-window var(--shimmer-cycle) linear infinite;
 }
 .shimmer-sweep > span { display: inline-block; white-space: nowrap; animation: acp-shimmer-copy var(--shimmer-cycle) linear infinite; }
+/* The strong copy is one colour throughout, even over children that tint the muted text (the goal strip's label + objective) */
+.shimmer-sweep > span * { color: inherit; }
+/* A truncated shimmer clips its copy the same way, so the sweep never reveals text hidden behind the ellipsis */
+.shimmer.truncate > .shimmer-sweep > span { display: block; overflow: hidden; text-overflow: ellipsis; }
 @keyframes acp-shimmer-window { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
 @keyframes acp-shimmer-copy { from { transform: translateX(100%); } to { transform: translateX(-100%); } }
 /* Content that replaces something in place (a prompt card ↔ its inline editor): a plain fade, the container animates its own height */
@@ -73,6 +77,18 @@
   70% { transform: translate(calc(var(--compact-x) * .1), calc(var(--compact-y) * .1)); }
 }
 @keyframes acp-compact-label { from { color: var(--fg-strong); } }
+
+/* Goal strip lead while the goal is active and a turn runs (chat/Goal.tsx): lucide Goal's first path is the pole and flag.
+   The transform origin sits on the pole (x = 12 of 24), so skewY and scaleX leave the pole in place and only the flag
+   flutters; the rings stay still beside the line's shimmer. The rest pose is untransformed, so the kill switches leave
+   the plain mark. Picked over ring ripples / a breathing ring in lab/goal-motion.preview.html (2026-10-11). */
+.goal-live path:first-of-type { transform-box: view-box; transform-origin: 50% 50%; animation: acp-goal-flag 2.4s ease-in-out infinite; }
+@keyframes acp-goal-flag {
+  0%, 100% { transform: none; }
+  25% { transform: skewY(-14deg) scaleX(.9); }
+  60% { transform: skewY(7deg) scaleX(.96); }
+  80% { transform: skewY(-2deg); }
+}
 
 /* Row slots enter once, independently of the active verb's continuous shimmer. */
 .process-row-enter { --row-enter-delay: 0ms; }
