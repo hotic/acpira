@@ -2407,42 +2407,28 @@ impl SessionManager {
       subagents: (!subagents.is_empty()).then_some(subagents),
       goal: None,
     };
-    // Attachment blobs are re-saved under the fork's own blob dir (content-hash names keep the same file name)
+    // Every blob the copied turns point at (prompt / steer attachments and the images the agent produced, subagent
+    // transcripts included) is re-saved under the fork's own blob dir; content-hash names keep the same file name
     let fork_id = record.id.clone();
-    // Prompts steered into a reply carry attachments of their own
-    let lists = record.turns.iter_mut().flat_map(|turn| match turn {
-      Turn::User(u) => vec![&mut u.attachments],
-      Turn::Agent(a) => a
-        .blocks
-        .iter_mut()
-        .filter_map(|b| match b {
-          AgentBlock::Steer(s) => Some(&mut s.attachments),
-          _ => None,
-        })
-        .collect(),
-    });
-    for list in lists {
-      for a in list.iter_mut().flatten() {
-        let blob = match a {
-          Attachment::Image { blob, .. } | Attachment::Text { blob, .. } | Attachment::Selection { blob, .. } => blob,
-          Attachment::File { .. } | Attachment::Quote { .. } => continue,
-        };
-        let Some(name) = blob.clone() else { continue };
+    let mut slots = Vec::new();
+    blob_slots(&mut record.turns, &mut slots);
+    for node in record.subagents.iter_mut().flatten() {
+      blob_slots(&mut node.turns, &mut slots);
+    }
+    // One copy per distinct blob; a name that could not be copied is dropped everywhere it appears
+    let mut copied: HashMap<String, Option<String>> = HashMap::new();
+    for blob in slots {
+      let Some(name) = blob.clone() else { continue };
+      if !copied.contains_key(&name) {
         let ext = std::path::Path::new(&name).extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
-        match self.deps.store.read_blob(&source.id, &name).await {
-          Ok(bytes) => match self.deps.store.save_blob(&fork_id, &ext, &bytes).await {
-            Ok((n, _)) => *blob = Some(n),
-            Err(e) => {
-              self.log(&format!("fork: blob {name} not copied ({e})"));
-              *blob = None;
-            }
-          },
-          Err(e) => {
-            self.log(&format!("fork: blob {name} not copied ({e})"));
-            *blob = None;
-          }
-        }
+        let result = match self.deps.store.read_blob(&source.id, &name).await {
+          Ok(bytes) => self.deps.store.save_blob(&fork_id, &ext, &bytes).await.map(|(n, _)| n),
+          Err(e) => Err(e),
+        };
+        let next = result.map_err(|e| self.log(&format!("fork: blob {name} not copied ({e})"))).ok();
+        copied.insert(name.clone(), next);
       }
+      *blob = copied[&name].clone();
     }
     self.deps.store.flush(Arc::new(record.clone())).await?;
     self.drop_empty_current(v).await;
@@ -3036,6 +3022,44 @@ impl Drop for LeaseHold<'_> {
   fn drop(&mut self) {
     if self.pin != 0 {
       self.leases.release(self.id, self.pin);
+    }
+  }
+}
+
+/// Every blob reference in a transcript: prompt and steer attachments, agent image blocks, images a reply's markdown
+/// embeds, and image results of tool calls
+fn blob_slots<'a>(turns: &'a mut [Turn], out: &mut Vec<&'a mut Option<String>>) {
+  fn image(c: &mut ToolContent) -> Option<&mut Option<String>> {
+    match c {
+      ToolContent::Image(r) => Some(&mut r.blob),
+      _ => None,
+    }
+  }
+  fn attachments<'a>(list: &'a mut Option<Vec<Attachment>>, out: &mut Vec<&'a mut Option<String>>) {
+    for a in list.iter_mut().flatten() {
+      match a {
+        Attachment::Image { blob, .. } | Attachment::Text { blob, .. } | Attachment::Selection { blob, .. } => out.push(blob),
+        Attachment::File { .. } | Attachment::Quote { .. } => {}
+      }
+    }
+  }
+  for turn in turns {
+    match turn {
+      Turn::User(u) => attachments(&mut u.attachments, out),
+      Turn::Agent(a) => {
+        for b in &mut a.blocks {
+          match b {
+            AgentBlock::Steer(s) => attachments(&mut s.attachments, out),
+            AgentBlock::Image(i) => out.push(&mut i.blob),
+            AgentBlock::Text(t) => out.extend(t.images.iter_mut().flatten().map(|r| &mut r.blob)),
+            AgentBlock::ToolCall(c) => {
+              out.extend(c.content.as_mut().and_then(image));
+              out.extend(c.contents.iter_mut().flatten().filter_map(image));
+            }
+            _ => {}
+          }
+        }
+      }
     }
   }
 }

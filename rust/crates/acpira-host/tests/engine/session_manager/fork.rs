@@ -69,6 +69,38 @@ async fn forking_re_homes_the_blobs_of_a_steered_prompt_and_hands_them_over() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn forking_re_homes_the_images_the_agent_produced() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let m = Mgr::new(dir.path(), Opts::fake(&fake));
+  m.init().await;
+  m.new_session(None).await;
+  let src = m.active_id().unwrap();
+  m.handle(json!({ "type": "send", "text": "image" })).await;
+  // The agent's image block and the tool's image item both point into the session blob store
+  let blocks = last_turn(&m.active().unwrap())["blocks"].clone();
+  let image = blocks.as_array().unwrap().iter().find(|b| b["type"] == "image").and_then(|b| b["blob"].as_str()).expect("image block").to_owned();
+  let tool = blocks.as_array().unwrap().iter().find(|b| b["type"] == "tool_call").cloned().expect("tool row");
+  let tool_image = tool["contents"].as_array().unwrap().iter().find(|c| c["type"] == "image").and_then(|c| c["blob"].as_str()).expect("tool image").to_owned();
+  // Agent images are written in the background; wait until the source holds them
+  let t0 = std::time::Instant::now();
+  while !(dir.path().join(&src).join(&image).exists() && dir.path().join(&src).join(&tool_image).exists()) {
+    assert!(t0.elapsed() < std::time::Duration::from_secs(5));
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+  }
+  m.handle(json!({ "type": "forkSession", "sessionId": src, "turnIndex": 1 })).await;
+  let fork = m.active_id().unwrap();
+  assert_ne!(fork, src);
+  let store = TranscriptStore::new(dir.path().to_path_buf(), Arc::new(|_: &str| {}), None);
+  let record = v(store.load(&fork).await.unwrap());
+  let text = record["turns"][1]["blocks"].to_string();
+  assert!(text.contains(&image) && text.contains(&tool_image), "{text}");
+  assert!(dir.path().join(&fork).join(&image).exists());
+  assert!(dir.path().join(&fork).join(&tool_image).exists());
+  m.dispose().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn forking_a_non_agent_turn_or_the_running_last_turn_is_refused() {
   let fake = fake_or_skip!();
   let dir = tempfile::tempdir().unwrap();
