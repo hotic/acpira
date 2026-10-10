@@ -86,11 +86,16 @@ export interface ChipProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   children: ReactNode;
 }
 
-// A badge inside a Chip's `tags`: --text-4 on the active fill; `ultra` tints it, an icon (Fast's bolt) leads the text
-export function ChipTag({ tone, icon, children }: { tone?: 'ultra'; icon?: ReactNode; children: ReactNode }) {
+// A badge inside a Chip's `tags`: --text-4 on the active fill; `ultra` tints it, an icon (Fast's bolt) leads the text.
+// `short` replaces the text below the sm container tier, together with the caret going ('' keeps only the icon), so a
+// narrow toolbar shows [M] [⚡] instead of clipping the badges away
+export function ChipTag({ tone, icon, short, children }: { tone?: 'ultra'; icon?: ReactNode; short?: string; children: ReactNode }) {
+  const compact = short !== undefined;
   return (
     <span className={cn('inline-flex h-4 shrink-0 items-center gap-0.5 rounded-xs px-1 text-4 leading-none', tone === 'ultra' ? 'bg-ultra/15 text-ultra' : 'bg-active text-fg-2')}>
-      {icon}{children}
+      {icon}
+      <span className={cn(compact && '@max-sm:hidden')}>{children}</span>
+      {short && <span className="hidden @max-sm:inline">{short}</span>}
     </span>
   );
 }

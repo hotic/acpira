@@ -66,7 +66,7 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
     <Popover.Root open={open} onOpenChange={setOpen} onOpenLifecycle={onOpenChange}>
       <Popover.Trigger render={
         <Chip narrow="text" title={title} icon={<ModelMark family={cur?.name ?? c.name} brand={cur?.brand} />}
-          tags={tags.length ? tags.map(tag => <ChipTag key={tag.label} tone={tag.ultra ? 'ultra' : undefined} icon={tag.fast ? <FastIcon /> : undefined}>{tag.label}</ChipTag>) : undefined}>
+          tags={tags.length ? tags.map(tag => <ChipTag key={tag.label} tone={tag.ultra ? 'ultra' : undefined} icon={tag.fast ? <FastIcon /> : undefined} short={tag.short}>{tag.label}</ChipTag>) : undefined}>
           {cur?.name ?? c.options.find(o => o.id === c.value)?.name ?? c.name}
         </Chip>
       } />

@@ -116,24 +116,34 @@ export function modelConfigChip(control: ConfigControl): string | undefined {
   return control.options.find(option => option.id === control.value)?.name;
 }
 
-export interface ChipTagItem { label: string; ultra?: boolean; fast?: boolean }
+// A badge's compact form on a narrow toolbar. `short` is what replaces the label there: '' leaves only the icon (Fast's
+// bolt); absent keeps the label as is (1M, an unknown parameter value)
+export interface ChipTagItem { label: string; short?: string; ultra?: boolean; fast?: boolean }
+
+// One letter where the scale allows it; Minimal / Medium / Max share an M, so the outer two keep a short word
+const LEVEL_SHORT: Record<string, string> = { None: 'N', Minimal: 'Min', Low: 'L', Medium: 'M', High: 'H', XHigh: 'XH', Max: 'Max', Ultra: 'U', Thinking: 'T' };
+
+function levelTag(label: string): ChipTagItem {
+  return { label, short: LEVEL_SHORT[label], ultra: isUltraLevel(label) };
+}
 
 // The model chip's badges, in the order they give way when the toolbar is narrow: effort (or Ultra), then Fast, then the
 // rest. Provider identity stays in the expanded list; the chip reads as one model name plus its parameters. `standard` is
 // the localized name of an embedded family's level-less variant
 export function chipTags(cur: ModelFamily | undefined, curVar: ModelVariant | undefined, reasoning: ConfigControl[], modelConfig: ConfigControl[], standard: string): ChipTagItem[] {
   const tags: ChipTagItem[] = [];
-  const fast: ChipTagItem = { label: 'Fast', fast: true };
+  const fast: ChipTagItem = { label: 'Fast', short: '', fast: true };
   if (cur && curVar && (curVar.lead || cur.efforts.length > 1 || curVar.effort || curVar.fast || curVar.long)) {
-    const effort = curVar.effort || (!curVar.lead && cur.efforts.length > 1 ? standard : '');
-    if (effort) tags.push({ label: effort });
+    if (curVar.effort) tags.push(levelTag(curVar.effort));
+    // The localized Standard shortens to its first character (S, 标)
+    else if (!curVar.lead && cur.efforts.length > 1) tags.push({ label: standard, short: Array.from(standard)[0] ?? '' });
     if (curVar.fast) tags.push(fast);
     if (curVar.long) tags.push({ label: '1M' });
   }
   // Codex's real `ultra` effort and Claude's host-made Ultra level (ultracode) read the same: an Ultra badge
   for (const control of reasoning) {
     const level = reasoningChip(control);
-    if (level) tags.push({ label: level, ultra: isUltraLevel(level) });
+    if (level) tags.push(levelTag(level));
   }
   for (const control of modelConfig) {
     const label = modelConfigChip(control);
