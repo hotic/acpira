@@ -99,7 +99,7 @@ Verified 2026-10-11 (acpira 1.9.1) through an OpenAI-compatible gateway, one `op
 | | acpira, effort medium | 2/5 | 0.149 | 18.8 |
 | | Codex | 5/5 | 0.305 | 16.8 |
 | | OpenCode (sends low) | 1/5 | 0.149 | 18.4 |
-| | Pi | 3/4 | 0.204 | 17.0 |
+| | Pi | 4/5 | 0.245 | 18.4 |
 | deepseek-v4-pro | acpira | 23/29 | 0.095 | 19.7 |
 | | Kimi Code | 4/4 | 0.114 | 12.3 |
 | | OpenCode | 3/5 | 0.076 | 13.4 |
