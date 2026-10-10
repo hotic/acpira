@@ -1,0 +1,290 @@
+[
+ {
+  "name": "builtin-cancel",
+  "turns": [
+   {
+    "role": "user",
+    "id": "user-1",
+    "text": "wait for it",
+    "settings": {
+     "modeId": "agent",
+     "config": {
+      "approval": "ask",
+      "model": "mock/m1"
+     }
+    }
+   },
+   {
+    "role": "agent",
+    "blocks": [],
+    "stop": "cancelled"
+   },
+   {
+    "role": "user",
+    "id": "user-2",
+    "text": "go on",
+    "settings": {
+     "modeId": "agent",
+     "config": {
+      "approval": "ask",
+      "model": "mock/m1"
+     }
+    }
+   },
+   {
+    "role": "agent",
+    "blocks": [
+     {
+      "type": "text",
+      "markdown": "Ready.",
+      "streaming": false
+     }
+    ],
+    "usage": {
+     "input": 100,
+     "output": 10,
+     "cachedRead": 0,
+     "cachedWrite": 0,
+     "reasoning": 0,
+     "total": 110,
+     "modelCalls": 1,
+     "model": "mock/m1",
+     "context": {
+      "used": 110,
+      "size": 64000
+     }
+    },
+    "stop": "end_turn"
+   }
+  ]
+ },
+ {
+  "name": "builtin-edit",
+  "turns": [
+   {
+    "role": "user",
+    "id": "user-1",
+    "text": "change it",
+    "settings": {
+     "modeId": "agent",
+     "config": {
+      "approval": "ask",
+      "model": "mock/m1"
+     }
+    }
+   },
+   {
+    "role": "agent",
+    "blocks": [
+     {
+      "type": "tool_call",
+      "id": "call-1",
+      "kind": "read",
+      "verb": "Read",
+      "target": "a.txt",
+      "targetMono": false,
+      "locations": [
+       {
+        "path": "/repo/a.txt"
+       }
+      ],
+      "status": "completed"
+     },
+     {
+      "type": "tool_call",
+      "id": "call-2",
+      "kind": "edit",
+      "verb": "Edit",
+      "target": "a.txt",
+      "targetMono": false,
+      "locations": [
+       {
+        "path": "/repo/a.txt"
+       }
+      ],
+      "status": "completed",
+      "content": {
+       "type": "diff",
+       "lines": [
+        {
+         "kind": "del",
+         "text": "-hello world",
+         "oldLine": 1
+        },
+        {
+         "kind": "add",
+         "text": "+hello there",
+         "newLine": 1
+        }
+       ],
+       "source": {
+        "path": "/repo/a.txt",
+        "omitted": true
+       }
+      },
+      "diffStat": {
+       "add": 1,
+       "del": 1
+      }
+     },
+     {
+      "type": "text",
+      "markdown": "Changed a.txt.",
+      "streaming": false
+     }
+    ],
+    "usage": {
+     "input": 300,
+     "output": 30,
+     "cachedRead": 0,
+     "cachedWrite": 0,
+     "reasoning": 0,
+     "total": 330,
+     "modelCalls": 3,
+     "model": "mock/m1",
+     "context": {
+      "used": 110,
+      "size": 64000
+     }
+    },
+    "stop": "end_turn"
+   }
+  ]
+ },
+ {
+  "name": "builtin-plan",
+  "turns": [
+   {
+    "role": "user",
+    "id": "user-1",
+    "text": "add src.txt",
+    "settings": {
+     "modeId": "plan",
+     "config": {
+      "approval": "ask",
+      "model": "mock/m1"
+     }
+    }
+   },
+   {
+    "role": "agent",
+    "blocks": [
+     {
+      "type": "tool_call",
+      "id": "call-1",
+      "kind": "edit",
+      "verb": "Edit",
+      "target": "plan.md",
+      "targetMono": false,
+      "locations": [
+       {
+        "path": "/acpira/agent/sessions/SESSION/plan.md"
+       }
+      ],
+      "status": "completed",
+      "content": {
+       "type": "diff",
+       "lines": [
+        {
+         "kind": "add",
+         "text": "+# Add src.txt",
+         "newLine": 1
+        },
+        {
+         "kind": "add",
+         "text": "+",
+         "newLine": 2
+        },
+        {
+         "kind": "add",
+         "text": "+1. Write it.",
+         "newLine": 3
+        }
+       ],
+       "source": {
+        "path": "/acpira/agent/sessions/SESSION/plan.md",
+        "omitted": true
+       }
+      },
+      "diffStat": {
+       "add": 3,
+       "del": 0
+      }
+     },
+     {
+      "type": "tool_call",
+      "id": "call-2",
+      "kind": "switch_mode",
+      "verb": "Switch mode",
+      "target": "Exit plan mode",
+      "targetMono": false,
+      "locations": [],
+      "status": "completed"
+     },
+     {
+      "type": "plan_document",
+      "id": "plan-call-2",
+      "title": "Add src.txt",
+      "markdown": "# Add src.txt\n\n1. Write it.",
+      "path": "/acpira/agent/sessions/SESSION/plan.md",
+      "toolCallId": "call-2",
+      "approvalToolCallId": "call-2",
+      "status": "approved"
+     },
+     {
+      "type": "tool_call",
+      "id": "call-3",
+      "kind": "edit",
+      "verb": "Edit",
+      "target": "src.txt",
+      "targetMono": false,
+      "locations": [
+       {
+        "path": "/repo/src.txt"
+       }
+      ],
+      "status": "completed",
+      "content": {
+       "type": "diff",
+       "lines": [
+        {
+         "kind": "add",
+         "text": "+x",
+         "newLine": 1
+        }
+       ],
+       "source": {
+        "path": "/repo/src.txt",
+        "omitted": true
+       }
+      },
+      "diffStat": {
+       "add": 1,
+       "del": 0
+      }
+     },
+     {
+      "type": "text",
+      "markdown": "Built.",
+      "streaming": false
+     }
+    ],
+    "usage": {
+     "input": 400,
+     "output": 40,
+     "cachedRead": 0,
+     "cachedWrite": 0,
+     "reasoning": 0,
+     "total": 440,
+     "modelCalls": 4,
+     "model": "mock/m1",
+     "context": {
+      "used": 110,
+      "size": 64000
+     }
+    },
+    "stop": "end_turn"
+   }
+  ]
+ }
+]

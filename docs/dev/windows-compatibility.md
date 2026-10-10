@@ -32,6 +32,7 @@ Review date: 2026-10-02; source baseline Acpira 1.8.0. Scope covers the platform
 - The offline installer tests passed on native Windows, including a running EXE; EXE / CMD tests for all nine built-in login argument shapes passed too.
 - Forcing Legacy argument mode in PowerShell 7.6.6 on macOS reproduced the native loss of empty arguments and corrupted double quotes; the shared launcher bypasses that marshalling and the regression passes.
 - Native Windows x64 Rust regressions: host 121, shared 22, ACP launch 3, lifecycle 4, 150 passed in total; 1 helper-process entry ignored by design. Built by cross-compiling the GNU target on macOS and running the Windows EXEs over SSH; this does not replace CI for the MSVC release build.
+- The built-in agent (2026-10-10, same host, code page 936): `acpira-agent` unit and integration tests cross-built for the GNU target pass over SSH, including Chinese output from PowerShell and from native commands and killing a cancelled command's tree; details in `builtin-agent.md`.
 - Registry PATH and the Roaming Known Folder use read-only native APIs and match what Windows' own APIs return; Pi paths match Node 24.13.0's real `realpathSync`.
 - `scripts/test-windows.ps1` is the single entry point, covering native tests and Clippy for every Windows target; a dedicated Windows CI runs on push / PR and the release calls the same entry. Compiling only, or registering in CI, does not count as proof of native execution.
 
