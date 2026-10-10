@@ -1,0 +1,7 @@
+{
+  "id": "conf-bugs",
+  "kind": "bug hunt",
+  "prompt": "ISSUES.md lists the open bug reports for the confparse package; README.md describes the intended behaviour. Fix every issue in ISSUES.md without breaking anything else. Add a regression test for each fix under tests/. Work autonomously until all of them are fixed; do not ask questions.",
+  "verify": "python3 -m unittest discover -s .eval_hidden -p 'test_*.py'",
+  "timeoutMin": 20
+}

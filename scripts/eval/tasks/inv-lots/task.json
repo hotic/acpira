@@ -1,0 +1,7 @@
+{
+  "id": "inv-lots",
+  "kind": "multi-file feature + migration",
+  "prompt": "Implement the feature described in TASK.md in the inv package (python3 -m inv). Keep existing behaviour that TASK.md does not change. Use only the Python standard library. Work autonomously until it is done and the tests pass; do not ask questions.",
+  "verify": "python3 -m unittest discover -s .eval_hidden -p 'test_*.py'",
+  "timeoutMin": 25
+}

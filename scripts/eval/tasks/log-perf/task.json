@@ -1,0 +1,7 @@
+{
+  "id": "log-perf",
+  "kind": "performance",
+  "prompt": "python3 -m logsum summarises access logs, but it is far too slow on real logs: summarize() must handle 300,000 lines in under 5 seconds on this machine (it currently takes hours). Make it fast without changing its output in any way: the report must stay byte-for-byte identical for every input, including malformed lines, ties and rounding. Use only the Python standard library. Work autonomously until it is done; do not ask questions.",
+  "verify": "python3 -m unittest discover -s .eval_hidden -p 'test_*.py'",
+  "timeoutMin": 20
+}

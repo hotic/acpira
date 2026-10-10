@@ -1,0 +1,7 @@
+{
+  "id": "calc-lang",
+  "kind": "spec build",
+  "prompt": "Implement the calc language described in SPEC.md in the `calc` package (`calc/__init__.py` and `calc/__main__.py`). Follow the spec exactly, including the error messages and line numbers. Use only the Python standard library. The tests in tests/ show a few examples; the implementation is checked against many more cases from the spec, so test edge cases yourself. Work autonomously until it is done; do not ask questions.",
+  "verify": "python3 -m unittest discover -s .eval_hidden -p 'test_*.py'",
+  "timeoutMin": 30
+}

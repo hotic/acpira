@@ -1,0 +1,7 @@
+{
+  "id": "semver-port",
+  "kind": "port",
+  "prompt": "Port js/semver.js to Python as the package semverlite (semverlite/__init__.py), keeping js/ as it is. Same functions with snake_case names (maxSatisfying becomes max_satisfying); parse returns a dict with the same keys, or None; where the JavaScript throws a TypeError, raise ValueError. The port must behave exactly like the JavaScript for every input, edge cases included; node is available to run the original. Use only the Python standard library and add Python tests under tests/. Work autonomously until it is done; do not ask questions.",
+  "verify": "python3 -m unittest discover -s .eval_hidden -p 'test_*.py'",
+  "timeoutMin": 25
+}
