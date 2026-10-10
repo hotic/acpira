@@ -34,6 +34,8 @@ export class Host {
 
   private constructor(readonly home: string, readonly cwd: string, env: Record<string, string> = {}) {
     this.shell = new Shell(home, cwd, sidecarBin({ build: true }), env);
+    // Probes read views, not the raw envelope log, and an eval run streams for most of an hour
+    this.shell.record = false;
     this.shell.answers = {
       toast: r => { if (r.method === 'toast') console.log(`toast ${r.level}: ${r.text}`); return null; },
       searchFiles: () => [],

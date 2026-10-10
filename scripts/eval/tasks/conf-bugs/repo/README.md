@@ -13,7 +13,8 @@ An INI-style configuration reader. `confparse.parse(text)` and `confparse.load(p
 - An indented line continues the previous value: it is appended after a newline, with its own indentation removed.
   A blank line ends the value.
 - `${key}` refers to another key of the same section (DEFAULT included), `${section:key}` to a key of another section;
-  a referenced value is interpolated in its own section. `$$` is a literal `$`. A missing reference raises
+  a referenced value is interpolated in its own section. A value a section inherits from `[DEFAULT]` is interpolated
+  in that section, so its references see the section's own overrides. `$$` is a literal `$`. A missing reference raises
   `InterpolationError`, and so do references nested more than 10 levels deep (cycles included).
 - Syntax errors raise `ParseError` with the message `line N: ...`, lines counted from 1.
 

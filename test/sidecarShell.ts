@@ -22,6 +22,8 @@ export class Shell {
   readonly stderr: string[] = [];
   readonly requests: Extract<SidecarMsg, { type: 'platformRequest' }>[] = [];
   exitCode: number | null = null;
+  // Keep every envelope in `out` / `stdoutLines`; a long-running probe turns it off, as full session views per chunk add up to gigabytes
+  record = true;
   private waiters: { pred: (m: SidecarMsg) => boolean; resolve: (m: SidecarMsg) => void }[] = [];
   // How this shell answers RPCs; a method not listed here is left unanswered
   answers: Partial<Record<PlatformMethod, (r: PlatformRequest) => unknown>> = {};
@@ -31,10 +33,10 @@ export class Shell {
   constructor(readonly home: string, readonly cwd: string, bin = SIDECAR, env: Record<string, string> = {}) {
     this.proc = spawn(bin, ['--home', home], { stdio: 'pipe', env: { ...process.env, ACPIRA_HOME: '', ACPIRA_CATALOG_REFRESH: '0', ACPIRA_LOGIN_PATH: '0', ...env } });
     onNdjsonLines(this.proc.stdout, line => {
-      this.stdoutLines.push(line);
+      if (this.record) this.stdoutLines.push(line);
       let m: SidecarMsg;
       try { m = JSON.parse(line) as SidecarMsg; } catch { return; }
-      this.out.push(m);
+      if (this.record) this.out.push(m);
       if (m.type === 'platformRequest') this.onRequest(m);
       for (const l of this.listeners) l(m);
       for (const w of this.waiters.splice(0)) { if (w.pred(m)) w.resolve(m); else this.waiters.push(w); }
