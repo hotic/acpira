@@ -1,5 +1,5 @@
 import { Fragment, createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Bot, Check, ChevronRight, Compass, Hand, MessageCircleQuestion, Shrink, TriangleAlert, X } from 'lucide-react';
+import { Bot, Check, ChevronRight, Compass, FileText, Hand, MessageCircleQuestion, ShieldAlert, ShieldX, Shrink, TriangleAlert, X } from 'lucide-react';
 import type { AgentBlock, AgentTurn, CompactionBlock, FailureAction, NoticeBlock, PermissionBlock, SlashCommand, SteerBlock, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
 import { isImageResultBlock } from '@shared/imageTools';
@@ -29,7 +29,7 @@ import { AgentImage } from './AgentImage';
 import { GeneratedImages, ImageInFoldContext } from './GeneratedImage';
 import { Permission } from './Permission';
 import { QuestionRecord } from './Questions';
-import { BlobUrlContext } from './fileLinks';
+import { BlobUrlContext, OpenToolFileContext, parseFileLink } from './fileLinks';
 import { PlanDocument } from './PlanDocument';
 import { TurnAttachments } from './Attachments';
 import { elapsedLabel, splitCodexBlocks } from './folding';
@@ -128,22 +128,59 @@ const NoticeActionContext = createContext<NoticeActions | undefined>(undefined);
 // Lines under a row with a lead start at the label column, past the lead slot and its gap
 const UNDER_LABEL = 'pl-indent';
 
-// One row per failure id: an error marks only its glyph with the warn tone and keeps the title in body grey,
-// a warning stays in the transcript's quiet color. Details wrap under the title at the label column; the
-// adapter's own actions render as small secondary buttons, in payload order
+// Workspace hook notices (`acp/session/hooks.rs`) carry this id prefix; they get the gate's shield glyph
+const HOOK_NOTICE = 'hooks:';
+
+// The folded row's summary: the first line of the details, without the colon that introduces a list
+function noticeSummary(details: string) {
+  return details.split('\n').find(line => line.trim())?.trim().replace(/[:：]$/, '') ?? '';
+}
+
+// Details under an open notice: `- path` lines become file rows that open the file, the rest stays verbatim
+function NoticeDetails({ text }: { text: string }) {
+  const openFile = useContext(OpenToolFileContext);
+  return (
+    <div className="flex min-w-0 flex-col text-3 text-fg-3">
+      {text.trimEnd().split('\n').map((line, i) => {
+        const item = /^\s*-\s+(\S+)$/.exec(line)?.[1];
+        const file = item ? parseFileLink(item) : undefined;
+        if (!file) return <span key={i} className="whitespace-pre-wrap [overflow-wrap:anywhere]">{line || '\u00a0'}</span>;
+        const open = openFile && (() => openFile(file.path, file.line));
+        return (
+          <span key={i} className="flex min-w-0 items-center gap-gap text-fg-2">
+            <FileText className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} />
+            {open
+              ? <button type="button" title={file.path} onClick={open} className="min-w-0 cursor-pointer truncate text-left font-mono text-mono hover:text-fg-1 hover:underline focus-visible:underline">{item}</button>
+              : <span className="min-w-0 truncate font-mono text-mono">{item}</span>}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+// One row per failure id. A notice with details folds like a thought (picked as E in `lab/hook-gate-pick.preview.html`):
+// one line with the title and the details' first line as a quiet summary, the full details on the rail once opened.
+// An error opens by default and marks only its glyph with the warn tone; a bare warning keeps the quiet color.
+// The adapter's own actions render as small secondary buttons under the fold, in payload order
 function NoticeRow({ block }: { block: NoticeBlock }) {
   const ctx = useContext(NoticeActionContext);
   if (block.id === ctx?.suppressId || ctx?.absorbed?.includes(block)) return null;
   const error = block.severity === 'error';
   const buttons = error && ctx?.showActions && ctx.onAction ? block.actions : [];
+  const Glyph = !block.id.startsWith(HOOK_NOTICE) ? TriangleAlert : error ? ShieldX : ShieldAlert;
+  const lead = <Glyph className={cn('size-icon', error && 'text-warn')} strokeWidth={1.5} />;
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
-      <Row lead={<TriangleAlert className={cn('size-icon', error && 'text-warn')} strokeWidth={1.5} />} className={error ? 'text-fg-2' : 'text-fg-3'}>
-        <RowLabel className="whitespace-pre-wrap">{block.title}</RowLabel>
-      </Row>
-      {block.details && (
-        <p className={cn('m-0 min-w-0 whitespace-pre-wrap text-3 text-fg-3 [overflow-wrap:anywhere]', UNDER_LABEL)}>{block.details}</p>
-      )}
+      {block.details
+        ? <Disclosure className={cn('group/notice', error && 'rail-tint')} lead={lead} defaultOpen={error} body={<NoticeDetails text={block.details} />}>
+            {/* The title gives way first only when the summary has nothing left; the summary hides once the details show */}
+            <RowLabel className="min-w-0 shrink truncate">{block.title}</RowLabel>
+            <span className="min-w-0 flex-1 truncate text-fg-3 group-data-open/notice:hidden">{noticeSummary(block.details)}</span>
+          </Disclosure>
+        : <Row lead={lead} className={error ? 'text-fg-2' : 'text-fg-3'}>
+            <RowLabel className="whitespace-pre-wrap">{block.title}</RowLabel>
+          </Row>}
       {buttons.length > 0 && (
         <div className={cn('flex flex-wrap gap-gap pt-1', UNDER_LABEL)}>
           {buttons.map(a => (
