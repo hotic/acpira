@@ -79,6 +79,8 @@ pub struct Family {
   pub breakpoints: &'static [Breakpoint],
   /// How long a cached prefix lives, in seconds, when the provider says
   pub cache_ttl: Option<u32>,
+  /// The effort level a session starts at when the model offers it (else its strongest level)
+  pub effort: &'static str,
 }
 
 /// A family with these differences and the rest as `GENERIC`
@@ -94,9 +96,12 @@ pub const GENERIC: Family = Family {
   cache: CacheKind::ImplicitPrefix,
   breakpoints: &[],
   cache_ttl: None,
+  effort: "high",
 };
 
-/// Claude: breakpoint caching with a five-minute default lifetime, signed thinking that goes back whole
+/// Claude: breakpoint caching with a five-minute default lifetime, signed thinking that goes back whole. Sessions start
+/// at medium effort: on the long-task eval (scripts/eval, 2026-10, claude-sonnet-5.5) medium passed 10 of 10 runs at
+/// two thirds of high's cost, while GPT at medium failed tasks that high passed, so the other families keep high
 const CLAUDE: Family = Family {
   name: "claude",
   thinking: ThinkingParam::ReasoningEffort,
@@ -105,6 +110,7 @@ const CLAUDE: Family = Family {
   cache: CacheKind::Breakpoints,
   breakpoints: &[Breakpoint::System, Breakpoint::PreviousRequest, Breakpoint::LastMessage],
   cache_ttl: Some(300),
+  effort: "medium",
 };
 
 /// (patterns matched against the lowercase model id, then the preset / base URL; family)
