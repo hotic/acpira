@@ -197,6 +197,8 @@ try {
     // Claude's and the built-in agent's plan mode is a mode; Codex exposes planning as the collaboration_mode config option
     if ((agentId === 'claude' || agentId === 'acpira') && v.controls.modes.some(x => x.id === 'plan')) {
       await m.handle({ type: 'setMode', id: 'plan' });
+      // The view follows the agent's answer, which can land after handle() returns
+      await until(() => m.active()!.controls.modeId === 'plan', 15_000, 'mode → plan');
       console.log('mode set to', m.active()!.controls.modeId);
     }
     if (agentId === 'codex' && v.controls.options.some(o => o.id === 'collaboration_mode')) {
