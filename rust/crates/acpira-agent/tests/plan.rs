@@ -82,8 +82,8 @@ async fn plan_mode_writes_only_the_plan_and_an_approval_builds_in_the_same_turn(
 
   assert!(h.updates().iter().any(|u| u["sessionUpdate"] == "current_mode_update" && u["currentModeId"] == "agent"));
   assert!(tool_result(&server, 2, 0).starts_with("The user approved the plan. Plan mode is off."));
-  // From the approval on, the turn runs with Agent mode's tools and rules
-  assert!(!tool_names(&server, 2).contains(&"exit_plan".to_owned()));
+  // From the approval on, the turn runs with Agent mode's rules; the tools stay as they were, so the prefix holds
+  assert_eq!(tool_names(&server, 2), tool_names(&server, 0));
   assert_eq!(std::fs::read_to_string(h.cwd().join("src.txt")).unwrap(), "x");
 }
 

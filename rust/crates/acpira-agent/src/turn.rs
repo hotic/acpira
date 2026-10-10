@@ -201,8 +201,8 @@ fn setup(server: &Server, session: &Session) -> Result<Setup, String> {
     thinking,
     system: composed.text,
     prompt: (composed.variant, composed.version, composed.digest),
-    tools: mode.tools,
-    specs: tools::specs(mode.tools),
+    tools: modes::TOOLS,
+    specs: tools::specs(modes::TOOLS),
     rules,
   })
 }
@@ -254,6 +254,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       effort: s.effort.clone(),
     };
     log_view(session, &s, &request);
+    let approx = approx_input(&request);
     let started = std::time::Instant::now();
     let mut unfinished = Unfinished { session, event: Some(request_event(&s)), started };
     let mut rx = llm::stream(server.http.clone(), s.endpoint.clone(), request);
@@ -281,7 +282,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
         }
         Err(e) => {
           unfinished.event = None;
-          log_request(session, &s, started, None, None, Some(&e.to_string()));
+          log_request(session, &s, started, None, None, false, Some(&e.to_string()));
           return Err(describe(s.provider.display_name(), &e));
         }
       }
@@ -289,11 +290,14 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     let Some((reply, stop, usage)) = finished else {
       let e = LlmError::Protocol("the stream ended without a result".into());
       unfinished.event = None;
-      log_request(session, &s, started, None, None, Some(&e.to_string()));
+      log_request(session, &s, started, None, None, false, Some(&e.to_string()));
       return Err(describe(s.provider.display_name(), &e));
     };
     unfinished.event = None;
-    log_request(session, &s, started, Some(&stop), usage.as_ref(), None);
+    // A call always has input, so a reported 0 is a provider gap (a gateway's streamed usage): estimate it instead
+    let estimated = usage.is_some_and(|u| u.input == 0);
+    let usage = usage.map(|u| if estimated { Usage { input: approx, ..u } } else { u });
+    log_request(session, &s, started, Some(&stop), usage.as_ref(), estimated, None);
     if let Some(u) = usage {
       let mut st = stats.lock();
       st.usage.input += u.input;
@@ -381,12 +385,45 @@ impl Drop for Unfinished<'_> {
   }
 }
 
+/// A stand-in for a prompt count the provider reported as 0: about four bytes a token over the text sent, a thousand
+/// per image. Rough, and only ever used in place of a zero
+fn approx_input(r: &Request) -> u64 {
+  let (mut bytes, mut images) = (r.system.len(), 0u64);
+  for item in &r.items {
+    match item {
+      Item::User(parts) => {
+        for p in parts {
+          match p {
+            Part::Text(t) => bytes += t.len(),
+            Part::Image { .. } => images += 1,
+          }
+        }
+      }
+      Item::Assistant { text, tool_calls, .. } => bytes += text.len() + tool_calls.iter().map(|c| c.name.len() + c.arguments.len()).sum::<usize>(),
+      Item::ToolResult { content, .. } => bytes += content.len(),
+    }
+  }
+  bytes += r.tools.iter().map(|t| t.name.len() + t.description.len() + t.parameters.to_string().len()).sum::<usize>();
+  (bytes as u64).div_ceil(4) + images * 1000
+}
+
 /// One `request` event per model call
-fn log_request(session: &Session, s: &Setup, started: std::time::Instant, stop: Option<&StopReason>, usage: Option<&Usage>, error: Option<&str>) {
+fn log_request(
+  session: &Session,
+  s: &Setup,
+  started: std::time::Instant,
+  stop: Option<&StopReason>,
+  usage: Option<&Usage>,
+  input_estimated: bool,
+  error: Option<&str>,
+) {
   let mut ev = request_event(s);
   ev["ms"] = json!(started.elapsed().as_millis() as u64);
   if let Some(u) = usage {
     ev["usage"] = json!({ "input": u.input, "output": u.output, "cacheRead": u.cache_read, "cacheWrite": u.cache_write, "reasoning": u.reasoning });
+    if input_estimated {
+      ev["usage"]["inputEstimated"] = Value::Bool(true);
+    }
     // At list prices: an estimate, not the bill (discounts, tiers and gateways' markups are not known here)
     if let Some(c) = &s.cost {
       ev["cost"] = json!(c.estimate(u.input, u.output, u.cache_read, u.cache_write));
@@ -699,7 +736,7 @@ async fn exit_plan(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, p
   }
   let text = std::fs::read_to_string(&path).unwrap_or_default();
   if text.trim().is_empty() {
-    return (Output::error(format!("There is no plan yet. Write it to {} (or pass it as \"plan\"), then call exit_plan again.", path.display())), None);
+    return (Output::error(format!("There is no plan yet. Write it to {}, then call exit_plan again.", path.display())), None);
   }
   let raw_input = json!({ "plan": text, "planFilePath": path });
   let meta = json!({ "acpira/planApproval": true });
