@@ -19,6 +19,8 @@ import { t } from '../i18n';
 import { ModelMark } from '../chat/ModelMark';
 import { Count, Dot, FactRow, Field, Group, ItemRow, Note, PathText, Section, SectionAction, SectionDescription, SectionHead, Select, SourceLink, Switch, shortPath } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
+import { ProvidersSection, type ProvidersState } from './ProvidersSection';
+import { BUILTIN_AGENT_ID } from '@shared/providers';
 
 type AgentSection = 'models' | 'mcp' | 'skills' | 'rules' | 'config';
 // What the CLI's own files declare; shared resources live on the Shared page, so these fold away by default
@@ -33,6 +35,8 @@ export interface AgentPageProps {
   inventory?: AgentInventory;
   // The select-type configOptions this agent offered in its latest session; undefined until one has been opened
   controls?: ConfigControl[];
+  // The built-in agent's model sources (only its page shows them)
+  providers?: ProvidersState;
   settings: SettingsView;
   env: SettingsEnv;
   on: SettingsHandlers;
@@ -41,7 +45,7 @@ export interface AgentPageProps {
 // One agent: a card of facts (the page heading carries the name), accounts when it has an account layer, then five stacked sections: the option families
 // shown in the composer menus, and the extension inventory. Everything read from the CLI's own files is read-only here — rows open the file,
 // Acpira never writes it. Only the option families have switches
-export function AgentPage({ agent, accounts, install, inventory, controls, settings, env, on }: AgentPageProps) {
+export function AgentPage({ agent, accounts, install, inventory, controls, providers, settings, env, on }: AgentPageProps) {
   useEffect(() => { if (!inventory) on.refreshInventory(agent.id); }, [agent.id, inventory, on]);
   // Re-read when the page opens and whenever the set of accounts changes (a login finishes while this page is already open)
   const accountKey = accounts.map(a => a.id).join();
@@ -116,6 +120,8 @@ export function AgentPage({ agent, accounts, install, inventory, controls, setti
           </Section>
         </div>
       )}
+
+      {agent.id === BUILTIN_AGENT_ID && <ProvidersSection state={providers} on={on} />}
 
       {PLAN_AUTO_APPROVE_AGENTS.includes(agent.id) && <PermissionsSection agent={agent} settings={settings} on={on} />}
 

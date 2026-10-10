@@ -22,6 +22,8 @@ import { AgentPage } from './AgentPage';
 import { SharedPage, type SharedState } from './SharedPage';
 import { SubagentsPage } from './SubagentsPage';
 import type { SharedAction } from '@shared/sharedConfig';
+import type { ProviderAction } from '@shared/providers';
+import type { ProvidersState } from './ProvidersSection';
 import { Page, PageHeader } from './controls';
 
 // Every action the settings page sends to the host; the LAB implements these with a fake host, the real page with postMessage
@@ -53,6 +55,9 @@ export interface SettingsHandlers {
   // Shared tab: read the view, apply an action (the reply is the fresh view)
   shared?: () => void;
   sharedAction?: (action: SharedAction) => void;
+  // The built-in agent's model sources: read them, apply an edit (the reply is the fresh view)
+  providers?: () => void;
+  providerAction?: (action: ProviderAction) => void;
   // Subagents page: the list it showed and the list it wants; the host applies only the difference to the shared file,
   // so another window's edits made meanwhile survive (relay/roster.rs). Without it the page writes the whole list
   saveSubagents?: (base: SubagentPersona[], next: SubagentPersona[]) => void;
@@ -80,6 +85,8 @@ export interface SettingsShellProps {
   chatgptStatus?: ChatGptIntegrationStatus;
   // The Shared tab's last view; undefined until the page asked for it
   shared?: SharedState;
+  // The built-in agent's model sources; undefined until its page asked for them
+  providers?: ProvidersState;
   // Per agent, the configOptions of its latest session (the hide lists are built from these)
   controls: Partial<Record<AgentId, ConfigControl[]>>;
   // Agents whose refresh is in flight: the button spins and ignores clicks while the cached page stays in place
@@ -144,6 +151,7 @@ export function SettingsShell(p: SettingsShellProps) {
                       install={p.installs?.find(i => i.agent === agent.id)}
                       inventory={p.inventories[agent.id]}
                       controls={p.controls[agent.id]}
+                      providers={p.providers}
                       settings={p.settings}
                       env={p.env}
                       on={p.on}

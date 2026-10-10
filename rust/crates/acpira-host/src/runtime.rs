@@ -51,6 +51,7 @@ impl HostRuntime {
     let p = platform.clone();
     let log: LogFn = Arc::new(move |line: &str| p.log(line));
     let vault = Arc::new(FileVault::new(root.join("secrets.json"), log.clone()));
+    let providers = Arc::new(crate::providers::ProviderStore::new(&root, vault.clone()));
     let account_store = Arc::new(AccountStore::new(root.join("accounts.json"), vault, log.clone()));
     account_store.load().await?;
 
@@ -195,6 +196,7 @@ impl HostRuntime {
       shared: crate::shared_config::SharedConfig::new(root.clone(), log.clone()),
       agent_config_path: agent_config.path().to_owned(),
       roster,
+      providers,
     }));
 
     let runtime = Arc::new(HostRuntime {

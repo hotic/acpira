@@ -223,10 +223,58 @@ impl ProvidersFile {
   }
 }
 
+/// One source as the settings page sees it: the file's entry plus whether a key is stored. The key itself never
+/// leaves the host
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderView {
+  #[serde(flatten)]
+  pub provider: Provider,
+  pub has_key: bool,
+}
+
+/// The settings page's copy of providers.json; `error` when the file exists but cannot be read (it is then left alone)
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProvidersView {
+  pub providers: Vec<ProviderView>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub error: Option<String>,
+}
+
+/// An edit from the settings page; the reply is the fresh view
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ProviderAction {
+  /// Insert, or replace the entry with the same id; an empty id gets one made from the name. `key`: absent keeps the
+  /// stored key, empty removes it
+  Save {
+    provider: Provider,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key: Option<String>,
+  },
+  /// Remove the source and its key
+  Delete { id: String },
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
   use serde_json::json;
+
+  #[test]
+  fn the_view_flattens_the_entry_and_actions_are_tagged() {
+    let v = serde_json::to_value(ProviderView {
+      provider: ProvidersFile::parse(r#"{"providers":[{"id":"ds"}]}"#).unwrap().providers.remove(0),
+      has_key: true,
+    })
+    .unwrap();
+    assert_eq!((v["id"].as_str(), v["hasKey"].as_bool()), (Some("ds"), Some(true)));
+    let a: ProviderAction = serde_json::from_value(json!({ "kind": "delete", "id": "ds" })).unwrap();
+    assert_eq!(a, ProviderAction::Delete { id: "ds".into() });
+    let a: ProviderAction = serde_json::from_value(json!({ "kind": "save", "provider": { "id": "" } })).unwrap();
+    assert!(matches!(a, ProviderAction::Save { key: None, .. }));
+  }
 
   #[test]
   fn defaults_fill_a_minimal_file_and_unknown_fields_survive() {

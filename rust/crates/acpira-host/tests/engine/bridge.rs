@@ -92,6 +92,11 @@ fn center(store: Store) -> SettingsCenter {
     // Nothing here runs a shared action, so the ledger is never written
     shared: acpira_host::shared_config::SharedConfig::new(std::env::temp_dir().join("acpira-bridge-shared"), Arc::new(|_: &str| {})),
     roster: Arc::new(acpira_host::relay::roster::Roster::new(&std::env::temp_dir().join("acpira-bridge-roster"))),
+    // Nothing here edits a model source either
+    providers: Arc::new(acpira_host::providers::ProviderStore::new(
+      &std::env::temp_dir().join("acpira-bridge-providers"),
+      Arc::new(acpira_host::accounts::account_store::FileVault::new(std::env::temp_dir().join("acpira-bridge-providers/secrets.json"), Arc::new(|_: &str| {}))),
+    )),
   })
 }
 

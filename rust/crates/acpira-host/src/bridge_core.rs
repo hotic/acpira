@@ -363,6 +363,15 @@ impl BridgeCore {
         let view = self.settings.shared_view().await;
         self.post_now(HostMsg::Shared { view, error });
       }
+      W::Providers => {
+        let view = self.settings.providers_view().await;
+        self.post_now(HostMsg::Providers { view, error: None });
+      }
+      W::ProviderAction { action } => {
+        let error = self.settings.provider_action(action).await.err().map(|e| format!("{e:#}"));
+        let view = self.settings.providers_view().await;
+        self.post_now(HostMsg::Providers { view, error });
+      }
       W::Controls { agent, fresh } => {
         if fresh != Some(true) {
           let controls = manager.known_controls(&agent).await;
