@@ -14,13 +14,16 @@ async fn an_oversized_edit_right_after_compaction_goes_out_as_one_request() {
   let before = view(&s)["turns"].clone();
   let peer = s.to_record().acp_session_id;
   s.edit_turn(history_edit(&s, 4, "inspect-history")).await.unwrap();
-  until(|| !s.is_running() && !last_turn(&view(&s))["stop"].is_null() && turn_count(&s) > before.as_array().unwrap().len(), 5000).await;
+  until(|| !s.is_running() && turn_count(&s) == 6 && view(&s)["turns"][4]["text"] == "inspect-history" && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
   assert_eq!(s.to_record().acp_session_id, peer);
   let vw = view(&s);
   let turns = vw["turns"].as_array().unwrap();
-  assert_eq!(json!(turns[..turns.len() - 2]), before);
-  expect_eq(&wire_prompt(&turns[turns.len() - 1])["prompt"], json!([{ "type": "text", "text": "inspect-history" }]));
-  expect_absent(&turns[turns.len() - 2], "edited");
+  assert_eq!(json!(turns[..4]), json!(before.as_array().unwrap()[..4]));
+  let p = wire_prompt(&turns[5])["prompt"].clone();
+  assert_eq!(p.as_array().unwrap().len(), 2);
+  expect_superseded_note(&p[0], "cancel-empty-once");
+  expect_eq(&p[1], json!({ "type": "text", "text": "inspect-history" }));
+  expect_match(&turns[4], json!({ "edited": true }));
 }
 
 // Devin, 2026-10-04: editing a message that carried a ~316 KB screenshot kept the old prompt on screen, because the image's
@@ -83,7 +86,7 @@ async fn an_unchanged_failed_message_retries_natively_even_when_the_edit_changed
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_continue_from_an_earlier_turn_keeps_and_adds_attachments_and_leaves_later_history() {
+async fn a_continue_from_an_earlier_turn_keeps_and_adds_attachments_and_replaces_later_history() {
   let fake = fake_or_skip!();
   let h = Harness::new(&fake, json!({}));
   let s = started(&h, "/tmp").await;
@@ -94,7 +97,6 @@ async fn a_continue_from_an_earlier_turn_keeps_and_adds_attachments_and_leaves_l
   s.prompt("later".into(), drafts(json!([{ "kind": "text", "name": "unrelated.txt", "text": "unrelated payload" }])), false, None, None).await;
   let lost = view(&s)["turns"][2]["attachments"][0]["blob"].as_str().unwrap().to_owned();
   std::fs::remove_file(h.dir.path().join("sessions").join(&s.id).join(&lost)).unwrap();
-  let before = view(&s)["turns"].clone();
   let peer = s.to_record().acp_session_id;
   let mut edit = history_edit(&s, 0, "inspect-history");
   edit.retained_attachments = vec![0];
@@ -104,19 +106,19 @@ async fn a_continue_from_an_earlier_turn_keeps_and_adds_attachments_and_leaves_l
   edit.settings.config.insert("effort".into(), "low".into());
   edit.intent = Some(serde_json::from_value(json!("continue")).unwrap());
   s.edit_turn(edit).await.unwrap();
-  until(|| !s.is_running() && turn_count(&s) == 6 && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
+  until(|| !s.is_running() && turn_count(&s) == 2 && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
   assert_eq!(s.to_record().acp_session_id, peer);
   let vw = view(&s);
   let turns = vw["turns"].as_array().unwrap();
-  assert_eq!(json!(turns[..4]), before);
-  expect_absent(&turns[4], "edited");
-  expect_match(&turns[4]["attachments"], json!([{ "kind": "image", "name": "old.png" }, { "kind": "text", "name": "new.txt" }]));
-  let wire = wire_prompt(&turns[5]);
+  expect_match(&turns[0], json!({ "text": "inspect-history", "edited": true }));
+  expect_match(&turns[0]["attachments"], json!([{ "kind": "image", "name": "old.png" }, { "kind": "text", "name": "new.txt" }]));
+  let wire = wire_prompt(&turns[1]);
   let p = wire["prompt"].as_array().unwrap();
-  assert_eq!(p.len(), 3);
-  expect_eq(&p[0], json!({ "type": "text", "text": "inspect-history" }));
-  expect_match(&p[1], json!({ "type": "image", "mimeType": "image/png", "data": "aGVsbG8=" }));
-  expect_match(&p[2], json!({ "type": "resource", "resource": { "text": "new attachment content" } }));
+  assert_eq!(p.len(), 4);
+  expect_superseded_note(&p[0], "original");
+  expect_eq(&p[1], json!({ "type": "text", "text": "inspect-history" }));
+  expect_match(&p[2], json!({ "type": "image", "mimeType": "image/png", "data": "aGVsbG8=" }));
+  expect_match(&p[3], json!({ "type": "resource", "resource": { "text": "new attachment content" } }));
   let text = wire["prompt"].to_string();
   assert!(!text.contains("removed attachment content") && !text.contains("Conversation before") && !text.contains("unrelated payload"));
   assert_eq!(wire["mode"], "plan");
@@ -230,7 +232,8 @@ async fn native_usage_reported_while_applying_editor_settings_is_retained() {
       assert!(s.edit_turn(edit).await.is_err());
     } else {
       s.edit_turn(edit).await.unwrap();
-      until(|| !s.is_running() && turn_count(&s) == 4 && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
+      until(|| !s.is_running() && view(&s)["turns"][0]["text"] == "inspect-history" && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
+      assert_eq!(turn_count(&s), 2);
     }
     expect_match(&view(&s)["usage"], json!({ "used": 24_000, "size": 200_000 }));
     assert_eq!(option_value(&view(&s), "model"), "m2", "rejected={rejected}");
@@ -292,20 +295,21 @@ async fn an_oversized_edit_after_native_style_compaction_keeps_context_and_appli
     edit.settings.config.insert("effort".into(), "low".into());
     edit.attachments = drafts(json!([{ "kind": "text", "name": "new.txt", "text": "new attachment content" }]));
     s.edit_turn(edit).await.unwrap();
-    until(|| !s.is_running() && turn_count(&s) == 8 && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
+    until(|| !s.is_running() && turn_count(&s) == 6 && view(&s)["turns"][4]["text"] == "inspect-history" && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
     assert_eq!(s.to_record().acp_session_id, peer, "{agent} {mode_id}");
     let vw = view(&s);
     let turns = vw["turns"].as_array().unwrap();
-    assert_eq!(json!(turns[..6]), before);
+    assert_eq!(json!(turns[..4]), json!(before.as_array().unwrap()[..4]));
     assert_eq!(vw["controls"]["modeId"], mode_id);
-    let wire = wire_prompt(&turns[7]);
+    let wire = wire_prompt(&turns[5]);
     assert_eq!(wire["mode"], if mode_id == "yolo" { "default" } else { mode_id }, "{agent} {mode_id}");
     expect_match(&wire["config"], json!({ "model": "m2", "effort": "low" }));
     let p = wire["prompt"].as_array().unwrap();
-    assert_eq!(p.len(), 3);
-    expect_eq(&p[0], json!({ "type": "text", "text": "inspect-history" }));
-    expect_match(&p[1], json!({ "type": "image", "data": "aGVsbG8=" }));
-    expect_match(&p[2], json!({ "type": "resource", "resource": { "text": "new attachment content" } }));
-    expect_absent(&turns[6], "edited");
+    assert_eq!(p.len(), 4);
+    expect_superseded_note(&p[0], "original");
+    expect_eq(&p[1], json!({ "type": "text", "text": "inspect-history" }));
+    expect_match(&p[2], json!({ "type": "image", "data": "aGVsbG8=" }));
+    expect_match(&p[3], json!({ "type": "resource", "resource": { "text": "new attachment content" } }));
+    expect_match(&turns[4], json!({ "edited": true }));
   }
 }

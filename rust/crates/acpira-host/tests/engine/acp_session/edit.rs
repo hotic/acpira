@@ -18,7 +18,7 @@ async fn an_unchanged_empty_cancelled_turn_resends_natively_even_with_multi_mega
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_oversized_historical_edit_continues_without_replacing_the_native_session_or_history() {
+async fn an_oversized_historical_edit_continues_in_the_native_session_and_replaces_the_edited_turn() {
   let fake = fake_or_skip!();
   let (h, _native) = native_harness(&fake, json!({}));
   let (s, _) = with_ui_history(&h, "archived output ".repeat(300_000)).await;
@@ -26,14 +26,17 @@ async fn an_oversized_historical_edit_continues_without_replacing_the_native_ses
   let before = view(&s)["turns"].clone();
   let peer = s.to_record().acp_session_id;
   s.edit_turn(history_edit(&s, 2, "inspect-history")).await.unwrap();
-  until(|| !s.is_running(), 5000).await;
+  until(|| !s.is_running() && turn_count(&s) == 4 && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
   assert_eq!(s.to_record().acp_session_id, peer);
   let vw = view(&s);
   let turns = vw["turns"].as_array().unwrap();
-  assert_eq!(json!(turns[..turns.len() - 2]), before);
-  assert_eq!(turns.len(), 6);
-  expect_absent(&turns[4], "edited");
-  expect_eq(&wire_prompt(&turns[5])["prompt"], json!([{ "type": "text", "text": "inspect-history" }]));
+  // The original and its reply are replaced on screen, as with a rebuilt edit; the peer is told they are superseded
+  assert_eq!(json!(turns[..2]), json!(before.as_array().unwrap()[..2]));
+  expect_match(&turns[2], json!({ "text": "inspect-history", "edited": true }));
+  let p = wire_prompt(&turns[3])["prompt"].clone();
+  assert_eq!(p.as_array().unwrap().len(), 2);
+  expect_superseded_note(&p[0], "original");
+  expect_eq(&p[1], json!({ "type": "text", "text": "inspect-history" }));
   prompt(&s, "ordinary follow-up").await;
   expect_match(last_turn(&view(&s)), json!({ "stop": "end_turn" }));
   assert_eq!(s.to_record().acp_session_id, peer);

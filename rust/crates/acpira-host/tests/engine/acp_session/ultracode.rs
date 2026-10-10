@@ -286,7 +286,8 @@ async fn an_edit_continuing_natively_rebuilds_with_the_edited_ultra_first() {
   edit.intent = Some(serde_json::from_value(json!("continue")).unwrap());
   edit.settings.config.insert("effort".into(), ULTRA.into());
   s.edit_turn(edit).await.unwrap();
-  until(|| turn_count(&s) >= 4 && view(&s)["running"] == false, 5000).await;
+  until(|| view(&s)["turns"][0]["text"] == "first again" && view(&s)["running"] == false && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
+  assert_eq!(turn_count(&s), 2, "the edited prompt replaces the original on screen");
   let meta = lines(&meta_log);
   assert_eq!(meta.len(), 2, "the native session is rebuilt once, ahead of the edited prompt");
   assert_eq!(meta[1]["method"], "resume");
