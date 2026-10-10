@@ -307,7 +307,7 @@ describe('sidecar runtime', () => {
     expect(s.hostMsgs('V').length).toBe(n);
   });
 
-  it('routes a continue editTurn: acknowledged, appended natively, a stale repeat rejected', async () => {
+  it('routes a continue editTurn: acknowledged, replacing the turn natively, a stale repeat rejected', async () => {
     const { s, init } = await setup();
     const sessionId = init.state.active!.id;
     const latest = () => s.hostMsgs('V').filter((m): m is Extract<HostMsg, { type: 'session' }> => m.type === 'session' && m.session.id === sessionId).at(-1)?.session;
@@ -321,14 +321,14 @@ describe('sidecar runtime', () => {
       text: 'inspect-history', retainedAttachments: [], attachments: [], settings: captureTurnSettings(view.controls), intent: 'continue' };
     s.view('V', { type: 'editTurn', requestId: 'continue-request', edit });
     expect(await s.hostMsg('V', 'editTurnResult', m => m.requestId === 'continue-request')).toEqual({ type: 'editTurnResult', requestId: 'continue-request' });
-    await until(() => latest()?.turns.length === 4 && lastStop() === 'end_turn');
+    const first = () => { const t = latest()?.turns[0]; return t?.role === 'user' ? t.text : undefined; };
+    await until(() => first() === 'inspect-history' && latest()?.turns.length === 2 && lastStop() === 'end_turn');
     const after = latest()!;
-    expect(after.turns.slice(0, 2)).toEqual(view.turns);
-    expect(after.turns[2]).toMatchObject({ role: 'user', text: 'inspect-history' });
-    expect(after.turns[2]).not.toHaveProperty('edited');
+    // The native session keeps the original, so it is replaced on screen and marked edited like a rebuilt edit
+    expect(after.turns[0]).toMatchObject({ role: 'user', text: 'inspect-history', edited: true });
     s.view('V', { type: 'editTurn', requestId: 'stale-repeat', edit });
     expect(await s.hostMsg('V', 'editTurnResult', m => m.requestId === 'stale-repeat')).toMatchObject({ error: expect.any(String) });
-    expect(latest()!.turns).toHaveLength(4);
+    expect(latest()!.turns).toHaveLength(2);
   });
 
   it('exportSession writes the file under exports/ and toasts an Open button for it; a repeat reuses the file; an unknown id toasts the error', async () => {

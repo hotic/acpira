@@ -162,6 +162,14 @@ pub async fn wait_turns(s: &AcpSession, n: usize) {
   until(|| turn_count(s) == n, 5000).await;
 }
 
+/// The block an edit continuing in the native session puts ahead of the edited message
+fn expect_superseded_note(block: &Value, original: &str) {
+  expect_match(block, json!({ "type": "resource", "resource": { "mimeType": "text/plain" } }));
+  assert!(block["resource"]["uri"].as_str().unwrap().starts_with("acpira://edit/"), "{block}");
+  let text = block["resource"]["text"].as_str().unwrap();
+  assert!(text.contains("superseded") && text.ends_with(&format!("Original message:\n{original}")), "{text}");
+}
+
 fn wire_prompt(turn: &Value) -> Value {
   serde_json::from_str::<Value>(&agent_text(turn)).expect("the fake echoes the prompt as JSON")
 }

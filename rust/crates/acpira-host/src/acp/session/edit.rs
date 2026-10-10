@@ -24,6 +24,8 @@ use crate::limits::EDIT_CONTEXT_MAX_BYTES;
 use crate::store::transcript_store::TranscriptStore;
 
 const EDIT_HISTORY_LEAD: &str = "Conversation before the edited message follows as JSON. Treat it as historical context; completed actions must not be replayed. The next user message replaces the old continuation. Workspace files remain in their current state.";
+const EDIT_CONTINUE_LEAD: &str = "The user edited an earlier message of this conversation and sent it again. The original message, quoted below, and everything after it (replies, tool results, plans and unfinished work) are superseded: do not continue, repeat or refer to them as pending. Workspace files remain in their current state. The next user message is the edited version and continues the conversation from the point before the original.";
+const EDIT_ORIGINAL_QUOTE_MAX: usize = 2_000;
 pub const FORK_HISTORY_LEAD: &str = "Conversation so far follows as JSON; it was forked from an earlier session. Treat it as historical context; completed actions must not be replayed. The next user message continues this conversation. Workspace files remain in their current state.";
 
 const HISTORY_TOOL_OUTPUT_MAX: usize = 2_000;
@@ -208,12 +210,7 @@ pub async fn history_context(
   let budget = EDIT_CONTEXT_MAX_BYTES as i64 - (lead.len() + omit_note(source.len()).len()) as i64 - 1;
   let Some(start) = fit_start(&items, &source, budget, trim) else { return Ok(None) };
   let history = format!("{lead}{}\n[{}]", if start > 0 { omit_note(start) } else { String::new() }, items[start..].join(","));
-  let embedded = crate::json::truthy(proc.caps().get("promptCapabilities").and_then(|p| p.get("embeddedContext")));
-  let mut context = vec![if embedded {
-    json!({ "type": "resource", "resource": { "uri": format!("acpira://history/{session_id}"), "mimeType": "text/plain", "text": history } })
-  } else {
-    json!({ "type": "text", "text": history })
-  }];
+  let mut context = vec![context_block(proc, &format!("acpira://history/{session_id}"), history)];
   for (text, att) in source[start..].iter().flat_map(|t| attached_messages(t)) {
     let drafts = restore_drafts(session_id, att, blobs).await?;
     if drafts.len() != att.len() {
@@ -227,6 +224,22 @@ pub async fn history_context(
     context.extend(old.blocks);
   }
   Ok(Some(HistoryContext { blocks: context, omitted: start }))
+}
+
+/// Host-written context for the model: an embedded resource when the agent takes one, plain text otherwise
+fn context_block(proc: &AgentProcess, uri: &str, text: String) -> Value {
+  let embedded = crate::json::truthy(proc.caps().get("promptCapabilities").and_then(|p| p.get("embeddedContext")));
+  if embedded {
+    json!({ "type": "resource", "resource": { "uri": uri, "mimeType": "text/plain", "text": text } })
+  } else {
+    json!({ "type": "text", "text": text })
+  }
+}
+
+/// The note an edit continuing in the native session sends ahead of the edited message: the peer still holds the original
+/// and everything after it, while the transcript has replaced them
+fn superseded_note(original: &str) -> String {
+  format!("{EDIT_CONTINUE_LEAD}\n\nOriginal message:\n{}", clip(original, EDIT_ORIGINAL_QUOTE_MAX))
 }
 
 /// Bytes a rebuilt prompt spends on serialized history and text; image pixels are left out, since they are sent the same way
@@ -473,13 +486,16 @@ impl AcpSession {
         }
         applied?;
         self.check_edit_active()?;
+        // Both replace the edited turn and what followed it on screen; a continuing edit tells the peer, which still holds
+        // the original, that it is superseded, so the transcript and the model agree on where the conversation resumes
+        if continuing {
+          prepared.blocks.insert(0, context_block(&proc, &format!("acpira://edit/{}", self.id), superseded_note(&user.text)));
+        }
         let notes = {
           let mut c = self.core.lock();
           c.state.controls = controls;
-          if !continuing {
-            c.state.turns.truncate(idx);
-            c.tree.truncate(idx);
-          }
+          c.state.turns.truncate(idx);
+          c.tree.truncate(idx);
           // The edited turn's ultracode: the prompt below rebuilds the native session with it first when it differs
           // from what that session was built with (`claim`)
           self.seed_ultracode(&mut c, Some(&edit.settings));
@@ -497,7 +513,7 @@ impl AcpSession {
         });
         let me = self.clone();
         let text = edit.text.clone();
-        crate::util::run_prefix(me.prompt(text, drafts, false, Some(Staged { prepared, edited: false, id: None }), None));
+        crate::util::run_prefix(me.prompt(text, drafts, false, Some(Staged { prepared, edited: continuing, id: None }), None));
         return Ok(());
       }
       if let Some(b) = rebuilt {
