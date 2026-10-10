@@ -5,7 +5,7 @@ import type { HiddenMap, SettingKey, SettingsView } from './settings';
 import type { Locale } from './i18n';
 import type { AgentInventory } from './inventory';
 import type { SharedAction, SharedView } from './sharedConfig';
-import type { ProviderAction, ProvidersView } from './providers';
+import type { ProbeOutcome, ProviderAction, ProviderProbe, ProvidersView } from './providers';
 import type { SessionPatch } from './sessionPatch';
 
 // Message contract between host ↔ webview; both sides trust only this file
@@ -111,6 +111,8 @@ export type HostMsg =
   | { type: 'controls'; agent: AgentId; controls: ConfigControl[] }
   // The built-in agent's model sources; error when the action that triggered this reply failed
   | { type: 'providers'; view: ProvidersView; error?: string }
+  // The answer to the providerProbe with the same id
+  | { type: 'providerProbed'; id: string; outcome: ProbeOutcome }
   // Reply to searchFiles; seq echoes the request so stale replies can be dropped
   | { type: 'files'; seq: number; files: FileHit[] }
   // Reply to listNativeSessions: the agent's own sessions in this workspace, with localId marking the ones already imported
@@ -268,6 +270,8 @@ export type WebviewMsg =
   // The built-in agent's model sources: read them, or apply an edit and get the view back
   | { type: 'providers' }
   | { type: 'providerAction'; action: ProviderAction }
+  // List a source's models, check it, test a model or find local servers; answered by providerProbed
+  | { type: 'providerProbe'; id: string; probe: ProviderProbe }
   // fresh: the refresh button — host spawns a throwaway process to re-read the current configOptions; without it, the latest session's list
   | { type: 'controls'; agent: AgentId; fresh?: boolean }
   // History list → "Import from <agent>": the host spawns a throwaway process, initialize + session/list for this workspace; no session is created

@@ -7,7 +7,7 @@ use crate::appearance::Appearance;
 use crate::chatgpt_integration::ChatGptIntegrationStatus;
 use crate::i18n::Locale;
 use crate::inventory::AgentInventory;
-use crate::providers::{ProviderAction, ProvidersView};
+use crate::providers::{ProbeOutcome, ProviderAction, ProviderProbe, ProvidersView};
 use crate::shared_config::{SharedAction, SharedView};
 use crate::settings::{HiddenMap, SettingsView};
 use crate::transcript::{
@@ -266,6 +266,11 @@ pub enum HostMsg {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
   },
+  /// The answer to `ProviderProbe` with the same id
+  ProviderProbed {
+    id: String,
+    outcome: ProbeOutcome,
+  },
   Controls {
     agent: AgentId,
     controls: Vec<ConfigControl>,
@@ -322,6 +327,7 @@ impl HostMsg {
       HostMsg::Inventory { .. } => "inventory",
       HostMsg::Shared { .. } => "shared",
       HostMsg::Providers { .. } => "providers",
+      HostMsg::ProviderProbed { .. } => "providerProbed",
       HostMsg::Controls { .. } => "controls",
       HostMsg::Files { .. } => "files",
       HostMsg::NativeSessions { .. } => "nativeSessions",
@@ -627,6 +633,11 @@ pub enum WebviewMsg {
   Providers,
   ProviderAction {
     action: ProviderAction,
+  },
+  /// A network question about a source (list models, check, test, find local servers); answered by `ProviderProbed`
+  ProviderProbe {
+    id: String,
+    probe: ProviderProbe,
   },
   Controls {
     agent: AgentId,

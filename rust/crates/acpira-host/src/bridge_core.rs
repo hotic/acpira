@@ -372,6 +372,14 @@ impl BridgeCore {
         let view = self.settings.providers_view().await;
         self.post_now(HostMsg::Providers { view, error });
       }
+      // Network round trips (a test call takes seconds): off the message loop, answered by id
+      W::ProviderProbe { id, probe } => {
+        let me = self.clone();
+        tokio::spawn(async move {
+          let outcome = me.settings.provider_probe(probe).await;
+          me.post_now(HostMsg::ProviderProbed { id, outcome });
+        });
+      }
       W::Controls { agent, fresh } => {
         if fresh != Some(true) {
           let controls = manager.known_controls(&agent).await;

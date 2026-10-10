@@ -1,4 +1,6 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createServer, type IncomingHttpHeaders } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -52,5 +54,48 @@ describe('providers contract', () => {
     // hostMsg scans everything received so far: the first, empty view must not stand in for the delete's reply
     await s.hostMsg('V', 'providers', m => m !== empty && m.view.providers.length === 0 && !m.error);
     expect(JSON.parse(readFileSync(join(data, 'secrets.json'), 'utf8'))).not.toHaveProperty(['acpira.provider.deep-seek']);
+  });
+
+  it('carries the presets and families, and answers a model fetch with the stored key', async () => {
+    const temp = (p: string) => { const d = mkdtempSync(join(tmpdir(), p)); dirs.push(d); return d; };
+    const data = temp('acpira-providers-data-');
+    const s = new Shell(data, temp('acpira-providers-ws-'));
+    shells.push(s);
+    // A stand-in model list: ids only, so everything past the id comes from the catalogue or the defaults
+    const seen: IncomingHttpHeaders[] = [];
+    const server = createServer((req, res) => {
+      seen.push(req.headers);
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ object: 'list', data: [{ id: 'deepseek-v4-flash' }, { id: 'text-embedding-v4' }, { id: 'my-finetune' }] }));
+    });
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+    try {
+      const port = (server.address() as AddressInfo).port;
+      await s.hello({ client: { name: 'contract', version: '0', capabilities: [] } });
+      await s.open('V');
+      const draft: Provider = { id: '', name: 'Stub', preset: 'custom', format: 'openai-chat', baseUrl: `http://127.0.0.1:${port}/v1`, fullUrl: false, enabled: true, models: [] };
+      s.view('V', { type: 'providerAction', action: { kind: 'save', provider: draft, key: 'sk-stored' } });
+      const view = (await s.hostMsg('V', 'providers', m => m.view.providers.length === 1)).view;
+      expect(view.presets.map(p => p.id)).toEqual(expect.arrayContaining(['deepseek', 'ollama', 'custom']));
+      expect(view.families[0]).toBe('generic');
+
+      s.view('V', { type: 'providerProbe', id: 'fetch-1', probe: { kind: 'models', provider: view.providers[0]! } });
+      const got = await s.hostMsg('V', 'providerProbed', m => m.id === 'fetch-1');
+      expect(got.outcome.kind).toBe('models');
+      const models = got.outcome.kind === 'models' ? got.outcome.models : [];
+      expect(models.map(m => m.id)).toEqual(['deepseek-v4-flash', 'my-finetune']);
+      expect(models[0]!.estimated).toEqual(expect.arrayContaining(['context', 'output']));
+      expect(models[1]).toMatchObject({ context: 128000, estimated: ['context', 'input'] });
+      expect(seen[0]!.authorization).toBe('Bearer sk-stored');
+
+      // A key typed into the form wins over the stored one; a closed port is a failed outcome, not a dropped reply
+      s.view('V', { type: 'providerProbe', id: 'check-1', probe: { kind: 'check', provider: view.providers[0]!, key: 'sk-typed' } });
+      expect((await s.hostMsg('V', 'providerProbed', m => m.id === 'check-1')).outcome).toEqual({ kind: 'check', count: 3 });
+      expect(seen[1]!.authorization).toBe('Bearer sk-typed');
+      s.view('V', { type: 'providerProbe', id: 'check-2', probe: { kind: 'check', provider: { ...draft, baseUrl: 'http://127.0.0.1:9/v1' } } });
+      expect((await s.hostMsg('V', 'providerProbed', m => m.id === 'check-2')).outcome.kind).toBe('failed');
+    } finally {
+      server.close();
+    }
   });
 });

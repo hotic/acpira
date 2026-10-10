@@ -125,7 +125,8 @@ export function AgentPage({ agent, accounts, install, inventory, controls, provi
 
       {PLAN_AUTO_APPROVE_AGENTS.includes(agent.id) && <PermissionsSection agent={agent} settings={settings} on={on} />}
 
-      {block('models')}
+      {/* The built-in agent's models are its sources' models, edited above */}
+      {agent.id !== BUILTIN_AGENT_ID && block('models')}
       <NativeBlock agent={agent} count={inventory ? counts.mcp + counts.skills + counts.rules : undefined}>
         {NATIVE.map(id => (
           <div key={id} className="flex flex-col gap-2">
