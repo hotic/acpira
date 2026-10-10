@@ -57,6 +57,12 @@ pub fn apply_model_sources(agent: &str, controls: &mut [ConfigControl], configur
           }
         }
         "pi" | "opencode" => provider_prefixed(option, configured),
+        // The built-in agent picks `provider/model` and puts the provider's display name in the description
+        "acpira" => {
+          let Some((provider, _)) = crate::providers::split_pick(&option.id) else { continue };
+          let name = option.description.clone().filter(|d| !d.trim().is_empty()).unwrap_or_else(|| provider.to_owned());
+          option.source = Some(OptionSource { id: provider.to_owned(), name, kind: SourceKind::Custom });
+        }
         "codex" | "claude" => {
           if let Some(source) = configured.get(ALL) {
             option.source = Some(source.clone());
@@ -88,6 +94,19 @@ mod tests {
 
   fn seen(controls: &[ConfigControl]) -> Vec<(String, Option<(String, SourceKind)>)> {
     controls[0].options.iter().map(|o| (o.name.clone(), o.source.as_ref().map(|s| (s.name.clone(), s.kind)))).collect()
+  }
+
+  #[test]
+  fn built_in_picks_take_their_provider_as_the_source() {
+    let mut c = model(&[("ds/deepseek-v4-flash", "DeepSeek V4 Flash"), ("local/qwen3:8b", "qwen3:8b"), ("bare", "Bare")]);
+    c[0].options[0].description = Some("DeepSeek".into());
+    apply_model_sources("acpira", &mut c, &ModelSources::new());
+    assert_eq!(seen(&c), [
+      ("DeepSeek V4 Flash".into(), Some(("DeepSeek".into(), SourceKind::Custom))),
+      ("qwen3:8b".into(), Some(("local".into(), SourceKind::Custom))),
+      ("Bare".into(), None),
+    ]);
+    assert_eq!(c[0].options[0].source.as_ref().unwrap().id, "ds");
   }
 
   #[test]

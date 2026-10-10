@@ -1,9 +1,14 @@
 import { cn } from '../ui/cn';
 
-// Vendor marks: monochrome versions of each official logo (paths taken from @lobehub/icons-static-svg 1.95.1,
+// Vendor marks (plus Acpira's own): monochrome versions of each official logo (paths taken from @lobehub/icons-static-svg 1.95.1,
 // 24 viewBox, filled with currentColor). Shared by AgentMark (agent ids) and ModelMark (modelBrand keys);
 // unlisted keys fall back to an initial-letter tile
 const MARKS: Record<string, string[]> = {
+  // Acpira's own two-dock logo (media/icon.svg), scaled into the 24 viewBox: the built-in agent's mark
+  acpira: [
+    'M5.19 0.8H15.69C16.86 0.8 17.69 1.62 17.69 2.92V4.33C17.69 5.75 16.81 6.57 15.39 6.57H8.55C7.14 6.57 6.37 7.34 6.37 8.76V14C6.37 14.95 6.72 15.36 7.78 15.36H9.67C10.5 15.36 11.09 15.95 11.09 16.84V17.43H8.85C6.9 17.43 5.72 18.6 5.72 20.37V20.61H4.6C2.06 20.61 0 18.6 0 16.13V6.34C0 3.33 2.42 0.8 5.19 0.8Z',
+    'M18.63 3.74C21.82 3.74 24 6.16 24 9.35V18.43C24 21.08 21.94 23.2 19.22 23.2H8.96C7.49 23.2 6.66 22.38 6.66 20.96V20.37C6.66 19.14 7.49 18.37 8.85 18.37H15.57C16.81 18.37 17.57 17.43 17.57 16.19V10.7C17.57 9.7 17.16 9.35 16.28 9.35H14.39C13.5 9.35 13.09 8.76 13.09 7.93V7.52H15.69C17.51 7.52 18.63 6.34 18.63 4.57Z',
+  ],
   grok: [
     'M9.27 15.29l7.978-5.897c.391-.29.95-.177 1.137.272.98 2.369.542 5.215-1.41 7.169-1.951 1.954-4.667 2.382-7.149 1.406l-2.711 1.257c3.889 2.661 8.611 2.003 11.562-.953 2.341-2.344 3.066-5.539 2.388-8.42l.006.007c-.983-4.232.242-5.924 2.75-9.383.06-.082.12-.164.179-.248l-3.301 3.305v-.01L9.267 15.292M7.623 16.723c-2.792-2.67-2.31-6.801.071-9.184 1.761-1.763 4.647-2.483 7.166-1.425l2.705-1.25a7.808 7.808 0 00-1.829-1A8.975 8.975 0 005.984 5.83c-2.533 2.536-3.33 6.436-1.962 9.764 1.022 2.487-.653 4.246-2.34 6.022-.599.63-1.199 1.259-1.682 1.925l7.62-6.815',
   ],
