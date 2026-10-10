@@ -66,8 +66,11 @@ pub struct Harness {
 
 impl Harness {
   pub async fn start() -> Harness {
-    let home = tempfile::tempdir().unwrap();
-    let cwd = tempfile::tempdir().unwrap();
+    Harness::start_in(tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()).await
+  }
+
+  /// A fresh agent process on an existing data root and project (a reopened window)
+  pub async fn start_in(home: tempfile::TempDir, cwd: tempfile::TempDir) -> Harness {
     let (agent_r, client_w) = tokio::io::duplex(1 << 20);
     let (client_r, agent_w) = tokio::io::duplex(1 << 20);
     let agent_home = home.path().to_owned();

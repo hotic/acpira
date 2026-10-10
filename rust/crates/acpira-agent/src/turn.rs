@@ -79,8 +79,13 @@ pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<V
   {
     let mut st = session.state.lock();
     st.turn = None;
+    let before = st.items.len();
     settle(&mut st);
+    for item in &st.items[before..] {
+      session.store.item(item);
+    }
   }
+  session.store.flush();
   let stop = result.map_err(|e| RpcError::new(-32603, e))?;
   let s = stats.lock().clone();
   let mut response = json!({ "stopReason": stop.wire() });
@@ -100,7 +105,7 @@ pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<V
 
 /// Close the history after a turn ended any way: cut-off text becomes an assistant message, and every tool call
 /// without a result gets one
-fn settle(st: &mut SessionState) {
+pub(crate) fn settle(st: &mut SessionState) {
   let text = std::mem::take(&mut st.partial_text);
   let reasoning = std::mem::take(&mut st.partial_reasoning);
   if !text.is_empty() {
@@ -161,6 +166,7 @@ fn setup(server: &Server, session: &Session) -> Result<Setup, String> {
     let mut st = session.state.lock();
     if st.prompt.variant != variant || st.prompt.text.is_empty() {
       st.prompt = prompt::compose(&places, Some((provider, model)));
+      session.save_prompt(&st.prompt);
     }
     st.prompt.clone()
   };
@@ -208,7 +214,13 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
         _ => parts.insert(0, Part::Text(format!("<mode>\n{overlay}\n</mode>"))),
       }
     }
-    st.items.push(Item::User(parts));
+    let item = Item::User(parts);
+    session.store.item(&item);
+    st.items.push(item);
+  }
+  // The replay shows the prompt as the user sent it, without the mode note
+  for block in params.get("prompt").and_then(Value::as_array).into_iter().flatten() {
+    session.store.record_update(&json!({ "sessionUpdate": "user_message_chunk", "content": block }));
   }
   let mut corrections = 0u32;
   let mut step = 0u32;
@@ -234,6 +246,8 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       thinking: s.thinking,
       effort: s.effort.clone(),
     };
+    log_view(session, &s, &request);
+    let started = std::time::Instant::now();
     let mut rx = llm::stream(server.http.clone(), s.endpoint.clone(), request);
     // Model tool-call id → ACP tool call id: providers reuse ids across calls, ACP needs them unique per session
     let mut ids: HashMap<String, String> = HashMap::new();
@@ -257,10 +271,18 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
           finished = Some((reply, stop, usage));
           break;
         }
-        Err(e) => return Err(describe(s.provider.display_name(), &e)),
+        Err(e) => {
+          log_request(session, &s, started, None, None, Some(&e.to_string()));
+          return Err(describe(s.provider.display_name(), &e));
+        }
       }
     }
-    let (reply, stop, usage) = finished.ok_or_else(|| describe(s.provider.display_name(), &LlmError::Protocol("the stream ended without a result".into())))?;
+    let Some((reply, stop, usage)) = finished else {
+      let e = LlmError::Protocol("the stream ended without a result".into());
+      log_request(session, &s, started, None, None, Some(&e.to_string()));
+      return Err(describe(s.provider.display_name(), &e));
+    };
+    log_request(session, &s, started, Some(&stop), usage.as_ref(), None);
     if let Some(u) = usage {
       let mut st = stats.lock();
       st.usage.input += u.input;
@@ -277,12 +299,14 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       let mut st = session.state.lock();
       st.partial_text.clear();
       st.partial_reasoning.clear();
-      st.items.push(Item::Assistant {
+      let item = Item::Assistant {
         text: reply.text.clone(),
         reasoning: reply.reasoning.clone(),
         tool_calls: reply.tool_calls.clone(),
         native: reply.native.clone(),
-      });
+      };
+      session.store.item(&item);
+      st.items.push(item);
     }
     match stop {
       _ if !reply.tool_calls.is_empty() && stop != StopReason::MaxTokens => match run_tools(server, session, &s, &reply.tool_calls, &mut ids, &mut corrections).await {
@@ -296,6 +320,47 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       _ => return Ok(Stop::EndTurn),
     }
   }
+}
+
+/// Record what the request's prefix is built from, and a `view` event when that changed since the last request: a
+/// changed prompt, tool set or model is where a provider's prompt cache stops matching
+fn log_view(session: &Session, s: &Setup, request: &Request) {
+  let view = json!({
+    "model": s.pick,
+    "prompt": { "variant": s.prompt.0, "version": s.prompt.1, "digest": s.prompt.2 },
+    "tools": request.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+  });
+  let prev = session.state.lock().last_view.replace(view.clone());
+  if let Some(prev) = prev
+    && prev != view
+  {
+    let changed: Vec<&str> = ["model", "prompt", "tools"].into_iter().filter(|k| prev[k] != view[k]).collect();
+    session.store.append(json!({ "type": "view", "changed": changed, "from": prev, "to": view }));
+  }
+}
+
+/// One `request` event per model call
+fn log_request(session: &Session, s: &Setup, started: std::time::Instant, stop: Option<&StopReason>, usage: Option<&Usage>, error: Option<&str>) {
+  let mut ev = json!({
+    "type": "request",
+    "model": s.pick,
+    "source": s.provider.id,
+    "format": s.provider.format,
+    "prompt": { "variant": s.prompt.0, "version": s.prompt.1, "digest": s.prompt.2 },
+    // Context policies in effect; only the tool output budget exists so far
+    "policies": { "outputBudget": { "lines": crate::budget::MAX_LINES, "bytes": crate::budget::MAX_BYTES } },
+    "ms": started.elapsed().as_millis() as u64,
+  });
+  if let Some(u) = usage {
+    ev["usage"] = json!({ "input": u.input, "output": u.output, "cacheRead": u.cache_read, "cacheWrite": u.cache_write, "reasoning": u.reasoning });
+  }
+  if let Some(stop) = stop {
+    ev["stop"] = Value::String(format!("{stop:?}"));
+  }
+  if let Some(e) = error {
+    ev["error"] = Value::String(e.to_owned());
+  }
+  session.store.append(ev);
 }
 
 /// The output limit sent with a request: only one the user (or the endpoint) gave, never a guessed one
@@ -612,6 +677,7 @@ async fn exit_plan(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, p
     let mut st = session.state.lock();
     st.mode = modes::AGENT.to_owned();
     st.announced = modes::AGENT.to_owned();
+    session.save_state(&st);
   }
   server.update(&session.id, json!({ "sessionUpdate": "current_mode_update", "currentModeId": modes::AGENT }));
   let model = format!("The user approved the plan. {} Carry out the plan now, keeping the to-do list current.", modes::get(modes::AGENT).overlay(&path));
@@ -693,7 +759,9 @@ fn finish(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, out: Outpu
     Some(note) => format!("{note}\n{}", out.model),
     None => out.model,
   };
-  session.state.lock().items.push(Item::ToolResult { call_id: p.call.id.clone(), name: p.call.name.clone(), content, is_error: out.is_error });
+  let item = Item::ToolResult { call_id: p.call.id.clone(), name: p.call.name.clone(), content, is_error: out.is_error };
+  session.store.item(&item);
+  session.state.lock().items.push(item);
 }
 
 #[cfg(test)]

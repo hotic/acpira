@@ -26,6 +26,7 @@ pub mod shared_config;
 pub mod sidecar;
 pub mod slash_commands;
 pub mod subagents;
+pub mod time;
 pub mod todo_tools;
 pub mod transcript;
 pub mod turn_errors;
