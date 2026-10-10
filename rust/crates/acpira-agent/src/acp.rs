@@ -10,7 +10,8 @@ use serde_json::{Value, json};
 
 use acpira_rpc::cancel::Cancel;
 use acpira_rpc::rpc::{BoxFuture, Connection, Inbound, RpcError};
-use acpira_shared::providers::split_pick;
+use acpira_shared::model_catalog::Catalog;
+use acpira_shared::providers::{Thinking, split_pick};
 
 use crate::config::{Config, ConfigCache};
 use crate::llm::Item;
@@ -149,16 +150,17 @@ impl Server {
   fn new_session(&self, params: &Value) -> Result<Value, RpcError> {
     let cwd = params.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty()).ok_or_else(|| RpcError::new(-32602, "cwd is required"))?;
     let config = self.config.get();
+    let catalog = self.catalog.get();
     let id = uuid::Uuid::new_v4().to_string();
     let mut state = SessionState { mode: modes::AGENT.to_owned(), announced: modes::AGENT.to_owned(), ..Default::default() };
     state.model = config.default_pick();
     let places = crate::prompt::Places::new(std::path::Path::new(cwd), crate::turn::user_home().as_deref());
     state.prompt = crate::prompt::compose(&places, state.model.as_deref().and_then(|p| config.find(p)));
-    state.effort = default_effort(&config, state.model.as_deref());
+    state.effort = default_effort(&config, &catalog, state.model.as_deref());
     let response = json!({
       "sessionId": id,
       "modes": modes_of(&state),
-      "configOptions": config_options(&config, &state),
+      "configOptions": config_options(&config, &catalog, &state),
     });
     let store = Store::new(self.session_file(&id), &id, std::path::Path::new(cwd));
     // The file starts with the first event; the prompt goes first so a reopen keeps the very same text
@@ -200,13 +202,15 @@ impl Server {
       }
     }
     let config = self.config.get();
+    let catalog = self.catalog.get();
     let st = session.state.lock();
-    Ok(json!({ "modes": modes_of(&st), "configOptions": config_options(&config, &st) }))
+    Ok(json!({ "modes": modes_of(&st), "configOptions": config_options(&config, &catalog, &st) }))
   }
 
   /// A session object from its file: the history, the controls and the system prompt as they were
   fn revive(&self, id: &str, cwd: PathBuf, loaded: &store::Loaded, path: PathBuf) -> Session {
     let config = self.config.get();
+    let catalog = self.catalog.get();
     let s = |k: &str| loaded.state.get(k).and_then(Value::as_str).map(str::to_owned);
     let mut st = SessionState {
       mode: s("mode").filter(|m| modes::find(m).is_some()).unwrap_or_else(|| modes::AGENT.to_owned()),
@@ -216,7 +220,7 @@ impl Server {
       items: loaded.items.clone(),
       ..Default::default()
     };
-    st.effort = s("effort").or_else(|| default_effort(&config, st.model.as_deref()));
+    st.effort = s("effort").or_else(|| default_effort(&config, &catalog, st.model.as_deref()));
     if let Some(p) = &loaded.prompt {
       let ps = |k: &str| p.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
       st.prompt = crate::prompt::Composed {
@@ -290,6 +294,7 @@ impl Server {
     let config_id = str_param(params, "configId")?;
     let value = params.get("value").and_then(Value::as_str).ok_or_else(|| RpcError::new(-32602, "value must be a string"))?;
     let config = self.config.get();
+    let catalog = self.catalog.get();
     let mut st = session.state.lock();
     match config_id {
       "model" => {
@@ -298,16 +303,16 @@ impl Server {
         }
         st.model = Some(value.to_owned());
         // An effort the new model does not offer falls back to its default
-        let efforts = efforts_of(&config, st.model.as_deref());
+        let efforts = efforts_of(&config, &catalog, st.model.as_deref());
         if !st.effort.as_ref().is_some_and(|e| efforts.contains(e)) {
-          st.effort = default_effort(&config, st.model.as_deref());
+          st.effort = default_effort(&config, &catalog, st.model.as_deref());
         }
       }
       "approval" => {
         st.approval = Approval::parse(value).ok_or_else(|| RpcError::new(-32602, format!("Unknown approval level: {value}")))?;
       }
       "effort" => {
-        if !efforts_of(&config, st.model.as_deref()).iter().any(|e| e == value) {
+        if !efforts_of(&config, &catalog, st.model.as_deref()).iter().any(|e| e == value) {
           return Err(RpcError::new(-32602, format!("Unknown effort: {value}")));
         }
         st.effort = Some(value.to_owned());
@@ -315,7 +320,7 @@ impl Server {
       other => return Err(RpcError::new(-32602, format!("Unknown config option: {other}"))),
     }
     session.save_state(&st);
-    Ok(json!({ "configOptions": config_options(&config, &st) }))
+    Ok(json!({ "configOptions": config_options(&config, &catalog, &st) }))
   }
 
   fn cancel(&self, params: &Value) {
@@ -336,19 +341,25 @@ fn modes_of(st: &SessionState) -> Value {
   })
 }
 
-fn efforts_of(config: &Config, pick: Option<&str>) -> Vec<String> {
-  pick.and_then(|p| config.find(p)).map(|(_, m)| m.efforts.clone()).unwrap_or_default()
+/// The configured levels; a model entered without any (added by id rather than fetched) gets the catalogue's, as model
+/// discovery would have given it, unless its thinking is switched off
+fn efforts_of(config: &Config, catalog: &Catalog, pick: Option<&str>) -> Vec<String> {
+  let Some((_, m)) = pick.and_then(|p| config.find(p)) else { return vec![] };
+  if !m.efforts.is_empty() || m.thinking == Thinking::Off {
+    return m.efforts.clone();
+  }
+  crate::catalog::lookup(catalog, &m.id).filter(|c| c.reasoning).map(|c| c.efforts.clone()).unwrap_or_default()
 }
 
 /// `high` when offered, else the last (strongest) level
-fn default_effort(config: &Config, pick: Option<&str>) -> Option<String> {
-  let efforts = efforts_of(config, pick);
+fn default_effort(config: &Config, catalog: &Catalog, pick: Option<&str>) -> Option<String> {
+  let efforts = efforts_of(config, catalog, pick);
   efforts.iter().find(|e| *e == "high").or(efforts.last()).cloned()
 }
 
 /// The full configOptions set: the model select (every usable model, labelled with its source), the effort select when
 /// the current model offers levels, and the approval level
-pub fn config_options(config: &Config, st: &SessionState) -> Vec<Value> {
+pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState) -> Vec<Value> {
   let mut out = vec![];
   let current = st.model.as_deref().filter(|p| config.find(p).is_some()).map(str::to_owned).or_else(|| config.default_pick());
   if let Some(current) = current {
@@ -358,9 +369,9 @@ pub fn config_options(config: &Config, st: &SessionState) -> Vec<Value> {
       .map(|(p, m)| json!({ "value": acpira_shared::providers::model_pick(&p.id, &m.id), "name": m.display_name(), "description": p.display_name() }))
       .collect();
     out.push(json!({ "id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": current, "options": options }));
-    let efforts = efforts_of(config, Some(&current));
+    let efforts = efforts_of(config, catalog, Some(&current));
     if !efforts.is_empty() {
-      let value = st.effort.clone().filter(|e| efforts.contains(e)).or_else(|| default_effort(config, Some(&current))).unwrap_or_default();
+      let value = st.effort.clone().filter(|e| efforts.contains(e)).or_else(|| default_effort(config, catalog, Some(&current))).unwrap_or_default();
       out.push(json!({
         "id": "effort", "name": "Effort", "category": "thought_level", "type": "select", "currentValue": value,
         "options": efforts.iter().map(|e| json!({ "value": e, "name": title_case(e) })).collect::<Vec<_>>(),
