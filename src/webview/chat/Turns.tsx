@@ -8,7 +8,7 @@ import { getLocale, t } from '../i18n';
 import { commandSegments } from './PromptInput';
 import { promptMarks } from './slashCommands';
 import { absorbedNotices, hasTurnContent, turnOutcome } from './turnOutcome';
-import { EntranceOnce, Row, RowLabel, RowTarget, RowEntranceContext, EntranceScopeContext } from '../ui/Row';
+import { EntranceOnce, Row, RowLabel, RowTarget, RowEntranceContext, EntranceScopeContext, QuietEntranceContext } from '../ui/Row';
 import { Button } from '../ui/Button';
 import { Disclosure } from '../ui/Disclosure';
 import { Collapsible, LazyPanelContext } from '../ui/Collapsible';
@@ -20,7 +20,8 @@ import { Thought } from './Thought';
 import { Plan } from './Plan';
 import { ToolCall } from './ToolCall';
 import { ToolGroup } from './ToolGroup';
-import { foldStates, groupProcess, itemEntrance, type ProcessItem } from './processGroups';
+import { blockSettled, foldStates, groupProcess, itemEntrance, itemSettled, type ProcessItem } from './processGroups';
+import { useTailWindow } from './tailWindow';
 import { AutoFoldContext, AutoFoldItem, AutoFoldStore } from './autoFold';
 import { useFollowing } from './useBottomFollow';
 import { Prose } from './Prose';
@@ -196,7 +197,8 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
     ...(turn.error?.failureId !== undefined ? { suppressId: turn.error.failureId } : {}),
     ...(absorbed.length ? { absorbed } : {}),
   }), [onFailureAction, last, running, turn.error?.failureId, absorbed]);
-  // A settled turn mounts fold bodies on first open; a live one keeps them mounted so streamed content stays in step while closed
+  // A settled turn mounts fold bodies on first open; a live one keeps them mounted (its finished items narrow this again,
+  // `ProcessBlocks`) so streamed content stays in step while closed
   return <LazyPanelContext.Provider value={!running}><EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><NoticeActionContext.Provider value={noticeActions}><div className={cn('group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]', joined && '-mt-msg-join')}>
     {sections.map((section, i) => {
       const lastSection = i === sections.length - 1;
@@ -232,18 +234,35 @@ function AgentContent({ turn, index, running, compactionOnly, onPermission, memo
   const { fold } = useAppearance();
   const working = running && !compactionOnly;
   if (fold === 'codex') return <CodexMessage turn={turn} running={running} working={working} onPermission={onPermission} memoryKey={memoryKey} subagents={subagents} allSubagents={allSubagents} onInspect={onInspect} lead={lead} />;
+  return <FlatMessage turn={turn} running={running} working={working} fold={fold} onPermission={onPermission} subagents={subagents} allSubagents={allSubagents} onInspect={onInspect} lead={lead} />;
+}
+
+// Every fold mode but codex: lines and standalone blocks in transcript order
+function FlatMessage({ turn, running, working, fold, onPermission, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; running: boolean; working: boolean; fold: Appearance['fold']; onPermission: OnPermission } & SubagentSlots) {
   // Plan approvals live on the plan card and the open question card above the composer; neither takes a slot in the message
   const groups = groupBlocks(turn.blocks.filter(b => (b.type !== 'permission' || !b.planId) && (b.type !== 'question' || !!b.outcome)));
+  const box = useRef<HTMLDivElement>(null);
+  // The window counts blocks: a lines group of many blocks is trimmed inside, keeping its items' keys
+  const tail = useTailWindow(groups.reduce((n, g) => n + (g.kind === 'lines' ? g.blocks.length : 1), 0), running, box);
+  let at = 0;
   return (
-    <div className="flex flex-col gap-gap">
+    <div ref={box} className="flex flex-col gap-gap">
       <Activity turn={turn} running={working} leadKind={lead} />
-      {groups.map((g, gi) => (
-        <div key={g.kind === 'block' && 'id' in g.block && g.block.id ? g.block.id : `g${gi}`}>
-          {g.kind === 'lines'
-            ? <Lines blocks={g.blocks} fold={fold} running={running} />
-            : <Block block={g.block} onPermission={onPermission} />}
-        </div>
-      ))}
+      <QuietEntranceContext.Provider value={tail.quiet}>
+        {groups.map((g, gi) => {
+          const size = g.kind === 'lines' ? g.blocks.length : 1;
+          const skip = Math.max(0, tail.start - at);
+          at += size;
+          if (skip >= size) return null;
+          return (
+            <div key={g.kind === 'block' && 'id' in g.block && g.block.id ? g.block.id : `g${gi}`}>
+              {g.kind === 'lines'
+                ? <Lines blocks={g.blocks} fold={fold} running={running} skip={skip} />
+                : <Block block={g.block} onPermission={onPermission} />}
+            </div>
+          );
+        })}
+      </QuietEntranceContext.Provider>
       {subagents !== undefined && subagents.length > 0 && onInspect !== undefined && (
         <>
           <SubagentGroup nodes={subagents} all={allSubagents ?? subagents} onInspect={onInspect} />
@@ -405,13 +424,21 @@ function groupBlocks(blocks: AgentBlock[]): Group[] {
 }
 
 // A group of lines in cursor mode: runs of finished read-only actions (read / search / fetch, ≥ 2) fold into one expandable row, everything else stays flat
-function Lines({ blocks, fold, running }: { blocks: AgentBlock[]; fold: Appearance['fold']; running: boolean }) {
+// `skip` leaves out the group's first blocks while a live turn's earlier history is still mounting (`tailWindow.ts`);
+// items keep their keys from the whole group. Finished lines mount their fold bodies only while open
+function Lines({ blocks, fold, skip = 0 }: { blocks: AgentBlock[]; fold: Appearance['fold']; running: boolean; skip?: number }) {
+  const lazy = useContext(LazyPanelContext);
   const items = fold === 'cursor' ? foldReadOnly(blocks) : blocks.map(b => ({ kind: 'one' as const, block: b }));
+  let at = 0;
   return (
     <div className="process-rows flex flex-col gap-0.5">
-      {items.map((it, i) => it.kind === 'one'
-        ? <LineBlock key={i} block={it.block} />
-        : <CursorFold key={it.blocks[0]!.id} blocks={it.blocks} />)}
+      {items.map((it, i) => {
+        at += it.kind === 'one' ? 1 : it.blocks.length;
+        if (at <= skip) return null;
+        return it.kind === 'one'
+          ? <LazyPanelContext.Provider key={i} value={lazy || blockSettled(it.block)}><LineBlock block={it.block} /></LazyPanelContext.Provider>
+          : <LazyPanelContext.Provider key={it.blocks[0]!.id} value={true}><CursorFold blocks={it.blocks} /></LazyPanelContext.Provider>;
+      })}
     </div>
   );
 }
@@ -533,6 +560,9 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
   const elapsed = !running && turn.startedAt !== undefined && turn.endedAt !== undefined ? elapsedLabel(turn) : undefined;
   // Steered prompts stay visible between the folding parts of the process
   const parts = useMemo(() => splitAtSteers(items), [items]);
+  const root = useRef<HTMLDivElement>(null);
+  const tail = useTailWindow(items.length, running, root);
+  const skips = useMemo(() => partSkips(parts, tail.start), [parts, tail.start]);
   const mounted = useRef(!retired);
   if (!retired) mounted.current = true;
   if (!mounted.current && blocks.length === 0) return null;
@@ -544,7 +574,7 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
     </Collapsible.Trigger>
   );
   return (
-    <Collapsible.Root open={open} onOpenChange={toggle} className={cn(
+    <Collapsible.Root ref={root} open={open} onOpenChange={toggle} className={cn(
       'group flex min-w-0 flex-col transition-[margin-bottom] duration-(--dur-open) ease-out',
       // The root is the reply stack's flex item; an inner margin cannot cancel its sibling gap.
       retired && blocks.length === 0 && '-mb-gap [transition-delay:var(--dur-open)]',
@@ -558,11 +588,11 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
       )}
       {blocks.length > 0 && (
         <ImageInFoldContext.Provider value={open}>
-          <AutoFoldContext.Provider value={store}>
+          <AutoFoldContext.Provider value={store}><QuietEntranceContext.Provider value={tail.quiet}>
             {parts.map((part, i) => {
               // A steered prompt keeps the process prose gap open or closed: between two parts while they show, under
               // the head (or the previous card) once they have folded away
-              if (part.type === 'steer') return (
+              if (part.type === 'steer') return skips[i] ? null : (
                 <div key={part.id} className="flex min-w-0 flex-col pt-(--process-prose-gap)">
                   <EntranceOnce id={itemEntrance(part.id)}><SteeredMessage block={part.block} /></EntranceOnce>
                 </div>
@@ -570,7 +600,7 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
               // The padding folds with its part: the head's offset on the first, the prose gap after a card, the tail on the last
               const body = (
                 <div className={cn(!retired && (i === 0 ? 'pt-1' : 'pt-(--process-prose-gap)'), !retired && i === parts.length - 1 && 'pb-1.5')}>
-                  <ProcessHistory><ProcessBlocks blocks={blocks} items={part.items} /></ProcessHistory>
+                  <ProcessHistory><ProcessBlocks blocks={blocks} items={skips[i] ? part.items.slice(skips[i]) : part.items} /></ProcessHistory>
                 </div>
               );
               // Nested rows extend their hit area beyond the text column; the clip reserves the turn padding (wider than
@@ -579,7 +609,7 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
                 ? <Collapsible.Panel key={part.id} className="-mx-pad [&>div]:px-pad">{body}</Collapsible.Panel>
                 : <Collapsible.Section key={part.id} open={open} className="-mx-pad [&>div]:px-pad">{body}</Collapsible.Section>;
             })}
-          </AutoFoldContext.Provider>
+          </QuietEntranceContext.Provider></AutoFoldContext.Provider>
         </ImageInFoldContext.Provider>
       )}
       {!open && imageResults.length > 0 && (
@@ -592,6 +622,18 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
 }
 
 type FoldPart = { type: 'items'; id: string; items: ProcessItem[] } | { type: 'steer'; id: string; block: SteerBlock };
+
+// Per part, what the tail window leaves out of it: the leading items of an items part, 1 for a hidden steered prompt.
+// Parts stay in place (an emptied first part still holds the root's panel), so nothing remounts as the window grows
+function partSkips(parts: FoldPart[], start: number): number[] {
+  let at = 0;
+  return parts.map(part => {
+    const size = part.type === 'steer' ? 1 : part.items.length;
+    const skip = Math.min(size, Math.max(0, start - at));
+    at += size;
+    return skip;
+  });
+}
 
 // The turn's process cut at each steered prompt: runs of items fold, the prompts between them stay. A part is keyed by
 // its first item, so a prompt steered into a live turn leaves the earlier part mounted and starts a new one after it
@@ -650,13 +692,18 @@ function useProcessFolds(items: ProcessItem[], settle: boolean, live: boolean, f
 // Process details retain static icons; only the currently running verb shimmers. Each item enters once under its
 // own id at the list level, whatever row component draws it: a single call that becomes a group keeps its first
 // call's id, and a remounted transcript replays nothing. Unkeyed blocks take their transcript position
+// A finished item mounts its fold bodies only while open, in a live turn too: only what still streams keeps a closed
+// body mounted (a 700-block live turn held ~35k nodes, 9k with this)
 function ProcessBlocks({ blocks, items }: { blocks: AgentBlock[]; items?: ProcessItem[] }) {
+  const lazy = useContext(LazyPanelContext);
   return (items ?? groupProcess(blocks)).map(item => (
     <EntranceOnce key={item.id} id={itemEntrance(item.id)}>
-      <AutoFoldItem id={item.id}>{item.type === 'group' ? <ToolGroup kind={item.kind} blocks={item.blocks} />
-        : item.block.type === 'tool_call' ? <ToolCall block={item.block} grouped />
-        : item.block.type === 'text' ? <Prose block={item.block} />
-        : <LineBlock block={item.block} />}</AutoFoldItem>
+      <LazyPanelContext.Provider value={lazy || itemSettled(item)}>
+        <AutoFoldItem id={item.id}>{item.type === 'group' ? <ToolGroup kind={item.kind} blocks={item.blocks} />
+          : item.block.type === 'tool_call' ? <ToolCall block={item.block} grouped />
+          : item.block.type === 'text' ? <Prose block={item.block} />
+          : <LineBlock block={item.block} />}</AutoFoldItem>
+      </LazyPanelContext.Provider>
     </EntranceOnce>
   ));
 }

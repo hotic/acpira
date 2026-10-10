@@ -7,7 +7,8 @@
 //   --stream  keep a turn streaming during the clicks and report the frame budget with no clicks first
 //   --live    leave the initial thought streaming; use with --stream to measure live glyphs after a 4 s warmup
 //   --cpu     record a CPU profile per step (top self-time frames printed, full profiles in /tmp/acpira-*.cpuprofile)
-//   --switch  only measure session switches: three sessions of the same shape arrive in turn (dispatch → second frame, long tasks)
+//   --switch  only measure session switches: three sessions of the same shape arrive in turn (dispatch → second frame, long tasks),
+//             then the same blocks as one live turn (a session opened mid-turn); `settled` is the node count once its history has mounted
 // The dev server runs React's development build; for absolute numbers, build the page with `vite build` and serve it with `vite preview`
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
@@ -120,6 +121,23 @@ if (switching) {
       requestAnimationFrame(() => requestAnimationFrame(() => {
         const paint = Math.round(performance.now() - t0);
         setTimeout(() => done({ paint, long: window.__long.map(Math.round), nodes: document.querySelectorAll('*').length }), 1000);
+      }));
+    })`));
+    console.log('switch', r);
+  }
+  // Every agent block in one running turn: the tail paints first, the earlier items mount in idle slices
+  for (const id of ['live-a', 'live-b']) {
+    const r = await profiled(`switch ${id}`, () => evaluate(`new Promise(done => {
+      window.__long = [];
+      const s = structuredClone(window.perfProbe.session); s.id = ${JSON.stringify(id)}; s.running = true;
+      const blocks = s.turns.filter(t => t.role === 'agent').flatMap(t => t.blocks).map(b => ({ ...b, streaming: false }));
+      s.turns = [s.turns[0], { role: 'agent', blocks }];
+      const t0 = performance.now();
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'session', session: s } }));
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const paint = Math.round(performance.now() - t0);
+        const nodes = document.querySelectorAll('*').length;
+        setTimeout(() => done({ blocks: blocks.length, paint, nodes, long: window.__long.map(Math.round), settled: document.querySelectorAll('*').length }), 3000);
       }));
     })`));
     console.log('switch', r);
