@@ -4,6 +4,7 @@
 //! dropped receiver ends the reading thread at its next chunk
 
 pub mod anthropic;
+pub mod discover;
 pub mod family;
 pub mod openai_chat;
 pub mod sse;
