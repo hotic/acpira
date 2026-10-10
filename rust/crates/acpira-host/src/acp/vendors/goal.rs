@@ -127,6 +127,25 @@ pub fn command_text(action: GoalAction, objective: Option<&str>) -> Option<Strin
   }
 }
 
+/// Claude Code answers its `/goal` command with the command's local output, which claude-agent-acp forwards as reply
+/// text: "Goal set: <objective>", or "Goal cleared: <old objective>" for `/goal clear` (claude-agent-acp 0.87.0 / SDK
+/// 0.3.287, seen live after a steered `/goal`). The goal row and strip already say as much, so the echo is dropped.
+/// `sent` is the newest text the host sent (prompt or steer); whitespace is compared loosely
+pub fn is_command_echo(text: &str, sent: &str) -> bool {
+  let squash = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+  let Some(arg) = sent.trim().strip_prefix("/goal") else { return false };
+  // "/goals" is another command
+  if !arg.is_empty() && !arg.starts_with(char::is_whitespace) {
+    return false;
+  }
+  let (arg, text) = (squash(arg), squash(text));
+  match arg.as_str() {
+    "" | "pause" | "resume" => false,
+    "clear" => text.starts_with("Goal cleared: "),
+    _ => text == format!("Goal set: {arg}"),
+  }
+}
+
 pub fn params(session_id: &str, action: GoalAction) -> Value {
   json!({ "sessionId": session_id, "action": action })
 }
@@ -195,5 +214,17 @@ mod tests {
     assert_eq!(command_text(GoalAction::Set, Some(" ")), None);
     assert_eq!(command_text(GoalAction::Clear, None).as_deref(), Some("/goal clear"));
     assert_eq!(params("s", GoalAction::Pause)["action"], "pause");
+  }
+
+  #[test]
+  fn only_the_echo_of_the_sent_command_is_dropped() {
+    let sent = "/goal ship it\nwith  docs";
+    assert!(is_command_echo("Goal set: ship it\nwith docs", sent));
+    assert!(!is_command_echo("Goal set: something else", sent));
+    assert!(!is_command_echo("Goal set: ship it with docs. Starting now", sent));
+    assert!(!is_command_echo("Goal set: ship it", "ship it"));
+    assert!(!is_command_echo("Goal set: ship it", "/goals ship it"));
+    assert!(is_command_echo("Goal cleared: ship it", "/goal clear"));
+    assert!(!is_command_echo("No goal set", "/goal clear"));
   }
 }

@@ -133,13 +133,18 @@ impl Vendor {
     }
   }
 
-  /// Leaving plan mode shows up only in the approval tool's output, without a current_mode_update (Kimi 0.41.0)
   /// `_session/goal` `clear` starts a turn of the agent's own (claude-agent-acp runs it as the `/goal clear` command);
   /// codex-acp only clears the goal (`goal::starts_turn`)
   pub fn goal_clear_starts_turn(self) -> bool {
     self != Vendor::Codex
   }
 
+  /// A `/goal` command is answered with its local output as reply text (`goal::is_command_echo`)
+  pub fn echoes_goal_command(self) -> bool {
+    self == Vendor::Claude
+  }
+
+  /// Leaving plan mode shows up only in the approval tool's output, without a current_mode_update (Kimi 0.41.0)
   pub fn plan_exit_in_tool_output(self) -> bool {
     self == Vendor::Kimi
   }
