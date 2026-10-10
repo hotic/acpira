@@ -217,13 +217,17 @@ async fn a_plan_card_approves_and_the_same_turn_builds_it() {
   env.server.push(mock::tools(&[("c3", "write", json!({ "path": "src.txt", "content": "x\n" }))]));
   env.server.push(mock::text("Built."));
   let cards = run(&s, "add src.txt").await;
-  assert!(cards.iter().any(|c| c["planId"].is_string()), "the plan went through the plan card: {cards:?}");
+  let plan_card = cards.iter().find(|c| c["planId"].is_string()).unwrap_or_else(|| panic!("the plan went through the plan card: {cards:?}"));
+  assert_eq!(plan_card["title"], "Approval needed: Exit plan mode");
   assert_eq!(std::fs::read_to_string(env.cwd().join("src.txt")).unwrap(), "x\n");
   let vw = view(&s);
   expect_match(find_block(&vw, "plan_document").unwrap(), json!({ "status": "approved", "markdown": "# Add src.txt\n\n1. Write it." }));
   assert_eq!(vw["controls"]["modeId"], "agent");
   expect_match(last_turn(&vw), json!({ "stop": "end_turn" }));
   env.assert_prefix_stable(&env.log_of(&s));
+  // Every mode offers the same tools, so entering and leaving Plan never shows up as a tools change
+  let log = std::fs::read_to_string(env.log_of(&s)).unwrap();
+  assert!(!log.lines().any(|l| l.contains(r#""type":"view""#) && l.contains(r#""tools""#)), "a mode switch changed the tools\n{log}");
   env.golden(&s, "builtin-plan", &vw["turns"]);
 }
 

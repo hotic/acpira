@@ -9,15 +9,14 @@ use crate::llm::ToolSpec;
 pub fn spec() -> ToolSpec {
   ToolSpec {
     name: super::EXIT_PLAN.into(),
-    description: "Ask the user to approve the plan and leave Plan mode. Call it when the plan file is complete. `plan` optionally \
-                  replaces the plan file's content first, so writing and submitting can be one call."
+    description: "Plan mode only: ask the user to approve the plan and leave Plan mode. Write the plan file first, then call \
+                  this with no arguments."
       .into(),
-    parameters: json!({
-      "type": "object",
-      "properties": {
-        "plan": { "type": "string", "description": "The whole plan in Markdown (optional when the plan file is already written)" },
-      },
-    }),
+    // No `plan` parameter: the plan goes through the plan file once instead of being repeated in the call. With an
+    // optional `plan` string, one gateway's Anthropic endpoint cut Claude's stream in 9 of 9 replays of a request where
+    // the call followed a write, and in 0 of 5 without it (2026-10-11). `prepare` still takes a `plan` from models that
+    // pass one anyway (Claude Code's ExitPlanMode habit)
+    parameters: json!({ "type": "object", "properties": {} }),
   }
 }
 

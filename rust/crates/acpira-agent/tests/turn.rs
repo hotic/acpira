@@ -54,6 +54,29 @@ async fn a_plain_answer_streams_and_reports_usage() {
 }
 
 #[tokio::test]
+async fn a_zero_prompt_count_is_estimated_from_the_request_and_marked() {
+  // A gateway's streamed usage with every prompt count at 0 (seen on a MiniMax route, 2026-10-11)
+  let (h, server, sid) = setup(json!([{ "id": "m1", "context": 64000 }])).await;
+  server.push(Reply::Sse(vec![mock::delta(json!({ "role": "assistant", "content": "ok" })), mock::finish("stop"), mock::usage(0, 2, 0)]));
+  let r = prompt(&h, &sid, "hi").await;
+  let input = r["usage"]["inputTokens"].as_u64().unwrap();
+  // The system prompt and the tool schemas alone are well over a thousand tokens
+  assert!(input > 1000, "estimated input {input}");
+  assert!(h.updates().iter().any(|u| u["sessionUpdate"] == "usage_update" && u["used"] == input + 2));
+  let log = std::fs::read_to_string(h.home().join("agent").join("sessions").join(format!("{sid}.jsonl"))).unwrap();
+  let req: Value = log.lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).find(|e| e["type"] == "request").unwrap();
+  assert_eq!((req["usage"]["input"].as_u64(), &req["usage"]["inputEstimated"]), (Some(input), &json!(true)));
+
+  // A real count is taken as it is, unmarked
+  server.push(mock::text("again"));
+  let r = prompt(&h, &sid, "hi").await;
+  assert_eq!(r["usage"]["inputTokens"], 100, "usage is per turn");
+  let log = std::fs::read_to_string(h.home().join("agent").join("sessions").join(format!("{sid}.jsonl"))).unwrap();
+  let last: Value = log.lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).rfind(|e| e["type"] == "request").unwrap();
+  assert!(last["usage"].get("inputEstimated").is_none());
+}
+
+#[tokio::test]
 async fn an_allowed_edit_changes_the_file_and_the_model_sees_the_result() {
   let (h, server, sid) = setup(json!([{ "id": "m1" }])).await;
   std::fs::write(h.cwd().join("a.txt"), "hello world\n").unwrap();
