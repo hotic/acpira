@@ -255,49 +255,75 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     };
     log_view(session, &s, &request);
     let approx = approx_input(&request);
-    let started = std::time::Instant::now();
-    let mut unfinished = Unfinished { session, event: Some(request_event(&s)), started };
-    let mut rx = llm::stream(server.http.clone(), s.endpoint.clone(), request);
     // Model tool-call id → ACP tool call id: providers reuse ids across calls, ACP needs them unique per session
     let mut ids: HashMap<String, String> = HashMap::new();
-    let mut finished = None;
-    while let Some(ev) = rx.recv().await {
-      match ev {
-        Ok(Event::Text(t)) => {
-          session.state.lock().partial_text.push_str(&t);
-          server.update(&session.id, json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": t } }));
-        }
-        Ok(Event::Reasoning(t)) => {
-          session.state.lock().partial_reasoning.push_str(&t);
-          server.update(&session.id, json!({ "sessionUpdate": "agent_thought_chunk", "content": { "type": "text", "text": t } }));
-        }
-        Ok(Event::ToolCallStart { id, name }) => {
-          let acp = session.next_tool_id();
-          server.update(&session.id, json!({ "sessionUpdate": "tool_call", "toolCallId": acp, "title": call_title(&name, s.tools), "kind": kind_of(&name, s.tools), "status": "pending" }));
-          ids.insert(id, acp);
-        }
-        Ok(Event::Done { reply, stop, usage }) => {
-          finished = Some((reply, stop, usage));
-          break;
-        }
-        Err(e) => {
-          unfinished.event = None;
-          log_request(session, &s, started, None, None, false, Some(&e.to_string()));
-          return Err(describe(s.provider.display_name(), &e));
+    let mut attempt = 0u32;
+    let (reply, stop, usage, started) = loop {
+      attempt += 1;
+      let started = std::time::Instant::now();
+      let mut unfinished = Unfinished { session, event: Some(request_event(&s)), started };
+      let mut rx = llm::stream(server.http.clone(), s.endpoint.clone(), request.clone());
+      let mut outcome = Err(LlmError::Protocol("the stream ended without a result".into()));
+      let idle = stream_idle();
+      loop {
+        let ev = match tokio::time::timeout(idle, rx.recv()).await {
+          Ok(Some(ev)) => ev,
+          Ok(None) => break,
+          // A stream gone silent is dropped (its reader thread stops at the next chunk) and retried like a broken one
+          Err(_) => {
+            outcome = Err(LlmError::Network(format!("no data from the provider for {} s", idle.as_secs())));
+            break;
+          }
+        };
+        match ev {
+          Ok(Event::Text(t)) => {
+            session.state.lock().partial_text.push_str(&t);
+            server.update(&session.id, json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": t } }));
+          }
+          Ok(Event::Reasoning(t)) => {
+            session.state.lock().partial_reasoning.push_str(&t);
+            server.update(&session.id, json!({ "sessionUpdate": "agent_thought_chunk", "content": { "type": "text", "text": t } }));
+          }
+          Ok(Event::ToolCallStart { id, name }) => {
+            let acp = session.next_tool_id();
+            server.update(&session.id, json!({ "sessionUpdate": "tool_call", "toolCallId": acp, "title": call_title(&name, s.tools), "kind": kind_of(&name, s.tools), "status": "pending" }));
+            ids.insert(id, acp);
+          }
+          Ok(Event::Done { reply, stop, usage }) => {
+            outcome = Ok((reply, stop, usage));
+            break;
+          }
+          Err(e) => {
+            outcome = Err(e);
+            break;
+          }
         }
       }
-    }
-    let Some((reply, stop, usage)) = finished else {
-      let e = LlmError::Protocol("the stream ended without a result".into());
       unfinished.event = None;
-      log_request(session, &s, started, None, None, false, Some(&e.to_string()));
-      return Err(describe(s.provider.display_name(), &e));
+      let e = match outcome {
+        Ok((reply, stop, usage)) => break (reply, stop, usage, started),
+        Err(e) => e,
+      };
+      log_request(session, &s, started, attempt, None, None, false, Some(&e.to_string()));
+      if attempt >= MAX_ATTEMPTS || !retriable(&e) {
+        return Err(describe(s.provider.display_name(), &e));
+      }
+      // The failed attempt's output is dropped: its tool rows are settled and the next attempt streams afresh
+      for acp in ids.drain().map(|(_, acp)| acp) {
+        server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": acp, "status": "failed" }));
+      }
+      {
+        let mut st = session.state.lock();
+        st.partial_text.clear();
+        st.partial_reasoning.clear();
+      }
+      server.update(&session.id, retry_notice(s.provider.display_name(), &e, attempt + 1));
+      tokio::time::sleep(retry_delay(&e, attempt)).await;
     };
-    unfinished.event = None;
     // A call always has input, so a reported 0 is a provider gap (a gateway's streamed usage): estimate it instead
     let estimated = usage.is_some_and(|u| u.input == 0);
     let usage = usage.map(|u| if estimated { Usage { input: approx, ..u } } else { u });
-    log_request(session, &s, started, Some(&stop), usage.as_ref(), estimated, None);
+    log_request(session, &s, started, attempt, Some(&stop), usage.as_ref(), estimated, None);
     if let Some(u) = usage {
       let mut st = stats.lock();
       st.usage.input += u.input;
@@ -407,11 +433,71 @@ fn approx_input(r: &Request) -> u64 {
   (bytes as u64).div_ceil(4) + images * 1000
 }
 
-/// One `request` event per model call
+/// How long a stream may go without an event before it counts as stalled: Codex's default stream idle timeout. A
+/// gateway route was seen holding a GPT call open for six minutes without a byte (2026-10-11).
+/// `ACPIRA_AGENT_STREAM_IDLE_SECS` overrides it (tests, diagnosis)
+fn stream_idle() -> std::time::Duration {
+  static IDLE: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
+  *IDLE.get_or_init(|| {
+    let secs = std::env::var("ACPIRA_AGENT_STREAM_IDLE_SECS").ok().and_then(|v| v.parse().ok()).filter(|s| *s > 0).unwrap_or(300);
+    std::time::Duration::from_secs(secs)
+  })
+}
+
+/// Attempts per model call: the first and up to three retries
+const MAX_ATTEMPTS: u32 = 4;
+
+/// Worth another attempt: the connection, the stream or the service failed, not the request itself. A gateway ending a
+/// 200 stream with an `error` event ("response stream interrupted", seen on 2026-10-11 on a Claude route, 1 call in 40
+/// or so) is the common case; a rejected key, a bad request or a context overflow would only fail again
+fn retriable(e: &LlmError) -> bool {
+  match e {
+    LlmError::Http { status, .. } => matches!(status, 408 | 409 | 425 | 429 | 500..=599),
+    LlmError::Network(_) | LlmError::Protocol(_) => true,
+    LlmError::Api(m) => {
+      let m = m.to_ascii_lowercase();
+      !(m.contains("invalid_request") || m.contains("context") || m.contains("too long") || m.contains("authentication"))
+    }
+  }
+}
+
+/// The wait before the next attempt: the provider's Retry-After when given (at most a minute), else 1, 2, 4 s
+fn retry_delay(e: &LlmError, attempt: u32) -> std::time::Duration {
+  match e {
+    LlmError::Http { retry_after: Some(d), .. } => (*d).min(std::time::Duration::from_secs(60)),
+    _ => std::time::Duration::from_secs(1 << (attempt - 1).min(5)),
+  }
+}
+
+/// A retry in progress, in the shape the host already labels for other agents (an AIR `sessionFailure` warning
+/// titled "attempt N of M", see `retry_of_failure` on the host): the working label shows it until the stream resumes
+fn retry_notice(source: &str, e: &LlmError, next: u32) -> Value {
+  let category = match e {
+    LlmError::Http { status: 429, .. } => "limit",
+    LlmError::Http { .. } | LlmError::Api(_) => "service",
+    LlmError::Network(_) | LlmError::Protocol(_) => "connection",
+  };
+  json!({
+    "sessionUpdate": "session_info_update",
+    "_meta": { "jetbrains": { "air": { "sessionFailure": {
+      "id": format!("acpira-retry-{}", uuid::Uuid::new_v4()),
+      "revision": 1,
+      "severity": "warning",
+      "category": category,
+      "title": format!("Retrying {source}, attempt {next} of {MAX_ATTEMPTS}"),
+      "details": e.to_string(),
+      "actions": [],
+    } } } },
+  })
+}
+
+/// One `request` event per model call (a retried call has one per attempt, `attempt` from 2 on)
+#[allow(clippy::too_many_arguments)]
 fn log_request(
   session: &Session,
   s: &Setup,
   started: std::time::Instant,
+  attempt: u32,
   stop: Option<&StopReason>,
   usage: Option<&Usage>,
   input_estimated: bool,
@@ -419,6 +505,9 @@ fn log_request(
 ) {
   let mut ev = request_event(s);
   ev["ms"] = json!(started.elapsed().as_millis() as u64);
+  if attempt > 1 {
+    ev["attempt"] = json!(attempt);
+  }
   if let Some(u) = usage {
     ev["usage"] = json!({ "input": u.input, "output": u.output, "cacheRead": u.cache_read, "cacheWrite": u.cache_write, "reasoning": u.reasoning });
     if input_estimated {
