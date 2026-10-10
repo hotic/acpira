@@ -107,9 +107,6 @@ pub fn body(req: &Request, family: &Family, origin: &str) -> Value {
   body.insert("messages".into(), Value::Array(messages));
   if !req.tools.is_empty() {
     body.insert("tools".into(), req.tools.iter().map(|t| json!({ "name": t.name, "description": t.description, "input_schema": t.parameters })).collect());
-    if req.serial_tools {
-      body.insert("tool_choice".into(), json!({ "type": "auto", "disable_parallel_tool_use": true }));
-    }
   }
   body.insert("stream".into(), Value::Bool(true));
   let thinking = apply_thinking(&mut body, family, req.thinking, req.effort.as_deref(), max_tokens);
@@ -290,9 +287,9 @@ impl Assembler {
   }
 
   /// Keep a reply cut while a later tool call was streaming: blocks stream strictly in order, so every block before the
-  /// last started one is complete. Some gateways end the stream as soon as a second tool call starts (seen on a Claude
-  /// route, 2026-10-11, whatever `disable_parallel_tool_use` says), and a retry makes the same calls again; running the
-  /// finished calls moves the turn on instead. Only when at least one finished tool call precedes an unfinished one
+  /// last started one is complete, and running the finished calls moves the turn on where a retry would likely make the
+  /// same calls and break the same way (a Claude gateway route ends the stream at a tool call with empty input,
+  /// 2026-10-11). Only when at least one finished tool call precedes an unfinished one
   fn salvage(&mut self, message: &str) -> bool {
     let Some(last) = self.blocks.iter().rposition(|b| !b.is_null()) else { return false };
     if self.blocks[last]["type"] != "tool_use" || !self.blocks[..last].iter().any(|b| b["type"] == "tool_use") {
@@ -461,7 +458,6 @@ mod tests {
       sampling: Sampling::default(),
       thinking: Thinking::Auto,
       effort: None,
-      serial_tools: false,
     }
   }
 
@@ -501,11 +497,8 @@ mod tests {
     assert_eq!(b["tools"][0], json!({ "name": "read", "description": "Read", "input_schema": { "type": "object" } }));
     assert_eq!(b["max_tokens"], DEFAULT_MAX_TOKENS);
     // Another model: no thinking, the call rebuilt from its arguments
-    let other = body(&req(items.clone()), &claude(), "https://other/v1/messages m");
+    let other = body(&req(items), &claude(), "https://other/v1/messages m");
     assert_eq!(other["messages"][1]["content"], json!([{ "type": "tool_use", "id": "t1", "name": "read", "input": { "path": "a" } }]));
-    assert!(b.get("tool_choice").is_none());
-    let serial = body(&Request { serial_tools: true, ..req(items) }, &claude(), ORIGIN);
-    assert_eq!(serial["tool_choice"], json!({ "type": "auto", "disable_parallel_tool_use": true }));
   }
 
   #[test]

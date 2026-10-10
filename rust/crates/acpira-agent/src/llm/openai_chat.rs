@@ -62,9 +62,6 @@ pub fn body(req: &Request, family: &Family) -> Value {
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": t.parameters } }))
         .collect(),
     );
-    if req.serial_tools {
-      body.insert("parallel_tool_calls".into(), Value::Bool(false));
-    }
   }
   body.insert("stream".into(), Value::Bool(true));
   body.insert("stream_options".into(), json!({ "include_usage": true }));
@@ -393,7 +390,6 @@ mod tests {
       sampling: Sampling::default(),
       thinking: Thinking::Auto,
       effort: None,
-      serial_tools: false,
     }
   }
 

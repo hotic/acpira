@@ -64,9 +64,12 @@ pub fn list_spec() -> ToolSpec {
     parameters: json!({
       "type": "object",
       "properties": {
-        "path": { "type": "string", "description": "Folder to list (default: the session folder)" },
+        "path": { "type": "string", "description": "Folder to list; \".\" for the session folder" },
         "ignore": { "type": "array", "items": { "type": "string" }, "description": "Globs to leave out" },
       },
+      // Required although a call without it lists the session folder: a Claude gateway route ends the stream at a tool
+      // call with empty input (2026-10-11), and an optional-only schema invites exactly that call
+      "required": ["path"],
     }),
   }
 }
