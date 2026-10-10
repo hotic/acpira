@@ -1,0 +1,12 @@
+[package]
+name = "acpira-rpc"
+description = "ndjson JSON-RPC 2.0 peer and the cancellation signal, shared by the host (ACP client) and the built-in agent (ACP server)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+parking_lot.workspace = true
+serde_json.workspace = true
+tokio.workspace = true

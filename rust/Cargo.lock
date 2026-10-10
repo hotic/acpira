@@ -6,6 +6,7 @@ version = 4
 name = "acpira-host"
 version = "1.9.1"
 dependencies = [
+ "acpira-rpc",
  "acpira-shared",
  "anyhow",
  "base64 0.22.1",
@@ -25,6 +26,15 @@ dependencies = [
  "ureq",
  "uuid",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "acpira-rpc"
+version = "1.9.1"
+dependencies = [
+ "parking_lot",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
