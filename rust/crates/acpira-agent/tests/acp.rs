@@ -32,3 +32,21 @@ async fn session_new_offers_the_configured_models_and_their_efforts() {
   assert_eq!(r["configOptions"][2]["currentValue"], "full");
   assert!(h.conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "approval", "value": "yolo" })).await.is_err());
 }
+
+#[tokio::test]
+async fn a_model_added_by_id_takes_its_levels_from_the_catalogue() {
+  let h = Harness::start().await;
+  // Entered by hand, so without the levels discovery would have filled in
+  h.providers("http://127.0.0.1:1", json!([{ "id": "claude-sonnet-5-5" }, { "id": "glm-5.3", "thinking": "off" }]));
+  let s = h.new_session().await;
+  let sid = s["sessionId"].as_str().unwrap();
+  let effort = &s["configOptions"][1];
+  assert_eq!((effort["id"].as_str(), effort["currentValue"].as_str()), (Some("effort"), Some("high")));
+  let levels: Vec<&str> = effort["options"].as_array().unwrap().iter().map(|o| o["value"].as_str().unwrap()).collect();
+  assert!(levels.contains(&"max"), "{levels:?}");
+  let r = h.conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "effort", "value": "max" })).await.unwrap();
+  assert_eq!(r["configOptions"][1]["currentValue"], "max");
+  // Thinking switched off keeps the select away
+  let r = h.conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "model", "value": "mock/glm-5.3" })).await.unwrap();
+  assert_eq!(r["configOptions"][1]["id"], "approval");
+}
