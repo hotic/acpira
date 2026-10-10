@@ -239,7 +239,7 @@ mod tests {
   use super::*;
 
   fn ctx(cwd: &Path) -> Ctx {
-    Ctx { cwd: cwd.to_path_buf(), outputs: cwd.join(".out"), call_id: "c".into(), progress: Box::new(|_| {}) }
+    Ctx { cwd: cwd.to_path_buf(), outputs: cwd.join(".out"), call_id: "c".into(), progress: Box::new(|_| {}), jobs: Default::default() }
   }
 
   fn tree(root: &Path) {

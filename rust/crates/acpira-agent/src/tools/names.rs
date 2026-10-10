@@ -2,9 +2,9 @@
 //! were given; a name that maps to exactly one tool of the current set is taken as that tool (a few times a turn, see
 //! `turn.rs`), anything else gets an error that lists the real names, so a turn never ends silently on a misspelt call
 
-use super::{BASH, EDIT, EXIT_PLAN, GLOB, GREP, LIST, READ, TODO, WRITE};
+use super::{BASH, EDIT, EXIT_PLAN, GLOB, GREP, JOB, LIST, READ, TODO, WRITE};
 
-pub const ALL: [&str; 9] = [READ, WRITE, EDIT, BASH, GREP, GLOB, LIST, TODO, EXIT_PLAN];
+pub const ALL: [&str; 10] = [READ, WRITE, EDIT, BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN];
 
 /// Other names models use for the tools, already folded (lowercase, letters and digits only)
 const ALIASES: &[(&str, &[&str])] = &[
@@ -12,6 +12,7 @@ const ALIASES: &[(&str, &[&str])] = &[
   (WRITE, &["writefile", "createfile", "filewrite", "writetofile", "savefile"]),
   (EDIT, &["editfile", "strreplace", "strreplaceeditor", "replace", "replaceinfile", "fileedit", "searchreplace", "modifyfile"]),
   (BASH, &["shell", "sh", "run", "runcommand", "runshell", "runshellcommand", "execute", "exec", "executecommand", "terminal", "command", "cmd", "runterminalcmd", "powershell"]),
+  (JOB, &["bashoutput", "joboutput", "checkjob", "jobstatus", "killshell", "killjob", "writestdin", "getoutput"]),
   (GREP, &["search", "grepsearch", "rg", "ripgrep", "searchcode", "codesearch", "findinfiles", "searchfilecontent"]),
   (GLOB, &["find", "findfiles", "filesearch", "globsearch", "searchfiles", "findbyname"]),
   (LIST, &["ls", "listdir", "listdirectory", "listfiles", "dir", "tree"]),

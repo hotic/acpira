@@ -5,6 +5,7 @@
 pub mod bash;
 pub mod edit;
 pub mod files;
+pub mod jobs;
 pub mod names;
 pub mod plan;
 pub mod read;
@@ -27,16 +28,22 @@ pub struct Ctx {
   pub call_id: String,
   /// Streams a partial `tool_call_update` (terminal output) while the tool runs
   pub progress: Box<dyn Fn(Value) + Send + Sync>,
+  /// The session's background commands
+  pub jobs: std::sync::Arc<jobs::Jobs>,
 }
 
 /// A validated call, ready to describe and run
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
-  Read { path: PathBuf, offset: usize, limit: usize },
+  /// `more`: further files read whole in the same call
+  Read { path: PathBuf, offset: usize, limit: usize, more: Vec<PathBuf> },
   /// The whole file replaced (`write`) or a computed edit (`edit`): `before` None for a new file
   /// `edits` empty for a whole-file write
   Write { path: PathBuf, before: Option<String>, after: String, edits: Vec<edit::Edit> },
-  Bash { command: String, workdir: PathBuf, timeout_ms: u64 },
+  /// `background`: start it as a job and return at once
+  Bash { command: String, workdir: PathBuf, timeout_ms: u64, background: bool },
+  /// Check (or stop) a background job
+  Job { id: String, wait_s: u64, kill: bool },
   Grep { pattern: String, path: PathBuf, include: Option<String> },
   Glob { pattern: String, path: PathBuf },
   List { path: PathBuf, ignore: Vec<String> },
@@ -84,6 +91,7 @@ pub const READ: &str = "read";
 pub const WRITE: &str = "write";
 pub const EDIT: &str = "edit";
 pub const BASH: &str = "bash";
+pub const JOB: &str = "job";
 pub const GREP: &str = "grep";
 pub const GLOB: &str = "glob";
 pub const LIST: &str = "list";
@@ -99,6 +107,7 @@ pub fn specs(names: &[&str]) -> Vec<ToolSpec> {
       WRITE => Some(edit::write_spec()),
       EDIT => Some(edit::spec()),
       BASH => Some(bash::spec()),
+      JOB => Some(jobs::spec()),
       GREP => Some(search::grep_spec()),
       GLOB => Some(search::glob_spec()),
       LIST => Some(search::list_spec()),
@@ -116,6 +125,7 @@ pub fn prepare(name: &str, args: &Value, cwd: &Path) -> Result<Action, String> {
     WRITE => edit::prepare_write(args, cwd),
     EDIT => edit::prepare(args, cwd),
     BASH => bash::prepare(args, cwd),
+    JOB => jobs::prepare(args),
     GREP => search::prepare_grep(args, cwd),
     GLOB => search::prepare_glob(args, cwd),
     LIST => search::prepare_list(args, cwd),
@@ -128,7 +138,7 @@ pub fn prepare(name: &str, args: &Value, cwd: &Path) -> Result<Action, String> {
 impl Action {
   /// Changes nothing on disk: such calls run side by side
   pub fn read_only(&self) -> bool {
-    !matches!(self, Action::Write { .. } | Action::Bash { .. } | Action::ExitPlan { .. })
+    !matches!(self, Action::Write { .. } | Action::Bash { .. } | Action::Job { .. } | Action::ExitPlan { .. })
   }
 
   /// The permission key and the target the rules match (`permission.rs`)
@@ -139,8 +149,20 @@ impl Action {
       Action::Write { path, .. } => (perm::EDIT, path_target(path, cwd)),
       Action::Bash { command, .. } => (perm::BASH, command.clone()),
       Action::Todo { .. } => (perm::TODO, "*".to_owned()),
+      // Starting the job was the permission
+      Action::Job { id, .. } => (perm::JOB, id.clone()),
       // Never evaluated: the approval card is the permission
       Action::ExitPlan { .. } => ("plan", "*".to_owned()),
+    }
+  }
+
+  /// Every (permission, target) the call touches: a read of several files is checked for each of them
+  pub fn permissions(&self, cwd: &Path) -> Vec<(&'static str, String)> {
+    match self {
+      Action::Read { more, .. } => {
+        std::iter::once(self.permission(cwd)).chain(more.iter().map(|p| (crate::permission::READ, crate::permission::path_target(p, cwd)))).collect()
+      }
+      _ => vec![self.permission(cwd)],
     }
   }
 
@@ -159,7 +181,14 @@ impl Action {
 
   pub fn describe(&self, cwd: &Path) -> Presentation {
     match self {
-      Action::Read { path, .. } => Presentation { title: format!("Read {}", shown(path, cwd)), kind: "read", locations: vec![path.clone()], content: vec![] },
+      Action::Read { path, more, .. } => {
+        let title = match more.len() {
+          0 => format!("Read {}", shown(path, cwd)),
+          1 => format!("Read {}, {}", shown(path, cwd), shown(&more[0], cwd)),
+          n => format!("Read {}, {} and {} more", shown(path, cwd), shown(&more[0], cwd), n - 1),
+        };
+        Presentation { title, kind: "read", locations: std::iter::once(path).chain(more).cloned().collect(), content: vec![] }
+      }
       Action::Write { path, before, after, .. } => Presentation {
         title: format!("{} {}", if before.is_some() { "Edit" } else { "Write" }, shown(path, cwd)),
         kind: "edit",
@@ -167,6 +196,10 @@ impl Action {
         content: vec![diff_content(path, before.as_deref(), after)],
       },
       Action::Bash { command, .. } => Presentation { title: command.clone(), kind: "execute", locations: vec![], content: vec![] },
+      Action::Job { id, wait_s, kill } => {
+        let title = if *kill { format!("Stop job {id}") } else if *wait_s > 0 { format!("Check job {id} (wait {wait_s}s)") } else { format!("Check job {id}") };
+        Presentation { title, kind: "execute", locations: vec![], content: vec![] }
+      }
       Action::Grep { pattern, path, include } => {
         let scope = [(path != cwd).then(|| shown(path, cwd)), include.clone()].into_iter().flatten().collect::<Vec<_>>().join(" ");
         let title = if scope.is_empty() { format!("grep \"{pattern}\"") } else { format!("grep \"{pattern}\" in {scope}") };
@@ -184,7 +217,7 @@ impl Action {
   /// A read-only call, on a blocking thread so several run side by side
   pub fn run_sync(self, ctx: Ctx) -> Output {
     match self {
-      Action::Read { path, offset, limit } => read::run(&path, offset, limit, &ctx),
+      Action::Read { path, offset, limit, more } => read::run(&path, offset, limit, &more, &ctx),
       Action::Grep { pattern, path, include } => search::grep(&pattern, &path, include.as_deref(), &ctx),
       Action::Glob { pattern, path } => search::glob(&pattern, &path, &ctx),
       Action::List { path, ignore } => search::list(&path, &ignore, &ctx),
@@ -195,9 +228,11 @@ impl Action {
 
   pub async fn run(self, ctx: Ctx) -> Output {
     match self {
-      Action::Read { path, offset, limit } => read::run(&path, offset, limit, &ctx),
+      Action::Read { path, offset, limit, more } => read::run(&path, offset, limit, &more, &ctx),
       Action::Write { path, before, after, edits } => edit::run(&path, before, after, edits, &ctx),
-      Action::Bash { command, workdir, timeout_ms } => bash::run(&command, &workdir, timeout_ms, &ctx).await,
+      Action::Bash { command, workdir, background: true, .. } => ctx.jobs.clone().start(&command, &workdir, &ctx).await,
+      Action::Bash { command, workdir, timeout_ms, .. } => bash::run(&command, &workdir, timeout_ms, &ctx).await,
+      Action::Job { id, wait_s, kill } => ctx.jobs.clone().check(&id, wait_s, kill, &ctx).await,
       read_only => read_only.run_sync(ctx),
     }
   }

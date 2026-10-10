@@ -53,6 +53,8 @@ pub struct Session {
   pub state: parking_lot::Mutex<SessionState>,
   pub store: Store,
   tool_seq: AtomicU64,
+  /// Background commands started in this session; dropping the session stops them
+  pub jobs: Arc<crate::tools::jobs::Jobs>,
 }
 
 impl Session {
@@ -166,7 +168,7 @@ impl Server {
     // The file starts with the first event; the prompt goes first so a reopen keeps the very same text
     store.prelude(json!({ "type": "prompt", "variant": state.prompt.variant, "version": state.prompt.version, "digest": state.prompt.digest,
       "text": state.prompt.text, "sampling": state.prompt.sampling, "thinking": state.prompt.thinking }));
-    let session = Session { id: id.clone(), cwd: PathBuf::from(cwd), state: parking_lot::Mutex::new(state), store, tool_seq: AtomicU64::new(0) };
+    let session = Session { id: id.clone(), cwd: PathBuf::from(cwd), state: parking_lot::Mutex::new(state), store, tool_seq: AtomicU64::new(0), jobs: Default::default() };
     self.sessions.lock().insert(id, Arc::new(session));
     Ok(response)
   }
@@ -246,7 +248,7 @@ impl Server {
       .filter_map(|u| u.get("toolCallId").and_then(Value::as_str)?.strip_prefix("call-")?.parse::<u64>().ok())
       .max()
       .unwrap_or(0);
-    Session { id: id.to_owned(), cwd, state: parking_lot::Mutex::new(st), store, tool_seq: AtomicU64::new(seq) }
+    Session { id: id.to_owned(), cwd, state: parking_lot::Mutex::new(st), store, tool_seq: AtomicU64::new(seq), jobs: Default::default() }
   }
 
   /// `session/list`: this data root's sessions with at least one message, newest first, filtered by `cwd` when given
