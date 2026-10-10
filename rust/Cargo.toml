@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/acpira-shared", "crates/acpira-host"]
+members = ["crates/acpira-shared", "crates/acpira-rpc", "crates/acpira-host"]
 
 [workspace.package]
 version = "1.9.1"
@@ -10,6 +10,7 @@ publish = false
 
 [workspace.dependencies]
 acpira-shared = { path = "crates/acpira-shared" }
+acpira-rpc = { path = "crates/acpira-rpc" }
 anyhow = "1.0.100"
 base64 = "0.22"
 flate2 = "1.1"

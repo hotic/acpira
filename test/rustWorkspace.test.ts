@@ -10,6 +10,6 @@ describe('rust workspace', () => {
     const { version } = JSON.parse(read('package.json')) as { version: string };
     expect(read('rust/Cargo.toml').match(/\[workspace\.package\]\nversion = "([^"]+)"/)?.[1]).toBe(version);
     const lock = read('rust/Cargo.lock');
-    for (const name of ['acpira-host', 'acpira-shared']) expect(lock.match(new RegExp(`name = "${name}"\\nversion = "([^"]+)"`))?.[1]).toBe(version);
+    for (const name of ['acpira-host', 'acpira-rpc', 'acpira-shared']) expect(lock.match(new RegExp(`name = "${name}"\\nversion = "([^"]+)"`))?.[1]).toBe(version);
   });
 });
