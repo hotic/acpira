@@ -1,4 +1,4 @@
-//! The OpenAI-compatible client against the mock server: what goes on the wire and what comes back
+//! The model clients against the mock server: what goes on the wire and what comes back
 
 use serde_json::json;
 
@@ -18,6 +18,7 @@ fn request() -> Request {
     items: vec![Item::User(vec![Part::Text("hi".into())])],
     tools: vec![],
     max_tokens: Some(256),
+    output_limit: None,
     sampling: Sampling::default(),
     thinking: Thinking::Auto,
     effort: None,
@@ -68,4 +69,28 @@ async fn a_cut_stream_is_a_protocol_error() {
   server.push(Reply::Cut(vec![mock::delta(json!({ "content": "par" }))]));
   let events = collect(&server).await;
   assert!(matches!(events.last(), Some(Err(LlmError::Protocol(_)))), "{events:?}");
+}
+
+#[tokio::test]
+async fn the_anthropic_client_sends_its_headers_and_assembles_a_tool_call() {
+  let server = MockModel::start();
+  server.push(mock::messages(&[json!({ "type": "text", "text": "Reading." }), json!({ "type": "tool_use", "id": "toolu_1", "name": "read", "input": { "path": "a.rs" } })], "tool_use", 60));
+  let provider: Provider = serde_json::from_value(json!({ "id": "mock", "format": "anthropic", "baseUrl": server.base_url() })).unwrap();
+  let endpoint = Endpoint::of(&provider, &ProviderModel::new("claude-mock"), Some("sk-ant")).unwrap();
+  let mut rx = llm::stream(llm::default_http(), endpoint, request());
+  let mut events = vec![];
+  while let Some(e) = rx.recv().await {
+    events.push(e.unwrap());
+  }
+  let req = &server.requests()[0];
+  assert_eq!(req.path, "/v1/messages");
+  assert_eq!((req.header("x-api-key"), req.header("anthropic-version")), (Some("sk-ant"), Some("2023-06-01")));
+  assert_eq!(req.header("authorization"), Some("Bearer sk-ant"), "not api.anthropic.com: the bearer form too");
+  assert_eq!(req.body["max_tokens"], 256);
+  assert_eq!(req.body["system"][0]["text"], "be brief");
+  assert_eq!(req.body["messages"], json!([{ "role": "user", "content": [{ "type": "text", "text": "hi", "cache_control": { "type": "ephemeral" } }] }]));
+  let Some(Event::Done { reply, stop, usage }) = events.last() else { panic!("{events:?}") };
+  assert_eq!(*stop, StopReason::ToolUse);
+  assert_eq!((reply.text.as_str(), reply.tool_calls[0].arguments.as_str()), ("Reading.", "{\"path\":\"a.rs\"}"));
+  assert_eq!((usage.unwrap().input, usage.unwrap().cache_read), (100, 60));
 }

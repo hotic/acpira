@@ -3,6 +3,7 @@
 //! uses the default, which reads the proxy variables the engine injects; the host passes its own proxy-aware one). A
 //! dropped receiver ends the reading thread at its next chunk
 
+pub mod anthropic;
 pub mod family;
 pub mod openai_chat;
 pub mod sse;
@@ -30,6 +31,15 @@ pub struct ToolCall {
   pub arguments: String,
 }
 
+/// An assistant message as a wire format returned it, replayed verbatim to the same endpoint and model (Anthropic's
+/// signed thinking blocks must come back unmodified within a tool loop, and are not valid for another model)
+#[derive(Debug, Clone, PartialEq)]
+pub struct Native {
+  /// The endpoint URL and model id that produced the blocks
+  pub origin: String,
+  pub blocks: Vec<Value>,
+}
+
 /// One conversation entry, in the order the model saw it
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item {
@@ -39,6 +49,8 @@ pub enum Item {
     /// Visible reasoning, kept so families that need it back get it
     reasoning: String,
     tool_calls: Vec<ToolCall>,
+    /// The provider's own content blocks, when its format has any to replay
+    native: Option<Native>,
   },
   ToolResult {
     call_id: String,
@@ -64,6 +76,9 @@ pub struct Request {
   pub tools: Vec<ToolSpec>,
   /// Sent only when the user (or the endpoint) gave a real limit, never a guessed one
   pub max_tokens: Option<u64>,
+  /// The model's output limit, estimated or not: a format that requires a limit (Anthropic) sends it when `max_tokens`
+  /// is None
+  pub output_limit: Option<u64>,
   pub sampling: Sampling,
   pub thinking: Thinking,
   pub effort: Option<String>,
@@ -95,6 +110,7 @@ pub struct Reply {
   pub text: String,
   pub reasoning: String,
   pub tool_calls: Vec<ToolCall>,
+  pub native: Option<Native>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -184,7 +200,7 @@ pub fn stream(http: ureq::Agent, endpoint: Endpoint, request: Request) -> mpsc::
   tokio::task::spawn_blocking(move || {
     let result = match endpoint.format {
       ApiFormat::OpenaiChat => openai_chat::stream(&http, &endpoint, &request, &tx),
-      ApiFormat::Anthropic => Err(LlmError::Protocol("the Anthropic Messages format is not supported yet".into())),
+      ApiFormat::Anthropic => anthropic::stream(&http, &endpoint, &request, &tx),
     };
     if let Err(e) = result {
       let _ = tx.send(Err(e));

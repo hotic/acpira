@@ -89,9 +89,14 @@ impl Harness {
 
   /// One OpenAI-compatible source with the given models at `base_url`, and its key
   pub fn providers(&self, base_url: &str, models: Value) {
+    self.providers_in("openai-chat", base_url, models);
+  }
+
+  /// One source of this API format
+  pub fn providers_in(&self, format: &str, base_url: &str, models: Value) {
     std::fs::write(
       self.home().join("providers.json"),
-      json!({ "version": 1, "providers": [{ "id": "mock", "name": "Mock", "baseUrl": base_url, "models": models }] }).to_string(),
+      json!({ "version": 1, "providers": [{ "id": "mock", "name": "Mock", "format": format, "baseUrl": base_url, "models": models }] }).to_string(),
     )
     .unwrap();
     std::fs::write(self.home().join("secrets.json"), json!({ "acpira.provider.mock": "sk-test" }).to_string()).unwrap();

@@ -1,6 +1,7 @@
-//! A scripted OpenAI-compatible model server for tests (feature `mock`): each request takes the next scripted reply,
-//! and every request is recorded, so a test can check what the model was sent (prefix stability included). Plain
-//! blocking HTTP/1.1 on a loopback port, one thread per connection, `Connection: close` responses
+//! A scripted model server for tests (feature `mock`), OpenAI Chat or Anthropic Messages shaped by the builders used:
+//! each request takes the next scripted reply, and every request is recorded, so a test can check what the model was
+//! sent (prefix stability included). Plain blocking HTTP/1.1 on a loopback port, one thread per connection,
+//! `Connection: close` responses
 
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -12,7 +13,8 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 pub enum Reply {
-  /// These chunks as SSE events, then `[DONE]`
+  /// These chunks as SSE events, then `[DONE]`; chunks with a `type` (Anthropic events) go with their `event:` line and
+  /// no `[DONE]`
   Sse(Vec<Value>),
   /// These chunks, then the connection closes without a finish or `[DONE]`
   Cut(Vec<Value>),
@@ -141,11 +143,21 @@ fn serve(conn: TcpStream, st: &State) {
     }
     Reply::Sse(chunks) => {
       let _ = out.write_all(sse_head.as_bytes());
+      let typed = chunks.first().is_some_and(|c| c.get("type").is_some_and(Value::is_string));
       for c in chunks {
-        let _ = write!(out, "data: {c}\n\n");
+        match c.get("type").and_then(Value::as_str) {
+          Some(t) => {
+            let _ = write!(out, "event: {t}\ndata: {c}\n\n");
+          }
+          None => {
+            let _ = write!(out, "data: {c}\n\n");
+          }
+        }
         let _ = out.flush();
       }
-      let _ = out.write_all(b"data: [DONE]\n\n");
+      if !typed {
+        let _ = out.write_all(b"data: [DONE]\n\n");
+      }
     }
     Reply::Cut(chunks) => {
       let _ = out.write_all(sse_head.as_bytes());
@@ -216,4 +228,34 @@ pub fn tools(calls: &[(&str, &str, Value)]) -> Reply {
   chunks.push(finish("tool_calls"));
   chunks.push(usage(100, 10, 0));
   Reply::Sse(chunks)
+}
+
+/// Anthropic Messages events: the start with `cached` prompt tokens read from cache, `blocks` (text / tool_use content
+/// blocks, a tool_use's input streamed in two pieces), the stop
+pub fn messages(blocks: &[Value], stop: &str, cached: u64) -> Reply {
+  let mut events = vec![json!({ "type": "message_start", "message": { "id": "msg_mock", "type": "message", "role": "assistant", "content": [],
+    "usage": { "input_tokens": 100 - cached, "cache_read_input_tokens": cached, "cache_creation_input_tokens": 0, "output_tokens": 1 } } })];
+  for (index, b) in blocks.iter().enumerate() {
+    match b["type"].as_str() {
+      Some("tool_use") => {
+        events.push(json!({ "type": "content_block_start", "index": index, "content_block": { "type": "tool_use", "id": b["id"], "name": b["name"], "input": {} } }));
+        let args = b["input"].to_string();
+        let mut mid = args.len() / 2;
+        while !args.is_char_boundary(mid) {
+          mid -= 1;
+        }
+        for piece in [&args[..mid], &args[mid..]] {
+          events.push(json!({ "type": "content_block_delta", "index": index, "delta": { "type": "input_json_delta", "partial_json": piece } }));
+        }
+      }
+      _ => {
+        events.push(json!({ "type": "content_block_start", "index": index, "content_block": { "type": "text", "text": "" } }));
+        events.push(json!({ "type": "content_block_delta", "index": index, "delta": { "type": "text_delta", "text": b["text"] } }));
+      }
+    }
+    events.push(json!({ "type": "content_block_stop", "index": index }));
+  }
+  events.push(json!({ "type": "message_delta", "delta": { "stop_reason": stop }, "usage": { "output_tokens": 10 } }));
+  events.push(json!({ "type": "message_stop" }));
+  Reply::Sse(events)
 }
