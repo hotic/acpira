@@ -52,20 +52,25 @@ const json = (path: string, value: unknown) => {
   writeFileSync(path, JSON.stringify(value, null, 2) + '\n');
 };
 
+function acpira({ model, base, acpiraHome }: HarnessCtx, efforts?: string[]): HarnessSetup {
+  json(join(acpiraHome, 'providers.json'), {
+    version: 1,
+    providers: [{
+      id: 'evalgw', name: 'Eval gateway', preset: 'custom',
+      format: model.api === 'anthropic' ? 'anthropic' : 'openai-chat',
+      baseUrl: `${base}/v1`,
+      models: [{ id: model.id, enabled: true, ...(efforts ? { efforts } : {}) }],
+    }],
+  });
+  json(join(acpiraHome, 'secrets.json'), { 'acpira.provider.evalgw': DUMMY_KEY });
+  return { agent: 'acpira', env: {} };
+}
+
 export const HARNESSES: Record<string, (c: HarnessCtx) => HarnessSetup> = {
-  acpira({ model, base, acpiraHome }) {
-    json(join(acpiraHome, 'providers.json'), {
-      version: 1,
-      providers: [{
-        id: 'evalgw', name: 'Eval gateway', preset: 'custom',
-        format: model.api === 'anthropic' ? 'anthropic' : 'openai-chat',
-        baseUrl: `${base}/v1`,
-        models: [{ id: model.id, enabled: true }],
-      }],
-    });
-    json(join(acpiraHome, 'secrets.json'), { 'acpira.provider.evalgw': DUMMY_KEY });
-    return { agent: 'acpira', env: {} };
-  },
+  acpira: c => acpira(c),
+  // The built-in agent at a fixed effort: a model whose only level is this one starts there (the default is high)
+  'acpira-medium': c => acpira(c, ['medium']),
+  'acpira-low': c => acpira(c, ['low']),
 
   opencode({ model, base, home }) {
     const npm = model.api === 'anthropic' ? '@ai-sdk/anthropic' : model.api === 'responses' ? '@ai-sdk/openai' : '@ai-sdk/openai-compatible';
