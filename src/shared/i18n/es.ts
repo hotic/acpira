@@ -260,6 +260,9 @@ export const es = {
   'usage.windowLimited': 'Limitado por la ventana',
   'usage.pendingAfterTurn': 'Tras este turno',
   'usage.pendingBeforeSend': 'Antes del siguiente mensaje',
+  'usage.compactedStale': 'Compactado',
+  'usage.compactedStaleHint': 'El agente no informó de su contexto tras compactar. La cifra real aparece tras su próxima respuesta.',
+  'usage.beforeCompact': 'Antes {n}',
 
   'notice.connecting': 'Iniciando {agent}…',
   'notice.login.title': 'Iniciar sesión en {agent}',

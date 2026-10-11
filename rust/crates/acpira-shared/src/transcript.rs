@@ -1218,11 +1218,16 @@ pub struct NativeSessionInfo {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Usage {
   pub used: Num,
   pub size: Num,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub cost: Option<Num>,
+  /// Set when a compaction finished and the agent has not reported its context since (Devin): `used` is still the
+  /// pre-compaction value, kept here; the next snapshot replaces the whole struct and clears it
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub compacted_from: Option<Num>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

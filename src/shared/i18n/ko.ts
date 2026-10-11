@@ -266,6 +266,9 @@ export const ko = {
   'usage.windowLimited': '창 크기 제한',
   'usage.pendingAfterTurn': '이번 턴 후',
   'usage.pendingBeforeSend': '다음 메시지 전',
+  'usage.compactedStale': '압축됨',
+  'usage.compactedStaleHint': '압축 후 에이전트가 컨텍스트를 보고하지 않았습니다. 다음 응답 후 실제 값이 표시됩니다.',
+  'usage.beforeCompact': '압축 전 {n}',
 
   'notice.connecting': '{agent} 시작 중…',
   'notice.login.title': '{agent}에 로그인',

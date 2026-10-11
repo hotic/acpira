@@ -184,7 +184,7 @@ pub fn context_usage(jsonl: &str, window: impl Fn(&str, &str) -> Option<f64>) ->
   let used = used.or((!matches!(walk, Walk::Done) && estimate > 0.0).then_some(estimate))?;
   let (provider, id) = model?;
   let size = window(&provider, &id)?;
-  Some(Usage { used: Num(used), size: Num(size), cost: (cost > 0.0).then_some(Num(cost)) })
+  Some(Usage { used: Num(used), size: Num(size), cost: (cost > 0.0).then_some(Num(cost)), compacted_from: None })
 }
 
 fn str_of<'a>(v: &'a Value, key: &str) -> Option<&'a str> {

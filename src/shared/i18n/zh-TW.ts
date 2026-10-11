@@ -273,6 +273,9 @@ export const zhTW = {
   'usage.windowLimited': '受視窗限制',
   'usage.pendingAfterTurn': '本輪結束後',
   'usage.pendingBeforeSend': '下次傳送前',
+  'usage.compactedStale': '已壓縮',
+  'usage.compactedStaleHint': '壓縮後 Agent 沒有回報上下文用量，下一次回覆後顯示真實數值。',
+  'usage.beforeCompact': '壓縮前 {n}',
 
   // Notice bar above the composer
   'notice.connecting': '正在啟動 {agent}…',

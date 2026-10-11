@@ -263,6 +263,9 @@ export const de = {
   'usage.windowLimited': 'Durch Fenster begrenzt',
   'usage.pendingAfterTurn': 'Nach diesem Durchlauf',
   'usage.pendingBeforeSend': 'Vor der nächsten Nachricht',
+  'usage.compactedStale': 'Komprimiert',
+  'usage.compactedStaleHint': 'Der Agent hat nach dem Komprimieren keinen Kontext gemeldet. Der tatsächliche Wert erscheint nach seiner nächsten Antwort.',
+  'usage.beforeCompact': 'Vorher {n}',
 
   'notice.connecting': '{agent} wird gestartet…',
   'notice.login.title': 'Bei {agent} anmelden',

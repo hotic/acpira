@@ -78,6 +78,18 @@
 }
 @keyframes acp-compact-label { from { color: var(--fg-strong); } }
 
+/* Context ring (chat/ContextUsage.tsx). The fill is a dash offset that transitions at the pace data-shift names: a
+   compaction eases down slowly (also into the dimmed sliver Devin gets while it reports nothing), the real figure
+   replacing that sliver snaps in with one bright flash, growth follows at an ordinary pace. While a compaction runs the
+   fill breathes on the compaction icon's beat. The panel bar follows the same figure. */
+.context-ring-arc { transition: stroke-dashoffset .5s cubic-bezier(.2, .7, .2, 1), opacity .3s ease; }
+.context-ring[data-shift="drop"] .context-ring-arc { transition-duration: 1.2s, .6s; transition-timing-function: cubic-bezier(.4, 0, .2, 1), ease; }
+.context-ring[data-shift="snap"] .context-ring-arc { transition-duration: .16s, .16s; transition-timing-function: cubic-bezier(.3, 1.4, .5, 1), ease-out; animation: acp-ring-flash .6s ease-out; }
+.context-ring[data-stale] .context-ring-arc { opacity: .45; }
+.context-ring[data-compacting] .context-ring-arc { animation: acp-pulse 1.4s ease-in-out infinite; }
+.context-bar-fill { transition: width .6s cubic-bezier(.4, 0, .2, 1), opacity .3s ease; }
+@keyframes acp-ring-flash { 0% { color: var(--fg-strong); filter: drop-shadow(0 0 1.5px currentColor); } 100% { filter: none; } }
+
 /* Goal strip lead while the goal is active and a turn runs (chat/Goal.tsx): lucide Goal's first path is the pole and flag.
    The transform origin sits on the pole (x = 12 of 24), so skewY and scaleX leave the pole in place and only the flag
    flutters; the rings stay still beside the line's shimmer. The rest pose is untransformed, so the kill switches leave

@@ -275,6 +275,9 @@ export const zhCN = {
   'usage.windowLimited': '受窗口限制',
   'usage.pendingAfterTurn': '本轮结束后',
   'usage.pendingBeforeSend': '下次发送前',
+  'usage.compactedStale': '已压缩',
+  'usage.compactedStaleHint': '压缩后 Agent 没有上报上下文用量，下一次回复后显示真实数值。',
+  'usage.beforeCompact': '压缩前 {n}',
 
   // Notice bar above the composer
   'notice.connecting': '正在启动 {agent}…',
