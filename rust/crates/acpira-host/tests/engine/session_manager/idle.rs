@@ -108,3 +108,46 @@ async fn reopening_a_released_session_waits_for_the_old_process_to_close() {
   assert!(m.m.leased().contains(&a));
   m.dispose().await;
 }
+
+// A reopened session gets its own choices back, not the agent's resume defaults (fake: m1 / high / agent), even when no
+// idle release in this engine remembered them: a restarted engine reads them from the record. Reported 2026-10-11 on
+// Claude, whose session/resume answers Fable 5.1 Medium / Manual and used to overwrite the session's Opus / bypass
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_reopened_by_a_new_engine_gets_its_own_controls_back() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let native = dir.path().join("native");
+  std::fs::create_dir(&native).unwrap();
+  let env = json!({ "env": { "FAKE_SESSION_DIR": native, "FAKE_RESTORE_DEFAULTS": "1" } });
+  let opts = || Opts::with_agents(fake.setting(env.clone()), "fake");
+  let m = Mgr::new(&dir.path().join("sessions"), opts());
+  m.init().await;
+  m.new_session(None).await;
+  m.handle(json!({ "type": "setConfig", "configId": "model", "value": "m2" })).await;
+  m.handle(json!({ "type": "setConfig", "configId": "effort", "value": "low" })).await;
+  m.handle(json!({ "type": "setMode", "id": "plan" })).await;
+  m.handle(json!({ "type": "send", "text": "hi" })).await;
+  let a = m.active_id().unwrap();
+  // The agent's memory now holds other choices, so only the record can bring a's back
+  m.new_session(None).await;
+  m.handle(json!({ "type": "setConfig", "configId": "effort", "value": "high" })).await;
+  m.handle(json!({ "type": "setMode", "id": "agent" })).await;
+  m.handle(json!({ "type": "send", "text": "hello" })).await;
+  m.dispose().await;
+
+  let m2 = Mgr::new(&dir.path().join("sessions"), opts());
+  m2.init().await;
+  m2.m.select_session_for(&m2.v, &a).await;
+  let view = m2.active().unwrap();
+  assert_eq!(view["status"], "ready", "{:#?}", m2.logs());
+  assert!(m2.logs().iter().any(|l| l.contains("session/resume ok")), "{:#?}", m2.logs());
+  let values: Vec<Value> = view["controls"]["options"].as_array().unwrap().iter().map(|o| o["value"].clone()).collect();
+  assert_eq!(values, [json!("m2"), json!("low")]);
+  assert_eq!(view["controls"]["modeId"], "plan");
+  // The record keeps them too: the resume defaults never reach the disk
+  m2.dispose().await;
+  let store = TranscriptStore::new(dir.path().join("sessions"), Arc::new(|_: &str| {}), None);
+  let record = v(store.load(&a).await.unwrap());
+  assert_eq!(record["controls"]["modeId"], "plan");
+  assert_eq!(record["controls"]["options"][0]["value"], "m2");
+}

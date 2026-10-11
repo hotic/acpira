@@ -180,8 +180,6 @@ struct State {
   mirrors: HashMap<String, Arc<AcpSession>>,
   // Since when each live session has been unseen with nothing in flight (`release_idle`)
   idle_since: HashMap<String, tokio::time::Instant>,
-  // Controls of sessions whose process was released while idle, replayed when the session opens again
-  released: HashMap<String, TurnSettings>,
   // Released sessions whose old agent process is still closing: reopening one waits for it (`release`)
   closing: HashMap<String, tokio::sync::watch::Receiver<bool>>,
 }
@@ -262,7 +260,6 @@ impl SessionManager {
           dirty: HashMap::new(),
           mirrors: HashMap::new(),
           idle_since: HashMap::new(),
-          released: HashMap::new(),
           closing: HashMap::new(),
         }),
         deps,
@@ -1563,20 +1560,18 @@ impl SessionManager {
       self.start_mirror(id, record, note, elsewhere);
       return;
     }
+    // The record's own controls are this session's choices. session/resume and session/load answer with the agent's
+    // defaults (claude-agent-acp: Fable 5.1 Medium, Manual), and that answer must neither show nor reach the record:
+    // held on screen through the restore, then replayed. Every reopen does this, not only one after an idle release in
+    // this engine, since a restarted engine, a reloaded window or another engine's session has no such memory
+    let settings = capture_turn_settings(&record.controls);
     let s = AcpSession::new(record, self.session_deps());
-    let released = {
-      let mut st = self.state.lock();
-      st.live.insert(id.to_owned(), s.clone());
-      st.released.remove(id)
-    };
+    s.hold_settings(&settings);
+    self.state.lock().live.insert(id.to_owned(), s.clone());
     self.emit_session(&s);
     s.start().await;
-    // A session whose process was released while idle gets back the controls it had (the agent may resume on its defaults)
-    if let Some(settings) = released
-      && s.status() == SessionStatus::Ready
-    {
-      s.adopt_controls(settings).await;
-    }
+    // Also on a failed start: it releases the hold and the prompts it queued
+    s.adopt_controls(settings).await;
     // A draining engine keeps the lease of every live agent: synced before the load's own hold goes
     self.sync_leases();
     drop(hold);
@@ -2236,7 +2231,6 @@ impl SessionManager {
       st.dirty.remove(id);
       st.mirrors.remove(id);
       st.idle_since.remove(id);
-      st.released.remove(id);
       st.live.remove(id)
     };
     if let Some(s) = live {
@@ -2785,7 +2779,6 @@ impl SessionManager {
   /// process has closed the native session and exited, this engine keeps the lease (no other engine resumes it) and a
   /// reopen here waits (`load_session`)
   async fn release(self: &Arc<Self>, s: &Arc<AcpSession>) -> bool {
-    let settings = capture_turn_settings(&s.agent_controls());
     if let Err(e) = self.deps.store.flush(s.clone() as Arc<dyn RecordSource>).await {
       self.log(&format!("session {}: idle release skipped, save failed: {e}", s.id));
       return false;
@@ -2807,7 +2800,6 @@ impl SessionManager {
       st.health_seen.remove(&s.id);
       st.dirty.remove(&s.id);
       st.idle_since.remove(&s.id);
-      st.released.insert(s.id.clone(), settings);
       st.closing.insert(s.id.clone(), closed_rx);
     }
     // A pin of its own holds the lease across the close; the session's turn pin (if any) can go now

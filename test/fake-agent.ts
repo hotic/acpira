@@ -80,6 +80,8 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // FAKE_SESSION_DIR → a native session store on disk: sessions persist as <id>.json, resume/load restore them (load replays a
 // "NATIVE_REPLAY" message), and the agent advertises sessionCapabilities.list, answering session/list with the dir's sessions
 // (title "Fake <id8>", updatedAt = file mtime, newest first; cursor is a numeric offset, page size 50)
+// FAKE_RESTORE_DEFAULTS → resume/load answer the process defaults (m1 / high / agent) instead of the saved session's
+// choices, like claude-agent-acp 0.83.0, whose session/resume reports Fable 5.1 Medium / default mode for every session
 // FAKE_STEERING → advertise `_meta.steering.supported` and take `_session/steering` the way claude-agent-acp does: while a
 // "slow" prompt runs the text is injected (the loop answers it with a `steered:<text>` chunk), idle with the promptRequired
 // opt-in it is handed back; =idle always answers promptRequired (the turn-just-ended race), =fail rejects every request.
@@ -180,8 +182,13 @@ function restoreSession(id: string, cwd: string): acp.LoadSessionResponse {
   const saved = readSession(id);
   if (!saved) throw new acp.RequestError(-32016, 'Session not found', { 'cognition.ai/errorKind': 'session_not_found' });
   sessions.add(id);
-  modes.set(id, saved.mode);
-  Object.assign(config, saved.config);
+  if (process.env.FAKE_RESTORE_DEFAULTS) {
+    modes.set(id, 'agent');
+    Object.assign(config, { model: 'm1', effort: 'high', fast: 'false' });
+  } else {
+    modes.set(id, saved.mode);
+    Object.assign(config, saved.config);
+  }
   // A cwd with no-modes restores without modes too, like its session/new (Grok never advertises them)
   return {
     ...(cwd.includes('no-modes') ? {} : { modes: { currentModeId: saved.mode, availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }] } }),
