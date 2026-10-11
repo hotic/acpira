@@ -58,6 +58,8 @@ impl AcpSession {
           let Core { tree, state, .. } = &mut *c;
           tree.lifecycle(&session_id, root.as_deref(), l, &mut RouteCtx { turn_index, root_turns: &mut state.turns });
           self.drain_terminal(&mut c);
+          // A resumed native run is read from its sidechain log (`workflow_logs.rs`)
+          self.schedule_workflow_logs(&mut c);
         }
       }
       self.touch(&mut c);

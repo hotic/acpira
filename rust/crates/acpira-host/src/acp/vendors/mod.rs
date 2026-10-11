@@ -105,6 +105,12 @@ impl Vendor {
     self == Vendor::Claude
   }
 
+  /// A `SendMessage` resume of a finished native subagent arrives as an announced run with no content of its own: the
+  /// adapter drops it, so the run is read from the child's sidechain log (`SubagentTree` `resumed_task`)
+  pub fn resumed_child_logs(self) -> bool {
+    self == Vendor::Claude
+  }
+
   /// The host offers ultracode as an "Ultra" effort level past Max, applied through the session settings
   /// (`claude_ultracode`); it needs dynamic workflows, so it is never offered without `workflows`
   pub fn ultracode(self) -> bool {

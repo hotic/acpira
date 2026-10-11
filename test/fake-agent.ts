@@ -30,7 +30,9 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 //   =orphan returns end_turn while c1 still runs; =late-terminal arms a queue so the next two prompts report c1 completed
 //   then running (must be ignored); =lost has the agent itself report c1 disconnected; =early sends c9's updates before its announce (=early-flood over the buffer cap);
 //   =claude sends the legacy `subagent_spawned`/`subagent_state_update` pair plus an `async_launched` toolResponse receipt
-//   (=claude-async never reports a terminal state); =devin replays the Devin nested shape (run_subagent / subagent_started /
+//   (=claude-async never reports a terminal state); =claude-resume runs k1, then a root SendMessage to it whose resumed run
+//   `k1:generation:2` streams nothing for 1.5 s (claude-agent-acp 0.83.0 drops it; =claude-resume-wire sends one chunk
+//   on it, as an adapter that delivers the run would); =devin replays the Devin nested shape (run_subagent / subagent_started /
 //   subagent_context / read_subagent / subagent_completed, child usage_update); =receipt is Kimi's Agent tool.
 //   Extension kinds leave this process verbatim — the agent side does not validate outgoing params; the host's ndjson
 //   rewrite (subagents/wire.ts) is what parks them in session_info_update
@@ -1137,6 +1139,26 @@ const app = acp.agent({ name: 'fake-agent' })
         await sendTo('k1', { sessionUpdate: 'tool_call_update', toolCallId: 'k1-t1', status: 'completed' });
         await sendTo('k1', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'k1 findings' } });
         if (text === 'subagents-claude') await sendExt({ sessionUpdate: 'subagent_state_update', subagentSessionId: 'k1', state: 'completed' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root done' } });
+        return { stopReason: 'end_turn' };
+      }
+
+      if (text === 'subagents-claude-resume' || text === 'subagents-claude-resume-wire') {
+        await sendExt({ sessionUpdate: 'subagent_spawned', subagentSessionId: 'k1', name: 'Build LAB', task: 'build it', capabilities: {} });
+        await sendTo('k1', { sessionUpdate: 'tool_call', toolCallId: 'k1-t1', title: 'Glob', kind: 'search', status: 'completed',
+          _meta: { claudeCode: { parentToolUseId: 'call_k1' } } });
+        await sendExt({ sessionUpdate: 'subagent_state_update', subagentSessionId: 'k1', state: 'completed' });
+        // The call streams in with an empty input; the update carries `to`
+        await send({ sessionUpdate: 'tool_call', toolCallId: 'sm-1', title: 'SendMessage', kind: 'other', status: 'pending', rawInput: {},
+          _meta: { claudeCode: { toolName: 'SendMessage' } } });
+        await send({ sessionUpdate: 'tool_call_update', toolCallId: 'sm-1', status: 'completed', rawInput: { to: 'k1', message: 'do more' },
+          _meta: { claudeCode: { toolName: 'SendMessage' } } });
+        await sendExt({ sessionUpdate: 'subagent_spawned', subagentSessionId: 'k1:generation:2', name: 'Build LAB', task: 'build it', prompt: 'do more', capabilities: {} });
+        if (text === 'subagents-claude-resume-wire') {
+          await sendTo('k1:generation:2', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'wire reply' } });
+        }
+        await new Promise(r => setTimeout(r, 1500));
+        await sendExt({ sessionUpdate: 'subagent_state_update', subagentSessionId: 'k1:generation:2', state: 'completed' });
         await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root done' } });
         return { stopReason: 'end_turn' };
       }

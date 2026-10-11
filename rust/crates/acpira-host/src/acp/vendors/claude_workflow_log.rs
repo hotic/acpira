@@ -27,6 +27,11 @@
 //! skipped silently (the last one is kept and completed on the next read). Lines become the ACP updates claude-agent-acp
 //! would have sent for the same blocks (`tool-calls/reporters`, 0.87.0: titles, kinds, locations, diffs, terminal
 //! output), so the child transcript goes through the ordinary normalizer and its rows look like any Claude subagent's
+//!
+//! A native (Agent tool) subagent keeps the same format one level up, `<sessionId>/subagents/agent-<agentId>.jsonl`, one
+//! file for every run of that agent: a `SendMessage` resume appends the next run to it (observed 2026-10-11, Claude Code
+//! under claude-agent-acp 0.83.0). Such a run is read through a time window (`LogCursor::window`), so only its own lines
+//! land in its node
 
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
@@ -102,12 +107,17 @@ pub fn session_dir(config: &Path, cwd: &str, session_id: &str) -> Option<PathBuf
   std::fs::read_dir(&projects).ok()?.filter_map(|e| e.ok()).map(|e| e.path().join(session_id)).find(|p| p.is_dir())
 }
 
-/// `subagents/workflows/*/agent-<agentId>.jsonl` under a session directory
+/// `subagents/agent-<agentId>.jsonl` (a native subagent) or `subagents/workflows/*/agent-<agentId>.jsonl` (a workflow
+/// agent) under a session directory
 pub fn agent_log(session_dir: &Path, agent_id: &str) -> Option<PathBuf> {
   if !safe_id(agent_id) {
     return None;
   }
   let name = format!("agent-{agent_id}.jsonl");
+  let native = session_dir.join("subagents").join(&name);
+  if native.is_file() {
+    return Some(native);
+  }
   std::fs::read_dir(session_dir.join("subagents").join("workflows"))
     .ok()?
     .filter_map(|e| e.ok())
@@ -126,6 +136,23 @@ pub struct LineParser {
   /// The last streamed block: (thinking | text, message id). The normalizer joins consecutive chunks of one kind, so a
   /// block of another message gets a paragraph break
   last: Option<(&'static str, String)>,
+  /// Only lines stamped inside this window count (`LogCursor::window`)
+  window: Option<LogWindow>,
+}
+
+/// The stretch of a shared log that belongs to one run: `from` and `to` are epoch milliseconds compared with each line's
+/// `timestamp`, `to` open while the run goes on. A line without a readable timestamp is outside every window
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LogWindow {
+  pub from: i64,
+  pub to: Option<i64>,
+}
+
+impl LogWindow {
+  fn holds(&self, line: &Value) -> bool {
+    let Some(at) = line.get("timestamp").and_then(Value::as_str).and_then(acpira_shared::time::ms_of_iso) else { return false };
+    at >= self.from && self.to.is_none_or(|to| at <= to)
+  }
 }
 
 impl LineParser {
@@ -136,6 +163,9 @@ impl LineParser {
   /// One line → its updates; anything unknown or malformed yields none
   pub fn line(&mut self, line: &[u8]) -> Vec<Value> {
     let Ok(v) = serde_json::from_slice::<Value>(line) else { return vec![] };
+    if self.window.is_some_and(|w| !w.holds(&v)) {
+      return vec![];
+    }
     let Some(msg) = v.get("message") else { return vec![] };
     let blocks = msg.get("content").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
     match v.get("type").and_then(Value::as_str) {
@@ -422,6 +452,11 @@ impl LogCursor {
     LogCursor { path: None, offset: 0, partial: vec![], skipping: false, stamp: None, parser: LineParser::new(cwd), stopped: false }
   }
 
+  /// Read only the lines of this window from now on (set before each read: a running run's end is not known yet)
+  pub fn set_window(&mut self, window: Option<LogWindow>) {
+    self.parser.window = window;
+  }
+
   /// Whether the log file has been found
   pub fn located(&self) -> bool {
     self.path.is_some()
@@ -526,6 +561,22 @@ mod tests {
 
   fn kinds(updates: &[Value]) -> Vec<String> {
     updates.iter().map(|u| u["sessionUpdate"].as_str().unwrap_or("").to_owned()).collect()
+  }
+
+  #[test]
+  fn a_window_keeps_only_the_lines_stamped_inside_it() {
+    let mut p = LineParser::new("/w");
+    p.window = Some(LogWindow { from: 1_000_000, to: Some(2_000_000) });
+    let at = |ms: i64, text: &str| {
+      format!(r#"{{"type":"assistant","timestamp":"{}","message":{{"id":"m","content":[{{"type":"text","text":"{text}"}}]}}}}"#, acpira_shared::time::iso_of_ms(ms))
+    };
+    assert!(p.line(at(999_999, "before").as_bytes()).is_empty());
+    assert_eq!(p.line(at(1_500_000, "inside").as_bytes()).len(), 1);
+    assert!(p.line(at(2_000_001, "after").as_bytes()).is_empty());
+    assert!(p.line(br#"{"type":"assistant","message":{"id":"m","content":[{"type":"text","text":"unstamped"}]}}"#).is_empty());
+    // An open end takes everything after the start
+    p.window = Some(LogWindow { from: 1_000_000, to: None });
+    assert_eq!(p.line(at(9_000_000, "later").as_bytes()).len(), 1);
   }
 
   #[test]

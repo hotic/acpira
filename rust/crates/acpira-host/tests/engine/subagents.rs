@@ -805,3 +805,93 @@ async fn extension_updates_reach_the_process_handler_raw_and_child_streams_pass_
   assert!(ups.iter().any(|n| n["sessionId"] == sid && n["update"]["sessionUpdate"] == "agent_message_chunk"));
   proc.kill().await;
 }
+
+/// One sidechain log line of a native Claude subagent, stamped `at`
+fn sidechain_line(at: i64, kind: &str, message: Value) -> String {
+  let mut line = json!({ "isSidechain": true, "agentId": "k1", "type": kind, "timestamp": acpira_shared::time::iso_of_ms(at), "message": message });
+  line["uuid"] = json!(format!("u{at}{kind}"));
+  format!("{line}\n")
+}
+
+fn append(path: &std::path::Path, text: &str) {
+  use std::io::Write;
+  std::fs::OpenOptions::new().create(true).append(true).open(path).unwrap().write_all(text.as_bytes()).unwrap();
+}
+
+/// The resumed run's own lines, appended now; the first run's line an hour before
+fn resume_log(path: &std::path::Path, now: i64) {
+  append(path, &sidechain_line(now, "user", json!({ "role": "user", "content": "The coordinator sent a message while you were working: do more" })));
+  append(path, &sidechain_line(now, "assistant", json!({ "id": "m2", "content": [{ "type": "tool_use", "id": "new-t1", "name": "Bash", "input": { "command": "ls" } }] })));
+  append(path, &sidechain_line(now, "user", json!({ "content": [{ "type": "tool_result", "tool_use_id": "new-t1", "content": "a.ts" }] })));
+  append(path, &sidechain_line(now, "assistant", json!({ "id": "m3", "content": [{ "type": "text", "text": "landed" }] })));
+}
+
+fn resume_log_path(config: &std::path::Path, sid: &str) -> std::path::PathBuf {
+  use acpira_host::acp::vendors::claude_workflow_log::project_dir_name;
+  let dir = config.join("projects").join(project_dir_name("/tmp")).join(sid).join("subagents");
+  std::fs::create_dir_all(&dir).unwrap();
+  let path = dir.join("agent-k1.jsonl");
+  let old = acpira_host::util::now_ms() - 3_600_000;
+  append(&path, &sidechain_line(old, "assistant", json!({ "id": "m1", "content": [{ "type": "tool_use", "id": "old-t1", "name": "Bash", "input": { "command": "pwd" } }] })));
+  path
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_resumed_claude_run_reads_its_own_lines_from_the_sidechain_log_and_sits_at_its_send_message() {
+  let fake = fake_or_skip!();
+  let config = tempfile::tempdir().unwrap();
+  let h = Harness::for_agent(&fake, "claude", json!({ "env": { "CLAUDE_CONFIG_DIR": config.path().to_string_lossy() } }));
+  let s = session(&h).await;
+  let sid = s.to_record().acp_session_id.expect("session id");
+  let path = resume_log_path(config.path(), &sid);
+  let p = spawn_prompt(&s, "subagents-claude-resume");
+  until(|| sub(&s, "sessionId", "k1:generation:2").is_some(), 8000).await;
+  resume_log(&path, acpira_host::util::now_ms());
+  p.await.unwrap();
+  let run = sub_id(&s, "sessionId", "k1:generation:2");
+  until(|| has(&child_blocks(&s, &run), |b| b["markdown"] == "landed"), 8000).await;
+  let blocks = child_blocks(&s, &run);
+  // Only the resumed run's lines: the first run's call an hour earlier stays out
+  assert!(has(&blocks, |b| b["type"] == "tool_call" && b["id"] == "new-t1" && b["status"] == "completed"), "{blocks:#?}");
+  assert!(!has(&blocks, |b| b["id"] == "old-t1"), "{blocks:#?}");
+  expect_match(sub(&s, "sessionId", "k1:generation:2").unwrap(), json!({ "state": "completed", "peer": { "sidechainId": "k1", "toolCallId": "sm-1" } }));
+  // The SendMessage call is the run's delegation row; the first run keeps its own Agent call and wire content
+  assert!(has(&root_blocks(&s), |b| b["id"] == "sm-1" && b["subagentId"] == run.as_str()));
+  let first = sub(&s, "sessionId", "k1").unwrap();
+  expect_match(&first, json!({ "peer": { "toolCallId": "call_k1" } }));
+  assert!(!has(&child_blocks(&s, first["id"].as_str().unwrap()), |b| b["id"] == "new-t1"));
+  // A record from before the log was read (no sidechainId, an empty transcript) reads it once when the run is opened
+  let mut record = s.to_record();
+  for r in record.subagents.as_mut().unwrap() {
+    if r.core.peer.session_id.as_deref() == Some("k1:generation:2") {
+      r.core.peer.sidechain_id = None;
+      r.turns = vec![];
+    }
+  }
+  let restored = Disposing(AcpSession::new(record, h.deps.clone()));
+  assert!(child_blocks(&restored, &run).is_empty());
+  restored.observe_subagent(&run);
+  until(|| has(&child_blocks(&restored, &run), |b| b["markdown"] == "landed"), 8000).await;
+  assert!(!has(&child_blocks(&restored, &run), |b| b["id"] == "old-t1"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_resumed_run_that_streams_on_the_wire_leaves_its_log_alone() {
+  let fake = fake_or_skip!();
+  let config = tempfile::tempdir().unwrap();
+  let h = Harness::for_agent(&fake, "claude", json!({ "env": { "CLAUDE_CONFIG_DIR": config.path().to_string_lossy() } }));
+  let s = session(&h).await;
+  let sid = s.to_record().acp_session_id.expect("session id");
+  let path = resume_log_path(config.path(), &sid);
+  let p = spawn_prompt(&s, "subagents-claude-resume-wire");
+  until(|| sub(&s, "sessionId", "k1:generation:2").is_some(), 8000).await;
+  resume_log(&path, acpira_host::util::now_ms());
+  p.await.unwrap();
+  until(|| h.logs.lock().unwrap().iter().any(|l| l.contains("streams on the wire")), 8000).await;
+  let run = sub_id(&s, "sessionId", "k1:generation:2");
+  // Two poll intervals: nothing from the log arrives
+  tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+  let blocks = child_blocks(&s, &run);
+  assert!(has(&blocks, |b| b["markdown"] == "wire reply"), "{blocks:#?}");
+  assert!(!has(&blocks, |b| b["id"] == "new-t1"), "{blocks:#?}");
+}
