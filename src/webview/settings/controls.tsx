@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { BookText, Brain, ChevronRight, Combine, ExternalLink, Image as ImageIcon, Search, Zap } from 'lucide-react';
 import { cn } from '../ui/cn';
 import { Card } from '../ui/Card';
@@ -226,15 +226,28 @@ export function Note({ children, shimmer }: { children: ReactNode; shimmer?: boo
 export interface Option<V extends string> { value: V; label: string; icon?: ReactNode; hint?: string; disabled?: boolean }
 
 // Dropdown select: a bordered Chip that opens the shared Menu; radio semantics, the current value gets the check.
-// Sized like NumberField (--ctl tall, --r-md) so the two form controls line up in a column; the label grows so the caret stays at the right edge with or without an icon
+// Sized like NumberField (--ctl tall, --r-md) so the two form controls line up in a column. The field is as wide as its
+// longest option (every label sits stacked in one grid cell, only the current one visible), so a pick never resizes it,
+// and its list is exactly the field's width, like a native select. A className width (w-full in a form dialog) wins;
+// the list follows it. The list is painted in the field's own material (`fieldTone`), and the field keeps its resting
+// fill while open, so the two read as one control instead of a lighter field over a darker menu
 export function Select<V extends string>({ options, value, onChange, label, className }: { options: Option<V>[]; value: V; onChange: (v: V) => void; label: string; className?: string }) {
   const cur = options.find(o => o.value === value);
-  return <DropdownMenu.Root>
-    <DropdownMenu.Trigger render={<Chip aria-label={label} icon={cur?.icon}
-      className={cn('h-ctl min-w-(--ctl-w) gap-2 rounded-md border border-line bg-hover px-3 text-2 text-fg-1 hover:bg-active data-[open]:bg-active data-[popup-open]:bg-active', className)}>
-      {cur?.label ?? value}
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [tone, setTone] = useState<CSSProperties>();
+  return <DropdownMenu.Root onOpenChange={open => { if (open) setTone(fieldTone(trigger.current)); }}>
+    <DropdownMenu.Trigger render={<Chip ref={trigger} aria-label={label} icon={cur?.icon}
+      className={cn('h-ctl min-w-(--ctl-w) max-w-full gap-2 rounded-md border border-line bg-hover px-3 text-2 text-fg-1 hover:bg-active data-[popup-open]:bg-hover', className)}>
+      {/* pe-1: a list row's chrome (popup border and padding, row padding, check) is a few px wider than the field's
+          (border, padding, caret), so the longest label still fits its row unclipped */}
+      <span className="grid grid-cols-[minmax(0,1fr)] pe-1">
+        {options.map(o => (
+          <span key={o.value} aria-hidden={o.value !== value || undefined} className={cn('col-start-1 row-start-1 truncate', o.value !== value && 'invisible')}>{o.label}</span>
+        ))}
+        {!cur && <span className="col-start-1 row-start-1 truncate">{value}</span>}
+      </span>
     </Chip>} />
-    <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="end" width="md"><DropdownMenu.Popup>
+    <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="start" width="anchor"><DropdownMenu.Popup style={tone}>
       <DropdownMenu.RadioGroup value={value} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
         {options.map(o => <DropdownMenu.RadioItem key={o.value} value={o.value} title={o.hint} disabled={o.disabled} onClick={() => onChange(o.value)}>
           <OptionContent icon={o.icon} checked={o.value === value} checkSlot={!!cur}>{o.label}</OptionContent>
@@ -242,6 +255,34 @@ export function Select<V extends string>({ options, value, onChange, label, clas
       </DropdownMenu.RadioGroup>
     </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
   </DropdownMenu.Root>;
+}
+
+// The field's look as one opaque paint for its list: the field's translucent fill (`--hover`) layered over the first
+// opaque surface behind it (a card, a dialog), and the field's border colour. Read when the list opens: the list is
+// portaled to the shell root, so it cannot inherit the card's or the dialog's colours, and the menu palette's own
+// background (`--menu-bg`) is darker than a card
+function fieldTone(el: HTMLElement | null): CSSProperties | undefined {
+  if (!el) return undefined;
+  let surface: string | undefined;
+  for (let p = el.parentElement; p && !surface; p = p.parentElement) {
+    const bg = getComputedStyle(p).backgroundColor;
+    if (alphaOf(bg) >= 1) surface = bg;
+  }
+  if (!surface) return undefined;
+  const style = getComputedStyle(el);
+  const fill = style.getPropertyValue('--hover').trim();
+  return { background: fill ? `linear-gradient(${fill}, ${fill}), ${surface}` : surface, borderColor: style.borderTopColor };
+}
+
+// A computed colour's alpha: `rgb(…)` is opaque, `rgba(r, g, b, a)` and the `color(srgb … / a)` form colour-mix
+// computes to carry it, `transparent` is none
+function alphaOf(color: string): number {
+  if (color === 'transparent') return 0;
+  const slash = /\/\s*([\d.]+%?)\s*\)$/.exec(color);
+  const comma = /^rgba\((?:[^,]+,){3}\s*([\d.]+%?)\s*\)$/.exec(color);
+  const a = slash?.[1] ?? comma?.[1];
+  if (a === undefined) return 1;
+  return a.endsWith('%') ? parseFloat(a) / 100 : parseFloat(a);
 }
 
 export function Switch({ checked, onChange, label, disabled }: { checked: boolean; onChange: (on: boolean) => void; label: string; disabled?: boolean }) {
