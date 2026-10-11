@@ -141,3 +141,21 @@ async fn a_claude_clear_during_a_turn_is_steered_in_as_a_request() {
   s.cancel().await;
   pending.await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_codex_goal_continuation_runs_as_a_turn_and_holds_the_queue() {
+  let fake = fake_or_skip!();
+  let h = Harness::for_agent(&fake, "codex", json!({ "env": { "FAKE_GOAL": "codex" } }));
+  let s = started(&h, "/tmp").await;
+  // The prompt returns with the goal still active; Codex then goes on by itself with nothing on the wire
+  prompt(&s, "/goal continue the port").await;
+  until(|| s.is_running() && last_turn(&view(&s))["blocks"].to_string().contains("continued"), 5000).await;
+  prompt(&s, "hi").await;
+  assert_eq!(view(&s)["queued"].as_array().map(Vec::len), Some(1));
+  // Its idle ends that turn: the met goal leaves the view and the queue moves on
+  until(|| !s.is_running() && view(&s)["queued"].as_array().is_none_or(|q| q.is_empty()), 5000).await;
+  let vw = view(&s);
+  expect_absent(&vw, "goal");
+  assert_eq!(goal_rows(&vw).iter().map(|r| r["event"].clone()).collect::<Vec<_>>(), [json!("set"), json!("complete")]);
+  expect_match(&vw["turns"][2], json!({ "role": "user", "text": "hi" }));
+}

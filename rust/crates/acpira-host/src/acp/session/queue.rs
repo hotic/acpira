@@ -345,6 +345,26 @@ impl AcpSession {
     self.log(&format!("autonomous cycle started ({kind})"));
   }
 
+  /// Codex goes on with an active goal on its own once the thread is idle (an automatic goal continuation, no
+  /// `session/prompt`): a thread turning active while no prompt owns one — idle, or past the running prompt's own idle —
+  /// is that turn, run detached like a steer's new turn until its thread reports idle. Read off codex 0.159.3's strings
+  /// ("continue active goal for idle thread"), not yet seen on the wire
+  pub(crate) fn open_goal_continuation(&self, c: &mut Core) {
+    if c.replaying
+      || c.peer.detached
+      || c.status != SessionStatus::Ready
+      || (c.phase.running && !c.peer.idle)
+      || !c.state.goal.as_ref().is_some_and(|g| g.status == GoalStatus::Active)
+      || !matches!(c.state.turns.last(), Some(Turn::Agent(_)))
+    {
+      return;
+    }
+    c.peer.detached = true;
+    // A prompt still waiting on its response reopens the turn when it settles (`settle`)
+    self.reopen_for_detached(c);
+    self.log("goal continuation started");
+  }
+
   /// The steer did not join the turn: the entry is queued again, first in line when the turn it missed has already ended
   fn release_steer(self: &Arc<Self>, id: &str, first: bool) {
     {
