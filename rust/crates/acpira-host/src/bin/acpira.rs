@@ -65,7 +65,7 @@ fn main() {
     let explicit_home = flag(&args, "--home").filter(|h| !h.is_empty()).map(|h| absolute(&PathBuf::from(h)));
     let exe = std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned());
     if args.first().map(String::as_str) == Some("agent") {
-      return acpira_agent::run(tokio::io::stdin(), tokio::io::stdout(), explicit_home.unwrap_or_else(acpira_home), VERSION).await;
+      return acpira_agent::run_until(tokio::io::stdin(), tokio::io::stdout(), explicit_home.unwrap_or_else(acpira_home), VERSION, shutdown_signal()).await;
     }
     if args.iter().any(|a| a == "--ws") {
       return harness(&args, explicit_home, exe).await;

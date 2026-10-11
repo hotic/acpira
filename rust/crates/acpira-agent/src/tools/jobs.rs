@@ -1,8 +1,8 @@
 //! Background commands: `bash` with `background` starts one and returns at once with a job id; `job` reads what it
 //! printed since the last check (optionally waiting for more, or for its end) and can stop it. Dev servers, watchers
 //! and long builds run while the model goes on working, as Claude Code's background Bash and Codex's `exec_command`
-//! sessions allow. Jobs belong to their session; each runs in a process group of its own, killed with `kill` or when
-//! the session's job table is dropped
+//! sessions allow. Jobs belong to their session; each runs in a process group of its own, killed with `kill`, when the
+//! agent shuts down (`Server::close`, also on SIGTERM) or when the session's job table is dropped
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -193,15 +193,24 @@ impl Jobs {
   }
 }
 
-impl Drop for Jobs {
-  fn drop(&mut self) {
-    for job in self.jobs.get_mut().values() {
-      if job.buf.lock().exit.is_none()
+impl Jobs {
+  /// Kill every job still running (the agent is shutting down)
+  pub fn stop_all(&self) {
+    for job in self.jobs.lock().values() {
+      let mut b = job.buf.lock();
+      if b.exit.is_none()
         && let Some(pid) = job.pid
       {
+        b.killed = true;
         kill_tree(pid);
       }
     }
+  }
+}
+
+impl Drop for Jobs {
+  fn drop(&mut self) {
+    self.stop_all();
   }
 }
 

@@ -97,17 +97,30 @@ pub fn defaults(outputs: &Path) -> Vec<Rule> {
   ]
 }
 
-/// The last matching rule over the layers in order; ask when none matches
+/// The last matching rule over the layers in order; ask when none matches. An allow rule narrower than `*` names one
+/// command (`echo review *`), so it never matches a command line that chains, pipes, redirects or substitutes another
+/// one: the text match alone would let `echo review && rm -rf x` through
 pub fn evaluate(layers: &[&[Rule]], permission: &str, target: &str) -> Decision {
+  let compound = permission == BASH && compound_command(target);
   let mut out = Decision::Ask;
   for layer in layers {
     for r in layer.iter() {
+      if compound && r.decision == Decision::Allow && r.pattern != "*" {
+        continue;
+      }
       if wildcard(&r.permission, permission) && wildcard(&r.pattern, target) {
         out = r.decision;
       }
     }
   }
   out
+}
+
+/// Whether a command line holds shell structure beyond one command and its arguments: a list or pipeline (`;`, `&`,
+/// `|`, a line break), a redirection or process substitution (`<`, `>`), or command substitution (`` ` ``, `$(`).
+/// Quoting is not parsed, so a quoted `;` counts too; that only means one more card
+pub fn compound_command(command: &str) -> bool {
+  command.contains([';', '&', '|', '<', '>', '`', '\n', '\r']) || command.contains("$(")
 }
 
 /// `*` matches any run of characters (`/` included), `?` one character, the rest is literal. A pattern ending in ` *`
@@ -191,12 +204,46 @@ impl Guard {
       dirs.push(u.join(".agents").join("acpira"));
       files.push(u.join(".agents").join("hooks.json"));
     }
-    Guard { files: files.iter().map(|p| normal(p)).collect(), dirs: dirs.iter().map(|p| normal(p)).collect() }
+    // Each protected path in both spellings: as written and with its symlinks resolved (a temp or home folder is often
+    // reached through one, `/var` → `/private/var` on macOS)
+    let both = |ps: Vec<PathBuf>| ps.iter().flat_map(|p| [normal(p), resolve(p)]).collect();
+    Guard { files: both(files), dirs: both(dirs) }
   }
 
+  /// Whether a write to `path` changes a protected file, also when the path reaches it through a symlinked file or
+  /// folder
   pub fn protects(&self, path: &Path) -> bool {
-    let p = normal(path);
-    self.files.contains(&p) || self.dirs.iter().any(|d| p.starts_with(d))
+    [normal(path), resolve(path)].iter().any(|p| self.files.contains(p) || self.dirs.iter().any(|d| p.starts_with(d)))
+  }
+}
+
+/// The path with every symlink resolved, for a target that may not exist yet: the nearest existing ancestor is
+/// canonicalized and the rest appended; a dangling symlink is followed to where it points
+fn resolve(p: &Path) -> PathBuf {
+  resolve_in(&normal(p), 0)
+}
+
+fn resolve_in(p: &Path, depth: u32) -> PathBuf {
+  let mut head = p.to_path_buf();
+  let mut tail = vec![];
+  loop {
+    if let Ok(real) = std::fs::canonicalize(&head) {
+      return tail.iter().rev().fold(real, |acc, c| acc.join(c));
+    }
+    // A link whose target does not exist (yet): continue from the target, a bounded number of hops
+    if depth < 40
+      && let Ok(target) = std::fs::read_link(&head)
+    {
+      let base = head.parent().map(|d| d.join(&target)).unwrap_or(target);
+      return resolve_in(&normal(&tail.iter().rev().fold(base, |acc, c| acc.join(c))), depth + 1);
+    }
+    match (head.file_name().map(|n| n.to_owned()), head.parent()) {
+      (Some(name), Some(parent)) => {
+        tail.push(name);
+        head = parent.to_path_buf();
+      }
+      _ => return p.to_path_buf(),
+    }
   }
 }
 
@@ -228,6 +275,21 @@ mod tests {
     assert!(wildcard("git status *", "git status") && wildcard("git status *", "git status -s"));
     assert!(!wildcard("git status *", "git statuses"));
     assert!(wildcard("*.env", ".env") && wildcard("**", ""));
+  }
+
+  #[test]
+  fn a_command_prefix_rule_allows_only_a_single_command() {
+    let allowed = [Rule::new(BASH, "echo review *", Decision::Allow)];
+    let ev = |layers: &[&[Rule]], cmd: &str| evaluate(layers, BASH, cmd);
+    assert_eq!(ev(&[&allowed], "echo review -n"), Decision::Allow);
+    for cmd in ["echo review && touch x", "echo review; touch x", "echo review | sh", "echo review > x", "echo review $(touch x)", "echo review `touch x`", "echo review\ntouch x", "echo review & touch x"] {
+      assert_eq!(ev(&[&allowed], cmd), Decision::Ask, "{cmd}");
+    }
+    // Full access and the mode's own rules still cover a compound command
+    assert_eq!(ev(&[&Approval::Full.rules()], "a && b"), Decision::Allow);
+    assert_eq!(ev(&[&Approval::Full.rules(), &[Rule::new(BASH, "*", Decision::Ask)]], "a && b"), Decision::Ask);
+    // A deny still matches
+    assert_eq!(ev(&[&Approval::Full.rules(), &[Rule::new(BASH, "rm *", Decision::Deny)]], "rm -rf x && ls"), Decision::Deny);
   }
 
   #[test]
@@ -266,5 +328,26 @@ mod tests {
     assert!(g.protects(Path::new("/h/.agents/acpira/prompts/x.md")));
     assert!(!g.protects(Path::new("/w/.agents/skills/x/SKILL.md")));
     assert!(!g.protects(Path::new("/w/src/providers.json")));
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn the_guard_follows_symlinked_files_and_folders() {
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::write(home.path().join("secrets.json"), "{}").unwrap();
+    let link = |target: &Path, name: &str| std::os::unix::fs::symlink(target, cwd.path().join(name)).unwrap();
+    link(home.path(), "alias");
+    link(&home.path().join("secrets.json"), "keys.json");
+    // Points at a protected file that does not exist yet
+    link(&home.path().join("providers.json"), "sources.json");
+    let g = Guard::new(home.path(), cwd.path(), None);
+    assert!(g.protects(&cwd.path().join("alias/secrets.json")));
+    assert!(g.protects(&cwd.path().join("alias/providers.json")));
+    assert!(g.protects(&cwd.path().join("alias/agent/config/new/x.md")));
+    assert!(g.protects(&cwd.path().join("keys.json")));
+    assert!(g.protects(&cwd.path().join("sources.json")));
+    assert!(!g.protects(&cwd.path().join("alias/other.json")));
+    assert!(!g.protects(&cwd.path().join("src/a.rs")));
   }
 }

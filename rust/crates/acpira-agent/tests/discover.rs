@@ -107,6 +107,11 @@ fn the_models_url_follows_the_base_or_the_full_endpoint() {
   p.full_url = true;
   p.base_url = "https://gw.example.com/v2/chat/completions".into();
   assert_eq!(discover::models_url(&p).as_deref(), Some("https://gw.example.com/v2/models"));
+  // Every wire format's own endpoint
+  for (format, path) in [("openai-responses", "responses"), ("anthropic", "messages")] {
+    let q = Provider { format: format.into(), base_url: format!("https://gw.example.com/v2/{path}"), ..p.clone() };
+    assert_eq!(discover::models_url(&q).as_deref(), Some("https://gw.example.com/v2/models"), "{format}");
+  }
   p.base_url = "https://gw.example.com/invoke".into();
   assert_eq!(discover::models_url(&p), None);
 }

@@ -112,17 +112,18 @@ pub(crate) fn settle(st: &mut SessionState) {
   if !text.is_empty() {
     st.items.push(Item::Assistant { text, reasoning, tool_calls: vec![], native: None });
   }
-  let answered: std::collections::HashSet<String> = st
-    .items
+  let Some(last_call) = st.items.iter().rposition(|i| matches!(i, Item::Assistant { tool_calls, .. } if !tool_calls.is_empty())) else { return };
+  // Only results after that reply answer it: providers reuse call ids across replies, so an older result with the
+  // same id says nothing about the current call
+  let answered: std::collections::HashSet<&str> = st.items[last_call + 1..]
     .iter()
     .filter_map(|i| match i {
-      Item::ToolResult { call_id, .. } => Some(call_id.clone()),
+      Item::ToolResult { call_id, .. } => Some(call_id.as_str()),
       _ => None,
     })
     .collect();
-  let Some(last_call) = st.items.iter().rposition(|i| matches!(i, Item::Assistant { tool_calls, .. } if !tool_calls.is_empty())) else { return };
   let Item::Assistant { tool_calls, .. } = &st.items[last_call] else { return };
-  let missing: Vec<ToolCall> = tool_calls.iter().filter(|c| !answered.contains(&c.id)).cloned().collect();
+  let missing: Vec<ToolCall> = tool_calls.iter().filter(|c| !answered.contains(c.id.as_str())).cloned().collect();
   for c in missing {
     st.items.push(Item::ToolResult { call_id: c.id, name: c.name, content: "Cancelled by the user before it finished.".into(), is_error: true });
   }
@@ -155,8 +156,15 @@ fn setup(server: &Server, session: &Session) -> Result<Setup, String> {
     return Err(e.clone());
   }
   let (pick, effort, mode, approval) = {
-    let st = session.state.lock();
-    (st.model.clone().or_else(|| config.default_pick()), st.effort.clone(), modes::get(&st.mode), st.approval)
+    let mut st = session.state.lock();
+    // A session opened before any model was configured takes the default now, and keeps it
+    if st.model.is_none()
+      && let Some(pick) = config.default_pick()
+    {
+      st.model = Some(pick);
+      session.save_state(&st);
+    }
+    (st.model.clone(), st.effort.clone(), modes::get(&st.mode), st.approval)
   };
   let pick = pick.ok_or("No model is configured. Add a model source in Acpira's settings (Agents → Acpira).")?;
   let (provider, model) = config.find(&pick).ok_or_else(|| format!("The model {pick} is no longer configured; pick another one."))?;
@@ -984,6 +992,23 @@ mod tests {
     st.partial_text = "half an ans".into();
     settle(&mut st);
     assert!(matches!(st.items.last(), Some(Item::Assistant { text, .. }) if text == "half an ans"));
+  }
+
+  #[test]
+  fn settle_ignores_an_earlier_result_with_a_reused_call_id() {
+    let mut st = SessionState::default();
+    let call = |name: &str| Item::Assistant {
+      text: String::new(),
+      reasoning: String::new(),
+      tool_calls: vec![ToolCall { id: "c1".into(), name: name.into(), arguments: "{}".into() }],
+      native: None,
+    };
+    st.items.push(call("read"));
+    st.items.push(Item::ToolResult { call_id: "c1".into(), name: "read".into(), content: "ok".into(), is_error: false });
+    st.items.push(call("bash"));
+    settle(&mut st);
+    assert_eq!(st.items.len(), 4);
+    assert!(matches!(&st.items[3], Item::ToolResult { call_id, name, is_error: true, .. } if call_id == "c1" && name == "bash"));
   }
 
   #[test]

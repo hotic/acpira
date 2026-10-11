@@ -45,6 +45,8 @@ pub struct SessionState {
   pub allowed: Vec<Rule>,
   /// What the last model request's prefix was built from (`turn.rs` logs a `view` event when it changes)
   pub last_view: Option<Value>,
+  /// The config options the client last got for this session (`Server::push_controls` sends a change)
+  pub sent_options: Option<Vec<Value>>,
 }
 
 pub struct Session {
@@ -63,8 +65,8 @@ impl Session {
     format!("call-{}", self.tool_seq.fetch_add(1, Ordering::Relaxed) + 1)
   }
 
-  /// Record the controls after a change, so a reopened session comes back with them (held until the session has a
-  /// file: changing a control alone does not make one)
+  /// Record the controls at the start and after a change, so a reopened session comes back with them (held until the
+  /// session has a file: changing a control alone does not make one)
   pub fn save_state(&self, st: &SessionState) {
     self.store.prelude(json!({
       "type": "state", "mode": st.mode, "announced": st.announced, "model": st.model, "effort": st.effort, "approval": st.approval.id(),
@@ -162,13 +164,15 @@ impl Server {
     let response = json!({
       "sessionId": id,
       "modes": modes_of(&state),
-      "configOptions": config_options(&config, &catalog, &state),
+      "configOptions": sent_options(&config, &catalog, &mut state),
     });
     let store = Store::new(self.session_file(&id), &id, std::path::Path::new(cwd));
     // The file starts with the first event; the prompt goes first so a reopen keeps the very same text
     store.prelude(json!({ "type": "prompt", "variant": state.prompt.variant, "version": state.prompt.version, "digest": state.prompt.digest,
       "text": state.prompt.text, "sampling": state.prompt.sampling, "thinking": state.prompt.thinking }));
     let session = Session { id: id.clone(), cwd: PathBuf::from(cwd), state: parking_lot::Mutex::new(state), store, tool_seq: AtomicU64::new(0), jobs: Default::default() };
+    // The starting controls too: a reopen must not take a default that changed in the meantime
+    session.save_state(&session.state.lock());
     self.sessions.lock().insert(id, Arc::new(session));
     Ok(response)
   }
@@ -205,8 +209,8 @@ impl Server {
     }
     let config = self.config.get();
     let catalog = self.catalog.get();
-    let st = session.state.lock();
-    Ok(json!({ "modes": modes_of(&st), "configOptions": config_options(&config, &catalog, &st) }))
+    let mut st = session.state.lock();
+    Ok(json!({ "modes": modes_of(&st), "configOptions": sent_options(&config, &catalog, &mut st) }))
   }
 
   /// A session object from its file: the history, the controls and the system prompt as they were
@@ -322,7 +326,56 @@ impl Server {
       other => return Err(RpcError::new(-32602, format!("Unknown config option: {other}"))),
     }
     session.save_state(&st);
-    Ok(json!({ "configOptions": config_options(&config, &catalog, &st) }))
+    Ok(json!({ "configOptions": sent_options(&config, &catalog, &mut st) }))
+  }
+
+  /// Send `config_option_update` to every open session whose options changed since the client last got them: a model
+  /// source saved in settings (or edited elsewhere) adds or removes models, and the composer's picker reads the
+  /// session's own options, not the settings page's probe
+  pub fn push_controls(&self) {
+    let config = self.config.get();
+    let catalog = self.catalog.get();
+    let sessions: Vec<Arc<Session>> = self.sessions.lock().values().cloned().collect();
+    for s in sessions {
+      let options = {
+        let mut st = s.state.lock();
+        let options = config_options(&config, &catalog, &st);
+        if st.sent_options.as_ref().is_none_or(|sent| *sent == options) {
+          continue;
+        }
+        st.sent_options = Some(options.clone());
+        options
+      };
+      self.conn().notify("session/update", json!({ "sessionId": s.id, "update": { "sessionUpdate": "config_option_update", "configOptions": options } }));
+    }
+  }
+
+  /// `push_controls` once a second while the connection lives. Nothing on the wire announces a changed
+  /// `providers.json`, and the check is two `stat` calls while nothing changed (`ConfigCache`, `CatalogCache`)
+  pub async fn watch_controls(self: Arc<Self>) {
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+      tick.tick().await;
+      self.push_controls();
+    }
+  }
+
+  /// The client went away or the process was told to exit: cancel every running turn (dropping a turn kills its
+  /// foreground command's process group) and stop every background job, then wait briefly for the turns to unwind.
+  /// Done before `run` returns, since an exit by signal would skip the `Drop` impls that otherwise clean up
+  pub async fn close(&self) {
+    let sessions: Vec<Arc<Session>> = self.sessions.lock().values().cloned().collect();
+    for s in &sessions {
+      if let Some(c) = s.state.lock().turn.clone() {
+        c.cancel();
+      }
+      s.jobs.stop_all();
+    }
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    while sessions.iter().any(|s| s.state.lock().turn.is_some()) && tokio::time::Instant::now() < deadline {
+      tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
   }
 
   fn cancel(&self, params: &Value) {
@@ -365,6 +418,13 @@ pub const APPROVAL_CATEGORY: &str = "_permission_mode";
 
 /// The full configOptions set: the model select (every usable model, labelled with its source), the effort select when
 /// the current model offers levels, and the approval level
+/// `config_options`, remembered as what the client has
+fn sent_options(config: &Config, catalog: &Catalog, st: &mut SessionState) -> Vec<Value> {
+  let options = config_options(config, catalog, st);
+  st.sent_options = Some(options.clone());
+  options
+}
+
 pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState) -> Vec<Value> {
   let mut out = vec![];
   let current = st.model.as_deref().filter(|p| config.find(p).is_some()).map(str::to_owned).or_else(|| config.default_pick());
