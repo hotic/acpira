@@ -589,6 +589,9 @@ export interface Usage {
   used: number;
   size: number;
   cost?: number;
+  // A compaction finished and the agent has not reported its context since (Devin): `used` still predates it and this is
+  // that figure; the next report replaces the snapshot and drops the field
+  compactedFrom?: number;
 }
 
 // A prompt waiting for the running turn to end. Its attachments are staged when it is queued (blobs on disk), so the webview shows

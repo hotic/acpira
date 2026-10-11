@@ -18,6 +18,7 @@ VS Code and Cursor read their own `acpira.*` settings. IntelliJ persists an appl
 3. Kimi 0.41.0 emits usage asynchronously after acknowledging an ordinary prompt. With auto-compaction enabled, the host holds the turn and queue until that notification, with a five-second bound for unavailable usage. Cancellation and disposal release the wait. Late usage is also checked after a completed user turn.
 4. Once reported usage meets the enabled threshold and `/compact` is advertised, automatic compaction runs before queued work. The existing completion latch waits for Devin/Kimi background completion or structured compaction events.
 5. A missing usage notification is not replaced with transcript estimates. The UI identifies totals as the latest agent report. Some CLIs refresh only after model calls or the next ordinary turn.
+6. A completed `/compact` turn that brought no new snapshot and no `Tokens after` count (Devin) marks the usage `compactedFrom` (the pre-compaction `used`, `prompt.rs` `mark_compacted_usage`); agents whose usage is polled are left to their refresh. The ring then drops to a dimmed sliver and the panel reads "Compacted · before N"; the next snapshot replaces the struct and the flag, and the ring snaps to the real figure. The ring's fill transitions (slow on a drop, a snap with a flash out of the stale sliver) and it breathes while a compaction runs (`compactingNow`); preview in `lab/context-compact.preview.html` (`?auto=1` plays the flow).
 
 ## Verified on 2026-09-12
 

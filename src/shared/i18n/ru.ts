@@ -266,6 +266,9 @@ export const ru = {
   'usage.windowLimited': 'Ограничено окном',
   'usage.pendingAfterTurn': 'После этого хода',
   'usage.pendingBeforeSend': 'Перед следующим сообщением',
+  'usage.compactedStale': 'Сжато',
+  'usage.compactedStaleHint': 'После сжатия агент не сообщил объём контекста. Реальное значение появится после его следующего ответа.',
+  'usage.beforeCompact': 'До сжатия {n}',
 
   'notice.connecting': 'Запуск {agent}…',
   'notice.login.title': 'Вход в {agent}',

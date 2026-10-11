@@ -267,6 +267,9 @@ export const en = {
   'usage.windowLimited': 'Window limited',
   'usage.pendingAfterTurn': 'After this turn',
   'usage.pendingBeforeSend': 'Before next message',
+  'usage.compactedStale': 'Compacted',
+  'usage.compactedStaleHint': 'The agent did not report its context after compacting. The real figure appears after its next reply.',
+  'usage.beforeCompact': 'Before {n}',
 
   'notice.connecting': 'Starting {agent}…',
   'notice.login.title': 'Sign in to {agent}',

@@ -334,7 +334,7 @@ pub fn apply_update(s: &mut NormalizeState, u: &Value) -> bool {
       let used = u.get("used").and_then(Value::as_f64).unwrap_or(0.0);
       let size = u.get("size").and_then(Value::as_f64).unwrap_or(0.0);
       let cost = u.get("cost").and_then(|c| c.get("amount")).and_then(Value::as_f64).map(Num);
-      s.usage = Some(Usage { used: Num(used), size: Num(size), cost });
+      s.usage = Some(Usage { used: Num(used), size: Num(size), cost, compacted_from: None });
       // The context snapshot belongs to the turn it followed
       if let Some(Turn::Agent(last)) = s.turns.last_mut() {
         last.usage.get_or_insert_with(Default::default).context = Some(ContextUse { used: Num(used), size: Num(size) });

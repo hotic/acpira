@@ -445,3 +445,42 @@ async fn dispose_releases_a_background_wait_without_dispatching_the_queued_promp
   assert_eq!(view(&s)["status"], "closed");
   assert_eq!(turn_count(&s), 4);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_compaction_the_agent_reports_no_context_for_marks_the_usage_stale_until_the_next_report() {
+  let fake = fake_or_skip!();
+  let (h, _) = compaction_fixture(&fake, "devin", false, json!({ "FAKE_COMPACTION_SILENT_USAGE": "1" }));
+  let s = session(&h).await;
+  prompt(&s, "big").await;
+  until(|| view(&s)["usage"]["used"] == 401_234, 5000).await;
+  let compact = tokio::spawn(s.prompt("/compact".into(), vec![], false, None, None));
+  until(|| h.logs().iter().any(|l| l.contains("waiting for compaction completion")), 5000).await;
+  s.set_config("effort".into(), "low".into()).await.ok();
+  s.set_config("effort".into(), "high".into()).await.ok();
+  compact.await.unwrap();
+  until(|| !s.is_running(), 5000).await;
+  // Devin says "Context compacted" and nothing else: the old figure stays, flagged as predating the compaction
+  expect_eq(view(&s)["usage"].clone(), json!({ "used": 401_234, "size": 1_000_000, "compactedFrom": 401_234 }));
+  assert_eq!(serde_json::to_value(s.to_record().usage).unwrap()["compactedFrom"], 401_234);
+  // The next reply's report replaces the snapshot and the flag with it
+  prompt(&s, "after").await;
+  until(|| view(&s)["usage"]["used"] == 80_247, 5000).await;
+  assert!(view(&s)["usage"].get("compactedFrom").is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_compaction_with_its_own_report_or_token_count_is_never_marked_stale() {
+  let fake = fake_or_skip!();
+  for agent in ["devin", "kimi"] {
+    let (h, _) = compaction_fixture(&fake, agent, false, json!({}));
+    let s = session(&h).await;
+    prompt(&s, "big").await;
+    let compact = tokio::spawn(s.prompt("/compact".into(), vec![], false, None, None));
+    until(|| h.logs().iter().any(|l| l.contains("waiting for compaction completion")), 5000).await;
+    s.set_config("effort".into(), "low".into()).await.ok();
+    s.set_config("effort".into(), "high".into()).await.ok();
+    compact.await.unwrap();
+    until(|| !s.is_running() && view(&s)["usage"]["used"] == 80_247, 5000).await;
+    assert!(view(&s)["usage"].get("compactedFrom").is_none(), "{agent}");
+  }
+}

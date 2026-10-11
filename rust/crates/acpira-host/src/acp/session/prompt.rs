@@ -508,6 +508,7 @@ impl AcpSession {
         {
           u.used = num(after);
         }
+        self.mark_compacted_usage(&mut c, turn, auto || accepted.compacting, after.is_some());
       }
       if !auto && accepted.command_name.is_none() && self.wait_for_late_usage(turn.usage_before).await {
         stop = TurnStop::Cancelled;
@@ -782,6 +783,22 @@ fn take_reply_error(vendor: Vendor, turn: &mut AgentTurn) -> Option<ReplyError> 
     x.markdown = kept;
   }
   Some(e)
+}
+
+impl AcpSession {
+  /// A /compact that completed while the agent reported no context (Devin sends neither `usage_update` nor a token
+  /// count with it): the snapshot is marked stale so the ring can drop at once, and the next report replaces it.
+  /// Agents whose usage is polled get a fresh read right after this, so they are left alone
+  fn mark_compacted_usage(&self, c: &mut Core, turn: &OpenTurn, compact: bool, counted: bool) {
+    if !compact || counted || c.usage.revision != turn.usage_before || self.polls_usage(c) {
+      return;
+    }
+    let done = agent_turn_mut(c, turn.agent_idx, turn.started_at)
+      .is_some_and(|t| t.blocks.iter().any(|b| matches!(b, AgentBlock::Compaction(x) if x.status == CompactionStatus::Completed)));
+    if let Some(u) = c.state.usage.as_mut().filter(|_| done) {
+      u.compacted_from.get_or_insert(u.used);
+    }
+  }
 }
 
 pub(crate) fn agent_turn_mut(c: &mut Core, idx: usize, started_at: i64) -> Option<&mut AgentTurn> {

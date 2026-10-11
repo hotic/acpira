@@ -53,7 +53,7 @@ impl UsageTracker {
 impl AcpSession {
   /// Agents that never send `usage_update` and have their context snapshot polled instead: Grok over
   /// `_x.ai/session/info`, Pi from its session file (`pi_usage`)
-  fn polls_usage(&self, c: &Core) -> bool {
+  pub(crate) fn polls_usage(&self, c: &Core) -> bool {
     !c.usage.notifications
       && match self.vendor.usage_poll() {
         Some(UsagePoll::Grok) => !c.usage.grok_unavailable,
@@ -199,5 +199,5 @@ pub fn grok_context_usage(v: &Value, session_id: &str) -> Option<Usage> {
   if !safe(used) || used < 0.0 || !safe(total) || total <= 0.0 {
     return None;
   }
-  Some(Usage { used: num(used), size: num(total), cost: None })
+  Some(Usage { used: num(used), size: num(total), cost: None, compacted_from: None })
 }

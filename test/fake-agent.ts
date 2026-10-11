@@ -204,6 +204,8 @@ const backgroundStyle = process.env.FAKE_COMPACTION;
 const grokUsage = process.env.FAKE_GROK_USAGE;
 let background: ((status: 'start' | 'completed' | 'cancelled') => Promise<void>) | undefined;
 
+// FAKE_COMPACTION_SILENT_USAGE: background compaction reports no context afterwards (Devin 3000.11.3); the next ordinary reply does
+const silentCompactionUsage = !!process.env.FAKE_COMPACTION_SILENT_USAGE;
 const app = acp.agent({ name: 'fake-agent' })
   .onRequest('_x.ai/session/info', value => value as { sessionId: string }, ({ params }) => {
     if (!grokUsage || grokUsage === 'unsupported') throw acp.RequestError.methodNotFound('_x.ai/session/info');
@@ -986,7 +988,7 @@ const app = acp.agent({ name: 'fake-agent' })
           }
           if (status === 'completed') {
             usedTokens = Math.round(usedTokens * 0.2);
-            if (backgroundStyle !== 'kimi') await send({ sessionUpdate: 'usage_update', used: usedTokens, size: 1_000_000 });
+            if (backgroundStyle !== 'kimi' && !silentCompactionUsage) await send({ sessionUpdate: 'usage_update', used: usedTokens, size: 1_000_000 });
           }
         };
         // Structured agents must announce the work before returning; Devin's
@@ -1553,7 +1555,7 @@ const app = acp.agent({ name: 'fake-agent' })
     await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'world' } });
     await send({ sessionUpdate: 'session_info_update', title: 'Fake title' });
     await send({ sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'compact', description: 'compact it' }] });
-    if (backgroundStyle === 'kimi') await send({ sessionUpdate: 'usage_update', used: usedTokens, size: 1_000_000 });
+    if (backgroundStyle === 'kimi' || silentCompactionUsage) await send({ sessionUpdate: 'usage_update', used: usedTokens, size: 1_000_000 });
     return { stopReason: 'end_turn' };
   });
 

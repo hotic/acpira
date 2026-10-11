@@ -259,6 +259,9 @@ export const fr = {
   'usage.windowLimited': 'Limité par la fenêtre',
   'usage.pendingAfterTurn': 'Après ce tour',
   'usage.pendingBeforeSend': 'Avant le prochain message',
+  'usage.compactedStale': 'Compacté',
+  'usage.compactedStaleHint': 'L’agent n’a pas signalé son contexte après la compaction. La valeur réelle apparaît après sa prochaine réponse.',
+  'usage.beforeCompact': 'Avant {n}',
 
   'notice.connecting': 'Démarrage de {agent}…',
   'notice.login.title': 'Se connecter à {agent}',
