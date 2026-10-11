@@ -89,6 +89,7 @@ impl AcpSession {
     {
       c.peer.status_seen = true;
       if !idle {
+        self.open_goal_continuation(&mut c);
         c.peer.idle = false;
       } else if c.peer.detached {
         self.end_detached(&mut c, TurnStop::EndTurn);

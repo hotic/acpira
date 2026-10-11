@@ -94,7 +94,9 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // claude-agent-acp (`_meta.jetbrains.air.goal`, set / clear, only to AIR clients). A `/goal <objective|pause|resume|clear>`
 // prompt publishes the matching snapshot (session_info_update at the same key, null = cleared) and answers `goal:<arg>`;
 // a "goal-done" prompt publishes the goal complete. `_session/goal` pause / clear publish the snapshot with no turn;
-// FAKE_GOAL_LOG appends every request's action
+// FAKE_GOAL_LOG appends every request's action. =codex: an objective starting with "continue" leaves the goal active when
+// its prompt returns, then runs one automatic continuation the way Codex does for an idle thread — threadStatus active,
+// a `continued` chunk, the goal complete, idle 300 ms later — with no session/prompt
 // FAKE_SLOW_STEP_MS → the pause between the 50 chunks of a "slow" turn (default 40 ms, so 2 s in all)
 // FAKE_META_LOG → append `{ method, meta }` (the request's `_meta`) for every session/new, resume and load
 // FAKE_REBUILD → claude-agent-acp 0.87.0's getOrCreateSession: a resume of a live session whose
@@ -489,6 +491,17 @@ const app = acp.agent({ name: 'fake-agent' })
       } else goals.set(sid, { objective: arg, status: 'active', tokensUsed: 1200, timeUsedSeconds: 0 });
       await publishGoal(client, sid);
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `goal:${arg}` } });
+      if (goalMode === 'codex' && goalCommand && arg.startsWith('continue')) {
+        setTimeout(async () => {
+          await client.notify(acp.methods.client.session.update, threadStatus(sid, 'active'));
+          await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'continued' } });
+          const goal = goals.get(sid);
+          if (goal) goals.set(sid, { ...goal, status: 'complete' });
+          await publishGoal(client, sid);
+          await new Promise(r => setTimeout(r, 300));
+          await client.notify(acp.methods.client.session.update, threadStatus(sid, 'idle'));
+        }, 100);
+      }
       return { stopReason: 'end_turn' };
     }
     // A subagent that kept running past its parent's turn reports on the next prompt's stream — the only channel left
