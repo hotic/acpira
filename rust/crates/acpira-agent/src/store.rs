@@ -6,7 +6,7 @@
 //! - `item` — one conversation entry as the model sees it (the view's source)
 //! - `update` — a `session/update` as sent to the client, for `session/load`'s replay; streamed text and terminal
 //!   output are merged per block and tool call, so a long session stays a reasonable size
-//! - `state` — mode, model, effort and approval after a change
+//! - `state` — mode, model and effort at the start and after each change
 //! - `prompt` — the system prompt whenever it was (re)composed
 //! - `request` — one per model call: model and source, prompt variant and version, policies, usage with cache reads and
 //!   writes, duration, stop reason or error
@@ -74,16 +74,17 @@ impl Store {
       let opened = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|_| OpenOptions::new().create(true).append(true).open(path));
       match opened {
         Ok(mut f) => {
-          // An existing file (a resumed session) already has its header
+          // An existing file (a resumed session) already has its header; the held events still go in, since they
+          // are what changed after the resume
+          let t = now_ms();
           if f.metadata().map(|m| m.len() == 0).unwrap_or(false) {
-            let t = now_ms();
             let mut h = header.clone();
             h["t"] = t.into();
             let _ = writeln!(f, "{h}");
-            for mut e in std::mem::take(&mut inner.prelude) {
-              e["t"] = t.into();
-              let _ = writeln!(f, "{e}");
-            }
+          }
+          for mut e in std::mem::take(&mut inner.prelude) {
+            e["t"] = t.into();
+            let _ = writeln!(f, "{e}");
           }
           inner.file = Some(f);
         }
@@ -105,10 +106,11 @@ impl Store {
     }
   }
 
-  /// An event that belongs at the start of the file but is not worth creating it for (a new session's prompt)
+  /// An event that belongs at the start of the file but is not worth creating it for (a new session's prompt). Once the
+  /// file exists (also one a resumed session has not written to yet) it is appended at once
   pub fn prelude(&self, event: Value) {
     let mut inner = self.inner.lock();
-    if inner.file.is_some() {
+    if inner.file.is_some() || self.path.metadata().is_ok_and(|m| m.len() > 0) {
       drop(inner);
       self.append(event);
     } else {

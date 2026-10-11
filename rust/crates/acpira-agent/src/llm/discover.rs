@@ -43,7 +43,7 @@ pub fn models_url(provider: &Provider) -> Option<String> {
   if !provider.full_url {
     return Some(format!("{url}/models"));
   }
-  ["/chat/completions", "/messages"].iter().find_map(|s| url.strip_suffix(s)).map(|root| format!("{root}/models"))
+  ["/chat/completions", "/responses", "/messages"].iter().find_map(|s| url.strip_suffix(s)).map(|root| format!("{root}/models"))
 }
 
 /// Request headers for a GET in the source's format: its auth, its version header, its own extra headers last

@@ -163,21 +163,18 @@ export class View {
   // The account menu's add: resolves with the host's final action state for that agent (`success`, `missing`, `error`, …)
   async addAccount(agent: AgentId, via: AddAccountVia): Promise<AccountAction> {
     const settled = (a: AccountAction) => a.agent === agent && a.via === via && a.status !== 'pending';
-    const seen = this.shell.hostMsgs(this.id).length;
+    // Armed before the post, and only for envelopes that arrive afterwards: the shell keeps no history here
+    const reply = this.shell.upcoming((m): m is Extract<SidecarMsg, { type: 'hostMessage' }> =>
+      m.type === 'hostMessage' && m.viewId === this.id && m.message.type === 'accountActions' && m.message.actions.some(settled), 120_000);
     this.post({ type: 'addAccount', agent, via });
-    const reply = await this.shell.next((m): m is Extract<SidecarMsg, { type: 'hostMessage' }> =>
-      m.type === 'hostMessage' && m.viewId === this.id && m.message.type === 'accountActions' && m.message.actions.some(settled)
-      && this.shell.hostMsgs(this.id).length > seen, 120_000);
-    return (reply.message as Extract<HostMsg, { type: 'accountActions' }>).actions.find(settled)!;
+    return ((await reply).message as Extract<HostMsg, { type: 'accountActions' }>).actions.find(settled)!;
   }
 
   async listNativeSessions(agent: AgentId): Promise<NativeSessionInfo[]> {
-    const seen = this.shell.hostMsgs(this.id).filter(m => m.type === 'nativeSessions').length;
+    const reply = this.shell.upcoming((m): m is Extract<SidecarMsg, { type: 'hostMessage' }> =>
+      m.type === 'hostMessage' && m.viewId === this.id && m.message.type === 'nativeSessions' && m.message.agent === agent, 120_000);
     this.post({ type: 'listNativeSessions', agent });
-    const reply = await this.shell.next((m): m is Extract<SidecarMsg, { type: 'hostMessage' }> =>
-      m.type === 'hostMessage' && m.viewId === this.id && m.message.type === 'nativeSessions' && m.message.agent === agent
-      && this.shell.hostMsgs(this.id).filter(x => x.type === 'nativeSessions').length > seen, 120_000);
-    const msg = reply.message as Extract<HostMsg, { type: 'nativeSessions' }>;
+    const msg = (await reply).message as Extract<HostMsg, { type: 'nativeSessions' }>;
     if (msg.error) throw new Error(msg.error);
     return msg.sessions;
   }

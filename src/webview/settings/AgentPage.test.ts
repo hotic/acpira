@@ -8,7 +8,7 @@ import { DEFAULT_SETTINGS } from '@shared/settings';
 import { newModel, type ProviderModel, type ProviderView } from '@shared/providers';
 import { setLocale, t } from '../i18n';
 import { AgentPage } from './AgentPage';
-import { fmtTokens, ModelRow, parseTokens } from './ProviderModel';
+import { editTokens, fmtTokens, ModelRow, parseTokens } from './ProviderModel';
 import type { ProvidersState } from './ProvidersSection';
 import type { SettingsHandlers } from './SettingsShell';
 
@@ -168,7 +168,8 @@ describe('built-in agent model sources', () => {
       test: { pending: false, outcome: { kind: 'failed', error: 'HTTP 401: Invalid API key' } },
     }));
     expect(markup).toContain('value="DeepSeek V4 Flash"');
-    expect(markup).toContain('value="1M"');
+    // 1000000 is not a whole 1M (1048576): the field shows the exact number, so saving keeps it
+    expect(markup).toContain('value="1000000"');
     expect(markup).toContain('value="384k"');
     expect(markup).toContain('value="low, high, max"');
     expect(markup).toContain('Match automatically');
@@ -180,5 +181,9 @@ describe('built-in agent model sources', () => {
     expect([131_072, 1_048_576, 1_000_000, 393_216, 128_000, 512].map(fmtTokens)).toEqual(['128k', '1M', '1M', '384k', '128k', '512']);
     expect(['128k', '1M', '131072', ' 32K ', '1.5m'].map(parseTokens)).toEqual([131_072, 1_048_576, 131_072, 32_768, 1_572_864]);
     expect(['', 'abc', '0', '-5'].map(parseTokens)).toEqual([undefined, undefined, undefined, undefined]);
+    // The editor's fields come from editTokens: saving an untouched field keeps the exact number
+    const limits = [128_000, 64_000, 1_000_000, 131_072, 1_048_576, 393_216, 200_001];
+    expect(limits.map(n => parseTokens(editTokens(n)))).toEqual(limits);
+    expect([131_072, 128_000, 1_048_576].map(editTokens)).toEqual(['128k', '128000', '1M']);
   });
 });

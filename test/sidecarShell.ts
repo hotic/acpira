@@ -61,6 +61,11 @@ export class Shell {
   next<T extends SidecarMsg>(pred: (m: SidecarMsg) => m is T, ms = 10_000): Promise<T> {
     const have = this.out.find(pred);
     if (have) return Promise.resolve(have);
+    return this.upcoming(pred, ms);
+  }
+
+  // The first matching envelope that arrives from now on, ignoring the recorded history (works with `record` off)
+  upcoming<T extends SidecarMsg>(pred: (m: SidecarMsg) => m is T, ms = 10_000): Promise<T> {
     return new Promise((resolve, reject) => {
       const t = setTimeout(() => reject(new Error(`timed out waiting; stderr:\n${this.stderr.join('\n')}`)), ms);
       this.waiters.push({ pred, resolve: m => { clearTimeout(t); resolve(m as T); } });

@@ -16,6 +16,13 @@ export function fmtTokens(n: number): string {
   return String(n);
 }
 
+// A token count as the editor's field shows it, so saving an untouched field gives back the same number: the short
+// form where it parses back exactly (k and M count in 1024s), digits otherwise: 131072 → 128k, 128000 → 128000
+export function editTokens(n: number): string {
+  const short = fmtTokens(n);
+  return parseTokens(short) === n ? short : String(n);
+}
+
 // "128k" / "1M" / "131072" → tokens (k and M count in 1024s, like the quick values); undefined for anything else
 export function parseTokens(text: string): number | undefined {
   const m = /^\s*(\d+(?:\.\d+)?)\s*([kKmM])?\s*$/.exec(text);
@@ -108,7 +115,7 @@ function TokenField({ value, onChange, quick, label }: { value: string; onChange
   const bad = value.trim() !== '' && parseTokens(value) === undefined;
   return <>
     {quick.map(n => (
-      <Chip key={n} caret={false} aria-pressed={parseTokens(value) === n} onClick={() => onChange(fmtTokens(n))}
+      <Chip key={n} caret={false} aria-pressed={parseTokens(value) === n} onClick={() => onChange(editTokens(n))}
         className={cn('h-ctl-sm', parseTokens(value) === n && 'bg-active text-fg-1')}>{fmtTokens(n)}</Chip>
     ))}
     <input value={value} onChange={e => onChange(e.target.value)} aria-label={label} aria-invalid={bad} spellCheck={false}
@@ -129,8 +136,8 @@ function ModelEditor({ model, families, onSave, onCancel, onRemove, onTest, test
   test?: { pending: boolean; outcome?: ProbeOutcome };
 }) {
   const [name, setName] = useState(model.name ?? '');
-  const [context, setContext] = useState(model.context ? fmtTokens(model.context) : '');
-  const [output, setOutput] = useState(model.output ? fmtTokens(model.output) : '');
+  const [context, setContext] = useState(model.context ? editTokens(model.context) : '');
+  const [output, setOutput] = useState(model.output ? editTokens(model.output) : '');
   const [images, setImages] = useState(model.input.includes('image'));
   const [thinking, setThinking] = useState<Thinking>(model.thinking);
   const [efforts, setEfforts] = useState(model.efforts.join(', '));

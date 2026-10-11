@@ -31,10 +31,27 @@ where
   R: AsyncRead + Unpin + Send + 'static,
   W: AsyncWrite + Unpin + Send + 'static,
 {
+  run_until(reader, writer, home, version, std::future::pending()).await
+}
+
+/// `run`, also ending when `stop` resolves (the subcommand passes SIGTERM / Ctrl-C: the engine closes the agent's
+/// stdin and signals it at once). Either way every turn and background command of the agent's sessions is stopped
+/// before this returns, because their process groups are not the agent's and outlive it otherwise
+pub async fn run_until<R, W>(reader: R, writer: W, home: PathBuf, version: &str, stop: impl Future<Output = ()>) -> i32
+where
+  R: AsyncRead + Unpin + Send + 'static,
+  W: AsyncWrite + Unpin + Send + 'static,
+{
   let server = acp::Server::new(home, version);
   let handler: Arc<dyn Inbound> = Arc::new(acp::Handler(server.clone()));
   let conn = Connection::start(reader, writer, Arc::new(move || handler.clone()), Arc::new(|line: &str| eprintln!("[acpira agent] {line}")));
   server.attach(conn.clone());
-  conn.closed().await;
+  let watcher = tokio::spawn(server.clone().watch_controls());
+  tokio::select! {
+    _ = conn.closed() => {}
+    _ = stop => conn.close(),
+  }
+  watcher.abort();
+  server.close().await;
   0
 }
