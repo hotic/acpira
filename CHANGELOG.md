@@ -11,6 +11,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [1.10.0] - 2026-10-12
+
+### Added
+
+- **Built-in Acpira agent** for models without a harness of their own: any OpenAI Chat Completions, OpenAI Responses or Anthropic Messages endpoint, such as DeepSeek, GLM, Kimi, MiniMax, OpenRouter or a local Ollama or LM Studio server. It runs inside the engine, so it needs no Node.js or separate install. It appears first in the agent list unless an agent order has been saved; the default agent setting is unchanged. It reads files (several per call), writes and edits them (several changes to one file per call), runs commands, including background jobs, searches with grep, glob and list, and keeps a to-do list. Its Plan mode writes only the session's plan file and hands the plan to the usual plan approval card. Edits and commands ask through permission cards by default; the Permissions section of the agent's settings page sets ask, auto-edit or full, applied from each session's next turn, and edits to Acpira's own configuration or `.agents/hooks.json` always ask. Sessions are saved and reopen like other agents' sessions. Failed or stalled model calls are retried up to three times. Claude models start at medium effort, Gemini at low and the rest at high. Same-name prompt files under `~/.agents/acpira/prompts` or the project's `.agents/acpira/prompts` replace or extend sections of the system prompt, and `AGENTS.md` files are included. Tested end to end against a scripted model server and on real GPT, Claude, Gemini, GLM, MiniMax and DeepSeek endpoints; other endpoints remain unverified.
+- **Model sources** on the built-in agent's settings page: add an endpoint with its base URL and key (stored in Acpira's secrets file, not in `providers.json`), check the connection, fetch its model list or add a model by id, and test a model with one small request. Limits the endpoint does not report are filled from the model catalogue and marked Unconfirmed until saved. Ollama and LM Studio servers running on this machine are offered as one-click sources. A saved model shows up in open sessions' model pickers, and with no usable model the composer offers an Add model shortcut.
+- Agent installs run in the background inside the engine, remote hosts included, with a streamed log, a cancel button and a terminal fallback. On macOS and Linux a global npm install goes to `~/.local` when the global prefix is not writable, and a missing Node.js is reported up front.
+- The new `acpira.proxy` setting applies a network proxy to agents (their model requests included), logins, installs and engine downloads. The default `auto` uses `127.0.0.1:7890` while something listens there and the system environment otherwise; `off` adds no proxy, or enter a proxy URL. Loopback and `NO_PROXY` hosts stay direct, and SOCKS proxies are honoured.
+- A `beforePrompt` workspace hook in `.agents/hooks.json` runs before every user or goal prompt. Context it returns goes to the agent with the prompt as a hidden block (slash commands excepted); a block keeps the prompt from being sent and leaves a warning with the reason and the prompt text.
+- The context ring shows a compaction: it breathes while `/compact` runs, then stays dimmed as stale until the agent reports new usage, for agents such as Devin that report no token count after compacting. The usage panel reads "Compacted · before N" meanwhile.
+
+### Changed
+
+- Notices with details fold into one line like a thought row, showing the title and the first detail line; errors open by default. Workspace hook notices carry a shield mark, and the file paths they list open the file.
+- **Set as goal** is a small goal icon under the prompt, revealed on hover, and no longer pushes the reply down. While a goal turn runs, the goal strip's flag waves and the whole goal line shimmers.
+- Set, resume and clear from the goal strip go out as hidden turns, with no prompt bubble, and are left out of exports.
+- On a narrow composer the model chip shortens effort levels to L / M / H / XH / Max / U and Fast to its bolt instead of clipping them.
+- A long live turn opened from the session list shows its last rows first and mounts the rest in idle slices, opening in tens of milliseconds instead of seconds.
+- Model rows on the agent settings pages are one compact line, and settings dropdowns match their field's width and look.
+- Unknown keys in `.agents/hooks.json` are skipped with a one-time notice instead of invalidating the whole file, so a newer key no longer switches every gate off.
+
+### Fixed
+
+- Reopening a session keeps its own model, mode and effort. claude-agent-acp 0.83.0 reset them to its defaults on resume, and the reset was saved to the session.
+- Claude goals end when met instead of staying active, a Claude goal cleared during a running turn is cleared, and Claude Code's "Goal set", "Goal cleared" and "No goal set" echoes no longer repeat the goal row.
+- Codex's automatic goal continuations run as a turn: the stop button works and queued prompts wait, instead of the updates landing in the finished turn while the session looked idle.
+- An edited prompt that continues in the same session (an oversized edit, or one meant to continue) replaces the edited turn and everything after it, instead of appending what looked like a duplicate send.
+- Claude's custom answer box (claude-agent-acp 0.83.0) is the question's Other row again instead of a separate English question page.
+- Claude subagent runs resumed through SendMessage show their work, read from Claude's subagent log, instead of staying empty.
+- A forked session keeps the images the agent produced, which used to show as broken.
+
 ## [1.9.1] - 2026-10-10
 
 ### Added
