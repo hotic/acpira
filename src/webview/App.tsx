@@ -414,7 +414,7 @@ export function App() {
       subagentTranscripts={subagentTranscripts}
       on={on}
       replayKey={session?.id}
-      onOpenSettings={() => setView('settings')}
+      onOpenSettings={target => { if (target) setPage(target); setView('settings'); }}
     />
     </LocaleContext.Provider>
   );

@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { TextSelect, X } from 'lucide-react';
+import { Plus, TextSelect, X } from 'lucide-react';
 import type { Draft, SessionControls, SessionOption, SlashCommand, Turn, Usage } from '@shared/transcript';
 import type { EditorSelection, FileHit } from '@shared/protocol';
 import type { HiddenMap } from '@shared/settings';
@@ -62,6 +62,9 @@ export interface ComposerProps {
   onCompact: () => void;
   // Session-level navigation is omitted from history and queued-message editors.
   toolbarStart?: ReactNode;
+  // The agent takes its models from the user's own sources (the built-in agent): with none offered, the model chip's
+  // place holds a shortcut to the page where they are added
+  onAddModel?: () => void;
   // The session's own composer (not an inline editor): it takes drafts pushed from outside (editor "Add to chat", transcript quotes)
   // and, with `shareSelection`, offers the editor's live selection as a toolbar chip that goes out with the next prompt
   main?: boolean;
@@ -91,7 +94,7 @@ export function Composer(p: ComposerProps) {
   const onOpenChange = useCallback((open: boolean) => setOpenMenus(n => n + (open ? 1 : -1)), []);
   const beamActive = focused || openMenus > 0;
   const dim = p.running || p.disabled;
-  const { models, reasoning, modelConfig, collaboration, other } = composerControls(p.controls.options);
+  const { models, reasoning, modelConfig, collaboration, permission, other } = composerControls(p.controls.options);
   const canCompact = !!p.commands?.some(c => c.name === 'compact');
   // Files are read asynchronously after a paste / drop; sending is held until every read has landed, so a message never leaves without its attachments
   const [reading, setReading] = useState(0);
@@ -330,6 +333,10 @@ export function Composer(p: ComposerProps) {
             {p.controls.modes.length > 0 && (
               <ModeMenu title={t('composer.mode')} modes={p.controls.modes} value={p.controls.modeId} onOpenChange={onOpenChange} onSelect={p.onSetMode} />
             )}
+            {/* A permission level offered as a config option (the built-in agent's approval) follows the working mode */}
+            {permission.map(c => (
+              <ModeMenu key={c.id} title={c.name} value={c.value} onOpenChange={onOpenChange} onSelect={v => p.onSetConfig(c.id, v)} modes={c.options} />
+            ))}
           </div>
         </fieldset>
         {offered && <SelectionChip selection={offered} cwd={p.cwd} on={offeredOn} onToggle={() => setExcluded(offeredOn ? selectionKey(offered) : undefined)} />}
@@ -346,6 +353,9 @@ export function Composer(p: ComposerProps) {
               modelConfig={i === 0 ? modelConfig : undefined} hiddenConfig={p.hidden}
               onSetConfig={p.onSetConfig} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
           ))}
+          {p.onAddModel && p.main && !p.edit && !p.controlsLocked && !models.length && (
+            <Chip caret={false} className="shrink-0" icon={<Plus strokeWidth={1.75} />} onClick={p.onAddModel}>{t('settings.providers.addModel')}</Chip>
+          )}
           {!models.length && reasoning.map(c => (
             <ReasoningControl key={c.id} control={c} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
           ))}

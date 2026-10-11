@@ -43,7 +43,8 @@ export interface Provider {
   // Unique, no `/` (model picks are `<provider id>/<model id>`); empty on a new entry, the host makes one from the name
   id: string;
   name: string;
-  // The preset it was created from (`deepseek`, `ollama`, … or `custom`)
+  // `custom`, or `ollama` / `lmstudio` for a local server found on this machine (takes no key); older files may name a
+  // vendor (`deepseek`, …), still read as a family hint
   preset: string;
   format: ApiFormat | (string & {});
   // The API root, or the full endpoint when fullUrl is on
@@ -63,22 +64,8 @@ export interface ProviderView extends Provider {
 export interface ProvidersView {
   providers: ProviderView[];
   error?: string;
-  // What a new source can start from (the agent's table, rust/crates/acpira-agent/src/llm/presets.rs)
-  presets: Preset[];
   // The families a model can be pinned to (llm/family.rs), the generic one first
   families: string[];
-}
-
-// A known service a new source can start from; `custom` has an empty URL
-export interface Preset {
-  id: string;
-  name: string;
-  format: ApiFormat | (string & {});
-  baseUrl: string;
-  // Where the service hands out API keys
-  keyUrl?: string;
-  // Runs on this machine and takes no key (Ollama, LM Studio)
-  local?: boolean;
 }
 
 // A network question from the settings page; none changes providers.json. key: typed into the form and not saved yet;

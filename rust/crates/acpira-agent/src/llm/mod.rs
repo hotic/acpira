@@ -8,7 +8,6 @@ pub mod discover;
 pub mod family;
 pub mod openai_chat;
 pub mod openai_responses;
-pub mod presets;
 pub mod sse;
 
 use std::time::Duration;

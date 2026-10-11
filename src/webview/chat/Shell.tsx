@@ -37,6 +37,8 @@ import { Queue } from './Queue';
 import { GoalStrip, SetGoalAction } from './Goal';
 import { lastTypedPrompt } from './goalText';
 import { heldPrompt } from './heldPrompt';
+import { BUILTIN_AGENT_ID } from '@shared/providers';
+import type { SettingsPage } from '../settings/Nav';
 import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, DiffSourceContext, OpenBlobContext } from './fileLinks';
 import { TurnActionsContext } from './TurnActions';
 import { SubagentInspector } from './subagents/SubagentInspector';
@@ -179,8 +181,8 @@ export interface ShellProps {
   subagents?: SubagentSummary[];
   subagentTranscripts?: Record<string, { rev: number; running: boolean; turns: Turn[] }>;
   on: ShellHandlers;
-  // Opens the settings page (a local view swap, not a host action — hence not part of ShellHandlers)
-  onOpenSettings?: () => void;
+  // Opens the settings page (a local view swap, not a host action — hence not part of ShellHandlers), at `page` when given
+  onOpenSettings?: (page?: SettingsPage) => void;
   // For replaying the entrance animation: remounts the conversation when it changes
   replayKey?: number | string;
 }
@@ -385,7 +387,8 @@ export function Shell(p: ShellProps) {
     usage: p.usage, commands: p.commands, compactAt: p.compactAt, cwd: p.cwd ?? '',
     onSend: steering ? (text: string, attachments: Draft[]) => on.send(text, attachments, true) : on.send, onSearchFiles: on.searchFiles, onNotice: notice, onStop: on.stop,
     onSetMode: on.setMode, onSetConfig: on.setConfig, onCompact: on.compact, personas: p.personas,
-  }), [p.running, steering, p.status, p.theme, p.turns, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact, p.personas]);
+    onAddModel: p.agent.id === BUILTIN_AGENT_ID && p.onOpenSettings ? () => p.onOpenSettings!({ kind: 'agent', id: BUILTIN_AGENT_ID }) : undefined,
+  }), [p.running, steering, p.status, p.theme, p.turns, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact, p.personas, p.onOpenSettings]);
   // Context values above the transcript must not change on every stream push: React walks the whole memoized tree for consumers each time
   const permissions = useStableList(useMemo(() => p.turns.flatMap(t => t.role === 'agent' ? t.blocks.filter((b): b is PermissionBlock => b.type === 'permission') : []), [p.turns]));
   const planDoc = useMemo(() => ({

@@ -143,10 +143,9 @@ impl ProviderStore {
   }
 }
 
-/// The agent's tables the page builds its forms from
+/// The agent's table the page builds its model editor from
 fn tables() -> ProvidersView {
   ProvidersView {
-    presets: acpira_agent::llm::presets::presets(),
     families: acpira_agent::llm::family::names().into_iter().map(str::to_owned).collect(),
     ..Default::default()
   }

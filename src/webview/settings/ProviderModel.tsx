@@ -1,11 +1,11 @@
 import { useState, type KeyboardEvent, type ReactNode } from 'react';
-import { ChevronDown, ChevronUp, LoaderCircle, X } from 'lucide-react';
+import { LoaderCircle, X } from 'lucide-react';
 import type { ProbeOutcome, ProviderModel, Thinking } from '@shared/providers';
 import { Button, Chip, IconButton } from '../ui/Button';
 import { cn } from '../ui/cn';
 import { t } from '../i18n';
 import { ModelMark } from '../chat/ModelMark';
-import { inputBox, ItemRow, Select, Switch } from './controls';
+import { inputBox, ModelLine, Select, Switch, type ModelTags } from './controls';
 
 // Token counts as the page writes them, in whichever base gives the round number: 128000 → 128k, 131072 → 128k,
 // 1000000 → 1M, 1048576 → 1M, 393216 → 384k
@@ -28,7 +28,7 @@ export function parseTokens(text: string): number | undefined {
 const CONTEXT_QUICK = [131_072, 262_144, 524_288, 1_048_576];
 const OUTPUT_QUICK = [4096, 16_384, 32_768, 131_072];
 
-// The second line of a model row: its window, output limit, levels and image input
+// A model's facts in words (the row's tooltip, the add list's second line): window, output limit, levels, image input
 export function modelSummary(m: ProviderModel): string {
   return [
     m.context && t('settings.providers.model.ctx', { n: fmtTokens(m.context) }),
@@ -44,12 +44,15 @@ export function Unconfirmed({ fields }: { fields: string[] }) {
   return <span className="shrink-0 text-3 text-warn" title={t('settings.providers.unconfirmed.hint', { fields: fields.join(', ') })}>{t('settings.providers.unconfirmed')}</span>;
 }
 
-// One model of a source: mark, name, summary, the unconfirmed marker, then edit and the enable switch. The editor opens
-// in place under the row
-export function ModelRow({ model, families, open, onToggleOpen, onChange, onRemove, onTest, test }: {
+// One model of a source on one compact line: mark, name and the Unconfirmed marker, badges (context, thinking, images),
+// then the editor chevron and the enable switch. The id and the summary are the name's tooltip; the editor opens in
+// place under the row
+export function ModelRow({ model, families, open, dim, onToggleOpen, onChange, onRemove, onTest, test }: {
   model: ProviderModel;
   families: string[];
   open: boolean;
+  // The source is switched off: the row reads as inactive whatever its own switch says
+  dim?: boolean;
   onToggleOpen: () => void;
   onChange: (m: ProviderModel) => void;
   onRemove: () => void;
@@ -60,21 +63,34 @@ export function ModelRow({ model, families, open, onToggleOpen, onChange, onRemo
   const label = t('settings.providers.model.edit', { name });
   return (
     <>
-      <ItemRow
+      <ModelLine
         lead={<ModelMark family={model.id} />}
-        title={<span className="flex min-w-0 items-baseline gap-2"><span className="truncate">{name}</span><Unconfirmed fields={model.estimated} /></span>}
-        desc={[model.name && model.name !== model.id ? model.id : '', modelSummary(model)].filter(Boolean).join(t('common.metaSep')) || undefined}
-        dim={!model.enabled}
-        trailing={<>
-          <IconButton title={label} aria-label={label} aria-expanded={open} onClick={onToggleOpen} className="text-fg-2">
-            {open ? <ChevronUp strokeWidth={1.5} /> : <ChevronDown strokeWidth={1.5} />}
-          </IconButton>
-          <Switch checked={model.enabled} onChange={enabled => onChange({ ...model, enabled })} label={name} />
-        </>}
+        name={name}
+        marker={<Unconfirmed fields={model.estimated} />}
+        hint={[model.id, modelSummary(model)].filter(Boolean).join(t('common.metaSep'))}
+        tags={modelTags(model)}
+        dim={dim || !model.enabled}
+        onOpen={onToggleOpen} open={open} openLabel={label}
+        trailing={<Switch checked={model.enabled} onChange={enabled => onChange({ ...model, enabled })} label={name} />}
       />
       {open && <ModelEditor model={model} families={families} onSave={m => { onChange(m); onToggleOpen(); }} onCancel={onToggleOpen} onRemove={onRemove} onTest={onTest} test={test} />}
     </>
   );
+}
+
+// A model row's badges: thinking, image input, a long (1M and up) context window; the exact window is in the tooltip
+export function modelTags(m: ProviderModel): ModelTags {
+  const tags: ModelTags = {};
+  if (m.efforts.length) tags.thinking = t('settings.providers.model.levels', { count: m.efforts.length });
+  else if (m.thinking === 'on') tags.thinking = t('settings.providers.model.thinking');
+  if (m.input.includes('image')) tags.image = t('settings.providers.model.image');
+  if ((m.context ?? 0) >= 1_000_000) tags.long = t('settings.providers.model.ctx', { n: fmtTokens(m.context!) });
+  return tags;
+}
+
+// The add list's second line: the id when the name differs, then the summary
+export function modelDesc(m: ProviderModel): string | undefined {
+  return [m.name && m.name !== m.id ? m.id : '', modelSummary(m)].filter(Boolean).join(t('common.metaSep')) || undefined;
 }
 
 // A labelled line of the editor: label on the left, the control on the right (wraps under it when narrow)

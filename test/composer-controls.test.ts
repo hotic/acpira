@@ -15,7 +15,7 @@ describe('shared composer controls', () => {
       options: ['Low', 'High', 'Max'].map(name => ({ id: name.toLowerCase(), name: `Thinking ${name}` })),
     };
     const model: ConfigControl = { id: 'model', name: 'Model', category: 'model', options: [{ id: 'asgard/kimi-k3', name: 'K3' }] };
-    expect(composerControls([model, thinking])).toEqual({ models: [model], reasoning: [thinking], modelConfig: [], collaboration: [], other: [] });
+    expect(composerControls([model, thinking])).toEqual({ models: [model], reasoning: [thinking], modelConfig: [], collaboration: [], permission: [], other: [] });
     expect(composerControls([{ ...thinking, category: undefined }]).reasoning).toHaveLength(1);
   });
 
@@ -32,7 +32,7 @@ describe('shared composer controls', () => {
       { id: 'context:normal', name: 'Context Standard' }, { id: 'context:1m', name: 'Context 1M' },
     ] };
     expect(composerControls([model, speed, reasoning, parameter, custom])).toEqual({
-      models: [model], reasoning: [reasoning], modelConfig: [speed, parameter], collaboration: [], other: [custom],
+      models: [model], reasoning: [reasoning], modelConfig: [speed, parameter], collaboration: [], permission: [], other: [custom],
     });
     expect(composerControls([speed]).modelConfig).toEqual([speed]);
     expect(isFastControl(speed)).toBe(true);
@@ -67,7 +67,14 @@ describe('shared composer controls', () => {
     const collab: ConfigControl = { id: 'collaboration_mode', name: 'Collaboration mode', category: 'collaboration_mode', value: 'default', options: [
       { id: 'default', name: 'Default' }, { id: 'plan', name: 'Plan', description: 'Plan before making changes' },
     ] };
-    expect(composerControls([collab])).toEqual({ models: [], reasoning: [], modelConfig: [], collaboration: [collab], other: [] });
+    expect(composerControls([collab])).toEqual({ models: [], reasoning: [], modelConfig: [], collaboration: [collab], permission: [], other: [] });
+  });
+
+  it("the built-in agent's approval level sits on the left beside its modes, leaving the right side to the model", () => {
+    const approval: ConfigControl = { id: 'approval', name: 'Approval', category: '_permission_mode', value: 'full', options: [
+      { id: 'ask', name: 'Ask' }, { id: 'full', name: 'Full access', kind: 'full_access' },
+    ] };
+    expect(composerControls([approval])).toEqual({ models: [], reasoning: [], modelConfig: [], collaboration: [], permission: [approval], other: [] });
   });
 
   it('a non-Fast boolean control chips as its own name only while on', () => {
@@ -77,9 +84,9 @@ describe('shared composer controls', () => {
     expect(modelConfigChip({ ...toggle, value: 'false' })).toBeUndefined();
     expect(isFastControl(toggle)).toBe(false);
     // The synthetic Off/On pair must never read as a model family
-    expect(composerControls([toggle])).toEqual({ models: [], reasoning: [], modelConfig: [toggle], collaboration: [], other: [] });
+    expect(composerControls([toggle])).toEqual({ models: [], reasoning: [], modelConfig: [toggle], collaboration: [], permission: [], other: [] });
     // Even a `model`-categorized boolean stays out of the models bucket — Off/On is never a family
-    expect(composerControls([{ ...toggle, category: 'model' }])).toEqual({ models: [], reasoning: [], modelConfig: [], collaboration: [], other: [{ ...toggle, category: 'model' }] });
+    expect(composerControls([{ ...toggle, category: 'model' }])).toEqual({ models: [], reasoning: [], modelConfig: [], collaboration: [], permission: [], other: [{ ...toggle, category: 'model' }] });
   });
 
   it('normalizes and orders Grok labels while preserving exact wire IDs', () => {
@@ -164,7 +171,7 @@ describe('shared composer controls', () => {
       { id: 'penguin-medium', name: 'Penguin Medium' }, { id: 'penguin-max', name: 'Penguin Max' },
     ] };
     const custom = { ...model, id: 'custom', category: 'custom' };
-    expect(composerControls([model, custom])).toEqual({ models: [model], reasoning: [], modelConfig: [], collaboration: [], other: [custom] });
+    expect(composerControls([model, custom])).toEqual({ models: [model], reasoning: [], modelConfig: [], collaboration: [], permission: [], other: [custom] });
   });
   // Claude's ultracode is the Ultra level the engine appends to the effort select: the Codex Ultra path draws it
   it('reads Claude\'s host-made Ultra level like Codex\'s, as the last segment and the chip badge', () => {
@@ -181,7 +188,7 @@ describe('shared composer controls', () => {
     expect(p.value).toBe('ultra');
     expect(reasoningChip(effort)).toBe('Ultra');
     expect(thoughtCorrection(effort)).toBeUndefined();
-    expect(composerControls([model, effort, fast])).toEqual({ models: [model], reasoning: [effort], modelConfig: [fast], collaboration: [], other: [] });
+    expect(composerControls([model, effort, fast])).toEqual({ models: [model], reasoning: [effort], modelConfig: [fast], collaboration: [], permission: [], other: [] });
     const cur = groupModels(model.options)[0];
     const curVar = cur?.variants[0];
     // Opus 5.5 [Ultra] [Fast]: Ultra in place of the effort badge
