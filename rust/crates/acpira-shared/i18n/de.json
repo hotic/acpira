@@ -500,6 +500,8 @@
   "host.hookEditDenied": "Bearbeitung vom Workspace-Gate blockiert: {file}",
   "host.gateDeniedEdit": "Bearbeitung von {file} abgelehnt:\n{reason}",
   "host.gateFailed": "Workspace-Gate nicht bestanden (Runde {round} von {rounds}); an den Agenten zurückgegeben",
+  "host.hookPromptBlocked": "Nachricht nicht gesendet: Der Workspace-Hook beforePrompt hat sie blockiert",
+  "host.hooksUnknownKeys": "Workspace-Hooks: unbekannte Schlüssel übersprungen ({keys}); der Rest gilt weiterhin",
   "host.gateGaveUp": "Workspace-Gate nach {rounds} automatischen Runden weiterhin nicht bestanden",
   "host.gatePrompt": "Das Workspace-Gate (.agents/hooks.json) wurde nach deinem letzten Durchlauf nicht bestanden. Behebe die gemeldeten Punkte und schließe dann ab. Stammt ein Punkt aus nicht committeten Änderungen anderer oder ist er ein Fehlalarm, begründe das stattdessen in deiner Antwort.\n\n{reason}",
   "host.retryContinuePrompt": "Der vorige Durchlauf wurde durch einen Fehler abgebrochen. Setze die unvollendete Aufgabe dort fort, wo sie aufgehört hat; wiederhole keine bereits erledigten Schritte.",

@@ -516,6 +516,8 @@ export const ko = {
   'host.hookEditDenied': '워크스페이스 게이트가 편집을 막았습니다: {file}',
   'host.gateDeniedEdit': '{file} 편집이 거부되었습니다:\n{reason}',
   'host.gateFailed': '워크스페이스 게이트를 통과하지 못했습니다({round}/{rounds}회차). 에이전트에게 돌려보냈습니다',
+  'host.hookPromptBlocked': '메시지를 보내지 않았습니다: 워크스페이스 hook beforePrompt가 차단했습니다',
+  'host.hooksUnknownKeys': '워크스페이스 hooks: 알 수 없는 키를 건너뛰었습니다({keys}). 나머지는 그대로 적용됩니다',
   'host.gateGaveUp': '자동 재시도 {rounds}회 후에도 워크스페이스 게이트를 통과하지 못했습니다',
   'host.gatePrompt': '지난 턴 이후 워크스페이스 게이트(.agents/hooks.json)를 통과하지 못했습니다. 보고된 문제를 고친 뒤 마무리하세요. 다른 사람의 커밋되지 않은 변경에서 나온 항목이거나 오탐이라면 대신 답변에서 이유를 설명하세요.\n\n{reason}',
   'host.retryContinuePrompt': '이전 턴이 오류로 중단되었습니다. 멈춘 지점부터 끝나지 않은 작업을 이어서 하세요. 이미 끝난 단계는 반복하지 마세요.',

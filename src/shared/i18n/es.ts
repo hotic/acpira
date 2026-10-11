@@ -514,6 +514,8 @@ export const es = {
   'host.hookEditDenied': 'La compuerta del espacio de trabajo bloqueó la edición: {file}',
   'host.gateDeniedEdit': 'Edición de {file} rechazada:\n{reason}',
   'host.gateFailed': 'La compuerta del espacio de trabajo no pasó (ronda {round} de {rounds}); devuelto al agente',
+  'host.hookPromptBlocked': 'Mensaje no enviado: el hook beforePrompt del espacio de trabajo lo bloqueó',
+  'host.hooksUnknownKeys': 'Hooks del espacio de trabajo: se omitieron claves desconocidas ({keys}); el resto sigue aplicándose',
   'host.gateGaveUp': 'La compuerta del espacio de trabajo sigue fallando tras {rounds} rondas automáticas',
   'host.gatePrompt': 'La compuerta del espacio de trabajo (.agents/hooks.json) no pasó tras tu último turno. Corrige lo que indica y luego termina. Si algún punto viene de cambios sin confirmar de otra persona o es un falso positivo, explica el motivo en tu respuesta.\n\n{reason}',
   'host.retryContinuePrompt': 'El turno anterior se cortó por un error. Continúa la tarea pendiente desde donde se detuvo; no repitas los pasos que ya están hechos.',

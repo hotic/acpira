@@ -164,12 +164,18 @@ impl AcpSession {
         compact_first
       }
     };
-    // The workspace hooks' snapshot is taken before anything reaches the agent; a first prompt carries their context
-    let context = self.hooks_before_turn(origin).await;
     let mut staging = self.stage_turn(&text, &drafts, staged, auto).await;
-    if !context.is_empty() {
-      staging.prepared.blocks.splice(0..0, context);
-    }
+    // The workspace hooks: `beforePrompt` may block the prompt or add context behind it, the snapshot is taken before
+    // anything reaches the agent, and a first prompt carries the context files in front
+    let context = match self.hooks_before_turn(origin, &text, &staging.prepared.attachments).await {
+      Ok(context) => context,
+      Err(reason) => {
+        self.hooks_prompt_blocked(&text, &reason);
+        return;
+      }
+    };
+    staging.prepared.blocks.splice(0..0, context.lead);
+    staging.prepared.blocks.extend(context.tail);
     let Some(mut accepted) = self.accept(&text, origin, plan_id.as_deref(), staging) else { return };
     if compact_first && !self.compact_before(&accepted.user_turn).await {
       return;

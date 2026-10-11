@@ -18,6 +18,14 @@ pub enum Verdict {
   Broken(String),
 }
 
+/// What `beforePrompt` decided: a pass may carry context for the agent
+#[derive(Debug, Clone, PartialEq)]
+pub enum PromptVerdict {
+  Pass(Option<String>),
+  Block(String),
+  Broken(String),
+}
+
 /// Stdout / stderr kept for the reason and the log; a hook printing more is cut
 const OUTPUT_MAX_BYTES: usize = 64 * 1024;
 
@@ -47,6 +55,23 @@ pub fn verdict_of(code: Option<i32>, stdout: &str, stderr: &str) -> Verdict {
   }
 }
 
+/// `beforePrompt`'s verdict, Claude Code's UserPromptSubmit rules: blocks and failures as for any hook; a pass sends
+/// `hookSpecificOutput.additionalContext`, or stdout that is not JSON, along as context
+pub fn prompt_verdict_of(code: Option<i32>, stdout: &str, stderr: &str) -> PromptVerdict {
+  match verdict_of(code, stdout, stderr) {
+    Verdict::Block(r) => PromptVerdict::Block(r),
+    Verdict::Broken(e) => PromptVerdict::Broken(e),
+    Verdict::Pass => {
+      let text = stdout.trim();
+      let context = match serde_json::from_str::<Value>(text) {
+        Ok(out) => out.pointer("/hookSpecificOutput/additionalContext").and_then(Value::as_str).map(|s| s.trim().to_owned()),
+        Err(_) => Some(text.to_owned()),
+      };
+      PromptVerdict::Pass(context.filter(|c| !c.is_empty()))
+    }
+  }
+}
+
 fn clip(bytes: &[u8]) -> String {
   let end = bytes.len().min(OUTPUT_MAX_BYTES);
   String::from_utf8_lossy(&bytes[..end]).into_owned()
@@ -71,6 +96,22 @@ fn shell(command: &str) -> tokio::process::Command {
 
 /// Run `hook` in `root` with `payload` on stdin. `env` adds variables (the session and agent ids)
 pub async fn run(hook: &Hook, root: &Path, payload: &Value, env: &[(&str, String)]) -> Verdict {
+  match output(hook, root, payload, env).await {
+    Ok((code, stdout, stderr)) => verdict_of(code, &stdout, &stderr),
+    Err(e) => Verdict::Broken(e),
+  }
+}
+
+/// `run` for `beforePrompt`, whose pass may carry context
+pub async fn run_prompt(hook: &Hook, root: &Path, payload: &Value, env: &[(&str, String)]) -> PromptVerdict {
+  match output(hook, root, payload, env).await {
+    Ok((code, stdout, stderr)) => prompt_verdict_of(code, &stdout, &stderr),
+    Err(e) => PromptVerdict::Broken(e),
+  }
+}
+
+/// The finished hook's exit code, stdout and stderr; Err: it could not start, failed to run or timed out
+async fn output(hook: &Hook, root: &Path, payload: &Value, env: &[(&str, String)]) -> Result<(Option<i32>, String, String), String> {
   let mut cmd = shell(&hook.run);
   cmd
     .current_dir(root)
@@ -93,7 +134,7 @@ pub async fn run(hook: &Hook, root: &Path, payload: &Value, env: &[(&str, String
   let spawned = cmd.spawn().map(|child| (child, ()));
   let (mut child, _job) = match spawned {
     Ok(c) => c,
-    Err(e) => return Verdict::Broken(format!("could not start `{}`: {e}", hook.run)),
+    Err(e) => return Err(format!("could not start `{}`: {e}", hook.run)),
   };
   // The payload goes in while the output is read, both under the timeout: a hook that never reads a payload larger than
   // the pipe buffer (or fills its stdout before reading) must not stall the write past it
@@ -110,8 +151,8 @@ pub async fn run(hook: &Hook, root: &Path, payload: &Value, env: &[(&str, String
   let pid = child.id();
   let finished = async move { tokio::join!(feed, child.wait_with_output()).1 };
   match tokio::time::timeout(hook.timeout, finished).await {
-    Ok(Ok(out)) => verdict_of(out.status.code(), &clip(&out.stdout), &clip(&out.stderr)),
-    Ok(Err(e)) => Verdict::Broken(format!("`{}` failed: {e}", hook.run)),
+    Ok(Ok(out)) => Ok((out.status.code(), clip(&out.stdout), clip(&out.stderr))),
+    Ok(Err(e)) => Err(format!("`{}` failed: {e}", hook.run)),
     Err(_) => {
       // The future owned the child and dropped it (kill_on_drop); the group still holds its descendants
       #[cfg(unix)]
@@ -121,7 +162,7 @@ pub async fn run(hook: &Hook, root: &Path, payload: &Value, env: &[(&str, String
           libc::killpg(pid as i32, libc::SIGKILL);
         }
       }
-      Verdict::Broken(format!("`{}` timed out after {}s", hook.run, hook.timeout.as_secs_f64()))
+      Err(format!("`{}` timed out after {}s", hook.run, hook.timeout.as_secs_f64()))
     }
   }
 }
@@ -144,6 +185,20 @@ mod tests {
     }
     assert!(matches!(verdict_of(Some(1), "", "Traceback"), Verdict::Broken(m) if m.contains("Traceback")));
     assert!(matches!(verdict_of(None, "", ""), Verdict::Broken(_)));
+  }
+
+  #[test]
+  fn a_prompt_hook_passes_context_or_blocks() {
+    let ctx = r#"{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":" read wish-to-blocks first "}}"#;
+    assert_eq!(prompt_verdict_of(Some(0), ctx, ""), PromptVerdict::Pass(Some("read wish-to-blocks first".into())));
+    assert_eq!(prompt_verdict_of(Some(0), "plain note\n", ""), PromptVerdict::Pass(Some("plain note".into())));
+    for out in ["", "{}", "  "] {
+      assert_eq!(prompt_verdict_of(Some(0), out, ""), PromptVerdict::Pass(None), "{out}");
+    }
+    let block = r#"{"decision":"block","reason":"not a wish"}"#;
+    assert_eq!(prompt_verdict_of(Some(0), block, ""), PromptVerdict::Block("not a wish".into()));
+    assert_eq!(prompt_verdict_of(Some(2), "", "no"), PromptVerdict::Block("no".into()));
+    assert!(matches!(prompt_verdict_of(Some(1), "", "x"), PromptVerdict::Broken(_)));
   }
 
   // A hook that never reads stdin while a payload larger than any pipe buffer waits there: the timeout still ends it

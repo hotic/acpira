@@ -3,6 +3,8 @@
 //! makes and the end of its turn — so the gate runs there instead of once per harness:
 //!
 //! - `context`: files sent along with a session's first prompt (the instructions the agent must have read);
+//! - `beforePrompt`: asked before every prompt the user sends; its output rides along as extra context, a block keeps
+//!   the prompt from being sent;
 //! - `beforeEdit`: asked before an edit a permission request announces (deny → the request is rejected), and again at
 //!   the end of the turn for every file the turn changed without asking;
 //! - `afterTurn`: run when a turn ends; a block sends its reason back to the agent as an automatic follow-up, at most
@@ -27,6 +29,8 @@ use crate::shared_config::project_root;
 /// Where a project declares its hooks, relative to its root
 pub const HOOKS_FILE: &str = ".agents/hooks.json";
 
+/// Short: every send waits for it
+const BEFORE_PROMPT_TIMEOUT: Duration = Duration::from_secs(10);
 const BEFORE_EDIT_TIMEOUT: Duration = Duration::from_secs(30);
 const AFTER_TURN_TIMEOUT: Duration = Duration::from_secs(120);
 /// The longest timeout a hooks file may ask for; a larger one is cut to this (`Duration::from_secs_f64` panics past its
@@ -49,11 +53,14 @@ pub struct Hook {
 pub struct HooksConfig {
   pub root: PathBuf,
   pub context: Vec<PathBuf>,
+  pub before_prompt: Option<Hook>,
   pub before_edit: Option<Hook>,
   pub after_turn: Option<Hook>,
   pub rounds: u32,
   /// Git work trees whose changes count as the turn's edits (nested repositories the root's own status cannot see)
   pub watch: Vec<PathBuf>,
+  /// Keys this version does not know (a newer Acpira's, or a typo): reported, while the known ones still apply
+  pub unknown: Vec<String>,
 }
 
 impl HooksConfig {
@@ -77,19 +84,24 @@ enum RawHook {
   },
 }
 
+// Unknown keys are collected rather than rejected: a file written for a newer Acpira must not switch every gate off
 #[derive(Deserialize, Default)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct RawConfig {
   #[serde(default, rename = "$schema")]
   _schema: Option<String>,
   #[serde(default)]
   context: Vec<String>,
   #[serde(default)]
+  before_prompt: Option<RawHook>,
+  #[serde(default)]
   before_edit: Option<RawHook>,
   #[serde(default)]
   after_turn: Option<RawHook>,
   #[serde(default)]
   watch: Option<Vec<String>>,
+  #[serde(flatten)]
+  unknown: std::collections::BTreeMap<String, Value>,
 }
 
 fn hook_of(raw: Option<RawHook>, default_timeout: Duration) -> (Option<Hook>, Option<u32>) {
@@ -110,6 +122,7 @@ fn hook_of(raw: Option<RawHook>, default_timeout: Duration) -> (Option<Hook>, Op
 pub fn parse(root: &Path, text: &str) -> Result<HooksConfig, String> {
   let value: Value = parse_json_loose(text).ok_or_else(|| "not valid JSON".to_owned())?;
   let raw: RawConfig = serde_json::from_value(value).map_err(|e| e.to_string())?;
+  let (before_prompt, _) = hook_of(raw.before_prompt, BEFORE_PROMPT_TIMEOUT);
   let (before_edit, _) = hook_of(raw.before_edit, BEFORE_EDIT_TIMEOUT);
   let (after_turn, rounds) = hook_of(raw.after_turn, AFTER_TURN_TIMEOUT);
   let join = |p: &String| root.join(p.trim_start_matches("./"));
@@ -120,10 +133,12 @@ pub fn parse(root: &Path, text: &str) -> Result<HooksConfig, String> {
   Ok(HooksConfig {
     root: root.to_path_buf(),
     context: raw.context.iter().filter(|p| !p.trim().is_empty()).map(join).collect(),
+    before_prompt,
     before_edit,
     after_turn,
     rounds: rounds.unwrap_or(DEFAULT_ROUNDS),
     watch,
+    unknown: raw.unknown.into_keys().collect(),
   })
 }
 
@@ -147,12 +162,17 @@ pub const GUIDE: &str = r#"# Acpira workspace hooks
 `<project root>/.agents/hooks.json` (the root is the nearest ancestor holding `.git`) gates every agent the user runs
 through Acpira the same way, whatever CLI it is. Acpira runs the scripts itself; the agents' own hook settings are not
 involved. The file is JSON with comments and trailing commas allowed, and is read again before every prompt, so an edit
-takes effect from the next turn. An unknown key makes the whole file invalid (reported to the user), never ignored.
+takes effect from the next turn. An unknown key (a typo, or a key of a newer Acpira) is reported to the user and
+skipped; the keys this version knows still apply. Malformed JSON or a known key of the wrong type makes the whole file
+invalid (also reported).
 
 ```jsonc
 {
   // Files sent with the first prompt of every session (paths relative to the root)
   "context": ["AGENTS.md"],
+  // Asked before every prompt the user sends (slash commands included). Its output is sent along with the prompt as
+  // extra context; a block keeps the prompt from being sent and shows the user the reason
+  "beforePrompt": "python3 tools/hooks/route_prompt.py",
   // Asked before an edit the agent requests permission for; deny = the request is rejected and the reason goes back
   // to the agent. Asked again when the turn ends for every file the turn changed without asking (phase "audit")
   "beforeEdit": "python3 tools/hooks/check_edit.py",
@@ -166,12 +186,18 @@ takes effect from the next turn. An unknown key makes the whole file invalid (re
 ```
 
 A hook is a bare command string or `{ "run": "...", "timeout": seconds }` (`rounds` only on afterTurn). Defaults:
-beforeEdit 30 s, afterTurn 120 s; at most 3600 s. Commands run through `/bin/sh -c` (`cmd /c` on Windows) in the project root, with
+beforePrompt 10 s, beforeEdit 30 s, afterTurn 120 s; at most 3600 s. Commands run through `/bin/sh -c` (`cmd /c` on Windows) in the project root, with
 `ACPIRA_PROJECT_DIR` and `CLAUDE_PROJECT_DIR` set to the root,
 `ACPIRA_SESSION_ID` and `ACPIRA_AGENT` to the session's. A hook that times out, crashes or prints something
-unreadable lets the edit / turn through and shows the user a warning.
+unreadable lets the prompt / edit / turn through and shows the user a warning.
 
 ## Input (JSON on stdin)
+
+beforePrompt: `hook_event_name: "UserPromptSubmit"`, `session_id`, `agent`, `cwd`, `prompt` (the text the user sent),
+`origin` (`"user"`, or `"goal"` for the prompt a session goal sends), `attachments` (what the prompt carries besides
+its text: images, files, selections, quotes), `first` (true on the session's first prompt). Automatic prompts Acpira
+sends itself (gate follow-ups, the continue after a Retry or an account switch, /compact before an over-budget prompt)
+and messages steered into a running turn are not asked.
 
 beforeEdit: `hook_event_name: "PreToolUse"`, `session_id`, `agent` (Acpira's agent id), `cwd` (the root),
 `tool_name` (`Edit` | `Delete` | `Move`), `tool_input` (the tool's raw input plus `file_path`), `files` (absolute paths
@@ -185,11 +211,16 @@ afterTurn: `hook_event_name: "Stop"`, `session_id`, `agent`, `cwd`, `stop_hook_a
 ## Answer (the Claude Code hook protocol, so existing Claude Code hook scripts work unchanged)
 
 - exit 0 with no output, or `{}`: pass;
+- beforePrompt only: exit 0 with plain text, or with `{"hookSpecificOutput": {"additionalContext": "..."}}`, passes
+  and sends that text to the agent after the prompt (not shown in the user's message; left out of a slash command,
+  which must stay the prompt's only text);
 - exit 2: block, stderr is the reason;
 - exit 0 with JSON: `{"hookSpecificOutput": {"permissionDecision": "deny", "permissionDecisionReason": "..."}}`
-  (beforeEdit) or `{"decision": "block", "reason": "..."}` (afterTurn) blocks with that reason.
+  (beforeEdit) or `{"decision": "block", "reason": "..."}` (beforePrompt, afterTurn) blocks with that reason.
 
-Write reasons for the agent: they are sent to it as they are, so say what is wrong and how to fix it. After writing
+Write beforeEdit / afterTurn reasons for the agent: they are sent to it as they are, so say what is wrong and how to
+fix it. A beforePrompt reason is shown to the user instead (the prompt never reaches the agent) next to the prompt's
+text, so it can be changed and sent again. After writing
 or changing the file, call `workspace_hooks` again to check that it parses."#;
 
 /// What `workspace_hooks` reports about the project `cwd` belongs to, after the guide
@@ -205,9 +236,10 @@ pub fn describe(cwd: &str) -> String {
       let hook = |h: &Option<Hook>| h.as_ref().map_or("none".to_owned(), |h| format!("`{}` ({} s)", h.run, h.timeout.as_secs_f64()));
       let missing: Vec<String> = c.context.iter().filter(|p| !p.is_file()).map(|p| wire_path(p)).collect();
       let mut text = format!(
-        "`{}` is valid. context: {} file(s); beforeEdit: {}; afterTurn: {}, rounds {}; watch: {}.",
+        "`{}` is valid. context: {} file(s); beforePrompt: {}; beforeEdit: {}; afterTurn: {}, rounds {}; watch: {}.",
         wire_path(&path),
         c.context.len(),
+        hook(&c.before_prompt),
         hook(&c.before_edit),
         hook(&c.after_turn),
         c.rounds,
@@ -215,6 +247,9 @@ pub fn describe(cwd: &str) -> String {
       );
       if !missing.is_empty() {
         text.push_str(&format!(" Context files that do not exist: {}.", missing.join(", ")));
+      }
+      if !c.unknown.is_empty() {
+        text.push_str(&format!(" Unknown keys, skipped: {}.", c.unknown.join(", ")));
       }
       text
     }
@@ -252,10 +287,31 @@ mod tests {
   }
 
   #[test]
-  fn a_misspelled_key_is_an_error_not_a_silently_open_gate() {
-    let e = parse(Path::new("/w"), r#"{ "afterturn": "x" }"#).unwrap_err();
-    assert!(e.contains("afterturn"), "{e}");
+  fn an_unknown_key_is_reported_while_the_known_ones_still_apply() {
+    let c = parse(Path::new("/w"), r#"{ "afterturn": "x", "beforeEdit": "y", "$schema": "s" }"#).unwrap();
+    assert_eq!(c.unknown, ["afterturn"]);
+    assert_eq!(c.before_edit.unwrap().run, "y");
+    assert!(c.after_turn.is_none());
+    assert!(describe_unknown_mentions_it());
+    // Broken JSON and a known key of the wrong type still invalidate the file
     assert!(parse(Path::new("/w"), "{").is_err());
+    assert!(parse(Path::new("/w"), r#"{ "beforeEdit": 3 }"#).is_err());
+  }
+
+  fn describe_unknown_mentions_it() -> bool {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+    std::fs::create_dir_all(dir.path().join(".agents")).unwrap();
+    std::fs::write(dir.path().join(HOOKS_FILE), r#"{ "afterturn": "x" }"#).unwrap();
+    describe(&dir.path().to_string_lossy()).contains("Unknown keys, skipped: afterturn")
+  }
+
+  #[test]
+  fn before_prompt_takes_its_short_default_and_tracks_nothing() {
+    let c = parse(Path::new("/w"), r#"{ "beforePrompt": "python3 p.py" }"#).unwrap();
+    assert_eq!(c.before_prompt, Some(Hook { run: "python3 p.py".into(), timeout: BEFORE_PROMPT_TIMEOUT }));
+    assert!(!c.tracks_changes());
+    assert!(c.unknown.is_empty());
   }
 
   // The shape a real project writes (Dev-Workspace, 2026-10-08): comments in another language, a bare beforeEdit, nested

@@ -508,6 +508,8 @@
   "host.hookEditDenied": "Edit blocked by the workspace gate: {file}",
   "host.gateDeniedEdit": "Rejected edit of {file}:\n{reason}",
   "host.gateFailed": "Workspace gate did not pass (round {round} of {rounds}); sent back to the agent",
+  "host.hookPromptBlocked": "Prompt not sent: the workspace hook beforePrompt blocked it",
+  "host.hooksUnknownKeys": "Workspace hooks: unknown keys skipped ({keys}); the rest still applies",
   "host.gateGaveUp": "Workspace gate still failing after {rounds} automatic rounds",
   "host.gatePrompt": "The workspace gate (.agents/hooks.json) did not pass after your last turn. Fix what it reports, then finish. If an item comes from someone else's uncommitted work or is a false positive, explain why in your reply instead.\n\n{reason}",
   "host.retryContinuePrompt": "The previous turn was cut off by an error. Continue the unfinished task from where it stopped; do not repeat steps that are already done.",

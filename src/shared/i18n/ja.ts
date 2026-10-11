@@ -521,6 +521,8 @@ export const ja = {
   'host.hookEditDenied': 'ワークスペースのゲートが編集をブロックしました：{file}',
   'host.gateDeniedEdit': '{file} の編集は拒否されました：\n{reason}',
   'host.gateFailed': 'ワークスペースのゲートを通過しませんでした（{round} / {rounds} 回目）。エージェントに差し戻しました',
+  'host.hookPromptBlocked': 'メッセージは送信されませんでした：ワークスペースの hook beforePrompt がブロックしました',
+  'host.hooksUnknownKeys': 'ワークスペース hooks：不明なキーをスキップしました（{keys}）。ほかの設定はそのまま有効です',
   'host.gateGaveUp': '{rounds} 回の自動再実行後もワークスペースのゲートを通過していません',
   'host.gatePrompt': '前のターンの後、ワークスペースのゲート（.agents/hooks.json）を通過しませんでした。報告された問題を修正してから終了してください。他の人の未コミットの変更によるもの、または誤検知である場合は、その理由を返信で説明してください。\n\n{reason}',
   'host.retryContinuePrompt': '前のターンはエラーで中断されました。中断したところから未完了のタスクを続けてください。完了済みの手順は繰り返さないでください。',
