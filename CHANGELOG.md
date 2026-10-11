@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
-## [1.10.0] - 2026-10-12
+## [1.10.1] - 2026-10-12
 
 ### Added
 
@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Claude's custom answer box (claude-agent-acp 0.83.0) is the question's Other row again instead of a separate English question page.
 - Claude subagent runs resumed through SendMessage show their work, read from Claude's subagent log, instead of staying empty.
 - A forked session keeps the images the agent produced, which used to show as broken.
+
+## [1.10.0] - 2026-10-12
+
+Unpublished: the release build stopped at the Windows checks before reaching any marketplace. Its changes shipped in 1.10.1.
 
 ## [1.9.1] - 2026-10-10
 
