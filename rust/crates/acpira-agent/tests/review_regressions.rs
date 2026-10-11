@@ -33,16 +33,15 @@ async fn a_control_changed_after_resume_survives_the_next_resume() {
   let server = MockModel::start();
   h.providers(&server.base_url(), json!([{"id":"m1"},{"id":"m2"}]));
   let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
-  set(&h, &sid, "approval", "full").await;
+  set(&h, &sid, "model", "mock/m2").await;
   server.push(mock::text("first"));
   prompt(&h, &sid).await;
   let (h, _) = reopen(h, &sid).await;
-  set(&h, &sid, "approval", "ask").await;
-  set(&h, &sid, "model", "mock/m2").await;
+  set(&h, &sid, "model", "mock/m1").await;
   server.push(mock::text("second"));
   prompt(&h, &sid).await;
   let (_h, r) = reopen(h, &sid).await;
-  assert_eq!((control(&r, "approval"), control(&r, "model")), (&json!("ask"), &json!("mock/m2")));
+  assert_eq!(control(&r, "model"), &json!("mock/m1"));
 }
 
 #[tokio::test]
@@ -121,7 +120,7 @@ async fn a_protected_config_write_through_a_symlink_still_asks() {
   h.providers(&server.base_url(), json!([{"id":"m1"}]));
   std::os::unix::fs::symlink(h.home(), h.cwd().join("alias")).unwrap();
   let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
-  set(&h, &sid, "approval", "full").await;
+  h.approval("full");
   server.push(mock::tools(&[("c1", "write", json!({"path":"alias/secrets.json","content":"{}"}))]));
   server.push(mock::text("done"));
   prompt(&h, &sid).await;

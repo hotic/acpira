@@ -66,6 +66,18 @@ export interface ProvidersView {
   error?: string;
   // The families a model can be pinned to (llm/family.rs), the generic one first
   families: string[];
+  // The agent's approval level as the file holds it; absent reads as 'ask'
+  approval?: string;
+}
+
+// How much the built-in agent runs without a permission card (`APPROVAL_LEVELS` in acpira-shared/src/providers.rs),
+// the default first. A setting of the agent, not a session control
+export const APPROVAL_LEVELS = ['ask', 'auto-edit', 'full'] as const;
+export type ApprovalLevel = typeof APPROVAL_LEVELS[number];
+
+// The view's level, unknown or absent values reading as the default
+export function approvalOf(view?: ProvidersView): ApprovalLevel {
+  return APPROVAL_LEVELS.find(l => l === view?.approval) ?? APPROVAL_LEVELS[0];
 }
 
 // A network question from the settings page; none changes providers.json. key: typed into the form and not saved yet;
@@ -95,7 +107,8 @@ export interface LocalSource {
 // key: absent keeps the stored key, empty removes it
 export type ProviderAction =
   | { kind: 'save'; provider: Provider; key?: string }
-  | { kind: 'delete'; id: string };
+  | { kind: 'delete'; id: string }
+  | { kind: 'approval'; level: ApprovalLevel };
 
 // A model entry with the file's defaults, for a hand-typed id
 export function newModel(id: string): ProviderModel {

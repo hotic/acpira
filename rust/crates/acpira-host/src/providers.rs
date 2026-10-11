@@ -12,7 +12,7 @@ use tokio::fs;
 
 use acpira_agent::llm::discover;
 use acpira_shared::providers::{
-  LocalSource, PROVIDERS_FILE, PROVIDERS_VERSION, ProbeOutcome, Provider, ProviderAction, ProviderProbe, ProviderView, ProvidersFile,
+  APPROVAL_LEVELS, LocalSource, PROVIDERS_FILE, PROVIDERS_VERSION, ProbeOutcome, Provider, ProviderAction, ProviderProbe, ProviderView, ProvidersFile,
   ProvidersView, provider_secret_key,
 };
 
@@ -48,7 +48,7 @@ impl ProviderStore {
       let has_key = self.vault.get(&provider_secret_key(&provider.id)).await.ok().flatten().is_some_and(|k| !k.is_empty());
       providers.push(ProviderView { provider, has_key });
     }
-    ProvidersView { providers, error: None, ..tables() }
+    ProvidersView { providers, error: None, approval: file.approval, ..tables() }
   }
 
   /// The key a probe uses: one typed into the form, else the stored key of the source with that id
@@ -123,6 +123,17 @@ impl ProviderStore {
           })
           .await?;
         self.vault.delete(&provider_secret_key(&id)).await
+      }
+      ProviderAction::Approval { level } => {
+        if !APPROVAL_LEVELS.contains(&level.as_str()) {
+          bail!("Unknown approval level: {level}");
+        }
+        self
+          .edit(|file| {
+            file.approval = Some(level);
+            Ok(())
+          })
+          .await
       }
     }
   }
@@ -263,6 +274,13 @@ mod tests {
     assert_eq!(s.view().await.providers.len(), 1);
     let secrets = std::fs::read_to_string(dir.path().join("secrets.json")).unwrap();
     assert!(!secrets.contains("sk-1"));
+
+    // The approval level is the agent's own setting in the same file; an unknown level is refused
+    assert_eq!(s.view().await.approval, None);
+    s.apply(ProviderAction::Approval { level: "full".into() }).await.unwrap();
+    assert!(s.apply(ProviderAction::Approval { level: "yolo".into() }).await.is_err());
+    let v = s.view().await;
+    assert_eq!((v.approval.as_deref(), v.providers.len()), (Some("full"), 1));
   }
 
   #[tokio::test]

@@ -73,13 +73,13 @@ it('stops built-in agent background jobs when the sidecar shuts down', async () 
   });
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
   try {
-    writeFileSync(join(home, 'providers.json'), JSON.stringify({ version: 1, providers: [provider(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`)] }));
+    // Full access is the agent's setting in providers.json, so the background command runs without a card
+    writeFileSync(join(home, 'providers.json'), JSON.stringify({ version: 1, approval: 'full', providers: [provider(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`)] }));
     const h = await Host.start({ cwd, home, defaultAgent: 'acpira', settings: { proxy: 'off' } });
     hosts.push(h);
     const v = await h.view();
     v.post({ type: 'newSession', agent: 'acpira' });
-    await v.until(() => !!v.active()?.controls.options.find(c => c.id === 'approval'), 10000, 'approval control');
-    await v.handle({ type: 'setConfig', configId: 'approval', value: 'full' });
+    await v.until(() => !!v.active()?.controls.options.find(c => c.id === 'model'), 10000, 'model control');
     await v.handle({ type: 'send', text: 'local scripted fixture only' }, 10000);
     jobPid = Number(readFileSync(join(cwd, 'job.pid'), 'utf8').trim());
     await h.dispose();

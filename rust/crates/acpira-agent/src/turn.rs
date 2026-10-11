@@ -155,7 +155,7 @@ fn setup(server: &Server, session: &Session) -> Result<Setup, String> {
   if let Some(e) = &config.error {
     return Err(e.clone());
   }
-  let (pick, effort, mode, approval) = {
+  let (pick, effort, mode) = {
     let mut st = session.state.lock();
     // A session opened before any model was configured takes the default now, and keeps it
     if st.model.is_none()
@@ -164,7 +164,7 @@ fn setup(server: &Server, session: &Session) -> Result<Setup, String> {
       st.model = Some(pick);
       session.save_state(&st);
     }
-    (st.model.clone(), st.effort.clone(), modes::get(&st.mode), st.approval)
+    (st.model.clone(), st.effort.clone(), modes::get(&st.mode))
   };
   let pick = pick.ok_or("No model is configured. Add a model source in Acpira's settings (Agents → Acpira).")?;
   let (provider, model) = config.find(&pick).ok_or_else(|| format!("The model {pick} is no longer configured; pick another one."))?;
@@ -191,7 +191,7 @@ fn setup(server: &Server, session: &Session) -> Result<Setup, String> {
   // Frozen for the turn like the rest; what the user allows on a card applies at once (`SessionState::allowed`)
   let rules = Rules {
     defaults: permission::defaults(&server.session_dir(&session.id).join("outputs")),
-    approval: approval.rules(),
+    approval: config.approval().rules(),
     mode: mode.rules(&server.plan_file(&session.id), &session.cwd),
     guard: Guard::new(server.config.home(), &session.cwd, user_home().as_deref()),
   };

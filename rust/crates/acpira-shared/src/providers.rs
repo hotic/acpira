@@ -24,9 +24,17 @@ pub struct ProvidersFile {
   pub version: u32,
   #[serde(default)]
   pub providers: Vec<Provider>,
+  /// How much the agent runs without a permission card, one of `APPROVAL_LEVELS`; absent (or unknown) is `ask`. A
+  /// setting of the agent, not of a session: the agent reads it at the start of every turn
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub approval: Option<String>,
   #[serde(flatten)]
   pub extra: Map<String, Value>,
 }
+
+/// The approval levels `ProvidersFile::approval` takes, the default first: `ask` (edits and commands ask), `auto-edit`
+/// (edits run, commands ask), `full` (everything runs, except edits to Acpira's own configuration)
+pub const APPROVAL_LEVELS: [&str; 3] = ["ask", "auto-edit", "full"];
 
 /// The wire format a source speaks (`Provider::format` as a value; the field stays a string so a format a newer build
 /// added survives this build's rewrite)
@@ -248,6 +256,9 @@ pub struct ProvidersView {
   /// The families a model can be pinned to (`acpira_agent::llm::family::names`)
   #[serde(default)]
   pub families: Vec<String>,
+  /// The file's approval level as written (absent reads as `ask`)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub approval: Option<String>,
 }
 
 /// A network question from the settings page; none of them changes providers.json. `key`: a key typed into the form
@@ -311,6 +322,8 @@ pub enum ProviderAction {
   },
   /// Remove the source and its key
   Delete { id: String },
+  /// Set the agent's approval level (one of `APPROVAL_LEVELS`)
+  Approval { level: String },
 }
 
 #[cfg(test)]

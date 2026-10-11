@@ -47,7 +47,7 @@ async fn plan_mode_writes_only_the_plan_and_an_approval_builds_in_the_same_turn(
   assert_eq!(modes["availableModes"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect::<Vec<_>>(), ["agent", "plan"]);
   set_mode(&h, &sid, "plan").await;
   // Full access does not lift Plan mode's restrictions
-  h.conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "approval", "value": "full" })).await.unwrap();
+  h.approval("full");
   let plan = h.home().join("agent/sessions").join(&sid).join("plan.md");
   server.push(mock::tools(&[
     ("c1", "write", json!({ "path": "src.txt", "content": "x" })),

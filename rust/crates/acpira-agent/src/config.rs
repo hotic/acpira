@@ -9,6 +9,8 @@ use std::time::SystemTime;
 
 use acpira_shared::providers::{PROVIDERS_FILE, Provider, ProviderModel, ProvidersFile, provider_secret_key};
 
+use crate::permission::Approval;
+
 pub const SECRETS_FILE: &str = "secrets.json";
 
 #[derive(Debug, Default)]
@@ -26,6 +28,11 @@ impl Config {
 
   pub fn find(&self, pick: &str) -> Option<(&Provider, &ProviderModel)> {
     self.providers.find(pick)
+  }
+
+  /// The approval level set on the settings page; absent or unknown asks
+  pub fn approval(&self) -> Approval {
+    self.providers.approval.as_deref().and_then(Approval::parse).unwrap_or_default()
   }
 
   /// The first usable model, the default of a new session

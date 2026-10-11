@@ -33,7 +33,6 @@ async fn a_session_comes_back_after_the_agent_restarts() {
   // A session that never got a prompt leaves no file and no list entry
   h.new_session().await;
   let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
-  h.conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "approval", "value": "full" })).await.unwrap();
   server.push(mock::tools(&[("c1", "read", json!({ "path": "a.txt" }))]));
   server.push(mock::text("It says alpha."));
   assert_eq!(prompt(&h, &sid, "what is in a.txt").await["stopReason"], "end_turn");
@@ -62,8 +61,8 @@ async fn a_session_comes_back_after_the_agent_restarts() {
 
   // Resume brings the controls back without replaying anything
   let resumed = h.conn.request("session/resume", json!({ "sessionId": sid, "cwd": h.cwd(), "mcpServers": [] })).await.unwrap();
-  let approval = resumed["configOptions"].as_array().unwrap().iter().find(|o| o["id"] == "approval").unwrap().clone();
-  assert_eq!(approval["currentValue"], "full");
+  let model = resumed["configOptions"].as_array().unwrap().iter().find(|o| o["id"] == "model").unwrap().clone();
+  assert_eq!(model["currentValue"], "mock/m1");
   assert!(h.updates().is_empty());
 
   // The follow-up's request carries the earlier history byte for byte, and a model switch is a view change

@@ -333,7 +333,7 @@ export function Composer(p: ComposerProps) {
             {p.controls.modes.length > 0 && (
               <ModeMenu title={t('composer.mode')} modes={p.controls.modes} value={p.controls.modeId} onOpenChange={onOpenChange} onSelect={p.onSetMode} />
             )}
-            {/* A permission level offered as a config option (the built-in agent's approval) follows the working mode */}
+            {/* A permission level offered as a config option (custom category `_permission_mode`) follows the working mode */}
             {permission.map(c => (
               <ModeMenu key={c.id} title={c.name} value={c.value} onOpenChange={onOpenChange} onSelect={v => p.onSetConfig(c.id, v)} modes={c.options} />
             ))}

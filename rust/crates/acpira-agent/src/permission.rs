@@ -33,7 +33,8 @@ pub const BASH: &str = "bash";
 pub const TODO: &str = "todo";
 pub const JOB: &str = "job";
 
-/// The approval level: how much runs without a card
+/// The approval level: how much runs without a card. A setting of the agent (`ProvidersFile::approval`, ids as in
+/// `APPROVAL_LEVELS`), read at the start of each turn
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Approval {
   /// Edits and commands ask
@@ -53,22 +54,6 @@ impl Approval {
       Approval::Ask => "ask",
       Approval::AutoEdit => "auto-edit",
       Approval::Full => "full",
-    }
-  }
-
-  pub fn name(self) -> &'static str {
-    match self {
-      Approval::Ask => "Ask",
-      Approval::AutoEdit => "Auto-edit",
-      Approval::Full => "Full access",
-    }
-  }
-
-  pub fn description(self) -> &'static str {
-    match self {
-      Approval::Ask => "Ask before every edit and command",
-      Approval::AutoEdit => "Edit files without asking; ask before commands",
-      Approval::Full => "Run everything without asking, except changes to Acpira's own configuration",
     }
   }
 
@@ -275,6 +260,12 @@ mod tests {
     assert!(wildcard("git status *", "git status") && wildcard("git status *", "git status -s"));
     assert!(!wildcard("git status *", "git statuses"));
     assert!(wildcard("*.env", ".env") && wildcard("**", ""));
+  }
+
+  #[test]
+  fn the_levels_match_the_settings_contract() {
+    assert_eq!(Approval::ALL.map(Approval::id), acpira_shared::providers::APPROVAL_LEVELS);
+    assert_eq!(Approval::default().id(), acpira_shared::providers::APPROVAL_LEVELS[0]);
   }
 
   #[test]

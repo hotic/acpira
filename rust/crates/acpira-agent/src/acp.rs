@@ -16,7 +16,7 @@ use acpira_shared::providers::{Thinking, split_pick};
 use crate::config::{Config, ConfigCache};
 use crate::llm::Item;
 use crate::modes;
-use crate::permission::{Approval, Rule};
+use crate::permission::Rule;
 use crate::store::{self, Store};
 
 pub const PROTOCOL_VERSION: i64 = 1;
@@ -40,7 +40,6 @@ pub struct SessionState {
   pub partial_reasoning: String,
   /// The running turn's cancel signal
   pub turn: Option<Cancel>,
-  pub approval: Approval,
   /// Rules the user added from permission cards ("always allow"), for this session only
   pub allowed: Vec<Rule>,
   /// What the last model request's prefix was built from (`turn.rs` logs a `view` event when it changes)
@@ -69,7 +68,7 @@ impl Session {
   /// session has a file: changing a control alone does not make one)
   pub fn save_state(&self, st: &SessionState) {
     self.store.prelude(json!({
-      "type": "state", "mode": st.mode, "announced": st.announced, "model": st.model, "effort": st.effort, "approval": st.approval.id(),
+      "type": "state", "mode": st.mode, "announced": st.announced, "model": st.model, "effort": st.effort,
     }));
   }
 
@@ -222,7 +221,6 @@ impl Server {
       mode: s("mode").filter(|m| modes::find(m).is_some()).unwrap_or_else(|| modes::AGENT.to_owned()),
       announced: s("announced").unwrap_or_else(|| modes::AGENT.to_owned()),
       model: s("model").or_else(|| config.default_pick()),
-      approval: s("approval").and_then(|a| Approval::parse(&a)).unwrap_or_default(),
       items: loaded.items.clone(),
       ..Default::default()
     };
@@ -313,9 +311,6 @@ impl Server {
         if !st.effort.as_ref().is_some_and(|e| efforts.contains(e)) {
           st.effort = default_effort(&config, &catalog, st.model.as_deref());
         }
-      }
-      "approval" => {
-        st.approval = Approval::parse(value).ok_or_else(|| RpcError::new(-32602, format!("Unknown approval level: {value}")))?;
       }
       "effort" => {
         if !efforts_of(&config, &catalog, st.model.as_deref()).iter().any(|e| e == value) {
@@ -413,11 +408,6 @@ fn default_effort(config: &Config, catalog: &Catalog, pick: Option<&str>) -> Opt
   efforts.iter().find(|e| Some(e.as_str()) == preferred).or(efforts.last()).cloned()
 }
 
-/// The approval select's category: ACP leaves names starting with `_` free for custom use
-pub const APPROVAL_CATEGORY: &str = "_permission_mode";
-
-/// The full configOptions set: the model select (every usable model, labelled with its source), the effort select when
-/// the current model offers levels, and the approval level
 /// `config_options`, remembered as what the client has
 fn sent_options(config: &Config, catalog: &Catalog, st: &mut SessionState) -> Vec<Value> {
   let options = config_options(config, catalog, st);
@@ -425,6 +415,9 @@ fn sent_options(config: &Config, catalog: &Catalog, st: &mut SessionState) -> Ve
   options
 }
 
+/// The full configOptions set: the model select (every usable model, labelled with its source) and the effort select
+/// when the current model offers levels. The approval level is not a session control: it is the agent's setting in
+/// `providers.json` (`Config::approval`), so the composer shows one mode chip and nothing beside it
 pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState) -> Vec<Value> {
   let mut out = vec![];
   let current = st.model.as_deref().filter(|p| config.find(p).is_some()).map(str::to_owned).or_else(|| config.default_pick());
@@ -444,18 +437,6 @@ pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState) -> 
       }));
     }
   }
-  // How much runs without a permission card; applies from the next turn. The custom category puts it beside the mode
-  // chip (a permission mode, like Codex's), and `full` carries the `full_access` kind the composer tints
-  out.push(json!({
-    "id": "approval", "name": "Approval", "category": APPROVAL_CATEGORY, "type": "select", "currentValue": st.approval.id(),
-    "options": Approval::ALL.iter().map(|a| {
-      let mut o = json!({ "value": a.id(), "name": a.name(), "description": a.description() });
-      if *a == Approval::Full {
-        o["_meta"] = json!({ "kind": "full_access" });
-      }
-      o
-    }).collect::<Vec<_>>(),
-  }));
   out
 }
 
