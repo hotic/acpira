@@ -28,12 +28,13 @@ function Portal(props: Omit<ComponentProps<typeof Base.Portal>, 'container'>) {
   const layer = useContext(ShellLayerContext);
   return layer ? <Base.Portal {...props} container={layer} /> : null;
 }
-function Positioner({ width = 'md', className, side = 'bottom', align = 'start', sideOffset, collisionPadding, collisionBoundary, collisionAvoidance, ...props }: ComponentProps<typeof Base.Positioner> & { width?: OverlayWidth }) {
+// width 'anchor': exactly the trigger's width, for a form field's list (`settings/controls.tsx` Select)
+function Positioner({ width = 'md', className, side = 'bottom', align = 'start', sideOffset, collisionPadding, collisionBoundary, collisionAvoidance, ...props }: ComponentProps<typeof Base.Positioner> & { width?: OverlayWidth | 'anchor' }) {
   const { shell, gap, pad, width: shellWidth } = useShellPosition();
   return <Base.Positioner side={side} align={align} sideOffset={sideOffset ?? gap}
     collisionBoundary={collisionBoundary ?? shell} collisionPadding={collisionPadding ?? pad}
     collisionAvoidance={collisionAvoidance ?? { side: 'flip', align: 'shift' }}
-    {...props} className={cnState(cn('z-30', overlayWidth[width]), className)}
+    {...props} className={cnState(cn('z-30', width === 'anchor' ? 'w-(--anchor-width)' : overlayWidth[width]), className)}
     style={state => ({ maxWidth: shellWidth ? shellWidth - pad * 2 : undefined, ...(typeof props.style === 'function' ? props.style(state) : props.style) })} />;
 }
 function Popup({ className, ref: forwardedRef, ...props }: ComponentProps<typeof Base.Popup>) {
