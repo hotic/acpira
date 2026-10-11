@@ -75,7 +75,7 @@ describe('Codex process folding', () => {
     expect(splitCodexBlocks([read, notice, run, reply])).toEqual({ process: [read, run], reply: [reply], permissions: [], notices: [notice], goalsLead: [], goals: [] });
   });
 
-  it('keeps goal milestones out of the fold: the leading ones open the turn, later ones follow the reply', () => {
+  it('places goal milestones: the leading ones open the turn, mid-process ones stay in place, the last ones follow the reply', () => {
     const set: GoalBlock = { type: 'goal', event: 'set', objective: 'ship it' };
     const paused: GoalBlock = { type: 'goal', event: 'paused', timeUsedSeconds: 40 };
     const reply = { type: 'text' as const, markdown: 'Done.' };
@@ -84,6 +84,11 @@ describe('Codex process folding', () => {
     });
     // A turn holding only milestones keeps them all in the lead
     expect(splitCodexBlocks([set, paused])).toMatchObject({ process: [], reply: [], goalsLead: [set, paused], goals: [] });
+    // A goal set mid-turn stays where it happened while actions follow it, instead of trailing the live process
+    expect(splitCodexBlocks([read, set, run])).toMatchObject({ process: [read, set, run], goalsLead: [], goals: [] });
+    expect(splitCodexBlocks([read, set, run, reply, paused])).toMatchObject({ process: [read, set, run], reply: [reply], goals: [paused] });
+    // Only prose after it: it still follows the reply
+    expect(splitCodexBlocks([read, set, reply])).toMatchObject({ process: [read], reply: [reply], goals: [set] });
   });
 
   it('keeps the open question card out of the message and the answered one in place in the process history', () => {

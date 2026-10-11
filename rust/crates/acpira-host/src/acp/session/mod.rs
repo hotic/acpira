@@ -177,6 +177,9 @@ pub(crate) struct Core {
   pub phase: Phase,
   pub replaying: bool,
   pub startup_banner: Option<String>,
+  /// The `/goal …` command a goal control steered into the running turn over `_session/goal`: its echo is dropped like
+  /// a sent prompt's (`goal::is_command_echo`); cleared when the turn settles
+  pub goal_steered: Option<String>,
   pub perms: PermissionGate,
   pub questions: QuestionGate,
   pub queue: PromptQueue,
@@ -318,6 +321,7 @@ impl AcpSession {
           phase: Phase::default(),
           replaying: false,
           startup_banner: None,
+          goal_steered: None,
           perms: PermissionGate::default(),
           questions: QuestionGate::default(),
           queue: PromptQueue::default(),

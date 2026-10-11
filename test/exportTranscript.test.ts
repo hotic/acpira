@@ -63,6 +63,15 @@ describe('exportMarkdown', () => {
     expect(md).toContain('_Automatic /compact_');
   });
 
+  it('leaves out a goal control turn, like its goal row', () => {
+    const goal = exportMarkdown({ title: 't', agentName: 'Fake', cwd: '/repo', exportedAt: 'x', turns: [
+      { role: 'user', text: '/goal clear', auto: true, autoReason: 'goal' },
+      { role: 'agent', blocks: [{ type: 'goal', event: 'cleared' }] },
+    ] });
+    expect(goal).not.toContain('/goal clear');
+    expect(goal).not.toContain('_Automatic');
+  });
+
   it('renders agent blocks: thought, prose, plan, tools, question, compaction, plan doc', () => {
     expect(md).toContain('### Fake');
     expect(md).toContain('<details><summary>Thinking</summary>');

@@ -139,6 +139,12 @@ impl Vendor {
     self != Vendor::Codex
   }
 
+  /// The goal is a Stop hook that keeps the turn going until the condition holds, so a turn that ends on its own ended
+  /// with the goal met (`goal::met_by_turn_end`)
+  pub fn goal_met_at_turn_end(self) -> bool {
+    self == Vendor::Claude
+  }
+
   /// A `/goal` command is answered with its local output as reply text (`goal::is_command_echo`)
   pub fn echoes_goal_command(self) -> bool {
     self == Vendor::Claude

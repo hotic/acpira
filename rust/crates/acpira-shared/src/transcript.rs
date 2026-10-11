@@ -970,6 +970,8 @@ pub enum AutoReason {
   Retry,
   /// The workspace gate (`.agents/hooks.json`) blocked the previous turn: its findings go back to the agent
   Gate,
+  /// A goal control from the dock went out as its `/goal …` command; the goal row stands for it
+  Goal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

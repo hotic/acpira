@@ -17,11 +17,11 @@ use crate::acp::session::errors::{is_auth, is_session_gone, turn_error_of};
 use crate::acp::session::failure::{failure_of, failure_turn_error};
 use crate::acp::session::turn_usage::turn_usage_of;
 use crate::acp::session::{AcpSession, Core, num};
-use crate::acp::transcript::normalize::{activity_of, apply_session_failure, end_turn, fail_turn};
+use crate::acp::transcript::normalize::{activity_of, apply_goal, apply_session_failure, end_turn, fail_turn};
 use crate::acp::transport::process::AgentProcess;
 use crate::acp::transport::rpc::{BoxFuture, RpcError};
 use crate::acp::vendors::antigravity::ReplyError;
-use crate::acp::vendors::{FailureLog, Vendor, claude_window, kimi_failure, logged_failure, pi_failure, pi_usage};
+use crate::acp::vendors::{FailureLog, Vendor, claude_window, goal, kimi_failure, logged_failure, pi_failure, pi_usage};
 use crate::i18n::{t, tp};
 use crate::limits::TITLE_MAX;
 use crate::util::{js_num, now_ms, random_uuid};
@@ -37,7 +37,8 @@ pub struct Staged {
 
 /// Who sent a prompt: the user (or the queue on the user's behalf), the over-threshold /compact, the continue that
 /// follows an automatic account switch, the continue a Retry sends after a failed turn that already did some work, or
-/// the workspace gate sending what blocked the last turn back to the agent (`hooks.rs`)
+/// the workspace gate sending what blocked the last turn back to the agent (`hooks.rs`), or a goal control from the dock
+/// sent as its `/goal …` command (`session/goal.rs`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Origin {
   User,
@@ -45,6 +46,7 @@ pub(crate) enum Origin {
   Continue,
   Retry,
   Gate,
+  Goal,
 }
 
 impl Origin {
@@ -332,7 +334,7 @@ impl AcpSession {
     let command_name = command_name(text).map(str::to_owned);
     let user_turn = match origin {
       Origin::Compact => UserTurn { text: text.to_owned(), auto: Some(true), ..Default::default() },
-      Origin::Continue | Origin::Retry | Origin::Gate => UserTurn {
+      Origin::Continue | Origin::Retry | Origin::Gate | Origin::Goal => UserTurn {
         id: Some(random_uuid()),
         text: text.to_owned(),
         settings: Some(before.clone()),
@@ -340,6 +342,7 @@ impl AcpSession {
         auto_reason: Some(match origin {
           Origin::Retry => AutoReason::Retry,
           Origin::Gate => AutoReason::Gate,
+          Origin::Goal => AutoReason::Goal,
           _ => AutoReason::AccountSwitch,
         }),
         ..Default::default()
@@ -693,9 +696,18 @@ impl AcpSession {
     c.tree.settle("prompt-returned");
     self.drain_terminal(c);
     let failed = error.is_some();
+    let ended = !failed && stop == TurnStop::EndTurn;
     match error {
       Some(e) => fail_turn(&mut c.state, e),
       None => end_turn(&mut c.state, stop),
+    }
+    c.goal_steered = None;
+    // Claude's goal holds the turn until it is met, so a turn that ended on its own met it (`goal::met_by_turn_end`)
+    if ended
+      && self.vendor.goal_met_at_turn_end()
+      && let Some(met) = goal::met_by_turn_end(c.state.goal.as_ref())
+    {
+      apply_goal(&mut c.state, Some(met), true);
     }
     // A met goal shows on the dock only until the turn that met it ends; a later prompt must not bring it back
     if c.state.goal.as_ref().is_some_and(|g| g.status == GoalStatus::Complete) {
