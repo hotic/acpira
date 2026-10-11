@@ -534,6 +534,8 @@ export const zhTW = {
   'host.hookEditDenied': '工作區門禁攔下了這次編輯：{file}',
   'host.gateDeniedEdit': '對 {file} 的編輯被拒絕：\n{reason}',
   'host.gateFailed': '工作區門禁未通過（第 {round} / {rounds} 輪），已交回 Agent 修復',
+  'host.hookPromptBlocked': '訊息沒有送出：被工作區 hook beforePrompt 攔下了',
+  'host.hooksUnknownKeys': '工作區 hooks：已略過無法辨識的鍵（{keys}），其餘照常生效',
   'host.gateGaveUp': '自動補跑 {rounds} 輪後，工作區門禁仍未通過',
   'host.gatePrompt': '上一輪結束後，工作區門禁（.agents/hooks.json）沒有通過。請先修復下面列出的問題再結束。若某條來自他人未提交的改動或確屬誤報，在回覆中說明理由即可。\n\n{reason}',
   'host.retryContinuePrompt': '上一輪因請求出錯被中斷。請從中斷處繼續完成未完成的任務，不要重複已經完成的步驟。',

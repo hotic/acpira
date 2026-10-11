@@ -513,6 +513,8 @@ export const fr = {
   'host.hookEditDenied': 'Modification bloquée par la barrière de l’espace de travail : {file}',
   'host.gateDeniedEdit': 'Modification de {file} refusée :\n{reason}',
   'host.gateFailed': 'Barrière de l’espace de travail non franchie (tour {round} sur {rounds}) ; renvoyé à l’agent',
+  'host.hookPromptBlocked': 'Message non envoyé : le hook beforePrompt de l’espace de travail l’a bloqué',
+  'host.hooksUnknownKeys': 'Hooks de l’espace de travail : clés inconnues ignorées ({keys}) ; le reste s’applique toujours',
   'host.gateGaveUp': 'La barrière de l’espace de travail échoue toujours après {rounds} tours automatiques',
   'host.gatePrompt': 'La barrière de l’espace de travail (.agents/hooks.json) n’est pas passée après ton dernier tour. Corrige ce qu’elle signale, puis termine. Si un point vient de modifications non validées de quelqu’un d’autre ou est un faux positif, explique-le plutôt dans ta réponse.\n\n{reason}',
   'host.retryContinuePrompt': 'Le tour précédent a été interrompu par une erreur. Reprends la tâche inachevée là où elle s’est arrêtée ; ne refais pas les étapes déjà terminées.',

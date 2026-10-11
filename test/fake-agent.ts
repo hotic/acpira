@@ -622,6 +622,11 @@ const app = acp.agent({ name: 'fake-agent' })
     if (text.startsWith('say:')) {
       for (const part of text.slice(4).split('||')) await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: part } });
       return { stopReason: 'end_turn' };
+    // echo-text → reply with the prompt's text blocks joined, so tests can see text the host added to the prompt
+    if (text.startsWith('echo-text')) {
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
+      return { stopReason: 'end_turn' };
+    }
     }
     // Workspace hooks (tests/engine/acp_session/hooks.rs). A prompt holding "hook-fix:<path>" anywhere (the gate's findings)
     // rewrites that file to "fixed\n"; "hook-write:<path>" writes "bad\n" the way an agent's own tool does, without asking;

@@ -494,7 +494,9 @@ mod tests {
     let valid = ask(4);
     assert!(valid.contains("is valid") && valid.contains("NOPE.md"), "{valid}");
     std::fs::write(dir.join(".agents/hooks.json"), r#"{ "afterturn": "x" }"#).unwrap();
-    assert!(ask(5).contains("is invalid"));
+    assert!(ask(5).contains("Unknown keys, skipped: afterturn"));
+    std::fs::write(dir.join(".agents/hooks.json"), r#"{ "afterTurn": 3 }"#).unwrap();
+    assert!(ask(6).contains("is invalid"));
     std::fs::remove_dir_all(&dir).ok();
   }
 

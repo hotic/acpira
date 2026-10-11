@@ -1,4 +1,5 @@
-//! Workspace hooks in the session loop (`crate::hooks`): the first prompt carries the project's context files, an edit
+//! Workspace hooks in the session loop (`crate::hooks`): the first prompt carries the project's context files, every
+//! user prompt asks `beforePrompt` first (its output rides along, a block keeps the prompt from being sent), an edit
 //! announced by a permission request asks `beforeEdit` first, and a finished turn goes through the gate — the turn's
 //! changed files are checked against `beforeEdit` again (edits made without asking), then `afterTurn` runs. Whatever
 //! blocks goes back to the agent as an automatic follow-up (`Origin::Gate`), at most `rounds` times per user prompt;
@@ -15,15 +16,16 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 
+use acpira_shared::slash_commands::command_name;
 use acpira_shared::transcript::*;
 
 use crate::acp::session::prompt::Origin;
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::transport::rpc::BoxFuture;
-use crate::hooks::run::{Verdict, run};
+use crate::hooks::run::{PromptVerdict, Verdict, run, run_prompt};
 use crate::hooks::snapshot::Snapshot;
 use crate::hooks::{CONTEXT_MAX_BYTES, Hook, HooksConfig};
-use crate::i18n::tp;
+use crate::i18n::{t, tp};
 use crate::platform::file_url::path_to_file_url;
 use crate::util::{now_ms, random_uuid};
 
@@ -55,6 +57,14 @@ pub(crate) struct HookState {
   pub rerun: bool,
   /// The last hooks-file error shown, so a broken file is reported once rather than every turn
   pub reported: Option<String>,
+}
+
+/// What a turn's prompt carries besides the user's own blocks: the context files in front (a first prompt) and the
+/// `beforePrompt` context behind
+#[derive(Default)]
+pub(crate) struct TurnContext {
+  pub lead: Vec<Value>,
+  pub tail: Vec<Value>,
 }
 
 /// The edit rows of the span a gate covers, split by whether `beforeEdit` already passed them in a permission request
@@ -182,7 +192,20 @@ impl AcpSession {
     match crate::hooks::load(&self.cwd) {
       None => None,
       Some(Ok(cfg)) => {
-        self.core.lock().hooks.reported = None;
+        // Unknown keys are skipped, not fatal: said once per distinct list, like a broken file
+        let warning = (!cfg.unknown.is_empty()).then(|| cfg.unknown.join(", "));
+        let fresh = {
+          let mut c = self.core.lock();
+          let fresh = warning.is_some() && c.hooks.reported != warning;
+          c.hooks.reported = warning.clone();
+          fresh
+        };
+        if let Some(keys) = warning {
+          self.log(&format!("hooks: unknown keys skipped: {keys}"));
+          if fresh {
+            self.notify(&tp("host.hooksUnknownKeys", &[("keys", &keys)]));
+          }
+        }
         Some(Arc::new(cfg))
       }
       Some(Err(e)) => {
@@ -201,13 +224,48 @@ impl AcpSession {
     }
   }
 
-  /// A turn is about to be staged: load the hooks, snapshot the watched trees, and return the context blocks a
-  /// session's first user prompt carries in front of its own
-  pub(crate) async fn hooks_before_turn(&self, origin: Origin) -> Vec<Value> {
+  /// A staged turn is about to be accepted: load the hooks, ask `beforePrompt` about a user's prompt, snapshot the
+  /// watched trees, and return what the prompt carries besides its own blocks. Err(reason): `beforePrompt` blocked the
+  /// prompt, and nothing of the hooks' state moved
+  pub(crate) async fn hooks_before_turn(&self, origin: Origin, text: &str, attachments: &[Attachment]) -> Result<TurnContext, String> {
     if origin == Origin::Compact {
-      return vec![];
+      return Ok(TurnContext::default());
     }
     let cfg = self.load_hooks();
+    let first_of = |c: &Core| origin == Origin::User && !c.state.turns.iter().any(|t| matches!(t, Turn::User(u) if u.auto != Some(true)));
+    let mut tail = vec![];
+    // Only what the user (or their goal) asks for; Acpira's own follow-ups and continues are not prompts of theirs
+    if matches!(origin, Origin::User | Origin::Goal)
+      && let Some(cfg) = cfg.as_ref()
+      && let Some(hook) = cfg.before_prompt.as_ref()
+    {
+      let first = first_of(&self.core.lock());
+      let payload = json!({
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": self.id,
+        "agent": self.agent,
+        "cwd": path_text(&cfg.root),
+        "prompt": text,
+        "origin": if origin == Origin::Goal { "goal" } else { "user" },
+        "attachments": attachments,
+        "first": first,
+      });
+      match run_prompt(hook, &cfg.root, &payload, &self.hook_env()).await {
+        PromptVerdict::Block(reason) => return Err(reason),
+        // A slash command must stay the prompt's only text, or the agent no longer reads it as one
+        PromptVerdict::Pass(Some(_)) if command_name(text).is_some() => self.log("hooks: beforePrompt context left out of a slash command"),
+        PromptVerdict::Pass(Some(context)) => {
+          self.log(&format!("hooks: beforePrompt context ({} bytes)", context.len()));
+          tail.push(json!({ "type": "text", "text": format!("<workspace-hook-context hook=\"beforePrompt\">\n{context}\n</workspace-hook-context>") }));
+        }
+        PromptVerdict::Pass(None) => {}
+        // No turn to hold a notice row yet: the warning is a toast
+        PromptVerdict::Broken(e) => {
+          self.log(&format!("hooks: `{}` broken: {e}", hook.run));
+          self.notify(&format!("{}\n{e}", tp("host.hookBroken", &[("hook", &hook.run)])));
+        }
+      }
+    }
     let (first, fresh) = {
       let mut c = self.core.lock();
       // A goal set or resumed from the dock is a request of the user's own, like a typed prompt
@@ -225,15 +283,38 @@ impl AcpSession {
         c.hooks.asked.clear();
       }
       c.hooks.config = cfg.clone();
-      let first = origin == Origin::User && !c.state.turns.iter().any(|t| matches!(t, Turn::User(u) if u.auto != Some(true)));
-      (first, !carried)
+      (first_of(&c), !carried)
     };
-    let Some(cfg) = cfg else { return vec![] };
+    let Some(cfg) = cfg else { return Ok(TurnContext { lead: vec![], tail }) };
     if fresh && cfg.tracks_changes() {
       let snap = Snapshot::take(&cfg.watch).await;
       self.core.lock().hooks.before = Some(snap);
     }
-    if first { self.context_blocks(&cfg).await } else { vec![] }
+    let lead = if first { self.context_blocks(&cfg).await } else { vec![] };
+    Ok(TurnContext { lead, tail })
+  }
+
+  /// `beforePrompt` blocked a prompt the session had claimed: the claim is undone, the user sees why next to the
+  /// prompt's text (the bubble never appears, so the text would be lost otherwise), and the queue moves on
+  pub(crate) fn hooks_prompt_blocked(self: &Arc<Self>, text: &str, reason: &str) {
+    self.log(&format!("hooks: prompt blocked: {reason}"));
+    let title = t("host.hookPromptBlocked");
+    let shown = {
+      let mut c = self.core.lock();
+      c.phase.staging = false;
+      c.phase.running = false;
+      let shown = c.state.turns.iter().any(|t| matches!(t, Turn::Agent(_)));
+      if shown {
+        let details = if text.trim().is_empty() { reason.to_owned() } else { format!("{reason}\n\n{text}") };
+        push_notice(&mut c, notice(Severity::Warning, title.clone(), Some(details)));
+      }
+      self.touch(&mut c);
+      shown
+    };
+    if !shown {
+      self.notify(&format!("{title}\n{reason}"));
+    }
+    self.flush_queue();
   }
 
   async fn context_blocks(&self, cfg: &HooksConfig) -> Vec<Value> {

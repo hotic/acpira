@@ -1,4 +1,5 @@
-//! Workspace hooks (`.agents/hooks.json`): context on the first prompt, `beforeEdit` on permission requests and on the
+//! Workspace hooks (`.agents/hooks.json`): context on the first prompt, `beforePrompt` on every user prompt,
+//! `beforeEdit` on permission requests and on the
 //! turn's own edits, `afterTurn` sending its findings back as automatic follow-ups
 
 use std::path::{Path, PathBuf};
@@ -9,7 +10,8 @@ use super::*;
 /// A git work tree with a hooks file and two node hook scripts that log every payload next to themselves:
 /// - before.cjs denies edits of `guarded.txt` until a tool has looked at RULES.md;
 /// - after.cjs blocks while a file the turn changed holds "bad\n", naming it with `hook-fix:` (the fake agent's cue);
-/// - always.cjs blocks every time, through exit code 2
+/// - always.cjs blocks every time, through exit code 2;
+/// - prompt.cjs adds context to a prompt naming `wish:` and blocks one naming `forbidden`
 struct Project {
   _dir: tempfile::TempDir,
   root: PathBuf,
@@ -40,6 +42,14 @@ process.stderr.write('nope');
 process.exit(2);
 "#;
 
+const PROMPT: &str = r#"
+const fs = require('fs'), path = require('path');
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+fs.appendFileSync(path.join(__dirname, 'prompt.log'), JSON.stringify(input) + '\n');
+if (input.prompt.includes('forbidden')) process.stdout.write(JSON.stringify({ decision: 'block', reason: 'not allowed here' }));
+else if (input.prompt.includes('wish:')) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: 'read wish-to-blocks first' } }));
+"#;
+
 fn git(root: &Path, args: &[&str]) {
   let ok = std::process::Command::new("git").arg("-C").arg(root).args(args).output().map(|o| o.status.success());
   assert_eq!(ok.ok(), Some(true), "git {args:?}");
@@ -59,7 +69,7 @@ impl Project {
     git(&root, &["commit", "-q", "-m", "base"]);
     let hooks_dir = root.join(".agents");
     std::fs::create_dir_all(&hooks_dir).unwrap();
-    for (name, body) in [("before.cjs", BEFORE), ("after.cjs", AFTER), ("always.cjs", ALWAYS)] {
+    for (name, body) in [("before.cjs", BEFORE), ("after.cjs", AFTER), ("always.cjs", ALWAYS), ("prompt.cjs", PROMPT)] {
       std::fs::write(hooks_dir.join(name), body).unwrap();
     }
     let command = |v: &Value| -> Value {
@@ -75,7 +85,7 @@ impl Project {
       }
     };
     let mut cfg = hooks.as_object().unwrap().clone();
-    for key in ["beforeEdit", "afterTurn"] {
+    for key in ["beforePrompt", "beforeEdit", "afterTurn"] {
       if let Some(v) = cfg.get(key).cloned() {
         cfg.insert(key.into(), command(&v));
       }
@@ -143,6 +153,56 @@ async fn the_first_prompt_carries_the_context_files_and_later_prompts_do_not() {
   // The user's bubble is the message alone: the context rides on the wire only
   expect_absent(&view(&s)["turns"][0], "attachments");
   assert!(h.logs().iter().any(|l| l.contains("hooks: context") && l.contains("RULES.md")), "{:?}", h.logs());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn before_prompt_context_rides_behind_the_prompt_on_the_wire_only() {
+  let fake = fake_or_skip!();
+  if !git_or_skip() {
+    return;
+  }
+  let p = Project::new(json!({ "beforePrompt": "prompt.cjs" }));
+  let h = Harness::new(&fake, json!({}));
+  let s = started(&h, &p.cwd()).await;
+  prompt(&s, "echo-text wish:a bigger chest").await;
+  prompt(&s, "echo-text plain").await;
+  let vw = view(&s);
+  let reply = vw["turns"][1]["blocks"][0]["markdown"].as_str().unwrap().to_owned();
+  assert!(reply.starts_with("echo-text wish:a bigger chest"), "{reply}");
+  assert!(reply.contains("<workspace-hook-context hook=\"beforePrompt\">\nread wish-to-blocks first\n</workspace-hook-context>"), "{reply}");
+  assert_eq!(vw["turns"][0]["text"], "echo-text wish:a bigger chest");
+  assert_eq!(vw["turns"][3]["blocks"][0]["markdown"], "echo-text plain");
+  let payloads = p.payloads("prompt.log");
+  assert_eq!(payloads.len(), 2);
+  assert_eq!(payloads[0]["hook_event_name"], "UserPromptSubmit");
+  assert_eq!(payloads[0]["prompt"], "echo-text wish:a bigger chest");
+  assert_eq!(payloads[0]["origin"], "user");
+  assert_eq!((payloads[0]["first"].clone(), payloads[1]["first"].clone()), (json!(true), json!(false)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_prompt_before_prompt_blocks_is_not_sent_and_its_text_is_kept_in_the_notice() {
+  let fake = fake_or_skip!();
+  if !git_or_skip() {
+    return;
+  }
+  let p = Project::new(json!({ "beforePrompt": "prompt.cjs" }));
+  let h = Harness::new(&fake, json!({}));
+  let s = started(&h, &p.cwd()).await;
+  // A first prompt blocked: no turn appears, the session takes the next one
+  prompt(&s, "say:forbidden first").await;
+  assert_eq!(turns_in(&view(&s)), 0);
+  assert!(!s.is_running());
+  prompt(&s, "say:fine").await;
+  prompt(&s, "say:forbidden again").await;
+  let vw = view(&s);
+  assert_eq!(turns_in(&vw), 2, "the blocked prompt never became a turn");
+  let n = notices(&vw);
+  assert_eq!(n.len(), 1, "{n:?}");
+  assert_eq!(n[0]["details"], "not allowed here\n\nsay:forbidden again");
+  assert_eq!(count(&h, "hooks: prompt blocked: not allowed here"), 2);
+  prompt(&s, "say:after").await;
+  assert_eq!(turns_in(&view(&s)), 4);
 }
 
 #[tokio::test(flavor = "multi_thread")]
