@@ -25,12 +25,12 @@ async fn codex_goals_show_on_the_view_mark_each_change_and_split_controls_betwee
   assert_eq!(view(&s)["goalActions"], json!(["set", "pause", "resume", "clear"]));
   expect_absent(view(&s), "goal");
 
-  // set goes out as the `/goal` prompt: a host turn, no request
+  // set goes out as the `/goal` prompt: a host turn without a bubble, no request
   s.control_goal(GoalAction::Set, Some(" ship it ".into())).await.unwrap();
   until(|| !s.is_running(), 5000).await;
   let vw = view(&s);
   expect_match(&vw["goal"], json!({ "objective": "ship it", "status": "active", "tokensUsed": 1200 }));
-  expect_match(&vw["turns"][0], json!({ "role": "user", "text": "/goal ship it" }));
+  expect_match(&vw["turns"][0], json!({ "role": "user", "text": "/goal ship it", "auto": true, "autoReason": "goal" }));
   assert_eq!(goal_rows(&vw), [json!({ "type": "goal", "event": "set", "objective": "ship it", "tokensUsed": 1200, "timeUsedSeconds": 0 })]);
   assert_eq!(goal_log(&dir), "");
 
@@ -44,7 +44,7 @@ async fn codex_goals_show_on_the_view_mark_each_change_and_split_controls_betwee
   // resume starts a turn on codex-acp, so it is the `/goal resume` prompt
   s.control_goal(GoalAction::Resume, None).await.unwrap();
   until(|| !s.is_running() && view(&s)["goal"]["status"] == "active", 5000).await;
-  expect_match(&view(&s)["turns"][2], json!({ "role": "user", "text": "/goal resume" }));
+  expect_match(&view(&s)["turns"][2], json!({ "role": "user", "text": "/goal resume", "auto": true, "autoReason": "goal" }));
   assert_eq!(goal_rows(&view(&s)).last().unwrap()["event"], "resumed");
 
   // A counter-only change marks nothing; meeting it does, and the met goal leaves the view when its turn ends
@@ -66,23 +66,44 @@ async fn codex_goals_show_on_the_view_mark_each_change_and_split_controls_betwee
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn claude_goals_clear_through_the_command_and_unadvertised_controls_send_nothing() {
+async fn claude_goals_are_met_when_their_turn_ends_and_unadvertised_controls_send_nothing() {
   let fake = fake_or_skip!();
   let dir = tempfile::tempdir().unwrap();
   let h = Harness::for_agent(&fake, "claude", json!({ "env": { "FAKE_GOAL": "claude", "FAKE_GOAL_LOG": dir.path().join("goal.log") } }));
   let s = started(&h, "/tmp").await;
   assert_eq!(view(&s)["goalActions"], json!(["set", "clear"]));
+  // The Stop hook holds the turn until the goal is met, so a turn that ends on its own met it, snapshot or not
   prompt(&s, "/goal fix the build").await;
   until(|| !s.is_running(), 5000).await;
-  expect_match(&view(&s)["goal"], json!({ "objective": "fix the build", "status": "active" }));
+  let vw = view(&s);
+  assert_eq!(goal_rows(&vw).iter().map(|r| r["event"].clone()).collect::<Vec<_>>(), [json!("set"), json!("complete")]);
+  expect_absent(&vw, "goal");
+  assert!(s.to_record().goal.is_none());
   // Not advertised: neither a request nor a prompt
   s.control_goal(GoalAction::Pause, None).await.unwrap();
   assert_eq!(turn_count(&s), 2);
+  assert_eq!(goal_log(&dir), "");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancelled_claude_turn_keeps_its_goal_and_clear_is_sent_as_the_command() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let h = Harness::for_agent(&fake, "claude", json!({ "env": { "FAKE_GOAL": "claude", "FAKE_SESSION_DIR": dir.path() } }));
+  // A goal still active while idle: here a reopened record's, as after a cancel
+  let mut record = ran_once(&h, "/tmp").await;
+  record.goal = Some(serde_json::from_value(json!({ "objective": "fix the build", "status": "active" })).unwrap());
+  let s = reopened(&h, record).await;
+  let pending = spawn_prompt(&s, "slow");
+  until(|| s.is_running(), 5000).await;
+  s.cancel().await;
+  pending.await.unwrap();
+  expect_match(&view(&s)["goal"], json!({ "objective": "fix the build", "status": "active" }));
   // claude-agent-acp runs clear as the command, so the host sends it as its own turn
   s.control_goal(GoalAction::Clear, None).await.unwrap();
   until(|| !s.is_running() && view(&s)["goal"].is_null(), 5000).await;
-  expect_match(&view(&s)["turns"][2], json!({ "role": "user", "text": "/goal clear" }));
-  assert_eq!(goal_log(&dir), "");
+  expect_match(view(&s)["turns"].as_array().unwrap().iter().rev().nth(1).unwrap(), json!({ "role": "user", "text": "/goal clear", "auto": true, "autoReason": "goal" }));
+  assert_eq!(goal_rows(&view(&s)).last().unwrap()["event"], "cleared");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -97,4 +118,26 @@ async fn a_reopened_record_keeps_its_goal_until_the_agent_reports_another() {
   // An agent without the extension advertises no controls
   expect_absent(&vw, "goalActions");
   assert!(goal_rows(&vw).is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_claude_clear_during_a_turn_is_steered_in_as_a_request() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let env = json!({ "FAKE_GOAL": "claude", "FAKE_SESSION_DIR": dir.path(), "FAKE_GOAL_LOG": dir.path().join("goal.log") });
+  let h = Harness::for_agent(&fake, "claude", json!({ "env": env }));
+  let mut record = ran_once(&h, "/tmp").await;
+  record.goal = Some(serde_json::from_value(json!({ "objective": "fix the build", "status": "active" })).unwrap());
+  let s = reopened(&h, record).await;
+  let pending = spawn_prompt(&s, "slow");
+  until(|| s.is_running(), 5000).await;
+  // The goal holds the running turn until met: a queued clear would wait for good, so it goes over `_session/goal`
+  s.control_goal(GoalAction::Clear, None).await.unwrap();
+  until(|| view(&s)["goal"].is_null(), 5000).await;
+  assert_eq!(goal_log(&dir), "clear
+");
+  assert!(view(&s)["queued"].as_array().is_none_or(|q| q.is_empty()));
+  assert_eq!(goal_rows(&view(&s)).last().unwrap()["event"], "cleared");
+  s.cancel().await;
+  pending.await.unwrap();
 }

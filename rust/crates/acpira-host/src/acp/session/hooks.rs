@@ -210,7 +210,8 @@ impl AcpSession {
     let cfg = self.load_hooks();
     let (first, fresh) = {
       let mut c = self.core.lock();
-      if origin == Origin::User {
+      // A goal set or resumed from the dock is a request of the user's own, like a typed prompt
+      if matches!(origin, Origin::User | Origin::Goal) {
         c.hooks.round = 0;
       }
       c.hooks.denied.clear();

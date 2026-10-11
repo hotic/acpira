@@ -455,7 +455,8 @@ export interface UserTurn {
 // `accountSwitch`: the previous turn ran out of account quota and the session moved to another account
 // `retry`: the previous turn failed after doing part of the work; Retry asked the agent to carry on instead of resending the message
 // `gate`: the workspace gate (`.agents/hooks.json`) blocked the previous turn and sent its findings back to the agent
-export type AutoReason = 'compact' | 'accountSwitch' | 'retry' | 'gate';
+// `goal`: a goal control from the dock (set as goal, resume, clear) went out as its `/goal …` command; the goal row stands for it
+export type AutoReason = 'compact' | 'accountSwitch' | 'retry' | 'gate' | 'goal';
 
 export interface TurnSettings {
   modeId?: string;

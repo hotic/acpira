@@ -63,6 +63,10 @@ pub fn export_markdown(input: &ExportInput, labels: &ExportLabels, blob_path: &d
 
 fn user_turn(turn: &UserTurn, labels: &ExportLabels) -> String {
   if turn.auto == Some(true) {
+    // A goal control has nothing to say beyond its goal row, which the export leaves out too
+    if turn.auto_reason == Some(AutoReason::Goal) {
+      return String::new();
+    }
     let label = match turn.auto_reason {
       Some(AutoReason::AccountSwitch) => &labels.auto_continue,
       Some(AutoReason::Retry) => &labels.auto_retry,

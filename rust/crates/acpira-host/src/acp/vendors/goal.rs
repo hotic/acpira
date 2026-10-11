@@ -107,6 +107,16 @@ fn event_for(s: GoalStatus) -> GoalEvent {
   }
 }
 
+/// The met goal a Claude turn that ended on its own leaves behind (`Vendor::goal_met_at_turn_end`). Claude Code's
+/// `/goal` is a Stop hook that blocks the turn from ending until the condition holds, then clears the goal and emits
+/// `active_goal: null`; claude-agent-acp 0.87.0 drops that null while the `/goal` command that set the goal is still
+/// pending, which is always the case when the first check already passes (the goal turn and the command share one
+/// result). Seen live 2026-10-11 (Claude Code 2.1.287): `goal_status met: true` in the CLI's transcript, no snapshot
+/// on the wire. A goal still active there is therefore met; one the hook let go unmet comes back with its next snapshot
+pub fn met_by_turn_end(goal: Option<&SessionGoal>) -> Option<SessionGoal> {
+  goal.filter(|g| g.status == GoalStatus::Active).map(|g| SessionGoal { status: GoalStatus::Complete, ..g.clone() })
+}
+
 /// Whether the action starts a turn of the agent's own when sent over `_session/goal` (see the module doc); those go
 /// out as a `/goal …` prompt instead. `clear_starts_turn` is `Vendor::goal_clear_starts_turn`
 pub fn starts_turn(action: GoalAction, clear_starts_turn: bool) -> bool {
@@ -129,8 +139,9 @@ pub fn command_text(action: GoalAction, objective: Option<&str>) -> Option<Strin
 
 /// Claude Code answers its `/goal` command with the command's local output, which claude-agent-acp forwards as reply
 /// text: "Goal set: <objective>", or "Goal cleared: <old objective>" for `/goal clear` (claude-agent-acp 0.87.0 / SDK
-/// 0.3.287, seen live after a steered `/goal`). The goal row and strip already say as much, so the echo is dropped.
-/// `sent` is the newest text the host sent (prompt or steer); whitespace is compared loosely
+/// 0.3.287, seen live after a steered `/goal`), or "No goal set" for a `/goal clear` that found none (seen live
+/// 2026-10-11 after the dock's clear, the goal already met and cleared by the CLI). The goal row and strip already say as
+/// much, so the echo is dropped. `sent` is the newest text the host sent (prompt or steer); whitespace is compared loosely
 pub fn is_command_echo(text: &str, sent: &str) -> bool {
   let squash = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
   let Some(arg) = sent.trim().strip_prefix("/goal") else { return false };
@@ -141,7 +152,7 @@ pub fn is_command_echo(text: &str, sent: &str) -> bool {
   let (arg, text) = (squash(arg), squash(text));
   match arg.as_str() {
     "" | "pause" | "resume" => false,
-    "clear" => text.starts_with("Goal cleared: "),
+    "clear" => text.starts_with("Goal cleared: ") || text.trim_end_matches('.') == "No goal set",
     _ => text == format!("Goal set: {arg}"),
   }
 }
@@ -225,6 +236,8 @@ mod tests {
     assert!(!is_command_echo("Goal set: ship it", "ship it"));
     assert!(!is_command_echo("Goal set: ship it", "/goals ship it"));
     assert!(is_command_echo("Goal cleared: ship it", "/goal clear"));
-    assert!(!is_command_echo("No goal set", "/goal clear"));
+    assert!(is_command_echo("No goal set", "/goal clear"));
+    assert!(!is_command_echo("No goal set", "/goal ship it"));
+    assert!(!is_command_echo("No goal set yet, so nothing to clear", "/goal clear"));
   }
 }

@@ -168,15 +168,21 @@ impl AcpSession {
       c.startup_banner = None;
       return;
     }
-    // Claude Code's "Goal set: …" answer to the `/goal` command just sent repeats the goal row
+    // Claude Code's "Goal set: …" answer to the `/goal` command just sent (as a prompt, or steered in by a goal control)
+    // repeats the goal row
     if kind == "agent_message_chunk"
       && self.vendor.echoes_goal_command()
       && u.get("content").and_then(|x| x.get("type")).and_then(Value::as_str) == Some("text")
       && let Some(text) = u["content"].get("text").and_then(Value::as_str)
-      && last_sent_text(&c.state.turns).is_some_and(|sent| goal::is_command_echo(text, sent))
     {
-      self.log("goal command echo ignored");
-      return;
+      let steered = c.goal_steered.as_deref().is_some_and(|sent| goal::is_command_echo(text, sent));
+      if steered || last_sent_text(&c.state.turns).is_some_and(|sent| goal::is_command_echo(text, sent)) {
+        if steered {
+          c.goal_steered = None;
+        }
+        self.log("goal command echo ignored");
+        return;
+      }
     }
     // A goal snapshot (codex-acp / claude-agent-acp goal extension); a replayed history restores it without rows
     if kind == "session_info_update"
