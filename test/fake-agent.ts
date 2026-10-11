@@ -204,10 +204,10 @@ let compactions = 0;
 // tests can place a follow-up between the RPC acknowledgement and status events.
 const backgroundStyle = process.env.FAKE_COMPACTION;
 const grokUsage = process.env.FAKE_GROK_USAGE;
-let background: ((status: 'start' | 'completed' | 'cancelled') => Promise<void>) | undefined;
-
 // FAKE_COMPACTION_SILENT_USAGE: background compaction reports no context afterwards (Devin 3000.11.3); the next ordinary reply does
 const silentCompactionUsage = !!process.env.FAKE_COMPACTION_SILENT_USAGE;
+let background: ((status: 'start' | 'completed' | 'cancelled') => Promise<void>) | undefined;
+
 const app = acp.agent({ name: 'fake-agent' })
   .onRequest('_x.ai/session/info', value => value as { sessionId: string }, ({ params }) => {
     if (!grokUsage || grokUsage === 'unsupported') throw acp.RequestError.methodNotFound('_x.ai/session/info');
@@ -622,15 +622,15 @@ const app = acp.agent({ name: 'fake-agent' })
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: params.prompt.map(p => p.type).join(',') } });
       return { stopReason: 'end_turn' };
     }
-    // "say:<text>" → exactly that text as the reply ("||" splits it into chunks): antigravity-acp reports a failed turn this way
-    if (text.startsWith('say:')) {
-      for (const part of text.slice(4).split('||')) await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: part } });
-      return { stopReason: 'end_turn' };
     // echo-text → reply with the prompt's text blocks joined, so tests can see text the host added to the prompt
     if (text.startsWith('echo-text')) {
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
       return { stopReason: 'end_turn' };
     }
+    // "say:<text>" → exactly that text as the reply ("||" splits it into chunks): antigravity-acp reports a failed turn this way
+    if (text.startsWith('say:')) {
+      for (const part of text.slice(4).split('||')) await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: part } });
+      return { stopReason: 'end_turn' };
     }
     // Workspace hooks (tests/engine/acp_session/hooks.rs). A prompt holding "hook-fix:<path>" anywhere (the gate's findings)
     // rewrites that file to "fixed\n"; "hook-write:<path>" writes "bad\n" the way an agent's own tool does, without asking;
