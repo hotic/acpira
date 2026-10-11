@@ -287,7 +287,7 @@ impl AcpSession {
         goal: record.goal,
         ..Default::default()
       };
-      let tree = SubagentTree::new(tree_log, ctx, record.subagents, Some(&record.updated_at));
+      let tree = SubagentTree::new(tree_log, ctx, record.subagents, Some(&record.updated_at), Vendor::of(&record.agent).resumed_child_logs());
       AcpSession {
         id: record.id,
         vendor: Vendor::of(&record.agent),

@@ -1,7 +1,8 @@
-//! The live process of Claude workflow agents: while any workflow receipt node of the session runs, its sidechain log
-//! (`vendors/claude_workflow_log.rs`) is polled, and what was appended lands in the node's own transcript. A node that
+//! The live process of Claude workflow agents, and of resumed native subagent runs the adapter drops (`SubagentTree`
+//! `resumed_task`): while such a node runs, its sidechain log (`vendors/claude_workflow_log.rs`) is polled, and what was
+//! appended lands in the node's own transcript (a resumed run only takes the lines of its own time window). A node that
 //! ends gets one more read for its last lines; a restored node without a process is read once when a viewer opens it.
-//! Nothing is polled while no workflow agent runs, and an unchanged log (size + mtime) is not opened
+//! Nothing is polled while no such node runs, and an unchanged log (size + mtime) is not opened
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -12,7 +13,7 @@ use serde_json::Value;
 use tokio::task::AbortHandle;
 
 use crate::acp::session::{AcpSession, Core};
-use crate::acp::vendors::claude_workflow_log::{self as wlog, LogCursor};
+use crate::acp::vendors::claude_workflow_log::{self as wlog, LogCursor, LogWindow};
 
 pub const WORKFLOW_LOG_INTERVAL: Duration = Duration::from_millis(1000);
 /// A session directory not found yet is looked for again (a scan of every project directory) at most this often
@@ -38,6 +39,7 @@ struct Job {
   node: String,
   agent_id: String,
   running: bool,
+  window: Option<LogWindow>,
   cursor: LogCursor,
 }
 
@@ -75,16 +77,16 @@ impl AcpSession {
       let Core { tree, workflow_logs: w, .. } = &mut *c;
       let targets = tree.workflow_log_targets(&w.wanted, &w.done);
       // Cursors of nodes that are gone (an edit removed their turn) go with them
-      w.cursors.retain(|id, _| targets.iter().any(|(n, _, _)| n == id));
+      w.cursors.retain(|id, _| targets.iter().any(|t| t.node == *id));
       if targets.is_empty() {
         return;
       }
       w.inflight = true;
       let jobs: Vec<Job> = targets
         .into_iter()
-        .map(|(node, agent_id, running)| {
-          let cursor = w.cursors.remove(&node).unwrap_or_else(|| LogCursor::new(&self.cwd));
-          Job { node, agent_id, running, cursor }
+        .map(|t| {
+          let cursor = w.cursors.remove(&t.node).unwrap_or_else(|| LogCursor::new(&self.cwd));
+          Job { node: t.node, agent_id: t.agent_id, running: t.running, window: t.window, cursor }
         })
         .collect();
       let rescan = w.session_dir.is_none() && w.last_scan.is_none_or(|t| t.elapsed() >= RESCAN_INTERVAL);
@@ -101,6 +103,7 @@ impl AcpSession {
         .into_iter()
         .map(|mut j| {
           let mut updates = vec![];
+          j.cursor.set_window(j.window);
           if let Some(d) = &dir {
             // A running agent's backlog catches up over a few polls; an ended one is read to its end now (the cursor
             // caps the whole log, so this stays bounded)

@@ -23,11 +23,17 @@ use crate::acp::transcript::normalize::{
 use crate::acp::session::restore_turns::restore_interrupted_turns;
 use crate::acp::session::failure::failure_of;
 use crate::acp::transport::wire::{SubagentLifecycle, WorkflowProgress};
+use crate::acp::vendors::claude_workflow_log::LogWindow;
 use crate::i18n::t;
 use crate::util::{ms_of_iso, now_iso, now_ms, random_uuid};
 
 const ORPHAN_MAX_IDS: usize = 8;
 const ORPHAN_MAX_UPDATES: usize = 64;
+/// How far around its announce / end a resumed run's log window reaches: the CLI writes the resume prompt just before the
+/// adapter announces the run, and the run's last lines just before its terminal word
+const RESUMED_LOG_SLACK_MS: i64 = 2000;
+/// `SendMessage` calls remembered until the run they resume is announced
+const SEND_MESSAGES_MAX: usize = 16;
 
 /// What routing may touch on the root side: the anchor turn index and the root transcript itself
 pub struct RouteCtx<'a> {
@@ -92,6 +98,28 @@ struct Node {
   cached: Option<(i64, SubagentSummary)>,
   restored: bool,
   late_logged: bool,
+  /// A `SendMessage` resume of a Claude native child (`resumed_task`): claude-agent-acp drops the run's own updates, so
+  /// its transcript is read from the child's sidechain log until the wire proves otherwise
+  resumed: bool,
+  /// Some of that log has landed: a late wire copy of the same run is no longer applied
+  log_fed: bool,
+}
+
+/// The task id of a resumed native child run: claude-agent-acp announces the run a `SendMessage` starts on a finished
+/// child as `<taskId>:generation:<n>` (n ≥ 2; source 0.83.0 `native-subagents.js` `nextChildSessionId`). Its updates
+/// still name the first run's `parentToolUseId`, which the adapter routes to that finished first run and drops (stderr
+/// "ignoring late update for terminal subagent"; observed 2026-10-11, 0.83.0, source unchanged in 0.89.1)
+fn resumed_task(peer_session: &str) -> Option<&str> {
+  let (task, n) = peer_session.split_once(":generation:")?;
+  (!task.is_empty() && n.parse::<u32>().is_ok_and(|n| n >= 2)).then_some(task)
+}
+
+/// What `session/workflow_logs.rs` reads for one node: its log, whether it still runs, and the window of its own lines
+pub struct LogTarget {
+  pub node: String,
+  pub agent_id: String,
+  pub running: bool,
+  pub window: Option<LogWindow>,
 }
 
 fn terminal(s: SubagentState) -> bool {
@@ -140,6 +168,10 @@ pub struct SubagentTree {
   child_ctx: ToolCtx,
   /// Node ids that went terminal since the last drain: the session closes their pending cards
   pub terminal_events: Vec<String>,
+  /// The adapter drops resumed native runs (`resumed_task`): read them from the sidechain log (`Vendor::resumed_child_logs`)
+  resumed_logs: bool,
+  /// Root `SendMessage` calls not yet tied to the run they resume: (tool call id, the agent id it names)
+  send_messages: Vec<(String, String)>,
 }
 
 #[derive(serde::Serialize)]
@@ -167,7 +199,7 @@ pub enum Route {
 }
 
 impl SubagentTree {
-  pub fn new(log: Log, child_ctx: ToolCtx, records: Option<Vec<SubagentRecord>>, updated_at: Option<&str>) -> Self {
+  pub fn new(log: Log, child_ctx: ToolCtx, records: Option<Vec<SubagentRecord>>, updated_at: Option<&str>, resumed_logs: bool) -> Self {
     let at = updated_at.map(str::to_owned).unwrap_or_else(now_iso);
     let mut tree = SubagentTree {
       nodes: vec![],
@@ -183,10 +215,17 @@ impl SubagentTree {
       log,
       child_ctx,
       terminal_events: vec![],
+      resumed_logs,
+      send_messages: vec![],
     };
     for r in records.unwrap_or_default() {
-      let c = r.core;
+      let mut c = r.core;
       let was_running = c.state == SubagentState::Running;
+      // A record from before the sidechain read still names its log through the peer id
+      let resumed = resumed_logs && c.peer.session_id.as_deref().and_then(resumed_task).is_some();
+      if resumed && c.peer.sidechain_id.is_none() {
+        c.peer.sidechain_id = c.peer.session_id.as_deref().and_then(resumed_task).map(str::to_owned);
+      }
       let mut state = tree.child_state();
       state.turns = restore_interrupted_turns(r.turns, &at);
       tree.nodes.push(Node {
@@ -218,6 +257,8 @@ impl SubagentTree {
         cached: None,
         restored: true,
         late_logged: false,
+        resumed,
+        log_fed: false,
       });
     }
     tree.reindex();
@@ -384,6 +425,8 @@ impl SubagentTree {
       cached: None,
       restored: false,
       late_logged: false,
+      resumed: false,
+      log_fed: false,
     }
   }
 
@@ -418,16 +461,28 @@ impl SubagentTree {
     let i = match n {
       Some(i) => i,
       None => {
-        let node = self.new_node(
+        let mut node = self.new_node(
           SubagentVisibility::Session,
           SubagentPeer { session_id: Some(l.peer_session_id.clone()), ..Default::default() },
           ctx.turn_index,
           l.cancel == Some(true),
           None,
         );
+        let task = if self.resumed_logs { resumed_task(&l.peer_session_id).map(str::to_owned) } else { None };
+        if let Some(task) = &task {
+          node.resumed = true;
+          node.peer.sidechain_id = Some(task.clone());
+        }
         self.by_session.insert(l.peer_session_id.clone(), node.id.clone());
         self.nodes.push(node);
-        self.nodes.len() - 1
+        let i = self.nodes.len() - 1;
+        if let Some(task) = task
+          && let Some(pos) = self.send_messages.iter().rposition(|(_, to)| *to == task)
+        {
+          let (call, _) = self.send_messages.remove(pos);
+          self.link_resume_call(i, &call, ctx);
+        }
+        i
       }
     };
     if let Some(launch) = launch {
@@ -531,11 +586,23 @@ impl SubagentTree {
       }
       _ => {}
     }
+    // A resumed run read from its log takes no wire copy of the same chunks; wire text before any log line means this
+    // adapter delivers the run after all, and the log is left alone
+    if self.nodes[i].resumed && matches!(kind, "agent_message_chunk" | "agent_thought_chunk") {
+      if self.nodes[i].log_fed {
+        return;
+      }
+      self.nodes[i].resumed = false;
+      let label = Self::label(&self.nodes[i]);
+      self.log(&format!("resumed subagent {label} streams on the wire; its sidechain log is not read"));
+    }
     // Claude native mirror link: the child's own updates may name the parent's Task call
     let n = &self.nodes[i];
     if n.visibility == SubagentVisibility::Session
       && n.peer.tool_call_id.is_none()
       && let Some(session) = n.peer.session_id.clone()
+      // A resumed run still names the first run's Agent call, which stays the first run's
+      && resumed_task(&session).is_none()
       && let Some(link) = s(u.get("_meta").and_then(|m| m.get("claudeCode")).and_then(|c| c.get("parentToolUseId")))
     {
       if let Some(prior) = self.by(&self.by_tool, &link)
@@ -850,6 +917,14 @@ impl SubagentTree {
       return;
     }
     let claude = meta.and_then(|m| rec(m.get("claudeCode")));
+    if self.resumed_logs
+      && self.by(&self.by_tool, &tool_call_id).is_none()
+      && s(claude.and_then(|c| c.get("toolName"))).as_deref() == Some("SendMessage")
+      && let Some(to) = s(raw.and_then(|r| r.get("to")))
+    {
+      self.note_send_message(&tool_call_id, &to, ctx);
+      return;
+    }
     let mut n = self.by(&self.by_tool, &tool_call_id);
     if claude.and_then(|c| c.get("subagent")) == Some(&Value::Bool(true)) {
       let i = match n {
@@ -913,6 +988,26 @@ impl SubagentTree {
       _ => {}
     }
     self.bump(&id);
+  }
+
+  /// A root `SendMessage` naming an agent: tied to that agent's resumed run if it is already announced in this turn,
+  /// else remembered for its announce. The call streams in with an empty input first, so `to` may come with an update
+  fn note_send_message(&mut self, call: &str, to: &str, ctx: &mut RouteCtx) {
+    let turn = ctx.turn_index as u64;
+    let run = self.nodes.iter().rposition(|n| {
+      n.resumed && n.peer.tool_call_id.is_none() && n.turn_index == turn && n.peer.sidechain_id.as_deref() == Some(to)
+    });
+    if let Some(i) = run {
+      self.link_resume_call(i, call, ctx);
+      return;
+    }
+    if self.send_messages.iter().any(|(c, _)| c == call) {
+      return;
+    }
+    if self.send_messages.len() >= SEND_MESSAGES_MAX {
+      self.send_messages.remove(0);
+    }
+    self.send_messages.push((call.to_owned(), to.to_owned()));
   }
 
   /// A Claude dynamic workflow's progress (`claude_workflow.rs`): one receipt node per agent, keyed by run and position
@@ -1000,7 +1095,7 @@ impl SubagentTree {
   /// Workflow agents whose sidechain log is due a read (`session/workflow_logs.rs`): running ones, a live one that just
   /// ended (its last lines), and a restored one a viewer asked for (`wanted`) whose record holds no process. `done` are
   /// the nodes whose final read already ran. (node id, the agent's own id, running)
-  pub fn workflow_log_targets(&self, wanted: &HashSet<String>, done: &HashSet<String>) -> Vec<(String, String, bool)> {
+  pub fn workflow_log_targets(&self, wanted: &HashSet<String>, done: &HashSet<String>) -> Vec<LogTarget> {
     self
       .nodes
       .iter()
@@ -1011,9 +1106,14 @@ impl SubagentTree {
         let due = if n.restored {
           !running && wanted.contains(&n.id) && !has_content(&n.state.turns)
         } else {
-          n.dialect == Some(Dialect::Workflow)
+          n.dialect == Some(Dialect::Workflow) || n.resumed
         };
-        due.then(|| (n.id.clone(), agent_id, running))
+        // A resumed run shares its log with every other run of the agent: only the lines between its announce and its end
+        let window = n.resumed.then(|| LogWindow {
+          from: n.announced_at - RESUMED_LOG_SLACK_MS,
+          to: if running { None } else { Some(n.ended_at.unwrap_or_else(now_ms) + RESUMED_LOG_SLACK_MS) },
+        });
+        due.then(|| LogTarget { node: n.id.clone(), agent_id, running, window })
       })
       .collect()
   }
@@ -1024,6 +1124,10 @@ impl SubagentTree {
   pub fn workflow_log(&mut self, id: &str, updates: &[Value]) -> bool {
     let Some(i) = self.idx(id) else { return false };
     let n = &mut self.nodes[i];
+    // A native child whose run turned out to stream on the wire while this read was under way
+    if n.dialect != Some(Dialect::Workflow) && !n.resumed && !n.restored {
+      return false;
+    }
     let mut changed = false;
     for u in updates {
       changed |= apply_update(&mut n.state, u);
@@ -1035,10 +1139,25 @@ impl SubagentTree {
       let stop = if matches!(n.status, SubagentState::Cancelled | SubagentState::Disconnected) { TurnStop::Cancelled } else { TurnStop::EndTurn };
       end_turn(&mut n.state, stop);
     }
+    n.log_fed |= n.resumed;
     // The progress frame counts the agent's tool calls too; the log may be behind it or ahead
     n.tool_count = n.tool_count.max(tool_count(&n.state.turns));
     n.rev += 1;
     true
+  }
+
+  /// A resumed run sits where the `SendMessage` that started it is, the way a first run sits at its Agent call
+  fn link_resume_call(&mut self, i: usize, call: &str, ctx: &mut RouteCtx) {
+    let id = self.nodes[i].id.clone();
+    let Some(block) = ctx.root_tool(call) else { return };
+    if block.subagent_id.is_some() {
+      return;
+    }
+    block.subagent_id = Some(id.clone());
+    seal_launch_receipt(block);
+    self.nodes[i].peer.tool_call_id = Some(call.to_owned());
+    self.by_tool.insert(call.to_owned(), id.clone());
+    self.bump(&id);
   }
 
   fn upsert_call_node(&mut self, tool_call_id: &str, visibility: SubagentVisibility, ctx: &mut RouteCtx) -> usize {
@@ -1413,5 +1532,20 @@ fn result_text(u: &Value, block: &ToolCallBlock) -> Option<String> {
   match &block.content {
     Some(ToolContent::Text { text }) => Some(text.clone()),
     _ => None,
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::resumed_task;
+
+  #[test]
+  fn only_a_later_generation_names_a_resumed_task() {
+    assert_eq!(resumed_task("af556d847b5f299c3:generation:2"), Some("af556d847b5f299c3"));
+    assert_eq!(resumed_task("af556d847b5f299c3:generation:13"), Some("af556d847b5f299c3"));
+    assert_eq!(resumed_task("thr:generation:1"), None);
+    assert_eq!(resumed_task(":generation:2"), None);
+    assert_eq!(resumed_task("k1:generation:x"), None);
+    assert_eq!(resumed_task("k1"), None);
   }
 }
