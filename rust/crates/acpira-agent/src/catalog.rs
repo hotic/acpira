@@ -94,8 +94,11 @@ mod tests {
     std::fs::write(dir.path().join("catalog/models.json"), file.to_json()).unwrap();
     assert!(Arc::ptr_eq(&cache.get(), &SNAPSHOT), "an older format is not used");
     file.format = acpira_shared::model_catalog::FORMAT;
-    file.models[0].name = "From the cache".into();
+    // The cache keys on (mtime, length) and Windows can give two quick writes the same mtime, so the rewrite must
+    // change the length: appending to the snapshot's name does, a fixed name of the same length did not
+    let name = format!("{} (from the cache)", file.models[0].name);
+    file.models[0].name = name.clone();
     std::fs::write(dir.path().join("catalog/models.json"), file.to_json()).unwrap();
-    assert_eq!(cache.get().file.models[0].name, "From the cache");
+    assert_eq!(cache.get().file.models[0].name, name);
   }
 }
