@@ -4,7 +4,7 @@ mod support;
 use std::time::Duration;
 use acpira_agent::mock::{self, MockModel};
 use serde_json::{Value, json};
-use support::{Answer, Harness};
+use support::Harness;
 
 async fn prompt(h: &Harness, sid: &str) -> Value {
   h.conn.request("session/prompt", json!({"sessionId":sid,"prompt":[{"type":"text","text":"review fixture"}]})).await.unwrap()
@@ -93,7 +93,7 @@ async fn allowing_a_command_prefix_does_not_allow_a_second_shell_command() {
   let server = MockModel::start();
   h.providers(&server.base_url(), json!([{"id":"m1"}]));
   let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
-  *h.client.answer.lock() = Answer::Always;
+  *h.client.answer.lock() = support::Answer::Always;
   server.push(mock::tools(&[("c1", "bash", json!({"command":"echo review"}))]));
   server.push(mock::tools(&[("c2", "bash", json!({"command":"echo review && printf unapproved > marker"}))]));
   server.push(mock::text("done"));
