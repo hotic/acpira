@@ -29,7 +29,7 @@ pub const MODES: &[Mode] = &[
   Mode {
     id: AGENT,
     name: "Agent",
-    description: "Reads, edits and runs commands, asking before each change",
+    description: "Reads, edits and runs commands; what asks first is the approval level in settings",
     overlay: "Plan mode is off. You are in Agent mode again: you can edit files and run commands, within the permission rules.",
     rules: &[],
   },

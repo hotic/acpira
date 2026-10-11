@@ -20,7 +20,7 @@ import { ModelMark } from '../chat/ModelMark';
 import { Count, Dot, FactRow, Field, Group, ItemRow, ListHead, ModelLine, Note, PathText, SearchRow, Section, SectionAction, SectionDescription, SectionHead, Select, SourceLink, Switch, shortPath, type ModelTags } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 import { ProvidersSection, type ProvidersState } from './ProvidersSection';
-import { BUILTIN_AGENT_ID } from '@shared/providers';
+import { APPROVAL_LEVELS, approvalOf, BUILTIN_AGENT_ID, type ApprovalLevel } from '@shared/providers';
 
 type AgentSection = 'models' | 'mcp' | 'skills' | 'rules' | 'config';
 // What the CLI's own files declare; shared resources live on the Shared page, so these fold away by default
@@ -122,6 +122,7 @@ export function AgentPage({ agent, accounts, install, inventory, controls, provi
       )}
 
       {agent.id === BUILTIN_AGENT_ID && <ProvidersSection state={providers} on={on} />}
+      {agent.id === BUILTIN_AGENT_ID && <ApprovalSection state={providers} on={on} />}
 
       {PLAN_AUTO_APPROVE_AGENTS.includes(agent.id) && <PermissionsSection agent={agent} settings={settings} on={on} />}
 
@@ -158,6 +159,38 @@ function NativeBlock({ agent, count, children }: { agent: AgentInfo; count?: num
         <div className="flex flex-col gap-(--section-gap) pt-2">{children}</div>
       </Collapsible.Panel>
     </Collapsible.Root>
+  );
+}
+
+// The built-in agent's approval level: a setting of the agent in providers.json, not a composer control, so the
+// composer shows only the mode chip. Read at the start of every turn; Plan mode's limits hold under any level
+const APPROVAL_KEYS: Record<ApprovalLevel, { label: MsgKey; desc: MsgKey }> = {
+  ask: { label: 'settings.agent.approval.ask', desc: 'settings.agent.approval.ask.desc' },
+  'auto-edit': { label: 'settings.agent.approval.autoEdit', desc: 'settings.agent.approval.autoEdit.desc' },
+  full: { label: 'settings.agent.approval.full', desc: 'settings.agent.approval.full.desc' },
+};
+
+function ApprovalSection({ state, on }: { state?: ProvidersState; on: SettingsHandlers }) {
+  // The picked level shows at once and gives way to the file's once the host answers with a new view
+  const [picked, setPicked] = useState<ApprovalLevel>();
+  useEffect(() => { setPicked(undefined); }, [state?.view, state?.error]);
+  const level = picked ?? approvalOf(state?.view);
+  const pick = (v: ApprovalLevel) => {
+    if (v === level) return;
+    setPicked(v);
+    on.providerAction?.({ kind: 'approval', level: v });
+  };
+  return (
+    <div className="flex flex-col gap-2">
+      <SectionHead>{t('settings.agent.permissions')}</SectionHead>
+      <Section>
+        <Field label={t('settings.agent.approval')} desc={t(APPROVAL_KEYS[level].desc)}>
+          {state
+            ? <Select options={APPROVAL_LEVELS.map(v => ({ value: v, label: t(APPROVAL_KEYS[v].label) }))} value={level} onChange={pick} label={t('settings.agent.approval')} />
+            : <Shimmer active>{t('settings.loading')}</Shimmer>}
+        </Field>
+      </Section>
+    </div>
   );
 }
 

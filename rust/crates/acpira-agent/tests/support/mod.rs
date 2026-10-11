@@ -105,6 +105,14 @@ impl Harness {
     std::fs::write(self.home().join("secrets.json"), json!({ "acpira.provider.mock": "sk-test" }).to_string()).unwrap();
   }
 
+  /// The approval level as the settings page sets it: a field of providers.json, read at the start of every turn
+  pub fn approval(&self, level: &str) {
+    let path = self.home().join("providers.json");
+    let mut file: Value = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_else(|| json!({ "version": 1 }));
+    file["approval"] = json!(level);
+    std::fs::write(&path, file.to_string()).unwrap();
+  }
+
   pub async fn new_session(&self) -> Value {
     self.conn.request("session/new", json!({ "cwd": self.cwd.path(), "mcpServers": [] })).await.unwrap()
   }

@@ -162,7 +162,8 @@ export function familyLabel(control: Pick<ConfigControl, 'id' | 'category'>, fam
 // ACP capabilities choose the contents of one composer, never its layout.
 // Recognize native reasoning and model parameters before applying model-name decomposition.
 // Codex's `collaboration_mode` (default / plan) is a working mode next to the permission modes, so it sits on the left,
-// and so does the built-in agent's approval level (`_permission_mode`, after its Agent / Plan modes): the right side is the model's.
+// and so does a permission level offered as a config option (custom category `_permission_mode`, after the modes): the right side
+// is the model's. The built-in agent no longer sends one; its approval level is a settings-page setting
 export function composerControls(options: ConfigControl[]) {
   const models: ConfigControl[] = [], reasoning: ConfigControl[] = [], modelConfig: ConfigControl[] = [], collaboration: ConfigControl[] = [], permission: ConfigControl[] = [], other: ConfigControl[] = [];
   for (const c of options) {

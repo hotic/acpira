@@ -70,7 +70,7 @@ describe('shared composer controls', () => {
     expect(composerControls([collab])).toEqual({ models: [], reasoning: [], modelConfig: [], collaboration: [collab], permission: [], other: [] });
   });
 
-  it("the built-in agent's approval level sits on the left beside its modes, leaving the right side to the model", () => {
+  it('a `_permission_mode` approval level sits on the left beside the modes, leaving the right side to the model', () => {
     const approval: ConfigControl = { id: 'approval', name: 'Approval', category: '_permission_mode', value: 'full', options: [
       { id: 'ask', name: 'Ask' }, { id: 'full', name: 'Full access', kind: 'full_access' },
     ] };
