@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { ChevronRight, ExternalLink } from 'lucide-react';
+import { BookText, Brain, ChevronRight, Combine, ExternalLink, Image as ImageIcon, Search, Zap } from 'lucide-react';
 import { cn } from '../ui/cn';
 import { Card } from '../ui/Card';
 import { Chip, IconButton } from '../ui/Button';
@@ -46,6 +46,10 @@ export interface SectionProps {
   title?: ReactNode;
   desc?: ReactNode;
   count?: number;
+  // A mark before the title column (a source's glyph), sized to the two-line header
+  lead?: ReactNode;
+  // A small status mark between the title and the count (a Dot with its label)
+  status?: ReactNode;
   // One small action (a quiet Chip / IconButton), at the right of the title line
   action?: ReactNode;
   // Children are already Cards (several groups), not rows to be wrapped in one Group
@@ -72,7 +76,7 @@ function useSettingRow() {
   return cn(settingRow, !useContext(GroupContext) && 'px-pad');
 }
 
-export function Section({ title, desc, count, action, cards, children }: SectionProps) {
+export function Section({ title, desc, count, lead, status, action, cards, children }: SectionProps) {
   const inset = title !== undefined || !!action;
   const hasContent = children !== null && children !== undefined;
   const content = cards ? <div className={cn('flex flex-col', !inset && 'gap-pad')}>{children}</div> : <Group>{children}</Group>;
@@ -84,20 +88,95 @@ export function Section({ title, desc, count, action, cards, children }: Section
   );
   return (
     <Card className="acp-section-panel flex flex-col px-pad shadow-none">
-      <div className={cn(settingRow, 'flex flex-wrap items-center gap-gap')} data-detail={!!desc || undefined}>
-        <div className="min-w-0 flex-[1_1_var(--setting-header-copy)]">
-          <h3 className="m-0 flex items-baseline gap-2 text-2 font-normal text-fg-1">
-            <span className="[overflow-wrap:anywhere]">{title}</span>
-            {count !== undefined && <Count n={count} />}
-          </h3>
-          {desc && <SectionDescription>{desc}</SectionDescription>}
-        </div>
-        {action}
-      </div>
+      <ListHead title={title} desc={desc} count={count} lead={lead} status={status} action={action} />
       {hasContent && <InsetGroupContext.Provider value={true}>
         <div className="border-t border-line">{content}</div>
       </InsetGroupContext.Provider>}
     </Card>
+  );
+}
+
+// The head of a titled list: an optional lead mark, the title with its status and count, an optional second line, and
+// the actions at the right. A Section card's header, and a group header inside a shared card (the model lists' groups).
+// Without a lead the actions wrap under the copy when narrow; with one the row stays on one line (the copy shrinks), so
+// the mark never ends up alone above its title
+export function ListHead({ title, desc, count, lead, status, action }: Pick<SectionProps, 'title' | 'desc' | 'count' | 'lead' | 'status' | 'action'>) {
+  return (
+    <div className={cn(settingRow, 'flex items-center gap-gap', !lead && 'flex-wrap')} data-detail={!!desc || undefined}>
+      {lead && <span className="flex size-lead shrink-0 items-center justify-center text-fg-2 [&_svg]:size-lead">{lead}</span>}
+      <div className={cn('min-w-0', lead ? 'flex-1' : 'flex-[1_1_var(--setting-header-copy)]')}>
+        <h3 className="m-0 flex items-baseline gap-2 text-2 font-normal text-fg-1">
+          <span className="min-w-0 [overflow-wrap:anywhere]">{title}</span>
+          {status}
+          {count !== undefined && <Count n={count} />}
+        </h3>
+        {desc && <SectionDescription>{desc}</SectionDescription>}
+      </div>
+      {action}
+    </div>
+  );
+}
+
+// A search field in the shared box style; `className` sizes it in its row
+export function SearchBox({ value, onChange, label, className }: { value: string; onChange: (v: string) => void; label: string; className?: string }) {
+  return (
+    <div className={cn('flex h-ctl min-w-0 items-center gap-2 rounded-md border border-line bg-chip px-3 focus-within:border-line-strong', className)}>
+      <Search className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} aria-hidden />
+      <input type="search" value={value} onChange={e => onChange(e.target.value)} aria-label={label} placeholder={label}
+        className="min-w-0 flex-1 border-0 bg-transparent text-2 text-fg-1 outline-none placeholder:text-fg-3" />
+    </div>
+  );
+}
+
+// The first row inside a model list's card, the same on every agent's page: the search field, then an optional control
+// (the master switch) at the right edge, where the rows' switches sit
+export function SearchRow({ value, onChange, children }: { value: string; onChange: (v: string) => void; children?: ReactNode }) {
+  return (
+    <div className="flex min-w-0 items-center gap-gap py-pad-y">
+      <SearchBox value={value} onChange={onChange} label={t('settings.models.search')} className="flex-1" />
+      {children && <div className="flex shrink-0 items-center gap-2">{children}</div>}
+    </div>
+  );
+}
+
+// The badges a model row can carry, in their column order. Each is one muted icon in a fixed slot (no words beside it);
+// the words are its label and tooltip
+export type ModelTagKind = 'thinking' | 'fusion' | 'fast' | 'image' | 'long';
+const MODEL_TAG_ORDER: ModelTagKind[] = ['thinking', 'fusion', 'fast', 'image', 'long'];
+const MODEL_TAG_ICON: Record<ModelTagKind, ReactNode> = {
+  thinking: <Brain strokeWidth={1.75} />,
+  fusion: <Combine strokeWidth={1.75} />,
+  fast: <Zap strokeWidth={1.75} />,
+  image: <ImageIcon strokeWidth={1.75} />,
+  long: <BookText strokeWidth={1.75} />,
+};
+// A row's badges: kind → its words
+export type ModelTags = Partial<Record<ModelTagKind, string>>;
+
+// One model on one compact line, shared by the built-in agent's sources and the other agents' visibility lists: mark,
+// name (an optional marker after it), the badges packed against the row's own controls on the right, then those
+// controls. The full description is the name's tooltip. `onOpen` makes the name a button stretched over the whole row
+// (the controls stay above it) that opens the row's editor; its hover lights the row from card edge to card edge
+export function ModelLine({ lead, name, marker, hint, tags, dim, trailing, onOpen, open, openLabel }: {
+  lead: ReactNode; name: string; marker?: ReactNode; hint?: string; tags: ModelTags; dim?: boolean; trailing: ReactNode;
+  onOpen?: () => void; open?: boolean; openLabel?: string;
+}) {
+  const label = <><span className="min-w-0 truncate">{name}</span>{marker}</>;
+  const kinds = MODEL_TAG_ORDER.filter(k => tags[k]);
+  return (
+    <ItemRow lead={lead} dim={dim}
+      className={cn(onOpen && 'relative isolate before:pointer-events-none before:absolute before:inset-y-0 before:-inset-x-pad before:-z-10 before:transition-colors has-[[data-model-open]:hover]:before:bg-hover has-[[data-model-open]:focus-visible]:before:bg-hover',
+        onOpen && open && 'before:bg-hover')}
+      title={onOpen
+        ? <button type="button" data-model-open onClick={onOpen} aria-expanded={open} aria-label={openLabel} title={hint}
+            className="flex w-full min-w-0 items-baseline gap-2 text-left outline-none after:absolute after:inset-y-0 after:-inset-x-pad">{label}</button>
+        : <span className="flex min-w-0 items-baseline gap-2" title={hint}>{label}</span>}
+      trailing={<span className="relative flex items-center gap-gap">
+        {kinds.length > 0 && <span className="flex items-center gap-1.5 text-fg-3">
+          {kinds.map(k => <span key={k} role="img" aria-label={tags[k]} title={tags[k]} className="flex size-icon items-center justify-center [&_svg]:size-icon">{MODEL_TAG_ICON[k]}</span>)}
+        </span>}
+        {trailing}
+      </span>} />
   );
 }
 
@@ -112,7 +191,7 @@ export function Group({ className, children, embedded = false }: { className?: s
   const inset = embedded || inheritedInset;
   const Container = inset ? 'div' : Card;
   return <GroupContext.Provider value={true}>
-    <Container className={cn('flex flex-col divide-y divide-line overflow-hidden', !inset && 'px-pad shadow-none', className)}>{children}</Container>
+    <Container className={cn('flex flex-col divide-y divide-line', !inset && 'overflow-hidden px-pad shadow-none', className)}>{children}</Container>
   </GroupContext.Provider>;
 }
 
@@ -200,9 +279,12 @@ export function NumberField({ value, onCommit, min, max, step, unit, label }: { 
   );
 }
 
-// Status dot before a status line: ok / off
-export function Dot({ ok }: { ok: boolean }) {
-  return <span aria-hidden className={cn('inline-block size-(--dot) shrink-0 rounded-full', ok ? 'bg-ok' : 'bg-fg-3')} />;
+// Status dot before a status line: ok / off, or warn (needs attention). With a label it is announced and carries the
+// label as its tooltip; without one it only repeats the text beside it
+export function Dot({ ok, warn, label }: { ok: boolean; warn?: boolean; label?: string }) {
+  const tone = ok ? 'bg-ok' : warn ? 'bg-warn' : 'bg-fg-3';
+  if (label) return <span role="img" aria-label={label} title={label} className={cn('inline-block size-(--dot) shrink-0 self-center rounded-full', tone)} />;
+  return <span aria-hidden className={cn('inline-block size-(--dot) shrink-0 rounded-full', tone)} />;
 }
 
 // Path display lives in a DOM-free module so the shared test suites can load it; re-exported for the pages
@@ -249,7 +331,8 @@ export function ItemRow({ lead, title, desc, extra, trailing, onOpen, reserveOpe
       </span>
       {trailing && <span className="flex shrink-0 items-center gap-2">{trailing}</span>}
       {(onOpen || reserveOpen) && (
-        <span className="-mr-1.5 flex size-ctl shrink-0 items-center justify-center" aria-hidden={!onOpen || undefined}>
+        // Zero height: the button overflows the slot evenly, so reserving it never makes the row taller than its neighbours
+        <span className="-mr-1.5 flex h-0 w-ctl shrink-0 items-center justify-center" aria-hidden={!onOpen || undefined}>
           {onOpen && <IconButton title={t('common.open')} aria-label={t('common.open')} onClick={onOpen} className="text-fg-2 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100">
             <ExternalLink strokeWidth={1.5} />
           </IconButton>}

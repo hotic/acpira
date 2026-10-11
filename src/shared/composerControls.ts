@@ -161,16 +161,18 @@ export function familyLabel(control: Pick<ConfigControl, 'id' | 'category'>, fam
 
 // ACP capabilities choose the contents of one composer, never its layout.
 // Recognize native reasoning and model parameters before applying model-name decomposition.
-// Codex's `collaboration_mode` (default / plan) is a working mode next to the permission modes, so it sits on the left.
+// Codex's `collaboration_mode` (default / plan) is a working mode next to the permission modes, so it sits on the left,
+// and so does the built-in agent's approval level (`_permission_mode`, after its Agent / Plan modes): the right side is the model's.
 export function composerControls(options: ConfigControl[]) {
-  const models: ConfigControl[] = [], reasoning: ConfigControl[] = [], modelConfig: ConfigControl[] = [], collaboration: ConfigControl[] = [], other: ConfigControl[] = [];
+  const models: ConfigControl[] = [], reasoning: ConfigControl[] = [], modelConfig: ConfigControl[] = [], collaboration: ConfigControl[] = [], permission: ConfigControl[] = [], other: ConfigControl[] = [];
   for (const c of options) {
     if (isReasoningControl(c)) reasoning.push(c);
     else if (c.category === 'collaboration_mode' && c.type !== 'boolean') collaboration.push(c);
+    else if (c.category === '_permission_mode' && c.type !== 'boolean') permission.push(c);
     else if (c.category === 'model_config') modelConfig.push(c);
     // A boolean's synthetic Off/On pair is not a model family even under a `model` category; it chips in `other`
     else if (c.type !== 'boolean' && (c.category === 'model' || (!c.category && (c.id === 'model' || groupModels(c.options).length < c.options.length)))) models.push(c);
     else other.push(c);
   }
-  return { models, reasoning, modelConfig, collaboration, other };
+  return { models, reasoning, modelConfig, collaboration, permission, other };
 }

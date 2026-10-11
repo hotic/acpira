@@ -132,7 +132,7 @@ describe('built-in agent model sources', () => {
     { id: 'openrouter', name: 'OpenRouter', preset: 'openrouter', format: 'openai-chat', baseUrl: 'https://openrouter.ai/api/v1', fullUrl: false, enabled: false, hasKey: false,
       models: [model('moonshotai/kimi-k3', { input: ['text', 'image'], context: 262_144 })] },
   ];
-  const state: ProvidersState = { view: { providers: sources, presets: [], families: ['generic', 'deepseek'] } };
+  const state: ProvidersState = { view: { providers: sources, families: ['generic', 'deepseek'] } };
   const builtin: AgentInfo = { id: 'acpira', name: 'Acpira', available: true };
   const render = () => renderToStaticMarkup(createElement(AgentPage, {
     agent: builtin, accounts: [], settings: DEFAULT_SETTINGS, env: { home: '/preview', cwd: '/preview/project' }, on: { ...handlers, providers: vi.fn(), providerProbe: vi.fn() },
@@ -144,9 +144,14 @@ describe('built-in agent model sources', () => {
     expect(markup).toContain('>DeepSeek<');
     expect(markup).toContain('>OpenRouter<');
     expect(markup).toContain('https://api.deepseek.com/v1');
-    // A source without a key says so; one with a key does not
-    expect(markup.split('No API key').length - 1).toBe(1);
+    // The status dot carries the source's state as its label: a stored key, or switched off (with Turn on offered)
+    expect(markup).toContain(`aria-label="${t('settings.providers.keySaved')}"`);
+    expect(markup).toContain(`aria-label="${t('settings.providers.off')}"`);
+    expect(markup).toContain(`>${t('settings.providers.turnOn')}<`);
     expect(markup).toContain('DeepSeek V4 Flash');
+    // Compact rows: icon badges labelled in words, the full summary in the name's tooltip
+    expect(markup).toContain('aria-label="Context 1M"');
+    expect(markup).toContain(`aria-label="${t('settings.providers.model.image')}"`);
     const sep = t('common.metaSep');
     expect(markup).toContain(['Context 1M', 'Output 384k', 'Levels: 3'].join(sep));
     expect(markup).toContain(['Context 256k', 'Images'].join(sep));

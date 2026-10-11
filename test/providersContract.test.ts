@@ -56,7 +56,7 @@ describe('providers contract', () => {
     expect(JSON.parse(readFileSync(join(data, 'secrets.json'), 'utf8'))).not.toHaveProperty(['acpira.provider.deep-seek']);
   });
 
-  it('carries the presets and families, and answers a model fetch with the stored key', async () => {
+  it('carries the families, and answers a model fetch with the stored key', async () => {
     const temp = (p: string) => { const d = mkdtempSync(join(tmpdir(), p)); dirs.push(d); return d; };
     const data = temp('acpira-providers-data-');
     const s = new Shell(data, temp('acpira-providers-ws-'));
@@ -76,7 +76,6 @@ describe('providers contract', () => {
       const draft: Provider = { id: '', name: 'Stub', preset: 'custom', format: 'openai-chat', baseUrl: `http://127.0.0.1:${port}/v1`, fullUrl: false, enabled: true, models: [] };
       s.view('V', { type: 'providerAction', action: { kind: 'save', provider: draft, key: 'sk-stored' } });
       const view = (await s.hostMsg('V', 'providers', m => m.view.providers.length === 1)).view;
-      expect(view.presets.map(p => p.id)).toEqual(expect.arrayContaining(['deepseek', 'ollama', 'custom']));
       expect(view.families[0]).toBe('generic');
 
       s.view('V', { type: 'providerProbe', id: 'fetch-1', probe: { kind: 'models', provider: view.providers[0]! } });

@@ -66,7 +66,8 @@ pub struct Provider {
   pub id: String,
   #[serde(default)]
   pub name: String,
-  /// The preset it was created from (`deepseek`, `ollama`, … or `custom`)
+  /// `custom`, or `ollama` / `lmstudio` for a local server found on this machine (takes no key). Files written before
+  /// the vendor presets were dropped may name a vendor (`deepseek`, …), which still counts as a family hint
   #[serde(default)]
   pub preset: String,
   /// `openai-chat` | `openai-responses` | `anthropic`; anything else is listed but not used
@@ -244,28 +245,9 @@ pub struct ProvidersView {
   pub providers: Vec<ProviderView>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub error: Option<String>,
-  /// What a new source can start from (the agent's table, `acpira_agent::llm::presets`)
-  #[serde(default)]
-  pub presets: Vec<Preset>,
   /// The families a model can be pinned to (`acpira_agent::llm::family::names`)
   #[serde(default)]
   pub families: Vec<String>,
-}
-
-/// A known service a new source can start from; `custom` has an empty URL
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Preset {
-  pub id: String,
-  pub name: String,
-  pub format: String,
-  pub base_url: String,
-  /// Where the service hands out API keys
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub key_url: Option<String>,
-  /// Runs on this machine and takes no key (Ollama, LM Studio)
-  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-  pub local: bool,
 }
 
 /// A network question from the settings page; none of them changes providers.json. `key`: a key typed into the form

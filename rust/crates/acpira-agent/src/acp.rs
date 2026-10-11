@@ -360,6 +360,9 @@ fn default_effort(config: &Config, catalog: &Catalog, pick: Option<&str>) -> Opt
   efforts.iter().find(|e| Some(e.as_str()) == preferred).or(efforts.last()).cloned()
 }
 
+/// The approval select's category: ACP leaves names starting with `_` free for custom use
+pub const APPROVAL_CATEGORY: &str = "_permission_mode";
+
 /// The full configOptions set: the model select (every usable model, labelled with its source), the effort select when
 /// the current model offers levels, and the approval level
 pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState) -> Vec<Value> {
@@ -381,10 +384,17 @@ pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState) -> 
       }));
     }
   }
-  // How much runs without a permission card; applies from the next turn
+  // How much runs without a permission card; applies from the next turn. The custom category puts it beside the mode
+  // chip (a permission mode, like Codex's), and `full` carries the `full_access` kind the composer tints
   out.push(json!({
-    "id": "approval", "name": "Approval", "type": "select", "currentValue": st.approval.id(),
-    "options": Approval::ALL.iter().map(|a| json!({ "value": a.id(), "name": a.name(), "description": a.description() })).collect::<Vec<_>>(),
+    "id": "approval", "name": "Approval", "category": APPROVAL_CATEGORY, "type": "select", "currentValue": st.approval.id(),
+    "options": Approval::ALL.iter().map(|a| {
+      let mut o = json!({ "value": a.id(), "name": a.name(), "description": a.description() });
+      if *a == Approval::Full {
+        o["_meta"] = json!({ "kind": "full_access" });
+      }
+      o
+    }).collect::<Vec<_>>(),
   }));
   out
 }

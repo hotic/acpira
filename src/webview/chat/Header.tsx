@@ -51,7 +51,7 @@ export function Header({ title, sessions, categories, agent, agents, accounts, a
   // Tooltip: agent, account, with the remaining allowance appended once known ("Devin, s@x.io, Weekly 94%")
   const accountTitle = account ? [agent.name, account.label, account.quota && quotaSummary(account.quota)].filter(Boolean).join(t('common.metaSep')) : agent.name;
   const settingsButton = onOpenSettings && (
-    <IconButton onClick={onOpenSettings} title={t('session.settings')} aria-label={t('session.settings')}>
+    <IconButton onClick={() => onOpenSettings()} title={t('session.settings')} aria-label={t('session.settings')}>
       <Settings2 strokeWidth={1.5} />
     </IconButton>
   );

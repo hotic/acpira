@@ -221,6 +221,21 @@ mod tests {
     serde_json::from_value(json!({ "id": "p", "preset": preset, "baseUrl": base })).unwrap()
   }
 
+  /// A custom source with a gateway model name still finds its family from the vendor's documented API root
+  #[test]
+  fn vendor_api_roots_select_their_family() {
+    for (base, name) in [
+      ("https://api.deepseek.com/v1", "deepseek"),
+      ("https://api.moonshot.cn/v1", "kimi"),
+      ("https://open.bigmodel.cn/api/paas/v4", "glm"),
+      ("https://api.z.ai/api/paas/v4", "glm"),
+      ("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen"),
+      ("https://api.minimaxi.com/v1", "minimax"),
+    ] {
+      assert_eq!(resolve(&provider("custom", base), &ProviderModel::new("some-model")).name, name, "{base}");
+    }
+  }
+
   #[test]
   fn families_match_by_model_id_then_source_and_a_pin_wins() {
     let any = provider("custom", "https://gw.example.com/v1");

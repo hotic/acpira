@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { BookOpen, Ban, Check, ChevronDown, ChevronUp, CircleAlert, Copy, Download, FileText, Globe, KeyRound, LoaderCircle, LockKeyhole, Plus, Search, Server, SlidersHorizontal, Sparkles, SquareTerminal, X } from 'lucide-react';
+import { BookOpen, Ban, Check, ChevronDown, ChevronUp, CircleAlert, Copy, Download, FileText, Globe, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, SlidersHorizontal, Sparkles, SquareTerminal, X } from 'lucide-react';
 import type { AccountInfo, AgentInfo, ConfigControl } from '@shared/transcript';
 import type { AgentInstallProgress } from '@shared/protocol';
 import type { AgentHealthStage, AgentInventory, InventoryFile, InventoryMcp, InventorySkill, McpTransport } from '@shared/inventory';
@@ -17,7 +17,7 @@ import { cn } from '../ui/cn';
 import { Collapsible } from '../ui/Collapsible';
 import { t } from '../i18n';
 import { ModelMark } from '../chat/ModelMark';
-import { Count, Dot, FactRow, Field, Group, ItemRow, Note, PathText, Section, SectionAction, SectionDescription, SectionHead, Select, SourceLink, Switch, shortPath } from './controls';
+import { Count, Dot, FactRow, Field, Group, ItemRow, ListHead, ModelLine, Note, PathText, SearchRow, Section, SectionAction, SectionDescription, SectionHead, Select, SourceLink, Switch, shortPath, type ModelTags } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 import { ProvidersSection, type ProvidersState } from './ProvidersSection';
 import { BUILTIN_AGENT_ID } from '@shared/providers';
@@ -355,7 +355,9 @@ function hostOf(url: string): string {
 
 // Option families with a show / hide switch each; reasoning controls are excluded by the caller.
 // The lists only ever come over ACP, so before the first session there is nothing to show. The family in use can be switched off too —
-// the composer keeps the current value reachable on its own (visibleOptions)
+// the composer keeps the current value reachable on its own (visibleOptions). The layout matches the built-in agent's
+// sources: the search toolbar (with the master switch) above the card, group headers with a mark, title, count and the
+// group's sources, compact rows with badges
 function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; controls?: ConfigControl[]; settings: SettingsView; on: SettingsHandlers }) {
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState(false);
@@ -383,13 +385,13 @@ function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; co
   let remaining = searching || expanded ? Infinity : MODEL_PREVIEW_LIMIT;
   let matched = 0;
   const visible = catalogs.map(catalog => {
-    const matches = filterModels(catalog.families, query);
-    matched += matches.length;
-    const families = matches.slice(0, remaining);
+    const found = filterModels(catalog.families, query);
+    matched += found.length;
+    const families = found.slice(0, remaining);
     remaining -= families.length;
-    return { ...catalog, families };
+    return { ...catalog, families, found };
   });
-  // Second line: what the family spans — its effort levels, Fast / 1M — so the row says which switch is being flipped
+  // What the family spans in words — its effort levels, Fast / 1M — the row's tooltip after the source
   const summary = (f: ModelFamily) => {
     if (f.variants.length === 1) return f.variants[0]!.name === f.name ? undefined : variantLabel(f.variants[0]!, f, { standard: t('composer.standard') });
     // Fusion is one row for all 210 pairs: the switch hides the whole feature, so the line says what it spans
@@ -399,70 +401,87 @@ function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; co
   };
   if (controls === undefined) return <Section desc={t('settings.models.desc', { agent: agent.name })}><Note shimmer>{t('settings.loading')}</Note></Section>;
   if (!controls.length) return <Section desc={t('settings.models.desc', { agent: agent.name })}><Note>{t('settings.models.none', { agent: agent.name })}</Note></Section>;
+  // One header + rows block per group, flattened so only the blocks after the first draw a separator
+  const groups = visible.flatMap(({ control: c, families, found }) => {
+    if (!families.length) return [];
+    // Translate standard categories; preserve names supplied by custom controls.
+    const title = c.category === 'model' ? t('settings.models.selection')
+      : c.category === 'collaboration_mode' ? t('settings.models.collaboration') : c.name;
+    // Agent adapters classify model sources; unclassified ACP options retain their own group. Counts cover the whole
+    // match, not just the rows the preview limit leaves
+    const split = c.category === 'model' && families.some(f => f.sourceKind);
+    const kinds = split
+      ? [{ key: 'official', title: t('settings.models.official'), kind: 'official' as const },
+         { key: 'custom', title: t('settings.models.custom'), kind: 'custom' as const },
+         { key: 'other', title, kind: undefined }]
+      : [{ key: c.id, title, kind: null }];
+    return kinds.map(g => {
+      const keep = (f: ModelFamily) => g.kind === null || f.sourceKind === g.kind;
+      const rows = families.filter(keep);
+      const sources = [...new Set(rows.map(f => f.source).filter((s): s is string => !!s))];
+      const mark = g.key === 'custom' ? <Globe strokeWidth={1.5} />
+        : c.category === 'model' ? <ModelMark family={agent.name} brand={agent.id} /> : <Sparkles strokeWidth={1.5} />;
+      return { control: c, key: `${c.id}:${g.key}`, title: g.title, count: found.filter(keep).length, rows, sources, mark };
+    }).filter(g => g.rows.length);
+  });
   return (
-    <>
+    <div className="flex flex-col gap-2">
       <SectionDescription>{t('settings.models.desc', { agent: agent.name })}</SectionDescription>
       <Card className="flex flex-col px-pad shadow-none">
-        <div className="flex flex-wrap items-center gap-2 py-pad-y">
-          <div className="flex h-ctl min-w-0 flex-[1_1_var(--setting-header-copy)] items-center gap-2 rounded-md border border-line bg-chip px-3 focus-within:border-line-strong">
-            <Search className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} aria-hidden />
-            <input type="search" value={query} onChange={event => setQuery(event.target.value)}
-              aria-label={t('settings.models.search')} placeholder={t('settings.models.search')}
-              className="min-w-0 flex-1 border-0 bg-transparent text-2 text-fg-1 outline-none placeholder:text-fg-3" />
-          </div>
+        <SearchRow value={query} onChange={setQuery}>
           <span className="sr-only" aria-live="polite">{t('settings.models.enabled', { count: enabled, total })}</span>
-          <div className="ml-auto flex shrink-0 items-center gap-2" title={t('settings.models.enabled', { count: enabled, total })}>
+          <span className="flex" title={t('settings.models.enabled', { count: enabled, total })}>
             <Switch checked={total > 0 && enabled === total} disabled={total === 0} onChange={toggleAll} label={t('settings.models.all')} />
-          </div>
-        </div>
-        {visible.map(({ control: c, families }) => {
-          if (!families.length) return null;
-          const off = hidden[c.id] ?? [];
-          // With a single configOption the section heading names it; several get one labelled group each
-          const several = controls.length > 1;
-          // Translate standard categories; preserve names supplied by custom controls.
-          const title = c.category === 'model' ? t('settings.models.selection')
-            : c.category === 'collaboration_mode' ? t('settings.models.collaboration') : c.name;
-          // Agent adapters classify model sources; unclassified ACP options retain their own group.
-          const groups = c.category === 'model' && families.some(f => f.sourceKind)
-            ? [
-                { key: 'official', title: t('settings.models.official'), families: families.filter(f => f.sourceKind === 'official') },
-                { key: 'custom', title: t('settings.models.custom'), families: families.filter(f => f.sourceKind === 'custom') },
-                { key: 'other', title, families: families.filter(f => !f.sourceKind) },
-              ].filter(g => g.families.length)
-            : [{ key: c.id, title: several ? title : undefined, families }];
-          return groups.map(g => (
-            <div key={`${c.id}:${g.key}`} className="border-t border-line">
-              {g.title && <h3 className="m-0 py-(--setting-row-pad) text-3 font-normal text-fg-2">{g.title}</h3>}
+          </span>
+        </SearchRow>
+        {groups.map(g => {
+          const off = hidden[g.control.id] ?? [];
+          return (
+            <div key={g.key} className="border-t border-line">
+              <ListHead lead={g.mark} title={g.title} count={g.count}
+                desc={g.sources.length > 0 && <span className="block truncate">{g.sources.join(t('common.metaSep'))}</span>} />
               <Group embedded>
-                {g.families.map(f => {
+                {g.rows.map(f => {
                   const shown = !familyHidden(f, off);
-                  const name = familyLabel(c, f);
+                  const name = familyLabel(g.control, f);
                   return (
-                    <ItemRow
+                    <ModelLine
                       key={f.key}
                       lead={<ModelMark family={name} brand={f.brand} />}
-                      title={name}
-                      desc={[f.source, summary(f)].filter(Boolean).join(t('common.metaSep')) || undefined}
+                      name={name}
+                      hint={[f.source, summary(f)].filter(Boolean).join(t('common.metaSep')) || undefined}
+                      tags={familyTags(f)}
                       dim={!shown}
-                      trailing={<Switch checked={shown} onChange={v => toggle(c, f, v)} label={`${name}${t('common.metaSep')}${f.source ?? c.name}`} />}
+                      trailing={<Switch checked={shown} onChange={v => toggle(g.control, f, v)} label={`${name}${t('common.metaSep')}${f.source ?? g.control.name}`} />}
                     />
                   );
                 })}
               </Group>
             </div>
-          ));
+          );
         })}
         {searching && matched === 0 && <Group embedded className="border-t border-line"><Note>{t('settings.models.noResults')}</Note></Group>}
-        {!searching && total > MODEL_PREVIEW_LIMIT && <div className="py-(--setting-row-pad)">
+        {!searching && total > MODEL_PREVIEW_LIMIT && <div className="border-t border-line py-(--setting-row-pad)">
           <Chip caret={false} aria-expanded={expanded} onClick={() => setExpanded(value => !value)}
             icon={expanded ? <ChevronUp /> : <ChevronDown />}>
             {expanded ? t('settings.models.showLess') : t('settings.models.showMore')}
           </Chip>
         </div>}
       </Card>
-    </>
+    </div>
   );
+}
+
+// A family's badges on its compact row: a Fusion's pair count, thinking (it has effort levels), Fast, 1M, and the source
+// when the group mixes several (otherwise the group header already names it). The levels themselves are in the tooltip
+function familyTags(f: ModelFamily): ModelTags {
+  const tags: ModelTags = {};
+  const levels = f.efforts.filter(Boolean);
+  if (f.fusion) tags.fusion = t('composer.fusionSummary', { leads: f.fusion.leads.length, sidekicks: f.fusion.sidekicks.length });
+  else if (levels.length) tags.thinking = `${t('settings.providers.model.thinking')}${t('common.metaSep')}${levels.join(' / ')}`;
+  if (f.hasFast) tags.fast = 'Fast';
+  if (f.hasLong) tags.long = t('settings.providers.model.ctx', { n: '1M' });
+  return tags;
 }
 
 const TRANSPORT_ICON: Record<McpTransport, ReactNode> = {

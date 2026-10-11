@@ -1,18 +1,20 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { Check, Download, Ellipsis, Eye, EyeOff, LoaderCircle, Pencil, Plus, Search, Server, Trash2 } from 'lucide-react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { Eye, EyeOff, Globe, LoaderCircle, Pencil, Plus, Server, X } from 'lucide-react';
 import {
   BUILTIN_AGENT_ID, newModel,
-  type LocalSource, type Preset, type ProbeOutcome, type Provider, type ProviderAction, type ProviderModel, type ProviderProbe, type ProvidersView, type ProviderView,
+  type LocalSource, type ProbeOutcome, type Provider, type ProviderAction, type ProviderModel, type ProviderProbe, type ProvidersView, type ProviderView,
 } from '@shared/providers';
-import { Button, IconButton } from '../ui/Button';
+import { Button, Chip, IconButton } from '../ui/Button';
 import { Card } from '../ui/Card';
-import { DropdownMenu } from '../ui/DropdownMenu';
+import { Command } from '../ui/Command';
+import { Dialog } from '../ui/Dialog';
 import { OptionContent } from '../ui/Panel';
+import { Shimmer } from '../ui/Shimmer';
 import { cn } from '../ui/cn';
 import { t } from '../i18n';
 import { ModelMark } from '../chat/ModelMark';
-import { Count, Group, inputBox, ItemRow, Note, Section, SectionAction, SectionHead, Select, Switch } from './controls';
-import { modelSummary, ModelRow, Unconfirmed } from './ProviderModel';
+import { Dot, Group, inputBox, ItemRow, Note, ListHead, SearchRow, Section, SectionAction, SectionDescription, SectionHead, Select } from './controls';
+import { modelDesc, ModelRow, Unconfirmed } from './ProviderModel';
 import type { SettingsHandlers } from './SettingsShell';
 
 // The page's last providers view (error when the action that produced it failed) and the answers to its probes by id
@@ -41,19 +43,25 @@ function useProbe() {
 
 const sameUrl = (a: string, b: string) => a.trim().replace(/\/+$/, '').toLowerCase() === b.trim().replace(/\/+$/, '').toLowerCase();
 
-// The built-in agent's model sources, one card per source: its header (name, count, URL, fetch / add / edit / delete,
-// the enable switch) over its models. A model row opens its editor in place; "fetch" lists the endpoint's models to
-// pick from. Local Ollama / LM Studio servers found on the machine can be added with one click. Keys go to the host
-// once and never come back; the page only knows whether one is stored
+// The built-in agent's model sources, one card per source: its header (mark, name with a status dot and the model
+// count, the URL, Turn on for a switched-off source, the edit pencil) over its compact model rows and a last "Add model"
+// row. Adding models and editing a source happen in dialogs. The search toolbar above the cards sits where every other
+// agent's model page has it. Local Ollama / LM Studio servers found on the machine can be added with one click. Keys go
+// to the host once and never come back; the page only knows whether one is stored
 export function ProvidersSection({ state, on }: { state?: ProvidersState; on: SettingsHandlers }) {
   useEffect(() => { on.providers?.(); }, [on]);
-  // The id being edited, 'new' for an added source
+  // The id whose form dialog is open, 'new' for an added source
   const [editing, setEditing] = useState<string>();
+  // The error of the last save from the form, shown inside the dialog (the page behind it is covered)
+  const [formError, setFormError] = useState<string>();
   const [query, setQuery] = useState('');
   // An action is in flight until the next view lands; a reply without an error closes the form and re-reads the
   // agent's model list, so the composer picks up the change
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
+  // The source ids before a new source was saved: the one that appears afterwards opens its add-model dialog
+  const before = useRef<Set<string>>(undefined);
+  const [fresh, setFresh] = useState<string>();
   useEffect(() => {
     setBusy(false);
     if (!pending.current || !state) return;
@@ -61,42 +69,51 @@ export function ProvidersSection({ state, on }: { state?: ProvidersState; on: Se
     if (!state.error) {
       setEditing(undefined);
       on.refreshAgent(BUILTIN_AGENT_ID);
-    }
+      const added = before.current && state.view.providers.find(p => !before.current!.has(p.id));
+      if (added) setFresh(added.id);
+    } else setFormError(state.error);
+    before.current = undefined;
   // Keyed on the view and error only: a probe answer also replaces the state object and must not end an action
   }, [state?.view, state?.error, on]);
   const act = (a: ProviderAction) => { pending.current = true; setBusy(true); on.providerAction?.(a); };
-  const save = (provider: Provider, key?: string) => act({ kind: 'save', provider: strip(provider), key });
+  const save = (provider: Provider, key?: string) => {
+    if (!provider.id) before.current = new Set(state?.view.providers.map(p => p.id));
+    act({ kind: 'save', provider: strip(provider), key });
+  };
+  // Opening a form clears its last failure; closing keeps it, so the page does not repeat what the dialog showed
+  const edit = (id?: string) => { if (id) setFormError(undefined); setEditing(id); };
 
   const view = state?.view;
-  const error = state?.error ?? view?.error;
+  // The form's own failures show in the dialog; the page shows the view's error and failures of row actions
+  const error = (state?.error !== formError ? state?.error : undefined) ?? view?.error;
   const providers = view?.providers ?? [];
-  const presets = view?.presets ?? [];
   const families = view?.families ?? [];
   const ctx = useMemo(() => ({ probes: state?.probes, on }), [state?.probes, on]);
   const total = providers.reduce((n, p) => n + p.models.length, 0);
-  const form = (p?: ProviderView) => (
-    <ProviderForm key={p?.id ?? 'new'} provider={p} presets={presets} busy={busy} onCancel={() => setEditing(undefined)} onSave={save} />
-  );
+  const edited = editing && editing !== 'new' ? providers.find(p => p.id === editing) : undefined;
   return (
     <ProbeContext.Provider value={ctx}>
       <div className="flex flex-col gap-2">
         <SectionHead count={state ? total : undefined}
-          action={<SectionAction icon={<Plus strokeWidth={1.75} />} disabled={!state || editing === 'new'} onClick={() => setEditing('new')}>{t('settings.providers.add')}</SectionAction>}>
+          action={<SectionAction icon={<Plus strokeWidth={1.75} />} disabled={!state || editing === 'new'} onClick={() => edit('new')}>{t('settings.providers.add')}</SectionAction>}>
           {t('settings.providers')}
         </SectionHead>
-        <Section desc={t('settings.providers.desc')} cards>
+        <SectionDescription>{t('settings.providers.desc')}</SectionDescription>
+        <div className="flex flex-col gap-pad">
           {!state && <Group><Note shimmer>{t('settings.loading')}</Note></Group>}
           {error && <Group><Note><span className="text-danger [overflow-wrap:anywhere]">{error}</span></Note></Group>}
-          {state && <LocalServers providers={providers} busy={busy} onAdd={s => save(fromLocal(s, presets))} />}
-          {state && !providers.length && editing !== 'new' && <Group><Note>{t('settings.providers.none')}</Note></Group>}
-          {total > 0 && <SearchBox value={query} onChange={setQuery} />}
-          {providers.map(p => editing === p.id
-            ? <Card key={p.id} className="flex flex-col px-pad shadow-none">{form(p)}</Card>
-            : <ProviderCard key={p.id} provider={p} families={families} query={query} busy={busy}
-                onEdit={() => setEditing(p.id)} onDelete={() => act({ kind: 'delete', id: p.id })} onSave={pv => save(pv)} />)}
-          {editing === 'new' && <Card className="flex flex-col px-pad shadow-none">{form()}</Card>}
-        </Section>
+          {state && <LocalServers providers={providers} busy={busy} onAdd={s => save(fromLocal(s))} />}
+          {state && !providers.length && <Group><Note>{t('settings.providers.none')}</Note></Group>}
+          {/* One card for every source, like the other agents' model lists: the search row, then a group per source */}
+          {providers.length > 0 && <Card className="flex flex-col px-pad shadow-none">
+            {total > 0 && <SearchRow value={query} onChange={setQuery} />}
+            {providers.map(p => <ProviderGroup key={p.id} provider={p} families={families} query={query} busy={busy} autoOpen={fresh === p.id}
+              onEdit={() => edit(p.id)} onSave={pv => save(pv)} />)}
+          </Card>}
+        </div>
       </div>
+      {(editing === 'new' || edited) && <ProviderForm key={editing} provider={edited} busy={busy} error={formError}
+        onClose={() => edit(undefined)} onSave={save} onDelete={edited ? () => act({ kind: 'delete', id: edited.id }) : undefined} />}
     </ProbeContext.Provider>
   );
 }
@@ -107,19 +124,9 @@ function strip(p: Provider | ProviderView): Provider {
   return rest;
 }
 
-function fromLocal(s: LocalSource, presets: Preset[]): Provider {
-  const preset = presets.find(p => p.id === s.preset);
-  return { id: '', name: s.name, preset: s.preset, format: preset?.format ?? 'openai-chat', baseUrl: s.baseUrl, fullUrl: false, enabled: true, models: s.models };
-}
-
-function SearchBox({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return (
-    <div className="flex h-ctl min-w-0 items-center gap-2 rounded-md border border-line bg-chip px-3 focus-within:border-line-strong">
-      <Search className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} aria-hidden />
-      <input type="search" value={value} onChange={e => onChange(e.target.value)} aria-label={t('settings.providers.search')} placeholder={t('settings.providers.search')}
-        className="min-w-0 flex-1 border-0 bg-transparent text-2 text-fg-1 outline-none placeholder:text-fg-3" />
-    </div>
-  );
+// Ollama and LM Studio both serve the OpenAI Chat format at the root the probe found
+function fromLocal(s: LocalSource): Provider {
+  return { id: '', name: s.name, preset: s.preset, format: 'openai-chat', baseUrl: s.baseUrl, fullUrl: false, enabled: true, models: s.models };
 }
 
 // Ollama / LM Studio answering on this machine and not yet a source: one row each, added with their models
@@ -143,14 +150,35 @@ function LocalServers({ providers, busy, onAdd }: { providers: ProviderView[]; b
   );
 }
 
-// One source: header row, then its fetch picker / add-model line when open, then its models
-function ProviderCard({ provider: p, families, query, busy, onEdit, onDelete, onSave }: {
-  provider: ProviderView; families: string[]; query: string; busy: boolean;
-  onEdit: () => void; onDelete: () => void; onSave: (p: Provider) => void;
+const isLocal = (p: Provider) => p.preset === 'ollama' || p.preset === 'lmstudio';
+
+// A source's lead: a local server, an Anthropic endpoint (its vendor's mark), any other endpoint
+function SourceMark({ provider: p }: { provider: Provider }) {
+  if (isLocal(p)) return <Server strokeWidth={1.5} />;
+  if (p.format === 'anthropic') return <ModelMark family="claude" />;
+  return <Globe strokeWidth={1.5} />;
+}
+
+// The header's status dot: a key stored (or a local server, which needs none) / no key / switched off. The words are the
+// dot's label and tooltip
+function SourceStatus({ provider: p }: { provider: ProviderView }) {
+  if (!p.enabled) return <Dot ok={false} label={t('settings.providers.off')} />;
+  if (isLocal(p)) return <Dot ok label={t('settings.providers.keyNotNeeded')} />;
+  return p.hasKey ? <Dot ok label={t('settings.providers.keySaved')} /> : <Dot ok={false} warn label={t('settings.providers.noKey')} />;
+}
+
+// One source as a group of the sources' card (a rule above it, none when it opens the card): mark, name with its status dot and model count, the URL under it, Turn on (a source switched
+// off earlier) and the edit pencil on the right; then the model rows and the "Add model" row. There is no source
+// switch: each model has its own. Removing lives in the edit dialog. `autoOpen` opens the add dialog once, right after
+// the source was created
+function ProviderGroup({ provider: p, families, query, busy, autoOpen, onEdit, onSave }: {
+  provider: ProviderView; families: string[]; query: string; busy: boolean; autoOpen?: boolean;
+  onEdit: () => void; onSave: (p: Provider) => void;
 }) {
   const [open, setOpen] = useState<string>();
-  const [panel, setPanel] = useState<'fetch' | 'add'>();
-  const fetch = useProbe();
+  const [adding, setAdding] = useState(false);
+  const opened = useRef(false);
+  useEffect(() => { if (autoOpen && !opened.current) { opened.current = true; setAdding(true); } });
   const test = useProbe();
   const [testing, setTesting] = useState<string>();
   const name = p.name || p.id;
@@ -158,193 +186,215 @@ function ProviderCard({ provider: p, families, query, busy, onEdit, onDelete, on
   const models = q ? p.models.filter(m => m.id.toLowerCase().includes(q) || (m.name ?? '').toLowerCase().includes(q)) : p.models;
   if (q && !models.length) return null;
   const update = (models: ProviderModel[]) => onSave({ ...strip(p), models });
-  const startFetch = () => { setPanel('fetch'); fetch.run({ kind: 'models', provider: strip(p) }); };
-  // A Group, so the header row sits on the card's own inset like the model rows below it
+  const editLabel = t('settings.providers.edit', { name });
   return (
-    <Group>
-      <ItemRow
-        lead={<Server strokeWidth={1.5} />}
-        title={<span className="flex min-w-0 items-baseline gap-2"><span className="truncate">{name}</span><Count n={p.models.length} /></span>}
-        desc={[p.baseUrl, !p.hasKey && !isLocal(p) ? t('settings.providers.noKey') : ''].filter(Boolean).join(t('common.metaSep'))}
-        dim={!p.enabled}
-        trailing={<>
-          {fetch.pending && <LoaderCircle strokeWidth={1.5} className="size-icon animate-spin live-spin text-fg-2" aria-hidden />}
-          {/* One menu instead of four row buttons, so a narrow page keeps the source name readable */}
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger disabled={busy} render={<IconButton title={t('session.more')} aria-label={t('session.more')} className="text-fg-2"><Ellipsis strokeWidth={1.5} /></IconButton>} />
-            <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="end" width="md"><DropdownMenu.Popup>
-              <DropdownMenu.Item disabled={fetch.pending} onClick={startFetch}><OptionContent icon={<Download strokeWidth={1.5} />}>{t('settings.providers.fetch')}</OptionContent></DropdownMenu.Item>
-              <DropdownMenu.Item onClick={() => setPanel('add')}><OptionContent icon={<Plus strokeWidth={1.5} />}>{t('settings.providers.addModel')}</OptionContent></DropdownMenu.Item>
-              <DropdownMenu.Item onClick={onEdit}><OptionContent icon={<Pencil strokeWidth={1.5} />}>{t('settings.providers.edit', { name })}</OptionContent></DropdownMenu.Item>
-              <DropdownMenu.Separator className="my-1 h-px bg-line" />
-              <DropdownMenu.Item className="text-danger" onClick={onDelete}><OptionContent icon={<Trash2 strokeWidth={1.5} />}>{t('common.removeNamed', { name })}</OptionContent></DropdownMenu.Item>
-            </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
-          </DropdownMenu.Root>
-          <Switch checked={p.enabled} disabled={busy} onChange={enabled => onSave({ ...strip(p), enabled })} label={t('settings.providers.enabled', { name })} />
-        </>}
-      />
-      {panel === 'add' && <AddModel taken={p.models} onAdd={id => { update([...p.models, newModel(id)]); setPanel(undefined); }} onCancel={() => setPanel(undefined)} />}
-      {panel === 'fetch' && <FetchPicker pending={fetch.pending} outcome={fetch.outcome} taken={p.models} busy={busy}
-        onAdd={picked => { update([...p.models, ...picked]); setPanel(undefined); fetch.reset(); }} onClose={() => { setPanel(undefined); fetch.reset(); }} />}
-      {models.length > 0 && <Group embedded className="border-t border-line">
-        {models.map(m => (
-          <ModelRow key={m.id} model={m} families={families} open={open === m.id}
-            onToggleOpen={() => setOpen(v => v === m.id ? undefined : m.id)}
-            onChange={next => update(p.models.map(x => x.id === m.id ? next : x))}
-            onRemove={() => { setOpen(undefined); update(p.models.filter(x => x.id !== m.id)); }}
-            onTest={draft => { setTesting(m.id); test.run({ kind: 'test', provider: strip(p), model: draft }); }}
-            test={testing === m.id ? test : undefined} />
-        ))}
-      </Group>}
-      {!p.models.length && panel === undefined && <Group embedded className="border-t border-line"><Note>{t('settings.providers.noModels')}</Note></Group>}
-    </Group>
-  );
-}
-
-const isLocal = (p: Provider) => p.preset === 'ollama' || p.preset === 'lmstudio';
-
-// A hand-typed model id
-function AddModel({ taken, onAdd, onCancel }: { taken: ProviderModel[]; onAdd: (id: string) => void; onCancel: () => void }) {
-  const [id, setId] = useState('');
-  const clean = id.trim();
-  const ok = !!clean && !taken.some(m => m.id === clean);
-  const keys = (e: KeyboardEvent) => { if (e.key === 'Enter' && ok) onAdd(clean); if (e.key === 'Escape') onCancel(); };
-  return (
-    <div className="flex flex-wrap items-center gap-2 border-t border-line py-(--setting-row-pad)">
-      <input autoFocus value={id} onChange={e => setId(e.target.value)} onKeyDown={keys} spellCheck={false}
-        aria-label={t('settings.providers.modelId')} placeholder={t('settings.providers.modelId')} className={cn(inputBox, 'h-ctl min-w-0 flex-1')} />
-      <Button variant="primary" disabled={!ok} onClick={() => onAdd(clean)}>{t('settings.providers.addModel')}</Button>
-      <Button onClick={onCancel}>{t('settings.providers.cancel')}</Button>
+    <div className="border-t border-line first:border-t-0">
+      <ListHead title={name} count={p.models.length} lead={<SourceMark provider={p} />} status={<SourceStatus provider={p} />}
+        desc={<span className="block truncate" title={p.baseUrl}>{p.baseUrl}</span>}
+        action={<div className="flex shrink-0 items-center gap-1">
+          {!p.enabled && <SectionAction disabled={busy} onClick={() => onSave({ ...strip(p), enabled: true })}>{t('settings.providers.turnOn')}</SectionAction>}
+          <IconButton size="sm" title={editLabel} aria-label={editLabel} disabled={busy} onClick={onEdit} className="text-fg-2"><Pencil strokeWidth={1.5} /></IconButton>
+        </div>} />
+      <Group embedded>
+      {models.map(m => (
+        <ModelRow key={m.id} model={m} families={families} open={open === m.id} dim={!p.enabled}
+          onToggleOpen={() => setOpen(v => v === m.id ? undefined : m.id)}
+          onChange={next => update(p.models.map(x => x.id === m.id ? next : x))}
+          onRemove={() => { setOpen(undefined); update(p.models.filter(x => x.id !== m.id)); }}
+          onTest={draft => { setTesting(m.id); test.run({ kind: 'test', provider: strip(p), model: draft }); }}
+          test={testing === m.id ? test : undefined} />
+      ))}
+      {!p.models.length && <Note>{t('settings.providers.noModels')}</Note>}
+      {/* The list's last row: a muted add entry in the rows' own layout (mark column, text column) */}
+      <button type="button" disabled={busy} onClick={() => setAdding(true)}
+        className="flex min-h-(--setting-row) w-full items-center gap-gap py-(--setting-row-pad) text-left text-2 text-fg-2 transition-colors hover:text-fg-1 focus-visible:text-fg-1 disabled:opacity-60">
+        <span className="flex size-lead shrink-0 items-center justify-center [&_svg]:size-icon"><Plus strokeWidth={1.5} /></span>
+        <span className="min-w-0 flex-1 truncate">{t('settings.providers.addModel')}</span>
+      </button>
+      </Group>
+      {adding && <AddModelDialog provider={p} busy={busy} onAdd={m => update([...p.models, m])} onClose={() => setAdding(false)} />}
     </div>
   );
 }
 
-// The endpoint's models to pick from: the ones already added are marked and cannot be picked again, guessed values
-// carry the unconfirmed marker
-function FetchPicker({ pending, outcome, taken, busy, onAdd, onClose }: {
-  pending: boolean; outcome?: ProbeOutcome; taken: ProviderModel[]; busy: boolean;
-  onAdd: (models: ProviderModel[]) => void; onClose: () => void;
-}) {
-  const [picked, setPicked] = useState<Set<string>>(new Set());
-  const found = outcome?.kind === 'models' ? outcome.models : [];
-  const fresh = found.filter(m => !taken.some(x => x.id === m.id));
-  const all = fresh.length > 0 && fresh.every(m => picked.has(m.id));
-  const toggle = (id: string) => setPicked(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+// The dialog frame of the add-model list and the source form (the TextPeek / SubagentGraph overlay): a scrim over the
+// settings shell, a titled box with a close button, the body, and an optional footer bar. A click on the scrim closes.
+// It shares the menus' z-30 layer: the form's format menu portals after it into the same layer and so paints above it
+function SourceDialog({ title, onClose, footer, children }: { title: string; onClose: () => void; footer?: ReactNode; children: ReactNode }) {
+  const scrim = (e: MouseEvent) => { if (e.target === e.currentTarget) onClose(); };
+  return <Dialog.Root open onOpenChange={next => { if (!next) onClose(); }}>
+    <Dialog.Portal>
+      <Dialog.Popup onClick={scrim} className="absolute inset-0 z-30 flex items-center justify-center bg-scrim p-pad">
+        <div className="flex max-h-full w-pop-xl max-w-full flex-col overflow-hidden rounded-lg border border-line bg-bg-1 shadow-pop">
+          <header className="flex shrink-0 items-center gap-gap border-b border-line py-gap pr-gap pl-pad">
+            <Dialog.Title className="m-0 min-w-0 flex-1 truncate text-2 font-medium text-fg-1">{title}</Dialog.Title>
+            <IconButton size="sm" title={t('common.close')} aria-label={t('common.close')} onClick={onClose} className="text-fg-2"><X strokeWidth={1.5} /></IconButton>
+          </header>
+          {children}
+          {footer && <div className="flex shrink-0 items-center gap-2 border-t border-line px-pad py-gap">{footer}</div>}
+        </div>
+      </Dialog.Popup>
+    </Dialog.Portal>
+  </Dialog.Root>;
+}
+
+// What the add list holds: a model the endpoint listed, or the id typed into the search field
+type Pick = ProviderModel & { typed?: boolean };
+
+// Add model: a dialog holding one Command list. Opening it lists the endpoint's models (free); a click adds one and the
+// dialog stays open for the next, added ones carry the check. Whatever is typed that the list does not hold can be
+// added as an id, which is also the way out when listing fails. The footer counts the source's models
+function AddModelDialog({ provider: p, busy, onAdd, onClose }: { provider: ProviderView; busy: boolean; onAdd: (m: ProviderModel) => void; onClose: () => void }) {
+  const [query, setQuery] = useState('');
+  const fetch = useProbe();
+  const asked = useRef(false);
+  useEffect(() => { if (!asked.current) { asked.current = true; fetch.run({ kind: 'models', provider: strip(p) }); } });
+  const listed: Pick[] = fetch.outcome?.kind === 'models' ? fetch.outcome.models : [];
+  const typed = query.trim();
+  const items: Pick[] = typed && !listed.some(m => m.id === typed) && !p.models.some(m => m.id === typed)
+    ? [{ ...newModel(typed), typed: true }, ...listed] : listed;
+  const taken = (m: Pick) => p.models.some(x => x.id === m.id);
   return (
-    <div className="flex flex-col border-t border-line">
-      {pending && <Note shimmer>{t('settings.providers.fetching')}</Note>}
-      {outcome?.kind === 'failed' && <Note><span className="text-danger [overflow-wrap:anywhere]">{outcome.error}</span></Note>}
-      {outcome?.kind === 'models' && !found.length && <Note>{t('settings.providers.fetched.none')}</Note>}
-      {found.length > 0 && <>
-        <div className="flex flex-wrap items-center gap-2 py-(--setting-row-pad)">
-          <span className="min-w-0 flex-1 text-2 text-fg-2">{t('settings.providers.fetched', { count: found.length })}</span>
-          <Button disabled={!fresh.length} onClick={() => setPicked(all ? new Set() : new Set(fresh.map(m => m.id)))}>
-            {all ? t('settings.providers.selectNone') : t('settings.providers.selectAll')}
-          </Button>
-        </div>
-        <div className="scroll-thin flex max-h-code-output flex-col overflow-y-auto">
-          {found.map(m => {
-            const added = taken.some(x => x.id === m.id);
-            const on = added || picked.has(m.id);
-            return (
-              <ItemRow key={m.id} lead={<ModelMark family={m.id} />} dim={added}
-                title={<span className="flex min-w-0 items-baseline gap-2"><span className="truncate">{m.name || m.id}</span><Unconfirmed fields={m.estimated} /></span>}
-                desc={[m.name && m.name !== m.id ? m.id : '', modelSummary(m)].filter(Boolean).join(t('common.metaSep')) || undefined}
-                trailing={added
-                  ? <span className="text-2 text-fg-3">{t('settings.providers.added')}</span>
-                  : <IconButton role="checkbox" aria-checked={on} aria-label={m.id} title={m.id} onClick={() => toggle(m.id)}
-                      className={cn('rounded-md border', on ? 'border-line-strong bg-active text-fg-1' : 'border-line text-transparent')}>
-                      <Check strokeWidth={1.75} />
-                    </IconButton>} />
-            );
-          })}
-        </div>
-      </>}
-      <div className="flex flex-wrap items-center gap-2 py-(--setting-row-pad)">
-        {found.length > 0 && <Button variant="primary" disabled={!picked.size || busy} onClick={() => onAdd(found.filter(m => picked.has(m.id)).map(m => ({ ...m, enabled: true })))}>
-          {t('settings.providers.addSelected', { count: picked.size })}
-        </Button>}
-        <Button onClick={onClose}>{t('settings.providers.close')}</Button>
+    <SourceDialog title={t('settings.providers.addModel.to', { name: p.name || p.id })} onClose={onClose}
+      footer={<>
+        <span className="min-w-0 flex-1 truncate text-3 text-fg-3">{t('settings.providers.addModel.count', { count: p.models.length })}</span>
+        <Button onClick={onClose}>{t('settings.providers.addModel.done')}</Button>
+      </>}>
+      <div className="flex min-h-0 flex-col p-1">
+        <Command.Root items={items} value={null} inputValue={query} onInputValueChange={setQuery}
+          itemToStringValue={(m: Pick | null) => m?.id ?? ''} itemToStringLabel={(m: Pick | null) => (m ? [m.name, m.id].filter(Boolean).join(' ') : '')}>
+          <Command.Input placeholder={t('settings.providers.addModel.search')} />
+          {fetch.pending && <div className="flex min-h-row items-center px-2 text-3 text-fg-3"><Shimmer active>{t('settings.providers.fetching')}</Shimmer></div>}
+          {fetch.outcome?.kind === 'failed' && <div className="px-2 py-1 text-3 [overflow-wrap:anywhere]">
+            <span className="text-danger">{fetch.outcome.error}</span>
+          </div>}
+          {!fetch.pending && <Command.Empty>{t('settings.providers.addModel.typeId')}</Command.Empty>}
+          <Command.List searchable>
+            {(m: Pick) => <Command.Item key={m.typed ? `typed:${m.id}` : m.id} value={m} disabled={busy || taken(m)} className="min-h-0 py-1.5"
+              onClick={() => { if (!taken(m)) { const { typed: _typed, ...model } = m; onAdd({ ...model, enabled: true }); if (m.typed) setQuery(''); } }}>
+              <OptionContent icon={m.typed ? <Plus strokeWidth={1.5} /> : <ModelMark family={m.id} />} checked={taken(m)} checkSlot
+                description={m.typed ? undefined : modelDesc(m)}>
+                {m.typed ? t('settings.providers.addModel.useId', { id: m.id })
+                  : <span className="flex min-w-0 items-baseline gap-2"><span className="truncate">{m.name || m.id}</span><Unconfirmed fields={m.estimated} /></span>}
+              </OptionContent>
+            </Command.Item>}
+          </Command.List>
+        </Command.Root>
       </div>
+    </SourceDialog>
+  );
+}
+
+// The request URL a source's settings produce, as the agent builds it (llm/mod.rs `Endpoint::of`)
+function endpointOf(baseUrl: string, format: string, fullUrl: boolean): string {
+  const url = baseUrl.trim();
+  if (fullUrl) return url;
+  const suffix = format === 'anthropic' ? 'messages' : format === 'openai-responses' ? 'responses' : 'chat/completions';
+  return `${url.replace(/\/+$/, '')}/${suffix}`;
+}
+
+// A URL already naming the endpoint (the agent appends one of these to a root), so it is used as typed
+const looksFull = (url: string) => /\/(chat\/completions|responses|messages)\/?$/i.test(url.trim());
+
+// A form field: its label above the control
+function FormField({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
+  return (
+    <div className={cn('flex min-w-0 flex-col gap-1', className)}>
+      <span className="text-3 text-fg-2">{label}</span>
+      {children}
     </div>
   );
 }
 
-// One source's fields: preset (new sources only), name, API format, URL (as a root or the full endpoint), key. Check
-// reads the model list, which is free
-function ProviderForm({ provider, presets, busy, onSave, onCancel }: {
-  provider?: ProviderView; presets: Preset[]; busy: boolean; onSave: (p: Provider, key?: string) => void; onCancel: () => void;
+// One source's fields in a dialog: name and API format side by side, the URL with the request URL it produces underneath
+// (or used as the full endpoint), the key, and Check with its result. The footer holds Remove (a saved source) apart
+// from Cancel and Save, so Save never wraps away from them. Every source is a custom endpoint; Ollama / LM Studio come
+// from the local servers row and keep their kind when edited. Check reads the model list, which is free
+function ProviderForm({ provider, busy, error, onSave, onClose, onDelete }: {
+  provider?: ProviderView; busy: boolean; error?: string; onSave: (p: Provider, key?: string) => void; onClose: () => void; onDelete?: () => void;
 }) {
-  const [preset, setPreset] = useState(provider?.preset || 'custom');
   const [name, setName] = useState(provider?.name ?? '');
   const [format, setFormat] = useState<string>(provider?.format ?? 'openai-chat');
   const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? '');
-  const [fullUrl, setFullUrl] = useState(provider?.fullUrl ?? false);
+  // Whether the URL is used as typed: a saved source keeps its choice, a new one follows the URL's shape until the
+  // text button under the field overrides it
+  const [fullOverride, setFullOverride] = useState<boolean | undefined>(provider?.fullUrl);
+  const fullUrl = fullOverride ?? looksFull(baseUrl);
   const [key, setKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   const check = useProbe();
-  const { on } = useContext(ProbeContext)!;
-  const chosen = presets.find(p => p.id === preset);
-  const pick = (id: string) => {
-    const next = presets.find(p => p.id === id);
-    setPreset(id);
-    if (!next) return;
-    // Fill what the user has not typed over: the previous preset's values count as untouched
-    if (!name.trim() || name === chosen?.name) setName(next.id === 'custom' ? '' : next.name);
-    if (!baseUrl.trim() || baseUrl === chosen?.baseUrl) setBaseUrl(next.baseUrl);
-    setFormat(next.format);
-    check.reset();
-  };
   const draft = (): Provider => {
-    const base = provider ? strip(provider) : { id: '', enabled: true, models: [] };
-    return { ...base, name: name.trim(), preset, format, baseUrl: baseUrl.trim(), fullUrl } as Provider;
+    const base = provider ? strip(provider) : { id: '', preset: 'custom', enabled: true, models: [] };
+    return { ...base, name: name.trim(), format, baseUrl: baseUrl.trim(), fullUrl } as Provider;
   };
-  const ok = /^https?:\/\/\S+$/.test(baseUrl.trim()) && !busy;
+  const valid = /^https?:\/\/\S+$/.test(baseUrl.trim());
+  const ok = valid && !busy;
   const submit = () => { if (ok) onSave(draft(), key.trim() || undefined); };
-  const keys = (e: KeyboardEvent) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel(); };
+  // Escape is the dialog's own close
+  const keys = (e: KeyboardEvent) => { if (e.key === 'Enter') submit(); };
   const field = cn(inputBox, 'h-ctl w-full');
   const formats = [
     { value: 'openai-chat', label: t('settings.providers.format.openai') },
     { value: 'openai-responses', label: t('settings.providers.format.responses') },
     { value: 'anthropic', label: t('settings.providers.format.anthropic') },
   ];
-  const local = !!chosen?.local;
+  const local = !!provider && isLocal(provider);
   const result = check.outcome;
+  const keyLabel = showKey ? t('settings.providers.hideKey') : t('settings.providers.showKey');
   return (
-    <div className="flex flex-col gap-2 py-(--setting-row-pad)" onKeyDown={keys}>
-      <div className="flex flex-wrap items-center gap-2">
-        {!provider && <Select options={presets.map(p => ({ value: p.id, label: p.id === 'custom' ? t('settings.providers.preset.custom') : p.name }))}
-          value={preset} onChange={pick} label={t('settings.providers.preset')} />}
-        <Select options={formats} value={format} onChange={setFormat} label={t('settings.providers.format')} />
-      </div>
-      <input autoFocus value={name} onChange={e => setName(e.target.value)}
-        aria-label={t('settings.providers.name')} placeholder={t('settings.providers.name')} className={field} />
-      <input value={baseUrl} onChange={e => setBaseUrl(e.target.value)} spellCheck={false}
-        aria-label={t('settings.providers.baseUrl')} placeholder={fullUrl ? t('settings.providers.fullUrl.placeholder') : t('settings.providers.baseUrl')} className={field} />
-      <label className="flex items-center gap-2 text-2 text-fg-2">
-        <Switch checked={fullUrl} onChange={setFullUrl} label={t('settings.providers.fullUrl')} />
-        <span>{t('settings.providers.fullUrl')}</span>
-      </label>
-      {!local && <div className="flex items-center gap-2">
-        <input type={showKey ? 'text' : 'password'} autoComplete="off" spellCheck={false} value={key} onChange={e => setKey(e.target.value)}
-          aria-label={t('settings.providers.key')} placeholder={provider?.hasKey ? t('settings.providers.keyKept') : t('settings.providers.key')} className={cn(field, 'flex-1')} />
-        <IconButton title={showKey ? t('settings.providers.hideKey') : t('settings.providers.showKey')} aria-label={showKey ? t('settings.providers.hideKey') : t('settings.providers.showKey')}
-          aria-pressed={showKey} onClick={() => setShowKey(v => !v)} className="text-fg-2">
-          {showKey ? <EyeOff strokeWidth={1.5} /> : <Eye strokeWidth={1.5} />}
-        </IconButton>
-      </div>}
-      {result && <p className={cn('m-0 text-2 [overflow-wrap:anywhere]', result.kind === 'failed' ? 'text-danger' : 'text-ok')}>
-        {result.kind === 'failed' ? result.error : result.kind === 'check' ? t('settings.providers.checkOk', { count: result.count }) : null}
-      </p>}
-      <div className="flex flex-wrap items-center gap-2">
+    <SourceDialog title={provider ? t('settings.providers.edit', { name: provider.name || provider.id }) : t('settings.providers.add')} onClose={onClose}
+      footer={<>
+        {onDelete && <Button disabled={busy} className="text-danger" onClick={onDelete}>{t('common.remove')}</Button>}
+        <span className="flex-1" />
+        <Button onClick={onClose}>{t('settings.providers.cancel')}</Button>
         <Button variant="primary" disabled={!ok} onClick={submit}>{t('settings.providers.save')}</Button>
-        <Button onClick={onCancel}>{t('settings.providers.cancel')}</Button>
-        <Button disabled={!ok || check.pending} onClick={() => check.run({ kind: 'check', provider: draft(), key: key.trim() || undefined })}>
-          {check.pending && <LoaderCircle strokeWidth={1.5} className="size-icon animate-spin live-spin" />}
-          {t('settings.providers.check')}
-        </Button>
-        {chosen?.keyUrl && !local && <Button onClick={() => on.openExternal(chosen.keyUrl!)}>{t('settings.providers.getKey')}</Button>}
+      </>}>
+      <div className="scroll-thin flex min-h-0 flex-col gap-3 overflow-y-auto p-pad" onKeyDown={keys}>
+        <div className="flex flex-wrap gap-3">
+          <FormField label={t('settings.providers.name')} className="flex-[1_1_var(--setting-header-copy)]">
+            <input autoFocus value={name} onChange={e => setName(e.target.value)}
+              aria-label={t('settings.providers.name')} placeholder={t('settings.providers.name.placeholder')} className={field} />
+          </FormField>
+          <FormField label={t('settings.providers.format')} className="flex-[1_1_var(--setting-header-copy)]">
+            <Select options={formats} value={format} onChange={v => { setFormat(v); check.reset(); }} label={t('settings.providers.format')} className="w-full" />
+          </FormField>
+        </div>
+        <FormField label={t('settings.providers.baseUrl')}>
+          <input value={baseUrl} onChange={e => { setBaseUrl(e.target.value); check.reset(); }} spellCheck={false}
+            aria-label={t('settings.providers.baseUrl')} placeholder={fullUrl ? t('settings.providers.fullUrl.placeholder') : t('settings.providers.baseUrl.placeholder')} className={field} />
+          {/* What the agent will actually call, so a root missing its /v1 shows before the first request fails; the text
+              button flips between appending the format's path and using the URL as typed */}
+          {valid && <div className="flex min-w-0 items-center gap-2">
+            <span className="min-w-0 flex-1 truncate text-3 text-fg-3" title={endpointOf(baseUrl, format, fullUrl)}>
+              {t('settings.providers.endpoint', { url: endpointOf(baseUrl, format, fullUrl) })}
+            </span>
+            <Chip caret={false} aria-pressed={fullUrl} className="h-ctl-sm shrink-0 text-3" onClick={() => setFullOverride(!fullUrl)}>
+              {fullUrl ? t('settings.providers.appendPath') : t('settings.providers.asTyped')}
+            </Chip>
+          </div>}
+        </FormField>
+        {!local && <FormField label={t('settings.providers.key')}>
+          {/* The visibility toggle sits inside the box, so the key field spans the same width as the URL */}
+          <div className="flex h-ctl min-w-0 items-center rounded-md border border-line bg-chip pl-3 focus-within:border-line-strong">
+            <input type={showKey ? 'text' : 'password'} autoComplete="off" spellCheck={false} value={key} onChange={e => { setKey(e.target.value); check.reset(); }}
+              aria-label={t('settings.providers.key')} placeholder={provider?.hasKey ? t('settings.providers.keyKept') : t('settings.providers.key.placeholder')}
+              className="min-w-0 flex-1 border-0 bg-transparent text-2 text-fg-1 outline-none placeholder:text-fg-3" />
+            <IconButton title={keyLabel} aria-label={keyLabel} aria-pressed={showKey} onClick={() => setShowKey(v => !v)} className="text-fg-2">
+              {showKey ? <EyeOff strokeWidth={1.5} /> : <Eye strokeWidth={1.5} />}
+            </IconButton>
+          </div>
+        </FormField>}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button disabled={!ok || check.pending} onClick={() => check.run({ kind: 'check', provider: draft(), key: key.trim() || undefined })}>
+            {check.pending && <LoaderCircle strokeWidth={1.5} className="size-icon animate-spin live-spin" />}
+            {t('settings.providers.check')}
+          </Button>
+          <span className={cn('min-w-0 flex-1 text-3 [overflow-wrap:anywhere]', result?.kind === 'failed' ? 'text-danger' : 'text-ok')}>
+            {result?.kind === 'failed' ? result.error : result?.kind === 'check' ? t('settings.providers.checkOk', { count: result.count }) : null}
+          </span>
+        </div>
+        {error && <p className="m-0 text-3 text-danger [overflow-wrap:anywhere]">{error}</p>}
       </div>
-    </div>
+    </SourceDialog>
   );
 }
