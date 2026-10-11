@@ -119,14 +119,15 @@ export function GoalRow({ block }: { block: GoalBlock }) {
 // Under the last sent prompt (Codex's "Set as goal"): turns that prompt into the session goal in one click. The thread
 // only offers it on agents advertising `set` while no goal is set. The strip takes the place of the message gap: it cancels
 // the gaps on both sides and is exactly the button's height, so the button touches neither the prompt nor the reply and
-// the reply sits one button height under the prompt instead of one message gap (tuned in lab/set-goal-tune, 2026-10-10)
+// the reply sits one button height under the prompt instead of one message gap (tuned in lab/set-goal-tune, 2026-10-10).
+// Icon only and hidden like a reply's action row: it fades in while the prompt above (`peer/prompt` on HistoryMessage)
+// or the strip itself is hovered / focused; touch screens without hover always show it
 export function SetGoalAction({ onSet }: { onSet: () => void }) {
   return (
-    <div data-set-goal className="-my-msg flex h-ctl-sm items-center justify-end">
-      <button type="button" title={t('goal.setFromPromptHint')} onClick={onSet}
-        className="flex h-ctl-sm items-center gap-1 rounded-md px-1.5 text-3 text-fg-3 transition-colors hover:bg-hover hover:text-fg-1">
-        <GoalIcon className="size-icon" strokeWidth={1.5} />{t('goal.setFromPrompt')}
-      </button>
+    <div data-set-goal className="-my-msg flex h-ctl-sm items-center justify-end opacity-0 transition-opacity duration-(--code-copy-duration) ease-out peer-hover/prompt:opacity-100 peer-focus-within/prompt:opacity-100 hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100 motion-reduce:transition-none">
+      <IconButton size="sm" title={t('goal.setFromPromptHint')} aria-label={t('goal.setFromPrompt')} onClick={onSet}>
+        <GoalIcon strokeWidth={1.5} />
+      </IconButton>
     </div>
   );
 }
