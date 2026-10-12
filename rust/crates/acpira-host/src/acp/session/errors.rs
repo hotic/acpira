@@ -32,8 +32,10 @@ static AUTH_WORDS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)auth|cred
 static GLOG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^([IWEFD])\d{4} \d{2}:\d{2}:\d{2}\.\d+\s+\d+\s+[\w.-]+:\d+\]").unwrap());
 /// A sign-in link printed while the browser opens (antigravity-acp `Open the following link to authenticate …: <url>`)
 static SIGN_IN_LINK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(?:open|visit|go to)\b.*\bhttps?://").unwrap());
-static GONE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)session not found").unwrap());
+static GONE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)session not found|no rollout found for thread id").unwrap());
 static LOCKED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)already active|in use|held by|locked").unwrap());
+/// Codex's per-thread writer lock (`thread <id> already has an active writer`), held by another live Codex process
+static WRITER_LOCKED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)already has an active writer").unwrap());
 static UNRESUMABLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)not resumable|cannot be resumed").unwrap());
 static RESTORE_FAILED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bcwd\b|working directory|absolute path|\bmcp\b").unwrap());
 
@@ -164,11 +166,11 @@ fn error_kind(e: &anyhow::Error) -> Option<String> {
 }
 
 pub fn is_session_gone(e: &anyhow::Error) -> bool {
-  error_kind(e).as_deref() == Some("session_not_found") || GONE.is_match(&e.to_string())
+  error_kind(e).as_deref() == Some("session_not_found") || GONE.is_match(&error_text(e))
 }
 
 pub fn is_session_locked(e: &anyhow::Error) -> bool {
-  error_kind(e).as_deref() == Some("session_locked")
+  error_kind(e).as_deref() == Some("session_locked") || WRITER_LOCKED.is_match(&error_text(e))
 }
 
 pub fn is_method_missing(e: &anyhow::Error) -> bool {

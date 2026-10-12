@@ -49,6 +49,20 @@ fn claudes_resource_not_found_means_gone() {
 }
 
 #[test]
+fn codex_missing_rollout_means_the_native_session_is_gone() {
+  // codex-acp 2.1.1 forwards this Codex app-server error in data.details when an unmaterialized thread is reopened
+  let e = rpc(-32603, "Internal error", Some(json!({ "details": "no rollout found for thread id 01a131ba-3087-7253-a264-d41d5a51a76e" })));
+  assert_eq!(classify_restore_error(&e), Some(RestoreFailure::Gone));
+}
+
+#[test]
+fn codex_thread_writer_lock_means_locked() {
+  // Codex 0.159.3 (codex-acp 2.1.1) while another live Codex process still holds the thread
+  let e = rpc(-32603, "Internal error", Some(json!({ "details": "thread 01a13212-d73f-7c71-8c55-2e8b606aff91 already has an active writer" })));
+  assert_eq!(classify_restore_error(&e), Some(RestoreFailure::Locked));
+}
+
+#[test]
 fn method_not_found_means_no_restore_path() {
   assert_eq!(classify_restore_error(&anyhow::Error::new(RpcError::method_not_found("session/resume"))), None);
 }
