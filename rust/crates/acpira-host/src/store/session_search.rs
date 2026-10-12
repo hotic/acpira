@@ -18,8 +18,10 @@ use acpira_shared::protocol::SessionHit;
 
 use crate::store::transcript_store::is_session_id;
 
-/// Characters of context kept before the first match, and the whole snippet's length; the row truncates the rest
-const SNIPPET_BEFORE: usize = 24;
+/// Context kept before the first match, in display columns (a CJK character counts two), and the whole snippet's length
+/// in characters. The history row shows about forty columns and truncates the rest, so the lead stays short enough for
+/// the match itself to land on screen
+const SNIPPET_BEFORE: usize = 12;
 const SNIPPET_LEN: usize = 160;
 /// Replies stay bounded however broad the query; the most recently written records win
 pub const HITS_MAX: usize = 200;
@@ -113,17 +115,27 @@ fn entry_of(stamp: Stamp, raw: &[u8]) -> Entry {
   Entry { stamp, title: fold(&r.title), messages, folded }
 }
 
-/// The text around the first occurrence of `term` in `message`, `pos` being its byte offset in the folded copy
+/// The text from a short lead before the first occurrence of `term` in `message`, `pos` being its byte offset in the
+/// folded copy. The match always sits near the start, even at the end of a long message, since the row cuts the tail
 fn snippet(message: &str, folded: &str, pos: usize, term: &str) -> String {
   let chars: Vec<char> = message.chars().collect();
   let at = folded[..pos].chars().count();
   let term_len = term.chars().count();
-  let mut start = at.saturating_sub(SNIPPET_BEFORE);
-  let end = (start + SNIPPET_LEN).max(at + term_len).min(chars.len());
-  // A match near the end of a message pulls the window back so the snippet still carries its full length of context
-  if end - start < SNIPPET_LEN {
-    start = end.saturating_sub(SNIPPET_LEN);
+  let mut start = at;
+  let mut width = 0;
+  while start > 0 && width + col_width(chars[start - 1]) <= SNIPPET_BEFORE {
+    start -= 1;
+    width += col_width(chars[start]);
   }
+  // A cut through a word moves forward to the next word start, as long as one comes before the match
+  if start > 0
+    && !chars[start - 1].is_whitespace()
+    && !chars[start].is_whitespace()
+    && let Some(space) = chars[start..at].iter().position(|c| c.is_whitespace())
+  {
+    start += space + 1;
+  }
+  let end = (start + SNIPPET_LEN).max(at + term_len).min(chars.len());
   let mut out = String::new();
   if start > 0 {
     out.push('…');
@@ -133,6 +145,15 @@ fn snippet(message: &str, folded: &str, pos: usize, term: &str) -> String {
     out.push('…');
   }
   out
+}
+
+/// Display columns of a character: two for East Asian wide and fullwidth forms and emoji, one otherwise
+fn col_width(c: char) -> usize {
+  match c as u32 {
+    0x1100..=0x115F | 0x2E80..=0x303E | 0x3041..=0xA4CF | 0xAC00..=0xD7A3 | 0xF900..=0xFAFF | 0xFE30..=0xFE4F
+    | 0xFF00..=0xFF60 | 0xFFE0..=0xFFE6 | 0x1F300..=0x1FAFF | 0x20000..=0x3FFFD => 2,
+    _ => 1,
+  }
 }
 
 /// Every term must occur in the title or the conversation; the snippet comes from the first message holding any term.
@@ -252,14 +273,24 @@ mod tests {
     let s = hit_of("a", &e, &terms_of("NEEDLE")).unwrap().snippet;
     assert!(s.starts_with('…') && s.ends_with('…'));
     assert_eq!(s.chars().count(), SNIPPET_LEN + 2);
-    assert!(s[..s.find("needle").unwrap()].trim_start_matches('…').chars().count() == SNIPPET_BEFORE);
+    assert_eq!(s[..s.find("needle").unwrap()].trim_start_matches('…').chars().count(), SNIPPET_BEFORE);
+  }
+
+  #[test]
+  fn snippets_lead_with_the_match_however_late_it_comes() {
+    // Wide characters spend two columns of the lead, and a match at the end of a long message is not pulled back
+    let e = entry("t", &format!(r#"[{{"role":"user","text":"{}标题"}}]"#, "会话".repeat(100)));
+    assert_eq!(hit_of("a", &e, &terms_of("标题")).unwrap().snippet, "…会话会话会话标题");
+    // A lead that starts inside a word skips to the next word
+    let e = entry("t", r#"[{"role":"user","text":"the quick brownish fox needle"}]"#);
+    assert_eq!(hit_of("a", &e, &terms_of("needle")).unwrap().snippet, "…fox needle");
   }
 
   #[test]
   fn folding_keeps_char_positions_for_wide_text() {
     let e = entry("t", r#"[{"role":"agent","blocks":[{"type":"text","markdown":"İstanbul 会话搜索 ÄBC"}]}]"#);
-    assert_eq!(hit_of("a", &e, &terms_of("搜索")).unwrap().snippet, "İstanbul 会话搜索 ÄBC");
-    assert_eq!(hit_of("a", &e, &terms_of("äbc")).unwrap().snippet, "İstanbul 会话搜索 ÄBC");
+    assert_eq!(hit_of("a", &e, &terms_of("会话")).unwrap().snippet, "İstanbul 会话搜索 ÄBC");
+    assert_eq!(hit_of("a", &e, &terms_of("äbc")).unwrap().snippet, "…会话搜索 ÄBC");
   }
 
   #[test]
