@@ -392,7 +392,7 @@ async fn history_search_reads_saved_conversations_and_follows_later_writes() {
 
   let hits = search.search(dir.path().to_path_buf(), "NEEDLE").await;
   assert_eq!(hit_ids(&hits), vec!["a"]);
-  assert_eq!(hits[0].snippet, "where is the needle");
+  assert_eq!(hits[0].snippet, "…is the needle");
   assert!(search.search(dir.path().to_path_buf(), "reasoning").await.is_empty(), "thoughts stay out of the index");
   assert_eq!(hit_ids(&search.search(dir.path().to_path_buf(), "parser haystack").await), vec!["a"]);
 
