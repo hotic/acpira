@@ -23,7 +23,7 @@ use crate::acp::vendors::{Vendor, claude_auth};
 use crate::i18n::{t, tp};
 use crate::util::now_iso;
 
-const CLOSE_GRACE: Duration = Duration::from_secs(3);
+pub(super) const CLOSE_GRACE: Duration = Duration::from_secs(3);
 
 impl AcpSession {
   /// Params for session/new, resume and load (and an edit's fresh session): the shared MCP servers for this agent and
@@ -334,6 +334,7 @@ impl AcpSession {
               }
               self.apply_controls(&mut c, r.get("modes"), r.get("configOptions"));
               c.status = SessionStatus::Ready;
+              c.ultracode.unprompted = false;
               drop(c);
               drop(handoff);
               self.log(&format!("{method} ok"));
@@ -435,6 +436,7 @@ impl AcpSession {
     let mut c = self.core.lock();
     let sid = r.get("sessionId").and_then(Value::as_str).unwrap_or("").to_owned();
     c.acp_session_id = Some(sid.clone());
+    c.ultracode.unprompted = true;
     Self::note_startup_banner(&mut c, r.get("_meta"));
     self.apply_controls(&mut c, r.get("modes"), r.get("configOptions"));
     c.status = SessionStatus::Ready;

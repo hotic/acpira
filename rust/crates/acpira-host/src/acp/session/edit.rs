@@ -540,6 +540,7 @@ impl AcpSession {
       let notes = {
         let mut c = self.core.lock();
         c.acp_session_id = Some(fresh_id.clone());
+        c.ultracode.unprompted = true;
         c.state.controls = controls;
         c.state.turns.truncate(idx);
         c.tree.truncate(idx);

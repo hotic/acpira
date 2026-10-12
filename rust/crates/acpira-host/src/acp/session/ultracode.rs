@@ -16,6 +16,7 @@ use acpira_shared::transcript::*;
 use acpira_shared::turn_settings::capture_turn_settings;
 
 use crate::acp::session::controls::MODE_PICK;
+use crate::acp::session::lifecycle::CLOSE_GRACE;
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::transcript::normalize::has_live_async_task;
 use crate::acp::transport::process::AgentProcess;
@@ -35,6 +36,9 @@ pub(crate) struct UltracodeState {
   pub wire: Option<String>,
   /// The level picked to leave Ultra, shown and set by the rebuild that turns ultracode off
   pub level: Option<String>,
+  /// The native session came from session/new and no prompt has reached it yet: Claude Code has written no transcript,
+  /// so a resume would fail (claude-agent-acp answers -32002 Resource not found) and a rebuild takes a fresh session/new
+  pub unprompted: bool,
 }
 
 /// What an effort pick on a Claude session means for ultracode (`ultracode_pick`)
@@ -283,7 +287,10 @@ impl AcpSession {
       let target = c.proc.clone().filter(|p| p.alive()).zip(c.acp_session_id.clone());
       target.and_then(|(proc, sid)| {
         let caps = proc.caps();
-        let method = if crate::json::truthy(caps.get("sessionCapabilities").and_then(|s| s.get("resume"))) {
+        // Nothing to keep in a never-prompted native session, and nothing to resume either: a fresh one replaces it
+        let method = if c.ultracode.unprompted {
+          "session/new"
+        } else if crate::json::truthy(caps.get("sessionCapabilities").and_then(|s| s.get("resume"))) {
           "session/resume"
         } else if crate::json::truthy(caps.get("loadSession")) {
           "session/load"
@@ -330,7 +337,8 @@ impl AcpSession {
       self.touch(&mut c);
       return if changed { Err(anyhow!("ultracode needs session/resume or session/load on a live process")) } else { Ok(()) };
     };
-    let req = self.session_request(&proc, Some(&sid)).await;
+    let fresh = method == "session/new";
+    let req = self.session_request(&proc, (!fresh).then_some(sid.as_str())).await;
     let on = self.core.lock().ultracode.sent;
     self.log(&format!("ultracode {on}: rebuilding the session through {method}"));
     let result = match proc.request_ordered(method, req).await {
@@ -338,10 +346,19 @@ impl AcpSession {
         {
           let mut c = self.core.lock();
           c.replaying = false;
+          if fresh {
+            // Switched before the handoff lets the new session's own updates through, so they land on the root
+            c.acp_session_id = r.get("sessionId").and_then(Value::as_str).map(str::to_owned);
+            c.state.commands = vec![];
+            self.touch(&mut c);
+          }
           self.adopt_rebuilt_controls(&mut c, &r);
         }
         drop(handoff);
         self.log(&format!("{method} ok (ultracode {on})"));
+        if fresh {
+          self.close_replaced(&proc, &sid).await;
+        }
         Ok(())
       }
       Err(e) => {
@@ -361,7 +378,10 @@ impl AcpSession {
           }
         }
         self.log(&format!("ultracode {on}: {method} failed, effort reverted: {}", crate::acp::session::errors::error_text(&e)));
-        self.restore_after_failed_rebuild(&proc, &sid, method).await;
+        // A failed session/new never tore the old session down
+        if !fresh {
+          self.restore_after_failed_rebuild(&proc, &sid, method).await;
+        }
         Err(e)
       }
     };
@@ -416,6 +436,18 @@ impl AcpSession {
         self.log(&format!("{method} with the previous settings failed too: {}", crate::acp::session::errors::error_text(&e)));
         self.fail(&mut c, &e);
       }
+    }
+  }
+
+  /// The never-prompted native session a session/new rebuild replaced still holds a query (and its `claude` process)
+  /// in the adapter: closed when the agent advertises session/close, best effort
+  async fn close_replaced(&self, proc: &AgentProcess, sid: &str) {
+    if !crate::json::truthy(proc.caps().get("sessionCapabilities").and_then(|s| s.get("close"))) {
+      return;
+    }
+    let closed = tokio::time::timeout(CLOSE_GRACE, proc.request("session/close", serde_json::json!({ "sessionId": sid }))).await;
+    if !matches!(closed, Ok(Ok(_))) {
+      self.log(&format!("session/close of the replaced session {sid} failed"));
     }
   }
 
