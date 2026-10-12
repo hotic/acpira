@@ -157,11 +157,8 @@ fn setup(server: &Server, session: &Session) -> Result<Setup, String> {
   }
   let (pick, effort, mode) = {
     let mut st = session.state.lock();
-    // A session opened before any model was configured takes the default now, and keeps it
-    if st.model.is_none()
-      && let Some(pick) = config.default_pick()
-    {
-      st.model = Some(pick);
+    // A session opened before any model was configured takes the default now, and keeps it, with that model's effort
+    if crate::acp::reconcile(&config, &server.catalog.get(), &mut st) {
       session.save_state(&st);
     }
     (st.model.clone(), st.effort.clone(), modes::get(&st.mode))

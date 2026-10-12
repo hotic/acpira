@@ -209,6 +209,9 @@ impl Server {
     let config = self.config.get();
     let catalog = self.catalog.get();
     let mut st = session.state.lock();
+    if reconcile(&config, &catalog, &mut st) {
+      session.save_state(&st);
+    }
     Ok(json!({ "modes": modes_of(&st), "configOptions": sent_options(&config, &catalog, &mut st) }))
   }
 
@@ -300,6 +303,8 @@ impl Server {
     let config = self.config.get();
     let catalog = self.catalog.get();
     let mut st = session.state.lock();
+    // The effort check below must see the model the picker shows
+    reconcile(&config, &catalog, &mut st);
     match config_id {
       "model" => {
         if config.find(value).is_none() {
@@ -334,6 +339,9 @@ impl Server {
     for s in sessions {
       let options = {
         let mut st = s.state.lock();
+        if reconcile(&config, &catalog, &mut st) {
+          s.save_state(&st);
+        }
         let options = config_options(&config, &catalog, &st);
         if st.sent_options.as_ref().is_none_or(|sent| *sent == options) {
           continue;
@@ -406,6 +414,25 @@ fn default_effort(config: &Config, catalog: &Catalog, pick: Option<&str>) -> Opt
   let efforts = efforts_of(config, catalog, pick);
   let preferred = pick.and_then(|p| config.find(p)).map(|(p, m)| crate::llm::family::resolve(p, m).effort);
   efforts.iter().find(|e| Some(e.as_str()) == preferred).or(efforts.last()).cloned()
+}
+
+/// Bring the session's model and effort in line with what `config_options` shows: a session opened before any model
+/// existed takes the default, and an effort the current model does not offer (or none, where it now offers levels)
+/// becomes the model's default. Without this the picker showed a fallback the session did not hold, so setting the
+/// shown effort was refused and a turn sent no effort until the model was switched once. True when something changed
+pub(crate) fn reconcile(config: &Config, catalog: &Catalog, st: &mut SessionState) -> bool {
+  let before = (st.model.clone(), st.effort.clone());
+  if st.model.is_none() {
+    st.model = config.default_pick();
+  }
+  // A model that is no longer configured keeps its effort: the turn refuses to run it anyway
+  if st.model.as_deref().is_some_and(|p| config.find(p).is_some()) {
+    let efforts = efforts_of(config, catalog, st.model.as_deref());
+    if !st.effort.as_ref().is_some_and(|e| efforts.contains(e)) {
+      st.effort = default_effort(config, catalog, st.model.as_deref());
+    }
+  }
+  (st.model.clone(), st.effort.clone()) != before
 }
 
 /// `config_options`, remembered as what the client has

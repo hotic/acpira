@@ -57,6 +57,24 @@ async fn a_default_model_is_persisted_after_the_first_prompt() {
   assert_eq!(control(&r, "model"), &json!("mock/m1"), "the session followed the changed provider default");
 }
 
+#[tokio::test]
+async fn a_session_opened_before_its_model_existed_holds_the_shown_effort() {
+  let h = Harness::start().await;
+  let server = MockModel::start();
+  let picked = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
+  let untouched = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
+  h.providers(&server.base_url(), json!([{"id":"thinker","efforts":["low","high"]}]));
+  // The picker shows the new model's effort; setting it needs no model switch first
+  set(&h, &picked, "effort", "low").await;
+  server.push(mock::text("first"));
+  prompt(&h, &picked).await;
+  // A first prompt under the shown defaults sends the shown effort
+  server.push(mock::text("second"));
+  prompt(&h, &untouched).await;
+  let efforts: Vec<Value> = server.requests().iter().map(|r| r.body["reasoning_effort"].clone()).collect();
+  assert_eq!(efforts, [json!("low"), json!("high")]);
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn cancelling_a_reused_provider_call_id_still_writes_its_result() {
