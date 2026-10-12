@@ -31,6 +31,9 @@ export interface ProviderModel {
   efforts: string[];
   // The prompt / request family pinned for this model; null matches automatically
   family?: string | null;
+  // Whether sessions offer the Fast switch (the provider's premium speed tier); absent decides from the API format and
+  // the model id (llm/fast.rs), true / false override that
+  fast?: boolean | null;
   sampling: Sampling;
   // Tool-call rounds per turn before the agent pauses; null = no cap
   maxSteps?: number | null;

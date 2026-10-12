@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use serde_json::{Value, json};
@@ -31,6 +31,8 @@ pub struct SessionState {
   /// `<provider>/<model>`; None until a model exists
   pub model: Option<String>,
   pub effort: Option<String>,
+  /// The Fast switch. Kept across model switches and applied only while the model offers it (`llm::fast::offered`)
+  pub fast: bool,
   /// The system prompt, fixed while the model's variant stays the same (prompt caches key on it)
   pub prompt: crate::prompt::Composed,
   /// The conversation as the model sees it
@@ -70,7 +72,7 @@ impl Session {
   /// session has a file: changing a control alone does not make one)
   pub fn save_state(&self, st: &SessionState) {
     self.store.prelude(json!({
-      "type": "state", "mode": st.mode, "announced": st.announced, "model": st.model, "effort": st.effort,
+      "type": "state", "mode": st.mode, "announced": st.announced, "model": st.model, "effort": st.effort, "fast": st.fast,
     }));
   }
 
@@ -88,6 +90,9 @@ pub struct Server {
   pub catalog: crate::catalog::CatalogCache,
   pub version: String,
   pub http: ureq::Agent,
+  /// The client takes boolean config options (`clientCapabilities.session.configOptions.boolean`); without it the Fast
+  /// switch goes out as a Standard / Fast select
+  booleans: AtomicBool,
   conn: OnceLock<Connection>,
   sessions: parking_lot::Mutex<HashMap<String, Arc<Session>>>,
 }
@@ -99,6 +104,7 @@ impl Server {
       config: ConfigCache::new(home),
       version: version.into(),
       http: crate::llm::default_http(),
+      booleans: AtomicBool::new(false),
       conn: OnceLock::new(),
       sessions: Default::default(),
     })
@@ -139,7 +145,9 @@ impl Server {
     self.sessions.lock().get(id).cloned().ok_or_else(|| RpcError::new(-32602, format!("Unknown session: {id}")))
   }
 
-  fn initialize(&self, _params: &Value) -> Value {
+  fn initialize(&self, params: &Value) -> Value {
+    let booleans = params.pointer("/clientCapabilities/session/configOptions/boolean").is_some_and(|b| !b.is_null());
+    self.booleans.store(booleans, Ordering::Relaxed);
     json!({
       "protocolVersion": PROTOCOL_VERSION,
       "agentInfo": { "name": AGENT_NAME, "title": "Acpira", "version": self.version },
@@ -165,7 +173,7 @@ impl Server {
     let response = json!({
       "sessionId": id,
       "modes": modes_of(&state),
-      "configOptions": sent_options(&config, &catalog, &mut state),
+      "configOptions": sent_options(&config, &catalog, &mut state, self.booleans()),
     });
     let store = Store::new(self.session_file(&id), &id, std::path::Path::new(cwd));
     // The file starts with the first event; the prompt goes first so a reopen keeps the very same text
@@ -214,7 +222,7 @@ impl Server {
     if reconcile(&config, &catalog, &mut st) {
       session.save_state(&st);
     }
-    Ok(json!({ "modes": modes_of(&st), "configOptions": sent_options(&config, &catalog, &mut st) }))
+    Ok(json!({ "modes": modes_of(&st), "configOptions": sent_options(&config, &catalog, &mut st, self.booleans()) }))
   }
 
   /// A session object from its file: the history, the controls and the system prompt as they were
@@ -230,6 +238,7 @@ impl Server {
       ..Default::default()
     };
     st.effort = s("effort").or_else(|| default_effort(&config, &catalog, st.model.as_deref()));
+    st.fast = loaded.state.get("fast").and_then(Value::as_bool).unwrap_or(false);
     if let Some(p) = &loaded.prompt {
       let ps = |k: &str| p.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
       st.prompt = crate::prompt::Composed {
@@ -301,7 +310,11 @@ impl Server {
   fn set_config_option(&self, params: &Value) -> Result<Value, RpcError> {
     let session = self.session(str_param(params, "sessionId")?)?;
     let config_id = str_param(params, "configId")?;
-    let value = params.get("value").and_then(Value::as_str).ok_or_else(|| RpcError::new(-32602, "value must be a string"))?;
+    let raw = params.get("value").unwrap_or(&Value::Null);
+    let value = raw.as_str().unwrap_or_default();
+    if config_id != FAST && !raw.is_string() {
+      return Err(RpcError::new(-32602, "value must be a string"));
+    }
     let config = self.config.get();
     let catalog = self.catalog.get();
     let mut st = session.state.lock();
@@ -325,10 +338,22 @@ impl Server {
         }
         st.effort = Some(value.to_owned());
       }
+      FAST => {
+        if !st.model.as_deref().and_then(|p| config.find(p)).is_some_and(|(p, m)| crate::llm::fast::offered(p, m)) {
+          return Err(RpcError::new(-32602, "Fast is not offered for this model"));
+        }
+        // A real boolean from a client that takes boolean options, else the select's value
+        st.fast = match (raw.as_bool(), value) {
+          (Some(on), _) => on,
+          (None, "true" | FAST) => true,
+          (None, "false" | STANDARD) => false,
+          _ => return Err(RpcError::new(-32602, format!("Unknown fast value: {raw}"))),
+        };
+      }
       other => return Err(RpcError::new(-32602, format!("Unknown config option: {other}"))),
     }
     session.save_state(&st);
-    Ok(json!({ "configOptions": sent_options(&config, &catalog, &mut st) }))
+    Ok(json!({ "configOptions": sent_options(&config, &catalog, &mut st, self.booleans()) }))
   }
 
   /// Send `config_option_update` to every open session whose options changed since the client last got them: a model
@@ -344,7 +369,7 @@ impl Server {
         if reconcile(&config, &catalog, &mut st) {
           s.save_state(&st);
         }
-        let options = config_options(&config, &catalog, &st);
+        let options = config_options(&config, &catalog, &st, self.booleans());
         if st.sent_options.as_ref().is_none_or(|sent| *sent == options) {
           continue;
         }
@@ -381,6 +406,10 @@ impl Server {
     while sessions.iter().any(|s| s.state.lock().turn.is_some()) && tokio::time::Instant::now() < deadline {
       tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
+  }
+
+  fn booleans(&self) -> bool {
+    self.booleans.load(Ordering::Relaxed)
   }
 
   fn cancel(&self, params: &Value) {
@@ -438,16 +467,22 @@ pub(crate) fn reconcile(config: &Config, catalog: &Catalog, st: &mut SessionStat
 }
 
 /// `config_options`, remembered as what the client has
-fn sent_options(config: &Config, catalog: &Catalog, st: &mut SessionState) -> Vec<Value> {
-  let options = config_options(config, catalog, st);
+fn sent_options(config: &Config, catalog: &Catalog, st: &mut SessionState, booleans: bool) -> Vec<Value> {
+  let options = config_options(config, catalog, st, booleans);
   st.sent_options = Some(options.clone());
   options
 }
 
-/// The full configOptions set: the model select (every usable model, labelled with its source) and the effort select
-/// when the current model offers levels. The approval level is not a session control: it is the agent's setting in
-/// `providers.json` (`Config::approval`), so the composer shows one mode chip and nothing beside it
-pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState) -> Vec<Value> {
+/// The Fast switch's id, and its values as a select for a client without boolean options (the shape Devin uses)
+const FAST: &str = "fast";
+const STANDARD: &str = "standard";
+
+/// The full configOptions set: the model select (every usable model, labelled with its source), the effort select when
+/// the current model offers levels, and the Fast switch when it has a fast tier (a boolean, or a Standard / Fast select
+/// for a client that does not take booleans; the composer shows either as its Fast toggle). The approval level is not a
+/// session control: it is the agent's setting in `providers.json` (`Config::approval`), so the composer shows one mode
+/// chip and nothing beside it
+pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState, booleans: bool) -> Vec<Value> {
   let mut out = vec![];
   let current = st.model.as_deref().filter(|p| config.find(p).is_some()).map(str::to_owned).or_else(|| config.default_pick());
   if let Some(current) = current {
@@ -464,6 +499,18 @@ pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState) -> 
         "id": "effort", "name": "Effort", "category": "thought_level", "type": "select", "currentValue": value,
         "options": efforts.iter().map(|e| json!({ "value": e, "name": title_case(e) })).collect::<Vec<_>>(),
       }));
+    }
+    if config.find(&current).is_some_and(|(p, m)| crate::llm::fast::offered(p, m)) {
+      let description = "The provider's faster tier, billed at a higher rate";
+      out.push(if booleans {
+        json!({ "id": FAST, "name": "Fast", "description": description, "category": "model_config", "type": "boolean", "currentValue": st.fast })
+      } else {
+        json!({
+          "id": FAST, "name": "Fast", "description": description, "category": "model_config", "type": "select",
+          "currentValue": if st.fast { FAST } else { STANDARD },
+          "options": [{ "value": STANDARD, "name": "Standard" }, { "value": FAST, "name": "Fast" }],
+        })
+      });
     }
   }
   out
