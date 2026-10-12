@@ -580,6 +580,7 @@ export const de = {
   'verb.showImage': 'Bild anzeigen',
   'verb.delegate': 'Delegieren',
   'verb.awaitSubagent': 'Auf Subagent warten',
+  'verb.workflow': 'Workflow ausführen',
 
   'asyncTask.running': 'Hintergrundaufgabe läuft',
   'asyncTask.paused': 'Hintergrundaufgabe pausiert',
@@ -589,6 +590,8 @@ export const de = {
   'asyncTask.stopping': 'Wird gestoppt…',
   'asyncTask.stop': 'Aufgabe stoppen',
   'asyncTask.stopRefused': 'Der Agent konnte diese Aufgabe nicht stoppen',
+  'asyncTask.script': 'Skript',
+  'asyncTask.output': 'Ausgabe',
   'asyncTask.toolUses': '{n} Tool-Aufrufe',
   'asyncTask.toolUses#one': '{n} Tool-Aufruf',
 
@@ -625,7 +628,6 @@ export const de = {
   'subagents.cancelling': 'Stopp angefordert…',
   'subagents.receiptOnly': 'Dieser Agent meldet nur die Delegation und ihr Ergebnis; einen eigenen Ablauf-Stream gibt es nicht.',
   'subagents.disconnectedNote': 'Vor dem Ende der Verbindung kam kein Ergebnis an; der Ausgang der Aufgabe ist unbekannt.',
-  'subagents.moreCompleted': '{n} weitere fertig',
   'subagents.provenance': 'Hauptagent › {path}',
   'subagents.loading': 'Protokoll wird gelesen…',
 

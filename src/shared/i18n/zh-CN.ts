@@ -606,6 +606,7 @@ export const zhCN = {
   // Delegation calls: the tool that spawns a subagent (Devin run_subagent, Claude/Kimi Agent) and the one that blocks on it
   'verb.delegate': '委派',
   'verb.awaitSubagent': '等待子代理',
+  'verb.workflow': '运行工作流',
 
   'asyncTask.running': '后台任务运行中',
   'asyncTask.paused': '后台任务已暂停',
@@ -615,9 +616,10 @@ export const zhCN = {
   'asyncTask.stopping': '正在停止…',
   'asyncTask.stop': '停止任务',
   'asyncTask.stopRefused': 'agent 无法停止该任务',
+  'asyncTask.script': '脚本',
+  'asyncTask.output': '输出',
   'asyncTask.tokens': '{n} tokens',
   'asyncTask.toolUses': '{n} 次工具调用',
-  'asyncTask.duration': '{s} 秒',
 
   'subagents.group': '子代理 {n}',
   'subagents.running': '{n} 运行中',
@@ -648,7 +650,6 @@ export const zhCN = {
   'subagents.cancelling': '正在请求停止…',
   'subagents.receiptOnly': '此代理只提供委派回执和结果，没有独立的过程流。',
   'subagents.disconnectedNote': '连接结束前没有收到结果，任务结局未知。',
-  'subagents.moreCompleted': '另有 {n} 个已完成',
   'subagents.provenance': '主代理 › {path}',
   'subagents.loading': '正在读取过程…',
 

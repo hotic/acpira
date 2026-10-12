@@ -59,6 +59,14 @@
 }
 
 @layer components {
+  /* Two-line child rows keep the title and state readable while long activity text gives up width first. */
+  .subagent-row {
+    overflow: hidden;
+  }
+  .subagent-row > .row-lead {
+    margin-top: var(--gap);
+  }
+
   .subagent-mark {
     display: block;
     flex-shrink: 0;

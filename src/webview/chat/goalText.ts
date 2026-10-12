@@ -14,14 +14,15 @@ export function goalDuration(seconds: number): string {
   return t('turns.elapsed.s', { s });
 }
 
-const tokens = (n: number) => new Intl.NumberFormat(getLocale(), { notation: 'compact', maximumFractionDigits: 1 }).format(n);
+/** A token count in the locale's compact notation ("184K", "211万"); async task rows use it too */
+export const compactTokens = (n: number) => new Intl.NumberFormat(getLocale(), { notation: 'compact', maximumFractionDigits: 1 }).format(n);
 
 /** Token spend, against the budget when the agent set one ("184K / 500K tokens") */
 export function goalSpend(goal: { tokensUsed?: number; tokenBudget?: number }): string | undefined {
   if (goal.tokensUsed === undefined) return undefined;
   return goal.tokenBudget
-    ? t('goal.tokensOf', { used: tokens(goal.tokensUsed), budget: tokens(goal.tokenBudget) })
-    : t('goal.tokens', { used: tokens(goal.tokensUsed) });
+    ? t('goal.tokensOf', { used: compactTokens(goal.tokensUsed), budget: compactTokens(goal.tokenBudget) })
+    : t('goal.tokens', { used: compactTokens(goal.tokensUsed) });
 }
 
 /**

@@ -594,6 +594,7 @@ export const ru = {
   'verb.showImage': 'Показ изображения',
   'verb.delegate': 'Делегирование',
   'verb.awaitSubagent': 'Ожидание субагента',
+  'verb.workflow': 'Запуск рабочего процесса',
 
   'asyncTask.running': 'Фоновая задача выполняется',
   'asyncTask.paused': 'Фоновая задача приостановлена',
@@ -603,13 +604,14 @@ export const ru = {
   'asyncTask.stopping': 'Остановка…',
   'asyncTask.stop': 'Остановить задачу',
   'asyncTask.stopRefused': 'Агент не смог остановить эту задачу',
+  'asyncTask.script': 'Скрипт',
+  'asyncTask.output': 'Вывод',
   'asyncTask.tokens': '{n} токенов',
   'asyncTask.tokens#one': '{n} токен',
   'asyncTask.tokens#few': '{n} токена',
   'asyncTask.toolUses': '{n} вызовов инструментов',
   'asyncTask.toolUses#one': '{n} вызов инструмента',
   'asyncTask.toolUses#few': '{n} вызова инструментов',
-  'asyncTask.duration': '{s} с',
 
   'subagents.group': 'Субагенты {n}',
   'subagents.running': 'Выполняется: {n}',
@@ -646,8 +648,6 @@ export const ru = {
   'subagents.cancelling': 'Остановка запрошена…',
   'subagents.receiptOnly': 'Этот агент сообщает только о делегировании и его результате; отдельного потока выполнения нет.',
   'subagents.disconnectedNote': 'Результат не пришёл до разрыва соединения; исход задачи неизвестен.',
-  'subagents.moreCompleted': 'Ещё {n} завершено',
-  'subagents.moreCompleted#one': 'Ещё {n} завершён',
   'subagents.provenance': 'Основной агент › {path}',
   'subagents.loading': 'Чтение записи…',
 

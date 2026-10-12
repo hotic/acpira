@@ -579,6 +579,7 @@ export const fr = {
   'verb.showImage': 'Affichage d’image',
   'verb.delegate': 'Délégation',
   'verb.awaitSubagent': 'Attente du sous-agent',
+  'verb.workflow': 'Exécution du workflow',
 
   'asyncTask.running': 'Tâche en arrière-plan en cours',
   'asyncTask.paused': 'Tâche en arrière-plan en pause',
@@ -588,9 +589,10 @@ export const fr = {
   'asyncTask.stopping': 'Arrêt…',
   'asyncTask.stop': 'Arrêter la tâche',
   'asyncTask.stopRefused': 'L’agent n’a pas pu arrêter cette tâche',
+  'asyncTask.script': 'Script',
+  'asyncTask.output': 'Sortie',
   'asyncTask.toolUses': '{n} appels d’outils',
   'asyncTask.toolUses#one': '{n} appel d’outil',
-  'asyncTask.duration': '{s} s',
 
   'subagents.group': 'Sous-agents {n}',
   'subagents.running': '{n} en cours',
@@ -627,8 +629,6 @@ export const fr = {
   'subagents.cancelling': 'Arrêt demandé…',
   'subagents.receiptOnly': 'Cet agent ne signale que la délégation et son résultat ; il n’y a pas de flux de processus séparé.',
   'subagents.disconnectedNote': 'Aucun résultat n’est arrivé avant la fin de la connexion ; l’issue de la tâche est inconnue.',
-  'subagents.moreCompleted': '{n} autres terminés',
-  'subagents.moreCompleted#one': '{n} autre terminé',
   'subagents.provenance': 'Agent principal › {path}',
   'subagents.loading': 'Lecture de la transcription…',
 

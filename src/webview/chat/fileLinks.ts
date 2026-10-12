@@ -1,5 +1,6 @@
 import { createContext } from 'react';
 import type { FullDiffSource } from '@shared/transcript';
+import type { WorkflowProgress } from './subagents/subagentState';
 
 export type FileLink = { path: string; line?: number };
 
@@ -11,6 +12,10 @@ export const DiffSourceContext = createContext<((toolCallId: string, nth: number
 
 // AIR asyncTasks: the stop affordance on a tool row asks the adapter to stop the task on the session that owns it
 export const AsyncTaskStopContext = createContext<((taskId: string) => void) | undefined>(undefined);
+
+// A Claude workflow run's finished / total agents by async task id, from the turn's subagent nodes; only the count on
+// the run's tool row reads it, so a progress frame does not re-render every tool of the turn
+export const WorkflowProgressContext = createContext<ReadonlyMap<string, WorkflowProgress>>(new Map());
 
 // Agent-emitted images are blob-store files: the URL builds them for <img>, the opener hands the host the blob name
 export const BlobUrlContext = createContext<((blob: string) => string) | undefined>(undefined);

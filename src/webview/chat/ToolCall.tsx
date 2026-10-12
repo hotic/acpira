@@ -17,8 +17,9 @@ import { CodeSurface, DiffBlock } from './CodeBlock';
 import { AgentImage } from './AgentImage';
 import { GeneratedImages, ImageInFoldContext } from './GeneratedImage';
 import { TerminalOutput, ToolOutput } from './Terminal';
-import { toolTarget, toolVerb } from './folding';
-import { AsyncTaskStopContext, OpenToolFileContext } from './fileLinks';
+import { isWorkflowRun, toolTarget, toolVerb } from './folding';
+import { AsyncTaskStopContext, OpenToolFileContext, WorkflowProgressContext } from './fileLinks';
+import { compactTokens } from './goalText';
 import { diffIndex, fileReference, toolFiles, visibleToolContents } from './toolDetails';
 import { useToolSeconds } from './useToolSeconds';
 import { commandDuration } from './commandDuration';
@@ -58,13 +59,15 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
   // An AIR async task owns this row while it runs: the state tag replaces the generic status icon, and
   // a stoppable task gets a stop button that posts _session/async_task/stop through the host
   const task = block.asyncTask;
+  const workflow = isWorkflowRun(block);
   const stopTask = useContext(AsyncTaskStopContext);
-  const stoppable = task !== undefined && task.canStop && task.stopRequested !== true
-    && (task.state === 'running' || task.state === 'paused') && stopTask !== undefined;
+  const live = task !== undefined && (task.state === 'running' || task.state === 'paused');
+  const stoppable = live && task.canStop && task.stopRequested !== true && stopTask !== undefined;
   const taskTag = task && (
     <span className={cn('inline-flex shrink-0 items-center gap-1 whitespace-nowrap',
       task.state === 'failed' ? 'text-danger' : task.state === 'completed' ? 'text-ok' : 'text-fg-3')}>
       {task.stopRequested ? t('asyncTask.stopping') : t(TASK_STATE_KEY[task.state])}
+      {workflow && live && <WorkflowCount taskId={task.id} />}
     </span>
   );
   const taskStop = stoppable && (
@@ -135,6 +138,15 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
     const row = <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
     return <div className="flex flex-col gap-gap">{row}{(!grouped || imageInFold) && <GeneratedImages block={block} />}</div>;
   }
+  // A Claude workflow run: the launch receipt is written for the model (transcript dir, resume instructions), so the row
+  // opens to the run's own report instead; its agents are the subagent rows after the turn's content
+  if (task && workflow) {
+    const script = workflowScript(block);
+    return hasTaskMeta(task, script)
+      ? <Disclosure className="action-details" bodyClassName="pt-gap-half" tone="action" lead={lead} trailing={trailing}
+          open={fold?.open} onToggle={fold?.onToggle} body={<TaskMeta task={task} script={script} />}>{label}</Disclosure>
+      : <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
+  }
   // Search hits open on demand; read references remain visible inside the process.
   if (files.length && block.kind === 'search') return (
     <Disclosure className="action-details" tone="action" lead={lead} trailing={trailing} indent={false} rail="rows" open={fold?.open} onToggle={fold?.onToggle}
@@ -187,28 +199,63 @@ const TASK_STATE_KEY: Record<AsyncTaskState, MsgKey> = {
   stopped: 'asyncTask.stopped',
 };
 
-// An AIR async task's own report, under its tool row: latest summary, the tool it was last on,
-// usage when the adapter reports it, and the output file as an ordinary file link
-function TaskMeta({ task }: { task: AsyncTaskInfo | undefined }) {
-  const openFile = useContext(OpenToolFileContext);
-  if (!task) return null;
-  const usage = [
-    task.usage?.totalTokens !== undefined ? t('asyncTask.tokens', { n: task.usage.totalTokens }) : undefined,
-    task.usage?.toolUses !== undefined ? t('asyncTask.toolUses', { n: task.usage.toolUses }) : undefined,
-    task.usage?.durationMs !== undefined ? t('asyncTask.duration', { s: Math.round(task.usage.durationMs / 1000) }) : undefined,
+// Finished / total agents beside a running workflow's state tag. The only reader of the turn's workflow counts, so a
+// progress frame re-renders this span rather than the tool row
+function WorkflowCount({ taskId }: { taskId: string }) {
+  const count = useContext(WorkflowProgressContext).get(taskId);
+  return count && count.total > 0 ? <span className="tabular-nums">· {count.done}/{count.total}</span> : null;
+}
+
+// The launch receipt names the run's script ("Script file: <path>"), the one line in it worth a click
+function workflowScript(block: ToolCallBlock): string | undefined {
+  return /^Script file: (.+)$/m.exec(toolTexts(block))?.[1]?.trim() || undefined;
+}
+
+// Usage as one line; a zero count says nothing while a run is starting up
+function taskUsage(task: AsyncTaskInfo): string {
+  const u = task.usage;
+  return [
+    u?.totalTokens ? t('asyncTask.tokens', { n: compactTokens(u.totalTokens) }) : undefined,
+    u?.toolUses ? t('asyncTask.toolUses', { n: u.toolUses }) : undefined,
+    u?.durationMs !== undefined ? commandDuration(u.durationMs) : undefined,
   ].filter(Boolean).join(' · ');
-  if (!task.summary && !task.lastToolName && !usage && !task.outputFilePath) return null;
+}
+
+function hasTaskMeta(task: AsyncTaskInfo, script?: string): boolean {
+  const workflow = task.taskType === 'workflow';
+  return !!(task.summary || (!workflow && task.lastToolName) || taskUsage(task) || task.outputFilePath || script);
+}
+
+// An AIR async task's own report, under its tool row: latest summary, the tool it was last on,
+// usage when the adapter reports it, and the output file as an ordinary file link.
+// A workflow run's "last tool" is the label of whichever agent reported last, which its subagent rows already show, so
+// it gives way to the run's script and output as two short links
+function TaskMeta({ task, script }: { task: AsyncTaskInfo | undefined; script?: string }) {
+  if (!task || !hasTaskMeta(task, script)) return null;
+  const workflow = task.taskType === 'workflow';
+  const usage = taskUsage(task);
+  const files = workflow
+    ? ([['asyncTask.script', script], ['asyncTask.output', task.outputFilePath]] as const).filter(([, path]) => path)
+    : [];
   return (
     <div className="flex min-w-0 flex-col gap-1 text-3 text-fg-3">
       {task.summary && <span className="whitespace-pre-wrap [overflow-wrap:anywhere]">{task.summary}</span>}
-      {task.lastToolName && <span>{task.lastToolName}</span>}
+      {!workflow && task.lastToolName && <span>{task.lastToolName}</span>}
       {usage && <span>{usage}</span>}
-      {task.outputFilePath && (openFile
-        ? <button type="button" title={task.outputFilePath} className="min-w-0 cursor-pointer truncate text-left hover:underline focus-visible:underline"
-            onClick={() => openFile(task.outputFilePath!)}>{task.outputFilePath}</button>
-        : <span className="truncate" title={task.outputFilePath}>{task.outputFilePath}</span>)}
+      {files.length > 0 && <span className="flex min-w-0 items-baseline gap-gap">
+        {files.map(([key, path]) => <TaskFile key={key} path={path!}>{t(key)}</TaskFile>)}
+      </span>}
+      {!workflow && task.outputFilePath && <TaskFile path={task.outputFilePath} truncate>{task.outputFilePath}</TaskFile>}
     </div>
   );
+}
+
+function TaskFile({ path, truncate, children }: { path: string; truncate?: boolean; children: ReactNode }) {
+  const openFile = useContext(OpenToolFileContext);
+  return openFile
+    ? <button type="button" title={path} className={cn('min-w-0 cursor-pointer text-left hover:underline focus-visible:underline', truncate && 'truncate')}
+        onClick={() => openFile(path)}>{children}</button>
+    : <span className={cn('min-w-0', truncate && 'truncate')} title={path}>{children}</span>;
 }
 
 function ToolBody({ block, items, command }: { block: ToolCallBlock; items: ReturnType<typeof visibleToolContents>; command?: string }) {
