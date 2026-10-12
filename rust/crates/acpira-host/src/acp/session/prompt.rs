@@ -182,6 +182,8 @@ impl AcpSession {
     }
     let turn = self.open_turn(&text, origin, plan_id.as_deref(), &mut accepted);
     let blocks = std::mem::take(&mut accepted.prepared.blocks);
+    // From here on Claude Code has a transcript for this native session to resume
+    self.core.lock().ultracode.unprompted = false;
     let result = match &turn.proc {
       Some(p) => p.request("session/prompt", json!({ "sessionId": turn.acp_id, "prompt": blocks })).await,
       None => Err(RpcError::internal("no process")),

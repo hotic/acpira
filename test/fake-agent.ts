@@ -105,8 +105,9 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // FAKE_META_LOG → append `{ method, meta }` (the request's `_meta`) for every session/new, resume and load
 // FAKE_REBUILD → claude-agent-acp 0.87.0's getOrCreateSession: a resume of a live session whose
 // `_meta.claudeCode.options.settings` changed recreates it, which resets model / effort / Fast to the defaults and keeps
-// the live mode; the response carries modes and configOptions. FAKE_REBUILD_FAIL=ultracode fails such a recreate when it
-// asks for ultracode, =always fails every recreate (the session stays torn down either way)
+// the live mode; the response carries modes and configOptions. A recreate of a session that never got a prompt fails with
+// -32002 Resource not found, since Claude Code writes no transcript before the first turn. FAKE_REBUILD_FAIL=ultracode
+// fails such a recreate when it asks for ultracode, =always fails every recreate (the session stays torn down either way)
 
 // FAKE_HELPER_PIDFILE → start a helper that ignores SIGTERM in this process's group (antigravity's localharness_external
 // stand-in) and write its pid to that file; with FAKE_HELPER_EXIT the leader then exits by itself
@@ -171,6 +172,8 @@ function logMeta(method: string, meta: unknown) {
 }
 // FAKE_REBUILD: the settings each live session was built with, the part of the adapter's fingerprint the host changes
 const builtWith = new Map<string, string>();
+// FAKE_REBUILD: sessions that have had a prompt, i.e. whose transcript Claude Code would have written
+const prompted = new Set<string>();
 const settingsOf = (meta: unknown) => JSON.stringify((meta as { claudeCode?: { options?: { settings?: unknown } } } | undefined)?.claudeCode?.options?.settings ?? null);
 function logMcp(method: string, servers: unknown) {
   if (process.env.FAKE_MCP_TRACE) appendFileSync(process.env.FAKE_MCP_TRACE, `${method} ${JSON.stringify(servers ?? null)}\n`);
@@ -304,6 +307,7 @@ const app = acp.agent({ name: 'fake-agent' })
       if (!sessions.has(params.sessionId) || builtWith.get(params.sessionId) !== settings) {
         // teardownSession first, then createSession({ resume }): a failing create leaves the session torn down
         sessions.delete(params.sessionId);
+        if (!prompted.has(params.sessionId)) throw new acp.RequestError(-32002, `Resource not found: ${params.sessionId}`, { uri: params.sessionId });
         const fail = process.env.FAKE_REBUILD_FAIL;
         if (fail === 'always' || (fail === 'ultracode' && settings.includes('"ultracode":true'))) throw acp.RequestError.internalError(undefined, 'createSession failed');
         sessions.add(params.sessionId);
@@ -488,6 +492,7 @@ const app = acp.agent({ name: 'fake-agent' })
   })
   .onRequest(acp.methods.agent.session.prompt, async ({ params, client }) => {
     const sid = params.sessionId;
+    prompted.add(sid);
     const text = params.prompt.map(p => (p.type === 'text' ? p.text : '')).join('');
     const send = (update: acp.SessionUpdate) => client.notify(acp.methods.client.session.update, { sessionId: sid, update });
     cancelled.delete(sid);

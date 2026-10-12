@@ -65,6 +65,8 @@ async fn ultra_is_the_last_effort_level_and_rebuilds_the_live_session_with_xhigh
   assert_eq!(first[0]["method"], "new");
   assert!(settings_of(&first[0]).is_null(), "a session without Ultra sends no settings");
   assert!(first[0]["meta"]["claudeCode"]["options"]["thinking"].is_object(), "thinking still rides along");
+  // A prompted session has a transcript to resume
+  prompt(&s, "first").await;
 
   s.select_config("effort".into(), "low".into()).await.unwrap();
   s.select_config("effort".into(), ULTRA.into()).await.unwrap();
@@ -303,6 +305,7 @@ async fn a_failed_rebuild_reverts_the_effort_and_brings_the_native_session_back(
   let dir = tempfile::tempdir().unwrap();
   let h = claude(&fake, dir.path(), json!({ "FAKE_REBUILD_FAIL": "ultracode" }));
   let s = started(&h, dir.path().to_str().unwrap()).await;
+  prompt(&s, "first").await;
   s.select_config("effort".into(), "low".into()).await.unwrap();
   assert!(s.select_config("effort".into(), ULTRA.into()).await.is_err());
   let vw = view(&s);
@@ -323,8 +326,38 @@ async fn a_rebuild_whose_restore_fails_too_leaves_the_session_for_retry() {
   let dir = tempfile::tempdir().unwrap();
   let h = claude(&fake, dir.path(), json!({ "FAKE_REBUILD_FAIL": "always" }));
   let s = started(&h, dir.path().to_str().unwrap()).await;
+  prompt(&s, "first").await;
   assert!(s.select_config("effort".into(), ULTRA.into()).await.is_err());
   let vw = view(&s);
   assert_eq!(vw["status"], "error");
   assert_eq!(lines(&dir.path().join("meta.log")).len(), 3);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_never_prompted_session_switches_ultra_through_a_fresh_session() {
+  // claude-agent-acp 0.87.0 answers a resume of a session without a transcript with -32002 Resource not found
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let close_log = dir.path().join("close.log");
+  let h = claude(&fake, dir.path(), json!({ "FAKE_CLOSE_LOG": close_log }));
+  let s = started(&h, dir.path().to_str().unwrap()).await;
+  let first = s.acp_session_id().unwrap();
+  s.select_config("effort".into(), ULTRA.into()).await.unwrap();
+  let vw = view(&s);
+  assert_eq!(vw["status"], "ready");
+  assert_eq!(option_value(&vw, "effort"), ULTRA);
+  let meta = lines(&dir.path().join("meta.log"));
+  assert_eq!(meta.iter().map(|m| m["method"].as_str().unwrap()).collect::<Vec<_>>(), ["new", "new"]);
+  assert_eq!(settings_of(&meta[1])["ultracode"], true);
+  assert_eq!(wire_efforts(dir.path()), ["xhigh"]);
+  let second = s.acp_session_id().unwrap();
+  assert_ne!(first, second, "the fresh native session takes over");
+  assert_eq!(std::fs::read_to_string(&close_log).unwrap().trim(), first, "the replaced one is closed");
+  // Leaving Ultra before any prompt goes the same way
+  s.select_config("effort".into(), "low".into()).await.unwrap();
+  assert_eq!(view(&s)["status"], "ready");
+  assert_eq!(option_value(&view(&s), "effort"), "low");
+  assert!(settings_of(lines(&dir.path().join("meta.log")).last().unwrap()).is_null());
+  prompt(&s, "hello").await;
+  assert_eq!(last_turn(&view(&s))["stop"], "end_turn");
 }
