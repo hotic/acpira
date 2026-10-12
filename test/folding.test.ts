@@ -75,6 +75,12 @@ describe('Codex process folding', () => {
     expect(splitCodexBlocks([read, notice, run, reply])).toEqual({ process: [read, run], reply: [reply], permissions: [], notices: [notice], goalsLead: [], goals: [] });
   });
 
+  it('keeps advisory notices in the process at their place (codex-acp compaction heads-up)', () => {
+    const advisory: NoticeBlock = { type: 'notice', id: 't1:notice:1', revision: 1, category: 'unknown', severity: 'warning', title: 'Heads up: Long threads and multiple compactions …', actions: [] };
+    const reply = { type: 'text' as const, markdown: 'Done.' };
+    expect(splitCodexBlocks([read, advisory, run, reply])).toEqual({ process: [read, advisory, run], reply: [reply], permissions: [], notices: [], goalsLead: [], goals: [] });
+  });
+
   it('places goal milestones: the leading ones open the turn, mid-process ones stay in place, the last ones follow the reply', () => {
     const set: GoalBlock = { type: 'goal', event: 'set', objective: 'ship it' };
     const paused: GoalBlock = { type: 'goal', event: 'paused', timeUsedSeconds: 40 };
