@@ -7,6 +7,11 @@ import { planApprovalTitle } from './permissionOptions';
 // the process fold instead, so a summary followed by one more thought and a short coda stays visible as a whole.
 const TAIL_PROCESS: ReadonlySet<AgentBlock['type']> = new Set<AgentBlock['type']>(['thought', 'plan']);
 
+// A notice that only informs: nothing to act on and no known transient cause
+function isAdvisory(b: NoticeBlock) {
+  return b.severity === 'warning' && b.category === 'unknown' && b.actions.length === 0;
+}
+
 // ACP has no final/commentary distinction: the text after the last action stays outside the process fold.
 // If another action arrives, that text becomes process history on the next render.
 // Turns without tool calls render flat and chronological, so there only the trailing text run is the reply.
@@ -14,8 +19,12 @@ const TAIL_PROCESS: ReadonlySet<AgentBlock['type']> = new Set<AgentBlock['type']
 // at the point where it was asked, so the answers read in sequence with the actions around them.
 export function splitCodexBlocks(blocks: AgentBlock[]) {
   const permissions = blocks.filter(b => b.type === 'permission');
-  // AIR sessionFailure notices are status rows, not process detail: they never fold away under tools
-  const notices = blocks.filter((b): b is NoticeBlock => b.type === 'notice');
+  // AIR sessionFailure notices are status rows, not process detail: they never fold away under tools. An advisory
+  // (warning, category unknown, no remedy) is the exception: codex-acp sends "Heads up: Long threads and multiple
+  // compactions …" after every automatic compaction inside a turn, each under a new id, and lifted out they would
+  // stack under the live fold for the rest of the turn, so they keep their place after the compaction row instead
+  const lifted = (b: AgentBlock): b is NoticeBlock => b.type === 'notice' && !isAdvisory(b);
+  const notices = blocks.filter(lifted);
   // Goal milestones are status rows too: the ones before any other content (a `/goal` prompt's own "Goal set") open
   // the turn above the fold, the ones after the last action (met, cleared …) follow the reply. A milestone that more
   // actions follow (a `/goal` steered into a running turn) keeps its place in the process history; lifted out, it would
@@ -27,7 +36,7 @@ export function splitCodexBlocks(blocks: AgentBlock[]) {
   const goalsLead = blocks.filter((b, i): b is GoalBlock => b.type === 'goal' && (firstOther < 0 || i < firstOther));
   const goals = blocks.filter((b, i): b is GoalBlock => b.type === 'goal' && firstOther >= 0 && i > firstOther && i > lastAction);
   const content = blocks.filter((b, i) => b.type === 'goal' ? firstOther >= 0 && i > firstOther && i < lastAction
-    : b.type !== 'permission' && b.type !== 'notice' && (b.type !== 'question' || !!b.outcome));
+    : b.type !== 'permission' && !lifted(b) && (b.type !== 'question' || !!b.outcome));
   const foldable = content.some(b => b.type === 'tool_call');
   let end = content.length;
   while (end > 0 && (content[end - 1]!.type === 'text' || (foldable && TAIL_PROCESS.has(content[end - 1]!.type)))) end--;
