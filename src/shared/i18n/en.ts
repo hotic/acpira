@@ -591,6 +591,8 @@ export const en = {
   // Delegation calls: the tool that spawns a subagent (Devin run_subagent, Claude/Kimi Agent) and the one that blocks on it
   'verb.delegate': 'Delegate',
   'verb.awaitSubagent': 'Wait for subagent',
+  // Claude's Workflow tool, recognized by its async task (taskType `workflow`); the run's name follows as the target
+  'verb.workflow': 'Run workflow',
 
   // AIR asyncTasks: background work the adapter reports independently of the prompt lifecycle; the tag
   // sits on its tool row and Stop goes to _session/async_task/stop
@@ -602,9 +604,10 @@ export const en = {
   'asyncTask.stopping': 'Stopping…',
   'asyncTask.stop': 'Stop task',
   'asyncTask.stopRefused': 'The agent could not stop that task',
+  'asyncTask.script': 'Script',
+  'asyncTask.output': 'Output',
   'asyncTask.tokens': '{n} tokens',
   'asyncTask.toolUses': '{n} tool calls',
-  'asyncTask.duration': '{s}s',
 
   // Delegated child agents: the group row inside a turn, the inspector, and the relations tree
   'subagents.group': 'Subagents {n}',
@@ -636,7 +639,6 @@ export const en = {
   'subagents.cancelling': 'Stop requested…',
   'subagents.receiptOnly': 'This agent only reports the delegation and its result; there is no separate process stream.',
   'subagents.disconnectedNote': 'No result arrived before the connection ended; the task outcome is unknown.',
-  'subagents.moreCompleted': '{n} more finished',
   'subagents.provenance': 'Main agent › {path}',
   'subagents.loading': 'Reading transcript…',
 

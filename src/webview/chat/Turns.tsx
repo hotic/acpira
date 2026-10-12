@@ -29,7 +29,7 @@ import { AgentImage } from './AgentImage';
 import { GeneratedImages, ImageInFoldContext } from './GeneratedImage';
 import { Permission } from './Permission';
 import { QuestionRecord } from './Questions';
-import { BlobUrlContext, OpenToolFileContext, parseFileLink } from './fileLinks';
+import { BlobUrlContext, OpenToolFileContext, WorkflowProgressContext, parseFileLink } from './fileLinks';
 import { PlanDocument } from './PlanDocument';
 import { TurnAttachments } from './Attachments';
 import { elapsedLabel, splitCodexBlocks } from './folding';
@@ -40,7 +40,7 @@ import { compactionForDisplay } from './compactionDisplay';
 import { splitPlanSections } from './planSections';
 import { TurnActions } from './TurnActions';
 import { SubagentGroup } from './subagents/SubagentGroup';
-import { breadcrumb, delegatedIds, nodesByTurn, placeNodes, subagentTitle } from './subagents/subagentState';
+import { breadcrumb, delegatedIds, nodesByTurn, placeNodes, subagentTitle, workflowProgress } from './subagents/subagentState';
 import { Surface, surfaceVariants } from '../ui/Surface';
 
 // User message: color block / right-aligned bubble / plain text; ones Acpira sends automatically (/compact) render nothing,
@@ -224,6 +224,7 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   const placed = useMemo(() => subagents?.length && onInspect ? delegatedIds(raw.blocks, subagents) : undefined, [raw.blocks, subagents, onInspect]);
   const { byId: placedNodes, rest: restNodes } = useMemo(() => placed?.size ? placeNodes(subagents!, placed) : { byId: undefined, rest: subagents }, [placed, subagents]);
   const sections = useMemo(() => splitPlanSections(raw.blocks, placed), [raw.blocks, placed]);
+  const workflows = useMemo(() => workflowProgress(subagents), [subagents]);
   // A /compact reply that so far holds only its compaction row: that row shimmers in place, so no generic Working row above it
   const compactionOnly = !!compacting && shown.blocks.length > 0 && shown.blocks.every(b => b.type === 'compaction');
   const entranceScope = useId();
@@ -236,7 +237,7 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   }), [onFailureAction, last, running, turn.error?.failureId, absorbed]);
   // A settled turn mounts fold bodies on first open; a live one keeps them mounted (its finished items narrow this again,
   // `ProcessBlocks`) so streamed content stays in step while closed
-  return <LazyPanelContext.Provider value={!running}><EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><NoticeActionContext.Provider value={noticeActions}><div className={cn('group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]', joined && '-mt-msg-join')}>
+  return <LazyPanelContext.Provider value={!running}><EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><NoticeActionContext.Provider value={noticeActions}><WorkflowProgressContext.Provider value={workflows}><div className={cn('group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]', joined && '-mt-msg-join')}>
     {sections.map((section, i) => {
       const lastSection = i === sections.length - 1;
       // Only the continuation owns live activity and the turn outcome. Earlier
@@ -257,7 +258,7 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
       </Fragment>;
     })}
     {actions && !running && !compacting && hasTurnContent(turn) && <TurnActions turn={turn} turnIndex={turnIndex} last={last} settings={settings} />}
-  </div></NoticeActionContext.Provider></RowEntranceContext.Provider></EntranceScopeContext.Provider></LazyPanelContext.Provider>;
+  </div></WorkflowProgressContext.Provider></NoticeActionContext.Provider></RowEntranceContext.Provider></EntranceScopeContext.Provider></LazyPanelContext.Provider>;
 });
 
 interface SubagentSlots {

@@ -586,6 +586,7 @@ export const ja = {
   'verb.showImage': '画像を表示',
   'verb.delegate': '委任',
   'verb.awaitSubagent': 'サブエージェントを待機',
+  'verb.workflow': 'ワークフローを実行',
 
   'asyncTask.running': 'バックグラウンドタスク実行中',
   'asyncTask.paused': 'バックグラウンドタスク一時停止',
@@ -595,9 +596,10 @@ export const ja = {
   'asyncTask.stopping': '停止中…',
   'asyncTask.stop': 'タスクを停止',
   'asyncTask.stopRefused': 'エージェントはこのタスクを停止できませんでした',
+  'asyncTask.script': 'スクリプト',
+  'asyncTask.output': '出力',
   'asyncTask.tokens': '{n} トークン',
   'asyncTask.toolUses': 'ツール呼び出し {n} 回',
-  'asyncTask.duration': '{s}秒',
 
   'subagents.group': 'サブエージェント {n}',
   'subagents.running': '{n} 実行中',
@@ -628,7 +630,6 @@ export const ja = {
   'subagents.cancelling': '停止を要求しました…',
   'subagents.receiptOnly': 'このエージェントは委任とその結果だけを報告し、個別の処理ストリームはありません。',
   'subagents.disconnectedNote': '接続が切れる前に結果が届かなかったため、タスクの結果は不明です。',
-  'subagents.moreCompleted': 'ほかに {n} 件完了',
   'subagents.provenance': 'メインエージェント › {path}',
   'subagents.loading': '記録を読み込み中…',
 

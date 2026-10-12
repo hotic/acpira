@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { translate, type MsgKey, type Params } from '../src/shared/i18n';
 import type { SubagentSummary } from '../src/shared/subagents';
 import type { PermissionBlock, QuestionBlock } from '../src/shared/transcript';
-import { breadcrumb, countsLabel, delegatedIds, placeNodes, descendantCount, elapsedMs, elapsedText, flattenTree, nodesByTurn, partitionRows, receiptOnly, rootRows, secondLine, stateLabel, subagentTitle } from '../src/webview/chat/subagents/subagentState';
+import { breadcrumb, countsLabel, delegatedIds, placeNodes, descendantCount, elapsedMs, elapsedText, flattenTree, nodesByTurn, receiptOnly, resultText, rootRows, secondLine, stateLabel, subagentTitle, workflowProgress } from '../src/webview/chat/subagents/subagentState';
 
 const zh = (key: MsgKey, params?: Params) => translate('zh-CN', key, params);
 const en = (key: MsgKey, params?: Params) => translate('en', key, params);
@@ -79,31 +79,35 @@ describe('rootRows / descendantCount / flattenTree', () => {
   });
 });
 
-describe('partitionRows', () => {
-  it('expanding adds the folded rows exactly once — shown + hidden covers every row', () => {
-    const rows = [
-      node({ id: 'a', state: 'completed' }), node({ id: 'b', state: 'completed' }), node({ id: 'c', state: 'completed' }),
-      node({ id: 'd', state: 'completed' }), node({ id: 'e', state: 'completed' }),
-      node({ id: 'f', state: 'running' }), node({ id: 'g', state: 'running', permissions: [perm] }),
-    ];
-    const { shown, hidden } = partitionRows(rows);
-    // the two oldest finished rows fold away; running and waiting rows never do
-    expect(hidden.map(n => n.id)).toEqual(['a', 'b']);
-    expect(shown.map(n => n.id)).toEqual(['c', 'd', 'e', 'f', 'g']);
-    // the rendered total after expanding is exactly the row list — no duplicates, no drops
-    const all = [...shown, ...hidden];
-    expect(new Set(all.map(n => n.id)).size).toBe(rows.length);
-    expect([...all].sort((x, y) => rows.indexOf(x) - rows.indexOf(y))).toEqual(rows);
+describe('workflowProgress', () => {
+  it('counts a run\'s receipt agents by the task id in their `<task>#<index>` key', () => {
+    const wf = (task: string, index: number, state: SubagentSummary['state']) =>
+      node({ visibility: 'receipt', state, peer: { agentId: `${task}#${index}` } });
+    const counts = workflowProgress([
+      wf('t1', 1, 'completed'), wf('t1', 2, 'failed'), wf('t1', 3, 'running'), wf('t2', 1, 'running'),
+      // a Kimi-style receipt and a native child carry no run key
+      node({ visibility: 'receipt', state: 'completed', peer: { toolCallId: 'call-1' } }),
+      node({ visibility: 'session', peer: { agentId: 'x#1' } }),
+    ]);
+    expect(Object.fromEntries(counts)).toEqual({ t1: { done: 2, total: 3 }, t2: { done: 0, total: 1 } });
+    expect(workflowProgress(undefined).size).toBe(0);
+  });
+});
+
+describe('resultText', () => {
+  it('quotes the summary of a JSON result the preview cut off mid-object', () => {
+    expect(resultText('{"summary":"下载链骨架（全部静态）。\\n1) 地图列表不是 RPC","notes":"x')).toBe('下载链骨架（全部静态）。\n1) 地图列表不是 RPC');
+    expect(resultText('{"topic":"批次 A","notes_path":"C:\\\\Users\\\\a.md"}')).toBe('批次 A · C:\\Users\\a.md');
   });
 
-  it('at five or fewer rows nothing folds, and a group of only finished rows keeps the newest three', () => {
-    const few = [node({ id: 'a', state: 'completed' }), node({ id: 'b', state: 'completed' }), node({ id: 'c', state: 'completed' }),
-      node({ id: 'd', state: 'completed' }), node({ id: 'e', state: 'completed' })];
-    expect(partitionRows(few)).toEqual({ shown: few, hidden: [] });
-    const six = [...few, node({ id: 'f', state: 'completed' })];
-    const { shown, hidden } = partitionRows(six);
-    expect(hidden.map(n => n.id)).toEqual(['a', 'b', 'c']);
-    expect(shown.map(n => n.id)).toEqual(['d', 'e', 'f']);
+  it('joins the first string values when there is no summary, dropping a cut escape', () => {
+    expect(resultText('{"verdicts":[{"claim_id":"C1","verdict":"confirmed","evidence":"log.txt:1105","more":"y"}]}')).toBe('C1 · confirmed · log.txt:1105');
+    expect(resultText('{"summary":"cut \\u4e')).toBe('cut ');
+  });
+
+  it('leaves prose and objects without string fields alone', () => {
+    expect(resultText('Done: 3 files')).toBe('Done: 3 files');
+    expect(resultText('{"ok":true}')).toBe('{"ok":true}');
   });
 });
 

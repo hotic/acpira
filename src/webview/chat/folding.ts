@@ -65,11 +65,18 @@ const FOLD_KEY: Record<ToolCallBlock['status'], MsgKey> = {
 export function toolVerb(block: ToolCallBlock): string {
   if (block.observation === 'unknown') return t('chatgpt.unknownTool');
   // Stored verbs use the host locale at creation time; render from semantic kind, or from verbKey when the verb came from the tool's identity
-  return t(FOLD_KEY[block.status], { verb: t(block.verbKey ?? `verb.${block.kind}`) });
+  return t(FOLD_KEY[block.status], { verb: t(block.verbKey ?? (isWorkflowRun(block) ? 'verb.workflow' : `verb.${block.kind}`)) });
+}
+
+// Claude's Workflow tool reaches the transcript as a generic `other` call titled "Workflow"; its async task says what
+// it is and names the run. Read here rather than in the engine so transcripts stored before this render the same way
+export function isWorkflowRun(block: ToolCallBlock): boolean {
+  return block.asyncTask?.taskType === 'workflow';
 }
 
 // Only mode-switch headings are adapter UI; commands and file targets stay verbatim.
 export function toolTarget(block: ToolCallBlock): string | undefined {
+  if (isWorkflowRun(block)) return block.asyncTask!.name ?? block.target;
   return block.kind === 'switch_mode' && block.target && !block.targetMono
     ? planApprovalTitle(block.target, getLocale()) : block.target;
 }

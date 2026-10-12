@@ -581,6 +581,7 @@ export const es = {
   'verb.showImage': 'Visualización de imagen',
   'verb.delegate': 'Delegación',
   'verb.awaitSubagent': 'Espera del subagente',
+  'verb.workflow': 'Ejecución del flujo de trabajo',
 
   'asyncTask.running': 'Tarea en segundo plano en curso',
   'asyncTask.paused': 'Tarea en segundo plano en pausa',
@@ -590,9 +591,10 @@ export const es = {
   'asyncTask.stopping': 'Deteniendo…',
   'asyncTask.stop': 'Detener tarea',
   'asyncTask.stopRefused': 'El agente no pudo detener esa tarea',
+  'asyncTask.script': 'Script',
+  'asyncTask.output': 'Salida',
   'asyncTask.toolUses': '{n} llamadas a herramientas',
   'asyncTask.toolUses#one': '{n} llamada a herramienta',
-  'asyncTask.duration': '{s} s',
 
   'subagents.group': 'Subagentes {n}',
   'subagents.running': '{n} en curso',
@@ -626,7 +628,6 @@ export const es = {
   'subagents.cancelling': 'Detención solicitada…',
   'subagents.receiptOnly': 'Este agente solo informa de la delegación y su resultado; no hay un flujo de proceso aparte.',
   'subagents.disconnectedNote': 'No llegó ningún resultado antes de que terminara la conexión; el resultado de la tarea es desconocido.',
-  'subagents.moreCompleted': '{n} más terminados',
   'subagents.provenance': 'Agente principal › {path}',
   'subagents.loading': 'Leyendo la transcripción…',
 

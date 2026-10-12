@@ -60,14 +60,21 @@ export function rootRows(turnNodes: SubagentSummary[]): SubagentSummary[] {
   return turnNodes.filter(n => n.parentId === undefined || !ids.has(n.parentId));
 }
 
-// Past five rows the group folds its older finished ones into the disclosure. The hidden set does not depend
-// on the open state, so expanding adds rows rather than re-shuffling which rows exist (shown + hidden = rows)
-export function partitionRows(rows: SubagentSummary[]): { shown: SubagentSummary[]; hidden: SubagentSummary[] } {
-  if (rows.length <= 5) return { shown: rows, hidden: [] };
-  const terminal = rows.filter(n => n.state !== 'running' && !isWaiting(n));
-  const hidden = terminal.slice(0, Math.max(0, terminal.length - 3));
-  const hide = new Set(hidden.map(n => n.id));
-  return { shown: rows.filter(n => !hide.has(n.id)), hidden };
+export interface WorkflowProgress { done: number; total: number }
+
+// A Claude workflow's agents are receipt nodes keyed `<asyncTaskId>#<index>` in peer.agentId (`subagent_tree.rs`
+// `workflow_progress`), so the run's tool row can count them by task id without another field on the wire
+export function workflowProgress(nodes: SubagentSummary[] | undefined): Map<string, WorkflowProgress> {
+  const out = new Map<string, WorkflowProgress>();
+  for (const n of nodes ?? []) {
+    const key = n.visibility === 'receipt' ? /^(.+)#\d+$/.exec(n.peer.agentId ?? '')?.[1] : undefined;
+    if (key === undefined) continue;
+    const c = out.get(key) ?? { done: 0, total: 0 };
+    c.total++;
+    if (n.state !== 'running') c.done++;
+    out.set(key, c);
+  }
+  return out;
 }
 
 // All descendants through parentId edges; the visited set keeps a malformed cycle from looping
@@ -154,9 +161,28 @@ export function secondLine(node: SubagentSummary, t: T): string {
   if (node.permissions?.length) return t('host.awaitingApproval');
   if (node.question) return t('host.awaitingAnswers');
   if (node.state === 'running') return node.activity ?? t('host.working');
-  const line = node.result?.split('\n').map(s => s.trim()).find(s => s.length > 0);
+  const line = node.result && resultText(node.result).split('\n').map(s => s.trim()).find(s => s.length > 0);
   if (line) return line.length > 120 ? `${line.slice(0, 119)}…` : line;
   return stateLabel(node, t);
+}
+
+// A string field of a JSON object, up to its closing quote or the end of a cut-off text
+const JSON_STRING_FIELD = /"([^"\\]+)"\s*:\s*"((?:[^"\\]|\\.)*)"?/g;
+
+// A schema-bound workflow agent returns a JSON object, and the CLI's result preview cuts it off (about 400 characters),
+// so it rarely parses. The row quotes its prose instead: the `summary` field when there is one, else the first string
+// values in order. A result not shaped like a JSON object passes through unchanged
+export function resultText(result: string): string {
+  if (!result.trimStart().startsWith('{')) return result;
+  const fields = [...result.matchAll(JSON_STRING_FIELD)].map(m => [m[1]!, unescapeJson(m[2]!)] as const).filter(([, v]) => v.trim());
+  if (!fields.length) return result;
+  return fields.find(([k]) => k === 'summary')?.[1] ?? fields.slice(0, 3).map(([, v]) => v).join(' · ');
+}
+
+function unescapeJson(raw: string): string {
+  // A cut can land inside an escape sequence; drop the partial one
+  const whole = raw.replace(/\\(?:u[0-9a-fA-F]{0,3})?$/, '');
+  try { return JSON.parse(`"${whole}"`) as string; } catch { return whole; }
 }
 
 export function elapsedMs(node: SubagentSummary, now: number): number {
