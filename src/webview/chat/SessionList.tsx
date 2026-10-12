@@ -753,7 +753,7 @@ function RenameInput({ initial, label = t('session.titleAria'), onDone }: { init
       }}
       onBlur={() => finish(value)}
       aria-label={label}
-      className="min-w-0 flex-1 rounded-sm bg-active px-1 text-2 text-fg-1 outline-none"
+      className="min-w-0 flex-1 bg-transparent px-0 text-2 text-fg-1 outline-none"
     />
   );
 }
