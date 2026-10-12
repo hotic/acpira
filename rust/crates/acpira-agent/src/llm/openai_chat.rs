@@ -8,6 +8,7 @@ use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
 
 use super::family::{Family, ReasoningEcho, apply_thinking};
+use super::fast;
 use super::sse::SseReader;
 use super::{Endpoint, Event, Item, LlmError, Part, Reply, Request, StopReason, ToolCall, Usage, error_message, retry_after};
 
@@ -78,6 +79,9 @@ pub fn body(req: &Request, family: &Family) -> Value {
     body.insert("top_k".into(), Value::from(k));
   }
   apply_thinking(&mut body, family, req.thinking, req.effort.as_deref());
+  if req.fast {
+    body.insert("service_tier".into(), Value::from(fast::OPENAI_TIER));
+  }
   Value::Object(body)
 }
 
@@ -208,6 +212,10 @@ impl Assembler {
     }
     if let Some(u) = v.get("usage").filter(|u| u.is_object()) {
       self.usage = Some(parse_usage(u));
+    }
+    // The tier the call was served at, on every chunk OpenAI sends
+    if let Some(tier) = v.get("service_tier").and_then(Value::as_str) {
+      self.reply.served = Some(tier.to_owned());
     }
     for choice in v.get("choices").and_then(Value::as_array).into_iter().flatten() {
       let delta = choice.get("delta").or_else(|| choice.get("message")).unwrap_or(&Value::Null);
@@ -391,6 +399,7 @@ mod tests {
       thinking: Thinking::Auto,
       effort: None,
       cache_key: None,
+      fast: false,
     }
   }
 
@@ -459,6 +468,24 @@ mod tests {
 
   fn delta(d: Value) -> Value {
     json!({ "choices": [{ "index": 0, "delta": d }] })
+  }
+
+  /// Fast mode asks for the priority tier; the chunks name the tier that served the call (`default` when downgraded)
+  #[test]
+  fn a_fast_call_asks_for_the_priority_tier() {
+    let mut r = req(vec![Item::User(vec![Part::Text("hi".into())])]);
+    assert!(body(&r, &GENERIC).get("service_tier").is_none());
+    r.fast = true;
+    assert_eq!(body(&r, &GENERIC)["service_tier"], "priority");
+    let (events, _) = run(
+      &[
+        json!({ "service_tier": "default", "choices": [{ "index": 0, "delta": { "content": "ok" } }] }),
+        json!({ "service_tier": "default", "choices": [{ "index": 0, "delta": {}, "finish_reason": "stop" }] }),
+      ],
+      true,
+    );
+    let Some(Event::Done { reply, .. }) = events.last() else { panic!() };
+    assert_eq!(reply.served.as_deref(), Some("default"));
   }
 
   #[test]

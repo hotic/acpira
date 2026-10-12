@@ -23,6 +23,7 @@ fn request() -> Request {
     thinking: Thinking::Auto,
     effort: None,
     cache_key: None,
+    fast: false,
   }
 }
 

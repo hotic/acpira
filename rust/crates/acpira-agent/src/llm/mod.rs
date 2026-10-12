@@ -6,6 +6,7 @@
 pub mod anthropic;
 pub mod discover;
 pub mod family;
+pub mod fast;
 pub mod openai_chat;
 pub mod openai_responses;
 pub mod sse;
@@ -86,6 +87,8 @@ pub struct Request {
   pub effort: Option<String>,
   /// Groups requests for the provider's prompt cache (the session id; Responses' `prompt_cache_key`)
   pub cache_key: Option<String>,
+  /// Ask for the provider's fast tier (`fast.rs`); set only for a model that offers it
+  pub fast: bool,
 }
 
 /// Token usage of one call. `input` counts every prompt token, cached ones included
@@ -118,6 +121,8 @@ pub struct Reply {
   /// The provider's error when the stream broke after these tool calls had finished: the reply keeps them and drops
   /// only the call that was still streaming
   pub cut: Option<String>,
+  /// The speed or service tier the provider says it served (Anthropic `usage.speed`, OpenAI `service_tier`)
+  pub served: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

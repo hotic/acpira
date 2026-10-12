@@ -90,6 +90,7 @@ export function modelTags(m: ProviderModel): ModelTags {
   const tags: ModelTags = {};
   if (m.efforts.length) tags.thinking = t('settings.providers.model.levels', { count: m.efforts.length });
   else if (m.thinking === 'on') tags.thinking = t('settings.providers.model.thinking');
+  if (m.fast) tags.fast = t('settings.providers.model.fast');
   if (m.input.includes('image')) tags.image = t('settings.providers.model.image');
   if ((m.context ?? 0) >= 1_000_000) tags.long = t('settings.providers.model.ctx', { n: fmtTokens(m.context!) });
   return tags;
@@ -142,6 +143,7 @@ function ModelEditor({ model, families, onSave, onCancel, onRemove, onTest, test
   const [thinking, setThinking] = useState<Thinking>(model.thinking);
   const [efforts, setEfforts] = useState(model.efforts.join(', '));
   const [family, setFamily] = useState(model.family ?? '');
+  const [fast, setFast] = useState<'auto' | 'on' | 'off'>(model.fast == null ? 'auto' : model.fast ? 'on' : 'off');
   const [temperature, setTemperature] = useState(model.sampling.temperature?.toString() ?? '');
   const [topP, setTopP] = useState(model.sampling.topP?.toString() ?? '');
   const [topK, setTopK] = useState(model.sampling.topK?.toString() ?? '');
@@ -158,6 +160,8 @@ function ModelEditor({ model, families, onSave, onCancel, onRemove, onTest, test
     thinking,
     efforts: [...new Set(efforts.split(/[,\s]+/).map(s => s.trim()).filter(Boolean))],
     family: family || null,
+    // Automatic leaves the field out, so the agent's list decides
+    fast: fast === 'auto' ? undefined : fast === 'on',
     sampling: { temperature: num(temperature), topP: num(topP), topK: num(topK) },
     maxSteps: num(maxSteps) ?? null,
     estimated: [],
@@ -165,6 +169,7 @@ function ModelEditor({ model, families, onSave, onCancel, onRemove, onTest, test
   const keys = (e: KeyboardEvent) => { if (e.key === 'Enter' && ok) onSave(draft()); if (e.key === 'Escape') onCancel(); };
   const field = cn(inputBox, 'h-ctl');
   const thinkingOptions = (['auto', 'on', 'off'] as const).map(v => ({ value: v, label: t(`settings.providers.model.thinking.${v}`) }));
+  const fastOptions = (['auto', 'on', 'off'] as const).map(v => ({ value: v, label: t(`settings.providers.model.fast.${v}`) }));
   const familyOptions = [{ value: '', label: t('settings.providers.model.family.auto') }, ...families.map(f => ({ value: f, label: f }))];
   const outcome = test?.outcome;
   return (
@@ -188,6 +193,9 @@ function ModelEditor({ model, families, onSave, onCancel, onRemove, onTest, test
         <input value={efforts} onChange={e => setEfforts(e.target.value)} placeholder="low, high, max" spellCheck={false}
           aria-label={t('settings.providers.model.efforts')} className={field} />
       </Line>}
+      <Line label={t('settings.providers.model.fast')} hint={t('settings.providers.model.fast.hint')}>
+        <Select options={fastOptions} value={fast} onChange={setFast} label={t('settings.providers.model.fast')} />
+      </Line>
       <Line label={t('settings.providers.model.family')}>
         <Select options={familyOptions} value={family} onChange={setFamily} label={t('settings.providers.model.family')} />
       </Line>

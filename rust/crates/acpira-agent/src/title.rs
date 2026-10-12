@@ -63,6 +63,8 @@ pub fn spawn(server: &Arc<Server>, session: &Arc<Session>, prompt: &Value) -> bo
     thinking: Thinking::Off,
     effort: None,
     cache_key: None,
+    // A side job: never billed at the fast tier
+    fast: false,
   };
   let (server, session, http) = (server.clone(), session.clone(), server.http.clone());
   tokio::spawn(async move {

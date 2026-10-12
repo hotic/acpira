@@ -13,6 +13,7 @@ use tokio::sync::mpsc;
 
 use acpira_shared::providers::Thinking;
 
+use super::fast;
 use super::sse::SseReader;
 use super::{Endpoint, Event, Item, LlmError, Native, Part, Reply, Request, StopReason, ToolCall, Usage, error_message, retry_after};
 
@@ -86,6 +87,9 @@ pub fn body(req: &Request, origin: &str) -> Value {
   }
   if let Some(p) = req.sampling.top_p {
     body.insert("top_p".into(), Value::from(p));
+  }
+  if req.fast {
+    body.insert("service_tier".into(), Value::from(fast::OPENAI_TIER));
   }
   Value::Object(body)
 }
@@ -220,6 +224,10 @@ impl Assembler {
         }
         if let Some(u) = resp.get("usage").filter(|u| u.is_object()) {
           self.usage = Some(parse_usage(u));
+        }
+        // The tier the call was served at: `default` when a rate limit downgraded a fast request
+        if let Some(tier) = resp.get("service_tier").and_then(Value::as_str) {
+          self.reply.served = Some(tier.to_owned());
         }
         self.stop = Some(match resp.pointer("/incomplete_details/reason").and_then(Value::as_str) {
           Some("max_output_tokens") => StopReason::MaxTokens,
@@ -357,6 +365,7 @@ mod tests {
       thinking: Thinking::Auto,
       effort: Some("high".into()),
       cache_key: Some("session-1".into()),
+      fast: false,
     }
   }
 
@@ -410,6 +419,22 @@ mod tests {
     let other = body(&req(vec![Item::User(vec![Part::Text("hi".into())]), item, result]), "https://api.example.com/v1/responses other");
     assert_eq!(other["input"].as_array().unwrap().len(), 3);
     assert_eq!(other["input"][1]["type"], "function_call");
+  }
+
+  /// Fast mode asks for the priority tier; `response.completed` names the tier that served the call
+  #[test]
+  fn a_fast_call_asks_for_the_priority_tier() {
+    let mut r = req(vec![Item::User(vec![Part::Text("hi".into())])]);
+    assert!(body(&r, ORIGIN).get("service_tier").is_none());
+    r.fast = true;
+    assert_eq!(body(&r, ORIGIN)["service_tier"], "priority");
+    let (events, r) = run(&[
+      json!({ "type": "response.output_text.delta", "output_index": 0, "delta": "ok" }),
+      json!({ "type": "response.completed", "response": { "output": [], "service_tier": "priority" } }),
+    ]);
+    r.unwrap();
+    let Some(Event::Done { reply, .. }) = events.last() else { panic!() };
+    assert_eq!(reply.served.as_deref(), Some("priority"));
   }
 
   #[test]

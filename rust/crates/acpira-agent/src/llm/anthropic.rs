@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 
 use acpira_shared::providers::Thinking;
 
+use super::fast;
 use super::family::{AnthropicThinking, Breakpoint, CacheKind, Family, ReasoningEcho};
 use super::sse::SseReader;
 use super::{Endpoint, Event, Item, LlmError, Native, Part, Reply, Request, StopReason, ToolCall, Usage, error_message, retry_after};
@@ -109,6 +110,9 @@ pub fn body(req: &Request, family: &Family, origin: &str) -> Value {
     body.insert("tools".into(), req.tools.iter().map(|t| json!({ "name": t.name, "description": t.description, "input_schema": t.parameters })).collect());
   }
   body.insert("stream".into(), Value::Bool(true));
+  if req.fast {
+    body.insert("speed".into(), Value::from("fast"));
+  }
   let thinking = apply_thinking(&mut body, family, req.thinking, req.effort.as_deref(), max_tokens);
   // Thinking refuses a changed temperature and top_k
   if let Some(t) = req.sampling.temperature.filter(|_| !thinking) {
@@ -200,19 +204,25 @@ pub struct Assembler {
   /// Tool input JSON being streamed, by block index
   inputs: HashMap<usize, String>,
   usage: Map<String, Value>,
+  /// `usage.speed`: the speed the call was served at
+  speed: Option<String>,
   stop: Option<String>,
   done: bool,
 }
 
 impl Assembler {
   pub fn new(origin: String) -> Assembler {
-    Assembler { origin, reply: Reply::default(), blocks: vec![], inputs: HashMap::new(), usage: Map::new(), stop: None, done: false }
+    Assembler { origin, reply: Reply::default(), blocks: vec![], inputs: HashMap::new(), usage: Map::new(), speed: None, stop: None, done: false }
   }
 
   fn merge_usage(&mut self, u: Option<&Value>) {
     for (k, v) in u.and_then(Value::as_object).into_iter().flatten() {
       if v.is_u64() {
         self.usage.insert(k.clone(), v.clone());
+      } else if k == "speed"
+        && let Some(speed) = v.as_str()
+      {
+        self.speed = Some(speed.to_owned());
       }
     }
   }
@@ -355,6 +365,7 @@ impl Assembler {
     });
     self.blocks.retain(|b| !b.is_null());
     self.reply.native = Some(Native { origin: self.origin, blocks: self.blocks });
+    self.reply.served = self.speed;
     emit(Event::Done { reply: self.reply, stop, usage });
     Ok(())
   }
@@ -366,8 +377,9 @@ fn append(block: &mut Value, key: &str, text: &str) {
 }
 
 /// The headers of a call. Anthropic takes the key as `x-api-key`; the compatible endpoints document a bearer token, so
-/// they get both. The source's own headers replace these by name
-fn headers(endpoint: &Endpoint) -> Vec<(String, String)> {
+/// they get both. The source's own headers replace these by name; a fast call adds its beta to whatever
+/// `anthropic-beta` list the source sends
+fn headers(endpoint: &Endpoint, fast: bool) -> Vec<(String, String)> {
   let mut out: Vec<(String, String)> = vec![
     ("content-type".into(), "application/json".into()),
     ("accept".into(), "text/event-stream".into()),
@@ -383,6 +395,13 @@ fn headers(endpoint: &Endpoint) -> Vec<(String, String)> {
     out.retain(|(name, _)| !name.eq_ignore_ascii_case(k));
     out.push((k.clone(), v.clone()));
   }
+  if fast {
+    match out.iter_mut().find(|(name, _)| name.eq_ignore_ascii_case("anthropic-beta")) {
+      Some((_, v)) if v.split(',').any(|b| b.trim() == fast::ANTHROPIC_BETA) => {}
+      Some((_, v)) => *v = format!("{v},{}", fast::ANTHROPIC_BETA),
+      None => out.push(("anthropic-beta".into(), fast::ANTHROPIC_BETA.into())),
+    }
+  }
   out
 }
 
@@ -391,7 +410,7 @@ pub fn stream(http: &ureq::Agent, endpoint: &Endpoint, req: &Request, tx: &mpsc:
   let origin = origin(&endpoint.url, &req.model);
   let payload = body(req, &endpoint.family, &origin);
   let mut call = http.post(&endpoint.url);
-  for (k, v) in headers(endpoint) {
+  for (k, v) in headers(endpoint, req.fast) {
     call = call.header(k.as_str(), v.as_str());
   }
   let res = call.send(payload.to_string()).map_err(|e| LlmError::Network(e.to_string()))?;
@@ -459,6 +478,7 @@ mod tests {
       thinking: Thinking::Auto,
       effort: None,
       cache_key: None,
+      fast: false,
     }
   }
 
@@ -601,12 +621,46 @@ mod tests {
       headers: vec![],
       family: claude(),
     };
-    let names = |e: &Endpoint| headers(e).into_iter().map(|(k, _)| k).collect::<Vec<_>>();
+    let names = |e: &Endpoint| headers(e, false).into_iter().map(|(k, _)| k).collect::<Vec<_>>();
     assert!(!names(&e).contains(&"authorization".to_owned()));
     e.url = "https://api.deepseek.com/anthropic/v1/messages".into();
     e.headers = vec![("Anthropic-Version".into(), "2024-01-01".into())];
-    let h = headers(&e);
+    let h = headers(&e, false);
     assert!(h.contains(&("authorization".into(), "Bearer k".into())));
     assert_eq!(h.iter().filter(|(k, _)| k.eq_ignore_ascii_case("anthropic-version")).count(), 1);
+  }
+
+  /// Fast mode: `speed` in the body, its beta added to the source's own list (once), and `usage.speed` read back
+  #[test]
+  fn a_fast_call_asks_for_the_speed_and_reports_what_was_served() {
+    let mut r = req(vec![Item::User(vec![Part::Text("hi".into())])]);
+    assert!(body(&r, &claude(), ORIGIN).get("speed").is_none());
+    r.fast = true;
+    assert_eq!(body(&r, &claude(), ORIGIN)["speed"], "fast");
+    let mut e = Endpoint {
+      format: acpira_shared::providers::ApiFormat::Anthropic,
+      url: "https://api.anthropic.com/v1/messages".into(),
+      api_key: Some("k".into()),
+      headers: vec![],
+      family: claude(),
+    };
+    let beta = |e: &Endpoint, fast: bool| headers(e, fast).into_iter().filter(|(k, _)| k.eq_ignore_ascii_case("anthropic-beta")).map(|(_, v)| v).collect::<Vec<_>>();
+    assert!(beta(&e, false).is_empty());
+    assert_eq!(beta(&e, true), ["fast-mode-2026-02-01"]);
+    e.headers = vec![("Anthropic-Beta".into(), "context-1m-2025-08-07".into())];
+    assert_eq!(beta(&e, true), ["context-1m-2025-08-07,fast-mode-2026-02-01"]);
+    e.headers = vec![("anthropic-beta".into(), "fast-mode-2026-02-01".into())];
+    assert_eq!(beta(&e, true), ["fast-mode-2026-02-01"]);
+    let (events, _) = run(&[
+      json!({ "type": "message_start", "message": { "usage": { "input_tokens": 10, "output_tokens": 1, "speed": "fast" } } }),
+      json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "text", "text": "" } }),
+      json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "text_delta", "text": "ok" } }),
+      json!({ "type": "content_block_stop", "index": 0 }),
+      json!({ "type": "message_delta", "delta": { "stop_reason": "end_turn" }, "usage": { "output_tokens": 2 } }),
+      json!({ "type": "message_stop" }),
+    ]);
+    let Some(Event::Done { reply, usage, .. }) = events.last() else { panic!() };
+    assert_eq!(reply.served.as_deref(), Some("fast"));
+    assert_eq!(usage.unwrap().output, 2, "the speed is not a token count");
   }
 }

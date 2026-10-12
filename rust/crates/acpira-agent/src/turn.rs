@@ -144,6 +144,8 @@ struct Setup {
   /// List prices from the catalogue, when it knows the model
   cost: Option<Cost>,
   effort: Option<String>,
+  /// The session's Fast switch, where the model offers a fast tier (`llm::fast`)
+  fast: bool,
   /// The model's sampling over its prompt variant's defaults
   sampling: Sampling,
   thinking: Thinking,
@@ -160,16 +162,17 @@ fn setup(server: &Server, session: &Session) -> Result<Setup, String> {
   if let Some(e) = &config.error {
     return Err(e.clone());
   }
-  let (pick, effort, mode) = {
+  let (pick, effort, fast, mode) = {
     let mut st = session.state.lock();
     // A session opened before any model was configured takes the default now, and keeps it, with that model's effort
     if crate::acp::reconcile(&config, &server.catalog.get(), &mut st) {
       session.save_state(&st);
     }
-    (st.model.clone(), st.effort.clone(), modes::get(&st.mode))
+    (st.model.clone(), st.effort.clone(), st.fast, modes::get(&st.mode))
   };
   let pick = pick.ok_or("No model is configured. Add a model source in Acpira's settings (Agents → Acpira).")?;
   let (provider, model) = config.find(&pick).ok_or_else(|| format!("The model {pick} is no longer configured; pick another one."))?;
+  let fast = fast && llm::fast::offered(provider, model);
   let endpoint = Endpoint::of(provider, model, config.api_key(&provider.id))
     .ok_or_else(|| format!("{}: the API format \"{}\" is not supported", provider.display_name(), provider.format))?;
   // The prompt changes only when the model now matches another variant (a view change at a turn boundary)
@@ -207,6 +210,7 @@ fn setup(server: &Server, session: &Session) -> Result<Setup, String> {
     endpoint,
     cost,
     effort,
+    fast,
     sampling,
     thinking,
     system: composed.text,
@@ -263,6 +267,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       thinking: s.thinking,
       effort: s.effort.clone(),
       cache_key: Some(session.id.clone()),
+      fast: s.fast,
     };
     log_view(session, &s, &request);
     let approx = approx_input(&request);
@@ -334,7 +339,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     // A call always has input, so a reported 0 is a provider gap (a gateway's streamed usage): estimate it instead
     let estimated = usage.is_some_and(|u| u.input == 0);
     let usage = usage.map(|u| if estimated { Usage { input: approx, ..u } } else { u });
-    log_request(session, &s, started, attempt, Some(&stop), usage.as_ref(), estimated, None, reply.cut.as_deref());
+    log_request(session, &s, started, attempt, Some(&stop), usage.as_ref(), estimated, None, Some(&reply));
     if reply.cut.is_some() {
       // The call that was still streaming is lost: its row is settled
       for (_, acp) in ids.extract_if(|id, _| !reply.tool_calls.iter().any(|c| &c.id == id)) {
@@ -381,25 +386,28 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
 }
 
 /// Record what the request's prefix is built from, and a `view` event when that changed since the last request: a
-/// changed prompt, tool set or model is where a provider's prompt cache stops matching
+/// changed prompt, tool set or model is where a provider's prompt cache stops matching, and so is a switch between the
+/// standard and the fast tier (Anthropic documents that a speed change invalidates the cache)
 fn log_view(session: &Session, s: &Setup, request: &Request) {
   let view = json!({
     "model": s.pick,
     "prompt": { "variant": s.prompt.0, "version": s.prompt.1, "digest": s.prompt.2 },
     "tools": request.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+    "fast": request.fast,
   });
   let prev = session.state.lock().last_view.replace(view.clone());
   if let Some(prev) = prev
     && prev != view
   {
-    let changed: Vec<&str> = ["model", "prompt", "tools"].into_iter().filter(|k| prev[k] != view[k]).collect();
+    let changed: Vec<&str> = ["model", "prompt", "tools", "fast"].into_iter().filter(|k| prev[k] != view[k]).collect();
     session.store.append(json!({ "type": "view", "changed": changed, "from": prev, "to": view }));
   }
 }
 
-/// What every `request` event carries: the model, its source and the prompt and policies the call was built with
+/// What every `request` event carries: the model, its source and the prompt and policies the call was built with, and
+/// `fast` when the call asked for the fast tier
 fn request_event(s: &Setup) -> Value {
-  json!({
+  let mut ev = json!({
     "type": "request",
     "model": s.pick,
     "source": s.provider.id,
@@ -407,7 +415,11 @@ fn request_event(s: &Setup) -> Value {
     "prompt": { "variant": s.prompt.0, "version": s.prompt.1, "digest": s.prompt.2 },
     // Context policies in effect; only the tool output budget exists so far
     "policies": { "outputBudget": { "lines": crate::budget::MAX_LINES, "bytes": crate::budget::MAX_BYTES } },
-  })
+  });
+  if s.fast {
+    ev["fast"] = json!({});
+  }
+  ev
 }
 
 /// A model call still open when the turn's future is dropped (a cancel) is logged on the way out with stop
@@ -519,9 +531,14 @@ fn log_request(
   usage: Option<&Usage>,
   input_estimated: bool,
   error: Option<&str>,
-  cut: Option<&str>,
+  reply: Option<&llm::Reply>,
 ) {
   let mut ev = request_event(s);
+  // A fast request is billed at the fast tier unless the provider says it served the standard one
+  let fast_billed = s.fast && reply.and_then(|r| llm::fast::served_fast(r.served.as_deref())).unwrap_or(true);
+  if let Some(served) = reply.and_then(|r| r.served.as_deref()).filter(|_| s.fast) {
+    ev["fast"]["served"] = Value::from(served);
+  }
   ev["ms"] = json!(started.elapsed().as_millis() as u64);
   if attempt > 1 {
     ev["attempt"] = json!(attempt);
@@ -533,7 +550,8 @@ fn log_request(
     }
     // At list prices: an estimate, not the bill (discounts, tiers and gateways' markups are not known here)
     if let Some(c) = &s.cost {
-      ev["cost"] = json!(c.estimate(u.input, u.output, u.cache_read, u.cache_write));
+      let factor = if fast_billed { llm::fast::PRICE_FACTOR } else { 1.0 };
+      ev["cost"] = json!(c.estimate(u.input, u.output, u.cache_read, u.cache_write) * factor);
     }
   }
   if let Some(stop) = stop {
@@ -543,7 +561,7 @@ fn log_request(
     ev["error"] = Value::String(e.to_owned());
   }
   // A reply kept up to the call that was streaming when the provider broke it off (`Assembler::salvage`)
-  if let Some(c) = cut {
+  if let Some(c) = reply.and_then(|r| r.cut.as_deref()) {
     ev["cut"] = Value::String(c.to_owned());
   }
   session.store.append(ev);
