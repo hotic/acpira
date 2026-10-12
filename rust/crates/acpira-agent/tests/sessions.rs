@@ -128,3 +128,75 @@ async fn a_catalogued_model_gets_its_window_and_a_priced_request_record() {
   let req = events(&h, &sid).into_iter().find(|e| e["type"] == "request").unwrap();
   assert!(req["cost"].as_f64().is_some_and(|c| c > 0.0), "{req}");
 }
+
+/// The main source `mock` and a second one, `fast`, each on its own scripted server; `fast_model` as the settings page
+/// writes it
+fn two_sources(h: &Harness, main: &MockModel, fast: &MockModel, fast_model: &str) {
+  let source = |id: &str, url: String, model: &str| json!({ "id": id, "name": id, "baseUrl": url, "models": [{ "id": model }] });
+  std::fs::write(
+    h.home().join("providers.json"),
+    json!({ "version": 1, "fastModel": fast_model, "providers": [source("mock", main.base_url(), "m1"), source("fast", fast.base_url(), "f1")] }).to_string(),
+  )
+  .unwrap();
+  std::fs::write(h.home().join("secrets.json"), json!({ "acpira.provider.mock": "sk-main", "acpira.provider.fast": "sk-fast" }).to_string()).unwrap();
+}
+
+/// Wait for the background title call to be logged
+async fn title_event(h: &Harness, sid: &str) -> Value {
+  for _ in 0..200 {
+    if let Some(e) = events(h, sid).into_iter().find(|e| e["type"] == "title") {
+      return e;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+  }
+  panic!("no title event");
+}
+
+#[tokio::test]
+async fn the_fast_model_names_a_session_once_from_its_first_prompt() {
+  let h = Harness::start().await;
+  let (main, fast) = (MockModel::start(), MockModel::start());
+  two_sources(&h, &main, &fast, "fast/f1");
+  let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
+  fast.push(mock::text("Title: \"Fix the build.\""));
+  main.push(mock::text("Done."));
+  assert_eq!(prompt(&h, &sid, "the build fails on Windows, please fix it").await["stopReason"], "end_turn");
+  let ev = title_event(&h, &sid).await;
+  assert_eq!((ev["title"].as_str(), ev["model"].as_str(), ev["usage"]["output"].as_u64()), (Some("Fix the build"), Some("fast/f1"), Some(10)));
+  assert!(h.updates().iter().any(|u| u == &json!({ "sessionUpdate": "session_info_update", "title": "Fix the build" })));
+
+  // One small call of its own: the fast source's key, no tools, thinking off, only the prompt's text
+  let req = &fast.requests()[0];
+  assert_eq!(req.header("authorization"), Some("Bearer sk-fast"));
+  assert_eq!(req.body["model"], "f1");
+  assert!(req.body.get("tools").is_none_or(|t| t.as_array().is_some_and(|a| a.is_empty())), "{}", req.body);
+  assert_eq!(req.body["messages"][1], json!({ "role": "user", "content": "the build fails on Windows, please fix it" }));
+  assert_eq!(main.requests().len(), 1, "the turn's own requests are untouched");
+
+  // A later prompt never renames the session
+  main.push(mock::text("Again."));
+  prompt(&h, &sid, "and the tests too").await;
+  assert_eq!(fast.requests().len(), 1);
+
+  // The title outlives the process: the listing shows it and a load replays it
+  let h = reopen(h).await;
+  let listed = h.conn.request("session/list", json!({ "cwd": h.cwd() })).await.unwrap();
+  assert_eq!(listed["sessions"][0]["title"], "Fix the build");
+  h.conn.request("session/load", json!({ "sessionId": sid, "cwd": h.cwd(), "mcpServers": [] })).await.unwrap();
+  assert!(h.updates().iter().any(|u| u["sessionUpdate"] == "session_info_update" && u["title"] == "Fix the build"));
+}
+
+#[tokio::test]
+async fn without_a_usable_fast_model_the_session_keeps_its_prompt_title() {
+  let h = Harness::start().await;
+  let (main, fast) = (MockModel::start(), MockModel::start());
+  two_sources(&h, &main, &fast, "fast/gone");
+  let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
+  main.push(mock::text("Done."));
+  prompt(&h, &sid, "the build fails").await;
+  assert!(fast.requests().is_empty());
+  assert!(h.updates().iter().all(|u| u["sessionUpdate"] != "session_info_update"));
+  assert!(events(&h, &sid).iter().all(|e| e["type"] != "title"));
+  let listed = h.conn.request("session/list", json!({ "cwd": h.cwd() })).await.unwrap();
+  assert_eq!(listed["sessions"][0]["title"], "the build fails");
+}

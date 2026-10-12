@@ -68,6 +68,8 @@ export interface ProvidersView {
   families: string[];
   // The agent's approval level as the file holds it; absent reads as 'ask'
   approval?: string;
+  // The model for quick side jobs such as naming a session (`<provider id>/<model id>`); absent turns them off
+  fastModel?: string;
 }
 
 // How much the built-in agent runs without a permission card (`APPROVAL_LEVELS` in acpira-shared/src/providers.rs),
@@ -78,6 +80,17 @@ export type ApprovalLevel = typeof APPROVAL_LEVELS[number];
 // The view's level, unknown or absent values reading as the default
 export function approvalOf(view?: ProvidersView): ApprovalLevel {
   return APPROVAL_LEVELS.find(l => l === view?.approval) ?? APPROVAL_LEVELS[0];
+}
+
+// The formats the agent speaks (`ApiFormat::parse`; an empty format reads as openai-chat)
+const KNOWN_FORMATS = new Set(['', 'openai-chat', 'openai-responses', 'anthropic']);
+
+// Every model the agent can call, in file order, as `ProvidersFile::usable` picks them: enabled source with a known
+// format, enabled model
+export function usableModels(view?: ProvidersView): { pick: string; provider: ProviderView; model: ProviderModel }[] {
+  return (view?.providers ?? [])
+    .filter(p => p.enabled && KNOWN_FORMATS.has(p.format))
+    .flatMap(p => p.models.filter(m => m.enabled).map(m => ({ pick: `${p.id}/${m.id}`, provider: p, model: m })));
 }
 
 // A network question from the settings page; none changes providers.json. key: typed into the form and not saved yet;
@@ -108,7 +121,9 @@ export interface LocalSource {
 export type ProviderAction =
   | { kind: 'save'; provider: Provider; key?: string }
   | { kind: 'delete'; id: string }
-  | { kind: 'approval'; level: ApprovalLevel };
+  | { kind: 'approval'; level: ApprovalLevel }
+  // pick: a usable `<provider id>/<model id>`; absent turns the fast model off
+  | { kind: 'fastModel'; pick?: string };
 
 // A model entry with the file's defaults, for a hand-typed id
 export function newModel(id: string): ProviderModel {

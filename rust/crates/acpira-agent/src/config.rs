@@ -35,6 +35,11 @@ impl Config {
     self.providers.approval.as_deref().and_then(Approval::parse).unwrap_or_default()
   }
 
+  /// The fast model picked on the settings page, while it is still usable
+  pub fn fast_model(&self) -> Option<(&Provider, &ProviderModel)> {
+    self.providers.fast_model.as_deref().and_then(|p| self.find(p))
+  }
+
   /// The first usable model, the default of a new session
   pub fn default_pick(&self) -> Option<String> {
     self.providers.usable().next().map(|(p, m)| acpira_shared::providers::model_pick(&p.id, &m.id))

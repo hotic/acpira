@@ -203,7 +203,8 @@ export function Field({ label, desc, htmlFor, stack, children }: { label?: React
         {label !== undefined && <label htmlFor={htmlFor} className="block text-2 text-fg-1">{label}</label>}
         {desc && <div className="text-2 text-fg-2 [overflow-wrap:anywhere]">{desc}</div>}
       </div>
-      {children !== undefined && <div className={cn('flex shrink-0 items-center gap-2', stack && 'w-full min-w-0')}>{children}</div>}
+      {/* max-w-full: once the row wraps, a long Select label truncates inside the card instead of overflowing it */}
+      {children !== undefined && <div className={cn('flex max-w-full shrink-0 items-center gap-2', stack && 'w-full min-w-0')}>{children}</div>}
     </div>
   );
 }
@@ -223,7 +224,8 @@ export function Note({ children, shimmer }: { children: ReactNode; shimmer?: boo
   return <div className={cn(useSettingRow(), 'flex items-center text-fg-2')}><Shimmer active={!!shimmer}>{children}</Shimmer></div>;
 }
 
-export interface Option<V extends string> { value: V; label: string; icon?: ReactNode; hint?: string; disabled?: boolean }
+// description: a caption under the label in the list only (the field shows the label alone)
+export interface Option<V extends string> { value: V; label: string; icon?: ReactNode; hint?: string; disabled?: boolean; description?: string }
 
 // Dropdown select: a bordered Chip that opens the shared Menu; radio semantics, the current value gets the check.
 // Sized like NumberField (--ctl tall, --r-md) so the two form controls line up in a column. The field is as wide as its
@@ -233,6 +235,8 @@ export interface Option<V extends string> { value: V; label: string; icon?: Reac
 // fill while open, so the two read as one control instead of a lighter field over a darker menu
 export function Select<V extends string>({ options, value, onChange, label, className }: { options: Option<V>[]; value: V; onChange: (v: V) => void; label: string; className?: string }) {
   const cur = options.find(o => o.value === value);
+  // Rows with a caption get the model panels' two-line padding, all of them so the list keeps one rhythm
+  const twoLine = options.some(o => o.description);
   const trigger = useRef<HTMLButtonElement>(null);
   const [tone, setTone] = useState<CSSProperties>();
   return <DropdownMenu.Root onOpenChange={open => { if (open) setTone(fieldTone(trigger.current)); }}>
@@ -249,8 +253,8 @@ export function Select<V extends string>({ options, value, onChange, label, clas
     </Chip>} />
     <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="start" width="anchor"><DropdownMenu.Popup style={tone}>
       <DropdownMenu.RadioGroup value={value} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
-        {options.map(o => <DropdownMenu.RadioItem key={o.value} value={o.value} title={o.hint} disabled={o.disabled} onClick={() => onChange(o.value)}>
-          <OptionContent icon={o.icon} checked={o.value === value} checkSlot={!!cur}>{o.label}</OptionContent>
+        {options.map(o => <DropdownMenu.RadioItem key={o.value} value={o.value} title={o.hint} disabled={o.disabled} onClick={() => onChange(o.value)} className={twoLine ? 'min-h-0 py-1.5' : undefined}>
+          <OptionContent icon={o.icon} description={o.description} descriptionClassName="text-fg-3/70" checked={o.value === value} checkSlot={!!cur}>{o.label}</OptionContent>
         </DropdownMenu.RadioItem>)}
       </DropdownMenu.RadioGroup>
     </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>

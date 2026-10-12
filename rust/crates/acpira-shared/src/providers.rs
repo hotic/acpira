@@ -28,6 +28,10 @@ pub struct ProvidersFile {
   /// setting of the agent, not of a session: the agent reads it at the start of every turn
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub approval: Option<String>,
+  /// The model for quick side jobs such as naming a session (`<provider id>/<model id>`); absent, or a model no longer
+  /// usable, turns them off
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub fast_model: Option<String>,
   #[serde(flatten)]
   pub extra: Map<String, Value>,
 }
@@ -259,6 +263,9 @@ pub struct ProvidersView {
   /// The file's approval level as written (absent reads as `ask`)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub approval: Option<String>,
+  /// The file's fast model pick as written (`ProvidersFile::fast_model`)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub fast_model: Option<String>,
 }
 
 /// A network question from the settings page; none of them changes providers.json. `key`: a key typed into the form
@@ -324,6 +331,11 @@ pub enum ProviderAction {
   Delete { id: String },
   /// Set the agent's approval level (one of `APPROVAL_LEVELS`)
   Approval { level: String },
+  /// Set the fast model (a usable `<provider id>/<model id>`); absent or empty turns it off
+  FastModel {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pick: Option<String>,
+  },
 }
 
 #[cfg(test)]

@@ -65,12 +65,17 @@ struct Stats {
 pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<Value, RpcError> {
   let sid = params.get("sessionId").and_then(Value::as_str).ok_or_else(|| RpcError::new(-32602, "sessionId is required"))?;
   let session = server.session(sid)?;
-  {
+  let first = {
     let mut st = session.state.lock();
     if st.turn.is_some() {
       return Err(RpcError::new(-32603, "A turn is already running in this session"));
     }
     st.turn = Some(cancel.clone());
+    !st.titled && !st.items.iter().any(|i| matches!(i, Item::User(_)))
+  };
+  // The first prompt also names the session, beside the turn and outside its cancel
+  if first && crate::title::spawn(&server, &session, params.get("prompt").unwrap_or(&Value::Null)) {
+    session.state.lock().titled = true;
   }
   let stats = Arc::new(parking_lot::Mutex::new(Stats::default()));
   let result = tokio::select! {
