@@ -12,6 +12,8 @@
 //!   writes, duration, stop reason or error
 //! - `view` — what changed in the request prefix between two calls (prompt variant, tool set, model), so a cache miss
 //!   can be traced afterwards
+//! - `title` — the fast model's call naming the session (`title.rs`): model, duration, usage and cost, then `title` or
+//!   `error`
 //!
 //! A line cut short by a crash is skipped when the file is read back
 
@@ -255,7 +257,7 @@ pub struct Loaded {
   /// The latest `prompt` event
   pub prompt: Option<Value>,
   pub updates: Vec<Value>,
-  /// The first user message's text
+  /// The title the fast model gave the session, else the first user message's text
   pub title: Option<String>,
   pub updated_ms: u64,
 }
@@ -264,10 +266,20 @@ pub struct Loaded {
 pub fn load(path: &Path, only_summary: bool) -> std::io::Result<Loaded> {
   let file = File::open(path)?;
   let mut out = Loaded { updated_ms: file.metadata()?.modified().ok().and_then(|m| m.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0), ..Default::default() };
+  let mut named: Option<String> = None;
   for line in BufReader::new(file).lines() {
     let Ok(line) = line else { break };
+    // A listing needs only the head up to the first message, and a title event after it: skip parsing the rest
+    if only_summary && out.title.is_some() && !line.contains(TITLE_MARK) {
+      continue;
+    }
     let Ok(ev) = serde_json::from_str::<Value>(&line) else { continue };
     match ev.get("type").and_then(Value::as_str) {
+      Some("title") => {
+        if let Some(t) = ev.get("title").and_then(Value::as_str).filter(|t| !t.trim().is_empty()) {
+          named = Some(t.to_owned());
+        }
+      }
       Some("session") => {
         out.id = ev.get("id").and_then(Value::as_str).unwrap_or("").to_owned();
         out.cwd = PathBuf::from(ev.get("cwd").and_then(Value::as_str).unwrap_or(""));
@@ -283,9 +295,6 @@ pub fn load(path: &Path, only_summary: bool) -> std::io::Result<Loaded> {
           });
         }
         if only_summary {
-          if out.title.is_some() {
-            break;
-          }
           continue;
         }
         out.items.push(item);
@@ -303,8 +312,14 @@ pub fn load(path: &Path, only_summary: bool) -> std::io::Result<Loaded> {
       _ => {}
     }
   }
+  if named.is_some() {
+    out.title = named;
+  }
   Ok(out)
 }
+
+/// How a `title` event's line starts (`json!` keeps the key order it was written in)
+const TITLE_MARK: &str = r#"{"type":"title""#;
 
 /// A list title: the first line of the first message, without a mode note the agent put in front
 fn title_of(text: &str) -> String {

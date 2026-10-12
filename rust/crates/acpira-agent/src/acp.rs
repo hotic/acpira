@@ -46,6 +46,8 @@ pub struct SessionState {
   pub last_view: Option<Value>,
   /// The config options the client last got for this session (`Server::push_controls` sends a change)
   pub sent_options: Option<Vec<Value>>,
+  /// Naming the session from its first prompt has started (`title.rs`); it happens once
+  pub titled: bool,
 }
 
 pub struct Session {

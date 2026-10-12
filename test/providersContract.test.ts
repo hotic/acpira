@@ -50,6 +50,17 @@ describe('providers contract', () => {
     expect(model?.value).toBe('deep-seek/deepseek-chat');
     expect(model?.options.map(o => o.id)).toEqual(['deep-seek/deepseek-chat']);
 
+    // The fast model takes only a usable pick, lands in the file as `fastModel`, and an absent pick turns it off
+    s.view('V', { type: 'providerAction', action: { kind: 'fastModel', pick: 'deep-seek/gone' } });
+    expect((await s.hostMsg('V', 'providers', m => !!m.error?.includes('gone'))).view.fastModel).toBeUndefined();
+    s.view('V', { type: 'providerAction', action: { kind: 'fastModel', pick: 'deep-seek/deepseek-chat' } });
+    await s.hostMsg('V', 'providers', m => m.view.fastModel === 'deep-seek/deepseek-chat');
+    expect(JSON.parse(readFileSync(join(data, 'providers.json'), 'utf8')).fastModel).toBe('deep-seek/deepseek-chat');
+    // Only a reply that arrives after the unset counts: earlier views have no fastModel either
+    const earlier = new Set(s.hostMsgs('V'));
+    s.view('V', { type: 'providerAction', action: { kind: 'fastModel' } });
+    await s.hostMsg('V', 'providers', m => !earlier.has(m) && m.view.fastModel === undefined && !m.error);
+
     s.view('V', { type: 'providerAction', action: { kind: 'delete', id: 'deep-seek' } });
     // hostMsg scans everything received so far: the first, empty view must not stand in for the delete's reply
     await s.hostMsg('V', 'providers', m => m !== empty && m.view.providers.length === 0 && !m.error);

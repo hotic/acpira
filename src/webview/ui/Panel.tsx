@@ -3,13 +3,14 @@ import { Check, ChevronRight } from 'lucide-react';
 import { cn } from './cn';
 
 // Shared column geometry; reserve the check slot on every selectable row.
-export function OptionContent({ icon, children, description, extra, checked, checkSlot = false }: {
-  icon?: ReactNode; children: ReactNode; description?: string; extra?: ReactNode; checked?: boolean; checkSlot?: boolean;
+// descriptionClassName: overrides the caption's colour (a settings select dims its source captions further)
+export function OptionContent({ icon, children, description, descriptionClassName, extra, checked, checkSlot = false }: {
+  icon?: ReactNode; children: ReactNode; description?: string; descriptionClassName?: string; extra?: ReactNode; checked?: boolean; checkSlot?: boolean;
 }) {
   return <>
     {icon && <span className="flex size-icon shrink-0 items-center justify-center [&_svg]:size-icon">{icon}</span>}
     <span className="flex min-w-0 flex-1 flex-col"><span className="truncate">{children}</span>
-      {description && <span className="truncate text-3 text-fg-3">{description}</span>}{extra}
+      {description && <span className={cn('truncate text-3 text-fg-3', descriptionClassName)}>{description}</span>}{extra}
     </span>
     {checked ? <Check className="size-icon shrink-0 text-fg-1" strokeWidth={2} /> : checkSlot && <span className="size-icon shrink-0" aria-hidden />}
   </>;

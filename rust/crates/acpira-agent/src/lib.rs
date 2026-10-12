@@ -14,6 +14,7 @@ pub mod modes;
 pub mod permission;
 pub mod prompt;
 pub mod store;
+pub mod title;
 pub mod tools;
 pub mod turn;
 

@@ -48,7 +48,7 @@ impl ProviderStore {
       let has_key = self.vault.get(&provider_secret_key(&provider.id)).await.ok().flatten().is_some_and(|k| !k.is_empty());
       providers.push(ProviderView { provider, has_key });
     }
-    ProvidersView { providers, error: None, approval: file.approval, ..tables() }
+    ProvidersView { providers, error: None, approval: file.approval, fast_model: file.fast_model, ..tables() }
   }
 
   /// The key a probe uses: one typed into the form, else the stored key of the source with that id
@@ -131,6 +131,21 @@ impl ProviderStore {
         self
           .edit(|file| {
             file.approval = Some(level);
+            Ok(())
+          })
+          .await
+      }
+      ProviderAction::FastModel { pick } => {
+        let pick = pick.map(|p| p.trim().to_owned()).filter(|p| !p.is_empty());
+        self
+          .edit(|file| {
+            // Only a model the agent could call; a source edited away later just turns the job off again
+            if let Some(p) = &pick
+              && file.find(p).is_none()
+            {
+              bail!("Unknown model: {p}");
+            }
+            file.fast_model = pick;
             Ok(())
           })
           .await
@@ -281,6 +296,13 @@ mod tests {
     assert!(s.apply(ProviderAction::Approval { level: "yolo".into() }).await.is_err());
     let v = s.view().await;
     assert_eq!((v.approval.as_deref(), v.providers.len()), (Some("full"), 1));
+
+    // So is the fast model: only a usable pick is taken, and none turns it off
+    assert!(s.apply(ProviderAction::FastModel { pick: Some("deepseek-2/gone".into()) }).await.is_err());
+    s.apply(ProviderAction::FastModel { pick: Some("deepseek-2/m".into()) }).await.unwrap();
+    assert_eq!(s.view().await.fast_model.as_deref(), Some("deepseek-2/m"));
+    s.apply(ProviderAction::FastModel { pick: None }).await.unwrap();
+    assert_eq!(s.view().await.fast_model, None);
   }
 
   #[tokio::test]

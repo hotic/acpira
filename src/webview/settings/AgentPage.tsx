@@ -20,7 +20,7 @@ import { ModelMark } from '../chat/ModelMark';
 import { Count, Dot, FactRow, Field, Group, ItemRow, ListHead, ModelLine, Note, PathText, SearchRow, Section, SectionAction, SectionDescription, SectionHead, Select, SourceLink, Switch, shortPath, type ModelTags } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 import { ProvidersSection, type ProvidersState } from './ProvidersSection';
-import { APPROVAL_LEVELS, approvalOf, BUILTIN_AGENT_ID, type ApprovalLevel } from '@shared/providers';
+import { APPROVAL_LEVELS, approvalOf, BUILTIN_AGENT_ID, usableModels, type ApprovalLevel } from '@shared/providers';
 
 type AgentSection = 'models' | 'mcp' | 'skills' | 'rules' | 'config';
 // What the CLI's own files declare; shared resources live on the Shared page, so these fold away by default
@@ -122,6 +122,7 @@ export function AgentPage({ agent, accounts, install, inventory, controls, provi
       )}
 
       {agent.id === BUILTIN_AGENT_ID && <ProvidersSection state={providers} on={on} />}
+      {agent.id === BUILTIN_AGENT_ID && <FastModelSection state={providers} on={on} />}
       {agent.id === BUILTIN_AGENT_ID && <ApprovalSection state={providers} on={on} />}
 
       {PLAN_AUTO_APPROVE_AGENTS.includes(agent.id) && <PermissionsSection agent={agent} settings={settings} on={on} />}
@@ -159,6 +160,44 @@ function NativeBlock({ agent, count, children }: { agent: AgentInfo; count?: num
         <div className="flex flex-col gap-(--section-gap) pt-2">{children}</div>
       </Collapsible.Panel>
     </Collapsible.Root>
+  );
+}
+
+// The built-in agent's fast model (`fastModel` in providers.json): a cheap model for side jobs such as naming a session
+// from its first message. A pick no longer usable reads as off, as the agent treats it
+function FastModelSection({ state, on }: { state?: ProvidersState; on: SettingsHandlers }) {
+  const [picked, setPicked] = useState<string>();
+  useEffect(() => { setPicked(undefined); }, [state?.view, state?.error]);
+  const models = usableModels(state?.view);
+  const stored = state?.view.fastModel ?? '';
+  const value = picked ?? (models.some(m => m.pick === stored) ? stored : '');
+  const options = [
+    { value: '', label: t('settings.agent.fastModel.off'), icon: <Ban strokeWidth={1.5} /> },
+    // The model on the row, its source as the caption: two sources may offer the same model
+    ...models.map(m => ({
+      value: m.pick,
+      label: m.model.name?.trim() || m.model.id,
+      description: m.provider.name.trim() || m.provider.id,
+      icon: <ModelMark family={m.model.id} />,
+      hint: m.pick,
+    })),
+  ];
+  const pick = (v: string) => {
+    if (v === value) return;
+    setPicked(v);
+    on.providerAction?.({ kind: 'fastModel', pick: v || undefined });
+  };
+  return (
+    <div className="flex flex-col gap-2">
+      <SectionHead>{t('settings.agent.quickTasks')}</SectionHead>
+      <Section>
+        <Field label={t('settings.agent.fastModel')} desc={t('settings.agent.fastModel.desc')}>
+          {state
+            ? <Select options={options} value={value} onChange={pick} label={t('settings.agent.fastModel')} />
+            : <Shimmer active>{t('settings.loading')}</Shimmer>}
+        </Field>
+      </Section>
+    </div>
   );
 }
 
