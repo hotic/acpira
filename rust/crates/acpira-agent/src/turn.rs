@@ -1005,6 +1005,7 @@ fn ctx_for(server: &Arc<Server>, session: &Arc<Session>, acp: &str) -> Ctx {
     outputs: server.session_dir(&session.id).join("outputs"),
     call_id: acp.to_owned(),
     jobs: session.jobs.clone(),
+    search: Default::default(),
     progress: Box::new(move |mut u: Value| {
       u["sessionUpdate"] = "tool_call_update".into();
       u["toolCallId"] = id.clone().into();

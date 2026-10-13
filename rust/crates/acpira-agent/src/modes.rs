@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use crate::permission::{BASH, Decision, EDIT, Rule, path_target};
-use crate::tools::{BASH as T_BASH, EDIT as T_EDIT, EXIT_PLAN, GLOB, GREP, JOB, LIST, READ, SKILL, TODO, WRITE};
+use crate::tools::{BASH as T_BASH, EDIT as T_EDIT, EXIT_PLAN, GLOB, GREP, JOB, LIST, READ, SKILL, TODO, WEBFETCH, WEBSEARCH, WRITE};
 
 pub const AGENT: &str = "agent";
 pub const PLAN: &str = "plan";
@@ -22,10 +22,11 @@ pub struct Mode {
   pub rules: &'static [(&'static str, &'static str, Decision)],
 }
 
-/// The tools every mode offers, in request order
-pub const TOOLS: &[&str] = &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN];
+/// The tools every mode offers, in request order (the web tools came last, 2026-10-14, so the earlier specs kept their
+/// place)
+pub const TOOLS: &[&str] = &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN, WEBFETCH, WEBSEARCH];
 /// The same with `skill` behind them, for a session that has skills (appended, so the other specs keep their place)
-pub const TOOLS_WITH_SKILL: &[&str] = &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN, SKILL];
+pub const TOOLS_WITH_SKILL: &[&str] = &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN, WEBFETCH, WEBSEARCH, SKILL];
 
 pub const MODES: &[Mode] = &[
   Mode {
