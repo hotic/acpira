@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { BookOpen, Ban, Check, ChevronDown, ChevronUp, CircleAlert, Copy, Download, FileText, Globe, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, SlidersHorizontal, Sparkles, SquareTerminal, X } from 'lucide-react';
+import { BookOpen, Ban, Check, ChevronDown, ChevronUp, CircleAlert, Copy, Download, Eye, EyeOff, FileText, Globe, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, SlidersHorizontal, Sparkles, SquareTerminal, X } from 'lucide-react';
 import type { AccountInfo, AgentInfo, ConfigControl } from '@shared/transcript';
 import type { AgentInstallProgress } from '@shared/protocol';
 import type { AgentHealthStage, AgentInventory, InventoryFile, InventoryMcp, InventorySkill, McpTransport } from '@shared/inventory';
@@ -8,7 +8,7 @@ import { PLAN_AUTO_APPROVE_AGENTS, type SettingsView } from '@shared/settings';
 import { familyLabel, isReasoningControl } from '@shared/composerControls';
 import { familyHidden, groupModels, setFamilyVisible, variantLabel, type ModelFamily } from '@shared/models';
 import { filterModels, MODEL_PREVIEW_LIMIT, prioritizeModels, setModelsVisible } from '@shared/modelCatalog';
-import { Chip, IconButton } from '../ui/Button';
+import { Button, Chip, IconButton } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { AccountLabel } from '../ui/AccountLabel';
 import { LocalAccountQuota, SavedAccountQuota } from '../ui/LocalAccountQuota';
@@ -21,7 +21,7 @@ import { ModelMark } from '../chat/ModelMark';
 import { Count, Dot, FactRow, Field, Group, ItemRow, ListHead, ModelLine, Note, PathText, SearchRow, Section, SectionAction, SectionDescription, SectionHead, Select, SourceLink, Switch, shortPath, type ModelTags } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 import { ProvidersSection, type ProvidersState } from './ProvidersSection';
-import { APPROVAL_LEVELS, approvalOf, BUILTIN_AGENT_ID, usableModels, type ApprovalLevel } from '@shared/providers';
+import { APPROVAL_LEVELS, approvalOf, BUILTIN_AGENT_ID, usableModels, WEB_SEARCH_BACKENDS, webSearchOf, type ApprovalLevel, type WebSearchBackend } from '@shared/providers';
 
 type AgentSection = 'models' | 'mcp' | 'skills' | 'rules' | 'config';
 // What the CLI's own files declare; shared resources live on the Shared page, so these fold away by default
@@ -124,6 +124,7 @@ export function AgentPage({ agent, accounts, install, inventory, controls, provi
 
       {agent.id === BUILTIN_AGENT_ID && <ProvidersSection state={providers} on={on} />}
       {agent.id === BUILTIN_AGENT_ID && <FastModelSection state={providers} on={on} />}
+      {agent.id === BUILTIN_AGENT_ID && <WebSearchSection state={providers} on={on} />}
       {agent.id === BUILTIN_AGENT_ID && <ApprovalSection state={providers} on={on} />}
 
       {PLAN_AUTO_APPROVE_AGENTS.includes(agent.id) && <PermissionsSection agent={agent} settings={settings} on={on} />}
@@ -199,6 +200,74 @@ function FastModelSection({ state, on }: { state?: ProvidersState; on: SettingsH
         </Field>
       </Section>
     </div>
+  );
+}
+
+// The built-in agent's websearch backend (`webSearch` in providers.json): the free hosted endpoints, or Jina Search with
+// the user's key. Picking Jina adds the key row under the picker; the key goes to secrets.json and never comes back
+const WEB_SEARCH_KEYS: Record<WebSearchBackend, { label: MsgKey; desc: MsgKey }> = {
+  default: { label: 'settings.agent.webSearch.default', desc: 'settings.agent.webSearch.default.desc' },
+  jina: { label: 'settings.agent.webSearch.jina', desc: 'settings.agent.webSearch.jina.desc' },
+};
+
+function WebSearchSection({ state, on }: { state?: ProvidersState; on: SettingsHandlers }) {
+  // The picked backend shows at once and gives way to the file's once the host answers with a new view
+  const [picked, setPicked] = useState<WebSearchBackend>();
+  useEffect(() => { setPicked(undefined); }, [state?.view, state?.error]);
+  const backend = picked ?? webSearchOf(state?.view);
+  const pick = (v: WebSearchBackend) => {
+    if (v === backend) return;
+    setPicked(v);
+    on.providerAction?.({ kind: 'webSearch', backend: v });
+  };
+  return (
+    <div className="flex flex-col gap-2">
+      <SectionHead>{t('settings.agent.web')}</SectionHead>
+      <Section>
+        {/* Both descriptions are laid out, so a pick never changes the picker row's height */}
+        <Field label={t('settings.agent.webSearch')} desc={<StableText current={backend} items={WEB_SEARCH_BACKENDS.map(v => ({ key: v, text: t(WEB_SEARCH_KEYS[v].desc) }))} />}>
+          {state
+            ? <Select options={WEB_SEARCH_BACKENDS.map(v => ({ value: v, label: t(WEB_SEARCH_KEYS[v].label) }))} value={backend} onChange={pick} label={t('settings.agent.webSearch')} />
+            : <Shimmer active>{t('settings.loading')}</Shimmer>}
+        </Field>
+        {state && backend === 'jina' && <JinaKeyField stored={!!state.view.webKeys?.includes('jina')} on={on} />}
+      </Section>
+    </div>
+  );
+}
+
+// Jina's key: typed, then saved with the button or Enter. The box empties once sent; the status line says whether one
+// is stored, which is all the page ever learns about it
+function JinaKeyField({ stored, on }: { stored: boolean; on: SettingsHandlers }) {
+  const [key, setKey] = useState('');
+  const [show, setShow] = useState(false);
+  const save = () => {
+    const k = key.trim();
+    if (!k) return;
+    on.providerAction?.({ kind: 'webSearch', backend: 'jina', key: k });
+    setKey('');
+    setShow(false);
+  };
+  const eyeLabel = show ? t('settings.providers.hideKey') : t('settings.providers.showKey');
+  return (
+    <Field stack label={t('settings.agent.webSearch.key')} desc={
+      <span className="inline-flex items-center gap-2">
+        <Dot ok={stored} warn={!stored} />
+        {stored ? t('settings.providers.keySaved') : t('settings.agent.webSearch.noKey')}
+      </span>
+    }>
+      {/* The visibility toggle sits inside the box, as in the model source form */}
+      <div className="flex h-ctl min-w-0 flex-1 items-center rounded-md border border-line bg-chip pl-3 focus-within:border-line-strong">
+        <input type={show ? 'text' : 'password'} autoComplete="off" spellCheck={false} value={key} onChange={e => setKey(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') save(); }}
+          aria-label={t('settings.agent.webSearch.key')} placeholder={stored ? t('settings.providers.keyKept') : t('settings.agent.webSearch.key.placeholder')}
+          className="min-w-0 flex-1 border-0 bg-transparent text-2 text-fg-1 outline-none placeholder:text-fg-3" />
+        <IconButton title={eyeLabel} aria-label={eyeLabel} aria-pressed={show} onClick={() => setShow(v => !v)} className="text-fg-2">
+          {show ? <EyeOff strokeWidth={1.5} /> : <Eye strokeWidth={1.5} />}
+        </IconButton>
+      </div>
+      <Button disabled={!key.trim()} onClick={save}>{t('settings.providers.save')}</Button>
+    </Field>
   );
 }
 

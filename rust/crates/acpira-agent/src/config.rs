@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use acpira_shared::providers::{PROVIDERS_FILE, Provider, ProviderModel, ProvidersFile, provider_secret_key};
+use acpira_shared::providers::{PROVIDERS_FILE, Provider, ProviderModel, ProvidersFile, provider_secret_key, web_secret_key};
 
 use crate::permission::Approval;
 
@@ -33,6 +33,13 @@ impl Config {
   /// The approval level set on the settings page; absent or unknown asks
   pub fn approval(&self) -> Approval {
     self.providers.approval.as_deref().and_then(Approval::parse).unwrap_or_default()
+  }
+
+  /// The search setup picked on the settings page: Jina's key when Jina is the backend and has one
+  pub fn web_search(&self) -> crate::tools::web::SearchSetup {
+    let jina = self.providers.web_search.as_deref() == Some("jina");
+    let key = || self.secrets.get(&web_secret_key("jina")).map(|k| k.trim().to_owned()).filter(|k| !k.is_empty());
+    crate::tools::web::SearchSetup { jina_key: if jina { key() } else { None } }
   }
 
   /// The fast model picked on the settings page, while it is still usable
@@ -92,7 +99,7 @@ impl ConfigCache {
     {
       config.secrets = m
         .into_iter()
-        .filter(|(k, _)| k.starts_with(acpira_shared::providers::PROVIDER_SECRET_PREFIX))
+        .filter(|(k, _)| k.starts_with(acpira_shared::providers::PROVIDER_SECRET_PREFIX) || k.starts_with(acpira_shared::providers::WEB_SECRET_PREFIX))
         .filter_map(|(k, v)| v.as_str().map(|v| (k, v.to_owned())))
         .collect();
     }
@@ -117,11 +124,19 @@ mod tests {
       json!({ "version": 1, "providers": [{ "id": "ds", "baseUrl": "http://x", "models": [{ "id": "m" }] }] }).to_string(),
     )
     .unwrap();
-    std::fs::write(dir.path().join(SECRETS_FILE), json!({ "acpira.provider.ds": "sk-1", "acpira.account.a": "other" }).to_string()).unwrap();
+    std::fs::write(dir.path().join(SECRETS_FILE), json!({ "acpira.provider.ds": "sk-1", "acpira.account.a": "other", "acpira.web.jina": "j-1" }).to_string()).unwrap();
     let c = cache.get();
     assert_eq!(c.default_pick().as_deref(), Some("ds/m"));
     assert_eq!(c.api_key("ds"), Some("sk-1"));
-    assert!(c.secrets.len() == 1, "only provider keys are kept");
+    assert!(c.secrets.len() == 2, "only provider and search keys are kept");
+    // The key is used only while Jina is the picked backend
+    assert_eq!(c.web_search().jina_key, None);
+    std::fs::write(
+      dir.path().join(PROVIDERS_FILE),
+      json!({ "version": 1, "webSearch": "jina", "providers": [{ "id": "ds", "baseUrl": "http://x", "models": [{ "id": "m" }] }] }).to_string(),
+    )
+    .unwrap();
+    assert_eq!(cache.get().web_search().jina_key.as_deref(), Some("j-1"));
     std::fs::write(dir.path().join(PROVIDERS_FILE), "{ broken").unwrap();
     assert!(cache.get().error.is_some());
   }

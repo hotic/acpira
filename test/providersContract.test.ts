@@ -61,6 +61,19 @@ describe('providers contract', () => {
     s.view('V', { type: 'providerAction', action: { kind: 'fastModel' } });
     await s.hostMsg('V', 'providers', m => !earlier.has(m) && m.view.fastModel === undefined && !m.error);
 
+    // Web search: Jina with a key stores the key in the vault (never in the view), and back to default keeps it
+    s.view('V', { type: 'providerAction', action: { kind: 'webSearch', backend: 'jina', key: 'jina-contract' } });
+    const jina = await s.hostMsg('V', 'providers', m => m.view.webSearch === 'jina');
+    expect(jina.view.webKeys).toEqual(['jina']);
+    expect(JSON.stringify(jina)).not.toContain('jina-contract');
+    expect(JSON.parse(readFileSync(join(data, 'providers.json'), 'utf8')).webSearch).toBe('jina');
+    expect(JSON.parse(readFileSync(join(data, 'secrets.json'), 'utf8'))['acpira.web.jina']).toBe('jina-contract');
+    const beforeDefault = new Set(s.hostMsgs('V'));
+    s.view('V', { type: 'providerAction', action: { kind: 'webSearch', backend: 'default' } });
+    const back = await s.hostMsg('V', 'providers', m => !beforeDefault.has(m) && m.view.webSearch === undefined && !m.error);
+    expect(back.view.webKeys).toEqual(['jina']);
+    expect(JSON.parse(readFileSync(join(data, 'providers.json'), 'utf8'))).not.toHaveProperty('webSearch');
+
     s.view('V', { type: 'providerAction', action: { kind: 'delete', id: 'deep-seek' } });
     // hostMsg scans everything received so far: the first, empty view must not stand in for the delete's reply
     await s.hostMsg('V', 'providers', m => m !== empty && m.view.providers.length === 0 && !m.error);

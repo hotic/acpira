@@ -17,6 +17,18 @@ pub fn provider_secret_key(id: &str) -> String {
   format!("{PROVIDER_SECRET_PREFIX}{id}")
 }
 
+/// Vault keys of the web search backends (`web_secret_key`), apart from the model sources' so a source id never meets one
+pub const WEB_SECRET_PREFIX: &str = "acpira.web.";
+
+/// The vault key holding a web search backend's API key
+pub fn web_secret_key(backend: &str) -> String {
+  format!("{WEB_SECRET_PREFIX}{backend}")
+}
+
+/// The search backends `ProvidersFile::web_search` takes, the default first: `default` (the free hosted endpoints, no
+/// key) and `jina` (Jina Search with the user's key, the free ones behind it)
+pub const WEB_SEARCH_BACKENDS: [&str; 2] = ["default", "jina"];
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProvidersFile {
@@ -32,6 +44,9 @@ pub struct ProvidersFile {
   /// usable, turns them off
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub fast_model: Option<String>,
+  /// The `websearch` backend, one of `WEB_SEARCH_BACKENDS` other than `default`; absent (or unknown) is `default`
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub web_search: Option<String>,
   #[serde(flatten)]
   pub extra: Map<String, Value>,
 }
@@ -271,6 +286,12 @@ pub struct ProvidersView {
   /// The file's fast model pick as written (`ProvidersFile::fast_model`)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub fast_model: Option<String>,
+  /// The file's search backend as written (`ProvidersFile::web_search`)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub web_search: Option<String>,
+  /// The search backends with a stored key (never the key itself)
+  #[serde(default)]
+  pub web_keys: Vec<String>,
 }
 
 /// A network question from the settings page; none of them changes providers.json. `key`: a key typed into the form
@@ -340,6 +361,13 @@ pub enum ProviderAction {
   FastModel {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pick: Option<String>,
+  },
+  /// Set the search backend (one of `WEB_SEARCH_BACKENDS`). `key` is that backend's: absent keeps the stored key, empty
+  /// removes it
+  WebSearch {
+    backend: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key: Option<String>,
   },
 }
 

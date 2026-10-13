@@ -73,6 +73,20 @@ export interface ProvidersView {
   approval?: string;
   // The model for quick side jobs such as naming a session (`<provider id>/<model id>`); absent turns them off
   fastModel?: string;
+  // The websearch backend as the file holds it; absent reads as 'default'
+  webSearch?: string;
+  // The search backends with a stored key (never the key itself)
+  webKeys?: string[];
+}
+
+// The built-in agent's search backends (`WEB_SEARCH_BACKENDS` in acpira-shared/src/providers.rs), the default first:
+// the free hosted endpoints, or Jina Search with the user's key (the free ones behind it)
+export const WEB_SEARCH_BACKENDS = ['default', 'jina'] as const;
+export type WebSearchBackend = typeof WEB_SEARCH_BACKENDS[number];
+
+// The view's backend, unknown or absent values reading as the default
+export function webSearchOf(view?: ProvidersView): WebSearchBackend {
+  return WEB_SEARCH_BACKENDS.find(b => b === view?.webSearch) ?? WEB_SEARCH_BACKENDS[0];
 }
 
 // How much the built-in agent runs without a permission card (`APPROVAL_LEVELS` in acpira-shared/src/providers.rs),
@@ -126,7 +140,9 @@ export type ProviderAction =
   | { kind: 'delete'; id: string }
   | { kind: 'approval'; level: ApprovalLevel }
   // pick: a usable `<provider id>/<model id>`; absent turns the fast model off
-  | { kind: 'fastModel'; pick?: string };
+  | { kind: 'fastModel'; pick?: string }
+  // key: that backend's; absent keeps the stored key, empty removes it
+  | { kind: 'webSearch'; backend: WebSearchBackend; key?: string };
 
 // A model entry with the file's defaults, for a hand-typed id
 export function newModel(id: string): ProviderModel {
