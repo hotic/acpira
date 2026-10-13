@@ -404,7 +404,9 @@ impl AcpSession {
         return Err(anyhow!(t("host.importGone")));
       }
       let mut c = self.core.lock();
-      if !c.state.turns.is_empty() {
+      // A fork whose copied turns were never handed over is as empty natively as a fresh session (peers such as the
+      // built-in agent persist nothing before the first prompt): a new one still gets the copy on its first prompt
+      if !c.state.turns.is_empty() && !c.lineage.history_pending {
         c.status = SessionStatus::Readonly;
         c.error = Some(t("host.sessionGone"));
         drop(c);

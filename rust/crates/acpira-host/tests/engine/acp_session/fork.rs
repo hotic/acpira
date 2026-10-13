@@ -36,6 +36,30 @@ async fn a_forks_copied_transcript_goes_to_the_native_session_as_retained_contex
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_never_prompted_fork_whose_native_session_is_gone_starts_a_new_one_instead_of_going_read_only() {
+  let fake = fake_or_skip!();
+  std::fs::create_dir_all("/tmp/acpira-gone").unwrap();
+  let h = Harness::new(&fake, json!({}));
+  // The fork opened a native session once, but no prompt ever reached it, so the peer kept nothing (a "gone" cwd
+  // makes the fake answer resume with session_not_found)
+  let record = fork_record(&h, json!([
+    { "role": "user", "text": "earlier" },
+    { "role": "agent", "blocks": [{ "type": "text", "markdown": "before" }], "stop": "end_turn" },
+  ]), |r| {
+    r.cwd = "/tmp/acpira-gone".into();
+    r.acp_session_id = Some("never-prompted".into());
+  });
+  let s = reopened(&h, record).await;
+  assert_eq!(view(&s)["status"], "ready");
+  assert_ne!(s.to_record().acp_session_id.as_deref(), Some("never-prompted"));
+  assert!(s.to_record().history_pending);
+  prompt(&s, "now").await;
+  let vw = view(&s);
+  assert_eq!(turns_in(&vw), 4);
+  assert!(agent_text(&vw["turns"][3]).contains("resource:acpira://history/"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_oversized_fork_history_is_compacted_keeping_its_most_recent_turns() {
   let fake = fake_or_skip!();
   let mut h = Harness::new(&fake, json!({}));
