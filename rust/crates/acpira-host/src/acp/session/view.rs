@@ -56,6 +56,21 @@ impl AcpSession {
     }
   }
 
+  /// Still inside a turn: running, a prompt waiting on its pre-send compaction, or the workspace gate deciding about a follow-up
+  pub fn turn_busy(&self) -> bool {
+    let c = self.core.lock();
+    c.phase.running || c.pending_prompt.is_some() || c.hooks.gating
+  }
+
+  /// How the last visible agent turn stopped; None when the transcript ends on a user turn or the turn has no stop yet
+  pub fn last_stop(&self) -> Option<TurnStop> {
+    let c = self.core.lock();
+    match visible_turns(&c).last() {
+      Some(Turn::Agent(a)) => a.stop,
+      _ => None,
+    }
+  }
+
   /// The whole view, serialized once for every viewer showing this session
   pub fn view_json(&self) -> (RawJson, bool) {
     let (raw, running, _) = self.view_encoded();

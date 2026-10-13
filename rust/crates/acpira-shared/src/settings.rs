@@ -18,7 +18,7 @@ pub const AGENT_CPU_CAP: (i64, i64, i64) = (10, 100, 80);
 /// The `proxy` setting's default: the local 127.0.0.1:7890 proxy while it listens, the inherited environment otherwise
 pub const DEFAULT_PROXY: &str = "auto";
 
-pub const SETTING_KEYS: [&str; 21] = [
+pub const SETTING_KEYS: [&str; 23] = [
   "language",
   "defaultAgent",
   "agentOrder",
@@ -36,6 +36,8 @@ pub const SETTING_KEYS: [&str; 21] = [
   "fontSmoothing",
   "shareEditorSelection",
   "steerQueued",
+  "notifySound",
+  "notifySystem",
   "planAutoApprove",
   "subagents",
   "agentCpuCap",
@@ -65,6 +67,12 @@ pub struct SettingsView {
   pub share_editor_selection: bool,
   /// A queued prompt's send button steers it into the running turn on agents that support `_session/steering`
   pub steer_queued: bool,
+  /// A chime when a session needs the user or finishes while they are not looking (off by default)
+  #[serde(default)]
+  pub notify_sound: bool,
+  /// A system notification for the same moments (off by default)
+  #[serde(default)]
+  pub notify_system: bool,
   /// Agents whose plan mode answers tool permission requests itself (plan approvals still ask)
   #[serde(default)]
   pub plan_auto_approve: Vec<AgentId>,
@@ -160,6 +168,7 @@ pub fn sanitize_setting(key: &str, value: &Value) -> Value {
     "fontSmoothing" => Value::from(value.as_bool().unwrap_or(false)),
     "shareEditorSelection" => Value::from(value.as_bool().unwrap_or(true)),
     "steerQueued" => Value::from(value.as_bool().unwrap_or(false)),
+    "notifySound" | "notifySystem" => Value::from(value.as_bool().unwrap_or(false)),
     "compactAtTokens" => {
       let n = value.as_f64().filter(|n| n.is_finite()).map(|n| js_round(n) as i64).unwrap_or(300_000);
       Value::from(n.max(MIN_COMPACT_AT_TOKENS))

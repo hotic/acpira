@@ -177,6 +177,18 @@ impl SidecarPlatform {
     }
   }
 
+  /// A session wants the user (`SessionManager::watch_attention`); dropped when the shell cannot notify
+  pub fn attention(&self, session_id: &str, title: &str, body: &str, sound: bool, system: bool) {
+    self.notify(PlatformRequest::Notify {
+      session_id: session_id.to_owned(),
+      title: title.to_owned(),
+      body: body.to_owned(),
+      open: crate::i18n::t("common.open"),
+      sound,
+      system,
+    });
+  }
+
   /// Without a terminal on the shell side the command is at least shown, so a login / install can be run by hand
   pub fn run_in_terminal(&self, title: String, command: String, args: Vec<String>, env: Option<BTreeMap<String, Option<String>>>) {
     // Both IDEs receive the same ASCII-only Windows invocation, regardless of their configured terminal dialect.

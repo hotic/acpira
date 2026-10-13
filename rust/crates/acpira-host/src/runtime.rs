@@ -26,7 +26,7 @@ use crate::acp::session::CompactionPolicy;
 use crate::bridge_core::{BridgeCore, Post};
 use crate::external::chatgpt_store::ChatGptBridgeStore;
 use crate::i18n::{set_host_locale, tp};
-use crate::session_manager::{ManagerDeps, SessionManager};
+use crate::session_manager::{Attention, AttentionKind, ManagerDeps, SessionManager};
 use crate::settings::{SettingsCenter, SettingsDeps};
 use crate::sidecar::platform::{Affects, SidecarPlatform};
 use crate::store::agent_config::AgentConfig;
@@ -144,6 +144,7 @@ impl HostRuntime {
     let (r1, r2, r3, r4, r5, r6) = (r(&platform), r(&platform), r(&platform), r(&platform), r(&platform), r(&platform));
     let cwd_p = platform.clone();
     let mcp_home = platform.clone();
+    let notify_p = platform.clone();
     let manager = SessionManager::new(
       registry,
       ManagerDeps {
@@ -175,6 +176,20 @@ impl HostRuntime {
         lease_root: root.clone(),
         shared_mcp: Some(crate::shared_config::mcp_provider(Arc::new(move || mcp_home.home()))),
         host_mcp,
+        // Both switches are off by default (`notifySound` / `notifySystem`); read at each edge, so a change applies to the next one
+        attention: Some(Arc::new(move |a: Attention| {
+          let on = |k: &str| notify_p.read_setting(k).and_then(|v| v.as_bool()).unwrap_or(false);
+          let (sound, system) = (on("notifySound"), on("notifySystem"));
+          if !sound && !system {
+            return;
+          }
+          let key = match a.kind {
+            AttentionKind::Waiting => "host.attention.waiting",
+            AttentionKind::Done => "host.attention.done",
+            AttentionKind::Error => "host.attention.error",
+          };
+          notify_p.attention(&a.session_id, &a.title, &tp(key, &[("agent", &a.agent)]), sound, system);
+        })),
       },
     );
     *mgr_slot.lock() = Some(Arc::downgrade(&manager));
