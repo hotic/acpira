@@ -1,0 +1,184 @@
+//! Skills: the shared `SKILL.md` folders under `~/.agents/skills/` and the project's `.agents/skills/` (what the Shared
+//! tab manages for every agent). Each one is a slash command the session advertises (`available_commands_update`,
+//! next to `/compact`), so the composer lists and marks it; a `/name` anywhere in a prompt, at the start or after
+//! whitespace, puts the skill's instructions behind the message, and the `skill` tool lets the model load one itself
+
+use std::path::{Path, PathBuf};
+
+use serde_json::{Value, json};
+
+use crate::prompt::{Places, doc};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Skill {
+  pub name: String,
+  pub description: String,
+  /// The frontmatter's `argument-hint`, shown under the composer while the arguments are empty
+  pub hint: Option<String>,
+  /// The `SKILL.md`
+  pub path: PathBuf,
+}
+
+impl Skill {
+  pub fn dir(&self) -> &Path {
+    self.path.parent().unwrap_or(&self.path)
+  }
+
+  /// The instructions without the frontmatter
+  pub fn body(&self) -> std::io::Result<String> {
+    let text = std::fs::read_to_string(&self.path)?;
+    Ok(doc::split_frontmatter(&text).1.trim().to_owned())
+  }
+}
+
+/// The description of `/compact`, the one command of the agent's own
+pub const COMPACT: &str = "compact";
+const COMPACT_DESCRIPTION: &str = "Summarize the conversation so far to free context";
+
+/// Every skill, by name, the project's over the user's. Dot-names and folders without a SKILL.md are skipped
+pub fn scan(places: &Places) -> Vec<Skill> {
+  let mut out: Vec<Skill> = vec![];
+  let mut roots = vec![];
+  if let Some(h) = &places.home {
+    roots.push(h.join(".agents").join("skills"));
+  }
+  if let Some(r) = places.root.as_ref().or(Some(&places.cwd)) {
+    roots.push(r.join(".agents").join("skills"));
+  }
+  roots.dedup();
+  for root in roots {
+    let Ok(rd) = std::fs::read_dir(&root) else { continue };
+    let mut dirs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    dirs.sort();
+    for dir in dirs {
+      let Some(folder) = dir.file_name().map(|n| n.to_string_lossy().into_owned()).filter(|n| !n.starts_with('.')) else { continue };
+      let path = dir.join("SKILL.md");
+      let Ok(text) = std::fs::read_to_string(&path) else { continue };
+      let (meta, _) = doc::split_frontmatter(&text);
+      let text_of = |k: &str| meta.iter().rev().find(|(key, _)| key == k).and_then(|(_, v)| match v {
+        doc::Meta::Text(t) => Some(t.trim().to_owned()).filter(|t| !t.is_empty()),
+        doc::Meta::List(_) => None,
+      });
+      let name = text_of("name").filter(|n| !n.chars().any(char::is_whitespace)).unwrap_or(folder);
+      let skill = Skill { name, description: text_of("description").unwrap_or_default(), hint: text_of("argument-hint"), path };
+      match out.iter_mut().find(|s| s.name == skill.name) {
+        Some(s) => *s = skill,
+        None => out.push(skill),
+      }
+    }
+  }
+  out.sort_by(|a, b| a.name.cmp(&b.name));
+  out
+}
+
+/// The `availableCommands` of a session: `/compact`, then the skills
+pub fn commands(skills: &[Skill]) -> Vec<Value> {
+  let mut out = vec![json!({ "name": COMPACT, "description": COMPACT_DESCRIPTION })];
+  for s in skills {
+    let mut c = json!({ "name": s.name, "description": s.description });
+    if let Some(h) = &s.hint {
+      c["input"] = json!({ "hint": h });
+    }
+    out.push(c);
+  }
+  out
+}
+
+/// A `/compact` prompt: the text is the command, with or without arguments
+pub fn is_compact(text: &str) -> bool {
+  let t = text.trim();
+  t == "/compact" || t.starts_with("/compact ")
+}
+
+/// A character that may end a `/name` token besides whitespace
+fn boundary(c: char) -> bool {
+  c.is_whitespace() || matches!(c, ',' | '.' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '，' | '。' | '！' | '？' | '；' | '：' | '）' | '」' | '』')
+}
+
+/// The skills a text calls up, each once in order of first mention, with the rest of its line as the arguments. A
+/// `/name` counts at the start or after whitespace and ends at whitespace, punctuation or the end, the same boundary
+/// the composer paints; the longest name wins where one is a prefix of another
+pub fn mentioned<'a>(text: &str, skills: &'a [Skill]) -> Vec<(&'a Skill, String)> {
+  let mut out: Vec<(&Skill, String)> = vec![];
+  let mut prev: Option<char> = None;
+  for (i, c) in text.char_indices() {
+    let leading = c == '/' && prev.is_none_or(char::is_whitespace);
+    prev = Some(c);
+    if !leading {
+      continue;
+    }
+    let rest = &text[i + 1..];
+    let hit = skills
+      .iter()
+      .filter(|s| rest.starts_with(s.name.as_str()) && rest[s.name.len()..].chars().next().is_none_or(boundary))
+      .max_by_key(|s| s.name.len());
+    let Some(skill) = hit else { continue };
+    if out.iter().any(|(s, _)| s.name == skill.name) {
+      continue;
+    }
+    let after = &rest[skill.name.len()..];
+    let args = after.lines().next().unwrap_or("").trim().to_owned();
+    out.push((skill, args));
+  }
+  out
+}
+
+/// The text put behind a prompt for the skills it calls up
+pub fn expansion(mentions: &[(&Skill, String)]) -> String {
+  let mut out = String::new();
+  for (skill, args) in mentions {
+    match skill.body() {
+      Ok(body) => {
+        let body = body.replace("$ARGUMENTS", args);
+        out.push_str(&format!("\n\n<skill name=\"{}\" path=\"{}\">\n{body}\n</skill>", skill.name, skill.path.display()));
+      }
+      Err(e) => eprintln!("[acpira agent] skill {} cannot be read: {e}", skill.path.display()),
+    }
+  }
+  out
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn skills_are_scanned_mentioned_and_expanded() {
+    let dir = tempfile::tempdir().unwrap();
+    let (home, work) = (dir.path().join("home"), dir.path().join("work"));
+    std::fs::create_dir_all(work.join(".git")).unwrap();
+    for (root, folder, text) in [
+      (&home, "release", "---\nname: release\ndescription: Cut a release\nargument-hint: version\n---\nTag $ARGUMENTS and push.\n"),
+      (&home, "dig", "---\ndescription: user copy\n---\nuser dig\n"),
+      (&work, "dig", "---\nname: dig\ndescription: project copy\n---\nproject dig\n"),
+      (&work, "dig-deep", "no frontmatter\n"),
+      (&work, ".hidden", "---\nname: hidden\n---\n"),
+      (&work, "empty", ""),
+    ] {
+      let d = root.join(".agents/skills").join(folder);
+      std::fs::create_dir_all(&d).unwrap();
+      if !text.is_empty() {
+        std::fs::write(d.join("SKILL.md"), text).unwrap();
+      }
+    }
+    let skills = scan(&Places::new(&work, Some(&home)));
+    // A dot-name and a folder without a SKILL.md are skipped; the project's dig wins over the user's
+    assert_eq!(skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["dig", "dig-deep", "release"]);
+    assert_eq!(skills[0].description, "project copy");
+    assert_eq!(skills[2].hint.as_deref(), Some("version"));
+    let cmds = commands(&skills);
+    assert_eq!(cmds[0]["name"], "compact");
+    assert_eq!(cmds[3], json!({ "name": "release", "description": "Cut a release", "input": { "hint": "version" } }));
+
+    // Leading, mid-sentence, before punctuation; a path, a partial name and a second mention are not
+    let m = mentioned("please /release 1.2 then /dig, not /tmp/release or /releaser or /release again", &skills);
+    assert_eq!(m.iter().map(|(s, a)| (s.name.as_str(), a.as_str())).collect::<Vec<_>>(), [("release", "1.2 then /dig, not /tmp/release or /releaser or /release again"), ("dig", ", not /tmp/release or /releaser or /release again")]);
+    let m = mentioned("/dig-deep\nsecond line", &skills);
+    assert_eq!((m[0].0.name.as_str(), m[0].1.as_str()), ("dig-deep", ""));
+    assert!(mentioned("a/release", &skills).is_empty());
+    let text = expansion(&mentioned("/release 1.2", &skills));
+    assert!(text.contains("<skill name=\"release\" path=") && text.contains("\nTag 1.2 and push.\n</skill>"), "{text}");
+    assert_eq!(skills[1].body().unwrap(), "no frontmatter");
+    assert!(is_compact(" /compact ") && is_compact("/compact now") && !is_compact("/compaction") && !is_compact("x /compact"));
+  }
+}

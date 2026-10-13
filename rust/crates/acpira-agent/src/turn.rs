@@ -18,9 +18,11 @@ use acpira_shared::model_catalog::Cost;
 use acpira_shared::providers::{Provider, ProviderModel, Sampling, Thinking};
 
 use crate::acp::{Server, Session, SessionState};
+use crate::compact::{self, Policy, Reason};
 use crate::llm::{self, Endpoint, Event, Item, LlmError, Part, Request, StopReason, ToolCall, ToolSpec, Usage};
 use crate::{modes, prompt};
 use crate::permission::{self, Decision, Guard, Rule};
+use crate::skills::{self, Skill};
 use crate::tools::names::{self, Resolved};
 use crate::tools::{self, Action, Ctx, Output};
 
@@ -73,8 +75,9 @@ pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<V
     st.turn = Some(cancel.clone());
     !st.titled && !st.items.iter().any(|i| matches!(i, Item::User(_)))
   };
-  // The first prompt also names the session, beside the turn and outside its cancel
-  if first && crate::title::spawn(&server, &session, params.get("prompt").unwrap_or(&Value::Null)) {
+  // The first prompt also names the session, beside the turn and outside its cancel (a /compact names nothing)
+  let prompt = params.get("prompt").unwrap_or(&Value::Null);
+  if first && !skills::is_compact(&prompt_text(prompt)) && crate::title::spawn(&server, &session, prompt) {
     session.state.lock().titled = true;
   }
   let stats = Arc::new(parking_lot::Mutex::new(Stats::default()));
@@ -91,6 +94,8 @@ pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<V
       session.store.item(item);
     }
   }
+  // Old tool output is cleared between turns, as OpenCode does, once enough of it has piled up
+  compact::prune(&session);
   session.store.flush();
   let stop = result.map_err(|e| RpcError::new(-32603, e))?;
   let s = stats.lock().clone();
@@ -155,9 +160,13 @@ struct Setup {
   tools: &'static [&'static str],
   specs: Vec<ToolSpec>,
   rules: Rules,
+  /// The host's auto-compaction setting, off the prompt's `_meta`
+  policy: Policy,
+  /// The skills found at the start of the turn (`skills.rs`); with any, `skill` is among the tools
+  skills: Vec<Skill>,
 }
 
-fn setup(server: &Server, session: &Session) -> Result<Setup, String> {
+fn setup(server: &Server, session: &Session, params: &Value) -> Result<Setup, String> {
   let config = server.config.get();
   if let Some(e) = &config.error {
     return Err(e.clone());
@@ -203,6 +212,11 @@ fn setup(server: &Server, session: &Session) -> Result<Setup, String> {
   // Limits the configuration leaves open come from the catalogue, marked estimated (never sent as max_tokens)
   let mut model = model.clone();
   let cost = crate::catalog::complete(&mut model, &server.catalog.get());
+  let skills = skills::scan(&places);
+  let (tools, mut specs) = if skills.is_empty() { (modes::TOOLS, tools::specs(modes::TOOLS)) } else { (modes::TOOLS_WITH_SKILL, tools::specs(modes::TOOLS_WITH_SKILL)) };
+  if !skills.is_empty() {
+    specs.push(tools::skill::spec(&skills));
+  }
   Ok(Setup {
     pick,
     provider: provider.clone(),
@@ -215,15 +229,59 @@ fn setup(server: &Server, session: &Session) -> Result<Setup, String> {
     thinking,
     system: composed.text,
     prompt: (composed.variant, composed.version, composed.digest),
-    tools: modes::TOOLS,
-    specs: tools::specs(modes::TOOLS),
+    tools,
+    specs,
     rules,
+    policy: Policy::from_prompt(params),
+    skills,
   })
 }
 
+/// The prompt's text blocks, joined (attachments and images left out)
+fn prompt_text(prompt: &Value) -> String {
+  prompt
+    .as_array()
+    .into_iter()
+    .flatten()
+    .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
+    .filter_map(|b| b.get("text").and_then(Value::as_str))
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
+/// The summary call of a compaction: the turn's model without its tools
+fn summary_call<'a>(server: &Server, s: &'a Setup) -> compact::Call<'a> {
+  compact::Call { http: server.http.clone(), endpoint: s.endpoint.clone(), model: &s.model, pick: &s.pick, cost: s.cost.as_ref() }
+}
+
+/// The context after a compaction, as an estimate until the next call reports it
+fn report_usage(server: &Server, session: &Session, s: &Setup) {
+  let used = approx(&s.system, &session.state.lock().items, &s.specs);
+  server.update(&session.id, json!({ "sessionUpdate": "usage_update", "used": used, "size": s.model.context.unwrap_or(DEFAULT_CONTEXT) }));
+}
+
 async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stats: &Arc<parking_lot::Mutex<Stats>>) -> Result<Stop, String> {
-  let mut s = setup(server, session)?;
-  let mut parts = prompt_parts(params.get("prompt").unwrap_or(&Value::Null), s.model.takes_images());
+  let mut s = setup(server, session, params)?;
+  let prompt = params.get("prompt").unwrap_or(&Value::Null);
+  let text = prompt_text(prompt);
+  // /compact summarizes the history and ends the turn; nothing of it enters the history
+  if skills::is_compact(&text) {
+    match compact::run(server, session, &summary_call(server, &s), Reason::Manual).await {
+      Ok(true) => report_usage(server, session, &s),
+      Ok(false) => server.update(&session.id, json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "Nothing to compact yet." } })),
+      Err(_) => {}
+    }
+    return Ok(Stop::EndTurn);
+  }
+  let mut parts = prompt_parts(prompt, s.model.takes_images());
+  // A `/name` anywhere in the text puts the skill's instructions behind the message
+  let expansion = skills::expansion(&skills::mentioned(&text, &s.skills));
+  if !expansion.is_empty() {
+    match parts.last_mut() {
+      Some(Part::Text(t)) => t.push_str(&expansion),
+      _ => parts.push(Part::Text(expansion.trim_start().to_owned())),
+    }
+  }
   {
     let mut st = session.state.lock();
     // A mode entered since the model last heard about it is announced in the user message: the system prompt stays fixed
@@ -256,7 +314,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       st.prompt = Some(s.prompt.clone());
     }
     let context = s.model.context.unwrap_or(DEFAULT_CONTEXT);
-    let request = Request {
+    let mut request = Request {
       model: s.model.id.clone(),
       system: s.system.clone(),
       items: session.state.lock().items.clone(),
@@ -270,10 +328,12 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       fast: s.fast,
     };
     log_view(session, &s, &request);
-    let approx = approx_input(&request);
+    let mut input_estimate = approx(&request.system, &request.items, &request.tools);
     // Model tool-call id → ACP tool call id: providers reuse ids across calls, ACP needs them unique per session
     let mut ids: HashMap<String, String> = HashMap::new();
     let mut attempt = 0u32;
+    // A request refused for its size is compacted once and sent again
+    let mut overflowed = false;
     let (reply, stop, usage, started) = loop {
       attempt += 1;
       let started = std::time::Instant::now();
@@ -321,7 +381,10 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
         Err(e) => e,
       };
       log_request(session, &s, started, attempt, None, None, false, Some(&e.to_string()), None);
-      if attempt >= MAX_ATTEMPTS || !retriable(&e) {
+      // Refused for its size: the provider says so, or refuses a request near the window without saying why
+      let near = input_estimate >= s.model.context.unwrap_or(DEFAULT_CONTEXT) * 4 / 5;
+      let overflow = (compact::is_overflow(&e) || (near && compact::is_refusal(&e))) && !overflowed;
+      if !overflow && (attempt >= MAX_ATTEMPTS || !retriable(&e)) {
         return Err(describe(s.provider.display_name(), &e));
       }
       // The failed attempt's output is dropped: its tool rows are settled and the next attempt streams afresh
@@ -333,12 +396,26 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
         st.partial_text.clear();
         st.partial_reasoning.clear();
       }
+      if overflow {
+        overflowed = true;
+        // Compacted, the same step goes out again with the summary in place of the history; nothing to compact (or
+        // a failed summary) leaves the provider's refusal as the turn's error
+        match compact::run(server, session, &summary_call(server, &s), Reason::Overflow).await {
+          Ok(true) => {
+            request.items = session.state.lock().items.clone();
+            input_estimate = approx(&request.system, &request.items, &request.tools);
+            report_usage(server, session, &s);
+            continue;
+          }
+          _ => return Err(describe(s.provider.display_name(), &e)),
+        }
+      }
       server.update(&session.id, retry_notice(s.provider.display_name(), &e, attempt + 1));
       tokio::time::sleep(retry_delay(&e, attempt)).await;
     };
     // A call always has input, so a reported 0 is a provider gap (a gateway's streamed usage): estimate it instead
     let estimated = usage.is_some_and(|u| u.input == 0);
-    let usage = usage.map(|u| if estimated { Usage { input: approx, ..u } } else { u });
+    let usage = usage.map(|u| if estimated { Usage { input: input_estimate, ..u } } else { u });
     log_request(session, &s, started, attempt, Some(&stop), usage.as_ref(), estimated, None, Some(&reply));
     if reply.cut.is_some() {
       // The call that was still streaming is lost: its row is settled
@@ -346,6 +423,9 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
         server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": acp, "status": "failed" }));
       }
     }
+    // The call's own size against the threshold: at or over it the history is compacted once this step's tool
+    // results are in, so the next call is the small one (Claude Code and Codex compact mid-turn the same way)
+    let mut over = false;
     if let Some(u) = usage {
       let mut st = stats.lock();
       st.usage.input += u.input;
@@ -354,7 +434,9 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       st.usage.cache_write += u.cache_write;
       st.usage.reasoning += u.reasoning;
       st.calls += 1;
-      server.update(&session.id, json!({ "sessionUpdate": "usage_update", "used": u.input + u.output, "size": context }));
+      let used = u.input + u.output;
+      server.update(&session.id, json!({ "sessionUpdate": "usage_update", "used": used, "size": context }));
+      over = s.policy.auto && used >= s.policy.threshold(context, s.model.output);
     } else {
       stats.lock().calls += 1;
     }
@@ -371,16 +453,20 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       session.store.item(&item);
       st.items.push(item);
     }
-    match stop {
-      _ if !reply.tool_calls.is_empty() && stop != StopReason::MaxTokens => match run_tools(server, session, &s, &reply.tool_calls, &mut ids, &mut corrections).await {
-        Flow::Continue => {}
-        Flow::Stop => return Ok(Stop::EndTurn),
-        // The approved plan is carried out in this turn, with Agent mode's tools and rules
-        Flow::Switched => s = setup(server, session)?,
-      },
+    let flow = match stop {
+      _ if !reply.tool_calls.is_empty() && stop != StopReason::MaxTokens => run_tools(server, session, &s, &reply.tool_calls, &mut ids, &mut corrections).await,
       StopReason::MaxTokens => return Ok(Stop::MaxTokens),
       StopReason::Refusal => return Ok(Stop::Refusal),
-      _ => return Ok(Stop::EndTurn),
+      _ => Flow::Stop,
+    };
+    if over && let Ok(true) = compact::run(server, session, &summary_call(server, &s), Reason::Threshold).await {
+      report_usage(server, session, &s);
+    }
+    match flow {
+      Flow::Continue => {}
+      Flow::Stop => return Ok(Stop::EndTurn),
+      // The approved plan is carried out in this turn, with Agent mode's tools and rules
+      Flow::Switched => s = setup(server, session, params)?,
     }
   }
 }
@@ -413,8 +499,11 @@ fn request_event(s: &Setup) -> Value {
     "source": s.provider.id,
     "format": s.provider.format,
     "prompt": { "variant": s.prompt.0, "version": s.prompt.1, "digest": s.prompt.2 },
-    // Context policies in effect; only the tool output budget exists so far
-    "policies": { "outputBudget": { "lines": crate::budget::MAX_LINES, "bytes": crate::budget::MAX_BYTES } },
+    // Context policies in effect: the tool output budget and the compaction threshold
+    "policies": {
+      "outputBudget": { "lines": crate::budget::MAX_LINES, "bytes": crate::budget::MAX_BYTES },
+      "compaction": { "auto": s.policy.auto, "threshold": s.policy.threshold(s.model.context.unwrap_or(DEFAULT_CONTEXT), s.model.output) },
+    },
   });
   if s.fast {
     ev["fast"] = json!({});
@@ -440,11 +529,11 @@ impl Drop for Unfinished<'_> {
   }
 }
 
-/// A stand-in for a prompt count the provider reported as 0: about four bytes a token over the text sent, a thousand
-/// per image. Rough, and only ever used in place of a zero
-fn approx_input(r: &Request) -> u64 {
-  let (mut bytes, mut images) = (r.system.len(), 0u64);
-  for item in &r.items {
+/// A stand-in for a prompt count the provider reported as 0, and the context right after a compaction: about four
+/// bytes a token over the text sent, a thousand per image. Rough, and only ever used until a provider reports
+fn approx(system: &str, items: &[Item], tools: &[ToolSpec]) -> u64 {
+  let (mut bytes, mut images) = (system.len(), 0u64);
+  for item in items {
     match item {
       Item::User(parts) => {
         for p in parts {
@@ -458,7 +547,7 @@ fn approx_input(r: &Request) -> u64 {
       Item::ToolResult { content, .. } => bytes += content.len(),
     }
   }
-  bytes += r.tools.iter().map(|t| t.name.len() + t.description.len() + t.parameters.to_string().len()).sum::<usize>();
+  bytes += tools.iter().map(|t| t.name.len() + t.description.len() + t.parameters.to_string().len()).sum::<usize>();
   (bytes as u64).div_ceil(4) + images * 1000
 }
 
@@ -483,6 +572,7 @@ fn retriable(e: &LlmError) -> bool {
   match e {
     LlmError::Http { status, .. } => matches!(status, 408 | 409 | 425 | 429 | 500..=599),
     LlmError::Network(_) | LlmError::Protocol(_) => true,
+    LlmError::Rejected(_) => false,
     LlmError::Api(m) => {
       let m = m.to_ascii_lowercase();
       !(m.contains("invalid_request") || m.contains("context") || m.contains("too long") || m.contains("authentication"))
@@ -503,7 +593,7 @@ fn retry_delay(e: &LlmError, attempt: u32) -> std::time::Duration {
 fn retry_notice(source: &str, e: &LlmError, next: u32) -> Value {
   let category = match e {
     LlmError::Http { status: 429, .. } => "limit",
-    LlmError::Http { .. } | LlmError::Api(_) => "service",
+    LlmError::Http { .. } | LlmError::Api(_) | LlmError::Rejected(_) => "service",
     LlmError::Network(_) | LlmError::Protocol(_) => "connection",
   };
   json!({
@@ -603,7 +693,7 @@ const EXIT_PLAN_TITLE: &str = "Exit plan mode";
 /// ACP ToolKind for a tool name, before its arguments are known
 fn kind_of(name: &str, tools: &[&'static str]) -> &'static str {
   match shown_name(name, tools) {
-    tools::READ | tools::LIST => "read",
+    tools::READ | tools::LIST | tools::SKILL => "read",
     tools::WRITE | tools::EDIT => "edit",
     tools::BASH | tools::JOB => "execute",
     tools::GREP | tools::GLOB => "search",
