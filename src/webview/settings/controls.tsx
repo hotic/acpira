@@ -1,13 +1,14 @@
-import { createContext, useContext, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
-import { BookText, Brain, ChevronRight, Combine, ExternalLink, Image as ImageIcon, Search, Zap } from 'lucide-react';
+import { createContext, useContext, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { BookText, Brain, ChevronRight, Combine, ExternalLink, Image as ImageIcon, Search, X, Zap } from 'lucide-react';
 import { cn } from '../ui/cn';
 import { Card } from '../ui/Card';
 import { Chip, IconButton } from '../ui/Button';
+import { Dialog } from '../ui/Dialog';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { Shimmer } from '../ui/Shimmer';
-import { Switch as SwitchPrimitive } from '../ui/Switch';
 import { StableText } from '../ui/StableText';
+import { Switch as SwitchPrimitive } from '../ui/Switch';
 import { t } from '../i18n';
 
 // Settings use a navigation column beside one content column. Page and section headings belong to the content.
@@ -169,7 +170,7 @@ export function ModelLine({ lead, name, marker, hint, tags, dim, trailing, onOpe
       className={cn(onOpen && 'relative isolate before:pointer-events-none before:absolute before:inset-y-0 before:-inset-x-pad before:-z-10 before:transition-colors has-[[data-model-open]:hover]:before:bg-hover has-[[data-model-open]:focus-visible]:before:bg-hover',
         onOpen && open && 'before:bg-hover')}
       title={onOpen
-        ? <button type="button" data-model-open onClick={onOpen} aria-expanded={open} aria-label={openLabel} title={hint}
+        ? <button type="button" data-model-open onClick={onOpen} aria-haspopup="dialog" aria-expanded={open} aria-label={openLabel} title={hint}
             className="flex w-full min-w-0 items-baseline gap-2 text-left outline-none after:absolute after:inset-y-0 after:-inset-x-pad">{label}</button>
         : <span className="flex min-w-0 items-baseline gap-2" title={hint}>{label}</span>}
       trailing={<span className="relative flex items-center gap-gap">
@@ -194,6 +195,38 @@ export function Group({ className, children, embedded = false }: { className?: s
   return <GroupContext.Provider value={true}>
     <Container className={cn('flex flex-col divide-y divide-line', !inset && 'overflow-hidden px-pad shadow-none', className)}>{children}</Container>
   </GroupContext.Provider>;
+}
+
+// The settings pages' dialog frame, used by the add-model list, the source form and the model editor (the TextPeek /
+// SubagentGraph overlay): a scrim over the settings shell, a titled box with a close button, the body, and an optional
+// footer bar. A click on the scrim closes. It shares the menus' z-30 layer: a select inside portals its list after it
+// into the same layer and so paints above it
+export function SettingsDialog({ title, onClose, footer, children }: { title: string; onClose: () => void; footer?: ReactNode; children: ReactNode }) {
+  const scrim = (e: MouseEvent) => { if (e.target === e.currentTarget) onClose(); };
+  return <Dialog.Root open onOpenChange={next => { if (!next) onClose(); }}>
+    <Dialog.Portal>
+      <Dialog.Popup onClick={scrim} className="absolute inset-0 z-30 flex items-center justify-center bg-scrim p-pad">
+        <div className="flex max-h-full w-pop-xl max-w-full flex-col overflow-hidden rounded-lg border border-line bg-bg-1 shadow-pop">
+          <header className="flex shrink-0 items-center gap-gap border-b border-line py-gap pr-gap pl-pad">
+            <Dialog.Title className="m-0 min-w-0 flex-1 truncate text-2 font-medium text-fg-1">{title}</Dialog.Title>
+            <IconButton size="sm" title={t('common.close')} aria-label={t('common.close')} onClick={onClose} className="text-fg-2"><X strokeWidth={1.5} /></IconButton>
+          </header>
+          {children}
+          {footer && <div className="flex shrink-0 items-center gap-2 border-t border-line px-pad py-gap">{footer}</div>}
+        </div>
+      </Dialog.Popup>
+    </Dialog.Portal>
+  </Dialog.Root>;
+}
+
+// A dialog form's field: its label above the control (the source form, the model editor); `hint` is the label's tooltip
+export function FormField({ label, hint, children, className }: { label: string; hint?: string; children: ReactNode; className?: string }) {
+  return (
+    <div className={cn('flex min-w-0 flex-col gap-1', className)}>
+      <span className="text-3 text-fg-2" title={hint}>{label}</span>
+      {children}
+    </div>
+  );
 }
 
 // One setting: label + description on the left, the control on the right. `stack` puts the control under the text (wide controls)
@@ -262,7 +295,7 @@ export function Select<V extends string>({ options, value, onChange, label, clas
 // opaque surface behind it (a card, a dialog), and the field's border colour. Read when the list opens: the list is
 // portaled to the shell root, so it cannot inherit the card's or the dialog's colours, and the menu palette's own
 // background (`--menu-bg`) is darker than a card
-function fieldTone(el: HTMLElement | null): CSSProperties | undefined {
+export function fieldTone(el: HTMLElement | null): CSSProperties | undefined {
   if (!el) return undefined;
   let surface: string | undefined;
   for (let p = el.parentElement; p && !surface; p = p.parentElement) {

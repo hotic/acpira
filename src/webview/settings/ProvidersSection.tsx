@@ -1,5 +1,5 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
-import { Eye, EyeOff, Globe, LoaderCircle, Pencil, Plus, Server, X } from 'lucide-react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { Eye, EyeOff, Globe, LoaderCircle, Pencil, Plus, Server } from 'lucide-react';
 import {
   BUILTIN_AGENT_ID, newModel,
   type LocalSource, type ProbeOutcome, type Provider, type ProviderAction, type ProviderModel, type ProviderProbe, type ProvidersView, type ProviderView,
@@ -7,14 +7,13 @@ import {
 import { Button, Chip, IconButton } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { Command } from '../ui/Command';
-import { Dialog } from '../ui/Dialog';
 import { OptionContent } from '../ui/Panel';
 import { Shimmer } from '../ui/Shimmer';
 import { cn } from '../ui/cn';
 import { t } from '../i18n';
 import { ModelMark } from '../chat/ModelMark';
-import { Dot, Group, inputBox, ItemRow, Note, ListHead, SearchRow, Section, SectionAction, SectionDescription, SectionHead, Select } from './controls';
-import { modelDesc, ModelRow, Unconfirmed } from './ProviderModel';
+import { Dot, Group, inputBox, ItemRow, Note, ListHead, SearchRow, Section, SectionAction, SectionDescription, SectionHead, Select, SettingsDialog, FormField } from './controls';
+import { modelDesc, ModelRow } from './ProviderModel';
 import type { SettingsHandlers } from './SettingsShell';
 
 // The page's last providers view (error when the action that produced it failed) and the answers to its probes by id
@@ -87,7 +86,6 @@ export function ProvidersSection({ state, on }: { state?: ProvidersState; on: Se
   // The form's own failures show in the dialog; the page shows the view's error and failures of row actions
   const error = (state?.error !== formError ? state?.error : undefined) ?? view?.error;
   const providers = view?.providers ?? [];
-  const families = view?.families ?? [];
   const ctx = useMemo(() => ({ probes: state?.probes, on }), [state?.probes, on]);
   const total = providers.reduce((n, p) => n + p.models.length, 0);
   const edited = editing && editing !== 'new' ? providers.find(p => p.id === editing) : undefined;
@@ -107,7 +105,7 @@ export function ProvidersSection({ state, on }: { state?: ProvidersState; on: Se
           {/* One card for every source, like the other agents' model lists: the search row, then a group per source */}
           {providers.length > 0 && <Card className="flex flex-col px-pad shadow-none">
             {total > 0 && <SearchRow value={query} onChange={setQuery} />}
-            {providers.map(p => <ProviderGroup key={p.id} provider={p} families={families} query={query} busy={busy} autoOpen={fresh === p.id}
+            {providers.map(p => <ProviderGroup key={p.id} provider={p} query={query} busy={busy} autoOpen={fresh === p.id}
               onEdit={() => edit(p.id)} onSave={pv => save(pv)} />)}
           </Card>}
         </div>
@@ -171,8 +169,8 @@ function SourceStatus({ provider: p }: { provider: ProviderView }) {
 // off earlier) and the edit pencil on the right; then the model rows and the "Add model" row. There is no source
 // switch: each model has its own. Removing lives in the edit dialog. `autoOpen` opens the add dialog once, right after
 // the source was created
-function ProviderGroup({ provider: p, families, query, busy, autoOpen, onEdit, onSave }: {
-  provider: ProviderView; families: string[]; query: string; busy: boolean; autoOpen?: boolean;
+function ProviderGroup({ provider: p, query, busy, autoOpen, onEdit, onSave }: {
+  provider: ProviderView; query: string; busy: boolean; autoOpen?: boolean;
   onEdit: () => void; onSave: (p: Provider) => void;
 }) {
   const [open, setOpen] = useState<string>();
@@ -197,7 +195,7 @@ function ProviderGroup({ provider: p, families, query, busy, autoOpen, onEdit, o
         </div>} />
       <Group embedded>
       {models.map(m => (
-        <ModelRow key={m.id} model={m} families={families} open={open === m.id} dim={!p.enabled}
+        <ModelRow key={m.id} model={m} open={open === m.id} dim={!p.enabled}
           onToggleOpen={() => setOpen(v => v === m.id ? undefined : m.id)}
           onChange={next => update(p.models.map(x => x.id === m.id ? next : x))}
           onRemove={() => { setOpen(undefined); update(p.models.filter(x => x.id !== m.id)); }}
@@ -212,39 +210,21 @@ function ProviderGroup({ provider: p, families, query, busy, autoOpen, onEdit, o
         <span className="min-w-0 flex-1 truncate">{t('settings.providers.addModel')}</span>
       </button>
       </Group>
-      {adding && <AddModelDialog provider={p} busy={busy} onAdd={m => update([...p.models, m])} onClose={() => setAdding(false)} />}
+      {adding && <AddModelDialog provider={p} busy={busy} onAdd={m => update([...p.models, m])}
+        onRemove={id => { if (open === id) setOpen(undefined); update(p.models.filter(x => x.id !== id)); }} onClose={() => setAdding(false)} />}
     </div>
   );
-}
-
-// The dialog frame of the add-model list and the source form (the TextPeek / SubagentGraph overlay): a scrim over the
-// settings shell, a titled box with a close button, the body, and an optional footer bar. A click on the scrim closes.
-// It shares the menus' z-30 layer: the form's format menu portals after it into the same layer and so paints above it
-function SourceDialog({ title, onClose, footer, children }: { title: string; onClose: () => void; footer?: ReactNode; children: ReactNode }) {
-  const scrim = (e: MouseEvent) => { if (e.target === e.currentTarget) onClose(); };
-  return <Dialog.Root open onOpenChange={next => { if (!next) onClose(); }}>
-    <Dialog.Portal>
-      <Dialog.Popup onClick={scrim} className="absolute inset-0 z-30 flex items-center justify-center bg-scrim p-pad">
-        <div className="flex max-h-full w-pop-xl max-w-full flex-col overflow-hidden rounded-lg border border-line bg-bg-1 shadow-pop">
-          <header className="flex shrink-0 items-center gap-gap border-b border-line py-gap pr-gap pl-pad">
-            <Dialog.Title className="m-0 min-w-0 flex-1 truncate text-2 font-medium text-fg-1">{title}</Dialog.Title>
-            <IconButton size="sm" title={t('common.close')} aria-label={t('common.close')} onClick={onClose} className="text-fg-2"><X strokeWidth={1.5} /></IconButton>
-          </header>
-          {children}
-          {footer && <div className="flex shrink-0 items-center gap-2 border-t border-line px-pad py-gap">{footer}</div>}
-        </div>
-      </Dialog.Popup>
-    </Dialog.Portal>
-  </Dialog.Root>;
 }
 
 // What the add list holds: a model the endpoint listed, or the id typed into the search field
 type Pick = ProviderModel & { typed?: boolean };
 
 // Add model: a dialog holding one Command list. Opening it lists the endpoint's models (free); a click adds one and the
-// dialog stays open for the next, added ones carry the check. Whatever is typed that the list does not hold can be
+// dialog stays open for the next, added ones carry the check and a second click takes them out again. Whatever is typed that the list does not hold can be
 // added as an id, which is also the way out when listing fails. The footer counts the source's models
-function AddModelDialog({ provider: p, busy, onAdd, onClose }: { provider: ProviderView; busy: boolean; onAdd: (m: ProviderModel) => void; onClose: () => void }) {
+function AddModelDialog({ provider: p, busy, onAdd, onRemove, onClose }: {
+  provider: ProviderView; busy: boolean; onAdd: (m: ProviderModel) => void; onRemove: (id: string) => void; onClose: () => void;
+}) {
   const [query, setQuery] = useState('');
   const fetch = useProbe();
   const asked = useRef(false);
@@ -255,7 +235,7 @@ function AddModelDialog({ provider: p, busy, onAdd, onClose }: { provider: Provi
     ? [{ ...newModel(typed), typed: true }, ...listed] : listed;
   const taken = (m: Pick) => p.models.some(x => x.id === m.id);
   return (
-    <SourceDialog title={t('settings.providers.addModel.to', { name: p.name || p.id })} onClose={onClose}
+    <SettingsDialog title={t('settings.providers.addModel.to', { name: p.name || p.id })} onClose={onClose}
       footer={<>
         <span className="min-w-0 flex-1 truncate text-3 text-fg-3">{t('settings.providers.addModel.count', { count: p.models.length })}</span>
         <Button onClick={onClose}>{t('settings.providers.addModel.done')}</Button>
@@ -270,18 +250,23 @@ function AddModelDialog({ provider: p, busy, onAdd, onClose }: { provider: Provi
           </div>}
           {!fetch.pending && <Command.Empty>{t('settings.providers.addModel.typeId')}</Command.Empty>}
           <Command.List searchable>
-            {(m: Pick) => <Command.Item key={m.typed ? `typed:${m.id}` : m.id} value={m} disabled={busy || taken(m)} className="min-h-0 py-1.5"
-              onClick={() => { if (!taken(m)) { const { typed: _typed, ...model } = m; onAdd({ ...model, enabled: true }); if (m.typed) setQuery(''); } }}>
+            {(m: Pick) => <Command.Item key={m.typed ? `typed:${m.id}` : m.id} value={m} disabled={busy} className="min-h-0 py-1.5"
+              onClick={() => {
+                if (taken(m)) { onRemove(m.id); return; }
+                const { typed: _typed, ...model } = m;
+                onAdd({ ...model, enabled: true });
+                if (m.typed) setQuery('');
+              }}>
               <OptionContent icon={m.typed ? <Plus strokeWidth={1.5} /> : <ModelMark family={m.id} />} checked={taken(m)} checkSlot
                 description={m.typed ? undefined : modelDesc(m)}>
                 {m.typed ? t('settings.providers.addModel.useId', { id: m.id })
-                  : <span className="flex min-w-0 items-baseline gap-2"><span className="truncate">{m.name || m.id}</span><Unconfirmed fields={m.estimated} /></span>}
+                  : m.name || m.id}
               </OptionContent>
             </Command.Item>}
           </Command.List>
         </Command.Root>
       </div>
-    </SourceDialog>
+    </SettingsDialog>
   );
 }
 
@@ -295,16 +280,6 @@ function endpointOf(baseUrl: string, format: string, fullUrl: boolean): string {
 
 // A URL already naming the endpoint (the agent appends one of these to a root), so it is used as typed
 const looksFull = (url: string) => /\/(chat\/completions|responses|messages)\/?$/i.test(url.trim());
-
-// A form field: its label above the control
-function FormField({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
-  return (
-    <div className={cn('flex min-w-0 flex-col gap-1', className)}>
-      <span className="text-3 text-fg-2">{label}</span>
-      {children}
-    </div>
-  );
-}
 
 // One source's fields in a dialog: name and API format side by side, the URL with the request URL it produces underneath
 // (or used as the full endpoint), the key, and Check with its result. The footer holds Remove (a saved source) apart
@@ -342,7 +317,7 @@ function ProviderForm({ provider, busy, error, onSave, onClose, onDelete }: {
   const result = check.outcome;
   const keyLabel = showKey ? t('settings.providers.hideKey') : t('settings.providers.showKey');
   return (
-    <SourceDialog title={provider ? t('settings.providers.edit', { name: provider.name || provider.id }) : t('settings.providers.add')} onClose={onClose}
+    <SettingsDialog title={provider ? t('settings.providers.edit', { name: provider.name || provider.id }) : t('settings.providers.add')} onClose={onClose}
       footer={<>
         {onDelete && <Button disabled={busy} className="text-danger" onClick={onDelete}>{t('common.remove')}</Button>}
         <span className="flex-1" />
@@ -395,6 +370,6 @@ function ProviderForm({ provider, busy, error, onSave, onClose, onDelete }: {
         </div>
         {error && <p className="m-0 text-3 text-danger [overflow-wrap:anywhere]">{error}</p>}
       </div>
-    </SourceDialog>
+    </SettingsDialog>
   );
 }

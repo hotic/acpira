@@ -8,9 +8,18 @@ import { DEFAULT_SETTINGS } from '@shared/settings';
 import { newModel, type ProviderModel, type ProviderView } from '@shared/providers';
 import { setLocale, t } from '../i18n';
 import { AgentPage } from './AgentPage';
-import { editTokens, fmtTokens, ModelRow, parseTokens } from './ProviderModel';
+import { editTokens, fmtTokens, ModelEditor, parseTokens } from './ProviderModel';
 import type { ProvidersState } from './ProvidersSection';
 import type { SettingsHandlers } from './SettingsShell';
+
+// A dialog portals into the shell's layer once mounted, so the server renders none of it; here every part renders its
+// children in place, which lets the model editor's dialog be read like any other markup
+vi.mock('../ui/Dialog', async () => {
+  const { createElement: h, Fragment } = await import('react');
+  const pass = ({ children }: { children?: unknown }) => h(Fragment, null, children as never);
+  const tag = (name: string) => ({ children, className }: { children?: unknown; className?: string }) => h(name, { className }, children as never);
+  return { Dialog: { Root: pass, Portal: pass, Popup: tag('div'), Close: pass, Title: tag('h2'), Description: tag('p') } };
+});
 
 const handlers: SettingsHandlers = {
   setSetting: vi.fn(), setAppearance: vi.fn(), openPath: vi.fn(), refreshInventory: vi.fn(),
@@ -155,24 +164,28 @@ describe('built-in agent model sources', () => {
     const sep = t('common.metaSep');
     expect(markup).toContain(['Context 1M', 'Output 384k', 'Levels: 3'].join(sep));
     expect(markup).toContain(['Context 256k', 'Images'].join(sep));
-    // Guessed values carry the marker with the field names in its hint
-    expect(markup).toContain('>Unconfirmed<');
-    expect(markup).toContain('not reported by the endpoint: output.');
+    // Guessed values are named only in the editor, not as a marker on the row
+    expect(markup).not.toContain('not reported by the endpoint');
     expect(markup).not.toContain(t('settings.models.desc', { agent: 'Acpira' }));
   });
 
-  it('opens the editor of a model in place with its values', () => {
-    const markup = renderToStaticMarkup(createElement(ModelRow, {
-      model: sources[0]!.models[0]!, families: ['generic', 'deepseek'], open: true,
-      onToggleOpen: vi.fn(), onChange: vi.fn(), onRemove: vi.fn(), onTest: vi.fn(),
+  it('fills the model editor with the model\'s values', () => {
+    // The editor is a dialog, which portals and so renders nothing on the server: render its contents directly
+    const markup = renderToStaticMarkup(createElement(ModelEditor, {
+      model: sources[0]!.models[0]!, title: 'Edit DeepSeek V4 Flash',
+      onSave: vi.fn(), onCancel: vi.fn(), onRemove: vi.fn(), onTest: vi.fn(),
       test: { pending: false, outcome: { kind: 'failed', error: 'HTTP 401: Invalid API key' } },
     }));
     expect(markup).toContain('value="DeepSeek V4 Flash"');
     // 1000000 is not a whole 1M (1048576): the field shows the exact number, so saving keeps it
     expect(markup).toContain('value="1000000"');
     expect(markup).toContain('value="384k"');
-    expect(markup).toContain('value="low, high, max"');
-    expect(markup).toContain('Match automatically');
+    // The model's levels are lit toggles; the other common levels are offered unlit
+    const lit = (level: string) => new RegExp(`aria-pressed="true"[^>]*>${level}<`).test(markup);
+    expect(['Low', 'High', 'Max'].every(lit)).toBe(true);
+    expect(['Minimal', 'Medium', 'XHigh'].some(lit)).toBe(false);
+    // The fields the endpoint did not report are named at the top of the editor
+    expect(markup).toContain('not reported by the endpoint: output.');
     expect(markup).toContain('HTTP 401: Invalid API key');
     expect(markup).toContain(t('settings.providers.model.test.hint'));
   });
