@@ -62,16 +62,23 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
   const tags = chipTags(cur, curVar, reasoning, modelConfig, t('composer.standard'));
   // A Fusion pair is too long for the chip: it reads "Fusion" plus the lead's badges and keeps the pair in the tooltip and the panel
   const title = [cur?.name ?? c.name, curVar?.lead ? fusionLabel(curVar) : tags.map(tag => tag.label).join(' ')].filter(Boolean).join(' ');
+  const live = { title, family: cur?.name ?? c.name, brand: cur?.brand, tags, name: cur?.name ?? c.options.find(o => o.id === c.value)?.name ?? c.name };
+  // While the panel is open the chip keeps what it showed when it opened: effort / Fast changes apply at once and keep the
+  // panel open, and a chip resizing under it moved its left edge and everything beside it on every click. The panel shows
+  // the live choice; the chip catches up once it closes (Codex's composer holds its chip the same way)
+  const [held, setHeld] = useState<typeof live>();
+  const chip = held ?? live;
+  const toggle = (next: boolean) => { setHeld(next ? live : undefined); setOpen(next); };
   return (
-    <Popover.Root open={open} onOpenChange={setOpen} onOpenLifecycle={onOpenChange}>
+    <Popover.Root open={open} onOpenChange={toggle} onOpenLifecycle={onOpenChange}>
       <Popover.Trigger render={
-        <Chip narrow="text" title={title} icon={<ModelMark family={cur?.name ?? c.name} brand={cur?.brand} />}
-          tags={tags.length ? tags.map(tag => <ChipTag key={tag.label} tone={tag.ultra ? 'ultra' : undefined} icon={tag.fast ? <FastIcon /> : undefined} short={tag.short}>{tag.label}</ChipTag>) : undefined}>
-          {cur?.name ?? c.options.find(o => o.id === c.value)?.name ?? c.name}
+        <Chip narrow="text" title={chip.title} icon={<ModelMark family={chip.family} brand={chip.brand} />}
+          tags={chip.tags.length ? chip.tags.map(tag => <ChipTag key={tag.label} tone={tag.ultra ? 'ultra' : undefined} icon={tag.fast ? <FastIcon /> : undefined} short={tag.short}>{tag.label}</ChipTag>) : undefined}>
+          {chip.name}
         </Chip>
       } />
       <Popover.Portal><Popover.Positioner side="top" align="end" width="lg"><Popover.Popup palette="menu">
-        <ModelPanel families={families} cur={cur} curVar={curVar} onSelect={onSelect} close={() => setOpen(false)}
+        <ModelPanel families={families} cur={cur} curVar={curVar} onSelect={onSelect} close={() => toggle(false)}
           reasoning={reasoning} modelConfig={modelConfig} hiddenConfig={hiddenConfig} onSetConfig={onSetConfig} />
       </Popover.Popup></Popover.Positioner></Popover.Portal>
     </Popover.Root>
@@ -84,10 +91,13 @@ function FastIcon() {
 
 // Agents without a model selector still use the same reasoning field and labels.
 export function ReasoningControl({ control: c, onSelect, onOpenChange }: OptionMenuProps) {
+  // Held while open, like the model chip: a level change keeps the panel open and must not resize the chip under it
+  const [held, setHeld] = useState<string>();
   if (!reasoningVisible(c)) return null;
-  return <Popover.Root onOpenLifecycle={onOpenChange}>
+  const live = reasoningChip(c) ?? t('composer.effort');
+  return <Popover.Root onOpenChange={open => setHeld(open ? live : undefined)} onOpenLifecycle={onOpenChange}>
     <Popover.Trigger render={<Chip narrow="text" title={t('composer.effort')}>
-      {reasoningChip(c) ?? t('composer.effort')}
+      {held ?? live}
     </Chip>} />
     <Popover.Portal><Popover.Positioner side="top" align="end" width="lg"><Popover.Popup palette="menu">
       <ReasoningParams control={c} onChange={onSelect} />
