@@ -56,7 +56,7 @@ function List({ className, searchable = false, ref, ...props }: ComponentProps<t
 function Item({ className, ...props }: ComponentProps<typeof Base.Item>) {
   return <Base.Item render={<button type="button" />} nativeButton {...props}
     // The selected row has no fill of its own (its check mark marks it); only the highlight is filled, as in DropdownMenu
-    className={cnState(cn(optionClass, 'shrink-0'), className)} />;
+    className={cnState(cn(optionClass), className)} />;
 }
 function Empty({ className, children = t('common.noMatch'), ...props }: ComponentProps<typeof Base.Empty>) {
   return <Base.Empty {...props} className={cnState(cn('flex min-h-row items-center px-2 text-3 text-fg-3 empty:hidden'), className)}>{children}</Base.Empty>;

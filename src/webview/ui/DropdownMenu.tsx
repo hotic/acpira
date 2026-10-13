@@ -44,7 +44,9 @@ function Popup({ className, ref: forwardedRef, ...props }: ComponentProps<typeof
   useImperativeHandle(forwardedRef, () => ref.current!, [ref]);
   return <Base.Popup data-palette="menu" {...props} ref={ref} className={cnState(cn(popupClass), className)} />;
 }
-export const optionClass = 'flex min-h-row w-full items-center gap-2 rounded-md px-2 text-left text-2 text-fg-1 outline-none transition-colors enabled:hover:option-highlighted focus-visible:option-highlighted data-[highlighted]:option-highlighted disabled:text-fg-3 data-[disabled]:text-fg-3';
+// shrink-0: rows sit in a capped flex column (max-h-pop); a two-line row drops its floor to min-h-0, and without this
+// an overflowing list squeezes every row below its content, stacking the caption over the next label
+export const optionClass = 'flex min-h-row w-full shrink-0 items-center gap-2 rounded-md px-2 text-left text-2 text-fg-1 outline-none transition-colors enabled:hover:option-highlighted focus-visible:option-highlighted data-[highlighted]:option-highlighted disabled:text-fg-3 data-[disabled]:text-fg-3';
 function Item({ className, ...props }: ComponentProps<typeof Base.Item>) {
   return <Base.Item render={<button type="button" />} nativeButton {...props} className={cnState(cn(optionClass), className)} />;
 }
