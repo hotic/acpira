@@ -48,6 +48,9 @@ pub struct SessionState {
   pub last_view: Option<Value>,
   /// The config options the client last got for this session (`Server::push_controls` sends a change)
   pub sent_options: Option<Vec<Value>>,
+  /// The context (used, size) of the last `usage_update` sent: a window changed in the settings is pushed with the
+  /// same `used` (`Server::push_controls`), so the client's meter does not wait for the next model call
+  pub reported: Option<(u64, u64)>,
   /// Naming the session from its first prompt has started (`title.rs`); it happens once
   pub titled: bool,
   /// The first item is a compaction's summary (`compact.rs`)
@@ -253,6 +256,8 @@ impl Server {
       model: s("model").or_else(|| config.default_pick()),
       items: loaded.items.clone(),
       summarized: loaded.summarized,
+      // The replay ends on this context; a window edited since is pushed by the next `push_controls`
+      reported: loaded.updates.iter().rev().find(|u| u["sessionUpdate"] == "usage_update").and_then(|u| Some((u["used"].as_u64()?, u["size"].as_u64()?))),
       ..Default::default()
     };
     st.effort = s("effort").or_else(|| default_effort(&config, &catalog, st.model.as_deref()));
@@ -382,19 +387,36 @@ impl Server {
     let catalog = self.catalog.get();
     let sessions: Vec<Arc<Session>> = self.sessions.lock().values().cloned().collect();
     for s in sessions {
-      let options = {
+      let (options, usage) = {
         let mut st = s.state.lock();
         if reconcile(&config, &catalog, &mut st) {
           s.save_state(&st);
         }
         let options = config_options(&config, &catalog, &st, self.booleans());
-        if st.sent_options.as_ref().is_none_or(|sent| *sent == options) {
-          continue;
-        }
-        st.sent_options = Some(options.clone());
-        options
+        let options = if st.sent_options.as_ref().is_none_or(|sent| *sent == options) {
+          None
+        } else {
+          st.sent_options = Some(options.clone());
+          Some(options)
+        };
+        // The window of the session's model as configured now (edited in the settings, or another model picked)
+        let window = st.model.as_deref().and_then(|p| crate::turn::limits(&config, &catalog, p)).map(|m| m.context.unwrap_or(crate::turn::DEFAULT_CONTEXT));
+        let usage = match (st.reported, window) {
+          (Some((used, size)), Some(w)) if w != size => {
+            st.reported = Some((used, w));
+            Some((used, w))
+          }
+          _ => None,
+        };
+        (options, usage)
       };
-      self.conn().notify("session/update", json!({ "sessionId": s.id, "update": { "sessionUpdate": "config_option_update", "configOptions": options } }));
+      if let Some(options) = options {
+        self.conn().notify("session/update", json!({ "sessionId": s.id, "update": { "sessionUpdate": "config_option_update", "configOptions": options } }));
+      }
+      if let Some((used, size)) = usage {
+        // Recorded like the turn's own, so a replay ends on the current window
+        self.update(&s.id, json!({ "sessionUpdate": "usage_update", "used": used, "size": size }));
+      }
     }
   }
 
