@@ -5,6 +5,7 @@
 pub mod bash;
 pub mod edit;
 pub mod files;
+pub mod html;
 pub mod jobs;
 pub mod names;
 pub mod plan;
@@ -12,6 +13,7 @@ pub mod read;
 pub mod search;
 pub mod skill;
 pub mod todo;
+pub mod web;
 
 use std::path::{Path, PathBuf};
 
@@ -31,6 +33,8 @@ pub struct Ctx {
   pub progress: Box<dyn Fn(Value) + Send + Sync>,
   /// The session's background commands
   pub jobs: std::sync::Arc<jobs::Jobs>,
+  /// The search backend set on the settings page, read when the call is prepared
+  pub search: web::SearchSetup,
 }
 
 /// A validated call, ready to describe and run
@@ -53,6 +57,9 @@ pub enum Action {
   Skill { name: String, path: PathBuf },
   /// Plan mode's approval request; the turn runs it itself
   ExitPlan { plan: Option<String> },
+  /// `private`: the URL names this machine or a private network, so the call asks (`web.rs`)
+  Fetch { url: String, format: web::Format, timeout_s: u64, private: bool },
+  Search { query: String, count: usize },
 }
 
 /// How a call reads on the tool card and in the permission request
@@ -101,6 +108,8 @@ pub const LIST: &str = "list";
 pub const TODO: &str = "todo";
 pub const SKILL: &str = "skill";
 pub const EXIT_PLAN: &str = "exit_plan";
+pub const WEBFETCH: &str = "webfetch";
+pub const WEBSEARCH: &str = "websearch";
 
 /// The specs of these tools, in the given order (a mode's tool set). `skill` is not among them: its spec lists the
 /// session's skills (`skill::spec`), so the turn adds it when there are any
@@ -118,6 +127,8 @@ pub fn specs(names: &[&str]) -> Vec<ToolSpec> {
       LIST => Some(search::list_spec()),
       TODO => Some(todo::spec()),
       EXIT_PLAN => Some(plan::spec()),
+      WEBFETCH => Some(web::fetch_spec()),
+      WEBSEARCH => Some(web::search_spec()),
       _ => None,
     })
     .collect()
@@ -137,6 +148,8 @@ pub fn prepare(name: &str, args: &Value, cwd: &Path) -> Result<Action, String> {
     TODO => todo::prepare(args),
     SKILL => skill::prepare(args, cwd),
     EXIT_PLAN => plan::prepare(args),
+    WEBFETCH => web::prepare_fetch(args),
+    WEBSEARCH => web::prepare_search(args),
     other => Err(format!("Unknown tool \"{other}\". Available tools: {}.", names::ALL.join(", "))),
   }
 }
@@ -159,6 +172,9 @@ impl Action {
       Action::Job { id, .. } => (perm::JOB, id.clone()),
       // Never evaluated: the approval card is the permission
       Action::ExitPlan { .. } => ("plan", "*".to_owned()),
+      Action::Fetch { url, private: false, .. } => (perm::WEB, url.clone()),
+      Action::Fetch { url, private: true, .. } => (perm::WEB_LOCAL, url.clone()),
+      Action::Search { query, .. } => (perm::WEB, query.clone()),
     }
   }
 
@@ -181,6 +197,8 @@ impl Action {
         let label = format!("Always allow `{pattern}` in this session");
         Some((pattern, label))
       }
+      // A local address is allowed per origin: the dev server's other pages need no second card
+      Action::Fetch { url, private: true, .. } => web::origin(url).map(|o| (format!("{o}/*"), format!("Always allow {o} in this session"))),
       _ => None,
     }
   }
@@ -218,6 +236,9 @@ impl Action {
       Action::Skill { name, path } => Presentation { title: format!("Skill {name}"), kind: "read", locations: vec![path.clone()], content: vec![] },
       // The webview localizes this exact heading
       Action::ExitPlan { .. } => Presentation { title: "Exit plan mode".to_owned(), kind: "switch_mode", locations: vec![], content: vec![] },
+      // `fetch` for both, as claude-agent-acp sends WebFetch and WebSearch: the webview renders their markdown
+      Action::Fetch { url, .. } => Presentation { title: format!("Fetch {url}"), kind: "fetch", locations: vec![], content: vec![] },
+      Action::Search { query, .. } => Presentation { title: format!("Search \"{query}\""), kind: "fetch", locations: vec![], content: vec![] },
     }
   }
 
@@ -230,6 +251,8 @@ impl Action {
       Action::List { path, ignore } => search::list(&path, &ignore, &ctx),
       Action::Todo { todos } => todo::run(&todos),
       Action::Skill { name, path } => skill::run(&name, &path),
+      Action::Fetch { url, format, timeout_s, private } => web::fetch(&url, format, timeout_s, private, &ctx),
+      Action::Search { query, count } => web::search(&query, count, &ctx.search, &ctx),
       other => Output::error(format!("{other:?} cannot run synchronously")),
     }
   }
@@ -241,6 +264,10 @@ impl Action {
       Action::Bash { command, workdir, background: true, .. } => ctx.jobs.clone().start(&command, &workdir, &ctx).await,
       Action::Bash { command, workdir, timeout_ms, .. } => bash::run(&command, &workdir, timeout_ms, &ctx).await,
       Action::Job { id, wait_s, kill } => ctx.jobs.clone().check(&id, wait_s, kill, &ctx).await,
+      // Network calls block for up to two minutes: off the runtime's workers (an approved local fetch comes this way)
+      web @ (Action::Fetch { .. } | Action::Search { .. }) => {
+        tokio::task::spawn_blocking(move || web.run_sync(ctx)).await.unwrap_or_else(|e| Output::error(format!("The tool crashed: {e}")))
+      }
       read_only => read_only.run_sync(ctx),
     }
   }

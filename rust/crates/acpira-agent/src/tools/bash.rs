@@ -276,6 +276,7 @@ mod tests {
       call_id: "b1".into(),
       progress: Box::new(move |u| seen.lock().push_str(u["_meta"]["terminal_output_delta"]["data"].as_str().unwrap_or(""))),
       jobs: Default::default(),
+      search: Default::default(),
     }
   }
 
@@ -323,7 +324,7 @@ mod windows_tests {
 
   fn ctx(dir: &Path) -> Ctx {
     let seen = Arc::new(parking_lot::Mutex::new(String::new()));
-    Ctx { cwd: dir.to_owned(), outputs: dir.join("outputs"), call_id: "b1".into(), progress: Box::new(move |u| seen.lock().push_str(u.to_string().as_str())), jobs: Default::default() }
+    Ctx { cwd: dir.to_owned(), outputs: dir.join("outputs"), call_id: "b1".into(), progress: Box::new(move |u| seen.lock().push_str(u.to_string().as_str())), jobs: Default::default(), search: Default::default() }
   }
 
   #[tokio::test]

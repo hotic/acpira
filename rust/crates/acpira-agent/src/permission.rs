@@ -14,7 +14,7 @@ pub enum Decision {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rule {
-  /// `read`, `edit`, `bash`, `todo`, or `*`
+  /// `read`, `edit`, `bash`, `todo`, `job`, `web`, `web-local`, or `*`
   pub permission: String,
   pub pattern: String,
   pub decision: Decision,
@@ -32,6 +32,10 @@ pub const EDIT: &str = "edit";
 pub const BASH: &str = "bash";
 pub const TODO: &str = "todo";
 pub const JOB: &str = "job";
+/// `webfetch` of a public URL and `websearch`
+pub const WEB: &str = "web";
+/// `webfetch` of this machine or a private network
+pub const WEB_LOCAL: &str = "web-local";
 
 /// The approval level: how much runs without a card. A setting of the agent (`ProvidersFile::approval`, ids as in
 /// `APPROVAL_LEVELS`), read at the start of each turn
@@ -70,14 +74,15 @@ impl Approval {
   }
 }
 
-/// What every session starts from: reads and the to-do list run, the rest asks. The session's spilled outputs are
-/// always readable
+/// What every session starts from: reads, the to-do list and the public web run, the rest asks. The session's spilled
+/// outputs are always readable
 pub fn defaults(outputs: &Path) -> Vec<Rule> {
   vec![
     Rule::new("*", "*", Decision::Ask),
     Rule::new(READ, "*", Decision::Allow),
     Rule::new(TODO, "*", Decision::Allow),
     Rule::new(JOB, "*", Decision::Allow),
+    Rule::new(WEB, "*", Decision::Allow),
     Rule::new(READ, &format!("{}/*", slashed(outputs)), Decision::Allow),
   ]
 }
