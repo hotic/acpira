@@ -11,6 +11,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [1.10.2] - 2026-10-14
+
+### Added
+
+- **Notifications** when a session needs attention: a chime, a system notification, or both, switched in the new Notifications section of General settings (`acpira.notifySound` and `acpira.notifySystem`, both off by default). A new permission card or question is announced at once, and a finished or failed turn once it has stayed settled for a moment; a cancelled turn stays quiet. Nothing is announced while the window is focused and a visible chat shows that session. VS Code uses macOS, Windows or Linux's own notifications, and a remote window shows an in-window message that opens the session instead. In IntelliJ a balloon offers to open the session.
+- **Context compaction for the built-in agent.** Old tool output is pruned after each turn, and the history is rewritten into a summary on `/compact`, when the session reaches the Auto compact threshold, or after a provider refuses a request as too long. The running turn's prompt is kept behind the summary.
+- **Skills as slash commands in the built-in agent.** Skills under `~/.agents` and the project's `.agents` are offered as slash commands next to `/compact`. Naming one with `/name` in a prompt includes it, and the agent can also load a skill on its own.
+- **Web fetch and web search for the built-in agent.** Fetched pages are converted to Markdown. Search uses free hosted search services by default, or Jina with its own key, picked in the new Web section of the agent's settings page. Public pages and searches are allowed by default; requests to private or local hosts ask through a permission card.
+- **Fast mode for the built-in agent** on models with a premium speed tier, such as Claude Opus and recent GPT models. The Fast switch sits in the composer, is remembered per session, and is billed at the faster tier's cost. The model editor can force it on or off for a model.
+- **Session titles from a fast model.** The new Quick tasks section of the built-in agent's settings page picks a model that names each session after its first prompt. Without one, or when the call fails, the title stays the prompt text.
+- Claude workflow runs get their own tool row, with the run's name, finished and total agents, the summary, usage, and links to the script and output.
+
+### Changed
+
+- The model editor on the built-in agent's settings page opens in a dialog with the common fields only: name, token limits with a list of common sizes, thinking levels, image input, Fast mode and a test. Family, sampling and tool-round values stay in `providers.json` and are kept on save. Clicking an added model again in the Add model dialog removes it.
+- A model that a gateway marks as reasoning-capable but that has no catalogue entry now gets estimated low, medium and high effort levels, so it can think.
+- A context window edited in the settings applies at once: the usage meter follows between turns, and a running turn uses it for its next compaction threshold.
+- Mode chips use short labels for the built-in integrations' modes, with the agent's full name and description in the tooltip. The model and effort chips keep their size while their panel is open, and settings choices such as the approval level no longer resize their card.
+- Subagent rows show two lines with status and elapsed time, and finished subagents stay listed instead of folding away.
+- Buttons, chips and the settings dropdown show a clearer hover state, and Remove buttons stay red on hover.
+
+### Fixed
+
+- A built-in agent session opened before any model was configured now follows the picker's model and effort. Previously the first effort change failed with `Unknown effort` and the first prompt went out without a level.
+- A session waiting on a permission card or question shows as waiting, not working, in the session list.
+- History search snippets keep the matched term visible in narrow rows and long messages.
+- Codex's advisory notices, such as the one after each automatic compaction, stay in place inside the process fold instead of piling up under the running turn.
+- Reopening a Codex session whose thread was never prompted starts a new session, or turns read-only when it has turns, instead of showing an error whose Retry never succeeds. A thread held by another Codex process is reported as open in another window.
+- Switching a never-prompted Claude session to Ultra no longer turns it into an error.
+- A fork that was opened but never prompted keeps working after a restart instead of turning read-only.
+- The session rename field no longer draws its own background, and menu and command rows no longer shrink in a long list.
+
 ## [1.10.1] - 2026-10-12
 
 ### Added
