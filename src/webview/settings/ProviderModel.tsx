@@ -1,11 +1,14 @@
-import { useState, type KeyboardEvent, type ReactNode } from 'react';
-import { LoaderCircle, X } from 'lucide-react';
+import { useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
+import { ChevronDown, LoaderCircle } from 'lucide-react';
+import { effortLabel } from '@shared/composerControls';
 import type { ProbeOutcome, ProviderModel, Thinking } from '@shared/providers';
-import { Button, Chip, IconButton } from '../ui/Button';
+import { Button, IconButton } from '../ui/Button';
+import { DropdownMenu } from '../ui/DropdownMenu';
+import { OptionContent } from '../ui/Panel';
 import { cn } from '../ui/cn';
 import { t } from '../i18n';
 import { ModelMark } from '../chat/ModelMark';
-import { inputBox, ModelLine, Select, Switch, type ModelTags } from './controls';
+import { fieldTone, FormField, inputBox, ModelLine, SettingsDialog, Select, Switch, type ModelTags } from './controls';
 
 // Token counts as the page writes them, in whichever base gives the round number: 128000 → 128k, 131072 → 128k,
 // 1000000 → 1M, 1048576 → 1M, 393216 → 384k
@@ -45,18 +48,10 @@ export function modelSummary(m: ProviderModel): string {
   ].filter(Boolean).join(t('common.metaSep'));
 }
 
-// The marker for values the endpoint did not report (catalogue or defaults): check them against the provider's docs
-export function Unconfirmed({ fields }: { fields: string[] }) {
-  if (!fields.length) return null;
-  return <span className="shrink-0 text-3 text-warn" title={t('settings.providers.unconfirmed.hint', { fields: fields.join(', ') })}>{t('settings.providers.unconfirmed')}</span>;
-}
-
-// One model of a source on one compact line: mark, name and the Unconfirmed marker, badges (context, thinking, images),
-// then the editor chevron and the enable switch. The id and the summary are the name's tooltip; the editor opens in
-// place under the row
-export function ModelRow({ model, families, open, dim, onToggleOpen, onChange, onRemove, onTest, test }: {
+// One model of a source on one compact line: mark, name, badges (context, thinking, images),
+// then the enable switch. The id and the summary are the name's tooltip; a click on the row opens the editor in a dialog
+export function ModelRow({ model, open, dim, onToggleOpen, onChange, onRemove, onTest, test }: {
   model: ProviderModel;
-  families: string[];
   open: boolean;
   // The source is switched off: the row reads as inactive whatever its own switch says
   dim?: boolean;
@@ -73,14 +68,13 @@ export function ModelRow({ model, families, open, dim, onToggleOpen, onChange, o
       <ModelLine
         lead={<ModelMark family={model.id} />}
         name={name}
-        marker={<Unconfirmed fields={model.estimated} />}
         hint={[model.id, modelSummary(model)].filter(Boolean).join(t('common.metaSep'))}
         tags={modelTags(model)}
         dim={dim || !model.enabled}
         onOpen={onToggleOpen} open={open} openLabel={label}
         trailing={<Switch checked={model.enabled} onChange={enabled => onChange({ ...model, enabled })} label={name} />}
       />
-      {open && <ModelEditor model={model} families={families} onSave={m => { onChange(m); onToggleOpen(); }} onCancel={onToggleOpen} onRemove={onRemove} onTest={onTest} test={test} />}
+      {open && <ModelEditor model={model} title={label} onSave={m => { onChange(m); onToggleOpen(); }} onCancel={onToggleOpen} onRemove={onRemove} onTest={onTest} test={test} />}
     </>
   );
 }
@@ -101,35 +95,65 @@ export function modelDesc(m: ProviderModel): string | undefined {
   return [m.name && m.name !== m.id ? m.id : '', modelSummary(m)].filter(Boolean).join(t('common.metaSep')) || undefined;
 }
 
-// A labelled line of the editor: label on the left, the control on the right (wraps under it when narrow)
-function Line({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
+// A token-count field: the typed value, with the common sizes in a list behind the chevron at its end. Empty leaves
+// the limit unset, which the placeholder says
+function TokenField({ value, onChange, quick, label }: { value: string; onChange: (v: string) => void; quick: number[]; label: string }) {
+  const bad = value.trim() !== '' && parseTokens(value) === undefined;
+  const box = useRef<HTMLDivElement>(null);
+  const [tone, setTone] = useState<CSSProperties>();
+  const cur = parseTokens(value);
+  const pick = t('settings.providers.model.presets', { field: label });
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="min-w-0 flex-[1_1_var(--setting-header-copy)] text-2 text-fg-1" title={hint}>{label}</span>
-      <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">{children}</div>
+    <div ref={box} className={cn('flex h-ctl min-w-0 items-center rounded-md border border-line bg-chip pl-3 focus-within:border-line-strong', bad && 'border-danger')}>
+      <input value={value} onChange={e => onChange(e.target.value)} aria-label={label} aria-invalid={bad} spellCheck={false}
+        placeholder={t('settings.providers.model.default')}
+        className="min-w-0 flex-1 border-0 bg-transparent text-2 text-fg-1 tabular-nums outline-none placeholder:text-fg-3" />
+      {/* The list opens under the whole field and as wide as it, in the field's material like a settings Select */}
+      <DropdownMenu.Root onOpenChange={open => { if (open) setTone(fieldTone(box.current)); }}>
+        <DropdownMenu.Trigger render={<IconButton title={pick} aria-label={pick} className="text-fg-3"><ChevronDown strokeWidth={1.75} /></IconButton>} />
+        <DropdownMenu.Portal><DropdownMenu.Positioner anchor={box} side="bottom" align="start" width="anchor"><DropdownMenu.Popup style={tone}>
+          <DropdownMenu.RadioGroup value={cur === undefined ? '' : String(cur)} className="flex flex-col">
+            {quick.map(n => <DropdownMenu.RadioItem key={n} value={String(n)} onClick={() => onChange(editTokens(n))}>
+              <OptionContent checked={cur === n} checkSlot>{fmtTokens(n)}</OptionContent>
+            </DropdownMenu.RadioItem>)}
+          </DropdownMenu.RadioGroup>
+        </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
+      </DropdownMenu.Root>
     </div>
   );
 }
 
-// A token-count field with quick values; empty leaves the limit unset
-function TokenField({ value, onChange, quick, label }: { value: string; onChange: (v: string) => void; quick: number[]; label: string }) {
-  const bad = value.trim() !== '' && parseTokens(value) === undefined;
-  return <>
-    {quick.map(n => (
-      <Chip key={n} caret={false} aria-pressed={parseTokens(value) === n} onClick={() => onChange(editTokens(n))}
-        className={cn('h-ctl-sm', parseTokens(value) === n && 'bg-active text-fg-1')}>{fmtTokens(n)}</Chip>
-    ))}
-    <input value={value} onChange={e => onChange(e.target.value)} aria-label={label} aria-invalid={bad} spellCheck={false}
-      className={cn(inputBox, 'h-ctl w-(--num-w) text-right tabular-nums', bad && 'border-danger')} />
-  </>;
+// The levels every family spells this way, in rising order; a model's own other spellings follow them
+const LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+// The thinking levels as one segmented row of toggles. A lit level is offered in the composer's effort select; none
+// lit leaves the provider's default. Thinking itself is switched off by the switch above the row, which hides it
+function ThinkingLevels({ levels, onChange }: { levels: string[]; onChange: (levels: string[]) => void }) {
+  const all = [...LEVELS, ...levels.filter(l => !LEVELS.includes(l))];
+  return (
+    <div role="group" aria-label={t('settings.providers.model.efforts')} className="flex min-w-0 flex-wrap gap-0.5 rounded-md bg-hover p-0.5">
+      {all.map(level => {
+        const lit = levels.includes(level);
+        return <button key={level} type="button" aria-pressed={lit}
+          onClick={() => onChange(all.filter(l => (l === level ? !lit : levels.includes(l))))}
+          className={cn('inline-flex h-ctl-sm min-w-0 flex-auto items-center justify-center whitespace-nowrap rounded-sm px-1.5 text-3 outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-fg-2',
+            lit ? 'bg-active text-fg-1' : 'text-fg-3 hover:bg-hover hover:text-fg-1')}>
+          {effortLabel({ id: level, name: level })}
+        </button>;
+      })}
+    </div>
+  );
 }
 
-const num = (s: string) => (s.trim() === '' ? undefined : Number(s));
-
-// The model's fields. Saving drops the unconfirmed marker of every field the editor shows: the user has looked at them
-function ModelEditor({ model, families, onSave, onCancel, onRemove, onTest, test }: {
+// The model's fields in a dialog, laid out like the source form: each label above its control. Only what a source
+// commonly gets wrong is here: the name, the two token limits, thinking levels, image input and Fast; the rarer settings
+// (family, sampling, tool rounds) stay in providers.json and are kept as they are. Values the endpoint did not report
+// (catalogue or defaults) are named in a note at the top, so they can be checked against the provider's docs; saving
+// clears that list. Test sits on the last line with its hint, which its result replaces, like the source form's Check;
+// the footer holds Remove apart from Cancel and Save
+export function ModelEditor({ model, title, onSave, onCancel, onRemove, onTest, test }: {
   model: ProviderModel;
-  families: string[];
+  title: string;
   onSave: (m: ProviderModel) => void;
   onCancel: () => void;
   onRemove: () => void;
@@ -141,16 +165,9 @@ function ModelEditor({ model, families, onSave, onCancel, onRemove, onTest, test
   const [output, setOutput] = useState(model.output ? editTokens(model.output) : '');
   const [images, setImages] = useState(model.input.includes('image'));
   const [thinking, setThinking] = useState<Thinking>(model.thinking);
-  const [efforts, setEfforts] = useState(model.efforts.join(', '));
-  const [family, setFamily] = useState(model.family ?? '');
+  const [levels, setLevels] = useState(model.efforts);
   const [fast, setFast] = useState<'auto' | 'on' | 'off'>(model.fast == null ? 'auto' : model.fast ? 'on' : 'off');
-  const [temperature, setTemperature] = useState(model.sampling.temperature?.toString() ?? '');
-  const [topP, setTopP] = useState(model.sampling.topP?.toString() ?? '');
-  const [topK, setTopK] = useState(model.sampling.topK?.toString() ?? '');
-  const [maxSteps, setMaxSteps] = useState(model.maxSteps?.toString() ?? '');
-  const numbers = [temperature, topP, topK, maxSteps];
-  const ok = [context, output].every(v => v.trim() === '' || parseTokens(v) !== undefined)
-    && numbers.every(v => v.trim() === '' || Number.isFinite(Number(v)));
+  const ok = [context, output].every(v => v.trim() === '' || parseTokens(v) !== undefined);
   const draft = (): ProviderModel => ({
     ...model,
     name: name.trim() || undefined,
@@ -158,73 +175,75 @@ function ModelEditor({ model, families, onSave, onCancel, onRemove, onTest, test
     output: parseTokens(output),
     input: images ? ['text', 'image'] : ['text'],
     thinking,
-    efforts: [...new Set(efforts.split(/[,\s]+/).map(s => s.trim()).filter(Boolean))],
-    family: family || null,
+    efforts: thinking === 'off' ? [] : levels,
     // Automatic leaves the field out, so the agent's list decides
     fast: fast === 'auto' ? undefined : fast === 'on',
-    sampling: { temperature: num(temperature), topP: num(topP), topK: num(topK) },
-    maxSteps: num(maxSteps) ?? null,
     estimated: [],
   });
-  const keys = (e: KeyboardEvent) => { if (e.key === 'Enter' && ok) onSave(draft()); if (e.key === 'Escape') onCancel(); };
-  const field = cn(inputBox, 'h-ctl');
-  const thinkingOptions = (['auto', 'on', 'off'] as const).map(v => ({ value: v, label: t(`settings.providers.model.thinking.${v}`) }));
+  // Enter in a text field saves; a list or a button keeps its own Enter, and Escape is the dialog's close
+  const keys = (e: KeyboardEvent) => { if (e.key === 'Enter' && ok && e.target instanceof HTMLInputElement) onSave(draft()); };
   const fastOptions = (['auto', 'on', 'off'] as const).map(v => ({ value: v, label: t(`settings.providers.model.fast.${v}`) }));
-  const familyOptions = [{ value: '', label: t('settings.providers.model.family.auto') }, ...families.map(f => ({ value: f, label: f }))];
   const outcome = test?.outcome;
   return (
-    <div className="flex flex-col gap-2 border-t border-line py-(--setting-row-pad)" onKeyDown={keys}>
-      <Line label={t('settings.providers.model.name')}>
-        <input value={name} onChange={e => setName(e.target.value)} placeholder={model.id} aria-label={t('settings.providers.model.name')} className={field} />
-      </Line>
-      <Line label={t('settings.providers.model.context')}>
-        <TokenField value={context} onChange={setContext} quick={CONTEXT_QUICK} label={t('settings.providers.model.context')} />
-      </Line>
-      <Line label={t('settings.providers.model.output')}>
-        <TokenField value={output} onChange={setOutput} quick={OUTPUT_QUICK} label={t('settings.providers.model.output')} />
-      </Line>
-      <Line label={t('settings.providers.model.images')}>
-        <Switch checked={images} onChange={setImages} label={t('settings.providers.model.images')} />
-      </Line>
-      <Line label={t('settings.providers.model.thinking')}>
-        <Select options={thinkingOptions} value={thinking} onChange={setThinking} label={t('settings.providers.model.thinking')} />
-      </Line>
-      {thinking !== 'off' && <Line label={t('settings.providers.model.efforts')} hint={t('settings.providers.model.efforts.hint')}>
-        <input value={efforts} onChange={e => setEfforts(e.target.value)} placeholder="low, high, max" spellCheck={false}
-          aria-label={t('settings.providers.model.efforts')} className={field} />
-      </Line>}
-      <Line label={t('settings.providers.model.fast')} hint={t('settings.providers.model.fast.hint')}>
-        <Select options={fastOptions} value={fast} onChange={setFast} label={t('settings.providers.model.fast')} />
-      </Line>
-      <Line label={t('settings.providers.model.family')}>
-        <Select options={familyOptions} value={family} onChange={setFamily} label={t('settings.providers.model.family')} />
-      </Line>
-      <Line label={t('settings.providers.model.sampling')} hint={t('settings.providers.model.sampling.hint')}>
-        {/* The request parameter names as placeholders: they fit the narrow number fields */}
-        {([['Temperature', 'temp', temperature, setTemperature], ['Top P', 'top_p', topP, setTopP], ['Top K', 'top_k', topK, setTopK]] as const).map(([label, hint, value, set]) => (
-          <input key={label} value={value} onChange={e => set(e.target.value)} placeholder={hint} aria-label={label} title={label} spellCheck={false}
-            className={cn(field, 'w-(--num-w) text-right tabular-nums')} />
-        ))}
-      </Line>
-      <Line label={t('settings.providers.model.maxSteps')}>
-        <input value={maxSteps} onChange={e => setMaxSteps(e.target.value)} placeholder={t('settings.providers.model.maxSteps.none')}
-          aria-label={t('settings.providers.model.maxSteps')} spellCheck={false} className={cn(field, 'text-right tabular-nums')} />
-      </Line>
-      {outcome && <p className={cn('m-0 text-2 [overflow-wrap:anywhere]', outcome.kind === 'failed' ? 'text-danger' : 'text-fg-2')}>
-        {outcome.kind === 'failed' ? outcome.error : outcome.kind === 'test' ? t('settings.providers.model.testOk', { ms: outcome.ms, text: outcome.text.trim() || '—' }) : null}
-      </p>}
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="primary" disabled={!ok} onClick={() => onSave(draft())}>{t('settings.providers.save')}</Button>
+    <SettingsDialog title={title} onClose={onCancel}
+      footer={<>
+        <Button className="text-danger" onClick={onRemove}>{t('settings.providers.model.remove')}</Button>
+        <span className="flex-1" />
         <Button onClick={onCancel}>{t('settings.providers.cancel')}</Button>
-        <Button disabled={!ok || test?.pending} title={t('settings.providers.model.test.hint')} onClick={() => onTest(draft())}>
-          {test?.pending && <LoaderCircle strokeWidth={1.5} className="size-icon animate-spin live-spin" />}
-          {t('settings.providers.model.test')}
-        </Button>
-        <span className="min-w-0 flex-1 text-3 text-fg-3">{t('settings.providers.model.test.hint')}</span>
-        <IconButton title={t('settings.providers.model.remove')} aria-label={t('settings.providers.model.remove')} onClick={onRemove} className="text-fg-2">
-          <X strokeWidth={1.5} />
-        </IconButton>
+        <Button variant="primary" disabled={!ok} onClick={() => onSave(draft())}>{t('settings.providers.save')}</Button>
+      </>}>
+      <div className="scroll-thin flex min-h-0 flex-col gap-3 overflow-y-auto p-pad" onKeyDown={keys}>
+        {model.estimated.length > 0 && <p className="m-0 text-3 text-fg-3">
+          {t('settings.providers.unconfirmed.hint', { fields: model.estimated.join(', ') })}
+        </p>}
+        <FormField label={t('settings.providers.model.name')}>
+          <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder={model.id} aria-label={t('settings.providers.model.name')}
+            className={cn(inputBox, 'h-ctl w-full')} />
+        </FormField>
+        {/* The two limits side by side, each under its own label; they stack when the dialog is narrow */}
+        <div className="flex flex-wrap gap-3">
+          <FormField label={t('settings.providers.model.context')} className="min-w-(--ctl-w) flex-1">
+            <TokenField value={context} onChange={setContext} quick={CONTEXT_QUICK} label={t('settings.providers.model.context')} />
+          </FormField>
+          <FormField label={t('settings.providers.model.output')} className="min-w-(--ctl-w) flex-1">
+            <TokenField value={output} onChange={setOutput} quick={OUTPUT_QUICK} label={t('settings.providers.model.output')} />
+          </FormField>
+        </div>
+        {/* Thinking: a switch on its label's line; switched on, the levels row and what it means follow. Switching off
+            keeps the levels in the dialog, so switching back restores them; they are dropped only on save */}
+        <div className="flex flex-col gap-1">
+          <div className="flex min-h-ctl items-center justify-between gap-2">
+            <span className="text-3 text-fg-2">{t('settings.providers.model.thinking')}</span>
+            <Switch checked={thinking !== 'off'} onChange={on => setThinking(on ? 'auto' : 'off')} label={t('settings.providers.model.thinking')} />
+          </div>
+          {thinking !== 'off' && <>
+            <ThinkingLevels levels={levels} onChange={setLevels} />
+            {/* One line: a longer translation truncates and keeps the whole sentence as its tooltip */}
+            <span className="truncate text-3 text-fg-3" title={t('settings.providers.model.efforts.hint')}>{t('settings.providers.model.efforts.hint')}</span>
+          </>}
+        </div>
+        {/* A switch reads on one line: the label on the left, the switch at the end */}
+        <div className="flex min-h-ctl items-center justify-between gap-2">
+          <span className="text-3 text-fg-2">{t('settings.providers.model.images')}</span>
+          <Switch checked={images} onChange={setImages} label={t('settings.providers.model.images')} />
+        </div>
+        {/* Fast is three-way (automatic, offered, not offered), so a select on the label's line; the long hint is the label's tooltip */}
+        <div className="flex min-h-ctl items-center justify-between gap-2">
+          <span className="text-3 text-fg-2" title={t('settings.providers.model.fast.hint')}>{t('settings.providers.model.fast')}</span>
+          <Select options={fastOptions} value={fast} onChange={setFast} label={t('settings.providers.model.fast')} />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button disabled={!ok || test?.pending} title={t('settings.providers.model.test.hint')} onClick={() => onTest(draft())}>
+            {test?.pending && <LoaderCircle strokeWidth={1.5} className="size-icon animate-spin live-spin" />}
+            {t('settings.providers.model.test')}
+          </Button>
+          <span className={cn('min-w-0 flex-1 text-3 [overflow-wrap:anywhere]', outcome?.kind === 'failed' ? 'text-danger' : outcome?.kind === 'test' ? 'text-ok' : 'text-fg-3')}>
+            {outcome?.kind === 'failed' ? outcome.error
+              : outcome?.kind === 'test' ? t('settings.providers.model.testOk', { ms: outcome.ms, text: outcome.text.trim() || '—' })
+              : t('settings.providers.model.test.hint')}
+          </span>
+        </div>
       </div>
-    </div>
+    </SettingsDialog>
   );
 }
