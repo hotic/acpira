@@ -13,6 +13,7 @@ import { Card } from '../ui/Card';
 import { AccountLabel } from '../ui/AccountLabel';
 import { LocalAccountQuota, SavedAccountQuota } from '../ui/LocalAccountQuota';
 import { Shimmer } from '../ui/Shimmer';
+import { StableText } from '../ui/StableText';
 import { cn } from '../ui/cn';
 import { Collapsible } from '../ui/Collapsible';
 import { t } from '../i18n';
@@ -223,7 +224,8 @@ function ApprovalSection({ state, on }: { state?: ProvidersState; on: SettingsHa
     <div className="flex flex-col gap-2">
       <SectionHead>{t('settings.agent.permissions')}</SectionHead>
       <Section>
-        <Field label={t('settings.agent.approval')} desc={t(APPROVAL_KEYS[level].desc)}>
+        {/* Every level's description is laid out, so a pick never changes the card's height */}
+        <Field label={t('settings.agent.approval')} desc={<StableText current={level} items={APPROVAL_LEVELS.map(v => ({ key: v, text: t(APPROVAL_KEYS[v].desc) }))} />}>
           {state
             ? <Select options={APPROVAL_LEVELS.map(v => ({ value: v, label: t(APPROVAL_KEYS[v].label) }))} value={level} onChange={pick} label={t('settings.agent.approval')} />
             : <Shimmer active>{t('settings.loading')}</Shimmer>}
