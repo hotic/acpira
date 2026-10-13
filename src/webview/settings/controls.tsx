@@ -7,6 +7,7 @@ import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { Shimmer } from '../ui/Shimmer';
 import { Switch as SwitchPrimitive } from '../ui/Switch';
+import { StableText } from '../ui/StableText';
 import { t } from '../i18n';
 
 // Settings use a navigation column beside one content column. Page and section headings belong to the content.
@@ -244,12 +245,8 @@ export function Select<V extends string>({ options, value, onChange, label, clas
       className={cn('h-ctl min-w-(--ctl-w) max-w-full gap-2 rounded-md border border-line bg-hover px-3 text-2 text-fg-1 hover:bg-active data-[popup-open]:bg-hover', className)}>
       {/* pe-1: a list row's chrome (popup border and padding, row padding, check) is a few px wider than the field's
           (border, padding, caret), so the longest label still fits its row unclipped */}
-      <span className="grid grid-cols-[minmax(0,1fr)] pe-1">
-        {options.map(o => (
-          <span key={o.value} aria-hidden={o.value !== value || undefined} className={cn('col-start-1 row-start-1 truncate', o.value !== value && 'invisible')}>{o.label}</span>
-        ))}
-        {!cur && <span className="col-start-1 row-start-1 truncate">{value}</span>}
-      </span>
+      <StableText className="pe-1" itemClassName="truncate" current={value}
+        items={[...options.map(o => ({ key: o.value, text: o.label })), ...(cur ? [] : [{ key: value, text: value }])]} />
     </Chip>} />
     <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="start" width="anchor"><DropdownMenu.Popup style={tone}>
       <DropdownMenu.RadioGroup value={value} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">

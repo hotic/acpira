@@ -5,6 +5,7 @@ import type { SettingsView } from '@shared/settings';
 import { PERSONA_MAX, sanitizePersonas, type RelayMode, type SubagentPersona } from '@shared/subagents';
 import { AgentMark } from '../chat/AgentMark';
 import { Button, ChipTag, IconButton } from '../ui/Button';
+import { StableText } from '../ui/StableText';
 import { t } from '../i18n';
 import { FactRow, Field, Group, ItemRow, Section, SectionAction, Select, Switch, type Option } from './controls';
 import type { SettingsHandlers } from './SettingsShell';
@@ -123,7 +124,7 @@ function PersonaDetail({ persona: p, agents, controls, onBack, onChange, onDelet
             onChange={v => onChange({ effort: v || undefined })} />
         </Field>
       )}
-      <Field label={t('subagents.page.mode')} desc={p.mode === 'consult' ? t('subagents.page.consultDesc') : t('subagents.page.workDesc')}>
+      <Field label={t('subagents.page.mode')} desc={<StableText current={p.mode} items={[{ key: 'consult', text: t('subagents.page.consultDesc') }, { key: 'work', text: t('subagents.page.workDesc') }]} />}>
         <Select<RelayMode> label={t('subagents.page.mode')} value={p.mode}
           options={[{ value: 'consult', label: t('subagents.page.consult') }, { value: 'work', label: t('subagents.page.work') }]}
           onChange={mode => onChange({ mode })} />
