@@ -13,7 +13,7 @@ use tokio::fs;
 use acpira_agent::llm::discover;
 use acpira_shared::providers::{
   APPROVAL_LEVELS, LocalSource, PROVIDERS_FILE, PROVIDERS_VERSION, ProbeOutcome, Provider, ProviderAction, ProviderProbe, ProviderView, ProvidersFile,
-  ProvidersView, provider_secret_key,
+  ProvidersView, WEB_SEARCH_BACKENDS, provider_secret_key, web_secret_key,
 };
 
 use crate::accounts::account_store::FileVault;
@@ -48,7 +48,14 @@ impl ProviderStore {
       let has_key = self.vault.get(&provider_secret_key(&provider.id)).await.ok().flatten().is_some_and(|k| !k.is_empty());
       providers.push(ProviderView { provider, has_key });
     }
-    ProvidersView { providers, error: None, approval: file.approval, fast_model: file.fast_model, ..tables() }
+    // Which search backends hold a key; the page shows "saved" without ever receiving one
+    let mut web_keys = vec![];
+    for backend in WEB_SEARCH_BACKENDS.into_iter().skip(1) {
+      if self.vault.get(&web_secret_key(backend)).await.ok().flatten().is_some_and(|k| !k.is_empty()) {
+        web_keys.push(backend.to_owned());
+      }
+    }
+    ProvidersView { providers, error: None, approval: file.approval, fast_model: file.fast_model, web_search: file.web_search, web_keys, ..tables() }
   }
 
   /// The key a probe uses: one typed into the form, else the stored key of the source with that id
@@ -146,6 +153,26 @@ impl ProviderStore {
               bail!("Unknown model: {p}");
             }
             file.fast_model = pick;
+            Ok(())
+          })
+          .await
+      }
+      ProviderAction::WebSearch { backend, key } => {
+        if !WEB_SEARCH_BACKENDS.contains(&backend.as_str()) {
+          bail!("Unknown search backend: {backend}");
+        }
+        let default = backend == WEB_SEARCH_BACKENDS[0];
+        // The key first: a turn that already sees the new backend finds its key with it
+        match key.as_deref().map(str::trim) {
+          Some(_) if default => bail!("The default search backend takes no key"),
+          Some("") => self.vault.delete(&web_secret_key(&backend)).await?,
+          Some(k) => self.vault.store(&web_secret_key(&backend), k).await?,
+          None => {}
+        }
+        self
+          .edit(|file| {
+            // The default is written as no entry, like an unset approval level
+            file.web_search = (!default).then_some(backend);
             Ok(())
           })
           .await
@@ -303,6 +330,24 @@ mod tests {
     assert_eq!(s.view().await.fast_model.as_deref(), Some("deepseek-2/m"));
     s.apply(ProviderAction::FastModel { pick: None }).await.unwrap();
     assert_eq!(s.view().await.fast_model, None);
+
+    // The search backend: its key goes to the vault under its own prefix, the view only says one is stored, and
+    // switching back to the default keeps the key for the next switch
+    let web = |backend: &str, key: Option<&str>| s.apply(ProviderAction::WebSearch { backend: backend.into(), key: key.map(str::to_owned) });
+    assert!(web("google", None).await.is_err());
+    assert!(web("default", Some("k")).await.is_err());
+    web("jina", Some(" jina_123 ")).await.unwrap();
+    let v = s.view().await;
+    assert_eq!((v.web_search.as_deref(), v.web_keys.as_slice()), (Some("jina"), ["jina".to_owned()].as_slice()));
+    let secrets: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.path().join("secrets.json")).unwrap()).unwrap();
+    assert_eq!(secrets["acpira.web.jina"], "jina_123");
+    assert!(!serde_json::to_string(&v).unwrap().contains("jina_123"));
+    web("default", None).await.unwrap();
+    let v = s.view().await;
+    assert_eq!((v.web_search, v.web_keys.len()), (None, 1));
+    assert!(!std::fs::read_to_string(dir.path().join(PROVIDERS_FILE)).unwrap().contains("webSearch"));
+    web("jina", Some("")).await.unwrap();
+    assert!(s.view().await.web_keys.is_empty());
   }
 
   #[tokio::test]
