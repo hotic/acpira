@@ -19,7 +19,7 @@ import { collectDrafts, hasPayload, pathlessWorkbenchDrag } from './drafts';
 import { MentionList, mentionAt, personaHits, personaOfHit, useMentionHits, type MentionPersona } from './Mention';
 import { SummonMenu } from './SummonMenu';
 import { SlashList, commandAt, commandHint, completeCommand, promptMarks, useSlashHits } from './Slash';
-import { modeIcon } from './modeIcons';
+import { modeIcon, modeLabel } from './modeIcons';
 import { ModelControl, OptionControl, ReasoningControl } from './ModelPicker';
 import { ContextRing } from './ContextUsage';
 import { useComposerDraft } from './useComposerDraft';
@@ -328,7 +328,7 @@ export function Composer(p: ComposerProps) {
             {/* Working mode first (Codex collaboration_mode: Build / Plan), then the permission modes; both are solid chips that never truncate */}
             {collaboration.map(c => (
               <ModeMenu key={c.id} title={c.name} value={c.value} onOpenChange={onOpenChange} onSelect={v => p.onSetConfig(c.id, v)}
-                modes={c.options.map(o => (o.id === 'default' ? { ...o, name: t('composer.build') } : o))} />
+                modes={c.options} labelOf={o => (o.id === 'default' ? t('composer.modeShort.build') : modeLabel(o))} />
             ))}
             {p.controls.modes.length > 0 && (
               <ModeMenu title={t('composer.mode')} modes={p.controls.modes} value={p.controls.modeId} onOpenChange={onOpenChange} onSelect={p.onSetMode} />
@@ -373,14 +373,16 @@ export function Composer(p: ComposerProps) {
   );
 }
 
-// One mode chip and its menu: single-line rows with a glyph each, the description rides along as a tooltip.
-// full_access kinds keep the agent's own name; only the glyph carries the warning color
-function ModeMenu({ modes, value, title, onSelect, onOpenChange }: {
+// One mode chip and its menu: single-line rows with a glyph each, the agent's own name and description ride along as a tooltip.
+// Chip and rows use the same short label (`modeLabel`); the full_access glyph carries the warning color
+function ModeMenu({ modes, value, title, onSelect, onOpenChange, labelOf = modeLabel }: {
   modes: SessionOption[];
   value?: string;
   title: string;
   onSelect: (id: string) => void;
   onOpenChange: (open: boolean) => void;
+  // Codex's collaboration `default` is its Build mode, not the permission default beside it
+  labelOf?: (mode: SessionOption) => string;
 }) {
   const mode = modes.find(m => m.id === value);
   const ModeIcon = mode ? modeIcon(mode) : undefined;
@@ -389,14 +391,15 @@ function ModeMenu({ modes, value, title, onSelect, onOpenChange }: {
       <DropdownMenu.Trigger render={<Chip variant="solid" className="ml-0.5 shrink-0" narrow="icon"
         title={mode ? [mode.name, mode.description].filter(Boolean).join(t('common.metaSep')) : title}
         icon={ModeIcon && <ModeIcon strokeWidth={1.75} className={mode?.kind === 'full_access' ? 'text-warn' : undefined} />}>
-        {mode?.name ?? title}
+        {mode ? labelOf(mode) : title}
       </Chip>} />
       <DropdownMenu.Portal><DropdownMenu.Positioner side="top" width="sm"><DropdownMenu.Popup>
         <DropdownMenu.RadioGroup value={value} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
           {modes.map(m => {
             const Icon = modeIcon(m);
-            return <DropdownMenu.RadioItem key={m.id} value={m.id} title={m.description} onClick={() => onSelect(m.id)}>
-              <OptionContent icon={<Icon strokeWidth={1.75} className={m.kind === 'full_access' ? 'text-warn' : undefined} />} checked={m.id === value} checkSlot={!!mode}>{m.name}</OptionContent>
+            const label = labelOf(m);
+            return <DropdownMenu.RadioItem key={m.id} value={m.id} title={[label === m.name ? undefined : m.name, m.description].filter(Boolean).join(t('common.metaSep')) || undefined} onClick={() => onSelect(m.id)}>
+              <OptionContent icon={<Icon strokeWidth={1.75} className={m.kind === 'full_access' ? 'text-warn' : undefined} />} checked={m.id === value} checkSlot={!!mode}>{label}</OptionContent>
             </DropdownMenu.RadioItem>;
           })}
         </DropdownMenu.RadioGroup>
