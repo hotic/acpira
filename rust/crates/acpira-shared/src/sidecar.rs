@@ -61,6 +61,17 @@ pub enum PlatformRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     open: Option<ToastOpen>,
   },
+  /// A session needs the user or has settled: a chime and / or a system notification, each only when its setting is on.
+  /// The shell stays quiet when its window is focused and a visible view shows the session
+  Notify {
+    session_id: String,
+    title: String,
+    body: String,
+    /// The label of the notification's button that brings the session up (already localized)
+    open: String,
+    sound: bool,
+    system: bool,
+  },
 }
 
 /// The open-file action a toast carries: the button label (already localized) and the absolute path behind it
@@ -82,6 +93,7 @@ impl PlatformRequest {
       PlatformRequest::OpenInEditor { .. } => "openInEditor",
       PlatformRequest::RunInTerminal { .. } => "runInTerminal",
       PlatformRequest::Toast { .. } => "toast",
+      PlatformRequest::Notify { .. } => "notify",
     }
   }
 }

@@ -131,6 +131,40 @@ async fn a_turn_ending_unwatched_marks_the_session_unread_until_it_is_opened() {
   m.dispose().await;
 }
 
+// A permission card shows the waiting dot over its running turn's spinner and is announced at once; the turn that settles
+// after the answer is announced as done once it stayed settled, a stopped turn is not announced at all
+#[tokio::test(flavor = "multi_thread")]
+async fn a_card_waits_over_its_running_turn_and_attention_announces_waiting_then_done_but_not_a_stop() {
+  use acpira_host::session_manager::AttentionKind;
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let m = Mgr::new(dir.path(), Opts::fake(&fake));
+  m.init().await;
+  let state_of = |id: &str| m.sessions().iter().find(|s| s["id"] == id).map(|s| s["state"].clone()).unwrap_or(Value::Null);
+  let kinds = || m.attentions.lock().unwrap().iter().map(|a| a.kind).collect::<Vec<_>>();
+  m.new_session(None).await;
+  let id = m.active_id().unwrap();
+  let perm_of = |id: &str| m.view_of(id).and_then(|x| crate::acp_session::agent_blocks(&x).into_iter().find(|b| b["type"] == "permission"));
+  let send = m.spawn_handle(json!({ "type": "send", "text": "use tool" }));
+  until(|| perm_of(&id).is_some() && state_of(&id) == "waiting", 8000).await;
+  until(|| kinds() == [AttentionKind::Waiting], 5000).await;
+  assert_eq!(m.attentions.lock().unwrap()[0].session_id, id);
+  let perm = perm_of(&id).unwrap();
+  m.handle(json!({ "type": "permission", "sessionId": id, "blockId": perm["id"], "optionId": "allow" })).await;
+  send.await.unwrap();
+  until(|| kinds() == [AttentionKind::Waiting, AttentionKind::Done], 8000).await;
+
+  let slow = m.spawn_handle(json!({ "type": "send", "text": "slow" }));
+  until(|| state_of(&id) == "working", 5000).await;
+  m.handle(json!({ "type": "stop", "sessionId": id })).await;
+  slow.await.unwrap();
+  until(|| state_of(&id).is_null(), 5000).await;
+  // Past the settle delay: still only the two edges from the first turn
+  tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+  assert_eq!(kinds(), [AttentionKind::Waiting, AttentionKind::Done]);
+  m.dispose().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn observe_subagent_streams_only_to_the_observing_viewer_until_unobserved() {
   let fake = fake_or_skip!();

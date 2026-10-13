@@ -11,7 +11,7 @@ use acpira_host::acp::agents::registry::AgentRegistry;
 use acpira_host::acp::session::{AcpSession, CompactionPolicy, SessionDeps};
 #[allow(unused_imports)]
 use std::path::PathBuf;
-use acpira_host::session_manager::{ManagerDeps, SessionManager, Viewer};
+use acpira_host::session_manager::{Attention, ManagerDeps, SessionManager, Viewer};
 use acpira_host::store::transcript_store::TranscriptStore;
 use acpira_shared::agent_order::AgentPrefs;
 use acpira_shared::protocol::WebviewMsg;
@@ -78,6 +78,8 @@ pub struct Mgr {
   pub toasts: Arc<Mutex<Vec<String>>>,
   pub terminals: Arc<Mutex<Vec<Terminal>>>,
   pub store: Arc<TranscriptStore>,
+  /// Every attention edge the manager announced, in order
+  pub attentions: Arc<Mutex<Vec<Attention>>>,
 }
 
 pub fn record_events(v: &Viewer) -> Arc<Mutex<Vec<Value>>> {
@@ -91,6 +93,8 @@ impl Mgr {
   pub fn new(dir: &Path, opts: Opts) -> Mgr {
     let (logs, toasts, terminals) = (Arc::new(Mutex::new(vec![])), Arc::new(Mutex::new(vec![])), Arc::new(Mutex::new(vec![])));
     let (l, t, tt) = (logs.clone(), toasts.clone(), terminals.clone());
+    let attentions = Arc::new(Mutex::new(vec![]));
+    let at = attentions.clone();
     let log: acpira_host::store::transcript_store::LogFn = Arc::new(move |line: &str| l.lock().unwrap().push(line.to_owned()));
     let store = TranscriptStore::new(dir.to_path_buf(), log.clone(), None);
     let (cwd, scope, prefs, hidden, default_agent) = (opts.cwd.clone(), opts.scope.clone(), opts.prefs.clone(), opts.hidden.clone(), opts.default_agent.clone());
@@ -115,11 +119,12 @@ impl Mgr {
         host_mcp: None,
         // Inside the test's own directory (record scans only look at `<id>.json`), shared by managers on one directory
         lease_root: dir.join("lease-home"),
+        attention: Some(Arc::new(move |a| at.lock().unwrap().push(a))),
       },
     );
     let v = m.attach(None);
     let events = record_events(&v);
-    Mgr { m, v, events, logs, toasts, terminals, store }
+    Mgr { m, v, events, logs, toasts, terminals, store, attentions }
   }
 
   pub async fn init(&self) {

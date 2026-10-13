@@ -91,6 +91,28 @@ fn safe_record_text(value: &str) -> String {
 
 pub type Sink = Arc<dyn Fn(HostMsg) + Send + Sync>;
 
+/// Why a session wants the user: a permission card or question appeared, or a turn settled (finished or failed)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttentionKind {
+  Waiting,
+  Done,
+  Error,
+}
+
+#[derive(Debug, Clone)]
+pub struct Attention {
+  pub session_id: String,
+  pub title: String,
+  /// The agent's display name
+  pub agent: String,
+  pub kind: AttentionKind,
+}
+
+pub type AttentionFn = Arc<dyn Fn(Attention) + Send + Sync>;
+
+/// How long a finished turn must stay settled before it is announced: a queued follow-up starts well within it
+const ATTENTION_SETTLE: Duration = Duration::from_millis(1500);
+
 pub struct ManagerDeps {
   pub store: Arc<TranscriptStore>,
   pub chatgpt: Option<Arc<ChatGptBridgeStore>>,
@@ -113,6 +135,9 @@ pub struct ManagerDeps {
   pub host_mcp: Option<crate::host_mcp::HostMcp>,
   /// ACPIRA_HOME: cross-engine session leases live under its `run/leases` (`store::session_lease`)
   pub lease_root: std::path::PathBuf,
+  /// Sessions that need the user or have settled (`watch_attention`); the runtime turns them into sound / system
+  /// notifications per the settings, the shell decides whether the user is already looking. None: nobody listens
+  pub attention: Option<AttentionFn>,
 }
 
 #[derive(Default)]
@@ -166,6 +191,11 @@ struct State {
   was_running: HashSet<String>,
   // Sessions whose turn ended while no viewer showed them; cleared once a viewer lands on one
   unread: HashSet<String>,
+  // Attention edges (`watch_attention`): sessions inside a turn, sessions showing a card for the user, and a counter per
+  // session so a settle check started for an earlier turn stays quiet once another turn has begun
+  was_busy: HashSet<String>,
+  was_waiting: HashSet<String>,
+  settle_seq: HashMap<String, u64>,
   prefs: SessionPrefs,
   // The session list's user categories as last read from (or written to) categories.json
   categories: SessionCategories,
@@ -249,6 +279,9 @@ impl SessionManager {
           health_seen: HashMap::new(),
           was_running: HashSet::new(),
           unread: HashSet::new(),
+          was_busy: HashSet::new(),
+          was_waiting: HashSet::new(),
+          settle_seq: HashMap::new(),
           prefs: SessionPrefs::default(),
           categories: SessionCategories::default(),
           probe_timer: None,
@@ -1234,6 +1267,7 @@ impl SessionManager {
     // Every change reports here, so a turn shorter than one flush quantum still leaves its running edge for the idle check
     if running {
       st.was_running.insert(id.to_owned());
+      st.was_busy.insert(id.to_owned());
     }
     drop(st);
     // A fresh entry or an idle edge wakes the flusher at once
@@ -1280,6 +1314,7 @@ impl SessionManager {
     }
     self.emit_session(&s);
     self.emit_sessions();
+    self.watch_attention(&s);
     if let Some(outcome) = s.start_outcome() {
       let mut st = self.state.lock();
       if st.health_seen.get(id) != Some(&outcome) {
@@ -1305,6 +1340,57 @@ impl SessionManager {
     if s.status() == SessionStatus::Ready {
       self.pool.ensure(&s.agent, &s.cwd, s.account_id().as_deref());
     }
+  }
+
+  /// Announce the edges a user away from the session wants to hear about: a card waiting for them (at once), and a turn that
+  /// has settled, once it stayed settled for ATTENTION_SETTLE (a queued follow-up or a hook's follow-up keeps it busy).
+  /// A turn the user cancelled is not announced. Whether the user is already looking is the shell's call
+  fn watch_attention(&self, s: &Arc<AcpSession>) {
+    let Some(announce) = self.deps.attention.clone() else { return };
+    let id = s.id.clone();
+    let waiting = s.list_state() == Some(SummaryState::Waiting);
+    let busy = s.turn_busy();
+    let (asked, settled) = {
+      let mut st = self.state.lock();
+      let asked = if waiting {
+        st.was_waiting.insert(id.clone())
+      } else {
+        st.was_waiting.remove(&id);
+        false
+      };
+      let settled = if busy {
+        st.was_busy.insert(id.clone());
+        None
+      } else if st.was_busy.remove(&id) {
+        let seq = st.settle_seq.entry(id.clone()).or_default();
+        *seq += 1;
+        Some(*seq)
+      } else {
+        None
+      };
+      (asked, settled)
+    };
+    let agent = self.registry().try_get(&s.agent).map(|d| d.name.clone()).unwrap_or_else(|| s.agent.clone());
+    if asked {
+      announce(Attention { session_id: id.clone(), title: s.title(), agent: agent.clone(), kind: AttentionKind::Waiting });
+    }
+    let Some(seq) = settled else { return };
+    let me = self.me.clone();
+    tokio::spawn(async move {
+      tokio::time::sleep(ATTENTION_SETTLE).await;
+      let Some(m) = me.upgrade() else { return };
+      let Some(s) = m.live(&id) else { return };
+      // Another turn began meanwhile (it announces itself when it settles), or the session now waits on the user
+      if m.state.lock().settle_seq.get(&id) != Some(&seq) || s.turn_busy() || s.list_state() == Some(SummaryState::Waiting) {
+        return;
+      }
+      let kind = match s.last_stop() {
+        Some(TurnStop::Error) => AttentionKind::Error,
+        Some(TurnStop::Cancelled) | None => return,
+        Some(_) => AttentionKind::Done,
+      };
+      announce(Attention { session_id: id, title: s.title(), agent, kind });
+    });
   }
 
   fn session_deps(&self) -> SessionDeps {
@@ -2227,6 +2313,9 @@ impl SessionManager {
       let mut st = self.state.lock();
       st.was_running.remove(id);
       st.unread.remove(id);
+      st.was_busy.remove(id);
+      st.was_waiting.remove(id);
+      st.settle_seq.remove(id);
       st.health_seen.remove(id);
       st.dirty.remove(id);
       st.mirrors.remove(id);
@@ -2797,6 +2886,9 @@ impl SessionManager {
       }
       st.live.remove(&s.id);
       st.was_running.remove(&s.id);
+      st.was_busy.remove(&s.id);
+      st.was_waiting.remove(&s.id);
+      st.settle_seq.remove(&s.id);
       st.health_seen.remove(&s.id);
       st.dirty.remove(&s.id);
       st.idle_since.remove(&s.id);
