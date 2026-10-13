@@ -9,7 +9,7 @@ import { terminalLaunch } from './terminalLaunch';
 import { legacyAgents } from './legacyAgents';
 
 // Every IDE action the sidecar may ask for; VS Code implements them all
-const CAPABILITIES: PlatformMethod[] = ['openResolvedFile', 'openPlanDocument', 'revealInOS', 'searchFiles', 'writeSetting', 'openExternal', 'openInEditor', 'runInTerminal', 'toast'];
+const CAPABILITIES: PlatformMethod[] = ['openResolvedFile', 'openPlanDocument', 'revealInOS', 'searchFiles', 'writeSetting', 'openExternal', 'openInEditor', 'runInTerminal', 'toast', 'notify'];
 
 // The view type of the chat opened as an editor tab (extension.ts creates and restores those panels)
 export const EDITOR_VIEW_TYPE = 'acpira.editor';
@@ -61,7 +61,12 @@ export class VscodePlatform {
   private readonly files = new WorkspaceFiles();
   private readonly keys: string[];
 
-  constructor(private context: vscode.ExtensionContext, private openInEditor: (sessionId?: string) => void) {
+  constructor(
+    private context: vscode.ExtensionContext,
+    private openInEditor: (sessionId?: string) => void,
+    // The attention check needs the chat webviews, which extension.ts owns
+    private announce: (r: Extract<PlatformRequest, { method: 'notify' }>) => void,
+  ) {
     // Each IDE's globalStorage / SecretStorage tree is merged into ~/.acpira once (dataDir.migrateOnce), before the sidecar starts
     this.legacy = {
       from: context.globalStorageUri.fsPath,
@@ -129,6 +134,7 @@ export class VscodePlatform {
       case 'openExternal': void vscode.env.openExternal(vscode.Uri.parse(r.url)); return null;
       case 'openInEditor': this.openInEditor(r.sessionId); return null;
       case 'toast': showToast(r); return null;
+      case 'notify': this.announce(r); return null;
       case 'runInTerminal': {
         const { text, ...launch } = terminalLaunch(r.command, r.args);
         // One-shot terminals (logins, unlocks, installs) must not be persisted: on Windows the command is the shell

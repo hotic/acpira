@@ -16,6 +16,7 @@ import { vscodeApi } from './vscodeApi';
 import { SettingsShell, type SettingsHandlers } from './settings/SettingsShell';
 import { sameRange, selectionDraft, setEditorCopy, setEditorSelection } from './chat/editorContext';
 import { updateMainComposer } from './chat/useComposerDraft';
+import { playChime } from './effects/chime';
 import type { SettingsPage } from './settings/Nav';
 import type { SharedState } from './settings/SharedPage';
 import type { ProvidersState } from './settings/ProvidersSection';
@@ -209,6 +210,7 @@ export function App() {
         case 'diffSource': settleDiff(m.seq, m.source); break;
         case 'editorSelection': setEditorSelection(m.selection); break;
         case 'editorCopy': setEditorCopy(m.selection); break;
+        case 'chime': playChime(); break;
         case 'addSelection': {
           const draft = selectionDraft(m.selection, cwdRef.current);
           setView('chat');

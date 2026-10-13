@@ -1,6 +1,6 @@
 // The browser stand-in for an IDE shell: speaks the envelope protocol (src/shared/sidecar.ts) to the sidecar over /ws, presents
 // exactly the transport the webview bundle expects (window.__acpiraApi.postMessage up, window `message` events down), and answers
-// the platform requests a shell must (writeSetting, toast, openExternal); the rest is logged. Plain JS on purpose: nothing to build.
+// the platform requests a shell must (writeSetting, toast, notify, openExternal); the rest is logged. Plain JS on purpose: nothing to build.
 //
 // Query string: ?host=editor (default sidebar) · ?theme=light (default dark) · ?agent=<id> (default setting) · ?cwd=<abs path>
 (() => {
@@ -40,6 +40,26 @@
 
   const deliver = message => window.dispatchEvent(new MessageEvent('message', { data: message }));
 
+  // The session the page shows (from the pushes going by), for the attention check below
+  let shown;
+  const track = message => {
+    const view = message.type === 'session' ? message.session : message.type === 'sessionPatch' ? message.patch.view : message.type === 'init' ? message.state.active : undefined;
+    if (view) shown = view.id;
+  };
+
+  // `notify`: quiet while this tab is focused on that session; otherwise the page chimes and the browser shows a notification
+  // (asked for permission on the first one; a refusal leaves only the harness toast)
+  const announce = request => {
+    if (document.hasFocus() && !document.hidden && shown === request.sessionId) return;
+    if (request.sound) deliver({ type: 'chime' });
+    if (!request.system) return;
+    const show = () => new Notification(request.title, { body: request.body });
+    if (!('Notification' in window)) toast('info', `${request.title} · ${request.body}`);
+    else if (Notification.permission === 'granted') show();
+    else if (Notification.permission === 'default') Notification.requestPermission().then(p => p === 'granted' ? show() : toast('info', `${request.title} · ${request.body}`));
+    else toast('info', `${request.title} · ${request.body}`);
+  };
+
   const respond = (requestId, result, error) => {
     if (!requestId) return;
     send(error ? { type: 'platformResponse', requestId, error } : { type: 'platformResponse', requestId, result });
@@ -48,6 +68,7 @@
   const onPlatformRequest = ({ requestId, request }) => {
     switch (request.method) {
       case 'toast': toast(request.level, request.text); return;
+      case 'notify': announce(request); return;
       case 'openExternal': window.open(request.url, '_blank', 'noopener'); return;
       case 'writeSetting': {
         settings[request.key] = request.value;
@@ -75,7 +96,7 @@
     ws.onopen = () => {
       send({
         type: 'hello', protocolVersion: 1, requestId: 'hello-1',
-        client: { name: 'host-preview', version: '0', capabilities: ['toast', 'openExternal', 'writeSetting', 'openResolvedFile', 'openPlanDocument', 'revealInOS', 'runInTerminal', 'openInEditor'] },
+        client: { name: 'host-preview', version: '0', capabilities: ['toast', 'notify', 'openExternal', 'writeSetting', 'openResolvedFile', 'openPlanDocument', 'revealInOS', 'runInTerminal', 'openInEditor'] },
         env: { hostLanguage: navigator.language, cwd: params.get('cwd') || undefined, blobBase: `${location.origin}/blobs` },
         settings,
       });
@@ -93,7 +114,7 @@
             break;
           }
           case 'helloReject': toast('error', `sidecar rejected hello: ${m.reason}`); break;
-          case 'hostMessage': if (m.viewId === VIEW_ID) deliver(m.message); break;
+          case 'hostMessage': if (m.viewId === VIEW_ID) { track(m.message); deliver(m.message); } break;
           case 'platformRequest': onPlatformRequest(m); break;
         }
       }

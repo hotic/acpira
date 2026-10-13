@@ -83,6 +83,9 @@ export interface SettingsView {
   shareEditorSelection: boolean;
   // A queued prompt's send button steers it into the running turn on agents that support `_session/steering`
   steerQueued: boolean;
+  // A chime / a system notification when a session needs the user or finishes while they are not looking (both off by default)
+  notifySound: boolean;
+  notifySystem: boolean;
   // Agents whose Plan mode approves tool requests without a card (plan approvals and adapter safety asks still ask)
   planAutoApprove: AgentId[];
   // Cross-harness subagents: kept in ~/.acpira/subagents.json (shared by every window and IDE), not a host setting
@@ -94,8 +97,8 @@ export interface SettingsView {
 }
 
 // Keys the webview may write back; the host maps them onto acpira.<key> at user scope
-export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued' | 'planAutoApprove' | 'subagents' | 'agentCpuCap' | 'proxy';
-export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued', 'planAutoApprove', 'subagents', 'agentCpuCap', 'proxy'];
+export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued' | 'notifySound' | 'notifySystem' | 'planAutoApprove' | 'subagents' | 'agentCpuCap' | 'proxy';
+export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued', 'notifySound', 'notifySystem', 'planAutoApprove', 'subagents', 'agentCpuCap', 'proxy'];
 
 export const MIN_COMPACT_AT_TOKENS = 10_000;
 
@@ -122,6 +125,8 @@ export const DEFAULT_SETTINGS: SettingsView = {
   fontSmoothing: false,
   shareEditorSelection: true,
   steerQueued: false,
+  notifySound: false,
+  notifySystem: false,
   planAutoApprove: [],
   subagents: [],
   agentCpuCap: AGENT_CPU_CAP.default,
@@ -140,6 +145,8 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
     case 'fontSmoothing':
     case 'shareEditorSelection':
     case 'steerQueued':
+    case 'notifySound':
+    case 'notifySystem':
       return (typeof value === 'boolean' ? value : fallback) as SettingsView[K];
     case 'compactAtTokens': {
       const n = typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : fallback as number;

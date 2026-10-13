@@ -18,7 +18,11 @@ export type PlatformRequest =
   | { method: 'openInEditor'; sessionId?: string }
   | { method: 'runInTerminal'; title: string; command: string; args: string[]; env?: Record<string, string | null> }
   // `open` adds an Open button for a file (label already localized); the shell opens it only when clicked
-  | { method: 'toast'; level: 'info' | 'error'; text: string; open?: { label: string; path: string } };
+  | { method: 'toast'; level: 'info' | 'error'; text: string; open?: { label: string; path: string } }
+  // A session needs the user or has settled: a chime (`sound`) and / or a system notification (`system`), each sent only when its
+  // setting is on. The shell stays quiet when its window is focused and a visible view shows the session
+  // `open` is the label of the button that brings the session up (already localized)
+  | { method: 'notify'; sessionId: string; title: string; body: string; open: string; sound: boolean; system: boolean };
 
 export type PlatformMethod = PlatformRequest['method'];
 

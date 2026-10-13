@@ -77,6 +77,8 @@ export function isSafeExternalUrl(url: string): boolean {
 }
 
 export type HostMsg =
+  // The shell's attention chime (a `notify` platform request with `sound`): the page plays it, the shell picks one page to do so
+  | { type: 'chime' }
   // The next three come from the IDE shell itself, not the sidecar: editor state is UI, and the engine never sees it until a prompt carries it.
   // The editor's current selection, on every change; absent when nothing (or no file: document) is selected
   | { type: 'editorSelection'; selection?: EditorSelection }

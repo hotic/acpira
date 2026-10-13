@@ -351,6 +351,16 @@
           "default": false,
           "description": "%acpira.conf.steerQueued%"
         },
+        "acpira.notifySound": {
+          "type": "boolean",
+          "default": false,
+          "description": "%acpira.conf.notifySound%"
+        },
+        "acpira.notifySystem": {
+          "type": "boolean",
+          "default": false,
+          "description": "%acpira.conf.notifySystem%"
+        },
         "acpira.agentCpuCap": {
           "type": "number",
           "default": 80,
