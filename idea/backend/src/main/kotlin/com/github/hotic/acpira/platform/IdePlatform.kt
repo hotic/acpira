@@ -26,7 +26,7 @@ class IdePlatform(private val project: Project, private val sidecar: SidecarServ
     private val uiRequests = project.getService(UiRequestBus::class.java)
     private val terminal = ApplicationManager.getApplication().getService(TerminalRunner::class.java)
 
-    val capabilities: List<String> = listOf("openResolvedFile", "openPlanDocument", "openExternal", "revealInOS", "toast", "writeSetting", "searchFiles", "openInEditor") +
+    val capabilities: List<String> = listOf("openResolvedFile", "openPlanDocument", "openExternal", "revealInOS", "toast", "notify", "writeSetting", "searchFiles", "openInEditor") +
         (if (terminal != null) listOf("runInTerminal") else emptyList())
 
     fun handle(requestId: String?, request: JsonObject) {
@@ -41,6 +41,17 @@ class IdePlatform(private val project: Project, private val sidecar: SidecarServ
                         request.get("level")?.asString == "error",
                         open?.get("label")?.asString,
                         open?.get("path")?.asString,
+                    ))
+                    done(null)
+                }
+                "notify" -> {
+                    uiRequests.send(UiRequest.Notify(
+                        request.get("sessionId").asString,
+                        request.get("title").asString,
+                        request.get("body").asString,
+                        request.get("open")?.asString ?: "Open",
+                        request.get("sound")?.asBoolean == true,
+                        request.get("system")?.asBoolean == true,
                     ))
                     done(null)
                 }

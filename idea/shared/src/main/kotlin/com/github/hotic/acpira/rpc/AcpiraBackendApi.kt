@@ -70,4 +70,8 @@ sealed interface UiRequest {
 
     @Serializable
     data class OpenPlan(val path: String?, val markdown: String?) : UiRequest
+
+    @Serializable
+    // A session needs the user or has settled (the sidecar's `notify`): the frontend decides whether the user is already looking
+    data class Notify(val sessionId: String, val title: String, val body: String, val openLabel: String, val sound: Boolean, val system: Boolean) : UiRequest
 }
