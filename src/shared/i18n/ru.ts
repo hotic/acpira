@@ -784,6 +784,7 @@ export const ru = {
   'settings.providers.model.default': 'По умолчанию у провайдера',
   'settings.providers.model.efforts': 'Уровни рассуждения',
   'settings.providers.model.efforts.hint': 'Выбранные уровни будут в поле ввода',
+  'settings.providers.model.efforts.none': 'Без выбранных уровней параметр размышления не отправляется, решает провайдер',
   'settings.providers.model.presets': 'Частые значения: {field}',
   'settings.providers.model.test': 'Проверить',
   'settings.providers.model.test.hint': 'Отправляет один крошечный запрос; тратит несколько токенов',

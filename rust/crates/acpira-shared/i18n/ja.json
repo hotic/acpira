@@ -746,6 +746,7 @@
   "settings.providers.model.default": "プロバイダーの既定",
   "settings.providers.model.efforts": "思考レベル",
   "settings.providers.model.efforts.hint": "選んだレベルが入力欄に表示されます",
+  "settings.providers.model.efforts.none": "レベル未選択では思考パラメータを送らず、提供元に任せます",
   "settings.providers.model.presets": "{field}のよく使う値",
   "settings.providers.model.test": "テスト",
   "settings.providers.model.test.hint": "ごく小さなリクエストを 1 回送ります。少量のトークンを消費します",

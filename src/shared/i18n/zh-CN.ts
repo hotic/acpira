@@ -800,6 +800,7 @@ export const zhCN = {
   'settings.providers.model.default': '服务商默认',
   'settings.providers.model.efforts': '思考档位',
   'settings.providers.model.efforts.hint': '点亮的档位会出现在输入框里',
+  'settings.providers.model.efforts.none': '未点亮档位时不发送思考参数，由服务商决定',
   'settings.providers.model.presets': '{field}常用值',
   'settings.providers.model.test': '测试',
   'settings.providers.model.test.hint': '发送一次很小的请求，会消耗少量 token',

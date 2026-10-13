@@ -787,6 +787,7 @@ export const en = {
   'settings.providers.model.default': 'Provider default',
   'settings.providers.model.efforts': 'Effort levels',
   'settings.providers.model.efforts.hint': 'Lit levels appear in the composer',
+  'settings.providers.model.efforts.none': 'No level lit: no thinking parameter is sent, the provider decides',
   'settings.providers.model.presets': 'Common sizes for {field}',
   'settings.providers.model.test': 'Test',
   'settings.providers.model.test.hint': 'Sends one tiny request; spends a few tokens',

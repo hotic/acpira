@@ -744,6 +744,7 @@
   "settings.providers.model.default": "Valeur du fournisseur",
   "settings.providers.model.efforts": "Niveaux d’effort",
   "settings.providers.model.efforts.hint": "Niveaux actifs proposés à la saisie",
+  "settings.providers.model.efforts.none": "Sans niveau actif, aucun paramètre de réflexion n’est envoyé : le fournisseur décide",
   "settings.providers.model.presets": "Valeurs courantes pour {field}",
   "settings.providers.model.test": "Tester",
   "settings.providers.model.test.hint": "Envoie une toute petite requête ; consomme quelques tokens",

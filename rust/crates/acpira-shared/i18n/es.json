@@ -744,6 +744,7 @@
   "settings.providers.model.default": "Valor del proveedor",
   "settings.providers.model.efforts": "Niveles de esfuerzo",
   "settings.providers.model.efforts.hint": "Niveles activos en la entrada",
+  "settings.providers.model.efforts.none": "Sin niveles activos no se envía parámetro de razonamiento; decide el proveedor",
   "settings.providers.model.presets": "Valores habituales de {field}",
   "settings.providers.model.test": "Probar",
   "settings.providers.model.test.hint": "Envía una petición mínima; gasta unos pocos tokens",

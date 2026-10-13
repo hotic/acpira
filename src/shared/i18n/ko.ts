@@ -760,6 +760,7 @@ export const ko = {
   'settings.providers.model.default': '제공업체 기본값',
   'settings.providers.model.efforts': '추론 단계',
   'settings.providers.model.efforts.hint': '선택한 단계가 입력창에 표시됩니다',
+  'settings.providers.model.efforts.none': '단계를 선택하지 않으면 사고 매개변수를 보내지 않고 제공자에게 맡깁니다',
   'settings.providers.model.presets': '{field} 자주 쓰는 값',
   'settings.providers.model.test': '테스트',
   'settings.providers.model.test.hint': '아주 작은 요청을 한 번 보냅니다. 토큰이 조금 소모됩니다',

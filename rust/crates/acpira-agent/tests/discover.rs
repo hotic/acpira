@@ -86,6 +86,41 @@ fn anthropic_gemini_and_lm_studio_shapes() {
 }
 
 #[test]
+fn a_gateway_reasoning_flag_without_catalogue_levels_gets_the_default_levels() {
+  // The asgard gateway's /v1/models entry for a model newer than the catalogue (trimmed; recorded 2026-10-14)
+  let entry = json!({ "id": "gemini-4-argon", "object": "model", "owned_by": "antigravity", "name": "Gemini 4 Argon",
+    "reasoning": true, "supportsReasoning": true, "supportsThinking": true,
+    "capabilities": { "context_length": 1000000, "max_output_tokens": 65536, "supports_reasoning": true, "supports_vision": true },
+    "modalities": { "input": ["text", "image", "video", "audio", "pdf"], "output": ["text"] },
+    "limit": { "context": 1000000, "output": 65536 }, "contextLength": 1000000, "maxOutputTokens": 65536,
+    "settings": { "extendParams": ["thinkingLevel"] } });
+  let l = listed(entry.clone());
+  assert_eq!((l.context, l.output, l.images, l.reasoning), (Some(1000000), Some(65536), Some(true), Some(true)));
+  let responses = provider("openai-responses", "https://gw.example/v1", "custom");
+  let m = discover::complete_for(&responses, &l, &catalog());
+  assert_eq!(m.efforts, discover::DEFAULT_EFFORTS);
+  assert_eq!(m.estimated, ["efforts"]);
+  // Each spelling of the flag counts on its own
+  for flag in [json!({ "supportsThinking": true }), json!({ "capabilities": { "supports_reasoning": true } })] {
+    let mut e = flag;
+    e["id"] = json!("new-model");
+    assert_eq!(listed(e).reasoning, Some(true));
+  }
+  // Catalogue levels win over the defaults (OpenRouter's flag on a model the catalogue knows)
+  let known = listed(json!({ "id": "deepseek-v4-flash", "supported_parameters": ["reasoning"] }));
+  assert_eq!(discover::complete_for(&responses, &known, &catalog()).efforts, ["low", "high", "max"]);
+  // On Chat a level only reaches the wire where the family's switch takes one: Kimi's does not, DeepSeek's does
+  let chat = provider("openai-chat", "https://gw.example/v1", "custom");
+  let kimi = listed(json!({ "id": "kimi-k9-thinking", "reasoning": true }));
+  assert!(discover::complete_for(&chat, &kimi, &catalog()).efforts.is_empty());
+  let deepseek = listed(json!({ "id": "deepseek-v9", "reasoning": true }));
+  assert_eq!(discover::complete_for(&chat, &deepseek, &catalog()).efforts, discover::DEFAULT_EFFORTS);
+  // Silence is not a flag
+  let plain = listed(json!({ "id": "plain-model", "reasoning": false }));
+  assert!(discover::complete_for(&responses, &plain, &catalog()).efforts.is_empty());
+}
+
+#[test]
 fn ollama_show_fills_the_window_and_capabilities() {
   let mut l = listed(json!({ "id": "qwen3:8b", "object": "model", "owned_by": "library" }));
   discover::apply_ollama_show(
