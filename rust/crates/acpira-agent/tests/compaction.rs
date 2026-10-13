@@ -116,8 +116,10 @@ async fn a_request_the_summary_took_in_comes_back_verbatim() {
 async fn a_vague_refusal_near_the_window_counts_as_an_overflow() {
   // What a gateway's Claude route sends for an oversized request, inside a 200 stream (2026-10-13)
   let vague = || Reply::Sse(vec![json!({ "error": { "type": "invalid_request_error", "message": "There is an issue with this request, please try a different model." } })]);
-  // The system prompt and the tool schemas alone are over 80% of a 4000-token window
-  let (h, server, sid) = setup(json!([{ "id": "m1", "context": 4000 }])).await;
+  // The system prompt and the tool schemas alone are over 80% of a 1000-token window. The prompt also carries the
+  // real home's AGENTS.md and skills, so the window sits below the bare prompt (about 2000 tokens with an empty HOME,
+  // as on CI) instead of relying on a developer machine's larger one
+  let (h, server, sid) = setup(json!([{ "id": "m1", "context": 1000 }])).await;
   server.push(mock::text("A done")).push(mock::text("B done"));
   prompt(&h, &sid, "first task", false, 0).await;
   prompt(&h, &sid, "second task", false, 0).await;
