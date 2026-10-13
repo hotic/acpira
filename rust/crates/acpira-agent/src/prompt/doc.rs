@@ -19,11 +19,7 @@ pub enum Meta {
 
 impl Doc {
   pub fn parse(text: &str) -> Doc {
-    let text = text.replace("\r\n", "\n");
-    let (meta, body) = match text.strip_prefix("---\n").and_then(|rest| rest.split_once("\n---\n").or_else(|| rest.strip_suffix("\n---").map(|m| (m, "")))) {
-      Some((front, body)) => (parse_meta(front), body.to_owned()),
-      None => (vec![], text),
-    };
+    let (meta, body) = split_frontmatter(text);
     let mut doc = Doc { meta, ..Default::default() };
     let mut current: Option<(String, String)> = None;
     let mut fence = false;
@@ -92,6 +88,15 @@ impl Doc {
       parts.push(format!("## {h}\n{}", body.trim()));
     }
     parts.join("\n\n")
+  }
+}
+
+/// The frontmatter entries and the text after them (the whole text when there is none)
+pub fn split_frontmatter(text: &str) -> (Vec<(String, Meta)>, String) {
+  let text = text.replace("\r\n", "\n");
+  match text.strip_prefix("---\n").and_then(|rest| rest.split_once("\n---\n").or_else(|| rest.strip_suffix("\n---").map(|m| (m, "")))) {
+    Some((front, body)) => (parse_meta(front), body.to_owned()),
+    None => (vec![], text),
   }
 }
 

@@ -208,7 +208,8 @@ pub struct Assembler {
 impl Assembler {
   pub fn chunk(&mut self, v: &Value, emit: &mut dyn FnMut(Event)) -> Result<(), LlmError> {
     if let Some(err) = v.get("error").filter(|e| !e.is_null()) {
-      return Err(LlmError::Api(error_message(&json!({ "error": err }).to_string())));
+      let message = error_message(&json!({ "error": err }).to_string());
+      return Err(super::stream_error(message, err.get("type").and_then(Value::as_str), err.get("code").and_then(Value::as_str)));
     }
     if let Some(u) = v.get("usage").filter(|u| u.is_object()) {
       self.usage = Some(parse_usage(u));
@@ -530,5 +531,9 @@ mod tests {
     assert!(matches!(r, Err(LlmError::Protocol(_))));
     let (_, r) = run(&[json!({ "error": { "message": "overloaded" } })], false);
     assert_eq!(r, Err(LlmError::Api("overloaded".into())));
+    // OpenAI's overflow inside a 200 stream, as the gateway sends it for gpt-6-luna (2026-10-13)
+    let m = "Your input exceeds the context window of this model. Please adjust your input and try again.";
+    let (_, r) = run(&[json!({ "error": { "type": "invalid_request_error", "code": "context_length_exceeded", "message": m, "param": "input" } })], false);
+    assert_eq!(r, Err(LlmError::Rejected(m.into())));
   }
 }

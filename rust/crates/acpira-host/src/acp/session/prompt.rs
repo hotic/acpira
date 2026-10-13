@@ -185,7 +185,7 @@ impl AcpSession {
     // From here on Claude Code has a transcript for this native session to resume
     self.core.lock().ultracode.unprompted = false;
     let result = match &turn.proc {
-      Some(p) => p.request("session/prompt", json!({ "sessionId": turn.acp_id, "prompt": blocks })).await,
+      Some(p) => p.request("session/prompt", self.prompt_params(turn.acp_id.as_deref(), blocks)).await,
       None => Err(RpcError::internal("no process")),
     };
     let settled = match result {
@@ -195,6 +195,16 @@ impl AcpSession {
     if let Some(settled) = settled {
       self.finish_turn(&turn, auto, accepted.compacting, settled);
     }
+  }
+
+  /// The `session/prompt` params: the blocks, and the auto-compaction setting as `_meta["acpira/compaction"]`, which
+  /// the built-in agent reads to compact inside the turn at that threshold (every other agent ignores it)
+  fn prompt_params(&self, acp_id: Option<&str>, blocks: Vec<Value>) -> Value {
+    let mut params = json!({ "sessionId": acp_id, "prompt": blocks });
+    if let Some(policy) = self.deps.compaction.as_ref().map(|f| f()) {
+      params["_meta"] = json!({ "acpira/compaction": { "auto": policy.auto, "atTokens": policy.at_tokens } });
+    }
+    params
   }
 
   /// Where a prompt goes. running is claimed here, before staging, so a second send meanwhile queues

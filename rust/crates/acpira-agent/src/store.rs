@@ -14,6 +14,10 @@
 //!   can be traced afterwards
 //! - `title` — the fast model's call naming the session (`title.rs`): model, duration, usage and cost, then `title` or
 //!   `error`
+//! - `compaction` — a summary compaction (`compact.rs`): reason, model, duration, usage and cost, then `summary`, `request` and
+//!   `tail` (how many of the latest items were kept behind it) or `error`; the view from then on is the summary item
+//!   and the tail
+//! - `prune` — the tool results cleared by a prune (`calls`, the tokens freed)
 //!
 //! A line cut short by a crash is skipped when the file is read back
 
@@ -260,6 +264,8 @@ pub struct Loaded {
   /// The title the fast model gave the session, else the first user message's text
   pub title: Option<String>,
   pub updated_ms: u64,
+  /// The first item is a compaction's summary
+  pub summarized: bool,
 }
 
 /// Read a session file; `only_summary` skips the history for listings
@@ -301,6 +307,19 @@ pub fn load(path: &Path, only_summary: bool) -> std::io::Result<Loaded> {
       }
       _ if only_summary => {}
       Some("update") => out.updates.extend(ev.get("update").cloned()),
+      // The view from a compaction on: its summary in front of the items the tail kept
+      Some("compaction") => {
+        let Some(summary) = ev.get("summary").and_then(Value::as_str) else { continue };
+        let tail = ev.get("tail").and_then(Value::as_u64).unwrap_or(0) as usize;
+        let rest = out.items.split_off(out.items.len().saturating_sub(tail));
+        out.items = vec![crate::compact::summary_item(summary, ev.get("request").and_then(Value::as_str))];
+        out.items.extend(rest);
+        out.summarized = true;
+      }
+      Some("prune") => {
+        let calls: Vec<String> = ev.get("calls").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
+        crate::compact::apply_prune(&mut out.items, &calls);
+      }
       Some("state") => {
         for (k, v) in ev.as_object().into_iter().flatten() {
           if k != "type" && k != "t" {
@@ -384,5 +403,29 @@ mod tests {
     assert_eq!(back.updates[1]["_meta"], json!({ "terminal_output_delta": { "data": "ab" }, "terminal_exit": { "exit_code": 1 } }));
     let summary = load(&path, true).unwrap();
     assert!(summary.items.is_empty() && summary.title.is_some());
+  }
+
+  #[test]
+  fn a_compaction_and_a_prune_project_the_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("s.jsonl");
+    let store = Store::new(path.clone(), "s", Path::new("/w"));
+    let call = |id: &str| Item::Assistant { text: String::new(), reasoning: String::new(), tool_calls: vec![ToolCall { id: id.into(), name: "read".into(), arguments: "{}".into() }], native: None };
+    let result = |id: &str| Item::ToolResult { call_id: id.into(), name: "read".into(), content: format!("out {id}"), is_error: false };
+    for i in [Item::User(vec![Part::Text("one".into())]), call("c1"), result("c1"), Item::User(vec![Part::Text("two".into())]), call("c2"), result("c2")] {
+      store.item(&i);
+    }
+    store.append(json!({ "type": "prune", "calls": ["c1"], "tokens": 2 }));
+    store.append(json!({ "type": "compaction", "reason": "manual", "summary": "## Objective\n- x", "tail": 3 }));
+    store.item(&Item::User(vec![Part::Text("three".into())]));
+    store.flush();
+    let back = load(&path, false).unwrap();
+    assert!(back.summarized);
+    assert_eq!(back.items.len(), 5);
+    assert!(matches!(&back.items[0], Item::User(p) if matches!(&p[0], Part::Text(t) if t.starts_with("<conversation-summary>\n## Objective\n- x\n</conversation-summary>"))));
+    assert_eq!(back.items[1], Item::User(vec![Part::Text("two".into())]));
+    assert_eq!(back.items[4], Item::User(vec![Part::Text("three".into())]));
+    // The prune cleared the first result before the compaction dropped it; a later one would show in the tail
+    assert_eq!(back.title.as_deref(), Some("one"));
   }
 }

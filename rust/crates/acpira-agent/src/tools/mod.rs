@@ -10,6 +10,7 @@ pub mod names;
 pub mod plan;
 pub mod read;
 pub mod search;
+pub mod skill;
 pub mod todo;
 
 use std::path::{Path, PathBuf};
@@ -48,6 +49,8 @@ pub enum Action {
   Glob { pattern: String, path: PathBuf },
   List { path: PathBuf, ignore: Vec<String> },
   Todo { todos: Vec<todo::Todo> },
+  /// A skill's instructions (`path` is its SKILL.md)
+  Skill { name: String, path: PathBuf },
   /// Plan mode's approval request; the turn runs it itself
   ExitPlan { plan: Option<String> },
 }
@@ -96,9 +99,11 @@ pub const GREP: &str = "grep";
 pub const GLOB: &str = "glob";
 pub const LIST: &str = "list";
 pub const TODO: &str = "todo";
+pub const SKILL: &str = "skill";
 pub const EXIT_PLAN: &str = "exit_plan";
 
-/// The specs of these tools, in the given order (a mode's tool set)
+/// The specs of these tools, in the given order (a mode's tool set). `skill` is not among them: its spec lists the
+/// session's skills (`skill::spec`), so the turn adds it when there are any
 pub fn specs(names: &[&str]) -> Vec<ToolSpec> {
   names
     .iter()
@@ -130,6 +135,7 @@ pub fn prepare(name: &str, args: &Value, cwd: &Path) -> Result<Action, String> {
     GLOB => search::prepare_glob(args, cwd),
     LIST => search::prepare_list(args, cwd),
     TODO => todo::prepare(args),
+    SKILL => skill::prepare(args, cwd),
     EXIT_PLAN => plan::prepare(args),
     other => Err(format!("Unknown tool \"{other}\". Available tools: {}.", names::ALL.join(", "))),
   }
@@ -145,7 +151,7 @@ impl Action {
   pub fn permission(&self, cwd: &Path) -> (&'static str, String) {
     use crate::permission::{self as perm, path_target};
     match self {
-      Action::Read { path, .. } | Action::Grep { path, .. } | Action::Glob { path, .. } | Action::List { path, .. } => (perm::READ, path_target(path, cwd)),
+      Action::Read { path, .. } | Action::Grep { path, .. } | Action::Glob { path, .. } | Action::List { path, .. } | Action::Skill { path, .. } => (perm::READ, path_target(path, cwd)),
       Action::Write { path, .. } => (perm::EDIT, path_target(path, cwd)),
       Action::Bash { command, .. } => (perm::BASH, command.clone()),
       Action::Todo { .. } => (perm::TODO, "*".to_owned()),
@@ -209,6 +215,7 @@ impl Action {
       Action::List { path, .. } => Presentation { title: format!("List {}", shown(path, cwd)), kind: "read", locations: vec![path.clone()], content: vec![] },
       // The host knows a to-do update by this exact title
       Action::Todo { .. } => Presentation { title: TODO.to_owned(), kind: "other", locations: vec![], content: vec![] },
+      Action::Skill { name, path } => Presentation { title: format!("Skill {name}"), kind: "read", locations: vec![path.clone()], content: vec![] },
       // The webview localizes this exact heading
       Action::ExitPlan { .. } => Presentation { title: "Exit plan mode".to_owned(), kind: "switch_mode", locations: vec![], content: vec![] },
     }
@@ -222,6 +229,7 @@ impl Action {
       Action::Glob { pattern, path } => search::glob(&pattern, &path, &ctx),
       Action::List { path, ignore } => search::list(&path, &ignore, &ctx),
       Action::Todo { todos } => todo::run(&todos),
+      Action::Skill { name, path } => skill::run(&name, &path),
       other => Output::error(format!("{other:?} cannot run synchronously")),
     }
   }

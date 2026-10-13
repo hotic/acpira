@@ -239,11 +239,14 @@ impl Assembler {
       "response.failed" => {
         let err = &v["response"]["error"];
         let message = err["message"].as_str().map(str::to_owned).unwrap_or_else(|| err.to_string());
-        return Err(LlmError::Api(message));
+        return Err(super::stream_error(message, err["type"].as_str(), err["code"].as_str()));
       }
+      // OpenAI's shape carries `code` and `message` on the event, a gateway's Claude route an Anthropic `error` object
       "error" => {
         let message = v["message"].as_str().or_else(|| v.pointer("/error/message").and_then(Value::as_str)).map(str::to_owned).unwrap_or_else(|| v.to_string());
-        return Err(LlmError::Api(message));
+        let kind = v.pointer("/error/type").and_then(Value::as_str);
+        let code = v["code"].as_str().or_else(|| v.pointer("/error/code").and_then(Value::as_str));
+        return Err(super::stream_error(message, kind, code));
       }
       _ => {}
     }
@@ -454,6 +457,11 @@ mod tests {
 
     let (_, r) = run(&[json!({ "type": "response.failed", "response": { "error": { "message": "upstream overloaded" } } })]);
     assert_eq!(r, Err(LlmError::Api("upstream overloaded".into())));
+    let (_, r) = run(&[json!({ "type": "response.failed", "response": { "error": { "code": "context_length_exceeded", "message": "too big" } } })]);
+    assert_eq!(r, Err(LlmError::Rejected("too big".into())));
+    // A gateway's Claude route on the Responses path sends an Anthropic error object (2026-10-13)
+    let (_, r) = run(&[json!({ "type": "error", "error": { "type": "invalid_request_error", "message": "There is an issue with this request" } })]);
+    assert_eq!(r, Err(LlmError::Rejected("There is an issue with this request".into())));
     let (_, r) = run(&[json!({ "type": "response.output_text.delta", "delta": "par" })]);
     assert!(matches!(r, Err(LlmError::Protocol(_))), "a stream without response.completed is broken");
     let (events, r) = run(&[json!({ "type": "response.incomplete", "response": { "incomplete_details": { "reason": "max_output_tokens" } } })]);

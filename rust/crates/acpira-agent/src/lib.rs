@@ -6,6 +6,7 @@
 pub mod acp;
 pub mod budget;
 pub mod catalog;
+pub mod compact;
 pub mod config;
 pub mod llm;
 #[cfg(feature = "mock")]
@@ -13,6 +14,7 @@ pub mod mock;
 pub mod modes;
 pub mod permission;
 pub mod prompt;
+pub mod skills;
 pub mod store;
 pub mod title;
 pub mod tools;

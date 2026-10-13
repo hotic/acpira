@@ -2,9 +2,9 @@
 //! were given; a name that maps to exactly one tool of the current set is taken as that tool (a few times a turn, see
 //! `turn.rs`), anything else gets an error that lists the real names, so a turn never ends silently on a misspelt call
 
-use super::{BASH, EDIT, EXIT_PLAN, GLOB, GREP, JOB, LIST, READ, TODO, WRITE};
+use super::{BASH, EDIT, EXIT_PLAN, GLOB, GREP, JOB, LIST, READ, SKILL, TODO, WRITE};
 
-pub const ALL: [&str; 10] = [READ, WRITE, EDIT, BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN];
+pub const ALL: [&str; 11] = [READ, WRITE, EDIT, BASH, JOB, GREP, GLOB, LIST, TODO, SKILL, EXIT_PLAN];
 
 /// Other names models use for the tools, already folded (lowercase, letters and digits only)
 const ALIASES: &[(&str, &[&str])] = &[
@@ -17,6 +17,7 @@ const ALIASES: &[(&str, &[&str])] = &[
   (GLOB, &["find", "findfiles", "filesearch", "globsearch", "searchfiles", "findbyname"]),
   (LIST, &["ls", "listdir", "listdirectory", "listfiles", "dir", "tree"]),
   (TODO, &["todowrite", "todos", "updatetodos", "todolist", "writetodos", "updatetodo", "todoupdate"]),
+  (SKILL, &["skills", "loadskill", "useskill", "readskill", "getskill", "skillload", "runskill"]),
   (EXIT_PLAN, &["exitplanmode", "planexit", "submitplan", "presentplan", "finishplan", "approveplan", "exitplanning"]),
 ];
 

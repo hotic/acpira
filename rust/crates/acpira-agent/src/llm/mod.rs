@@ -144,6 +144,21 @@ pub enum LlmError {
   Protocol(String),
   /// The provider reported an error inside a 200 stream
   Api(String),
+  /// The provider refused the request itself inside a 200 stream (`invalid_request_error`, `context_length_exceeded`):
+  /// sending it again fails the same way. Kept apart from `Api` because the message alone may not say so (a gateway's
+  /// Claude route refuses an oversized request with "There is an issue with this request, please try a different
+  /// model.", 2026-10-13)
+  Rejected(String),
+}
+
+/// Whether an in-stream error's `type` / `code` says the request itself was refused
+pub(crate) fn refused(kind: Option<&str>, code: Option<&str>) -> bool {
+  kind == Some("invalid_request_error") || matches!(code, Some("context_length_exceeded" | "invalid_request_error"))
+}
+
+/// The in-stream error for a message and its `type` / `code`
+pub(crate) fn stream_error(message: String, kind: Option<&str>, code: Option<&str>) -> LlmError {
+  if refused(kind, code) { LlmError::Rejected(message) } else { LlmError::Api(message) }
 }
 
 impl std::fmt::Display for LlmError {
@@ -153,7 +168,7 @@ impl std::fmt::Display for LlmError {
       LlmError::Http { status, message, .. } => write!(f, "HTTP {status}: {message}"),
       LlmError::Network(m) => write!(f, "network error: {m}"),
       LlmError::Protocol(m) => write!(f, "bad stream: {m}"),
-      LlmError::Api(m) => f.write_str(m),
+      LlmError::Api(m) | LlmError::Rejected(m) => f.write_str(m),
     }
   }
 }

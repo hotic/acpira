@@ -50,6 +50,8 @@ pub struct SessionState {
   pub sent_options: Option<Vec<Value>>,
   /// Naming the session from its first prompt has started (`title.rs`); it happens once
   pub titled: bool,
+  /// The first item is a compaction's summary (`compact.rs`)
+  pub summarized: bool,
 }
 
 pub struct Session {
@@ -66,6 +68,11 @@ impl Session {
   /// A tool call id unique in this session
   pub fn next_tool_id(&self) -> String {
     format!("call-{}", self.tool_seq.fetch_add(1, Ordering::Relaxed) + 1)
+  }
+
+  /// A compaction id: unique across reopenings too, since a replay carries the earlier ones
+  pub fn next_compaction_id(&self) -> String {
+    format!("compaction-{}", uuid::Uuid::new_v4())
   }
 
   /// Record the controls at the start and after a change, so a reopened session comes back with them (held until the
@@ -182,8 +189,17 @@ impl Server {
     let session = Session { id: id.clone(), cwd: PathBuf::from(cwd), state: parking_lot::Mutex::new(state), store, tool_seq: AtomicU64::new(0), jobs: Default::default() };
     // The starting controls too: a reopen must not take a default that changed in the meantime
     session.save_state(&session.state.lock());
-    self.sessions.lock().insert(id, Arc::new(session));
+    self.sessions.lock().insert(id.clone(), Arc::new(session));
+    self.announce_commands(&id, std::path::Path::new(cwd));
     Ok(response)
+  }
+
+  /// The session's slash commands: `/compact` and the skills found now (`skills.rs`). Sent inside `session/new` /
+  /// `load` / `resume` like Devin does, straight to the client: a replay would only repeat a stale list
+  fn announce_commands(&self, id: &str, cwd: &std::path::Path) {
+    let places = crate::prompt::Places::new(cwd, crate::turn::user_home().as_deref());
+    let commands = crate::skills::commands(&crate::skills::scan(&places));
+    self.conn().notify("session/update", json!({ "sessionId": id, "update": { "sessionUpdate": "available_commands_update", "availableCommands": commands } }));
   }
 
   /// `session/load` (replay = true) and `session/resume`: a session open in this process continues as it is, another
@@ -216,6 +232,7 @@ impl Server {
         self.conn().notify("session/update", json!({ "sessionId": id, "update": u }));
       }
     }
+    self.announce_commands(id, &session.cwd);
     let config = self.config.get();
     let catalog = self.catalog.get();
     let mut st = session.state.lock();
@@ -235,6 +252,7 @@ impl Server {
       announced: s("announced").unwrap_or_else(|| modes::AGENT.to_owned()),
       model: s("model").or_else(|| config.default_pick()),
       items: loaded.items.clone(),
+      summarized: loaded.summarized,
       ..Default::default()
     };
     st.effort = s("effort").or_else(|| default_effort(&config, &catalog, st.model.as_deref()));

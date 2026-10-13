@@ -288,7 +288,7 @@ impl Assembler {
         if self.salvage(message) {
           return Ok(());
         }
-        return Err(LlmError::Api(message.to_owned()));
+        return Err(super::stream_error(message.to_owned(), v.pointer("/error/type").and_then(Value::as_str), None));
       }
       // ping and event types added later
       _ => {}
@@ -606,6 +606,10 @@ mod tests {
   fn errors_cuts_and_stop_reasons() {
     let (_, r) = run(&[json!({ "type": "error", "error": { "type": "overloaded_error", "message": "Overloaded" } })]);
     assert_eq!(r, Err(LlmError::Api("Overloaded".into())));
+    // A refused request is told apart by its type: the message may say nothing about why (a gateway, 2026-10-13)
+    let vague = "There is an issue with this request, please try a different model.";
+    let (_, r) = run(&[json!({ "type": "error", "error": { "type": "invalid_request_error", "message": vague } })]);
+    assert_eq!(r, Err(LlmError::Rejected(vague.into())));
     let (_, r) = run(&[json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "text", "text": "par" } })]);
     assert!(matches!(r, Err(LlmError::Protocol(_))));
     let (events, _) = run(&[json!({ "type": "message_delta", "delta": { "stop_reason": "max_tokens" } }), json!({ "type": "message_stop" })]);

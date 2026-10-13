@@ -63,7 +63,8 @@ async fn a_session_comes_back_after_the_agent_restarts() {
   let resumed = h.conn.request("session/resume", json!({ "sessionId": sid, "cwd": h.cwd(), "mcpServers": [] })).await.unwrap();
   let model = resumed["configOptions"].as_array().unwrap().iter().find(|o| o["id"] == "model").unwrap().clone();
   assert_eq!(model["currentValue"], "mock/m1");
-  assert!(h.updates().is_empty());
+  // Only the session's commands are announced, as on session/new
+  assert!(h.updates().iter().all(|u| u["sessionUpdate"] == "available_commands_update"), "{:?}", h.updates());
 
   // The follow-up's request carries the earlier history byte for byte, and a model switch is a view change
   h.conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "model", "value": "mock/m2" })).await.unwrap();
