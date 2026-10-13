@@ -35,12 +35,10 @@ impl AcpSession {
     }
   }
 
-  /// The session list's state dot: working, waiting on the user, or ended in error
+  /// The session list's state dot: waiting on the user, working, or ended in error. A permission card or question keeps
+  /// its turn running, so waiting is checked first: otherwise a turn blocked on the user shows the same spinner as one at work
   pub fn list_state(&self) -> Option<SummaryState> {
     let c = self.core.lock();
-    if c.phase.running {
-      return Some(SummaryState::Working);
-    }
     let waiting = visible_turns(&c).any(|t| {
       t.as_agent().is_some_and(|a| {
         a.blocks.iter().any(|b| matches!(b, AgentBlock::Permission(_)) || matches!(b, AgentBlock::Question(q) if q.outcome.is_none()))
@@ -48,6 +46,9 @@ impl AcpSession {
     });
     if waiting {
       return Some(SummaryState::Waiting);
+    }
+    if c.phase.running {
+      return Some(SummaryState::Working);
     }
     match visible_turns(&c).last() {
       Some(Turn::Agent(a)) if a.stop == Some(TurnStop::Error) => Some(SummaryState::Error),
