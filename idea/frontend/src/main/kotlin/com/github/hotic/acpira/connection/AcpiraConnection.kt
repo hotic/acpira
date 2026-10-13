@@ -9,6 +9,7 @@ import com.github.hotic.acpira.rpc.SidecarState
 import com.github.hotic.acpira.rpc.ViewAttach
 import com.github.hotic.acpira.rpc.ViewEvent
 import com.google.gson.JsonElement
+import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.JsonPrimitive
 import com.intellij.DynamicBundle
@@ -42,6 +43,9 @@ class AcpiraConnection(private val project: Project, val cs: CoroutineScope) {
         val host: String
         val initial: JsonElement?
         val lastSessionId: String?
+        // On screen right now (its tool window or editor tab is shown), and past its page's init (a chime can play at once)
+        val showing: Boolean
+        val ready: Boolean
         fun onHostMessage(message: JsonElement)
         fun onState(state: SidecarState, detail: String?)
         // Editor state from the IDE itself (selection, copy, "Add to chat"), never through the sidecar; the view holds it until its page initialized
@@ -131,6 +135,15 @@ class AcpiraConnection(private val project: Project, val cs: CoroutineScope) {
         val targets = views.values.filter { it.host == host }
         if (targets.isEmpty()) waiting.computeIfAbsent(host) { java.util.Collections.synchronizedList(mutableListOf()) }.add(message)
         else targets.forEach { it.onShellMessage(message) }
+    }
+
+    // Some chat on screen shows this session
+    fun shows(sessionId: String): Boolean = views.values.any { it.lastSessionId == sessionId && it.showing }
+
+    // The attention chime, played by one initialized page (a showing one first)
+    fun chime() {
+        val ready = views.values.filter { it.ready }
+        (ready.firstOrNull { it.showing } ?: ready.firstOrNull())?.onShellMessage(JsonObject().apply { addProperty("type", "chime") })
     }
 
     // A page finished initializing: it gets the editor's current selection and the last editor copy

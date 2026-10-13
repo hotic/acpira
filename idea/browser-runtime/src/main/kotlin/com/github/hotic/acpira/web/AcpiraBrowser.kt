@@ -58,6 +58,8 @@ class AcpiraBrowser(
     private val shellQueue = mutableListOf<JsonElement>()
     private var pageInitialized = false
     override val component: JComponent get() = browser.component
+    override val showing: Boolean get() = browser.component.isShowing
+    override val ready: Boolean get() = synchronized(shellQueue) { pageInitialized }
 
     init {
         Disposer.register(parent, this)

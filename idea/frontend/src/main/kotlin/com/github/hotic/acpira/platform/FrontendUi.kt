@@ -20,6 +20,7 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.wm.WindowManager
 import com.intellij.testFramework.LightVirtualFile
 import kotlinx.coroutines.launch
 
@@ -37,6 +38,7 @@ object FrontendUi {
                     is UiRequest.Toast -> toast(project, event)
                     is UiRequest.OpenExternal -> BrowserUtil.browse(event.url)
                     is UiRequest.OpenInEditor -> AcpiraEditors.open(project, event.sessionId)
+                    is UiRequest.Notify -> announce(project, event)
                     else -> {}
                 }
             }
@@ -56,6 +58,21 @@ object FrontendUi {
             })
         }
         notification.notify(project)
+    }
+
+    // A session needs the user or has settled. Quiet while this project's frame is active and a showing chat has that session;
+    // otherwise one initialized chat plays the chime and the IDE shows a balloon with an Open action. The IDE itself passes
+    // balloons on to the OS while it is in the background (Settings | Notifications | "Enable system notifications")
+    private fun announce(project: Project, event: UiRequest.Notify) {
+        val connection = project.service<AcpiraConnection>()
+        val active = WindowManager.getInstance().getFrame(project)?.isActive == true
+        if (active && connection.shows(event.sessionId)) return
+        if (event.sound) connection.chime()
+        if (!event.system) return
+        NotificationGroupManager.getInstance().getNotificationGroup(Acpira.NOTIFICATION_GROUP)
+            .createNotification(event.title, event.body, NotificationType.INFORMATION)
+            .addAction(NotificationAction.createSimpleExpiring(event.openLabel) { AcpiraEditors.open(project, event.sessionId) })
+            .notify(project)
     }
 
     private fun onEdt(project: Project, body: () -> Unit) {
