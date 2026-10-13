@@ -222,3 +222,48 @@ async fn an_overflowing_request_is_compacted_and_sent_again() {
   assert!(r.is_err());
   assert_eq!(compaction_updates(&h).len(), 2);
 }
+
+/// Wait up to 5 s for `done`
+async fn until(done: impl Fn() -> bool) {
+  tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    while !done() {
+      tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+  })
+  .await
+  .expect("timed out");
+}
+
+#[tokio::test]
+async fn a_window_edited_mid_turn_sets_the_next_calls_threshold() {
+  let (h, server, sid) = setup(json!([{ "id": "m1", "context": 64000, "output": 1000 }])).await;
+  // The first call asks for a slow command; the window is corrected while it runs (2000 less 1000 for the output)
+  server.push(mock::tools(&[("c1", "bash", json!({ "command": "sleep 1" }))]));
+  server.push(answer("done", 1500)).push(mock::text("## Objective\n- the summary"));
+  let edit = async {
+    until(|| h.updates().iter().any(|u| u["toolCallId"] == "call-1" && u["status"] == "in_progress")).await;
+    h.providers(&server.base_url(), json!([{ "id": "m1", "context": 2000, "output": 1000 }]));
+  };
+  let (r, ()) = tokio::join!(prompt(&h, &sid, "task", true, 1_000_000), edit);
+  assert_eq!(r["stopReason"], "end_turn");
+  // Under the 64k guess the second call's 1510 tokens were far from the threshold; under the edit they are over it
+  let requests: Vec<Value> = log(&h, &sid).into_iter().filter(|e| e["type"] == "request").collect();
+  assert_eq!(requests[1]["policies"]["compaction"]["threshold"], 1000, "{requests:?}");
+  assert_eq!(compaction_updates(&h).len(), 2, "the second call compacts");
+  assert!(h.updates().iter().any(|u| u["sessionUpdate"] == "usage_update" && u["used"] == 1510 && u["size"] == 2000));
+}
+
+#[tokio::test]
+async fn a_window_edited_between_turns_is_pushed_to_the_meter() {
+  let (h, server, sid) = setup(json!([{ "id": "m1", "context": 64000, "output": 1000 }])).await;
+  server.push(answer("done", 100));
+  prompt(&h, &sid, "task", true, 1_000_000).await;
+  let usage = || h.updates().into_iter().filter(|u| u["sessionUpdate"] == "usage_update").collect::<Vec<_>>();
+  assert_eq!(usage().last().map(|u| (u["used"].clone(), u["size"].clone())), Some((json!(110), json!(64000))));
+  // No turn runs: the next check of providers.json sends the same usage against the new window, once
+  h.providers(&server.base_url(), json!([{ "id": "m1", "context": 1_000_000, "output": 1000 }]));
+  until(|| usage().len() == 2).await;
+  assert_eq!((usage()[1]["used"].clone(), usage()[1]["size"].clone()), (json!(110), json!(1_000_000)));
+  tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+  assert_eq!(usage().len(), 2, "{sid}");
+}

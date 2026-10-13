@@ -257,7 +257,32 @@ fn summary_call<'a>(server: &Server, s: &'a Setup) -> compact::Call<'a> {
 /// The context after a compaction, as an estimate until the next call reports it
 fn report_usage(server: &Server, session: &Session, s: &Setup) {
   let used = approx(&s.system, &session.state.lock().items, &s.specs);
-  server.update(&session.id, json!({ "sessionUpdate": "usage_update", "used": used, "size": s.model.context.unwrap_or(DEFAULT_CONTEXT) }));
+  send_usage(server, session, used, s.model.context.unwrap_or(DEFAULT_CONTEXT));
+}
+
+/// A `usage_update`, remembered so a window edited later can be pushed with the same `used` (`Server::push_controls`)
+fn send_usage(server: &Server, session: &Session, used: u64, size: u64) {
+  session.state.lock().reported = Some((used, size));
+  server.update(&session.id, json!({ "sessionUpdate": "usage_update", "used": used, "size": size }));
+}
+
+/// A configured model with the limits the configuration leaves open filled from the catalogue (marked estimated)
+pub fn limits(config: &crate::config::Config, catalog: &acpira_shared::model_catalog::Catalog, pick: &str) -> Option<ProviderModel> {
+  let (_, m) = config.find(pick)?;
+  let mut model = m.clone();
+  crate::catalog::complete(&mut model, catalog);
+  Some(model)
+}
+
+/// Take the model's window and output limit as configured now. The rest of the setup stays frozen for the turn (the
+/// prompt cache keys on it), but a limit edited in the settings mid-turn applies from the next model call, where
+/// before it waited for the next turn and a window corrected from a 128k guess still compacted at the old threshold
+fn refresh_limits(server: &Server, s: &mut Setup) {
+  if let Some(m) = limits(&server.config.get(), &server.catalog.get(), &s.pick) {
+    s.model.context = m.context;
+    s.model.output = m.output;
+    s.model.estimated = m.estimated;
+  }
 }
 
 async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stats: &Arc<parking_lot::Mutex<Stats>>) -> Result<Stop, String> {
@@ -313,7 +338,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       st.pick = Some(s.pick.clone());
       st.prompt = Some(s.prompt.clone());
     }
-    let context = s.model.context.unwrap_or(DEFAULT_CONTEXT);
+    refresh_limits(server, &mut s);
     let mut request = Request {
       model: s.model.id.clone(),
       system: s.system.clone(),
@@ -413,6 +438,9 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       server.update(&session.id, retry_notice(s.provider.display_name(), &e, attempt + 1));
       tokio::time::sleep(retry_delay(&e, attempt)).await;
     };
+    // A window edited while the call ran decides this step's compaction already
+    refresh_limits(server, &mut s);
+    let context = s.model.context.unwrap_or(DEFAULT_CONTEXT);
     // A call always has input, so a reported 0 is a provider gap (a gateway's streamed usage): estimate it instead
     let estimated = usage.is_some_and(|u| u.input == 0);
     let usage = usage.map(|u| if estimated { Usage { input: input_estimate, ..u } } else { u });
@@ -435,7 +463,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       st.usage.reasoning += u.reasoning;
       st.calls += 1;
       let used = u.input + u.output;
-      server.update(&session.id, json!({ "sessionUpdate": "usage_update", "used": used, "size": context }));
+      send_usage(server, session, used, context);
       over = s.policy.auto && used >= s.policy.threshold(context, s.model.output);
     } else {
       stats.lock().calls += 1;
