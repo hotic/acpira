@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use acpira_shared::model_catalog::{Catalog, model_key};
 use acpira_shared::providers::{ApiFormat, Provider, ProviderModel, Thinking};
 
+use super::family::ThinkingParam;
 use super::{Endpoint, Event, Item, LlmError, Part, Request, StopReason, Usage, error_message};
 
 /// The context window assumed when neither the endpoint nor the catalogue knows one: small enough that a real window
@@ -143,10 +144,24 @@ pub fn parse_entry(e: &Value) -> Option<Listed> {
     "/max_input_tokens",
     "/inputTokenLimit",
     "/top_provider/context_length",
+    // OpenAI-compatible gateways that spell the listing their own way (camelCase, `limit`, a `capabilities` object)
+    "/contextLength",
+    "/contextWindowTokens",
+    "/limit/context",
+    "/capabilities/context_length",
   ]);
   // LM Studio reports what the loaded instance was given, which is the real window, ahead of the model's maximum
   let context = uint(e.get("loaded_context_length")).or(context);
-  let output = first(&["/top_provider/max_completion_tokens", "/max_completion_tokens", "/max_output_tokens", "/outputTokenLimit", "/max_tokens"]);
+  let output = first(&[
+    "/top_provider/max_completion_tokens",
+    "/max_completion_tokens",
+    "/max_output_tokens",
+    "/outputTokenLimit",
+    "/max_tokens",
+    "/maxOutputTokens",
+    "/limit/output",
+    "/capabilities/max_output_tokens",
+  ]);
   let modalities: Vec<String> = [strings(e.pointer("/architecture/input_modalities")), strings(e.pointer("/modalities/input")), strings(e.get("input_modalities"))].concat();
   let params = strings(e.get("supported_parameters"));
   let caps = strings(e.get("capabilities"));
@@ -165,7 +180,10 @@ pub fn parse_entry(e: &Value) -> Option<Listed> {
   } else {
     None
   };
-  let reasoning = if params.iter().any(|p| p == "reasoning" || p == "include_reasoning") || caps.iter().any(|c| c == "thinking") { Some(true) } else { None };
+  // Besides OpenRouter's parameters and Ollama's capabilities, gateways flag a reasoning model with a boolean: `reasoning`
+  // (models.dev's name), `supportsReasoning` / `supportsThinking`, or `capabilities.supports_reasoning`
+  let flagged = ["/reasoning", "/supportsReasoning", "/supportsThinking", "/capabilities/supports_reasoning"].iter().any(|p| e.pointer(p) == Some(&Value::Bool(true)));
+  let reasoning = if flagged || params.iter().any(|p| p == "reasoning" || p == "include_reasoning") || caps.iter().any(|c| c == "thinking") { Some(true) } else { None };
   let methods = strings(e.get("supportedGenerationMethods"));
   let lower = id.to_lowercase();
   let not_chat = kind == "embeddings"
@@ -206,7 +224,7 @@ pub fn complete(listed: &Listed, catalog: &Catalog) -> ProviderModel {
   if images {
     m.input.push("image".into());
   }
-  // Effort levels come only from the catalogue (no listing reports them); reasoning stays the provider's default
+  // Effort levels come from the catalogue (no listing reports them); reasoning stays the provider's default
   if let Some(c) = entry.filter(|c| c.reasoning && !c.efforts.is_empty()) {
     m.efforts = c.efforts.clone();
     estimated.push("efforts");
@@ -215,6 +233,27 @@ pub fn complete(listed: &Listed, catalog: &Catalog) -> ProviderModel {
     m.name = entry.map(|c| c.name.clone()).filter(|n| n != &listed.id);
   }
   m.estimated = estimated.into_iter().map(str::to_owned).collect();
+  m
+}
+
+/// The levels a reasoning model gets when the endpoint says it reasons but the catalogue has none for it (a model newer
+/// than the catalogue): the three every `reasoning.effort` / `reasoning_effort` takes
+pub const DEFAULT_EFFORTS: [&str; 3] = ["low", "medium", "high"];
+
+/// `complete`, then the default levels for a model the endpoint flags as reasoning and the catalogue gives none, where
+/// a level reaches the wire: always on Responses and Anthropic Messages, on Chat only for a family whose thinking
+/// switch takes one (Kimi, MiniMax and Qwen on Chat would show a level select that changes nothing). Without levels a
+/// model's thinking stays `auto` and no request turns it on, so a new reasoning model would never think
+pub fn complete_for(provider: &Provider, listed: &Listed, catalog: &Catalog) -> ProviderModel {
+  let mut m = complete(listed, catalog);
+  if listed.reasoning == Some(true) && m.efforts.is_empty() {
+    let takes_level = matches!(provider.api_format(), Some(ApiFormat::OpenaiResponses | ApiFormat::Anthropic))
+      || matches!(super::family::resolve(provider, &m).thinking, ThinkingParam::ReasoningEffort | ThinkingParam::ThinkingType | ThinkingParam::OpenRouter);
+    if takes_level {
+      m.efforts = DEFAULT_EFFORTS.map(str::to_owned).to_vec();
+      m.estimated.push("efforts".into());
+    }
+  }
   m
 }
 
@@ -239,7 +278,7 @@ pub fn discover(http: &ureq::Agent, provider: &Provider, api_key: Option<&str>, 
   }
   listed.sort_by(|a, b| a.id.cmp(&b.id));
   listed.dedup_by(|a, b| a.id == b.id);
-  let mut models: Vec<ProviderModel> = listed.iter().map(|l| complete(l, catalog)).collect();
+  let mut models: Vec<ProviderModel> = listed.iter().map(|l| complete_for(provider, l, catalog)).collect();
   // Ollama reports the model's trained window, not the `num_ctx` it serves with: still an estimate
   if local == Some(Local::Ollama) {
     for m in &mut models {

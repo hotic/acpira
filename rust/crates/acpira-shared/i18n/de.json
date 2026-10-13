@@ -743,6 +743,7 @@
   "settings.providers.model.default": "Standard des Anbieters",
   "settings.providers.model.efforts": "Denkstufen",
   "settings.providers.model.efforts.hint": "Aktive Stufen stehen im Eingabefeld",
+  "settings.providers.model.efforts.none": "Ohne aktive Stufe wird kein Denkparameter gesendet, der Anbieter entscheidet",
   "settings.providers.model.presets": "Übliche Werte für {field}",
   "settings.providers.model.test": "Testen",
   "settings.providers.model.test.hint": "Sendet eine winzige Anfrage; kostet ein paar Tokens",

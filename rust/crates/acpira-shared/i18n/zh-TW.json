@@ -745,6 +745,7 @@
   "settings.providers.model.default": "服務商預設",
   "settings.providers.model.efforts": "思考檔位",
   "settings.providers.model.efforts.hint": "點亮的檔位會出現在輸入框裡",
+  "settings.providers.model.efforts.none": "未點亮檔位時不傳送思考參數，由服務商決定",
   "settings.providers.model.presets": "{field}常用值",
   "settings.providers.model.test": "測試",
   "settings.providers.model.test.hint": "傳送一次很小的請求，會消耗少量 token",

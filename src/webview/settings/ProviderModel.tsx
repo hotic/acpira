@@ -184,6 +184,7 @@ export function ModelEditor({ model, title, onSave, onCancel, onRemove, onTest, 
   const keys = (e: KeyboardEvent) => { if (e.key === 'Enter' && ok && e.target instanceof HTMLInputElement) onSave(draft()); };
   const fastOptions = (['auto', 'on', 'off'] as const).map(v => ({ value: v, label: t(`settings.providers.model.fast.${v}`) }));
   const outcome = test?.outcome;
+  const levelsHint = t(levels.length ? 'settings.providers.model.efforts.hint' : 'settings.providers.model.efforts.none');
   return (
     <SettingsDialog title={title} onClose={onCancel}
       footer={<>
@@ -218,8 +219,9 @@ export function ModelEditor({ model, title, onSave, onCancel, onRemove, onTest, 
           </div>
           {thinking !== 'off' && <>
             <ThinkingLevels levels={levels} onChange={setLevels} />
-            {/* One line: a longer translation truncates and keeps the whole sentence as its tooltip */}
-            <span className="truncate text-3 text-fg-3" title={t('settings.providers.model.efforts.hint')}>{t('settings.providers.model.efforts.hint')}</span>
+            {/* One line: a longer translation truncates and keeps the whole sentence as its tooltip. With no level lit the
+                switch alone sends nothing (thinking stays `auto`), so the hint says so rather than implying thinking is on */}
+            <span className="truncate text-3 text-fg-3" title={levelsHint}>{levelsHint}</span>
           </>}
         </div>
         {/* A switch reads on one line: the label on the left, the switch at the end */}
