@@ -146,7 +146,7 @@ export function QuoteToolbar({ root }: { root: RefObject<HTMLElement | null> }) 
                       // Pressing the button must not collapse the selection it acts on
                       onMouseDown={e => e.preventDefault()}
                       onClick={add}
-                      className="inline-flex h-ctl-sm items-center gap-1 rounded-sm px-2 text-3 font-medium text-fg-1 outline-none hover:bg-hover focus-visible:bg-hover [&_svg]:size-icon [&_svg]:text-fg-3">
+                      className="inline-flex h-ctl-sm items-center gap-1 rounded-sm px-2 text-3 font-medium text-fg-1 outline-none transition-colors hover:bg-active focus-visible:bg-active [&_svg]:size-icon [&_svg]:text-fg-3">
                       <MessageSquarePlus strokeWidth={1.5} />
                       {t('quote.add')}
                     </button>}

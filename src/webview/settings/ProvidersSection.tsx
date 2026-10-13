@@ -319,7 +319,7 @@ function ProviderForm({ provider, busy, error, onSave, onClose, onDelete }: {
   return (
     <SettingsDialog title={provider ? t('settings.providers.edit', { name: provider.name || provider.id }) : t('settings.providers.add')} onClose={onClose}
       footer={<>
-        {onDelete && <Button disabled={busy} className="text-danger" onClick={onDelete}>{t('common.remove')}</Button>}
+        {onDelete && <Button disabled={busy} tone="danger" onClick={onDelete}>{t('common.remove')}</Button>}
         <span className="flex-1" />
         <Button onClick={onClose}>{t('settings.providers.cancel')}</Button>
         <Button variant="primary" disabled={!ok} onClick={submit}>{t('settings.providers.save')}</Button>

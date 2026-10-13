@@ -8,28 +8,38 @@ type Variant = 'primary' | 'secondary';
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   ref?: Ref<HTMLButtonElement>;
   variant?: Variant;
+  // A destructive action (Remove): red text that stays red on hover, over a faint red fill
+  tone?: 'danger';
   kbd?: string;
 }
 
 // Two neutral tiers (picked in the buttons LAB, scheme "tonal"): primary is a tonal grey fill with strong text and a firmer outline, secondary is an outline that fills on hover.
-// No inverted solid (that look belongs to the send button alone) and no colored buttons (accent is reserved for status dots)
+// No inverted solid (that look belongs to the send button alone) and no colored buttons (accent is reserved for status dots); the danger tone only tints a secondary's text.
+// Hover is one clear step on both tiers: primary goes from --active to --chip-hover, secondary fills with --active and firms its outline
+// (--hover alone, a list row's step, was too faint to read on a button)
 const buttonVariants = cva('inline-flex h-ctl items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-2 transition-colors', {
-  variants: { variant: {
-    primary: 'border border-line-strong bg-active text-fg-strong font-medium hover:bg-chip-hover focus-visible:bg-chip-hover',
-    secondary: 'border border-line text-fg-2 hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1',
-  } }, defaultVariants: { variant: 'secondary' },
+  variants: {
+    variant: {
+      primary: 'border border-line-strong bg-active text-fg-strong font-medium hover:bg-chip-hover focus-visible:bg-chip-hover',
+      secondary: 'border border-line text-fg-2 hover:border-line-strong hover:bg-active hover:text-fg-1 focus-visible:border-line-strong focus-visible:bg-active focus-visible:text-fg-1',
+    },
+    tone: {
+      danger: 'text-danger hover:border-danger/40 hover:bg-danger/10 hover:text-danger focus-visible:border-danger/40 focus-visible:bg-danger/10 focus-visible:text-danger',
+    },
+  }, defaultVariants: { variant: 'secondary' },
 });
-const iconVariants = cva('inline-flex shrink-0 items-center justify-center rounded-md text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1 data-[popup-open]:bg-active data-[popup-open]:text-fg-1', {
+// Icon buttons hover to --active, like the session list's row actions; an open menu keeps the same pressed fill
+const iconVariants = cva('inline-flex shrink-0 items-center justify-center rounded-md text-fg-2 transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 data-[popup-open]:bg-active data-[popup-open]:text-fg-1', {
   variants: { size: { sm: 'size-ctl-sm [&_svg]:size-icon', default: 'size-ctl [&_svg]:size-icon-ctl' } }, defaultVariants: { size: 'default' },
 });
 
 // All buttons share --ctl height, --r-md radius, and 12px horizontal padding
-export function Button({ variant = 'secondary', kbd, className, children, ...rest }: ButtonProps) {
+export function Button({ variant = 'secondary', tone, kbd, className, children, ...rest }: ButtonProps) {
   return (
     <button
       type="button"
       className={cn(
-        buttonVariants({ variant }),
+        buttonVariants({ variant, tone }),
         className,
       )}
       {...rest}
@@ -64,7 +74,7 @@ type ChipVariant = 'quiet' | 'solid';
 
 const chipVariants = cva('inline-flex h-ctl-sm min-w-0 items-center gap-1 rounded-sm px-1.5 text-3 transition-colors', {
   variants: { variant: {
-    quiet: 'text-fg-2 hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1 data-[open]:bg-active data-[open]:text-fg-1 data-[popup-open]:bg-active data-[popup-open]:text-fg-1',
+    quiet: 'text-fg-2 hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 data-[open]:bg-active data-[open]:text-fg-1 data-[popup-open]:bg-active data-[popup-open]:text-fg-1',
     solid: 'bg-chip text-fg-1 hover:bg-chip-hover focus-visible:bg-chip-hover data-[open]:bg-chip-hover data-[popup-open]:bg-chip-hover',
   } }, defaultVariants: { variant: 'quiet' },
 });

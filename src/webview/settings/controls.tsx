@@ -275,7 +275,7 @@ export function Select<V extends string>({ options, value, onChange, label, clas
   const [tone, setTone] = useState<CSSProperties>();
   return <DropdownMenu.Root onOpenChange={open => { if (open) setTone(fieldTone(trigger.current)); }}>
     <DropdownMenu.Trigger render={<Chip ref={trigger} aria-label={label} icon={cur?.icon}
-      className={cn('h-ctl min-w-(--ctl-w) max-w-full gap-2 rounded-md border border-line bg-hover px-3 text-2 text-fg-1 hover:bg-active data-[popup-open]:bg-hover', className)}>
+      className={cn('h-ctl min-w-(--ctl-w) max-w-full gap-2 rounded-md border border-line bg-hover px-3 text-2 text-fg-1 hover:border-line-strong hover:bg-active data-[popup-open]:border-line-strong data-[popup-open]:bg-hover', className)}>
       {/* pe-1: a list row's chrome (popup border and padding, row padding, check) is a few px wider than the field's
           (border, padding, caret), so the longest label still fits its row unclipped */}
       <StableText className="pe-1" itemClassName="truncate" current={value}

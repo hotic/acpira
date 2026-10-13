@@ -519,7 +519,7 @@ function ChannelFilter({ agents, value, onChange }: { agents: AgentInfo[]; value
     ? <AgentMark id={a.id} name={a.name} />
     : <ListFilter className="size-icon" strokeWidth={1.5} />;
   const trigger = <button type="button" aria-label={`${t('session.filterChannel')}: ${current.name}`} title={current.name}
-    className={cn('inline-flex h-[calc(var(--ctl)-4px)] min-w-0 max-w-full items-center gap-1.5 rounded-md px-2 text-3 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1 data-[open]:bg-hover data-[popup-open]:bg-hover', value ? 'text-fg-1' : 'text-fg-2')}>
+    className={cn('inline-flex h-[calc(var(--ctl)-4px)] min-w-0 max-w-full items-center gap-1.5 rounded-md px-2 text-3 transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 data-[open]:bg-active data-[popup-open]:bg-active', value ? 'text-fg-1' : 'text-fg-2')}>
     <span className="flex size-icon shrink-0 items-center justify-center">{mark(current)}</span>
     <span className="min-w-0 truncate">{current.name}</span>
     <ChevronDown className="size-3 shrink-0 text-fg-3" strokeWidth={1.5} />

@@ -42,7 +42,8 @@
   --hover: color-mix(in srgb, var(--fg-1) 6%, transparent);
   --active: color-mix(in srgb, var(--fg-1) 11%, transparent);
   --chip: color-mix(in srgb, var(--fg-1) 8%, transparent);
-  --chip-hover: color-mix(in srgb, var(--fg-1) 12%, transparent);
+  /* Clearly above --active (11%), the primary button's rest fill, so its hover reads */
+  --chip-hover: color-mix(in srgb, var(--fg-1) 18%, transparent);
   --widget-bg: var(--vscode-editorWidget-background, var(--bg-1));
   --widget-fg: var(--vscode-editorWidget-foreground, var(--fg-1));
   --widget-border: var(--vscode-editorWidget-border, var(--line-strong));

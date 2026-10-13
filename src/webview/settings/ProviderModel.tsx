@@ -188,7 +188,7 @@ export function ModelEditor({ model, title, onSave, onCancel, onRemove, onTest, 
   return (
     <SettingsDialog title={title} onClose={onCancel}
       footer={<>
-        <Button className="text-danger" onClick={onRemove}>{t('settings.providers.model.remove')}</Button>
+        <Button tone="danger" onClick={onRemove}>{t('settings.providers.model.remove')}</Button>
         <span className="flex-1" />
         <Button onClick={onCancel}>{t('settings.providers.cancel')}</Button>
         <Button variant="primary" disabled={!ok} onClick={() => onSave(draft())}>{t('settings.providers.save')}</Button>
