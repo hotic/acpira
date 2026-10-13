@@ -29,7 +29,7 @@ export function ContextRing({ usage, turns, canCompact, compactAt, running, disa
       <Popover.Trigger openOnHover delay={120} closeDelay={250} onFocus={e => { if (e.relatedTarget) setOpen(true); }}
         render={<button type="button" data-open={open || undefined}
           aria-label={stale ? t('usage.compactedStale') : t('usage.usedPct', { pct: Math.round(pct * 100) })}
-          className="inline-flex size-ctl shrink-0 items-center justify-center rounded-md text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1 data-[open]:bg-active data-[open]:text-fg-1"
+          className="inline-flex size-ctl shrink-0 items-center justify-center rounded-md text-fg-2 transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 data-[open]:bg-active data-[open]:text-fg-1"
         >
           <svg className="context-ring size-icon -rotate-90" viewBox="0 0 16 16" fill="none"
             data-shift={shift} data-stale={stale || undefined} data-compacting={compacting || undefined}>

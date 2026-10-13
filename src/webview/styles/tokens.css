@@ -33,7 +33,8 @@
   --conversation-line: rgba(255, 255, 255, 0.12);
   --conversation-line-focus: rgba(255, 255, 255, 0.20);
   --chip: rgba(255, 255, 255, 0.07);
-  --chip-hover: rgba(255, 255, 255, 0.1);
+  /* Hover of a chip-filled control and of the primary button (rest --active): one step clearly above both */
+  --chip-hover: rgba(255, 255, 255, 0.14);
   --cmp-bg: rgba(255, 255, 255, 0.04);
   --cmp-bg-lift: rgba(255, 255, 255, 0.08);
   /* Inverted solid: the send button's lit state and the settings switch; Button itself is tonal (grey fill / outline) and never uses it; no colored buttons anywhere in the app */
@@ -249,7 +250,7 @@
   --conversation-line: rgba(0, 0, 0, 0.10);
   --conversation-line-focus: rgba(0, 0, 0, 0.18);
   --chip: #f4f4f4;
-  --chip-hover: #f1f1f1;
+  --chip-hover: #e0e0e0;
   --cmp-bg: rgba(255, 255, 255, 0.04);
   --cmp-bg-lift: rgba(255, 255, 255, 0.04);
   --send-bg: rgba(0, 0, 0, 0.04);

@@ -69,7 +69,7 @@ function BarButton({ label, icon, onClick }: FooterAction) {
       aria-label={label}
       title={label}
       onClick={onClick}
-      className="flex size-ctl shrink-0 items-center justify-center rounded-md text-fg-3 outline-none transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1 [&_svg]:size-icon"
+      className="flex size-ctl shrink-0 items-center justify-center rounded-md text-fg-3 outline-none transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 [&_svg]:size-icon"
     >
       {icon}
     </button>
