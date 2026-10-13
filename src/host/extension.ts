@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import * as vscode from 'vscode';
 import type { EditorSelection, HostMsg } from '@shared/protocol';
+import type { PlatformRequest } from '@shared/sidecar';
 import type { SessionView } from '@shared/transcript';
 import { FileVault } from './accounts/AccountStore';
 import { WebviewBridge } from './bridge';
@@ -12,6 +13,7 @@ import { acpiraHome, migrateOnce } from './store/dataDir';
 import { EDITOR_VIEW_TYPE, VscodePlatform } from './vscodePlatform';
 import { editorSelectionOf } from './editorSelection';
 import { availableChromeCommands, columnPicks, columnsLayout, defaultColumnPick, type ColumnPick } from './multiOpen';
+import { showSystemNotification } from './systemNotify';
 
 const VIEW_ID = 'acpira.chat';
 const EDITOR_STATE_SESSION = 'acpiraSessionId';
@@ -22,7 +24,7 @@ let client: SidecarClient | undefined;
 // there, the extension renders webviews and carries out IDE actions. Same protocol as the IntelliJ plugin
 export async function activate(context: vscode.ExtensionContext) {
   const log = vscode.window.createOutputChannel('Acpira', { log: true });
-  const platform = new VscodePlatform(context, id => { openEditor(id); });
+  const platform = new VscodePlatform(context, id => { openEditor(id); }, r => announce(r));
   setHostLocale(platform.locale());
 
   // The legacy globalStorage / SecretStorage tree only VS Code can read is merged before the sidecar takes over ~/.acpira
@@ -59,9 +61,9 @@ export async function activate(context: vscode.ExtensionContext) {
   // The chat last focused, clicked into or brought into view: where "Add to Chat" goes. Editor tabs are revealed through their panel
   let lastFocused: WebviewBridge | undefined;
   const panels = new Map<WebviewBridge, vscode.WebviewPanel>();
-  const attach = (webview: vscode.Webview, host: 'sidebar' | 'editor', initial?: string | { mostRecent: true }, onSession?: (s: SessionView) => void) => {
+  const attach = (webview: vscode.Webview, host: 'sidebar' | 'editor', visible: () => boolean, initial?: string | { mostRecent: true }, onSession?: (s: SessionView) => void) => {
     const b = new WebviewBridge(webview, host, {
-      client: sidecar, extensionUri: context.extensionUri, sessionsDir, onSession, log: line => log.info(line),
+      client: sidecar, extensionUri: context.extensionUri, sessionsDir, onSession, visible, log: line => log.info(line),
       locale: () => platform.locale(),
       onPageReady: ready => {
         ready.postShell({ type: 'editorSelection', selection: liveSelection });
@@ -116,7 +118,7 @@ export async function activate(context: vscode.ExtensionContext) {
       light: vscode.Uri.joinPath(context.extensionUri, 'media', 'icon-light.svg'),
       dark: vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.svg'),
     };
-    const b = attach(panel.webview, 'editor', sessionId, s => { panel.title = s.title; watch?.(s); });
+    const b = attach(panel.webview, 'editor', () => panel.visible, sessionId, s => { panel.title = s.title; watch?.(s); });
     panels.set(b, panel);
     lastFocused = b;
     panel.onDidChangeViewState(e => { if (e.webviewPanel.active) lastFocused = b; });
@@ -180,6 +182,33 @@ export async function activate(context: vscode.ExtensionContext) {
     void vscode.commands.executeCommand(`${VIEW_ID}.focus`);
   };
 
+  // Bring a session up: the editor tab already showing it, else the sidebar (switched to it when it shows another one)
+  const revealSession = (sessionId: string) => {
+    const showing = [...bridges].find(b => b.sessionId === sessionId);
+    const panel = showing && panels.get(showing);
+    if (panel) { panel.reveal(undefined, false); return; }
+    void vscode.commands.executeCommand(`${VIEW_ID}.focus`);
+    if (!showing) withSidebar(b => b.send({ type: 'selectSession', id: sessionId }));
+  };
+
+  // A session needs the user or has settled (`notify`, sent only for the switches that are on). Nothing while this window is
+  // focused and a visible chat shows that session. The chime plays in one page (the chat used last when it is up); the system
+  // notification is the OS's own, except in a remote window (the extension host runs on the remote machine) or where the OS
+  // command is missing or fails: there VS Code's message stands in, and its button brings the session up
+  function announce(r: Extract<PlatformRequest, { method: 'notify' }>) {
+    if (vscode.window.state.focused && [...bridges].some(b => b.shows(r.sessionId))) return;
+    if (r.sound) {
+      const target = lastFocused?.ready ? lastFocused : [...bridges].find(b => b.ready);
+      target?.postShell({ type: 'chime' });
+    }
+    if (!r.system) return;
+    const inWindow = () => {
+      void vscode.window.showInformationMessage(`${r.body} · ${r.title}`, r.open).then(pick => { if (pick === r.open) revealSession(r.sessionId); });
+    };
+    if (vscode.env.remoteName) { inWindow(); return; }
+    void showSystemNotification(r.title, r.body).then(shown => { if (!shown) inWindow(); });
+  }
+
   context.subscriptions.push(
     log,
     platform.subscribe(ev => {
@@ -188,7 +217,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
     vscode.window.registerWebviewViewProvider(VIEW_ID, {
       resolveWebviewView(view) {
-        const b = sidebar = attach(view.webview, 'sidebar', { mostRecent: true });
+        const b = sidebar = attach(view.webview, 'sidebar', () => view.visible, { mostRecent: true });
         // Bringing the sidebar chat into view makes it the "Add to Chat" target again (clicking into it does too, via viewFocus)
         view.onDidChangeVisibility(() => { if (view.visible) lastFocused = b; });
         view.onDidDispose(() => {

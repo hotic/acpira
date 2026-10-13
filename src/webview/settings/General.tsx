@@ -4,6 +4,7 @@ import { ACCOUNT_SWITCH_STRATEGIES, AGENT_CPU_CAP, AUTO_PROXY_URL, MIN_COMPACT_A
 import { LANGUAGES, type Language } from '@shared/i18n';
 import { launchable, pickDefaultAgent } from '@shared/agentOrder';
 import { AgentMark } from '../chat/AgentMark';
+import { playChime } from '../effects/chime';
 import { t } from '../i18n';
 import { Field, NumberField, Section, Select, Switch } from './controls';
 import type { SettingsHandlers } from './SettingsShell';
@@ -53,6 +54,16 @@ export function General({ settings, agents, on }: { settings: SettingsView; agen
         </Field>
         <Field label={t('settings.proxy')} desc={t('settings.proxy.desc')}>
           <ProxyField value={settings.proxy} onCommit={v => on.setSetting('proxy', v)} />
+        </Field>
+      </Section>
+
+      <Section title={t('settings.notifications.title')}>
+        <Field label={t('settings.notifySound')} desc={t('settings.notifySound.desc')}>
+          {/* Switching it on plays a preview: the user hears it, and the click lets the page's audio start later on its own */}
+          <Switch checked={settings.notifySound} onChange={v => { if (v) playChime(); on.setSetting('notifySound', v); }} label={t('settings.notifySound')} />
+        </Field>
+        <Field label={t('settings.notifySystem')} desc={t('settings.notifySystem.desc')}>
+          <Switch checked={settings.notifySystem} onChange={v => on.setSetting('notifySystem', v)} label={t('settings.notifySystem')} />
         </Field>
       </Section>
 

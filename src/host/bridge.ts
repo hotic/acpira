@@ -16,6 +16,8 @@ export interface WebviewBridgeOpts {
   onPageReady?: (bridge: WebviewBridge) => void;
   // The page's window got focus (`viewFocus`, kept in the shell)
   onFocus?: (bridge: WebviewBridge) => void;
+  // Whether the user can see this webview right now (its panel or sidebar is shown), for the attention check
+  visible?: () => boolean;
   log?: (line: string) => void;
 }
 
@@ -33,6 +35,8 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
   // Everything bound for the page, one postMessage in flight at a time (outbox.ts)
   private outbox: PostQueue;
   private resyncing = false;
+  // The session the page shows, as last pushed: an attention for it is not announced while the page is in view
+  private shown?: string;
 
   constructor(
     private webview: vscode.Webview,
@@ -64,13 +68,23 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
 
   onHostMessage(m: HostMsg) {
     const session = m.type === 'session' ? m.session : m.type === 'sessionPatch' ? m.patch.view : m.type === 'init' ? m.state.active : undefined;
-    if (session) this.opts.onSession?.(session);
+    if (session) { this.shown = session.id; this.opts.onSession?.(session); }
     this.outbox.push(m);
     if (m.type !== 'init') return;
     this.pageReady = true;
     for (const q of this.shellQueue.splice(0)) this.outbox.push(q);
     this.opts.onPageReady?.(this);
   }
+
+  // In view and showing this session: the user is looking at it (window focus is the caller's half of the check)
+  shows(sessionId: string): boolean {
+    return this.shown === sessionId && (this.opts.visible?.() ?? true);
+  }
+
+  get sessionId(): string | undefined { return this.shown; }
+
+  // A page that has its init state can play the attention chime now; a queued one would chime late, after a reload
+  get ready(): boolean { return this.pageReady; }
 
   // Editor state from the extension itself (never through the sidecar): selection, copy, "Add to chat"
   postShell(m: HostMsg) {
