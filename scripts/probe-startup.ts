@@ -217,7 +217,8 @@ async function once(v: (typeof variants)[number], port: number): Promise<Row> {
     await waitHttp(`http://127.0.0.1:${port}/host-preview/shim.js`);
     const cdpPort = port + 1000;
     const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${cdpPort}`, '--window-size=1000,900', '--no-first-run', '--no-default-browser-check',
-      '--disable-extensions', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', `--user-data-dir=${profile}`,
+      // --use-mock-keychain: never touch the macOS keychain, which prompts on every launch when HOME points at a fake home
+      '--disable-extensions', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--use-mock-keychain', `--user-data-dir=${profile}`,
       ...(dpr ? [`--force-device-scale-factor=${dpr}`] : []), 'about:blank'], { stdio: 'ignore' });
     procs.push(chrome);
     await waitHttp(`http://127.0.0.1:${cdpPort}/json/version`);
