@@ -62,6 +62,10 @@ pub struct StorageSession {
   pub subagents: Option<u32>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub blocked: Option<StorageBlock>,
+  /// Open in this engine (a tab or the sidebar shows it): its transcript in memory would write the texts back, so it
+  /// cannot be slimmed until closed; deleting it is fine
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub open: bool,
   /// What slimming would free; only with the slim detail
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub slim: Option<u64>,

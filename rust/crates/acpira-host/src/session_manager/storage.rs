@@ -125,6 +125,7 @@ impl SessionManager {
           bytes: usage.get(&s.id).map(|u| u.total()).unwrap_or(0),
           subagents: (f.subagents > 0).then_some(f.subagents),
           blocked: self.storage_block(&s.id, s.pinned.unwrap_or(false)),
+          open: self.live(&s.id).is_some(),
           slim: if slim { f.slim } else { None },
           id: s.id,
           title: s.title,
@@ -234,7 +235,41 @@ impl SessionManager {
     }
   }
 
-  async fn storage_slim(self: &Arc<Self>, _ids: &[String], _outcome: &mut StorageOutcome) {}
+  /// Rewrite each record without its whole-file diff texts, the way a page gets it (`encode_for_view`); the diff lines
+  /// stay. Pinned sessions may be slimmed (nothing visible goes); a session running, held elsewhere or open here is not
+  async fn storage_slim(self: &Arc<Self>, ids: &[String], outcome: &mut StorageOutcome) {
+    for id in ids {
+      match self.slim_record(id).await {
+        Ok(freed) => {
+          outcome.freed += freed;
+          outcome.done.push(id.clone());
+        }
+        Err(e) => outcome.skipped.push(StorageSkip { id: id.clone(), reason: format!("{e:#}") }),
+      }
+    }
+  }
+
+  async fn slim_record(self: &Arc<Self>, id: &str) -> Result<u64> {
+    match self.storage_block(id, false) {
+      Some(b) => return Err(anyhow::anyhow!(block_reason(b))),
+      None if self.live(id).is_some() => return Err(anyhow::anyhow!(t("host.storage.open"))),
+      None => {}
+    }
+    let _hold = self.hold_record(id).await?;
+    let path = self.deps.store.dir().join(format!("{id}.json"));
+    let before = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    let record = self.deps.store.load_detailed(id).await.map_err(|e| anyhow::anyhow!(e.detail()))?;
+    let slim = acpira_shared::transcript::encode_for_view(|| serde_json::to_vec(&record))?;
+    // Nothing to drop: leave the file (and its stamp) as it is
+    if slim.len() >= serde_json::to_vec(&record)?.len() {
+      return Ok(0);
+    }
+    // Read back, every source is `omitted` and serializes as such from now on
+    let slimmed: crate::store::record::SessionRecord = serde_json::from_slice(&slim)?;
+    self.deps.store.flush(Arc::new(slimmed)).await?;
+    let after = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(before);
+    Ok(before.saturating_sub(after))
+  }
 
   /// The data root, or a place inside it (or a leftover the scan lists): never an arbitrary path from the page
   pub async fn storage_reveal(self: &Arc<Self>, path: Option<String>) -> Result<PathBuf> {

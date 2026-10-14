@@ -1934,8 +1934,10 @@ impl SessionManager {
 
   /// The whole files behind a diff a page was sent without them: the open session (or the read-only copy shown for it)
   /// holds them. A ChatGPT mirror's view carries its sources whole and never asks
+  /// A source the Storage tab slimmed away (`omitted` in the record) has no texts left: none is sent, so the page copies
+  /// what it shows
   pub fn diff_source(&self, session_id: &str, tool_call_id: &str, nth: usize, subagent: Option<&str>) -> Option<DiffSource> {
-    self.live(session_id).or_else(|| self.mirror_of(session_id))?.diff_source(tool_call_id, nth, subagent)
+    self.live(session_id).or_else(|| self.mirror_of(session_id))?.diff_source(tool_call_id, nth, subagent).filter(|s| !s.omitted)
   }
 
   pub fn plan_document(&self, session_id: &str, plan_id: &str) -> Option<PlanDocumentBlock> {

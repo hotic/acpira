@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { ArrowDownWideNarrow, CalendarClock, Check, ChevronLeft, Trash2 } from 'lucide-react';
 import {
   STORAGE_RESIDUE_KINDS, STORAGE_SEGMENTS, formatBytes,
-  type StorageBlock, type StorageOutcome, type StorageResidue, type StorageResidueKind, type StorageSegmentKind, type StorageSession, type StorageView,
+  type StorageAction, type StorageBlock, type StorageDetail, type StorageOutcome, type StorageResidue, type StorageResidueKind, type StorageSegmentKind, type StorageSession, type StorageView,
 } from '@shared/storage';
 import type { MsgKey } from '@shared/i18n';
 import type { AgentInfo } from '@shared/transcript';
@@ -55,7 +55,7 @@ export interface StoragePageProps {
   on: SettingsHandlers;
 }
 
-type Review = 'old' | 'residue';
+type Review = 'old' | 'slim' | 'residue';
 
 export function StoragePage({ state, agents, env, on }: StoragePageProps) {
   const [open, setOpen] = useState<Review>();
@@ -63,7 +63,7 @@ export function StoragePage({ state, agents, env, on }: StoragePageProps) {
   const reveal = (path?: string) => on.storageAction?.({ kind: 'reveal', path });
   const error = state?.error && <Section><Note><span className="truncate text-danger" title={state.error}>{state.error}</span></Note></Section>;
   const back = () => setOpen(undefined);
-  if (open === 'old') return <>{error}<SessionReview state={state} agents={agents} on={on} onBack={back} /></>;
+  if (open === 'old' || open === 'slim') return <>{error}<SessionReview key={open} mode={open === 'slim' ? 'slim' : 'delete'} state={state} agents={agents} on={on} onBack={back} /></>;
   if (open === 'residue') return <>{error}<ResidueReview state={state} env={env} on={on} onBack={back} /></>;
   return <Measured on={on}>
     {error}
@@ -84,6 +84,7 @@ function Cleanup({ view, onOpen }: { view?: StorageView; onOpen: (r: Review) => 
   return (
     <Section title={t('storage.cleanup')}>
       <ItemRow title={t('storage.old.title')} desc={t('storage.old.entry')} onClick={() => onOpen('old')} />
+      <ItemRow title={t('storage.slim.title')} desc={t('storage.slim.entry')} onClick={() => onOpen('slim')} />
       <ItemRow title={t('storage.residue.title')} onClick={() => onOpen('residue')}
         desc={!reclaim ? t('storage.pending') : reclaim.bytes > 0 ? t('storage.residue.entry', { size: bytes(reclaim.bytes) }) : t('storage.residue.none')} />
     </Section>
@@ -185,8 +186,18 @@ type Sort = 'size' | 'age';
 const AGES: Age[] = ['30', '90', '180', 'all'];
 const DAY = 86_400_000;
 
-function blockText(b: StorageBlock): string {
-  return t(b === 'pinned' ? 'storage.block.pinned' : b === 'running' ? 'storage.block.running' : 'storage.block.elsewhere');
+type Block = StorageBlock | 'open';
+
+function blockText(b: Block): string {
+  return t(b === 'pinned' ? 'storage.block.pinned' : b === 'running' ? 'storage.block.running' : b === 'open' ? 'storage.block.open' : 'storage.block.elsewhere');
+}
+
+// What keeps a row from being picked. Deleting keeps pinned sessions; slimming takes them (nothing visible goes) but
+// not a session open here, whose transcript in memory would write the texts back
+function blockOf(s: StorageSession, mode: SessionMode): Block | undefined {
+  if (mode === 'delete') return s.blocked;
+  if (s.blocked && s.blocked !== 'pinned') return s.blocked;
+  return s.open ? 'open' : undefined;
 }
 
 // How long ago, in the UI locale: days under two months, then months, then years
@@ -199,32 +210,49 @@ function since(iso: string): string {
   return rtf.format(-Math.round(days / 365), 'year');
 }
 
-// The sessions of one age range, largest or oldest first; a pick runs through the engine's soft delete, so the toast can undo it
-function SessionReview({ state, agents, on, onBack }: { state?: StorageState; agents: AgentInfo[]; on: SettingsHandlers; onBack: () => void }) {
-  useEffect(() => { on.storage?.(['sessions']); }, [on]);
+// The two session reviews share one page: old sessions are deleted through the engine's soft delete (the toast can
+// undo it), slimming rewrites records without their whole-file diff texts and has no undo
+type SessionMode = 'delete' | 'slim';
+
+const MODE = {
+  delete: { title: 'storage.old.title', desc: 'storage.old.desc', empty: 'storage.old.empty', action: 'storage.delete', kind: 'deleteSessions', detail: ['sessions'] },
+  slim: { title: 'storage.slim.title', desc: 'storage.slim.desc', empty: 'storage.slim.empty', action: 'storage.slim.action', kind: 'slimSessions', detail: ['sessions', 'slim'] },
+} as const satisfies Record<SessionMode, { title: MsgKey; desc: MsgKey; empty: MsgKey; action: MsgKey; kind: StorageAction['kind']; detail: StorageDetail[] }>;
+
+// The sessions of one age range, largest or oldest first; in the slim review the size is what slimming frees and a
+// session with nothing to drop is left out
+// The mode is fixed for the page's life (the parent keys it), so the effects below leave it out of their deps
+function SessionReview({ mode, state, agents, on, onBack }: { mode: SessionMode; state?: StorageState; agents: AgentInfo[]; on: SettingsHandlers; onBack: () => void }) {
+  const m = MODE[mode];
+  const detail: StorageDetail[] = [...m.detail];
+  useEffect(() => { on.storage?.(detail); }, [on]);
   const [age, setAge] = useState<Age>('30');
   const [sort, setSort] = useState<Sort>('size');
   const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ key: number; text: string; undo?: string[] }>();
-  const all = state?.view.sessions;
+  // The slim review waits for the estimates: a list the delete review left behind carries none
+  const all = mode === 'slim' && state?.view.sessions?.some(s => s.slim === undefined) ? undefined : state?.view.sessions;
+  const size = (s: StorageSession) => (mode === 'slim' ? s.slim ?? 0 : s.bytes);
   const rows = useMemo(() => {
     const cutoff = age === 'all' ? Infinity : Date.now() - Number(age) * DAY;
-    const list = (all ?? []).filter(s => age === 'all' || Date.parse(s.updatedAt) < cutoff);
-    return sort === 'size' ? list.sort((a, b) => b.bytes - a.bytes) : list.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+    const list = (all ?? []).filter(s => (age === 'all' || Date.parse(s.updatedAt) < cutoff) && size(s) > 0);
+    return sort === 'size' ? list.sort((a, b) => size(b) - size(a)) : list.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
   }, [all, age, sort]);
-  const pickable = rows.filter(s => !s.blocked);
+  const pickable = rows.filter(s => !blockOf(s, mode));
   const chosen = pickable.filter(s => picked.has(s.id));
-  // The outcome of this page's action: a toast with undo, and the picks that went drop out
+  // The outcome of this page's action: a toast (with undo after a delete), and the picks that went drop out
   const seen = useRef(state?.outcome);
   useEffect(() => {
     setBusy(false);
     const o = state?.outcome;
     if (!o || o === seen.current) return;
     seen.current = o;
-    if (o.action === 'deleteSessions' && o.done.length > 0) {
-      setToast({ key: Date.now(), text: t('storage.deleted', { n: o.done.length }), undo: o.done });
-    } else if (o.action === 'deleteSessions' && o.skipped.length > 0) {
+    if (o.action === m.kind && o.done.length > 0) {
+      setToast(mode === 'delete'
+        ? { key: Date.now(), text: t('storage.deleted', { n: o.done.length }), undo: o.done }
+        : { key: Date.now(), text: t('storage.cleaned', { size: bytes(o.freed) }) });
+    } else if (o.action === m.kind && o.skipped.length > 0) {
       setToast({ key: Date.now(), text: o.skipped[0]!.reason });
     }
     if (o.action === 'restoreSessions') setToast(undefined);
@@ -233,38 +261,42 @@ function SessionReview({ state, agents, on, onBack }: { state?: StorageState; ag
   const toggle = (id: string) => setPicked(p => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const everything = pickable.length > 0 && chosen.length === pickable.length;
   const name = (id: string) => agents.find(a => a.id === id)?.name ?? id;
-  const meta = (s: StorageSession) => [
-    s.blocked ? blockText(s.blocked) : name(s.agent),
-    since(s.updatedAt),
-    s.subagents ? t('storage.subagents', { n: s.subagents }) : undefined,
-  ].filter(Boolean).join(t('common.metaSep'));
+  const meta = (s: StorageSession) => {
+    const b = blockOf(s, mode);
+    return [
+      b ? blockText(b) : name(s.agent),
+      since(s.updatedAt),
+      s.subagents ? t('storage.subagents', { n: s.subagents }) : undefined,
+    ].filter(Boolean).join(t('common.metaSep'));
+  };
   return <>
-    <ReviewHead title={t('storage.old.title')} onBack={onBack} action={
+    <ReviewHead title={t(m.title)} onBack={onBack} action={
       // One toggle for the order; its tooltip names the order shown
       <IconButton title={t(sort === 'size' ? 'storage.sort.size' : 'storage.sort.age')} aria-label={t('storage.sort.label')}
         onClick={() => setSort(sort === 'size' ? 'age' : 'size')}>
         {sort === 'size' ? <ArrowDownWideNarrow strokeWidth={1.5} /> : <CalendarClock strokeWidth={1.5} />}
       </IconButton>
     } />
-    <Section desc={t('storage.old.desc')}>
+    <Section desc={t(m.desc)}>
       <div className="flex py-(--setting-row-pad)">
         <RadioPills<Age> label={t('storage.age.label')} value={age} onChange={setAge}
           options={AGES.map(a => ({ value: a, label: a === 'all' ? t('storage.age.all') : t('storage.age.days', { n: Number(a) }) }))} />
       </div>
-      <ReviewList loading={!all} empty={t('storage.old.empty')}>
-        {rows.map(s => (
-          <PickRow key={s.id} on={!s.blocked && picked.has(s.id)} disabled={!!s.blocked} onToggle={() => toggle(s.id)}
-            title={s.title || t('storage.untitled')} meta={meta(s)} size={bytes(s.bytes)} />
-        ))}
+      <ReviewList loading={!all} empty={t(m.empty)}>
+        {rows.map(s => {
+          const blocked = !!blockOf(s, mode);
+          return <PickRow key={s.id} on={!blocked && picked.has(s.id)} disabled={blocked} onToggle={() => toggle(s.id)}
+            title={s.title || t('storage.untitled')} meta={meta(s)} size={bytes(size(s))} />;
+        })}
       </ReviewList>
-      <ReviewFooter n={chosen.length} size={chosen.reduce((a, s) => a + s.bytes, 0)} all={everything}
+      <ReviewFooter n={chosen.length} size={chosen.reduce((a, s) => a + size(s), 0)} all={everything}
         onAll={() => setPicked(everything ? new Set() : new Set(pickable.map(s => s.id)))}
-        action={t('storage.delete')} disabled={busy}
-        onAction={() => { setBusy(true); on.storageAction?.({ kind: 'deleteSessions', ids: chosen.map(s => s.id) }, ['sessions']); }} />
+        action={t(m.action)} disabled={busy}
+        onAction={() => { setBusy(true); on.storageAction?.({ kind: m.kind, ids: chosen.map(s => s.id) }, detail); }} />
     </Section>
     {toast && <ShellToast>
       <Toast key={toast.key} text={toast.text} ttl={toast.undo ? UNDO_TTL : undefined} onClose={() => setToast(undefined)}
-        onUndo={toast.undo && (() => { on.storageAction?.({ kind: 'restoreSessions', ids: toast.undo! }, ['sessions']); setToast(undefined); })} />
+        onUndo={toast.undo && (() => { on.storageAction?.({ kind: 'restoreSessions', ids: toast.undo! }, detail); setToast(undefined); })} />
     </ShellToast>}
   </>;
 }
