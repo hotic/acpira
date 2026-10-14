@@ -9,6 +9,7 @@ pub mod catalog;
 pub mod compact;
 pub mod config;
 pub mod llm;
+pub mod mcp;
 #[cfg(feature = "mock")]
 pub mod mock;
 pub mod modes;

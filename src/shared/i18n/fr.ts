@@ -583,6 +583,7 @@ export const fr = {
   'verb.fetch': 'Récupération',
   'verb.switch_mode': 'Changement de mode',
   'verb.other': 'Utilisation d’outil',
+  'verb.mcp': 'Appel à {server}',
   'verb.todo': 'Mise à jour des tâches',
   'verb.ask': 'Question',
   'verb.wait': 'Attente d’une commande en arrière-plan',

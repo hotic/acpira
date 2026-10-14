@@ -28,7 +28,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
 
-use crate::llm::{Item, Native, Part, ToolCall};
+use crate::llm::{Image, Item, Native, Part, ToolCall};
 
 pub const FORMAT: u32 = 1;
 
@@ -210,7 +210,14 @@ pub fn item_json(item: &Item) -> Value {
       }
       v
     }
-    Item::ToolResult { call_id, name, content, is_error } => json!({ "role": "tool", "id": call_id, "name": name, "content": content, "error": is_error }),
+    Item::ToolResult { call_id, name, content, is_error, images } => {
+      let mut v = json!({ "role": "tool", "id": call_id, "name": name, "content": content, "error": is_error });
+      // Only when there are any: older logs have no such field, and most results never will
+      if !images.is_empty() {
+        v["images"] = images.iter().map(|im| json!({ "image": im.data, "mime": im.mime })).collect();
+      }
+      v
+    }
   }
 }
 
@@ -245,7 +252,19 @@ pub fn item_from(v: &Value) -> Option<Item> {
         Some(Native { origin: n.get("origin")?.as_str()?.to_owned(), blocks: n.get("blocks")?.as_array()?.clone() })
       }),
     },
-    "tool" => Item::ToolResult { call_id: s("id"), name: s("name"), content: s("content"), is_error: v.get("error").and_then(Value::as_bool).unwrap_or(false) },
+    "tool" => Item::ToolResult {
+      call_id: s("id"),
+      name: s("name"),
+      content: s("content"),
+      is_error: v.get("error").and_then(Value::as_bool).unwrap_or(false),
+      images: v
+        .get("images")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|i| Some(Image { data: i.get("image")?.as_str()?.to_owned(), mime: i.get("mime").and_then(Value::as_str).unwrap_or("image/png").to_owned() }))
+        .collect(),
+    },
     _ => return None,
   })
 }
@@ -372,7 +391,9 @@ mod tests {
         tool_calls: vec![ToolCall { id: "c1".into(), name: "bash".into(), arguments: "{}".into() }],
         native: Some(Native { origin: "o".into(), blocks: vec![json!({ "type": "text", "text": "ok" })] }),
       },
-      Item::ToolResult { call_id: "c1".into(), name: "bash".into(), content: "out".into(), is_error: true },
+      Item::ToolResult { call_id: "c1".into(), name: "bash".into(), content: "out".into(), is_error: true, images: vec![] },
+      // An MCP screenshot comes back with its image
+      Item::ToolResult { call_id: "c2".into(), name: "bench_shot".into(), content: "shot".into(), is_error: false, images: vec![Image { mime: "image/png".into(), data: "BB".into() }] },
     ];
     for i in &items {
       store.item(i);
@@ -411,7 +432,7 @@ mod tests {
     let path = dir.path().join("s.jsonl");
     let store = Store::new(path.clone(), "s", Path::new("/w"));
     let call = |id: &str| Item::Assistant { text: String::new(), reasoning: String::new(), tool_calls: vec![ToolCall { id: id.into(), name: "read".into(), arguments: "{}".into() }], native: None };
-    let result = |id: &str| Item::ToolResult { call_id: id.into(), name: "read".into(), content: format!("out {id}"), is_error: false };
+    let result = |id: &str| Item::ToolResult { call_id: id.into(), name: "read".into(), content: format!("out {id}"), is_error: false, images: vec![] };
     for i in [Item::User(vec![Part::Text("one".into())]), call("c1"), result("c1"), Item::User(vec![Part::Text("two".into())]), call("c2"), result("c2")] {
       store.item(&i);
     }

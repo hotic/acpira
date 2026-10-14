@@ -601,6 +601,7 @@ mod tests {
       kind,
       verb: String::new(),
       verb_key: None,
+      mcp_server: None,
       target: target.map(str::to_owned),
       target_mono: None,
       locations: Some(paths.iter().map(|p| Location { path: (*p).to_owned(), line: None }).collect()),

@@ -589,6 +589,7 @@ export const en = {
   'verb.fetch': 'Fetch',
   'verb.switch_mode': 'Switch mode',
   'verb.other': 'Use tool',
+  'verb.mcp': 'Call {server}',
   // A todo-list tool is recognized by name regardless of the kind the agent filed it under
   'verb.todo': 'Update todos',
   // The agent's ask-user-question tool, recognized by name too

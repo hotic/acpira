@@ -25,11 +25,11 @@ const ALIASES: &[(&str, &[&str])] = &[
 ];
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Resolved {
+pub enum Resolved<'a> {
   /// The name as given
-  Exact(&'static str),
+  Exact(&'a str),
   /// Read as this tool
-  Corrected(&'static str),
+  Corrected(&'a str),
   /// The message for the model
   Unknown(String),
 }
@@ -42,11 +42,19 @@ fn by_folded(key: &str) -> Option<&'static str> {
   ALL.into_iter().find(|t| fold(t) == key).or_else(|| ALIASES.iter().find(|(_, names)| names.contains(&key)).map(|(t, _)| *t))
 }
 
-/// The tool a model-given name stands for among `tools` (the turn's set)
-pub fn resolve(name: &str, tools: &[&'static str]) -> Resolved {
+/// The tool a model-given name stands for among `tools` (the turn's set: the built-in tools, then the MCP servers'
+/// `<server>_<tool>` names)
+pub fn resolve<'a>(name: &str, tools: &[&'a str]) -> Resolved<'a> {
   let available = || tools.join(", ");
   if let Some(t) = tools.iter().find(|t| **t == name) {
     return Resolved::Exact(t);
+  }
+  // An MCP tool written another harness's way (`blockbench.screenshot`, `mcp__blockbench__screenshot`) or in another
+  // case: the same letters and digits as exactly one of them
+  let key = fold(name);
+  let mcp: Vec<&'a str> = tools.iter().copied().filter(|t| !ALL.contains(t) && (fold(t) == key || key.strip_prefix("mcp") == Some(fold(t).as_str()))).collect();
+  if let [one] = mcp[..] {
+    return Resolved::Corrected(one);
   }
   // A real tool that the current mode does not offer
   if let Some(t) = ALL.into_iter().find(|t| *t == name) {
@@ -54,7 +62,7 @@ pub fn resolve(name: &str, tools: &[&'static str]) -> Resolved {
   }
   // A namespace in front (`functions.read`, `default_api:read`, `tools/read`) is dropped first
   let bare = name.rsplit(['.', ':', '/']).next().unwrap_or(name);
-  if let Some(t) = by_folded(&fold(bare)).filter(|t| tools.contains(t)) {
+  if let Some(t) = by_folded(&fold(bare)).and_then(|t| tools.iter().copied().find(|x| *x == t)) {
     return Resolved::Corrected(t);
   }
   // Then the words of the name (`bash_tool`, `ReadFileTool`): a single tool among them is the one meant
@@ -76,7 +84,7 @@ pub fn resolve(name: &str, tools: &[&'static str]) -> Resolved {
   }
   // Adjacent pairs too, so `read_file_tool` finds `readfile`
   let pairs: Vec<String> = words.windows(2).map(|w| format!("{}{}", w[0], w[1])).collect();
-  let mut hits: Vec<&'static str> = words.iter().chain(&pairs).filter_map(|w| by_folded(w)).filter(|t| tools.contains(t)).collect();
+  let mut hits: Vec<&'a str> = words.iter().chain(&pairs).filter_map(|w| by_folded(w)).filter_map(|t| tools.iter().copied().find(|x| *x == t)).collect();
   hits.sort_unstable();
   hits.dedup();
   match hits[..] {
@@ -118,5 +126,15 @@ mod tests {
     assert!(m.contains("not available in the current mode"), "{m}");
     assert!(matches!(resolve("ExitPlanMode"), Resolved::Unknown(_)));
     assert_eq!(super::resolve("ExitPlanMode", &ALL), Resolved::Corrected(EXIT_PLAN));
+  }
+
+  #[test]
+  fn mcp_tools_are_found_under_other_harnesses_names() {
+    let tools = [READ, BASH, "blockbench_screenshot", "acpira_show_image"];
+    for given in ["blockbench.screenshot", "mcp__blockbench__screenshot", "Blockbench_Screenshot"] {
+      assert_eq!(resolve(given, &tools), Resolved::Corrected("blockbench_screenshot"), "{given}");
+    }
+    assert_eq!(resolve("acpira_show_image", &tools), Resolved::Exact("acpira_show_image"));
+    assert!(matches!(resolve("screenshot", &tools), Resolved::Unknown(_)));
   }
 }

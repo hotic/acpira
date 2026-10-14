@@ -55,6 +55,8 @@ pub struct SessionState {
   pub titled: bool,
   /// The first item is a compaction's summary (`compact.rs`)
   pub summarized: bool,
+  /// The MCP note (servers' instructions, the ones that failed) the model was last told, in a user message like the mode
+  pub mcp_note: Option<String>,
   /// Messages steered into the running turn (`_session/steering`, each one's content blocks) that no model call has
   /// carried yet. The turn takes them before its next call (`steer::take`); any left when the turn ends go into
   /// the history for the next one
@@ -72,6 +74,8 @@ pub struct Session {
   tool_seq: AtomicU64,
   /// Background commands started in this session; dropping the session stops them
   pub jobs: Arc<crate::tools::jobs::Jobs>,
+  /// The MCP servers the client handed this session, started when it opened
+  pub mcp: Arc<crate::mcp::Hub>,
 }
 
 impl Session {
@@ -181,6 +185,8 @@ impl Server {
         "loadSession": true,
         "promptCapabilities": { "image": true, "embeddedContext": true },
         "sessionCapabilities": { "list": {}, "resume": {} },
+        // stdio is always spoken; the legacy SSE transport is not (`mcp/mod.rs`)
+        "mcpCapabilities": { "http": true, "sse": false },
       },
       "authMethods": [],
       // The steering extension claude-agent-acp and codex-acp implement, advertised at the top level as they do
@@ -228,7 +234,8 @@ impl Server {
     // The file starts with the first event; the prompt goes first so a reopen keeps the very same text
     store.prelude(json!({ "type": "prompt", "variant": state.prompt.variant, "version": state.prompt.version, "digest": state.prompt.digest,
       "text": state.prompt.text, "sampling": state.prompt.sampling, "thinking": state.prompt.thinking }));
-    let session = Session { id: id.clone(), cwd: PathBuf::from(cwd), state: parking_lot::Mutex::new(state), store, tool_seq: AtomicU64::new(0), jobs: Default::default() };
+    let mcp = crate::mcp::Hub::start(params.get("mcpServers").unwrap_or(&Value::Null), std::path::Path::new(cwd));
+    let session = Session { id: id.clone(), cwd: PathBuf::from(cwd), state: parking_lot::Mutex::new(state), store, tool_seq: AtomicU64::new(0), jobs: Default::default(), mcp };
     // The starting controls too: a reopen must not take a default that changed in the meantime
     session.save_state(&session.state.lock());
     self.sessions.lock().insert(id.clone(), Arc::new(session));
@@ -263,7 +270,7 @@ impl Server {
           return Err(gone());
         }
         let cwd = params.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty()).map(PathBuf::from).unwrap_or(loaded.cwd.clone());
-        let session = Arc::new(self.revive(id, cwd, &loaded, path));
+        let session = Arc::new(self.revive(id, cwd, &loaded, path, params.get("mcpServers").unwrap_or(&Value::Null)));
         self.sessions.lock().insert(id.to_owned(), session.clone());
         (session, loaded.updates)
       }
@@ -285,7 +292,7 @@ impl Server {
   }
 
   /// A session object from its file: the history, the controls and the system prompt as they were
-  fn revive(&self, id: &str, cwd: PathBuf, loaded: &store::Loaded, path: PathBuf) -> Session {
+  fn revive(&self, id: &str, cwd: PathBuf, loaded: &store::Loaded, path: PathBuf, mcp_servers: &Value) -> Session {
     let config = self.config.get();
     let catalog = self.catalog.get();
     let s = |k: &str| loaded.state.get(k).and_then(Value::as_str).map(str::to_owned);
@@ -326,7 +333,8 @@ impl Server {
       .filter_map(|u| u.get("toolCallId").and_then(Value::as_str)?.strip_prefix("call-")?.parse::<u64>().ok())
       .max()
       .unwrap_or(0);
-    Session { id: id.to_owned(), cwd, state: parking_lot::Mutex::new(st), store, tool_seq: AtomicU64::new(seq), jobs: Default::default() }
+    let mcp = crate::mcp::Hub::start(mcp_servers, &cwd);
+    Session { id: id.to_owned(), cwd, state: parking_lot::Mutex::new(st), store, tool_seq: AtomicU64::new(seq), jobs: Default::default(), mcp }
   }
 
   /// `session/list`: this data root's sessions with at least one message, newest first, filtered by `cwd` when given
@@ -471,7 +479,8 @@ impl Server {
   }
 
   /// The client went away or the process was told to exit: cancel every running turn (dropping a turn kills its
-  /// foreground command's process group) and stop every background job, then wait briefly for the turns to unwind.
+  /// foreground command's process group), stop every background job and MCP server, then wait briefly for the turns to
+  /// unwind.
   /// Done before `run` returns, since an exit by signal would skip the `Drop` impls that otherwise clean up
   pub async fn close(&self) {
     let sessions: Vec<Arc<Session>> = self.sessions.lock().values().cloned().collect();
@@ -480,6 +489,7 @@ impl Server {
         c.cancel();
       }
       s.jobs.stop_all();
+      s.mcp.close();
     }
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
     while sessions.iter().any(|s| s.state.lock().turn.is_some()) && tokio::time::Instant::now() < deadline {

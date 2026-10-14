@@ -195,6 +195,55 @@ async fn slash_compact_summarizes_everything_and_the_session_reopens_compacted()
 }
 
 #[tokio::test]
+async fn the_fast_model_writes_the_summary_and_the_sessions_model_takes_over_when_it_fails() {
+  let h = Harness::start().await;
+  let (main, fast) = (MockModel::start(), MockModel::start());
+  // The settings page's fast model: a second source with a smaller window than the session's model
+  let source = |id: &str, url: String, model: Value| json!({ "id": id, "name": id, "baseUrl": url, "models": [model] });
+  std::fs::write(
+    h.home().join("providers.json"),
+    json!({ "version": 1, "fastModel": "fast/f1", "providers": [
+      source("mock", main.base_url(), json!({ "id": "m1", "context": 64000 })),
+      source("fast", fast.base_url(), json!({ "id": "f1", "context": 16000 })),
+    ] })
+    .to_string(),
+  )
+  .unwrap();
+  std::fs::write(h.home().join("secrets.json"), json!({ "acpira.provider.mock": "sk-main", "acpira.provider.fast": "sk-fast" }).to_string()).unwrap();
+  let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
+  // The first prompt also asks the fast model for a title, beside the turn
+  fast.push(mock::text("Title"));
+  main.push(mock::text("A done")).push(mock::text("B done"));
+  prompt(&h, &sid, "first task", true, 0).await;
+  prompt(&h, &sid, "second task", true, 0).await;
+  until(|| fast.requests().len() == 1).await;
+
+  // /compact: the summary comes from the fast model with its own key, and the session's model is not called
+  fast.push(mock::text("## Objective\n- fast summary"));
+  assert_eq!(prompt(&h, &sid, "/compact", true, 0).await["stopReason"], "end_turn");
+  let reqs = fast.requests();
+  assert_eq!((reqs.len(), main.requests().len()), (2, 2));
+  assert_eq!((reqs[1].header("authorization"), reqs[1].body["model"].as_str()), (Some("Bearer sk-fast"), Some("f1")));
+  assert!(user_texts(&reqs[1]).join("\n").contains("[User]: second task"));
+  let ev = log(&h, &sid).into_iter().find(|e| e["type"] == "compaction").unwrap();
+  assert_eq!((ev["model"].as_str(), ev["summary"].as_str()), (Some("fast/f1"), Some("## Objective\n- fast summary")));
+  assert!(ev.get("fallback").is_none());
+
+  // The fast model fails: the session's model writes the summary in the same compaction, and the log says why
+  main.push(mock::text("C done"));
+  prompt(&h, &sid, "third task", true, 0).await;
+  fast.push(Reply::Status(500, "down".into()));
+  main.push(mock::text("## Objective\n- main summary"));
+  prompt(&h, &sid, "/compact", true, 0).await;
+  let ups = compaction_updates(&h);
+  assert_eq!(ups.iter().map(|u| u["status"].as_str().unwrap()).collect::<Vec<_>>(), ["in_progress", "completed", "in_progress", "completed"]);
+  assert_eq!(main.requests()[3].body["model"], "m1");
+  let ev = log(&h, &sid).into_iter().filter(|e| e["type"] == "compaction").last().unwrap();
+  assert_eq!((ev["model"].as_str(), ev["fallback"]["model"].as_str()), (Some("mock/m1"), Some("fast/f1")));
+  assert!(ev["fallback"]["error"].as_str().is_some_and(|e| e.contains("500")), "{ev}");
+}
+
+#[tokio::test]
 async fn an_overflowing_request_is_compacted_and_sent_again() {
   let (h, server, sid) = setup(json!([{ "id": "m1", "context": 64000 }])).await;
   server.push(mock::text("A done")).push(mock::text("B done"));

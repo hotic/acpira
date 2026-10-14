@@ -605,6 +605,7 @@ export const zhCN = {
   'verb.fetch': '抓取',
   'verb.switch_mode': '切换模式',
   'verb.other': '调用工具',
+  'verb.mcp': '调用 {server}',
   // A todo-list tool is recognized by name regardless of the kind the agent filed it under
   'verb.todo': '更新待办',
   'verb.ask': '提问',

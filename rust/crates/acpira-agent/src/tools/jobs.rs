@@ -255,7 +255,7 @@ mod tests {
   use super::*;
 
   fn ctx(dir: &Path) -> Ctx {
-    Ctx { cwd: dir.to_owned(), outputs: dir.join("outputs"), call_id: "j".into(), progress: Box::new(|_| {}), jobs: Arc::new(Jobs::default()), search: Default::default() }
+    Ctx { cwd: dir.to_owned(), outputs: dir.join("outputs"), call_id: "j".into(), progress: std::sync::Arc::new(|_| {}), jobs: Arc::new(Jobs::default()), search: Default::default(), mcp: Default::default() }
   }
 
   #[tokio::test]

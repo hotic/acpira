@@ -790,7 +790,7 @@ mod tests {
   #[test]
   fn fetching_follows_redirects_converts_pages_and_saves_files() {
     let dir = tempfile::tempdir().unwrap();
-    let ctx = Ctx { cwd: dir.path().to_owned(), outputs: dir.path().join("outputs"), call_id: "f:1".into(), progress: Box::new(|_| {}), jobs: Default::default(), search: Default::default() };
+    let ctx = Ctx { cwd: dir.path().to_owned(), outputs: dir.path().join("outputs"), call_id: "f:1".into(), progress: std::sync::Arc::new(|_| {}), jobs: Default::default(), search: Default::default(), mcp: Default::default() };
     let base = serve();
     let out = fetch(&format!("{base}/moved"), Format::Markdown, 10, true, &ctx);
     assert!(!out.is_error, "{}", out.model);

@@ -84,8 +84,16 @@ pub fn body(req: &Request, family: &Family, origin: &str) -> Value {
           messages.push(json!({ "role": "assistant", "content": blocks }));
         }
       }
-      Item::ToolResult { call_id, content, is_error, .. } => {
-        let mut block = json!({ "type": "tool_result", "tool_use_id": call_id, "content": if content.is_empty() { "(no output)" } else { content } });
+      Item::ToolResult { call_id, content, is_error, images, .. } => {
+        let text = if content.is_empty() { "(no output)" } else { content };
+        let body = if images.is_empty() {
+          Value::from(text)
+        } else {
+          let mut blocks = vec![json!({ "type": "text", "text": text })];
+          blocks.extend(images.iter().map(|im| json!({ "type": "image", "source": { "type": "base64", "media_type": im.mime, "data": im.data } })));
+          Value::Array(blocks)
+        };
+        let mut block = json!({ "type": "tool_result", "tool_use_id": call_id, "content": body });
         if *is_error {
           block["is_error"] = Value::Bool(true);
         }
@@ -498,7 +506,7 @@ mod tests {
   }
 
   fn result(id: &str, content: &str) -> Item {
-    Item::ToolResult { call_id: id.into(), name: "read".into(), content: content.into(), is_error: false }
+    Item::ToolResult { call_id: id.into(), name: "read".into(), content: content.into(), is_error: false, images: vec![] }
   }
 
   fn signed_call(id: &str, origin: &str) -> Item {
@@ -515,6 +523,16 @@ mod tests {
         ],
       }),
     }
+  }
+
+  #[test]
+  fn a_tool_results_images_stay_inside_it() {
+    let shot = Item::ToolResult { call_id: "t1".into(), name: "bench_shot".into(), content: "shot".into(), is_error: false, images: vec![super::super::Image { mime: "image/png".into(), data: "AA".into() }] };
+    let b = body(&req(vec![user("look"), signed_call("t1", ORIGIN), shot]), &claude(), ORIGIN);
+    assert_eq!(b["messages"][2]["content"][0]["content"], json!([
+      { "type": "text", "text": "shot" },
+      { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "AA" } },
+    ]));
   }
 
   #[test]

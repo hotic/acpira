@@ -214,6 +214,9 @@ export interface ToolCallBlock {
   verb: string;
   // Set when the verb comes from the tool's identity (e.g. a todo-list tool filed under kind "think") rather than its ACP kind; renders in the current UI locale
   verbKey?: MsgKey;
+  // The MCP server the call went to, as a label (`Blockbench`): the row reads "Call Blockbench" with the tool's title as
+  // its target, whichever adapter naming the call came in
+  mcpServer?: string;
   target?: string;
   targetMono?: boolean;
   // Preserve ACP file references independently of the compact heading target.

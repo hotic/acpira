@@ -598,6 +598,7 @@ export const ru = {
   'verb.fetch': 'Загрузка',
   'verb.switch_mode': 'Смена режима',
   'verb.other': 'Вызов инструмента',
+  'verb.mcp': 'Вызов {server}',
   'verb.todo': 'Обновление задач',
   'verb.ask': 'Вопрос',
   'verb.wait': 'Ожидание фоновой команды',

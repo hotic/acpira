@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use acpira_rpc::cancel::Cancel;
 use acpira_rpc::rpc::RpcError;
 use acpira_shared::model_catalog::Cost;
-use acpira_shared::providers::{Provider, ProviderModel, Sampling, Thinking};
+use acpira_shared::providers::{Provider, ProviderModel, Sampling, Thinking, model_pick};
 
 use crate::acp::{Server, Session, SessionState};
 use crate::compact::{self, Policy, Reason};
@@ -148,7 +148,7 @@ pub(crate) fn settle(st: &mut SessionState) {
   let Item::Assistant { tool_calls, .. } = &st.items[last_call] else { return };
   let missing: Vec<ToolCall> = tool_calls.iter().filter(|c| !answered.contains(c.id.as_str())).cloned().collect();
   for c in missing {
-    st.items.push(Item::ToolResult { call_id: c.id, name: c.name, content: "Cancelled by the user before it finished.".into(), is_error: true });
+    st.items.push(Item::ToolResult { call_id: c.id, name: c.name, content: "Cancelled by the user before it finished.".into(), is_error: true, images: vec![] });
   }
 }
 
@@ -177,9 +177,20 @@ struct Setup {
   policy: Policy,
   /// The skills found at the start of the turn (`skills.rs`); with any, `skill` is among the tools
   skills: Vec<Skill>,
+  /// The MCP servers' tools, offered after the built-in ones (`mcp.rs`)
+  mcp: Vec<crate::mcp::Tool>,
+  /// The model takes images, so images an MCP tool returns go to it
+  images: bool,
 }
 
-fn setup(server: &Server, session: &Session, params: &Value) -> Result<Setup, String> {
+impl Setup {
+  /// Every tool name of the turn, built-in first
+  fn names(&self) -> Vec<&str> {
+    self.tools.iter().copied().chain(self.mcp.iter().map(|t| t.name.as_str())).collect()
+  }
+}
+
+fn setup(server: &Server, session: &Session, params: &Value, mcp: &[crate::mcp::Tool]) -> Result<Setup, String> {
   let config = server.config.get();
   if let Some(e) = &config.error {
     return Err(e.clone());
@@ -230,6 +241,8 @@ fn setup(server: &Server, session: &Session, params: &Value) -> Result<Setup, St
   if !skills.is_empty() {
     specs.push(tools::skill::spec(&skills));
   }
+  specs.extend(mcp.iter().map(crate::mcp::Tool::spec));
+  let images = model.takes_images();
   Ok(Setup {
     pick,
     provider: provider.clone(),
@@ -247,6 +260,8 @@ fn setup(server: &Server, session: &Session, params: &Value) -> Result<Setup, St
     rules,
     policy: Policy::from_prompt(params),
     skills,
+    mcp: mcp.to_vec(),
+    images,
   })
 }
 
@@ -262,9 +277,21 @@ pub(crate) fn prompt_text(prompt: &Value) -> String {
     .join("\n")
 }
 
-/// The summary call of a compaction: the turn's model without its tools
+/// A compaction's models: the turn's model sets the tail; the summary is written by the fast model of the settings
+/// page when one is set and usable (read at the moment, like the title's), then by the turn's model when that fails
 fn summary_call<'a>(server: &Server, s: &'a Setup) -> compact::Call<'a> {
-  compact::Call { http: server.http.clone(), endpoint: s.endpoint.clone(), model: &s.model, pick: &s.pick, cost: s.cost.as_ref() }
+  let mut writers = Vec::with_capacity(2);
+  let config = server.config.get();
+  if let Some((provider, model)) = config.fast_model()
+    && model_pick(&provider.id, &model.id) != s.pick
+    && let Some(endpoint) = Endpoint::of(provider, model, config.api_key(&provider.id))
+  {
+    let mut model = model.clone();
+    let cost = crate::catalog::complete(&mut model, &server.catalog.get());
+    writers.push(compact::Writer { endpoint, pick: model_pick(&provider.id, &model.id), model, cost });
+  }
+  writers.push(compact::Writer { endpoint: s.endpoint.clone(), model: s.model.clone(), pick: s.pick.clone(), cost: s.cost });
+  compact::Call { http: server.http.clone(), model: &s.model, writers }
 }
 
 /// The context after a compaction, as an estimate until the next call reports it
@@ -299,7 +326,9 @@ fn refresh_limits(server: &Server, s: &mut Setup) {
 }
 
 async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stats: &Arc<parking_lot::Mutex<Stats>>) -> Result<Stop, String> {
-  let mut s = setup(server, session, params)?;
+  // The MCP servers still starting are waited for here, so the tool set is complete from the first request on
+  let offer = session.mcp.offer(&tools::names::ALL).await;
+  let mut s = setup(server, session, params, &offer.tools)?;
   let prompt = params.get("prompt").unwrap_or(&Value::Null);
   let text = prompt_text(prompt);
   // /compact summarizes the history and ends the turn; nothing of it enters the history
@@ -329,6 +358,16 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       match parts.first_mut() {
         Some(Part::Text(t)) => *t = format!("<mode>\n{overlay}\n</mode>\n\n{t}"),
         _ => parts.insert(0, Part::Text(format!("<mode>\n{overlay}\n</mode>"))),
+      }
+    }
+    // The MCP servers' instructions (and the ones that failed) the same way, when they changed since the model heard
+    if offer.note != st.mcp_note {
+      st.mcp_note = offer.note.clone();
+      if let Some(note) = &offer.note {
+        match parts.first_mut() {
+          Some(Part::Text(t)) => *t = format!("<mcp>\n{note}\n</mcp>\n\n{t}"),
+          _ => parts.insert(0, Part::Text(format!("<mcp>\n{note}\n</mcp>"))),
+        }
       }
     }
     let item = Item::User(parts);
@@ -405,7 +444,12 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
           }
           Ok(Event::ToolCallStart { id, name }) => {
             let acp = session.next_tool_id();
-            server.update(&session.id, json!({ "sessionUpdate": "tool_call", "toolCallId": acp, "title": call_title(&name, s.tools), "kind": kind_of(&name, s.tools), "status": "pending" }));
+            let names = s.names();
+            let mut call = json!({ "sessionUpdate": "tool_call", "toolCallId": acp, "title": call_title(&name, &names), "kind": kind_of(&name, &names), "status": "pending" });
+            if let Some(meta) = mcp_meta(&name, &s) {
+              call["_meta"] = meta;
+            }
+            server.update(&session.id, call);
             ids.insert(id, acp);
           }
           Ok(Event::Done { reply, stop, usage }) => {
@@ -515,7 +559,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       // after a rejected card, where the message is the direction the model was told to wait for
       Flow::Stop => {}
       // The approved plan is carried out in this turn, with Agent mode's tools and rules
-      Flow::Switched => s = setup(server, session, params)?,
+      Flow::Switched => s = setup(server, session, params, &offer.tools)?,
     }
   }
 }
@@ -593,7 +637,10 @@ fn approx(system: &str, items: &[Item], tools: &[ToolSpec]) -> u64 {
         }
       }
       Item::Assistant { text, tool_calls, .. } => bytes += text.len() + tool_calls.iter().map(|c| c.name.len() + c.arguments.len()).sum::<usize>(),
-      Item::ToolResult { content, .. } => bytes += content.len(),
+      Item::ToolResult { content, images: shown, .. } => {
+        bytes += content.len();
+        images += shown.len() as u64;
+      }
     }
   }
   bytes += tools.iter().map(|t| t.name.len() + t.description.len() + t.parameters.to_string().len()).sum::<usize>();
@@ -721,16 +768,23 @@ fn describe(source: &str, e: &LlmError) -> String {
 }
 
 /// The tool a model-given name stands for, for display before the call is prepared
-fn shown_name<'a>(name: &'a str, tools: &[&'static str]) -> &'a str {
+fn shown_name<'a>(name: &'a str, tools: &[&'a str]) -> &'a str {
   match names::resolve(name, tools) {
     Resolved::Exact(n) | Resolved::Corrected(n) => n,
     Resolved::Unknown(_) => name,
   }
 }
 
+/// The engine's `acpira/mcp` note for a call of an MCP tool (by the name the model wrote, corrected like any other)
+fn mcp_meta(name: &str, s: &Setup) -> Option<Value> {
+  let names = s.names();
+  let resolved = shown_name(name, &names);
+  s.mcp.iter().find(|t| t.name == resolved).map(crate::mcp::Tool::meta)
+}
+
 /// The title a tool call starts with: the tool's name, except Plan mode's exit, which shows as the plan step the
 /// webview already knows (`Exit plan mode`, localized there) from the first update on
-fn call_title<'a>(name: &'a str, tools: &[&'static str]) -> &'a str {
+fn call_title<'a>(name: &'a str, tools: &[&'a str]) -> &'a str {
   match shown_name(name, tools) {
     tools::EXIT_PLAN => EXIT_PLAN_TITLE,
     // Read as an ask row before the arguments are known
@@ -742,7 +796,7 @@ fn call_title<'a>(name: &'a str, tools: &[&'static str]) -> &'a str {
 const EXIT_PLAN_TITLE: &str = "Exit plan mode";
 
 /// ACP ToolKind for a tool name, before its arguments are known
-fn kind_of(name: &str, tools: &[&'static str]) -> &'static str {
+fn kind_of(name: &str, tools: &[&str]) -> &'static str {
   match shown_name(name, tools) {
     tools::READ | tools::LIST | tools::SKILL => "read",
     tools::WRITE | tools::EDIT => "edit",
@@ -857,6 +911,8 @@ struct Prepared {
   action: Result<Action, String>,
   /// Put before the result: the misnamed call was taken as another tool
   note: Option<String>,
+  /// The `acpira/mcp` note of an MCP call, on its permission card too
+  meta: Option<Value>,
 }
 
 /// How a tool round leaves the turn
@@ -877,15 +933,21 @@ async fn run_tools(
   ids: &mut HashMap<String, String>,
   corrections: &mut u32,
 ) -> Flow {
-  let (rules, tool_names) = (&setup.rules, setup.tools);
+  let (rules, tool_names) = (&setup.rules, setup.names());
+  let tool_names = &tool_names[..];
   let cwd = session.cwd.clone();
   let mut prepared = vec![];
   for call in calls {
+    let meta = mcp_meta(&call.name, setup);
     let acp = match ids.remove(&call.id) {
       Some(a) => a,
       None => {
         let a = session.next_tool_id();
-        server.update(&session.id, json!({ "sessionUpdate": "tool_call", "toolCallId": a, "title": call_title(&call.name, tool_names), "kind": kind_of(&call.name, tool_names), "status": "pending" }));
+        let mut first = json!({ "sessionUpdate": "tool_call", "toolCallId": a, "title": call_title(&call.name, tool_names), "kind": kind_of(&call.name, tool_names), "status": "pending" });
+        if let Some(m) = &meta {
+          first["_meta"] = m.clone();
+        }
+        server.update(&session.id, first);
         a
       }
     };
@@ -904,23 +966,28 @@ async fn run_tools(
     // A bad argument goes back with what was received, so the model can see its own mistake
     let action = name.and_then(|n| {
       let a = args.clone()?;
+      // An MCP tool's arguments are the server's to check against its schema
+      if let Some(t) = setup.mcp.iter().find(|t| t.name == n) {
+        return Ok(tools::mcp::prepare(t, &a, setup.images));
+      }
       tools::prepare(n, &a, &cwd).map_err(|e| format!("{e}. Received arguments: {}", crate::budget::cut(&a.to_string(), 2000)))
     });
     let raw_input = args.unwrap_or_else(|_| Value::String(call.arguments.clone()));
     match &action {
       Ok(a) => {
         let p = a.describe(&cwd);
-        server.update(
-          &session.id,
-          json!({ "sessionUpdate": "tool_call_update", "toolCallId": acp, "title": p.title, "kind": p.kind, "rawInput": raw_input,
-            "locations": p.locations.iter().map(|l| json!({ "path": l })).collect::<Vec<_>>(), "content": p.content }),
-        );
+        let mut update = json!({ "sessionUpdate": "tool_call_update", "toolCallId": acp, "title": p.title, "kind": p.kind, "rawInput": raw_input,
+          "locations": p.locations.iter().map(|l| json!({ "path": l })).collect::<Vec<_>>(), "content": p.content });
+        if let Some(m) = &meta {
+          update["_meta"] = m.clone();
+        }
+        server.update(&session.id, update);
       }
       Err(_) => {
         server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": acp, "rawInput": raw_input }));
       }
     }
-    prepared.push(Prepared { call: call.clone(), acp, action, note });
+    prepared.push(Prepared { call: call.clone(), acp, action, note, meta });
   }
 
   let mut rejected = false;
@@ -938,7 +1005,11 @@ async fn run_tools(
         let Ok(action) = p.action.clone() else { unreachable!() };
         let ctx = ctx_for(server, session, &p.acp);
         server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": "in_progress" }));
-        handles.push(tokio::task::spawn_blocking(move || action.run_sync(ctx)));
+        // An MCP call waits on its server; the rest read files or the network on a blocking thread
+        handles.push(match action {
+          mcp @ Action::Mcp { .. } => tokio::spawn(mcp.run(ctx)),
+          other => tokio::task::spawn_blocking(move || other.run_sync(ctx)),
+        });
       }
       for (p, h) in prepared[start..i].iter().zip(handles) {
         let out = h.await.unwrap_or_else(|e| Output::error(format!("The tool crashed: {e}")));
@@ -1095,7 +1166,8 @@ fn ctx_for(server: &Arc<Server>, session: &Arc<Session>, acp: &str) -> Ctx {
     call_id: acp.to_owned(),
     jobs: session.jobs.clone(),
     search: server.config.get().web_search(),
-    progress: Box::new(move |mut u: Value| {
+    mcp: session.mcp.clone(),
+    progress: Arc::new(move |mut u: Value| {
       u["sessionUpdate"] = "tool_call_update".into();
       u["toolCallId"] = id.clone().into();
       srv.update(&sid, u);
@@ -1127,7 +1199,7 @@ async fn ask(server: &Arc<Server>, session: &Arc<Session>, rules: &Rules, p: &Pr
     options.push(json!({ "optionId": "always", "name": label, "kind": "allow_always" }));
   }
   options.push(json!({ "optionId": "reject", "name": "Reject", "kind": "reject_once" }));
-  let request = json!({
+  let mut request = json!({
     "sessionId": session.id,
     "toolCall": {
       "toolCallId": p.acp, "title": pres.title, "kind": pres.kind, "status": "pending", "rawInput": raw_input,
@@ -1135,6 +1207,9 @@ async fn ask(server: &Arc<Server>, session: &Arc<Session>, rules: &Rules, p: &Pr
     },
     "options": options,
   });
+  if let Some(m) = &p.meta {
+    request["toolCall"]["_meta"] = m.clone();
+  }
   let Ok(r) = server.conn().request("session/request_permission", request).await else { return Answer::Reject };
   if r.pointer("/outcome/outcome").and_then(Value::as_str) != Some("selected") {
     return Answer::Reject;
@@ -1147,7 +1222,21 @@ async fn ask(server: &Arc<Server>, session: &Arc<Session>, rules: &Rules, p: &Pr
 }
 
 /// Report a finished call and add its result to the history
-fn finish(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, out: Output) {
+fn finish(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, mut out: Output) {
+  // An MCP result's images go to the model when it takes them; the card shows them either way
+  let images = match &p.action {
+    Ok(Action::Mcp { images: true, .. }) => tools::mcp::model_images(&out.content),
+    _ => vec![],
+  };
+  for c in &mut out.content {
+    let emptied = c.get_mut("_meta").and_then(Value::as_object_mut).is_some_and(|m| {
+      m.remove("acpira/notForModel");
+      m.is_empty()
+    });
+    if emptied && let Some(o) = c.as_object_mut() {
+      o.remove("_meta");
+    }
+  }
   let mut update = json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": if out.is_error { "failed" } else { "completed" } });
   if !out.content.is_empty() {
     update["content"] = Value::Array(out.content);
@@ -1164,7 +1253,7 @@ fn finish(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, out: Outpu
     Some(note) => format!("{note}\n{}", out.model),
     None => out.model,
   };
-  let item = Item::ToolResult { call_id: p.call.id.clone(), name: p.call.name.clone(), content, is_error: out.is_error };
+  let item = Item::ToolResult { call_id: p.call.id.clone(), name: p.call.name.clone(), content, is_error: out.is_error, images };
   session.store.item(&item);
   session.state.lock().items.push(item);
 }
@@ -1186,7 +1275,7 @@ mod tests {
       ],
       native: None,
     });
-    st.items.push(Item::ToolResult { call_id: "a".into(), name: "read".into(), content: "ok".into(), is_error: false });
+    st.items.push(Item::ToolResult { call_id: "a".into(), name: "read".into(), content: "ok".into(), is_error: false, images: vec![] });
     settle(&mut st);
     assert!(matches!(&st.items[3], Item::ToolResult { call_id, is_error: true, .. } if call_id == "b"));
     st.partial_text = "half an ans".into();
@@ -1204,7 +1293,7 @@ mod tests {
       native: None,
     };
     st.items.push(call("read"));
-    st.items.push(Item::ToolResult { call_id: "c1".into(), name: "read".into(), content: "ok".into(), is_error: false });
+    st.items.push(Item::ToolResult { call_id: "c1".into(), name: "read".into(), content: "ok".into(), is_error: false, images: vec![] });
     st.items.push(call("bash"));
     settle(&mut st);
     assert_eq!(st.items.len(), 4);

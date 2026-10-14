@@ -118,6 +118,7 @@ Consequences implemented: text attachments become marked-up `text` blocks when `
 | OpenCode | 1.18.15 | http, sse | yes | verified |
 | DSH | deepseek-harness-acp 0.0.1 | http | yes | verified |
 | Pi | pi-acp 0.0.33 | none | **no** (the list is ignored) | verified |
+| Acpira (built-in) | acpira 1.10.2 (2026-10-14) | http | yes | verified |
 
 Shared skills and prompts (the Shared tab's wiring, `agent_ext.rs` `AgentExt.shared`):
 
