@@ -59,8 +59,9 @@ export function General({ settings, agents, on }: { settings: SettingsView; agen
 
       <Section title={t('settings.notifications.title')}>
         <Field label={t('settings.notifySound')} desc={t('settings.notifySound.desc')}>
-          {/* Switching it on plays a preview: the user hears it, and the click lets the page's audio start later on its own */}
-          <Switch checked={settings.notifySound} onChange={v => { if (v) playChime(); on.setSetting('notifySound', v); }} label={t('settings.notifySound')} />
+          {/* Switching it on plays a preview: the user hears it, and the click lets the page's audio start later on its own.
+              The setting is saved first, so the switch flips even if audio output is slow to come up */}
+          <Switch checked={settings.notifySound} onChange={v => { on.setSetting('notifySound', v); if (v) playChime(); }} label={t('settings.notifySound')} />
         </Field>
         <Field label={t('settings.notifySystem')} desc={t('settings.notifySystem.desc')}>
           <Switch checked={settings.notifySystem} onChange={v => on.setSetting('notifySystem', v)} label={t('settings.notifySystem')} />
