@@ -251,7 +251,7 @@ async fn connect(spec: &Spec, cwd: &Path) -> Result<Arc<Live>, String> {
   let stale = Arc::new(AtomicBool::new(false));
   let transport = match spec {
     Spec::Stdio { name, command, args, env } => Transport::Stdio(stdio::Stdio::spawn(name, command, args, env, cwd, stale.clone())?),
-    Spec::Http { url, headers, .. } => Transport::Http(Arc::new(http::Http::new(url, headers, stale.clone()))),
+    Spec::Http { url, headers, .. } => Transport::Http(Arc::new(http::Http::new(url, headers, cwd, stale.clone()))),
   };
   let init = json!({
     "protocolVersion": PROTOCOL_VERSION,

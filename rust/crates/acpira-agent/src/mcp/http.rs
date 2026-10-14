@@ -2,10 +2,13 @@
 //! an event stream that carries progress notifications before the response. `Mcp-Session-Id` from the `initialize`
 //! answer goes on every later request, the negotiated `MCP-Protocol-Version` too. A 404 on a request that carried a
 //! session id means the server forgot the session: the client initializes again and repeats the request once.
+//! A request the server sends on the stream (`ping`, `roots/list`) is answered with a POST of its own, as the stdio
+//! transport answers it; without that a server that asks for the roots mid-call would wait until the call times out.
 //! Blocking ureq, called from the blocking pool. A server on this machine or a private network is reached without the
 //! user's proxy, as `webfetch` does
 
 use std::io::BufReader;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::time::Duration;
@@ -28,6 +31,8 @@ pub struct Http {
   init: parking_lot::Mutex<Option<Value>>,
   next_id: AtomicI64,
   stale: Arc<AtomicBool>,
+  /// The session's folder, the root `roots/list` answers with
+  cwd: PathBuf,
 }
 
 /// Why a POST failed
@@ -38,7 +43,7 @@ enum Failure {
 }
 
 impl Http {
-  pub fn new(url: &str, headers: &[(String, String)], stale: Arc<AtomicBool>) -> Http {
+  pub fn new(url: &str, headers: &[(String, String)], cwd: &Path, stale: Arc<AtomicBool>) -> Http {
     let mut config = ureq::Agent::config_builder()
       .http_status_as_error(false)
       .timeout_connect(Some(Duration::from_secs(15)))
@@ -57,6 +62,7 @@ impl Http {
       init: Default::default(),
       next_id: AtomicI64::new(0),
       stale,
+      cwd: cwd.to_owned(),
     }
   }
 
@@ -171,6 +177,17 @@ impl Http {
     }
   }
 
+  /// Answer a request the server sent on a stream, the way the stdio transport answers it (`super::answer`)
+  fn respond(&self, id: &Value, method: &str) {
+    let body = match super::answer(method, &self.cwd) {
+      Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+      Err(e) => json!({ "jsonrpc": "2.0", "id": id, "error": { "code": e.code, "message": e.message } }),
+    };
+    if let Ok(mut res) = self.post(&body) {
+      let _ = res.body_mut().with_config().limit(64 * 1024).read_to_string();
+    }
+  }
+
   /// The events up to our response: progress goes to the caller, a changed tool list marks the list stale
   fn read_stream(&self, res: ureq::http::Response<ureq::Body>, id: i64, token: Option<&str>, progress: Option<&Progress>) -> Result<Value, Failure> {
     let mut events = SseReader::new(BufReader::new(res.into_body().into_reader()));
@@ -194,6 +211,8 @@ impl Http {
           }
         }
         Some("notifications/tools/list_changed") => self.stale.store(true, Ordering::Release),
+        // A request of the server's (it carries an id): answered on a POST of its own while this stream waits
+        Some(method) if msg.get("id").is_some_and(|id| !id.is_null()) => self.respond(&msg["id"], method),
         Some(_) => {}
         None if msg.get("id").and_then(Value::as_i64) == Some(id) => return Ok(msg),
         None => {}
@@ -270,7 +289,7 @@ mod tests {
         }
       }
     });
-    let http = Http::new(&url, &[("Authorization".into(), "Bearer t".into())], Default::default());
+    let http = Http::new(&url, &[("Authorization".into(), "Bearer t".into())], Path::new("/w"), Default::default());
     let init = http.request("initialize", json!({ "protocolVersion": "2025-06-18" }), None).unwrap();
     http.set_protocol(init["protocolVersion"].as_str().unwrap());
     http.notify("notifications/initialized", json!({}));
@@ -290,10 +309,35 @@ mod tests {
       Some("tools/list") => (200, "application/json", json!({ "jsonrpc": "2.0", "id": body["id"], "error": { "code": -32601, "message": "no tools here" } }).to_string(), None),
       _ => (401, "application/json", json!({ "error": { "message": "bad key" } }).to_string(), None),
     });
-    let http = Http::new(&url, &[], Default::default());
+    let http = Http::new(&url, &[], Path::new("/w"), Default::default());
     assert_eq!(http.request("tools/list", json!({}), None).unwrap_err(), "no tools here");
     let e = http.request("initialize", json!({}), None).unwrap_err();
     assert!(e.contains("401") && e.contains("refused the credentials") && e.contains("bad key"), "{e}");
     server.join().unwrap();
+  }
+
+  #[test]
+  fn a_request_the_server_sends_mid_call_is_answered() {
+    let answers = Arc::new(parking_lot::Mutex::new(vec![]));
+    let a = answers.clone();
+    let (url, server) = serve(3, move |body, _| match body["method"].as_str() {
+      // The call's stream asks for the roots and an unknown method before it answers
+      Some("tools/call") => {
+        let roots = json!({ "jsonrpc": "2.0", "id": "r1", "method": "roots/list" });
+        let other = json!({ "jsonrpc": "2.0", "id": 7, "method": "sampling/createMessage", "params": {} });
+        let done = json!({ "jsonrpc": "2.0", "id": body["id"], "result": { "content": [] } });
+        (200, "text/event-stream", format!("data: {roots}\n\ndata: {other}\n\ndata: {done}\n\n"), None)
+      }
+      _ => {
+        a.lock().push(body.clone());
+        (202, "application/json", String::new(), None)
+      }
+    });
+    let http = Http::new(&url, &[], Path::new("/w/my repo"), Default::default());
+    http.request("tools/call", json!({ "name": "x", "arguments": {} }), None).unwrap();
+    server.join().unwrap();
+    let answers = answers.lock();
+    assert_eq!(answers[0], json!({ "jsonrpc": "2.0", "id": "r1", "result": { "roots": [{ "uri": "file:///w/my%20repo", "name": "my repo" }] } }));
+    assert_eq!((answers[1]["id"].clone(), answers[1]["error"]["code"].clone()), (json!(7), json!(-32601)));
   }
 }
