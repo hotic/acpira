@@ -13,6 +13,8 @@ import type { SettingsHandlers } from './SettingsShell';
 // The read-only mode the relay finds on the CLIs whose modes are recorded (docs/acp-agents-compat.md; null = none);
 // any other CLI is tried at run time against acp/session/relay.rs READ_ONLY_MODES
 const READ_ONLY: Partial<Record<AgentId, string | null>> = { codex: 'read-only', claude: 'plan', opencode: 'plan', dsh: null };
+// The persona's default access, least to most; the i18n keys are `subagents.page.<mode>` and `<mode>Desc`
+const MODES: RelayMode[] = ['consult', 'work', 'bypass'];
 
 interface PageProps {
   settings: SettingsView;
@@ -124,9 +126,9 @@ function PersonaDetail({ persona: p, agents, controls, onBack, onChange, onDelet
             onChange={v => onChange({ effort: v || undefined })} />
         </Field>
       )}
-      <Field label={t('subagents.page.mode')} desc={<StableText current={p.mode} items={[{ key: 'consult', text: t('subagents.page.consultDesc') }, { key: 'work', text: t('subagents.page.workDesc') }]} />}>
+      <Field label={t('subagents.page.mode')} desc={<StableText current={p.mode} items={MODES.map(m => ({ key: m, text: t(`subagents.page.${m}Desc`) }))} />}>
         <Select<RelayMode> label={t('subagents.page.mode')} value={p.mode}
-          options={[{ value: 'consult', label: t('subagents.page.consult') }, { value: 'work', label: t('subagents.page.work') }]}
+          options={MODES.map(m => ({ value: m, label: t(`subagents.page.${m}`) }))}
           onChange={mode => onChange({ mode })} />
       </Field>
       {p.mode === 'consult' && (
@@ -177,7 +179,7 @@ function metaOf(p: SubagentPersona, agents: AgentInfo[]): ReactNode {
   return <span className="flex min-w-0 items-center gap-gap">
     <span className="shrink-0">{cli}</span>
     {p.model && <span className="min-w-0 truncate text-fg-3/70">{p.model}</span>}
-    <ChipTag>{p.mode === 'consult' ? t('subagents.page.consult') : t('subagents.page.work')}</ChipTag>
+    <ChipTag>{t(`subagents.page.${p.mode}`)}</ChipTag>
   </span>;
 }
 

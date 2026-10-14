@@ -49,6 +49,11 @@
       "name": "Custom",
       "id": "custom-id",
       "agent": "codex"
+    },
+    {
+      "name": "Free Hand",
+      "agent": "claude",
+      "mode": "bypass"
     }
   ],
   "output": [
@@ -107,6 +112,14 @@
       "name": "Custom",
       "agent": "codex",
       "mode": "consult",
+      "when": "",
+      "enabled": true
+    },
+    {
+      "id": "free-hand",
+      "name": "Free Hand",
+      "agent": "claude",
+      "mode": "bypass",
       "when": "",
       "enabled": true
     }

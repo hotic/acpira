@@ -41,6 +41,9 @@ const PROGRESS_EVERY: Duration = Duration::from_secs(5);
 const TITLE_MAX: usize = 48;
 /// Mode ids that mean "read only" across the built-in CLIs: codex-acp `read-only`, Claude / OpenCode / Grok `plan`
 const READ_ONLY_MODES: [&str; 3] = ["read-only", "plan", "ask"];
+/// Modes that skip the CLI's own approvals: Claude `bypassPermissions`, Codex `agent-full-access`, Devin `bypass`,
+/// Antigravity / Kimi `yolo`; a mode the agent marks `_meta.kind` `full_access` counts too
+const BYPASS_MODES: [&str; 4] = ["bypassPermissions", "agent-full-access", "bypass", "yolo"];
 const MODEL_KEYS: [&str; 1] = ["model"];
 const EFFORT_KEYS: [&str; 3] = ["thought_level", "reasoning_effort", "effort"];
 const MODE_KEYS: [&str; 1] = ["mode"];
@@ -288,6 +291,32 @@ fn is_read_only(mode: &str) -> bool {
   READ_ONLY_MODES.contains(&mode)
 }
 
+/// The session's full-access mode ids: a known id, or one whose `_meta.kind` is `full_access` (in the `modes` list or
+/// among the values of a `mode` select)
+fn bypass_modes(opened: &Value) -> Vec<String> {
+  let full = |m: &Value| m.pointer("/_meta/kind").and_then(Value::as_str) == Some("full_access");
+  let mut marked: Vec<String> = vec![];
+  for m in opened.pointer("/modes/availableModes").and_then(Value::as_array).into_iter().flatten() {
+    if full(m)
+      && let Some(id) = m.get("id").and_then(Value::as_str)
+    {
+      marked.push(id.to_owned());
+    }
+  }
+  if let Some(o) = find_option(opened.get("configOptions"), &MODE_KEYS) {
+    for v in o.get("options").and_then(Value::as_array).into_iter().flatten() {
+      for x in v.get("options").and_then(Value::as_array).map(|l| l.iter().collect::<Vec<_>>()).unwrap_or_else(|| vec![v]) {
+        if full(x)
+          && let Some(val) = x.get("value").and_then(Value::as_str)
+        {
+          marked.push(val.to_owned());
+        }
+      }
+    }
+  }
+  mode_ids(opened).into_iter().filter(|m| BYPASS_MODES.contains(&m.as_str()) || marked.contains(m)).collect()
+}
+
 /// One `session/set_config_option`; the answer's option list (model-dependent effort values) replaces the known one
 async fn set_config(proc: &AgentProcess, sid: &str, opened: &mut Value, id: &str, value: &str) -> std::result::Result<(), String> {
   let r = proc
@@ -408,9 +437,11 @@ impl AcpSession {
     if prompt.is_empty() {
       return Err(anyhow!("`prompt` is empty: say what {} should do.", who(&persona)));
     }
+    // A call may ask for a consult or for work, never for bypass on its own: work on a bypass persona stays bypass
     let mode = match args.mode.as_deref() {
-      Some("work") => RelayMode::Work,
       Some("consult") => RelayMode::Consult,
+      Some("work" | "bypass") if persona.mode == RelayMode::Bypass => RelayMode::Bypass,
+      Some("work" | "bypass") => RelayMode::Work,
       _ => persona.mode,
     };
     if self.deps.registry.try_get(&persona.agent).is_none() {
@@ -833,27 +864,39 @@ async fn relay_controls(proc: &AgentProcess, sid: &str, opened: &mut Value, pers
   }
 }
 
-/// The round's mode: a consult switches to the CLI's read-only mode where it has one; a work round leaves a read-only
-/// mode for the one the session opened in (or the first writable one). Answers false when the CLI refused the switch,
-/// so the next round tries again instead of taking the mode as set
+/// The round's mode: a consult switches to the CLI's read-only mode where it has one; a bypass round to its full-access
+/// mode where it has one (without one the host still answers its permission requests); a work round in a read-only or
+/// full-access mode switches to the one the session opened in (or the first ordinary one), as does a consult in a
+/// full-access mode on a CLI without a read-only one. Answers false when the CLI refused the switch, so the next round
+/// tries again instead of taking the mode as set
 async fn relay_mode(proc: &AgentProcess, sid: &str, opened: &mut Value, start: Option<&str>, mode: RelayMode, agent: &str, notes: &mut Vec<String>) -> bool {
   let ids = mode_ids(opened);
+  let bypass = bypass_modes(opened);
   let current = current_mode(opened);
+  let ordinary = |m: &str| !is_read_only(m) && !bypass.iter().any(|b| b == m);
+  // The mode to leave a read-only or full-access one for
+  let back = || start.filter(|s| ordinary(s)).map(str::to_owned).or_else(|| ids.iter().find(|m| ordinary(m)).cloned());
+  let in_bypass = current.as_deref().is_some_and(|c| bypass.iter().any(|b| b == c));
   let want = match mode {
     RelayMode::Consult => match READ_ONLY_MODES.iter().find(|r| ids.iter().any(|m| m == *r)) {
       Some(m) => (*m).to_owned(),
       None => {
         notes.push(format!("{agent} has no read-only mode; it follows its own permission settings, so nothing stops a write"));
-        return true;
-      }
-    },
-    RelayMode::Work => match current.as_deref() {
-      Some(c) if is_read_only(c) => {
-        match start.filter(|s| !is_read_only(s)).map(str::to_owned).or_else(|| ids.iter().find(|m| !is_read_only(m)).cloned()) {
+        match back().filter(|_| in_bypass) {
           Some(m) => m,
           None => return true,
         }
       }
+    },
+    RelayMode::Bypass => match bypass.first() {
+      Some(m) if !in_bypass => m.clone(),
+      _ => return true,
+    },
+    RelayMode::Work => match current.as_deref() {
+      Some(c) if !ordinary(c) => match back() {
+        Some(m) => m,
+        None => return true,
+      },
       _ => return true,
     },
   };
@@ -960,6 +1003,21 @@ fn ask_agent_args(u: &Value) -> Option<Map<String, Value>> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn full_access_modes_are_known_ids_or_marked_full_access() {
+    let claude = json!({ "modes": { "currentModeId": "default", "availableModes": [
+      { "id": "default" }, { "id": "plan" }, { "id": "bypassPermissions", "_meta": { "kind": "full_access" } },
+    ] } });
+    assert_eq!(bypass_modes(&claude), ["bypassPermissions"]);
+    let marked = json!({ "modes": { "availableModes": [{ "id": "agent" }, { "id": "danger", "_meta": { "kind": "full_access" } }] } });
+    assert_eq!(bypass_modes(&marked), ["danger"]);
+    let select = json!({ "configOptions": [{ "id": "mode", "category": "mode", "currentValue": "agent", "options": [
+      { "value": "read-only" }, { "value": "agent" }, { "value": "agent-full-access" },
+    ] }] });
+    assert_eq!(bypass_modes(&select), ["agent-full-access"]);
+    assert!(bypass_modes(&json!({ "modes": { "availableModes": [{ "id": "agent" }, { "id": "plan" }] } })).is_empty());
+  }
 
   #[test]
   fn picks_a_select_value_by_value_or_name_including_grouped_ones() {

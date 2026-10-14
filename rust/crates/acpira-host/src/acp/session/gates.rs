@@ -226,6 +226,12 @@ impl AcpSession {
       }
       let options: Vec<Value> = req.get("options").and_then(Value::as_array).cloned().unwrap_or_default();
       let auto = c.perms.auto_approve;
+      // A summoned child in a bypass round: answered without a card, preferring the one-time allow so nothing lasting
+      // lands in that CLI's own settings; a request with no plain allow still gets a card
+      let bypass = matches!(&target, Target::Node(id) if c.tree.relay_bypass(id));
+      if bypass && let Some(id) = single_allow_once(&options).or_else(|| auto_allow(&options)) {
+        return Ok(json!({ "outcome": { "outcome": "selected", "optionId": id } }));
+      }
       let state = Self::target_state(&mut c, &target).expect("target resolved");
       let plan = captured
         .as_ref()

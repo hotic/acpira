@@ -142,6 +142,35 @@ async fn the_childs_permission_request_lands_on_its_node_and_the_answer_reaches_
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_bypass_round_answers_its_childs_permission_without_a_card_and_a_consult_round_shows_one_again() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let roster = Arc::new(Roster::new(h.dir.path()));
+  roster.save(&json!([{ "name": "Fake Hand", "agent": "fake", "mode": "bypass", "when": "edits" }])).await.unwrap();
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  // The fake agent has no full-access mode: the host's answer alone carries the round
+  let (ok, text) = last_text(&run(&s, &roster, 0, ask("fake-hand", "relay: perm edit")).await);
+  assert!(ok && text.starts_with("reply to relay: perm edit (round 1, mode agent)"), "{text}");
+  expect_match(&nodes(&s)[0], json!({ "state": "completed", "harness": { "mode": "bypass" } }));
+  let thread = thread_of(&text);
+  // `work` from the caller keeps the persona's bypass; the edit is still allowed without a card
+  let (ok, text) =
+    last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), mode: Some("work".into()), ..ask("", "relay: perm again") }).await);
+  assert!(ok && text.starts_with("reply to relay: perm again (round 2, mode agent)"), "{text}");
+  assert_eq!(nodes(&s)[1]["harness"]["mode"], "bypass");
+  // A consult round on the same thread asks again
+  let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+  let args = AskArgs { thread: Some(thread), mode: Some("consult".into()), ..ask("", "relay: perm look") };
+  tokio::spawn(s.0.clone().relay_ask(roster.clone(), None, 0, args, tx));
+  until(|| nodes(&s).get(2).is_some_and(|n| n["permissions"].as_array().is_some_and(|p| p.len() == 1)), 8000).await;
+  let block = nodes(&s)[2]["permissions"][0]["id"].as_str().unwrap().to_owned();
+  s.resolve_permission(&block, "no");
+  while tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.unwrap().is_some() {}
+  expect_match(&nodes(&s)[2], json!({ "state": "completed", "harness": { "mode": "consult" } }));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn unknown_personas_threads_and_depth_are_refused_with_text_the_model_can_act_on() {
   let fake = fake_or_skip!();
   let h = Harness::new(&fake, json!({}));

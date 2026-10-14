@@ -958,6 +958,8 @@ export const fr = {
   'subagents.page.work': "Travailler",
   'subagents.page.consultDesc': "Sollicité pour un avis : consigne de ne rien modifier, dans son mode lecture seule s'il en a un",
   'subagents.page.workDesc': "Peut modifier des fichiers selon ses propres autorisations",
+  'subagents.page.bypass': "Contourner les autorisations",
+  'subagents.page.bypassDesc': "Modifie sans validation : mode accès complet du CLI, chaque demande d'autorisation est approuvée",
   'subagents.page.readOnly': "Lecture seule via",
   'subagents.page.readOnlyMode': "Passe dans son propre mode {mode} ; la rigueur du blocage des écritures dépend du CLI",
   'subagents.page.readOnlyNone': "Pas de mode lecture seule : seule la consigne lui dit de ne rien modifier",
