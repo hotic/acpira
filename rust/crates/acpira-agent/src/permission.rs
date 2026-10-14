@@ -31,6 +31,8 @@ pub const READ: &str = "read";
 pub const EDIT: &str = "edit";
 pub const BASH: &str = "bash";
 pub const TODO: &str = "todo";
+/// The history tools of chunk compaction, which read only the session's own log
+pub const HISTORY: &str = "history";
 pub const JOB: &str = "job";
 /// `webfetch` of a public URL and `websearch`
 pub const WEB: &str = "web";
@@ -87,6 +89,7 @@ pub fn defaults(outputs: &Path) -> Vec<Rule> {
     Rule::new("*", "*", Decision::Ask),
     Rule::new(READ, "*", Decision::Allow),
     Rule::new(TODO, "*", Decision::Allow),
+    Rule::new(HISTORY, "*", Decision::Allow),
     Rule::new(JOB, "*", Decision::Allow),
     Rule::new(WEB, "*", Decision::Allow),
     Rule::new(MCP_READ, "*", Decision::Allow),

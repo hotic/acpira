@@ -128,7 +128,7 @@ mod tests {
   use super::*;
 
   fn ctx(dir: &Path) -> Ctx {
-    Ctx { cwd: dir.to_owned(), outputs: dir.join("outputs"), call_id: "c".into(), progress: std::sync::Arc::new(|_| {}), jobs: Default::default(), search: Default::default(), mcp: Default::default() }
+    Ctx { cwd: dir.to_owned(), outputs: dir.join("outputs"), call_id: "c".into(), progress: std::sync::Arc::new(|_| {}), jobs: Default::default(), search: Default::default(), mcp: Default::default(), history: Default::default() }
   }
 
   #[test]

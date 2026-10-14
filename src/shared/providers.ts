@@ -77,6 +77,18 @@ export interface ProvidersView {
   webSearch?: string;
   // The search backends with a stored key (never the key itself)
   webKeys?: string[];
+  // The compaction strategy as the file holds it; absent reads as 'summary'
+  compaction?: string;
+}
+
+// How the built-in agent compacts its history (`COMPACTION_STRATEGIES` in acpira-shared/src/providers.rs), the default
+// first: a model-written summary, or chunks of the finished turns (no model call)
+export const COMPACTION_STRATEGIES = ['summary', 'chunk'] as const;
+export type CompactionStrategy = typeof COMPACTION_STRATEGIES[number];
+
+// The view's strategy, unknown or absent values reading as the default
+export function compactionOf(view?: ProvidersView): CompactionStrategy {
+  return COMPACTION_STRATEGIES.find(c => c === view?.compaction) ?? COMPACTION_STRATEGIES[0];
 }
 
 // The built-in agent's search backends (`WEB_SEARCH_BACKENDS` in acpira-shared/src/providers.rs), the default first:
@@ -142,7 +154,8 @@ export type ProviderAction =
   // pick: a usable `<provider id>/<model id>`; absent turns the fast model off
   | { kind: 'fastModel'; pick?: string }
   // key: that backend's; absent keeps the stored key, empty removes it
-  | { kind: 'webSearch'; backend: WebSearchBackend; key?: string };
+  | { kind: 'webSearch'; backend: WebSearchBackend; key?: string }
+  | { kind: 'compaction'; strategy: CompactionStrategy };
 
 // A model entry with the file's defaults, for a hand-typed id
 export function newModel(id: string): ProviderModel {

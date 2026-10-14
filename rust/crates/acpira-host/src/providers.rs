@@ -13,7 +13,7 @@ use tokio::fs;
 use acpira_agent::llm::discover;
 use acpira_shared::providers::{
   APPROVAL_LEVELS, LocalSource, PROVIDERS_FILE, PROVIDERS_VERSION, ProbeOutcome, Provider, ProviderAction, ProviderProbe, ProviderView, ProvidersFile,
-  ProvidersView, WEB_SEARCH_BACKENDS, provider_secret_key, web_secret_key,
+  COMPACTION_STRATEGIES, ProvidersView, WEB_SEARCH_BACKENDS, provider_secret_key, web_secret_key,
 };
 
 use crate::accounts::account_store::FileVault;
@@ -55,7 +55,7 @@ impl ProviderStore {
         web_keys.push(backend.to_owned());
       }
     }
-    ProvidersView { providers, error: None, approval: file.approval, fast_model: file.fast_model, web_search: file.web_search, web_keys, ..tables() }
+    ProvidersView { providers, error: None, approval: file.approval, fast_model: file.fast_model, web_search: file.web_search, web_keys, compaction: file.compaction, ..tables() }
   }
 
   /// The key a probe uses: one typed into the form, else the stored key of the source with that id
@@ -173,6 +173,18 @@ impl ProviderStore {
           .edit(|file| {
             // The default is written as no entry, like an unset approval level
             file.web_search = (!default).then_some(backend);
+            Ok(())
+          })
+          .await
+      }
+      ProviderAction::Compaction { strategy } => {
+        if !COMPACTION_STRATEGIES.contains(&strategy.as_str()) {
+          bail!("Unknown compaction strategy: {strategy}");
+        }
+        self
+          .edit(|file| {
+            // The default is written as no entry, like the search backend
+            file.compaction = (strategy != COMPACTION_STRATEGIES[0]).then_some(strategy);
             Ok(())
           })
           .await
@@ -330,6 +342,15 @@ mod tests {
     assert_eq!(s.view().await.fast_model.as_deref(), Some("deepseek-2/m"));
     s.apply(ProviderAction::FastModel { pick: None }).await.unwrap();
     assert_eq!(s.view().await.fast_model, None);
+
+    // The compaction strategy: chunk is written, the default summary is no entry, anything else is refused
+    let compaction = |strategy: &str| s.apply(ProviderAction::Compaction { strategy: strategy.into() });
+    assert!(compaction("slices").await.is_err());
+    compaction("chunk").await.unwrap();
+    assert_eq!(s.view().await.compaction.as_deref(), Some("chunk"));
+    compaction("summary").await.unwrap();
+    assert_eq!(s.view().await.compaction, None);
+    assert!(!std::fs::read_to_string(dir.path().join(PROVIDERS_FILE)).unwrap().contains("compaction"));
 
     // The search backend: its key goes to the vault under its own prefix, the view only says one is stored, and
     // switching back to the default keeps the key for the next switch

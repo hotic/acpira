@@ -22,7 +22,7 @@ import { ModelMark } from '../chat/ModelMark';
 import { Count, Dot, FactRow, Field, Group, ItemRow, ListHead, ModelLine, Note, PathText, SearchRow, Section, SectionAction, SectionDescription, SectionHead, Select, SourceLink, Switch, shortPath, type ModelTags } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 import { ProvidersSection, type ProvidersState } from './ProvidersSection';
-import { APPROVAL_LEVELS, approvalOf, BUILTIN_AGENT_ID, usableModels, WEB_SEARCH_BACKENDS, webSearchOf, type ApprovalLevel, type WebSearchBackend } from '@shared/providers';
+import { APPROVAL_LEVELS, approvalOf, BUILTIN_AGENT_ID, COMPACTION_STRATEGIES, compactionOf, usableModels, WEB_SEARCH_BACKENDS, webSearchOf, type ApprovalLevel, type CompactionStrategy, type WebSearchBackend } from '@shared/providers';
 
 type AgentSection = 'models' | 'mcp' | 'skills' | 'rules' | 'config';
 // What the CLI's own files declare; shared resources live on the Shared page, so these fold away by default
@@ -125,6 +125,7 @@ export function AgentPage({ agent, accounts, install, inventory, controls, provi
 
       {agent.id === BUILTIN_AGENT_ID && <ProvidersSection state={providers} on={on} />}
       {agent.id === BUILTIN_AGENT_ID && <FastModelSection state={providers} on={on} />}
+      {agent.id === BUILTIN_AGENT_ID && <CompactionSection state={providers} on={on} />}
       {agent.id === BUILTIN_AGENT_ID && <WebSearchSection state={providers} on={on} />}
       {agent.id === BUILTIN_AGENT_ID && <ApprovalSection state={providers} on={on} />}
 
@@ -197,6 +198,38 @@ function FastModelSection({ state, on }: { state?: ProvidersState; on: SettingsH
         <Field label={t('settings.agent.fastModel')} desc={t('settings.agent.fastModel.desc')}>
           {state
             ? <Select options={options} value={value} onChange={pick} label={t('settings.agent.fastModel')} />
+            : <Shimmer active>{t('settings.loading')}</Shimmer>}
+        </Field>
+      </Section>
+    </div>
+  );
+}
+
+// How the built-in agent compacts its history (`compaction` in providers.json): a summary a model writes, or chunks of
+// the finished turns that keep the user's messages and the final replies, with no model call
+const COMPACTION_KEYS: Record<CompactionStrategy, { label: MsgKey; desc: MsgKey }> = {
+  summary: { label: 'settings.agent.compaction.summary', desc: 'settings.agent.compaction.summary.desc' },
+  chunk: { label: 'settings.agent.compaction.chunk', desc: 'settings.agent.compaction.chunk.desc' },
+};
+
+function CompactionSection({ state, on }: { state?: ProvidersState; on: SettingsHandlers }) {
+  // The picked strategy shows at once and gives way to the file's once the host answers with a new view
+  const [picked, setPicked] = useState<CompactionStrategy>();
+  useEffect(() => { setPicked(undefined); }, [state?.view, state?.error]);
+  const strategy = picked ?? compactionOf(state?.view);
+  const pick = (v: CompactionStrategy) => {
+    if (v === strategy) return;
+    setPicked(v);
+    on.providerAction?.({ kind: 'compaction', strategy: v });
+  };
+  return (
+    <div className="flex flex-col gap-2">
+      <SectionHead>{t('settings.agent.context')}</SectionHead>
+      <Section>
+        {/* Both descriptions are laid out, so a pick never changes the picker row's height */}
+        <Field label={t('settings.agent.compaction')} desc={<StableText current={strategy} items={COMPACTION_STRATEGIES.map(v => ({ key: v, text: t(COMPACTION_KEYS[v].desc) }))} />}>
+          {state
+            ? <Select options={COMPACTION_STRATEGIES.map(v => ({ value: v, label: t(COMPACTION_KEYS[v].label) }))} value={strategy} onChange={pick} label={t('settings.agent.compaction')} />
             : <Shimmer active>{t('settings.loading')}</Shimmer>}
         </Field>
       </Section>

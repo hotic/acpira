@@ -29,6 +29,11 @@ pub fn web_secret_key(backend: &str) -> String {
 /// key) and `jina` (Jina Search with the user's key, the free ones behind it)
 pub const WEB_SEARCH_BACKENDS: [&str; 2] = ["default", "jina"];
 
+/// The compaction strategies `ProvidersFile::compaction` takes, the default first: `summary` (a model writes a summary
+/// of the history, `compact.rs`) and `chunk` (finished turns fold into chunks of the user's words and the final
+/// replies, no model call, `chunk.rs`)
+pub const COMPACTION_STRATEGIES: [&str; 2] = ["summary", "chunk"];
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProvidersFile {
@@ -47,6 +52,10 @@ pub struct ProvidersFile {
   /// The `websearch` backend, one of `WEB_SEARCH_BACKENDS` other than `default`; absent (or unknown) is `default`
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub web_search: Option<String>,
+  /// How the agent compacts its history, one of `COMPACTION_STRATEGIES` other than `summary`; absent (or unknown) is
+  /// `summary`. Read when a compaction runs
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub compaction: Option<String>,
   #[serde(flatten)]
   pub extra: Map<String, Value>,
 }
@@ -292,6 +301,9 @@ pub struct ProvidersView {
   /// The search backends with a stored key (never the key itself)
   #[serde(default)]
   pub web_keys: Vec<String>,
+  /// The file's compaction strategy as written (`ProvidersFile::compaction`)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub compaction: Option<String>,
 }
 
 /// A network question from the settings page; none of them changes providers.json. `key`: a key typed into the form
@@ -369,6 +381,8 @@ pub enum ProviderAction {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     key: Option<String>,
   },
+  /// Set the compaction strategy (one of `COMPACTION_STRATEGIES`)
+  Compaction { strategy: String },
 }
 
 #[cfg(test)]
