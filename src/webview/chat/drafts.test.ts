@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MAX_FILE_BYTES, MAX_TEXT_BYTES } from '@shared/attachments';
-import { collectDrafts, hasPayload, pathlessWorkbenchDrag, workbenchUris } from './drafts';
+import { collectDrafts, collectImageSources, hasPayload, imageSources, pastedText, pathlessWorkbenchDrag, workbenchUris } from './drafts';
 
 // Minimal DataTransfer: lowercased types like the DOM one, no files
 function transfer(data: Record<string, string>): DataTransfer {
@@ -121,5 +121,37 @@ describe('OS files', () => {
     expect(drafts).toEqual([]);
     expect(refused).toHaveLength(1);
     expect(refused[0]).toContain('huge.mov');
+  });
+});
+
+describe('mixed pastes', () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64');
+  const clip = (data: Record<string, string>, files: File[] = []) =>
+    ({ types: [...Object.keys(data), ...(files.length ? ['Files'] : [])], files, getData: (type: string) => data[type] ?? '' }) as unknown as DataTransfer;
+
+  it('keeps the text that came with a screenshot', () => {
+    expect(pastedText(clip({ 'text/plain': 'why does this fail?' }, [osFile('image.png', 'x')]))).toBe('why does this fail?');
+  });
+
+  it('drops the file names a Finder copy puts beside the files', () => {
+    expect(pastedText(clip({ 'text/plain': 'a.png\nb c.pdf' }, [osFile('a.png', 'x'), osFile('b c.pdf', 'y')]))).toBe('');
+    expect(pastedText(clip({ 'text/plain': '/Users/me/a.png' }, [osFile('a.png', 'x')]))).toBe('');
+  });
+
+  it("drops the address a browser's Copy Image puts in text/plain", () => {
+    const dt = clip({ 'text/plain': 'https://e.com/a.png?x=1&y=2', 'text/html': '<img src="https://e.com/a.png?x=1&amp;y=2">' });
+    expect(pastedText(dt)).toBe('');
+  });
+
+  it('finds the images of a copied selection in its HTML', async () => {
+    const html = `<p>look</p><img alt="" class="size-full" src="data:image/png;base64,${png}"><img src='data:image/svg+xml,%3Csvg%2F%3E'><img src="data:image/png;base64,${png}">`;
+    const dt = clip({ 'text/plain': 'look', 'text/html': html });
+    expect(pastedText(dt)).toBe('look');
+    const sources = imageSources(dt);
+    expect(sources).toHaveLength(2);
+    // SVG is not an image the models take
+    const { drafts, refused } = await collectImageSources(sources);
+    expect(refused).toEqual([]);
+    expect(drafts).toEqual([{ kind: 'image', mimeType: 'image/png', data: png }]);
   });
 });

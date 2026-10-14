@@ -6,7 +6,7 @@ import { cn } from '../ui/cn';
 import { IconButton } from '../ui/Button';
 import { Popover } from '../ui/Popover';
 import { Removable } from './Attachments';
-import { collectDrafts } from './drafts';
+import { collectDrafts, collectImageSources, imageSources, pastedText } from './drafts';
 
 type ImageDraft = Extract<Draft, { kind: 'image' }>;
 
@@ -103,11 +103,16 @@ export function CommentEditor({ initial = '', autoFocus = true, acceptImages = f
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSave(value.trim(), images); }
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onCancel(); }
   };
-  // Only clipboard image files are taken; plain text (and any other file) pastes into the field as usual
+  // Images are taken (clipboard files, else the <img> copies in the HTML flavour); the text beside them still pastes into the field as usual
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!acceptImages || ![...e.clipboardData.files].some(f => f.type.startsWith('image/'))) return;
-    e.preventDefault();
-    void collectDrafts(e.clipboardData, '').then(({ drafts }) => {
+    if (!acceptImages) return;
+    const dt = e.clipboardData;
+    const files = [...dt.files].some(f => f.type.startsWith('image/'));
+    const sources = files ? [] : imageSources(dt);
+    if (!files && !sources.length) return;
+    // Only the copied files' names (or nothing) as text: nothing to type
+    if (!pastedText(dt).trim()) e.preventDefault();
+    void (files ? collectDrafts(dt, '') : collectImageSources(sources)).then(({ drafts }) => {
       const more = drafts.filter((d): d is ImageDraft => d.kind === 'image');
       if (more.length) setImages(list => [...list, ...more]);
     });

@@ -15,7 +15,7 @@ import { OptionContent } from '../ui/Panel';
 import { WorkingBeam } from '../effects/WorkingBeam';
 import { SendButton } from '../effects/SendButton';
 import { DraftChips } from './Attachments';
-import { collectDrafts, hasPayload, pathlessWorkbenchDrag } from './drafts';
+import { collectDrafts, collectImageSources, hasPayload, imageSources, pastedText, pathlessWorkbenchDrag, type Collected } from './drafts';
 import { MentionList, mentionAt, personaHits, personaOfHit, useMentionHits, type MentionPersona } from './Mention';
 import { SummonMenu } from './SummonMenu';
 import { SlashList, commandAt, commandHint, completeCommand, promptMarks, useSlashHits } from './Slash';
@@ -129,10 +129,11 @@ export function Composer(p: ComposerProps) {
   const dragDepth = useRef(0);
   const [dragging, setDragging] = useState(false);
   const fieldRef = useRef<HTMLDivElement>(null);
-  const addFrom = async (dt: DataTransfer) => {
+  // Takes the read already started: a DataTransfer's files and data are only readable during its event
+  const addFrom = async (collecting: Promise<Collected>) => {
     setReading(n => n + 1);
     try {
-      const { drafts: more, refused } = await collectDrafts(dt, p.cwd);
+      const { drafts: more, refused } = await collecting;
       if (more.length) setDrafts(d => [...d, ...more.filter(m => m.kind !== 'file' || !!m.data || !d.some(x => x.kind === 'file' && x.uri === m.uri))]);
       if (refused.length) p.onNotice(refused.join(t('common.listSep')));
     } catch (e) {
@@ -159,17 +160,20 @@ export function Composer(p: ComposerProps) {
     }
     if (!takes(e.dataTransfer)) return;
     e.preventDefault();
-    void addFrom(e.dataTransfer);
+    void addFrom(collectDrafts(e.dataTransfer, p.cwd));
   };
-  // Files take precedence over clipboard text. Large text bypasses textarea layout entirely.
+  // A paste can carry attachments and text together (a chat message copied with its screenshot, a web selection with images): both are kept.
+  // Real files win over the <img> copies in the HTML flavour. Large text bypasses textarea layout entirely.
   const onPaste = (e: ClipboardEvent) => {
     if (p.disabled) return;
-    if (hasPayload(e.clipboardData) && e.clipboardData.files.length) {
-      e.preventDefault();
-      void addFrom(e.clipboardData);
-      return;
-    }
-    const pasted = e.clipboardData.getData('text/plain');
+    const dt = e.clipboardData;
+    const files = hasPayload(dt) && dt.files.length > 0;
+    const sources = files ? [] : imageSources(dt);
+    if (files) void addFrom(collectDrafts(dt, p.cwd));
+    else if (sources.length) void addFrom(collectImageSources(sources));
+    const pasted = pastedText(dt);
+    // Nothing to type (or only the copied files' names): keep the textarea from inserting anything
+    if (!pasted.trim()) { if (files || sources.length || pasted !== dt.getData('text/plain')) e.preventDefault(); return; }
     // Lines copied from an editor come back as the range they were copied from, like Cursor's code references
     const copied = copiedSelection(pasted);
     if (copied) {
