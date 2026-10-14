@@ -738,11 +738,12 @@ impl AcpSession {
       Some(provider) => provider(agent.to_owned(), self.cwd.clone(), runtime_info_of(&proc.init).mcp).await.0,
       None => vec![],
     };
-    if depth < MAX_DEPTH {
-      servers.extend(self.deps.host_mcp.as_ref().and_then(|h| h.entry_for_session(agent, &self.arc(), Some(thread), depth)));
+    let entry = if depth < MAX_DEPTH {
+      self.deps.host_mcp.as_ref().and_then(|h| h.entry_for_session(agent, &self.arc(), Some(thread), depth))
     } else {
-      servers.extend(self.deps.host_mcp.as_ref().and_then(|h| h.entry_for(agent)));
-    }
+      self.deps.host_mcp.as_ref().and_then(|h| h.entry_for(agent))
+    };
+    crate::host_mcp::push_entry(&mut servers, entry);
     json!({ "cwd": self.cwd, "mcpServers": servers })
   }
 

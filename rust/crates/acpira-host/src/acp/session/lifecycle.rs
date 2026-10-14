@@ -43,7 +43,10 @@ impl AcpSession {
       None => vec![],
     };
     // The entry's env carries a grant for this session: the hub finds it when the agent calls ask_agent
-    servers.extend(self.deps.host_mcp.as_ref().and_then(|h| h.entry_for_session(&self.agent, &self.arc(), None, 0)));
+    let entry = self.deps.host_mcp.as_ref().and_then(|h| h.entry_for_session(&self.agent, &self.arc(), None, 0));
+    if crate::host_mcp::push_entry(&mut servers, entry) {
+      self.log(&format!("shared MCP: left out the server named {}, which is Acpira's own", crate::host_mcp::SERVER_NAME));
+    }
     {
       let mut c = self.core.lock();
       if !c.mcp_skip.is_empty() {
