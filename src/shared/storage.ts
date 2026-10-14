@@ -38,6 +38,9 @@ export interface StorageSession {
   // Subagent runs kept inside the record
   subagents?: number;
   blocked?: StorageBlock;
+  // Open in this engine (a tab or the sidebar shows it): its transcript in memory would write the texts back, so it
+  // cannot be slimmed until closed; deleting it is fine
+  open?: boolean;
   // What slimming would free; only with the slim detail, absent when the record was not estimated
   slim?: number;
 }

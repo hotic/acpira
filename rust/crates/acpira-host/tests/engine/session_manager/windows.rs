@@ -325,3 +325,46 @@ async fn storage_batch_delete_skips_a_session_another_engine_holds_and_says_why(
   a.dispose().await;
   b.dispose().await;
 }
+
+// Slimming rewrites a stored record without its whole-file diff texts: the diff lines stay, the source reads omitted,
+// and a session open in this engine is left alone (its transcript in memory would write the texts back)
+#[tokio::test(flavor = "multi_thread")]
+async fn storage_slim_drops_diff_texts_and_leaves_open_sessions_alone() {
+  use acpira_shared::storage::{StorageAction, StorageDetail};
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let a = Mgr::new(dir.path(), Opts::with_agents(fake.setting(json!({})), "fake"));
+  a.init().await;
+  let text = "x".repeat(20_000);
+  let lines = json!([{ "kind": "hunk", "text": "@@ -1 +1 @@" }, { "kind": "del", "text": "a" }, { "kind": "add", "text": "b" }]);
+  let tool = json!({ "type": "tool_call", "id": "t1", "kind": "edit", "verb": "Edit", "status": "completed",
+    "content": { "type": "diff", "lines": lines, "source": { "path": "/w/a.ts", "oldText": text, "newText": text } } });
+  let record = json!({ "id": "stored", "agent": "fake", "cwd": "/w", "title": "stored", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z",
+    "turns": [{ "role": "agent", "blocks": [tool] }], "controls": { "modes": [], "options": [] }, "commands": [] });
+  std::fs::write(dir.path().join("stored.json"), serde_json::to_vec(&record).unwrap()).unwrap();
+  a.new_session(None).await;
+  a.handle(json!({ "type": "send", "text": "open here" })).await;
+  let open = a.active_id().unwrap();
+  until(|| dir.path().join(format!("{open}.json")).exists(), 3000).await;
+  a.m.refresh_index().await;
+
+  let view = a.m.storage_view(&[StorageDetail::Sessions, StorageDetail::Slim]).await;
+  let rows = view.sessions.unwrap();
+  let stored = rows.iter().find(|r| r.id == "stored").unwrap();
+  assert!(stored.slim.unwrap() >= 40_000, "{stored:?}");
+  assert!(!stored.open);
+  assert!(rows.iter().find(|r| r.id == open).unwrap().open);
+
+  let reply = a.m.storage_action(StorageAction::SlimSessions { ids: vec!["stored".into(), open.clone()] }, &[StorageDetail::Sessions]).await;
+  let out = reply.outcome.unwrap();
+  assert_eq!(out.done, vec!["stored".to_owned()]);
+  assert!(out.freed >= 40_000, "{out:?}");
+  assert_eq!(out.skipped.len(), 1);
+  assert!(out.skipped[0].reason.contains("Open in this window"), "{:?}", out.skipped);
+  let back: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.path().join("stored.json")).unwrap()).unwrap();
+  let content = &back["turns"][0]["blocks"][0]["content"];
+  assert_eq!(content["lines"], lines);
+  assert_eq!(content["source"], json!({ "path": "/w/a.ts", "omitted": true }));
+  assert_eq!(back["updatedAt"], "2026-01-01T00:00:00.000Z");
+  a.dispose().await;
+}
