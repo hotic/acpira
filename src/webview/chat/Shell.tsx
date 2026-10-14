@@ -660,6 +660,16 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
   const body = useRef<HTMLDivElement>(null);
   const bodyRef = useMergedRefs(contentRef, body);
   const follow = useBottomFollow(ref, body, replayKey, [turns, running]);
+  // Fade the lower edge while the reader is scrolled away from the bottom (thread-fade): text leaving the view above a
+  // borderless dock row (the connecting notice) dissolves instead of being cut off flat. Driven by the follow state rather
+  // than useScrollFade, whose content observer would flash the fade for a frame on every streamed chunk before the re-pin
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const sync = () => el.toggleAttribute('data-more-below', !follow.value);
+    sync();
+    return follow.subscribe(sync);
+  }, [follow]);
   // The transcript's first commit restores what the session already holds: its rows appear in place, without entrances
   const opening = useRef(true);
   useLayoutEffect(() => { opening.current = false; }, []);
@@ -713,7 +723,7 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
   });
   // The right padding gives the scrollbar gutter back, so the transcript's edges line up with the header and the dock
   return (
-    <div ref={ref} data-thread className="scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-page pr-page-gutter [container-type:size] [overflow-anchor:none]">
+    <div ref={ref} data-thread className="thread-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-page pr-page-gutter [container-type:size] [overflow-anchor:none]">
       {/* The tail clearance equals the message gap, so the last message sits as far from the composer as from the message above it */}
       <div key={replayKey} ref={bodyRef} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-(--content-w)')}><FollowContext.Provider value={follow}><QuietEntranceContext.Provider value={opening}>
         {exchanges.map(exchange => (

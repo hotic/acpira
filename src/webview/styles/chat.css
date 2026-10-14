@@ -41,6 +41,18 @@
   &[data-more-below] { --fade-bottom: var(--scroll-fade-size); }
 }
 
+/* The transcript fades only its lower edge, and only while Thread marks data-more-below (the reader left the bottom).
+   The second, fully opaque layer covers the scrollbar gutter, so the thumb keeps its full length; the bar stays visible
+   here, unlike scroll-fade. */
+@utility thread-fade {
+  &[data-more-below] {
+    mask-image: linear-gradient(to bottom, #000 calc(100% - var(--scroll-fade-size)), transparent), linear-gradient(#000, #000);
+    mask-size: 100% 100%, var(--scrollbar) 100%;
+    mask-position: 0 0, 100% 0;
+    mask-repeat: no-repeat;
+  }
+}
+
 /* Composer input field and send button: modeled on Libraries.dev's Studio panel */
 @utility composer-field {
   --fg-1: var(--input-fg);
