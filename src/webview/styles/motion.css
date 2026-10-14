@@ -88,6 +88,20 @@
 .context-ring[data-stale] .context-ring-arc { opacity: .45; }
 .context-ring[data-compacting] .context-ring-arc { animation: acp-pulse 1.4s ease-in-out infinite; }
 .context-bar-fill { transition: width .6s cubic-bezier(.4, 0, .2, 1), opacity .3s ease; }
+/* Storage tab usage bar (settings/StoragePage.tsx): segments grow from zero on first paint and ease to new shares on refresh;
+   hovering a segment or its legend row dims the others so even a 2 px sliver is easy to spot */
+.storage-bar-seg {
+  flex-grow: var(--seg-grow, 0);
+  min-width: var(--storage-gap);
+  transition: flex-grow var(--quota-fill-duration) cubic-bezier(.2, .7, .2, 1), min-width var(--quota-fill-duration) cubic-bezier(.2, .7, .2, 1), opacity var(--dur) ease;
+  @starting-style { flex-grow: 0; min-width: 0; }
+}
+.storage-legend-row { transition: opacity var(--dur) ease; }
+.storage-legend-dot { transition: transform var(--dur) ease; }
+@media (hover: hover) and (pointer: fine) {
+  .storage-bar-seg[data-dim], .storage-legend-dim { opacity: .3; }
+  .storage-legend-active .storage-legend-dot { transform: scale(1.35); }
+}
 @keyframes acp-ring-flash { 0% { color: var(--fg-strong); filter: drop-shadow(0 0 1.5px currentColor); } 100% { filter: none; } }
 
 /* Goal strip lead while the goal is active and a turn runs (chat/Goal.tsx): lucide Goal's first path is the pole and flag.

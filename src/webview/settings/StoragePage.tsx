@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowDownWideNarrow, CalendarClock, Check, ChevronLeft, Trash2 } from 'lucide-react';
 import {
@@ -10,6 +10,7 @@ import type { AgentInfo } from '@shared/transcript';
 import { Button, IconButton } from '../ui/Button';
 import { RadioPills } from '../ui/Field';
 import { ShellLayerContext } from '../ui/Overlay';
+import { Shimmer } from '../ui/Shimmer';
 import { Toast } from '../ui/Toast';
 import { cn } from '../ui/cn';
 import { getLocale, t } from '../i18n';
@@ -384,24 +385,46 @@ function ResidueReview({ state, env, on, onBack }: { state?: StorageState; env: 
 
 // The total, the bar and its legend; before the first scan the same rows hold their place with a faint dash
 function Overview({ view, env, onReveal }: { view?: StorageView; env: SettingsEnv; onReveal: () => void }) {
+  // When mounted with a cached view, Measured's automatic rescan lands a moment later and transitions in place;
+  // any scan after that (the header Refresh button) remounts the segments so the fill plays again
+  const autoScan = useRef(!!view);
+  const lastScan = useRef(view?.scannedAt);
+  const barKey = useRef(0);
+  if (view?.scannedAt !== lastScan.current) {
+    const first = lastScan.current === undefined;
+    lastScan.current = view?.scannedAt;
+    if (!first) {
+      if (autoScan.current) autoScan.current = false;
+      else barKey.current++;
+    }
+  }
   const seg = (k: StorageSegmentKind) => view?.segments.find(s => s.kind === k);
   const shown = view?.segments.filter(s => s.bytes > 0) ?? [];
+  const total = view?.total ?? 0;
+  const [hover, setHover] = useState<StorageSegmentKind>();
+  const active = hover && shown.some(s => s.kind === hover) ? hover : undefined;
   const summary = shown.map(s => `${t(LABEL[s.kind])} ${bytes(s.bytes)}`).join(t('common.listSep'));
   return (
-    <Section title={t('storage.overview')} desc={view ? t('storage.total', { size: bytes(view.total) }) : t('storage.scanning')}>
+    <Section title={t('storage.overview')} desc={view ? t('storage.total', { size: bytes(view.total) }) : <Shimmer active>{t('storage.scanning')}</Shimmer>}>
       <div className="flex min-h-(--setting-row) items-center">
         <div role="img" aria-label={summary || t('storage.scanning')}
           className="flex h-(--storage-bar) w-full gap-(--storage-gap) overflow-hidden rounded-full bg-active">
           {shown.map(s => (
-            <span key={s.kind} title={`${t(LABEL[s.kind])}: ${bytes(s.bytes)}`} className={cn('h-full min-w-(--storage-gap) basis-0', FILL[s.kind])}
-              style={{ flexGrow: s.bytes }} />
+            <span key={`${barKey.current}:${s.kind}`} title={`${t(LABEL[s.kind])}: ${bytes(s.bytes)}`}
+              data-dim={(active && active !== s.kind) || undefined}
+              onMouseEnter={() => setHover(s.kind)} onMouseLeave={() => setHover(undefined)}
+              className={cn('storage-bar-seg h-full basis-0', FILL[s.kind])}
+              style={{ '--seg-grow': total > 0 ? s.bytes / total : 0 } as CSSProperties} />
           ))}
         </div>
       </div>
       {STORAGE_SEGMENTS.map(k => {
         const s = seg(k);
         return (
-          <ItemRow key={k} lead={<span aria-hidden className={cn('size-(--dot) rounded-full', FILL[k])} />}
+          <ItemRow key={k}
+            onMouseEnter={() => setHover(k)} onMouseLeave={() => setHover(undefined)}
+            className={cn('storage-legend-row', active === k && 'storage-legend-active', active && active !== k && 'storage-legend-dim')}
+            lead={<span aria-hidden className={cn('storage-legend-dot size-(--dot) rounded-full', FILL[k])} />}
             title={<>{t(LABEL[k])}{s && s.count > 0 && k !== 'other' && <> <Count n={s.count} /></>}</>}
             trailing={<span className={cn('text-2 tabular-nums', s ? 'text-fg-1' : 'text-fg-3')}>{s ? bytes(s.bytes) : t('storage.pending')}</span>} />
         );
