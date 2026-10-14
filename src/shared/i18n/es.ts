@@ -330,7 +330,6 @@ export const es = {
   'turns.searched#one': 'Buscó {n} vez',
   'turns.explored': 'Exploró {n} lugares',
   'turns.explored#one': 'Exploró {n} lugar',
-  'turns.elapsed': 'Tardó {t}',
   'turns.done': 'Hecho',
   'turns.groupFiles': '{names} y más ({n} archivos)',
   'turns.retrying': 'Reintentando',

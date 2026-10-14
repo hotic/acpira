@@ -333,7 +333,6 @@ export const en = {
   'turns.readFiles': 'Read {n} files',
   'turns.searched': 'Searched {n} times',
   'turns.explored': 'Explored {n} places',
-  'turns.elapsed': 'Took {t}',
   'turns.done': 'Done',
   'turns.nameSep': ', ',
   'turns.groupFiles': '{names} and more ({n} files)',

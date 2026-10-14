@@ -338,7 +338,6 @@ export const ru = {
   'turns.explored': 'Изучено {n} мест',
   'turns.explored#one': 'Изучено {n} место',
   'turns.explored#few': 'Изучено {n} места',
-  'turns.elapsed': 'Заняло {t}',
   'turns.done': 'Готово',
   'turns.groupFiles': '{names} и другие (файлов: {n})',
   'turns.retrying': 'Повтор',

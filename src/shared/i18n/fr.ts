@@ -329,7 +329,6 @@ export const fr = {
   'turns.searched#one': '{n} recherche',
   'turns.explored': '{n} emplacements explorés',
   'turns.explored#one': '{n} emplacement exploré',
-  'turns.elapsed': 'Durée {t}',
   'turns.done': 'Terminé',
   'turns.groupFiles': '{names} et d’autres ({n} fichiers)',
   'turns.retrying': 'Nouvel essai',

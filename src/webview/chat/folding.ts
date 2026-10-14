@@ -115,10 +115,15 @@ export function foldActivity(turn: AgentTurn): FoldActivity {
 }
 
 // Thought durations omit tool execution and waiting, so they cannot substitute for turn timing.
-// Bare "5m 35s" for label/value rows; elapsedLabel wraps it in the 用时/Took prefix used by the transcript note line.
+// Bare "5m 35s", the same on the turn's fold head, its live counter and the stats card.
 export function elapsedDuration(turn: AgentTurn): string {
   if (turn.startedAt === undefined || turn.endedAt === undefined) return '';
-  const seconds = Math.max(0, Math.round((turn.endedAt - turn.startedAt) / 1000));
+  return durationText(turn.endedAt - turn.startedAt);
+}
+
+// "5m 35s" for a span in ms; shared by the finished label and the live counter on a running turn's head
+export function durationText(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
   return minutes
@@ -126,7 +131,3 @@ export function elapsedDuration(turn: AgentTurn): string {
     : t('turns.elapsed.s', { s: rest });
 }
 
-export function elapsedLabel(turn: AgentTurn): string {
-  if (turn.startedAt === undefined || turn.endedAt === undefined) return t('turns.done');
-  return t('turns.elapsed', { t: elapsedDuration(turn) });
-}

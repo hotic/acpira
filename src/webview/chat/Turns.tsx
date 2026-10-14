@@ -32,13 +32,14 @@ import { QuestionRecord } from './Questions';
 import { BlobUrlContext, OpenToolFileContext, WorkflowProgressContext, parseFileLink } from './fileLinks';
 import { PlanDocument } from './PlanDocument';
 import { TurnAttachments } from './Attachments';
-import { elapsedLabel, splitCodexBlocks } from './folding';
+import { elapsedDuration, splitCodexBlocks } from './folding';
 import { GoalRow } from './Goal';
 import { rememberFold, rememberedFold } from './foldMemory';
 import { ProcessHistory } from './ProcessHistory';
 import { compactionForDisplay } from './compactionDisplay';
 import { splitPlanSections } from './planSections';
 import { TurnActions } from './TurnActions';
+import { LiveElapsed } from './TurnClock';
 import { SubagentGroup } from './subagents/SubagentGroup';
 import { breadcrumb, delegatedIds, nodesByTurn, placeNodes, subagentTitle, workflowProgress } from './subagents/subagentState';
 import { Surface, surfaceVariants } from '../ui/Surface';
@@ -453,6 +454,7 @@ function Activity({ turn, running, leadKind = 'orb' }: { turn: AgentTurn; runnin
       <div className="min-h-0 overflow-hidden">
         <Row lead={activity.lead} className="font-medium" title={activity.title}>
           <RowLabel shimmer={activity.active}>{activity.label}</RowLabel>
+          {running && turn.startedAt !== undefined && <LiveElapsed since={turn.startedAt} />}
         </Row>
       </div>
     </div>
@@ -616,7 +618,7 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
   const CompletionIcon = turn.stop === 'cancelled' ? X : outcomeOf(turn) ? TriangleAlert : Check;
   const leadIcon = running ? activity.lead : <CompletionIcon className="size-icon" strokeWidth={1.5} />;
   const label = running ? activity.label : outcomeOf(turn) ?? t('turns.done');
-  const elapsed = !running && turn.startedAt !== undefined && turn.endedAt !== undefined ? elapsedLabel(turn) : undefined;
+  const elapsed = !running && turn.startedAt !== undefined && turn.endedAt !== undefined ? elapsedDuration(turn) : undefined;
   // Steered prompts and the subagent rows at a delegation stay visible between the folding parts of the process
   const parts = useMemo(() => processParts(items), [items]);
   // Only items fold; a process of nothing but delegations has no chevron
@@ -631,6 +633,7 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
     <Collapsible.Trigger render={<Row as="button" interactive lead={leadIcon} title={(running && activity.title) || label} className={running ? surfaceVariants({ tone: 'status' }) : undefined} />}>
       <RowLabel shimmer={running && activity.active}>{retired ? t('host.working') : label}</RowLabel>
       {elapsed && !retired && <span className="min-w-0 truncate text-fg-3" title={elapsed}>{elapsed}</span>}
+      {running && turn.startedAt !== undefined && <LiveElapsed since={turn.startedAt} />}
       {foldable && <ChevronRight className={cn('size-3 shrink-0 self-center transition-transform', open && 'rotate-90')} strokeWidth={1.75} />}
     </Collapsible.Trigger>
   );

@@ -34,7 +34,7 @@ import { PlanBar } from './PlanBar';
 import { PlanDocumentContext } from './PlanDocument';
 import { planExecutionId } from '@shared/planExecution';
 import { Queue } from './Queue';
-import { GoalStrip, SetGoalAction } from './Goal';
+import { GoalStrip, PromptFooter } from './Goal';
 import { lastTypedPrompt } from './goalText';
 import { heldPrompt } from './heldPrompt';
 import { BUILTIN_AGENT_ID } from '@shared/providers';
@@ -708,10 +708,14 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
     const next = turns[ti + 1];
     const switchedAway = next?.role === 'user' && isContinue(next);
     const switchedIn = previous?.role === 'user' && isContinue(previous);
-    if (ti === goalPrompt && turn.role === 'user') {
+    // A user turn carries no time of its own; the reply it started began the moment it went out (absent on old transcripts)
+    const sentAt = turn.role === 'user' && next?.role === 'agent' ? next.startedAt : undefined;
+    // The strip under a prompt: its send time and, on the last typed one, Set as goal (both shown on hover)
+    const goal = ti === goalPrompt && turn.role === 'user' ? () => onSetGoal?.(turn.text.trim()) : undefined;
+    if (turn.role === 'user' && !turn.auto && (sentAt !== undefined || goal)) {
       exchanges[exchanges.length - 1]!.messages.push(
         <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} summons={summons} />,
-        <SetGoalAction key="set-goal" onSet={() => onSetGoal?.(turn.text.trim())} />,
+        <PromptFooter key={`footer${ti}`} sentAt={sentAt} onSetGoal={goal} />,
       );
       return;
     }

@@ -332,7 +332,6 @@ export const de = {
   'turns.searched': '{n}-mal gesucht',
   'turns.explored': '{n} Stellen erkundet',
   'turns.explored#one': '{n} Stelle erkundet',
-  'turns.elapsed': 'Dauer {t}',
   'turns.done': 'Fertig',
   'turns.groupFiles': '{names} und weitere ({n} Dateien)',
   'turns.retrying': 'Neuer Versuch',
