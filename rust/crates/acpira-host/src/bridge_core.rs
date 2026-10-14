@@ -363,6 +363,22 @@ impl BridgeCore {
         let view = self.settings.shared_view().await;
         self.post_now(HostMsg::Shared { view, error });
       }
+      W::Storage { detail } => {
+        let view = self.manager.storage_view(&detail).await;
+        self.post_now(HostMsg::Storage { view, outcome: None, error: None });
+      }
+      W::StorageAction { action: acpira_shared::storage::StorageAction::Reveal { path }, .. } => match self.manager.storage_reveal(path).await {
+        Ok(p) => {
+          if let Err(e) = platform.reveal_in_os(&p.to_string_lossy()).await {
+            platform.log(&format!("storage: revealing {} failed: {e}", p.display()));
+          }
+        }
+        Err(e) => platform.log(&format!("storage: reveal refused: {e:#}")),
+      },
+      W::StorageAction { action, detail } => {
+        let reply = self.manager.storage_action(action, &detail).await;
+        self.post_now(HostMsg::Storage { view: reply.view, outcome: reply.outcome, error: reply.error });
+      }
       W::Providers => {
         let view = self.settings.providers_view().await;
         self.post_now(HostMsg::Providers { view, error: None });

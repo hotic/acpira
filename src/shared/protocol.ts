@@ -5,6 +5,7 @@ import type { HiddenMap, SettingKey, SettingsView } from './settings';
 import type { Locale } from './i18n';
 import type { AgentInventory } from './inventory';
 import type { SharedAction, SharedView } from './sharedConfig';
+import type { StorageAction, StorageDetail, StorageOutcome, StorageView } from './storage';
 import type { ProbeOutcome, ProviderAction, ProviderProbe, ProvidersView } from './providers';
 import type { SessionPatch } from './sessionPatch';
 
@@ -113,6 +114,8 @@ export type HostMsg =
   | { type: 'inventory'; agent: AgentId; inventory: AgentInventory }
   // The Shared tab; error when the action that triggered this reply failed
   | { type: 'shared'; view: SharedView; error?: string }
+  // The Storage tab; outcome for the action that triggered this reply, error when it failed
+  | { type: 'storage'; view: StorageView; outcome?: StorageOutcome; error?: string }
   | { type: 'controls'; agent: AgentId; controls: ConfigControl[] }
   // The built-in agent's model sources; error when the action that triggered this reply failed
   | { type: 'providers'; view: ProvidersView; error?: string }
@@ -274,6 +277,9 @@ export type WebviewMsg =
   // Shared tab: read the view (links are repaired first once "link all" ran), or apply an action and get the view back
   | { type: 'shared' }
   | { type: 'sharedAction'; action: SharedAction }
+  // Storage tab: scan the data root (plus the details a review needs), or run a cleanup and get the view back
+  | { type: 'storage'; detail?: StorageDetail[] }
+  | { type: 'storageAction'; action: StorageAction; detail?: StorageDetail[] }
   // The built-in agent's model sources: read them, or apply an edit and get the view back
   | { type: 'providers' }
   | { type: 'providerAction'; action: ProviderAction }
