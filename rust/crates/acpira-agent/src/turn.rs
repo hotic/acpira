@@ -107,8 +107,11 @@ pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<V
       session.store.item(item);
     }
   }
-  // Old tool output is cleared between turns, as OpenCode does, once enough of it has piled up
-  compact::prune(&session);
+  // Old tool output is cleared between turns, as OpenCode does, once enough of it has piled up and a compaction is near
+  let pick = stats.lock().pick.clone();
+  if prune_due(&server, &session, &params, pick.as_deref()) {
+    compact::prune(&session);
+  }
   session.store.flush();
   let stop = result.map_err(|e| RpcError::new(-32603, e))?;
   let s = stats.lock().clone();
@@ -125,6 +128,25 @@ pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<V
     }
   }
   Ok(response)
+}
+
+/// The share of the compaction threshold (tenths) the last call must reach before old tool output is pruned
+const PRUNE_AT_TENTHS: u64 = 7;
+
+/// Whether to prune after this turn. A prune rewrites the history from the first result it clears, so the provider's
+/// prompt cache misses there once (seen 2026-10-13: the call after a prune read only the system prompt and tools from
+/// cache); far from the threshold that miss costs more than the smaller requests save before the next compaction.
+/// So only with automatic compaction on, the summary strategy picked (chunks fold the finished turns' output
+/// themselves) and the last call at `PRUNE_AT_TENTHS` of the threshold or more, where the prune puts a compaction off
+fn prune_due(server: &Server, session: &Session, params: &Value, pick: Option<&str>) -> bool {
+  let policy = Policy::from_prompt(params);
+  let config = server.config.get();
+  if !policy.auto || config.chunked() {
+    return false;
+  }
+  let Some((used, size)) = session.state.lock().reported else { return false };
+  let output = pick.and_then(|p| limits(&config, &server.catalog.get(), p)).and_then(|m| m.output);
+  used >= policy.threshold(size, output) * PRUNE_AT_TENTHS / 10
 }
 
 /// Close the history after a turn ended any way: cut-off text becomes an assistant message, and every tool call
