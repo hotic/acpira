@@ -238,7 +238,7 @@ async fn the_fast_model_writes_the_summary_and_the_sessions_model_takes_over_whe
   let ups = compaction_updates(&h);
   assert_eq!(ups.iter().map(|u| u["status"].as_str().unwrap()).collect::<Vec<_>>(), ["in_progress", "completed", "in_progress", "completed"]);
   assert_eq!(main.requests()[3].body["model"], "m1");
-  let ev = log(&h, &sid).into_iter().filter(|e| e["type"] == "compaction").last().unwrap();
+  let ev = log(&h, &sid).into_iter().rfind(|e| e["type"] == "compaction").unwrap();
   assert_eq!((ev["model"].as_str(), ev["fallback"]["model"].as_str()), (Some("mock/m1"), Some("fast/f1")));
   assert!(ev["fallback"]["error"].as_str().is_some_and(|e| e.contains("500")), "{ev}");
 }
@@ -317,4 +317,36 @@ async fn a_window_edited_between_turns_is_pushed_to_the_meter() {
   assert_eq!((usage()[1]["used"].clone(), usage()[1]["size"].clone()), (json!(110), json!(1_000_000)));
   tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
   assert_eq!(usage().len(), 2, "{sid}");
+}
+
+/// Seven turns that each read a 40 KB file, then two small ones: past the last two turns the old reads hold about 70k
+/// tokens, enough for a prune by the size rules. Whether one runs is the policy's; true when the log has a prune event
+async fn pruned_after(auto: bool, at: u64, chunked: bool) -> bool {
+  let (h, server, sid) = setup(json!([{ "id": "m1", "context": 400000 }])).await;
+  if chunked {
+    let path = h.home().join("providers.json");
+    let mut file: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    file["compaction"] = json!("chunk");
+    std::fs::write(&path, file.to_string()).unwrap();
+  }
+  let line = format!("{}\n", "x".repeat(49));
+  std::fs::write(h.cwd().join("big.txt"), line.repeat(800)).unwrap();
+  for i in 0..7 {
+    server.push(mock::tools(&[(&format!("c{i}"), "read", json!({ "path": "big.txt" }))])).push(answer("read", 100));
+    prompt(&h, &sid, &format!("read it {i}"), auto, at).await;
+  }
+  for i in 0..2 {
+    server.push(answer("ok", 100));
+    prompt(&h, &sid, &format!("small {i}"), auto, at).await;
+  }
+  log(&h, &sid).iter().any(|e| e["type"] == "prune")
+}
+
+#[tokio::test]
+async fn old_tool_output_is_pruned_only_when_a_summary_compaction_is_near() {
+  // The last call used 110 tokens: at a 150 threshold that is past 70%, at 100k it is far from it
+  assert!(pruned_after(true, 150, false).await, "near the threshold, the summary strategy prunes");
+  assert!(!pruned_after(true, 100_000, false).await, "far from the threshold the cache is kept");
+  assert!(!pruned_after(false, 150, false).await, "automatic compaction off leaves the history alone");
+  assert!(!pruned_after(true, 150, true).await, "chunks fold the finished turns themselves");
 }
