@@ -9,6 +9,7 @@ pub mod html;
 pub mod jobs;
 pub mod names;
 pub mod plan;
+pub mod question;
 pub mod read;
 pub mod search;
 pub mod skill;
@@ -57,6 +58,8 @@ pub enum Action {
   Skill { name: String, path: PathBuf },
   /// Plan mode's approval request; the turn runs it itself
   ExitPlan { plan: Option<String> },
+  /// Questions on the host's question card; the turn runs it itself
+  Question { questions: Vec<question::Question> },
   /// `private`: the URL names this machine or a private network, so the call asks (`web.rs`)
   Fetch { url: String, format: web::Format, timeout_s: u64, private: bool },
   Search { query: String, count: usize },
@@ -110,6 +113,7 @@ pub const SKILL: &str = "skill";
 pub const EXIT_PLAN: &str = "exit_plan";
 pub const WEBFETCH: &str = "webfetch";
 pub const WEBSEARCH: &str = "websearch";
+pub const QUESTION: &str = "question";
 
 /// The specs of these tools, in the given order (a mode's tool set). `skill` is not among them: its spec lists the
 /// session's skills (`skill::spec`), so the turn adds it when there are any
@@ -129,6 +133,7 @@ pub fn specs(names: &[&str]) -> Vec<ToolSpec> {
       EXIT_PLAN => Some(plan::spec()),
       WEBFETCH => Some(web::fetch_spec()),
       WEBSEARCH => Some(web::search_spec()),
+      QUESTION => Some(question::spec()),
       _ => None,
     })
     .collect()
@@ -150,6 +155,7 @@ pub fn prepare(name: &str, args: &Value, cwd: &Path) -> Result<Action, String> {
     EXIT_PLAN => plan::prepare(args),
     WEBFETCH => web::prepare_fetch(args),
     WEBSEARCH => web::prepare_search(args),
+    QUESTION => question::prepare(args),
     other => Err(format!("Unknown tool \"{other}\". Available tools: {}.", names::ALL.join(", "))),
   }
 }
@@ -157,7 +163,7 @@ pub fn prepare(name: &str, args: &Value, cwd: &Path) -> Result<Action, String> {
 impl Action {
   /// Changes nothing on disk: such calls run side by side
   pub fn read_only(&self) -> bool {
-    !matches!(self, Action::Write { .. } | Action::Bash { .. } | Action::Job { .. } | Action::ExitPlan { .. })
+    !matches!(self, Action::Write { .. } | Action::Bash { .. } | Action::Job { .. } | Action::ExitPlan { .. } | Action::Question { .. })
   }
 
   /// The permission key and the target the rules match (`permission.rs`)
@@ -172,6 +178,8 @@ impl Action {
       Action::Job { id, .. } => (perm::JOB, id.clone()),
       // Never evaluated: the approval card is the permission
       Action::ExitPlan { .. } => ("plan", "*".to_owned()),
+      // Never evaluated: asking the user needs no permission
+      Action::Question { .. } => ("question", "*".to_owned()),
       Action::Fetch { url, private: false, .. } => (perm::WEB, url.clone()),
       Action::Fetch { url, private: true, .. } => (perm::WEB_LOCAL, url.clone()),
       Action::Search { query, .. } => (perm::WEB, query.clone()),
@@ -236,6 +244,7 @@ impl Action {
       Action::Skill { name, path } => Presentation { title: format!("Skill {name}"), kind: "read", locations: vec![path.clone()], content: vec![] },
       // The webview localizes this exact heading
       Action::ExitPlan { .. } => Presentation { title: "Exit plan mode".to_owned(), kind: "switch_mode", locations: vec![], content: vec![] },
+      Action::Question { questions } => Presentation { title: question::title(questions.len()), kind: "other", locations: vec![], content: vec![] },
       // `fetch` for both, as claude-agent-acp sends WebFetch and WebSearch: the webview renders their markdown
       Action::Fetch { url, .. } => Presentation { title: format!("Fetch {url}"), kind: "fetch", locations: vec![], content: vec![] },
       Action::Search { query, .. } => Presentation { title: format!("Search \"{query}\""), kind: "fetch", locations: vec![], content: vec![] },

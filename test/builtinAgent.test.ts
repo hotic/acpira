@@ -46,6 +46,16 @@ describe('built-in agent transcripts', () => {
     expect(markdown(builtinTurns('builtin-plan'))).toContain('#### Add src.txt');
   });
 
+  it('a question reads as an ask row with no output card, and the card keeps the answers', () => {
+    const [turn] = agentTurns(builtinTurns('builtin-question'));
+    const [ask] = tools(turn!);
+    expect(toolVerb(ask!)).toBe('Ask');
+    expect(visibleToolContents(ask!)).toEqual([]);
+    expect(turn!.blocks.find(b => b.type === 'question')).toMatchObject({
+      toolCallId: ask!.id, outcome: 'answered', answers: { q0: 'my-own-name', q1: ['docs'] },
+    });
+  });
+
   it('a cancelled turn stays empty and the next one answers normally', () => {
     const [cancelled, next] = agentTurns(builtinTurns('builtin-cancel'));
     expect(cancelled).toMatchObject({ stop: 'cancelled', blocks: [] });

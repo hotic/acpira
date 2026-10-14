@@ -712,6 +712,8 @@ fn shown_name<'a>(name: &'a str, tools: &[&'static str]) -> &'a str {
 fn call_title<'a>(name: &'a str, tools: &[&'static str]) -> &'a str {
   match shown_name(name, tools) {
     tools::EXIT_PLAN => EXIT_PLAN_TITLE,
+    // Read as an ask row before the arguments are known
+    tools::QUESTION => "Ask questions",
     n => n,
   }
 }
@@ -943,6 +945,14 @@ async fn run_tools(
       }
       continue;
     }
+    // The question card needs no permission; closing it ends the turn
+    if let Action::Question { questions } = &action {
+      server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": "in_progress" }));
+      let (out, dismissed) = question(server, session, p, questions).await;
+      finish(server, session, p, out);
+      rejected |= dismissed;
+      continue;
+    }
     match rules.decide(session, &action) {
       Decision::Allow => {}
       Decision::Deny => {
@@ -1022,8 +1032,33 @@ async fn exit_plan(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, p
     session.save_state(&st);
   }
   server.update(&session.id, json!({ "sessionUpdate": "current_mode_update", "currentModeId": modes::AGENT }));
-  let model = format!("The user approved the plan. {} Carry out the plan now, keeping the to-do list current.", modes::get(modes::AGENT).overlay(&path));
+  let model = format!("The user approved the plan. {} Carry out the plan now, item by item in the to-do list's order: mark an item in_progress when you start it and \
+completed once it is checked. If the plan turns out wrong, correct the plan file before going on.", modes::get(modes::AGENT).overlay(&path));
   (Output { model, is_error: false, content: vec![], raw_output: None }, Some(true))
+}
+
+/// The `question` tool: an `elicitation/create` form on the host's question card. The bool is true when the user
+/// closed the card (or the client refused the form), which ends the turn like a rejected action
+async fn question(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, questions: &[tools::question::Question]) -> (Output, bool) {
+  if !server.forms() {
+    return (Output::error("This client cannot show questions. Ask in plain text instead and end your turn."), false);
+  }
+  let request = tools::question::form(&session.id, &p.acp, questions);
+  let out = match server.conn().request("elicitation/create", request).await {
+    Ok(r) => tools::question::reply(questions, &r),
+    Err(e) => return (Output::error(format!("The questions could not be shown ({}). Ask in plain text instead and end your turn.", e.message)), false),
+  };
+  match out {
+    // A skip is an answer too, so the row does not read as failed
+    tools::question::Reply::Answered(text) => (answered(text), false),
+    tools::question::Reply::Skipped => (answered("The user skipped the questions without answering. Go on with your own judgement and say what you assumed.".into()), false),
+    tools::question::Reply::Dismissed => (Output::error("The user closed the questions. Stop here and wait for their direction."), true),
+  }
+}
+
+/// The answers are the model's copy only: the question card below the row already shows them
+fn answered(text: String) -> Output {
+  Output { content: vec![], model: text, is_error: false, raw_output: None }
 }
 
 fn ctx_for(server: &Arc<Server>, session: &Arc<Session>, acp: &str) -> Ctx {

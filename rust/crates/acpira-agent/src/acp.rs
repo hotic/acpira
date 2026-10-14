@@ -103,6 +103,8 @@ pub struct Server {
   /// The client takes boolean config options (`clientCapabilities.session.configOptions.boolean`); without it the Fast
   /// switch goes out as a Standard / Fast select
   booleans: AtomicBool,
+  /// The client shows elicitation forms (`clientCapabilities.elicitation.form`): the `question` tool's card
+  forms: AtomicBool,
   conn: OnceLock<Connection>,
   sessions: parking_lot::Mutex<HashMap<String, Arc<Session>>>,
 }
@@ -115,6 +117,7 @@ impl Server {
       version: version.into(),
       http: crate::llm::default_http(),
       booleans: AtomicBool::new(false),
+      forms: AtomicBool::new(false),
       conn: OnceLock::new(),
       sessions: Default::default(),
     })
@@ -139,6 +142,10 @@ impl Server {
     let _ = self.conn.set(conn);
   }
 
+  pub fn forms(&self) -> bool {
+    self.forms.load(Ordering::Relaxed)
+  }
+
   pub fn conn(&self) -> &Connection {
     self.conn.get().expect("the connection is attached before the first message")
   }
@@ -158,6 +165,8 @@ impl Server {
   fn initialize(&self, params: &Value) -> Value {
     let booleans = params.pointer("/clientCapabilities/session/configOptions/boolean").is_some_and(|b| !b.is_null());
     self.booleans.store(booleans, Ordering::Relaxed);
+    let forms = params.pointer("/clientCapabilities/elicitation/form").is_some_and(|f| !f.is_null());
+    self.forms.store(forms, Ordering::Relaxed);
     json!({
       "protocolVersion": PROTOCOL_VERSION,
       "agentInfo": { "name": AGENT_NAME, "title": "Acpira", "version": self.version },

@@ -1,5 +1,6 @@
 //! An in-process ACP client for the agent: the agent runs on a `tokio::io::duplex` pair, the client records every
-//! `session/update` and answers permission requests with a scripted choice
+//! `session/update` and answers permission requests with a scripted choice, and `elicitation/create` forms with a
+//! scripted response
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
@@ -25,6 +26,9 @@ pub struct Client {
   pub updates: parking_lot::Mutex<Vec<Value>>,
   pub permissions: parking_lot::Mutex<Vec<Value>>,
   pub answer: parking_lot::Mutex<Answer>,
+  pub forms: parking_lot::Mutex<Vec<Value>>,
+  /// The response to every form
+  pub form_reply: parking_lot::Mutex<Value>,
 }
 
 impl Inbound for Client {
@@ -37,6 +41,11 @@ impl Inbound for Client {
     let answer = *self.answer.lock();
     if method == "session/request_permission" {
       self.permissions.lock().push(params.clone());
+    }
+    if method == "elicitation/create" {
+      self.forms.lock().push(params);
+      let reply = self.form_reply.lock().clone();
+      return Box::pin(async move { Ok(reply) });
     }
     Box::pin(async move {
       if method != "session/request_permission" {
@@ -71,14 +80,25 @@ impl Harness {
 
   /// A fresh agent process on an existing data root and project (a reopened window)
   pub async fn start_in(home: tempfile::TempDir, cwd: tempfile::TempDir) -> Harness {
+    Harness::start_with(home, cwd, json!({ "elicitation": { "form": {} } })).await
+  }
+
+  /// A client declaring these capabilities
+  pub async fn start_with(home: tempfile::TempDir, cwd: tempfile::TempDir, caps: Value) -> Harness {
     let (agent_r, client_w) = tokio::io::duplex(1 << 20);
     let (client_r, agent_w) = tokio::io::duplex(1 << 20);
     let agent_home = home.path().to_owned();
     tokio::spawn(async move { acpira_agent::run(agent_r, agent_w, agent_home, "0.0.0-test").await });
-    let client = Arc::new(Client { updates: Default::default(), permissions: Default::default(), answer: parking_lot::Mutex::new(Answer::Allow) });
+    let client = Arc::new(Client {
+      updates: Default::default(),
+      permissions: Default::default(),
+      answer: parking_lot::Mutex::new(Answer::Allow),
+      forms: Default::default(),
+      form_reply: parking_lot::Mutex::new(json!({ "action": "cancel" })),
+    });
     let inbound: Arc<dyn Inbound> = client.clone();
     let conn = Connection::start(client_r, client_w, Arc::new(move || inbound.clone()), Arc::new(|l: &str| eprintln!("client: {l}")));
-    conn.request("initialize", json!({ "protocolVersion": 1, "clientCapabilities": {} })).await.unwrap();
+    conn.request("initialize", json!({ "protocolVersion": 1, "clientCapabilities": caps })).await.unwrap();
     Harness { conn, client, home, cwd }
   }
 
