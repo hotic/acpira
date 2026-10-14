@@ -24,7 +24,8 @@ import type { StorageState } from './settings/StoragePage';
 import type { ProvidersState } from './settings/ProvidersSection';
 
 declare global {
-  interface Window { __acpira?: { host: 'sidebar' | 'editor' } }
+  // `font`: the configured UI face, for fontPreload.ts (VS Code only says so; other hosts get the default)
+  interface Window { __acpira?: { host: 'sidebar' | 'editor'; font?: Appearance['font'] } }
 }
 
 // Always through the memo: acquireVsCodeApi() throws when called twice, and other components (Link) reach the api via vscodeApi()

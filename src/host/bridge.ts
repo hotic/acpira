@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
+import { appearanceFromSettings } from '@shared/appearance';
 import type { HostMsg, WebviewHost, WebviewMsg } from '@shared/protocol';
 import type { SessionView } from '@shared/transcript';
 import type { SidecarClient, SidecarState, ShellView } from './shell/SidecarClient';
@@ -123,6 +124,10 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
     const js = this.webview.asWebviewUri(vscode.Uri.joinPath(dist, 'main.js'));
     const css = this.webview.asWebviewUri(vscode.Uri.joinPath(dist, 'main.css'));
     const nonce = randomBytes(16).toString('base64url');
+    // The page requests its UI face before init arrives (webview/fontPreload.ts); validated like the engine's appearance,
+    // so only one of the axis' values reaches the inline script
+    const config = vscode.workspace.getConfiguration('acpira');
+    const font = appearanceFromSettings(key => config.get(`appearance.${key}`)).font;
     const csp = [
       "default-src 'none'",
       `img-src ${this.webview.cspSource} https: data:`,
@@ -147,7 +152,7 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
 </head>
 <body>
 <div id="root"></div>
-<script nonce="${nonce}">window.__acpira={host:${JSON.stringify(this.host)}}</script>
+<script nonce="${nonce}">window.__acpira={host:${JSON.stringify(this.host)},font:${JSON.stringify(font)}}</script>
 <script type="module" nonce="${nonce}" src="${js}"></script>
 </body>
 </html>`;

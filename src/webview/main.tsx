@@ -1,3 +1,5 @@
+// First: its request starts before the rest of the bundle evaluates
+import './fontPreload';
 import { createRoot } from 'react-dom/client';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/geist';
