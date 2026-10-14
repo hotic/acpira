@@ -11,7 +11,7 @@ import { IconButton } from '../ui/Button';
 import { OptionContent, PanelHeader } from '../ui/Panel';
 import { Popover } from '../ui/Popover';
 import { Row } from '../ui/Row';
-import { t, useLocale } from '../i18n';
+import { dateFormat, t, useLocale } from '../i18n';
 import { AgentMark } from './AgentMark';
 import { CategoryAddIcon } from './CategoryIcon';
 import { SessionContextMenu, SessionMenu, type MoveProject, type SessionMenuItemsProps } from './SessionMenu';
@@ -655,15 +655,24 @@ interface ItemProps {
 // One item: the whole row is clickable to select; the tail shows a status dot + time by default, swapping to actions on hover / keyboard focus. Action buttons can't nest inside a button, so the whole row is a div[role=option].
 // The hover cluster keeps the two quick toggles (move / pin); rename, export and delete live in the "…" menu, which keeps
 // the cluster alive while open — the row tracks menuOpen because a pointer inside the portaled popup is no longer a hover.
-// Right-clicking the row opens the same menu at the pointer (not while renaming, where the input keeps the native one)
+// Right-clicking the row opens the same menu at the pointer (not while renaming, where the input keeps the native one).
+// The "…" menu mounts once the row is first hovered or focused: its button is hidden until then (the cluster shows on
+// hover / focus-within), and a list of hundreds of rows no longer builds a closed menu for each when it opens
 function Item({ session: s, agentName, terms, snippet, active, time, project, editing, onSelect, onEdit, onRename, onDelete, onPin, onMove, projects, onMoveTo, onExport, dragging, onDragStart, onDragEnd, categories, onFile, onNewCategory }: ItemProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [armed, setArmed] = useState(false);
+  const arm = () => { if (!armed) setArmed(true); };
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget) return;
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(); }
   };
   const act = 'inline-flex size-lead items-center justify-center rounded-sm text-fg-3 transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1';
   const menu: SessionMenuItemsProps = { session: s, onRename: onEdit, onPin, onMove, projects, onMoveTo, onExport, onDelete, categories, onFile, onNewCategory };
+  const more = (
+    <button type="button" title={t('session.more')} aria-label={t('session.more')} className={act}>
+      <Ellipsis className="size-3" strokeWidth={1.5} />
+    </button>
+  );
   const row = (
     <div
       role="option"
@@ -676,6 +685,8 @@ function Item({ session: s, agentName, terms, snippet, active, time, project, ed
       onDragEnd={onDragEnd}
       onClick={() => { if (!editing) onSelect(); }}
       onKeyDown={onKey}
+      onPointerEnter={arm}
+      onFocus={arm}
       className={cn(
         'group flex min-h-row cursor-pointer items-center gap-gap rounded-md px-2 text-2 text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover',
         snippet && !editing && 'py-1',
@@ -710,14 +721,7 @@ function Item({ session: s, agentName, terms, snippet, active, time, project, ed
             </button>
             {/* The row selects on click and synthetic events bubble through the menu's portal; keep both from reaching the option */}
             <span onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
-              <SessionMenu
-                {...menu}
-                align="end"
-                onOpenChange={setMenuOpen}
-                trigger={<button type="button" title={t('session.more')} aria-label={t('session.more')} className={act}>
-                  <Ellipsis className="size-3" strokeWidth={1.5} />
-                </button>}
-              />
+              {armed ? <SessionMenu {...menu} align="end" onOpenChange={setMenuOpen} trigger={more} /> : more}
             </span>
           </span>
         </span>
@@ -778,6 +782,6 @@ function timeWidth(text: string): number {
 function fmtTime(iso: string, dayAgo: number, locale: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  if (dayAgo <= 0) return new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(d);
-  return new Intl.DateTimeFormat(locale, { month: 'numeric', day: 'numeric' }).format(d);
+  if (dayAgo <= 0) return dateFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(d);
+  return dateFormat(locale, { month: 'numeric', day: 'numeric' }).format(d);
 }

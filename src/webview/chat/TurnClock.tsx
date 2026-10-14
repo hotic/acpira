@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Locale } from '@shared/i18n';
-import { useLocale } from '../i18n';
+import { dateFormat, useLocale } from '../i18n';
 import { durationText } from './folding';
 
 // Running time of a live turn, next to its Working label, the bare duration like the finished head (35 分钟 12 秒). A leaf
@@ -23,7 +23,7 @@ export function sentTimeText(at: number, now: number, locale: Locale): string {
   const today = new Date(now);
   const sameDay = d.toDateString() === today.toDateString();
   const sameYear = d.getFullYear() === today.getFullYear();
-  return new Intl.DateTimeFormat(locale, {
+  return dateFormat(locale, {
     ...(sameDay ? {} : { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) }),
     hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
   }).format(d);
@@ -32,7 +32,7 @@ export function sentTimeText(at: number, now: number, locale: Locale): string {
 // A sent prompt's time in the strip under it (`PromptFooter`); the full date and time with seconds is its tooltip
 export function SentTime({ at }: { at: number }) {
   const locale = useLocale();
-  const full = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'medium' }).format(at);
+  const full = dateFormat(locale, { dateStyle: 'medium', timeStyle: 'medium' }).format(at);
   return (
     <time dateTime={new Date(at).toISOString()} title={full} className="px-1 text-3 text-fg-3 tabular-nums">
       {sentTimeText(at, Date.now(), locale)}
