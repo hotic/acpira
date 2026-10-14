@@ -105,7 +105,8 @@ describe('ACP tool presentation', () => {
 
   it('infers the kind of well-known tool names when the agent omits or grab-bags it', () => {
     const [web, sh] = agentTurn('infer-kinds').blocks as ToolCallBlock[];
-    expect(web).toMatchObject({ kind: 'search', target: 'acp spec' });
+    // A bare `web_search` tool reads as a web search: the globe, the search verb, the query as plain text
+    expect(web).toMatchObject({ kind: 'fetch', verbKey: 'verb.search', target: 'acp spec', targetMono: false });
     expect(sh).toMatchObject({ kind: 'execute', target: 'ls -la' });
     setLocale('zh-CN');
     expect(toolVerb(web!)).toBe('正在搜索');

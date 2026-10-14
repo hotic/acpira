@@ -1149,10 +1149,11 @@
        {
         "type": "tool_call",
         "id": "w",
-        "kind": "search",
+        "kind": "fetch",
         "verb": "Search",
+        "verbKey": "verb.search",
         "target": "acp spec",
-        "targetMono": true,
+        "targetMono": false,
         "status": "in_progress"
        }
       ]
@@ -1178,10 +1179,11 @@
        {
         "type": "tool_call",
         "id": "w",
-        "kind": "search",
+        "kind": "fetch",
         "verb": "Search",
+        "verbKey": "verb.search",
         "target": "acp spec",
-        "targetMono": true,
+        "targetMono": false,
         "status": "in_progress"
        },
        {
