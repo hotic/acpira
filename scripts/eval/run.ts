@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { AgentTurn, PermissionBlock, QuestionBlock, SessionView } from '@shared/transcript';
 import { Host } from '../lib/host';
-import { HARNESSES, MODELS } from './harnesses';
+import { HARNESSES, type HarnessSetup, MODELS } from './harnesses';
 import { type Call, startMeter } from './meter';
 
 // Harness comparison on long tasks (docs/dev/builtin-agent.md, "Harness comparison"). Spends real model calls.
@@ -90,23 +90,40 @@ function lastAgent(v: SessionView | undefined): AgentTurn | undefined {
   return t?.role === 'agent' ? t : undefined;
 }
 
-async function runOne(o: { task: Task; harness: string; model: string; rep: number; root: string; meterUrl: string; calls: Call[]; timeoutMin: number }) {
-  const runId = `${o.task.id}.${o.harness}.${o.model}.${o.rep}`.replace(/[^\w.-]/g, '_');
-  const dir = join(o.root, 'runs', runId);
-  const work = join(dir, 'work');
-  const home = join(dir, 'home');
-  const acpiraHome = join(dir, 'acpira');
-  // A run interrupted before it reported leaves its tree behind; start over from the task's repo
-  rmSync(dir, { recursive: true, force: true });
-  // Its dumped bodies too: the numbering restarts with each runner process
-  const bodies = join(o.root, 'bodies');
-  for (const f of existsSync(bodies) ? readdirSync(bodies) : []) if (f.startsWith(`${runId}.`)) rmSync(join(bodies, f));
-  for (const d of [work, home, acpiraHome]) mkdirSync(d, { recursive: true });
-  cpSync(join(TASKS_DIR, o.task.id, 'repo'), work, { recursive: true });
-  sh('git init -q && git add -A && git -c user.name=eval -c user.email=eval@localhost commit -qm "Initial state"', work);
+interface Outcome {
+  timedOut: boolean; failure?: string; status?: string; stop?: string; error?: unknown;
+  tools: number; cards: number; questions: number; harnessUsage?: unknown;
+  // Token counts the harness reported itself, for one that bypasses the meter
+  usage?: { requests: number; input: number; cacheRead: number; output: number; reasoning: number };
+}
 
-  const setup = HARNESSES[o.harness]!({ model: MODELS[o.model]!, base: `${o.meterUrl}/r/${runId}/${MODELS[o.model]!.upstream ?? 'gw'}`, home, acpiraHome });
-  const started = Date.now();
+// A harness that is its own CLI (no ACP), run once in the work tree with the prompt; its stdout is kept as cli.out
+function driveCli(cli: NonNullable<HarnessSetup['cli']>, o: { runId: string; dir: string; work: string; home: string; prompt: string; timeoutMin: number }): Outcome {
+  console.log(`[${o.runId}] cli ${cli.cmd[0]}`);
+  const r = spawnSync(cli.cmd[0]!, [...cli.cmd.slice(1), o.prompt], {
+    cwd: o.work, encoding: 'utf8', timeout: o.timeoutMin * 60_000, killSignal: 'SIGTERM', maxBuffer: 256 << 20,
+    env: { ...process.env, HOME: o.home, PYTHONDONTWRITEBYTECODE: '1', ...cli.env },
+  });
+  writeFileSync(join(o.dir, 'cli.out'), r.stdout ?? '');
+  writeFileSync(join(o.dir, 'cli.err'), r.stderr ?? '');
+  const timedOut = r.error?.message.includes('ETIMEDOUT') ?? false;
+  const failure = r.error ? String(r.error) : r.status !== 0 ? `exit ${r.status}: ${(r.stderr ?? '').trim().slice(-300)}` : undefined;
+  // agy --output-format json: { status, num_turns, usage: { input_tokens (uncached), cache_read_tokens, output_tokens
+  // (thinking included), thinking_tokens } } (agy 1.3.5, 2026-10-15)
+  let usage: Outcome['usage'];
+  try {
+    const j = JSON.parse(r.stdout ?? '') as { num_turns?: number; usage?: Record<string, number> };
+    const u = j.usage ?? {};
+    usage = { requests: j.num_turns ?? 0, input: (u.input_tokens ?? 0) + (u.cache_read_tokens ?? 0), cacheRead: u.cache_read_tokens ?? 0, output: u.output_tokens ?? 0, reasoning: u.thinking_tokens ?? 0 };
+  } catch {
+    usage = undefined;
+  }
+  return { timedOut, failure, stop: timedOut ? 'timeout' : r.status === 0 ? 'end_turn' : 'error', tools: 0, cards: 0, questions: 0, usage };
+}
+
+// One prompt through the real sidecar, every permission card allowed
+async function driveSidecar(setup: HarnessSetup, o: { runId: string; work: string; home: string; acpiraHome: string; prompt: string; timeoutMin: number }): Promise<Outcome> {
+  const { work, home, acpiraHome } = o;
   const host = await Host.start({
     cwd: work, home: acpiraHome, defaultAgent: setup.agent,
     env: { HOME: home, PYTHONDONTWRITEBYTECODE: '1', ...setup.env },
@@ -143,9 +160,9 @@ async function runOne(o: { task: Task; harness: string; model: string; rep: numb
     await view.newSession(setup.agent);
     const v0 = view.active()!;
     const modelOpt = v0.controls.options.find(x => x.category === 'model');
-    console.log(`[${runId}] session ${v0.id} status=${v0.status} model=${JSON.stringify(modelOpt?.value ?? null)}`);
+    console.log(`[${o.runId}] session ${v0.id} status=${v0.status} model=${JSON.stringify(modelOpt?.value ?? null)}`);
     try {
-      await view.handle({ type: 'send', text: o.task.prompt }, o.timeoutMin * 60_000);
+      await view.handle({ type: 'send', text: o.prompt }, o.timeoutMin * 60_000);
     } catch (e) {
       timedOut = true;
       failure = String(e);
@@ -159,8 +176,32 @@ async function runOne(o: { task: Task; harness: string; model: string; rep: numb
   const v = view.active();
   const turn = lastAgent(v);
   const tools = turn?.blocks.filter(b => b.type === 'tool_call').length ?? 0;
-  const wallS = Math.round((Date.now() - started) / 1000);
   await host.dispose().catch(() => {});
+  return { timedOut, failure, status: v?.status, stop: turn?.stop, error: turn?.error ?? v?.error, tools, cards, questions, harnessUsage: v?.usage as unknown };
+}
+
+async function runOne(o: { task: Task; harness: string; model: string; rep: number; root: string; meterUrl: string; calls: Call[]; timeoutMin: number }) {
+  const runId = `${o.task.id}.${o.harness}.${o.model}.${o.rep}`.replace(/[^\w.-]/g, '_');
+  const dir = join(o.root, 'runs', runId);
+  const work = join(dir, 'work');
+  const home = join(dir, 'home');
+  const acpiraHome = join(dir, 'acpira');
+  // A run interrupted before it reported leaves its tree behind; start over from the task's repo
+  rmSync(dir, { recursive: true, force: true });
+  // Its dumped bodies too: the numbering restarts with each runner process
+  const bodies = join(o.root, 'bodies');
+  for (const f of existsSync(bodies) ? readdirSync(bodies) : []) if (f.startsWith(`${runId}.`)) rmSync(join(bodies, f));
+  for (const d of [work, home, acpiraHome]) mkdirSync(d, { recursive: true });
+  cpSync(join(TASKS_DIR, o.task.id, 'repo'), work, { recursive: true });
+  sh('git init -q && git add -A && git -c user.name=eval -c user.email=eval@localhost commit -qm "Initial state"', work);
+
+  const setup = HARNESSES[o.harness]!({ model: MODELS[o.model]!, base: `${o.meterUrl}/r/${runId}/${MODELS[o.model]!.upstream ?? 'gw'}`, home, acpiraHome });
+  const started = Date.now();
+  const outcome = setup.cli
+    ? driveCli(setup.cli, { runId, dir, work, home, prompt: o.task.prompt, timeoutMin: o.timeoutMin })
+    : await driveSidecar(setup, { runId, work, home, acpiraHome, prompt: o.task.prompt, timeoutMin: o.timeoutMin });
+  const { timedOut, failure, tools } = outcome;
+  const wallS = Math.round((Date.now() - started) / 1000);
 
   // The hidden tests, copied in only now so the agent never saw them
   cpSync(join(TASKS_DIR, o.task.id, 'hidden'), join(work, '.eval_hidden'), { recursive: true });
@@ -175,11 +216,13 @@ async function runOne(o: { task: Task; harness: string; model: string; rep: numb
   const result = {
     runId, task: o.task.id, harness: o.harness, model: o.model, rep: o.rep,
     pass: ver.status === 0 && counts.total > 0, testsPassed: counts.passed, testsTotal: counts.total, verifyTimedOut,
-    wallS, timedOut, failure, status: v?.status, stop: turn?.stop, error: turn?.error ?? v?.error,
-    tools, cards, questions,
+    wallS, timedOut, failure, status: outcome.status, stop: outcome.stop, error: outcome.error,
+    tools, cards: outcome.cards, questions: outcome.questions,
     requests: mine.length, callErrors: mine.filter(c => c.error).length,
     input: sum('input'), cacheRead: sum('cacheRead'), cacheWrite: sum('cacheWrite'), output: sum('output'), reasoning: sum('reasoning'),
-    harnessUsage: v?.usage,
+    ...(outcome.usage ? { ...outcome.usage, cacheWrite: 0 } : {}),
+    harnessUsage: outcome.harnessUsage,
+    ...(setup.unmetered && !outcome.usage ? { unmetered: true } : {}),
   };
   const outage = !result.pass && mine.some(c => c.error && OUTAGE.test(c.error));
   appendFileSync(join(o.root, outage ? 'infra.ndjson' : 'results.ndjson'), JSON.stringify(result) + '\n');

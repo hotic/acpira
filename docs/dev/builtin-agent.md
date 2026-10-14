@@ -176,6 +176,17 @@ Verified 2026-10-11 (acpira 1.9.1) through an OpenAI-compatible gateway, one `op
 - DeepSeek V4.1 Flash on its own API costs 2 to 3 cents a run under every harness, with 97 to 99% of the prompt read from cache. At low, acpira and OpenCode both lose the same `semver-port` that high passes, so DeepSeek keeps high. The family had been dropping the chosen level altogether (fixed: `reasoning_effort` now goes next to `thinking.type`).
 - `swe-2` reports input counts of a few hundred tokens for 60 KB requests and cache reads equal to them, so its cost column is left out; request bodies are 61 to 69% encrypted reasoning under every harness. acpira passed all five, the others four.
 - Two hidden-test ambiguities were fixed in the task text, not graded around: `calc-lang` accepts `end of input` quoted or not, and `conf-bugs`' README now says an inherited `[DEFAULT]` value is interpolated in the inheriting section (GPT under three harnesses had read it the other way).
+- Gemini 4 Argon against Google's own harness (2026-10-15, one run per cell, `--model gemini-4-argon`, i.e. `antigravity/gemini-4-argon` on the gateway, which pins the Antigravity channel; the `agy` harness is the Antigravity CLI 1.3.5 in print mode at `gemini-4-argon-high`, with its own Google sign-in, its usage taken from its `--output-format json`; cost at Google's launch price, $2 / $10 / $0.10 cached). acpira was the HEAD build of that day in a separate worktree:
+
+  | Harness | Passed | Hidden tests | $ / run | Output k / run | Wall min / run |
+  |---|---|---|---|---|---|
+  | acpira, effort low | 4/5 | 99% | 0.163 | 8.3 | 2.2 |
+  | acpira, effort medium | 5/5 | 100% | 0.319 | 19.6 | 4.3 |
+  | acpira, effort high | 5/5 | 100% | 0.486 | 32.6 | 7.3 |
+  | Antigravity CLI (`agy -p`, High) | 5/5 | 100% | 0.619 | 41.4 | 8.1 |
+
+  The task set does not separate them: every harness passed `semver-port`, which no harness passed with Gemini 3.8 Flash, and low's one miss was a single `calc-lang` case. At medium the built-in agent matched the native harness on all five at half its cost and time. `agy` thought for 10k to 71k tokens a task (`thinking_tokens`); the gateway's Responses usage has no reasoning count, so the acpira rows show output only. The `gemini` family's start at low was set on Flash and is not yet revisited for Argon.
+- The gateway's Antigravity channel maps `reasoning.effort` / `reasoning_effort` to Antigravity's tiered ids (`gemini-4-argon-low` / `-medium` / `-high`; no effort = medium) and also sends a `thinkingBudget`, which Argon ignores. Observed on one counting prompt (2026-10-15): low answered with 0 reasoning tokens in 4 of 4 calls; medium thought 0.5k to 2k; high spent the whole reply (32768 output tokens, the channel's cap, which no `max_output_tokens` raises) thinking and returned no text. Until gateway commit `238e06b8` that came back as `finish_reason: stop` / Responses `completed`; it is now `length` / `incomplete` with `max_output_tokens`, which the turn loop reads as `max_tokens`. The channel keeps Gemini thought signatures itself (an in-process cache keyed by tool call id), so nothing needs to go back from the client.
 
 ## Not verified yet
 
