@@ -4,17 +4,16 @@ export interface PlanSection {
   key: string;
   blocks: AgentBlock[];
   plan?: PlanDocumentBlock;
-  // Subagents delegated right after this section's blocks; their rows render at that point of the turn
-  subagents?: string[];
 }
 
 // A plan is a chronological boundary, outside both adjacent process folds.
 // Keep the trailing section even while empty: approval and continuation arrive
 // there later, and its stable key preserves disclosure state as chunks stream.
-// A delegation row (a tool call carrying `subagentId`) is a boundary too, when its node is in `placed`: the
-// subagent rows take the delegation's place instead of trailing the latest content. Back-to-back delegations
-// (a parallel launch) share one boundary. Delegation rows never render themselves, placed or not.
-// A steered prompt is not a boundary: it joined the running loop, so it stays a block of the same process, in order.
+// A delegation row (a tool call carrying `subagentId`) is not a boundary: handing work to a subagent is part of the
+// running turn, so nothing before it may read as finished while the turn works (reported 2026-10-14: the work before a
+// summon closed into a Done fold with a second Working row under the subagents). When its node is in `placed`, the
+// row stays in the section, once per node, as the point the subagent rows render at (`processParts`); the others drop.
+// Delegation rows never render as tools. A steered prompt is not a boundary either: it joined the running loop.
 export function splitPlanSections(blocks: AgentBlock[], placed?: ReadonlySet<string>): PlanSection[] {
   const sections: PlanSection[] = [{ key: 'start', blocks: [] }];
   const seen = new Set<string>();
@@ -31,12 +30,7 @@ export function splitPlanSections(blocks: AgentBlock[], placed?: ReadonlySet<str
       const id = block.subagentId;
       if (!placed?.has(id) || seen.has(id)) continue;
       seen.add(id);
-      const prev = sections[sections.length - 2];
-      if (section.blocks.length === 0 && prev?.subagents) prev.subagents.push(id);
-      else {
-        section.subagents = [id];
-        sections.push({ key: `subagents:${block.id}`, blocks: [] });
-      }
+      section.blocks.push(block);
     } else if (block.type !== 'thought' || block.text.trim()) {
       section.blocks.push(block);
     }

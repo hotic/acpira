@@ -20,7 +20,7 @@ import { Thought } from './Thought';
 import { Plan } from './Plan';
 import { ToolCall } from './ToolCall';
 import { ToolGroup } from './ToolGroup';
-import { blockSettled, foldStates, groupProcess, itemEntrance, itemSettled, type ProcessItem } from './processGroups';
+import { blockSettled, foldStates, groupProcess, isDelegation, itemEntrance, itemSettled, processParts, type FoldPart, type ProcessItem } from './processGroups';
 import { useTailWindow } from './tailWindow';
 import { AutoFoldContext, AutoFoldItem, AutoFoldStore } from './autoFold';
 import { useFollowing } from './useBottomFollow';
@@ -218,12 +218,15 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   // Everything but the section split reads the turn without its delegation rows
   const shown = useMemo(() => raw.blocks.some(b => b.type === 'tool_call' && b.subagentId !== undefined)
     ? { ...raw, blocks: raw.blocks.filter(b => b.type !== 'tool_call' || b.subagentId === undefined) } : raw, [raw]);
-  // Subagent rows sit where they were delegated: a delegation row (tool call with `subagentId`) splits the turn
-  // like a plan does, and its node plus that node's same-turn descendants render at the split. Nodes with no
-  // delegation row in this turn trail the content as before. Delegation rows themselves never render.
+  // Subagent rows sit where they were delegated: a placed delegation row (tool call with `subagentId`) stays in the
+  // turn's one process, and its node plus that node's same-turn descendants render at that point (`DelegatedSubagents`).
+  // Nodes with no delegation row in this turn trail the content as before. Delegation rows never render as tools.
   const placed = useMemo(() => subagents?.length && onInspect ? delegatedIds(raw.blocks, subagents) : undefined, [raw.blocks, subagents, onInspect]);
   const { byId: placedNodes, rest: restNodes } = useMemo(() => placed?.size ? placeNodes(subagents!, placed) : { byId: undefined, rest: subagents }, [placed, subagents]);
   const sections = useMemo(() => splitPlanSections(raw.blocks, placed), [raw.blocks, placed]);
+  const delegations = useMemo<Delegations | undefined>(() => placedNodes && onInspect
+    ? { byId: placedNodes, all: allSubagents ?? subagents!, onInspect, onPermission } : undefined,
+  [placedNodes, allSubagents, subagents, onInspect, onPermission]);
   const workflows = useMemo(() => workflowProgress(subagents), [subagents]);
   // A /compact reply that so far holds only its compaction row: that row shimmers in place, so no generic Working row above it
   const compactionOnly = !!compacting && shown.blocks.length > 0 && shown.blocks.every(b => b.type === 'compaction');
@@ -237,7 +240,7 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   }), [onFailureAction, last, running, turn.error?.failureId, absorbed]);
   // A settled turn mounts fold bodies on first open; a live one keeps them mounted (its finished items narrow this again,
   // `ProcessBlocks`) so streamed content stays in step while closed
-  return <LazyPanelContext.Provider value={!running}><EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><NoticeActionContext.Provider value={noticeActions}><WorkflowProgressContext.Provider value={workflows}><div className={cn('group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]', joined && '-mt-msg-join')}>
+  return <LazyPanelContext.Provider value={!running}><EntranceScopeContext.Provider value={entrance}><RowEntranceContext.Provider value={running}><NoticeActionContext.Provider value={noticeActions}><WorkflowProgressContext.Provider value={workflows}><DelegationContext.Provider value={delegations}><div className={cn('group/turn flex min-w-0 flex-col gap-gap px-pad [--row:var(--chat-row)]', joined && '-mt-msg-join')}>
     {sections.map((section, i) => {
       const lastSection = i === sections.length - 1;
       // Only the continuation owns live activity and the turn outcome. Earlier
@@ -251,14 +254,12 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
           running={lastSection && running} compactionOnly={compactionOnly} onPermission={onPermission}
           memoryKey={memoryKey && (i === 0 ? memoryKey : `${memoryKey}:after-plan:${section.key}`)}
           subagents={lastSection ? restNodes : undefined} allSubagents={lastSection ? allSubagents : undefined} onInspect={onInspect} lead={lead} />}
-        {section.subagents && placedNodes && onInspect && <PlacedSubagents nodes={section.subagents.flatMap(id => placedNodes.get(id) ?? [])}
-          all={allSubagents ?? subagents!} onInspect={onInspect} onPermission={onPermission} />}
         {section.plan && <PlanDocument block={section.plan}
           permission={shown.blocks.find((b): b is PermissionBlock => b.type === 'permission' && b.planId === section.plan!.id)} onChoose={onPermission} />}
       </Fragment>;
     })}
     {actions && !running && !compacting && hasTurnContent(turn) && <TurnActions turn={turn} turnIndex={turnIndex} last={last} settings={settings} />}
-  </div></WorkflowProgressContext.Provider></NoticeActionContext.Provider></RowEntranceContext.Provider></EntranceScopeContext.Provider></LazyPanelContext.Provider>;
+  </div></DelegationContext.Provider></WorkflowProgressContext.Provider></NoticeActionContext.Provider></RowEntranceContext.Provider></EntranceScopeContext.Provider></LazyPanelContext.Provider>;
 });
 
 interface SubagentSlots {
@@ -281,21 +282,22 @@ function FlatMessage({ turn, running, working, fold, onPermission, subagents, al
   const groups = groupBlocks(turn.blocks.filter(b => (b.type !== 'permission' || !b.planId) && (b.type !== 'question' || !!b.outcome)));
   const box = useRef<HTMLDivElement>(null);
   // The window counts blocks: a lines group of many blocks is trimmed inside, keeping its items' keys
-  const tail = useTailWindow(groups.reduce((n, g) => n + (g.kind === 'lines' ? g.blocks.length : 1), 0), running, box);
+  const tail = useTailWindow(groups.reduce((n, g) => n + groupSize(g), 0), running, box);
   let at = 0;
   return (
     <div ref={box} className="flex flex-col gap-gap">
       <Activity turn={turn} running={working} leadKind={lead} />
       <QuietEntranceContext.Provider value={tail.quiet}>
         {groups.map((g, gi) => {
-          const size = g.kind === 'lines' ? g.blocks.length : 1;
+          const size = groupSize(g);
           const skip = Math.max(0, tail.start - at);
           at += size;
           if (skip >= size) return null;
           return (
-            <div key={g.kind === 'block' && 'id' in g.block && g.block.id ? g.block.id : `g${gi}`}>
+            <div key={g.kind === 'subagents' ? g.id : g.kind === 'block' && 'id' in g.block && g.block.id ? g.block.id : `g${gi}`}>
               {g.kind === 'lines'
                 ? <Lines blocks={g.blocks} fold={fold} running={running} skip={skip} />
+                : g.kind === 'subagents' ? <DelegatedSubagents ids={g.ids} />
                 : <Block block={g.block} onPermission={onPermission} />}
             </div>
           );
@@ -314,6 +316,17 @@ function FlatMessage({ turn, running, working, fold, onPermission, subagents, al
       )}
     </div>
   );
+}
+
+// The nodes placed at this turn's delegation rows, so the process can draw them where each delegation sits
+interface Delegations { byId: Map<string, SubagentSummary[]>; all: SubagentSummary[]; onInspect: (id: string) => void; onPermission: OnPermission }
+const DelegationContext = createContext<Delegations | undefined>(undefined);
+
+// The subagent rows of one delegation point (a parallel launch is one point), read from the turn's placed nodes
+function DelegatedSubagents({ ids }: { ids: string[] }) {
+  const ctx = useContext(DelegationContext);
+  if (!ctx) return null;
+  return <PlacedSubagents nodes={ids.flatMap(id => ctx.byId.get(id) ?? [])} all={ctx.all} onInspect={ctx.onInspect} onPermission={ctx.onPermission} />;
 }
 
 // Subagent rows at their delegation point, with any pending child approvals right under them
@@ -447,13 +460,21 @@ function Activity({ turn, running, leadKind = 'orb' }: { turn: AgentTurn; runnin
 }
 
 const LINE_TYPES = new Set(['thought', 'plan', 'tool_call', 'compaction', 'notice', 'goal']);
-type Group = { kind: 'lines'; blocks: AgentBlock[] } | { kind: 'block'; block: AgentBlock };
+type Group = { kind: 'lines'; blocks: AgentBlock[] } | { kind: 'block'; block: AgentBlock } | { kind: 'subagents'; id: string; ids: string[] };
 
+// Blocks a group stands for, which is what the tail window counts
+const groupSize = (g: Group) => g.kind === 'lines' ? g.blocks.length : g.kind === 'subagents' ? g.ids.length : 1;
+
+// Runs of line blocks share a group, other blocks stand alone, and back-to-back delegations (a parallel launch) are one
+// group that draws their subagent rows
 function groupBlocks(blocks: AgentBlock[]): Group[] {
   const out: Group[] = [];
   for (const b of blocks) {
     const last = out[out.length - 1];
-    if (LINE_TYPES.has(b.type)) {
+    if (isDelegation(b)) {
+      if (last?.kind === 'subagents') last.ids.push(b.subagentId);
+      else out.push({ kind: 'subagents', id: b.id, ids: [b.subagentId] });
+    } else if (LINE_TYPES.has(b.type)) {
       if (last?.kind === 'lines') last.blocks.push(b);
       else out.push({ kind: 'lines', blocks: [b] });
     } else out.push({ kind: 'block', block: b });
@@ -596,8 +617,10 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
   const leadIcon = running ? activity.lead : <CompletionIcon className="size-icon" strokeWidth={1.5} />;
   const label = running ? activity.label : outcomeOf(turn) ?? t('turns.done');
   const elapsed = !running && turn.startedAt !== undefined && turn.endedAt !== undefined ? elapsedLabel(turn) : undefined;
-  // Steered prompts stay visible between the folding parts of the process
-  const parts = useMemo(() => splitAtSteers(items), [items]);
+  // Steered prompts and the subagent rows at a delegation stay visible between the folding parts of the process
+  const parts = useMemo(() => processParts(items), [items]);
+  // Only items fold; a process of nothing but delegations has no chevron
+  const foldable = parts.some(part => part.type === 'items');
   const root = useRef<HTMLDivElement>(null);
   const tail = useTailWindow(items.length, running, root);
   const skips = useMemo(() => partSkips(parts, tail.start), [parts, tail.start]);
@@ -608,7 +631,7 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
     <Collapsible.Trigger render={<Row as="button" interactive lead={leadIcon} title={(running && activity.title) || label} className={running ? surfaceVariants({ tone: 'status' }) : undefined} />}>
       <RowLabel shimmer={running && activity.active}>{retired ? t('host.working') : label}</RowLabel>
       {elapsed && !retired && <span className="min-w-0 truncate text-fg-3" title={elapsed}>{elapsed}</span>}
-      {blocks.length > 0 && <ChevronRight className={cn('size-3 shrink-0 self-center transition-transform', open && 'rotate-90')} strokeWidth={1.75} />}
+      {foldable && <ChevronRight className={cn('size-3 shrink-0 self-center transition-transform', open && 'rotate-90')} strokeWidth={1.75} />}
     </Collapsible.Trigger>
   );
   return (
@@ -635,6 +658,11 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
                   <EntranceOnce id={itemEntrance(part.id)}><SteeredMessage block={part.block} /></EntranceOnce>
                 </div>
               );
+              // The subagent rows of a delegation sit the same way: in the stream while the parts show, under the head
+              // once they have folded away, and never as a fold of their own (each row enters by itself, as before)
+              if (part.type === 'subagents') return skips[i] ? null : (
+                <div key={part.id} className="flex min-w-0 flex-col pt-(--process-prose-gap)"><DelegatedSubagents ids={part.ids} /></div>
+              );
               // The padding folds with its part: the head's offset on the first, the prose gap after a card, the tail on the last
               const body = (
                 <div className={cn(!retired && (i === 0 ? 'pt-1' : 'pt-(--process-prose-gap)'), !retired && i === parts.length - 1 && 'pb-1.5')}>
@@ -659,31 +687,17 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
   );
 }
 
-type FoldPart = { type: 'items'; id: string; items: ProcessItem[] } | { type: 'steer'; id: string; block: SteerBlock };
-
-// Per part, what the tail window leaves out of it: the leading items of an items part, 1 for a hidden steered prompt.
-// Parts stay in place (an emptied first part still holds the root's panel), so nothing remounts as the window grows
+// Per part, what the tail window leaves out of it: the leading items of an items part, all of a hidden steered prompt or
+// delegation point. Parts stay in place (an emptied first part still holds the root's panel), so nothing remounts as
+// the window grows
 function partSkips(parts: FoldPart[], start: number): number[] {
   let at = 0;
   return parts.map(part => {
-    const size = part.type === 'steer' ? 1 : part.items.length;
+    const size = part.type === 'steer' ? 1 : part.type === 'subagents' ? part.ids.length : part.items.length;
     const skip = Math.min(size, Math.max(0, start - at));
     at += size;
     return skip;
   });
-}
-
-// The turn's process cut at each steered prompt: runs of items fold, the prompts between them stay. A part is keyed by
-// its first item, so a prompt steered into a live turn leaves the earlier part mounted and starts a new one after it
-function splitAtSteers(items: ProcessItem[]): FoldPart[] {
-  const out: FoldPart[] = [];
-  for (const item of items) {
-    const last = out[out.length - 1];
-    if (item.type === 'block' && item.block.type === 'steer') out.push({ type: 'steer', id: item.id, block: item.block });
-    else if (last?.type === 'items') last.items.push(item);
-    else out.push({ type: 'items', id: item.id, items: [item] });
-  }
-  return out;
 }
 
 // The outer fold's close (--dur-close) and a frame or two: rows inside hold still until it has finished

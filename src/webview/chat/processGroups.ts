@@ -1,4 +1,4 @@
-import type { AgentBlock, ToolCallBlock } from '@shared/transcript';
+import type { AgentBlock, SteerBlock, ToolCallBlock } from '@shared/transcript';
 import { toolFiles, visibleToolContents } from './toolDetails';
 import { parseFileLink, type FileLink } from './fileLinks';
 
@@ -13,9 +13,38 @@ export type GroupKind = 'read' | 'edit';
 // Failed and cancelled calls stay visible on their own row; a completed read without a file reference has nothing
 // to list. Running calls join, so a group grows as the agent works instead of a live row trailing it
 function groupKind(block: AgentBlock): GroupKind | undefined {
-  if (block.type !== 'tool_call' || block.status === 'failed' || block.status === 'cancelled' || block.asyncTask) return;
+  if (block.type !== 'tool_call' || block.status === 'failed' || block.status === 'cancelled' || block.asyncTask || isDelegation(block)) return;
   if (block.kind === 'read') return block.status !== 'completed' || toolFiles(block).length ? 'read' : undefined;
   if (block.kind === 'edit') return 'edit';
+}
+
+// A root tool call that launched a subagent. It never renders as a tool: where its node is placed in the turn, the
+// subagent rows take its place (`processParts`), and everywhere else it is left out
+export function isDelegation(block: AgentBlock): block is ToolCallBlock & { subagentId: string } {
+  return block.type === 'tool_call' && block.subagentId !== undefined;
+}
+
+// The turn's process cut where something has to stay in view while the parts around it fold: a steered prompt (what the
+// user said) and the subagent rows at a delegation (the work the turn handed off). Runs of items fold. A part is keyed
+// by its first item, so content arriving later leaves the earlier parts mounted; back-to-back delegations (a parallel
+// launch) share one part
+export type FoldPart =
+  | { type: 'items'; id: string; items: ProcessItem[] }
+  | { type: 'steer'; id: string; block: SteerBlock }
+  | { type: 'subagents'; id: string; ids: string[] };
+
+export function processParts(items: ProcessItem[]): FoldPart[] {
+  const out: FoldPart[] = [];
+  for (const item of items) {
+    const last = out[out.length - 1];
+    if (item.type === 'block' && item.block.type === 'steer') out.push({ type: 'steer', id: item.id, block: item.block });
+    else if (item.type === 'block' && isDelegation(item.block)) {
+      if (last?.type === 'subagents') last.ids.push(item.block.subagentId);
+      else out.push({ type: 'subagents', id: item.id, ids: [item.block.subagentId] });
+    } else if (last?.type === 'items') last.items.push(item);
+    else out.push({ type: 'items', id: item.id, items: [item] });
+  }
+  return out;
 }
 
 // The entrance name of an item, apart from the ids rows use inside (a thought's own EntranceOnce, a tool's `:tool`)
