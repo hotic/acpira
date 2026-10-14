@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { BookOpen, Ban, Check, ChevronDown, ChevronUp, CircleAlert, Copy, Download, Eye, EyeOff, FileText, Globe, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, SlidersHorizontal, Sparkles, SquareTerminal, X } from 'lucide-react';
 import type { AccountInfo, AgentInfo, ConfigControl } from '@shared/transcript';
 import type { AgentInstallProgress } from '@shared/protocol';
@@ -16,6 +16,7 @@ import { Shimmer } from '../ui/Shimmer';
 import { StableText } from '../ui/StableText';
 import { cn } from '../ui/cn';
 import { Collapsible } from '../ui/Collapsible';
+import { useScrollFade } from '../ui/useScrollFade';
 import { t } from '../i18n';
 import { ModelMark } from '../chat/ModelMark';
 import { Count, Dot, FactRow, Field, Group, ItemRow, ListHead, ModelLine, Note, PathText, SearchRow, Section, SectionAction, SectionDescription, SectionHead, Select, SourceLink, Switch, shortPath, type ModelTags } from './controls';
@@ -331,7 +332,14 @@ const HEALTH_LABEL: Record<AgentHealthStage, MsgKey> = {
   auth_required: 'settings.health.authRequired',
 };
 
-function AgentFacts({ agent, inventory, env }: { agent: AgentInfo; inventory?: AgentInventory; env: SettingsEnv }) {
+function AgentFacts({ agent, inventory: live, env }: { agent: AgentInfo; inventory?: AgentInventory; env: SettingsEnv }) {
+  // A rescan (the executable appeared or vanished, e.g. an install finished) keeps the last settled rows on screen, only the
+  // executable shimmering, until the reply replaces them in one step. Dropping them collapsed the card to the probe's two
+  // rows and grew it back half a second later, moving the install section under the reader (reported 2026-10-14)
+  const [settled, setSettled] = useState(live && { inventory: live, searched: agent.searched });
+  if (live && (settled?.inventory !== live || settled.searched !== agent.searched)) setSettled({ inventory: live, searched: agent.searched });
+  const inventory = live ?? settled?.inventory;
+  const searched = live ? agent.searched : settled?.searched ?? agent.searched;
   const version = inventory?.runtime?.version ? t('settings.agent.version', { name: inventory.runtime.name ?? agent.name, version: inventory.runtime.version }) : undefined;
   const adapter = inventory?.adapter?.adapter;
   const engine = inventory?.adapter?.engine;
@@ -351,13 +359,13 @@ function AgentFacts({ agent, inventory, env }: { agent: AgentInfo; inventory?: A
   return (
     <Group>
       <FactRow label={t('settings.fact.binary')}>
-        {inventory === undefined
+        {live === undefined
           ? <Shimmer className="font-sans text-2">{t('settings.agent.probing')}</Shimmer>
-          : inventory.binary
-            ? <><Dot ok /><PathText path={inventory.binary} env={env} /></>
+          : live.binary
+            ? <><Dot ok /><PathText path={live.binary} env={env} /></>
             : <><Dot ok={false} /><span className="truncate font-sans text-2 text-fg-2" title={missingExecutable}>{missingExecutable}</span></>}
       </FactRow>
-      {!inventory?.binary && agent.searched?.length ? <SearchedDirs dirs={agent.searched} env={env} /> : null}
+      {!inventory?.binary && searched?.length ? <SearchedDirs dirs={searched} env={env} /> : null}
       {adapterText && <FactRow label={t('settings.fact.adapter')}><span className="truncate" title={adapter?.root}>{adapterText}</span></FactRow>}
       {engineText && (
         <FactRow label={t('settings.fact.engine')}>
@@ -429,11 +437,22 @@ const INSTALL_STATUS: Record<AgentInstallProgress['status'], MsgKey> = {
   cancelled: 'settings.install.cancelled',
 };
 
-// The latest in-app install: status, the route it took (proxy, npm prefix), the failure and the log tail. The log stays
-// open while it runs and after a failure or cancel; a success folds down to its status line
+// The latest in-app install as one status line in every state, so streaming output never resizes the card: while it
+// runs the line carries the installer's newest output in place, and a success keeps the route it took (proxy, npm
+// prefix) there instead. The whole log waits behind a toggle in a box of fixed height and opens by itself when the
+// install fails; a success has no log. Reported 2026-10-14: the log used to grow under the row line by line, up to the
+// output cap, and fold away on success
 function InstallProgressRow({ install, env }: { install: AgentInstallProgress; env: SettingsEnv }) {
   const { status } = install;
-  const lead = status === 'running' ? <LoaderCircle strokeWidth={1.5} className="animate-spin live-spin" />
+  const running = status === 'running';
+  const [open, setOpen] = useState(status === 'failed');
+  // A new run starts folded and a failure opens its log; otherwise the reader's own toggle holds
+  const [seen, setSeen] = useState(status);
+  if (seen !== status) {
+    setSeen(status);
+    if (status === 'running' || status === 'failed') setOpen(status === 'failed');
+  }
+  const lead = running ? <LoaderCircle strokeWidth={1.5} className="animate-spin live-spin" />
     : status === 'success' ? <Check strokeWidth={1.5} className="text-ok" />
     : status === 'failed' ? <CircleAlert strokeWidth={1.5} className="text-danger" />
     : <Ban strokeWidth={1.5} className="text-fg-2" />;
@@ -443,36 +462,73 @@ function InstallProgressRow({ install, env }: { install: AgentInstallProgress; e
     install.prefix && t('settings.install.prefix', { dir: shortPath(install.prefix, env) }),
   ].filter(Boolean).join(' · ');
   const log = status !== 'success' && install.log.length > 0;
+  const newest = running ? newestLine(install.log) : undefined;
   return (
-    // Top-aligned: the log below makes this row tall, and the status icon belongs to the status line
-    <ItemRow
-      className="items-start"
-      lead={lead}
-      title={status === 'running' ? <Shimmer className="font-sans text-2">{label}</Shimmer> : <span className={cn('text-2', status === 'failed' ? 'text-danger' : 'text-fg-1')}>{label}</span>}
-      extra={(facts || install.error || log) && <>
-        {facts && <p className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{facts}</p>}
-        {install.error && <p className="m-0 pt-1 text-2 text-danger [overflow-wrap:anywhere]">{install.error}</p>}
-        {log && <InstallLog lines={install.log} />}
-      </>}
-    />
+    <Collapsible.Root open={log && open} onOpenChange={setOpen}>
+      <ItemRow
+        // Top-aligned only under an error, so the status icon stays on the status line
+        className={cn(install.error && 'items-start')}
+        lead={lead}
+        title={<span className="flex min-w-0 items-baseline gap-2">
+          {running ? <Shimmer className="shrink-0 font-sans text-2">{label}</Shimmer> : <span className={cn('shrink-0 text-2', status === 'failed' ? 'text-danger' : 'text-fg-1')}>{label}</span>}
+          {newest ? <span className="min-w-0 truncate font-mono text-mono text-fg-2" title={newest}>{newest}</span>
+            : status === 'success' && facts && <span className="min-w-0 truncate text-2 text-fg-2" title={facts}>{facts}</span>}
+        </span>}
+        extra={install.error && <p className="m-0 pt-1 text-2 text-danger [overflow-wrap:anywhere]">{install.error}</p>}
+        // One text line tall: the button overflows into the row's padding, so the row keeps its height when a success
+        // drops the toggle, and under an error it stays on the status line
+        trailing={log && (
+          <span className="flex h-(--text-2-lh) items-center">
+            <IconButton title={t('settings.install.log')} aria-label={t('settings.install.log')} aria-expanded={open} onClick={() => setOpen(v => !v)} className="-mr-1.5 text-fg-2">
+              {open ? <ChevronUp strokeWidth={1.5} /> : <ChevronDown strokeWidth={1.5} />}
+            </IconButton>
+          </span>
+        )}
+      />
+      {log && <Collapsible.Panel>
+        <div className="flex flex-col gap-2 pb-(--setting-row-pad) pl-indent">
+          {facts && <p className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{facts}</p>}
+          <InstallLog lines={install.log} fixed={running} />
+        </div>
+      </Collapsible.Panel>}
+    </Collapsible.Root>
   );
 }
 
-// The log tail, kept scrolled to the newest line unless the reader scrolled up
-function InstallLog({ lines }: { lines: string[] }) {
-  const box = useRef<HTMLPreElement>(null);
+// The installer's newest line with something on it; a blank line would read as a stall
+function newestLine(lines: string[]): string | undefined {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (line?.trim()) return line;
+  }
+  return undefined;
+}
+
+// The log tail in the command output frame: exactly --install-log-lines tall while the install runs, so lines stream
+// inside it, and at most that once it ended. Kept scrolled to the newest line unless the reader scrolled up
+function InstallLog({ lines, fixed }: { lines: string[]; fixed: boolean }) {
+  const box = useRef<HTMLPreElement | null>(null);
   const pinned = useRef(true);
+  const fade = useScrollFade<HTMLPreElement>();
+  const setBox = useCallback((el: HTMLPreElement | null) => {
+    box.current = el;
+    return fade(el);
+  }, [fade]);
   useLayoutEffect(() => {
     const el = box.current;
     if (el && pinned.current) el.scrollTop = el.scrollHeight;
   }, [lines]);
   return (
-    <pre
-      ref={box}
-      aria-label={t('settings.install.log')}
-      onScroll={e => { const el = e.currentTarget; pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 4; }}
-      className="scroll-thin m-0 max-h-code-output overflow-auto pt-1 font-mono text-mono whitespace-pre-wrap text-fg-2 [overflow-wrap:anywhere]"
-    >{lines.join('\n')}</pre>
+    <div className="code-output">
+      <pre
+        ref={setBox}
+        tabIndex={0}
+        aria-label={t('settings.install.log')}
+        onScroll={e => { const el = e.currentTarget; pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 4; }}
+        className={cn('scroll-fade scroll-thin m-0 overflow-auto px-command-x py-command-y font-mono text-mono whitespace-pre-wrap text-fg-2 [overflow-wrap:anywhere]',
+          fixed ? 'h-install-log' : 'max-h-install-log')}
+      >{lines.join('\n')}</pre>
+    </div>
   );
 }
 
