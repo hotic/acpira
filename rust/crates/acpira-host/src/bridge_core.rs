@@ -90,6 +90,8 @@ pub struct BridgeCore {
   sent: parking_lot::Mutex<SentViews>,
   batch: parking_lot::Mutex<MsgBatch>,
   settings_sub: parking_lot::Mutex<Option<u64>>,
+  /// The stored session the page opens on, read from attach on (`ready` waits for this load instead of starting its own)
+  preload: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>,
   me: Weak<BridgeCore>,
 }
 
@@ -106,6 +108,13 @@ impl BridgeCore {
     initial: Option<InitialView>,
   ) -> Arc<BridgeCore> {
     let viewer = manager.attach(initial);
+    // The page loads its bundle between attach and `ready`: a stored session it opens on is read and brought live meanwhile,
+    // so `ready` finds its view instead of starting a long record's read only then. A page opening on a new session
+    // still starts it at `ready`
+    let preload = viewer.active_id().map(|_| {
+      let (m, v) = (manager.clone(), viewer.clone());
+      tokio::spawn(async move { m.ensure_active_for(&v).await })
+    });
     let core = Arc::new_cyclic(|me: &Weak<BridgeCore>| BridgeCore {
       viewer,
       manager,
@@ -121,6 +130,7 @@ impl BridgeCore {
       sent: Default::default(),
       batch: Default::default(),
       settings_sub: Default::default(),
+      preload: parking_lot::Mutex::new(preload),
       me: me.clone(),
     });
     let weak = core.me.clone();
@@ -169,14 +179,25 @@ impl BridgeCore {
         // its record is read, while starting the agent and resuming can take seconds, and the page stays blank until init
         let ensure = {
           let (m, v) = (manager.clone(), self.viewer.clone());
-          tokio::spawn(async move { m.ensure_active_for(&v).await })
+          let preload = self.preload.lock().take();
+          tokio::spawn(async move {
+            // The load begun at attach goes first: a session it could not open is replaced below, as without it
+            if let Some(load) = preload {
+              let _ = load.await;
+            }
+            m.ensure_active_for(&v).await
+          })
         };
         tokio::select! {
           _ = ensure => {}
           _ = self.view_shown.notified() => {}
         }
         // A page's first pushes start only now: init below carries everything they would have, and opening a long session
-        // during the awaits above used to send its whole view once before init and once inside it
+        // during the awaits above used to send its whole view once before init and once inside it.
+        // The sent views stay locked from here until init is out: a session push racing init (the agent starting, a status
+        // change) waits in `deliver` and goes as a patch against init's view. Before, it found no base yet and went whole,
+        // a second copy of a long transcript just before init
+        let mut sent = self.sent.lock();
         self.ready.store(true, std::sync::atomic::Ordering::Release);
         let (active, active_parts) = match manager.session_msg(self.viewer.active_id().as_deref()) {
           Some(HostMsg::Session { session, parts, .. }) => (Some(session), parts),
@@ -201,7 +222,6 @@ impl BridgeCore {
         };
         // The page takes init's view as a whole and starts its cache over, keeping that view as the one on screen: it
         // becomes the base the next push of that session patches against, instead of a second copy of the transcript
-        let mut sent = self.sent.lock();
         sent.clear();
         if let Some(parts) = active_parts.as_ref().filter(|_| self.patches.load(std::sync::atomic::Ordering::Acquire)) {
           sent.deliver(Some(parts));
