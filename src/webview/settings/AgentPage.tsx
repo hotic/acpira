@@ -374,14 +374,17 @@ function AgentFacts({ agent, inventory: live, env }: { agent: AgentInfo; invento
         </FactRow>
       )}
       <FactRow label={t('settings.fact.version')}>{version ?? <span className="text-fg-2">{t('settings.fact.noLive')}</span>}</FactRow>
-      {health && (
-        <FactRow label={t('settings.fact.status')}>
+      {/* Always a row, like Version: the first probe's reply only replaces its text. A row that appeared with the reply
+          grew the card and pushed the page down about a third of a second after it opened (reported 2026-10-14 on the
+          README's built-in agent clip) */}
+      <FactRow label={t('settings.fact.status')}>
+        {health ? <>
           <Dot ok={health.stage === 'ready'} />
           <span className="truncate" title={[health.at, health.error].filter(Boolean).join('\n')}>
             {t(HEALTH_LABEL[health.stage])}{health.error && health.stage !== 'ready' ? ` · ${health.error}` : ''}
           </span>
-        </FactRow>
-      )}
+        </> : <span className="text-fg-2">{t('settings.fact.noLive')}</span>}
+      </FactRow>
     </Group>
   );
 }
