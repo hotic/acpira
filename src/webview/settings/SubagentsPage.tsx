@@ -48,7 +48,8 @@ export function SubagentsPage({ settings, agents, controls, on }: PageProps) {
   }, [list, adding, open]);
   const full = list.length >= PERSONA_MAX;
   const add = () => {
-    const agent = usable.find(a => a.available)?.id ?? usable[0]?.id;
+    // Unknown availability (the engine's first probe still running) counts as available, as on every other page
+    const agent = usable.find(a => a.available !== false)?.id ?? usable[0]?.id;
     if (!agent || full) return;
     // The id comes from the name the way the host derives it, so the page knows what to open when the list comes back
     const next = sanitizePersonas([...list, { name: uniqueName(t('subagents.page.newName'), list), agent, mode: 'consult', when: '', enabled: true }]);
@@ -112,7 +113,7 @@ function PersonaDetail({ persona: p, agents, controls, onBack, onChange, onDelet
       </Field>
       <Field label={t('subagents.page.agent')}>
         <Select label={t('subagents.page.agent')} value={p.agent}
-          options={agents.map(a => ({ value: a.id, label: a.name, icon: <AgentMark id={a.id} name={a.name} />, disabled: !a.available }))}
+          options={agents.map(a => ({ value: a.id, label: a.name, icon: <AgentMark id={a.id} name={a.name} />, disabled: a.available === false }))}
           onChange={agent => onChange({ agent, model: undefined, effort: undefined })} />
       </Field>
       {/* The model list is the CLI's latest session's; until it is in, only the default (and a stored value) show */}
