@@ -74,22 +74,19 @@ describe('chronological plan sections', () => {
     expect(splitPlanSections([])).toEqual([{ key: 'start', blocks: [] }]);
   });
 
-  it('splits at placed delegation rows, groups a parallel launch, and drops every delegation row', () => {
-    const a: AgentBlock = { type: 'tool_call', id: 'agent-a', kind: 'other', verb: 'Agent', status: 'completed', subagentId: 'na' };
+  it('keeps placed delegation rows in the running process: no split, the work before them is not done yet', () => {
+    const a: AgentBlock = { type: 'tool_call', id: 'agent-a', kind: 'other', verb: 'Agent', status: 'in_progress', subagentId: 'na' };
     const b: AgentBlock = { ...a, id: 'agent-b', subagentId: 'nb' };
     const orphan: AgentBlock = { ...a, id: 'agent-c', subagentId: 'nc' };
+    const again: AgentBlock = { ...a, id: 'agent-a2' };
     const later: AgentBlock = { ...write, id: 'later' };
-    const sections = splitPlanSections([reply, a, b, orphan, later, thought], new Set(['na', 'nb']));
-    expect(sections).toEqual([
-      { key: 'start', blocks: [reply], subagents: ['na', 'nb'] },
-      { key: 'subagents:agent-a', blocks: [later, thought] },
+    // Placed rows stay where they were, once per node; an unplaced one and a repeat drop
+    expect(splitPlanSections([reply, a, b, orphan, again, later, thought], new Set(['na', 'nb']))).toEqual([
+      { key: 'start', blocks: [reply, a, b, later, thought] },
     ]);
-    // Without placement the delegation rows still vanish and nothing splits
+    // Without placement every delegation row drops
     expect(splitPlanSections([reply, a, later])).toEqual([{ key: 'start', blocks: [reply, later] }]);
-    // A delegation first in the turn leaves an empty leading section that carries the rows
-    expect(splitPlanSections([a, later], new Set(['na']))).toEqual([
-      { key: 'start', blocks: [], subagents: ['na'] }, { key: 'subagents:agent-a', blocks: [later] },
-    ]);
+    expect(splitPlanSections([a, later], new Set(['na']))).toEqual([{ key: 'start', blocks: [a, later] }]);
   });
 
   it('keeps a steered prompt inside the running process: no split, nothing before it reads as finished', () => {

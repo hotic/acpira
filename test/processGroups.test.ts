@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentBlock, DiffLine, ToolCallBlock } from '../src/shared/transcript';
-import { DWELL_MS, editEntries, editReference, editSpan, foldStates, groupNames, groupProcess, itemSettled, type FoldInput } from '../src/webview/chat/processGroups';
+import { DWELL_MS, editEntries, editReference, editSpan, foldStates, groupNames, groupProcess, itemSettled, processParts, type FoldInput } from '../src/webview/chat/processGroups';
 
 const read = (id: string, path: string, status: ToolCallBlock['status'] = 'completed'): ToolCallBlock => ({
   type: 'tool_call', id, kind: 'read', verb: 'Read', status, target: path.split('/').pop(), locations: [{ path }],
@@ -107,5 +107,20 @@ describe('process groups', () => {
     expect(itemSettled({ type: 'block', id: 'x', block: { ...cmd, background: true } })).toBe(true);
     expect(itemSettled({ type: 'block', id: 't', block: { ...thought, streaming: true } as AgentBlock })).toBe(false);
     expect(itemSettled({ type: 'block', id: 't', block: thought })).toBe(true);
+  });
+});
+
+describe('process parts', () => {
+  const delegate = (id: string, node: string): ToolCallBlock => ({ type: 'tool_call', id, kind: 'read', verb: 'Agent', status: 'in_progress', subagentId: node });
+
+  it('cuts the process at steered prompts and delegations, a parallel launch being one point', () => {
+    const steer: AgentBlock = { type: 'steer', id: 'st', text: 'also Esc' };
+    const items = groupProcess([thought, delegate('d1', 'n1'), delegate('d2', 'n2'), read('r1', '/a.ts'), steer, read('r2', '/b.ts')]);
+    expect(processParts(items).map(part => part.type === 'items' ? part.items.map(item => item.id)
+      : part.type === 'subagents' ? part.ids : part.id)).toEqual([['thought:5'], ['n1', 'n2'], ['r1'], 'st', ['r2']]);
+  });
+
+  it('never groups a delegation with the reads around it, whatever its kind', () => {
+    expect(groupProcess([read('r1', '/a.ts'), delegate('d1', 'n1'), read('r2', '/b.ts')]).map(item => item.type)).toEqual(['block', 'block', 'block']);
   });
 });
