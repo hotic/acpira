@@ -13,6 +13,8 @@ interface Result {
   runId: string; dir: string; task: string; harness: string; model: string; pass: boolean; testsPassed: number; testsTotal: number; wallS: number;
   timedOut: boolean; stop?: string; requests: number; callErrors: number; tools: number;
   input: number; cacheRead: number; cacheWrite: number; output: number; reasoning: number;
+  // The harness reached its own backend, so no call went through the meter: tokens and cost are unknown
+  unmetered?: boolean;
 }
 
 interface Price { input: number; output: number; cacheRead?: number; cacheWrite?: number }
@@ -21,7 +23,7 @@ const catalog = JSON.parse(readFileSync(resolve(import.meta.dirname, '../../rust
 
 function price(model: string): Price {
   const id = MODELS[model]?.catalog ?? model;
-  const p = catalog.models.find(m => m.id === id)?.cost;
+  const p = MODELS[model]?.price ?? catalog.models.find(m => m.id === id)?.cost;
   if (!p) throw new Error(`no catalogue price for ${id}`);
   return p;
 }
@@ -60,6 +62,7 @@ console.log(`|---|---|${byTask ? '---|' : ''}---|---|---|---|---|---|---|---|---
 for (const [k, rs] of [...groups].sort()) {
   const [model, harness, task] = k.split('|');
   const passes = rs.filter(r => r.pass).length;
+  const metered = !rs.some(r => r.unmetered);
   const usd = rs.reduce((a, r) => a + cost(r), 0);
   const tests = rs.reduce((a, r) => a + (r.testsTotal ? r.testsPassed / r.testsTotal : 0), 0) / rs.length;
   const input = rs.reduce((a, r) => a + r.input, 0);
@@ -67,5 +70,5 @@ for (const [k, rs] of [...groups].sort()) {
   const est = rs.map(estimated);
   const estK = est.every(e => e !== undefined) ? fmt(est.reduce((a, e) => a + e!, 0) / rs.length / 1000) : '-';
   const stops = [...new Set(rs.map(r => (r.timedOut ? 'timeout' : r.stop ?? '?')))].join(',');
-  console.log(`| ${model} | ${harness}${byTask ? ` | ${task}` : ''} | ${rs.length} | ${passes}/${rs.length} | ${fmt(tests * 100)}% | ${fmt(usd, 3)} | ${passes ? fmt(usd / passes, 3) : '-'} | ${fmt(rs.reduce((a, r) => a + r.requests, 0) / rs.length, 1)} | ${fmt(input / rs.length / 1000)} | ${estK} | ${input ? fmt((cached / input) * 100) : 0}% | ${fmt(rs.reduce((a, r) => a + r.output, 0) / rs.length / 1000, 1)} | ${fmt(rs.reduce((a, r) => a + r.wallS, 0) / rs.length / 60, 1)} | ${stops} |`);
+  console.log(`| ${model} | ${harness}${byTask ? ` | ${task}` : ''} | ${rs.length} | ${passes}/${rs.length} | ${fmt(tests * 100)}% | ${metered ? fmt(usd, 3) : '-'} | ${metered && passes ? fmt(usd / passes, 3) : '-'} | ${fmt(rs.reduce((a, r) => a + r.requests, 0) / rs.length, 1)} | ${fmt(input / rs.length / 1000)} | ${estK} | ${input ? fmt((cached / input) * 100) : 0}% | ${fmt(rs.reduce((a, r) => a + r.output, 0) / rs.length / 1000, 1)} | ${fmt(rs.reduce((a, r) => a + r.wallS, 0) / rs.length / 60, 1)} | ${stops} |`);
 }

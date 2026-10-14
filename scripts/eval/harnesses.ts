@@ -1,5 +1,6 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { cpSync, existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import type { AgentId } from '@shared/transcript';
 
 // How each harness under comparison is pointed at the metering proxy. Every run gets a fresh HOME, so the configs written
@@ -18,6 +19,8 @@ export interface ModelSpec {
   api: Api;
   // Model catalogue id (rust/crates/acpira-shared/assets/model-catalog.json), for prices
   catalog: string;
+  // USD per million tokens, for a model the catalogue does not list yet
+  price?: { input: number; output: number; cacheRead?: number };
   context: number;
   output: number;
 }
@@ -33,6 +36,13 @@ export const MODELS: Record<string, ModelSpec> = {
   // Served through Antigravity on the gateway; its Chat answers carry reasoning_content, its Responses answers no
   // encrypted reasoning (2026-10-11)
   'gemini-3.8-flash': { id: 'gemini-3.8-flash', api: 'chat', catalog: 'gemini-3.8-flash', context: 1_048_576, output: 65_536 },
+  // Pinned to the gateway's Antigravity channel (the bare name falls back to other backends when its one account is
+  // out of quota). Not in the catalogue yet: priced at Google's launch rate. The channel caps every reply at 32768
+  // output tokens whatever the request asks, and the high tier can spend all of it thinking (2026-10-15)
+  'gemini-4-argon': {
+    id: 'antigravity/gemini-4-argon', api: 'responses', catalog: 'gemini-4-argon', context: 1_048_576, output: 32_768,
+    price: { input: 2, output: 10, cacheRead: 0.1 },
+  },
   // Devin's SWE model; not in the catalogue, so priced as Kimi K3. The gateway reports no cache reads for it
   'swe-2': { id: 'swe-2', api: 'responses', catalog: 'kimi-k3', context: 262_144, output: 32_000 },
   // DeepSeek's own API (deepseek-flash is V4.1 Flash), whose usage reports real cache hits
@@ -54,6 +64,10 @@ export interface HarnessCtx {
 export interface HarnessSetup {
   agent: AgentId;
   env: Record<string, string>;
+  // A harness that is its own CLI and no ACP agent: run once in the work tree, the prompt appended to `cmd`
+  cli?: { cmd: string[]; env: Record<string, string> };
+  // The agent talks to its own backend, so the metering proxy sees none of its calls
+  unmetered?: boolean;
 }
 
 const json = (path: string, value: unknown) => {
@@ -81,6 +95,7 @@ function acpira({ model, base, acpiraHome }: HarnessCtx, efforts?: string[], api
 export const HARNESSES: Record<string, (c: HarnessCtx) => HarnessSetup> = {
   acpira: c => acpira(c),
   // The built-in agent at a fixed effort: a model whose only level is this one starts there (the default is high)
+  'acpira-high': c => acpira(c, ['high']),
   'acpira-medium': c => acpira(c, ['medium']),
   'acpira-low': c => acpira(c, ['low']),
   'acpira-chat': c => acpira(c, undefined, 'chat'),
@@ -167,6 +182,26 @@ export const HARNESSES: Record<string, (c: HarnessCtx) => HarnessSetup> = {
       '',
     ].join('\n'));
     return { agent: 'codex', env: {} };
+  },
+
+  // Google's own harness on the same model: the Antigravity CLI in print mode, which is the bench's "Antigravity CLI"
+  // row, with the CLI's Google sign-in. The run's HOME gets only that sign-in: the auth files under ~/.gemini and a link
+  // to the macOS keychain (agy keeps its token there and finds the keychain through HOME), not ~/.gemini/config with
+  // global rules, skills and MCP servers. BROWSER is a no-op, so a lost sign-in fails the run instead of opening a
+  // browser. Model ids are Antigravity's own tiers, so this ignores `model` and runs Gemini 4 Argon at its highest tier
+  agy({ home }) {
+    const real = join(homedir(), '.gemini');
+    for (const f of ['oauth_creds.json', 'google_accounts.json', 'installation_id', 'jetski-standalone-oauth-token', 'settings.json', 'antigravity-cli/installation_id', 'antigravity-cli/jetski_state.pbtxt']) {
+      if (!existsSync(join(real, f))) continue;
+      mkdirSync(dirname(join(home, '.gemini', f)), { recursive: true });
+      cpSync(join(real, f), join(home, '.gemini', f));
+    }
+    mkdirSync(join(home, 'Library'), { recursive: true });
+    symlinkSync(join(homedir(), 'Library/Keychains'), join(home, 'Library/Keychains'));
+    return {
+      agent: 'antigravity', env: {}, unmetered: true,
+      cli: { cmd: ['agy', '--model', 'gemini-4-argon-high', '--dangerously-skip-permissions', '--output-format', 'json', '-p'], env: { BROWSER: '/usr/bin/true' } },
+    };
   },
 
   claude({ model, base, home }) {
