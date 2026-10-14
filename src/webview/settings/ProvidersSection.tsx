@@ -370,7 +370,7 @@ function ProviderForm({ provider, busy, error, onSave, onClose, onDelete }: {
             {t('settings.providers.check')}
           </Button>
           <span className={cn('min-w-0 flex-1 text-3 [overflow-wrap:anywhere]', result?.kind === 'failed' ? 'text-danger' : 'text-ok')}>
-            {result?.kind === 'failed' ? result.error : result?.kind === 'check' ? t('settings.providers.checkOk', { count: result.count }) : null}
+            {result?.kind === 'failed' ? result.error : result?.kind === 'check' ? t('settings.providers.checkOk') : null}
           </span>
         </div>
         {error && <p className="m-0 text-3 text-danger [overflow-wrap:anywhere]">{error}</p>}
