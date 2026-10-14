@@ -16,6 +16,10 @@ pub const RESOLVING_ENV: &str = "ACPIRA_RESOLVING_ENVIRONMENT";
 /// A shell whose rc files hang (a prompt waiting for input, a slow network call) is abandoned after this
 #[cfg(not(windows))]
 const SHELL_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long agent lookups wait for the first shell run before going on with the inherited PATH. One deadline for the
+/// process, counted from the first lookup that waits: a slow rc file delays the first lookups that long and later ones
+/// not at all; the run still counts once it ends (the session manager probes again then)
+pub const FIRST_WAIT: Duration = Duration::from_millis(2500);
 const MARK: &str = "__ACPIRA_LOGIN_PATH__";
 
 /// The login shell outcome, once the run finished
@@ -37,6 +41,39 @@ static REFRESHING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// Run the login shell once per process; later calls wait for the same run
 pub async fn ready() {
   LOAD.get_or_init(|| async { store(load().await) }).await;
+}
+
+/// Start the first run in a task of its own: a waiter that gives up (`ready_within_first_wait`) would otherwise cancel
+/// the run it was driving, and the next waiter would start the shell over. Turned off, there is nothing to run and the
+/// outcome is settled here and now
+pub fn start() {
+  static STARTED: std::sync::Once = std::sync::Once::new();
+  STARTED.call_once(|| {
+    if disabled() {
+      if LOAD.set(()).is_ok() {
+        store(LoginPath::default());
+      }
+      return;
+    }
+    tokio::spawn(ready());
+  });
+}
+
+/// Whether the first run has ended (or there is none to wait for)
+pub fn is_ready() -> bool {
+  LOAD.initialized()
+}
+
+fn disabled() -> bool {
+  std::env::var(LOGIN_PATH_ENV).is_ok_and(|v| v == "0")
+}
+
+/// The first run, waited for until the process-wide `FIRST_WAIT` deadline; whether it finished by then
+pub async fn ready_within_first_wait() -> bool {
+  static DEADLINE: std::sync::OnceLock<tokio::time::Instant> = std::sync::OnceLock::new();
+  start();
+  let deadline = *DEADLINE.get_or_init(|| tokio::time::Instant::now() + FIRST_WAIT);
+  tokio::time::timeout_at(deadline, ready()).await.is_ok()
 }
 
 /// Run the shell again when the last run is older than `min_age`: an rc file edited after the sidecar started (an npm
@@ -73,7 +110,7 @@ pub fn added() -> Vec<String> {
 }
 
 async fn load() -> LoginPath {
-  if std::env::var(LOGIN_PATH_ENV).is_ok_and(|v| v == "0") {
+  if disabled() {
     return LoginPath::default();
   }
   #[cfg(windows)]
