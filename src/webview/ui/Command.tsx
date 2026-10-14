@@ -38,8 +38,15 @@ function List({ className, searchable = false, ref, ...props }: ComponentProps<t
       el.scrollTop += sr.top - lr.top - (lr.height - sr.height) / 2;
     }
     if (!searchable) el.focus({ preventScroll: true });
-    // Only the list scrolls when virtual focus changes; the conversation stays put.
+    // Only the list scrolls when virtual focus changes; the conversation stays put. A highlight the pointer moved does
+    // not scroll at all: a pointer coming in from below highlighted the half-visible last row first, the list scrolled
+    // it into view, and the row aimed at slid away under the click (found 2026-10-14 recording the README's built-in
+    // agent clip). Keys move the highlight again from the next key press on
+    let pointer = false;
+    const onPointer = () => { pointer = true; };
+    const onKey = () => { pointer = false; };
     const follow = () => {
+      if (pointer) return;
       const active = el.querySelector<HTMLElement>('[data-highlighted]');
       if (!active) return;
       const lr = el.getBoundingClientRect(), ar = active.getBoundingClientRect();
@@ -48,7 +55,13 @@ function List({ className, searchable = false, ref, ...props }: ComponentProps<t
     };
     const observer = new MutationObserver(follow);
     observer.observe(el, { subtree: true, attributes: true, attributeFilter: ['data-highlighted'] });
-    return () => observer.disconnect();
+    el.addEventListener('pointermove', onPointer);
+    el.ownerDocument.addEventListener('keydown', onKey, true);
+    return () => {
+      observer.disconnect();
+      el.removeEventListener('pointermove', onPointer);
+      el.ownerDocument.removeEventListener('keydown', onKey, true);
+    };
   }, [searchable]);
   return <Base.List ref={listRef} tabIndex={searchable ? -1 : 0} {...props}
     className={cnState(cn('scroll-thin flex max-h-pop flex-col overflow-y-auto outline-none', searchable && 'scroll-stable'), className)} />;
