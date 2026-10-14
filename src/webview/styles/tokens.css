@@ -181,6 +181,8 @@
 
   /* Max lines shown in a terminal block's output area; beyond that it scrolls inside the block */
   --term-lines: 12;
+  /* An agent install's log box (settings): a fixed number of lines while it runs, so streaming output never grows the card */
+  --install-log-lines: 8;
   /* Thoughts stay within eight rows or half the viewport. */
   --thought-body-max: min(calc(var(--row) * 8), 45dvh);
   /* Bound the whole question body so long prompts leave room for the transcript. */
@@ -452,6 +454,7 @@
 
   --default-transition-duration: var(--dur);
   --spacing-term: calc(var(--term-lines) * var(--text-mono-lh));
+  --spacing-install-log: calc(var(--install-log-lines) * var(--text-mono-lh));
   --spacing-pop: calc(var(--pop-rows) * var(--row));
   --spacing-plan: calc(var(--plan-rows) * var(--row-dense));
   --spacing-question-body: var(--question-body-max);

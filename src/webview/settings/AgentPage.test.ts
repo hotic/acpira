@@ -101,30 +101,35 @@ describe('in-app agent install', () => {
   const agent: AgentInfo = { id: 'codex', name: 'Codex', available: false, install: { command: 'npm install -g example-agent' } };
   const withTerminal: SettingsHandlers = { ...handlers, cancelInstall: vi.fn(), installInTerminal: vi.fn() };
 
-  it('shows a running install with its route, its log and a Cancel action instead of Install', () => {
+  it('shows a running install on one status line with its newest output, the log folded, and Cancel instead of Install', () => {
     const markup = renderAgent(agent, {}, {
-      agent: 'codex', status: 'running', log: ['$ npm install -g example-agent', 'added 3 packages'],
+      agent: 'codex', status: 'running', log: ['$ npm install -g example-agent', 'added 3 packages', ''],
       proxy: 'http://127.0.0.1:7890', prefix: '/preview/.local',
     }, withTerminal);
     expect(markup).toContain('Installing…');
+    // The newest non-blank line rides on the status line while the log box stays folded
+    expect(markup).toContain('title="added 3 packages"');
+    expect(markup).toMatch(/aria-label="Install log" aria-expanded="false"/);
     expect(markup).toContain('Proxy http://127.0.0.1:7890');
     expect(markup).toContain("installed to ~/.local");
-    expect(markup).toContain('added 3 packages');
     expect(markup).toContain('>Cancel</span></button>');
     expect(markup).not.toContain('>Install</span></button>');
     // The terminal fallback stays on the command row, disabled while the in-app run holds the install
     expect(markup).toMatch(/aria-label="Run in terminal"[^>]*disabled|disabled[^>]*aria-label="Run in terminal"/);
   });
 
-  it('shows a failure with its message and keeps the log; a success folds to its status line', () => {
+  it('opens the log of a failure under its message; a success keeps one status line with its route and no log', () => {
     const failed = renderAgent(agent, {}, { agent: 'codex', status: 'failed', log: ['npm ERR! EACCES'], error: 'The installer exited with code 243.' }, withTerminal);
     expect(failed).toContain('Install failed');
     expect(failed).toContain('The installer exited with code 243.');
     expect(failed).toContain('npm ERR! EACCES');
+    expect(failed).toMatch(/aria-label="Install log" aria-expanded="true"/);
     expect(failed).toContain('>Install</span></button>');
-    const done = renderAgent(agent, {}, { agent: 'codex', status: 'success', log: ['secret noise'] }, withTerminal);
+    const done = renderAgent(agent, {}, { agent: 'codex', status: 'success', log: ['secret noise'], prefix: '/preview/.local' }, withTerminal);
     expect(done).toContain('Installed');
+    expect(done).toContain("installed to ~/.local");
     expect(done).not.toContain('secret noise');
+    expect(done).not.toContain('Install log');
   });
 
   it('offers no terminal fallback when the host has none', () => {
