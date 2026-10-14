@@ -95,8 +95,13 @@ export async function reachEngine(cmd: SidecarCommand, ep: EngineEndpoint, o: Re
     closeSync(fd);
   }
   const deadline = Date.now() + LAUNCH_WAIT_MS;
+  // A launched engine listens a few milliseconds after spawn: the first tries come quickly, then the wait doubles up to
+  // 100 ms for a slow start (a first run of a new binary, an old engine still holding the socket). A fixed 100 ms first
+  // wait made every cold start pay most of it
+  let wait = 5;
   while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 100));
+    await new Promise(r => setTimeout(r, wait));
+    wait = Math.min(wait * 2, 100);
     if (o.cancelled()) throw new Error('cancelled');
     if (failure) throw new Error(failure);
     try {
