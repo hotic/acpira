@@ -67,6 +67,19 @@ describe('agent installation settings', () => {
     expect(markup).toContain('login shell profile');
   });
 
+  // Reported 2026-10-14: the Status row arrived with the first probe's reply and pushed the page down
+  it('keeps the facts card one height from the first probe to its reply', () => {
+    const agent: AgentInfo = { id: 'acpira', name: 'Acpira', available: true };
+    const rows = (markup: string) => markup.match(/>(Executable|Version|Status)</g);
+    const probing = renderToStaticMarkup(createElement(AgentPage, {
+      agent, accounts: [], settings: DEFAULT_SETTINGS, env: { home: '/preview', cwd: '/preview/project' }, on: handlers,
+    }));
+    const replied = renderAgent(agent, { health: { stage: 'ready', at: '2026-10-14T00:00:00Z', source: 'probe' } });
+    expect(rows(probing)).toEqual(['>Executable<', '>Version<', '>Status<']);
+    expect(rows(replied)).toEqual(rows(probing));
+    expect(probing).toContain('Shown after a session starts');
+  });
+
   it('shows no searched row once the CLI is found', () => {
     const markup = renderAgent({ id: 'codex', name: 'Codex', available: true, searched: ['/usr/local/bin'] });
     expect(markup).not.toContain('Searched');
