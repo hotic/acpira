@@ -652,8 +652,6 @@ export const zhCN = {
   'subagents.back': '返回主会话',
   'subagents.root': '主会话',
   'subagents.task': '分配的任务',
-  'subagents.taskExpand': '展开全部任务',
-  'subagents.taskCollapse': '收起任务',
   'subagents.result': '结果',
   'subagents.untitled': '子代理',
   'subagents.descendants': '{n} 子代理',

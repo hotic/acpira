@@ -647,8 +647,6 @@ export const ru = {
   'subagents.back': 'Назад к диалогу',
   'subagents.root': 'Основная сессия',
   'subagents.task': 'Поручённая задача',
-  'subagents.taskExpand': 'Показать задачу целиком',
-  'subagents.taskCollapse': 'Свернуть задачу',
   'subagents.result': 'Результат',
   'subagents.untitled': 'Субагент',
   'subagents.descendants': '{n} субагентов',

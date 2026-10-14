@@ -610,8 +610,6 @@
   "subagents.back": "대화로 돌아가기",
   "subagents.root": "메인 세션",
   "subagents.task": "맡긴 작업",
-  "subagents.taskExpand": "작업 전체 보기",
-  "subagents.taskCollapse": "작업 접기",
   "subagents.result": "결과",
   "subagents.untitled": "서브에이전트",
   "subagents.descendants": "서브에이전트 {n}개",

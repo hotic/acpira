@@ -630,8 +630,6 @@ export const fr = {
   'subagents.back': 'Retour à la conversation',
   'subagents.root': 'Session principale',
   'subagents.task': 'Tâche assignée',
-  'subagents.taskExpand': 'Afficher toute la tâche',
-  'subagents.taskCollapse': 'Réduire la tâche',
   'subagents.result': 'Résultat',
   'subagents.untitled': 'Sous-agent',
   'subagents.descendants': '{n} sous-agents',

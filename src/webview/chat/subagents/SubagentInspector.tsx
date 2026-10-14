@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { ArrowLeft, Square, Unplug, X } from 'lucide-react';
 import type { SubagentSummary } from '@shared/subagents';
-import type { FullDiffSource, QuestionBlock, TextBlock, Turn } from '@shared/transcript';
+import type { FullDiffSource, QuestionBlock, TextBlock, Turn, UserTurn } from '@shared/transcript';
 import { t } from '../../i18n';
 import { cn } from '../../ui/cn';
 import { IconButton } from '../../ui/Button';
@@ -156,26 +156,13 @@ function textOf(markdown: string): TextBlock {
   return { type: 'text', markdown };
 }
 
-// The delegated task is the child's prompt, so it wears the main thread's user-message card with no caption above it;
-// long briefs clamp to six lines with a text toggle
+// The delegated task is the child's prompt, so it is the main thread's user message with no caption above it:
+// long briefs scroll inside the same capped, fading card instead of growing a toggle
 function TaskCard({ task }: { task: string }) {
-  const body = useRef<HTMLDivElement>(null);
-  const [clamped, setClamped] = useState(false);
-  const [open, setOpen] = useState(false);
-  useLayoutEffect(() => {
-    const el = body.current;
-    if (el) setClamped(el.scrollHeight > el.clientHeight + 1);
-  }, [task]);
+  const turn = useMemo<UserTurn>(() => ({ role: 'user', text: task }), [task]);
   return (
     <section className="flex min-w-0 flex-col" aria-label={t('subagents.task')}>
-      <div className="rounded-lg bg-bg-0 bg-[linear-gradient(var(--chip),var(--chip))] px-pad py-gap shadow-[inset_0_0_0_1px_var(--conversation-line)]">
-        <div ref={body} className={cn('text-1 text-fg-1 whitespace-pre-wrap [overflow-wrap:anywhere]', !open && 'line-clamp-6')}>{task}</div>
-        {(clamped || open) && (
-          <button type="button" onClick={() => setOpen(o => !o)} className="mt-1 cursor-pointer text-3 text-fg-3 transition-colors hover:text-fg-1">
-            {t(open ? 'subagents.taskCollapse' : 'subagents.taskExpand')}
-          </button>
-        )}
-      </div>
+      <UserMessage turn={turn} index={0} />
     </section>
   );
 }

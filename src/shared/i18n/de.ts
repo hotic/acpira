@@ -630,8 +630,6 @@ export const de = {
   'subagents.back': 'Zurück zum Gespräch',
   'subagents.root': 'Hauptsitzung',
   'subagents.task': 'Zugewiesene Aufgabe',
-  'subagents.taskExpand': 'Ganze Aufgabe anzeigen',
-  'subagents.taskCollapse': 'Aufgabe einklappen',
   'subagents.result': 'Ergebnis',
   'subagents.descendants': '{n} Subagenten',
   'subagents.descendants#one': '{n} Subagent',

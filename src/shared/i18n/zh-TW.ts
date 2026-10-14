@@ -650,8 +650,6 @@ export const zhTW = {
   'subagents.back': '返回主工作階段',
   'subagents.root': '主工作階段',
   'subagents.task': '分配的任務',
-  'subagents.taskExpand': '展開全部任務',
-  'subagents.taskCollapse': '收起任務',
   'subagents.result': '結果',
   'subagents.untitled': '子代理',
   'subagents.descendants': '{n} 子代理',
