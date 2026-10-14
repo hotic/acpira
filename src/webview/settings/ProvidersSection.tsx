@@ -12,7 +12,7 @@ import { Shimmer } from '../ui/Shimmer';
 import { cn } from '../ui/cn';
 import { t } from '../i18n';
 import { ModelMark } from '../chat/ModelMark';
-import { Dot, Group, inputBox, ItemRow, Note, ListHead, SearchRow, Section, SectionAction, SectionDescription, SectionHead, Select, SettingsDialog, FormField } from './controls';
+import { Dot, Group, inputBox, ItemRow, Note, ListHead, SearchBox, Section, SectionAction, SectionDescription, SectionHead, Select, SettingsDialog, FormField } from './controls';
 import { modelDesc, ModelRow } from './ProviderModel';
 import type { SettingsHandlers } from './SettingsShell';
 
@@ -44,9 +44,9 @@ const sameUrl = (a: string, b: string) => a.trim().replace(/\/+$/, '').toLowerCa
 
 // The built-in agent's model sources, one card per source: its header (mark, name with a status dot and the model
 // count, the URL, Turn on for a switched-off source, the edit pencil) over its compact model rows and a last "Add model"
-// row. Adding models and editing a source happen in dialogs. The search toolbar above the cards sits where every other
-// agent's model page has it. Local Ollama / LM Studio servers found on the machine can be added with one click. Keys go
-// to the host once and never come back; the page only knows whether one is stored
+// row. Adding models and editing a source happen in dialogs. One outer card holds the search field and the source cards.
+// Local Ollama / LM Studio servers found on the machine can be added with one click. Keys go to the host once and never
+// come back; the page only knows whether one is stored
 export function ProvidersSection({ state, on }: { state?: ProvidersState; on: SettingsHandlers }) {
   useEffect(() => { on.providers?.(); }, [on]);
   // The id whose form dialog is open, 'new' for an added source
@@ -102,11 +102,14 @@ export function ProvidersSection({ state, on }: { state?: ProvidersState; on: Se
           {error && <Group><Note><span className="text-danger [overflow-wrap:anywhere]">{error}</span></Note></Group>}
           {state && <LocalServers providers={providers} busy={busy} onAdd={s => save(fromLocal(s))} />}
           {state && !providers.length && <Group><Note>{t('settings.providers.none')}</Note></Group>}
-          {/* One card for every source, like the other agents' model lists: the search row, then a group per source */}
-          {providers.length > 0 && <Card className="flex flex-col px-pad shadow-none">
-            {total > 0 && <SearchRow value={query} onChange={setQuery} />}
+          {/* One outer card like the other agents' model lists: the search field, then a nested card per source, so each
+              source reads as its own block inside the list */}
+          {providers.length > 0 && <Card className="flex flex-col gap-gap p-pad shadow-none">
+            {total > 0 && <SearchBox value={query} onChange={setQuery} label={t('settings.models.search')} />}
             {providers.map(p => <ProviderGroup key={p.id} provider={p} query={query} busy={busy} autoOpen={fresh === p.id}
               onEdit={() => edit(p.id)} onSave={pv => save(pv)} />)}
+            {/* Every source filtered away: say so instead of leaving the search field alone in the card */}
+            {query.trim() && !providers.some(p => matching(p, query).length) && <Group embedded><Note>{t('settings.models.noResults')}</Note></Group>}
           </Card>}
         </div>
       </div>
@@ -148,6 +151,12 @@ function LocalServers({ providers, busy, onAdd }: { providers: ProviderView[]; b
   );
 }
 
+// A source's models the search keeps: every model while the search is empty, else those whose id or name holds it
+function matching(p: Provider, query: string): ProviderModel[] {
+  const q = query.trim().toLowerCase();
+  return q ? p.models.filter(m => m.id.toLowerCase().includes(q) || (m.name ?? '').toLowerCase().includes(q)) : p.models;
+}
+
 const isLocal = (p: Provider) => p.preset === 'ollama' || p.preset === 'lmstudio';
 
 // A source's lead: a local server, an Anthropic endpoint (its vendor's mark), any other endpoint
@@ -165,8 +174,8 @@ function SourceStatus({ provider: p }: { provider: ProviderView }) {
   return p.hasKey ? <Dot ok label={t('settings.providers.keySaved')} /> : <Dot ok={false} warn label={t('settings.providers.noKey')} />;
 }
 
-// One source as a group of the sources' card (a rule above it, none when it opens the card): mark, name with its status dot and model count, the URL under it, Turn on (a source switched
-// off earlier) and the edit pencil on the right; then the model rows and the "Add model" row. There is no source
+// One source as its own card nested in the outer one: mark, name with its status dot and model count, the URL under it,
+// Turn on (a source switched off earlier) and the edit pencil on the right; then the model rows and the "Add model" row. There is no source
 // switch: each model has its own. Removing lives in the edit dialog. `autoOpen` opens the add dialog once, right after
 // the source was created
 function ProviderGroup({ provider: p, query, busy, autoOpen, onEdit, onSave }: {
@@ -180,13 +189,13 @@ function ProviderGroup({ provider: p, query, busy, autoOpen, onEdit, onSave }: {
   const test = useProbe();
   const [testing, setTesting] = useState<string>();
   const name = p.name || p.id;
-  const q = query.trim().toLowerCase();
-  const models = q ? p.models.filter(m => m.id.toLowerCase().includes(q) || (m.name ?? '').toLowerCase().includes(q)) : p.models;
-  if (q && !models.length) return null;
+  const models = matching(p, query);
+  if (query.trim() && !models.length) return null;
   const update = (models: ProviderModel[]) => onSave({ ...strip(p), models });
   const editLabel = t('settings.providers.edit', { name });
   return (
-    <div className="border-t border-line first:border-t-0">
+    // A translucent fill over the outer card, so the nested card reads one step apart on any surface and theme
+    <Card className="flex flex-col bg-hover px-pad shadow-none">
       <ListHead title={name} count={p.models.length} lead={<SourceMark provider={p} />} status={<SourceStatus provider={p} />}
         desc={<span className="block truncate" title={p.baseUrl}>{p.baseUrl}</span>}
         action={<div className="flex shrink-0 items-center gap-1">
@@ -212,7 +221,7 @@ function ProviderGroup({ provider: p, query, busy, autoOpen, onEdit, onSave }: {
       </Group>
       {adding && <AddModelDialog provider={p} busy={busy} onAdd={m => update([...p.models, m])}
         onRemove={id => { if (open === id) setOpen(undefined); update(p.models.filter(x => x.id !== id)); }} onClose={() => setAdding(false)} />}
-    </div>
+    </Card>
   );
 }
 
