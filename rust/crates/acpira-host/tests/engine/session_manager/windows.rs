@@ -281,3 +281,47 @@ async fn the_workspace_scope_keeps_most_recent_and_deletion_picks_inside_the_fol
   assert_eq!(store.load(&a1).await.unwrap().cwd, g);
   m.dispose().await;
 }
+
+// The Storage tab's batch delete goes through delete_session one by one: a session another engine has open is passed
+// over with the reason, the rest go into the undo window like a history-list delete
+#[tokio::test(flavor = "multi_thread")]
+async fn storage_batch_delete_skips_a_session_another_engine_holds_and_says_why() {
+  use acpira_shared::storage::{StorageAction, StorageBlock, StorageDetail};
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let opts = || Opts::with_agents(fake.setting(json!({})), "fake");
+  let a = Mgr::new(dir.path(), opts());
+  let b = Mgr::new(dir.path(), opts());
+  a.init().await;
+  b.init().await;
+  a.new_session(None).await;
+  a.handle(json!({ "type": "send", "text": "in A" })).await;
+  let held = a.active_id().unwrap();
+  b.new_session(None).await;
+  b.handle(json!({ "type": "send", "text": "in B" })).await;
+  let mine = b.active_id().unwrap();
+  until(|| dir.path().join(format!("{held}.json")).exists() && dir.path().join(format!("{mine}.json")).exists(), 3000).await;
+  b.m.refresh_index().await;
+
+  let view = b.m.storage_view(&[StorageDetail::Sessions]).await;
+  let rows = view.sessions.unwrap();
+  assert_eq!(rows.iter().find(|r| r.id == held).unwrap().blocked, Some(StorageBlock::Elsewhere));
+  assert_eq!(rows.iter().find(|r| r.id == mine).unwrap().blocked, None);
+
+  let reply = b.m.storage_action(StorageAction::DeleteSessions { ids: vec![held.clone(), mine.clone()] }, &[StorageDetail::Sessions]).await;
+  let out = reply.outcome.unwrap();
+  assert_eq!(out.done, vec![mine.clone()]);
+  assert_eq!(out.skipped.len(), 1);
+  assert_eq!(out.skipped[0].id, held);
+  assert!(out.skipped[0].reason.contains("Another Acpira engine"), "{:?}", out.skipped);
+  assert!(dir.path().join("trash").join(format!("{mine}.json")).exists());
+  assert!(dir.path().join(format!("{held}.json")).exists());
+  let after = reply.view.sessions.unwrap();
+  assert!(after.iter().all(|r| r.id != mine));
+
+  let back = b.m.storage_action(StorageAction::RestoreSessions { ids: vec![mine.clone()] }, &[]).await;
+  assert_eq!(back.outcome.unwrap().done, vec![mine.clone()]);
+  assert!(dir.path().join(format!("{mine}.json")).exists());
+  a.dispose().await;
+  b.dispose().await;
+}

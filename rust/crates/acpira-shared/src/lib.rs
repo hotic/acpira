@@ -25,6 +25,7 @@ pub mod settings;
 pub mod shared_config;
 pub mod sidecar;
 pub mod slash_commands;
+pub mod storage;
 pub mod subagents;
 pub mod time;
 pub mod todo_tools;

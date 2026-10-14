@@ -4,4 +4,5 @@ pub mod file_lock;
 pub mod record;
 pub mod session_lease;
 pub mod session_search;
+pub mod storage;
 pub mod transcript_store;

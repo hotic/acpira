@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -237,6 +237,53 @@ describe('sidecar session contract', () => {
     await s.hostMsg('V', 'categories', m => m.categories.collapsedProjects.includes(cwd));
     s.view('V', { type: 'setSessionCategory', id, category: null });
     await s.hostMsg('V', 'sessions', m => m.sessions.some(x => x.id === id && x.category === undefined));
+  });
+
+  it('storage: the data root by owner; batch delete skips pinned sessions, restores, and cleans an orphaned agent log', async () => {
+    const at = dirsFor();
+    const s = shell(at);
+    const id = await started(s);
+    s.view('V', { type: 'send', sessionId: id, text: 'hi' });
+    await s.hostMsg('V', 'session', idle(2));
+    // A built-in agent log no record drives, two days old
+    const log = join(at.home, 'agent', 'sessions', 'orphan-acp.jsonl');
+    mkdirSync(join(at.home, 'agent', 'sessions'), { recursive: true });
+    writeFileSync(log, '{}\n');
+    const old = new Date(Date.now() - 2 * 86_400_000);
+    utimesSync(log, old, old);
+
+    s.view('V', { type: 'storage', detail: ['sessions', 'residue'] });
+    const first = await s.hostMsg('V', 'storage');
+    expect(first.view.root).toBe(at.home);
+    expect(first.view.segments.map(x => x.kind)).toEqual(['sessions', 'attachments', 'agentLogs', 'reclaimable', 'other']);
+    expect(first.view.segments.find(x => x.kind === 'sessions')!.count).toBeGreaterThanOrEqual(1);
+    expect(first.view.sessions!.find(x => x.id === id)).toMatchObject({ agent: 'fake' });
+    expect(first.view.residue).toMatchObject([{ kind: 'agentLog', path: log, preselected: true }]);
+
+    s.view('V', { type: 'pinSession', id, pinned: true });
+    await s.hostMsg('V', 'sessions', m => m.sessions.some(x => x.id === id && x.pinned === true));
+    s.view('V', { type: 'storageAction', action: { kind: 'deleteSessions', ids: [id] }, detail: ['sessions'] });
+    const refused = await s.hostMsg('V', 'storage', m => m.outcome?.action === 'deleteSessions');
+    expect(refused.outcome).toMatchObject({ done: [], skipped: [{ id }] });
+    expect(refused.view.sessions!.find(x => x.id === id)?.blocked).toBe('pinned');
+
+    s.view('V', { type: 'pinSession', id, pinned: false });
+    await s.hostMsg('V', 'sessions', m => m.sessions.some(x => x.id === id && !x.pinned));
+    s.view('V', { type: 'storageAction', action: { kind: 'deleteSessions', ids: [id] }, detail: ['sessions'] });
+    const deleted = await s.hostMsg('V', 'storage', m => m.outcome?.action === 'deleteSessions' && m.outcome.done.length === 1);
+    expect(deleted.outcome!.freed).toBeGreaterThan(0);
+    expect(deleted.view.sessions!.some(x => x.id === id)).toBe(false);
+    await s.hostMsg('V', 'sessions', m => !m.sessions.some(x => x.id === id));
+    s.view('V', { type: 'storageAction', action: { kind: 'restoreSessions', ids: [id] } });
+    await s.hostMsg('V', 'storage', m => m.outcome?.action === 'restoreSessions' && m.outcome.done[0] === id);
+    await s.hostMsg('V', 'sessions', m => m.sessions.some(x => x.id === id));
+
+    const orphan = first.view.residue![0]!.id;
+    s.view('V', { type: 'storageAction', action: { kind: 'cleanResidue', ids: [orphan] }, detail: ['residue'] });
+    const cleaned = await s.hostMsg('V', 'storage', m => m.outcome?.action === 'cleanResidue');
+    expect(cleaned.outcome).toMatchObject({ done: [orphan], skipped: [], freed: 3 });
+    expect(cleaned.view.residue).toEqual([]);
+    expect(existsSync(log)).toBe(false);
   });
 
   it('a record written by one sidecar reopens in the next one with its transcript', async () => {

@@ -9,6 +9,7 @@ use crate::i18n::Locale;
 use crate::inventory::AgentInventory;
 use crate::providers::{ProbeOutcome, ProviderAction, ProviderProbe, ProvidersView};
 use crate::shared_config::{SharedAction, SharedView};
+use crate::storage::{StorageAction, StorageDetail, StorageOutcome, StorageView};
 use crate::settings::{HiddenMap, SettingsView};
 use crate::transcript::{
   AccountInfo, AgentId, AgentInfo, CategoryOp, ConfigControl, DiffSource, Draft, NativeSessionInfo, QuestionAnswers,
@@ -260,6 +261,14 @@ pub enum HostMsg {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
   },
+  /// The Storage tab; `outcome` for the action that triggered this reply, `error` when it failed
+  Storage {
+    view: StorageView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    outcome: Option<StorageOutcome>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+  },
   /// The built-in agent's model sources; `error` when the action that triggered this reply failed
   Providers {
     view: ProvidersView,
@@ -326,6 +335,7 @@ impl HostMsg {
       HostMsg::Settings { .. } => "settings",
       HostMsg::Inventory { .. } => "inventory",
       HostMsg::Shared { .. } => "shared",
+      HostMsg::Storage { .. } => "storage",
       HostMsg::Providers { .. } => "providers",
       HostMsg::ProviderProbed { .. } => "providerProbed",
       HostMsg::Controls { .. } => "controls",
@@ -628,6 +638,16 @@ pub enum WebviewMsg {
   Shared,
   SharedAction {
     action: SharedAction,
+  },
+  /// Scan the data root (plus the details a review needs), or run a cleanup and get the view back
+  Storage {
+    #[serde(default)]
+    detail: Vec<StorageDetail>,
+  },
+  StorageAction {
+    action: StorageAction,
+    #[serde(default)]
+    detail: Vec<StorageDetail>,
   },
   /// The built-in agent's model sources: read them, or apply an edit and get the view back
   Providers,

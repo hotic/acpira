@@ -5,6 +5,8 @@
 //! awaiting. A session's `on_change` only marks it dirty; one flush task turns dirty sessions into pushes, serializing a
 //! view once for every viewer showing it
 
+pub mod storage;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
