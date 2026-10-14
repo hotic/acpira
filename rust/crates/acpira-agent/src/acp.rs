@@ -2,7 +2,7 @@
 //! `turn::run`
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
@@ -136,12 +136,12 @@ impl Server {
 
   /// The session's own directory under the data root (spilled tool outputs, the plan)
   pub fn session_dir(&self, id: &str) -> PathBuf {
-    self.config.home().join("agent").join("sessions").join(id)
+    sessions_root(self.config.home()).join(id)
   }
 
   /// The session's history (`store.rs`)
   pub fn session_file(&self, id: &str) -> PathBuf {
-    self.config.home().join("agent").join("sessions").join(format!("{id}.jsonl"))
+    sessions_root(self.config.home()).join(format!("{id}.jsonl"))
   }
 
   /// The file Plan mode writes its plan to
@@ -340,7 +340,7 @@ impl Server {
   /// `session/list`: this data root's sessions with at least one message, newest first, filtered by `cwd` when given
   fn list(&self, params: &Value) -> Value {
     const PAGE: usize = 50;
-    let dir = self.config.home().join("agent").join("sessions");
+    let dir = sessions_root(self.config.home());
     let want = params.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty()).map(PathBuf::from);
     let mut found: Vec<(u64, Value)> = std::fs::read_dir(&dir)
       .into_iter()
@@ -571,6 +571,18 @@ const STANDARD: &str = "standard";
 /// for a client that does not take booleans; the composer shows either as its Fast toggle). The approval level is not a
 /// session control: it is the agent's setting in `providers.json` (`Config::approval`), so the composer shows one mode
 /// chip and nothing beside it
+/// Where a data root keeps this agent's sessions: one `<id>.jsonl` log each, with an `<id>/` folder beside it (spilled
+/// tool output, the plan). The engine reads it to delete both together with the Acpira session that drove them
+pub fn sessions_root(home: &Path) -> PathBuf {
+  home.join("agent").join("sessions")
+}
+
+/// The files one session owns under `sessions_root`: its log and its folder
+pub fn session_paths(home: &Path, id: &str) -> [PathBuf; 2] {
+  let root = sessions_root(home);
+  [root.join(format!("{id}.jsonl")), root.join(id)]
+}
+
 pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState, booleans: bool) -> Vec<Value> {
   let mut out = vec![];
   let current = st.model.as_deref().filter(|p| config.find(p).is_some()).map(str::to_owned).or_else(|| config.default_pick());

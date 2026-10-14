@@ -108,6 +108,8 @@ impl HostRuntime {
       log.clone(),
       Some(Arc::new(move |_id: &str, error: &str| save_toast("error", &tp("host.saveFailed", &[("error", error)])))),
     );
+    // The built-in agent runs with this root as its home: a session deleted for good takes the agent's log along
+    store.set_agent_home(root.clone());
     // Cross-harness subagents: the persona file and the loopback hub `ask_agent` calls come back through
     let roster = Arc::new(crate::relay::roster::Roster::new(&root));
     let hub = match crate::relay::hub::RelayHub::start(roster.clone(), log.clone()).await {

@@ -20,6 +20,7 @@ use acpira_shared::transcript::{AgentId, CategoryOp, SessionCategories, SessionC
 
 use super::file_lock::{with_file_lock, write_atomic};
 use super::record::{RecordSource, SessionRecord};
+use crate::acp::agents::registry::SELF_AGENT_ID;
 use crate::i18n::tp;
 
 const META_FILES: [&str; 3] = ["index.json", "prefs.json", "categories.json"];
@@ -133,7 +134,26 @@ pub struct TranscriptStore {
   inflight: parking_lot::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
   /// Asked before every record write: false skips it (another engine drives the session, `store::session_lease`)
   write_guard: parking_lot::RwLock<Option<WriteGuard>>,
+  /// The data root the built-in agent keeps its session logs under; set, a record removed for good takes its log along
+  agent_home: parking_lot::RwLock<Option<PathBuf>>,
   me: Weak<TranscriptStore>,
+}
+
+/// The two fields of a record the log cascade needs; the transcript is skipped over by the parser instead of built
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LogOwner {
+  #[serde(default)]
+  agent: String,
+  #[serde(default)]
+  acp_session_id: Option<String>,
+}
+
+/// The built-in agent's session id a record file was driving, if it was one of its sessions
+async fn builtin_session_of(path: &Path) -> Option<String> {
+  let raw = fs::read(path).await.ok()?;
+  let owner: LogOwner = serde_json::from_slice(&raw).ok()?;
+  owner.acp_session_id.filter(|acp| owner.agent == SELF_AGENT_ID && is_session_id(acp))
 }
 
 pub type WriteGuard = Arc<dyn Fn(&str) -> bool + Send + Sync>;
@@ -153,6 +173,7 @@ impl TranscriptStore {
       state: parking_lot::Mutex::new(State { pending: HashMap::new(), known: HashSet::new(), unreadable: HashMap::new() }),
       inflight: Default::default(),
       write_guard: Default::default(),
+      agent_home: Default::default(),
       me: me.clone(),
     })
   }
@@ -164,6 +185,12 @@ impl TranscriptStore {
   /// Install the check every record write passes first
   pub fn set_write_guard(&self, guard: WriteGuard) {
     *self.write_guard.write() = Some(guard);
+  }
+
+  /// Where the built-in agent's logs live (the data root it is launched with); from then on a session removed for good
+  /// takes its log along
+  pub fn set_agent_home(&self, home: PathBuf) {
+    *self.agent_home.write() = Some(home);
   }
 
   async fn ensure(&self) -> Result<()> {
@@ -484,9 +511,47 @@ impl TranscriptStore {
     self.state.lock().pending.remove(id);
     self.settle_inflight(id).await;
     self.state.lock().known.remove(id);
+    let mut log = None;
     for dir in [self.dir.clone(), self.dir.join(TRASH_DIR)] {
+      if log.is_none() {
+        log = builtin_session_of(&dir.join(format!("{id}.json"))).await;
+      }
       rm_confined(&dir, &format!("{id}.json"), false).await;
       rm_confined(&dir, id, true).await;
+    }
+    if let Some(acp) = log {
+      self.remove_agent_log(id, &acp).await;
+    }
+  }
+
+  /// The built-in agent's log and folder for a session that is gone for good. Kept while another record (listed, or
+  /// still in its own undo window) drives the same agent session, e.g. a session imported twice
+  async fn remove_agent_log(&self, removed: &str, acp: &str) {
+    let Some(home) = self.agent_home.read().clone() else { return };
+    let listed = self.read_index().await.into_iter().any(|s| s.id != removed && s.agent == SELF_AGENT_ID && s.acp_session_id.as_deref() == Some(acp));
+    if listed {
+      return;
+    }
+    let trash = self.dir.join(TRASH_DIR);
+    if let Ok(mut rd) = fs::read_dir(&trash).await {
+      while let Ok(Some(e)) = rd.next_entry().await {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if name.strip_suffix(".json").is_some_and(|other| other != removed && is_session_id(other))
+          && builtin_session_of(&e.path()).await.as_deref() == Some(acp)
+        {
+          return;
+        }
+      }
+    }
+    let root = acpira_agent::acp::sessions_root(&home);
+    for path in acpira_agent::acp::session_paths(&home, acp) {
+      let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else { continue };
+      let Some(target) = confined(&root, &name).await else { continue };
+      let result = if target.is_dir() { fs::remove_dir_all(&target).await } else { fs::remove_file(&target).await };
+      // A file another process still has open on Windows stays; the Storage page lists it as an orphaned log
+      if let Err(e) = result.or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(e) }) {
+        (self.log)(&format!("session {removed}: built-in agent log {} not removed ({e})", target.display()));
+      }
     }
   }
 
@@ -530,8 +595,12 @@ impl TranscriptStore {
       if mtime > cutoff {
         continue;
       }
+      let log = builtin_session_of(&e.path()).await;
       rm_confined(&trash, &f, false).await;
       rm_confined(&trash, id, true).await;
+      if let Some(acp) = log {
+        self.remove_agent_log(id, &acp).await;
+      }
     }
   }
 
@@ -734,6 +803,96 @@ mod tests {
     std::fs::remove_file(dir.path().join("b.json")).unwrap();
     s.flush(Arc::new(record("b", "2026-01-03T00:00:00.000Z"))).await.unwrap();
     assert!(!dir.path().join("b.json").exists());
+  }
+
+  fn builtin(id: &str, acp: &str) -> SessionRecord {
+    let mut r = record(id, "2026-01-01T00:00:00.000Z");
+    r.agent = SELF_AGENT_ID.into();
+    r.acp_session_id = Some(acp.into());
+    r
+  }
+
+  /// A data root with `sessions/` for the store and the built-in agent's logs under `agent/sessions/`
+  fn rooted() -> (tempfile::TempDir, Arc<TranscriptStore>, impl Fn(&str) -> bool) {
+    let root = tempfile::tempdir().unwrap();
+    let s = store(&root.path().join("sessions"));
+    s.set_agent_home(root.path().to_path_buf());
+    let home = root.path().to_path_buf();
+    let log_exists = move |acp: &str| {
+      let [file, dir] = acpira_agent::acp::session_paths(&home, acp);
+      assert_eq!(file.exists(), dir.exists(), "log and folder go together");
+      file.exists()
+    };
+    (root, s, log_exists)
+  }
+
+  fn write_log(root: &Path, acp: &str) {
+    let [file, dir] = acpira_agent::acp::session_paths(root, acp);
+    std::fs::create_dir_all(dir.join("outputs")).unwrap();
+    std::fs::write(dir.join("plan.md"), b"plan").unwrap();
+    std::fs::write(file, b"{}\n").unwrap();
+  }
+
+  #[tokio::test]
+  async fn removing_a_builtin_session_for_good_takes_its_log_along() {
+    let (root, s, log_exists) = rooted();
+    write_log(root.path(), "acp-1");
+    s.flush(Arc::new(builtin("a", "acp-1"))).await.unwrap();
+    s.load_index().await.unwrap();
+    // The undo window keeps it; a restore finds the log untouched
+    s.trash("a").await.unwrap();
+    s.restore("a").await;
+    assert!(log_exists("acp-1"));
+    s.trash("a").await.unwrap();
+    s.load_index().await.unwrap();
+    s.remove("a").await;
+    assert!(!log_exists("acp-1"));
+    assert!(root.path().join("agent/sessions").exists(), "only the session's own files go");
+  }
+
+  #[tokio::test]
+  async fn a_log_another_record_still_drives_is_kept() {
+    let (root, s, log_exists) = rooted();
+    write_log(root.path(), "shared");
+    s.flush(Arc::new(builtin("a", "shared"))).await.unwrap();
+    s.flush(Arc::new(builtin("b", "shared"))).await.unwrap();
+    // Another CLI's session whose acp id happens to match is not the built-in agent's log
+    write_log(root.path(), "grok-1");
+    let mut other = record("g", "2026-01-01T00:00:00.000Z");
+    other.acp_session_id = Some("grok-1".into());
+    s.flush(Arc::new(other)).await.unwrap();
+    s.load_index().await.unwrap();
+    s.trash("a").await.unwrap();
+    s.load_index().await.unwrap();
+    s.remove("a").await;
+    assert!(log_exists("shared"), "b is still listed");
+    // b in its own undo window still counts
+    s.trash("b").await.unwrap();
+    s.flush(Arc::new(builtin("c", "shared"))).await.unwrap();
+    s.trash("c").await.unwrap();
+    s.load_index().await.unwrap();
+    s.remove("c").await;
+    assert!(log_exists("shared"), "b may still be undone");
+    s.remove("b").await;
+    assert!(!log_exists("shared"));
+    s.remove("g").await;
+    assert!(log_exists("grok-1"));
+  }
+
+  #[tokio::test]
+  async fn a_crashed_hosts_trash_sweep_takes_the_log_along() {
+    let (root, s, log_exists) = rooted();
+    write_log(root.path(), "acp-2");
+    s.flush(Arc::new(builtin("a", "acp-2"))).await.unwrap();
+    s.trash("a").await.unwrap();
+    // Another host after the crash: no summary in memory, only the trashed record
+    let next = store(&root.path().join("sessions"));
+    next.set_agent_home(root.path().to_path_buf());
+    next.sweep_trash(Duration::from_secs(3600)).await;
+    assert!(log_exists("acp-2"), "a fresh trash entry is still in its window");
+    next.sweep_trash(Duration::ZERO).await;
+    assert!(!log_exists("acp-2"));
+    assert!(!root.path().join("sessions/trash/a.json").exists());
   }
 
   #[tokio::test]
