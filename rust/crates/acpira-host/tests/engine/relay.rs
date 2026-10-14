@@ -419,6 +419,24 @@ async fn a_root_row_whose_arguments_stream_in_without_its_name_still_ties_to_its
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_root_row_named_before_any_input_still_ties_to_its_node() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let roster = roster(h.dir.path()).await;
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  // claude-agent-acp 0.83.0 to an AIR client: the name without rawInput, then the whole input without the name
+  prompt(&s, "relay-call-air:relay: air").await;
+  let (ok, _) = last_text(&run(&s, &roster, 0, ask("fake-review", "relay: air")).await);
+  assert!(ok);
+  let node = nodes(&s)[0].clone();
+  assert_eq!(node["peer"]["toolCallId"], "ak1");
+  let view = v(s.view());
+  let row = view["turns"].as_array().unwrap().iter().flat_map(|t| t["blocks"].as_array().cloned().unwrap_or_default()).find(|b| b["id"] == "ak1").unwrap();
+  assert_eq!(row["subagentId"], node["id"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_root_row_waits_for_the_round_of_its_own_persona() {
   let fake = fake_or_skip!();
   let h = Harness::new(&fake, json!({}));

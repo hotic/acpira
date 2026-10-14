@@ -728,10 +728,15 @@ impl AcpSession {
       c.relays.calls.retain(|p| p.tool_call_id != tool_call_id);
       return;
     }
-    let Some(args) = ask_agent_args(u, known) else { return };
+    if !(known || names_ask_agent(u)) {
+      return;
+    }
+    // The name may come without any input (an AIR client gets `rawInput` only once it is complete), so the row is
+    // remembered by its name alone: the refinement carrying the arguments leaves the unchanged title out
     if !ended {
       c.relays.rows.insert(tool_call_id.clone());
     }
+    let Some(args) = ask_agent_args(u) else { return };
     let text = |k: &str| args.get(k).and_then(Value::as_str).map(str::trim).unwrap_or("").to_owned();
     let (prompt, agent, thread) = (text("prompt"), text("agent"), Some(text("thread")).filter(|t| !t.is_empty()));
     // No prompt and no thread: the arguments are still streaming in (an empty `rawInput` first), not a wait call
@@ -939,15 +944,16 @@ fn done_text(reply: &str, thread: &str, persona: &SubagentPersona) -> String {
 /// The `ask_agent` arguments of a root tool update, when it is Acpira's tool (named like `show_image` per adapter)
 /// The arguments of an `ask_agent` row. `known`: an earlier update of this row already named the tool, so this one
 /// counts even without the name
-fn ask_agent_args(u: &Value, known: bool) -> Option<Map<String, Value>> {
+fn names_ask_agent(u: &Value) -> bool {
   static ASK: std::sync::LazyLock<regex::Regex> =
     std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)(?:^|acpira[_.:/-]{1,2})ask_agent$").unwrap());
-  let raw = u.get("rawInput").and_then(Value::as_object);
-  let named = |x: Option<&str>| x.map(str::trim).is_some_and(|x| ASK.is_match(x));
-  if !(known || named(u.get("title").and_then(Value::as_str)) || named(u.get("name").and_then(Value::as_str)) || named(raw.and_then(|r| r.get("tool")).and_then(Value::as_str))) {
-    return None;
-  }
-  let raw = raw?;
+  let named = |x: Option<&Value>| x.and_then(Value::as_str).map(str::trim).is_some_and(|x| ASK.is_match(x));
+  named(u.get("title")) || named(u.get("name")) || named(u.get("rawInput").and_then(|r| r.get("tool")))
+}
+
+/// The call's arguments, codex-acp's `{ server, tool, arguments }` unwrapped; None while no input arrived yet
+fn ask_agent_args(u: &Value) -> Option<Map<String, Value>> {
+  let raw = u.get("rawInput").and_then(Value::as_object)?;
   Some(raw.get("arguments").and_then(Value::as_object).unwrap_or(raw).clone())
 }
 
@@ -976,13 +982,15 @@ mod tests {
     let claude = json!({ "toolCallId": "t", "title": "mcp__acpira__ask_agent", "rawInput": { "agent": "codex-review", "prompt": "look" } });
     let codex = json!({ "toolCallId": "t", "title": "mcp.acpira.ask_agent", "rawInput": { "server": "acpira", "tool": "ask_agent", "arguments": { "prompt": "look" } } });
     let other = json!({ "toolCallId": "t", "title": "mcp__acpira__show_image", "rawInput": {} });
-    assert_eq!(ask_agent_args(&claude, false).unwrap()["agent"], "codex-review");
-    assert_eq!(ask_agent_args(&codex, false).unwrap()["prompt"], "look");
-    assert!(ask_agent_args(&other, false).is_none());
+    assert!(names_ask_agent(&claude) && names_ask_agent(&codex) && !names_ask_agent(&other));
+    assert_eq!(ask_agent_args(&claude).unwrap()["agent"], "codex-review");
+    assert_eq!(ask_agent_args(&codex).unwrap()["prompt"], "look");
     // claude-agent-acp 0.83.0 refinements carry the grown rawInput without the title
     let refinement = json!({ "toolCallId": "t", "rawInput": { "agent": "codex-review", "prompt": "look" } });
-    assert!(ask_agent_args(&refinement, false).is_none());
-    assert_eq!(ask_agent_args(&refinement, true).unwrap()["prompt"], "look");
+    assert!(!names_ask_agent(&refinement));
+    // ...and to an AIR client its first tool_call names the tool with no rawInput at all
+    let first = json!({ "toolCallId": "t", "title": "mcp__acpira__ask_agent", "status": "pending" });
+    assert!(names_ask_agent(&first) && ask_agent_args(&first).is_none());
   }
 
   #[test]
