@@ -63,6 +63,18 @@ pub enum Item {
   },
 }
 
+/// What a user message holding messages steered into a running turn opens with (`steer.rs`). Session logs keep it, so
+/// it stays as it is
+pub const STEER_OPEN: &str = "<steer>\n";
+
+impl Item {
+  /// A user message holding what the user steered into a running turn, not a prompt: compaction does not take it for
+  /// a turn's start, and Anthropic Messages carries it behind the round's tool results
+  pub fn is_steer(&self) -> bool {
+    matches!(self, Item::User(parts) if matches!(parts.first(), Some(Part::Text(t)) if t.starts_with(STEER_OPEN)))
+  }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolSpec {
   pub name: String,

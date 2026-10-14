@@ -19,7 +19,7 @@
 </picture>
 
 - **执行记录。** 在对话中查看文件读取、代码修改和命令输出。
-- **消息队列、引导与审批。** Agent 工作时可追加排队消息；在 Claude 与 Codex 上还能把消息直接插入正在运行的回合。计划审阅和权限审批在对话中完成。
+- **消息队列、引导与审批。** Agent 工作时可追加排队消息；在 Claude、Codex 和内置 Agent 上还能把消息直接插入正在运行的回合。计划审阅和权限审批在对话中完成。
 - **跨 Agent 子代理。** 把其他 Agent CLI 设为子代理，用 `@名称` 召唤；每个子代理都在自己的 CLI 会话中运行，完成后把结果交回对话。
 - **切换 Agent，保留熟悉的操作。** 支持 Grok、Devin、Kimi Code、Codex、Claude、OpenCode、DSH、Antigravity、Pi 及其他兼容 ACP 的 CLI，共用会话管理与模型控制界面。
 - **内置 Agent，任意模型都能用。** 接入 OpenAI 或 Anthropic 兼容的端点，例如 DeepSeek、GLM、OpenRouter 或本机 Ollama，即可直接用它写代码，无需额外安装。

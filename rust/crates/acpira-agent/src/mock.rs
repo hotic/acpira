@@ -22,6 +22,26 @@ pub enum Reply {
   Hang,
   /// A plain answer with this status and body
   Status(u16, String),
+  /// The inner reply once the gate opens: the request is recorded at once, the answer waits (a reply still streaming)
+  Held(Gate, Box<Reply>),
+}
+
+/// Holds a `Reply::Held` until the test opens it
+#[derive(Clone, Default)]
+pub struct Gate(Arc<(parking_lot::Mutex<bool>, parking_lot::Condvar)>);
+
+impl Gate {
+  pub fn open(&self) {
+    *self.0.0.lock() = true;
+    self.0.1.notify_all();
+  }
+
+  fn wait(&self) {
+    let mut open = self.0.0.lock();
+    while !*open {
+      self.0.1.wait(&mut open);
+    }
+  }
 }
 
 #[derive(Debug, Clone)]
@@ -134,7 +154,11 @@ fn serve(conn: TcpStream, st: &State) {
   }
   let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
   st.requests.lock().push(Recorded { path, headers, body });
-  let reply = st.script.lock().pop_front().unwrap_or_else(|| Reply::Status(500, r#"{"error":{"message":"mock: no scripted reply"}}"#.into()));
+  let mut reply = st.script.lock().pop_front().unwrap_or_else(|| Reply::Status(500, r#"{"error":{"message":"mock: no scripted reply"}}"#.into()));
+  while let Reply::Held(gate, inner) = reply {
+    gate.wait();
+    reply = *inner;
+  }
   let mut out = conn;
   let sse_head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache\r\nconnection: close\r\n\r\n";
   match reply {
@@ -182,6 +206,8 @@ fn serve(conn: TcpStream, st: &State) {
       }
       st.hanging.fetch_sub(1, Ordering::AcqRel);
     }
+    // Opened above
+    Reply::Held(..) => unreachable!(),
   }
   let _ = out.flush();
   let _ = out.shutdown(std::net::Shutdown::Both);

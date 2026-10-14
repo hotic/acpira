@@ -32,13 +32,26 @@ fn is_thinking(block: &Value) -> bool {
   matches!(block.get("type").and_then(Value::as_str), Some("thinking" | "redacted_thinking"))
 }
 
+/// A user message holding only a round's tool results
+fn is_tool_results(m: &Value) -> bool {
+  m["role"] == "user" && m["content"].as_array().is_some_and(|c| c.iter().all(|b| b["type"] == "tool_result"))
+}
+
 /// The request body for the endpoint at `origin`
 pub fn body(req: &Request, family: &Family, origin: &str) -> Value {
-  let turn_start = req.items.iter().rposition(|i| matches!(i, Item::User(_))).unwrap_or(0);
+  // The running turn starts at its prompt: a steered message rides in the tool results' message (below), so for the
+  // API the tool loop goes on through it, and the turn's thinking has to come back with it
+  let turn_start = req.items.iter().rposition(|i| matches!(i, Item::User(_)) && !i.is_steer()).unwrap_or(0);
   let mut messages: Vec<Value> = vec![];
   for (i, item) in req.items.iter().enumerate() {
     match item {
-      Item::User(parts) => messages.push(json!({ "role": "user", "content": user_blocks(parts) })),
+      // A message steered into the turn goes behind the round's tool results in their message, which is where Claude Code
+      // puts one (the results must come first). The API would join two user messages itself; compatible servers, made
+      // for Claude Code's traffic, may not. Those results were never sent without it, so no sent prefix changes
+      Item::User(parts) => match messages.last_mut().filter(|m| item.is_steer() && is_tool_results(m)) {
+        Some(results) => results["content"].as_array_mut().unwrap().extend(user_blocks(parts)),
+        None => messages.push(json!({ "role": "user", "content": user_blocks(parts) })),
+      },
       Item::Assistant { text, tool_calls, native, .. } => {
         let echo = match family.echo {
           ReasoningEcho::Never => false,
@@ -78,9 +91,7 @@ pub fn body(req: &Request, family: &Family, origin: &str) -> Value {
         }
         // Results of one round share the user message that follows the calls
         match messages.last_mut() {
-          Some(m) if m["role"] == "user" && m["content"].as_array().is_some_and(|c| c.iter().all(|b| b["type"] == "tool_result")) => {
-            m["content"].as_array_mut().unwrap().push(block);
-          }
+          Some(m) if is_tool_results(m) => m["content"].as_array_mut().unwrap().push(block),
           _ => messages.push(json!({ "role": "user", "content": [block] })),
         }
       }
@@ -533,6 +544,23 @@ mod tests {
     // A family with implicit caching gets no markers
     let ds = body(&req(items), &by_name("deepseek").unwrap(), ORIGIN);
     assert!(!ds.to_string().contains("cache_control"));
+  }
+
+  #[test]
+  fn a_steered_message_rides_behind_the_results_and_the_turns_thinking_comes_back() {
+    let steer = crate::steer::item(&[json!([{ "type": "text", "text": "use printf" }])], true, &[]);
+    let items = vec![user("one"), signed_call("t1", ORIGIN), result("t1", "x"), steer.clone(), signed_call("t2", ORIGIN), result("t2", "y")];
+    // A family that echoes only the running turn's reasoning: the steered message does not start a turn
+    let b = body(&req(items), &by_name("deepseek").unwrap(), ORIGIN);
+    let msgs = b["messages"].as_array().unwrap();
+    assert_eq!(msgs.len(), 5, "{msgs:?}");
+    assert_eq!(msgs[2]["content"][0]["type"], "tool_result");
+    assert!(msgs[2]["content"][1]["text"].as_str().unwrap().ends_with("</steer>\n\nuse printf"));
+    assert_eq!((msgs[1]["content"][0]["type"].as_str(), msgs[3]["content"][0]["type"].as_str()), (Some("thinking"), Some("thinking")));
+    // After a reply without calls it is a user message of its own
+    let b = body(&req(vec![user("one"), Item::Assistant { text: "Sure.".into(), reasoning: String::new(), tool_calls: vec![], native: None }, steer]), &claude(), ORIGIN);
+    let msgs = b["messages"].as_array().unwrap();
+    assert_eq!((msgs.len(), msgs[2]["role"].as_str()), (3, Some("user")));
   }
 
   #[test]

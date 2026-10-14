@@ -20,6 +20,8 @@ pub enum Answer {
   Reject,
   /// Never answer (the turn stays parked on the card)
   Hold,
+  /// Answer once the test calls `Harness::release`: allow once, or reject
+  Wait { allow: bool },
 }
 
 pub struct Client {
@@ -29,6 +31,8 @@ pub struct Client {
   pub forms: parking_lot::Mutex<Vec<Value>>,
   /// The response to every form
   pub form_reply: parking_lot::Mutex<Value>,
+  /// Lets an `Answer::Wait` card be answered
+  pub gate: Arc<tokio::sync::Notify>,
 }
 
 impl Inbound for Client {
@@ -39,6 +43,7 @@ impl Inbound for Client {
   }
   fn request(&self, method: String, params: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
     let answer = *self.answer.lock();
+    let gate = self.gate.clone();
     if method == "session/request_permission" {
       self.permissions.lock().push(params.clone());
     }
@@ -58,6 +63,13 @@ impl Inbound for Client {
         Answer::Hold => {
           cancel.cancelled().await;
           return Ok(json!({ "outcome": { "outcome": "cancelled" } }));
+        }
+        Answer::Wait { allow } => {
+          tokio::select! {
+            _ = gate.notified() => {}
+            _ = cancel.cancelled() => return Ok(json!({ "outcome": { "outcome": "cancelled" } })),
+          }
+          if allow { "allow_once" } else { "reject_once" }
         }
       };
       let option = params["options"].as_array().into_iter().flatten().find(|o| o["kind"] == kind).cloned().unwrap_or(Value::Null);
@@ -95,6 +107,7 @@ impl Harness {
       answer: parking_lot::Mutex::new(Answer::Allow),
       forms: Default::default(),
       form_reply: parking_lot::Mutex::new(json!({ "action": "cancel" })),
+      gate: Default::default(),
     });
     let inbound: Arc<dyn Inbound> = client.clone();
     let conn = Connection::start(client_r, client_w, Arc::new(move || inbound.clone()), Arc::new(|l: &str| eprintln!("client: {l}")));
@@ -135,6 +148,11 @@ impl Harness {
 
   pub async fn new_session(&self) -> Value {
     self.conn.request("session/new", json!({ "cwd": self.cwd.path(), "mcpServers": [] })).await.unwrap()
+  }
+
+  /// Answer the permission card an `Answer::Wait` holds
+  pub fn release(&self) {
+    self.client.gate.notify_one();
   }
 
   pub fn updates(&self) -> Vec<Value> {
