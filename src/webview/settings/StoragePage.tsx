@@ -13,7 +13,7 @@ import { ShellLayerContext } from '../ui/Overlay';
 import { Toast } from '../ui/Toast';
 import { cn } from '../ui/cn';
 import { getLocale, t } from '../i18n';
-import { Count, Group, ItemRow, Note, Section, SourceLink, shortPath } from './controls';
+import { Count, Group, ItemRow, Note, rowHover, Section, SourceLink, shortPath } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 
 // Settings → Storage: what the data directory holds by owner, drawn as one bar, and the cleanups that are reviewed
@@ -125,7 +125,7 @@ function PickRow({ on, disabled, title, meta, size, onToggle, nested }: {
 }) {
   return (
     <button type="button" role="checkbox" aria-checked={on} disabled={disabled} onClick={onToggle}
-      className={cn('flex min-h-(--setting-row-detail) w-full items-center gap-gap py-(--setting-row-pad) text-left text-2 enabled:hover:bg-hover focus-visible:bg-hover', nested && 'pl-indent')}>
+      className={cn(rowHover, 'flex min-h-(--setting-row-detail) w-full items-center gap-gap py-(--setting-row-pad) text-left text-2', nested && 'pl-indent')}>
       <Tick on={on} disabled={disabled} />
       <span className="flex min-w-0 flex-1 flex-col">
         <span className={cn('truncate', disabled ? 'text-fg-2' : 'text-fg-1')}>{title}</span>
@@ -136,12 +136,16 @@ function PickRow({ on, disabled, title, meta, size, onToggle, nested }: {
   );
 }
 
-// The review's fixed-height list: an async list never changes the page's height when it fills, empties or filters
+// The review's fixed-height list: an async list never changes the page's height when it fills, empties or filters.
+// The scrollport reaches the card edges so row hovers run full width and the scrollbar sits on the border, while the
+// outer wrapper keeps the section's `divide-y` rule inset
 function ReviewList({ children, empty, loading }: { children: ReactNode; empty: string; loading: boolean }) {
   const hasRows = Array.isArray(children) ? children.length > 0 : !!children;
   return (
-    <div className="h-(--storage-list) overflow-y-auto overscroll-contain scroll-thin">
-      {loading ? <Note shimmer>{t('storage.scanning')}</Note> : hasRows ? <Group embedded>{children}</Group> : <Note>{empty}</Note>}
+    <div>
+      <div className="-mx-pad h-(--storage-list) overflow-y-auto overscroll-contain px-pad scroll-thin">
+        {loading ? <Note shimmer>{t('storage.scanning')}</Note> : hasRows ? <Group embedded>{children}</Group> : <Note>{empty}</Note>}
+      </div>
     </div>
   );
 }

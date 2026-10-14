@@ -89,7 +89,7 @@ export function Section({ title, desc, count, lead, status, action, cards, child
     </div>
   );
   return (
-    <Card className="acp-section-panel flex flex-col px-pad shadow-none">
+    <Card className="acp-section-panel flex flex-col overflow-hidden px-pad shadow-none">
       <ListHead title={title} desc={desc} count={count} lead={lead} status={status} action={action} />
       {hasContent && <InsetGroupContext.Provider value={true}>
         <div className="border-t border-line">{content}</div>
@@ -383,18 +383,26 @@ export interface ItemRowProps {
   dim?: boolean;
   // A lead mark that fills the whole lead slot instead of the one-line icon size, for rows whose desc makes them two lines tall
   bigLead?: boolean;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
   className?: string;
 }
 
-export function ItemRow({ lead, title, desc, extra, trailing, onOpen, reserveOpen, onClick, dim, bigLead, className }: ItemRowProps) {
+// Full-width hover fill for a clickable row inside an inset Group: the row keeps the group's width so `divide-y` rules
+// stay inset, while `::before` paints (and takes pointer hits) from card edge to card edge
+export const rowHover = 'relative isolate before:absolute before:inset-y-0 before:-inset-x-pad before:-z-10 before:transition-colors enabled:hover:before:bg-hover focus-visible:before:bg-hover';
+
+export function ItemRow({ lead, title, desc, extra, trailing, onOpen, reserveOpen, onClick, dim, bigLead, onMouseEnter, onMouseLeave, className }: ItemRowProps) {
   const Tag = onClick ? 'button' : 'div';
   return (
     <Tag
       {...(onClick ? { type: 'button' as const, onClick } : {})}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
       data-detail={!!desc || undefined}
       className={cn(
         useSettingRow(), 'group/row flex w-full items-center gap-gap text-left',
-        onClick && 'transition-colors hover:bg-hover focus-visible:bg-hover',
+        onClick && rowHover,
         className,
       )}
     >
