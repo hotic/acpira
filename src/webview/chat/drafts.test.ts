@@ -154,4 +154,16 @@ describe('mixed pastes', () => {
     expect(refused).toEqual([]);
     expect(drafts).toEqual([{ kind: 'image', mimeType: 'image/png', data: png }]);
   });
+
+  it('never requests a pasted image on a loopback port, which the page may reach for open_browser', async () => {
+    const fetched: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => { fetched.push(url); return new Response(new Blob([], { type: 'image/png' })); }));
+    try {
+      const { drafts } = await collectImageSources(['http://localhost:8080/admin/drop.png', 'http://127.0.0.1:3000/x.png', 'http://[::1]/y.png', 'https://example.com/z.png']);
+      expect(fetched).toEqual(['https://example.com/z.png']);
+      expect(drafts).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
