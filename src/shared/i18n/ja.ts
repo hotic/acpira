@@ -335,7 +335,6 @@ export const ja = {
   'turns.readFiles': '{n} 個のファイルを読み取り',
   'turns.searched': '{n} 回検索',
   'turns.explored': '{n} か所を調査',
-  'turns.elapsed': '所要時間 {t}',
   'turns.done': '完了',
   'turns.nameSep': '、',
   'turns.groupFiles': '{names} など（{n} 個のファイル）',

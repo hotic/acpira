@@ -342,7 +342,6 @@ export const zhTW = {
   'turns.readFiles': '讀取 {n} 個檔案',
   'turns.searched': '搜尋 {n} 次',
   'turns.explored': '探索了 {n} 處',
-  'turns.elapsed': '用時 {t}',
   'turns.done': '已完成',
   'turns.nameSep': '、',
   'turns.groupFiles': '{names} 等 {n} 個檔案',

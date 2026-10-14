@@ -344,7 +344,6 @@ export const zhCN = {
   'turns.readFiles': '读取 {n} 个文件',
   'turns.searched': '搜索 {n} 次',
   'turns.explored': '探索了 {n} 处',
-  'turns.elapsed': '用时 {t}',
   'turns.done': '已完成',
   'turns.nameSep': '、',
   'turns.groupFiles': '{names} 等 {n} 个文件',

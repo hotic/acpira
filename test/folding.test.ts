@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AgentTurn, GoalBlock, NoticeBlock, PermissionBlock, QuestionBlock, ToolCallBlock } from '../src/shared/transcript';
 import { setLocale } from '../src/webview/i18n';
-import { elapsedDuration, elapsedLabel, foldActivity, splitCodexBlocks, toolTarget, toolVerb } from '../src/webview/chat/folding';
+import { elapsedDuration, foldActivity, splitCodexBlocks, toolTarget, toolVerb } from '../src/webview/chat/folding';
 
 const read: ToolCallBlock = { type: 'tool_call', id: 'read', kind: 'read', verb: 'Read', target: 'README.md', status: 'completed' };
 const run: ToolCallBlock = { type: 'tool_call', id: 'run', kind: 'execute', verb: 'Run', target: 'pnpm test', targetMono: true, status: 'in_progress' };
@@ -143,19 +143,16 @@ describe('Codex process folding', () => {
 
   it('uses elapsed wall time with compact units, without appending action summaries', () => {
     const turn: AgentTurn = { role: 'agent', blocks: [{ type: 'thought', text: '', durationSec: 5 }, run], startedAt: 1000, endedAt: 287000 };
-    expect(elapsedLabel(turn)).toBe('Took 4m 46s');
-    expect(elapsedLabel({ ...turn, endedAt: 61000 })).toBe('Took 1m');
-    expect(elapsedLabel({ ...turn, endedAt: 6000 })).toBe('Took 5s');
-    expect(elapsedLabel({ ...turn, startedAt: undefined, endedAt: undefined })).toBe('Done');
-    // The stats card uses the bare duration without the Took/用时 prefix
     expect(elapsedDuration(turn)).toBe('4m 46s');
+    expect(elapsedDuration({ ...turn, endedAt: 61000 })).toBe('1m');
+    expect(elapsedDuration({ ...turn, endedAt: 6000 })).toBe('5s');
     expect(elapsedDuration({ ...turn, startedAt: undefined })).toBe('');
   });
 
   it('follows the locale: zh-CN renders the same labels in Chinese', () => {
     setLocale('zh-CN');
     const turn: AgentTurn = { role: 'agent', blocks: [run], startedAt: 1000, endedAt: 287000 };
-    expect(elapsedLabel(turn)).toBe('用时 4 分钟 46 秒');
+    expect(elapsedDuration(turn)).toBe('4 分钟 46 秒');
     expect(toolVerb({ ...run, status: 'failed' })).toBe('运行失败');
     expect(foldActivity({ role: 'agent', blocks: [{ type: 'compaction', id: 'c', status: 'in_progress' }] }).label).toBe('正在压缩上下文');
   });

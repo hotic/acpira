@@ -333,7 +333,6 @@ export const ko = {
   'turns.readFiles': '파일 {n}개 읽음',
   'turns.searched': '{n}회 검색',
   'turns.explored': '{n}곳 탐색',
-  'turns.elapsed': '{t} 소요',
   'turns.done': '완료',
   'turns.groupFiles': '{names} 외 (파일 {n}개)',
   'turns.retrying': '다시 시도 중',
