@@ -68,11 +68,9 @@ export function SubagentsPage({ settings, agents, controls, on }: PageProps) {
       action={<SectionAction icon={<Plus strokeWidth={1.5} />} disabled={full || adding !== undefined} onClick={add}>{t('subagents.page.add')}</SectionAction>}>
       {list.length === 0
         ? <p className="m-0 py-pad text-2 text-fg-2">{t('subagents.page.empty')}</p>
-        // The Group owns the horizontal inset, so the rows line up with the section's title and description instead of
-        // adding a second inset of their own; it does not clip, since the rows' rounded hover reaches past their edges
-        : <Group className="overflow-visible">
+        : <Group>
           {list.map(p => (
-            <ItemRow key={p.id} className="settings-pick-row hover:bg-transparent focus-visible:bg-transparent" dim={!p.enabled} bigLead onClick={() => setOpen(p.id)}
+            <ItemRow key={p.id} dim={!p.enabled} bigLead onClick={() => setOpen(p.id)}
               lead={<AgentMark id={p.agent} name={p.name} />} title={p.name} desc={metaOf(p, agents)} />
           ))}
         </Group>}
