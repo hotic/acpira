@@ -244,6 +244,10 @@ function AddModelDialog({ provider: p, busy, onAdd, onRemove, onClose }: {
         <Command.Root items={items} value={null} inputValue={query} onInputValueChange={setQuery}
           itemToStringValue={(m: Pick | null) => m?.id ?? ''} itemToStringLabel={(m: Pick | null) => (m ? [m.name, m.id].filter(Boolean).join(' ') : '')}>
           <Command.Input placeholder={t('settings.providers.addModel.search')} />
+          {/* Every state under the search shares one region of the list's full height. The dialog is centred, so a body
+              that followed its content moved the whole dialog when the fetched list replaced Fetching models… and again
+              with every key that filtered it (found 2026-10-14 recording the README's built-in agent clip) */}
+          <div className="flex h-pop min-h-0 flex-col">
           {fetch.pending && <div className="flex min-h-row items-center px-2 text-3 text-fg-3"><Shimmer active>{t('settings.providers.fetching')}</Shimmer></div>}
           {fetch.outcome?.kind === 'failed' && <div className="px-2 py-1 text-3 [overflow-wrap:anywhere]">
             <span className="text-danger">{fetch.outcome.error}</span>
@@ -264,6 +268,7 @@ function AddModelDialog({ provider: p, busy, onAdd, onRemove, onClose }: {
               </OptionContent>
             </Command.Item>}
           </Command.List>
+          </div>
         </Command.Root>
       </div>
     </SettingsDialog>
