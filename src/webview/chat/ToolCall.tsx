@@ -71,13 +71,15 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
     </span>
   );
   const taskStop = stoppable && (
+    // Small variant: inside process rows --ctl-sm equals the row height, so the hover square never outgrows the line
     <IconButton
+      size="sm"
       aria-label={t('asyncTask.stop')}
       title={t('asyncTask.stop')}
-      className="-my-1 -mr-1"
+      className="-mr-1 [&_svg]:size-3"
       onClick={e => { e.stopPropagation(); stopTask(task.id); }}
     >
-      <Square className="size-3" strokeWidth={1.5} />
+      <Square strokeWidth={1.5} />
     </IconButton>
   );
 
