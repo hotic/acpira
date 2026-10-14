@@ -444,6 +444,8 @@
   --spacing-lead: var(--lead);
   --spacing-icon: var(--icon);
   --spacing-icon-ctl: var(--icon-ctl);
+  /* The check glyph inside a review row's tick box (settings/StoragePage.tsx), inset from the icon-sized box */
+  --spacing-tick: calc(var(--icon) - 4px);
   --spacing-pad: var(--pad);
   --spacing-pad-y: var(--pad-y);
   --spacing-page: var(--page);

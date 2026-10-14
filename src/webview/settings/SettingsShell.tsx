@@ -153,7 +153,7 @@ export function SettingsShell(p: SettingsShellProps) {
                   {page.kind === 'general' && <General settings={p.settings} agents={p.agents} on={p.on} />}
                   {page.kind === 'appearance' && <AppearancePage settings={p.settings} appearance={p.appearance} on={p.on} />}
                   {page.kind === 'shared' && <SharedPage state={p.shared} agents={p.agents} on={p.on} />}
-                  {page.kind === 'storage' && <StoragePage state={p.storage} env={p.env} on={p.on} />}
+                  {page.kind === 'storage' && <StoragePage state={p.storage} agents={p.agents} env={p.env} on={p.on} />}
                   {page.kind === 'subagents' && <SubagentsPage settings={p.settings} agents={p.agents} controls={p.controls} on={p.on} />}
                   {agent && (
                     <AgentPage
