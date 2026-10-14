@@ -20,3 +20,13 @@ export function tOr(key: string, fallback: string, params?: Params): string {
 
 export const LocaleContext = createContext<Locale>('en');
 export const useLocale = () => useContext(LocaleContext);
+
+// Constructing an Intl.DateTimeFormat resolves locale data every time, and the session list formats a date per row on
+// every render: one formatter per locale and option set, kept for the page's lifetime (a handful of shapes in all)
+const dateFormats = new Map<string, Intl.DateTimeFormat>();
+export function dateFormat(locale: string, options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  const key = `${locale} ${JSON.stringify(options)}`;
+  let format = dateFormats.get(key);
+  if (!format) dateFormats.set(key, format = new Intl.DateTimeFormat(locale, options));
+  return format;
+}
