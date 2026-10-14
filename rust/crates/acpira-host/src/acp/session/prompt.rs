@@ -711,6 +711,8 @@ impl AcpSession {
     c.compaction.completion = None;
     // Steers held behind a compaction missed this turn: the queue sends them as ordinary follow-ups
     c.queue.steer_after_compaction.clear();
+    // The turn's steers are its own from here on: a later stop has none of them to give back
+    c.queue.steered.clear();
     // The parent prompt returned: children still reported running are disconnected, never failed
     c.tree.settle("prompt-returned");
     self.drain_terminal(c);
@@ -741,7 +743,17 @@ impl AcpSession {
     }
   }
 
+  /// The user's stop (and a send-now's): steers the agent will drop unanswered go back to the queue
   pub async fn cancel(self: &Arc<Self>) {
+    self.cancel_turn(true).await
+  }
+
+  /// A stop for a handover to another engine: the queue stays behind, so the steers stay where the transcript has them
+  pub async fn cancel_for_handover(self: &Arc<Self>) {
+    self.cancel_turn(false).await
+  }
+
+  async fn cancel_turn(self: &Arc<Self>, requeue: bool) {
     let mut c = self.core.lock();
     // Summoned children outlive the tool call that started them, not the user's stop: each gets its own cancel, whatever
     // state the root turn is in
@@ -771,6 +783,10 @@ impl AcpSession {
     // A turn parked behind a background compaction has no request left on the wire; releasing the latch lets it settle
     if let Some(comp) = c.compaction.completion.as_mut() {
       comp.close();
+    }
+    // Before the cancel goes out, so no answer to a steer can stream in between
+    if requeue {
+      self.requeue_unanswered_steers(&mut c);
     }
     if let Some(sid) = c.acp_session_id.clone() {
       proc.notify("session/cancel", json!({ "sessionId": sid }));
