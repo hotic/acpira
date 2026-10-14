@@ -576,6 +576,44 @@ fn codex_image_generation_is_named_by_identity_and_keeps_the_revised_prompt_and_
 }
 
 #[test]
+fn claude_web_search_reads_as_a_web_search_with_its_query() {
+  let mut s = state();
+  // claude-agent-acp 0.83 WebSearchReporter: the stream start carries no input, the refinement the query
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "ws", "kind": "fetch", "title": "Web search",
+    "status": "pending", "rawInput": {} }));
+  expect_match(block(&s, 0, 0), json!({ "verbKey": "verb.search", "kind": "fetch" }));
+  expect_absent(block(&s, 0, 0), "target");
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "ws", "kind": "fetch",
+    "title": "Search \"telegram storage\"", "rawInput": { "query": "telegram storage" } }));
+  expect_match(block(&s, 0, 0), json!({ "verbKey": "verb.search", "kind": "fetch", "target": "telegram storage", "targetMono": false }));
+  // WebFetch stays a fetch of its URL
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "wf", "kind": "fetch", "title": "Fetch https://a.dev",
+    "rawInput": { "url": "https://a.dev", "prompt": "summarize" } }));
+  expect_match(block(&s, 0, 1), json!({ "kind": "fetch", "target": "https://a.dev", "targetMono": true }));
+  expect_absent(block(&s, 0, 1), "verbKey");
+}
+
+#[test]
+fn codex_web_search_names_its_query_and_an_opened_page_its_url() {
+  let mut s = state();
+  // codex-acp 1.13 createWebSearchStartUpdate / createWebSearchCompleteUpdate
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "s1", "kind": "search", "title": "Web search",
+    "status": "in_progress", "rawInput": { "type": "webSearch", "id": "s1", "query": "" } }));
+  expect_match(block(&s, 0, 0), json!({ "verbKey": "verb.search", "kind": "fetch" }));
+  expect_absent(block(&s, 0, 0), "target");
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "s1", "title": "Web search: acp spec", "status": "completed",
+    "rawInput": { "type": "webSearch", "id": "s1", "query": "acp", "action": { "type": "search", "query": "acp spec" } } }));
+  expect_match(block(&s, 0, 0), json!({ "verbKey": "verb.search", "kind": "fetch", "target": "acp spec", "status": "completed" }));
+  // The action may only arrive with the completion
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "p1", "kind": "search", "title": "Web search",
+    "status": "in_progress", "rawInput": { "type": "webSearch", "id": "p1", "query": "" } }));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "p1", "title": "Open page: https://a.dev/x", "status": "completed",
+    "rawInput": { "type": "webSearch", "id": "p1", "query": "", "action": { "type": "openPage", "url": "https://a.dev/x" } } }));
+  expect_match(block(&s, 0, 1), json!({ "kind": "fetch", "target": "https://a.dev/x", "targetMono": true }));
+  expect_absent(block(&s, 0, 1), "verbKey");
+}
+
+#[test]
 fn an_image_generation_tool_that_answers_with_a_path_reads_the_file() {
   let seen = Arc::new(Mutex::new(Vec::<String>::new()));
   let mut s = state();

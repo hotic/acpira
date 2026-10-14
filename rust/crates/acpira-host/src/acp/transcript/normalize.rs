@@ -1058,6 +1058,70 @@ static SAVED_IMAGE_PATH: LazyLock<Regex> = LazyLock::new(|| {
   Regex::new(r#"(?i)(?:^|[\s"'`(<\[=:])((?:file://|[A-Za-z]:[\\/]|/)[^\s"'`<>()\[\]]*?\.(?:png|jpe?g|gif|webp))\b"#).unwrap()
 });
 pub const IMAGE_GEN_VERB: &str = "verb.imagegen";
+/// A web search keeps the plain search verb as its key: the `fetch` kind (globe icon) tells it from a local search,
+/// and the key marks the row so later packets keep it a web search
+pub const WEB_SEARCH_VERB: &str = "verb.search";
+/// A web search by title: the placeholder "Web search" (claude-agent-acp 0.83, codex-acp 1.13) and codex-acp's
+/// "Web search: <query>"; group 1 is the query
+static WEB_SEARCH_TITLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^web[ _]?search(?::\s*(.*))?$").unwrap());
+/// claude-agent-acp 0.83's WebSearch once its input is complete: `Search "<query>"` (counted only on a `fetch` row,
+/// since a grep could be titled the same); group 1 is the query
+static CLAUDE_SEARCH_TITLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^Search "(.+)"$"#).unwrap());
+
+enum WebTool {
+  Search,
+  OpenPage,
+}
+
+/// Which web tool a call is. claude-agent-acp 0.83 files WebSearch as `fetch` titled "Web search", then `Search "<query>"`
+/// with `rawInput.query` (WebFetch keeps `fetch` with `rawInput.url`); codex-acp 1.13 files its web_search item as `search`
+/// titled "Web search[: <query>]" / "Open page: <url>" with `rawInput { type: "webSearch", query, action }`
+fn web_tool(b: &ToolCallBlock, title: Option<&str>, raw: Option<&Map<String, Value>>) -> Option<WebTool> {
+  if b.mcp_server.is_some() || b.verb_key.as_deref().is_some_and(|k| k != WEB_SEARCH_VERB) {
+    return None;
+  }
+  // codex-acp's action decides, and may only arrive with the completion
+  if let Some(raw) = raw.filter(|r| r.get("type").and_then(Value::as_str) == Some("webSearch")) {
+    return match raw.get("action").and_then(|a| a.get("type")).and_then(Value::as_str) {
+      Some("openPage") => Some(WebTool::OpenPage),
+      Some("findInPage") => None,
+      _ => Some(WebTool::Search),
+    };
+  }
+  let title = title.map(str::trim).unwrap_or("");
+  let fetch_query = b.kind == ToolKind::Fetch
+    && (CLAUDE_SEARCH_TITLE.is_match(title) || raw.is_some_and(|r| r.get("query").is_some_and(Value::is_string) && r.get("url").is_none()));
+  (b.verb_key.is_some() || WEB_SEARCH_TITLE.is_match(title) || fetch_query).then_some(WebTool::Search)
+}
+
+/// The query of a web search: codex-acp's `action.query` / `action.queries`, then `rawInput.query`, then the title
+fn web_search_query(title: Option<&str>, raw: Option<&Map<String, Value>>) -> Option<String> {
+  let text = |v: Option<&Value>| v.and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
+  if let Some(raw) = raw {
+    let action = raw.get("action");
+    if let Some(q) = text(action.and_then(|a| a.get("query"))) {
+      return Some(q);
+    }
+    let queries: Vec<&str> = action
+      .and_then(|a| a.get("queries"))
+      .and_then(Value::as_array)
+      .into_iter()
+      .flatten()
+      .filter_map(Value::as_str)
+      .map(str::trim)
+      .filter(|q| !q.is_empty())
+      .collect();
+    if !queries.is_empty() {
+      return Some(queries.join(", "));
+    }
+    if let Some(q) = text(raw.get("query")) {
+      return Some(q);
+    }
+  }
+  let title = title?.trim();
+  let found = WEB_SEARCH_TITLE.captures(title).and_then(|c| c.get(1)).or_else(|| CLAUDE_SEARCH_TITLE.captures(title).and_then(|c| c.get(1)));
+  found.map(|m| m.as_str().trim().to_owned()).filter(|q| !q.is_empty())
+}
 static KIND_BY_TITLE: LazyLock<Vec<(Regex, ToolKind)>> = LazyLock::new(|| {
   [
     (r"(?i)^(read|open|view|cat)(_[a-z]+)*$", ToolKind::Read),
@@ -1193,6 +1257,23 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   if image_gen_title || tool_name.and_then(Value::as_str).is_some_and(|n| IMAGE_GEN.is_match(n)) {
     set_verb(b, IMAGE_GEN_VERB);
   }
+  // Web tools read the same whichever CLI ran them: a search is "Search" with its query, an opened page a fetch of its URL.
+  // Re-applied on every packet, since a later `kind` field would otherwise reset the row to the agent's own kind
+  match web_tool(b, title, raw) {
+    Some(WebTool::Search) => {
+      set_verb(b, WEB_SEARCH_VERB);
+      b.kind = ToolKind::Fetch;
+    }
+    Some(WebTool::OpenPage) => {
+      // codex-acp may name the action only on completion, after the start packet looked like a search
+      if b.verb_key.as_deref() == Some(WEB_SEARCH_VERB) {
+        b.verb_key = None;
+      }
+      b.kind = ToolKind::Fetch;
+      b.verb = verb_of(ToolKind::Fetch);
+    }
+    None => {}
+  }
   if b.verb_key.as_deref() == Some(SHOW_IMAGE_VERB) || is_show_image_call(u, title, raw) {
     set_verb(b, SHOW_IMAGE_VERB);
     // codex-acp reports every MCP call as `execute`; this one is no command
@@ -1274,6 +1355,9 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   let named = matches!(b.verb_key.as_deref(), Some("verb.todo" | "verb.ask" | "verb.wait" | "verb.kill" | IMAGE_GEN_VERB | SHOW_IMAGE_VERB));
   let target = if matches!(b.verb_key.as_deref(), Some("verb.wait" | "verb.kill")) {
     shell_target(raw, ctx.as_deref())
+  } else if b.verb_key.as_deref() == Some(WEB_SEARCH_VERB) {
+    // No target until the query is known: the placeholder title ("Web search") only repeats the verb
+    web_search_query(title, raw).map(|text| Target { text, mono: false, from_title: false })
   } else if b.verb_key.as_deref() == Some(IMAGE_GEN_VERB) {
     prompt_target(raw)
   } else if b.verb_key.as_deref() == Some(SHOW_IMAGE_VERB) {
@@ -1498,8 +1582,12 @@ fn pick_target(u: &Value, kind: ToolKind) -> Option<Target> {
       return mono(q.to_owned());
     }
   }
+  // codex-acp's opened page keeps its URL in `rawInput.action.url`
   if kind == ToolKind::Fetch
-    && let Some(url) = raw.and_then(|r| r.get("url")).and_then(Value::as_str).filter(|x| !x.is_empty())
+    && let Some(url) = raw
+      .and_then(|r| r.get("url").or_else(|| r.get("action").and_then(|a| a.get("url"))))
+      .and_then(Value::as_str)
+      .filter(|x| !x.is_empty())
   {
     return mono(url.to_owned());
   }
