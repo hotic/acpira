@@ -8,7 +8,8 @@
 //! project's copy, so whichever model the user asks to add a gate writes one Acpira can read.
 //!
 //! With the relay env on its entry (`relay/`), it also offers `ask_agent`: summon one of the user's cross-harness
-//! personas. That call is forwarded to the sidecar over its loopback hub and answers with the child's reply.
+//! personas. That call is forwarded to the sidecar over its loopback hub and answers with the child's reply. Over the
+//! same hub, `open_browser` shows an http(s) page in the user's editor, offered only while the serving shell can.
 //!
 //! Wire: newline-delimited JSON-RPC 2.0 over stdio (MCP stdio transport). stdout carries protocol messages only.
 
@@ -27,6 +28,7 @@ use crate::limits::MAX_OUT_IMAGE_BYTES;
 pub const SERVER_NAME: &str = "acpira";
 pub const TOOL_NAME: &str = "show_image";
 pub const HOOKS_TOOL: &str = "workspace_hooks";
+pub const BROWSER_TOOL: &str = "open_browser";
 /// Answered when the client does not name a protocol version
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
@@ -39,6 +41,18 @@ call show_image with its absolute path instead of only printing the path. Projec
 const RELAY_INSTRUCTIONS: &str = "When the user writes @name for an agent listed by the ask_agent tool, that is an \
 Acpira agent, not one of your own subagents: call ask_agent for it right away, without listing agents first. \
 Several agents named = one ask_agent call each, all in the same message; they run in parallel.";
+
+/// Appended to the instructions while the serving shell can show pages, so a deferred `open_browser` is still found
+const BROWSER_INSTRUCTIONS: &str = "When the user wants to see a web page (a local dev server, a tool's web UI), call open_browser \
+with its URL: Acpira opens it in a browser tab inside their editor, forwarding the port when the workspace is remote. \
+Do not tell them to open it by hand unless the call fails.";
+
+const BROWSER_DESCRIPTION: &str = "Open an http(s) page in a browser tab inside the user's editor, next to the chat. \
+Use it when the user asks to see a page or would clearly want to: a local dev server, a tool's web UI, a preview. \
+A URL on this machine's loopback (localhost, 127.0.0.1, 0.0.0.0) must be served here first; when the user's editor runs \
+on another machine (SSH, containers), Acpira forwards the port to it and checks from there that the page answers. \
+The result says whether the page opened and at which address. Loading a page can change the state of the app behind it \
+(one that hands its session to the open page, for example), so open it when it is wanted, not as a check.";
 
 const DESCRIPTION: &str = "Display local image files (PNG, JPEG, GIF, WebP) to the user, inline in the conversation. \
 Use it whenever the user should look at an image you produced or found: a screenshot, a rendered UI, a chart, a generated picture. \
@@ -123,6 +137,7 @@ pub fn run(version: &str) -> i32 {
       continue;
     }
     let mut initialize = false;
+    let mut browser = false;
     if let Some(relay) = &relay
       && let Ok(msg) = serde_json::from_str::<Value>(&line)
     {
@@ -130,12 +145,16 @@ pub fn run(version: &str) -> i32 {
       if method == "initialize" {
         relay.note_client(msg.get("params"));
         initialize = true;
+        browser = relay.features().browser;
       }
       if method == "tools/list"
         && let Some(id) = msg.get("id").cloned()
       {
         let mut tools = vec![tool_def(), hooks_tool_def()];
         tools.extend(relay.tool_def());
+        if relay.features().browser {
+          tools.push(browser_tool_def());
+        }
         if !write(&out, &json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": tools } })) {
           break;
         }
@@ -154,10 +173,22 @@ pub fn run(version: &str) -> i32 {
         });
         continue;
       }
+      if method == "tools/call"
+        && msg.get("params").and_then(|p| p.get("name")).and_then(Value::as_str) == Some(BROWSER_TOOL)
+        && let Some(id) = msg.get("id").cloned()
+      {
+        let (relay, out, params) = (relay.clone(), out.clone(), msg.get("params").cloned().unwrap_or(Value::Null));
+        std::thread::spawn(move || {
+          let result = relay.open_browser(&params);
+          write(&out, &json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+        });
+        continue;
+      }
     }
     let Some(mut reply) = handle_line(&line, version) else { continue };
     if initialize && let Some(result) = reply.get_mut("result") {
-      result["instructions"] = json!(format!("{INSTRUCTIONS}\n\n{RELAY_INSTRUCTIONS}"));
+      let extra = if browser { format!("\n\n{BROWSER_INSTRUCTIONS}") } else { String::new() };
+      result["instructions"] = json!(format!("{INSTRUCTIONS}\n\n{RELAY_INSTRUCTIONS}{extra}"));
     }
     if !write(&out, &reply) {
       break;
@@ -205,6 +236,43 @@ impl Relay {
     crate::relay::wire::HubRequest { token: self.token.clone(), op }
   }
 
+  /// The host tools the serving shell can carry out now; none when the hub cannot be reached
+  fn features(&self) -> crate::relay::wire::HostFeatures {
+    use crate::relay::wire::{HubOp, HubReply};
+    let mut features = Default::default();
+    let _ = crate::relay::hub::call(&self.addr, &self.request(HubOp::Features), |r| {
+      if let HubReply::Features(f) = r {
+        features = f;
+      }
+      false
+    });
+    features
+  }
+
+  /// `open_browser`: checked here for shape, carried out by the sidecar and its shell
+  fn open_browser(&self, params: &Value) -> Value {
+    use crate::relay::wire::{HubOp, HubReply};
+    let url = params.get("arguments").and_then(|a| a.get("url")).and_then(Value::as_str).map(str::trim).unwrap_or("");
+    let scheme = url.split_once("://").map(|(s, _)| s.to_ascii_lowercase());
+    if !matches!(scheme.as_deref(), Some("http" | "https")) {
+      return tool_error("Pass `url`: an absolute http:// or https:// address.".into());
+    }
+    let mut end: Option<Value> = None;
+    let r = crate::relay::hub::call(&self.addr, &self.request(HubOp::OpenBrowser { url: url.to_owned() }), |reply| {
+      end = match reply {
+        HubReply::Done(text) => Some(json!({ "content": [{ "type": "text", "text": text }], "isError": false })),
+        HubReply::Error(text) => Some(tool_error(text)),
+        _ => return true,
+      };
+      false
+    });
+    match (end, r) {
+      (Some(v), _) => v,
+      (None, Err(e)) => tool_error(format!("Acpira could not be reached: {e}")),
+      (None, Ok(())) => tool_error("Acpira closed the call without an answer.".into()),
+    }
+  }
+
   /// The tool, listing the personas the hub offers; none (or no hub) = no tool
   fn tool_def(&self) -> Option<Value> {
     use crate::relay::wire::{HubOp, HubReply};
@@ -249,7 +317,7 @@ impl Relay {
         end = Some(tool_error(text));
         false
       }
-      HubReply::Personas(_) => true,
+      HubReply::Personas(_) | HubReply::Features(_) => true,
     });
     match (end, r) {
       (Some(v), _) => v,
@@ -361,6 +429,23 @@ fn tool_def() -> Value {
       },
     },
     "annotations": { "readOnlyHint": true, "openWorldHint": false },
+  })
+}
+
+fn browser_tool_def() -> Value {
+  json!({
+    "name": BROWSER_TOOL,
+    "title": "Open in browser",
+    "description": BROWSER_DESCRIPTION,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string", "description": "The page's absolute http:// or https:// URL, as it is reached from this machine (e.g. http://localhost:3000/)." },
+      },
+      "required": ["url"],
+    },
+    "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": true },
+    "_meta": { "anthropic/searchHint": "open web page browser url localhost preview dev server port forward show site" },
   })
 }
 

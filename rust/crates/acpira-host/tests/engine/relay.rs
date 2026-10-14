@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use acpira_host::relay::hub::{RelayHub, call};
+use acpira_host::relay::hub::{HostBrowser, RelayHub, call};
+use acpira_shared::sidecar::{BrowserOpened, BrowserReuse};
 use acpira_host::relay::roster::Roster;
 use acpira_host::relay::wire::{AskArgs, HubOp, HubReply, HubRequest};
 
@@ -211,6 +212,83 @@ async fn the_hub_lists_enabled_personas_and_forwards_an_ask_to_the_session_its_g
   assert!(text.starts_with("reply to relay: via hub (round 1, mode plan)"), "{text}");
   let Some(HubReply::Error(text)) = replies.last() else { panic!("{replies:?}") };
   assert!(text.contains("levels deep"), "{text}");
+}
+
+/// A shell that shows pages: every URL it is asked for, and the forwarded address it answers with
+struct FakeBrowser {
+  can: bool,
+  opened: parking_lot::Mutex<Vec<String>>,
+}
+
+impl HostBrowser for FakeBrowser {
+  fn available(&self) -> bool {
+    self.can
+  }
+  fn open<'a>(&'a self, url: &'a str) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<BrowserOpened>> + Send + 'a>> {
+    Box::pin(async move {
+      // The second request for one URL finds the tab the first one opened
+      let reused = self.opened.lock().iter().any(|u| u == url).then_some(BrowserReuse::Revealed);
+      self.opened.lock().push(url.to_owned());
+      if url.contains("unreachable") { anyhow::bail!("it did not answer from the user's machine") }
+      Ok(BrowserOpened { url: url.replace(":1/", ":2/"), reused })
+    })
+  }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn open_browser_goes_through_the_hub_to_the_shell_once_the_page_is_served_here() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let hub = RelayHub::start(roster(h.dir.path()).await, Arc::new(|_: &str| {})).await.unwrap();
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  let token = hub.env(&s.0, None, 0)[1]["value"].as_str().unwrap().to_owned();
+  let addr = hub.addr().to_owned();
+  let one = move |op: HubOp| {
+    let (addr, token) = (addr.clone(), token.clone());
+    let mut out = None;
+    call(&addr, &HubRequest { token, op }, |r| {
+      out = Some(r);
+      false
+    })
+    .unwrap();
+    out.expect("one reply")
+  };
+  let ask = |op: HubOp| {
+    let one = one.clone();
+    tokio::task::spawn_blocking(move || one(op))
+  };
+  // No shell platform yet: not offered, and a call says why
+  let HubReply::Features(f) = ask(HubOp::Features).await.unwrap() else { panic!() };
+  assert!(!f.browser);
+  let HubReply::Error(text) = ask(HubOp::OpenBrowser { url: "https://example.com/".into() }).await.unwrap() else { panic!() };
+  assert!(text.contains("cannot show web pages"), "{text}");
+
+  let browser = Arc::new(FakeBrowser { can: true, opened: Default::default() });
+  hub.set_browser(browser.clone());
+  let HubReply::Features(f) = ask(HubOp::Features).await.unwrap() else { panic!() };
+  assert!(f.browser);
+  // A loopback page nobody serves here is refused before the shell is asked
+  let closed = { let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap(); l.local_addr().unwrap().port() };
+  let HubReply::Error(text) = ask(HubOp::OpenBrowser { url: format!("http://localhost:{closed}/") }).await.unwrap() else { panic!() };
+  assert!(text.contains(&format!("Nothing is listening on localhost:{closed}")), "{text}");
+  assert!(browser.opened.lock().is_empty());
+  // Served here: the shell opens it and its forwarded address is reported
+  let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+  let port = listener.local_addr().unwrap().port();
+  tokio::spawn(async move { while listener.accept().await.is_ok() {} });
+  let url = format!("http://127.0.0.1:{port}/:1/");
+  let HubReply::Done(text) = ask(HubOp::OpenBrowser { url: url.clone() }).await.unwrap() else { panic!() };
+  assert!(text.contains(&format!("loads it as http://127.0.0.1:{port}/:2/")), "{text}");
+  // Asked again for the same page: the tab is brought back, and the model is told it was not reloaded
+  let HubReply::Done(text) = ask(HubOp::OpenBrowser { url: url.clone() }).await.unwrap() else { panic!() };
+  assert!(text.contains("without reloading"), "{text}");
+  // The shell's failure (the page does not answer from the user's side) reaches the model
+  let HubReply::Error(text) = ask(HubOp::OpenBrowser { url: format!("http://127.0.0.1:{port}/unreachable") }).await.unwrap() else { panic!() };
+  assert!(text.contains("did not answer from the user's machine"), "{text}");
+  // Other hosts are the shell's to check
+  let HubReply::Done(_) = ask(HubOp::OpenBrowser { url: "https://example.com/".into() }).await.unwrap() else { panic!() };
+  assert_eq!(browser.opened.lock().len(), 4);
 }
 
 #[tokio::test(flavor = "multi_thread")]

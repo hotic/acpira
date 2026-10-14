@@ -15,6 +15,10 @@ export type PlatformRequest =
   | { method: 'searchFiles'; query: string }
   | { method: 'writeSetting'; key: string; value: unknown }
   | { method: 'openExternal'; url: string }
+  // An http(s) page in a browser tab inside the editor, next to the chat (the agent's `open_browser` tool). The shell
+  // forwards the port when the workspace is remote, checks from the user's machine that the page answers, and only then
+  // opens it; it answers with the URL the user's side loaded, or fails with the reason
+  | { method: 'openBrowser'; url: string }
   | { method: 'openInEditor'; sessionId?: string }
   | { method: 'runInTerminal'; title: string; command: string; args: string[]; env?: Record<string, string | null> }
   // `open` adds an Open button for a file (label already localized); the shell opens it only when clicked
@@ -26,8 +30,13 @@ export type PlatformRequest =
 
 export type PlatformMethod = PlatformRequest['method'];
 
+// openBrowser's answer: the URL the browser tab shows on the user's side (a forwarded port has its own local address), and
+// whether a tab open_browser opened before was reused: `revealed` = it already showed that URL and was only brought to the
+// front (not reloaded), `navigated` = it showed another page of the same site and moved to this one
+export interface BrowserOpened { url: string; reused?: 'revealed' | 'navigated' }
+
 // Requests the shell must answer (platformResponse); the rest are fire-and-forget
-export const PLATFORM_RPC_METHODS = ['openResolvedFile', 'openPlanDocument', 'revealInOS', 'searchFiles', 'writeSetting'] as const satisfies readonly PlatformMethod[];
+export const PLATFORM_RPC_METHODS = ['openResolvedFile', 'openPlanDocument', 'revealInOS', 'searchFiles', 'writeSetting', 'openBrowser'] as const satisfies readonly PlatformMethod[];
 
 // Shell → sidecar facts about the IDE, sent with hello and refreshed by platformEvents
 export interface ShellEnv {

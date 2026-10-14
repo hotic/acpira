@@ -18,6 +18,10 @@ pub struct HubRequest {
 pub enum HubOp {
   List,
   Ask(AskArgs),
+  /// Which host tools this sidecar's shell can carry out right now (`HubReply::Features`)
+  Features,
+  /// `open_browser`: show an http(s) page in the user's editor; answered `Done` / `Error`
+  OpenBrowser { url: String },
 }
 
 /// `ask_agent`'s arguments
@@ -54,4 +58,15 @@ pub enum HubReply {
   Done(String),
   /// A failure the model should read (unknown persona, depth, spawn error …)
   Error(String),
+  /// The answer to `Features`
+  Features(HostFeatures),
+}
+
+/// Host tools the MCP server offers only when the serving shell can carry them out
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostFeatures {
+  /// The shell shows web pages inside the editor (`open_browser`)
+  #[serde(default)]
+  pub browser: bool,
 }

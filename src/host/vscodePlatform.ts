@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import * as vscode from 'vscode';
 import { resolveLocale, type Language, type Locale } from '@shared/i18n';
-import type { PlatformEvent, PlatformMethod, PlatformRequest } from '@shared/sidecar';
+import type { BrowserOpened, PlatformEvent, PlatformMethod, PlatformRequest } from '@shared/sidecar';
 import type { SecretVault } from './accounts/AccountStore';
 import { WorkspaceFiles } from './files';
 import type { HelloPayload } from './shell/SidecarClient';
@@ -9,7 +9,7 @@ import { terminalLaunch } from './terminalLaunch';
 import { legacyAgents } from './legacyAgents';
 
 // Every IDE action the sidecar may ask for; VS Code implements them all
-const CAPABILITIES: PlatformMethod[] = ['openResolvedFile', 'openPlanDocument', 'revealInOS', 'searchFiles', 'writeSetting', 'openExternal', 'openInEditor', 'runInTerminal', 'toast', 'notify'];
+const CAPABILITIES: PlatformMethod[] = ['openResolvedFile', 'openPlanDocument', 'revealInOS', 'searchFiles', 'writeSetting', 'openExternal', 'openBrowser', 'openInEditor', 'runInTerminal', 'toast', 'notify'];
 
 // The view type of the chat opened as an editor tab (extension.ts creates and restores those panels)
 export const EDITOR_VIEW_TYPE = 'acpira.editor';
@@ -30,6 +30,77 @@ function fileColumn(): vscode.ViewColumn {
   if (!showsChat(activeTabGroup)) return activeTabGroup.viewColumn;
   const other = all.find(g => !showsChat(g) && g.tabs.length > 0) ?? all.find(g => !showsChat(g));
   return other?.viewColumn ?? vscode.ViewColumn.Beside;
+}
+
+// The integrated browser (VS Code 1.10x+, a Chromium view) and the Simple Browser extension it superseded. Both open in
+// the active editor group whatever column they are given (the Simple Browser forwards to the integrated one when that
+// exists), so the target group is focused first
+const INTEGRATED_BROWSER = 'workbench.action.browser.open';
+const SIMPLE_BROWSER = 'simpleBrowser.api.open';
+const FOCUS_GROUP = ['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth'].map(n => `workbench.action.focus${n}EditorGroup`);
+
+// Whether the page answers from the user's machine: the chat webview renders there even when the extension host is remote
+export type UrlProbe = (url: string) => Promise<{ ok: boolean; error?: string } | undefined>;
+
+// Pages on loopback are what a remote workspace has to forward, and the only ones the chat webview's CSP lets it probe
+function isLoopback(uri: vscode.Uri): boolean {
+  const host = uri.authority.replace(/^.*@/, '').replace(/:\d+$/, '').toLowerCase();
+  return host === 'localhost' || host === '127.0.0.1';
+}
+
+// Dev servers print the any-address they bound; it is not a host the user's machine can browse to or forward
+function browsable(uri: vscode.Uri): vscode.Uri {
+  const m = /^(.*@)?(0\.0\.0\.0|\[::\])(:\d+)?$/.exec(uri.authority);
+  return m ? uri.with({ authority: `${m[1] ?? ''}localhost${m[3] ?? ''}` }) : uri;
+}
+
+const allTabs = () => vscode.window.tabGroups.all.flatMap(g => g.tabs);
+
+// Make a group the active one, where both browsers open: a column that is not there (Beside: a lone chat group) gets a new
+// group on the chat's left
+async function focusGroup(column: vscode.ViewColumn): Promise<void> {
+  const focus = column > 0 ? FOCUS_GROUP[column - 1] : 'workbench.action.newGroupLeft';
+  if (focus) await vscode.commands.executeCommand(focus);
+}
+
+// Pages open_browser shows, one integrated-browser tab per site (scheme, host and port): a later call for the same site
+// reuses that tab instead of opening another. The integrated browser's own reuse (`reuseUrlFilter`) navigates whenever it is
+// given a URL, which reloads the page, and some pages take over their app's session on every load (Blockbench's watch page
+// switches the workbench to attended and the project has to be reopened). So the same URL only brings the tab to the front;
+// another page of the site navigates it. Tabs are matched by identity; one the user closed (or dragged to another group,
+// which VS Code reports as a new tab) is no longer known, and the call opens or reuses through the browser's own match
+class BrowserPages {
+  private sites = new Map<string, { tab: vscode.Tab; url: string }>();
+
+  async show(uri: vscode.Uri): Promise<BrowserOpened['reused']> {
+    const url = uri.toString(true);
+    if (!(await vscode.commands.getCommands(true)).includes(INTEGRATED_BROWSER)) {
+      // Older VS Code: the Simple Browser keeps one view and reloads it on every call. Its command is registered only once its
+      // extension activates, so it is not in the list before the first call
+      await focusGroup(fileColumn());
+      await vscode.commands.executeCommand(SIMPLE_BROWSER, uri, { viewColumn: vscode.ViewColumn.Active });
+      return undefined;
+    }
+    const site = `${uri.scheme}://${uri.authority}`;
+    // The browser matches the filter's authority and path as globs against each tab's current URL, and a bare origin parses
+    // with the path "/", which matches no page; "/**" matches every page of the site
+    const known = this.sites.get(site);
+    const tab = known && allTabs().includes(known.tab) ? known.tab : undefined;
+    // A known tab is revealed in its own group (opening into another group would move it); a new one lands next to the chat
+    await focusGroup(tab ? tab.group.viewColumn : fileColumn());
+    if (tab && known?.url === url) {
+      // Without `url` the matching tab is only revealed. With no match this would open a blank tab, hence the check above
+      await vscode.commands.executeCommand(INTEGRATED_BROWSER, { reuseUrlFilter: `${site}/**` });
+      return 'revealed';
+    }
+    const before = new Set(allTabs());
+    await vscode.commands.executeCommand(INTEGRATED_BROWSER, { url, reuseUrlFilter: `${site}/**` });
+    // A tab that was not there before is new; otherwise the browser navigated a tab of that site, which is now the active one
+    const fresh = allTabs().find(t => !before.has(t));
+    const shown = fresh ?? vscode.window.tabGroups.activeTabGroup.activeTab;
+    if (shown) this.sites.set(site, { tab: shown, url });
+    return fresh ? undefined : 'navigated';
+  }
 }
 
 // vscode.open uses the default editor for the resource (image preview, custom editors, text); openTextDocument rejects binaries
@@ -59,6 +130,7 @@ function showToast(r: Extract<PlatformRequest, { method: 'toast' }>): void {
 export class VscodePlatform {
   readonly legacy: { from: string; vault: SecretVault };
   private readonly files = new WorkspaceFiles();
+  private readonly pages = new BrowserPages();
   private readonly keys: string[];
 
   constructor(
@@ -66,6 +138,8 @@ export class VscodePlatform {
     private openInEditor: (sessionId?: string) => void,
     // The attention check needs the chat webviews, which extension.ts owns
     private announce: (r: Extract<PlatformRequest, { method: 'notify' }>) => void,
+    // Asks a chat webview on the user's machine; undefined when no chat page is up to ask
+    private probe: UrlProbe,
   ) {
     // Each IDE's globalStorage / SecretStorage tree is merged into ~/.acpira once (dataDir.migrateOnce), before the sidecar starts
     this.legacy = {
@@ -106,6 +180,26 @@ export class VscodePlatform {
     return out;
   }
 
+  // A remote workspace's loopback page gets a tunnel to the user's machine (asExternalUri; local windows get the URL back
+  // unchanged), and that address must answer from the user's side before a tab opens. The integrated browser's
+  // experimental remote proxy loads pages on the remote itself, so it gets the original URL and no local check
+  private async openBrowser(url: string): Promise<BrowserOpened> {
+    const target = browsable(vscode.Uri.parse(url, true));
+    const proxied = !!vscode.env.remoteName && vscode.workspace.getConfiguration('workbench.browser').get<boolean>('enableRemoteProxy') === true
+      && (await vscode.commands.getCommands(true)).includes(INTEGRATED_BROWSER);
+    const local = proxied ? target : await vscode.env.asExternalUri(target);
+    if (!proxied && isLoopback(local)) {
+      const shown = local.toString(true);
+      const probed = await this.probe(shown);
+      if (probed && !probed.ok) {
+        const via = shown === url ? '' : ` (forwarded from ${url})`;
+        throw new Error(`${shown}${via} did not answer from the user's machine: ${probed.error ?? 'no response'}. The port forward may have failed; the user can check the Ports view.`);
+      }
+    }
+    const reused = await this.pages.show(local);
+    return { url: local.toString(true), ...(reused ? { reused } : {}) };
+  }
+
   // Settings edits (the settings page, settings.json, the Settings UI), window focus and workspace folder changes, as platform events
   subscribe(emit: (event: PlatformEvent) => void): vscode.Disposable {
     return vscode.Disposable.from(
@@ -132,6 +226,7 @@ export class VscodePlatform {
       }
       case 'revealInOS': await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(r.path)); return null;
       case 'openExternal': void vscode.env.openExternal(vscode.Uri.parse(r.url)); return null;
+      case 'openBrowser': return this.openBrowser(r.url);
       case 'openInEditor': this.openInEditor(r.sessionId); return null;
       case 'toast': showToast(r); return null;
       case 'notify': this.announce(r); return null;

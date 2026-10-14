@@ -111,9 +111,13 @@ impl HostRuntime {
     // Cross-harness subagents: the persona file and the loopback hub `ask_agent` calls come back through
     let roster = Arc::new(crate::relay::roster::Roster::new(&root));
     let hub = match crate::relay::hub::RelayHub::start(roster.clone(), log.clone()).await {
-      Ok(h) => Some(h),
+      Ok(h) => {
+        // `open_browser` comes back through the same hub and is carried out by the serving shell
+        h.set_browser(platform.clone());
+        Some(h)
+      }
       Err(e) => {
-        log(&format!("relay: listener failed, ask_agent unavailable: {e}"));
+        log(&format!("relay: listener failed, ask_agent and open_browser unavailable: {e}"));
         None
       }
     };

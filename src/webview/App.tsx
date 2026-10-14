@@ -17,6 +17,7 @@ import { SettingsShell, type SettingsHandlers } from './settings/SettingsShell';
 import { sameRange, selectionDraft, setEditorCopy, setEditorSelection } from './chat/editorContext';
 import { updateMainComposer } from './chat/useComposerDraft';
 import { playChime } from './effects/chime';
+import { probeUrl } from './probeUrl';
 import type { SettingsPage } from './settings/Nav';
 import type { SharedState } from './settings/SharedPage';
 import type { ProvidersState } from './settings/ProvidersSection';
@@ -211,6 +212,7 @@ export function App() {
         case 'editorSelection': setEditorSelection(m.selection); break;
         case 'editorCopy': setEditorCopy(m.selection); break;
         case 'chime': playChime(); break;
+        case 'probeUrl': { const { id, url } = m; void probeUrl(url).then(r => post({ type: 'probeResult', id, ...r })); break; }
         case 'addSelection': {
           const draft = selectionDraft(m.selection, cwdRef.current);
           setView('chat');

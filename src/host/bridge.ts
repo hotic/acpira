@@ -5,6 +5,9 @@ import type { SessionView } from '@shared/transcript';
 import type { SidecarClient, SidecarState, ShellView } from './shell/SidecarClient';
 import { PostQueue } from './outbox';
 
+// The page's own probe gives up sooner (effects/probeUrl.ts); this only covers a page that never answers
+const PROBE_WITHIN_MS = 10_000;
+
 export interface WebviewBridgeOpts {
   client: SidecarClient;
   extensionUri: vscode.Uri;
@@ -37,6 +40,8 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
   private resyncing = false;
   // The session the page shows, as last pushed: an attention for it is not announced while the page is in view
   private shown?: string;
+  // probeUrl requests waiting for the page's probeResult
+  private probes = new Map<string, (r: { ok: boolean; error?: string } | undefined) => void>();
 
   constructor(
     private webview: vscode.Webview,
@@ -59,6 +64,7 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
     this.blobBase = webview.asWebviewUri(sessions).toString();
     this.disposables.push(webview.onDidReceiveMessage((m: WebviewMsg) => {
       if (m.type === 'viewFocus') { opts.onFocus?.(this); return; }
+      if (m.type === 'probeResult') { this.probes.get(m.id)?.({ ok: m.ok, error: m.error }); return; }
       opts.client.send(this.viewId, m);
     }));
     this.detach = opts.client.attach(this);
@@ -94,6 +100,17 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
     this.shellQueue.push(m);
   }
 
+  // Whether a URL answers from where this page renders (the user's machine); undefined when the page does not say in time
+  probe(url: string): Promise<{ ok: boolean; error?: string } | undefined> {
+    const id = randomUUID();
+    return new Promise(resolve => {
+      const done = (r: { ok: boolean; error?: string } | undefined) => { clearTimeout(timer); this.probes.delete(id); resolve(r); };
+      const timer = setTimeout(() => done(undefined), PROBE_WITHIN_MS);
+      this.probes.set(id, done);
+      this.postShell({ type: 'probeUrl', id, url });
+    });
+  }
+
   // The page posts `ready` once, at load; a sidecar that came back after it initialized needs the page to start over
   onState(state: SidecarState) {
     if (state !== 'ready') return;
@@ -109,8 +126,9 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
     const csp = [
       "default-src 'none'",
       `img-src ${this.webview.cspSource} https: data:`,
-      // Attachment text blobs are fetched for the peek card from the same source the <img> tags already load them from
-      `connect-src ${this.webview.cspSource}`,
+      // Attachment text blobs are fetched for the peek card from the same source the <img> tags already load them from;
+      // loopback pages are probed before open_browser shows them (probeUrl)
+      `connect-src ${this.webview.cspSource} http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*`,
       `style-src ${this.webview.cspSource} 'unsafe-inline'`,
       `font-src ${this.webview.cspSource}`,
       `script-src 'nonce-${nonce}' 'wasm-unsafe-eval'`,
@@ -136,6 +154,7 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
   }
 
   dispose() {
+    for (const done of [...this.probes.values()]) done(undefined);
     for (const d of this.disposables) d.dispose();
     this.detach();
   }

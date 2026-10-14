@@ -1,11 +1,14 @@
 import { execFileSync } from 'node:child_process';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { EditTurnRequest, HostMsg } from '../src/shared/protocol';
-import type { PlatformRequest, SidecarMsg } from '../src/shared/sidecar';
+import type { PlatformMethod, PlatformRequest, SidecarMsg } from '../src/shared/sidecar';
+import type { SessionView } from '../src/shared/transcript';
 import { captureTurnSettings } from '../src/shared/turnSettings';
 import { FAKE, SIDECAR, Shell, NODE } from './sidecarShell';
 
@@ -26,7 +29,7 @@ describe('sidecar runtime', () => {
   const cleanups: (() => Promise<void> | void)[] = [];
   afterEach(async () => { for (const c of cleanups.splice(0)) await c(); });
 
-  async function setup(extraAgents: Record<string, unknown> = {}) {
+  async function setup(extraAgents: Record<string, unknown> = {}, capabilities: readonly PlatformMethod[] = CAPABILITIES) {
     const home = mkdtempSync(join(tmpdir(), 'acpira-runtime-'));
     const cwd = mkdtempSync(join(tmpdir(), 'acpira-runtime-ws-'));
     const settings: Record<string, unknown> = {
@@ -44,7 +47,7 @@ describe('sidecar runtime', () => {
       openPlanDocument: () => null,
       revealInOS: () => null,
     };
-    const ok = await s.hello({ client: { name: 'runtime-test', version: '0', capabilities: [...CAPABILITIES] }, settings });
+    const ok = await s.hello({ client: { name: 'runtime-test', version: '0', capabilities: [...capabilities] }, settings });
     if (ok.type !== 'helloOk') throw new Error('handshake refused');
     const init = await s.open('V');
     const posted = () => s.hostMsgs('V');
@@ -55,6 +58,51 @@ describe('sidecar runtime', () => {
 
   const toasts = (s: Shell) => s.requests.map(r => r.request).filter((r): r is Extract<PlatformRequest, { method: 'toast' }> => r.method === 'toast');
   const bridge = (home: string, args: string[]) => execFileSync(SIDECAR, ['bridge', ...args, '--home', home], { encoding: 'utf8' });
+
+  // The agent's open_browser call (`acpira mcp` → relay hub → openBrowser platform RPC): offered only to a shell that can, refused
+  // before the shell is asked when nothing serves the page, and answered with the address the shell's side loaded
+  it('routes open_browser from the MCP server to a shell that shows pages', async () => {
+    const server = createServer((_, res) => res.end('ok'));
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+    cleanups.push(() => new Promise<void>(r => server.close(() => r())));
+    const port = (server.address() as AddressInfo).port;
+    let turns = 0;
+    const reply = async (s: Shell, sessionId: string, text: string) => {
+      turns += 2;
+      s.view('V', { type: 'send', sessionId, text });
+      const done = await s.hostMsg('V', 'session', m => m.session.id === sessionId && !m.session.running && m.session.turns.length === turns
+        && JSON.stringify(m.session.turns.at(-1)).includes('tools'));
+      const last = done.session.turns.at(-1) as Extract<SessionView['turns'][number], { role: 'agent' }>;
+      const md = last.blocks.map(b => (b.type === 'text' ? b.markdown : '')).join('');
+      return JSON.parse(md) as { tools: string[]; result: { isError: boolean; content: { text: string }[] } };
+    };
+
+    const { s, init } = await setup({}, [...CAPABILITIES, 'openBrowser']);
+    s.answers.openBrowser = r => ({ url: r.method === 'openBrowser' ? r.url.replace(`127.0.0.1:${port}`, 'localhost:40001') : '' });
+    const sessionId = init.state.active!.id;
+    const opened = await reply(s, sessionId, `mcp-call:open_browser {"url":"http://127.0.0.1:${port}/app"}`);
+    expect(opened.tools).toContain('open_browser');
+    expect(opened.result.isError).toBe(false);
+    expect(opened.result.content[0]!.text).toContain('loads it as http://localhost:40001/app');
+    expect(s.requests.filter(r => r.request.method === 'openBrowser').map(r => r.request)).toEqual([{ method: 'openBrowser', url: `http://127.0.0.1:${port}/app` }]);
+
+    const closed = await new Promise<number>(r => { const c = createServer(); c.listen(0, '127.0.0.1', () => { const p = (c.address() as AddressInfo).port; c.close(() => r(p)); }); });
+    const refused = await reply(s, sessionId, `mcp-call:open_browser {"url":"http://localhost:${closed}/"}`);
+    expect(refused.result.isError).toBe(true);
+    expect(refused.result.content[0]!.text).toContain(`Nothing is listening on localhost:${closed}`);
+    expect(s.requests.filter(r => r.request.method === 'openBrowser')).toHaveLength(1);
+  }, 30_000);
+
+  it('leaves open_browser out for a shell that cannot show pages', async () => {
+    const { s, init } = await setup();
+    const sessionId = init.state.active!.id;
+    s.view('V', { type: 'send', sessionId, text: 'mcp-call:show_image {}' });
+    const done = await s.hostMsg('V', 'session', m => m.session.id === sessionId && !m.session.running && m.session.turns.length === 2
+      && JSON.stringify(m.session.turns[1]).includes('tools'));
+    const text = JSON.stringify(done.session.turns.at(-1));
+    expect(text).toContain('show_image');
+    expect(text).not.toContain('open_browser');
+  }, 30_000);
 
   it('shows ChatGPT as an external conversation and forwards live events without spawning another agent', async () => {
     const { s, home, cwd, init, posted, logs } = await setup();

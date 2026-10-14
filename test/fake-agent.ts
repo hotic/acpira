@@ -124,6 +124,8 @@ if (process.env.FAKE_STUBBORN) {
 }
 
 const sessions = new Set<string>();
+// The MCP servers each session was handed at session/new, for "mcp-call:"
+const mcpBySession = new Map<string, acp.McpServer[]>();
 // FAKE_STEERING: the sessions with a "slow" prompt in flight and the steered texts it has yet to answer
 const steerable = new Set<string>();
 const steered = new Map<string, string[]>();
@@ -177,6 +179,32 @@ const prompted = new Set<string>();
 const settingsOf = (meta: unknown) => JSON.stringify((meta as { claudeCode?: { options?: { settings?: unknown } } } | undefined)?.claudeCode?.options?.settings ?? null);
 function logMcp(method: string, servers: unknown) {
   if (process.env.FAKE_MCP_TRACE) appendFileSync(process.env.FAKE_MCP_TRACE, `${method} ${JSON.stringify(servers ?? null)}\n`);
+}
+// One MCP stdio session: initialize, tools/list, one tools/call; the server process ends with it
+function callMcp(server: Extract<acp.McpServer, { command: string }>, tool: string, args: unknown): Promise<{ tools: string[]; result: unknown }> {
+  return new Promise((resolve, reject) => {
+    const env = { ...process.env, ...Object.fromEntries(server.env.map(e => [e.name, e.value])) };
+    const child = spawn(server.command, server.args, { env, stdio: ['pipe', 'pipe', 'ignore'] });
+    const timer = setTimeout(() => { child.kill(); reject(new Error('MCP call timed out')); }, 40_000);
+    let tools: string[] = [];
+    let buf = '';
+    child.stdout.on('data', (d: Buffer) => {
+      buf += d.toString();
+      let nl: number;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const msg = JSON.parse(buf.slice(0, nl)) as { id?: number; result?: { tools?: { name: string }[] } };
+        buf = buf.slice(nl + 1);
+        if (msg.id === 2) tools = (msg.result?.tools ?? []).map(t => t.name);
+        if (msg.id === 3) { clearTimeout(timer); child.stdin.end(); resolve({ tools, result: msg.result }); }
+      }
+    });
+    child.on('error', e => { clearTimeout(timer); reject(e); });
+    const line = (m: unknown) => child.stdin.write(`${JSON.stringify(m)}\n`);
+    line({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'fake-agent', version: '0' } } });
+    line({ jsonrpc: '2.0', method: 'notifications/initialized' });
+    line({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+    line({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: tool, arguments: args } });
+  });
 }
 function rejectMcp(servers: unknown[] | undefined) {
   if (process.env.FAKE_MCP_REJECT && servers?.length) throw acp.RequestError.internalError(undefined, 'cannot start MCP servers');
@@ -275,6 +303,23 @@ const app = acp.agent({ name: 'fake-agent' })
     if (process.env.FAKE_MCP_REJECT && params.mcpServers.length) throw acp.RequestError.internalError(undefined, 'cannot start MCP servers');
     const sessionId = sessionDir ? randomUUID() : `s${++seq}`;
     sessions.add(sessionId);
+    mcpBySession.set(sessionId, params.mcpServers);
+    // FAKE_AUTO_MCP_CALL="<tool> <json>" (several on separate lines): the first session makes those calls on its own, one
+    // every FAKE_AUTO_MCP_GAP ms (default 1500) starting that long after it opens, and appends each outcome to FAKE_AUTO_MCP_OUT
+    // (an IDE run where no prompt can be typed in)
+    const auto = process.env.FAKE_AUTO_MCP_CALL;
+    const acpira = params.mcpServers.find(m => m.name === 'acpira' && 'command' in m) as Extract<acp.McpServer, { command: string }> | undefined;
+    if (auto && acpira && seq <= 1 && process.env.FAKE_AUTO_MCP_OUT) {
+      const gap = Number(process.env.FAKE_AUTO_MCP_GAP ?? 1500);
+      void (async () => {
+        for (const call of auto.split('\n').filter(Boolean)) {
+          await new Promise(r => setTimeout(r, gap));
+          const [tool = '', ...rest] = call.split(' ');
+          const r = await callMcp(acpira, tool, JSON.parse(rest.join(' ') || '{}') as unknown).catch((e: unknown) => ({ error: String(e) }));
+          appendFileSync(process.env.FAKE_AUTO_MCP_OUT!, `${JSON.stringify(r)}\n`);
+        }
+      })();
+    }
     logMeta('new', params._meta);
     builtWith.set(sessionId, settingsOf(params._meta));
     saveSession(sessionId, [], canonicalCwd(params.cwd));
@@ -630,6 +675,15 @@ const app = acp.agent({ name: 'fake-agent' })
     // echo-text → reply with the prompt's text blocks joined, so tests can see text the host added to the prompt
     if (text.startsWith('echo-text')) {
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
+      return { stopReason: 'end_turn' };
+    }
+    // "mcp-call:<tool> <json arguments>" → start the session's `acpira` MCP server the way a CLI does, list its tools, call one,
+    // and reply with JSON { tools, result } (or { error })
+    if (text.startsWith('mcp-call:')) {
+      const [tool = '', ...rest] = text.slice('mcp-call:'.length).trim().split(' ');
+      const server = mcpBySession.get(sid)?.find(m => m.name === 'acpira' && 'command' in m) as Extract<acp.McpServer, { command: string }> | undefined;
+      const reply = server ? await callMcp(server, tool, JSON.parse(rest.join(' ') || '{}') as unknown).catch((e: unknown) => ({ error: String(e) })) : { error: 'no acpira MCP server' };
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(reply) } });
       return { stopReason: 'end_turn' };
     }
     // "say:<text>" → exactly that text as the reply ("||" splits it into chunks): antigravity-acp reports a failed turn this way
