@@ -1942,12 +1942,22 @@ pub fn activity_of(turns: &[Turn]) -> Option<Activity> {
 }
 
 /// The specific action in flight (an open tool call, a pending card, streamed reply text); `None` when the
-/// only honest label is the generic "Working"
+/// only honest label is the generic "Working".
+///
+/// An open tool call followed by later model output (a thought or reply text) no longer names the activity:
+/// the model has moved past it. codex-acp can leave a call `pending` for good (a summoned Codex consult,
+/// 2026-10-15: `tool_call` pending, never updated, the command never ran, the model retried another way and
+/// went on for half an hour), and scanning for any open call pinned that dead command on the row. Parallel
+/// calls of one step sit next to each other with no output between, so a sibling still running keeps counting.
 pub fn live_activity(turns: &[Turn]) -> Option<Activity> {
   let Some(Turn::Agent(turn)) = turns.last() else { return None };
+  let mut later_output = false;
   for b in turn.blocks.iter().rev() {
     match b {
-      AgentBlock::ToolCall(tc) if tc.background != Some(true) && tc.status.is_open() => return Some(tool_activity(tc)),
+      AgentBlock::Thought(_) | AgentBlock::Text(_) => later_output = true,
+      AgentBlock::ToolCall(tc) if !later_output && tc.background != Some(true) && tc.status.is_open() => {
+        return Some(tool_activity(tc));
+      }
       AgentBlock::Permission(_) => return Some(Activity { kind: ToolKind::Other, label: t("host.awaitingApproval") }),
       AgentBlock::Question(q) if q.outcome.is_none() => return Some(Activity { kind: ToolKind::Other, label: t("host.awaitingAnswers") }),
       _ => {}
