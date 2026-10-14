@@ -100,6 +100,20 @@ export async function collectImageSources(sources: string[]): Promise<Collected>
   return out;
 }
 
+// The chat page's CSP reaches loopback ports (open_browser's probe, `bridge.ts`), so a pasted <img> pointing at one is not
+// fetched unless it is the page's own origin (the browser harness): a paste never sends a request to a local service
+const LOOPBACK_HOST = /^(localhost|0\.0\.0\.0|127(\.\d{1,3}){3}|\[::1?\])$/i;
+function fetchable(src: string): boolean {
+  if (/^blob:/i.test(src)) return true;
+  if (!/^https?:/i.test(src)) return false;
+  try {
+    const url = new URL(src);
+    return !LOOPBACK_HOST.test(url.hostname) || url.origin === globalThis.location?.origin;
+  } catch {
+    return false;
+  }
+}
+
 async function readImageSource(src: string): Promise<{ mimeType: string; data: string; bytes: number } | undefined> {
   const accepted = (type: string) => (type.startsWith('image/') ? imageMimeOf(`.${type.slice(6)}`) : undefined);
   const inline = /^data:([^;,]*)((?:;[^;,]*)*?)(;base64)?,(.*)$/is.exec(src);
@@ -112,7 +126,7 @@ async function readImageSource(src: string): Promise<{ mimeType: string; data: s
     const raw = decodeURIComponent(payload);
     return { mimeType, data: btoa(raw), bytes: raw.length };
   }
-  if (!/^(https?|blob):/i.test(src)) return undefined;
+  if (!fetchable(src)) return undefined;
   const response = await fetch(src);
   if (!response.ok) return undefined;
   const blob = await response.blob();
