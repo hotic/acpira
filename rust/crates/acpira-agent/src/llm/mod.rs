@@ -60,6 +60,9 @@ pub enum Item {
     name: String,
     content: String,
     is_error: bool,
+    /// Images the tool returned (an MCP screenshot), for a model that takes images. Anthropic carries them inside the
+    /// result; the OpenAI formats only take text there, so a user message holding them follows the round's results
+    images: Vec<Image>,
   },
 }
 
@@ -73,6 +76,18 @@ impl Item {
   pub fn is_steer(&self) -> bool {
     matches!(self, Item::User(parts) if matches!(parts.first(), Some(Part::Text(t)) if t.starts_with(STEER_OPEN)))
   }
+}
+
+/// A base64 image a tool returned
+#[derive(Debug, Clone, PartialEq)]
+pub struct Image {
+  pub mime: String,
+  pub data: String,
+}
+
+/// The text before the images a tool returned, in the user message the OpenAI formats carry them in
+pub fn images_label(call_id: &str, count: usize) -> String {
+  format!("[{} returned by the tool call {call_id}]", if count == 1 { "An image".to_owned() } else { format!("{count} images") })
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -17,6 +17,7 @@ pub fn body(req: &Request, family: &Family) -> Value {
   let mut messages = vec![json!({ "role": "system", "content": req.system })];
   // Assistant messages after the latest user message belong to the running turn
   let turn_start = req.items.iter().rposition(|i| matches!(i, Item::User(_))).unwrap_or(0);
+  let mut pending: Vec<Value> = vec![];
   for (i, item) in req.items.iter().enumerate() {
     match item {
       Item::User(parts) => messages.push(json!({ "role": "user", "content": user_content(parts) })),
@@ -46,8 +47,16 @@ pub fn body(req: &Request, family: &Family) -> Value {
         }
         messages.push(Value::Object(m));
       }
-      Item::ToolResult { call_id, content, .. } => {
+      Item::ToolResult { call_id, content, images, .. } => {
         messages.push(json!({ "role": "tool", "tool_call_id": call_id, "content": content }));
+        if !images.is_empty() {
+          pending.push(json!({ "type": "text", "text": super::images_label(call_id, images.len()) }));
+          pending.extend(images.iter().map(|im| json!({ "type": "image_url", "image_url": { "url": format!("data:{};base64,{}", im.mime, im.data) } })));
+        }
+        // A tool message takes text only: the round's images follow its last result as a user message
+        if !pending.is_empty() && !matches!(req.items.get(i + 1), Some(Item::ToolResult { .. })) {
+          messages.push(json!({ "role": "user", "content": std::mem::take(&mut pending) }));
+        }
       }
     }
   }
@@ -420,7 +429,7 @@ mod tests {
       assistant("done", "old thought", &[]),
       Item::User(vec![Part::Text("two".into())]),
       assistant("", "new thought", &[("c1", "read")]),
-      Item::ToolResult { call_id: "c1".into(), name: "read".into(), content: "x".into(), is_error: false },
+      Item::ToolResult { call_id: "c1".into(), name: "read".into(), content: "x".into(), is_error: false, images: vec![] },
     ];
     let ds = body(&req(items.clone()), &by_name("deepseek").unwrap());
     let msgs = ds["messages"].as_array().unwrap();

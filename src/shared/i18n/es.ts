@@ -585,6 +585,7 @@ export const es = {
   'verb.fetch': 'Obtención',
   'verb.switch_mode': 'Cambio de modo',
   'verb.other': 'Uso de herramienta',
+  'verb.mcp': 'Llamada a {server}',
   'verb.todo': 'Actualización de tareas',
   'verb.ask': 'Pregunta',
   'verb.wait': 'Espera de comando en segundo plano',

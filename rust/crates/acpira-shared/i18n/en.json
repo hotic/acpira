@@ -575,6 +575,7 @@
   "verb.fetch": "Fetch",
   "verb.switch_mode": "Switch mode",
   "verb.other": "Use tool",
+  "verb.mcp": "Call {server}",
   "verb.todo": "Update todos",
   "verb.ask": "Ask",
   "verb.wait": "Wait for background command",

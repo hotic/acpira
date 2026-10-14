@@ -584,6 +584,7 @@ export const ko = {
   'verb.fetch': '가져오기',
   'verb.switch_mode': '모드 전환',
   'verb.other': '도구 사용',
+  'verb.mcp': '{server} 호출',
   'verb.todo': '할 일 업데이트',
   'verb.ask': '질문',
   'verb.wait': '백그라운드 명령 대기',

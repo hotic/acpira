@@ -7,6 +7,7 @@ pub mod edit;
 pub mod files;
 pub mod html;
 pub mod jobs;
+pub mod mcp;
 pub mod names;
 pub mod plan;
 pub mod question;
@@ -30,12 +31,14 @@ pub struct Ctx {
   pub outputs: PathBuf,
   /// The ACP tool call id (names spill files)
   pub call_id: String,
-  /// Streams a partial `tool_call_update` (terminal output) while the tool runs
-  pub progress: Box<dyn Fn(Value) + Send + Sync>,
+  /// Streams a partial `tool_call_update` (terminal output, an MCP server's progress) while the tool runs
+  pub progress: std::sync::Arc<dyn Fn(Value) + Send + Sync>,
   /// The session's background commands
   pub jobs: std::sync::Arc<jobs::Jobs>,
   /// The search backend set on the settings page, read when the call is prepared
   pub search: web::SearchSetup,
+  /// The session's MCP servers
+  pub mcp: std::sync::Arc<crate::mcp::Hub>,
 }
 
 /// A validated call, ready to describe and run
@@ -63,6 +66,10 @@ pub enum Action {
   /// `private`: the URL names this machine or a private network, so the call asks (`web.rs`)
   Fetch { url: String, format: web::Format, timeout_s: u64, private: bool },
   Search { query: String, count: usize },
+  /// A tool of an MCP server: `server` is its key in the session's hub, `tool` the server's own name for it, `name`
+  /// what the model called (`<server>_<tool>`). `read_only` is the server's `readOnlyHint`; `images` whether the
+  /// turn's model takes the images a result may hold
+  Mcp { server: String, tool: String, name: String, args: Value, read_only: bool, images: bool },
 }
 
 /// How a call reads on the tool card and in the permission request
@@ -163,7 +170,10 @@ pub fn prepare(name: &str, args: &Value, cwd: &Path) -> Result<Action, String> {
 impl Action {
   /// Changes nothing on disk: such calls run side by side
   pub fn read_only(&self) -> bool {
-    !matches!(self, Action::Write { .. } | Action::Bash { .. } | Action::Job { .. } | Action::ExitPlan { .. } | Action::Question { .. })
+    !matches!(
+      self,
+      Action::Write { .. } | Action::Bash { .. } | Action::Job { .. } | Action::ExitPlan { .. } | Action::Question { .. } | Action::Mcp { read_only: false, .. }
+    )
   }
 
   /// The permission key and the target the rules match (`permission.rs`)
@@ -183,6 +193,7 @@ impl Action {
       Action::Fetch { url, private: false, .. } => (perm::WEB, url.clone()),
       Action::Fetch { url, private: true, .. } => (perm::WEB_LOCAL, url.clone()),
       Action::Search { query, .. } => (perm::WEB, query.clone()),
+      Action::Mcp { server, tool, read_only, .. } => (if *read_only { perm::MCP_READ } else { perm::MCP }, format!("{server}/{tool}")),
     }
   }
 
@@ -207,6 +218,7 @@ impl Action {
       }
       // A local address is allowed per origin: the dev server's other pages need no second card
       Action::Fetch { url, private: true, .. } => web::origin(url).map(|o| (format!("{o}/*"), format!("Always allow {o} in this session"))),
+      Action::Mcp { server, tool, name, .. } => Some((format!("{server}/{tool}"), format!("Always allow {name} in this session"))),
       _ => None,
     }
   }
@@ -248,6 +260,8 @@ impl Action {
       // `fetch` for both, as claude-agent-acp sends WebFetch and WebSearch: the webview renders their markdown
       Action::Fetch { url, .. } => Presentation { title: format!("Fetch {url}"), kind: "fetch", locations: vec![], content: vec![] },
       Action::Search { query, .. } => Presentation { title: format!("Search \"{query}\""), kind: "fetch", locations: vec![], content: vec![] },
+      // The name as the model called it: the engine knows `acpira_show_image` and `acpira_ask_agent` by it
+      Action::Mcp { name, .. } => Presentation { title: name.clone(), kind: "other", locations: vec![], content: vec![] },
     }
   }
 
@@ -274,6 +288,7 @@ impl Action {
       Action::Bash { command, workdir, timeout_ms, .. } => bash::run(&command, &workdir, timeout_ms, &ctx).await,
       Action::Job { id, wait_s, kill } => ctx.jobs.clone().check(&id, wait_s, kill, &ctx).await,
       // Network calls block for up to two minutes: off the runtime's workers (an approved local fetch comes this way)
+      Action::Mcp { server, tool, args, images, .. } => mcp::run(&server, &tool, args, images, &ctx).await,
       web @ (Action::Fetch { .. } | Action::Search { .. }) => {
         tokio::task::spawn_blocking(move || web.run_sync(ctx)).await.unwrap_or_else(|e| Output::error(format!("The tool crashed: {e}")))
       }

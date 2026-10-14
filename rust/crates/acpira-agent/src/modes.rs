@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use crate::permission::{BASH, Decision, EDIT, Rule, path_target};
+use crate::permission::{BASH, Decision, EDIT, ENGINE_MCP, MCP, Rule, path_target};
 use crate::tools::{BASH as T_BASH, EDIT as T_EDIT, EXIT_PLAN, GLOB, GREP, JOB, LIST, QUESTION, READ, SKILL, TODO, WEBFETCH, WEBSEARCH, WRITE};
 
 pub const AGENT: &str = "agent";
@@ -62,7 +62,9 @@ not end, graph, subgraph or flowchart; quote a label holding brackets, parenthes
 - Unless the plan is a single step, put its steps on the to-do list with the todo tool before exit_plan: all pending, \
 in the order they must be done, one checkable change each. Keep the list in step with the plan when you revise it.
 - When the plan is ready, call exit_plan. The user either approves it, and you then carry it out, or asks for changes.",
-    rules: &[(EDIT, "*", Decision::Deny), (EDIT, "{plan}", Decision::Allow), (BASH, "*", Decision::Ask)],
+    // An MCP tool its server does not mark read-only may change anything, so it asks like a command (the engine's own
+    // tools excepted)
+    rules: &[(EDIT, "*", Decision::Deny), (EDIT, "{plan}", Decision::Allow), (BASH, "*", Decision::Ask), (MCP, "*", Decision::Ask), (MCP, ENGINE_MCP, Decision::Allow)],
   },
 ];
 
@@ -101,6 +103,9 @@ mod tests {
     assert_eq!(ev(EDIT, "src/a.rs"), Decision::Deny);
     assert_eq!(ev(EDIT, "/h/agent/sessions/s/plan.md"), Decision::Allow);
     assert_eq!(ev(BASH, "ls -la"), Decision::Ask);
+    assert_eq!(ev(MCP, "blockbench/remove_cube"), Decision::Ask);
+    assert_eq!(ev(MCP, "acpira/show_image"), Decision::Allow);
+    assert_eq!(ev(crate::permission::MCP_READ, "blockbench/list_outline"), Decision::Allow);
     assert!(get(PLAN).overlay(plan).contains("/h/agent/sessions/s/plan.md"));
     assert!(get(AGENT).rules(plan, cwd).is_empty() && get("nope").id == AGENT);
     assert!(TOOLS.contains(&EXIT_PLAN) && TOOLS.contains(&QUESTION));

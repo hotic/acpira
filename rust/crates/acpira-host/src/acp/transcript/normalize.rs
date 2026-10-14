@@ -1114,6 +1114,7 @@ pub fn empty_tool(id: String) -> ToolCallBlock {
     kind: ToolKind::Other,
     verb: String::new(),
     verb_key: None,
+    mcp_server: None,
     target: None,
     target_mono: None,
     locations: None,
@@ -1160,7 +1161,8 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   let raw = u.get("rawInput").and_then(Value::as_object);
   let raw_present = crate::json::truthy(u.get("rawInput"));
   let title = str_of(u, "title");
-  if let Some(k) = kind_field(u) {
+  // An MCP row stays `other`: codex-acp files every MCP call as `execute`
+  if let Some(k) = kind_field(u).filter(|_| b.mcp_server.is_none()) {
     b.kind = k;
     b.verb = verb_of(k);
   }
@@ -1199,7 +1201,19 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
       b.locations = Some(paths.into_iter().map(|path| Location { path, line: None }).collect());
     }
   }
+  // Any other MCP call reads "Call <Server>" with the tool's title as its target, whichever naming it came in
+  let mut mcp_target = None;
   if b.verb_key.is_none()
+    && let Some(call) = mcp_identity(u, meta, title, raw)
+  {
+    let label = mcp_label(&call.server);
+    b.verb = tp("verb.mcp", &[("server", &label)]);
+    b.mcp_server = Some(label);
+    b.kind = ToolKind::Other;
+    mcp_target = Some(call.title.unwrap_or_else(|| call.tool.replace(['_', '-'], " ")));
+  }
+  if b.verb_key.is_none()
+    && b.mcp_server.is_none()
     && matches!(b.kind, ToolKind::Other | ToolKind::Think)
     && let Some(inferred) = infer_kind(title)
   {
@@ -1264,6 +1278,9 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
     prompt_target(raw)
   } else if b.verb_key.as_deref() == Some(SHOW_IMAGE_VERB) {
     show_image_target(show_image_args(raw), b.locations.as_deref())
+  } else if b.mcp_server.is_some() {
+    // Set once from the call's identity; a later update's arguments do not replace it
+    mcp_target.map(|text| Target { text, mono: false, from_title: false })
   } else {
     pick_target(u, b.kind)
   };
@@ -1593,6 +1610,51 @@ fn is_show_image_call(u: &Value, title: Option<&str>, raw: Option<&Map<String, V
 fn show_image_args(raw: Option<&Map<String, Value>>) -> Option<&Map<String, Value>> {
   let raw = raw?;
   raw.get("arguments").and_then(Value::as_object).or(Some(raw))
+}
+
+/// claude-agent-acp's `mcp__<server>__<tool>` and codex-acp's `mcp.<server>.<tool>`
+static CLAUDE_MCP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^mcp__([A-Za-z0-9-][A-Za-z0-9_-]*?)__(.+)$").unwrap());
+static CODEX_MCP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^mcp\.([^.\s]+)\.(\S+)$").unwrap());
+
+/// An MCP tool call: the server's name as configured, the tool's own name, and its title when the agent knows it
+struct McpCall {
+  server: String,
+  tool: String,
+  title: Option<String>,
+}
+
+/// Who an MCP call went to, from whichever naming the adapter used: the built-in agent says so in
+/// `_meta["acpira/mcp"] { server, tool, title }`; claude-agent-acp names the call `mcp__<server>__<tool>` (title or
+/// `name`); codex-acp titles it `mcp.<server>.<tool>` with rawInput `{ server, tool, arguments }`. OpenCode's
+/// `<server>_<tool>` cannot be told from an ordinary tool name and is left alone. The engine's own `ask_agent` keeps its
+/// row as it is: the summoned agent's node stands for it
+fn mcp_identity(u: &Value, meta: Option<&Map<String, Value>>, title: Option<&str>, raw: Option<&Map<String, Value>>) -> Option<McpCall> {
+  let s = |v: Option<&Value>| v.and_then(Value::as_str).map(str::trim).filter(|x| !x.is_empty()).map(str::to_owned);
+  let call = if let Some(m) = meta.and_then(|m| m.get("acpira/mcp")) {
+    McpCall { server: s(m.get("server"))?, tool: s(m.get("tool"))?, title: s(m.get("title")) }
+  } else if let Some(c) = [title, str_of(u, "name")].into_iter().flatten().find_map(|x| CLAUDE_MCP.captures(x.trim())) {
+    McpCall { server: c[1].to_owned(), tool: c[2].to_owned(), title: None }
+  } else {
+    let c = title.and_then(|x| CODEX_MCP.captures(x.trim()))?;
+    let server = s(raw.and_then(|r| r.get("server"))).unwrap_or_else(|| c[1].to_owned());
+    let tool = s(raw.and_then(|r| r.get("tool"))).unwrap_or_else(|| c[2].to_owned());
+    McpCall { server, tool, title: None }
+  };
+  (!(call.server == crate::host_mcp::SERVER_NAME && call.tool == crate::host_mcp::ASK_TOOL)).then_some(call)
+}
+
+/// A server name as the row shows it: words split at `-`, `_`, `.` and spaces, each capitalized (`chrome-devtools` →
+/// `Chrome Devtools`, `blockbench` → `Blockbench`)
+fn mcp_label(server: &str) -> String {
+  server
+    .split(['-', '_', '.', ' '])
+    .filter(|w| !w.is_empty())
+    .map(|w| {
+      let mut c = w.chars();
+      c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+    })
+    .collect::<Vec<_>>()
+    .join(" ")
 }
 
 /// `path` or `paths` from the tool's arguments, in order

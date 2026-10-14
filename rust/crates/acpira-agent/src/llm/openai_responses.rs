@@ -25,7 +25,8 @@ pub fn origin(url: &str, model: &str) -> String {
 /// The request body for the endpoint at `origin`
 pub fn body(req: &Request, origin: &str) -> Value {
   let mut input: Vec<Value> = vec![];
-  for item in &req.items {
+  let mut pending: Vec<Value> = vec![];
+  for (i, item) in req.items.iter().enumerate() {
     match item {
       Item::User(parts) => input.push(json!({ "type": "message", "role": "user", "content": user_content(parts) })),
       Item::Assistant { text, tool_calls, native, .. } => match native.as_ref().filter(|n| n.origin == origin) {
@@ -40,8 +41,16 @@ pub fn body(req: &Request, origin: &str) -> Value {
           }
         }
       },
-      Item::ToolResult { call_id, content, .. } => {
+      Item::ToolResult { call_id, content, images, .. } => {
         input.push(json!({ "type": "function_call_output", "call_id": call_id, "output": if content.is_empty() { "(no output)" } else { content } }));
+        if !images.is_empty() {
+          pending.push(json!({ "type": "input_text", "text": super::images_label(call_id, images.len()) }));
+          pending.extend(images.iter().map(|im| json!({ "type": "input_image", "image_url": format!("data:{};base64,{}", im.mime, im.data) })));
+        }
+        // Images go in a user message after the round's last output, as on Chat (gateways differ on images inside one)
+        if !pending.is_empty() && !matches!(req.items.get(i + 1), Some(Item::ToolResult { .. })) {
+          input.push(json!({ "type": "message", "role": "user", "content": std::mem::take(&mut pending) }));
+        }
       }
     }
   }
@@ -407,7 +416,7 @@ mod tests {
     assert_eq!(reply.tool_calls, vec![ToolCall { id: "call_1".into(), name: "read".into(), arguments: "{\"path\":\"a\"}".into() }]);
 
     let item = Item::Assistant { text: String::new(), reasoning: reply.reasoning.clone(), tool_calls: reply.tool_calls.clone(), native: reply.native.clone() };
-    let result = Item::ToolResult { call_id: "call_1".into(), name: "read".into(), content: "x".into(), is_error: false };
+    let result = Item::ToolResult { call_id: "call_1".into(), name: "read".into(), content: "x".into(), is_error: false, images: vec![] };
     let b = body(&req(vec![Item::User(vec![Part::Text("hi".into())]), item.clone(), result.clone()]), ORIGIN);
     let input = b["input"].as_array().unwrap();
     // Encrypted reasoning goes back with its id, the call without the item id or status
@@ -422,6 +431,21 @@ mod tests {
     let other = body(&req(vec![Item::User(vec![Part::Text("hi".into())]), item, result]), "https://api.example.com/v1/responses other");
     assert_eq!(other["input"].as_array().unwrap().len(), 3);
     assert_eq!(other["input"][1]["type"], "function_call");
+  }
+
+  #[test]
+  fn images_follow_the_rounds_last_output() {
+    let call = |id: &str| ToolCall { id: id.into(), name: "bench_shot".into(), arguments: "{}".into() };
+    let calls = Item::Assistant { text: String::new(), reasoning: String::new(), tool_calls: vec![call("a"), call("b")], native: None };
+    let out = |id: &str, images: Vec<crate::llm::Image>| Item::ToolResult { call_id: id.into(), name: "bench_shot".into(), content: "ok".into(), is_error: false, images };
+    let png = crate::llm::Image { mime: "image/png".into(), data: "AA".into() };
+    let b = body(&req(vec![Item::User(vec![Part::Text("hi".into())]), calls, out("a", vec![png]), out("b", vec![])]), ORIGIN);
+    let input = b["input"].as_array().unwrap();
+    assert_eq!(input.iter().map(|i| i["type"].as_str().unwrap()).collect::<Vec<_>>(), ["message", "function_call", "function_call", "function_call_output", "function_call_output", "message"]);
+    assert_eq!(input[5]["content"], json!([
+      { "type": "input_text", "text": "[An image returned by the tool call a]" },
+      { "type": "input_image", "image_url": "data:image/png;base64,AA" },
+    ]));
   }
 
   /// Fast mode asks for the priority tier; `response.completed` names the tier that served the call

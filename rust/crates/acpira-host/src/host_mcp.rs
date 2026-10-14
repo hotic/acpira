@@ -177,7 +177,8 @@ struct Relay {
   wait_secs: Arc<std::sync::atomic::AtomicU64>,
 }
 
-/// Claude Code waits for an MCP tool call far longer than a child round takes; Codex gives up after 60 s by default
+/// Claude Code waits for an MCP tool call far longer than a child round takes, and so does the built-in agent (client
+/// name `acpira`, `CALL_TIMEOUT` 30 min in `acpira-agent/src/mcp`); Codex gives up after 60 s by default
 /// (`tool_timeout_sec`), and the others are not known, so they get an answer within the shorter bound
 const SHORT_WAIT: u64 = 50;
 const LONG_WAIT: u64 = 25 * 60;
@@ -195,7 +196,8 @@ impl Relay {
 
   fn note_client(&self, params: Option<&Value>) {
     let name = params.and_then(|p| p.get("clientInfo")).and_then(|c| c.get("name")).and_then(Value::as_str).unwrap_or("");
-    let secs = if name.to_lowercase().contains("claude") { LONG_WAIT } else { SHORT_WAIT };
+    let lower = name.to_lowercase();
+    let secs = if lower.contains("claude") || lower == "acpira" { LONG_WAIT } else { SHORT_WAIT };
     self.wait_secs.store(secs, std::sync::atomic::Ordering::Relaxed);
   }
 

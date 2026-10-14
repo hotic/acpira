@@ -590,6 +590,7 @@ export const ja = {
   'verb.fetch': '取得',
   'verb.switch_mode': 'モード切り替え',
   'verb.other': 'ツール使用',
+  'verb.mcp': '{server} を呼び出し',
   'verb.todo': 'ToDo を更新',
   'verb.ask': '質問',
   'verb.wait': 'バックグラウンドコマンドを待機',

@@ -1,8 +1,8 @@
 //! Context compaction, the two kinds OpenCode has. Pruning clears the output of old tool calls: walking back from the
 //! end past the last two user turns, the results seen are kept until they hold `PRUNE_PROTECT` tokens, every older one
 //! is cleared, and only when that frees `PRUNE_MINIMUM` (otherwise the prefix, and the provider's cache, is left alone).
-//! Summary compaction replaces everything but a tail of recent turns with a summary the model writes to a fixed
-//! template; a later compaction updates the previous summary instead of starting over. It runs on `/compact`, inside a
+//! Summary compaction replaces everything but a tail of recent turns with a summary written to a fixed template, by the
+//! fast model when one is set (the session's model when it is not, or when the fast one fails); a later compaction updates the previous summary instead of starting over. It runs on `/compact`, inside a
 //! turn when a call's usage reaches the threshold (the host's `compactAtTokens`, sent as `_meta` on every prompt, capped
 //! at the model's window less room for its output), and when the provider refuses a request as too long. The session
 //! log keeps every item: a `compaction` event records the summary and how many items the tail kept, a `prune` event
@@ -58,7 +58,7 @@ fn item_tokens(item: &Item) -> u64 {
       })
       .sum(),
     Item::Assistant { text, reasoning, tool_calls, .. } => estimate(text) + estimate(reasoning) + tool_calls.iter().map(|c| estimate(&c.name) + estimate(&c.arguments)).sum::<u64>(),
-    Item::ToolResult { content, .. } => estimate(content),
+    Item::ToolResult { content, images, .. } => estimate(content) + 1000 * images.len() as u64,
   }
 }
 
@@ -137,12 +137,12 @@ pub fn prune_plan(items: &[Item]) -> Vec<usize> {
   for (i, item) in items.iter().enumerate().rev() {
     match item {
       Item::User(_) if opens_turn(item) => turns += 1,
-      Item::ToolResult { name, content, is_error, .. } if turns >= TAIL_TURNS && !*is_error && !PRUNE_PROTECTED.contains(&name.as_str()) => {
+      Item::ToolResult { name, content, is_error, images, .. } if turns >= TAIL_TURNS && !*is_error && !PRUNE_PROTECTED.contains(&name.as_str()) => {
         // Everything older was cleared by an earlier prune
         if content == PRUNED {
           break;
         }
-        let n = estimate(content);
+        let n = estimate(content) + 1000 * images.len() as u64;
         total += n;
         if total > PRUNE_PROTECT {
           freed += n;
@@ -165,9 +165,10 @@ pub fn prune(session: &Session) -> usize {
   let mut calls = vec![];
   let mut tokens = 0u64;
   for i in &plan {
-    if let Item::ToolResult { call_id, content, .. } = &mut st.items[*i] {
-      tokens += estimate(content);
+    if let Item::ToolResult { call_id, content, images, .. } = &mut st.items[*i] {
+      tokens += estimate(content) + 1000 * images.len() as u64;
       *content = PRUNED.to_owned();
+      images.clear();
       calls.push(call_id.clone());
     }
   }
@@ -178,10 +179,11 @@ pub fn prune(session: &Session) -> usize {
 /// Apply a logged prune to a loaded history
 pub fn apply_prune(items: &mut [Item], calls: &[String]) {
   for item in items {
-    if let Item::ToolResult { call_id, content, .. } = item
+    if let Item::ToolResult { call_id, content, images, .. } = item
       && calls.contains(call_id)
     {
       *content = PRUNED.to_owned();
+      images.clear();
     }
   }
 }
@@ -298,7 +300,10 @@ fn serialize(item: &Item) -> String {
       }
       lines.join("\n")
     }
-    Item::ToolResult { content, is_error, .. } => format!("[{}]: {}", if *is_error { "Tool error" } else { "Tool result" }, cut(content)),
+    Item::ToolResult { content, is_error, images, .. } => {
+      let shown = if images.is_empty() { String::new() } else { format!(" [{} image(s) not shown]", images.len()) };
+      format!("[{}]: {}{shown}", if *is_error { "Tool error" } else { "Tool result" }, cut(content))
+    }
   }
 }
 
@@ -374,13 +379,21 @@ pub fn summary_prompt(head: &[Item], previous: Option<&str>, room: usize) -> Str
   format!("<conversation>\n{transcript}\n</conversation>\n\n{intro}\n\n{TEMPLATE}")
 }
 
-/// What the summary call is made with: the session's model, without its tools
+/// A model a summary can be written with
+pub struct Writer {
+  pub endpoint: Endpoint,
+  pub model: ProviderModel,
+  pub pick: String,
+  pub cost: Option<Cost>,
+}
+
+/// What a compaction is made with: the session's model sets the tail, the writers are tried in order for the summary
+/// (the fast model first when one is set, then the session's model), each without tools
 pub struct Call<'a> {
   pub http: ureq::Agent,
-  pub endpoint: Endpoint,
+  /// The session's model: its window decides how much of the recent history stays verbatim
   pub model: &'a ProviderModel,
-  pub pick: &'a str,
-  pub cost: Option<&'a Cost>,
+  pub writers: Vec<Writer>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -441,44 +454,35 @@ pub async fn run(server: &Server, session: &Session, call: &Call<'_>, reason: Re
   }
   let id = session.next_compaction_id();
   server.update(&session.id, json!({ "sessionUpdate": "compaction_update", "compactionId": id, "status": "in_progress" }));
-  // The transcript must fit the window with the answer and the instructions
-  let room = (context.saturating_sub(SUMMARY_TOKENS + estimate(TEMPLATE) + 500) * 4) as usize;
-  let prompt = summary_prompt(head, previous.as_deref(), room);
-  let request = Request {
-    model: call.model.id.clone(),
-    system: SYSTEM.to_owned(),
-    items: vec![Item::User(vec![Part::Text(prompt)])],
-    tools: vec![],
-    max_tokens: Some(call.model.output.map_or(SUMMARY_TOKENS, |o| o.min(SUMMARY_TOKENS))),
-    output_limit: Some(SUMMARY_TOKENS),
-    sampling: Default::default(),
-    thinking: Thinking::Off,
-    effort: None,
-    cache_key: None,
-    fast: false,
-  };
   let started = Instant::now();
-  let result = summarize(call.http.clone(), call.endpoint.clone(), request).await;
-  let mut ev = json!({ "type": "compaction", "reason": reason.wire(), "model": call.pick, "ms": started.elapsed().as_millis() as u64 });
-  let usage = match &result {
-    Ok((_, usage)) => *usage,
-    Err(_) => None,
-  };
-  if let Some(u) = usage {
-    ev["usage"] = json!({ "input": u.input, "output": u.output, "cacheRead": u.cache_read, "cacheWrite": u.cache_write, "reasoning": u.reasoning });
-    if let Some(c) = call.cost {
-      ev["cost"] = json!(c.estimate(u.input, u.output, u.cache_read, u.cache_write));
+  let mut ev = json!({ "type": "compaction", "reason": reason.wire() });
+  let mut result = Err(LlmError::Protocol("no model to write the summary with".into()));
+  for (n, writer) in call.writers.iter().enumerate() {
+    if n > 0
+      && let Err(e) = &result
+    {
+      // The fast model failed: the next writer (the session's model) tries again, and the log says why
+      eprintln!("[acpira agent] summary with {} failed, falling back: {e}", ev["model"].as_str().unwrap_or("?"));
+      ev["fallback"] = json!({ "model": ev["model"].clone(), "error": e.to_string() });
+    }
+    ev["model"] = Value::String(writer.pick.clone());
+    result = summarize(call.http.clone(), writer.endpoint.clone(), summary_request(writer, head, previous.as_deref())).await;
+    if matches!(&result, Ok((text, _)) if text.trim().is_empty()) {
+      result = Err(LlmError::Protocol("the model returned an empty summary".into()));
+    }
+    if let Ok((_, Some(u))) = &result {
+      ev["usage"] = json!({ "input": u.input, "output": u.output, "cacheRead": u.cache_read, "cacheWrite": u.cache_write, "reasoning": u.reasoning });
+      if let Some(c) = &writer.cost {
+        ev["cost"] = json!(c.estimate(u.input, u.output, u.cache_read, u.cache_write));
+      }
+    }
+    if result.is_ok() {
+      break;
     }
   }
+  ev["ms"] = json!(started.elapsed().as_millis() as u64);
   let summary = match result {
-    Ok((text, _)) if !text.trim().is_empty() => text,
-    Ok(_) => {
-      let message = "the model returned an empty summary".to_owned();
-      ev["error"] = Value::String(message.clone());
-      session.store.append(ev);
-      server.update(&session.id, json!({ "sessionUpdate": "compaction_update", "compactionId": id, "status": "failed", "error": message }));
-      return Err(message);
-    }
+    Ok((text, _)) => text,
     Err(e) => {
       let message = e.to_string();
       ev["error"] = Value::String(message.clone());
@@ -510,6 +514,25 @@ pub async fn run(server: &Server, session: &Session, call: &Call<'_>, reason: Re
   Ok(true)
 }
 
+/// The summary call for one writer: the transcript cut to what its window takes beside the answer and the instructions
+fn summary_request(writer: &Writer, head: &[Item], previous: Option<&str>) -> Request {
+  let context = writer.model.context.unwrap_or(crate::turn::DEFAULT_CONTEXT);
+  let room = (context.saturating_sub(SUMMARY_TOKENS + estimate(TEMPLATE) + 500) * 4) as usize;
+  Request {
+    model: writer.model.id.clone(),
+    system: SYSTEM.to_owned(),
+    items: vec![Item::User(vec![Part::Text(summary_prompt(head, previous, room))])],
+    tools: vec![],
+    max_tokens: Some(writer.model.output.map_or(SUMMARY_TOKENS, |o| o.min(SUMMARY_TOKENS))),
+    output_limit: Some(SUMMARY_TOKENS),
+    sampling: Default::default(),
+    thinking: Thinking::Off,
+    effort: None,
+    cache_key: None,
+    fast: false,
+  }
+}
+
 /// The summary text inside a summary item
 fn previous_summary(text: &str) -> String {
   text.strip_prefix("<conversation-summary>\n").and_then(|t| t.split_once("\n</conversation-summary>")).map(|(s, _)| s.to_owned()).unwrap_or_default()
@@ -539,7 +562,7 @@ mod tests {
   }
 
   fn result(id: &str, name: &str, bytes: usize) -> Item {
-    Item::ToolResult { call_id: id.into(), name: name.into(), content: "x".repeat(bytes), is_error: false }
+    Item::ToolResult { call_id: id.into(), name: name.into(), content: "x".repeat(bytes), is_error: false, images: vec![] }
   }
 
   #[test]
@@ -600,7 +623,7 @@ mod tests {
 
   #[test]
   fn the_summary_prompt_holds_the_transcript_and_the_previous_summary() {
-    let head = vec![user("fix it"), call("1", "bash"), result("1", "bash", 10), Item::ToolResult { call_id: "2".into(), name: "read".into(), content: "no".into(), is_error: true }];
+    let head = vec![user("fix it"), call("1", "bash"), result("1", "bash", 10), Item::ToolResult { call_id: "2".into(), name: "read".into(), content: "no".into(), is_error: true, images: vec![] }];
     let p = summary_prompt(&head, None, 1 << 20);
     assert!(p.starts_with("<conversation>\n[User]: fix it\n\n[Assistant tool call]: bash({})\n\n[Tool result]: xxxxxxxxxx\n\n[Tool error]: no\n</conversation>"), "{p}");
     assert!(p.contains(FRESH_INTRO) && p.contains("## Next Move"));

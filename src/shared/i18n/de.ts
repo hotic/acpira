@@ -584,6 +584,7 @@ export const de = {
   'verb.fetch': 'Abrufen',
   'verb.switch_mode': 'Modus wechseln',
   'verb.other': 'Tool verwenden',
+  'verb.mcp': '{server} aufrufen',
   'verb.todo': 'Aufgaben aktualisieren',
   'verb.ask': 'Fragen',
   'verb.wait': 'Auf Hintergrundbefehl warten',

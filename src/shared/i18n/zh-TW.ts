@@ -603,6 +603,7 @@ export const zhTW = {
   'verb.fetch': '抓取',
   'verb.switch_mode': '切換模式',
   'verb.other': '呼叫工具',
+  'verb.mcp': '呼叫 {server}',
   // A todo-list tool is recognized by name regardless of the kind the agent filed it under
   'verb.todo': '更新待辦',
   'verb.ask': '提問',

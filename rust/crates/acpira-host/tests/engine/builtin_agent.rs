@@ -1,7 +1,7 @@
 //! The built-in agent end to end: the engine drives the real `acpira agent` binary against the scripted model server.
-//! Six scenarios (an edit behind a permission card, a Plan-mode approval, a question card, a cancel before the model's
-//! first chunk, a reopen that resumes the session, a message steered into a command round) each check that the request
-//! prefix stays byte for byte between two model calls
+//! Seven scenarios (an edit behind a permission card, a Plan-mode approval, a question card, a cancel before the model's
+//! first chunk, a reopen that resumes the session, the engine's own MCP server called over stdio, a message steered into
+//! a command round) each check that the request prefix stays byte for byte between two model calls
 //! unless the session log records a view change. The final transcripts are golden output in
 //! test/fixtures/engine-builtin.json, which the webview suites render (ACPIRA_UPDATE_FIXTURES=1 rewrites it)
 
@@ -349,4 +349,33 @@ async fn a_reopened_session_resumes_with_the_same_prefix() {
   env.assert_prefix_stable(&log);
   let turns = view(&again)["turns"].clone();
   assert_eq!(turns.as_array().unwrap().len(), 4, "{turns}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_engines_own_mcp_server_reaches_the_model_and_show_image_shows_the_picture() {
+  let mut env = Env::new();
+  // What the runtime hands every session: `acpira mcp` on stdio (show_image, workspace_hooks)
+  env.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")));
+  let png = env.cwd().join("shot.png");
+  std::fs::write(&png, b"\x89PNG\r\n\x1a\n").unwrap();
+  let s = env.session().await;
+  env.server.push(mock::tools(&[("c1", "acpira_show_image", json!({ "path": png.to_string_lossy() }))]));
+  env.server.push(mock::text("Here it is."));
+  let cards = run(&s, "show me the shot").await;
+  assert!(cards.is_empty(), "the engine's own tools ask nothing: {cards:?}");
+  let reqs = env.server.requests();
+  let names: Vec<String> = reqs[0].body["tools"].as_array().unwrap().iter().map(|t| t["function"]["name"].as_str().unwrap().to_owned()).collect();
+  assert!(names.iter().any(|n| n == "acpira_show_image") && names.iter().any(|n| n == "acpira_workspace_hooks"), "{names:?}");
+  // The server's instructions came with the first message, the receipt with the result
+  let first = reqs[0].body["messages"][1]["content"].as_str().unwrap().to_owned();
+  assert!(first.starts_with("<mcp>") && first.contains("## acpira\n"), "{first}");
+  let msgs = reqs[1].body["messages"].as_array().unwrap();
+  let receipt = msgs.iter().find(|m| m["role"] == "tool").unwrap()["content"].as_str().unwrap().to_owned();
+  assert!(receipt.contains("shot.png"), "{receipt}");
+  // The engine knows the call by its name: a show-image row carrying the picture
+  let vw = view(&s);
+  let row = agent_blocks(&vw).into_iter().find(|b| b["type"] == "tool_call").unwrap();
+  expect_match(&row, json!({ "verbKey": "verb.showImage", "status": "completed" }));
+  assert!(row.to_string().contains("image/png"), "the picture is attached: {row}");
+  env.assert_prefix_stable(&env.log_of(&s));
 }
