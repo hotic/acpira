@@ -251,6 +251,15 @@ impl HostRuntime {
       });
     }));
     tokio::spawn(crate::model_catalog::refresh(root.clone(), log.clone()));
+    // Half-written files a killed or failed write left (`<file>.<pid>.tmp`); never user content, so no review needed
+    let sweep_log = log.clone();
+    let temp_dirs = vec![root.clone(), root.join("sessions")];
+    tokio::spawn(async move {
+      let removed = crate::store::file_lock::sweep_temp_files(&temp_dirs, crate::store::file_lock::STALE_TEMP_AGE).await;
+      if removed > 0 {
+        sweep_log(&format!("removed {removed} temp files left by interrupted writes"));
+      }
+    });
     runtime.manager.init().await;
     // Files may be edited from any IDE or terminal, including on volumes without reliable native watch events.
     // Keep only a weak owner between ticks and stop the task explicitly before session teardown.

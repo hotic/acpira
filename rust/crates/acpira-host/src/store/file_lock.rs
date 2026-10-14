@@ -20,6 +20,8 @@ use crate::util::random_hex;
 const STALE: Duration = Duration::from_secs(10);
 // Give up on a lock that stays held this long
 const WAIT: Duration = Duration::from_secs(5);
+/// A temp file this old whose writer has exited is left over from an interrupted write
+pub const STALE_TEMP_AGE: Duration = Duration::from_secs(3600);
 
 static CHAINS: LazyLock<parking_lot::Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> = LazyLock::new(Default::default);
 
@@ -202,6 +204,39 @@ pub async fn write_atomic(path: &Path, data: &[u8], mode: Option<u32>) -> Result
   Ok(())
 }
 
+/// The writer's pid when `name` is a temp file `write_atomic` (or the shell's `fileLock.ts`) names `<file>.<pid>.tmp`
+pub fn temp_writer_pid(name: &str) -> Option<i64> {
+  let (base, pid) = name.strip_suffix(".tmp")?.rsplit_once('.')?;
+  if base.is_empty() || !pid.bytes().all(|b| b.is_ascii_digit()) {
+    return None;
+  }
+  pid.parse().ok()
+}
+
+/// A temp file an interrupted write left behind: older than `older_than` and its writer is no longer running. A live
+/// writer may still be about to rename it, and a pid that was reused only keeps the file longer
+pub async fn is_stale_temp(path: &Path, older_than: Duration) -> bool {
+  let Some(pid) = path.file_name().and_then(|n| temp_writer_pid(&n.to_string_lossy())) else { return false };
+  let Ok(meta) = fs::symlink_metadata(path).await else { return false };
+  let old = meta.modified().ok().and_then(|m| SystemTime::now().duration_since(m).ok()).is_some_and(|age| age >= older_than);
+  meta.is_file() && old && !pid_alive(Some(pid))
+}
+
+/// Remove the stale temp files directly inside each of `dirs` (not below them); returns how many went
+pub async fn sweep_temp_files(dirs: &[PathBuf], older_than: Duration) -> usize {
+  let mut removed = 0;
+  for dir in dirs {
+    let Ok(mut rd) = fs::read_dir(dir).await else { continue };
+    while let Ok(Some(e)) = rd.next_entry().await {
+      let path = e.path();
+      if is_stale_temp(&path, older_than).await && fs::remove_file(&path).await.is_ok() {
+        removed += 1;
+      }
+    }
+  }
+  removed
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -229,6 +264,35 @@ mod tests {
     std::fs::File::options().write(true).open(&lock).unwrap().set_modified(SystemTime::now() - STALE * 2).unwrap();
     assert!(!claim_stale(&lock).await);
     assert_eq!(std::fs::read_to_string(&lock).unwrap(), body);
+  }
+
+  #[tokio::test]
+  async fn only_old_temp_files_of_exited_writers_are_swept() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut child =
+      std::process::Command::new(std::env::current_exe().unwrap()).arg("--list").stdout(std::process::Stdio::null()).spawn().unwrap();
+    let dead = child.id();
+    child.wait().unwrap();
+    let me = std::process::id();
+    let hour_ago = SystemTime::now() - Duration::from_secs(2 * 3600);
+    let make = |name: &str, old: bool| {
+      let p = dir.path().join(name);
+      std::fs::write(&p, b"half").unwrap();
+      if old {
+        std::fs::File::options().write(true).open(&p).unwrap().set_modified(hour_ago).unwrap();
+      }
+      p
+    };
+    let stale = make(&format!("a.json.{dead}.tmp"), true);
+    let fresh = make(&format!("b.json.{dead}.tmp"), false);
+    let live = make(&format!("c.json.{me}.tmp"), true);
+    let other = make("notes.tmp", true);
+    assert_eq!(temp_writer_pid("a.json.42.tmp"), Some(42));
+    assert_eq!(temp_writer_pid(".42.tmp"), None);
+    assert_eq!(temp_writer_pid("a.json.x42.tmp"), None);
+    assert_eq!(sweep_temp_files(&[dir.path().to_path_buf()], Duration::from_secs(3600)).await, 1);
+    assert!(!stale.exists());
+    assert!(fresh.exists() && live.exists() && other.exists());
   }
 
   #[tokio::test]
