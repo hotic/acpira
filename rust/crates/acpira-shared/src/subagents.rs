@@ -144,6 +144,20 @@ pub enum RelayMode {
   #[default]
   Consult,
   Work,
+  /// Work without approvals: the CLI runs in its own full-access mode where it has one, and Acpira answers the child's
+  /// permission requests itself instead of showing cards
+  Bypass,
+}
+
+impl RelayMode {
+  /// A stored or requested mode name; anything unknown is a consult
+  pub fn parse(s: Option<&str>) -> Self {
+    match s {
+      Some("work") => Self::Work,
+      Some("bypass") => Self::Bypass,
+      _ => Self::Consult,
+    }
+  }
 }
 
 /// A cross-harness subagent defined once in the settings (`~/.acpira/subagents.json`); every session can summon it
@@ -236,7 +250,7 @@ pub fn sanitize_personas(v: &serde_json::Value) -> Vec<SubagentPersona> {
       agent,
       model: opt("model", ID_MAX),
       effort: opt("effort", ID_MAX),
-      mode: if o.get("mode").and_then(serde_json::Value::as_str) == Some("work") { RelayMode::Work } else { RelayMode::Consult },
+      mode: RelayMode::parse(o.get("mode").and_then(serde_json::Value::as_str)),
       when: text("when", TEXT_MAX),
       brief: opt("brief", TEXT_MAX),
       enabled: o.get("enabled") != Some(&serde_json::Value::Bool(false)),

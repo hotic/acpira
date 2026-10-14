@@ -962,6 +962,8 @@ export const ja = {
   'subagents.page.work': "作業",
   'subagents.page.consultDesc': "意見を聞く：編集しないよう指示し、読み取り専用モードがあれば切り替える",
   'subagents.page.workDesc': "CLI 自身の権限設定に従ってファイルを編集できる",
+  'subagents.page.bypass': "権限確認をスキップ",
+  'subagents.page.bypassDesc': "確認なしで編集：CLI のフルアクセスモードに切り替え、権限リクエストはすべて自動承認",
   'subagents.page.readOnly': "読み取り専用の方法",
   'subagents.page.readOnlyMode': "自身の {mode} モードに切り替える。書き込みをどこまで防ぐかは CLI 次第",
   'subagents.page.readOnlyNone': "読み取り専用モードなし：編集しないよう指示するだけ",

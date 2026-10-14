@@ -938,6 +938,8 @@
   "subagents.page.work": "작업",
   "subagents.page.consultDesc": "의견 요청: 파일을 고치지 말라고 지시하고, 읽기 전용 모드가 있으면 전환합니다",
   "subagents.page.workDesc": "자체 권한 설정에 따라 파일을 수정할 수 있음",
+  "subagents.page.bypass": "권한 확인 건너뛰기",
+  "subagents.page.bypassDesc": "승인 없이 수정: CLI의 전체 액세스 모드로 전환하고 모든 권한 요청을 자동 승인",
   "subagents.page.readOnly": "읽기 전용 방식",
   "subagents.page.readOnlyMode": "자체 {mode} 모드로 전환합니다. 쓰기를 얼마나 막는지는 CLI에 달려 있습니다",
   "subagents.page.readOnlyNone": "읽기 전용 모드 없음: 작업 지시로만 수정을 막습니다",

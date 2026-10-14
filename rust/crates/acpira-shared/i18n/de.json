@@ -935,6 +935,8 @@
   "subagents.page.work": "Arbeiten",
   "subagents.page.consultDesc": "Um eine Meinung gefragt: angewiesen, nichts zu ändern, im eigenen Nur-lesen-Modus, wenn es einen gibt",
   "subagents.page.workDesc": "Darf Dateien nach seinen eigenen Berechtigungen ändern",
+  "subagents.page.bypass": "Berechtigungen umgehen",
+  "subagents.page.bypassDesc": "Ändert ohne Rückfrage: Vollzugriffsmodus des CLI, jede Berechtigungsanfrage wird genehmigt",
   "subagents.page.readOnly": "Nur lesen über",
   "subagents.page.readOnlyMode": "Wechselt in seinen eigenen {mode}-Modus; wie streng der Schreibzugriffe sperrt, entscheidet die CLI",
   "subagents.page.readOnlyNone": "Kein Nur-lesen-Modus: nur die Aufgabe sagt, nichts zu ändern",

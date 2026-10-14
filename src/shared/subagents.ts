@@ -50,7 +50,9 @@ export interface SubagentHarness {
   sessionId?: string;  // the child CLI's own session id (peer.sessionId is Acpira's routing key)
 }
 
-export type RelayMode = 'consult' | 'work';
+// bypass = work without approvals: the CLI's own full-access mode where it has one, and its permission requests are
+// answered by the host instead of shown as cards
+export type RelayMode = 'consult' | 'work' | 'bypass';
 
 // A cross-harness subagent defined once in the settings (~/.acpira/subagents.json): any session can summon it through
 // Acpira's MCP tool `ask_agent`, or the user names it with @name. Mirror of acpira_shared::subagents::SubagentPersona
@@ -92,7 +94,7 @@ export function sanitizePersonas(value: unknown): SubagentPersona[] {
     out.push({
       id, name, agent,
       model: opt(o.model, 200), effort: opt(o.effort, 200),
-      mode: o.mode === 'work' ? 'work' : 'consult',
+      mode: o.mode === 'work' || o.mode === 'bypass' ? o.mode : 'consult',
       when: str(o.when, TEXT_MAX),
       brief: opt(o.brief, TEXT_MAX),
       enabled: o.enabled !== false,

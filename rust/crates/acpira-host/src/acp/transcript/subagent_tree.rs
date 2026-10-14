@@ -1301,6 +1301,11 @@ impl SubagentTree {
     Some((n.id.clone(), h, n.role.clone(), native, n.status))
   }
 
+  /// Whether a summoned node runs without approvals (its round's mode is bypass)
+  pub fn relay_bypass(&self, id: &str) -> bool {
+    self.nodes.iter().find(|n| n.id == id).and_then(|n| n.harness.as_ref()).is_some_and(|h| h.mode == acpira_shared::subagents::RelayMode::Bypass)
+  }
+
   /// The thread a node belongs to, when it is a summoned one
   pub fn relay_thread_of(&self, id: &str) -> Option<String> {
     self.nodes.iter().find(|n| n.id == id).and_then(|n| n.harness.as_ref()).map(|h| h.thread.clone())

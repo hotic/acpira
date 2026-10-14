@@ -959,6 +959,8 @@ export const es = {
   'subagents.page.work': "Trabajar",
   'subagents.page.consultDesc': "Se le pide opinión: se le indica no editar, en su modo de solo lectura si lo tiene",
   'subagents.page.workDesc': "Puede editar archivos según sus propios permisos",
+  'subagents.page.bypass': "Omitir permisos",
+  'subagents.page.bypassDesc': "Edita sin aprobación: modo de acceso total del CLI, cada solicitud de permiso se aprueba",
   'subagents.page.readOnly': "Solo lectura mediante",
   'subagents.page.readOnlyMode': "Cambia a su propio modo {mode}; cuánto bloquea las escrituras depende del CLI",
   'subagents.page.readOnlyNone': "Sin modo de solo lectura: solo la tarea le indica no editar",

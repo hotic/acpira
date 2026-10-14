@@ -367,7 +367,11 @@ fn ask_tool_def(personas: &[acpira_shared::subagents::SubagentPersona]) -> Value
     .iter()
     .map(|p| {
       let model = p.model.as_deref().map(|m| format!(" · {m}")).unwrap_or_default();
-      let mode = if p.mode == RelayMode::Consult { " · read-only" } else { "" };
+      let mode = match p.mode {
+        RelayMode::Consult => " · read-only",
+        RelayMode::Work => "",
+        RelayMode::Bypass => " · edits without approval",
+      };
       let when = if p.when.trim().is_empty() { String::new() } else { format!(": {}", p.when.trim()) };
       format!("- {} (@{}){when} [{}{model}{mode}]", p.id, p.name, p.agent)
     })
