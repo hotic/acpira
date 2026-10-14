@@ -12,7 +12,7 @@ use tokio::sync::oneshot;
 
 use acpira_shared::protocol::FileHit;
 use acpira_shared::sidecar::{
-  Hello, PLATFORM_RPC_METHODS, PlanTarget, PlatformEvent, PlatformRequest, ShellEnv, ShellEnvPatch, SidecarMsg, ToastOpen,
+  BrowserOpened, Hello, PLATFORM_RPC_METHODS, PlanTarget, PlatformEvent, PlatformRequest, ShellEnv, ShellEnvPatch, SidecarMsg, ToastOpen,
 };
 
 use crate::node_files::NodeFiles;
@@ -247,6 +247,24 @@ impl SidecarPlatform {
     if !self.notify(PlatformRequest::OpenExternal { url: url.to_owned() }) {
       (self.stderr)(&format!("openExternal unsupported by the shell: {url}"));
     }
+  }
+
+  /// Whether the serving shell can show a page inside the editor (`open_browser` is offered only then)
+  pub fn can_open_browser(&self) -> bool {
+    self.has_cap("openBrowser")
+  }
+
+  /// Show an http(s) page in the editor; where the user's side shows it, or the shell's reason it did not open
+  pub async fn open_browser(&self, url: &str) -> Result<BrowserOpened> {
+    if !self.has_cap("openBrowser") {
+      return Err(anyhow!("this editor cannot show web pages inside it"));
+    }
+    let r = self.rpc(PlatformRequest::OpenBrowser { url: url.to_owned() }).await?;
+    let mut opened: BrowserOpened = serde_json::from_value(r).unwrap_or_default();
+    if opened.url.is_empty() {
+      opened.url = url.to_owned();
+    }
+    Ok(opened)
   }
 
   pub async fn reveal_in_os(&self, path: &str) -> Result<()> {

@@ -24,7 +24,7 @@ let client: SidecarClient | undefined;
 // there, the extension renders webviews and carries out IDE actions. Same protocol as the IntelliJ plugin
 export async function activate(context: vscode.ExtensionContext) {
   const log = vscode.window.createOutputChannel('Acpira', { log: true });
-  const platform = new VscodePlatform(context, id => { openEditor(id); }, r => announce(r));
+  const platform = new VscodePlatform(context, id => { openEditor(id); }, r => announce(r), url => probeUrl(url));
   setHostLocale(platform.locale());
 
   // The legacy globalStorage / SecretStorage tree only VS Code can read is merged before the sidecar takes over ~/.acpira
@@ -190,6 +190,13 @@ export async function activate(context: vscode.ExtensionContext) {
     void vscode.commands.executeCommand(`${VIEW_ID}.focus`);
     if (!showing) withSidebar(b => b.send({ type: 'selectSession', id: sessionId }));
   };
+
+  // open_browser's check from the user's machine runs in a chat page (they render there even in a remote window): the chat used
+  // last when it is up, else any ready one. Without one the page opens unchecked
+  function probeUrl(url: string) {
+    const page = lastFocused?.ready ? lastFocused : [...bridges].find(b => b.ready);
+    return page ? page.probe(url) : Promise.resolve(undefined);
+  }
 
   // A session needs the user or has settled (`notify`, sent only for the switches that are on). Nothing while this window is
   // focused and a visible chat shows that session. The chime plays in one page (the chat used last when it is up); the system

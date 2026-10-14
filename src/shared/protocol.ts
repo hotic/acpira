@@ -79,6 +79,9 @@ export function isSafeExternalUrl(url: string): boolean {
 export type HostMsg =
   // The shell's attention chime (a `notify` platform request with `sound`): the page plays it, the shell picks one page to do so
   | { type: 'chime' }
+  // The VS Code shell asks the page whether a URL answers from the user's machine (the page renders there even when the
+  // extension host is remote); answered with probeResult. Never sent by the sidecar
+  | { type: 'probeUrl'; id: string; url: string }
   // The next three come from the IDE shell itself, not the sidecar: editor state is UI, and the engine never sees it until a prompt carries it.
   // The editor's current selection, on every change; absent when nothing (or no file: document) is selected
   | { type: 'editorSelection'; selection?: EditorSelection }
@@ -173,6 +176,8 @@ export type WebviewMsg =
   | { type: 'resync' }
   // The page's window got focus. The VS Code shell keeps it (the last-used chat is where "Add to Chat" goes); the sidecar ignores it
   | { type: 'viewFocus' }
+  // probeUrl's answer, kept in the VS Code shell like viewFocus: ok when anything answered over HTTP
+  | { type: 'probeResult'; id: string; ok: boolean; error?: string }
   // steer: sent while a turn runs with steering on (SessionView.canSteer); it joins that turn instead of queueing behind it
   | { type: 'send'; sessionId?: string; text: string; attachments?: Draft[]; steer?: boolean }
   | { type: 'stop'; sessionId?: string }

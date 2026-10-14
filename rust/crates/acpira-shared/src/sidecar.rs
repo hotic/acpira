@@ -9,7 +9,7 @@ use crate::protocol::{HostMsg, WebviewHost};
 pub const SIDECAR_PROTOCOL_VERSION: i64 = 1;
 
 /// Requests the shell must answer (platformResponse); the rest are fire-and-forget
-pub const PLATFORM_RPC_METHODS: [&str; 5] = ["openResolvedFile", "openPlanDocument", "revealInOS", "searchFiles", "writeSetting"];
+pub const PLATFORM_RPC_METHODS: [&str; 6] = ["openResolvedFile", "openPlanDocument", "revealInOS", "searchFiles", "writeSetting", "openBrowser"];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -43,6 +43,12 @@ pub enum PlatformRequest {
   OpenExternal {
     url: String,
   },
+  /// An http(s) page in a browser tab inside the editor (`open_browser`). The shell forwards the port of a remote
+  /// workspace, checks from the user's machine that the page answers and only then opens it; the result is
+  /// `{ url }`, the address the user's side loaded
+  OpenBrowser {
+    url: String,
+  },
   OpenInEditor {
     #[serde(skip_serializing_if = "Option::is_none")]
     session_id: Option<String>,
@@ -74,6 +80,25 @@ pub enum PlatformRequest {
   },
 }
 
+/// openBrowser's answer: the address the user's side shows, and how an earlier open_browser tab was reused
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserOpened {
+  #[serde(default)]
+  pub url: String,
+  #[serde(default)]
+  pub reused: Option<BrowserReuse>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BrowserReuse {
+  /// The tab already showed that URL: brought to the front, not reloaded
+  Revealed,
+  /// The tab showed another page of the same site and moved to this one
+  Navigated,
+}
+
 /// The open-file action a toast carries: the button label (already localized) and the absolute path behind it
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ToastOpen {
@@ -90,6 +115,7 @@ impl PlatformRequest {
       PlatformRequest::SearchFiles { .. } => "searchFiles",
       PlatformRequest::WriteSetting { .. } => "writeSetting",
       PlatformRequest::OpenExternal { .. } => "openExternal",
+      PlatformRequest::OpenBrowser { .. } => "openBrowser",
       PlatformRequest::OpenInEditor { .. } => "openInEditor",
       PlatformRequest::RunInTerminal { .. } => "runInTerminal",
       PlatformRequest::Toast { .. } => "toast",
