@@ -32,6 +32,9 @@ pub(crate) struct PromptQueue {
   /// Entries asked to steer while a compaction ran (a steer then aborts it on claude-agent-acp): they steer in once that
   /// compaction is over, or go out as ordinary follow-ups when the turn ends first
   pub steer_after_compaction: Vec<String>,
+  /// The running turn's injected steers with their staged payloads, so a stop can queue the unanswered ones again
+  /// (`requeue_unanswered_steers`); the turn's settle clears them
+  pub steered: Vec<QueuedEntry>,
 }
 
 impl PromptQueue {
@@ -260,8 +263,12 @@ impl AcpSession {
             c.queue.steering_id = None;
             if let Some(i) = c.queue.entries.iter().position(|q| q.id == id) {
               let entry = c.queue.entries.remove(i);
-              let attachments = (!entry.prepared.attachments.is_empty()).then_some(entry.prepared.attachments);
-              push_steer(&mut c.state, SteerBlock { id: entry.id, text: entry.text, attachments });
+              let attachments = (!entry.prepared.attachments.is_empty()).then(|| entry.prepared.attachments.clone());
+              push_steer(&mut c.state, SteerBlock { id: entry.id.clone(), text: entry.text.clone(), attachments });
+              // Kept for a stop the steer is still unanswered at; a new turn of the peer's own has nothing to come back to
+              if outcome == steering::Outcome::Injected {
+                c.queue.steered.push(entry);
+              }
             }
             if outcome == steering::Outcome::StartedNewTurn && c.peer.status_seen {
               c.peer.detached = true;
@@ -363,6 +370,43 @@ impl AcpSession {
     // A prompt still waiting on its response reopens the turn when it settles (`settle`)
     self.reopen_for_detached(c);
     self.log("goal continuation started");
+  }
+
+  /// The user's stop, on a peer that drops the steers it has not picked up yet (claude-agent-acp from 0.86.0): the steers
+  /// nothing has answered yet, the run of steer blocks that ends the running turn, leave it and go back to the head of the
+  /// queue in send order (behind an entry a send-now has claimed), so the cancel's settle sends the first as an ordinary
+  /// prompt and the rest follow. That is Claude Code's own stop: the work ends and the next message the user sent is taken
+  /// up, another stop moves on to the one after it (reported 2026-10-15: the steers were lost, or on 0.83.0 the stop hung)
+  pub(crate) fn requeue_unanswered_steers(&self, c: &mut Core) {
+    let drops = c.proc.as_ref().is_some_and(|p| steering::cancel_drops_unanswered(&p.init));
+    if !self.vendor.requeues_steers_on_cancel() || !drops || c.queue.steered.is_empty() {
+      return;
+    }
+    let Core { state, queue, .. } = c;
+    let Some(Turn::Agent(turn)) = state.turns.last_mut() else { return };
+    let mut ids: Vec<String> = turn
+      .blocks
+      .iter()
+      .rev()
+      .map_while(|b| match b {
+        AgentBlock::Steer(s) if queue.steered.iter().any(|q| q.id == s.id) => Some(s.id.clone()),
+        _ => None,
+      })
+      .collect();
+    if ids.is_empty() {
+      return;
+    }
+    ids.reverse();
+    turn.blocks.truncate(turn.blocks.len() - ids.len());
+    let mut at = usize::from(queue.sending_id.is_some() && queue.entries.first().map(|q| &q.id) == queue.sending_id.as_ref());
+    for id in &ids {
+      if let Some(i) = queue.steered.iter().position(|q| &q.id == id) {
+        queue.entries.insert(at, queue.steered.remove(i));
+        at += 1;
+      }
+    }
+    self.log(&format!("stop: {} unanswered steer(s) queued again", ids.len()));
+    self.touch(c);
   }
 
   /// The steer did not join the turn: the entry is queued again, first in line when the turn it missed has already ended

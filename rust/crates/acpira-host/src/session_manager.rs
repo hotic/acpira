@@ -1792,7 +1792,7 @@ impl SessionManager {
     let Some(s) = self.live(id) else { return };
     self.log(&format!("session {id}: another engine takes it over, letting go"));
     if s.is_running() {
-      s.cancel().await;
+      s.cancel_for_handover().await;
       let t0 = tokio::time::Instant::now();
       while s.is_running() && t0.elapsed() < YIELD_SETTLE {
         tokio::time::sleep(Duration::from_millis(50)).await;

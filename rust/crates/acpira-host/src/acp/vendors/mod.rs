@@ -94,6 +94,12 @@ impl Vendor {
     self == Vendor::Claude
   }
 
+  /// A stop gives the steers the agent has not answered back to the queue, where the agent drops them on cancel
+  /// (`steering::cancel_drops_unanswered` tells by the adapter version)
+  pub fn requeues_steers_on_cancel(self) -> bool {
+    self == Vendor::Claude
+  }
+
   /// session/new, resume and load ask for summarized thinking (`claude_thinking`)
   pub fn summarized_thinking(self) -> bool {
     self == Vendor::Claude

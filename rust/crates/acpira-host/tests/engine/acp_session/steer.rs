@@ -285,3 +285,75 @@ async fn a_steered_composer_send_while_idle_is_an_ordinary_prompt() {
   assert_eq!(user_prompts(&vw), [json!("hi")]);
   assert!(vw["turns"][1]["blocks"].as_array().unwrap().iter().all(|b| b["type"] != "steer"));
 }
+
+fn claude_steering(fake: &FakeAgent, version: &str, mode: &str) -> Harness {
+  Harness::for_agent(fake, "claude", json!({ "env": { "FAKE_STEERING": mode, "FAKE_AGENT_VERSION": version } }))
+}
+
+fn steer_ids(turn: &Value) -> Vec<String> {
+  turn["blocks"].as_array().unwrap().iter().filter(|b| b["type"] == "steer").map(|b| b["text"].as_str().unwrap().to_owned()).collect()
+}
+
+fn user_texts(vw: &Value) -> Vec<Value> {
+  vw["turns"].as_array().unwrap().iter().filter(|t| t["role"] == "user").map(|t| t["text"].clone()).collect()
+}
+
+/// claude-agent-acp 0.86.0+ drops the steers Claude Code has not picked up when the turn is cancelled: a stop puts them
+/// back in the queue, so the first goes out as the next prompt and the second follows, as Claude Code itself does
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_queues_the_steers_a_dropping_claude_never_answered() {
+  let fake = fake_or_skip!();
+  let h = claude_steering(&fake, "0.90.0", "1");
+  let s = started(&h, "/tmp").await;
+  let running = spawn_prompt(&s, "slow tool");
+  until(|| agent_blocks(&view(&s)).iter().any(|b| b["type"] == "tool_call"), 5000).await;
+  s.steer_prompt("first steer".into(), vec![]).await.unwrap();
+  s.steer_prompt("second steer".into(), vec![]).await.unwrap();
+  assert_eq!(steer_ids(&view(&s)["turns"][1]), ["first steer", "second steer"]);
+  s.cancel().await;
+  // Out of the stopped turn before the cancel goes out, back in the queue in send order
+  let vw = view(&s);
+  assert!(steer_ids(&vw["turns"][1]).is_empty());
+  running.await.unwrap();
+  until(|| !s.is_running() && view(&s)["queued"].is_null() && user_texts(&view(&s)).len() == 3, 5000).await;
+  let vw = view(&s);
+  expect_match(&vw["turns"][1], json!({ "stop": "cancelled" }));
+  assert_eq!(user_texts(&vw), [json!("slow tool"), json!("first steer"), json!("second steer")]);
+}
+
+/// Before 0.86.0 Claude Code runs the steers itself once the interrupt lands: sending them again would answer them twice
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_leaves_the_steers_to_an_older_claude() {
+  let fake = fake_or_skip!();
+  let h = claude_steering(&fake, "0.83.0", "1");
+  let s = started(&h, "/tmp").await;
+  let running = spawn_prompt(&s, "slow tool");
+  until(|| agent_blocks(&view(&s)).iter().any(|b| b["type"] == "tool_call"), 5000).await;
+  s.steer_prompt("kept".into(), vec![]).await.unwrap();
+  s.cancel().await;
+  running.await.unwrap();
+  until(|| !s.is_running(), 5000).await;
+  let vw = view(&s);
+  assert_eq!(steer_ids(&vw["turns"][1]), ["kept"]);
+  assert!(vw["queued"].is_null());
+  assert_eq!(user_texts(&vw), [json!("slow tool")]);
+}
+
+/// A steer the agent already answered stays in the stopped turn
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_leaves_an_answered_steer_in_the_turn() {
+  let fake = fake_or_skip!();
+  let h = claude_steering(&fake, "0.90.0", "1");
+  let s = started(&h, "/tmp").await;
+  let running = spawn_prompt(&s, "slow");
+  wait_turns(&s, 2).await;
+  s.steer_prompt("answered".into(), vec![]).await.unwrap();
+  until(|| agent_text(&view(&s)["turns"][1]).contains("steered:answered"), 5000).await;
+  s.cancel().await;
+  running.await.unwrap();
+  until(|| !s.is_running(), 5000).await;
+  let vw = view(&s);
+  assert_eq!(steer_ids(&vw["turns"][1]), ["answered"]);
+  assert!(vw["queued"].is_null());
+  assert_eq!(user_texts(&vw), [json!("slow")]);
+}

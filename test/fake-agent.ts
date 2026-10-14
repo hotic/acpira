@@ -91,6 +91,9 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // idle steer ignores the opt-in and runs a turn of its own (`startedNewTurn`, then active, `detached:<text>`, idle).
 // =codex-late: a steer during "slow" ends that turn first (idle, end_turn) and then lands idle, the race the host has to absorb;
 // =codex-gap: "slow" stops after 10 chunks, reports idle and answers the prompt 600 ms later.
+// A "slow tool" turn opens a tool call and holds every steer unanswered until it is cancelled, which drops them: a foreground
+// Bash on claude-agent-acp 0.86.0+, whose cancel drops the steered messages Claude Code has not picked up yet
+// FAKE_AGENT_VERSION → the version `initialize` reports in agentInfo (default 0.0.0)
 // A "slow compacting" turn compacts on its own from chunk 3 to chunk 15 (compaction_update in_progress … completed); a
 // steer arriving meanwhile fails that compaction `aborted`, the way claude-agent-acp does
 // FAKE_STEER_LOG → append every steering request's text to that file
@@ -255,7 +258,7 @@ const app = acp.agent({ name: 'fake-agent' })
     if (process.env.FAKE_INIT_LOG) appendFileSync(process.env.FAKE_INIT_LOG, `${JSON.stringify(params.clientCapabilities?._meta ?? null)}\n`);
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
-      agentInfo: { name: 'fake', version: '0.0.0' },
+      agentInfo: { name: 'fake', version: process.env.FAKE_AGENT_VERSION ?? '0.0.0' },
       agentCapabilities: {
         loadSession: true,
         sessionCapabilities: process.env.FAKE_LOAD_ONLY ? {} : { resume: {}, ...(process.env.FAKE_CLOSE_LOG ? { close: {} } : {}), ...(sessionDir ? { list: {} } : {}) },
@@ -1514,6 +1517,19 @@ const app = acp.agent({ name: 'fake-agent' })
         totalTokens: 38_167, inputTokens: 38_140, outputTokens: 20, cachedReadTokens: 37_888, reasoningTokens: 19,
         usage: { inputTokens: 38_140, outputTokens: 20, totalTokens: 38_167, cachedReadTokens: 37_888, cacheCreationTokens: 0, reasoningTokens: 19, modelCalls: 2, apiDurationMs: 1_200, costUsdTicks: 42, modelUsage: {}, numTurns: 1 },
       } };
+    }
+
+    if (text.includes('slow tool')) {
+      steerable.add(sid);
+      try {
+        await send({ sessionUpdate: 'tool_call', toolCallId: 'slow-tool', title: 'sleep 60', kind: 'execute', status: 'pending', rawInput: { command: 'sleep 60' } });
+        while (!cancelled.has(sid)) await new Promise(r => setTimeout(r, slowStepMs));
+        await send({ sessionUpdate: 'tool_call_update', toolCallId: 'slow-tool', status: 'failed' });
+        return { stopReason: 'cancelled' };
+      } finally {
+        steerable.delete(sid);
+        steered.delete(sid);
+      }
     }
 
     if (text.includes('slow')) {
