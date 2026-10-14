@@ -21,6 +21,8 @@ import { AppearancePage } from './Appearance';
 import { AgentPage } from './AgentPage';
 import { SharedPage, type SharedState } from './SharedPage';
 import { SubagentsPage } from './SubagentsPage';
+import { StoragePage, type StorageState } from './StoragePage';
+import type { StorageAction, StorageDetail } from '@shared/storage';
 import type { SharedAction } from '@shared/sharedConfig';
 import type { ProviderAction, ProviderProbe } from '@shared/providers';
 import type { ProvidersState } from './ProvidersSection';
@@ -63,6 +65,9 @@ export interface SettingsHandlers {
   // Subagents page: the list it showed and the list it wants; the host applies only the difference to the shared file,
   // so another window's edits made meanwhile survive (relay/roster.rs). Without it the page writes the whole list
   saveSubagents?: (base: SubagentPersona[], next: SubagentPersona[]) => void;
+  // Storage tab: measure the data directory (plus what an open review needs), run a cleanup (the reply is the fresh view)
+  storage?: (detail?: StorageDetail[]) => void;
+  storageAction?: (action: StorageAction, detail?: StorageDetail[]) => void;
 }
 
 export interface SettingsEnv {
@@ -89,6 +94,8 @@ export interface SettingsShellProps {
   shared?: SharedState;
   // The built-in agent's model sources; undefined until its page asked for them
   providers?: ProvidersState;
+  // The Storage tab's last measurement; undefined until the page asked for it
+  storage?: StorageState;
   // Per agent, the configOptions of its latest session (the hide lists are built from these)
   controls: Partial<Record<AgentId, ConfigControl[]>>;
   // Agents whose refresh is in flight: the button spins and ignores clicks while the cached page stays in place
@@ -111,11 +118,13 @@ export function SettingsShell(p: SettingsShellProps) {
   // Ids the rail does not show (a custom agent missing from agents.json for now) keep their saved order / off state
   const unlisted = (id: AgentId) => !p.agents.some(a => a.id === id);
   const title = page.kind === 'chatgpt' ? 'ChatGPT' : agent ? t('settings.agent.title', { agent: agent.name }) : page.kind === 'appearance' ? t('settings.appearance.title')
-    : page.kind === 'shared' ? t('settings.shared.title') : page.kind === 'subagents' ? t('settings.nav.subagents') : t('settings.general.title');
+    : page.kind === 'shared' ? t('settings.shared.title') : page.kind === 'subagents' ? t('settings.nav.subagents')
+    : page.kind === 'storage' ? t('storage.title') : t('settings.general.title');
   const busy = !!agent && !!p.refreshing?.has(agent.id);
-  const action = (agent || page.kind === 'chatgpt' || page.kind === 'shared') && (
+  const action = (agent || page.kind === 'chatgpt' || page.kind === 'shared' || page.kind === 'storage') && (
     <IconButton title={t('common.refresh')} aria-label={t('common.refresh')} aria-busy={busy || undefined} disabled={busy}
-      onClick={() => page.kind === 'chatgpt' ? p.on.refreshChatgpt?.() : page.kind === 'shared' ? p.on.shared?.() : agent && p.on.refreshAgent(agent.id)}>
+      onClick={() => page.kind === 'chatgpt' ? p.on.refreshChatgpt?.() : page.kind === 'shared' ? p.on.shared?.() : page.kind === 'storage' ? p.on.storage?.()
+        : agent && p.on.refreshAgent(agent.id)}>
       <RefreshCw strokeWidth={1.5} className={cn(busy && 'animate-spin live-spin')} />
     </IconButton>
   );
@@ -144,6 +153,7 @@ export function SettingsShell(p: SettingsShellProps) {
                   {page.kind === 'general' && <General settings={p.settings} agents={p.agents} on={p.on} />}
                   {page.kind === 'appearance' && <AppearancePage settings={p.settings} appearance={p.appearance} on={p.on} />}
                   {page.kind === 'shared' && <SharedPage state={p.shared} agents={p.agents} on={p.on} />}
+                  {page.kind === 'storage' && <StoragePage state={p.storage} env={p.env} on={p.on} />}
                   {page.kind === 'subagents' && <SubagentsPage settings={p.settings} agents={p.agents} controls={p.controls} on={p.on} />}
                   {agent && (
                     <AgentPage

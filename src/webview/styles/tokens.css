@@ -59,6 +59,14 @@
   /* Model panel accents: Fast's bolt and the ultra effort tier (Codex `ultra`), one quiet tint each */
   --fast: #f0b440;
   --ultra: #b3a2f5;
+  /* Storage tab usage bar (settings/StoragePage.tsx): four categorical hues in a fixed order plus a neutral "other",
+     validated as a set for CVD and normal-vision separation against each theme's card surface (dataviz validator,
+     2026-10-15). The light steps sit under 3:1 on white, so the legend always labels each segment with its size */
+  --storage-sessions: #3987e5;
+  --storage-attachments: #d95926;
+  --storage-agent-logs: #199e70;
+  --storage-reclaimable: #c98500;
+  --storage-other: color-mix(in srgb, var(--fg-1) 28%, var(--bg-1));
   --diff-add: color-mix(in srgb, var(--ok) 6%, var(--bg-code));
   --diff-del: color-mix(in srgb, var(--danger) 8%, var(--bg-code));
   --diff-number-width: 3.7ch;
@@ -270,6 +278,10 @@
   --warn: #9a6700;
   --danger: #cf222e;
   --fast: #b7791f;
+  --storage-sessions: #2a78d6;
+  --storage-attachments: #eb6834;
+  --storage-agent-logs: #1baf7a;
+  --storage-reclaimable: #eda100;
   --ultra: #6b52c9;
   --brand: #b7791f;
   --brand-fg: #ffffff;
@@ -341,6 +353,10 @@
   --ctl-w: 168px;
   --num-w: 64px;
   --dot: 6px;
+  /* Storage tab: the usage bar's height and the surface gap between its segments; a review list's fixed height */
+  --storage-bar: 8px;
+  --storage-gap: 2px;
+  --storage-list: calc(var(--setting-row-detail) * 6);
 }
 
 /* Tailwind theme mapping: class names → the tokens above */
@@ -354,6 +370,11 @@
   --color-bg-0: var(--bg-0);
   --color-bg-1: var(--bg-1);
   --color-bg-2: var(--bg-2);
+  --color-storage-sessions: var(--storage-sessions);
+  --color-storage-attachments: var(--storage-attachments);
+  --color-storage-agent-logs: var(--storage-agent-logs);
+  --color-storage-reclaimable: var(--storage-reclaimable);
+  --color-storage-other: var(--storage-other);
   --color-code: var(--bg-code);
   --color-card: var(--card-bg);
   --color-card-line: var(--card-line);

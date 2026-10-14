@@ -91,3 +91,22 @@ export interface StorageOutcome {
   skipped: { id: string; reason: string }[];
   freed: number;
 }
+
+// Decimal units, as Finder reads sizes (1 KB = 1000 bytes): whole numbers from 10 of a unit up, one decimal below
+export function formatBytes(n: number, locale = 'en'): string {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'] as const;
+  let v = Math.max(0, n);
+  let i = 0;
+  while (v >= 1000 && i < units.length - 1) {
+    v /= 1000;
+    i++;
+  }
+  // Rounding must not print 10.0 (9.96 of a unit) or 1000 (999.6 of a unit): the first goes whole, the second carries over
+  if (i > 0 && v < 10 && Math.round(v * 10) / 10 >= 10) v = 10;
+  if (v >= 999.5 && i < units.length - 1) {
+    v /= 1000;
+    i++;
+  }
+  const digits = i === 0 || v >= 10 ? 0 : 1;
+  return `${new Intl.NumberFormat(locale, { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(v)} ${units[i]}`;
+}
