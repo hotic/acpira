@@ -64,6 +64,66 @@ export async function collectDrafts(dt: DataTransfer, cwd: string): Promise<Coll
   return out;
 }
 
+// `<img src>` values of a paste's HTML flavour. A selection copied from a web page or from this transcript carries its images only there,
+// beside the text in text/plain. Parsed with a pattern rather than DOMParser so nothing in the markup is ever instantiated
+const IMG_SRC = /<img\b[^>]*?\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/gi;
+const ENTITIES: Record<string, string> = { amp: '&', quot: '"', apos: "'", '#39': "'", lt: '<', gt: '>' };
+export function imageSources(dt: DataTransfer): string[] {
+  const html = dt.getData('text/html');
+  if (!html) return [];
+  const found = Array.from(html.matchAll(IMG_SRC), m => (m[1] ?? m[2] ?? m[3] ?? '').replace(/&(amp|quot|apos|#39|lt|gt);/g, (_, e: string) => ENTITIES[e]!).trim());
+  return [...new Set(found.filter(Boolean))];
+}
+
+// The text a paste should type. A file copied in Finder also puts its name in text/plain, and a browser's "Copy image" may put the image's
+// address there; neither is message text, so either comes back empty
+export function pastedText(dt: DataTransfer): string {
+  const text = dt.getData('text/plain');
+  const lines = text.split(/\r\n|\r|\n/).map(l => l.trim()).filter(Boolean);
+  if (!lines.length) return text;
+  const names = new Set(Array.from(dt.files, f => f.name));
+  if (names.size && lines.every(l => names.has(l.split(/[\\/]/).pop()!))) return '';
+  if (lines.length === 1 && imageSources(dt).includes(lines[0]!)) return '';
+  return text;
+}
+
+// Image drafts for `imageSources`: data: URLs decode in place (the CSP's connect-src keeps fetch() from them), anything else is fetched,
+// which reaches this webview's own resources (sent images in the blob store) and quietly skips what the CSP or the network refuses
+export async function collectImageSources(sources: string[]): Promise<Collected> {
+  const out: Collected = { drafts: [], refused: [] };
+  for (const src of sources) {
+    const image = await readImageSource(src).catch(() => undefined);
+    if (!image) continue;
+    if (image.bytes > MAX_IMAGE_BYTES) { out.refused.push(t('attach.tooBigImage', { name: t('common.image'), mb: MAX_IMAGE_BYTES >> 20 })); continue; }
+    out.drafts.push({ kind: 'image', mimeType: image.mimeType, data: image.data });
+  }
+  return out;
+}
+
+async function readImageSource(src: string): Promise<{ mimeType: string; data: string; bytes: number } | undefined> {
+  const accepted = (type: string) => (type.startsWith('image/') ? imageMimeOf(`.${type.slice(6)}`) : undefined);
+  const inline = /^data:([^;,]*)((?:;[^;,]*)*?)(;base64)?,(.*)$/is.exec(src);
+  if (inline) {
+    const [, type = '', , base64, payload = ''] = inline;
+    const mimeType = accepted(type.toLowerCase());
+    if (!mimeType) return undefined;
+    // Base64 size without decoding; a percent-encoded payload is re-encoded
+    if (base64) return { mimeType, data: payload, bytes: Math.floor(payload.length * 3 / 4) };
+    const raw = decodeURIComponent(payload);
+    return { mimeType, data: btoa(raw), bytes: raw.length };
+  }
+  if (!/^(https?|blob):/i.test(src)) return undefined;
+  const response = await fetch(src);
+  if (!response.ok) return undefined;
+  const blob = await response.blob();
+  let path = src;
+  try { path = new URL(src).pathname; } catch { /* keep the raw source */ }
+  const mimeType = accepted(blob.type.toLowerCase()) ?? imageMimeOf(path);
+  if (!mimeType) return undefined;
+  if (blob.size > MAX_IMAGE_BYTES) return { mimeType, data: '', bytes: blob.size };
+  return { mimeType, data: await base64Of(blob), bytes: blob.size };
+}
+
 // file: URIs of a workbench drag, from the first format that yields any. Non-file resources (remote / virtual file systems) are skipped: the host reads real paths only
 export function workbenchUris(dt: DataTransfer): string[] {
   const read = (type: string) => { try { return dt.getData(type); } catch { return ''; } };
@@ -121,7 +181,7 @@ export function nameOf(uri: string, cwd: string): string {
   return inside ? path.slice(root.length) : path.split('/').pop() || path;
 }
 
-function base64Of(f: File): Promise<string> {
+function base64Of(f: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
     r.onload = () => resolve((r.result as string).split(',', 2)[1] ?? '');
