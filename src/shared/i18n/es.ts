@@ -629,8 +629,6 @@ export const es = {
   'subagents.back': 'Volver a la conversación',
   'subagents.root': 'Sesión principal',
   'subagents.task': 'Tarea asignada',
-  'subagents.taskExpand': 'Mostrar la tarea completa',
-  'subagents.taskCollapse': 'Contraer la tarea',
   'subagents.result': 'Resultado',
   'subagents.untitled': 'Subagente',
   'subagents.descendants': '{n} subagentes',

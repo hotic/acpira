@@ -616,8 +616,6 @@
   "subagents.back": "会話に戻る",
   "subagents.root": "メインセッション",
   "subagents.task": "割り当てたタスク",
-  "subagents.taskExpand": "タスク全体を表示",
-  "subagents.taskCollapse": "タスクを折りたたむ",
   "subagents.result": "結果",
   "subagents.untitled": "サブエージェント",
   "subagents.descendants": "サブエージェント {n} 個",

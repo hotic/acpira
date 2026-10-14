@@ -641,8 +641,6 @@ export const en = {
   'subagents.back': 'Back to conversation',
   'subagents.root': 'Main session',
   'subagents.task': 'Assigned task',
-  'subagents.taskExpand': 'Show the whole task',
-  'subagents.taskCollapse': 'Collapse the task',
   'subagents.result': 'Result',
   'subagents.untitled': 'Subagent',
   'subagents.descendants': '{n} subagents',
