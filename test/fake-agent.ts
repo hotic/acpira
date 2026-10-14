@@ -629,6 +629,13 @@ const app = acp.agent({ name: 'fake-agent' })
       await send({ sessionUpdate: 'tool_call_update', toolCallId: 'ak1', rawInput: { agent: 'fake-review', prompt } });
       return { stopReason: 'end_turn' };
     }
+    // "relay-call-air:<prompt>" → what Acpira really receives from claude-agent-acp 0.83.0, being an AIR client: the first
+    // tool_call names the tool with no rawInput at all, and the input arrives once complete, in a title-less refinement
+    if (text.startsWith('relay-call-air:')) {
+      await send({ sessionUpdate: 'tool_call', toolCallId: 'ak1', title: 'mcp__acpira__ask_agent', kind: 'other', status: 'pending' });
+      await send({ sessionUpdate: 'tool_call_update', toolCallId: 'ak1', rawInput: { agent: 'fake-review', prompt: text.slice('relay-call-air:'.length) } });
+      return { stopReason: 'end_turn' };
+    }
     if (text.startsWith('relay-call-failed:')) {
       const rawInput = { agent: 'fake-review', prompt: text.slice('relay-call-failed:'.length) };
       await send({ sessionUpdate: 'tool_call', toolCallId: 'ak1', title: 'mcp__acpira__ask_agent', kind: 'other', status: 'in_progress', rawInput });
