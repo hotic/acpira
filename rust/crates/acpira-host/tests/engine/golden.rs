@@ -137,6 +137,30 @@ fn a_finished_tool_leaves_live_activity_empty_while_latest_step_keeps_it() {
   assert!(latest_step(&turns(json!([{ "role": "agent", "blocks": [] }]))).is_none());
 }
 
+// codex-acp left a call pending for good and the model went on; the row followed the dead call for half an hour
+#[test]
+fn an_open_tool_the_model_moved_past_no_longer_names_the_activity() {
+  let mut s = NormalizeState::new(vec![]);
+  let call = |id: &str, cmd: &str, status: &str| {
+    json!({ "sessionUpdate": "tool_call", "toolCallId": id, "title": cmd, "kind": "execute", "status": status, "rawInput": { "command": cmd } })
+  };
+  apply_update(&mut s, &call("stuck", "rm -rf /tmp/x && pnpm build", "pending"));
+  let stuck = live_activity(&s.turns).unwrap().label;
+  // Parallel siblings of one step: the still-open one keeps counting after the newer one finished
+  apply_update(&mut s, &call("quick", "ls", "in_progress"));
+  apply_update(&mut s, &json!({ "sessionUpdate": "tool_call_update", "toolCallId": "quick", "status": "completed" }));
+  assert_eq!(live_activity(&s.turns).unwrap().label, stuck);
+  // New model output, then a newer step: the stuck call is history
+  apply_update(&mut s, &json!({ "sessionUpdate": "agent_thought_chunk", "content": { "type": "text", "text": "Retry without rm." } }));
+  apply_update(&mut s, &call("next", "pnpm typecheck", "in_progress"));
+  let next = live_activity(&s.turns).unwrap().label;
+  assert_ne!(next, stuck);
+  apply_update(&mut s, &json!({ "sessionUpdate": "tool_call_update", "toolCallId": "next", "status": "completed" }));
+  assert!(live_activity(&s.turns).is_none());
+  assert_eq!(latest_step(&s.turns).unwrap().label, next);
+  assert_eq!(activity_of(&s.turns).unwrap().label, "Working");
+}
+
 fn draft(j: Value) -> Draft {
   serde_json::from_value(j).unwrap()
 }
