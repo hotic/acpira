@@ -115,6 +115,8 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
       `font-src ${this.webview.cspSource}`,
       `script-src 'nonce-${nonce}' 'wasm-unsafe-eval'`,
       "worker-src blob:",
+      // The attention chime is a WAV synthesized in the page and played from a blob: URL (effects/chime.ts)
+      "media-src blob:",
     ].join('; ');
     return `<!doctype html>
 <html lang="${this.opts.locale()}">
