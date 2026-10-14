@@ -3,7 +3,7 @@ import type { DiffLine, DiffSource } from '@shared/transcript';
 import { cn } from '../ui/cn';
 import { diffCopyText, plainDiffRows, type CodeDiffRow } from './codeDiff';
 import { requestCodeHighlight, requestDiffHighlight } from './diffHighlight';
-import { codeLanguage, fenceLanguage, type CodeToken, type Language } from './codeSyntax';
+import { codeLanguage, fenceLanguage, type CodeToken, type Language } from './codeLanguage';
 import { OutputCopy } from './OutputCopy';
 import { DiffSourceContext } from './fileLinks';
 import { t } from '../i18n';

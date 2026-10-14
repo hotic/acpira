@@ -1,4 +1,3 @@
-import { PRESETS, createInstance, setFrameRate, setInstancePaused, type Instance } from 'img-fx';
 import { IMAGE_GEN } from './presets';
 import { composite, imageGenColors, type RGB, type RGBA } from './imageGenPalette';
 
@@ -26,17 +25,6 @@ export function readImageGenColors(el: HTMLElement) {
   const cs = getComputedStyle(el);
   const rgb = (name: string) => parseColor(cs.getPropertyValue(name)).slice(0, 3) as RGB;
   return imageGenColors(composite(layers), rgb('--fg-1'), rgb('--image-gen-peak'));
-}
-
-// img-fx shares one WebGL renderer across instances and disposes it with the last one, so every card would pay the
-// context creation and the synchronous shader link again. A paused 1px instance keeps the renderer alive once the first
-// card has built it; a paused instance is skipped by the render loop and the GL canvas sizing, so it costs no frames.
-let keeper: Instance | undefined;
-export function keepImageGenRenderer() {
-  if (keeper) return;
-  setFrameRate(IMAGE_GEN.fps);
-  keeper = createInstance({ canvas: document.createElement('canvas'), cssWidth: 1, cssHeight: 1, preset: PRESETS[IMAGE_GEN.preset].modes.dark });
-  setInstancePaused(keeper, true);
 }
 
 const hash = (x: number, y: number) => { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); };

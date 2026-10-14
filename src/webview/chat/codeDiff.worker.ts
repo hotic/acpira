@@ -1,5 +1,6 @@
 import type { DiffLine, DiffSource } from '@shared/transcript';
-import { highlightDiff, type CodeDiffRow } from './codeDiff';
+import type { CodeDiffRow } from './codeDiff';
+import { highlightDiff } from './codeDiffHighlight';
 import { tokenizeCode, type CodeToken, type Language } from './codeSyntax';
 
 export type HighlightRequest =
