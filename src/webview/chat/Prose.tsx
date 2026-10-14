@@ -2,13 +2,13 @@ import { cloneElement, createContext, isValidElement, memo, useContext, useEffec
 import { Block, Streamdown, defaultRehypePlugins, parseMarkdownIntoBlocks, type BlockProps, type Components, type ExtraProps } from 'streamdown';
 import { cjk } from '@streamdown/cjk';
 import { createMathPlugin } from '@streamdown/math';
-import { mermaid as mermaidDiagram } from '@streamdown/mermaid';
 import type { ImageRef, TextBlock } from '@shared/transcript';
 import { STREAM_MOTION, useSmoothText, useStreamMotion, type StreamMotion } from './streamMotion';
 import { CodeBlock } from './CodeBlock';
 import { InlineFileCode, Link } from './Link';
 import { decodeLocalImageSrc, rewriteFileHrefs, sameImageSource } from './fileLinks';
 import { AgentImage } from './AgentImage';
+import { mermaidDiagram } from './mermaidPlugin';
 import { useTheme } from '../look';
 
 // Full Markdown via streamdown: GFM + KaTeX + Mermaid, streaming-aware (remend repairs incomplete syntax mid-stream).

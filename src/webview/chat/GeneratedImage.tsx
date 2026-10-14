@@ -1,12 +1,11 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
-import { ImageGeneration } from 'img-fx';
 import type { ImageRef, ToolCallBlock } from '@shared/transcript';
 import { isShowImageTool, toolImages } from '@shared/imageTools';
 import { useAppearance } from '../appearance';
 import { useTheme } from '../look';
 import { t } from '../i18n';
 import { IMAGE_GEN } from '../effects/presets';
-import { dissolveIn, keepImageGenRenderer, readImageGenColors } from '../effects/imageGen';
+import { dissolveIn, readImageGenColors } from '../effects/imageGen';
 import { hasWebGL } from '../effects/webgl';
 import { cn } from '../ui/cn';
 import { AgentImage } from './AgentImage';
@@ -99,24 +98,41 @@ function GenerationCard({ image }: { image?: ImageRef }) {
   );
 }
 
+// img-fx (with three.js) is fetched by the first card, not with the page; later cards find it loaded
+type Renderer = typeof import('../effects/imageGenRenderer');
+let renderer: Promise<Renderer> | undefined;
+const loadRenderer = () => renderer ??= import('../effects/imageGenRenderer');
+
 // img-fx's mosaic on the card's own colours. It mounts on the next idle slot rather than with the row: the first card
 // in a webview builds the shared WebGL renderer and links its shader synchronously, which should not land in the same
-// frame as the transcript update; the keeper then holds the renderer for every later card.
+// frame as the transcript update; the keeper then holds the renderer for every later card. The module loads while the
+// slot is awaited, so the mosaic still fades in at the idle slot (or as soon as the module is there, if that is later)
 function MosaicLoader() {
   const host = useRef<HTMLDivElement>(null);
   const theme = useTheme();
-  const [ready, setReady] = useState(false);
+  const [fx, setFx] = useState<Renderer>();
   const [colors, setColors] = useState<ReturnType<typeof readImageGenColors>>();
-  useEffect(() => idle(() => { keepImageGenRenderer(); setReady(true); }), []);
-  useLayoutEffect(() => { if (ready && host.current) setColors(readImageGenColors(host.current)); }, [ready, theme]);
+  useEffect(() => {
+    let alive = true;
+    const loaded = loadRenderer();
+    const cancel = idle(() => {
+      void loaded.then(m => {
+        if (!alive) return;
+        m.keepImageGenRenderer();
+        setFx(m);
+      }, () => {});
+    });
+    return () => { alive = false; cancel(); };
+  }, []);
+  useLayoutEffect(() => { if (fx && host.current) setColors(readImageGenColors(host.current)); }, [fx, theme]);
   return (
     <div ref={host} className="size-full">
-      {colors && (
+      {fx && colors && (
         // img-fx's own stylesheet is unlayered, so its inline-block root only yields to an important utility
-        <ImageGeneration preset={IMAGE_GEN.preset} pixelScale={IMAGE_GEN.pixelScale} theme={theme} cardBg={colors.cardBg} colors={colors.colors}
+        <fx.ImageGeneration preset={IMAGE_GEN.preset} pixelScale={IMAGE_GEN.pixelScale} theme={theme} cardBg={colors.cardBg} colors={colors.colors}
           className="block! size-full fade-in">
           <div className="size-full" />
-        </ImageGeneration>
+        </fx.ImageGeneration>
       )}
     </div>
   );
