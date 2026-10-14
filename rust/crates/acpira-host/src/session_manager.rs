@@ -51,8 +51,6 @@ use crate::util::{clip, local_stamp, ms_of_iso, now_iso, random_uuid};
 
 const TRASH_TTL: Duration = Duration::from_secs(30);
 const PROBE_INTERVAL: Duration = Duration::from_secs(10);
-/// How long the first probe waits for the login shell's PATH before going ahead with the inherited one
-const LOGIN_PATH_WAIT: Duration = Duration::from_millis(2500);
 /// Focus-triggered login shell re-runs are at least this far apart
 const LOGIN_PATH_REFRESH: Duration = Duration::from_secs(30);
 // How long shutdown waits for agent processes to close and exit; shells escalate to SIGTERM after 3 s, so this stays below it
@@ -239,6 +237,8 @@ pub struct SessionManager {
   yielding: parking_lot::Mutex<HashSet<String>>,
   // In-app agent installs (`acp/agents/installer.rs`), pushed to every webview as `agentInstalls`
   installs: Arc<crate::acp::agents::installer::Installs>,
+  // Set once the first probe pass has run, which may be after `init` returned (it follows the login shell)
+  first_probe: tokio::sync::watch::Sender<bool>,
   me: Weak<SessionManager>,
 }
 
@@ -310,6 +310,7 @@ impl SessionManager {
         leases,
         yielding: Default::default(),
         installs,
+        first_probe: tokio::sync::watch::Sender::new(false),
         me: me.clone(),
       }
     });
@@ -437,22 +438,43 @@ impl SessionManager {
       st.prefs = prefs;
       st.categories = categories;
     }
-    // The login shell's PATH decides where CLIs are found; a slow rc file only delays the first pass that long,
-    // the rest of the run re-probes once it is done
-    if tokio::time::timeout(LOGIN_PATH_WAIT, login_path::ready()).await.is_err() {
+    // The login shell's PATH decides where CLIs are found, and running the user's rc files takes a while (~0.6 s for an
+    // oh-my-zsh setup, up to `FIRST_WAIT`). Nothing the first window shows needs it: a stored session is shown from its
+    // record and a fresh one before its agent starts, so init (and with it the engine's handshake) does not wait for the
+    // shell. Agent lookups wait for the run instead (`AgentRegistry::locate`) and the first probe pass follows it in the
+    // background; until then `available` is unknown, which pages treat as available. With no shell to wait for (turned
+    // off, or already run in this process) the first pass is cheap and still lands before init returns
+    login_path::start();
+    if login_path::is_ready() {
+      self.log_login_path();
+      self.registry().probe_all().await;
+      self.first_probe.send_replace(true);
+      self.schedule_probe();
+    } else {
       let me = self.me.clone();
       tokio::spawn(async move {
-        login_path::ready().await;
-        if let Some(m) = me.upgrade() {
+        let in_time = login_path::ready_within_first_wait().await;
+        let Some(m) = me.upgrade() else { return };
+        if in_time {
           m.log_login_path();
-          m.reprobe().await;
+        } else {
+          // A slow rc file: the first pass goes ahead with the inherited PATH and the run's directories count once it ends
+          let me = m.me.clone();
+          tokio::spawn(async move {
+            login_path::ready().await;
+            if let Some(m) = me.upgrade() {
+              m.log_login_path();
+              m.reprobe().await;
+            }
+          });
         }
+        m.registry().probe_all().await;
+        m.first_probe.send_replace(true);
+        // Init went out before this first pass, which notifies nobody of itself
+        m.emit_agents();
+        m.schedule_probe();
       });
-    } else {
-      self.log_login_path();
     }
-    self.registry().probe_all().await;
-    self.schedule_probe();
     if let Some(a) = self.deps.accounts.clone() {
       tokio::spawn(async move {
         a.sync_local(None).await;
@@ -462,8 +484,15 @@ impl SessionManager {
     if let Some(l) = self.deps.local_accounts.clone() {
       tokio::spawn(async move { l.refresh(None, false).await });
     }
+    // Warming starts now either way: its binary lookup waits for the shell itself, and the first session takes the
+    // process while it is still warming (`AgentPool::take`)
     let agent = self.default_agent();
     self.warm(&agent, None);
+  }
+
+  /// Resolves once the first probe pass has run: `init` may return before it (see there)
+  pub async fn agents_probed(&self) {
+    let _ = self.first_probe.subscribe().wait_for(|done| *done).await;
   }
 
   fn default_agent(&self) -> String {

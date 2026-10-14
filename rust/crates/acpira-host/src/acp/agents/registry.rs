@@ -508,6 +508,9 @@ impl AgentRegistry {
 
   async fn locate(&self, id: &str) -> Option<String> {
     let def = self.defs.get(id)?;
+    // CLIs installed through rc files (an npm prefix, nvm, mise …) are only on the login shell's PATH: every lookup
+    // waits for its first run (bounded), so the engine's startup does not have to
+    super::login_path::ready_within_first_wait().await;
     // A managed install is read fresh on every pass: `current` moves when a new version lands
     let mut candidates = def.candidates.clone();
     if let Some(r) = def.release {

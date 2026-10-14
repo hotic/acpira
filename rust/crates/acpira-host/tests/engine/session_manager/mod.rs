@@ -127,8 +127,10 @@ impl Mgr {
     Mgr { m, v, events, logs, toasts, terminals, store, attentions }
   }
 
+  // The first probe pass may follow the login shell after `init` returns; tests read availability right after this
   pub async fn init(&self) {
     self.m.init().await;
+    self.m.agents_probed().await;
   }
 
   pub fn active_id(&self) -> Option<String> {
