@@ -237,7 +237,14 @@ fn setup(server: &Server, session: &Session, params: &Value, mcp: &[crate::mcp::
   let mut model = model.clone();
   let cost = crate::catalog::complete(&mut model, &server.catalog.get());
   let skills = skills::scan(&places);
-  let (tools, mut specs) = if skills.is_empty() { (modes::TOOLS, tools::specs(modes::TOOLS)) } else { (modes::TOOLS_WITH_SKILL, tools::specs(modes::TOOLS_WITH_SKILL)) };
+  // Chunk compaction brings its history tools; the set is fixed for the turn like the rest
+  let tools = match (config.chunked(), skills.is_empty()) {
+    (false, true) => modes::TOOLS,
+    (false, false) => modes::TOOLS_WITH_SKILL,
+    (true, true) => modes::TOOLS_CHUNKED,
+    (true, false) => modes::TOOLS_CHUNKED_WITH_SKILL,
+  };
+  let mut specs = tools::specs(tools);
   if !skills.is_empty() {
     specs.push(tools::skill::spec(&skills));
   }
@@ -294,6 +301,33 @@ fn summary_call<'a>(server: &Server, s: &'a Setup) -> compact::Call<'a> {
   compact::Call { http: server.http.clone(), model: &s.model, writers }
 }
 
+/// Compact the history the way the settings page picked, read at the moment: chunks first when picked (no model
+/// call, `chunk.rs`), the summary when chunking found nothing to fold (except on `/compact`, which then has nothing to
+/// do) or could not read the log. Ok(Some(chunked)) when the history changed
+async fn compact_history(server: &Server, session: &Session, s: &Setup, reason: Reason) -> Result<Option<bool>, String> {
+  if server.config.get().chunked() {
+    let context = s.model.context.unwrap_or(DEFAULT_CONTEXT);
+    let usable = compact::usable(context, s.model.output);
+    let limits = crate::chunk::Limits {
+      usable,
+      goal: match reason {
+        Reason::Manual => None,
+        Reason::Threshold => Some(s.policy.threshold(context, s.model.output)),
+        Reason::Overflow => Some(usable),
+      },
+      force_fold: reason == Reason::Overflow,
+      fixed: approx(&s.system, &[], &s.specs),
+    };
+    match crate::chunk::run(server, session, reason, &limits) {
+      Ok(true) => return Ok(Some(true)),
+      Ok(false) if reason == Reason::Manual => return Ok(None),
+      Ok(false) => {}
+      Err(e) => eprintln!("[acpira agent] chunk compaction failed, summarizing instead: {e}"),
+    }
+  }
+  compact::run(server, session, &summary_call(server, s), reason).await.map(|done| done.then_some(false))
+}
+
 /// The context after a compaction, as an estimate until the next call reports it
 fn report_usage(server: &Server, session: &Session, s: &Setup) {
   let used = approx(&s.system, &session.state.lock().items, &s.specs);
@@ -333,9 +367,9 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
   let text = prompt_text(prompt);
   // /compact summarizes the history and ends the turn; nothing of it enters the history
   if skills::is_compact(&text) {
-    match compact::run(server, session, &summary_call(server, &s), Reason::Manual).await {
-      Ok(true) => report_usage(server, session, &s),
-      Ok(false) => server.update(&session.id, json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "Nothing to compact yet." } })),
+    match compact_history(server, session, &s, Reason::Manual).await {
+      Ok(Some(_)) => report_usage(server, session, &s),
+      Ok(None) => server.update(&session.id, json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "Nothing to compact yet." } })),
       Err(_) => {}
     }
     return Ok(Stop::EndTurn);
@@ -414,8 +448,10 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     // Model tool-call id → ACP tool call id: providers reuse ids across calls, ACP needs them unique per session
     let mut ids: HashMap<String, String> = HashMap::new();
     let mut attempt = 0u32;
-    // A request refused for its size is compacted once and sent again
-    let mut overflowed = false;
+    // A request refused for its size is compacted and sent again: once, or twice when chunks went first and the
+    // retry still overflowed, which the summary then answers
+    let mut overflows = 0u32;
+    let mut summarized_overflow = false;
     let (reply, stop, usage, started) = loop {
       attempt += 1;
       let started = std::time::Instant::now();
@@ -470,7 +506,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       log_request(session, &s, started, attempt, None, None, false, Some(&e.to_string()), None);
       // Refused for its size: the provider says so, or refuses a request near the window without saying why
       let near = input_estimate >= s.model.context.unwrap_or(DEFAULT_CONTEXT) * 4 / 5;
-      let overflow = (compact::is_overflow(&e) || (near && compact::is_refusal(&e))) && !overflowed;
+      let overflow = (compact::is_overflow(&e) || (near && compact::is_refusal(&e))) && !summarized_overflow && overflows < 2;
       if !overflow && (attempt >= MAX_ATTEMPTS || !retriable(&e)) {
         return Err(describe(s.provider.display_name(), &e));
       }
@@ -484,11 +520,17 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
         st.partial_reasoning.clear();
       }
       if overflow {
-        overflowed = true;
-        // Compacted, the same step goes out again with the summary in place of the history; nothing to compact (or
-        // a failed summary) leaves the provider's refusal as the turn's error
-        match compact::run(server, session, &summary_call(server, &s), Reason::Overflow).await {
-          Ok(true) => {
+        overflows += 1;
+        // Compacted, the same step goes out again with the compacted history; nothing to compact (or a failed
+        // summary) leaves the provider's refusal as the turn's error
+        let compacted = if overflows == 1 {
+          compact_history(server, session, &s, Reason::Overflow).await
+        } else {
+          compact::run(server, session, &summary_call(server, &s), Reason::Overflow).await.map(|done| done.then_some(false))
+        };
+        match compacted {
+          Ok(Some(chunked)) => {
+            summarized_overflow = !chunked;
             request.items = session.state.lock().items.clone();
             input_estimate = approx(&request.system, &request.items, &request.tools);
             report_usage(server, session, &s);
@@ -549,7 +591,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       StopReason::Refusal => return Ok(Stop::Refusal),
       _ => Flow::Stop,
     };
-    if over && let Ok(true) = compact::run(server, session, &summary_call(server, &s), Reason::Threshold).await {
+    if over && let Ok(Some(_)) = compact_history(server, session, &s, Reason::Threshold).await {
       report_usage(server, session, &s);
     }
     match flow {
@@ -1167,6 +1209,7 @@ fn ctx_for(server: &Arc<Server>, session: &Arc<Session>, acp: &str) -> Ctx {
     jobs: session.jobs.clone(),
     search: server.config.get().web_search(),
     mcp: session.mcp.clone(),
+    history: server.session_file(&session.id),
     progress: Arc::new(move |mut u: Value| {
       u["sessionUpdate"] = "tool_call_update".into();
       u["toolCallId"] = id.clone().into();

@@ -407,7 +407,7 @@ pub enum Reason {
 }
 
 impl Reason {
-  fn wire(self) -> &'static str {
+  pub fn wire(self) -> &'static str {
     match self {
       Reason::Manual => "manual",
       Reason::Threshold => "threshold",
@@ -423,11 +423,12 @@ pub async fn run(server: &Server, session: &Session, call: &Call<'_>, reason: Re
   let context = call.model.context.unwrap_or(crate::turn::DEFAULT_CONTEXT);
   let usable = usable(context, call.model.output);
   let budget = (usable / 4).clamp(MIN_TAIL_TOKENS, MAX_TAIL_TOKENS);
-  let (items, summarized) = {
+  let (items, summarized, folded) = {
     let st = session.state.lock();
-    (st.items.clone(), st.summarized)
+    (st.items.clone(), st.summarized, st.folded)
   };
-  let first = usize::from(summarized);
+  // The summary takes in the chunks shown (`chunk.rs`), but the tail and the running turn are looked for behind them
+  let first = usize::from(summarized) + folded;
   // Inside a turn the last user item that opens a turn is its prompt (messages steered in after it are not)
   let current = if reason == Reason::Manual { None } else { (first..items.len()).rev().find(|&i| opens_turn(&items[i])) };
   let mut tail = tail_start(&items, first, budget).unwrap_or(items.len());
@@ -448,7 +449,7 @@ pub async fn run(server: &Server, session: &Session, call: &Call<'_>, reason: Re
     },
     _ => String::new(),
   });
-  let head = &items[first..tail];
+  let head = &items[usize::from(summarized)..tail];
   if head.is_empty() {
     return Ok(false);
   }
@@ -501,6 +502,9 @@ pub async fn run(server: &Server, session: &Session, call: &Call<'_>, reason: Re
     st.items = vec![summary_item(&summary, request.as_deref())];
     st.items.extend(rest);
     st.summarized = true;
+    // The chunks are in the summary now; the history tools still find them in the log
+    st.chunks.clear();
+    st.folded = 0;
     // The mode note was in what the summary replaced: the next prompt announces it again
     st.announced.clear();
   }

@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use crate::permission::{BASH, Decision, EDIT, ENGINE_MCP, MCP, Rule, path_target};
-use crate::tools::{BASH as T_BASH, EDIT as T_EDIT, EXIT_PLAN, GLOB, GREP, JOB, LIST, QUESTION, READ, SKILL, TODO, WEBFETCH, WEBSEARCH, WRITE};
+use crate::tools::{BASH as T_BASH, EDIT as T_EDIT, EXIT_PLAN, GLOB, GREP, HISTORY_GREP, HISTORY_LIST, JOB, LIST, QUESTION, READ, SKILL, TODO, WEBFETCH, WEBSEARCH, WRITE};
 
 pub const AGENT: &str = "agent";
 pub const PLAN: &str = "plan";
@@ -27,6 +27,10 @@ pub struct Mode {
 pub const TOOLS: &[&str] = &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN, WEBFETCH, WEBSEARCH, QUESTION];
 /// The same with `skill` behind them, for a session that has skills (the turn appends its spec, so it stays last)
 pub const TOOLS_WITH_SKILL: &[&str] = &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN, WEBFETCH, WEBSEARCH, QUESTION, SKILL];
+/// The same two with the history tools of chunk compaction (`chunk.rs`) behind `question`, while the settings page
+/// picks it; the other sessions' sets stay exactly as they were
+pub const TOOLS_CHUNKED: &[&str] = &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN, WEBFETCH, WEBSEARCH, QUESTION, HISTORY_GREP, HISTORY_LIST];
+pub const TOOLS_CHUNKED_WITH_SKILL: &[&str] = &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN, WEBFETCH, WEBSEARCH, QUESTION, HISTORY_GREP, HISTORY_LIST, SKILL];
 
 pub const MODES: &[Mode] = &[
   Mode {

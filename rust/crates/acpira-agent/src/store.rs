@@ -16,7 +16,8 @@
 //!   `error`
 //! - `compaction` — a summary compaction (`compact.rs`): reason, model, duration, usage and cost, then `summary`, `request` and
 //!   `tail` (how many of the latest items were kept behind it) or `error`; the view from then on is the summary item
-//!   and the tail
+//!   and the tail. With `strategy: "chunk"` (`chunk.rs`) it holds the `chunks` added or changed, `tail` and the
+//!   `budget`, and the view is the earlier summary (if any), the rendered chunks and the tail
 //! - `prune` — the tool results cleared by a prune (`calls`, the tokens freed)
 //!
 //! A line cut short by a crash is skipped when the file is read back
@@ -38,6 +39,8 @@ pub fn now_ms() -> u64 {
 
 pub struct Store {
   path: PathBuf,
+  /// How many `item` events the file holds: the ordinal the next one gets (chunks address the log by them)
+  items: std::sync::atomic::AtomicUsize,
   /// Written as the first line when the file is created
   header: Value,
   inner: parking_lot::Mutex<Inner>,
@@ -55,7 +58,17 @@ struct Inner {
 
 impl Store {
   pub fn new(path: PathBuf, id: &str, cwd: &Path) -> Store {
-    Store { path, header: json!({ "type": "session", "id": id, "cwd": cwd, "format": FORMAT }), inner: Default::default() }
+    Store { path, items: Default::default(), header: json!({ "type": "session", "id": id, "cwd": cwd, "format": FORMAT }), inner: Default::default() }
+  }
+
+  /// How many `item` events have been written
+  pub fn items_logged(&self) -> usize {
+    self.items.load(std::sync::atomic::Ordering::SeqCst)
+  }
+
+  /// The count a reopened session's file already holds (`Loaded::logged`)
+  pub fn set_items_logged(&self, n: usize) {
+    self.items.store(n, std::sync::atomic::Ordering::SeqCst);
   }
 
   pub fn path(&self) -> &Path {
@@ -146,6 +159,7 @@ impl Store {
 
   pub fn item(&self, item: &Item) {
     self.append(json!({ "type": "item", "item": item_json(item) }));
+    self.items.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
   }
 }
 
@@ -285,6 +299,35 @@ pub struct Loaded {
   pub updated_ms: u64,
   /// The first item is a compaction's summary
   pub summarized: bool,
+  /// The chunks shown in the view (`chunk.rs`), and how many items they render to after the summary
+  pub chunks: Vec<crate::chunk::Chunk>,
+  pub folded: usize,
+  /// How many `item` events the file holds
+  pub logged: usize,
+}
+
+/// Every item the log holds, as first written (a prune does not touch them), and every chunk it recorded, the latest
+/// version of each: what the history tools read and chunk compaction folds from
+pub fn history(path: &Path) -> std::io::Result<(Vec<Item>, Vec<crate::chunk::Chunk>)> {
+  let (mut items, mut chunks) = (vec![], vec![]);
+  for line in BufReader::new(File::open(path)?).lines() {
+    let Ok(line) = line else { break };
+    // Events are written with `type` first (`json!` keeps the key order); the rest is skipped unparsed
+    if !line.starts_with(r#"{"type":"item""#) && !line.starts_with(r#"{"type":"compaction""#) {
+      continue;
+    }
+    let Ok(ev) = serde_json::from_str::<Value>(&line) else { continue };
+    match ev.get("type").and_then(Value::as_str) {
+      Some("item") => items.extend(ev.get("item").and_then(item_from)),
+      Some("compaction") if ev.get("strategy").and_then(Value::as_str) == Some(crate::chunk::STRATEGY) => crate::chunk::merge(&mut chunks, chunk_list(&ev)),
+      _ => {}
+    }
+  }
+  Ok((items, chunks))
+}
+
+fn chunk_list(ev: &Value) -> Vec<crate::chunk::Chunk> {
+  ev.get("chunks").and_then(Value::as_array).into_iter().flatten().filter_map(|c| serde_json::from_value(c.clone()).ok()).collect()
 }
 
 /// Read a session file; `only_summary` skips the history for listings
@@ -322,13 +365,28 @@ pub fn load(path: &Path, only_summary: bool) -> std::io::Result<Loaded> {
         if only_summary {
           continue;
         }
+        out.logged += 1;
         out.items.push(item);
       }
       _ if only_summary => {}
       Some("update") => out.updates.extend(ev.get("update").cloned()),
-      // The view from a compaction on: its summary in front of the items the tail kept
+      // Chunks: the earlier summary, the chunks rendered as they were, the items the tail kept
+      Some("compaction") if ev.get("strategy").and_then(Value::as_str) == Some(crate::chunk::STRATEGY) => {
+        let tail = ev.get("tail").and_then(Value::as_u64).unwrap_or(0) as usize;
+        let budget = ev.get("budget").cloned().and_then(|b| serde_json::from_value(b).ok()).unwrap_or_default();
+        crate::chunk::merge(&mut out.chunks, chunk_list(&ev));
+        let rest = out.items.split_off(out.items.len().saturating_sub(tail));
+        let summary = out.summarized.then(|| out.items[0].clone());
+        let projection = crate::chunk::render(&out.chunks, budget);
+        out.folded = projection.len();
+        out.items = summary.into_iter().chain(projection).chain(rest).collect();
+      }
+      // The view from a compaction on: its summary in front of the items the tail kept; the chunks it took in are no
+      // longer shown (the history tools still find them in the log)
       Some("compaction") => {
         let Some(summary) = ev.get("summary").and_then(Value::as_str) else { continue };
+        out.chunks.clear();
+        out.folded = 0;
         let tail = ev.get("tail").and_then(Value::as_u64).unwrap_or(0) as usize;
         let rest = out.items.split_off(out.items.len().saturating_sub(tail));
         out.items = vec![crate::compact::summary_item(summary, ev.get("request").and_then(Value::as_str))];

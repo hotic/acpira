@@ -74,6 +74,15 @@ describe('providers contract', () => {
     expect(back.view.webKeys).toEqual(['jina']);
     expect(JSON.parse(readFileSync(join(data, 'providers.json'), 'utf8'))).not.toHaveProperty('webSearch');
 
+    // Compaction: chunk is written, the default summary leaves no entry
+    s.view('V', { type: 'providerAction', action: { kind: 'compaction', strategy: 'chunk' } });
+    await s.hostMsg('V', 'providers', m => m.view.compaction === 'chunk');
+    expect(JSON.parse(readFileSync(join(data, 'providers.json'), 'utf8')).compaction).toBe('chunk');
+    const beforeSummary = new Set(s.hostMsgs('V'));
+    s.view('V', { type: 'providerAction', action: { kind: 'compaction', strategy: 'summary' } });
+    await s.hostMsg('V', 'providers', m => !beforeSummary.has(m) && m.view.compaction === undefined && !m.error);
+    expect(JSON.parse(readFileSync(join(data, 'providers.json'), 'utf8'))).not.toHaveProperty('compaction');
+
     s.view('V', { type: 'providerAction', action: { kind: 'delete', id: 'deep-seek' } });
     // hostMsg scans everything received so far: the first, empty view must not stand in for the delete's reply
     await s.hostMsg('V', 'providers', m => m !== empty && m.view.providers.length === 0 && !m.error);

@@ -5,6 +5,7 @@
 pub mod bash;
 pub mod edit;
 pub mod files;
+pub mod history;
 pub mod html;
 pub mod jobs;
 pub mod mcp;
@@ -39,6 +40,8 @@ pub struct Ctx {
   pub search: web::SearchSetup,
   /// The session's MCP servers
   pub mcp: std::sync::Arc<crate::mcp::Hub>,
+  /// The session's log, which the history tools read
+  pub history: PathBuf,
 }
 
 /// A validated call, ready to describe and run
@@ -70,6 +73,9 @@ pub enum Action {
   /// what the model called (`<server>_<tool>`). `read_only` is the server's `readOnlyHint`; `images` whether the
   /// turn's model takes the images a result may hold
   Mcp { server: String, tool: String, name: String, args: Value, read_only: bool, images: bool },
+  /// The folded history of chunk compaction (`history.rs`)
+  HistoryGrep { pattern: String, chunk: Option<String>, case_sensitive: bool, limit: usize },
+  HistoryList { chunk: String, offset: usize, limit: usize },
 }
 
 /// How a call reads on the tool card and in the permission request
@@ -121,6 +127,8 @@ pub const EXIT_PLAN: &str = "exit_plan";
 pub const WEBFETCH: &str = "webfetch";
 pub const WEBSEARCH: &str = "websearch";
 pub const QUESTION: &str = "question";
+pub const HISTORY_GREP: &str = "history_grep";
+pub const HISTORY_LIST: &str = "history_list";
 
 /// The specs of these tools, in the given order (a mode's tool set). `skill` is not among them: its spec lists the
 /// session's skills (`skill::spec`), so the turn adds it when there are any
@@ -141,6 +149,8 @@ pub fn specs(names: &[&str]) -> Vec<ToolSpec> {
       WEBFETCH => Some(web::fetch_spec()),
       WEBSEARCH => Some(web::search_spec()),
       QUESTION => Some(question::spec()),
+      HISTORY_GREP => Some(history::grep_spec()),
+      HISTORY_LIST => Some(history::list_spec()),
       _ => None,
     })
     .collect()
@@ -163,6 +173,8 @@ pub fn prepare(name: &str, args: &Value, cwd: &Path) -> Result<Action, String> {
     WEBFETCH => web::prepare_fetch(args),
     WEBSEARCH => web::prepare_search(args),
     QUESTION => question::prepare(args),
+    HISTORY_GREP => history::prepare_grep(args),
+    HISTORY_LIST => history::prepare_list(args),
     other => Err(format!("Unknown tool \"{other}\". Available tools: {}.", names::ALL.join(", "))),
   }
 }
@@ -194,6 +206,9 @@ impl Action {
       Action::Fetch { url, private: true, .. } => (perm::WEB_LOCAL, url.clone()),
       Action::Search { query, .. } => (perm::WEB, query.clone()),
       Action::Mcp { server, tool, read_only, .. } => (if *read_only { perm::MCP_READ } else { perm::MCP }, format!("{server}/{tool}")),
+      // The session's own log, allowed by default
+      Action::HistoryGrep { pattern, .. } => (perm::HISTORY, pattern.clone()),
+      Action::HistoryList { chunk, .. } => (perm::HISTORY, chunk.clone()),
     }
   }
 
@@ -262,6 +277,14 @@ impl Action {
       Action::Search { query, .. } => Presentation { title: format!("Search \"{query}\""), kind: "fetch", locations: vec![], content: vec![] },
       // The name as the model called it: the engine knows `acpira_show_image` and `acpira_ask_agent` by it
       Action::Mcp { name, .. } => Presentation { title: name.clone(), kind: "other", locations: vec![], content: vec![] },
+      Action::HistoryGrep { pattern, chunk, .. } => {
+        let title = match chunk {
+          Some(c) => format!("Search history \"{pattern}\" in {c}"),
+          None => format!("Search history \"{pattern}\""),
+        };
+        Presentation { title, kind: "search", locations: vec![], content: vec![] }
+      }
+      Action::HistoryList { chunk, offset, limit } => Presentation { title: format!("Read history {chunk} lines {offset}..{}", offset + limit), kind: "read", locations: vec![], content: vec![] },
     }
   }
 
@@ -276,6 +299,8 @@ impl Action {
       Action::Skill { name, path } => skill::run(&name, &path),
       Action::Fetch { url, format, timeout_s, private } => web::fetch(&url, format, timeout_s, private, &ctx),
       Action::Search { query, count } => web::search(&query, count, &ctx.search, &ctx),
+      Action::HistoryGrep { pattern, chunk, case_sensitive, limit } => history::grep(&pattern, chunk.as_deref(), case_sensitive, limit, &ctx),
+      Action::HistoryList { chunk, offset, limit } => history::list(&chunk, offset, limit, &ctx),
       other => Output::error(format!("{other:?} cannot run synchronously")),
     }
   }

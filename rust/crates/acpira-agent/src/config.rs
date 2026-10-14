@@ -35,6 +35,11 @@ impl Config {
     self.providers.approval.as_deref().and_then(Approval::parse).unwrap_or_default()
   }
 
+  /// Chunk compaction is picked on the settings page (`chunk.rs`); otherwise the summary
+  pub fn chunked(&self) -> bool {
+    self.providers.compaction.as_deref() == Some(crate::chunk::STRATEGY)
+  }
+
   /// The search setup picked on the settings page: Jina's key when Jina is the backend and has one
   pub fn web_search(&self) -> crate::tools::web::SearchSetup {
     let jina = self.providers.web_search.as_deref() == Some("jina");

@@ -78,6 +78,7 @@ mod tests {
       jobs: Default::default(),
       search: Default::default(),
       mcp: Default::default(),
+      history: Default::default(),
     }
   }
 

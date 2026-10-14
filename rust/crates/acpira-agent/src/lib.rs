@@ -6,6 +6,7 @@
 pub mod acp;
 pub mod budget;
 pub mod catalog;
+pub mod chunk;
 pub mod compact;
 pub mod config;
 pub mod llm;

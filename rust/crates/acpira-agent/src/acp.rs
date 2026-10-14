@@ -55,6 +55,9 @@ pub struct SessionState {
   pub titled: bool,
   /// The first item is a compaction's summary (`compact.rs`)
   pub summarized: bool,
+  /// The chunks the view shows (`chunk.rs`), and how many items they render to behind the summary item
+  pub chunks: Vec<crate::chunk::Chunk>,
+  pub folded: usize,
   /// The MCP note (servers' instructions, the ones that failed) the model was last told, in a user message like the mode
   pub mcp_note: Option<String>,
   /// Messages steered into the running turn (`_session/steering`, each one's content blocks) that no model call has
@@ -302,6 +305,8 @@ impl Server {
       model: s("model").or_else(|| config.default_pick()),
       items: loaded.items.clone(),
       summarized: loaded.summarized,
+      chunks: loaded.chunks.clone(),
+      folded: loaded.folded,
       // The replay ends on this context; a window edited since is pushed by the next `push_controls`
       reported: loaded.updates.iter().rev().find(|u| u["sessionUpdate"] == "usage_update").and_then(|u| Some((u["used"].as_u64()?, u["size"].as_u64()?))),
       ..Default::default()
@@ -323,6 +328,7 @@ impl Server {
     let before = st.items.len();
     crate::turn::settle(&mut st);
     let store = Store::new(path, id, &cwd);
+    store.set_items_logged(loaded.logged);
     for item in &st.items[before..] {
       store.item(item);
     }
