@@ -1,6 +1,6 @@
 //! The built-in agent end to end: the engine drives the real `acpira agent` binary against the scripted model server.
-//! Four scenarios (an edit behind a permission card, a Plan-mode approval, a cancel before the model's first chunk, a
-//! reopen that resumes the session) each check that the request prefix stays byte for byte between two model calls
+//! Five scenarios (an edit behind a permission card, a Plan-mode approval, a question card, a cancel before the model's
+//! first chunk, a reopen that resumes the session) each check that the request prefix stays byte for byte between two model calls
 //! unless the session log records a view change. The final transcripts are golden output in
 //! test/fixtures/engine-builtin.json, which the webview suites render (ACPIRA_UPDATE_FIXTURES=1 rewrites it)
 
@@ -229,6 +229,38 @@ async fn a_plan_card_approves_and_the_same_turn_builds_it() {
   let log = std::fs::read_to_string(env.log_of(&s)).unwrap();
   assert!(!log.lines().any(|l| l.contains(r#""type":"view""#) && l.contains(r#""tools""#)), "a mode switch changed the tools\n{log}");
   env.golden(&s, "builtin-plan", &vw["turns"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_question_tool_opens_the_question_card_and_the_answers_reach_the_model() {
+  let env = Env::new();
+  let s = env.session().await;
+  env.server.push(mock::tools(&[("c1", "question", json!({ "questions": [
+    { "question": "Which file name?", "header": "Name", "options": [{ "label": "report", "description": "A generic report" }, { "label": "notes" }] },
+    { "question": "Where should it go?", "options": ["src", "docs"], "multiple": true },
+  ] }))]));
+  env.server.push(mock::text("Going with my-own-name in docs."));
+  let task = spawn_prompt(&s, "make a file");
+  let open = || agent_blocks(&view(&s)).into_iter().find(|b| b["type"] == "question" && b["outcome"].is_null());
+  until(|| open().is_some(), 10_000).await;
+  let card = open().unwrap();
+  // The labels and descriptions are the model's own; both questions take a typed answer beside the choices
+  expect_match(&card["questions"][0], json!({ "id": "q0", "title": "Name", "text": "Which file name?", "kind": "single", "other": true,
+    "options": [{ "id": "report", "label": "report", "description": "A generic report" }, { "id": "notes", "label": "notes" }] }));
+  expect_match(&card["questions"][1], json!({ "id": "q1", "text": "Where should it go?", "kind": "multiple", "other": true }));
+  let answers = serde_json::from_value(json!({ "q0": "my-own-name", "q1": ["docs"] })).unwrap();
+  s.answer_questions(card["id"].as_str().unwrap(), &answers, false);
+  task.await.unwrap();
+  let reqs = env.server.requests();
+  let msgs = reqs[1].body["messages"].as_array().unwrap();
+  assert_eq!(msgs.last().unwrap()["content"], "The user answered:\n\nQ: Which file name?\nA: my-own-name\n\nQ: Where should it go?\nA: docs");
+  let vw = view(&s);
+  let blocks = agent_blocks(&vw);
+  expect_match(blocks.iter().find(|b| b["type"] == "question").unwrap(), json!({ "outcome": "answered", "answers": { "q0": "my-own-name", "q1": ["docs"] } }));
+  expect_match(blocks.iter().find(|b| b["type"] == "tool_call").unwrap(), json!({ "verbKey": "verb.ask", "status": "completed" }));
+  expect_match(last_turn(&vw), json!({ "stop": "end_turn" }));
+  env.assert_prefix_stable(&env.log_of(&s));
+  env.golden(&s, "builtin-question", &vw["turns"]);
 }
 
 #[tokio::test(flavor = "multi_thread")]

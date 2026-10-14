@@ -2,9 +2,9 @@
 //! were given; a name that maps to exactly one tool of the current set is taken as that tool (a few times a turn, see
 //! `turn.rs`), anything else gets an error that lists the real names, so a turn never ends silently on a misspelt call
 
-use super::{BASH, EDIT, EXIT_PLAN, GLOB, GREP, JOB, LIST, READ, SKILL, TODO, WEBFETCH, WEBSEARCH, WRITE};
+use super::{BASH, EDIT, EXIT_PLAN, GLOB, GREP, JOB, LIST, QUESTION, READ, SKILL, TODO, WEBFETCH, WEBSEARCH, WRITE};
 
-pub const ALL: [&str; 13] = [READ, WRITE, EDIT, BASH, JOB, GREP, GLOB, LIST, TODO, SKILL, EXIT_PLAN, WEBFETCH, WEBSEARCH];
+pub const ALL: [&str; 14] = [READ, WRITE, EDIT, BASH, JOB, GREP, GLOB, LIST, TODO, SKILL, EXIT_PLAN, WEBFETCH, WEBSEARCH, QUESTION];
 
 /// Other names models use for the tools, already folded (lowercase, letters and digits only)
 const ALIASES: &[(&str, &[&str])] = &[
@@ -21,6 +21,7 @@ const ALIASES: &[(&str, &[&str])] = &[
   (EXIT_PLAN, &["exitplanmode", "planexit", "submitplan", "presentplan", "finishplan", "approveplan", "exitplanning"]),
   (WEBFETCH, &["fetch", "fetchurl", "urlfetch", "readurl", "openurl", "browse", "fetchpage", "getpage", "fetchwebpage", "webpage", "httpget"]),
   (WEBSEARCH, &["searchweb", "internetsearch", "searchinternet", "googlesearch", "bingsearch", "websearchtool", "searchonline", "google"]),
+  (QUESTION, &["ask", "askuser", "askquestion", "askquestions", "askuserquestion", "askuserquestions", "askfollowupquestion", "requestuserinput", "userinput", "questions", "clarify"]),
 ];
 
 #[derive(Debug, PartialEq, Eq)]

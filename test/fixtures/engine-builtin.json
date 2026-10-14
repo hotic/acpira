@@ -282,5 +282,103 @@
     "stop": "end_turn"
    }
   ]
+ },
+ {
+  "name": "builtin-question",
+  "turns": [
+   {
+    "role": "user",
+    "id": "user-1",
+    "text": "make a file",
+    "settings": {
+     "modeId": "agent",
+     "config": {
+      "model": "mock/m1"
+     }
+    }
+   },
+   {
+    "role": "agent",
+    "blocks": [
+     {
+      "type": "tool_call",
+      "id": "call-1",
+      "kind": "other",
+      "verb": "Ask",
+      "verbKey": "verb.ask",
+      "locations": [],
+      "status": "completed"
+     },
+     {
+      "type": "question",
+      "id": "q-1",
+      "toolCallId": "call-1",
+      "questions": [
+       {
+        "id": "q0",
+        "title": "Name",
+        "text": "Which file name?",
+        "kind": "single",
+        "options": [
+         {
+          "id": "report",
+          "label": "report",
+          "description": "A generic report"
+         },
+         {
+          "id": "notes",
+          "label": "notes"
+         }
+        ],
+        "other": true
+       },
+       {
+        "id": "q1",
+        "text": "Where should it go?",
+        "kind": "multiple",
+        "options": [
+         {
+          "id": "src",
+          "label": "src"
+         },
+         {
+          "id": "docs",
+          "label": "docs"
+         }
+        ],
+        "other": true
+       }
+      ],
+      "outcome": "answered",
+      "answers": {
+       "q0": "my-own-name",
+       "q1": [
+        "docs"
+       ]
+      }
+     },
+     {
+      "type": "text",
+      "markdown": "Going with my-own-name in docs.",
+      "streaming": false
+     }
+    ],
+    "usage": {
+     "input": 200,
+     "output": 20,
+     "cachedRead": 0,
+     "cachedWrite": 0,
+     "reasoning": 0,
+     "total": 220,
+     "modelCalls": 2,
+     "model": "mock/m1",
+     "context": {
+      "used": 110,
+      "size": 64000
+     }
+    },
+    "stop": "end_turn"
+   }
+  ]
  }
 ]

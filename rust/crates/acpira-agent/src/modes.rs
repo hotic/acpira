@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use crate::permission::{BASH, Decision, EDIT, Rule, path_target};
-use crate::tools::{BASH as T_BASH, EDIT as T_EDIT, EXIT_PLAN, GLOB, GREP, JOB, LIST, READ, SKILL, TODO, WEBFETCH, WEBSEARCH, WRITE};
+use crate::tools::{BASH as T_BASH, EDIT as T_EDIT, EXIT_PLAN, GLOB, GREP, JOB, LIST, QUESTION, READ, SKILL, TODO, WEBFETCH, WEBSEARCH, WRITE};
 
 pub const AGENT: &str = "agent";
 pub const PLAN: &str = "plan";
@@ -22,11 +22,11 @@ pub struct Mode {
   pub rules: &'static [(&'static str, &'static str, Decision)],
 }
 
-/// The tools every mode offers, in request order (the web tools came last, 2026-10-14, so the earlier specs kept their
-/// place)
-pub const TOOLS: &[&str] = &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN, WEBFETCH, WEBSEARCH];
-/// The same with `skill` behind them, for a session that has skills (appended, so the other specs keep their place)
-pub const TOOLS_WITH_SKILL: &[&str] = &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN, WEBFETCH, WEBSEARCH, SKILL];
+/// The tools every mode offers, in request order (the web tools came last, 2026-10-14, then `question`, so the earlier
+/// specs kept their place)
+pub const TOOLS: &[&str] = &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN, WEBFETCH, WEBSEARCH, QUESTION];
+/// The same with `skill` behind them, for a session that has skills (the turn appends its spec, so it stays last)
+pub const TOOLS_WITH_SKILL: &[&str] = &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN, WEBFETCH, WEBSEARCH, QUESTION, SKILL];
 
 pub const MODES: &[Mode] = &[
   Mode {
@@ -40,11 +40,27 @@ pub const MODES: &[Mode] = &[
     id: PLAN,
     name: "Plan",
     description: "Investigates and writes a plan for approval; changes nothing else",
+    // The plan's shape follows Cursor's plan mode: sections in a fixed order, evidence for every problem, mermaid for
+    // structure, and the steps on the to-do list before approval, so the to-do bar shows the plan's order while the user
+    // reviews it and becomes the progress of the build after approval. The plan card renders the file with the chat's
+    // Markdown (mermaid included) and takes its title from the leading `# heading`
     overlay: "Plan mode is on. Work out how to do the task, but change nothing yet.
-- Read, search and list as much as needed. Run only commands that change nothing; each one needs the user's approval.
-- The one file you may write is the plan: {plan}. Write it there, and edit it to revise.
-- The plan names the changes file by file, in order, says why, and says how the result will be checked. Keep it concrete \
-and no longer than the task needs. Leave open questions for the user in the plan, marked as such.
+- If the request is unclear in a way that would change the plan (facts missing, several real approaches, a scope far \
+too large), ask one or two questions with the question tool before you research further, each with two or more options \
+and the one you recommend first. Otherwise go ahead and state your assumptions in the plan.
+- Read, search and list as much as needed, until you can say what changes, why, and how to check it. Run only commands \
+that change nothing; each one needs the user's approval.
+- The one file you may write is the plan: {plan}. Write it there, and edit the same file to revise.
+- Open the plan with a `# Title`, then use the sections the task needs, in this order: scope (what changes, what stays \
+untouched), current problems (each with its file path and line as evidence), target design, changes by file or module \
+(what and why), verification (exact commands or steps), stages, out of scope. Say why each step is needed and what it \
+enables. Quote only the few lines of code that decide the design. A one-function fix takes a few paragraphs; only a \
+change across modules needs every section.
+- Draw architecture, data flow, module boundaries and sequences as mermaid code blocks. Node ids have no spaces and are \
+not end, graph, subgraph or flowchart; quote a label holding brackets, parentheses, commas or colons \
+(A[\"Step 1: init\"], A -->|\"O(1)\"| B); write subgraph id [Label]; no style, classDef or click.
+- Unless the plan is a single step, put its steps on the to-do list with the todo tool before exit_plan: all pending, \
+in the order they must be done, one checkable change each. Keep the list in step with the plan when you revise it.
 - When the plan is ready, call exit_plan. The user either approves it, and you then carry it out, or asks for changes.",
     rules: &[(EDIT, "*", Decision::Deny), (EDIT, "{plan}", Decision::Allow), (BASH, "*", Decision::Ask)],
   },
@@ -87,6 +103,6 @@ mod tests {
     assert_eq!(ev(BASH, "ls -la"), Decision::Ask);
     assert!(get(PLAN).overlay(plan).contains("/h/agent/sessions/s/plan.md"));
     assert!(get(AGENT).rules(plan, cwd).is_empty() && get("nope").id == AGENT);
-    assert!(TOOLS.contains(&EXIT_PLAN));
+    assert!(TOOLS.contains(&EXIT_PLAN) && TOOLS.contains(&QUESTION));
   }
 }

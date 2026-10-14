@@ -156,7 +156,7 @@ pub fn form_questions(schema: &Value, message: &str, meta: Option<&Value>, raw: 
   let keys: Vec<&String> = props.keys().filter(|k| !companions.values().any(|c| c.key == **k)).collect();
   let required: Vec<&str> =
     schema.get("required").and_then(Value::as_array).map(|r| r.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-  let allow_other = meta.and_then(|m| m.get("cognition.ai/allowOther")) == Some(&Value::Bool(true));
+  let allow_other = meta.is_some_and(allows_other);
   let lines: Vec<&str> = message.split('\n').map(str::trim).filter(|l| !l.is_empty()).collect();
   let aligned = raw.filter(|r| r.len() == keys.len());
   let mut out = vec![];
@@ -216,7 +216,7 @@ pub fn form_questions(schema: &Value, message: &str, meta: Option<&Value>, raw: 
     if let Some(sentinel) = companion.and_then(|c| c.sentinel) {
       q.options.retain(|o| o.id != sentinel);
     }
-    let prop_other = prop.get("_meta").and_then(|m| m.get("cognition.ai/allowOther")) == Some(&Value::Bool(true));
+    let prop_other = prop.get("_meta").is_some_and(allows_other);
     if q.kind != QuestionKind::Text && ptype != Some("boolean") && (allow_other || prop_other || companion.is_some()) {
       q.other = Some(true);
     }
@@ -226,6 +226,11 @@ pub fn form_questions(schema: &Value, message: &str, meta: Option<&Value>, raw: 
     out.push(q);
   }
   out
+}
+
+/// Free text beside the choices: Devin's flag, or the built-in agent's (`acpira-agent` `tools/question.rs`)
+fn allows_other(meta: &Value) -> bool {
+  ["cognition.ai/allowOther", "acpira/allowOther"].iter().any(|k| meta.get(*k) == Some(&Value::Bool(true)))
 }
 
 /// Grok's question request → questions keyed by question text
