@@ -125,13 +125,18 @@ pub fn is_refusal(e: &LlmError) -> bool {
   matches!(e, LlmError::Http { status: 400 | 413 | 422, .. } | LlmError::Rejected(_))
 }
 
+/// A user message that opens a turn: a prompt (a summary counts), not a message steered into a running turn
+fn opens_turn(item: &Item) -> bool {
+  matches!(item, Item::User(_)) && !item.is_steer()
+}
+
 /// The items whose results a prune clears (indices), by OpenCode's rule
 pub fn prune_plan(items: &[Item]) -> Vec<usize> {
   let (mut turns, mut total, mut freed) = (0usize, 0u64, 0u64);
   let mut out = vec![];
   for (i, item) in items.iter().enumerate().rev() {
     match item {
-      Item::User(_) => turns += 1,
+      Item::User(_) if opens_turn(item) => turns += 1,
       Item::ToolResult { name, content, is_error, .. } if turns >= TAIL_TURNS && !*is_error && !PRUNE_PROTECTED.contains(&name.as_str()) => {
         // Everything older was cleared by an earlier prune
         if content == PRUNED {
@@ -186,7 +191,7 @@ pub fn apply_prune(items: &mut [Item], calls: &[String]) {
 /// nothing fits, or when the tail would be the whole conversation: then everything is summarized. `first` is the index
 /// of the first real item (1 behind a summary item)
 pub fn tail_start(items: &[Item], first: usize, budget: u64) -> Option<usize> {
-  let starts: Vec<usize> = (first..items.len()).filter(|&i| matches!(items[i], Item::User(_))).collect();
+  let starts: Vec<usize> = (first..items.len()).filter(|&i| opens_turn(&items[i])).collect();
   let recent = &starts[starts.len().saturating_sub(TAIL_TURNS)..];
   let mut total = 0u64;
   let mut keep: Option<usize> = None;
@@ -226,17 +231,22 @@ pub fn summary_item(summary: &str, request: Option<&str>) -> Item {
 /// The longest request text carried verbatim behind a summary; a longer one (a pasted file) is cut, with a note
 const REQUEST_CHARS: usize = 32 * 1024;
 
-/// The running turn's prompt as `summary_item` carries it: its text parts, images left out, cut to `REQUEST_CHARS`
-fn request_text(item: &Item) -> Option<String> {
-  let Item::User(parts) = item else { return None };
-  let text: Vec<&str> = parts
+/// The running turn's prompt as `summary_item` carries it, with the messages the user steered in after it that the
+/// summary took in too (`turn` runs from the prompt up to the kept tail): text parts, images left out, cut to
+/// `REQUEST_CHARS`
+fn request_text(turn: &[Item]) -> Option<String> {
+  let Some(Item::User(parts)) = turn.first() else { return None };
+  let mut text = parts
     .iter()
     .filter_map(|p| match p {
       Part::Text(t) => Some(t.as_str()),
       Part::Image { .. } => None,
     })
-    .collect();
-  let text = text.join("\n\n");
+    .collect::<Vec<_>>()
+    .join("\n\n");
+  for added in turn[1..].iter().filter_map(crate::steer::text_of).filter(|t| !t.is_empty()) {
+    text.push_str(&format!("\n\n[Added while the work was in progress]\n{added}"));
+  }
   let text = text.trim();
   if text.is_empty() {
     return None;
@@ -264,6 +274,9 @@ fn serialize(item: &Item) -> String {
       format!("{}\n[{} more characters left out of this excerpt; the assistant saw the whole result]", crate::budget::cut(s, TOOL_OUTPUT_CHARS), s.len() - TOOL_OUTPUT_CHARS)
     }
   };
+  if let Some(words) = crate::steer::text_of(item) {
+    return format!("[User, while the assistant was working]: {}", user_excerpt(&words));
+  }
   match item {
     Item::User(parts) => {
       let text: Vec<String> = parts
@@ -402,8 +415,8 @@ pub async fn run(server: &Server, session: &Session, call: &Call<'_>, reason: Re
     (st.items.clone(), st.summarized)
   };
   let first = usize::from(summarized);
-  // Inside a turn the last user item is its prompt
-  let current = if reason == Reason::Manual { None } else { (first..items.len()).rev().find(|&i| matches!(items[i], Item::User(_))) };
+  // Inside a turn the last user item that opens a turn is its prompt (messages steered in after it are not)
+  let current = if reason == Reason::Manual { None } else { (first..items.len()).rev().find(|&i| opens_turn(&items[i])) };
   let mut tail = tail_start(&items, first, budget).unwrap_or(items.len());
   // After an overflow the running turn is kept whole when it fits half the window, as OpenCode replays the last user
   // message: the history before it is what made the request too big, and the prompt (a pasted file, say) is still needed
@@ -476,7 +489,7 @@ pub async fn run(server: &Server, session: &Session, call: &Call<'_>, reason: Re
   };
   let kept = items.len() - tail;
   // When the summary took the running turn's prompt in, its words come back verbatim
-  let request = current.filter(|&i| i < tail).and_then(|i| request_text(&items[i]));
+  let request = current.filter(|&i| i < tail).and_then(|i| request_text(&items[i..tail]));
   {
     let mut st = session.state.lock();
     // The turn is the only writer of the history while it runs, so the snapshot is still the history
@@ -572,6 +585,17 @@ mod tests {
     assert_eq!(tail_start(&with_summary, 1, 500), Some(4));
     assert!(is_summary(&with_summary[0]) && !is_summary(&items[0]));
     assert_eq!(previous_summary(match &with_summary[0] { Item::User(p) => match &p[0] { Part::Text(t) => t, _ => "" }, _ => "" }), "old");
+  }
+
+  #[test]
+  fn a_steered_message_belongs_to_the_turn_it_was_sent_into() {
+    let steer = crate::steer::item(&[json!([{ "type": "text", "text": "use printf" }])], true, &[]);
+    let items = vec![user("a"), call("1", "bash"), result("1", "bash", 10), user("b"), call("2", "bash"), result("2", "bash", 10), steer.clone(), call("3", "bash"), result("3", "bash", 10)];
+    // Two turns, not three: a tail holding both would be the whole conversation
+    assert_eq!(tail_start(&items, 0, 100_000), None);
+    // Summarized with the prompt it followed, it comes back verbatim behind the request
+    assert_eq!(request_text(&items[3..]).as_deref(), Some("b\n\n[Added while the work was in progress]\nuse printf"));
+    assert_eq!(serialize(&steer), "[User, while the assistant was working]: use printf");
   }
 
   #[test]

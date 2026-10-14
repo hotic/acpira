@@ -19,7 +19,7 @@ Bring Grok, Devin, Kimi Code, Codex, Claude, OpenCode, Antigravity, Pi, and othe
 </picture>
 
 - **Execution history.** View file reads, code changes, and command output in the conversation.
-- **Queue, steering, and approvals.** Queue messages while an agent is working, or steer them into the running turn on Claude and Codex. Review plans and approve actions in place.
+- **Queue, steering, and approvals.** Queue messages while an agent is working, or steer them into the running turn on Claude, Codex, and the built-in agent. Review plans and approve actions in place.
 - **Cross-agent subagents.** Define subagents on other agent CLIs and summon them with `@name`. Each one works in its own CLI session and reports back to the conversation.
 - **Choose the agent. Keep the interface.** Use Grok, Devin, Kimi Code, Codex, Claude, OpenCode, DSH, Antigravity, Pi, and other ACP-compatible CLIs with shared session and model controls.
 - **A built-in agent for any model.** Connect an OpenAI- or Anthropic-compatible endpoint, such as DeepSeek, GLM, OpenRouter, or a local Ollama server, and code with it directly. No extra install is needed.

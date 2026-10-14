@@ -1,6 +1,7 @@
 //! The built-in agent end to end: the engine drives the real `acpira agent` binary against the scripted model server.
-//! Five scenarios (an edit behind a permission card, a Plan-mode approval, a question card, a cancel before the model's
-//! first chunk, a reopen that resumes the session) each check that the request prefix stays byte for byte between two model calls
+//! Six scenarios (an edit behind a permission card, a Plan-mode approval, a question card, a cancel before the model's
+//! first chunk, a reopen that resumes the session, a message steered into a command round) each check that the request
+//! prefix stays byte for byte between two model calls
 //! unless the session log records a view change. The final transcripts are golden output in
 //! test/fixtures/engine-builtin.json, which the webview suites render (ACPIRA_UPDATE_FIXTURES=1 rewrites it)
 
@@ -16,7 +17,7 @@ use acpira_host::acp::agents::registry::AgentRegistry;
 use acpira_host::acp::session::{AcpSession, SessionDeps};
 use acpira_host::store::transcript_store::{LogFn, TranscriptStore};
 
-use crate::acp_session::{agent_blocks, find_block, last_turn, spawn_prompt, view};
+use crate::acp_session::{agent_blocks, drafts, find_block, last_turn, spawn_prompt, view, wait_block};
 use crate::support::{Disposing, expect_match, until};
 
 /// A data root holding one OpenAI-compatible source on the scripted server, a project directory, and the engine's
@@ -127,7 +128,9 @@ impl Env {
         Value::Object(m) => {
           m.remove("startedAt");
           m.remove("endedAt");
-          if m.get("role").and_then(Value::as_str) == Some("user") && m.contains_key("id") {
+          // A steer block carries its queue entry's random id; it is numbered with the user turns
+          let user = m.get("role").and_then(Value::as_str) == Some("user") || m.get("type").and_then(Value::as_str) == Some("steer");
+          if user && m.contains_key("id") {
             *users += 1;
             m.insert("id".into(), json!(format!("user-{users}")));
           }
@@ -287,6 +290,41 @@ async fn a_cancel_before_the_first_chunk_ends_the_turn_at_once_and_nothing_follo
   assert!(log.lines().any(|l| l.contains(r#""type":"request""#) && l.contains(r#""stop":"Cancelled""#)), "the cancelled call has its record\n{log}");
   env.assert_prefix_stable(&env.log_of(&s));
   env.golden(&s, "builtin-cancel", &view(&s)["turns"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_steered_into_a_command_round_reaches_the_next_call_in_the_same_turn() {
+  let env = Env::new();
+  let s = env.session().await;
+  assert_eq!(view(&s)["canSteer"], true);
+  env.server.push(mock::tools(&[("c1", "bash", json!({ "command": "echo hi" }))]));
+  env.server.push(mock::text("Switched to printf."));
+  let task = spawn_prompt(&s, "print hi");
+  // The command waits on its card while the user sends a correction with a file attached (the composer's steer send)
+  let card = wait_block(&s, "permission").await;
+  s.steer_prompt("use printf instead".into(), drafts(json!([{ "kind": "text", "name": "note.txt", "text": "printf is portable" }]))).await.unwrap();
+  let allow = card["options"].as_array().unwrap().iter().find(|o| o["kind"] == "allow_once").unwrap()["id"].clone();
+  s.resolve_permission(card["id"].as_str().unwrap(), allow.as_str().unwrap());
+  task.await.unwrap();
+  // The model got it behind the command's result, attachment included, and answered in the same turn
+  let reqs = env.server.requests();
+  assert_eq!(reqs.len(), 2);
+  let msgs = reqs[1].body["messages"].as_array().unwrap();
+  let steered = msgs.last().unwrap()["content"].to_string();
+  assert!(steered.contains("use printf instead") && steered.contains("printf is portable"), "{steered}");
+  assert_eq!(msgs[msgs.len() - 2]["role"], "tool");
+  let vw = view(&s);
+  let users: Vec<Value> = vw["turns"].as_array().unwrap().iter().filter(|t| t["role"] == "user").map(|t| t["text"].clone()).collect();
+  assert_eq!(users, [json!("print hi")], "the message joined the turn instead of opening one");
+  assert!(vw["queued"].is_null());
+  let blocks = agent_blocks(&vw);
+  let at = blocks.iter().position(|b| b["type"] == "steer").expect("a steer block");
+  expect_match(&blocks[at], json!({ "text": "use printf instead" }));
+  assert!(blocks[..at].iter().any(|b| b["type"] == "tool_call"));
+  assert!(blocks[at + 1..].iter().any(|b| b["type"] == "text" && b["markdown"] == "Switched to printf."));
+  expect_match(last_turn(&vw), json!({ "role": "agent", "stop": "end_turn" }));
+  env.assert_prefix_stable(&env.log_of(&s));
+  env.golden(&s, "builtin-steer", &vw["turns"]);
 }
 
 #[tokio::test(flavor = "multi_thread")]

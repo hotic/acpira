@@ -6,6 +6,9 @@
 //! it. Its future is dropped, which kills a running command's process group; a model stream's reading thread notices
 //! the closed channel at its next chunk and drops the connection. The history keeps what finished, plus the cut-off
 //! text and a "cancelled" result for every tool call left without one, so the next request is well formed
+//!
+//! Steering (`steer.rs`): a message the client steers in while the turn runs goes in front of the turn's next model
+//! call, and a stop that would end the turn (a reply without tool calls, a rejected card) does not while one waits
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -67,17 +70,20 @@ struct Stats {
 pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<Value, RpcError> {
   let sid = params.get("sessionId").and_then(Value::as_str).ok_or_else(|| RpcError::new(-32602, "sessionId is required"))?;
   let session = server.session(sid)?;
+  let prompt = params.get("prompt").unwrap_or(&Value::Null);
+  let compacting = skills::is_compact(&prompt_text(prompt));
   let first = {
     let mut st = session.state.lock();
     if st.turn.is_some() {
       return Err(RpcError::new(-32603, "A turn is already running in this session"));
     }
     st.turn = Some(cancel.clone());
+    // Messages may be steered in from now on, except into a /compact: it calls no model they could reach
+    st.steerable = !compacting;
     !st.titled && !st.items.iter().any(|i| matches!(i, Item::User(_)))
   };
   // The first prompt also names the session, beside the turn and outside its cancel (a /compact names nothing)
-  let prompt = params.get("prompt").unwrap_or(&Value::Null);
-  if first && !skills::is_compact(&prompt_text(prompt)) && crate::title::spawn(&server, &session, prompt) {
+  if first && !compacting && crate::title::spawn(&server, &session, prompt) {
     session.state.lock().titled = true;
   }
   let stats = Arc::new(parking_lot::Mutex::new(Stats::default()));
@@ -85,11 +91,18 @@ pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<V
     r = body(&server, &session, &params, &stats) => r,
     _ = cancel.cancelled() => Ok(Stop::Cancelled),
   };
+  // No more steering. A message no call carried (cancelled, failed, stopped at a limit) stays in the history behind
+  // what the turn left, so the next turn's model gets what the user sent and saw land in this turn
+  let leftover = crate::steer::close(&server, &session);
   {
     let mut st = session.state.lock();
     st.turn = None;
     let before = st.items.len();
     settle(&mut st);
+    if let Some((item, prompts)) = leftover {
+      crate::steer::record(&session, &prompts);
+      st.items.push(item);
+    }
     for item in &st.items[before..] {
       session.store.item(item);
     }
@@ -238,7 +251,7 @@ fn setup(server: &Server, session: &Session, params: &Value) -> Result<Setup, St
 }
 
 /// The prompt's text blocks, joined (attachments and images left out)
-fn prompt_text(prompt: &Value) -> String {
+pub(crate) fn prompt_text(prompt: &Value) -> String {
   prompt
     .as_array()
     .into_iter()
@@ -333,6 +346,11 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       return Ok(Stop::MaxTurnRequests);
     }
     step += 1;
+    // What the user steered in since the last call goes in front of this one, behind the round's tool results. The
+    // first call carries the prompt alone, as Codex samples a turn's own input first
+    if step > 1 {
+      crate::steer::take(session, s.model.takes_images(), &s.skills);
+    }
     {
       let mut st = stats.lock();
       st.pick = Some(s.pick.clone());
@@ -492,7 +510,10 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     }
     match flow {
       Flow::Continue => {}
-      Flow::Stop => return Ok(Stop::EndTurn),
+      Flow::Stop if crate::steer::may_end(session) => return Ok(Stop::EndTurn),
+      // A message steered in meanwhile keeps the turn going: the model answers it here (Codex's follow-up rule), also
+      // after a rejected card, where the message is the direction the model was told to wait for
+      Flow::Stop => {}
       // The approved plan is carried out in this turn, with Agent mode's tools and rules
       Flow::Switched => s = setup(server, session, params)?,
     }
@@ -807,7 +828,15 @@ pub fn prompt_parts(prompt: &Value, images: bool) -> Vec<Part> {
       _ => {}
     }
   }
-  // Adjacent text blocks read as one message
+  let mut merged = merge_text(parts);
+  if merged.is_empty() {
+    merged.push(Part::Text(String::new()));
+  }
+  merged
+}
+
+/// Adjacent text parts joined into one, as a message reads
+pub(crate) fn merge_text(parts: Vec<Part>) -> Vec<Part> {
   let mut merged: Vec<Part> = vec![];
   for p in parts {
     match (merged.last_mut(), p) {
@@ -817,9 +846,6 @@ pub fn prompt_parts(prompt: &Value, images: bool) -> Vec<Part> {
       }
       (_, p) => merged.push(p),
     }
-  }
-  if merged.is_empty() {
-    merged.push(Part::Text(String::new()));
   }
   merged
 }

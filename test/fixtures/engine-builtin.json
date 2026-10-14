@@ -380,5 +380,72 @@
     "stop": "end_turn"
    }
   ]
+ },
+ {
+  "name": "builtin-steer",
+  "turns": [
+   {
+    "role": "user",
+    "id": "user-1",
+    "text": "print hi",
+    "settings": {
+     "modeId": "agent",
+     "config": {
+      "model": "mock/m1"
+     }
+    }
+   },
+   {
+    "role": "agent",
+    "blocks": [
+     {
+      "type": "tool_call",
+      "id": "call-1",
+      "kind": "execute",
+      "verb": "Run",
+      "target": "echo hi",
+      "targetMono": true,
+      "locations": [],
+      "status": "completed",
+      "content": {
+       "type": "text",
+       "text": "hi\n"
+      }
+     },
+     {
+      "type": "steer",
+      "id": "user-2",
+      "text": "use printf instead",
+      "attachments": [
+       {
+        "kind": "text",
+        "blob": "e755ff1e60e3b023.txt",
+        "name": "note.txt"
+       }
+      ]
+     },
+     {
+      "type": "text",
+      "markdown": "Switched to printf.",
+      "streaming": false
+     }
+    ],
+    "usage": {
+     "input": 200,
+     "output": 20,
+     "cachedRead": 0,
+     "cachedWrite": 0,
+     "reasoning": 0,
+     "total": 220,
+     "modelCalls": 2,
+     "model": "mock/m1",
+     "context": {
+      "used": 110,
+      "size": 64000
+     }
+    },
+    "stop": "end_turn"
+   }
+  ]
  }
 ]

@@ -56,6 +56,21 @@ describe('built-in agent transcripts', () => {
     });
   });
 
+  it('a message steered into a command round sits between the command and the answer it got', () => {
+    const turns = builtinTurns('builtin-steer');
+    expect(turns.filter(t => t.role === 'user')).toHaveLength(1);
+    const [turn] = agentTurns(turns);
+    expect(turn!.stop).toBe('end_turn');
+    expect(turn!.blocks.map(b => b.type)).toEqual(['tool_call', 'steer', 'text']);
+    expect(turn!.blocks[1]).toMatchObject({ text: 'use printf instead', attachments: [{ kind: 'text', name: 'note.txt' }] });
+    // The export reads it as the user speaking mid-turn, then the agent carrying on
+    const md = markdown(turns);
+    const at = (text: string) => md.indexOf(text);
+    expect(at('**Run** `echo hi`')).toBeGreaterThan(-1);
+    expect(at('### User\n\nuse printf instead')).toBeGreaterThan(at('**Run** `echo hi`'));
+    expect(at('Switched to printf.')).toBeGreaterThan(at('### User\n\nuse printf instead'));
+  });
+
   it('a cancelled turn stays empty and the next one answers normally', () => {
     const [cancelled, next] = agentTurns(builtinTurns('builtin-cancel'));
     expect(cancelled).toMatchObject({ stop: 'cancelled', blocks: [] });

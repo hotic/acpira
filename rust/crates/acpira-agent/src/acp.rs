@@ -55,6 +55,13 @@ pub struct SessionState {
   pub titled: bool,
   /// The first item is a compaction's summary (`compact.rs`)
   pub summarized: bool,
+  /// Messages steered into the running turn (`_session/steering`, each one's content blocks) that no model call has
+  /// carried yet. The turn takes them before its next call (`steer::take`); any left when the turn ends go into
+  /// the history for the next one
+  pub steers: Vec<Value>,
+  /// The running turn takes steering: on from its start (except a `/compact`), off the moment the turn decides to end.
+  /// Both sides switch it under this lock, so a steer either joins the turn or is handed back
+  pub steerable: bool,
 }
 
 pub struct Session {
@@ -176,7 +183,30 @@ impl Server {
         "sessionCapabilities": { "list": {}, "resume": {} },
       },
       "authMethods": [],
+      // The steering extension claude-agent-acp and codex-acp implement, advertised at the top level as they do
+      "_meta": { "steering": { "supported": true } },
     })
+  }
+
+  /// `_session/steering`: a message for the running turn. It is answered at once and reaches the model with the turn's
+  /// next call, after the tool round in flight, or right after a reply that would otherwise have ended the turn
+  /// (`steer::take`). With no turn running, or one that has already decided to end, the message is handed back
+  /// for a `session/prompt` when the client opted into that (`idleBehavior: promptRequired`, as the engine always
+  /// does) and refused otherwise: this agent never starts a turn no `session/prompt` owns
+  fn steer(&self, params: &Value) -> Result<Value, RpcError> {
+    let session = self.session(str_param(params, "sessionId")?)?;
+    let prompt = params.get("prompt").and_then(Value::as_array).filter(|p| !p.is_empty()).ok_or_else(|| RpcError::new(-32602, "prompt is required"))?;
+    {
+      let mut st = session.state.lock();
+      if st.turn.is_some() && st.steerable {
+        st.steers.push(Value::Array(prompt.clone()));
+        return Ok(json!({ "outcome": "injected" }));
+      }
+    }
+    if params.pointer("/_meta/steering/idleBehavior").and_then(Value::as_str) == Some("promptRequired") {
+      return Ok(json!({ "outcome": "promptRequired", "reason": "noRunningTurn" }));
+    }
+    Err(RpcError::new(-32603, "No turn is taking messages in this session; send it as a prompt"))
   }
 
   fn new_session(&self, params: &Value) -> Result<Value, RpcError> {
@@ -605,6 +635,7 @@ impl Inbound for Handler {
         "session/set_mode" => server.set_mode(&params),
         "session/set_config_option" => server.set_config_option(&params),
         "session/prompt" => crate::turn::run(server, params, cancel).await,
+        "_session/steering" => server.steer(&params),
         _ => Err(RpcError::method_not_found(&method)),
       }
     })
