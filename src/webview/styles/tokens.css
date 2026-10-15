@@ -448,6 +448,15 @@
   --spacing-pad-y: var(--pad-y);
   --spacing-page: var(--page);
   --spacing-page-gutter: calc(var(--page) - var(--scrollbar));
+  /* Side margin of the chat view (header, transcript column, the dock under the thread): the page margin less one scrollbar
+     width, so the composer and prompt cards read larger while every text edge stays on one line. Never below one scrollbar
+     width, so the transcript's right padding beside the stable scrollbar gutter (dock-gutter) cannot go negative */
+  /* Each of these is spelled out from --page and --scrollbar: utilities inline one level of theme value, so a reference to
+     --spacing-dock would read the root density's --page instead of the shell's */
+  --spacing-dock: max(var(--scrollbar), calc(var(--page) - var(--scrollbar)));
+  --spacing-dock-gutter: max(0px, calc(var(--page) - 2 * var(--scrollbar)));
+  /* Editor-panel cap of the transcript column: the island dock is content-w + 2 × page wide, so its inner width matches this */
+  --spacing-chat-column: calc(var(--content-w) + 2 * min(var(--scrollbar), calc(var(--page) - var(--scrollbar))));
   --spacing-gap: var(--gap);
   --spacing-gap-half: calc(var(--gap) / 2);
   --spacing-code-output: var(--code-output-max);
@@ -468,6 +477,9 @@
   --spacing-agent-image: var(--agent-image);
   --spacing-indent: calc(var(--lead) + var(--gap));
   --spacing-hit: var(--row-hit-outset);
+  /* An exchange's paint clip on the thread's right side: the hit outset, but never past the thread's right padding
+     (dock-gutter, 0 at the cozy and compact densities), or the section would overflow into a horizontal scrollbar */
+  --spacing-hit-end: min(var(--row-hit-outset), max(0px, calc(var(--page) - 2 * var(--scrollbar))));
 
   --shadow-*: initial;
   --shadow-card: var(--card-shadow);

@@ -38,7 +38,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
     const label = t('notice.connecting', { agent: agent.name });
     // Match the composer's text inset. Only the connection glyph loops;
     // the complete status fades in together and its label stays still.
-    return <div className="relative -top-gap-half px-page" data-session-connecting>
+    return <div className="relative -top-gap-half px-dock" data-session-connecting>
       <RowEntranceContext.Provider value={false}>
         <Row key={agent.id} lead={<span aria-hidden="true"><Orb kind="fetch" /></span>} className="px-pad fade-in" role="status" aria-live="polite" aria-atomic="true" title={label}>
           <span className="truncate">{label}</span>
@@ -78,7 +78,7 @@ export function Notice({ status, error, agent, authMethods, accounts, accountId,
         : { title: t('notice.error.title'), text: error ?? t('notice.error.unknown') };
   // Two button tiers only: the one action to take is primary, everything else (other paths, retry) secondary
   return (
-    <div className="px-page">
+    <div className="px-dock">
       <Card className="flex flex-col gap-gap p-pad">
         <div className="text-2 font-semibold text-fg-strong">{body.title}</div>
         <p className="m-0 text-2 text-fg-2 [overflow-wrap:anywhere]">{body.text}</p>

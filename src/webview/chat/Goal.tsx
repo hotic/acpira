@@ -73,7 +73,7 @@ export const GoalStrip = memo(function GoalStrip({ goal, actions, running, onAct
     <IconButton size="sm" title={t(key)} aria-label={t(key)} onClick={() => onAction?.(action)}>{icon}</IconButton>
   );
   return (
-    <div data-goal-strip className="-mb-(--dock-gap) px-page">
+    <div data-goal-strip className="-mb-(--dock-gap) px-dock">
       <div className="mx-pad flex flex-col rounded-t-lg bg-(--cmp-bg) px-pad pt-0.5 shadow-[inset_0_1px_0_0_var(--conversation-line),inset_1px_0_0_0_var(--conversation-line),inset_-1px_0_0_0_var(--conversation-line)]">
         <Row
           dense

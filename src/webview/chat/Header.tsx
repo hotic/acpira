@@ -65,7 +65,7 @@ export function Header({ title, sessions, categories, agent, agents, accounts, a
     </Popover.Root>
   );
   return (
-    <div className="flex h-hdr shrink-0 items-center gap-gap px-page shadow-[inset_0_-1px_0_0_var(--line)]">
+    <div className="flex h-hdr shrink-0 items-center gap-gap px-dock shadow-[inset_0_-1px_0_0_var(--line)]">
       {sessionPanel !== 'hidden' && !sessionPanelDocked && (
         <IconButton data-session-toggle onClick={onToggleDrawer} aria-expanded={drawerOpen} aria-label={t('session.history')} title={t('session.history')}>
           {sessionPanel === 'right' ? <PanelRight strokeWidth={1.5} /> : <PanelLeft strokeWidth={1.5} />}

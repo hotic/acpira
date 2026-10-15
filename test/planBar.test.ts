@@ -79,7 +79,7 @@ describe('PlanBar dock visibility', () => {
     // message gap from the first dock surface with or without the plan
     expect(shellSource).toContain('calc(var(--msg-gap) + ${dockHeight}px)');
     expect(shellSource).not.toContain('threadArea');
-    expect(planBarSource).toContain('pointer-events-none px-page pb-(--dock-gap)');
+    expect(planBarSource).toContain('pointer-events-none px-dock pb-(--dock-gap)');
     expect(planBarSource).toContain('pointer-events-auto');
   });
 });
