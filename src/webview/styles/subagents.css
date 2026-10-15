@@ -63,7 +63,8 @@
   .subagent-row {
     overflow: hidden;
   }
-  .subagent-row > .row-lead {
+  /* Two-line rows sit the mark between the title and the detail line */
+  .subagent-row-two > .row-lead {
     margin-top: var(--gap);
   }
 
