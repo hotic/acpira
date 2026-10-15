@@ -242,16 +242,25 @@ mod tests {
   use super::*;
   use std::sync::atomic::{AtomicUsize, Ordering};
 
+  /// The pid of a child that has exited, spawned once for the whole test binary: a child shares this process's
+  /// descriptors between fork and exec, so every spawn briefly keeps the file locks other tests just let go
+  fn exited_pid() -> u32 {
+    static PID: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *PID.get_or_init(|| {
+      let mut child =
+        std::process::Command::new(std::env::current_exe().unwrap()).arg("--list").stdout(std::process::Stdio::null()).spawn().unwrap();
+      let pid = child.id();
+      child.wait().unwrap();
+      pid
+    })
+  }
+
   #[test]
   fn process_liveness_distinguishes_a_running_holder_from_an_exited_child() {
     assert!(pid_alive(Some(std::process::id() as i64)));
     assert!(!pid_alive(None));
     assert!(!pid_alive(Some(-1)));
-    let mut child =
-      std::process::Command::new(std::env::current_exe().unwrap()).arg("--list").stdout(std::process::Stdio::null()).spawn().unwrap();
-    let pid = child.id();
-    child.wait().unwrap();
-    assert!(!pid_alive(Some(pid as i64)));
+    assert!(!pid_alive(Some(exited_pid() as i64)));
   }
 
   #[tokio::test]
@@ -269,10 +278,7 @@ mod tests {
   #[tokio::test]
   async fn only_old_temp_files_of_exited_writers_are_swept() {
     let dir = tempfile::tempdir().unwrap();
-    let mut child =
-      std::process::Command::new(std::env::current_exe().unwrap()).arg("--list").stdout(std::process::Stdio::null()).spawn().unwrap();
-    let dead = child.id();
-    child.wait().unwrap();
+    let dead = exited_pid();
     let me = std::process::id();
     let hour_ago = SystemTime::now() - Duration::from_secs(2 * 3600);
     let make = |name: &str, old: bool| {

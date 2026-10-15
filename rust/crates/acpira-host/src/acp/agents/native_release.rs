@@ -623,6 +623,21 @@ mod tests {
     Box::leak(Box::new(NativeRelease { version, assets: Box::leak(assets.into_boxed_slice()), ..ANTIGRAVITY }))
   }
 
+  /// `install` for darwin-aarch64, tried again while another install seems to hold the lock: a child process another
+  /// test spawns shares this process's descriptors between fork and exec, so the lock the last install let go can
+  /// still read as held for an instant
+  fn install_settled(r: &NativeRelease, root: &Path, force: bool, archive: &Path) -> Result<Installed> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+      match install(r, root, "darwin-aarch64", force, Some(archive), &mut |_: &str| {}) {
+        Err(e) if e.to_string().contains("another install") && std::time::Instant::now() < deadline => {
+          std::thread::sleep(std::time::Duration::from_millis(5))
+        }
+        other => return other,
+      }
+    }
+  }
+
   fn put(dir: &Path, name: &str, bytes: &[u8]) -> PathBuf {
     let p = dir.join(name);
     std::fs::write(&p, bytes).unwrap();
@@ -639,12 +654,11 @@ mod tests {
   fn an_install_switches_current_and_keeps_only_the_version_it_replaced() {
     let tmp = tempfile::tempdir().unwrap();
     let (root, downloads) = (tmp.path().join("home"), tmp.path());
-    let mut quiet = |_: &str| {};
     for v in ["1.0.0", "1.1.0", "1.2.0"] {
       let bytes = server_zip(v);
       let r = release(v, &bytes);
       let file = put(downloads, &format!("{v}.zip"), &bytes);
-      let Installed::Fresh { version, path, .. } = install(r, &root, "darwin-aarch64", false, Some(&file), &mut quiet).unwrap() else { panic!("{v}") };
+      let Installed::Fresh { version, path, .. } = install_settled(r, &root, false, &file).unwrap() else { panic!("{v}") };
       assert_eq!(version, v);
       assert_eq!(std::fs::read_to_string(&path).unwrap(), format!("#!/bin/sh\necho {v}\n"));
       assert_eq!(r.installed(&root, "darwin-aarch64").unwrap().1, path);
@@ -661,8 +675,8 @@ mod tests {
     let bytes = server_zip("1.2.0");
     let r = release("1.2.0", &bytes);
     let file = put(downloads, "again.zip", &bytes);
-    assert!(matches!(install(r, &root, "darwin-aarch64", false, Some(&file), &mut quiet).unwrap(), Installed::Already { .. }));
-    assert!(matches!(install(r, &root, "darwin-aarch64", true, Some(&file), &mut quiet).unwrap(), Installed::Fresh { .. }));
+    assert!(matches!(install_settled(r, &root, false, &file).unwrap(), Installed::Already { .. }));
+    assert!(matches!(install_settled(r, &root, true, &file).unwrap(), Installed::Fresh { .. }));
     assert_eq!(listing(&dir), ["1.1.0", "1.2.0", "current", "install.lock"]);
   }
 
@@ -674,13 +688,13 @@ mod tests {
     let good = server_zip("1.0.0");
     let r = release("1.0.0", &good);
     let tampered = put(tmp.path(), "tampered.zip", &server_zip("6.6.6"));
-    let e = install(r, &root, "darwin-aarch64", false, Some(&tampered), &mut quiet).err().unwrap();
+    let e = install_settled(r, &root, false, &tampered).err().unwrap();
     assert!(e.to_string().contains("SHA-256 mismatch"), "{e}");
     // Pinned to an archive without the launcher: the digest matches, the content does not
     let empty = zip(&[("README", b"hi", FILE, false)]);
     let r2 = release("1.0.0", &empty);
     let file = put(tmp.path(), "empty.zip", &empty);
-    assert!(install(r2, &root, "darwin-aarch64", false, Some(&file), &mut quiet).err().unwrap().to_string().contains("no agy_acp_server.par"));
+    assert!(install_settled(r2, &root, false, &file).err().unwrap().to_string().contains("no agy_acp_server.par"));
     // No current, no version directory, no stage left behind; the lock file stays, unlocked
     assert_eq!(listing(&ANTIGRAVITY.dir(&root)), ["install.lock"]);
     assert!(install(r, &root, "linux-riscv64", false, Some(&tampered), &mut quiet).is_err());
@@ -756,16 +770,15 @@ mod tests {
   fn a_failed_same_version_reinstall_keeps_the_installed_copy() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("home");
-    let mut quiet = |_: &str| {};
     let bytes = server_zip("1.0.0");
     let r = release("1.0.0", &bytes);
     let file = put(tmp.path(), "a.zip", &bytes);
-    install(r, &root, "darwin-aarch64", false, Some(&file), &mut quiet).unwrap();
+    install_settled(r, &root, false, &file).unwrap();
     // `current` turned into a directory: the rename onto it fails after the new copy took the version's place
     let dir = ANTIGRAVITY.dir(&root);
     std::fs::remove_file(dir.join("current")).unwrap();
     std::fs::create_dir_all(dir.join("current/blocker")).unwrap();
-    assert!(install(r, &root, "darwin-aarch64", true, Some(&file), &mut quiet).is_err());
+    assert!(install_settled(r, &root, true, &file).is_err());
     assert_eq!(std::fs::read_to_string(dir.join("1.0.0/agy_acp_server.par")).unwrap(), "#!/bin/sh\necho 1.0.0\n");
     assert!(!listing(&dir).iter().any(|n| n.starts_with(".old-") || n.starts_with(".stage-")), "{:?}", listing(&dir));
   }
