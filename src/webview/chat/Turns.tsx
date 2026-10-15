@@ -568,7 +568,7 @@ function CursorFold({ blocks }: { blocks: ToolCallBlock[] }) {
 // Permission cards stay outside; the latest reply remains visible while it streams.
 // `working` is false while a /compact reply shows only its compaction row, which retires the head the same way a settled turn does
 function CodexMessage({ turn, running, working = running, onPermission, memoryKey, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; running: boolean; working?: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
-  const { process, reply, permissions, notices, goalsLead, goals } = splitCodexBlocks(turn.blocks);
+  const { process, reply, permissions, notices, goalsLead, goals } = splitCodexBlocks(turn.blocks, running);
   const hasTools = turn.blocks.some(block => block.type === 'tool_call');
   // The process folds away only once the reply has finished drawing, not when its last chunk arrived
   const [replyBusy, setReplyBusy] = useState(false);

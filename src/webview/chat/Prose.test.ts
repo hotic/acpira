@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { Prose } from './Prose';
 import { CodeBlock } from './CodeBlock';
 import { fenceLanguage } from './codeSyntax';
+import { QuietEntranceContext } from '../ui/Row';
 
 const prose = (markdown: string) => renderToStaticMarkup(createElement(Prose, { block: { type: 'text', markdown } as never }));
 
@@ -14,6 +15,15 @@ describe('markdown prose', () => {
     // streamdown renders strong as a marked span
     expect(html).toContain('data-streamdown="strong">以后不会再卡住；但没有改成免 Passkey。</span>范围');
     expect(html).not.toContain('**');
+  });
+
+  it('shows a still-streaming reply at once when its thread mounts quietly', () => {
+    // A session reopened while its turn is held open: the reply was already on screen and must not replay
+    const block = { type: 'text', markdown: '计划草稿已经落盘', streaming: true } as never;
+    const mount = (quiet: boolean) => renderToStaticMarkup(createElement(QuietEntranceContext.Provider, { value: { current: quiet } }, createElement(Prose, { block })));
+    expect(mount(true).replace(/<[^>]+>/g, '')).toBe('计划草稿已经落盘');
+    // A reply that starts streaming in front of the reader is still paced in from its first character
+    expect(mount(false)).toBe('');
   });
 
   it('leaves an unlabelled fence uncoloured', () => {

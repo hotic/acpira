@@ -70,12 +70,14 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 
 // The visible prefix of a streamed text. Text that is not an extension of the previous value (an edit, a
 // replay) and motion-off show at once; `draining` stays true until the visible text catches up.
-export function useSmoothText(text: string, streaming: boolean, pace: StreamPace | false = STREAM_PACE) {
+// `resume`: the text was already on screen before this mount (a session reopened while its turn still streams), so
+// it shows at once and only what arrives afterwards is paced; the next chunk measures the rate from scratch
+export function useSmoothText(text: string, streaming: boolean, pace: StreamPace | false = STREAM_PACE, resume = false) {
   const { motion } = useAppearance();
   const off = !pace || motion === 'none';
-  const [count, setCount] = useState(() => (streaming && !off ? 0 : text.length));
+  const [count, setCount] = useState(() => (streaming && !off && !resume ? 0 : text.length));
   // throughput: chars / ms of the incoming stream; speed: chars / ms actually revealed
-  const state = useRef({ target: '', pos: count, at: 0, throughput: 0, speed: 0, streaming });
+  const state = useRef({ target: resume ? text : '', pos: count, at: 0, throughput: 0, speed: 0, streaming });
   useLayoutEffect(() => {
     const s = state.current;
     const appended = text.startsWith(s.target);

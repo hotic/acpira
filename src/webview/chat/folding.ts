@@ -17,7 +17,11 @@ function isAdvisory(b: NoticeBlock) {
 // Turns without tool calls render flat and chronological, so there only the trailing text run is the reply.
 // The open question card is pinned above the composer; a resolved one stays in the process history
 // at the point where it was asked, so the answers read in sequence with the actions around them.
-export function splitCodexBlocks(blocks: AgentBlock[]) {
+// `live`: the turn is still running. Its blocks then keep arrival order: a thought after the trailing text is the
+// agent working again (Claude writes a hand-off, then thinks over a background subagent's report), and joining the
+// fold it rendered above the text it follows. The open fold shows that text in place, and once the turn settles a
+// thought between closing paragraphs joins the fold again so summary and coda read as one reply
+export function splitCodexBlocks(blocks: AgentBlock[], live = false) {
   const permissions = blocks.filter(b => b.type === 'permission');
   // AIR sessionFailure notices are status rows, not process detail: they never fold away under tools. An advisory
   // (warning, category unknown, no remedy) is the exception: codex-acp sends "Heads up: Long threads and multiple
@@ -39,7 +43,7 @@ export function splitCodexBlocks(blocks: AgentBlock[]) {
     : b.type !== 'permission' && !lifted(b) && (b.type !== 'question' || !!b.outcome));
   const foldable = content.some(b => b.type === 'tool_call');
   let end = content.length;
-  while (end > 0 && (content[end - 1]!.type === 'text' || (foldable && TAIL_PROCESS.has(content[end - 1]!.type)))) end--;
+  while (end > 0 && (content[end - 1]!.type === 'text' || (foldable && !live && TAIL_PROCESS.has(content[end - 1]!.type)))) end--;
   const tail = content.slice(end);
   return {
     // Explicit source phases win; unannotated ACP text keeps the trailing-text heuristic.
