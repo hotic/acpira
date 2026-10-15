@@ -727,16 +727,16 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
   });
   // The right padding gives the scrollbar gutter back, so the transcript's edges line up with the header and the dock
   return (
-    <div ref={ref} data-thread className="thread-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-page pr-page-gutter [container-type:size] [overflow-anchor:none]">
+    <div ref={ref} data-thread className="thread-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter [container-type:size] [overflow-anchor:none]">
       {/* The tail clearance equals the message gap, so the last message sits as far from the composer as from the message above it */}
-      <div key={replayKey} ref={bodyRef} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-(--content-w)')}><FollowContext.Provider value={follow}><QuietEntranceContext.Provider value={opening}>
+      <div key={replayKey} ref={bodyRef} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-chat-column')}><FollowContext.Provider value={follow}><QuietEntranceContext.Provider value={opening}>
         {exchanges.map(exchange => (
           // Positioned so the prompt's stuck-state sentinel can sit at the exchange's top edge. Paint containment gives each exchange
           // its own paint offset, so a fold opening mid-thread no longer re-walks every later exchange each frame (see docs/dev/webview.md,
-          // transcript render budget); the clip it brings is pushed out by --hit on the sides and bottom, where row hit areas and
-          // card shadows reach past the column, and the top edge stays put for the sentinel. An exchange ending in a reply's action
+          // transcript render budget); the clip it brings is pushed out by --hit on the left and bottom, where row hit areas and
+          // card shadows reach past the column, and on the right only as far as the thread's right padding (--hit-end), and the top edge stays put for the sentinel. An exchange ending in a reply's action
           // row pulls the next one up to a row gap: the row's own height already separates them (TurnActions).
-          <section key={exchange.key} data-exchange className="relative -mx-hit -mb-hit flex min-w-0 flex-col gap-msg px-hit pb-hit contain-paint has-[>:last-child>[data-turn-actions]:last-child]:-mb-[calc(var(--spacing-hit)+var(--spacing-msg-join))]">
+          <section key={exchange.key} data-exchange className="relative -ml-hit -mr-hit-end -mb-hit flex min-w-0 flex-col gap-msg pl-hit pr-hit-end pb-hit contain-paint has-[>:last-child>[data-turn-actions]:last-child]:-mb-[calc(var(--spacing-hit)+var(--spacing-msg-join))]">
             {exchange.messages}
           </section>
         ))}
