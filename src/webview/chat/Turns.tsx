@@ -259,7 +259,7 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
           permission={shown.blocks.find((b): b is PermissionBlock => b.type === 'permission' && b.planId === section.plan!.id)} onChoose={onPermission} />}
       </Fragment>;
     })}
-    {actions && !running && !compacting && hasTurnContent(turn) && <TurnActions turn={turn} turnIndex={turnIndex} last={last} settings={settings} />}
+    {actions && !running && !compacting && hasTurnContent(turn) && <TurnActions turn={turn} turnIndex={turnIndex} settings={settings} />}
   </div></DelegationContext.Provider></WorkflowProgressContext.Provider></NoticeActionContext.Provider></RowEntranceContext.Provider></EntranceScopeContext.Provider></LazyPanelContext.Provider>;
 });
 
