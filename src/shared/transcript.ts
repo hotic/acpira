@@ -512,6 +512,9 @@ export interface AgentTurn {
   usage?: TurnUsage;
   // Wall-clock prompt duration, including tools and permission waits. Absent on older transcripts.
   startedAt?: number;
+  // When the first streamed block landed; the turn's clock (live and finished) counts from here so the wait for the
+  // agent's first output is not working time. Absent until then, and on older transcripts. `startedAt` stays the identity
+  respondedAt?: number;
   endedAt?: number;
   // What it's currently doing (inferred from usage and tool states); empty when the turn ends
   activity?: { kind: ToolKind; label: string };

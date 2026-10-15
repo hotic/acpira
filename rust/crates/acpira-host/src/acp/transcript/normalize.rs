@@ -158,6 +158,29 @@ fn user_open(s: &NormalizeState) -> bool {
 
 /// One update comes in, mutate state. Returns whether there is a UI-visible change
 pub fn apply_update(s: &mut NormalizeState, u: &Value) -> bool {
+  let changed = apply_update_kind(s, u);
+  if changed {
+    mark_responded(s);
+  }
+  changed
+}
+
+/// Stamp the live prompt's first output: the first update that leaves a block in the turn (a thought, text, tool,
+/// plan …). Usage, command and config updates add no block and keep the clock waiting; replayed turns have no
+/// `started_at` and are never stamped
+fn mark_responded(s: &mut NormalizeState) {
+  if let Some(Turn::Agent(t)) = s.turns.last_mut()
+    && t.started_at.is_some()
+    && t.responded_at.is_none()
+    && t.stop.is_none()
+    && t.ended_at.is_none()
+    && !t.blocks.is_empty()
+  {
+    t.responded_at = Some(now_ms());
+  }
+}
+
+fn apply_update_kind(s: &mut NormalizeState, u: &Value) -> bool {
   let kind = str_of(u, "sessionUpdate").unwrap_or("");
   match kind {
     "user_message_chunk" => {

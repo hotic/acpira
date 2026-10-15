@@ -1072,3 +1072,23 @@ fn the_host_show_image_tool_becomes_an_image_row_for_claude_and_codex_wire_shape
   expect_match(block(&s, 0, 2), json!({ "verbKey": "verb.showImage", "status": "failed" }));
   expect_absent(block(&s, 0, 2), "content");
 }
+
+#[test]
+fn live_turn_clock_starts_at_first_streamed_block() {
+  let mut s = NormalizeState::new(vec![turn(json!({ "role": "agent", "startedAt": 1, "blocks": [] }))]);
+  // An update that adds no block (usage) keeps the clock waiting
+  apply(&mut s, json!({ "sessionUpdate": "usage_update", "used": 10, "size": 100 }));
+  assert_eq!(s.turns[0].as_agent().unwrap().responded_at, None);
+  apply(&mut s, json!({ "sessionUpdate": "agent_thought_chunk", "content": { "type": "text", "text": "hmm" } }));
+  let first = s.turns[0].as_agent().unwrap().responded_at.expect("stamped by the first block");
+  assert!(first > 1);
+  apply(&mut s, json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "hi" } }));
+  assert_eq!(s.turns[0].as_agent().unwrap().responded_at, Some(first));
+}
+
+#[test]
+fn replayed_turn_is_never_stamped() {
+  let mut s = state();
+  apply(&mut s, json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "hi" } }));
+  assert_eq!(s.turns[0].as_agent().unwrap().responded_at, None);
+}

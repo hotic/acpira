@@ -1074,6 +1074,10 @@ pub struct AgentTurn {
   pub usage: Option<TurnUsage>,
   #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient_opt_i64")]
   pub started_at: Option<i64>,
+  /// When the first streamed block of a live prompt landed; the turn's clock counts from here, so the wait for the
+  /// agent's first output is not shown as working time. `started_at` stays the turn's identity
+  #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient_opt_i64")]
+  pub responded_at: Option<i64>,
   #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient_opt_i64")]
   pub ended_at: Option<i64>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
