@@ -68,6 +68,8 @@ export function IconButton({ className, children, size = 'default', ...rest }: B
 
 // Selector that opens a menu (session title / mode / model / agent): --ctl-sm tall and --r-sm radius, snug around its text like Cursor's
 // toolbar pills rather than filling the row; truncatable text, trailing arrow. Sets data-open while open to keep the pressed look.
+// The arrow turns over while the menu is open (data-open / Base UI's data-popup-open on the trigger), so a click visibly lands
+// even when the panel opens upward, away from a downward arrow
 // Two looks (modeled on Cursor's toolbar): solid is the filled pill the eye lands on first — one per toolbar, the mode; quiet is text until hovered, for everything else.
 // Splitting the hierarchy this way keeps a long mode name from reading as "buttons crowding buttons" when it pushes its neighbours
 type ChipVariant = 'quiet' | 'solid';
@@ -110,11 +112,15 @@ export function ChipTag({ tone, icon, short, children }: { tone?: 'ultra'; icon?
   );
 }
 
+// Turns a trigger's down arrow over while its menu is open; the trigger carries `group/chip`. Shared by the hand-built
+// triggers (SelectRow, the session list filter) so every dropdown arrow behaves alike
+export const CARET_TURN = 'transition-transform duration-(--dur-open) ease-out group-data-[open]/chip:rotate-180 group-data-[popup-open]/chip:rotate-180';
+
 export function Chip({ className, children, variant = 'quiet', caret = true, icon, meta, tags, narrow, ...rest }: ChipProps) {
   return (
     <button
       type="button"
-      className={cn(chipVariants({ variant }), className)}
+      className={cn('group/chip', chipVariants({ variant }), className)}
       {...rest}
     >
       {icon && <span className={cn('flex shrink-0 items-center [&_svg]:size-icon', variant === 'quiet' && 'text-fg-3')}>{icon}</span>}
@@ -123,7 +129,7 @@ export function Chip({ className, children, variant = 'quiet', caret = true, ico
         {meta && <span className="text-fg-3"> {meta}</span>}
       </span>
       {tags && <span className="flex h-4 min-w-0 flex-wrap items-center gap-0.5 overflow-hidden">{tags}</span>}
-      {caret && <ChevronDown className={cn('size-3 shrink-0 text-fg-3', narrow && '@max-sm:hidden')} strokeWidth={1.75} />}
+      {caret && <ChevronDown className={cn('size-3 shrink-0 text-fg-3', CARET_TURN, narrow && '@max-sm:hidden')} strokeWidth={1.75} />}
     </button>
   );
 }
