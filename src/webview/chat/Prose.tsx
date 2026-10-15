@@ -1,4 +1,4 @@
-import { cloneElement, createContext, isValidElement, memo, useContext, useEffect, useState, type ComponentProps, type ReactElement, type ReactNode } from 'react';
+import { cloneElement, createContext, isValidElement, memo, useContext, useEffect, useLayoutEffect, useState, type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import { Block, Streamdown, defaultRehypePlugins, parseMarkdownIntoBlocks, type BlockProps, type Components, type ExtraProps } from 'streamdown';
 import { cjk } from '@streamdown/cjk';
 import { createMathPlugin } from '@streamdown/math';
@@ -10,6 +10,7 @@ import { decodeLocalImageSrc, rewriteFileHrefs, sameImageSource } from './fileLi
 import { AgentImage } from './AgentImage';
 import { mermaidDiagram } from './mermaidPlugin';
 import { useTheme } from '../look';
+import { QuietEntranceContext } from '../ui/Row';
 
 // Full Markdown via streamdown: GFM + KaTeX + Mermaid, streaming-aware (remend repairs incomplete syntax mid-stream).
 // All typography lives in styles/prose.css under .acp-prose — Tailwind never scans node_modules, so streamdown's own classes don't resolve here.
@@ -30,12 +31,19 @@ const THOUGHT_CLASS = 'acp-prose acp-thought flex min-w-0 flex-col gap-gap text-
 // its reply to finish on screen before folding its process away; pass a stable function.
 // `tone="thought"` renders reasoning text: the secondary type scale and colour, with headings kept at body size (prose.css `.acp-thought`)
 export const Prose = memo(function Prose({ block, motion = STREAM_MOTION, onBusy, tone = 'reply' }: { block: TextBlock; motion?: StreamMotion; onBusy?: (busy: boolean) => void; tone?: 'reply' | 'thought' }) {
-  const smooth = useSmoothText(block.markdown, !!block.streaming, motion.pace);
+  // A block still streaming when its thread mounts quietly (the session reopened mid-turn) was already on screen:
+  // without this every return to a session whose turn is held open (Claude waiting on background subagents)
+  // replayed its last reply from the first character
+  const quiet = useContext(QuietEntranceContext);
+  const [resume] = useState(() => !!block.streaming && quiet.current);
+  const smooth = useSmoothText(block.markdown, !!block.streaming, motion.pace, resume);
   // Still draining counts as streaming: the renderer keeps its streaming mode until the visible text catches up
   const streaming = !!block.streaming || smooth.draining;
   const { animated, animating } = useStreamMotion(streaming, motion);
   const busy = streaming || animating;
-  const [blocks] = useState(createLiveBlocks);
+  const [blocks] = useState(() => createLiveBlocks(resume));
+  // Only the first render seeds the block plugins; later text animates past what it rendered
+  useLayoutEffect(() => { blocks.resume = false; }, [blocks]);
   useEffect(() => { onBusy?.(busy); }, [busy, onBusy]);
   useEffect(() => () => onBusy?.(false), [onBusy]);
   // The turn heading already indicates waiting before the first visible words.
@@ -74,13 +82,16 @@ export const Prose = memo(function Prose({ block, motion = STREAM_MOTION, onBusy
 // as plain text again. The block just before the tail keeps its spans so its last glyphs finish their fade.
 const ANIMATED_TAIL_BLOCKS = 2;
 
-interface LiveBlocksState { count: number; parse: (markdown: string) => string[] }
+// `resume` holds for the first render of a resumed block (see Prose): its text is already on screen, so the tail
+// blocks' animate plugins start past it instead of fading every glyph in again
+interface LiveBlocksState { count: number; resume: boolean; parse: (markdown: string) => string[] }
 
 // Per Prose instance: streamdown memoizes its block split on this function's identity, and the blocks render
 // right after the split in the same pass, so they read the current count from it
-function createLiveBlocks(): LiveBlocksState {
+function createLiveBlocks(resume: boolean): LiveBlocksState {
   const state: LiveBlocksState = {
     count: 0,
+    resume,
     parse: markdown => {
       const blocks = parseMarkdownIntoBlocks(markdown);
       state.count = blocks.length;
@@ -98,7 +109,13 @@ const settledPlugins = new WeakMap<object, BlockProps['rehypePlugins']>();
 function SettlingBlock(props: BlockProps) {
   const live = useContext(LiveBlocks);
   const { animatePlugin, rehypePlugins } = props;
-  if (!live || !animatePlugin || !rehypePlugins || props.index >= live.count - ANIMATED_TAIL_BLOCKS) return <Block {...props} />;
+  if (!live || !animatePlugin || !rehypePlugins) return <Block {...props} />;
+  if (props.index >= live.count - ANIMATED_TAIL_BLOCKS) {
+    // The plugin counts rendered characters, which never exceed the markdown source, so every glyph of this
+    // render counts as already shown; Block's commit then records the real count for the next chunk
+    if (live.resume) animatePlugin.setPrevContentLength(props.content.length);
+    return <Block {...props} />;
+  }
   let plain = settledPlugins.get(rehypePlugins);
   if (!plain) {
     plain = rehypePlugins.filter(plugin => plugin !== animatePlugin.rehypePlugin);

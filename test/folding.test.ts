@@ -52,8 +52,14 @@ describe('Codex process folding', () => {
     expect(splitCodexBlocks([read, think, summary, { ...think, streaming: true }, coda])).toEqual({
       process: [read, think, { ...think, streaming: true }], reply: [summary, coda], permissions: [], notices: [], goalsLead: [], goals: [],
     });
-    // A still-streaming thought after the summary keeps it on screen instead of folding it away mid-turn.
-    expect(splitCodexBlocks([read, summary, { ...think, streaming: true }]).reply).toEqual([summary]);
+    // A settled turn that ended on a thought keeps the summary as its reply.
+    expect(splitCodexBlocks([read, summary, think]).reply).toEqual([summary]);
+    // While the turn runs, a thought after the summary is the agent working again: it stays below the summary in the
+    // open fold instead of being lifted above it (Claude thinking over a background subagent's report).
+    expect(splitCodexBlocks([read, summary, { ...think, streaming: true }], true)).toMatchObject({
+      process: [read, summary, { ...think, streaming: true }], reply: [],
+    });
+    expect(splitCodexBlocks([read, summary, think, coda], true)).toMatchObject({ process: [read, summary, think], reply: [coda] });
     // Ticking the to-do list after the summary is bookkeeping, not a new action.
     expect(splitCodexBlocks([read, summary, todo])).toEqual({ process: [read, todo], reply: [summary], permissions: [], notices: [], goalsLead: [], goals: [] });
     // A real action after the summary still turns it into process history.
