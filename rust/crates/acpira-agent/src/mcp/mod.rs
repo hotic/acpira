@@ -170,7 +170,8 @@ fn tools_of(server: &str, server_name: &str, listed: &[Value], taken: &mut Vec<S
 }
 
 enum Transport {
-  Stdio(stdio::Stdio),
+  // Boxed: the stdio side (process, pipes, pending map) is far larger than an `Arc`, which clippy flags on Windows
+  Stdio(Box<stdio::Stdio>),
   Http(Arc<http::Http>),
 }
 
@@ -250,7 +251,7 @@ impl Server {
 async fn connect(spec: &Spec, cwd: &Path) -> Result<Arc<Live>, String> {
   let stale = Arc::new(AtomicBool::new(false));
   let transport = match spec {
-    Spec::Stdio { name, command, args, env } => Transport::Stdio(stdio::Stdio::spawn(name, command, args, env, cwd, stale.clone())?),
+    Spec::Stdio { name, command, args, env } => Transport::Stdio(Box::new(stdio::Stdio::spawn(name, command, args, env, cwd, stale.clone())?)),
     Spec::Http { url, headers, .. } => Transport::Http(Arc::new(http::Http::new(url, headers, cwd, stale.clone()))),
   };
   let init = json!({
