@@ -133,4 +133,3 @@ export function durationText(ms: number): string {
     ? (rest ? t('turns.elapsed.ms', { m: minutes, s: rest }) : t('turns.elapsed.m', { m: minutes }))
     : t('turns.elapsed.s', { s: rest });
 }
-
