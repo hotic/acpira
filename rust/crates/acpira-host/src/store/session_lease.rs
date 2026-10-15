@@ -15,7 +15,8 @@
 //! An engine holds the lease of every session it has open (live), not only while a turn runs: a session is driven from one
 //! place at a time, and every other engine shows it read-only. Taking it over is a request file next to the lease
 //! (`<id>.takeover`, naming the requesting engine): the holder sees it, stops its turn, lets go and turns read-only itself,
-//! and the requester takes the lease.
+//! and the requester takes the lease. A softer request (`<id>.wanted`), kept fresh while another engine shows the session
+//! read-only, makes the holder let go of it only while it is idle and none of the holder's windows shows it.
 //!
 //! The lock is `File::try_lock` (flock / LockFileEx): the OS drops it when the holder exits or crashes, so a stale
 //! lease cannot outlive its engine. Lease files are never deleted, so two engines can never lock different inodes.
@@ -170,34 +171,66 @@ impl SessionLeases {
     matches!(f.try_lock(), Err(TryLockError::WouldBlock))
   }
 
-  fn takeover_path(&self, id: &str) -> Option<PathBuf> {
-    is_session_id(id).then(|| self.dir.join(format!("{id}.takeover")))
+  fn request_path(&self, id: &str, kind: &str) -> Option<PathBuf> {
+    is_session_id(id).then(|| self.dir.join(format!("{id}.{kind}")))
   }
 
-  /// Ask whichever engine holds the session to let go of it (it notices within a second)
-  pub fn request_takeover(&self, id: &str) -> std::io::Result<()> {
-    let Some(path) = self.takeover_path(id) else { return Ok(()) };
+  /// Write a request file naming this engine (tmp + rename, so a reader never sees half a token)
+  fn write_request(&self, id: &str, kind: &str) -> std::io::Result<()> {
+    let Some(path) = self.request_path(id, kind) else { return Ok(()) };
     std::fs::create_dir_all(&self.dir)?;
-    let tmp = path.with_extension(format!("takeover.{}", self.token));
+    let tmp = path.with_extension(format!("{kind}.{}", self.token));
     std::fs::write(&tmp, &self.token)?;
     std::fs::rename(&tmp, &path)
   }
 
-  /// A fresh takeover request for the session from another engine
-  pub fn takeover_requested(&self, id: &str) -> bool {
-    let Some(path) = self.takeover_path(id) else { return false };
+  /// A fresh request file from another engine
+  fn requested(&self, id: &str, kind: &str) -> bool {
+    let Some(path) = self.request_path(id, kind) else { return false };
     let fresh = std::fs::metadata(&path)
       .and_then(|m| m.modified())
       .is_ok_and(|t| t.elapsed().map_or(true, |age| age < TAKEOVER_FRESH));
     fresh && std::fs::read_to_string(&path).is_ok_and(|who| who != self.token)
   }
 
-  /// This engine's own request is done (taken over, or given up)
-  pub fn clear_takeover(&self, id: &str) {
-    let Some(path) = self.takeover_path(id) else { return };
+  /// Remove a request file this engine wrote (another engine's request stays)
+  fn clear_request(&self, id: &str, kind: &str) {
+    let Some(path) = self.request_path(id, kind) else { return };
     if std::fs::read_to_string(&path).is_ok_and(|who| who == self.token) {
       let _ = std::fs::remove_file(&path);
     }
+  }
+
+  /// Ask whichever engine holds the session to let go of it (it notices within a second)
+  pub fn request_takeover(&self, id: &str) -> std::io::Result<()> {
+    self.write_request(id, "takeover")
+  }
+
+  /// A fresh takeover request for the session from another engine
+  pub fn takeover_requested(&self, id: &str) -> bool {
+    self.requested(id, "takeover")
+  }
+
+  /// This engine's own request is done (taken over, or given up)
+  pub fn clear_takeover(&self, id: &str) {
+    self.clear_request(id, "takeover")
+  }
+
+  /// The soft form of a takeover, kept fresh by an engine showing the session read-only: the holder lets go only when the
+  /// session is idle and none of its own windows shows it (a window reloaded onto a new engine after an upgrade leaves
+  /// the old engine holding sessions nobody there looks at any more). Never stops a turn
+  pub fn request_handover(&self, id: &str) -> std::io::Result<()> {
+    self.write_request(id, "wanted")
+  }
+
+  /// A fresh handover request for the session from another engine
+  pub fn handover_requested(&self, id: &str) -> bool {
+    self.requested(id, "wanted")
+  }
+
+  /// This engine no longer wants the session (it opened it, or stopped showing it)
+  pub fn clear_handover(&self, id: &str) {
+    self.clear_request(id, "wanted")
   }
 
   /// Ids this engine holds, sorted (tests, logs)
@@ -329,6 +362,18 @@ mod tests {
     assert!(a.takeover_requested(ID), "only the requester clears it");
     b.clear_takeover(ID);
     assert!(!a.takeover_requested(ID));
+  }
+
+  #[test]
+  fn a_handover_request_is_separate_from_a_takeover_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (leases(dir.path()), leases(dir.path()));
+    b.request_handover(ID).unwrap();
+    assert!(a.handover_requested(ID));
+    assert!(!b.handover_requested(ID), "a request is not addressed to its own engine");
+    assert!(!a.takeover_requested(ID), "wanting a session idle is not a takeover");
+    b.clear_handover(ID);
+    assert!(!a.handover_requested(ID));
   }
 
   #[test]

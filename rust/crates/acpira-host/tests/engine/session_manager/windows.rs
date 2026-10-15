@@ -148,6 +148,39 @@ async fn a_session_open_in_one_manager_is_read_only_in_the_other_until_taken_ove
   b.dispose().await;
 }
 
+// A window reloaded onto a new engine (the binary was reinstalled) used to find its session read-only behind "Take over":
+// the old engine, with no window left, still held the lease. A session the holder runs nothing on and shows in no window
+// now goes to the engine that opens it, without a takeover (store::session_lease, `<id>.wanted`)
+#[tokio::test(flavor = "multi_thread")]
+async fn an_idle_session_no_window_shows_moves_to_the_engine_that_opens_it() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let native = tempfile::tempdir().unwrap();
+  let opts = || Opts::with_agents(fake.setting(json!({ "env": { "FAKE_SESSION_DIR": native.path() } })), "fake");
+  let a = Mgr::new(dir.path(), opts());
+  let b = Mgr::new(dir.path(), opts());
+  a.init().await;
+  b.init().await;
+  a.new_session(None).await;
+  a.handle(json!({ "type": "send", "text": "first" })).await;
+  let id = a.active_id().unwrap();
+  until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
+  // A's window moves on; the session stays live (and leased) in A
+  a.new_session(None).await;
+  assert!(a.m.leased().contains(&id));
+  a.m.refresh_index().await;
+  b.m.refresh_index().await;
+
+  b.m.select_session_for(&b.v, &id).await;
+  until(|| b.active().is_some_and(|s| s["id"] == id.as_str() && s["status"] == "ready"), 8000).await;
+  assert_eq!(turns_in(&b.active().unwrap()), 2, "{:?}", b.toasts());
+  assert!(b.m.leased().contains(&id));
+  assert!(!a.m.leased().contains(&id));
+  assert!(a.logs().iter().any(|l| l.contains("handing it over")), "{:?}", a.logs());
+  a.dispose().await;
+  b.dispose().await;
+}
+
 // A lease that cannot be taken at all (its directory is unusable) is not a free pass: turns are refused with the reason, and a
 // stored session opens read-only instead of starting an agent and saving over whatever another engine might be doing
 #[tokio::test(flavor = "multi_thread")]
