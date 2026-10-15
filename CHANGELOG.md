@@ -11,6 +11,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [1.10.3] - 2026-10-15
+
+### Added
+
+- **A Storage page in settings** shows how much the data directory holds, split into sessions, images and attachments, built-in agent logs, files that can be cleaned and everything else, with the largest other entries and a button that reveals the directory. From there:
+  - **Clean old sessions** picks sessions by last use, sorted by size or age, and deletes them like the history list does, with 30 seconds to undo. Pinned, running and elsewhere-open sessions are kept and say why.
+  - **Clean leftovers** removes files that no session, engine or setting uses any more, such as logs of deleted built-in agent sessions and of stopped engines.
+  - **Slim old sessions** drops the whole-file copies stored with each edit. The diff lines stay in the transcript, but an old edit no longer opens as a full-file diff, and this cannot be undone.
+- **MCP servers for the built-in agent.** The shared `~/.agents/mcp.json` and the project's `.mcp.json` servers reach the model over stdio and streamable HTTP, next to Acpira's own server. Read-only tools run without a card; other tools ask, with an always-allow per tool, and Plan mode always asks.
+- **Steering for the built-in agent.** A message sent while a turn runs reaches the model at its next call, after the current round's tool results, without cutting running tools or replies short.
+- **Questions and Cursor-style planning for the built-in agent.** The agent can ask one to four questions on the question card, with choices, multi-select and free text. Plan mode asks first when a request is unclear, writes the plan in fixed sections, puts its steps on the to-do list, and works the list in order after approval.
+- **Chunk compaction for the built-in agent**, picked under Context on the agent's settings page. Finished turns fold into the user's messages and the final replies with no model call, and the agent can search the folded steps when it needs them. Summary compaction stays the default, and the Quick tasks model now writes its summaries too.
+- **Agents can open a page in a browser tab next to the chat** in VS Code, such as a dev server they started. Remote windows forward the port first, a local address that nothing answers on is refused, and each site keeps one tab.
+- **Bypass permissions** for subagent personas: the summoned CLI runs in its full-access mode and its permission requests are approved without cards. A call can narrow a persona's access but never ask for bypass.
+- A running turn counts its elapsed time next to Working, and hovering a sent prompt shows when it was sent.
+
+### Changed
+
+- Panels open faster. The engine answers before the login shell's `PATH` is read, the chat page loads about a quarter of its former script and fetches diagrams and syntax highlighting on demand, and a large stored session reaches the page in far less time. The first frame in VS Code now uses the configured font instead of re-wrapping a moment later.
+- MCP tool calls from Claude, Codex and the built-in agent name the server and the tool's title, such as "Call Blockbench  Take Screenshot".
+- Web searches from Claude and Codex show as searches with their query instead of "Fetched Web search". Rows stored earlier keep their old text.
+- A turn that summons subagents keeps one process fold that reads Working until the turn ends, with the subagent rows in view under it.
+- The subagent inspector shows the delegated task as a user message that scrolls inside its card, replacing the six-line clamp.
+- Subagent access levels read Read-only, Can edit and Bypass permissions.
+- An in-app agent install shows one status line with its log folded behind a chevron; a failure opens the log.
+- Each model source sits in its own card inside the sources card, and a source check reads Connected.
+- The built-in agent prunes old tool output only when a summary compaction is near, so earlier calls keep their prompt cache.
+- The transcript fades out above the composer instead of ending in a flat edge.
+- Hover fills of clickable settings rows reach the card's edges.
+
+### Fixed
+
+- Pasting images together with text keeps both, and images copied from a web page or the transcript paste as images. File names from a Finder copy are no longer typed into the field.
+- The chime switch no longer freezes the settings page on first use, and the chime plays in IntelliJ.
+- Deleting a built-in agent session removes its log too, so the conversation no longer comes back through the history import.
+- Temp files left by interrupted writes in the data directory are cleaned up at start.
+- Stopping a Claude turn gives steered messages that Claude had not picked up back to the queue. claude-agent-acp 0.86.0 and later dropped them silently.
+- A subagent summoned by Claude stays at its place in the turn instead of being drawn at the end, below later rows.
+- A subagent row and its wait progress no longer name a Codex command that never ran.
+- A project `.mcp.json` server named `acpira` no longer replaces Acpira's own server.
+- The built-in agent answers an HTTP MCP server's requests during a tool call instead of letting the call time out.
+- A command list no longer scrolls under the pointer, which made a click land on the neighbouring row.
+- The add-model dialog and the agent facts card keep their size while they load, and an async task's stop button fits its row.
+
 ## [1.10.2] - 2026-10-14
 
 ### Added
