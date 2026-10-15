@@ -1780,6 +1780,12 @@ impl SessionManager {
               m2.yield_session(&id).await;
               m2.yielding.lock().remove(&id);
             });
+          } else if m.leases.handover_requested(&id) && m.handover_ready(&id) && m.yielding.lock().insert(id.clone()) {
+            let m2 = m.clone();
+            tokio::spawn(async move {
+              m2.hand_over_idle(&id).await;
+              m2.yielding.lock().remove(&id);
+            });
           }
         }
       }
@@ -1809,6 +1815,23 @@ impl SessionManager {
     }
     self.sync_leases();
     self.emit_sessions();
+  }
+
+  /// A session another engine wants can go without asking anyone: live and idle here, and no window of this engine shows
+  /// it (the usual case is a window reloaded onto a new engine after an upgrade, leaving this one with no window at all)
+  fn handover_ready(&self, id: &str) -> bool {
+    self.live(id).is_some_and(|s| s.releasable()) && self.viewers_on(id, None).is_empty()
+  }
+
+  /// Hand an idle, unseen session to the engine that wants it: the agent process closes like an idle release, and the
+  /// lease goes once the native session is closed, so the other engine's read-only copy opens by itself
+  async fn hand_over_idle(self: &Arc<Self>, id: &str) {
+    let Some(s) = self.live(id) else { return };
+    if self.release(&s).await {
+      self.log(&format!("session {id}: another engine wants it and no window here shows it, handing it over"));
+      self.sync_leases();
+      self.emit_sessions();
+    }
   }
 
   /// Take over a session another engine has open: ask it to let go, wait for the lease, then open the session here
@@ -1882,6 +1905,10 @@ impl SessionManager {
     if !fresh {
       return;
     }
+    // Held by another engine: ask it to hand the session over once nobody there needs it (refreshed on every poll below)
+    if elsewhere {
+      self.want_handover(id);
+    }
     let me = self.me.clone();
     let id = id.to_owned();
     tokio::spawn(async move {
@@ -1895,17 +1922,20 @@ impl SessionManager {
         }
         // Replaced by the session itself (taken over, deleted): this poll is done
         if m.mirror_of(&id).is_none() {
+          m.leases.clear_handover(&id);
           return;
         }
         let watchers = m.viewers_on(&id, None);
         if watchers.is_empty() {
           // Nobody looks at it any more; a later select starts over
           m.state.lock().mirrors.remove(&id);
+          m.leases.clear_handover(&id);
           return;
         }
         // Free and nobody else is about to take it (a takeover in flight frees it for the requester, not for this copy)
         if !m.leases.held_elsewhere(&id) && !m.leases.takeover_requested(&id) {
           m.state.lock().mirrors.remove(&id);
+          m.leases.clear_handover(&id);
           m.log(&format!("session {id}: the other engine let go, opening it here"));
           // The first watcher loads it (fresh from disk); the rest wait on that load inside select_session_for
           for v in watchers {
@@ -1913,6 +1943,9 @@ impl SessionManager {
             tokio::spawn(async move { m2.select_session_for(&v, &id2).await });
           }
           return;
+        }
+        if elsewhere {
+          m.want_handover(&id);
         }
         // Re-read only when the other engine saved since the last look
         let stamp = tokio::fs::metadata(m.record_path(&id)).await.and_then(|md| md.modified()).ok();
@@ -1940,6 +1973,13 @@ impl SessionManager {
         }
       }
     });
+  }
+
+  /// Keep this engine's handover request for a mirrored session fresh
+  fn want_handover(&self, id: &str) {
+    if let Err(e) = self.leases.request_handover(id) {
+      self.log(&format!("session {id}: handover request failed: {e}"));
+    }
   }
 
   fn current(&self, v: &Viewer) -> Option<Arc<AcpSession>> {
