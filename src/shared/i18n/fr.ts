@@ -695,7 +695,7 @@ export const fr = {
   'settings.agent.approval.autoEdit': 'Modification auto',
   'settings.agent.approval.autoEdit.desc': 'Les modifications s’exécutent sans demander ; les commandes demandent toujours.',
   'settings.agent.approval.full': 'Accès complet',
-  'settings.agent.approval.full.desc': 'Tout s’exécute sans demander. Les modifications de la configuration d’Acpira demandent toujours, et le mode Plan n’écrit que son plan.',
+  'settings.agent.approval.full.desc': 'Tout s’exécute sans demander, les commandes du mode Plan comprises ; ce mode n’écrit toujours que son plan. Les modifications de la configuration d’Acpira demandent toujours.',
   'settings.agent.quickTasks': 'Tâches rapides',
   'settings.agent.fastModel': 'Modèle rapide',
   'settings.agent.fastModel.desc': 'Nomme les sessions et rédige les résumés de compaction ; choisissez-en un économique et rapide.',

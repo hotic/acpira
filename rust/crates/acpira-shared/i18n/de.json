@@ -675,7 +675,7 @@
   "settings.agent.approval.autoEdit": "Auto-Bearbeiten",
   "settings.agent.approval.autoEdit.desc": "Änderungen laufen ohne Rückfrage; Befehle fragen weiterhin.",
   "settings.agent.approval.full": "Vollzugriff",
-  "settings.agent.approval.full.desc": "Alles läuft ohne Rückfrage. Änderungen an Acpiras eigener Konfiguration fragen weiterhin, und der Plan-Modus schreibt nur seinen Plan.",
+  "settings.agent.approval.full.desc": "Alles läuft ohne Rückfrage, auch die Befehle im Plan-Modus; der Plan-Modus schreibt weiterhin nur seinen Plan. Änderungen an Acpiras eigener Konfiguration fragen weiterhin.",
   "settings.agent.quickTasks": "Schnelle Aufgaben",
   "settings.agent.fastModel": "Schnelles Modell",
   "settings.agent.fastModel.desc": "Benennt Sitzungen und schreibt Zusammenfassungen beim Komprimieren; am besten ein günstiges, schnelles Modell.",

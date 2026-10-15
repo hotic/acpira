@@ -677,7 +677,7 @@
   "settings.agent.approval.autoEdit": "自動編集",
   "settings.agent.approval.autoEdit.desc": "編集は確認なしで実行し、コマンドは確認します。",
   "settings.agent.approval.full": "フルアクセス",
-  "settings.agent.approval.full.desc": "すべて確認なしで実行します。Acpira 自体の設定の変更は確認し、Plan モードは計画ファイルだけを書きます。",
+  "settings.agent.approval.full.desc": "すべて確認なしで実行します。Plan モードのコマンドも同じで、書き込むのは計画ファイルだけです。Acpira 自体の設定の変更は確認します。",
   "settings.agent.quickTasks": "クイックタスク",
   "settings.agent.fastModel": "高速モデル",
   "settings.agent.fastModel.desc": "安くて速いモデルで、セッションのタイトルと圧縮時の要約を作ります。",

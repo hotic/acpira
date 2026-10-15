@@ -686,7 +686,7 @@
   "settings.agent.approval.autoEdit": "Auto-edit",
   "settings.agent.approval.autoEdit.desc": "Edits run without asking; commands still ask.",
   "settings.agent.approval.full": "Full access",
-  "settings.agent.approval.full.desc": "Everything runs without asking. Changes to Acpira’s own configuration still ask, and Plan mode still writes only its plan.",
+  "settings.agent.approval.full.desc": "Everything runs without asking, Plan mode’s commands included; it still writes only its plan file. Changes to Acpira’s own configuration still ask.",
   "settings.agent.quickTasks": "Quick tasks",
   "settings.agent.fastModel": "Fast model",
   "settings.agent.fastModel.desc": "Names sessions and writes compaction summaries; pick a cheap, fast one.",

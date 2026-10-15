@@ -1,6 +1,7 @@
 //! Permission rules, after OpenCode's semantics: a rule is (permission, pattern, decision), rules come in layers
 //! (defaults, the approval level, what the user allowed during the session, then the mode, whose restrictions hold
-//! over everything before it) and the last rule that matches wins. A path pattern is matched against the workspace-relative path (absolute outside the workspace), a command
+//! over everything before it) and the last rule that matches wins. The mode layer is built with the approval level in
+//! hand (`modes.rs`), which leaves a mode's `ask` rules out under full access; its `deny` rules always stay. A path pattern is matched against the workspace-relative path (absolute outside the workspace), a command
 //! pattern against the whole command line. Edits to the agent's own configuration always ask, whatever the layers say
 
 use std::path::{Path, PathBuf};

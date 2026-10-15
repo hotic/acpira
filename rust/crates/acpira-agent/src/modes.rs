@@ -1,12 +1,14 @@
 //! Modes as data: a mode is a text the model is told when the session enters it, and permission rules that hold over
-//! every other layer (`turn.rs` evaluates them last, so neither the approval level nor an earlier "always allow" can
-//! widen them). `{plan}` in a text or a rule pattern stands for the session's plan file. Every mode offers the same
+//! every other layer (`turn.rs` evaluates them last, so an earlier "always allow" cannot widen them). A mode's `ask`
+//! rules are the exception: the approval level sits above them, so full access drops them and a command of Plan mode
+//! runs without a card (its `deny` rules hold whatever the level is). `{plan}` in a text or a rule pattern stands for
+//! the session's plan file. Every mode offers the same
 //! tools, so a mode switch leaves the request prefix (and the provider's prompt cache) intact; `exit_plan` outside
 //! Plan mode answers with an error
 
 use std::path::Path;
 
-use crate::permission::{BASH, Decision, EDIT, ENGINE_MCP, MCP, Rule, path_target};
+use crate::permission::{Approval, BASH, Decision, EDIT, ENGINE_MCP, MCP, Rule, path_target};
 use crate::tools::{BASH as T_BASH, EDIT as T_EDIT, EXIT_PLAN, GLOB, GREP, HISTORY_GREP, HISTORY_LIST, JOB, LIST, QUESTION, READ, SKILL, TODO, WEBFETCH, WEBSEARCH, WRITE};
 
 pub const AGENT: &str = "agent";
@@ -52,8 +54,8 @@ pub const MODES: &[Mode] = &[
 - If the request is unclear in a way that would change the plan (facts missing, several real approaches, a scope far \
 too large), ask one or two questions with the question tool before you research further, each with two or more options \
 and the one you recommend first. Otherwise go ahead and state your assumptions in the plan.
-- Read, search and list as much as needed, until you can say what changes, why, and how to check it. Run only commands \
-that change nothing; each one needs the user's approval.
+- Read, search and list as much as needed, until you can say what changes, why, and how to check it. Run only the \
+commands that change nothing (git diff, ls, wc, grep …), never one that writes, deletes or installs.
 - The one file you may write is the plan: {plan}. Write it there, and edit the same file to revise.
 - Open the plan with a `# Title`, then use the sections the task needs, in this order: scope (what changes, what stays \
 untouched), current problems (each with its file path and line as evidence), target design, changes by file or module \
@@ -86,9 +88,17 @@ impl Mode {
     self.overlay.replace("{plan}", &plan.to_string_lossy())
   }
 
-  pub fn rules(&self, plan: &Path, cwd: &Path) -> Vec<Rule> {
+  /// The mode's rules, evaluated after every other layer. The approval level widens a mode's `ask` rules only: full
+  /// access runs Plan mode's commands without a card, while what the mode denies (any edit but the plan file) holds
+  /// whatever the level is
+  pub fn rules(&self, plan: &Path, cwd: &Path, approval: Approval) -> Vec<Rule> {
     let plan = path_target(plan, cwd);
-    self.rules.iter().map(|(p, pattern, d)| Rule::new(p, &pattern.replace("{plan}", &plan), *d)).collect()
+    self
+      .rules
+      .iter()
+      .filter(|(_, _, d)| !(approval == Approval::Full && *d == Decision::Ask))
+      .map(|(p, pattern, d)| Rule::new(p, &pattern.replace("{plan}", &plan), *d))
+      .collect()
   }
 }
 
@@ -98,20 +108,26 @@ mod tests {
   use crate::permission::{Approval, evaluate};
 
   #[test]
-  fn plan_mode_allows_only_the_plan_file_under_any_approval() {
+  fn plan_mode_writes_only_the_plan_and_full_access_runs_its_commands() {
     let (plan, cwd) = (Path::new("/h/agent/sessions/s/plan.md"), Path::new("/w"));
-    let rules = get(PLAN).rules(plan, cwd);
-    let full = Approval::Full.rules();
-    let allowed = [Rule::new(EDIT, "*", Decision::Allow), Rule::new(BASH, "ls *", Decision::Allow)];
-    let ev = |p: &str, t: &str| evaluate(&[&full, &allowed, &rules], p, t);
-    assert_eq!(ev(EDIT, "src/a.rs"), Decision::Deny);
-    assert_eq!(ev(EDIT, "/h/agent/sessions/s/plan.md"), Decision::Allow);
-    assert_eq!(ev(BASH, "ls -la"), Decision::Ask);
-    assert_eq!(ev(MCP, "blockbench/remove_cube"), Decision::Ask);
-    assert_eq!(ev(MCP, "acpira/show_image"), Decision::Allow);
-    assert_eq!(ev(crate::permission::MCP_READ, "blockbench/list_outline"), Decision::Allow);
+    let defaults = crate::permission::defaults(Path::new("/h/agent/sessions/s/outputs"));
+    let ev = |approval: Approval, p: &str, t: &str| evaluate(&[&defaults, &approval.rules(), &get(PLAN).rules(plan, cwd, approval)], p, t);
+    for approval in [Approval::Ask, Approval::AutoEdit, Approval::Full] {
+      assert_eq!(ev(approval, EDIT, "src/a.rs"), Decision::Deny, "{approval:?}");
+      assert_eq!(ev(approval, EDIT, "/h/agent/sessions/s/plan.md"), Decision::Allow, "{approval:?}");
+      assert_eq!(ev(approval, MCP, "acpira/show_image"), Decision::Allow, "{approval:?}");
+      assert_eq!(ev(approval, crate::permission::MCP_READ, "blockbench/list_outline"), Decision::Allow, "{approval:?}");
+    }
+    // The mode's ask rules hold under the lower levels and drop out under full access
+    assert_eq!(ev(Approval::Ask, BASH, "ls -la"), Decision::Ask);
+    assert_eq!(ev(Approval::AutoEdit, BASH, "ls -la"), Decision::Ask);
+    assert_eq!(ev(Approval::Full, BASH, "ls -la"), Decision::Allow);
+    assert_eq!(ev(Approval::Full, MCP, "blockbench/remove_cube"), Decision::Allow);
+    // A session "always allow" cannot widen them either
+    let allowed = [Rule::new(BASH, "ls *", Decision::Allow)];
+    assert_eq!(evaluate(&[&defaults, &allowed, &get(PLAN).rules(plan, cwd, Approval::Ask)], BASH, "ls -la"), Decision::Ask);
     assert!(get(PLAN).overlay(plan).contains("/h/agent/sessions/s/plan.md"));
-    assert!(get(AGENT).rules(plan, cwd).is_empty() && get("nope").id == AGENT);
+    assert!(get(AGENT).rules(plan, cwd, Approval::Full).is_empty() && get("nope").id == AGENT);
     assert!(TOOLS.contains(&EXIT_PLAN) && TOOLS.contains(&QUESTION));
   }
 }

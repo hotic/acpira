@@ -671,7 +671,7 @@
   "settings.agent.approval.autoEdit": "자동 편집",
   "settings.agent.approval.autoEdit.desc": "편집은 묻지 않고 실행하고, 명령은 확인합니다.",
   "settings.agent.approval.full": "전체 권한",
-  "settings.agent.approval.full.desc": "모두 묻지 않고 실행합니다. Acpira 자체 설정 변경은 확인하며, Plan 모드는 계획 파일만 씁니다.",
+  "settings.agent.approval.full.desc": "모두 묻지 않고 실행합니다. Plan 모드의 명령도 마찬가지이며, 계획 파일만 씁니다. Acpira 자체 설정 변경은 계속 확인합니다.",
   "settings.agent.quickTasks": "빠른 작업",
   "settings.agent.fastModel": "빠른 모델",
   "settings.agent.fastModel.desc": "저렴하고 빠른 모델로 세션 제목과 압축 요약을 만듭니다.",

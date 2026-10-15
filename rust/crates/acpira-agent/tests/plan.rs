@@ -1,5 +1,6 @@
-//! Plan mode against the scripted model: only the plan file is writable whatever the approval level, `exit_plan` puts
-//! the plan on the host's approval card, an approval switches to Agent mode inside the same turn, a refusal ends it
+//! Plan mode against the scripted model: only the plan file is writable whatever the approval level, a command asks
+//! first up to full access, `exit_plan` puts the plan on the host's approval card, an approval switches to Agent mode
+//! inside the same turn, a refusal ends it
 
 mod support;
 
@@ -46,8 +47,6 @@ async fn plan_mode_writes_only_the_plan_and_an_approval_builds_in_the_same_turn(
   let modes = h.new_session().await["modes"].clone();
   assert_eq!(modes["availableModes"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect::<Vec<_>>(), ["agent", "plan"]);
   set_mode(&h, &sid, "plan").await;
-  // Full access does not lift Plan mode's restrictions
-  h.approval("full");
   let plan = h.home().join("agent/sessions").join(&sid).join("plan.md");
   server.push(mock::tools(&[
     ("c1", "write", json!({ "path": "src.txt", "content": "x" })),
@@ -61,12 +60,13 @@ async fn plan_mode_writes_only_the_plan_and_an_approval_builds_in_the_same_turn(
   assert_eq!(r["stopReason"], "end_turn");
 
   assert!(user_text(&server, 0).starts_with("<mode>\nPlan mode is on.") && user_text(&server, 0).contains(&*plan.to_string_lossy()));
+  assert!(!user_text(&server, 0).contains("needs the user's approval"), "the model is told a command may run without a card");
   assert!(tool_names(&server, 0).contains(&"exit_plan".to_owned()));
   assert!(tool_result(&server, 1, 2).starts_with("Not allowed: the permission rules deny edit on src.txt"), "{}", tool_result(&server, 1, 2));
   assert_eq!(std::fs::read_to_string(&plan).unwrap(), "# Add src.txt\n\n1. Write it.\n");
 
   let perms = h.client.permissions.lock().clone();
-  assert_eq!(perms.len(), 2, "the command and the plan; the plan file and the built file needed no card");
+  assert_eq!(perms.len(), 3, "the command, the plan and the built file; the plan file itself needed no card");
   // An "always" answer could not hold over the mode's rule, so it is not offered
   let kinds: Vec<&str> = perms[0]["options"].as_array().unwrap().iter().map(|o| o["kind"].as_str().unwrap()).collect();
   assert_eq!((perms[0]["toolCall"]["title"].as_str(), kinds), (Some("ls"), vec!["allow_once", "reject_once"]));
@@ -84,7 +84,31 @@ async fn plan_mode_writes_only_the_plan_and_an_approval_builds_in_the_same_turn(
   assert!(tool_result(&server, 2, 0).starts_with("The user approved the plan. Plan mode is off."));
   // From the approval on, the turn runs with Agent mode's rules; the tools stay as they were, so the prefix holds
   assert_eq!(tool_names(&server, 2), tool_names(&server, 0));
+  // The third card is the build's own edit, which Plan mode denied and Agent mode asks for (approval level `ask`)
+  assert_eq!(perms[2]["toolCall"]["title"], "Write src.txt");
   assert_eq!(std::fs::read_to_string(h.cwd().join("src.txt")).unwrap(), "x");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn full_access_runs_plan_mode_commands_without_a_card() {
+  let (h, server, sid) = setup().await;
+  set_mode(&h, &sid, "plan").await;
+  h.approval("full");
+  let plan = h.home().join("agent/sessions").join(&sid).join("plan.md");
+  server.push(mock::tools(&[
+    ("c1", "write", json!({ "path": "src.txt", "content": "x" })),
+    ("c2", "write", json!({ "path": plan.to_string_lossy(), "content": "# Add src.txt\n\n1. Write it.\n" })),
+    ("c3", "bash", json!({ "command": "ls" })),
+  ]));
+  server.push(mock::text("planned"));
+  let r = prompt(&h, &sid, "add src.txt").await;
+  assert_eq!(r["stopReason"], "end_turn");
+  // What the mode denies still holds; the command and the plan write ran with no card at all
+  assert!(tool_result(&server, 1, 2).starts_with("Not allowed: the permission rules deny edit on src.txt"), "{}", tool_result(&server, 1, 2));
+  assert!(!tool_result(&server, 1, 0).starts_with("Not allowed"), "{}", tool_result(&server, 1, 0));
+  assert_eq!(std::fs::read_to_string(&plan).unwrap(), "# Add src.txt\n\n1. Write it.\n");
+  assert!(h.client.permissions.lock().is_empty(), "a command asked under full access");
 }
 
 #[tokio::test]
