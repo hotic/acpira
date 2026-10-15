@@ -5,7 +5,8 @@
   --quota-track: 7px;
   /* A refreshed quota slides the fill and blends its color instead of jumping */
   --quota-fill-duration: 600ms;
-  --quota-ok: #39745f;
+  /* All three fills are the status colours softened toward the card surface, so they follow the theme together */
+  --quota-ok: color-mix(in srgb, var(--ok) 65%, var(--bg-2));
   --quota-warn: color-mix(in srgb, var(--warn) 75%, var(--bg-2));
   --quota-danger: color-mix(in srgb, var(--danger) 70%, var(--bg-2));
   /* Host palette: the roles that follow the VS Code theme go through these, so a fixed theme (acpira.theme = light / dark,
@@ -50,10 +51,14 @@
   --active: rgba(255, 255, 255, 0.08);
   --focus: var(--host-focus, #0078d4);
   --shadow: 0 8px 28px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
+  /* Card lift under the tonal surface axis; light themes take a much fainter one, as --shadow does */
+  --tonal-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   /* Full-shell dim behind the image lightbox */
   --scrim: rgba(0, 0, 0, 0.72);
 
-  --ok: #3fb950;
+  /* One teal green across the app (status text, check marks, diff tint, quota fill). The dark step is chosen so the quota
+     fill below mixes out to #39745f, the original quota green */
+  --ok: #439e7e;
   --warn: #d29922;
   --danger: #f85149;
   /* Model panel accents: Fast's bolt and the ultra effort tier (Codex `ultra`), one quiet tint each */
@@ -218,7 +223,8 @@
   --enter-dur: 300ms;
   --enter-stagger: 40ms;
   --enter-y: 4px;
-  /* Running-verb shimmer (ui/Shimmer): resting text colour and one full sweep */
+  /* Running-verb shimmer (ui/Shimmer): resting text colour and one full sweep. The light and host palettes read the action
+     colour instead (a fixed grey sat under --fg-3 on white) */
   --shimmer-base: #9a9a9a;
   --shimmer-cycle: 2s;
   /* Image generation card: the loader layer's fade under the dissolve, the card's top highlight and the mosaic's peak cell colour */
@@ -260,7 +266,8 @@
   --chip: #f4f4f4;
   --chip-hover: #e0e0e0;
   --cmp-bg: rgba(255, 255, 255, 0.04);
-  --cmp-bg-lift: rgba(255, 255, 255, 0.04);
+  /* Hover / drag lift of the composer field: a dark tint, since a white one vanishes on the light page */
+  --cmp-bg-lift: rgba(0, 0, 0, 0.03);
   --send-bg: rgba(0, 0, 0, 0.04);
   --send-ring: inset 0 0 0 1px rgba(0, 0, 0, 0.04);
   --send-ink: rgba(0, 0, 0, 0.5);
@@ -271,8 +278,10 @@
   --active: rgba(0, 0, 0, 0.07);
   --focus: var(--host-focus, #005fb8);
   --shadow: 0 8px 28px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.08);
+  --tonal-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --shimmer-base: var(--action-fg);
   --scrim: rgba(0, 0, 0, 0.45);
-  --ok: #1f883d;
+  --ok: #2f7a5b;
   --warn: #9a6700;
   --danger: #cf222e;
   --fast: #b7791f;
@@ -308,12 +317,14 @@
 [data-diff="signs"] { --diff-add: transparent; --diff-del: transparent; }
 
 /* Appearance axes (acpira.appearance.*): change tokens only, never structure */
-[data-density="compact"] { --row: 24px; --ctl: 24px; --ctl-sm: 20px; --pad: 12px; --pad-y: 12px; --page: 16px; --gap: 6px; --msg-gap: 12px; --hdr: 44px; --text-1-lh: calc(var(--ui-font-size) + 5px); }
-[data-density="airy"]    { --row: 32px; --ctl: 32px; --ctl-sm: 26px; --pad: 16px; --pad-y: 22px; --page: 24px; --gap: 12px; --msg-gap: 24px; --hdr: 60px; --text-1-lh: calc(var(--ui-font-size) + 9px); }
-[data-density="compact"] { --row-dense: 20px; --chat-row: 24px; --process-row: 22px; }
-[data-density="airy"] { --row-dense: 28px; --chat-row: 30px; --process-row: 24px; }
-[data-density="compact"] { --process-prose-gap: 8px; }
-[data-density="airy"] { --process-prose-gap: 12px; }
+[data-density="compact"] {
+  --row: 24px; --row-dense: 20px; --chat-row: 24px; --process-row: 22px; --process-prose-gap: 8px; --ctl: 24px; --ctl-sm: 20px;
+  --pad: 12px; --pad-y: 12px; --page: 16px; --gap: 6px; --msg-gap: 12px; --hdr: 44px; --text-1-lh: calc(var(--ui-font-size) + 5px);
+}
+[data-density="airy"] {
+  --row: 32px; --row-dense: 28px; --chat-row: 30px; --process-row: 24px; --process-prose-gap: 12px; --ctl: 32px; --ctl-sm: 26px;
+  --pad: 16px; --pad-y: 22px; --page: 24px; --gap: 12px; --msg-gap: 24px; --hdr: 60px; --text-1-lh: calc(var(--ui-font-size) + 9px);
+}
 [data-radius="8"]  { --r-sm: 5px; --r-md: 6px; --r-lg: 8px; }
 [data-radius="16"] { --r-sm: 6px; --r-md: 10px; --r-lg: 16px; }
 [data-font="inter"] { --font: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
@@ -321,7 +332,7 @@
 
 [data-surface="hairline"] { --card-line: var(--line); --card-bg: var(--bg-1); --card-shadow: none; }
 /* Tonal pairs the raised fill with the conversation outline, so cards read as bubbles rather than bare fills */
-[data-surface="tonal"]    { --card-line: var(--conversation-line); --card-bg: var(--bg-2); --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); }
+[data-surface="tonal"]    { --card-line: var(--conversation-line); --card-bg: var(--bg-2); --card-shadow: var(--tonal-shadow); }
 [data-surface="stroke"]   { --card-line: var(--line-strong); --card-bg: var(--bg-0); --card-shadow: none; }
 
 [data-accent="brand"]  { --accent: var(--brand); --accent-fg: var(--brand-fg); }
@@ -347,7 +358,6 @@
   --prompt-editor-max: 70dvh;
   --text-h: calc(var(--ui-font-size) + 2px);
   --text-h-lh: calc(var(--ui-font-size) + 9px);
-  --content-w: 720px;
   --ctl-w: 168px;
   --num-w: 64px;
   --dot: 6px;

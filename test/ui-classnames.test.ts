@@ -1,5 +1,11 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { cn } from '../src/webview/ui/cn';
+
+// Spacing keys the @theme block maps to utilities; cn.ts must know each one or a later token class cannot replace an earlier one
+const themeSpacing = [...readFileSync(join(import.meta.dirname, '../src/webview/styles/tokens.css'), 'utf8')
+  .matchAll(/--spacing-([a-z0-9-]+):/g)].map(m => m[1]);
 
 describe('token-aware class merging', () => {
   it('keeps independent typography and color tokens, including opacity and state modifiers', () => {
@@ -14,5 +20,10 @@ describe('token-aware class merging', () => {
     expect(cn('pt-1 pl-indent', 'pt-gap-half')).toBe('pl-indent pt-gap-half');
     expect(cn('shadow-card', 'shadow-none')).toBe('shadow-none');
     expect(cn('bg-card border-card-line', 'bg-bg-1')).toBe('border-card-line bg-bg-1');
+  });
+  it('knows every spacing token declared in tokens.css', () => {
+    expect(themeSpacing.length).toBeGreaterThan(40);
+    const unknown = themeSpacing.filter(key => cn('px-pad', `px-${key}`) !== `px-${key}`);
+    expect(unknown).toEqual([]);
   });
 });

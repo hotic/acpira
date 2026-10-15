@@ -5,6 +5,8 @@ import { cn, cnState } from './cn';
 import { optionClass } from './DropdownMenu';
 
 // Selection rows inside a multi-page popover; panels own their close actions.
+// Radio sets no data-highlighted, so the pointer and keyboard fills come from :hover / :focus-visible. The checked row has
+// no fill of its own: its check mark marks it, as in DropdownMenu (one fill per list)
 function Item({ className, onKeyDownCapture, ...props }: ComponentProps<typeof Base.Root>) {
   return <Base.Root render={<button type="button" />} nativeButton {...props}
     onKeyDownCapture={event => {
@@ -15,6 +17,6 @@ function Item({ className, onKeyDownCapture, ...props }: ComponentProps<typeof B
         event.currentTarget.click();
       }
     }}
-    className={cnState(cn(optionClass, 'data-[checked]:option-selected data-[checked]:hover:option-selected data-[checked]:focus-visible:option-selected'), className)} />;
+    className={cnState(cn(optionClass, 'enabled:hover:option-highlighted focus-visible:option-highlighted'), className)} />;
 }
 export const RadioGroup = { Root, Item };

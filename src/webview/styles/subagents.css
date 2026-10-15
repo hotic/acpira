@@ -103,7 +103,7 @@
     height: var(--subagent-badge);
     padding: 1px;
     border-radius: var(--r-sm);
-    background: var(--page);
+    background: var(--bg-0);
     color: var(--fg-1);
   }
   .subagent-mark[data-phase="done"] .subagent-mark-check { stroke-dashoffset: 0; }
