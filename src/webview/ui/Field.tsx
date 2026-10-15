@@ -5,6 +5,7 @@ import { Radio } from '@base-ui/react/radio';
 import { RadioGroup } from '@base-ui/react/radio-group';
 import { DropdownMenu } from './DropdownMenu';
 import { OptionContent } from './Panel';
+import { CARET_TURN } from './Button';
 import { cn } from './cn';
 
 // Neutral form controls for menu footers: switch rows, segmented single-select groups, ordinal segment scales, header toggles and inline dropdown rows.
@@ -47,10 +48,10 @@ export function SelectRow<V extends string>({ label, options, value, onChange }:
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger aria-label={label}
-        className="flex min-h-row w-full items-center gap-2 rounded-md px-2 text-left text-2 text-fg-1 outline-none transition-colors hover:bg-hover focus-visible:bg-hover data-[popup-open]:bg-hover">
+        className="group/chip flex min-h-row w-full items-center gap-2 rounded-md px-2 text-left text-2 text-fg-1 outline-none transition-colors hover:bg-hover focus-visible:bg-hover data-[popup-open]:bg-hover">
         <span className="min-w-0 flex-1 truncate">{label}</span>
         <span className="min-w-0 truncate text-fg-2">{cur?.label ?? value}</span>
-        <ChevronDown className="size-3 shrink-0 text-fg-3" strokeWidth={1.75} />
+        <ChevronDown className={cn('size-3 shrink-0 text-fg-3', CARET_TURN)} strokeWidth={1.75} />
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="end" width="sm"><DropdownMenu.Popup>
         <DropdownMenu.RadioGroup value={value} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
