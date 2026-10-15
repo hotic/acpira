@@ -385,7 +385,9 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
           )}
         </span>
       </div>
-      <div className="scroll-thin mt-1 flex min-h-0 flex-col overflow-y-auto border-t border-line pb-1" role="listbox" aria-label={t('session.listAria')}
+      {/* The scroller bleeds through its container's padding (docked panel p-gap-half, popover p-1) and pads it back, so the
+          thumb rides the panel edge, the divider runs edge to edge and the rows stay where they were */}
+      <div className={cn('scroll-thin mt-1 flex min-h-0 flex-col overflow-y-auto border-t border-line pb-1', fill ? '-mx-gap-half px-gap-half' : '-mx-1 px-1')} role="listbox" aria-label={t('session.listAria')}
         style={timeCh ? { '--session-time': `${timeCh}ch` } as CSSProperties : undefined}
         onDragOver={onDragOver} onDrop={onDrop}>
         {/* Empty state takes exactly one item row (pt-1 + min-h-row) so the popover keeps its height whether the filter matches 0 or 1 session */}

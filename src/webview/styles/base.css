@@ -16,14 +16,49 @@
 /* Scrollbars are overlay-style: the gutter stays reserved (scrollbar-gutter) so content never shifts, but the track is invisible and the
    hairline thumb appears only while its element scrolls (useScrollReveal stamps data-scrolling) or under the pointer; focus alone shows nothing.
    Unlayered on purpose: the host webview stylesheet paints ::-webkit-scrollbar-thumb (plus :hover / :active) with --vscode-scrollbarSlider-*
-   unlayered, and a layered rule would lose to it everywhere — the permanent grey bar in every scroller. */
+   unlayered, and a layered rule would lose to it everywhere — the permanent grey bar in every scroller.
+   The host also sets an inherited `html { scrollbar-color }` (VS Code 1.141), and Chromium ignores every ::-webkit-scrollbar rule on an
+   element whose scrollbar-color is not auto: reset it on the shell root (overlay portals mount inside it) so the rules below apply. */
+.acp-shell { scrollbar-color: auto; }
 .acp-shell ::-webkit-scrollbar { width: var(--scrollbar); height: var(--scrollbar); }
-.acp-shell ::-webkit-scrollbar-thumb, .acp-shell ::-webkit-scrollbar-thumb:hover, .acp-shell ::-webkit-scrollbar-thumb:active {
-  background-color: transparent; border: 3.5px solid transparent; background-clip: padding-box; border-radius: 6px;
+/* The thumb's colour and inset live in registered properties on the scroller itself, because scrollbar pseudo-elements do not
+   transition but repaint every frame while their originating element's properties do. Non-inherited, so a lit scroller never lights
+   the scrollers nested in it and an animation restyles one element instead of its subtree; the thumb pulls both with `inherit`.
+   The thumb box always fills its gutter; the visible capsule is painted inside it by background layers (two round caps and a body)
+   sized from the inset, so widening moves nothing. A transparent border would be simpler, but Chromium floors border widths to whole
+   CSS pixels, which turned the 2 → 4px hover of thin bars into a single jump; background sizes interpolate. --scrollbar-gutter is set
+   on the pseudo-element, never inherited, so a thin scroller's width cannot leak into one nested in it. */
+@property --scrollbar-thumb { syntax: '<color>'; inherits: false; initial-value: transparent; }
+@property --scrollbar-inset { syntax: '<length>'; inherits: false; initial-value: 3.5px; }
+/* :hover is listed so the host's own thumb:hover colour never applies; the pointer is tracked by useScrollReveal instead */
+.acp-shell ::-webkit-scrollbar-thumb, .acp-shell ::-webkit-scrollbar-thumb:hover {
+  --scrollbar-thumb: inherit; --scrollbar-inset: inherit; --scrollbar-gutter: var(--scrollbar);
+  --scrollbar-cap: radial-gradient(closest-side, var(--scrollbar-thumb) calc(100% - 0.5px), transparent);
+  --scrollbar-girth: calc(var(--scrollbar-gutter) - 2 * var(--scrollbar-inset));
+  border: 0; border-radius: 0;
+  background:
+    var(--scrollbar-cap) center top var(--scrollbar-inset) / var(--scrollbar-girth) var(--scrollbar-girth) no-repeat,
+    var(--scrollbar-cap) center bottom var(--scrollbar-inset) / var(--scrollbar-girth) var(--scrollbar-girth) no-repeat,
+    linear-gradient(var(--scrollbar-thumb), var(--scrollbar-thumb)) center / var(--scrollbar-girth) calc(100% - 2 * var(--scrollbar-inset) - var(--scrollbar-girth)) no-repeat;
 }
-.acp-shell [data-scrolling]::-webkit-scrollbar-thumb, .acp-shell ::-webkit-scrollbar-thumb:hover, .acp-shell ::-webkit-scrollbar-thumb:active {
-  background-color: var(--line-strong);
+.acp-shell ::-webkit-scrollbar-thumb:horizontal {
+  background:
+    var(--scrollbar-cap) left var(--scrollbar-inset) center / var(--scrollbar-girth) var(--scrollbar-girth) no-repeat,
+    var(--scrollbar-cap) right var(--scrollbar-inset) center / var(--scrollbar-girth) var(--scrollbar-girth) no-repeat,
+    linear-gradient(var(--scrollbar-thumb), var(--scrollbar-thumb)) center / calc(100% - 2 * var(--scrollbar-inset) - var(--scrollbar-girth)) var(--scrollbar-girth) no-repeat;
 }
+/* useScrollReveal stamps data-scrolling while the content moves and data-scrollbar-hover while the pointer is in the gutter: either
+   lights the thumb, hover also widens it (3px → 6px in the default 10px gutter). data-scrollbar-anim carries the transition from the
+   first of them until the fade-out has run: in quickly, out over --dur-close. That transition replaces the element's own for the
+   moment, which no scroller here relies on. Both motion-off modes (motion.css) make it instant. */
+.acp-shell [data-scrolling], .acp-shell [data-scrollbar-hover] { --scrollbar-thumb: var(--line-strong); }
+.acp-shell [data-scrollbar-hover] { --scrollbar-inset: 2px; }
+.acp-shell [data-scrollbar-anim] {
+  transition: --scrollbar-thumb var(--dur-close) var(--ease-close), --scrollbar-inset var(--dur-close) var(--ease-close);
+}
+.acp-shell [data-scrollbar-anim]:is([data-scrolling], [data-scrollbar-hover]) { transition-duration: var(--dur); transition-timing-function: ease-out; }
+/* A dragged thumb stays lit and wide even when the pointer leaves the gutter mid-drag */
+.acp-shell ::-webkit-scrollbar-thumb:active { --scrollbar-thumb: var(--line-strong); --scrollbar-inset: 2px; }
 .acp-shell ::-webkit-scrollbar-track { background-color: transparent; }
 .acp-shell ::-webkit-scrollbar-corner { background-color: transparent; }
 
@@ -58,7 +93,11 @@
 /* Lists inside overlays and text inside cards: a 2px thumb in a 6px gutter, revealed the same way, so the bar never crowds the text.
    Plain unlayered class, not @utility: the host's unlayered ::-webkit-scrollbar { width: 10px } would beat a layered one. */
 .acp-shell .scroll-thin::-webkit-scrollbar { width: 6px; height: 6px; }
-.acp-shell .scroll-thin::-webkit-scrollbar-thumb { border-width: 2px; }
+.acp-shell .scroll-thin { --scrollbar-inset: 2px; }
+.acp-shell .scroll-thin::-webkit-scrollbar-thumb { --scrollbar-gutter: 6px; }
+/* Same widening for the thin variant (2px → 4px); one class more than the rules above, so it wins */
+.acp-shell .scroll-thin[data-scrollbar-hover] { --scrollbar-inset: 1px; }
+.acp-shell .scroll-thin::-webkit-scrollbar-thumb:active { --scrollbar-inset: 1px; }
 /* A fading scroller (user prompt, thought, question, to-do dock, terminal output) already signals overflow with its masked edge,
    so it drops the vertical bar and keeps only the wheel; a horizontal bar (terminal long lines) keeps its height.
    Must follow .scroll-thin (same specificity) and must not use scrollbar-width, which would disable the ::-webkit-scrollbar rules. */
