@@ -316,11 +316,16 @@ fn summary_call<'a>(server: &Server, s: &'a Setup) -> compact::Call<'a> {
     && let Some(endpoint) = Endpoint::of(provider, model, config.api_key(&provider.id))
   {
     let mut model = model.clone();
-    let cost = crate::catalog::complete(&mut model, &server.catalog.get());
-    writers.push(compact::Writer { endpoint, pick: model_pick(&provider.id, &model.id), model, cost });
+    let catalog = server.catalog.get();
+    let cost = crate::catalog::complete(&mut model, &catalog);
+    let pick = model_pick(&provider.id, &model.id);
+    // The fast model thinks at the level a new session on it would start with
+    let effort = crate::acp::default_effort(&config, &catalog, Some(&pick));
+    writers.push(compact::Writer { endpoint, thinking: model.thinking, model, pick, cost, effort });
   }
-  writers.push(compact::Writer { endpoint: s.endpoint.clone(), model: s.model.clone(), pick: s.pick.clone(), cost: s.cost });
-  compact::Call { http: server.http.clone(), model: &s.model, writers }
+  writers.push(compact::Writer { endpoint: s.endpoint.clone(), model: s.model.clone(), pick: s.pick.clone(), cost: s.cost, thinking: s.thinking, effort: s.effort.clone() });
+  let limit = s.policy.threshold(s.model.context.unwrap_or(DEFAULT_CONTEXT), s.model.output);
+  compact::Call { http: server.http.clone(), model: &s.model, writers, limit }
 }
 
 /// Compact the history the way the settings page picked, read at the moment: chunks first when picked (no model

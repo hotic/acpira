@@ -299,6 +299,8 @@ pub struct Loaded {
   pub updated_ms: u64,
   /// The first item is a compaction's summary
   pub summarized: bool,
+  /// What that summary item carries (`compact::Carry`), off its `compaction` event
+  pub carry: crate::compact::Carry,
   /// The chunks shown in the view (`chunk.rs`), and how many items they render to after the summary
   pub chunks: Vec<crate::chunk::Chunk>,
   pub folded: usize,
@@ -389,7 +391,8 @@ pub fn load(path: &Path, only_summary: bool) -> std::io::Result<Loaded> {
         out.folded = 0;
         let tail = ev.get("tail").and_then(Value::as_u64).unwrap_or(0) as usize;
         let rest = out.items.split_off(out.items.len().saturating_sub(tail));
-        out.items = vec![crate::compact::summary_item(summary, ev.get("request").and_then(Value::as_str))];
+        out.carry = crate::compact::Carry::from_event(&ev);
+        out.items = vec![crate::compact::summary_item(summary, &out.carry)];
         out.items.extend(rest);
         out.summarized = true;
       }

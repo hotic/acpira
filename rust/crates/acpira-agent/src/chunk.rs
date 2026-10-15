@@ -278,7 +278,7 @@ fn prompt_words(parts: &[Part]) -> String {
 }
 
 /// The user's words in an item: a prompt's, or a message steered into the turn
-fn user_words(item: &Item) -> Option<String> {
+pub(crate) fn user_words(item: &Item) -> Option<String> {
   if let Some(t) = crate::steer::text_of(item) {
     return Some(t);
   }

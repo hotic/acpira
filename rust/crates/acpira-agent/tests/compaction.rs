@@ -67,7 +67,7 @@ async fn a_turn_compacts_at_the_hosts_threshold_and_keeps_the_last_two_turns() {
   assert!(summary.body.get("tools").is_none_or(|t| t.as_array().is_some_and(|a| a.is_empty())), "{}", summary.body);
   let text = user_texts(summary).join("\n");
   assert!(text.contains("<conversation>\n[User]: first task\n\n[Assistant]: A done\n</conversation>"), "{text}");
-  assert!(!text.contains("second task") && text.contains("## Next Move"));
+  assert!(!text.contains("second task") && text.contains("9. Optional Next Step"));
   let ev = log(&h, &sid).into_iter().find(|e| e["type"] == "compaction").unwrap();
   assert_eq!((ev["reason"].as_str(), ev["tail"].as_u64(), ev["summary"].as_str()), (Some("threshold"), Some(4), Some("## Objective\n- the summary")));
   assert_eq!(ev["usage"]["output"], 10);
@@ -82,7 +82,9 @@ async fn a_turn_compacts_at_the_hosts_threshold_and_keeps_the_last_two_turns() {
   assert!(users[0].starts_with("<conversation-summary>\n## Objective\n- the summary\n</conversation-summary>"), "{users:?}");
   assert_eq!((users[1].as_str(), users[2].as_str()), ("second task", "third task"));
   // The mode note was in what the summary replaced, so the next prompt carries it again
-  assert!(users[3].starts_with("<mode>") && users[3].ends_with("fourth task") && !next.body.to_string().contains("first task"), "{users:?}");
+  assert!(users[3].starts_with("<mode>") && users[3].ends_with("fourth task") && !next.body.to_string().contains("A done"), "{users:?}");
+  // The first turn's reply is gone; the user's words of it are carried verbatim behind the summary
+  assert!(users[0].contains("<user-messages>\n<message>\nfirst task\n</message>\n</user-messages>"), "{users:?}");
   assert_eq!(next.body["messages"].as_array().unwrap().len(), 7, "system, summary, two kept turns, the prompt");
 }
 
@@ -272,6 +274,98 @@ async fn an_overflowing_request_is_compacted_and_sent_again() {
   let r = h.conn.request("session/prompt", json!({ "sessionId": sid, "prompt": [{ "type": "text", "text": "again" }] })).await;
   assert!(r.is_err());
   assert_eq!(compaction_updates(&h).len(), 2);
+}
+
+#[tokio::test]
+async fn the_summary_is_written_thinking_and_carries_the_users_words_the_todo_list_and_the_files() {
+  let (h, server, sid) = setup(json!([{ "id": "m1", "context": 64000, "output": 8000, "efforts": ["low", "high"] }])).await;
+  std::fs::write(h.cwd().join("notes.md"), "# Notes\nkeep the cache warm\n").unwrap();
+  // The first turn reads a file and writes a to-do list, the second is a plain answer
+  server
+    .push(mock::tools(&[("c1", "read", json!({ "path": "notes.md" }))]))
+    .push(mock::tools(&[("c2", "todo", json!({ "todos": [{ "content": "wire the cache", "status": "in_progress" }] }))]))
+    .push(mock::text("A done"))
+    .push(mock::text("B done"));
+  prompt(&h, &sid, "first task: read the notes", true, 0).await;
+  prompt(&h, &sid, "不对，先别动缓存", true, 0).await;
+  // The file changes on disk before the compaction, which restores it as it is then
+  std::fs::write(h.cwd().join("notes.md"), "# Notes\nkeep the cache cold\n").unwrap();
+  server.push(mock::text("<analysis>\nwalked through both turns\n</analysis>\n\n<summary>\n1. Primary Request and Intent:\n   the cache\n</summary>"));
+  assert_eq!(prompt(&h, &sid, "/compact", true, 0).await["stopReason"], "end_turn");
+
+  // The summary call thinks at the session's level, with room for a long answer, and asks for Claude Code's sections
+  let reqs = server.requests();
+  let call = &reqs[4].body;
+  assert_eq!((call["reasoning_effort"].as_str(), call["max_tokens"].as_u64()), (Some("high"), Some(8000)), "{call}");
+  let text = user_texts(&reqs[4]).join("\n");
+  assert!(text.contains("<analysis>") && text.contains("6. All user messages") && text.contains("[Tool result]: To-do list updated"), "{text}");
+  let ev = log(&h, &sid).into_iter().find(|e| e["type"] == "compaction").unwrap();
+  assert_eq!(ev["summary"], "1. Primary Request and Intent:\n   the cache", "the analysis is left out");
+  assert_eq!(ev["effort"], "high");
+  assert_eq!(ev["messages"], json!(["first task: read the notes", "不对，先别动缓存"]));
+
+  // The next request: the summary, then what it carries verbatim
+  server.push(mock::text("C done"));
+  prompt(&h, &sid, "third task", true, 0).await;
+  let first = user_texts(&server.requests()[5])[0].clone();
+  assert!(first.starts_with("<conversation-summary>\n1. Primary Request and Intent:\n   the cache\n</conversation-summary>"), "{first}");
+  assert!(first.contains("<user-messages>\n<message>\nfirst task: read the notes\n</message>\n<message>\n不对，先别动缓存\n</message>\n</user-messages>"), "{first}");
+  assert!(first.contains("<todo>\nTo-do list updated (0 pending, 1 in progress, 0 completed):\n[in_progress] wire the cache\n</todo>"), "{first}");
+  assert!(first.contains("<file path=\"notes.md\">\n# Notes\nkeep the cache cold\n</file>"), "{first}");
+  // A reopen rebuilds the same item from the log, and a second compaction carries the earlier messages on
+  let h = Harness::start_in(h.home, h.cwd).await;
+  h.conn.request("session/resume", json!({ "sessionId": sid, "cwd": h.cwd(), "mcpServers": [] })).await.unwrap();
+  server.push(mock::text("D done"));
+  prompt(&h, &sid, "fourth task", true, 0).await;
+  assert_eq!(user_texts(&server.requests()[6])[0], first);
+  server.push(mock::text("<summary>\n1. Primary Request and Intent:\n   all of it\n</summary>"));
+  prompt(&h, &sid, "/compact", true, 0).await;
+  let ev = log(&h, &sid).into_iter().rfind(|e| e["type"] == "compaction").unwrap();
+  assert_eq!(ev["messages"], json!(["first task: read the notes", "不对，先别动缓存", "third task", "fourth task"]), "{ev}");
+  assert!(user_texts(&server.requests()[7])[0].starts_with("<previous-summary>\n1. Primary Request and Intent:\n   the cache\n</previous-summary>"));
+}
+
+#[tokio::test]
+async fn a_summary_cut_off_at_the_output_limit_falls_back_and_a_window_too_small_is_skipped() {
+  let h = Harness::start().await;
+  let (main, fast) = (MockModel::start(), MockModel::start());
+  let source = |id: &str, url: String, model: Value| json!({ "id": id, "name": id, "baseUrl": url, "models": [model] });
+  let write = |fast_context: u64| {
+    std::fs::write(
+      h.home().join("providers.json"),
+      json!({ "version": 1, "fastModel": "fast/f1", "providers": [
+        source("mock", main.base_url(), json!({ "id": "m1", "context": 64000 })),
+        source("fast", fast.base_url(), json!({ "id": "f1", "context": fast_context })),
+      ] })
+      .to_string(),
+    )
+    .unwrap();
+  };
+  write(16000);
+  std::fs::write(h.home().join("secrets.json"), json!({ "acpira.provider.mock": "sk-main", "acpira.provider.fast": "sk-fast" }).to_string()).unwrap();
+  let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
+  fast.push(mock::text("Title"));
+  main.push(mock::text("A done")).push(mock::text("B done"));
+  prompt(&h, &sid, "first task", true, 0).await;
+  prompt(&h, &sid, "second task", true, 0).await;
+  until(|| fast.requests().len() == 1).await;
+  // The fast model runs out of room mid-summary: that is a failure, and the session's model writes it
+  fast.push(Reply::Sse(vec![mock::delta(json!({ "role": "assistant", "content": "<summary>\n1. Primary Req" })), mock::finish("length"), mock::usage(100, 4000, 0)]));
+  main.push(mock::text("<summary>\nmain summary\n</summary>"));
+  prompt(&h, &sid, "/compact", true, 0).await;
+  let ev = log(&h, &sid).into_iter().rfind(|e| e["type"] == "compaction").unwrap();
+  assert_eq!((ev["model"].as_str(), ev["summary"].as_str()), (Some("mock/m1"), Some("main summary")), "{ev}");
+  assert!(ev["fallback"]["error"].as_str().is_some_and(|e| e.contains("cut off")), "{ev}");
+
+  // A long turn that a 4k window cannot hold whole: the fast model is passed over for the session's, which holds it
+  write(4000);
+  tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+  main.push(mock::text(&"long answer ".repeat(2000))).push(mock::text("<summary>\nwhole\n</summary>"));
+  prompt(&h, &sid, "third task", true, 0).await;
+  prompt(&h, &sid, "/compact", true, 0).await;
+  let ev = log(&h, &sid).into_iter().rfind(|e| e["type"] == "compaction").unwrap();
+  assert_eq!((ev["model"].as_str(), ev["skipped"].as_str()), (Some("mock/m1"), Some("fast/f1")), "{ev}");
+  assert!(ev.get("fallback").is_none() && fast.requests().len() == 2, "{ev}");
 }
 
 /// Wait up to 5 s for `done`
