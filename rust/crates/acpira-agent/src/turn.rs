@@ -241,6 +241,7 @@ fn setup(server: &Server, session: &Session, params: &Value, mcp: &[crate::mcp::
     }
     st.prompt.clone()
   };
+  let approval = config.approval();
   let defaults = &composed.sampling;
   let sampling = Sampling {
     temperature: model.sampling.temperature.or(defaults.temperature),
@@ -251,8 +252,9 @@ fn setup(server: &Server, session: &Session, params: &Value, mcp: &[crate::mcp::
   // Frozen for the turn like the rest; what the user allows on a card applies at once (`SessionState::allowed`)
   let rules = Rules {
     defaults: permission::defaults(&server.session_dir(&session.id).join("outputs")),
-    approval: config.approval().rules(),
-    mode: mode.rules(&server.plan_file(&session.id), &session.cwd),
+    approval: approval.rules(),
+    // Full access widens the mode's ask rules (Plan mode's commands then run); what the mode denies does not move
+    mode: mode.rules(&server.plan_file(&session.id), &session.cwd, approval),
     guard: Guard::new(server.config.home(), &session.cwd, user_home().as_deref()),
   };
   // Limits the configuration leaves open come from the catalogue, marked estimated (never sent as max_tokens)

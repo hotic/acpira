@@ -694,7 +694,7 @@ export const es = {
   'settings.agent.approval.autoEdit': 'Edición automática',
   'settings.agent.approval.autoEdit.desc': 'Las ediciones se ejecutan sin preguntar; los comandos siguen preguntando.',
   'settings.agent.approval.full': 'Acceso total',
-  'settings.agent.approval.full.desc': 'Todo se ejecuta sin preguntar. Los cambios en la configuración de Acpira siguen preguntando y el modo Plan solo escribe su plan.',
+  'settings.agent.approval.full.desc': 'Todo se ejecuta sin preguntar, incluidos los comandos del modo Plan, que sigue escribiendo solo su plan. Los cambios en la configuración de Acpira siguen preguntando.',
   'settings.agent.quickTasks': 'Tareas rápidas',
   'settings.agent.fastModel': 'Modelo rápido',
   'settings.agent.fastModel.desc': 'Pone título a las sesiones y escribe los resúmenes al compactar; elige uno barato y rápido.',

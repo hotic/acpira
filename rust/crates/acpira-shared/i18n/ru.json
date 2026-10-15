@@ -694,7 +694,7 @@
   "settings.agent.approval.autoEdit": "Автоправки",
   "settings.agent.approval.autoEdit.desc": "Правки выполняются без вопросов; команды по-прежнему спрашивают.",
   "settings.agent.approval.full": "Полный доступ",
-  "settings.agent.approval.full.desc": "Всё выполняется без вопросов. Изменения собственной конфигурации Acpira по-прежнему спрашивают, а режим Plan пишет только свой план.",
+  "settings.agent.approval.full.desc": "Всё выполняется без вопросов, включая команды режима Plan, — он по-прежнему пишет только свой план. Изменения собственной конфигурации Acpira по-прежнему спрашивают.",
   "settings.agent.quickTasks": "Быстрые задачи",
   "settings.agent.fastModel": "Быстрая модель",
   "settings.agent.fastModel.desc": "Называет сессии и пишет сводки при сжатии; выберите дешёвую и быструю модель.",

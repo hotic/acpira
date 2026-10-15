@@ -726,7 +726,7 @@ export const zhCN = {
   'settings.agent.approval.autoEdit': '自动编辑',
   'settings.agent.approval.autoEdit.desc': '改文件不再询问，跑命令仍会询问。',
   'settings.agent.approval.full': '完全访问',
-  'settings.agent.approval.full.desc': '全部直接执行，不再询问。改 Acpira 自身配置仍会询问，Plan 模式仍只写计划文件。',
+  'settings.agent.approval.full.desc': '全部直接执行，不再询问，Plan 模式的命令也一样，只是仍只写计划文件。改 Acpira 自身配置仍会询问。',
   'settings.agent.quickTasks': '快速任务',
   'settings.agent.fastModel': '快速模型',
   'settings.agent.fastModel.desc': '用来起会话标题和写压缩总结，选个便宜快的。',
