@@ -23,7 +23,9 @@ export function SubagentGroup({ nodes, all, onInspect }: GroupProps) {
   const rows = useMemo(() => rootRows(nodes), [nodes]);
   if (!nodes.length || !rows.length) return null;
   return (
-    <div className="flex flex-col gap-gap" aria-label={t('subagents.group', { n: nodes.length })}>
+    // No gap between rows: each row carries its own vertical padding, so the hover fills abut like a menu list
+    // and the text keeps the spacing it had when the gap sat between unpadded rows
+    <div className="flex flex-col" aria-label={t('subagents.group', { n: nodes.length })}>
       {rows.map(n => <SubagentRow key={n.id} node={n} all={all} onInspect={onInspect} />)}
     </div>
   );
@@ -56,7 +58,9 @@ function SubagentRow({ node, all, onInspect }: { node: SubagentSummary; all: Sub
     <Row
       as="button"
       interactive
-      className="subagent-row items-start [&>.row-lead]:size-subagent-mark [&_.subagent-mark]:size-subagent-mark"
+      // Vertical padding matches a single-line row's breathing room (row height minus one line), so the hover fill
+      // does not hug the title and the detail line. A row without a detail line centres its mark like other rows
+      className={cn('subagent-row py-gap-half [&>.row-lead]:size-subagent-mark [&_.subagent-mark]:size-subagent-mark', detail ? 'subagent-row-two items-start' : 'items-center')}
       aria-label={`${title} · ${who ? `${who} · ` : ''}${status} · ${elapsed}${detail ? ` · ${detail}` : ''}`}
       title={who || undefined}
       onClick={() => onInspect(node.id)}
