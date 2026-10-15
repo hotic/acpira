@@ -18,7 +18,7 @@ use crate::i18n::{t, tp};
 use crate::session_manager::{SessionManager, Viewer};
 use crate::settings::SettingsCenter;
 use crate::sidecar::platform::SidecarPlatform;
-use crate::store::data_dir::normalize;
+use crate::store::data_dir::{home_dir, normalize};
 
 /// Manager events within this window collapse to one post per message type
 pub const BATCH_WINDOW: Duration = Duration::from_millis(30);
@@ -253,7 +253,7 @@ impl BridgeCore {
         let resolved = if crate::platform::file_url::is_file_url(&path) {
           file_url_to_path(&path).ok_or_else(|| anyhow::anyhow!("File URL must be absolute"))
         } else {
-          Ok(normalize(&Path::new(&cwd).join(&path)).to_string_lossy().into_owned())
+          Ok(normalize(&resolve_open_path(&cwd, &path)).to_string_lossy().into_owned())
         };
         match resolved {
           Ok(p) => {
@@ -495,4 +495,16 @@ impl BridgeCore {
     }
     self.manager.detach(&self.viewer);
   }
+}
+
+// A path an agent wrote in its reply: `~` / `~/…` is the engine user's home (agents cite `~/.agents/plans/…`), anything
+// else is relative to the session cwd. Joining `~/…` onto the cwd would open a missing `<cwd>/~/…`
+fn resolve_open_path(cwd: &str, path: &str) -> std::path::PathBuf {
+  if path == "~" {
+    return home_dir();
+  }
+  if let Some(rest) = path.strip_prefix("~/").or_else(|| if cfg!(windows) { path.strip_prefix("~\\") } else { None }) {
+    return home_dir().join(rest);
+  }
+  Path::new(cwd).join(path)
 }
