@@ -233,6 +233,19 @@ mod tests {
     }
   }
 
+  /// Whether `l` sees the lease free within a short wait. A child process another test spawns at that moment shares
+  /// this process's descriptors between fork and exec, so a lock just let go can still read as held for an instant
+  fn freed(l: &SessionLeases) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while l.held_elsewhere(ID) {
+      if std::time::Instant::now() >= deadline {
+        return false;
+      }
+      std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    true
+  }
+
   #[test]
   fn a_lease_is_seen_by_another_holder_until_released() {
     let dir = tempfile::tempdir().unwrap();
@@ -246,11 +259,11 @@ mod tests {
     b.sync(&HashSet::from([ID.to_owned()]));
     assert!(b.held().is_empty());
     a.sync(&HashSet::new());
-    assert!(!b.held_elsewhere(ID));
+    assert!(freed(&b));
     b.sync(&HashSet::from([ID.to_owned()]));
     assert!(a.held_elsewhere(ID));
     b.release_all();
-    assert!(!a.held_elsewhere(ID));
+    assert!(freed(&a));
   }
 
   #[test]
@@ -263,7 +276,7 @@ mod tests {
     a.sync(&HashSet::new());
     assert!(b.held_elsewhere(ID));
     a.release(ID, turn);
-    assert!(!b.held_elsewhere(ID), "the last pin going releases a lease no sync wants");
+    assert!(freed(&b), "the last pin going releases a lease no sync wants");
     pin(b.claim(ID));
   }
 
@@ -280,7 +293,7 @@ mod tests {
     a.sync(&HashSet::new());
     assert!(b.held_elsewhere(ID));
     a.release(ID, second);
-    assert!(!b.held_elsewhere(ID));
+    assert!(freed(&b));
   }
 
   #[test]
@@ -292,7 +305,7 @@ mod tests {
     a.release(ID, p);
     assert!(b.held_elsewhere(ID));
     a.sync(&HashSet::new());
-    assert!(!b.held_elsewhere(ID));
+    assert!(freed(&b));
   }
 
   #[test]
