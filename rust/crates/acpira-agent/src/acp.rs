@@ -55,6 +55,9 @@ pub struct SessionState {
   pub titled: bool,
   /// The first item is a compaction's summary (`compact.rs`)
   pub summarized: bool,
+  /// What that summary item carries beside the summary (the user's messages, ...); the next compaction carries the
+  /// messages on
+  pub carry: crate::compact::Carry,
   /// The chunks the view shows (`chunk.rs`), and how many items they render to behind the summary item
   pub chunks: Vec<crate::chunk::Chunk>,
   pub folded: usize,
@@ -305,6 +308,7 @@ impl Server {
       model: s("model").or_else(|| config.default_pick()),
       items: loaded.items.clone(),
       summarized: loaded.summarized,
+      carry: loaded.carry.clone(),
       chunks: loaded.chunks.clone(),
       folded: loaded.folded,
       // The replay ends on this context; a window edited since is pushed by the next `push_controls`
@@ -536,7 +540,7 @@ fn efforts_of(config: &Config, catalog: &Catalog, pick: Option<&str>) -> Vec<Str
 }
 
 /// The model family's preferred level when offered, else the last (strongest) level
-fn default_effort(config: &Config, catalog: &Catalog, pick: Option<&str>) -> Option<String> {
+pub(crate) fn default_effort(config: &Config, catalog: &Catalog, pick: Option<&str>) -> Option<String> {
   let efforts = efforts_of(config, catalog, pick);
   let preferred = pick.and_then(|p| config.find(p)).map(|(p, m)| crate::llm::family::resolve(p, m).effort);
   efforts.iter().find(|e| Some(e.as_str()) == preferred).or(efforts.last()).cloned()
