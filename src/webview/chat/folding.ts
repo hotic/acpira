@@ -121,11 +121,20 @@ export function foldActivity(turn: AgentTurn): FoldActivity {
   return { kind: 'other', label: t('host.working'), active: true };
 }
 
+// Where the turn's clock starts: the first streamed output, not the send, so the wait for the agent to answer is not
+// counted. A turn that already has blocks but no stamp (older transcripts, mirrors fed outside the ACP stream) falls
+// back to the send time; a live turn with no output yet has no clock.
+export function clockStart(turn: AgentTurn): number | undefined {
+  if (turn.respondedAt !== undefined) return turn.respondedAt;
+  return turn.blocks.length > 0 || turn.endedAt !== undefined ? turn.startedAt : undefined;
+}
+
 // Thought durations omit tool execution and waiting, so they cannot substitute for turn timing.
 // Bare "5m 35s", the same on the turn's fold head, its live counter and the stats card.
 export function elapsedDuration(turn: AgentTurn): string {
-  if (turn.startedAt === undefined || turn.endedAt === undefined) return '';
-  return durationText(turn.endedAt - turn.startedAt);
+  const from = clockStart(turn);
+  if (from === undefined || turn.endedAt === undefined) return '';
+  return durationText(turn.endedAt - from);
 }
 
 // "5m 35s" for a span in ms; shared by the finished label and the live counter on a running turn's head

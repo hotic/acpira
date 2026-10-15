@@ -32,7 +32,7 @@ import { QuestionRecord } from './Questions';
 import { BlobUrlContext, OpenToolFileContext, WorkflowProgressContext, parseFileLink } from './fileLinks';
 import { PlanDocument } from './PlanDocument';
 import { TurnAttachments } from './Attachments';
-import { elapsedDuration, splitCodexBlocks } from './folding';
+import { clockStart, elapsedDuration, splitCodexBlocks } from './folding';
 import { GoalRow } from './Goal';
 import { rememberFold, rememberedFold } from './foldMemory';
 import { ProcessHistory } from './ProcessHistory';
@@ -248,7 +248,7 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
       // sections have no independent timing; repeating the full duration lies.
       const content = { ...shown, blocks: section.blocks,
         ...(!lastSection ? { stop: undefined, error: undefined, command: undefined } : {}),
-        ...(sections.length > 1 ? { startedAt: undefined, endedAt: undefined } : {}),
+        ...(sections.length > 1 ? { startedAt: undefined, respondedAt: undefined, endedAt: undefined } : {}),
       };
       return <Fragment key={section.key}>
         {(section.blocks.length > 0 || (lastSection && (running || outcomeOf(shown)))) && <AgentContent turn={content} index={index}
@@ -442,6 +442,7 @@ function Activity({ turn, running, leadKind = 'orb' }: { turn: AgentTurn; runnin
     return () => { disposed = true; };
   }, [running, present]);
   const activity = liveActivity(turn, leadKind);
+  const since = clockStart(turn);
   if (!running && !present) return null;
   return (
     // Fade the complete label before collapsing its slot; clipping the row at the
@@ -454,7 +455,7 @@ function Activity({ turn, running, leadKind = 'orb' }: { turn: AgentTurn; runnin
       <div className="min-h-0 overflow-hidden">
         <Row lead={activity.lead} className="font-medium" title={activity.title}>
           <RowLabel shimmer={activity.active}>{activity.label}</RowLabel>
-          {running && turn.startedAt !== undefined && <LiveElapsed since={turn.startedAt} />}
+          {running && since !== undefined && <LiveElapsed since={since} />}
         </Row>
       </div>
     </div>
@@ -615,6 +616,7 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
   const open = retired || (manual ?? auto);
   const imageResults = useMemo(() => blocks.filter(isImageResultBlock), [blocks]);
   const activity = liveActivity(turn, lead);
+  const since = clockStart(turn);
   const CompletionIcon = turn.stop === 'cancelled' ? X : outcomeOf(turn) ? TriangleAlert : Check;
   const leadIcon = running ? activity.lead : <CompletionIcon className="size-icon" strokeWidth={1.5} />;
   const label = running ? activity.label : outcomeOf(turn) ?? t('turns.done');
@@ -633,7 +635,7 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
     <Collapsible.Trigger render={<Row as="button" interactive lead={leadIcon} title={(running && activity.title) || label} className={running ? surfaceVariants({ tone: 'status' }) : undefined} />}>
       <RowLabel shimmer={running && activity.active}>{retired ? t('host.working') : label}</RowLabel>
       {elapsed && !retired && <span className="min-w-0 truncate text-fg-3" title={elapsed}>{elapsed}</span>}
-      {running && turn.startedAt !== undefined && <LiveElapsed since={turn.startedAt} />}
+      {running && since !== undefined && <LiveElapsed since={since} />}
       {foldable && <ChevronRight className={cn('size-3 shrink-0 self-center transition-transform', open && 'rotate-90')} strokeWidth={1.75} />}
     </Collapsible.Trigger>
   );
