@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import type { EditorSelection, HostMsg } from '@shared/protocol';
 import type { PlatformRequest } from '@shared/sidecar';
 import type { SessionView } from '@shared/transcript';
+import { sessionIdOfLink } from '@shared/sessionLinks';
 import { FileVault } from './accounts/AccountStore';
 import { WebviewBridge } from './bridge';
 import { setHostLocale, t } from './i18n';
@@ -61,10 +62,12 @@ export async function activate(context: vscode.ExtensionContext) {
   // The chat last focused, clicked into or brought into view: where "Add to Chat" goes. Editor tabs are revealed through their panel
   let lastFocused: WebviewBridge | undefined;
   const panels = new Map<WebviewBridge, vscode.WebviewPanel>();
+  // Copied session links open through this window's URI handler (`cursor://` under Cursor, `vscode-insiders://` …)
+  const sessionLinkBase = `${vscode.env.uriScheme}://${context.extension.id}/session/`;
   const attach = (webview: vscode.Webview, host: 'sidebar' | 'editor', visible: () => boolean, initial?: string | { mostRecent: true }, onSession?: (s: SessionView) => void) => {
     const b = new WebviewBridge(webview, host, {
       client: sidecar, extensionUri: context.extensionUri, sessionsDir, onSession, visible, log: line => log.info(line),
-      locale: () => platform.locale(),
+      locale: () => platform.locale(), sessionLinkBase,
       onPageReady: ready => {
         ready.postShell({ type: 'editorSelection', selection: liveSelection });
         if (lastCopy) ready.postShell({ type: 'editorCopy', selection: lastCopy });
@@ -182,13 +185,14 @@ export async function activate(context: vscode.ExtensionContext) {
     void vscode.commands.executeCommand(`${VIEW_ID}.focus`);
   };
 
-  // Bring a session up: the editor tab already showing it, else the sidebar (switched to it when it shows another one)
+  // Bring a session up: the editor tab already showing it, else the sidebar. The page itself switches (showSession), so a
+  // sidebar left on the settings page comes back to the chat; an unknown id gets the engine's record-load message there
   const revealSession = (sessionId: string) => {
     const showing = [...bridges].find(b => b.sessionId === sessionId);
     const panel = showing && panels.get(showing);
-    if (panel) { panel.reveal(undefined, false); return; }
+    if (panel) { panel.reveal(undefined, false); showing.postShell({ type: 'showSession', id: sessionId }); return; }
     void vscode.commands.executeCommand(`${VIEW_ID}.focus`);
-    if (!showing) withSidebar(b => b.send({ type: 'selectSession', id: sessionId }));
+    withSidebar(b => b.postShell({ type: 'showSession', id: sessionId }));
   };
 
   // open_browser's check from the user's machine runs in a chat page (they render there even in a remote window): the chat used
@@ -273,6 +277,14 @@ export async function activate(context: vscode.ExtensionContext) {
         broadcast({ type: 'editorCopy', selection: copied });
       },
     }, { providedPasteEditKinds: [], copyMimeTypes: ['application/vnd.acpira.copy'] }),
+    // Copied session links (`vscode://hotic.acpira/session/<id>`) open here; VS Code routes the URI to the window that owns it
+    vscode.window.registerUriHandler({
+      handleUri(uri) {
+        const id = sessionIdOfLink(`${uri.scheme}://${uri.authority}${uri.path}`);
+        if (id) revealSession(id);
+        else log.warn(`unhandled URI: ${uri.path}`);
+      },
+    }),
     vscode.commands.registerCommand('acpira.openView', () => vscode.commands.executeCommand(`${VIEW_ID}.focus`)),
     vscode.commands.registerCommand('acpira.newSession', () => withSidebar(b => b.send({ type: 'newSession' }))),
     vscode.commands.registerCommand('acpira.showLog', () => log.show()),
