@@ -380,3 +380,53 @@ async fn the_engines_own_mcp_server_reaches_the_model_and_show_image_shows_the_p
   assert!(row.to_string().contains("image/png"), "the picture is attached: {row}");
   env.assert_prefix_stable(&env.log_of(&s));
 }
+
+/// Stands in for the session manager behind the hub: what reaches it, and a fixed answer
+struct CannedLibrary;
+
+impl acpira_host::session_library::SessionLibrary for CannedLibrary {
+  fn search_sessions<'a>(
+    &'a self,
+    _caller: &'a acpira_host::session_library::LibraryCaller,
+    args: acpira_host::relay::wire::SessionSearchArgs,
+  ) -> acpira_host::session_library::LibraryFuture<'a> {
+    Box::pin(async move { Ok(format!("searched {:?}", args.query)) })
+  }
+  fn read_session<'a>(
+    &'a self,
+    caller: &'a acpira_host::session_library::LibraryCaller,
+    args: acpira_host::relay::wire::SessionReadArgs,
+  ) -> acpira_host::session_library::LibraryFuture<'a> {
+    let me = caller.session_id.clone();
+    Box::pin(async move { Ok(format!("# Outline of {} 2-3 asked by {me}", args.session)) })
+  }
+}
+
+// The whole way an agent reads another session: the model's call, the built-in agent's MCP client, the `acpira mcp` process,
+// the hub with the session's grant, the library, and back into a "Read session" row naming the turns
+#[tokio::test(flavor = "multi_thread")]
+async fn read_session_goes_from_the_model_through_acpira_mcp_and_the_hub_into_a_session_row() {
+  let mut env = Env::new();
+  let roster = Arc::new(acpira_host::relay::roster::Roster::new(env.root.path()));
+  let hub = acpira_host::relay::hub::RelayHub::start(roster, Arc::new(|_: &str| {})).await.unwrap();
+  let library: Arc<dyn acpira_host::session_library::SessionLibrary> = Arc::new(CannedLibrary);
+  hub.set_library(Arc::downgrade(&library));
+  env.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub));
+  let s = env.session().await;
+  let args = json!({ "session": "vscode://hotic.acpira/session/abc", "from": 2, "to": 3 });
+  env.server.push(mock::tools(&[("r1", "acpira_read_session", args)]));
+  env.server.push(mock::text("Read it."));
+  let cards = run(&s, "what happened in that session?").await;
+  assert!(cards.is_empty(), "a read-only engine tool asks nothing: {cards:?}");
+  let reqs = env.server.requests();
+  let names: Vec<String> = reqs[0].body["tools"].as_array().unwrap().iter().map(|t| t["function"]["name"].as_str().unwrap().to_owned()).collect();
+  assert!(names.iter().any(|n| n == "acpira_search_sessions") && names.iter().any(|n| n == "acpira_read_session"), "{names:?}");
+  let first = reqs[0].body["messages"][1]["content"].as_str().unwrap().to_owned();
+  assert!(first.contains("acpira://session/<id>"), "the instructions name the links: {first}");
+  let msgs = reqs[1].body["messages"].as_array().unwrap();
+  let result = msgs.iter().find(|m| m["role"] == "tool").unwrap()["content"].as_str().unwrap().to_owned();
+  assert!(result.contains(&format!("# Outline of vscode://hotic.acpira/session/abc 2-3 asked by {}", s.0.id)), "{result}");
+  let vw = view(&s);
+  let row = agent_blocks(&vw).into_iter().find(|b| b["type"] == "tool_call").unwrap();
+  expect_match(&row, json!({ "verbKey": "verb.readSession", "target": "acpira://session/abc 2-3", "status": "completed" }));
+}
