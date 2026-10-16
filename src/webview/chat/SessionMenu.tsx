@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react';
 import { ContextMenu } from '@base-ui/react/context-menu';
-import { ChevronRight, FileJson, FileText, Folder, FolderInput, Inbox, Pencil, Pin, PinOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
+import { ChevronRight, Copy, FileJson, FileText, Folder, FolderInput, Inbox, Link, Pencil, Pin, PinOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
 import type { SessionCategory, SessionSummary } from '@shared/transcript';
 import { t } from '../i18n';
 import { DropdownMenu } from '../ui/DropdownMenu';
@@ -29,6 +29,8 @@ export interface SessionMenuItemsProps {
   projects?: MoveProject[];
   onMoveTo?: (cwd: string) => void;
   onExport?: (format: 'markdown' | 'json') => void;
+  // "Copy": the session's link, its transcript as Markdown, its working directory (only when the summary knows one)
+  onCopy?: (what: SessionCopyKind) => void;
   onDelete: () => void;
   // "Move to category": the categories of the session's own project, the pick (null = take it out) and "new category…".
   // Offered only with onFile, and never for a pinned session (pinned ones are locked to the top)
@@ -36,6 +38,8 @@ export interface SessionMenuItemsProps {
   onFile?: (category: string | null) => void;
   onNewCategory?: () => void;
 }
+
+export type SessionCopyKind = 'link' | 'markdown' | 'cwd';
 
 export interface SessionMenuProps extends SessionMenuItemsProps {
   // The button that opens the menu (an IconButton); aria-label belongs on it
@@ -61,10 +65,10 @@ function Submenu({ icon, label, children }: { icon: ReactElement; label: string;
   );
 }
 
-// The session menu's rows (Cursor's shape): session actions, export, delete. Shared by the "…" dropdown of the list row and the
+// The session menu's rows (Cursor's shape): session actions, copy and export, delete. Shared by the "…" dropdown of the list row and the
 // header and by the row's right-click menu; Base UI's context menu is built from the same Menu parts, so the rows are one set.
 // An item only renders when its handler exists; a separator only between two non-empty groups
-function sessionMenuItems({ session, onOpenInEditor, onRename, onPin, onMove, projects = [], onMoveTo, onExport, onDelete, categories = [], onFile, onNewCategory }: SessionMenuItemsProps): ReactElement[] {
+function sessionMenuItems({ session, onOpenInEditor, onRename, onPin, onMove, projects = [], onMoveTo, onExport, onCopy, onDelete, categories = [], onFile, onNewCategory }: SessionMenuItemsProps): ReactElement[] {
   const top: ReactElement[] = [];
   if (onOpenInEditor) top.push(<DropdownMenu.Item key="editor" onClick={onOpenInEditor}><OptionContent icon={<SquareArrowOutUpRight strokeWidth={1.5} />}>{t('session.openInEditor')}</OptionContent></DropdownMenu.Item>);
   if (onRename) top.push(<DropdownMenu.Item key="rename" onClick={onRename}><OptionContent icon={<Pencil strokeWidth={1.5} />}>{t('common.rename')}</OptionContent></DropdownMenu.Item>);
@@ -100,6 +104,14 @@ function sessionMenuItems({ session, onOpenInEditor, onRename, onPin, onMove, pr
     top.push(<DropdownMenu.Item key="move" onClick={onMove}><OptionContent icon={<FolderInput strokeWidth={1.5} />}>{t('session.move')}</OptionContent></DropdownMenu.Item>);
   }
   const middle: ReactElement[] = [];
+  // Copy leads the middle group; link and folder are written inside the click, the Markdown is fetched (Shell copySession)
+  if (onCopy) {
+    middle.push(<Submenu key="copy" icon={<Copy strokeWidth={1.5} />} label={t('session.copy')}>{[
+      <DropdownMenu.Item key="link" onClick={() => onCopy('link')}><OptionContent icon={<Link strokeWidth={1.5} />}>{t('session.copy.link')}</OptionContent></DropdownMenu.Item>,
+      <DropdownMenu.Item key="markdown" onClick={() => onCopy('markdown')}><OptionContent icon={<FileText strokeWidth={1.5} />}>{t('session.copy.markdown')}</OptionContent></DropdownMenu.Item>,
+      ...session.cwd ? [<DropdownMenu.Item key="cwd" title={session.cwd} onClick={() => onCopy('cwd')}><OptionContent icon={<Folder strokeWidth={1.5} />}>{t('session.copy.cwd')}</OptionContent></DropdownMenu.Item>] : [],
+    ]}</Submenu>);
+  }
   if (onExport) {
     middle.push(<DropdownMenu.Item key="md" onClick={() => onExport('markdown')}><OptionContent icon={<FileText strokeWidth={1.5} />}>{t('session.export.markdown')}</OptionContent></DropdownMenu.Item>);
     middle.push(<DropdownMenu.Item key="json" onClick={() => onExport('json')}><OptionContent icon={<FileJson strokeWidth={1.5} />}>{t('session.export.json')}</OptionContent></DropdownMenu.Item>);

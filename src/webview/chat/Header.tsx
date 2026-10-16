@@ -31,7 +31,7 @@ export interface HeaderProps {
   sessionScope?: SessionScope;
   // The import popover's current listing, handed on to the session list
   nativeSessions?: NativeSessionsState;
-  on: Pick<ShellHandlers, 'selectSession' | 'newSession' | 'renameSession' | 'deleteSession' | 'pinSession' | 'moveSession' | 'exportSession' | 'openInEditor' | 'selectAccount' | 'addAccount' | 'removeAccount' | 'refreshQuota' | 'unlockCredentials' | 'listNativeSessions' | 'importNativeSession' | 'searchSessions' | 'setSessionCategory' | 'categoryOp'>;
+  on: Pick<ShellHandlers, 'selectSession' | 'newSession' | 'renameSession' | 'deleteSession' | 'pinSession' | 'moveSession' | 'exportSession' | 'copySession' | 'openInEditor' | 'selectAccount' | 'addAccount' | 'removeAccount' | 'refreshQuota' | 'unlockCredentials' | 'listNativeSessions' | 'importNativeSession' | 'searchSessions' | 'setSessionCategory' | 'categoryOp'>;
   onToggleDrawer?: () => void;
   drawerOpen?: boolean;
   sessionPanel?: 'hidden' | 'left' | 'right';
@@ -90,7 +90,7 @@ export function Header({ title, sessions, categories, agent, agents, accounts, a
           <Popover.Portal><Popover.Positioner side="bottom" align="end" width="xl"><Popover.Popup initialFocus={interaction => interaction === 'keyboard'}>
             <SessionList sessions={sessions} agents={agents} activeId={activeSessionId} workspace={workspace} scope={sessionScope}
               onSelect={id => { on.selectSession(id); setHistoryOpen(false); }}
-              onRename={on.renameSession} onDelete={on.deleteSession} onPin={on.pinSession} onMove={on.moveSession} onExport={on.exportSession}
+              onRename={on.renameSession} onDelete={on.deleteSession} onPin={on.pinSession} onMove={on.moveSession} onExport={on.exportSession} onCopy={on.copySession}
               activeAgent={agent.id} nativeSessions={nativeSessions} onListNative={on.listNativeSessions} onImportNative={on.importNativeSession}
               onSearch={on.searchSessions}
               categories={categories} onFile={on.setSessionCategory} onCategoryOp={on.categoryOp}
@@ -107,6 +107,7 @@ export function Header({ title, sessions, categories, agent, agents, accounts, a
             onOpenInEditor={on.openInEditor ? () => on.openInEditor!(activeSessionId) : undefined}
             onPin={() => on.pinSession(activeSessionId, !(sessions.find(s => s.id === activeSessionId)?.pinned))}
             onExport={on.exportSession ? format => on.exportSession!(activeSessionId, format) : undefined}
+            onCopy={on.copySession ? what => on.copySession!(activeSessionId, what) : undefined}
             onDelete={() => on.deleteSession(activeSessionId)}
           />
         )}

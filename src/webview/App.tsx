@@ -24,8 +24,9 @@ import type { StorageState } from './settings/StoragePage';
 import type { ProvidersState } from './settings/ProvidersSection';
 
 declare global {
-  // `font`: the configured UI face, for fontPreload.ts (VS Code only says so; other hosts get the default)
-  interface Window { __acpira?: { host: 'sidebar' | 'editor'; font?: Appearance['font'] } }
+  // `font`: the configured UI face, for fontPreload.ts (VS Code only says so; other hosts get the default).
+  // `sessionLinkBase`: the clickable session-link base the VS Code shell injects (chat/sessionLinkBase.ts)
+  interface Window { __acpira?: { host: 'sidebar' | 'editor'; font?: Appearance['font']; sessionLinkBase?: string } }
 }
 
 // Always through the memo: acquireVsCodeApi() throws when called twice, and other components (Link) reach the api via vscodeApi()
@@ -75,6 +76,24 @@ const diffSource = (sessionId: string, toolCallId: string, nth: number, subagent
   diffWaits.set(seq, resolve);
   setTimeout(() => settleDiff(seq, undefined), DIFF_SOURCE_TIMEOUT);
   post({ type: 'diffSource', sessionId, toolCallId, nth, ...(subagentId !== undefined ? { subagentId } : {}), seq });
+});
+
+// "Copy as Markdown": the engine renders the export's Markdown and always answers; an error or no answer rejects, so the copy
+// toast says it failed instead of leaving the clipboard's pending write hanging
+const SESSION_MARKDOWN_TIMEOUT = 15000;
+let markdownSeq = 0;
+const markdownWaits = new Map<number, { resolve: (text: string) => void; reject: (error: Error) => void }>();
+const settleMarkdown = (seq: number, markdown: string | undefined, error: string | undefined) => {
+  const wait = markdownWaits.get(seq);
+  markdownWaits.delete(seq);
+  if (markdown !== undefined) wait?.resolve(markdown);
+  else wait?.reject(new Error(error ?? 'no reply'));
+};
+const sessionMarkdown = (id: string) => new Promise<string>((resolve, reject) => {
+  const seq = ++markdownSeq;
+  markdownWaits.set(seq, { resolve, reject });
+  setTimeout(() => settleMarkdown(seq, undefined, 'timed out'), SESSION_MARKDOWN_TIMEOUT);
+  post({ type: 'sessionMarkdown', id, seq });
 });
 
 type InitEnv = Pick<InitState, 'host' | 'home' | 'cwd' | 'blobBase'>;
@@ -214,10 +233,12 @@ export function App() {
         case 'files': settleFiles(m.seq, m.files); break;
         case 'sessionHits': settleSessions(m.seq, m.hits); break;
         case 'diffSource': settleDiff(m.seq, m.source); break;
+        case 'sessionMarkdown': settleMarkdown(m.seq, m.markdown, m.error); break;
         case 'editorSelection': setEditorSelection(m.selection); break;
         case 'editorCopy': setEditorCopy(m.selection); break;
         case 'chime': playChime(); break;
         case 'probeUrl': { const { id, url } = m; void probeUrl(url).then(r => post({ type: 'probeResult', id, ...r })); break; }
+        case 'showSession': post({ type: 'selectSession', id: m.id }); setView('chat'); break;
         case 'addSelection': {
           const draft = selectionDraft(m.selection, cwdRef.current);
           setView('chat');
@@ -301,6 +322,7 @@ export function App() {
     editQueued: (sessionId, id, text, retainedAttachments, attachments) => post({ type: 'editQueued', sessionId, id, text, retainedAttachments, attachments }),
     forkSession: (sessionId, turnIndex) => post({ type: 'forkSession', sessionId, turnIndex }),
     exportSession: (id, format) => post({ type: 'exportSession', id, format }),
+    sessionMarkdown,
     openInEditor: sessionId => post({ type: 'openInEditor', sessionId }),
     listNativeSessions: agent => { setNativeSessions({ agent, loading: true, sessions: [] }); post({ type: 'listNativeSessions', agent }); },
     importNativeSession: (agent, s) => post({ type: 'importNativeSession', agent, sessionId: s.sessionId, cwd: s.cwd, title: s.title, updatedAt: s.updatedAt }),

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Network, Paperclip, X } from 'lucide-react';
+import { Check, CircleAlert, Network, Paperclip, X } from 'lucide-react';
 import type { ExternalSessionInfo, AccountInfo, AgentInfo, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
 import type { ModelShapes } from '@shared/modelShapes';
@@ -28,6 +28,10 @@ import type { MentionPersona } from './Mention';
 import { Notice } from './Notice';
 import { ExternalSessionNotice } from './ExternalSessionNotice';
 import { Toast } from '../ui/Toast';
+import { writeClipboardLater } from '../ui/useCopied';
+import { sessionLink } from '@shared/sessionLinks';
+import { sessionLinkBase } from './sessionLinkBase';
+import type { SessionCopyKind } from './SessionMenu';
 import { Alert, isShortStop } from './Alert';
 import { Questions, type OnAnswer } from './Questions';
 import { PlanBar } from './PlanBar';
@@ -39,7 +43,7 @@ import { lastTypedPrompt } from './goalText';
 import { heldPrompt } from './heldPrompt';
 import { BUILTIN_AGENT_ID } from '@shared/providers';
 import type { SettingsPage } from '../settings/Nav';
-import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, DiffSourceContext, OpenBlobContext } from './fileLinks';
+import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, DiffSourceContext, OpenBlobContext, OpenSessionContext } from './fileLinks';
 import { TurnActionsContext } from './TurnActions';
 import { SubagentInspector } from './subagents/SubagentInspector';
 import { InspectorSplitter, clamp, usePreferredPaneWidth, type PaneBounds } from './subagents/InspectorSplitter';
@@ -108,6 +112,10 @@ export interface ShellHandlers {
   forkSession?: (sessionId: string, turnIndex: number) => void;
   // Write the session as Markdown or JSON under the data dir's exports/; the toast that follows offers to open it
   exportSession?: (id: string, format: 'markdown' | 'json') => void;
+  // The session as Markdown (the export's text, nothing written); rejects with the reason it could not be read
+  sessionMarkdown?: (id: string) => Promise<string>;
+  // "Copy" in the session menu; the Shell supplies it (clipboard write + toast), from sessionMarkdown for the Markdown
+  copySession?: (id: string, what: SessionCopyKind) => void;
   // Open the session in an editor tab
   openInEditor?: (sessionId: string) => void;
   // History list's import popover: read the agent's own sessions / import one as a local record
@@ -193,6 +201,7 @@ interface ToastState {
   text: string;
   icon?: ReactNode;
   undo?: () => void;
+  ttl?: number;
 }
 
 // Chat and optional session column share one webview. Width determines docking in both host surfaces.
@@ -324,13 +333,27 @@ export function Shell(p: ShellProps) {
       on.deleteSession(id);
       pushToast({ key: id, text: t('session.deleted', { title }), undo: () => { on.restoreSession(id); dropToast(id); } });
     },
+    // The link and the folder are written inside the click; the Markdown is handed over as pending text (writeClipboardLater).
+    // One toast slot, so copying again replaces the last confirmation
+    copySession: (id, what) => {
+      const cwd = p.sessions.find(s => s.id === id)?.cwd || (id === p.activeSessionId ? p.cwd : undefined);
+      const write = what === 'link' ? navigator.clipboard.writeText(sessionLink(id, sessionLinkBase()))
+        : what === 'cwd' ? (cwd ? navigator.clipboard.writeText(cwd) : Promise.reject(new Error('no working directory')))
+        : on.sessionMarkdown ? writeClipboardLater(() => on.sessionMarkdown!(id)) : Promise.reject(new Error('unavailable'));
+      // A fresh key per copy restarts the toast's timer; the previous confirmation goes
+      const show = (toast: Omit<ToastState, 'key'>) => setToasts(ts => [...ts.filter(x => !x.key.startsWith('copy:')), { key: `copy:${Date.now()}`, ...toast }]);
+      void write.then(
+        () => show({ text: t(`session.copied.${what}`), icon: <Check className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} />, ttl: 2000 }),
+        (e: unknown) => show({ text: t('session.copyFailed', { detail: e instanceof Error ? e.message : String(e) }), icon: <CircleAlert className="size-icon shrink-0 text-danger" strokeWidth={1.5} /> }),
+      );
+    },
     // A moved session leaves a "this project" list at once (or changes group under "all"); the toast says where it went
     moveSession: on.moveSession && ((id, to) => {
       const title = p.sessions.find(s => s.id === id)?.title ?? t('session.fallbackTitle');
       on.moveSession!(id, to);
       pushToast({ key: `m${id}`, text: to && to.cwd !== p.workspace ? t('session.movedTo', { title, project: projectName(to.cwd) }) : t('session.moved', { title }) });
     }),
-  }), [on, p.sessions, pushToast, dropToast]);
+  }), [on, p.sessions, p.activeSessionId, p.cwd, pushToast, dropToast]);
   const blobUrl = useMemo(() => (p.blobBase && p.activeSessionId ? (blob: string) => `${p.blobBase}/${p.activeSessionId}/${blob}` : undefined), [p.blobBase, p.activeSessionId]);
   // Child transcripts share the root session's blob store, so both contexts live above Thread and the inspector
   const openBlob = useMemo(() => p.activeSessionId && on.openBlob ? (name: string) => on.openBlob!(p.activeSessionId!, name) : undefined, [p.activeSessionId, on.openBlob]);
@@ -362,6 +385,7 @@ export function Shell(p: ShellProps) {
       onPin={on.pinSession}
       onMove={handlers.moveSession}
       onExport={on.exportSession}
+      onCopy={handlers.copySession}
       activeAgent={p.agent.id}
       nativeSessions={p.nativeSessions}
       onListNative={on.listNativeSessions}
@@ -405,6 +429,8 @@ export function Shell(p: ShellProps) {
       ? current?.sessionId === p.activeSessionId ? undefined : current
       : { sessionId: p.activeSessionId!, index }),
   } : undefined, [on.editTurn, p.activeSessionId, editable, editing, p.modelShapes]);
+  // A session link in a reply (or the inspector's child transcript) switches this view to that session, like a history row
+  const openSession = useCallback((id: string) => { on.selectSession(id); closeDrawer(); }, [on.selectSession, closeDrawer]);
   const openToolFile = useMemo(() => p.activeSessionId && on.openFile
     ? (path: string, line?: number) => on.openFile!(p.activeSessionId!, path, line) : undefined, [p.activeSessionId, on.openFile]);
   const goalAction = useMemo(() => p.activeSessionId && on.goal
@@ -439,6 +465,7 @@ export function Shell(p: ShellProps) {
   return (
     <AppearanceContext.Provider value={a}>
       <ThemeContext.Provider value={p.theme}>
+      <OpenSessionContext.Provider value={openSession}>
       <ShellLayerContext.Provider value={root}>
       <BlobUrlContext.Provider value={blobUrl}>
       <OpenBlobContext.Provider value={openBlob}>
@@ -524,7 +551,7 @@ export function Shell(p: ShellProps) {
                   </div>
                   {toasts.length > 0 && (
                     <div ref={toastRef} className="pointer-events-none absolute inset-x-0 bottom-[calc(var(--gap)+var(--thread-dock-height,0px))] z-10 flex flex-col items-center gap-1 px-page">
-                      {toasts.map(t => <Toast key={t.key} text={t.text} icon={t.icon} onUndo={t.undo} onClose={() => dropToast(t.key)} />)}
+                      {toasts.map(t => <Toast key={t.key} text={t.text} icon={t.icon} ttl={t.ttl} onUndo={t.undo} onClose={() => dropToast(t.key)} />)}
                     </div>
                   )}
                 </div>
@@ -618,6 +645,7 @@ export function Shell(p: ShellProps) {
       </OpenBlobContext.Provider>
       </BlobUrlContext.Provider>
       </ShellLayerContext.Provider>
+      </OpenSessionContext.Provider>
       </ThemeContext.Provider>
     </AppearanceContext.Provider>
   );

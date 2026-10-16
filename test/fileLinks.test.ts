@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeFileHref, decodeLocalImageSrc, encodeFileHref, parseFileLink, parseWrappedLink, rewriteFileHrefs, sameImageSource, toFileHref } from '../src/webview/chat/fileLinks';
+import { decodeFileHref, decodeLocalImageSrc, decodeSessionHref, encodeFileHref, parseCodeSessionLink, parseFileLink, parseWrappedLink, rewriteFileHrefs, sameImageSource, toFileHref } from '../src/webview/chat/fileLinks';
 
 describe('parseFileLink', () => {
   it('keeps an encoded line-like filename literal and accepts UNC directories', () => {
@@ -115,5 +115,23 @@ describe('file href encoding', () => {
     expect(sameImageSource(decodeLocalImageSrc(local)!, '/tmp/my shot.png')).toBe(true);
     expect(first!.children[1]!.properties.src).toBe('https://x.test/a.png');
     expect(second!.children[0]!.properties.src).toBe('data:image/png;base64,AA==');
+  });
+});
+
+describe('session links in replies', () => {
+  it('rewrite session anchors to the harden-safe hash and leave other schemes alone', () => {
+    const a = (href: string) => ({ type: 'element', tagName: 'a', properties: { href }, children: [] });
+    const tree = { type: 'root', children: [a('acpira://session/s1'), a('cursor://hotic.acpira/session/s2?windowId=1'), a('vscode://other.ext/session/s3'), a('#acpira-session:s4')] };
+    rewriteFileHrefs()(tree);
+    expect(tree.children.map(c => c.properties.href)).toEqual(['#acpira-session:s1', '#acpira-session:s2', 'vscode://other.ext/session/s3', '#acpira-session:s4']);
+    expect(decodeSessionHref('#acpira-session:s1')).toBe('s1');
+    expect(decodeSessionHref('#acpira-session:../x')).toBeUndefined();
+  });
+
+  it('find a session link in inline code, with the label of a wrapped Markdown link', () => {
+    expect(parseCodeSessionLink('[Plan](acpira://session/p1)')).toEqual({ id: 'p1', label: 'Plan' });
+    expect(parseCodeSessionLink(' vscode://hotic.acpira/session/p2 ')).toEqual({ id: 'p2' });
+    expect(parseCodeSessionLink('[a.ts](file:///repo/a.ts)')).toBeUndefined();
+    expect(parseCodeSessionLink('p3')).toBeUndefined();
   });
 });
