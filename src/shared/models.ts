@@ -185,25 +185,27 @@ export function variantLabel(v: ModelVariant, f: ModelFamily, labels?: { standar
 
 // Model → vendor brand key (see webview chat/marks.tsx for the matching logos). Purely heuristic: case-insensitive keyword
 // rules on word boundaries, first hit wins. Ids are slugs like "asgard/kimi-k3", so / and - count as word boundaries.
+// Model family words end in (?![a-z]) rather than \b, since ids often glue the version on ("qwen3.8-27b", "glm4.6",
+// "gemma3-27b"); a following letter ("Glmer") still rules the word out.
 // "Adaptive" / "Fusion" map to devin because they are Devin's own routing models; no match yields undefined and the renderer falls
 // back to an initial-letter tile
 const BRAND: [RegExp, string][] = [
   // claude-agent-acp's short ids ("opus[1m]", "sonnet", "haiku") and names ("Opus 5.5") carry no "claude" keyword
-  [/\bclaude\b|\bopus\b|\bsonnet\b|\bhaiku\b|\bfable\b/, 'claude'],
-  [/\bglm\b|\bzhipu\b|\bchatglm\b|\bzai\b|\bz\.ai\b/, 'zhipu'],
-  [/\bkimi\b|\bmoonshot\b/, 'kimi'],
+  [/\bclaude(?![a-z])|\bopus\b|\bsonnet\b|\bhaiku\b|\bfable\b/, 'claude'],
+  [/\bglm(?![a-z])|\bzhipu\b|\bchatglm(?![a-z])|\bzai\b|\bz\.ai\b/, 'zhipu'],
+  [/\bkimi(?![a-z])|\bmoonshot\b/, 'kimi'],
   // Moonshot's bare K-series names (K2.7 Coding, K3, K3-256k) carry no "kimi" keyword — a last resort for
   // options whose wire id is also opaque (e.g. a gateway alias like "asgard")
   [/\bk\d+(\.\d+)?\b/, 'kimi'],
   [/\bswe\b|\bwindsurf\b/, 'windsurf'],
   [/\badaptive\b|\bdevin\b|\bfusion\b/, 'devin'],
-  [/\bgpt\b|\bopenai\b|\bcodex\b/, 'openai'],
-  [/\bgemini\b|\bgemma\b/, 'gemini'],
-  [/\bgrok\b/, 'grok'],
-  [/\bdeepseek\b/, 'deepseek'],
-  [/\bqwen\b|\btongyi\b/, 'qwen'],
-  [/\bmistral\b|\bmixtral\b|\bcodestral\b|\bdevstral\b/, 'mistral'],
-  [/\bllama\b/, 'llama'],
+  [/\bgpt(?![a-z])|\bopenai\b|\bcodex\b/, 'openai'],
+  [/\bgemini(?![a-z])|\bgemma(?![a-z])/, 'gemini'],
+  [/\bgrok(?![a-z])/, 'grok'],
+  [/\bdeepseek(?![a-z])/, 'deepseek'],
+  [/\bqwen(?![a-z])|\btongyi\b/, 'qwen'],
+  [/\bmistral(?![a-z])|\bmixtral(?![a-z])|\bcodestral(?![a-z])|\bdevstral(?![a-z])/, 'mistral'],
+  [/\bllama(?![a-z])/, 'llama'],
 ];
 
 export function modelBrand(family: string): string | undefined {

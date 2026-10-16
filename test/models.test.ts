@@ -213,6 +213,16 @@ describe('modelBrand', () => {
     expect(modelBrand('K2.7 Coding Highspeed')).toBe('kimi');
   });
 
+  it('matches family words with the version glued on', () => {
+    expect(modelBrand('Qwen3.8-27B')).toBe('qwen');
+    expect(modelBrand('colab/qwen3.8-flash-next')).toBe('qwen');
+    expect(modelBrand('glm4.6')).toBe('zhipu');
+    expect(modelBrand('chatglm3-6b')).toBe('zhipu');
+    expect(modelBrand('gemma3-27b')).toBe('gemini');
+    expect(modelBrand('llama3.3-70b')).toBe('llama');
+    expect(modelBrand('gpt4o-mini')).toBe('openai');
+  });
+
   it('returns undefined for unbranded names', () => {
     expect(modelBrand('Composer 2.5')).toBeUndefined();
     expect(modelBrand('Inkling')).toBeUndefined();
