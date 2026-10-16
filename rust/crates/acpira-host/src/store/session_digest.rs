@@ -486,8 +486,9 @@ fn round_text(round: &Round, cwd: &str, full: bool) -> String {
 }
 
 /// Turns `from`..=`to` (the last turn when `to` is absent or past it), one page: whole turns while they fit, the first one
-/// cut when it alone does not. A page that stops early names the turn to read next
-pub fn range(r: &SessionRecord, meta: &DigestMeta, from: u32, to: Option<u32>, full: bool) -> String {
+/// cut when it alone does not. `offset` starts the first turn that many bytes into its text, where an earlier page cut it.
+/// A page that stops early names where to read next: the next turn, or the same turn further in
+pub fn range(r: &SessionRecord, meta: &DigestMeta, from: u32, to: Option<u32>, offset: usize, full: bool) -> String {
   let rounds = rounds(&r.turns);
   let total = rounds.len() as u32;
   let title = if r.title.trim().is_empty() { "(untitled)" } else { r.title.trim() };
@@ -502,28 +503,54 @@ pub fn range(r: &SessionRecord, meta: &DigestMeta, from: u32, to: Option<u32>, f
     return out;
   }
   let budget = PAGE_BYTES - 200;
+  // The next page: its first turn and the offset into it
   let mut next = None;
   for round in rounds.iter().filter(|x| x.n >= from && x.n <= to) {
-    let text = format!("\n{}", round_text(round, &r.cwd, full));
-    if out.len() + text.len() > budget {
+    let body = round_text(round, &r.cwd, full);
+    let start = if round.n == from { forward_boundary(&body, offset) } else { 0 };
+    let lead = if start > 0 { format!("\n(turn {} continued from byte {start})\n", round.n) } else { "\n".to_owned() };
+    let rest = &body[start..];
+    if out.len() + lead.len() + rest.len() > budget {
       if round.n == from {
-        // A turn larger than a page: its start, and the way to find the rest
-        out.push_str(&cut(&text, budget.saturating_sub(out.len())));
-        out.push_str(&format!("\n\n(turn {} is cut here; search_sessions {{session, query}} finds text further in)\n", round.n));
-        next = (round.n < to).then_some(round.n + 1);
+        // A turn larger than a page: as much as fits, ending on a line when one ends late enough, and where it goes on
+        let note = 160;
+        let room = budget.saturating_sub(out.len() + lead.len() + note).max(1024).min(rest.len());
+        let mut end = room;
+        while !rest.is_char_boundary(end) {
+          end -= 1;
+        }
+        if let Some(nl) = rest[..end].rfind('\n').filter(|&nl| nl > end / 2) {
+          end = nl + 1;
+        }
+        out.push_str(&lead);
+        out.push_str(&rest[..end]);
+        let at = start + end;
+        out.push_str(&format!("\n\n(turn {} is cut here, {at} of {} bytes)\n", round.n, body.len()));
+        next = Some((round.n, at));
       } else {
-        next = Some(round.n);
+        next = Some((round.n, 0));
       }
       break;
     }
-    out.push_str(&text);
+    out.push_str(&lead);
+    out.push_str(rest);
   }
   match next {
-    Some(n) => out.push_str(&format!("\nMore: read_session {{session, from: {n}, to: {to}}}\n")),
+    Some((n, 0)) => out.push_str(&format!("\nMore: read_session {{session, from: {n}, to: {to}}}\n")),
+    Some((n, at)) => out.push_str(&format!("\nMore: read_session {{session, from: {n}, offset: {at}, to: {to}}}\n")),
     None if to < total => out.push_str(&format!("\n(turns {}-{total} follow)\n", to + 1)),
     None => {}
   }
   out
+}
+
+/// `at` moved forward to a char boundary of `s`, at most its length
+fn forward_boundary(s: &str, at: usize) -> usize {
+  let mut at = at.min(s.len());
+  while !s.is_char_boundary(at) {
+    at += 1;
+  }
+  at
 }
 
 /// A fixed string (case-insensitive) in one record: user messages, steers, replies, tool targets and output, plan
@@ -677,7 +704,7 @@ mod tests {
   #[test]
   fn range_pages_stop_on_turn_boundaries() {
     let r = sample();
-    let p = range(&r, &META, 2, Some(2), false);
+    let p = range(&r, &META, 2, Some(2), 0, false);
     assert!(p.contains("## Turn 2"));
     assert!(p.contains("**User:**\nMake the lexer faster"));
     assert!(p.contains("**User (steered mid-turn):**\nalso keep the old API"));
@@ -686,7 +713,7 @@ mod tests {
     assert!(!p.contains("fast_path()"));
     assert!(!p.contains("secret thinking"));
     assert!(p.contains("(turns 3-3 follow)"));
-    assert!(range(&r, &META, 2, Some(2), true).contains("+fast_path()"));
+    assert!(range(&r, &META, 2, Some(2), 0, true).contains("+fast_path()"));
 
     let mut turns = vec![];
     for i in 0..30 {
@@ -694,17 +721,35 @@ mod tests {
       turns.push(serde_json::json!({ "role": "agent", "blocks": [{ "type": "text", "markdown": "z".repeat(3000) }] }));
     }
     let big = record(serde_json::Value::Array(turns));
-    let page = range(&big, &META, 1, None, false);
+    let page = range(&big, &META, 1, None, 0, false);
     assert!(page.len() <= PAGE_BYTES);
     let next: u32 = page.split("from: ").nth(1).unwrap().split(',').next().unwrap().parse().unwrap();
     assert!(next > 1 && next < 30);
     assert!(page.contains(&format!("## Turn {}", next - 1)) && !page.contains(&format!("## Turn {next}\n")));
-    // One turn bigger than a page is cut, and the next page starts after it
-    let huge = record(serde_json::json!([{ "role": "user", "text": "a" }, { "role": "agent", "blocks": [{ "type": "text", "markdown": "w".repeat(40_000) }] }, { "role": "user", "text": "b" }]));
-    let page = range(&huge, &META, 1, None, false);
-    assert!(page.len() <= PAGE_BYTES);
-    assert!(page.contains("turn 1 is cut here") && page.contains("from: 2"));
-    assert!(range(&huge, &META, 9, None, false).contains("No turns in 9-2"));
+    // One turn bigger than a page is cut, and the following pages go on inside it until the next turn
+    let huge = record(serde_json::json!([{ "role": "user", "text": "a" }, { "role": "agent", "blocks": [{ "type": "text", "markdown": format!("{}THE-END", "w".repeat(40_000)) }] }, { "role": "user", "text": "b" }]));
+    let mut offset = 0;
+    let mut pages = vec![];
+    loop {
+      let page = range(&huge, &META, 1, None, offset, false);
+      assert!(page.len() <= PAGE_BYTES);
+      let more = page.split("More: read_session {session, from: ").nth(1).map(|m| m.to_owned());
+      pages.push(page);
+      let Some(more) = more else { break };
+      if more.starts_with("2,") {
+        break;
+      }
+      let at: usize = more.split("offset: ").nth(1).unwrap().split(',').next().unwrap().parse().unwrap();
+      assert!(at > offset);
+      offset = at;
+      assert!(pages.len() < 10);
+    }
+    assert!(pages.len() >= 3 && pages[0].contains("turn 1 is cut here"));
+    assert!(pages[1].contains("(turn 1 continued from byte"));
+    let w: usize = pages.iter().map(|p| p.matches('w').count()).sum();
+    assert!(w >= 40_000, "every byte of the turn is read once: {w}");
+    assert!(pages.last().unwrap().contains("THE-END") && pages.last().unwrap().contains("**User:**\nb"));
+    assert!(range(&huge, &META, 9, None, 0, false).contains("No turns in 9-2"));
   }
 
   #[test]

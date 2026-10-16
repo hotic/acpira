@@ -60,6 +60,9 @@ pub struct SessionReadArgs {
   pub from: Option<u32>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub to: Option<u32>,
+  /// Bytes into the `from` turn's text, where a page cut it (the page names it)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub offset: Option<usize>,
   /// `full` adds tool output and diffs to the turns
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub detail: Option<String>,

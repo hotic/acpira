@@ -203,6 +203,7 @@ export const zhCN = {
   'session.copied.markdown': '已复制为 Markdown',
   'session.copied.cwd': '已复制工作目录',
   'session.copyFailed': '复制失败：{detail}',
+  'sessionLink.notHere': '此窗口找不到这个会话。请在复制链接的窗口或远程主机里打开。',
   'session.export': '导出',
   'session.export.markdown': 'Markdown',
   'session.export.json': 'JSON',

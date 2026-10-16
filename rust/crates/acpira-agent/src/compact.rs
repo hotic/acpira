@@ -662,18 +662,33 @@ pub fn summary_prompt(head: &[Item], previous: Option<&str>, room: usize, words:
 /// The summary in a reply: what the `<summary>` block holds, else the text with the `<analysis>` block left out. Empty
 /// when there is only analysis (a reply cut off inside it)
 pub fn summary_text(reply: &str) -> String {
-  let rest = match reply.find("<analysis>") {
-    Some(open) => match reply[open..].find("</analysis>") {
-      Some(close) => format!("{}{}", &reply[..open], &reply[open + close + "</analysis>".len()..]),
+  let rest = match tag(reply, "<analysis>", 0, false) {
+    Some(open) => match tag(reply, "</analysis>", open, false) {
+      Some(close) => format!("{}{}", &reply[..open], &reply[close + "</analysis>".len()..]),
       None => reply[..open].to_owned(),
     },
     None => reply.to_owned(),
   };
-  let inner = rest.find("<summary>").map(|open| {
-    let body = &rest[open + "<summary>".len()..];
-    body.find("</summary>").map_or(body, |close| &body[..close])
+  let inner = tag(&rest, "<summary>", 0, false).map(|open| {
+    let body = open + "<summary>".len();
+    // The last closing tag: the summary can quote one of its own (an HTML `<details><summary>`)
+    tag(&rest, "</summary>", body, true).map_or(&rest[body..], |close| &rest[body..close])
   });
   inner.unwrap_or(&rest).trim().to_owned()
+}
+
+/// Where `name` is in `s` at or after `from` (the first, or the last when `last`): preferably standing on a line of its
+/// own, the way the model writes the outer tags, so one quoted inside the summary or the analysis (code, an HTML
+/// `<details>` block) does not end it early; anywhere in the text when no line holds it alone
+fn tag(s: &str, name: &str, from: usize, last: bool) -> Option<usize> {
+  let mut start = 0;
+  let mut lines = s.split_inclusive('\n').filter_map(|l| {
+    let at = start;
+    start += l.len();
+    (at >= from && l.trim() == name).then(|| at + l.find(name).unwrap_or(0))
+  });
+  let alone = if last { lines.last() } else { lines.next() };
+  alone.or_else(|| if last { s[from..].rfind(name) } else { s[from..].find(name) }.map(|i| from + i))
 }
 
 /// A model a summary can be written with, thinking the way it would in a session: Claude Code compacts with the
@@ -1045,6 +1060,10 @@ mod tests {
     assert_eq!(summary_text("<analysis>\nstill thinking"), "");
     assert_eq!(summary_text("<analysis>a</analysis>\nplain summary"), "plain summary");
     assert_eq!(summary_text("<summary>\nopen to the end"), "open to the end");
+    // Tags quoted inside the summary or the analysis do not end them
+    let quoted = "<analysis>\nthe parser looks for `</analysis>` and <summary>\n</analysis>\n<summary>\n1. Code:\n<details><summary>Logs</summary>\nx\n</details>\n7. Pending Tasks: y\n</summary>";
+    assert_eq!(summary_text(quoted), "1. Code:\n<details><summary>Logs</summary>\nx\n</details>\n7. Pending Tasks: y");
+    assert_eq!(summary_text("<summary>a <summary>b</summary> c</summary>"), "a <summary>b</summary> c");
   }
 
   #[test]
