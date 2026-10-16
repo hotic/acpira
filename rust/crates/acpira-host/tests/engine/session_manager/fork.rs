@@ -124,7 +124,7 @@ async fn forking_a_non_agent_turn_or_the_running_last_turn_is_refused() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_session_exports_as_markdown_and_json_under_the_sibling_exports_dir() {
+async fn a_session_exports_as_markdown_json_and_text_under_the_sibling_exports_dir() {
   use acpira_shared::protocol::ExportFormat;
   let fake = fake_or_skip!();
   let parent = tempfile::tempdir().unwrap();
@@ -156,6 +156,11 @@ async fn a_session_exports_as_markdown_and_json_under_the_sibling_exports_dir() 
   assert!(std::fs::read_to_string(&after).unwrap().contains("second-question"));
   let json_path = m.m.export_session(&id, ExportFormat::Json).await.unwrap();
   assert_eq!(serde_json::from_str::<Value>(&std::fs::read_to_string(&json_path).unwrap()).unwrap()["id"], id.as_str());
+  // Plain text: a .txt beside them holding the prompts and the replies, no Markdown export header
+  let txt_path = m.m.export_session(&id, ExportFormat::Text).await.unwrap();
+  assert_eq!(txt_path.extension().and_then(|x| x.to_str()), Some("txt"));
+  let txt = std::fs::read_to_string(&txt_path).unwrap();
+  assert!(txt.starts_with(&format!("{title}\n\n[")) && txt.contains("second-question") && txt.contains("hello world") && !txt.contains("---"), "{txt}");
   assert!(m.m.export_session("missing-id", ExportFormat::Json).await.is_err());
   m.dispose().await;
 }

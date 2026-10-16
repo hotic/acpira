@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { Check, ChevronDown, ChevronRight, Ellipsis, Folder, FolderInput, FolderOpen, Import, Inbox, ListFilter, LoaderCircle, Pencil, Pin, PinOff, Search, SquarePen, Trash2 } from 'lucide-react';
 import type { AgentId, AgentInfo, CategoryOp, NativeSessionInfo, SessionCategories, SessionCategory, SessionSummary } from '@shared/transcript';
-import type { NativeSessionsState, SessionHit } from '@shared/protocol';
+import type { ExportFormat, NativeSessionsState, SessionHit } from '@shared/protocol';
 import { inWorkspace, type SessionScope } from '@shared/settings';
 import { launchable } from '@shared/agentOrder';
 import { cn } from '../ui/cn';
@@ -68,7 +68,7 @@ export interface SessionListProps {
   // group under "all", into that project (and its category when dropped on one)
   onMove?: (id: string, to?: MoveTarget) => void;
   // Writes the session as Markdown or JSON under exports/ (absent only where the host does not offer it)
-  onExport?: (id: string, format: 'markdown' | 'json') => void;
+  onExport?: (id: string, format: ExportFormat) => void;
   onCopy?: (id: string, what: SessionCopyKind) => void;
   // Searches the saved conversations too; content hits join the title matches with a snippet under their title
   onSearch?: (query: string) => Promise<SessionHit[]>;
@@ -645,7 +645,7 @@ interface ItemProps {
   // The menus' "move to project" submenu: the other projects and the pick
   projects?: MoveProject[];
   onMoveTo?: (cwd: string) => void;
-  onExport?: (format: 'markdown' | 'json') => void;
+  onExport?: (format: ExportFormat) => void;
   onCopy?: (what: SessionCopyKind) => void;
   // Native drag: present when the row may be filed by dragging (not pinned, not a ChatGPT mirror)
   dragging?: boolean;

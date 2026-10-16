@@ -703,6 +703,18 @@ pub struct ModelPick {
 pub enum ExportFormat {
   Markdown,
   Json,
+  /// Plain text: only what the user and the agent said (`export_text`)
+  Text,
+}
+
+impl ExportFormat {
+  pub fn extension(self) -> &'static str {
+    match self {
+      Self::Markdown => "md",
+      Self::Json => "json",
+      Self::Text => "txt",
+    }
+  }
 }
 
 impl WebviewMsg {
