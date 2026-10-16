@@ -92,6 +92,8 @@ pub struct BridgeCore {
   settings_sub: parking_lot::Mutex<Option<u64>>,
   /// The stored session the page opens on, read from attach on (`ready` waits for this load instead of starting its own)
   preload: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>,
+  /// Set by `dispose`; posts after it are dropped (`emit`)
+  disposed: parking_lot::RwLock<bool>,
   me: Weak<BridgeCore>,
 }
 
@@ -131,6 +133,7 @@ impl BridgeCore {
       batch: Default::default(),
       settings_sub: Default::default(),
       preload: parking_lot::Mutex::new(preload),
+      disposed: Default::default(),
       me: me.clone(),
     });
     let weak = core.me.clone();
@@ -226,7 +229,7 @@ impl BridgeCore {
         if let Some(parts) = active_parts.as_ref().filter(|_| self.patches.load(std::sync::atomic::Ordering::Acquire)) {
           sent.deliver(Some(parts));
         }
-        (self.post)(HostMsg::Init { state: Box::new(state) });
+        self.emit(HostMsg::Init { state: Box::new(state) });
         drop(sent);
         // A batched list may reach the page around init and lose to init's copy, and the manager does not repeat an
         // unchanged list: the batch gets the current one, ordered against every other list push
@@ -477,19 +480,29 @@ impl BridgeCore {
   /// the one on screen or one it keeps from before a switch (`SentViews`). The diff and the post happen under one lock, so
   /// two flushes racing on different threads can never post patches out of order
   fn deliver(&self, m: HostMsg) {
-    let HostMsg::Session { parts, .. } = &m else { return (self.post)(m) };
+    let HostMsg::Session { parts, .. } = &m else { return self.emit(m) };
     let mut sent = self.sent.lock();
     let next = parts.as_ref().filter(|_| self.patches.load(std::sync::atomic::Ordering::Acquire));
     match sent.deliver(next) {
       // Older than what the page shows: it carries nothing the page does not have and must not become a patch base
       Delivery::Stale => {}
-      Delivery::Patch(patch) => (self.post)(HostMsg::SessionPatch { patch }),
-      Delivery::Whole => (self.post)(m),
+      Delivery::Patch(patch) => self.emit(HostMsg::SessionPatch { patch }),
+      Delivery::Whole => self.emit(m),
     }
   }
 
   pub fn post_now(&self, m: HostMsg) {
-    (self.post)(m);
+    self.emit(m);
+  }
+
+  /// Every post to the page goes through here. The read guard is held across the post, so once `dispose` has taken the
+  /// write side nothing is mid-post and nothing posts again: a batch timer or a handler still running after detachView
+  /// cannot reach the shell behind the detach
+  fn emit(&self, m: HostMsg) {
+    let disposed = self.disposed.read();
+    if !*disposed {
+      (self.post)(m);
+    }
   }
 
   pub fn push_appearance(&self) {
@@ -497,6 +510,7 @@ impl BridgeCore {
   }
 
   pub fn dispose(&self) {
+    *self.disposed.write() = true;
     self.batch.lock().clear();
     if let Some(id) = self.settings_sub.lock().take() {
       self.settings.unsubscribe(id);

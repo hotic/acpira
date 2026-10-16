@@ -348,9 +348,14 @@ describe('sidecar runtime', () => {
     const { s } = await setup();
     await s.open('E', 'editor');
     s.send({ type: 'detachView', viewId: 'V' });
-    const n = s.hostMsgs('V').length;
+    // A round trip through E first: V's batched list from its ready can still be on the wire when the detach goes out
+    // (posted before the sidecar read it), so V is counted only once the sidecar has answered a later message
     s.view('E', { type: 'newSession' });
-    await s.hostMsg('E', 'session', m => m.session.status === 'ready' && m.session.turns.length === 0);
+    const first = await s.hostMsg('E', 'session', m => m.session.status === 'ready' && m.session.turns.length === 0);
+    const n = s.hostMsgs('V').length;
+    // A rename's list goes to every attached view; V must not get it
+    s.view('E', { type: 'renameSession', id: first.session.id, title: 'Detached' });
+    await s.hostMsg('E', 'sessions', m => m.sessions.some(x => x.id === first.session.id && x.title === 'Detached'));
     await new Promise(r => setTimeout(r, 50));
     expect(s.hostMsgs('V').length).toBe(n);
   });
