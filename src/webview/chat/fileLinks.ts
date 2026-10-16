@@ -21,6 +21,9 @@ export const WorkflowProgressContext = createContext<ReadonlyMap<string, Workflo
 // Session links in replies (`[title](acpira://session/<id>)`, `vscode://hotic.acpira/session/<id>`) open that session here
 export const OpenSessionContext = createContext<((id: string) => void) | undefined>(undefined);
 
+// The title of a session a tool row names (by id or by the agent's own session id), from the session list
+export const SessionTitleContext = createContext<((ref: string) => string | undefined) | undefined>(undefined);
+
 // Agent-emitted images are blob-store files: the URL builds them for <img>, the opener hands the host the blob name
 export const BlobUrlContext = createContext<((blob: string) => string) | undefined>(undefined);
 export const OpenBlobContext = createContext<((blob: string) => void) | undefined>(undefined);

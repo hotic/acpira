@@ -1074,6 +1074,30 @@ fn the_host_show_image_tool_becomes_an_image_row_for_claude_and_codex_wire_shape
 }
 
 #[test]
+fn the_host_session_tools_name_what_they_read_in_every_adapter_naming() {
+  let mut s = state();
+  // claude-agent-acp: mcp__acpira__read_session with the arguments as rawInput; a vscode link is stored canonical
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "r1", "name": "mcp__acpira__read_session", "title": "mcp__acpira__read_session",
+    "kind": "other", "status": "pending", "rawInput": { "session": "vscode://hotic.acpira/session/abc", "from": 3, "to": 5 } }));
+  expect_match(block(&s, 0, 0), json!({ "verbKey": "verb.readSession", "kind": "other", "target": "acpira://session/abc 3-5" }));
+  expect_absent(block(&s, 0, 0), "mcpServer");
+  // codex-acp: mcp.acpira.search_sessions, kind execute, rawInput { server, tool, arguments }
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "s1", "title": "mcp.acpira.search_sessions", "kind": "execute", "status": "in_progress",
+    "rawInput": { "server": "acpira", "tool": "search_sessions", "arguments": { "query": "lexer speed", "scope": "all" } } }));
+  expect_match(block(&s, 0, 1), json!({ "verbKey": "verb.searchSessions", "kind": "other", "target": "lexer speed" }));
+  // OpenCode: acpira_search_sessions; inside one session the session leads the target, an outline read has no range
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "s2", "title": "acpira_search_sessions", "status": "pending",
+    "rawInput": { "session": "abc", "query": "parser" } }));
+  expect_match(block(&s, 0, 2), json!({ "verbKey": "verb.searchSessions", "target": "acpira://session/abc parser" }));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "r2", "title": "read_session", "status": "pending", "rawInput": { "session": "019a-native", "from": "2" } }));
+  expect_match(block(&s, 0, 3), json!({ "verbKey": "verb.readSession", "target": "acpira://session/019a-native 2-" }));
+  // A later packet without the title keeps the identity
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "r1", "status": "completed", "kind": "execute",
+    "content": [{ "type": "content", "content": { "type": "text", "text": "# Title" } }] }));
+  expect_match(block(&s, 0, 0), json!({ "verbKey": "verb.readSession", "kind": "other", "target": "acpira://session/abc 3-5" }));
+}
+
+#[test]
 fn live_turn_clock_starts_at_first_streamed_block() {
   let mut s = NormalizeState::new(vec![turn(json!({ "role": "agent", "startedAt": 1, "blocks": [] }))]);
   // An update that adds no block (usage) keeps the clock waiting

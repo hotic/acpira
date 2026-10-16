@@ -43,7 +43,7 @@ import { lastTypedPrompt } from './goalText';
 import { heldPrompt } from './heldPrompt';
 import { BUILTIN_AGENT_ID } from '@shared/providers';
 import type { SettingsPage } from '../settings/Nav';
-import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, DiffSourceContext, OpenBlobContext, OpenSessionContext } from './fileLinks';
+import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, DiffSourceContext, OpenBlobContext, OpenSessionContext, SessionTitleContext } from './fileLinks';
 import { TurnActionsContext } from './TurnActions';
 import { SubagentInspector } from './subagents/SubagentInspector';
 import { InspectorSplitter, clamp, usePreferredPaneWidth, type PaneBounds } from './subagents/InspectorSplitter';
@@ -431,6 +431,16 @@ export function Shell(p: ShellProps) {
   } : undefined, [on.editTurn, p.activeSessionId, editable, editing, p.modelShapes]);
   // A session link in a reply (or the inspector's child transcript) switches this view to that session, like a history row
   const openSession = useCallback((id: string) => { on.selectSession(id); closeDrawer(); }, [on.selectSession, closeDrawer]);
+  // Session tool rows name the session they read by its title: keyed by id and by the agent's own session id
+  const sessionTitle = useMemo(() => {
+    const titles = new Map<string, string>();
+    for (const s of p.sessions) {
+      const title = s.title || t('session.fallbackTitle');
+      titles.set(s.id, title);
+      if (s.acpSessionId && !titles.has(s.acpSessionId)) titles.set(s.acpSessionId, title);
+    }
+    return (ref: string) => titles.get(ref);
+  }, [p.sessions]);
   const openToolFile = useMemo(() => p.activeSessionId && on.openFile
     ? (path: string, line?: number) => on.openFile!(p.activeSessionId!, path, line) : undefined, [p.activeSessionId, on.openFile]);
   const goalAction = useMemo(() => p.activeSessionId && on.goal
@@ -466,6 +476,7 @@ export function Shell(p: ShellProps) {
     <AppearanceContext.Provider value={a}>
       <ThemeContext.Provider value={p.theme}>
       <OpenSessionContext.Provider value={openSession}>
+      <SessionTitleContext.Provider value={sessionTitle}>
       <ShellLayerContext.Provider value={root}>
       <BlobUrlContext.Provider value={blobUrl}>
       <OpenBlobContext.Provider value={openBlob}>
@@ -645,6 +656,7 @@ export function Shell(p: ShellProps) {
       </OpenBlobContext.Provider>
       </BlobUrlContext.Provider>
       </ShellLayerContext.Provider>
+      </SessionTitleContext.Provider>
       </OpenSessionContext.Provider>
       </ThemeContext.Provider>
     </AppearanceContext.Provider>

@@ -1405,5 +1405,176 @@
     ]
    }
   ]
+ },
+ {
+  "name": "session-tools",
+  "steps": [
+   {
+    "at": 1000,
+    "update": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "ss",
+     "title": "mcp__acpira__search_sessions",
+     "kind": "other",
+     "status": "in_progress",
+     "rawInput": {
+      "query": "lexer speed"
+     }
+    },
+    "turns": [
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "tool_call",
+        "id": "ss",
+        "kind": "other",
+        "verb": "Search sessions",
+        "verbKey": "verb.searchSessions",
+        "target": "lexer speed",
+        "targetMono": false,
+        "status": "in_progress"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "at": 1200,
+    "update": {
+     "sessionUpdate": "tool_call_update",
+     "toolCallId": "ss",
+     "status": "completed",
+     "content": [
+      {
+       "type": "content",
+       "content": {
+        "type": "text",
+        "text": "Sessions in this project matching \"lexer speed\":\n- [Fix lexer speed](acpira://session/abc) | Claude | 2026-10-04 00:00 UTC\n  turn 2: make the lexer faster"
+       }
+      }
+     ]
+    },
+    "turns": [
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "tool_call",
+        "id": "ss",
+        "kind": "other",
+        "verb": "Search sessions",
+        "verbKey": "verb.searchSessions",
+        "target": "lexer speed",
+        "targetMono": false,
+        "status": "completed",
+        "content": {
+         "type": "text",
+         "text": "Sessions in this project matching \"lexer speed\":\n- [Fix lexer speed](acpira://session/abc) | Claude | 2026-10-04 00:00 UTC\n  turn 2: make the lexer faster"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "at": 1400,
+    "update": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "rs",
+     "title": "mcp__acpira__read_session",
+     "kind": "other",
+     "status": "in_progress",
+     "rawInput": {
+      "session": "acpira://session/abc",
+      "from": 2,
+      "to": 3
+     }
+    },
+    "turns": [
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "tool_call",
+        "id": "ss",
+        "kind": "other",
+        "verb": "Search sessions",
+        "verbKey": "verb.searchSessions",
+        "target": "lexer speed",
+        "targetMono": false,
+        "status": "completed",
+        "content": {
+         "type": "text",
+         "text": "Sessions in this project matching \"lexer speed\":\n- [Fix lexer speed](acpira://session/abc) | Claude | 2026-10-04 00:00 UTC\n  turn 2: make the lexer faster"
+        }
+       },
+       {
+        "type": "tool_call",
+        "id": "rs",
+        "kind": "other",
+        "verb": "Read session",
+        "verbKey": "verb.readSession",
+        "target": "acpira://session/abc 2-3",
+        "targetMono": false,
+        "status": "in_progress"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "at": 1600,
+    "update": {
+     "sessionUpdate": "tool_call_update",
+     "toolCallId": "rs",
+     "status": "completed",
+     "content": [
+      {
+       "type": "content",
+       "content": {
+        "type": "text",
+        "text": "# Fix lexer speed\n## Turn 2\n**User:**\nmake the lexer faster"
+       }
+      }
+     ]
+    },
+    "turns": [
+     {
+      "role": "agent",
+      "blocks": [
+       {
+        "type": "tool_call",
+        "id": "ss",
+        "kind": "other",
+        "verb": "Search sessions",
+        "verbKey": "verb.searchSessions",
+        "target": "lexer speed",
+        "targetMono": false,
+        "status": "completed",
+        "content": {
+         "type": "text",
+         "text": "Sessions in this project matching \"lexer speed\":\n- [Fix lexer speed](acpira://session/abc) | Claude | 2026-10-04 00:00 UTC\n  turn 2: make the lexer faster"
+        }
+       },
+       {
+        "type": "tool_call",
+        "id": "rs",
+        "kind": "other",
+        "verb": "Read session",
+        "verbKey": "verb.readSession",
+        "target": "acpira://session/abc 2-3",
+        "targetMono": false,
+        "status": "completed",
+        "content": {
+         "type": "text",
+         "text": "# Fix lexer speed\n## Turn 2\n**User:**\nmake the lexer faster"
+        }
+       }
+      ]
+     }
+    ]
+   }
+  ]
  }
 ]

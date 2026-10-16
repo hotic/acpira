@@ -613,6 +613,9 @@ export const en = {
   // Image generation tools (codex-acp "Image generation", Grok image_gen / image_edit), recognized by name
   'verb.imagegen': 'Generate image',
   'verb.showImage': 'Show image',
+  'verb.searchSessions': 'Search sessions',
+  'verb.readSession': 'Read session',
+  'tool.sessionTurns': 'turns {range}',
   // Delegation calls: the tool that spawns a subagent (Devin run_subagent, Claude/Kimi Agent) and the one that blocks on it
   'verb.delegate': 'Delegate',
   'verb.awaitSubagent': 'Wait for subagent',

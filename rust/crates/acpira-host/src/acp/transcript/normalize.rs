@@ -14,6 +14,7 @@ use acpira_shared::attachments::{base64_bytes, image_mime_of};
 use acpira_shared::inventory::{AgentRuntimeInfo, McpCaps};
 use acpira_shared::num::Num;
 use acpira_shared::todo_tools::{is_todo_tool, todo_entries};
+use acpira_shared::session_links::{session_link, session_ref_id};
 use acpira_shared::transcript::*;
 
 use crate::acp::transcript::compaction_text;
@@ -1305,6 +1306,11 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
       b.locations = Some(paths.into_iter().map(|path| Location { path, line: None }).collect());
     }
   }
+  // Acpira's session tools read "Search sessions" / "Read session" with what they looked for, not "Call Acpira"
+  if let Some(key) = b.verb_key.as_deref().filter(|k| matches!(*k, SEARCH_SESSIONS_VERB | READ_SESSION_VERB)).map(str::to_owned).or_else(|| session_tool_verb(u, title, raw).map(str::to_owned)) {
+    set_verb(b, &key);
+    b.kind = ToolKind::Other;
+  }
   // Any other MCP call reads "Call <Server>" with the tool's title as its target, whichever naming it came in
   let mut mcp_target = None;
   if b.verb_key.is_none()
@@ -1375,7 +1381,10 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   {
     ctx.pending_writes.insert(b.id.clone(), (path, content.to_owned()));
   }
-  let named = matches!(b.verb_key.as_deref(), Some("verb.todo" | "verb.ask" | "verb.wait" | "verb.kill" | IMAGE_GEN_VERB | SHOW_IMAGE_VERB));
+  let named = matches!(
+    b.verb_key.as_deref(),
+    Some("verb.todo" | "verb.ask" | "verb.wait" | "verb.kill" | IMAGE_GEN_VERB | SHOW_IMAGE_VERB | SEARCH_SESSIONS_VERB | READ_SESSION_VERB)
+  );
   let target = if matches!(b.verb_key.as_deref(), Some("verb.wait" | "verb.kill")) {
     shell_target(raw, ctx.as_deref())
   } else if b.verb_key.as_deref() == Some(WEB_SEARCH_VERB) {
@@ -1385,6 +1394,8 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
     prompt_target(raw)
   } else if b.verb_key.as_deref() == Some(SHOW_IMAGE_VERB) {
     show_image_target(show_image_args(raw), b.locations.as_deref())
+  } else if let Some(key @ (SEARCH_SESSIONS_VERB | READ_SESSION_VERB)) = b.verb_key.as_deref() {
+    session_tool_target(key, show_image_args(raw))
   } else if b.mcp_server.is_some() {
     // Set once from the call's identity; a later update's arguments do not replace it
     mcp_target.map(|text| Target { text, mono: false, from_title: false })
@@ -1715,6 +1726,38 @@ pub const SHOW_IMAGE_VERB: &str = "verb.showImage";
 fn is_show_image_call(u: &Value, title: Option<&str>, raw: Option<&Map<String, Value>>) -> bool {
   let named = |x: Option<&str>| x.map(str::trim).is_some_and(|x| SHOW_IMAGE.is_match(x));
   named(title) || named(str_of(u, "name")) || named(raw.and_then(|r| r.get("tool")).and_then(Value::as_str))
+}
+
+/// Acpira's session tools (`host_mcp.rs` search_sessions / read_session), in the same namings as show_image
+static SESSION_TOOL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(?:^|acpira[_.:/-]{1,2})(search_sessions|read_session)$").unwrap());
+pub const SEARCH_SESSIONS_VERB: &str = "verb.searchSessions";
+pub const READ_SESSION_VERB: &str = "verb.readSession";
+
+fn session_tool_verb(u: &Value, title: Option<&str>, raw: Option<&Map<String, Value>>) -> Option<&'static str> {
+  let tool = [title, str_of(u, "name"), raw.and_then(|r| r.get("tool")).and_then(Value::as_str)]
+    .into_iter()
+    .flatten()
+    .find_map(|x| SESSION_TOOL.captures(x.trim()).map(|c| c[1].to_ascii_lowercase()))?;
+  Some(if tool == "search_sessions" { SEARCH_SESSIONS_VERB } else { READ_SESSION_VERB })
+}
+
+/// A session tool's target, which the webview reads back (`splitSessionTarget`): the session as its canonical link first
+/// when the call names one, then the turn range (`3-5`, `3-`, `-5`) of a read or the query of a search
+fn session_tool_target(key: &str, args: Option<&Map<String, Value>>) -> Option<Target> {
+  let args = args?;
+  let text = |k: &str| args.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty());
+  let num = |k: &str| args.get(k).and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
+  let session = text("session").map(|r| session_ref_id(r).map(|id| session_link(&id)).unwrap_or_else(|| r.to_owned()));
+  let rest = if key == READ_SESSION_VERB {
+    match (num("from"), num("to")) {
+      (None, None) => None,
+      (from, to) => Some(format!("{}-{}", from.map(|n| n.to_string()).unwrap_or_default(), to.map(|n| n.to_string()).unwrap_or_default())),
+    }
+  } else {
+    text("query").map(str::to_owned)
+  };
+  let joined: Vec<String> = [session, rest].into_iter().flatten().collect();
+  (!joined.is_empty()).then(|| Target { text: joined.join(" "), mono: false, from_title: false })
 }
 
 /// The tool's own arguments: codex-acp nests them under `arguments`, the others send them as rawInput itself
