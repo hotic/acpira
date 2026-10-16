@@ -22,6 +22,47 @@ pub enum HubOp {
   Features,
   /// `open_browser`: show an http(s) page in the user's editor; answered `Done` / `Error`
   OpenBrowser { url: String },
+  /// `search_sessions`: find Acpira sessions, or text inside one; answered `Done` / `Error`
+  SearchSessions(SessionSearchArgs),
+  /// `read_session`: one session's outline or a page of its turns; answered `Done` / `Error`
+  ReadSession(SessionReadArgs),
+}
+
+/// `search_sessions`' arguments (`session_library.rs`)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSearchArgs {
+  /// Words that must all occur (title or conversation); absent or empty = the most recent sessions
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub query: Option<String>,
+  /// `project` (the caller's folder, the default) or `all`
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub scope: Option<String>,
+  /// Only sessions of this agent (id or name)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub agent: Option<String>,
+  /// Search inside this one session instead (link, id or the agent's own session id)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub session: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub limit: Option<usize>,
+}
+
+/// `read_session`'s arguments
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionReadArgs {
+  /// Link, id or the agent's own session id
+  #[serde(default)]
+  pub session: String,
+  /// Turn range (1-based, inclusive); both absent = the outline
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub from: Option<u32>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub to: Option<u32>,
+  /// `full` adds tool output and diffs to the turns
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub detail: Option<String>,
 }
 
 /// `ask_agent`'s arguments
