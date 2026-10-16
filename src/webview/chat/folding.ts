@@ -1,3 +1,4 @@
+import { isSessionTool, splitSessionTarget, turnRange } from '@shared/sessionLinks';
 import type { AgentBlock, AgentTurn, GoalBlock, NoticeBlock, TextBlock, ToolCallBlock, ToolKind } from '@shared/transcript';
 import type { MsgKey } from '@shared/i18n';
 import { getLocale, t } from '../i18n';
@@ -84,6 +85,11 @@ export function isWorkflowRun(block: ToolCallBlock): boolean {
 // Only mode-switch headings are adapter UI; commands and file targets stay verbatim.
 export function toolTarget(block: ToolCallBlock): string | undefined {
   if (isWorkflowRun(block)) return block.asyncTask!.name ?? block.target;
+  // A session tool's session shows as its title on the row (ToolCall SessionToolTarget); this is the rest: a read's turns, a search's query
+  if (isSessionTool(block)) {
+    const { rest } = splitSessionTarget(block.target);
+    return rest && block.verbKey === 'verb.readSession' ? t('tool.sessionTurns', { range: turnRange(rest) }) : rest;
+  }
   return block.kind === 'switch_mode' && block.target && !block.targetMono
     ? planApprovalTitle(block.target, getLocale()) : block.target;
 }

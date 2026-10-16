@@ -54,3 +54,25 @@ export function sessionRefId(input: string): string | undefined {
   const s = unwrap(input);
   return sessionIdOfLink(s) ?? (isSessionId(s) ? s : undefined);
 }
+
+// Acpira's session tools (`acpira mcp` search_sessions / read_session), recognized host-side across the adapters' namings and
+// carried in verbKey. Their target is the session as its canonical link first when the call names one, then a read's turn
+// range (`3-5`, `3-`, `-5`) or a search's query (normalize.rs session_tool_target)
+export function isSessionTool(block: { verbKey?: string }): boolean {
+  return block.verbKey === 'verb.searchSessions' || block.verbKey === 'verb.readSession';
+}
+
+export function splitSessionTarget(target: string | undefined): { id?: string; rest?: string } {
+  const text = (target ?? '').trim();
+  const space = text.indexOf(' ');
+  const head = space < 0 ? text : text.slice(0, space);
+  const id = sessionIdOfLink(head);
+  const rest = (id ? (space < 0 ? '' : text.slice(space + 1)) : text).trim();
+  return { ...(id ? { id } : {}), ...(rest ? { rest } : {}) };
+}
+
+// A read's range as shown: `3-5` → `3–5`, `3-` → `3–`, `-5` → `1–5`
+export function turnRange(range: string): string {
+  const [from = '', to = ''] = range.split('-');
+  return `${from || '1'}–${to}`;
+}

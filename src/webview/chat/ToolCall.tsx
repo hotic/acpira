@@ -18,7 +18,8 @@ import { AgentImage } from './AgentImage';
 import { GeneratedImages, ImageInFoldContext } from './GeneratedImage';
 import { TerminalOutput, ToolOutput } from './Terminal';
 import { isWorkflowRun, toolTarget, toolVerb } from './folding';
-import { AsyncTaskStopContext, OpenToolFileContext, WorkflowProgressContext } from './fileLinks';
+import { AsyncTaskStopContext, OpenToolFileContext, SessionTitleContext, WorkflowProgressContext } from './fileLinks';
+import { isSessionTool, splitSessionTarget } from '@shared/sessionLinks';
 import { compactTokens } from './goalText';
 import { diffIndex, fileReference, toolFiles, visibleToolContents } from './toolDetails';
 import { useToolSeconds } from './useToolSeconds';
@@ -114,7 +115,7 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
   // An edit names where it landed, first to last changed line, the way a read names its range
   const span = block.kind === 'edit' ? editSpan([block]) : undefined;
   const editFile = block.kind === 'edit' ? editReference([block]) : undefined;
-  const target = <RowTarget mono={block.targetMono}>{toolTarget(block)}</RowTarget>;
+  const target = isSessionTool(block) ? <SessionToolTarget block={block} /> : <RowTarget mono={block.targetMono}>{toolTarget(block)}</RowTarget>;
   const label = <>
     <RowLabel shimmer={running}>{toolVerb(block)}</RowLabel>
     {command
@@ -330,6 +331,21 @@ export function FileRef({ hit, line, aside, children }: { hit: string; line?: nu
 }
 
 // A faint note beside a target: a line range, a hit's line
+// search_sessions / read_session: the session they name as its title (the list's, read here so only these rows follow the
+// list), then the turns read or the query searched
+function SessionToolTarget({ block }: { block: ToolCallBlock }) {
+  const titleOf = useContext(SessionTitleContext);
+  const { id } = splitSessionTarget(block.target);
+  const rest = toolTarget(block);
+  if (!id) return <RowTarget>{rest}</RowTarget>;
+  return (
+    <span className="flex min-w-0 items-baseline gap-1">
+      <RowTarget>{titleOf?.(id) ?? id}</RowTarget>
+      {rest && <Aside>{rest}</Aside>}
+    </span>
+  );
+}
+
 export function Aside({ children }: { children: ReactNode }) {
   return <span className="shrink-0 whitespace-nowrap text-3 text-fg-3/70 tabular-nums">{children}</span>;
 }

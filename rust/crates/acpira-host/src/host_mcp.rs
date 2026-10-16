@@ -9,7 +9,8 @@
 //!
 //! With the relay env on its entry (`relay/`), it also offers `ask_agent`: summon one of the user's cross-harness
 //! personas. That call is forwarded to the sidecar over its loopback hub and answers with the child's reply. Over the
-//! same hub, `open_browser` shows an http(s) page in the user's editor, offered only while the serving shell can.
+//! same hub, `open_browser` shows an http(s) page in the user's editor, offered only while the serving shell can, and
+//! `search_sessions` / `read_session` read other Acpira sessions in bounded pieces (`session_library.rs`).
 //!
 //! Wire: newline-delimited JSON-RPC 2.0 over stdio (MCP stdio transport). stdout carries protocol messages only.
 
@@ -29,6 +30,8 @@ pub const SERVER_NAME: &str = "acpira";
 pub const TOOL_NAME: &str = "show_image";
 pub const HOOKS_TOOL: &str = "workspace_hooks";
 pub const BROWSER_TOOL: &str = "open_browser";
+pub const SEARCH_SESSIONS_TOOL: &str = "search_sessions";
+pub const READ_SESSION_TOOL: &str = "read_session";
 /// Answered when the client does not name a protocol version
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
@@ -41,6 +44,25 @@ call show_image with its absolute path instead of only printing the path. Projec
 const RELAY_INSTRUCTIONS: &str = "When the user writes @name for an agent listed by the ask_agent tool, that is an \
 Acpira agent, not one of your own subagents: call ask_agent for it right away, without listing agents first. \
 Several agents named = one ask_agent call each, all in the same message; they run in parallel.";
+
+/// Appended with the relay env: the session tools are found by their links even where the client defers them
+const SESSIONS_INSTRUCTIONS: &str = "Links like `acpira://session/<id>` or `vscode://hotic.acpira/session/<id>` point at \
+another Acpira session, whichever agent ran it. Read one with read_session (its outline first, then only the turns you need) \
+instead of opening files under ~/.acpira; search_sessions finds earlier sessions when the user refers to one without a link. \
+When a long session would flood your context, ask_agent (if offered) can hand the reading to a read-only agent that answers \
+with the conclusion only. When you mention a session, write the Markdown link the tools gave for it.";
+
+const SEARCH_SESSIONS_DESCRIPTION: &str = "Find earlier Acpira sessions, the user's conversations with any agent (Claude, \
+Codex, Kimi, Devin, the built-in agent …), by words in their title or conversation; without a query, list the most recent ones. \
+Searches this project unless scope is \"all\". With `session` (a link or id), it searches inside that one session instead, \
+tool output included, and answers turn numbers. Sessions come back as `[title](acpira://session/<id>)` links: pass one to \
+read_session, and quote it as it is when you mention the session to the user.";
+
+const READ_SESSION_DESCRIPTION: &str = "Read another Acpira session, whichever agent ran it. Without from / to it answers \
+the outline (about 12 KB): what was asked, edited files, plan state, one line per turn and the last reply. Then read only the \
+turns you need with from / to: one page of about 16 KB, and a page that stops early names where to go on. detail \"full\" adds \
+tool output and diffs. `session` takes a link (acpira://session/<id>, vscode://hotic.acpira/session/<id>), an id, or the \
+agent's own session id.";
 
 /// Appended to the instructions while the serving shell can show pages, so a deferred `open_browser` is still found
 const BROWSER_INSTRUCTIONS: &str = "When the user wants to see a web page (a local dev server, a tool's web UI), call open_browser \
@@ -167,6 +189,7 @@ pub fn run(version: &str) -> i32 {
         if relay.features().browser {
           tools.push(browser_tool_def());
         }
+        tools.extend(session_tool_defs());
         if !write(&out, &json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": tools } })) {
           break;
         }
@@ -181,6 +204,19 @@ pub fn run(version: &str) -> i32 {
           let result = relay.ask(&params, &mut |progress: Value| {
             write(&out, &progress);
           });
+          write(&out, &json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+        });
+        continue;
+      }
+      // Session reads answer from the sidecar's warm caches, but each still gets its own thread (a model reads several at once)
+      let name = msg.get("params").and_then(|p| p.get("name")).and_then(Value::as_str);
+      if method == "tools/call"
+        && matches!(name, Some(SEARCH_SESSIONS_TOOL | READ_SESSION_TOOL))
+        && let Some(id) = msg.get("id").cloned()
+      {
+        let (relay, out, params) = (relay.clone(), out.clone(), msg.get("params").cloned().unwrap_or(Value::Null));
+        std::thread::spawn(move || {
+          let result = relay.session_tool(&params);
           write(&out, &json!({ "jsonrpc": "2.0", "id": id, "result": result }));
         });
         continue;
@@ -200,7 +236,7 @@ pub fn run(version: &str) -> i32 {
     let Some(mut reply) = handle_line(&line, version) else { continue };
     if initialize && let Some(result) = reply.get_mut("result") {
       let extra = if browser { format!("\n\n{BROWSER_INSTRUCTIONS}") } else { String::new() };
-      result["instructions"] = json!(format!("{INSTRUCTIONS}\n\n{RELAY_INSTRUCTIONS}{extra}"));
+      result["instructions"] = json!(format!("{INSTRUCTIONS}\n\n{RELAY_INSTRUCTIONS}{extra}\n\n{SESSIONS_INSTRUCTIONS}"));
     }
     if !write(&out, &reply) {
       break;
@@ -263,14 +299,34 @@ impl Relay {
 
   /// `open_browser`: checked here for shape, carried out by the sidecar and its shell
   fn open_browser(&self, params: &Value) -> Value {
-    use crate::relay::wire::{HubOp, HubReply};
+    use crate::relay::wire::HubOp;
     let url = params.get("arguments").and_then(|a| a.get("url")).and_then(Value::as_str).map(str::trim).unwrap_or("");
     let scheme = url.split_once("://").map(|(s, _)| s.to_ascii_lowercase());
     if !matches!(scheme.as_deref(), Some("http" | "https")) {
       return tool_error("Pass `url`: an absolute http:// or https:// address.".into());
     }
+    self.answer(HubOp::OpenBrowser { url: url.to_owned() })
+  }
+
+  /// `search_sessions` / `read_session`: the arguments go to the hub as they are, the sidecar reads and bounds the answer
+  fn session_tool(&self, params: &Value) -> Value {
+    use crate::relay::wire::HubOp;
+    let args = params.get("arguments").cloned().unwrap_or(json!({}));
+    let op = match params.get("name").and_then(Value::as_str) {
+      Some(SEARCH_SESSIONS_TOOL) => serde_json::from_value(args).map(HubOp::SearchSessions),
+      _ => serde_json::from_value(args).map(HubOp::ReadSession),
+    };
+    match op {
+      Ok(op) => self.answer(op),
+      Err(e) => tool_error(format!("Bad arguments: {e}")),
+    }
+  }
+
+  /// One request whose answer is a single `Done` / `Error` line, as a tool result
+  fn answer(&self, op: crate::relay::wire::HubOp) -> Value {
+    use crate::relay::wire::HubReply;
     let mut end: Option<Value> = None;
-    let r = crate::relay::hub::call(&self.addr, &self.request(HubOp::OpenBrowser { url: url.to_owned() }), |reply| {
+    let r = crate::relay::hub::call(&self.addr, &self.request(op), |reply| {
       end = match reply {
         HubReply::Done(text) => Some(json!({ "content": [{ "type": "text", "text": text }], "isError": false })),
         HubReply::Error(text) => Some(tool_error(text)),
@@ -448,6 +504,48 @@ fn tool_def() -> Value {
   })
 }
 
+/// The session tools, offered with the relay env. Read-only (Claude Code runs them concurrently); not `alwaysLoad`, so a
+/// Claude session that never needs them does not carry their definitions: the server instructions name them instead
+fn session_tool_defs() -> Vec<Value> {
+  let read_only = json!({ "readOnlyHint": true, "openWorldHint": false });
+  vec![
+    json!({
+      "name": SEARCH_SESSIONS_TOOL,
+      "title": "Search sessions",
+      "description": SEARCH_SESSIONS_DESCRIPTION,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "Words that must all occur in the title or the conversation. Empty lists the most recent sessions." },
+          "scope": { "type": "string", "enum": ["project", "all"], "description": "project (default): this folder's sessions; all: every project." },
+          "agent": { "type": "string", "description": "Only sessions of this agent (id or name, e.g. codex, Claude)." },
+          "session": { "type": "string", "description": "Search inside this one session (link or id) instead; needs a query." },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 20, "description": "At most this many results (default 8)." },
+        },
+      },
+      "annotations": read_only,
+      "_meta": { "anthropic/searchHint": "search find earlier previous past acpira session conversation chat history link" },
+    }),
+    json!({
+      "name": READ_SESSION_TOOL,
+      "title": "Read session",
+      "description": READ_SESSION_DESCRIPTION,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session": { "type": "string", "description": "The session's link (acpira://session/<id>), id, or the agent's own session id." },
+          "from": { "type": "integer", "minimum": 1, "description": "First turn to read (1-based). Omit from and to for the outline." },
+          "to": { "type": "integer", "minimum": 1, "description": "Last turn to read (inclusive); defaults to the last turn." },
+          "detail": { "type": "string", "enum": ["brief", "full"], "description": "full adds tool output and diffs to the turns." },
+        },
+        "required": ["session"],
+      },
+      "annotations": read_only,
+      "_meta": { "anthropic/searchHint": "read open acpira session link transcript outline turns another conversation" },
+    }),
+  ]
+}
+
 fn browser_tool_def() -> Value {
   json!({
     "name": BROWSER_TOOL,
@@ -613,6 +711,21 @@ mod tests {
     // Kept out of ToolSearch, so a summon is one step
     assert_eq!(def["_meta"]["anthropic/alwaysLoad"], true);
     assert!(def["description"].as_str().unwrap().contains("- son-1 (@Son)"));
+  }
+
+  // Listed with the relay env (tools/list in `run`): read-only so Claude Code runs them side by side, found through a
+  // search hint and the server instructions rather than kept loaded
+  #[test]
+  fn session_tools_are_read_only_and_deferred() {
+    let defs = session_tool_defs();
+    assert_eq!(defs.iter().map(|d| d["name"].as_str().unwrap()).collect::<Vec<_>>(), vec![SEARCH_SESSIONS_TOOL, READ_SESSION_TOOL]);
+    for d in &defs {
+      assert_eq!(d["annotations"]["readOnlyHint"], true);
+      assert!(d["_meta"]["anthropic/searchHint"].is_string());
+      assert!(d["_meta"].get("anthropic/alwaysLoad").is_none());
+    }
+    assert_eq!(defs[1]["inputSchema"]["required"], json!(["session"]));
+    assert!(SESSIONS_INSTRUCTIONS.contains("acpira://session/<id>") && SESSIONS_INSTRUCTIONS.contains("read_session"));
   }
 
   #[test]
