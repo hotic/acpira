@@ -45,6 +45,12 @@ use crate::i18n::{t, tp};
 use crate::limits::RENAME_MAX;
 use crate::store::record::{ForkedFrom, ImportedFrom, RecordSource, SessionRecord};
 use crate::store::session_lease::{Claim, SessionLeases};
+use crate::relay::wire::{SessionReadArgs, SessionSearchArgs};
+use crate::session_library::{
+  LIST_DEFAULT, LIST_MAX, LibraryCaller, LibraryFuture, SELF_READ, SessionLibrary, agent_ids, candidates, matches, render_list, resolve_ref,
+  session_entry,
+};
+use crate::store::session_digest::{self, DigestMeta};
 use crate::store::session_search::SessionSearch;
 use crate::store::transcript_store::{LogFn, RecordLoadError, SessionPrefs, TranscriptStore, is_session_id, sort_index};
 use crate::util::{clip, local_stamp, ms_of_iso, now_iso, random_uuid};
@@ -807,6 +813,11 @@ impl SessionManager {
 
   fn live_sessions(&self) -> Vec<Arc<AcpSession>> {
     self.state.lock().live.values().cloned().collect()
+  }
+
+  /// A session open in this engine, for callers outside the manager (a relay grant in the engine tests)
+  pub fn live_session(&self, id: &str) -> Option<Arc<AcpSession>> {
+    self.live(id)
   }
 
   fn live(&self, id: &str) -> Option<Arc<AcpSession>> {
@@ -3118,6 +3129,74 @@ impl SessionManager {
     self.state.lock().sync_due = None;
     self.deps.store.dispose().await;
     self.sync_index().await;
+  }
+}
+
+// Agents reading other sessions (`session_library.rs`): this side supplies the summaries, snapshots and conversation hits
+impl SessionLibrary for SessionManager {
+  fn search_sessions<'a>(&'a self, caller: &'a LibraryCaller, args: SessionSearchArgs) -> LibraryFuture<'a> {
+    Box::pin(async move {
+      let sessions = self.sessions();
+      let query = args.query.as_deref().unwrap_or("").trim().to_owned();
+      let limit = args.limit.unwrap_or(LIST_DEFAULT).clamp(1, LIST_MAX);
+      // Inside one session: a fixed-string search over its record
+      if let Some(r) = args.session.as_deref().filter(|r| !r.trim().is_empty()) {
+        let id = resolve_ref(r, &sessions).ok_or_else(|| format!("No Acpira session is called {r:?}; search_sessions without `session` lists them."))?;
+        if caller.is_self_session(&id) {
+          return Ok(SELF_READ.to_owned());
+        }
+        if query.is_empty() {
+          return Err("Give a query to search inside a session; read_session reads it.".into());
+        }
+        let snap = self.snapshot(&id).await.map_err(|e| e.to_string())?;
+        return Ok(session_digest::grep(&snap.into_record(), &query, args.limit.unwrap_or(session_digest::GREP_HITS)));
+      }
+      let all = args.scope.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("all"));
+      let agents = self.agents();
+      let filter = args.agent.as_deref().filter(|a| !a.trim().is_empty()).map(|a| agent_ids(a, &agents));
+      let names: HashMap<String, String> = agents.iter().map(|a| (a.id.clone(), a.name.clone())).collect();
+      let cands = candidates(&sessions, caller, all, filter.as_ref());
+      let place = if all { "in all projects" } else { "in this project" };
+      if query.is_empty() {
+        let entries: Vec<String> = cands.iter().take(limit).map(|s| session_entry(s, None, &caller.cwd, &names)).collect();
+        return Ok(render_list(&format!("Most recent sessions {place}:"), &entries, cands.len().min(limit), &format!("No sessions {place}.")));
+      }
+      // A query that is itself a reference (a pasted link, the agent's own session id) names that session
+      if !query.contains(char::is_whitespace)
+        && let Some(id) = resolve_ref(&query, &sessions)
+        && let Some(s) = sessions.iter().find(|s| s.id == id && !caller.is_self_session(&s.id))
+      {
+        return Ok(render_list("That reference is this session:", &[session_entry(s, None, &caller.cwd, &names)], 1, ""));
+      }
+      let ids: HashSet<String> = cands.iter().map(|s| s.id.clone()).collect();
+      let body = self.search.tool_hits(self.deps.store.dir().to_path_buf(), &query, Some(ids)).await;
+      let found = matches(&cands, &query, &body);
+      let entries: Vec<String> = found.iter().take(limit).map(|s| session_entry(s, body.get(&s.id), &caller.cwd, &names)).collect();
+      let empty = if all { "No sessions match.".to_owned() } else { "No sessions in this project match; scope: \"all\" searches every project.".to_owned() };
+      Ok(render_list(&format!("Sessions {place} matching {query:?}:"), &entries, found.len(), &empty))
+    })
+  }
+
+  fn read_session<'a>(&'a self, caller: &'a LibraryCaller, args: SessionReadArgs) -> LibraryFuture<'a> {
+    Box::pin(async move {
+      let sessions = self.sessions();
+      let r = args.session.trim();
+      if r.is_empty() {
+        return Err("Name the session: its link, its id, or the agent's own session id. search_sessions finds them.".into());
+      }
+      let id = resolve_ref(r, &sessions).ok_or_else(|| format!("No Acpira session is called {r:?}; search_sessions lists them."))?;
+      if caller.is_self_session(&id) {
+        return Ok(SELF_READ.to_owned());
+      }
+      let snap = self.snapshot(&id).await.map_err(|e| e.to_string())?;
+      let agent_name = self.agent_name(snap.agent());
+      let meta = DigestMeta { agent_name: &agent_name, live: self.live(&id).is_some_and(|s| s.is_running()) };
+      let record = snap.into_record();
+      Ok(match (args.from, args.to) {
+        (None, None) => session_digest::outline(&record, &meta),
+        (from, to) => session_digest::range(&record, &meta, from.unwrap_or(1), to, args.detail.as_deref() == Some("full")),
+      })
+    })
   }
 }
 

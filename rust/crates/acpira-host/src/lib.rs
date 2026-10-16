@@ -24,6 +24,7 @@ pub mod platform;
 pub mod providers;
 pub mod relay;
 pub mod runtime;
+pub mod session_library;
 pub mod session_manager;
 pub mod settings;
 pub mod shared_config;

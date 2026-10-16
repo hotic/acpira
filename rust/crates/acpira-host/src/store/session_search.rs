@@ -6,6 +6,9 @@
 //! The extracted text is cached per record file and re-read only when the file's modification time or size changes,
 //! so a query typed one key at a time parses each record once. The records directory is shared by every window, which
 //! is why the cache revalidates against the disk on every search instead of listening to this host's own writes.
+//!
+//! Each cached message also carries its turn number (`session_digest::TurnCounter`), which agents' `search_sessions`
+//! answers with (`tool_hits`); the history list ignores it.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -16,6 +19,7 @@ use serde::Deserialize;
 
 use acpira_shared::protocol::SessionHit;
 
+use crate::store::session_digest::TurnCounter;
 use crate::store::transcript_store::is_session_id;
 
 /// Context kept before the first match, in display columns (a CJK character counts two), and the whole snippet's length
@@ -44,6 +48,8 @@ enum LiteTurn {
   User {
     #[serde(default)]
     text: String,
+    #[serde(default)]
+    auto: Option<bool>,
   },
   Agent {
     #[serde(default)]
@@ -78,6 +84,8 @@ struct Entry {
   /// Each message with its whitespace collapsed, and the same text folded; both have the same number of chars
   messages: Vec<String>,
   folded: Vec<String>,
+  /// The turn each message belongs to, numbered as `read_session` numbers them
+  turns: Vec<u32>,
 }
 
 /// Lower-cases one char to one char, so a match position in folded text is the same char position in the original
@@ -92,27 +100,34 @@ fn collapse(s: &str) -> String {
 fn entry_of(stamp: Stamp, raw: &[u8]) -> Entry {
   let Ok(r) = serde_json::from_slice::<LiteRecord>(raw) else {
     // An unreadable record is remembered empty under its stamp, so it is not parsed again until it changes
-    return Entry { stamp, title: String::new(), messages: vec![], folded: vec![] };
+    return Entry { stamp, title: String::new(), messages: vec![], folded: vec![], turns: vec![] };
   };
-  let mut messages = vec![];
+  let mut numbered: Vec<(u32, String)> = vec![];
+  let mut counter = TurnCounter::default();
   for turn in r.turns {
     match turn {
-      LiteTurn::User { text } => messages.push(collapse(&text)),
+      LiteTurn::User { text, auto } => {
+        let n = counter.user(auto == Some(true));
+        numbered.push((n, collapse(&text)));
+      }
       LiteTurn::Agent { blocks } => {
+        let n = counter.agent();
         for b in blocks {
           match b {
-            LiteBlock::Text { markdown } => messages.push(collapse(&markdown)),
-            LiteBlock::Steer { text } => messages.push(collapse(&text)),
+            LiteBlock::Text { markdown } => numbered.push((n, collapse(&markdown))),
+            LiteBlock::Steer { text } => numbered.push((n, collapse(&text))),
             LiteBlock::Other => {}
           }
         }
       }
+      // A role this build does not know is not numbered: read_session cannot read it either
       LiteTurn::Other => {}
     }
   }
-  messages.retain(|m| !m.is_empty());
+  numbered.retain(|(_, m)| !m.is_empty());
+  let (turns, messages): (Vec<u32>, Vec<String>) = numbered.into_iter().unzip();
   let folded = messages.iter().map(|m| fold(m)).collect();
-  Entry { stamp, title: fold(&r.title), messages, folded }
+  Entry { stamp, title: fold(&r.title), messages, folded, turns }
 }
 
 /// The text from a short lead before the first occurrence of `term` in `message`, `pos` being its byte offset in the
@@ -159,13 +174,18 @@ fn col_width(c: char) -> usize {
 /// Every term must occur in the title or the conversation; the snippet comes from the first message holding any term.
 /// A session whose terms all sit in its title is left to the webview's own title match
 fn hit_of(id: &str, e: &Entry, terms: &[String]) -> Option<SessionHit> {
+  numbered_hit(id, e, terms).map(|(_, h)| h)
+}
+
+/// `hit_of` with the turn of the message the snippet comes from
+fn numbered_hit(id: &str, e: &Entry, terms: &[String]) -> Option<(u32, SessionHit)> {
   if !terms.iter().all(|t| e.title.contains(t.as_str()) || e.folded.iter().any(|m| m.contains(t.as_str()))) {
     return None;
   }
-  for (message, folded) in e.messages.iter().zip(&e.folded) {
+  for ((message, folded), turn) in e.messages.iter().zip(&e.folded).zip(&e.turns) {
     let first = terms.iter().filter_map(|t| folded.find(t.as_str()).map(|pos| (pos, t))).min_by_key(|(pos, _)| *pos);
     if let Some((pos, term)) = first {
-      return Some(SessionHit { id: id.to_owned(), snippet: snippet(message, folded, pos, term) });
+      return Some((*turn, SessionHit { id: id.to_owned(), snippet: snippet(message, folded, pos, term) }));
     }
   }
   None
@@ -201,6 +221,29 @@ impl SessionSearch {
       hits.sort_by_key(|h| std::cmp::Reverse(h.0));
       hits.truncate(HITS_MAX);
       hits.into_iter().map(|(_, h)| h).collect()
+    })
+    .await
+    .unwrap_or_default()
+  }
+}
+
+impl SessionSearch {
+  /// The conversation hits among `ids` (every record when None) for an agent's `search_sessions`: id → (turn, snippet).
+  /// Same matching as the history list; a session whose terms all sit in its title is the caller's to add
+  pub async fn tool_hits(&self, dir: PathBuf, query: &str, ids: Option<HashSet<String>>) -> HashMap<String, (u32, String)> {
+    let terms = terms_of(query);
+    if terms.is_empty() {
+      return HashMap::new();
+    }
+    let cache = self.cache.clone();
+    tokio::task::spawn_blocking(move || {
+      let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
+      refresh(&mut cache, &dir);
+      cache
+        .iter()
+        .filter(|(id, _)| ids.as_ref().is_none_or(|ids| ids.contains(*id)))
+        .filter_map(|(id, e)| numbered_hit(id, e, &terms).map(|(turn, h)| (id.clone(), (turn, h.snippet))))
+        .collect()
     })
     .await
     .unwrap_or_default()
@@ -252,6 +295,7 @@ mod tests {
         {"type":"future_block","x":1}]},{"role":"narrator"}]"#,
     );
     assert_eq!(e.messages, vec!["hello world", "The **answer**", "steer me"]);
+    assert_eq!(e.turns, vec![1, 1, 1]);
     assert!(hit_of("a", &e, &terms_of("secret")).is_none());
     assert!(hit_of("a", &e, &terms_of("needle")).is_none());
     assert_eq!(hit_of("a", &e, &terms_of("ANSWER")).unwrap().snippet, "The **answer**");
@@ -291,6 +335,18 @@ mod tests {
     let e = entry("t", r#"[{"role":"agent","blocks":[{"type":"text","markdown":"İstanbul 会话搜索 ÄBC"}]}]"#);
     assert_eq!(hit_of("a", &e, &terms_of("会话")).unwrap().snippet, "İstanbul 会话搜索 ÄBC");
     assert_eq!(hit_of("a", &e, &terms_of("äbc")).unwrap().snippet, "…会话搜索 ÄBC");
+  }
+
+  // The numbers must be read_session's: session_digest::rounds over the same record
+  #[test]
+  fn messages_carry_the_turn_numbers_read_session_uses() {
+    let raw = r#"[{"role":"agent","blocks":[{"type":"text","markdown":"hi"}]},{"role":"user","text":"one"},
+      {"role":"agent","blocks":[{"type":"text","markdown":"first"}]},{"role":"user","text":"go on","auto":true,"autoReason":"retry"},
+      {"role":"agent","blocks":[{"type":"text","markdown":"more"}]},{"role":"user","text":"two"},{"role":"agent","blocks":[{"type":"steer","id":"s","text":"wait"}]}]"#;
+    let e = entry("t", raw);
+    assert_eq!(e.turns, vec![1, 2, 2, 2, 2, 3, 3]);
+    assert_eq!(numbered_hit("a", &e, &terms_of("more")).unwrap().0, 2);
+    assert_eq!(numbered_hit("a", &e, &terms_of("wait")).unwrap().0, 3);
   }
 
   #[test]

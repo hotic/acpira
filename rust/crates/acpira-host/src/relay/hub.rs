@@ -22,6 +22,7 @@ use crate::acp::session::AcpSession;
 use crate::relay::roster::Roster;
 use crate::relay::wire::{HostFeatures, HubOp, HubReply, HubRequest};
 use crate::relay::{ENV_ADDR, ENV_TOKEN};
+use crate::session_library::{LibraryCaller, SessionLibrary};
 use crate::store::transcript_store::LogFn;
 use crate::util::random_uuid;
 
@@ -69,6 +70,8 @@ pub struct RelayHub {
   log: LogFn,
   /// Set once the runtime has a shell platform; without one `open_browser` is not offered
   browser: parking_lot::RwLock<Option<Arc<dyn HostBrowser>>>,
+  /// The session manager, for `search_sessions` / `read_session`; weak, since the manager's sessions hold grants here
+  library: parking_lot::RwLock<Option<Weak<dyn SessionLibrary>>>,
 }
 
 /// Leaves the pending count when the request line is in (or the connection gave up)
@@ -84,7 +87,7 @@ impl RelayHub {
   pub async fn start(roster: Arc<Roster>, log: LogFn) -> Result<Arc<RelayHub>> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?.to_string();
-    let hub = Arc::new(RelayHub { addr, grants: Default::default(), pending: AtomicUsize::new(0), roster, log, browser: Default::default() });
+    let hub = Arc::new(RelayHub { addr, grants: Default::default(), pending: AtomicUsize::new(0), roster, log, browser: Default::default(), library: Default::default() });
     let weak = Arc::downgrade(&hub);
     tokio::spawn(async move {
       while let Ok((sock, _)) = listener.accept().await {
@@ -98,6 +101,11 @@ impl RelayHub {
   /// Where `open_browser` calls go (the runtime's platform)
   pub fn set_browser(&self, browser: Arc<dyn HostBrowser>) {
     *self.browser.write() = Some(browser);
+  }
+
+  /// Where `search_sessions` / `read_session` calls go (the runtime's session manager)
+  pub fn set_library(&self, library: Weak<dyn SessionLibrary>) {
+    *self.library.write() = Some(library);
   }
 
   /// The listener's address, for a test client
@@ -163,6 +171,10 @@ impl RelayHub {
         };
         let _ = write.write_all(reply(r).as_bytes()).await;
       }
+      HubOp::SearchSessions(_) | HubOp::ReadSession(_) => {
+        let r = self.library_op(&session, caller.is_some(), req.op).await;
+        let _ = write.write_all(reply(r).as_bytes()).await;
+      }
       HubOp::Ask(args) => {
         let Some(session) = session.upgrade() else {
           let _ = write.write_all(reply(HubReply::Error("The Acpira session that started this agent is gone.".into())).as_bytes()).await;
@@ -184,6 +196,27 @@ impl RelayHub {
 }
 
 impl RelayHub {
+  /// The caller is the grant's session (a summoned thread's CLI reads it as its parent, not as its own conversation)
+  async fn library_op(&self, session: &Weak<AcpSession>, summoned: bool, op: HubOp) -> HubReply {
+    let Some(s) = session.upgrade() else {
+      return HubReply::Error("The Acpira session that started this agent is gone.".into());
+    };
+    let caller = LibraryCaller { session_id: s.id.clone(), cwd: s.cwd.clone(), summoned };
+    drop(s);
+    let Some(library) = self.library.read().as_ref().and_then(Weak::upgrade) else {
+      return HubReply::Error("Reading Acpira sessions is not available in this host.".into());
+    };
+    let r = match op {
+      HubOp::SearchSessions(args) => library.search_sessions(&caller, args).await,
+      HubOp::ReadSession(args) => library.read_session(&caller, args).await,
+      _ => return HubReply::Error("unexpected op".into()),
+    };
+    match r {
+      Ok(text) => HubReply::Done(text),
+      Err(e) => HubReply::Error(e),
+    }
+  }
+
   /// A loopback page must be served on this machine first (the one the agent and its servers run on): nothing
   /// listening there is reported as such, before the shell forwards a port and checks from the user's side
   async fn open_browser(&self, browser: &dyn HostBrowser, url: &str) -> HubReply {

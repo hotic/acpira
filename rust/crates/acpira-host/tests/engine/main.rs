@@ -22,6 +22,7 @@ mod plans;
 mod questions;
 mod registry;
 mod relay;
+mod session_library;
 mod session_manager;
 mod store;
 mod subagents;

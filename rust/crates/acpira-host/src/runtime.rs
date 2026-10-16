@@ -199,6 +199,11 @@ impl HostRuntime {
       },
     );
     *mgr_slot.lock() = Some(Arc::downgrade(&manager));
+    // `search_sessions` / `read_session` read through the manager; weak like the slot above, since its sessions hold grants
+    if let Some(h) = &hub {
+      let library: std::sync::Weak<dyn crate::session_library::SessionLibrary> = Arc::downgrade(&manager) as _;
+      h.set_library(library);
+    }
 
     let (m1, m2, m3) = (manager.clone(), manager.clone(), manager.clone());
     let (pr, pw, ph, phome, pcwd) = (platform.clone(), platform.clone(), platform.clone(), platform.clone(), platform.clone());
