@@ -11,6 +11,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [1.10.4] - 2026-10-16
+
+### Added
+
+- **Session links.** Every session has a link, `acpira://session/<id>`, copied as a clickable `vscode://` or `cursor://` link in those editors. A Copy submenu in the session menu (list row, its right-click menu and the header) copies the link, the session as Markdown, or its working directory, and a short toast confirms it. A session link in a reply opens that session, a copied link opened from outside the editor brings the session up through the extension, and a link to a session this window does not have shows a warning.
+- **Agents can read other sessions.** Acpira's MCP server offers `search_sessions` and `read_session` to every agent, summoned subagents included. An agent finds sessions by query, project or agent, reads an outline first and then pages of turns, and a long turn continues on the next page. A summoned subagent reads the session that summoned it. Their tool rows show the session's title and the turns read.
+- **Plain-text export.** Export in the session menus is one submenu with Markdown, JSON and plain text. Plain text keeps the prompts, including quotes and steers, and the agent's prose, and leaves out thinking, tools, plans and notices.
+
+### Changed
+
+- **Thorough compaction summaries for the built-in agent.** The summary follows Claude Code's nine-section format, the writer may think at its own level with up to 32k output tokens, and a summary cut off at that limit falls back to the next writer. The user's own messages, the last to-do list and the files touched last are carried verbatim beside it. A fast model whose context window would cut the start of the transcript is passed over.
+- Under Full access, the built-in agent's Plan mode runs commands and non-read-only MCP tools without a card. It still writes only its plan file.
+- The turn clock starts at the agent's first output instead of the moment the prompt was sent; older transcripts still count from the send. The live clock stays hidden until its first second, and a finished turn's head no longer shows 0s.
+- The chat column and composer are wider, moved one scrollbar outward, and the header, thread and composer area share one side margin.
+- Scrollbar thumbs fade in and widen under the pointer, and the session list's thumb rides its panel edge.
+- The model chip updates while its panel is open, so an effort or Fast pick shows at once.
+- Dropdown carets turn over while their menu is open.
+- The last reply's actions appear on hover like the others.
+- The session row's more button is gone. Move and pin stay on hover, and rename, export, delete and filing are in the row's right-click menu.
+- Success colours share one teal, and light themes get a clearer composer lift and fainter card shadows.
+
+### Fixed
+
+- A `~/…` path clicked in an agent reply opens the file in the home directory instead of a missing `~` folder under the session's working directory.
+- Reopening a session whose reply is still streaming shows the reply at once instead of replaying it from the first character, such as a Claude turn held open by background subagents. A thought after the reply text stays below it in the process fold while the turn runs.
+- Reloading a window after a VSIX reinstall no longer lands idle sessions on Take over. An engine with no window on an idle session hands it to the engine whose window opens it.
+- Overlay scrollbar thumbs show again in VS Code 1.141, and a stray horizontal scrollbar under the transcript is gone.
+- Arrow keys in a menu no longer leave a second row lit, and radio rows no longer fill the checked row.
+- Model ids with the version glued on, such as `qwen3.8-27b`, `glm4.6`, `gemma3-27b` and `gpt4o-mini`, get their vendor mark.
+- The session context menu opens at the pointer in a narrow column instead of one fixed spot.
+- A subagent row's hover fill covers both of its lines, and the summoned CLI's badge tile is no longer transparent.
+
 ## [1.10.3] - 2026-10-15
 
 ### Added
