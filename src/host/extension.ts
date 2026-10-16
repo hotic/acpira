@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
 import type { EditorSelection, HostMsg } from '@shared/protocol';
@@ -277,12 +278,16 @@ export async function activate(context: vscode.ExtensionContext) {
         broadcast({ type: 'editorCopy', selection: copied });
       },
     }, { providedPasteEditKinds: [], copyMimeTypes: ['application/vnd.acpira.copy'] }),
-    // Copied session links (`vscode://hotic.acpira/session/<id>`) open here; VS Code routes the URI to the window that owns it
+    // Copied session links (`vscode://hotic.acpira/session/<id>`) open here. VS Code hands the URI to the frontmost window,
+    // which may not be the one (or the remote host) the link came from: a session this window's store lacks is said so
     vscode.window.registerUriHandler({
       handleUri(uri) {
         const id = sessionIdOfLink(`${uri.scheme}://${uri.authority}${uri.path}`);
-        if (id) revealSession(id);
-        else log.warn(`unhandled URI: ${uri.path}`);
+        if (!id) { log.warn(`unhandled URI: ${uri.path}`); return; }
+        const known = [...bridges].some(b => b.sessionId === id)
+          || existsSync(join(sessionsDir, `${id}.json`)) || existsSync(join(home, 'bridges', 'chatgpt', `${id}.json`));
+        if (known) revealSession(id);
+        else void vscode.window.showWarningMessage(t('sessionLink.notHere'));
       },
     }),
     vscode.commands.registerCommand('acpira.openView', () => vscode.commands.executeCommand(`${VIEW_ID}.focus`)),

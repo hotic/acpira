@@ -3163,7 +3163,7 @@ impl SessionLibrary for SessionManager {
       let place = if all { "in all projects" } else { "in this project" };
       if query.is_empty() {
         let entries: Vec<String> = cands.iter().take(limit).map(|s| session_entry(s, None, &caller.cwd, &names)).collect();
-        return Ok(render_list(&format!("Most recent sessions {place}:"), &entries, cands.len().min(limit), &format!("No sessions {place}.")));
+        return Ok(render_list(&format!("Most recent sessions {place}:"), &entries, cands.len(), &format!("No sessions {place}.")));
       }
       // A query that is itself a reference (a pasted link, the agent's own session id) names that session
       if !query.contains(char::is_whitespace)
@@ -3198,7 +3198,7 @@ impl SessionLibrary for SessionManager {
       let record = snap.into_record();
       Ok(match (args.from, args.to) {
         (None, None) => session_digest::outline(&record, &meta),
-        (from, to) => session_digest::range(&record, &meta, from.unwrap_or(1), to, args.detail.as_deref() == Some("full")),
+        (from, to) => session_digest::range(&record, &meta, from.unwrap_or(1), to, args.offset.unwrap_or(0), args.detail.as_deref() == Some("full")),
       })
     })
   }

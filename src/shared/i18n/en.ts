@@ -198,6 +198,7 @@ export const en = {
   'session.copied.markdown': 'Copied as Markdown',
   'session.copied.cwd': 'Working directory copied',
   'session.copyFailed': "Couldn't copy: {detail}",
+  'sessionLink.notHere': "This session isn't stored here. Open the link in the window or on the remote host it was copied from.",
   'session.export': 'Export',
   'session.export.markdown': 'Markdown',
   'session.export.json': 'JSON',

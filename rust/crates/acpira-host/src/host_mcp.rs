@@ -60,7 +60,8 @@ read_session, and quote it as it is when you mention the session to the user.";
 
 const READ_SESSION_DESCRIPTION: &str = "Read another Acpira session, whichever agent ran it. Without from / to it answers \
 the outline (about 12 KB): what was asked, edited files, plan state, one line per turn and the last reply. Then read only the \
-turns you need with from / to: one page of about 16 KB, and a page that stops early names where to go on. detail \"full\" adds \
+turns you need with from / to: one page of about 16 KB, and a page that stops early names where to go on (a turn longer than \
+a page goes on with offset). detail \"full\" adds \
 tool output and diffs. `session` takes a link (acpira://session/<id>, vscode://hotic.acpira/session/<id>), an id, or the \
 agent's own session id.";
 
@@ -536,6 +537,7 @@ fn session_tool_defs() -> Vec<Value> {
           "session": { "type": "string", "description": "The session's link (acpira://session/<id>), id, or the agent's own session id." },
           "from": { "type": "integer", "minimum": 1, "description": "First turn to read (1-based). Omit from and to for the outline." },
           "to": { "type": "integer", "minimum": 1, "description": "Last turn to read (inclusive); defaults to the last turn." },
+          "offset": { "type": "integer", "minimum": 0, "description": "Where to go on inside the from turn, as named by a page that cut it." },
           "detail": { "type": "string", "enum": ["brief", "full"], "description": "full adds tool output and diffs to the turns." },
         },
         "required": ["session"],
