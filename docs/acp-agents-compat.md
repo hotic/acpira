@@ -120,6 +120,8 @@ Consequences implemented: text attachments become marked-up `text` blocks when `
 | Pi | pi-acp 0.0.33 | none | **no** (the list is ignored) | verified |
 | Acpira (built-in) | acpira 1.10.2 (2026-10-14) | http | yes | verified |
 
+Session tools (2026-10-16): with the relay env every agent that launches the server above is offered `search_sessions` / `read_session` (`host-architecture.md`, session links); Pi, which launches none, has no way to read another session yet. Unverified on every real CLI: whether the model finds the tools from a pasted link (Claude Code defers them behind ToolSearch, the server instructions name them), whether it reads the outline first, how the answers sit against Claude Code's MCP output warning, and whether Claude or Codex ask before the first call. The row namings are those recorded for `show_image`, not observed for these tools.
+
 Shared skills and prompts (the Shared tab's wiring, `agent_ext.rs` `AgentExt.shared`):
 
 - Grok 1.0.18's embedded docs: skills are scanned from `.agents/skills` at each tier (user and project) and deduplicated by name, and gitignore does not apply to skill roots; its global rules file is `~/.grok/AGENTS.md` (source).
