@@ -90,6 +90,9 @@ export type HostMsg =
   | { type: 'addSelection'; selection: EditorSelection }
   // Text just copied from an editor, so pasting the same text into the composer becomes a selection chip instead
   | { type: 'editorCopy'; selection: EditorSelection }
+  // The shell brings a session up in this page (a session link opened from outside, a notification's Open button): the page
+  // selects it and leaves the settings page if it is there. Never sent by the sidecar
+  | { type: 'showSession'; id: string }
   | { type: 'chatgptStatus'; status: ChatGptIntegrationStatus }
   | { type: 'editTurnResult'; requestId: string; error?: string }
   | { type: 'init'; state: InitState }
@@ -128,7 +131,9 @@ export type HostMsg =
   // Reply to searchSessions; seq echoes the request so stale replies can be dropped
   | { type: 'sessionHits'; seq: number; hits: SessionHit[] }
   // Reply to diffSource: the whole files behind one diff, absent when the session or the diff is gone
-  | { type: 'diffSource'; seq: number; source?: FullDiffSource };
+  | { type: 'diffSource'; seq: number; source?: FullDiffSource }
+  // Reply to sessionMarkdown: the session as Markdown, or why it could not be read
+  | { type: 'sessionMarkdown'; seq: number; markdown?: string; error?: string };
 
 // What the import popover currently holds for the agent it asked about
 export interface NativeSessionsState {
@@ -218,6 +223,8 @@ export type WebviewMsg =
   | { type: 'forkSession'; sessionId: string; turnIndex: number }
   // Write the session as a file under the data dir's exports/ folder (an unchanged transcript reuses its last export); the toast offers to open it
   | { type: 'exportSession'; id: string; format: 'markdown' | 'json' }
+  // "Copy as Markdown": the export's Markdown as text, nothing written; answered with a `sessionMarkdown` message echoing seq
+  | { type: 'sessionMarkdown'; id: string; seq: number }
   // Rebind the session to this account (also becomes the agent's default account)
   | { type: 'selectAccount'; sessionId?: string; id: string }
   | { type: 'addAccount'; agent: AgentId; via: AddAccountVia }

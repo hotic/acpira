@@ -96,6 +96,22 @@ describe('sidecar session contract', () => {
     expect(await search('')).toEqual([]);
   });
 
+  // "Copy as Markdown": the live session renders straight away; an unknown id still answers, with the record-load message
+  it('sessionMarkdown answers the export Markdown, and answers an unknown id with an error', async () => {
+    const s = shell();
+    const id = await started(s);
+    s.view('V', { type: 'send', sessionId: id, text: 'copy me as markdown' });
+    await s.hostMsg('V', 'session', idle(2));
+    s.view('V', { type: 'sessionMarkdown', id, seq: 7 });
+    const ok = await s.hostMsg('V', 'sessionMarkdown', m => m.seq === 7);
+    expect(ok.error).toBeUndefined();
+    expect(ok.markdown).toContain('copy me as markdown');
+    s.view('V', { type: 'sessionMarkdown', id: 'no-such-session', seq: 8 });
+    const missing = await s.hostMsg('V', 'sessionMarkdown', m => m.seq === 8);
+    expect(missing.markdown).toBeUndefined();
+    expect(missing.error).toBeTruthy();
+  });
+
   it('a permission card answered by the webview lets the tool run; usage and the diff land in the turn', async () => {
     const s = shell();
     const id = await started(s);
