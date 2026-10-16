@@ -456,3 +456,83 @@ async fn an_autonomous_cycle_s_edits_go_through_the_gate() {
   let gates = vw["turns"].as_array().unwrap().iter().filter(|t| t["autoReason"] == "gate").count();
   assert_eq!(gates, 1, "{vw}");
 }
+
+fn paths(v: &Value) -> Vec<String> {
+  v.as_array().unwrap().iter().map(|f| f.as_str().unwrap().replace('\\', "/")).collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_read_only_turn_leaves_what_others_changed_meanwhile_out_of_the_gate() {
+  let fake = fake_or_skip!();
+  if !git_or_skip() {
+    return;
+  }
+  let p = Project::new(json!({ "beforeEdit": "before.cjs", "afterTurn": "after.cjs" }));
+  let h = Harness::new(&fake, json!({}));
+  let s = started(&h, &p.cwd()).await;
+  let rules = p.file("RULES.md");
+  // Someone sharing the work tree writes a bad file while the agent only reads
+  prompt(&s, &format!("hook-turn:read={rules}|outside={}", p.file("theirs.txt"))).await;
+  decisions(&h, 1).await;
+  let audits: Vec<Value> = p.payloads("before.log").into_iter().filter(|x| x["phase"] == "audit").collect();
+  assert!(audits.is_empty(), "{audits:?}");
+  let stops = p.payloads("after.log");
+  assert_eq!(stops.len(), 1);
+  expect_match(&stops[0], json!({ "turn_files": [], "changed_files": [], "file_sources": {} }));
+  expect_match(&stops[0]["turn_tools"], json!([{ "kind": "read", "status": "completed", "locations": [rules] }]));
+  assert_eq!(turns_in(&view(&s)), 2, "no follow-up about a file the agent never touched");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_edit_only_turn_is_gated_over_the_files_its_edits_name() {
+  let fake = fake_or_skip!();
+  if !git_or_skip() {
+    return;
+  }
+  let p = Project::new(json!({ "beforeEdit": "before.cjs", "afterTurn": "after.cjs" }));
+  let h = Harness::new(&fake, json!({}));
+  let s = started(&h, &p.cwd()).await;
+  let (mine, theirs) = (p.file("mine.txt"), p.file("theirs.txt"));
+  prompt(&s, &format!("hook-turn:edit={mine}|outside={theirs}")).await;
+  // after.cjs blocks on the agent's own bad file, and the follow-up fixes it
+  decisions(&h, 2).await;
+  let audits: Vec<Value> = p.payloads("before.log").into_iter().filter(|x| x["phase"] == "audit").collect();
+  assert_eq!(paths(&audits[0]["files"]), [mine.replace('\\', "/")]);
+  assert_eq!(audits[0]["file_sources"], json!({ mine.clone(): "tool" }));
+  let stops = p.payloads("after.log");
+  assert_eq!(stops.len(), 2);
+  for stop in &stops {
+    assert_eq!(paths(&stop["turn_files"]), [mine.replace('\\', "/")], "{stop}");
+    assert_eq!(paths(&stop["changed_files"]), [mine.replace('\\', "/")], "{stop}");
+    assert_eq!(stop["file_sources"], json!({ mine.clone(): "tool" }));
+  }
+  let follow_up = view(&s)["turns"][2]["text"].as_str().unwrap().to_owned();
+  assert!(follow_up.contains("mine.txt") && !follow_up.contains("theirs.txt"), "{follow_up}");
+  assert_eq!(std::fs::read_to_string(&theirs).unwrap(), "bad\n", "nobody was asked to fix someone else's file");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_file_a_shell_command_changed_is_still_audited_and_marked_snapshot() {
+  let fake = fake_or_skip!();
+  if !git_or_skip() {
+    return;
+  }
+  let p = Project::new(json!({ "beforeEdit": "before.cjs", "afterTurn": "after.cjs" }));
+  let h = Harness::new(&fake, json!({}));
+  let s = started(&h, &p.cwd()).await;
+  let file = p.file("built.txt");
+  prompt(&s, &format!("hook-turn:shell={file}")).await;
+  decisions(&h, 2).await;
+  assert_eq!(std::fs::read_to_string(&file).unwrap(), "fixed\n");
+  let audits: Vec<Value> = p.payloads("before.log").into_iter().filter(|x| x["phase"] == "audit").collect();
+  let audited = paths(&audits[0]["files"]);
+  assert!(audited.len() == 1 && audited[0].ends_with("/built.txt"), "{audited:?}");
+  assert_eq!(audits[0]["file_sources"].as_object().unwrap().values().collect::<Vec<_>>(), [&json!("snapshot")]);
+  let stops = p.payloads("after.log");
+  let turn = paths(&stops[0]["turn_files"]);
+  assert!(turn.len() == 1 && turn[0].ends_with("/built.txt"), "{turn:?}");
+  expect_match(&stops[0]["turn_tools"], json!([{ "kind": "execute", "locations": [] }]));
+  assert_eq!(stops[0]["file_sources"].as_object().unwrap().values().collect::<Vec<_>>(), [&json!("snapshot")]);
+  // The follow-up fixed it through an edit row: from then on the session counts it as the agent's own
+  assert_eq!(stops[1]["file_sources"].as_object().unwrap().values().collect::<Vec<_>>(), [&json!("tool")]);
+}

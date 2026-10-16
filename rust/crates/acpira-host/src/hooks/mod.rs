@@ -179,8 +179,8 @@ invalid (also reported).
   // Run when a turn ends; a block sends the reason back to the agent as an automatic follow-up, at most `rounds`
   // times per user prompt (default 2), then the user is told the gate gave up
   "afterTurn": { "run": "python3 tools/hooks/stop_gate.py", "timeout": 90, "rounds": 1 },
-  // Git work trees whose changes count as the turn's edits (default: the root). List nested repositories the
-  // root's own `git status` cannot see
+  // Git work trees whose changes count as the turn's edits when it ran a shell command, a subagent or another tool
+  // that can write anywhere (default: the root). List nested repositories the root's own `git status` cannot see
   "watch": [".", "vendor/server"]
 }
 ```
@@ -202,11 +202,17 @@ and messages steered into a running turn are not asked.
 beforeEdit: `hook_event_name: "PreToolUse"`, `session_id`, `agent` (Acpira's agent id), `cwd` (the root),
 `tool_name` (`Edit` | `Delete` | `Move`), `tool_input` (the tool's raw input plus `file_path`), `files` (absolute paths
 of every target), `read_files` (absolute paths the session's tools have read), `phase` (`"permission"` | `"audit"`).
-The audit leaves out files whose every edit already passed the hook in a permission request. A turn that ends without
-finishing (stopped, failed, out of quota) is not gated; its changes are audited with the next turn that finishes.
+The audit leaves out files whose every edit already passed the hook in a permission request, and adds `turn_tools` and
+`file_sources` (see afterTurn). A turn that ends without finishing (stopped, failed, out of quota) is not gated; its
+changes are audited with the next turn that finishes.
 
 afterTurn: `hook_event_name: "Stop"`, `session_id`, `agent`, `cwd`, `stop_hook_active` (true on a follow-up round),
-`round`, `turn_files` (changed by this turn), `changed_files` (changed by the session so far), `read_files`.
+`round`, `turn_files` (changed by this turn), `changed_files` (changed by the session so far), `read_files`,
+`turn_tools` (the turn's tool calls: `kind`, `status`, `locations`), `file_sources` (each changed file → `"tool"`, named
+by an edit tool call, or `"snapshot"`, only seen changing in a watched work tree). Other people and agents may share the
+work tree, so a turn that only read takes no files, and a turn whose only writes were edits naming their files takes
+just those; the work trees' changes count only after a shell command, a subagent, an MCP or unknown tool, or an edit
+naming no file. A script that wants to be stricter about `"snapshot"` files can look at `turn_tools` itself.
 
 ## Answer (the Claude Code hook protocol, so existing Claude Code hook scripts work unchanged)
 
