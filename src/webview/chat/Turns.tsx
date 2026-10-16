@@ -620,7 +620,10 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
   const CompletionIcon = turn.stop === 'cancelled' ? X : outcomeOf(turn) ? TriangleAlert : Check;
   const leadIcon = running ? activity.lead : <CompletionIcon className="size-icon" strokeWidth={1.5} />;
   const label = running ? activity.label : outcomeOf(turn) ?? t('turns.done');
-  const elapsed = !running && turn.startedAt !== undefined && turn.endedAt !== undefined ? elapsedDuration(turn) : undefined;
+  // A turn that rounds to 0s shows the bare Done label, matching the live counter that stays hidden for its first second
+  const elapsed = !running && turn.startedAt !== undefined && turn.endedAt !== undefined && (since === undefined || turn.endedAt - since >= 500)
+    ? elapsedDuration(turn)
+    : undefined;
   // Steered prompts and the subagent rows at a delegation stay visible between the folding parts of the process
   const parts = useMemo(() => processParts(items), [items]);
   // Only items fold; a process of nothing but delegations has no chevron
