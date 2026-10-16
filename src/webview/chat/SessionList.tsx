@@ -14,7 +14,7 @@ import { Row } from '../ui/Row';
 import { dateFormat, t, useLocale } from '../i18n';
 import { AgentMark } from './AgentMark';
 import { CategoryAddIcon } from './CategoryIcon';
-import { SessionContextMenu, type MoveProject, type SessionMenuItemsProps } from './SessionMenu';
+import { SessionContextMenu, type MoveProject, type SessionCopyKind, type SessionMenuItemsProps } from './SessionMenu';
 import { markParts, matchesTitle, searchTerms } from './sessionSearch';
 import { buildSessionTree, categoryOf, draggable, dropAction, type CategoryNode, type MoveTarget, type ProjectNode } from './sessionTree';
 
@@ -69,6 +69,7 @@ export interface SessionListProps {
   onMove?: (id: string, to?: MoveTarget) => void;
   // Writes the session as Markdown or JSON under exports/ (absent only where the host does not offer it)
   onExport?: (id: string, format: 'markdown' | 'json') => void;
+  onCopy?: (id: string, what: SessionCopyKind) => void;
   // Searches the saved conversations too; content hits join the title matches with a snippet under their title
   onSearch?: (query: string) => Promise<SessionHit[]>;
   // User categories (shared by every window through the host). With onFile + onCategoryOp the list shows them, files
@@ -112,7 +113,7 @@ function aggregate(sessions: SessionSummary[]): SessionSummary['state'] {
 // to its loose area; under "all", dropped on another project's group (or one of its categories) they move to that project.
 // Pinned rows are locked and do not drag; category headers drag to reorder within their project.
 // Deletion applies immediately, undo lives on the Toast at the shell's bottom
-export function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onMove, onExport, onSearch, categories: categoryState, onFile, onCategoryOp, onNewInCategory }: SessionListProps) {
+export function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onMove, onExport, onCopy, onSearch, categories: categoryState, onFile, onCategoryOp, onNewInCategory }: SessionListProps) {
   const locale = useLocale();
   const [query, setQuery] = useState('');
   const [agentFilter, setAgentFilter] = useState<string>();
@@ -256,6 +257,7 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
       projects={projects.filter(p => p.cwd !== s.cwd)}
       onMoveTo={onMove && !s.external ? cwd => onMove(s.id, { cwd }) : undefined}
       onExport={onExport ? format => onExport(s.id, format) : undefined}
+      onCopy={onCopy ? what => onCopy(s.id, what) : undefined}
       categories={categories.filter(c => c.cwd === s.cwd)}
       onFile={filing && !s.external ? category => onFile!(s.id, category) : undefined}
       onNewCategory={filing && !s.external ? () => createCategory(s.cwd, s.id) : undefined}
@@ -644,6 +646,7 @@ interface ItemProps {
   projects?: MoveProject[];
   onMoveTo?: (cwd: string) => void;
   onExport?: (format: 'markdown' | 'json') => void;
+  onCopy?: (what: SessionCopyKind) => void;
   // Native drag: present when the row may be filed by dragging (not pinned, not a ChatGPT mirror)
   dragging?: boolean;
   onDragStart?: (e: DragEvent) => void;
@@ -658,14 +661,14 @@ interface ItemProps {
 // The hover cluster keeps the two quick toggles (move / pin, pin rightmost); rename, export and delete live in the row's
 // context menu (right click, not while renaming, where the input keeps the native one). It keeps the cluster alive while
 // open — the row tracks menuOpen because a pointer inside the portaled popup is no longer a hover
-function Item({ session: s, agentName, terms, snippet, active, time, project, editing, onSelect, onEdit, onRename, onDelete, onPin, onMove, projects, onMoveTo, onExport, dragging, onDragStart, onDragEnd, categories, onFile, onNewCategory }: ItemProps) {
+function Item({ session: s, agentName, terms, snippet, active, time, project, editing, onSelect, onEdit, onRename, onDelete, onPin, onMove, projects, onMoveTo, onExport, onCopy, dragging, onDragStart, onDragEnd, categories, onFile, onNewCategory }: ItemProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget) return;
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(); }
   };
   const act = 'inline-flex size-lead items-center justify-center rounded-sm text-fg-3 transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1';
-  const menu: SessionMenuItemsProps = { session: s, onRename: onEdit, onPin, onMove, projects, onMoveTo, onExport, onDelete, categories, onFile, onNewCategory };
+  const menu: SessionMenuItemsProps = { session: s, onRename: onEdit, onPin, onMove, projects, onMoveTo, onExport, onCopy, onDelete, categories, onFile, onNewCategory };
   const row = (
     <div
       role="option"

@@ -2,10 +2,11 @@ import { isValidElement, useContext, type ComponentProps, type KeyboardEvent, ty
 import type { ExtraProps } from 'streamdown';
 import { vscodeApi } from '../vscodeApi';
 import { cn } from '../ui/cn';
-import { OpenToolFileContext, decodeFileHref, parseFileLink, parseWrappedLink } from './fileLinks';
+import { sessionIdOfLink } from '@shared/sessionLinks';
+import { OpenSessionContext, OpenToolFileContext, decodeFileHref, decodeSessionHref, parseCodeSessionLink, parseFileLink, parseWrappedLink } from './fileLinks';
 
 // Links in agent output: the webview cannot navigate, so clicks are forwarded to the host.
-// Workspace paths go through openFile; http(s)/mailto stay on openExternal.
+// Workspace paths go through openFile, session links switch to that session; http(s)/mailto stay on openExternal.
 // A host is either VS Code (acquireVsCodeApi) or a shell that injected window.__acpiraApi (JCEF, LAB fixtures); without either
 // (a bare LAB page) fall back to a plain window.open.
 const hasApi = () => !!window.__acpiraApi || typeof acquireVsCodeApi === 'function';
@@ -22,12 +23,18 @@ function fileFromHref(href: string) {
 // ExtraProps: streamdown passes the hast node along; unused here but part of the component contract
 export function Link({ href, children, node: _node, ...rest }: ComponentProps<'a'> & ExtraProps) {
   const openFile = useContext(OpenToolFileContext);
+  const openSession = useContext(OpenSessionContext);
   return (
     <a
       href={href}
       onClick={e => {
         e.preventDefault();
         if (!href) return;
+        const session = decodeSessionHref(href) ?? sessionIdOfLink(href);
+        if (session) {
+          openSession?.(session);
+          return;
+        }
         const file = fileFromHref(href);
         if (file) {
           openFile?.(file.path, file.line);
@@ -46,12 +53,19 @@ export function Link({ href, children, node: _node, ...rest }: ComponentProps<'a
 
 export function InlineFileCode({ children, className, node: _node, ...rest }: ComponentProps<'code'> & ExtraProps) {
   const openFile = useContext(OpenToolFileContext);
-  const text = openFile ? textOf(children) : '';
+  const openSession = useContext(OpenSessionContext);
+  const text = openFile || openSession ? textOf(children) : '';
+  // A session link in backticks (bare or a whole `[title](link)`) opens the session, showing the label when there is one
+  const session = openSession ? parseCodeSessionLink(text) : undefined;
+  if (session) return <CodeLink className={className} title={session.label ? undefined : session.id} label={session.label ?? children} open={() => openSession!(session.id)} rest={rest} />;
   // Some models wrap the whole `[label](file:///…)` link in backticks; show the label, open the target.
   const wrapped = openFile ? parseWrappedLink(text) : undefined;
   const file = wrapped?.file ?? (openFile ? parseFileLink(text) : undefined);
   if (!openFile || !file) return <code className={className} {...rest}>{children}</code>;
-  const open = () => openFile(file.path, file.line);
+  return <CodeLink className={className} title={file.path} label={wrapped ? wrapped.label : children} open={() => openFile(file.path, file.line)} rest={rest} />;
+}
+
+function CodeLink({ className, title, label, open, rest }: { className?: string; title?: string; label: ReactNode; open: () => void; rest: ComponentProps<'code'> }) {
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
@@ -59,8 +73,8 @@ export function InlineFileCode({ children, className, node: _node, ...rest }: Co
     }
   };
   return (
-    <code role="link" tabIndex={0} title={file.path} className={cn('cursor-pointer hover:underline focus-visible:underline', className)}
-      onClick={open} onKeyDown={onKeyDown} {...rest}>{wrapped ? wrapped.label : children}</code>
+    <code role="link" tabIndex={0} title={title} className={cn('cursor-pointer hover:underline focus-visible:underline', className)}
+      onClick={open} onKeyDown={onKeyDown} {...rest}>{label}</code>
   );
 }
 

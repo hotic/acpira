@@ -1,5 +1,6 @@
 import { createContext } from 'react';
 import type { FullDiffSource } from '@shared/transcript';
+import { isSessionId, sessionIdOfLink } from '@shared/sessionLinks';
 import type { WorkflowProgress } from './subagents/subagentState';
 
 export type FileLink = { path: string; line?: number };
@@ -17,12 +18,17 @@ export const AsyncTaskStopContext = createContext<((taskId: string) => void) | u
 // the run's tool row reads it, so a progress frame does not re-render every tool of the turn
 export const WorkflowProgressContext = createContext<ReadonlyMap<string, WorkflowProgress>>(new Map());
 
+// Session links in replies (`[title](acpira://session/<id>)`, `vscode://hotic.acpira/session/<id>`) open that session here
+export const OpenSessionContext = createContext<((id: string) => void) | undefined>(undefined);
+
 // Agent-emitted images are blob-store files: the URL builds them for <img>, the opener hands the host the blob name
 export const BlobUrlContext = createContext<((blob: string) => string) | undefined>(undefined);
 export const OpenBlobContext = createContext<((blob: string) => void) | undefined>(undefined);
 
 // Hash form survives rehype-sanitize / rehype-harden: file: is a hard block and becomes ` [blocked]`.
 export const FILE_HREF_PREFIX = '#acpira-file:';
+// Session links take the same route: an acpira:// or vscode:// href would come out of harden as ` [blocked]`
+export const SESSION_HREF_PREFIX = '#acpira-session:';
 // Local image sources in reply markdown (`![](/abs/shot.png)`) become a path-relative marker; `Prose` resolves them to the blob
 // the host read (TextBlock.images). Not the hash form: rehype-harden passes `#` fragments for links only, while a
 // path-relative image URL survives both sanitize and harden. Web and data URLs keep their own src.
@@ -97,12 +103,31 @@ export function parseWrappedLink(text: string): WrappedLink | undefined {
   return { label, file: line != null ? { path: target.path, line } : { path: target.path } };
 }
 
+export function decodeSessionHref(href: string): string | undefined {
+  if (!href.startsWith(SESSION_HREF_PREFIX)) return;
+  const id = href.slice(SESSION_HREF_PREFIX.length);
+  return isSessionId(id) ? id : undefined;
+}
+
+// A session link inside inline code: bare (`acpira://session/<id>`) or a whole Markdown link (`[title](vscode://…/session/<id>)`),
+// whose label is what shows
+export function parseCodeSessionLink(text: string): { id: string; label?: string } | undefined {
+  const hit = WRAPPED_LINK.exec(text.trim());
+  if (hit) {
+    const id = sessionIdOfLink(hit[2]!);
+    const label = hit[1]!.trim();
+    return id && label ? { id, label } : undefined;
+  }
+  const id = sessionIdOfLink(text);
+  return id ? { id } : undefined;
+}
+
 export function toFileHref(url: string): string {
   const file = parseFileLink(url);
   return file ? encodeFileHref(file.path, file.line) : url;
 }
 
-// Attacher: must run after rehype-raw and before sanitize/harden so file:// is already a hash when those run.
+// Attacher: must run after rehype-raw and before sanitize/harden so file:// and session links are already hashes when those run.
 export function rewriteFileHrefs() {
   return (tree: HastNode) => walk(tree);
 }
@@ -120,7 +145,9 @@ function walk(node: HastNode): void {
   if (isLocalImage(node)) node.properties!.src = `${LOCAL_IMAGE_PREFIX}${encodeURIComponent(node.properties!.src as string)}`;
   if (node.tagName === 'a' && typeof node.properties?.href === 'string') {
     const href = node.properties.href;
-    if (!href.startsWith(FILE_HREF_PREFIX)) {
+    const session = href.startsWith('#') ? undefined : sessionIdOfLink(href);
+    if (session) node.properties.href = `${SESSION_HREF_PREFIX}${session}`;
+    else if (!href.startsWith(FILE_HREF_PREFIX)) {
       const file = parseFileLink(href);
       if (file) node.properties.href = encodeFileHref(file.path, file.line);
     }

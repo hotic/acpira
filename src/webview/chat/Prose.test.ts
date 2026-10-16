@@ -5,6 +5,7 @@ import { Prose } from './Prose';
 import { CodeBlock } from './CodeBlock';
 import { fenceLanguage } from './codeSyntax';
 import { QuietEntranceContext } from '../ui/Row';
+import { OpenSessionContext, OpenToolFileContext } from './fileLinks';
 
 const prose = (markdown: string) => renderToStaticMarkup(createElement(Prose, { block: { type: 'text', markdown } as never }));
 
@@ -24,6 +25,24 @@ describe('markdown prose', () => {
     expect(mount(true).replace(/<[^>]+>/g, '')).toBe('计划草稿已经落盘');
     // A reply that starts streaming in front of the reader is still paced in from its first character
     expect(mount(false)).toBe('');
+  });
+
+  // acpira:// and vscode:// hrefs are rewritten before sanitize / harden, which would paint them ` [blocked]`
+  it('renders session links as clickable links, in Markdown links and in backticks', () => {
+    const md = [
+      'See [the plan](acpira://session/abc-1) and [VS Code](vscode://hotic.acpira/session/def_2).',
+      'Inline `[Wrapped](acpira://session/ghi)` and `acpira://session/jkl`.',
+      'Web [site](https://example.com), file [a.ts](file:///repo/a.ts#L3), other <vscode://other.ext/x>.',
+    ].join('\n\n');
+    const html = renderToStaticMarkup(createElement(OpenSessionContext.Provider, { value: () => {} },
+      createElement(OpenToolFileContext.Provider, { value: () => {} }, createElement(Prose, { block: { type: 'text', markdown: md } as never }))));
+    expect(html).toContain('href="#acpira-session:abc-1"');
+    expect(html).toContain('href="#acpira-session:def_2"');
+    expect(html).toMatch(/<code[^>]*role="link"[^>]*>Wrapped<\/code>/);
+    expect(html).toMatch(/<code[^>]*role="link"[^>]*title="jkl"[^>]*>acpira:\/\/session\/jkl<\/code>/);
+    expect(html).toContain('href="https://example.com/"');
+    expect(html).toContain('href="#acpira-file:%2Frepo%2Fa.ts:3"');
+    expect(html.match(/\[blocked\]/g)?.length ?? 0).toBe(1);
   });
 
   it('leaves an unlabelled fence uncoloured', () => {
