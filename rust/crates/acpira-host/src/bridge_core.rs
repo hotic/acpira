@@ -313,6 +313,14 @@ impl BridgeCore {
         let source = manager.diff_source(&session_id, &tool_call_id, nth, subagent_id.as_deref());
         self.post_now(HostMsg::DiffSource { seq, source });
       }
+      // Always answered, like diffSource: the page's clipboard write waits on it
+      W::SessionMarkdown { id, seq } => {
+        let (markdown, error) = match manager.session_markdown(&id).await {
+          Ok(m) => (Some(m), None),
+          Err(e) => (None, Some(e.to_string())),
+        };
+        self.post_now(HostMsg::SessionMarkdown { seq, markdown, error });
+      }
       // The file is not opened on its own: the toast names it and offers an Open button. A repeated export of an unchanged
       // transcript names the same file (SessionManager::export_session)
       W::ExportSession { id, format } => match manager.export_session(&id, format).await {

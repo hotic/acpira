@@ -305,6 +305,14 @@ pub enum HostMsg {
     #[serde(skip_serializing_if = "Option::is_none")]
     source: Option<DiffSource>,
   },
+  /// Reply to sessionMarkdown: the session as Markdown, or why it could not be read
+  SessionMarkdown {
+    seq: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    markdown: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+  },
 }
 
 impl HostMsg {
@@ -343,6 +351,7 @@ impl HostMsg {
       HostMsg::NativeSessions { .. } => "nativeSessions",
       HostMsg::SessionHits { .. } => "sessionHits",
       HostMsg::DiffSource { .. } => "diffSource",
+      HostMsg::SessionMarkdown { .. } => "sessionMarkdown",
     }
   }
 }
@@ -511,6 +520,12 @@ pub enum WebviewMsg {
   ExportSession {
     id: String,
     format: ExportFormat,
+  },
+  /// "Copy as Markdown": the export's Markdown as text, answered with a `sessionMarkdown` message echoing `seq`
+  SessionMarkdown {
+    id: String,
+    #[serde(deserialize_with = "crate::num::lenient_i64")]
+    seq: i64,
   },
   SelectAccount {
     session_id: Option<String>,

@@ -28,10 +28,8 @@ const TRASH_DIR: &str = "trash";
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(400);
 const SAVE_MAX_WAIT: Duration = Duration::from_millis(2000);
 
-/// Session ids name files and directories under the store root: plain tokens only
-pub fn is_session_id(id: &str) -> bool {
-  !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') && !matches!(id, "index" | "prefs" | "categories" | "trash")
-}
+/// Session ids name files and directories under the store root: plain tokens only (the rule session links parse by)
+pub use acpira_shared::session_links::is_session_id;
 
 fn is_blob_name(name: &str) -> bool {
   let Some((stem, ext)) = name.rsplit_once('.') else { return false };

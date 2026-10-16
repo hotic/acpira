@@ -113,6 +113,74 @@ pub type AttentionFn = Arc<dyn Fn(Attention) + Send + Sync>;
 /// How long a finished turn must stay settled before it is announced: a queued follow-up starts well within it
 const ATTENTION_SETTLE: Duration = Duration::from_millis(1500);
 
+/// A session's content at one moment (`SessionManager::snapshot`): its record, or a ChatGPT mirror's view
+pub enum SessionSnapshot {
+  Record(SessionRecord),
+  Mirror(SessionView),
+}
+
+impl SessionSnapshot {
+  pub fn title(&self) -> &str {
+    match self {
+      Self::Record(r) => &r.title,
+      Self::Mirror(v) => &v.title,
+    }
+  }
+  pub fn agent(&self) -> &AgentId {
+    match self {
+      Self::Record(r) => &r.agent,
+      Self::Mirror(v) => &v.agent,
+    }
+  }
+  pub fn cwd(&self) -> &str {
+    match self {
+      Self::Record(r) => &r.cwd,
+      Self::Mirror(v) => &v.cwd,
+    }
+  }
+  pub fn turns(&self) -> &[Turn] {
+    match self {
+      Self::Record(r) => &r.turns,
+      Self::Mirror(v) => &v.turns,
+    }
+  }
+  /// The JSON export: the record as stored, or the mirror's view
+  pub fn json(&self) -> Result<String> {
+    Ok(match self {
+      Self::Record(r) => serde_json::to_string_pretty(r)?,
+      Self::Mirror(v) => serde_json::to_string_pretty(v)?,
+    })
+  }
+  /// A record for readers that take one (session_digest); a mirror keeps its view fields
+  pub fn into_record(self) -> SessionRecord {
+    match self {
+      Self::Record(r) => r,
+      Self::Mirror(v) => SessionRecord {
+        id: v.id,
+        agent: v.agent,
+        account_id: v.account_id,
+        acp_session_id: None,
+        cwd: v.cwd,
+        title: v.title,
+        created_at: v.created_at,
+        updated_at: v.updated_at,
+        turns: v.turns,
+        controls: v.controls,
+        usage: v.usage,
+        commands: v.commands,
+        pinned: None,
+        category: None,
+        history_pending: false,
+        forked_from: None,
+        import_pending: false,
+        imported_from: None,
+        subagents: None,
+        goal: v.goal,
+      },
+    }
+  }
+}
+
 pub struct ManagerDeps {
   pub store: Arc<TranscriptStore>,
   pub chatgpt: Option<Arc<ChatGptBridgeStore>>,
@@ -2601,31 +2669,61 @@ impl SessionManager {
 
   /// Write the session as Markdown or JSON under exports/. Exporting a transcript that has not changed since the last export
   /// in the same format returns that file again (as long as it still exists) instead of writing a second copy
+  /// A session's content as export, copy and read_session see it: the live session first, else its record, else a ChatGPT
+  /// mirror. A record that cannot be read answers the same message the viewer would show
+  pub async fn snapshot(&self, id: &str) -> Result<SessionSnapshot> {
+    if let Some(c) = self.deps.chatgpt.as_ref().filter(|c| c.owns(id)) {
+      return c.view(id).map(SessionSnapshot::Mirror).ok_or_else(|| anyhow!(self.record_load_message(id, &RecordLoadError::Missing)));
+    }
+    if let Some(l) = self.live(id) {
+      return Ok(SessionSnapshot::Record(l.to_record()));
+    }
+    match self.deps.store.load_detailed(id).await {
+      Ok(record) => Ok(SessionSnapshot::Record(record)),
+      Err(error) => Err(anyhow!(self.record_load_message(id, &error))),
+    }
+  }
+
+  fn agent_name(&self, agent: &AgentId) -> String {
+    self.agents().into_iter().find(|a| &a.id == agent).map(|a| a.name).unwrap_or_else(|| agent.clone())
+  }
+
+  /// The Markdown both "Export as Markdown" and "Copy as Markdown" produce, labels in the display language, blobs as paths
+  fn snapshot_markdown(&self, id: &str, snap: &SessionSnapshot, agent_name: &str) -> String {
+    let labels = ExportLabels {
+      user: t("export.label.user"),
+      agent: t("export.label.agent"),
+      project: t("export.label.project"),
+      exported: t("export.label.exported"),
+      attachments: t("export.label.attachments"),
+      thinking: t("export.label.thinking"),
+      compacted: t("export.label.compacted"),
+      auto_compact: t("export.label.autoCompact"),
+      auto_continue: t("export.label.autoContinue"),
+      auto_retry: t("export.label.autoRetry"),
+      auto_gate: t("export.label.autoGate"),
+      error: t("export.label.error"),
+    };
+    let store = self.deps.store.clone();
+    let sid = id.to_owned();
+    export_markdown(
+      &ExportInput { title: snap.title(), agent_name, cwd: snap.cwd(), exported_at: &now_iso(), turns: snap.turns() },
+      &labels,
+      &move |name| store.blob_path(&sid, name).map(|p| p.to_string_lossy().into_owned()),
+    )
+  }
+
+  /// "Copy as Markdown": the export's Markdown as text, nothing written
+  pub async fn session_markdown(&self, id: &str) -> Result<String> {
+    let snap = self.snapshot(id).await?;
+    Ok(self.snapshot_markdown(id, &snap, &self.agent_name(snap.agent())))
+  }
+
   pub async fn export_session(&self, id: &str, format: ExportFormat) -> Result<std::path::PathBuf> {
     let mut exports = self.exports.lock().await;
-    let record = if self.deps.chatgpt.as_ref().is_some_and(|c| c.owns(id)) {
-      None
-    } else {
-      match self.live(id) {
-        Some(l) => Some(l.to_record()),
-        None => match self.deps.store.load_detailed(id).await {
-          Ok(record) => Some(record),
-          Err(error) => return Err(anyhow!(self.record_load_message(id, &error))),
-        },
-      }
-    };
-    let (title, agent, cwd, turns, json) = match record {
-      Some(r) => (r.title.clone(), r.agent.clone(), r.cwd.clone(), r.turns.clone(), serde_json::to_string_pretty(&r)?),
-      None => {
-        let view = self.deps.chatgpt.as_ref().filter(|c| c.owns(id)).and_then(|c| c.view(id)).ok_or_else(|| {
-          let error = RecordLoadError::Missing;
-          anyhow!(self.record_load_message(id, &error))
-        })?;
-        let json = serde_json::to_string_pretty(&view)?;
-        (view.title, view.agent, view.cwd, view.turns, json)
-      }
-    };
-    let agent_name = self.agents().into_iter().find(|a| a.id == agent).map(|a| a.name).unwrap_or(agent);
+    let snap = self.snapshot(id).await?;
+    let json = snap.json()?;
+    let agent_name = self.agent_name(snap.agent());
     // The fingerprint leaves out the export time stamped into the Markdown; the agent name and the label language are in it,
     // so a renamed agent or a switched display language still writes a fresh file
     let fingerprint = {
@@ -2643,31 +2741,9 @@ impl SessionManager {
     }
     let content = match format {
       ExportFormat::Json => json,
-      ExportFormat::Markdown => {
-        let labels = ExportLabels {
-          user: t("export.label.user"),
-          agent: t("export.label.agent"),
-          project: t("export.label.project"),
-          exported: t("export.label.exported"),
-          attachments: t("export.label.attachments"),
-          thinking: t("export.label.thinking"),
-          compacted: t("export.label.compacted"),
-          auto_compact: t("export.label.autoCompact"),
-          auto_continue: t("export.label.autoContinue"),
-          auto_retry: t("export.label.autoRetry"),
-          auto_gate: t("export.label.autoGate"),
-          error: t("export.label.error"),
-        };
-        let store = self.deps.store.clone();
-        let sid = id.to_owned();
-        export_markdown(
-          &ExportInput { title: &title, agent_name: &agent_name, cwd: &cwd, exported_at: &now_iso(), turns: &turns },
-          &labels,
-          &move |name| store.blob_path(&sid, name).map(|p| p.to_string_lossy().into_owned()),
-        )
-      }
+      ExportFormat::Markdown => self.snapshot_markdown(id, &snap, &agent_name),
     };
-    let path = self.deps.store.write_export(&export_file_name(&title, format == ExportFormat::Markdown, &local_stamp()), &content).await?;
+    let path = self.deps.store.write_export(&export_file_name(snap.title(), format == ExportFormat::Markdown, &local_stamp()), &content).await?;
     exports.insert(key, (fingerprint, path.clone()));
     Ok(path)
   }
