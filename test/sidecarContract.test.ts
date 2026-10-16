@@ -247,6 +247,9 @@ describe('sidecar session contract', () => {
     await s.hostMsg('V', 'categories', m => m.categories.categories.some(c => c.id === 'c-a' && c.name === 'A' && c.cwd === cwd));
     await s.hostMsg('V', 'sessions', m => m.sessions.some(x => x.id === id && x.category === 'c-a' && !x.pinned));
     s.view('V', { type: 'categoryOp', op: 'create', id: 'c-b', name: '', cwd });
+    // Back-to-back category ops are not ordered: each reads and writes categories.json on its own task, so a reorder sent
+    // straight after the create can run first and find no c-b. The page only reorders what it already shows
+    await s.hostMsg('V', 'categories', m => m.categories.categories.some(c => c.id === 'c-b'));
     s.view('V', { type: 'categoryOp', op: 'reorder', id: 'c-b', before: 'c-a' });
     await s.hostMsg('V', 'categories', m => m.categories.categories.map(c => c.id).join() === 'c-b,c-a');
     s.view('V', { type: 'categoryOp', op: 'collapseProject', cwd, collapsed: true });
