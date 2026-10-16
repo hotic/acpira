@@ -682,9 +682,10 @@ function Item({ session: s, agentName, terms, snippet, active, time, project, ed
       onClick={() => { if (!editing) onSelect(); }}
       onKeyDown={onKey}
       className={cn(
-        'group flex min-h-row cursor-pointer items-center gap-gap rounded-md px-2 text-2 text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover',
+        // The row whose context menu is open keeps the hover fill: the popup under the pointer ends the row's :hover
+        'group flex min-h-row cursor-pointer items-center gap-gap rounded-md px-2 text-2 text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover data-[menu-open]:bg-hover data-[menu-open]:text-fg-1',
         snippet && !editing && 'py-1',
-        active && 'bg-active text-fg-strong hover:bg-active',
+        active && 'bg-active text-fg-strong hover:bg-active data-[menu-open]:bg-active data-[menu-open]:text-fg-strong',
         dragging && 'opacity-40',
       )}
     >
@@ -718,7 +719,7 @@ function Item({ session: s, agentName, terms, snippet, active, time, project, ed
       )}
     </div>
   );
-  return editing ? row : <SessionContextMenu {...menu} onOpenChange={setMenuOpen}>{row}</SessionContextMenu>;
+  return <SessionContextMenu {...menu} editing={editing} onOpenChange={setMenuOpen}>{row}</SessionContextMenu>;
 }
 
 // Marks every occurrence of the search terms in brighter, heavier text
