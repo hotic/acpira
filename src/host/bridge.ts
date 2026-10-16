@@ -14,6 +14,8 @@ export interface WebviewBridgeOpts {
   extensionUri: vscode.Uri;
   sessionsDir: string;
   locale: () => string;
+  // The clickable session-link base the page copies (`vscode://hotic.acpira/session/`); pages without one copy `acpira://session/`
+  sessionLinkBase?: string;
   // Every session the view shows (init, then each push), for tab titles and one-shot watchers
   onSession?: (session: SessionView) => void;
   // The page has its init state; shell-originated state (the editor selection, the last copy) is replayed from here
@@ -152,7 +154,7 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
 </head>
 <body>
 <div id="root"></div>
-<script nonce="${nonce}">window.__acpira={host:${JSON.stringify(this.host)},font:${JSON.stringify(font)}}</script>
+<script nonce="${nonce}">window.__acpira={host:${JSON.stringify(this.host)},font:${JSON.stringify(font)},sessionLinkBase:${JSON.stringify(this.opts.sessionLinkBase)}}</script>
 <script type="module" nonce="${nonce}" src="${js}"></script>
 </body>
 </html>`;
