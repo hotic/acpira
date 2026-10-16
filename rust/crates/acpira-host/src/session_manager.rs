@@ -16,7 +16,7 @@ use serde_json::Value;
 
 use acpira_shared::agent_order::{AgentPrefs, arrange_agents};
 use acpira_shared::chatgpt_integration::{ChatGptIntegrationStatus, ProjectMirrors};
-use acpira_shared::export_transcript::{ExportInput, ExportLabels, export_file_name, export_markdown};
+use acpira_shared::export_transcript::{ExportInput, ExportLabels, export_file_name, export_markdown, export_text};
 use acpira_shared::inventory::{AgentHealth, AgentHealthStage, AgentRuntimeInfo, HealthSource};
 use acpira_shared::model_shapes::learn_shape;
 use acpira_shared::protocol::{
@@ -2753,8 +2753,12 @@ impl SessionManager {
     let content = match format {
       ExportFormat::Json => json,
       ExportFormat::Markdown => self.snapshot_markdown(id, &snap, &agent_name),
+      ExportFormat::Text => export_text(
+        &ExportInput { title: snap.title(), agent_name: &agent_name, cwd: snap.cwd(), exported_at: "", turns: snap.turns() },
+        &t("export.label.user"),
+      ),
     };
-    let path = self.deps.store.write_export(&export_file_name(snap.title(), format == ExportFormat::Markdown, &local_stamp()), &content).await?;
+    let path = self.deps.store.write_export(&export_file_name(snap.title(), format.extension(), &local_stamp()), &content).await?;
     exports.insert(key, (fingerprint, path.clone()));
     Ok(path)
   }

@@ -3,6 +3,7 @@
 
 import type { AgentBlock, ToolContent, Turn } from './transcript';
 import { attachmentLabel } from './attachments';
+import type { ExportFormat } from './protocol';
 
 // Every user-facing label the export emits; English is the default so a host without a locale still produces a readable file
 export interface ExportLabels {
@@ -168,9 +169,9 @@ function toolContent(c: ToolContent | undefined, blobPath?: ExportBlobPath): str
   }
 }
 
-// `<slug>-<yyyyMMdd-HHmmss>.<md|json>`: title minus filesystem-hostile characters, whitespace collapsed to dashes,
+// `<slug>-<yyyyMMdd-HHmmss>.<md|json|txt>`: title minus filesystem-hostile characters, whitespace collapsed to dashes,
 // capped at 60 code points (CJK survives — only ASCII separators and control characters are dropped)
-export function exportFileName(title: string, format: 'markdown' | 'json', now: Date): string {
+export function exportFileName(title: string, format: ExportFormat, now: Date): string {
   const slug = [...title
     .replace(/[/\\:*?"<>|\p{Cc}]/gu, '')
     .replace(/\s+/g, '-')
@@ -178,5 +179,5 @@ export function exportFileName(title: string, format: 'markdown' | 'json', now: 
     .slice(0, 60).join('').replace(/[-.]+$/, '') || 'session';
   const p = (n: number) => String(n).padStart(2, '0');
   const stamp = `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`;
-  return `${slug}-${stamp}.${format === 'markdown' ? 'md' : 'json'}`;
+  return `${slug}-${stamp}.${{ markdown: 'md', json: 'json', text: 'txt' }[format]}`;
 }

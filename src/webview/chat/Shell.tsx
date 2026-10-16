@@ -4,7 +4,7 @@ import type { ExternalSessionInfo, AccountInfo, AgentInfo, AuthMethodInfo, Categ
 import type { SubagentSummary } from '@shared/subagents';
 import type { ModelShapes } from '@shared/modelShapes';
 import type { HiddenMap, SessionScope } from '@shared/settings';
-import type { AccountAction, AddAccountVia, EditTurnRequest, FileHit, NativeSessionsState, SessionHit } from '@shared/protocol';
+import type { AccountAction, AddAccountVia, EditTurnRequest, ExportFormat, FileHit, NativeSessionsState, SessionHit } from '@shared/protocol';
 import { AppearanceContext, appearanceDataAttrs, type Appearance } from '../appearance';
 import { lookAttrs, ThemeContext, type ShellLook, type Theme } from '../look';
 import { t } from '../i18n';
@@ -111,7 +111,7 @@ export interface ShellHandlers {
   // Start a new session whose transcript is this session's turns through the given agent turn
   forkSession?: (sessionId: string, turnIndex: number) => void;
   // Write the session as Markdown or JSON under the data dir's exports/; the toast that follows offers to open it
-  exportSession?: (id: string, format: 'markdown' | 'json') => void;
+  exportSession?: (id: string, format: ExportFormat) => void;
   // The session as Markdown (the export's text, nothing written); rejects with the reason it could not be read
   sessionMarkdown?: (id: string) => Promise<string>;
   // "Copy" in the session menu; the Shell supplies it (clipboard write + toast), from sessionMarkdown for the Markdown

@@ -9,6 +9,9 @@ import type { StorageAction, StorageDetail, StorageOutcome, StorageView } from '
 import type { ProbeOutcome, ProviderAction, ProviderProbe, ProvidersView } from './providers';
 import type { SessionPatch } from './sessionPatch';
 
+// Session export formats: Markdown to read, JSON for tooling, plain text holding only what was said (export_transcript.rs export_text)
+export type ExportFormat = 'markdown' | 'json' | 'text';
+
 // Message contract between host ↔ webview; both sides trust only this file
 
 export type WebviewHost = 'sidebar' | 'editor';
@@ -222,7 +225,7 @@ export type WebviewMsg =
   // `turnIndex` (an agent turn); the native context is rebuilt from that transcript on the fork's first prompt, like editTurn
   | { type: 'forkSession'; sessionId: string; turnIndex: number }
   // Write the session as a file under the data dir's exports/ folder (an unchanged transcript reuses its last export); the toast offers to open it
-  | { type: 'exportSession'; id: string; format: 'markdown' | 'json' }
+  | { type: 'exportSession'; id: string; format: ExportFormat }
   // "Copy as Markdown": the export's Markdown as text, nothing written; answered with a `sessionMarkdown` message echoing seq
   | { type: 'sessionMarkdown'; id: string; seq: number }
   // Rebind the session to this account (also becomes the agent's default account)

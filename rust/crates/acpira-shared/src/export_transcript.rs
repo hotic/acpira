@@ -1,4 +1,4 @@
-//! Transcript → Markdown for reading (mirror of src/shared/exportTranscript.ts)
+//! Transcript → Markdown for reading (mirror of src/shared/exportTranscript.ts), and plain text holding only what was said
 
 use crate::transcript::*;
 
@@ -230,8 +230,67 @@ fn tool_content(c: &ToolContent, blob_path: &dyn Fn(&str) -> Option<String>) -> 
   })
 }
 
-/// `<slug>-<yyyyMMdd-HHmmss>.<md|json>`; `stamp` is the local-time part, formatted by the host
-pub fn export_file_name(title: &str, markdown: bool, stamp: &str) -> String {
+/// The plain-text export: the title, then what the user and the agent said, one `[speaker]` line per run of either. Kept:
+/// prompts (with their quotes, steered ones in place) and the agent's prose verbatim. Left out: thinking, tool calls, plans,
+/// permissions, questions, notices, images, errors and the prompts Acpira sent itself
+pub fn export_text(input: &ExportInput, user_label: &str) -> String {
+  // (spoken by the user, body), consecutive runs of one speaker merged below
+  let mut said: Vec<(bool, String)> = vec![];
+  let mut say = |user: bool, body: String| {
+    let body = body.trim().to_owned();
+    if body.is_empty() {
+      return;
+    }
+    match said.last_mut() {
+      Some((u, b)) if *u == user => {
+        b.push_str("\n\n");
+        b.push_str(&body);
+      }
+      _ => said.push((user, body)),
+    }
+  };
+  for turn in input.turns {
+    match turn {
+      Turn::User(u) if u.auto != Some(true) => say(true, prompt_text(&u.text, u.attachments.as_deref())),
+      Turn::User(_) => {}
+      Turn::Agent(a) => {
+        for b in &a.blocks {
+          match b {
+            AgentBlock::Steer(s) => say(true, prompt_text(&s.text, s.attachments.as_deref())),
+            AgentBlock::Text(t) => say(false, t.markdown.clone()),
+            _ => {}
+          }
+        }
+      }
+    }
+  }
+  let mut parts = vec![input.title.to_owned()];
+  parts.extend(said.into_iter().map(|(user, body)| format!("[{}]\n{body}", if user { user_label } else { input.agent_name })));
+  format!("{}\n", parts.join("\n\n"))
+}
+
+// A prompt as plain text: its quotes as `>` lines ahead of the typed text, as they were sent
+fn prompt_text(text: &str, attachments: Option<&[Attachment]>) -> String {
+  let mut out: Vec<String> = attachments
+    .unwrap_or(&[])
+    .iter()
+    .filter_map(|x| match x {
+      Attachment::Quote { text, comment } => {
+        let quoted = text.lines().map(|l| format!("> {l}")).collect::<Vec<_>>().join("\n");
+        Some(match comment.as_deref().filter(|c| !c.is_empty()) {
+          Some(c) => format!("{quoted}\n\n{c}"),
+          None => quoted,
+        })
+      }
+      _ => None,
+    })
+    .collect();
+  out.push(text.to_owned());
+  out.join("\n\n")
+}
+
+/// `<slug>-<yyyyMMdd-HHmmss>.<ext>`; `stamp` is the local-time part, formatted by the host
+pub fn export_file_name(title: &str, ext: &str, stamp: &str) -> String {
   let cleaned: String = title.chars().filter(|c| !"/\\:*?\"<>|".contains(*c) && !c.is_control()).collect();
   let dashed = cleaned.split_whitespace().collect::<Vec<_>>().join("-");
   let mut dashed = dashed;
@@ -241,7 +300,7 @@ pub fn export_file_name(title: &str, markdown: bool, stamp: &str) -> String {
   let capped: String = dashed.chars().take(60).collect();
   let slug = capped.trim_end_matches(['-', '.']);
   let slug = if slug.is_empty() { "session" } else { slug };
-  format!("{slug}-{stamp}.{}", if markdown { "md" } else { "json" })
+  format!("{slug}-{stamp}.{ext}")
 }
 
 #[cfg(test)]
@@ -277,6 +336,30 @@ mod tests {
     assert!(md.contains("> Attachments: x.ts, y.ts (3-9)"), "{md}");
     // Quotes lead the prompt text, in the order they were sent
     assert!(md.contains("> said this\n> and that\n\nwhy?\n\nfix\n\n> Attachments:"), "{md}");
+  }
+
+  #[test]
+  fn plain_text_keeps_only_what_was_said() {
+    let turns: Vec<Turn> = serde_json::from_value(serde_json::json!([
+      { "role": "user", "text": "fix it", "attachments": [{ "kind": "quote", "text": "old line", "comment": "this" }] },
+      { "role": "agent", "stop": "end_turn", "blocks": [
+        { "type": "thought", "text": "hmm" },
+        { "type": "text", "markdown": "Looking." },
+        { "type": "tool_call", "id": "t1", "kind": "read", "verb": "Read", "target": "a.rs", "status": "completed" },
+        { "type": "steer", "id": "s1", "text": "use pnpm" },
+        { "type": "text", "markdown": "Done." },
+      ] },
+      { "role": "user", "text": "/compact", "auto": true },
+      { "role": "agent", "stop": "end_turn", "blocks": [{ "type": "compaction", "id": "c1", "status": "completed" }] },
+      { "role": "agent", "stop": "end_turn", "blocks": [{ "type": "text", "markdown": "More." }] },
+    ]))
+    .unwrap();
+    let input = ExportInput { title: "T", agent_name: "Fake", cwd: "/repo", exported_at: "now", turns: &turns };
+    assert_eq!(
+      export_text(&input, "User"),
+      "T\n\n[User]\n> old line\n\nthis\n\nfix it\n\n[Fake]\nLooking.\n\n[User]\nuse pnpm\n\n[Fake]\nDone.\n\nMore.\n"
+    );
+    assert_eq!(export_file_name("a/b c", "txt", "20261016-101010"), "ab-c-20261016-101010.txt");
   }
 
   // Same expectation as the steered-prompt case in test/exportTranscript.test.ts

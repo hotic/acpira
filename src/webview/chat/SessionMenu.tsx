@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import { ContextMenu } from '@base-ui/react/context-menu';
-import { ChevronRight, Copy, FileJson, FileText, Folder, FolderInput, Inbox, Link, Pencil, Pin, PinOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
+import { ChevronRight, Copy, FileDown, FileJson, FileText, Folder, FolderInput, Inbox, LetterText, Link, Pencil, Pin, PinOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
+import type { ExportFormat } from '@shared/protocol';
 import type { SessionCategory, SessionSummary } from '@shared/transcript';
 import { t } from '../i18n';
 import { DropdownMenu } from '../ui/DropdownMenu';
@@ -28,7 +29,7 @@ export interface SessionMenuItemsProps {
   // "Move to project": every other project the list knows (the window's first), the pick re-homes the session there
   projects?: MoveProject[];
   onMoveTo?: (cwd: string) => void;
-  onExport?: (format: 'markdown' | 'json') => void;
+  onExport?: (format: ExportFormat) => void;
   // "Copy": the session's link, its transcript as Markdown, its working directory (only when the summary knows one)
   onCopy?: (what: SessionCopyKind) => void;
   onDelete: () => void;
@@ -112,9 +113,13 @@ function sessionMenuItems({ session, onOpenInEditor, onRename, onPin, onMove, pr
       ...session.cwd ? [<DropdownMenu.Item key="cwd" title={session.cwd} onClick={() => onCopy('cwd')}><OptionContent icon={<Folder strokeWidth={1.5} />}>{t('session.copy.cwd')}</OptionContent></DropdownMenu.Item>] : [],
     ]}</Submenu>);
   }
+  // Export: one submenu like Copy; plain text keeps only what was said (prompts and replies, no tools or thinking)
   if (onExport) {
-    middle.push(<DropdownMenu.Item key="md" onClick={() => onExport('markdown')}><OptionContent icon={<FileText strokeWidth={1.5} />}>{t('session.export.markdown')}</OptionContent></DropdownMenu.Item>);
-    middle.push(<DropdownMenu.Item key="json" onClick={() => onExport('json')}><OptionContent icon={<FileJson strokeWidth={1.5} />}>{t('session.export.json')}</OptionContent></DropdownMenu.Item>);
+    middle.push(<Submenu key="export" icon={<FileDown strokeWidth={1.5} />} label={t('session.export')}>{[
+      <DropdownMenu.Item key="md" onClick={() => onExport('markdown')}><OptionContent icon={<FileText strokeWidth={1.5} />}>{t('session.export.markdown')}</OptionContent></DropdownMenu.Item>,
+      <DropdownMenu.Item key="json" onClick={() => onExport('json')}><OptionContent icon={<FileJson strokeWidth={1.5} />}>{t('session.export.json')}</OptionContent></DropdownMenu.Item>,
+      <DropdownMenu.Item key="text" title={t('session.export.textHint')} onClick={() => onExport('text')}><OptionContent icon={<LetterText strokeWidth={1.5} />}>{t('session.export.text')}</OptionContent></DropdownMenu.Item>,
+    ]}</Submenu>);
   }
   return [
     ...top,
