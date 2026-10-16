@@ -9,8 +9,12 @@
 //! reconnect) leaves its snapshot and edit rows open, and the next turn that finishes is gated over both. A detached
 //! peer turn (a steer's new turn, a Claude autonomous cycle) that finishes is gated over what it added after the last
 //! gate
+//!
+//! A shared work tree changes under other people and agents too, so the work trees' own account only counts when a tool
+//! of the span could have changed any file (a shell command, a subagent, an MCP or unknown tool): a span of reads takes
+//! no files, a span of edits naming their files takes those files only
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -21,6 +25,7 @@ use acpira_shared::transcript::*;
 
 use crate::acp::session::prompt::Origin;
 use crate::acp::session::{AcpSession, Core};
+use crate::acp::transcript::normalize::{READ_SESSION_VERB, SEARCH_SESSIONS_VERB, SHOW_IMAGE_VERB, async_task_live};
 use crate::acp::transport::rpc::BoxFuture;
 use crate::hooks::run::{PromptVerdict, Verdict, run, run_prompt};
 use crate::hooks::snapshot::Snapshot;
@@ -45,8 +50,8 @@ pub(crate) struct HookState {
   pub audited: Option<(i64, usize)>,
   /// Edit rows whose permission request already passed `beforeEdit`: the audit leaves their files out
   pub asked: BTreeSet<String>,
-  /// Every file the session's turns changed, for `afterTurn`'s `changed_files`
-  pub changed: BTreeSet<PathBuf>,
+  /// Every file the session's turns changed, for `afterTurn`'s `changed_files`, with where the gate learnt it from
+  pub changed: BTreeMap<PathBuf, Source>,
   /// Edits `beforeEdit` rejected during the running turn: what the agent is told when the turn ends
   pub denied: Vec<String>,
   /// Automatic gate follow-ups since the user last prompted
@@ -67,18 +72,78 @@ pub(crate) struct TurnContext {
   pub tail: Vec<Value>,
 }
 
-/// The edit rows of the span a gate covers, split by whether `beforeEdit` already passed them in a permission request
+/// How a gate knows a file is the span's: an edit tool call named it, or only the work trees' snapshots differ. Ordered
+/// so that a tool call wins when both say so
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Source {
+  Snapshot,
+  Tool,
+}
+
+impl Source {
+  fn as_str(self) -> &'static str {
+    match self {
+      Source::Snapshot => "snapshot",
+      Source::Tool => "tool",
+    }
+  }
+}
+
+/// How far the span's tool calls can have reached on disk; the span takes its widest row
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+enum Reach {
+  /// Reads, searches, fetches and Acpira's own bookkeeping: nothing on disk is the span's
+  #[default]
+  None,
+  /// Edit / delete rows that name their files: those files are the span's
+  Edits,
+  /// A shell command, a move, a subagent, an MCP or unknown tool, an edit naming no file, or a background task still
+  /// running: any file that changed meanwhile may be the span's
+  Any,
+}
+
+/// What a row of this tool call can have changed. Unknown tools count as able to change anything, so an agent whose
+/// tools are not classified keeps the snapshot's account
+fn row_reach(tc: &ToolCallBlock) -> Reach {
+  // A subagent's own tool calls are not root rows, and an MCP tool (`ask_agent` included) can write anything
+  if tc.subagent_id.is_some() || tc.mcp_server.is_some() {
+    return Reach::Any;
+  }
+  match tc.kind {
+    ToolKind::Read | ToolKind::Search | ToolKind::Fetch | ToolKind::SwitchMode => Reach::None,
+    ToolKind::Edit | ToolKind::Delete if tc.status == ToolStatus::Failed => Reach::None,
+    ToolKind::Edit | ToolKind::Delete if !edit_paths(tc).is_empty() => Reach::Edits,
+    ToolKind::Think | ToolKind::Other
+      if matches!(tc.verb_key.as_deref(), Some(k) if ["verb.todo", "verb.ask", SHOW_IMAGE_VERB, SEARCH_SESSIONS_VERB, READ_SESSION_VERB].contains(&k)) =>
+    {
+      Reach::None
+    }
+    _ => Reach::Any,
+  }
+}
+
+/// One tool call of the span as `turn_tools` lists it
+struct SpanTool {
+  kind: ToolKind,
+  status: ToolStatus,
+  paths: Vec<String>,
+}
+
+/// The tool calls of the span a gate covers: its edit rows' files, split by whether `beforeEdit` already passed them in
+/// a permission request, every row for the payload, and how far they reach
 #[derive(Default)]
-struct SpanEdits {
+struct SpanTools {
   asked: Vec<String>,
   unasked: Vec<String>,
+  rows: Vec<SpanTool>,
+  reach: Reach,
 }
 
 /// What a gate run needs, taken out of the session under its lock
 struct GateJob {
   cfg: Arc<HooksConfig>,
   before: Option<Snapshot>,
-  edits: SpanEdits,
+  tools: SpanTools,
 }
 
 /// The Claude Code tool name a payload carries for an edit of this kind
@@ -94,26 +159,38 @@ fn is_edit(kind: ToolKind) -> bool {
   matches!(kind, ToolKind::Edit | ToolKind::Delete | ToolKind::Move)
 }
 
-/// The open span's edit rows not gated yet, and the mark that keeps the next gate from taking them again
-fn span_edits(c: &mut Core) -> SpanEdits {
-  let mut out = SpanEdits::default();
+/// The open span's tool calls not gated yet, and the mark that keeps the next gate from taking them again
+fn span_tools(c: &mut Core) -> SpanTools {
+  let mut out = SpanTools::default();
   let Some(since) = c.hooks.since else { return out };
   let mut last = None;
   for turn in c.state.turns.iter().filter_map(Turn::as_agent) {
-    let Some(at) = turn.started_at.filter(|at| *at >= since) else { continue };
-    let skip = match c.hooks.audited {
-      Some((t, n)) if t == at => n,
-      _ => 0,
+    let at = turn.started_at.filter(|at| *at >= since);
+    let skip = match (at, c.hooks.audited) {
+      (Some(at), Some((t, n))) if t == at => n,
+      (Some(_), _) => 0,
+      (None, _) => turn.blocks.len(),
     };
-    for b in turn.blocks.iter().skip(skip) {
+    for (i, b) in turn.blocks.iter().enumerate() {
       let AgentBlock::ToolCall(tc) = b else { continue };
+      if i < skip {
+        // Before the span: only a background task still running can be changing files now
+        if async_task_live(tc) || (tc.kind == ToolKind::Execute && tc.status.is_open()) {
+          out.reach = Reach::Any;
+        }
+        continue;
+      }
+      out.reach = out.reach.max(row_reach(tc));
+      out.rows.push(SpanTool { kind: tc.kind, status: tc.status, paths: edit_paths(tc) });
       if !is_edit(tc.kind) || tc.status == ToolStatus::Failed {
         continue;
       }
       let list = if c.hooks.asked.contains(&tc.id) { &mut out.asked } else { &mut out.unasked };
       list.extend(edit_paths(tc));
     }
-    last = Some((at, turn.blocks.len()));
+    if let Some(at) = at {
+      last = Some((at, turn.blocks.len()));
+    }
   }
   if let Some((at, n)) = last {
     c.hooks.since = Some(at);
@@ -122,7 +199,7 @@ fn span_edits(c: &mut Core) -> SpanEdits {
   out
 }
 
-/// The files an edit tool call touched: its locations and the paths of its diffs
+/// The files a tool call names: its locations and the paths of its diffs (for an edit, the files it touched)
 pub(crate) fn edit_paths(tc: &ToolCallBlock) -> Vec<String> {
   let mut out: Vec<String> = tc.locations.iter().flatten().map(|l| l.path.clone()).collect();
   for content in tc.content.iter().chain(tc.contents.iter().flatten()) {
@@ -180,6 +257,11 @@ fn push_notice(c: &mut Core, block: AgentBlock) {
 
 fn path_text(p: &Path) -> String {
   p.to_string_lossy().into_owned()
+}
+
+/// `file_sources` of a payload: each file's path → "tool" | "snapshot"
+fn file_sources<'a>(files: impl Iterator<Item = (&'a PathBuf, Source)>) -> Value {
+  Value::Object(files.map(|(p, s)| (path_text(p), json!(s.as_str()))).collect())
 }
 
 impl AcpSession {
@@ -353,7 +435,7 @@ impl AcpSession {
     let cfg = self.core.lock().hooks.config.clone().or_else(|| self.load_hooks())?;
     let hook = cfg.before_edit.as_ref()?;
     let files: Vec<String> = paths.iter().map(|p| path_text(&self.absolute(p))).collect();
-    let verdict = self.run_before_edit(&cfg, hook, kind, &files, raw_input, "permission").await;
+    let verdict = self.run_before_edit(&cfg, hook, kind, &files, raw_input, "permission", json!({})).await;
     let reason = match verdict {
       Verdict::Block(r) => r,
       Verdict::Pass => {
@@ -379,14 +461,16 @@ impl AcpSession {
     if path.is_absolute() { path.to_path_buf() } else { Path::new(&self.cwd).join(path) }
   }
 
-  async fn run_before_edit(&self, cfg: &HooksConfig, hook: &Hook, kind: ToolKind, files: &[String], raw_input: Option<Value>, phase: &str) -> Verdict {
+  /// `extra`: keys added to the payload (the audit's attribution)
+  #[allow(clippy::too_many_arguments)]
+  async fn run_before_edit(&self, cfg: &HooksConfig, hook: &Hook, kind: ToolKind, files: &[String], raw_input: Option<Value>, phase: &str, extra: Value) -> Verdict {
     let read = read_inputs(&self.core.lock().state.turns);
     // The tool's own input, with the first file under the key Claude Code's Edit uses, so scripts that read one path work
     let mut input = raw_input.filter(Value::is_object).unwrap_or_else(|| json!({}));
     if input.get("file_path").is_none() {
       input["file_path"] = json!(files.first());
     }
-    let payload = json!({
+    let mut payload = json!({
       "hook_event_name": "PreToolUse",
       "session_id": self.id,
       "agent": self.agent,
@@ -397,6 +481,9 @@ impl AcpSession {
       "read_files": read,
       "phase": phase,
     });
+    if let (Some(p), Value::Object(extra)) = (payload.as_object_mut(), extra) {
+      p.extend(extra);
+    }
     run(hook, &cfg.root, &payload, &self.hook_env()).await
   }
 
@@ -450,12 +537,12 @@ impl AcpSession {
     if !cfg.tracks_changes() && c.hooks.denied.is_empty() {
       return None;
     }
-    let edits = span_edits(c);
+    let tools = span_tools(c);
     // A detached turn past the last gate has no snapshot of its own: what that gate found is its baseline
     let before = c.hooks.before.take().or_else(|| c.hooks.settled.take());
     c.hooks.gating = true;
     self.touch(c);
-    Some(GateJob { cfg, before, edits })
+    Some(GateJob { cfg, before, tools })
   }
 
   /// Boxed: a gate can start another run of itself (`Next::Again`), a cycle an `async fn` future cannot hold
@@ -464,37 +551,52 @@ impl AcpSession {
   }
 
   async fn gate(self: Arc<Self>, job: GateJob) {
-    let GateJob { cfg, before, edits } = job;
-    // What the span changed: the work trees' own account, plus the edit tool calls (files outside the watched trees)
+    let GateJob { cfg, before, tools } = job;
     let after = if cfg.tracks_changes() { Some(Snapshot::take(&cfg.watch).await) } else { None };
-    let mut turn: Vec<PathBuf> = match (&before, &after) {
-      (Some(b), Some(a)) => a.changed_since(b),
+    // What the span changed: the work trees' own account when one of its tools could have changed any file (a span of
+    // reads or of edits naming their files leaves whatever else changed to whoever else shares the trees), plus the edit
+    // tool calls (files outside the watched trees too)
+    let mut turn: Vec<(PathBuf, Source)> = match (&before, &after) {
+      (Some(b), Some(a)) if tools.reach == Reach::Any => a.changed_since(b).into_iter().map(|p| (p, Source::Snapshot)).collect(),
       _ => vec![],
     };
     self.core.lock().hooks.settled = after;
-    let asked: Vec<PathBuf> = edits.asked.iter().map(|p| self.absolute(p)).collect();
-    let unasked: Vec<PathBuf> = edits.unasked.iter().map(|p| self.absolute(p)).collect();
+    let asked: Vec<PathBuf> = tools.asked.iter().map(|p| self.absolute(p)).collect();
+    let unasked: Vec<PathBuf> = tools.unasked.iter().map(|p| self.absolute(p)).collect();
     for p in unasked.iter().chain(&asked) {
-      if !turn.iter().any(|t| same_file(t, p)) {
-        turn.push(p.clone());
+      match turn.iter_mut().find(|(t, _)| same_file(t, p)) {
+        Some(entry) => entry.1 = Source::Tool,
+        None => turn.push((p.clone(), Source::Tool)),
       }
     }
     // The audit skips a file only when every edit row naming it went through a permission request beforeEdit passed
     let audit: Vec<String> = turn
       .iter()
-      .filter(|t| !asked.iter().any(|a| same_file(t, a)) || unasked.iter().any(|u| same_file(t, u)))
-      .map(|p| path_text(p))
+      .filter(|(t, _)| !asked.iter().any(|a| same_file(t, a)) || unasked.iter().any(|u| same_file(t, u)))
+      .map(|(p, _)| path_text(p))
       .collect();
-    let turn: Vec<String> = turn.iter().map(|p| path_text(p)).collect();
-    let (mut reasons, session_files, round) = {
+    let turn_tools: Vec<Value> = tools
+      .rows
+      .iter()
+      .map(|r| json!({ "kind": r.kind, "status": r.status, "locations": r.paths.iter().map(|p| path_text(&self.absolute(p))).collect::<Vec<_>>() }))
+      .collect();
+    let audit_sources = file_sources(turn.iter().map(|(p, s)| (p, *s)).filter(|(p, _)| audit.contains(&path_text(p))));
+    let (mut reasons, session_files, session_sources, round) = {
       let mut c = self.core.lock();
-      c.hooks.changed.extend(turn.iter().map(PathBuf::from));
-      (std::mem::take(&mut c.hooks.denied), c.hooks.changed.iter().map(|p| path_text(p)).collect::<Vec<_>>(), c.hooks.round)
+      for (p, s) in &turn {
+        let entry = c.hooks.changed.entry(p.clone()).or_insert(*s);
+        *entry = (*entry).max(*s);
+      }
+      let files: Vec<String> = c.hooks.changed.keys().map(|p| path_text(p)).collect();
+      let srcs = file_sources(c.hooks.changed.iter().map(|(p, s)| (p, *s)));
+      (std::mem::take(&mut c.hooks.denied), files, srcs, c.hooks.round)
     };
-    self.log(&format!("hooks: gate after turn ({} changed, round {round})", turn.len()));
+    let turn: Vec<String> = turn.iter().map(|(p, _)| path_text(p)).collect();
+    self.log(&format!("hooks: gate after turn ({} changed, {} tool calls reaching {:?}, round {round})", turn.len(), turn_tools.len(), tools.reach));
     // Edits made without a permission request get the beforeEdit check now
     if let Some(hook) = cfg.before_edit.as_ref().filter(|_| !audit.is_empty()) {
-      match self.run_before_edit(&cfg, hook, ToolKind::Edit, &audit, None, "audit").await {
+      let extra = json!({ "turn_tools": turn_tools, "file_sources": audit_sources });
+      match self.run_before_edit(&cfg, hook, ToolKind::Edit, &audit, None, "audit", extra).await {
         Verdict::Block(r) => reasons.push(r),
         Verdict::Pass => {}
         Verdict::Broken(e) => self.hook_broken(hook, &e),
@@ -510,6 +612,8 @@ impl AcpSession {
         "round": round,
         "turn_files": turn,
         "changed_files": session_files,
+        "turn_tools": turn_tools,
+        "file_sources": session_sources,
         "read_files": read_inputs(&self.core.lock().state.turns),
       });
       match run(hook, &cfg.root, &payload, &self.hook_env()).await {
@@ -631,6 +735,27 @@ mod tests {
       ..Default::default()
     })];
     assert_eq!(read_inputs(&turns), ["README.md", "/w/docs/README.md", "cat docs/systems/x/README.md"]);
+  }
+
+  #[test]
+  fn only_known_tools_keep_the_snapshot_out() {
+    let reach = |b: AgentBlock, f: &dyn Fn(&mut ToolCallBlock)| {
+      let AgentBlock::ToolCall(mut tc) = b else { unreachable!() };
+      f(&mut tc);
+      row_reach(&tc)
+    };
+    let none = |_: &mut ToolCallBlock| {};
+    assert_eq!(reach(tool(ToolKind::Read, None, &["/w/a"]), &none), Reach::None);
+    assert_eq!(reach(tool(ToolKind::Other, None, &[]), &|t| t.verb_key = Some("verb.todo".into())), Reach::None);
+    assert_eq!(reach(tool(ToolKind::Edit, None, &["/w/a"]), &none), Reach::Edits);
+    assert_eq!(reach(tool(ToolKind::Edit, None, &["/w/a"]), &|t| t.status = ToolStatus::Failed), Reach::None);
+    // Anything that may write where it does not say
+    assert_eq!(reach(tool(ToolKind::Edit, None, &[]), &none), Reach::Any);
+    assert_eq!(reach(tool(ToolKind::Execute, None, &[]), &|t| t.status = ToolStatus::Failed), Reach::Any);
+    assert_eq!(reach(tool(ToolKind::Move, None, &["/w/a"]), &none), Reach::Any);
+    assert_eq!(reach(tool(ToolKind::Other, None, &[]), &none), Reach::Any);
+    assert_eq!(reach(tool(ToolKind::Other, None, &[]), &|t| t.mcp_server = Some("Acpira".into())), Reach::Any);
+    assert_eq!(reach(tool(ToolKind::Think, None, &[]), &|t| t.subagent_id = Some("s1".into())), Reach::Any);
   }
 
   #[test]

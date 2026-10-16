@@ -23,7 +23,7 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // "tool-downgrade" / "tool-downgrade-late" → OpenCode's write: a permission request whose embedded toolCall is a low-fidelity copy
 // (kind 'other', dir title, file+dir locations, rawInput.filepath) racing the real in_progress update
 // "perm-meta" → permission request with the adapters' `_meta.permission` (title / description / defaultToNo, per-option details);
-// "hook-write:<path>" / "hook-perm-write:<path>" / "hook-write-stop:<path>" / "hook-read:<path>" / "…hook-fix:<path>…" → workspace hook scripts (edits on disk, see below);
+// "hook-write:<path>" / "hook-perm-write:<path>" / "hook-write-stop:<path>" / "hook-read:<path>" / "hook-turn:<steps>" / "…hook-fix:<path>…" → workspace hook scripts (edits on disk, see below);
 // "image" → an image chunk splitting a text run plus a tool image content item;
 // "subagents-*" → first-class subagent dialects: =native sends RFD `subagent_update` announcements plus child updates under each
 //   child's own sessionId (c1 requests a permission, c2 cannot be cancelled); =nested announces a grandchild on c1's stream;
@@ -717,6 +717,21 @@ const app = acp.agent({ name: 'fake-agent' })
       const path = text.slice('hook-read:'.length).trim();
       await send({ sessionUpdate: 'tool_call', toolCallId: `r-${randomUUID()}`, title: 'read', kind: 'read', status: 'completed', locations: [{ path }] });
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'read' } });
+      return { stopReason: 'end_turn' };
+    }
+    // "hook-turn:<step>|<step>…" runs its steps in order within one turn: read=<path> reports a read row, edit=<path> writes
+    // "bad\n" with an edit row, shell=<path> writes "bad\n" through an execute row naming no file, outside=<path> writes
+    // "bad\n" with no row at all (someone else sharing the work tree)
+    if (text.startsWith('hook-turn:')) {
+      for (const step of text.slice('hook-turn:'.length).trim().split('|')) {
+        const [what, path] = [step.slice(0, step.indexOf('=')), step.slice(step.indexOf('=') + 1)];
+        if (what !== 'read') writeFileSync(path, 'bad\n');
+        if (what === 'outside') continue;
+        const kind: acp.ToolKind = what === 'shell' ? 'execute' : what === 'edit' ? 'edit' : 'read';
+        const locations = what === 'shell' ? [] : [{ path }];
+        await send({ sessionUpdate: 'tool_call', toolCallId: `t-${randomUUID()}`, title: what, kind, status: 'completed', locations, rawInput: what === 'shell' ? { command: `echo bad > ${path}` } : { path } });
+      }
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'done' } });
       return { stopReason: 'end_turn' };
     }
     if (text.startsWith('hook-write:') || text.startsWith('hook-perm-write:') || text.startsWith('hook-write-stop:')) {
