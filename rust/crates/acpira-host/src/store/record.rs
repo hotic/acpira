@@ -78,6 +78,7 @@ impl SessionRecord {
       pinned: self.pinned,
       category: self.category.clone(),
       state: None,
+      unread: None,
     }
   }
 }

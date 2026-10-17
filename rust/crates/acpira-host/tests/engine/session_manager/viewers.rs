@@ -165,6 +165,32 @@ async fn a_card_waits_over_its_running_turn_and_attention_announces_waiting_then
   m.dispose().await;
 }
 
+// A turn that ends while a background task it started still runs is neither finished nor busy: the list shows the
+// background state and no done notification goes out until the task ends and the session stays settled
+#[tokio::test(flavor = "multi_thread")]
+async fn a_turn_ending_on_a_running_background_task_shows_background_and_announces_only_once_it_ends() {
+  use acpira_host::session_manager::AttentionKind;
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let m = Mgr::new(dir.path(), Opts::fake(&fake));
+  m.init().await;
+  let state_of = |id: &str| m.sessions().iter().find(|s| s["id"] == id).map(|s| s["state"].clone()).unwrap_or(Value::Null);
+  let kinds = || m.attentions.lock().unwrap().iter().map(|a| a.kind).collect::<Vec<_>>();
+  m.new_session(None).await;
+  let id = m.active_id().unwrap();
+  m.handle(json!({ "type": "send", "text": "async-stop" })).await;
+  until(|| state_of(&id) == "background", 5000).await;
+  // Past the settle delay: the turn ended, but a background task still runs, so nothing is announced
+  tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+  assert_eq!(state_of(&id), "background");
+  assert!(kinds().is_empty(), "{:?}", kinds());
+
+  m.handle(json!({ "type": "stopAsyncTask", "sessionId": id, "taskId": "task-1" })).await;
+  until(|| state_of(&id).is_null(), 5000).await;
+  until(|| kinds() == [AttentionKind::Done], 5000).await;
+  m.dispose().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn observe_subagent_streams_only_to_the_observing_viewer_until_unobserved() {
   let fake = fake_or_skip!();

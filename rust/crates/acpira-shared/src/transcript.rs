@@ -1142,6 +1142,9 @@ pub enum SummaryState {
   Waiting,
   Unread,
   Error,
+  /// The turn is over but a background task the agent started (background Bash, Monitor, a workflow) still runs; the
+  /// agent may wake and report on its own, so the session is neither finished nor busy
+  Background,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1170,6 +1173,9 @@ pub struct SessionSummary {
   pub category: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub state: Option<SummaryState>,
+  /// Only beside `Background`: a turn ended there that nobody has looked at yet (`Unread` itself would read as finished)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub unread: Option<bool>,
 }
 
 /// A user-made group of sessions inside one project (`cwd`), shown between the project and its sessions

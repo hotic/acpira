@@ -108,8 +108,10 @@ pub fn session_entry(s: &SessionSummary, hit: Option<&(u32, String)>, caller_cwd
   if !same_dir(&s.cwd, caller_cwd) && !s.cwd.is_empty() {
     line.push_str(&format!(" | {}", s.cwd));
   }
-  if s.state.is_some_and(|st| matches!(st, acpira_shared::transcript::SummaryState::Working)) {
-    line.push_str(" | running now");
+  match s.state {
+    Some(acpira_shared::transcript::SummaryState::Working) => line.push_str(" | running now"),
+    Some(acpira_shared::transcript::SummaryState::Background) => line.push_str(" | turn ended, background task still running"),
+    _ => {}
   }
   if let Some((turn, snippet)) = hit {
     line.push_str(&format!("\n  turn {turn}: {}", cut(snippet, 240)));

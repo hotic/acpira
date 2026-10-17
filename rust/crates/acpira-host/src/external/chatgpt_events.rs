@@ -428,5 +428,6 @@ pub fn chatgpt_summary(r: &ChatGptRecord, now: i64) -> SessionSummary {
     } else {
       None
     },
+    unread: None,
   }
 }

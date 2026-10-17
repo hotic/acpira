@@ -553,7 +553,10 @@ export interface SessionSummary {
   // The user category (SessionCategory.id) the session is filed under; pinned and filed are exclusive. An id no category
   // carries any more (deleted in some window) reads as unfiled
   category?: string;
-  state?: 'working' | 'waiting' | 'unread' | 'error';
+  // background: the turn ended but a background task it started (background Bash, Monitor, a workflow) still runs
+  state?: 'working' | 'waiting' | 'unread' | 'error' | 'background';
+  // Only beside `background`: a turn ended there that nobody has looked at yet ('unread' itself would read as finished)
+  unread?: boolean;
 }
 
 // A user-made group of sessions inside one project (cwd), shown between the project and its sessions
