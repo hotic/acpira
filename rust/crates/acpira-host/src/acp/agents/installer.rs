@@ -676,7 +676,7 @@ mod tests {
     assert_eq!(program, "powershell.exe");
     assert!(args.contains(&"-NonInteractive".to_owned()) && args.contains(&"Bypass".to_owned()));
     let bytes = base64::engine::general_purpose::STANDARD.decode(args.last().unwrap()).unwrap();
-    let src = String::from_utf16(&bytes.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect::<Vec<_>>()).unwrap();
+    let src = String::from_utf16(&bytes.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).collect::<Vec<_>>()).unwrap();
     assert!(src.contains("OutputEncoding"));
     assert!(src.contains("Tls12"));
     assert!(src.contains("New-Object System.Net.WebProxy('http://127.0.0.1:7890', $true)"));
@@ -684,7 +684,7 @@ mod tests {
     // A SOCKS proxy is left to the environment: .NET's WebProxy speaks HTTP only
     let (_, args) = powershell("irm x | iex", Some("socks5://127.0.0.1:1080"));
     let bytes = base64::engine::general_purpose::STANDARD.decode(args.last().unwrap()).unwrap();
-    let src = String::from_utf16(&bytes.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect::<Vec<_>>()).unwrap();
+    let src = String::from_utf16(&bytes.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).collect::<Vec<_>>()).unwrap();
     assert!(!src.contains("WebProxy"));
   }
 
