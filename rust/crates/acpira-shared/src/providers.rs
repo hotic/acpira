@@ -26,8 +26,10 @@ pub fn web_secret_key(backend: &str) -> String {
 }
 
 /// The search backends `ProvidersFile::web_search` takes, the default first: `default` (the free hosted endpoints, no
-/// key) and `jina` (Jina Search with the user's key, the free ones behind it)
-pub const WEB_SEARCH_BACKENDS: [&str; 2] = ["default", "jina"];
+/// key), `jina` (Jina Search with the user's key) and `deepseek` (DeepSeek's Search API, or a gateway serving the same
+/// `/v1/tools/search`, see `ProvidersFile::web_search_via`); a keyed pick has the other keyed backend and the free ones
+/// behind it
+pub const WEB_SEARCH_BACKENDS: [&str; 3] = ["default", "jina", "deepseek"];
 
 /// The compaction strategies `ProvidersFile::compaction` takes, the default first: `summary` (a model writes a summary
 /// of the history, `compact.rs`) and `chunk` (finished turns fold into chunks of the user's words and the final
@@ -52,6 +54,10 @@ pub struct ProvidersFile {
   /// The `websearch` backend, one of `WEB_SEARCH_BACKENDS` other than `default`; absent (or unknown) is `default`
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub web_search: Option<String>,
+  /// The model source whose address and key DeepSeek-shaped search goes through (a gateway serving
+  /// `/v1/tools/search`); absent is DeepSeek's own API with the `deepseek` search key
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub web_search_via: Option<String>,
   /// How the agent compacts its history, one of `COMPACTION_STRATEGIES` other than `summary`; absent (or unknown) is
   /// `summary`. Read when a compaction runs
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -298,6 +304,9 @@ pub struct ProvidersView {
   /// The file's search backend as written (`ProvidersFile::web_search`)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub web_search: Option<String>,
+  /// The file's search source as written (`ProvidersFile::web_search_via`)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub web_search_via: Option<String>,
   /// The search backends with a stored key (never the key itself)
   #[serde(default)]
   pub web_keys: Vec<String>,
@@ -375,11 +384,14 @@ pub enum ProviderAction {
     pick: Option<String>,
   },
   /// Set the search backend (one of `WEB_SEARCH_BACKENDS`). `key` is that backend's: absent keeps the stored key, empty
-  /// removes it
+  /// removes it. `via` names the model source DeepSeek-shaped search goes through: absent keeps it, empty goes back to
+  /// DeepSeek's own API
   WebSearch {
     backend: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    via: Option<String>,
   },
   /// Set the compaction strategy (one of `COMPACTION_STRATEGIES`)
   Compaction { strategy: String },

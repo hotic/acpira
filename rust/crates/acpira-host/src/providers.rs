@@ -55,7 +55,7 @@ impl ProviderStore {
         web_keys.push(backend.to_owned());
       }
     }
-    ProvidersView { providers, error: None, approval: file.approval, fast_model: file.fast_model, web_search: file.web_search, web_keys, compaction: file.compaction, ..tables() }
+    ProvidersView { providers, error: None, approval: file.approval, fast_model: file.fast_model, web_search: file.web_search, web_search_via: file.web_search_via, web_keys, compaction: file.compaction, ..tables() }
   }
 
   /// The key a probe uses: one typed into the form, else the stored key of the source with that id
@@ -126,6 +126,10 @@ impl ProviderStore {
         self
           .edit(|file| {
             file.providers.retain(|p| p.id != id);
+            // Search that went through this source goes back to DeepSeek's own API
+            if file.web_search_via.as_deref() == Some(id.as_str()) {
+              file.web_search_via = None;
+            }
             Ok(())
           })
           .await?;
@@ -157,10 +161,11 @@ impl ProviderStore {
           })
           .await
       }
-      ProviderAction::WebSearch { backend, key } => {
+      ProviderAction::WebSearch { backend, key, via } => {
         if !WEB_SEARCH_BACKENDS.contains(&backend.as_str()) {
           bail!("Unknown search backend: {backend}");
         }
+        let via = via.map(|v| v.trim().to_owned());
         let default = backend == WEB_SEARCH_BACKENDS[0];
         // The key first: a turn that already sees the new backend finds its key with it
         match key.as_deref().map(str::trim) {
@@ -171,6 +176,12 @@ impl ProviderStore {
         }
         self
           .edit(|file| {
+            if let Some(via) = via {
+              if !via.is_empty() && !file.providers.iter().any(|p| p.id == via) {
+                bail!("No model source with id {via}");
+              }
+              file.web_search_via = (!via.is_empty()).then_some(via);
+            }
             // The default is written as no entry, like an unset approval level
             file.web_search = (!default).then_some(backend);
             Ok(())
@@ -354,7 +365,7 @@ mod tests {
 
     // The search backend: its key goes to the vault under its own prefix, the view only says one is stored, and
     // switching back to the default keeps the key for the next switch
-    let web = |backend: &str, key: Option<&str>| s.apply(ProviderAction::WebSearch { backend: backend.into(), key: key.map(str::to_owned) });
+    let web = |backend: &str, key: Option<&str>| s.apply(ProviderAction::WebSearch { backend: backend.into(), key: key.map(str::to_owned), via: None });
     assert!(web("google", None).await.is_err());
     assert!(web("default", Some("k")).await.is_err());
     web("jina", Some(" jina_123 ")).await.unwrap();
@@ -369,6 +380,21 @@ mod tests {
     assert!(!std::fs::read_to_string(dir.path().join(PROVIDERS_FILE)).unwrap().contains("webSearch"));
     web("jina", Some("")).await.unwrap();
     assert!(s.view().await.web_keys.is_empty());
+
+    // DeepSeek through a model source: the source must exist, picking another backend keeps it, and deleting the
+    // source drops it
+    let via = |v: &str| s.apply(ProviderAction::WebSearch { backend: "deepseek".into(), key: None, via: Some(v.into()) });
+    assert!(via("nowhere").await.is_err());
+    s.apply(ProviderAction::Save { provider: draft("gw", "https://gw.test/v1", &["m"]), key: Some("sk-gw".into()) }).await.unwrap();
+    via("gw").await.unwrap();
+    let v = s.view().await;
+    assert_eq!((v.web_search.as_deref(), v.web_search_via.as_deref()), (Some("deepseek"), Some("gw")));
+    web("jina", None).await.unwrap();
+    assert_eq!(s.view().await.web_search_via.as_deref(), Some("gw"));
+    s.apply(ProviderAction::Delete { id: "gw".into() }).await.unwrap();
+    assert_eq!(s.view().await.web_search_via, None);
+    via("").await.unwrap();
+    assert_eq!(s.view().await.web_search_via, None);
   }
 
   #[tokio::test]

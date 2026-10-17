@@ -75,6 +75,8 @@ export interface ProvidersView {
   fastModel?: string;
   // The websearch backend as the file holds it; absent reads as 'default'
   webSearch?: string;
+  // The model source DeepSeek-shaped search goes through (a gateway serving /v1/tools/search); absent is DeepSeek's API
+  webSearchVia?: string;
   // The search backends with a stored key (never the key itself)
   webKeys?: string[];
   // The compaction strategy as the file holds it; absent reads as 'summary'
@@ -92,8 +94,9 @@ export function compactionOf(view?: ProvidersView): CompactionStrategy {
 }
 
 // The built-in agent's search backends (`WEB_SEARCH_BACKENDS` in acpira-shared/src/providers.rs), the default first:
-// the free hosted endpoints, or Jina Search with the user's key (the free ones behind it)
-export const WEB_SEARCH_BACKENDS = ['default', 'jina'] as const;
+// the free hosted endpoints, Jina Search with the user's key, or DeepSeek's Search API (its own or through a model
+// source); a keyed pick has the other keyed backend and the free ones behind it
+export const WEB_SEARCH_BACKENDS = ['default', 'jina', 'deepseek'] as const;
 export type WebSearchBackend = typeof WEB_SEARCH_BACKENDS[number];
 
 // The view's backend, unknown or absent values reading as the default
@@ -153,8 +156,9 @@ export type ProviderAction =
   | { kind: 'approval'; level: ApprovalLevel }
   // pick: a usable `<provider id>/<model id>`; absent turns the fast model off
   | { kind: 'fastModel'; pick?: string }
-  // key: that backend's; absent keeps the stored key, empty removes it
-  | { kind: 'webSearch'; backend: WebSearchBackend; key?: string }
+  // key: that backend's; absent keeps the stored key, empty removes it. via: the model source DeepSeek-shaped search goes
+  // through; absent keeps it, empty goes back to DeepSeek's own API
+  | { kind: 'webSearch'; backend: WebSearchBackend; key?: string; via?: string }
   | { kind: 'compaction'; strategy: CompactionStrategy };
 
 // A model entry with the file's defaults, for a hand-typed id

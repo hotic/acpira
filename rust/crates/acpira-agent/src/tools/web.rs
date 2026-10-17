@@ -6,8 +6,9 @@
 //! a public URL that redirects or resolves to one is refused rather than followed, so a page cannot steer the agent at
 //! the user's router or a dev server. Redirects are followed by hand for that reason, at most `MAX_HOPS`.
 //!
-//! `websearch` asks Jina Search first when the settings page picked it and holds its key (`SearchSetup`; Google's results,
-//! after keke's `search/jina.rs`), then the free hosted services over MCP's `tools/call` (plain JSON-RPC over HTTP, no
+//! `websearch` asks the keyed backend picked on the settings page first (`SearchSetup`): Jina Search (Google's results,
+//! after keke's `search/jina.rs`) or DeepSeek's Search API (`POST /v1/tools/search`, on api.deepseek.com or a gateway
+//! serving the same shape through a model source), then the other keyed one when it is set up, then the free hosted services over MCP's `tools/call` (plain JSON-RPC over HTTP, no
 //! session): Parallel's endpoint, then Exa's (its keyless endpoint is rate-limited per IP, which made it fail on
 //! 2026-10-14 where Parallel's answered). `EXA_API_KEY` puts Exa first, `ACPIRA_WEBSEARCH_PROVIDER` (`parallel` / `exa`)
 //! picks which free one leads, `PARALLEL_API_KEY` is sent when set. Queries leave the machine, results come back as
@@ -43,6 +44,11 @@ const JINA_URL: &str = "https://s.jina.ai/";
 /// Jina answers in 1.5 to 2.5 s; a stuck call gives way to the free services rather than taking the whole budget
 const JINA_TIMEOUT: Duration = Duration::from_secs(10);
 const EXA_URL: &str = "https://mcp.exa.ai/mcp";
+const DEEPSEEK_URL: &str = "https://api.deepseek.com";
+/// DeepSeek answers in under a second; a gateway merging it with Jina in about two
+const DEEPSEEK_TIMEOUT: Duration = Duration::from_secs(10);
+/// Characters of a DeepSeek result's summary kept (its summaries run to several thousand)
+const SUMMARY_CHARS: usize = 800;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
@@ -451,16 +457,46 @@ fn extension(mime: &str, url: &str) -> String {
 
 // Search
 
-/// What the settings page set up for `websearch` (`Config::web_search`)
+/// What the settings page set up for `websearch` (`Config::web_search`): the keyed backends, all absent when the
+/// default (free) backend is picked
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SearchSetup {
-  /// Present when Jina is the picked backend and has a key
   pub jina_key: Option<String>,
+  pub deepseek: Option<DeepSeekSearch>,
+  /// DeepSeek was the pick, so it goes before Jina
+  pub deepseek_first: bool,
+}
+
+/// Where DeepSeek-shaped search goes: DeepSeek's own API, or a model source's address and key
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeepSeekSearch {
+  /// The full `…/v1/tools/search` endpoint
+  pub url: String,
+  pub key: String,
+}
+
+impl DeepSeekSearch {
+  /// DeepSeek's own API with the search key
+  pub fn official(key: String) -> Self {
+    DeepSeekSearch { url: tools_search_url(DEEPSEEK_URL), key }
+  }
+}
+
+/// The `/v1/tools/search` endpoint under an API root: `https://host/v1` and `https://host` both end up at
+/// `https://host/v1/tools/search`, and a full endpoint (`…/v1/chat/completions`) keeps its root
+pub fn tools_search_url(base: &str) -> String {
+  let base = base.trim().trim_end_matches('/');
+  let root = match base.find("/v1/") {
+    Some(i) => &base[..i + 3],
+    None => base,
+  };
+  if root.ends_with("/v1") { format!("{root}/tools/search") } else { format!("{root}/v1/tools/search") }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Provider {
   Jina,
+  DeepSeek,
   Parallel,
   Exa,
 }
@@ -469,6 +505,7 @@ impl Provider {
   fn label(self) -> &'static str {
     match self {
       Provider::Jina => "Jina",
+      Provider::DeepSeek => "DeepSeek",
       Provider::Parallel => "Parallel",
       Provider::Exa => "Exa",
     }
@@ -492,10 +529,17 @@ pub fn search(query: &str, count: usize, setup: &SearchSetup, ctx: &Ctx) -> Outp
   // Parallel limits its free tier per conversation id: the session's folder name is stable across turns
   let session = ctx.outputs.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
   let mut failures = vec![];
-  let order = setup.jina_key.iter().map(|_| Provider::Jina).chain(providers());
-  for provider in order {
-    let found = match (provider, &setup.jina_key) {
-      (Provider::Jina, Some(key)) => search_jina(key, query, count),
+  let mut keyed = vec![];
+  if setup.jina_key.is_some() {
+    keyed.push(Provider::Jina);
+  }
+  if setup.deepseek.is_some() {
+    keyed.insert(if setup.deepseek_first { 0 } else { keyed.len() }, Provider::DeepSeek);
+  }
+  for provider in keyed.into_iter().chain(providers()) {
+    let found = match (provider, &setup.jina_key, &setup.deepseek) {
+      (Provider::Jina, Some(key), _) => search_jina(key, query, count),
+      (Provider::DeepSeek, _, Some(ds)) => search_deepseek(ds, query, count),
       _ => search_with(&http, provider, query, count, &session),
     };
     match found {
@@ -521,7 +565,7 @@ fn search_with(http: &ureq::Agent, provider: Provider, query: &str, count: usize
       }
       (PARALLEL_URL.to_owned(), "web_search", args)
     }
-    Provider::Jina => return Err("no key".into()),
+    Provider::Jina | Provider::DeepSeek => return Err("no key".into()),
     Provider::Exa => {
       let url = match std::env::var("EXA_API_KEY").ok().filter(|k| !k.trim().is_empty()) {
         Some(key) => format!("{EXA_URL}?exaApiKey={}", percent_encode(key.trim())),
@@ -590,6 +634,55 @@ fn search_jina(key: &str, query: &str, count: usize) -> Result<String, String> {
     return Err(format!("HTTP {status}: {}", message.unwrap_or_else(|| crate::budget::cut(text.trim(), 300).to_owned())));
   }
   jina_results(&text, count)
+}
+
+/// DeepSeek's Search API (`POST …/v1/tools/search`, `{ query, count }`). Some queries it will not answer (political ones
+/// among them, measured 2026-10-18) come back as HTTP 200 with no results, so an empty answer counts as a failure and the
+/// next backend is asked
+fn search_deepseek(ds: &DeepSeekSearch, query: &str, count: usize) -> Result<String, String> {
+  let http: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).timeout_global(Some(DEEPSEEK_TIMEOUT)).build().into();
+  let mut res = http
+    .post(&ds.url)
+    .header("Authorization", &format!("Bearer {}", ds.key))
+    .header("Content-Type", "application/json")
+    .send(json!({ "query": query, "count": count }).to_string())
+    .map_err(|e| e.to_string())?;
+  let status = res.status();
+  let text = res.body_mut().with_config().limit(MAX_BYTES).read_to_string().map_err(|e| e.to_string())?;
+  if status == 401 || status == 403 {
+    return Err(format!("the key was refused (HTTP {status})"));
+  }
+  if !status.is_success() {
+    let message = serde_json::from_str::<Value>(&text).ok().and_then(|v| v.pointer("/error/message").and_then(Value::as_str).map(str::to_owned));
+    return Err(format!("HTTP {status}: {}", message.unwrap_or_else(|| crate::budget::cut(text.trim(), 300).to_owned())));
+  }
+  deepseek_results(&text, count)
+}
+
+/// DeepSeek's `results: [{ title, url, date, summary, snippet }]` as markdown, the summary capped; no results is an error
+fn deepseek_results(body: &str, count: usize) -> Result<String, String> {
+  let data: Value = serde_json::from_str(body).map_err(|e| format!("unexpected answer ({e})"))?;
+  let items: Vec<&Value> = data.get("results").and_then(Value::as_array).into_iter().flatten().filter(|i| i.get("url").and_then(Value::as_str).is_some_and(|u| !u.is_empty())).take(count).collect();
+  if items.is_empty() {
+    return Err("no results".into());
+  }
+  let mut out = String::new();
+  for (i, item) in items.iter().enumerate() {
+    let s = |k: &str| item.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty());
+    let url = s("url").unwrap_or("");
+    out.push_str(&format!("## {}. [{}]({url})\n", i + 1, s("title").unwrap_or(url)));
+    // RFC 3339 from DeepSeek, free text from a gateway's other backends
+    if let Some(date) = s("date") {
+      let day = if date.len() > 10 && date.as_bytes()[4] == b'-' { &date[..10] } else { date };
+      out.push_str(&format!("Published {day}\n"));
+    }
+    if let Some(text) = s("summary").or_else(|| s("snippet")) {
+      let cut = crate::budget::cut(text, SUMMARY_CHARS);
+      out.push_str(&format!("\n{cut}{}\n", if cut.len() < text.len() { " …" } else { "" }));
+    }
+    out.push('\n');
+  }
+  Ok(out.trim_end().to_owned())
 }
 
 /// Jina's `data: [{ title, url, description, date }]` as markdown; entries without a link are dropped
@@ -753,6 +846,24 @@ mod tests {
       "## 1. [Announcing Rust 1.90.0](https://blog.rust-lang.org/2025/09/18/Rust-1.90.0/)\nPublished Sep 18, 2025\n\nGet it with rustup.\n\n## 2. [https://releases.rs/docs/1.90.0/](https://releases.rs/docs/1.90.0/)"
     );
     assert_eq!(jina_results(r#"{"data":null}"#, 8).unwrap(), "No results.");
+    // DeepSeek's answer (fields from a real one, 2026-10-18); a gateway adds `source`, which is ignored
+    let body = json!({ "results": [
+      { "title": "Blog | Bun", "url": "https://bun.com/blog", "date": "2026-10-09T16:00:00+00:00", "summary": "x".repeat(900), "snippet": "s", "rerank_score": 2.1 },
+      { "title": "J", "url": "https://j.dev", "date": "Oct 1, 2026", "summary": "", "snippet": "short", "source": "jina" },
+      { "title": "No link", "url": "" },
+    ] });
+    let text = deepseek_results(&body.to_string(), 8).unwrap();
+    assert!(text.starts_with("## 1. [Blog | Bun](https://bun.com/blog)\nPublished 2026-10-09\n\nxxx"), "{text}");
+    assert!(text.contains(" …\n\n## 2. [J](https://j.dev)\nPublished Oct 1, 2026\n\nshort") && !text.contains("No link"), "{text}");
+    // An empty answer is how DeepSeek declines a query: it fails so the next backend is asked
+    assert_eq!(deepseek_results(r#"{"results":[]}"#, 8).unwrap_err(), "no results");
+  }
+
+  #[test]
+  fn tools_search_endpoints_come_from_api_roots() {
+    assert_eq!(tools_search_url("https://api.deepseek.com"), "https://api.deepseek.com/v1/tools/search");
+    assert_eq!(tools_search_url("https://ai.example.cn/v1/"), "https://ai.example.cn/v1/tools/search");
+    assert_eq!(tools_search_url("https://gw.test/v1/chat/completions"), "https://gw.test/v1/tools/search");
   }
 
   /// A local server answering each request by its path, until the test ends

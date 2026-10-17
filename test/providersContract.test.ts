@@ -73,6 +73,14 @@ describe('providers contract', () => {
     const back = await s.hostMsg('V', 'providers', m => !beforeDefault.has(m) && m.view.webSearch === undefined && !m.error);
     expect(back.view.webKeys).toEqual(['jina']);
     expect(JSON.parse(readFileSync(join(data, 'providers.json'), 'utf8'))).not.toHaveProperty('webSearch');
+    // DeepSeek through a model source lands as `webSearchVia`; an empty via goes back to DeepSeek's own API
+    s.view('V', { type: 'providerAction', action: { kind: 'webSearch', backend: 'deepseek', via: 'deep-seek' } });
+    const via = await s.hostMsg('V', 'providers', m => m.view.webSearch === 'deepseek' && m.view.webSearchVia === 'deep-seek');
+    expect(via.error).toBeUndefined();
+    expect(JSON.parse(readFileSync(join(data, 'providers.json'), 'utf8'))).toMatchObject({ webSearch: 'deepseek', webSearchVia: 'deep-seek' });
+    s.view('V', { type: 'providerAction', action: { kind: 'webSearch', backend: 'deepseek', via: '' } });
+    await s.hostMsg('V', 'providers', m => m.view.webSearch === 'deepseek' && m.view.webSearchVia === undefined && !m.error);
+    expect(JSON.parse(readFileSync(join(data, 'providers.json'), 'utf8'))).not.toHaveProperty('webSearchVia');
 
     // Compaction: chunk is written, the default summary leaves no entry
     s.view('V', { type: 'providerAction', action: { kind: 'compaction', strategy: 'chunk' } });
