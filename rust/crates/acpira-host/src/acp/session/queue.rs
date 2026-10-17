@@ -355,7 +355,7 @@ impl AcpSession {
   /// Codex goes on with an active goal on its own once the thread is idle (an automatic goal continuation, no
   /// `session/prompt`): a thread turning active while no prompt owns one — idle, or past the running prompt's own idle —
   /// is that turn, run detached like a steer's new turn until its thread reports idle. Read off codex 0.159.3's strings
-  /// ("continue active goal for idle thread"), not yet seen on the wire
+  /// ("continue active goal for idle thread"); seen on the wire with codex-acp 1.13.0 / 2.2.2 (2026-10-18)
   pub(crate) fn open_goal_continuation(&self, c: &mut Core) {
     if c.replaying
       || c.peer.detached
