@@ -237,11 +237,19 @@ function CompactionSection({ state, on }: { state?: ProvidersState; on: Settings
   );
 }
 
-// The built-in agent's websearch backend (`webSearch` in providers.json): the free hosted endpoints, or Jina Search with
-// the user's key. Picking Jina adds the key row under the picker; the key goes to secrets.json and never comes back
+// The built-in agent's websearch backend (`webSearch` in providers.json): the free hosted endpoints, Jina Search with the
+// user's key, or DeepSeek's Search API. Picking a keyed backend adds its key row under the picker (DeepSeek's only when
+// it goes to DeepSeek's own API); a key goes to secrets.json and never comes back
 const WEB_SEARCH_KEYS: Record<WebSearchBackend, { label: MsgKey; desc: MsgKey }> = {
   default: { label: 'settings.agent.webSearch.default', desc: 'settings.agent.webSearch.default.desc' },
   jina: { label: 'settings.agent.webSearch.jina', desc: 'settings.agent.webSearch.jina.desc' },
+  deepseek: { label: 'settings.agent.webSearch.deepseek', desc: 'settings.agent.webSearch.deepseek.desc' },
+};
+
+// The key rows of the keyed backends
+const WEB_KEY_FIELDS: Record<Exclude<WebSearchBackend, 'default'>, { label: MsgKey; placeholder: MsgKey }> = {
+  jina: { label: 'settings.agent.webSearch.key', placeholder: 'settings.agent.webSearch.key.placeholder' },
+  deepseek: { label: 'settings.agent.webSearch.deepseekKey', placeholder: 'settings.agent.webSearch.deepseekKey.placeholder' },
 };
 
 function WebSearchSection({ state, on }: { state?: ProvidersState; on: SettingsHandlers }) {
@@ -264,27 +272,52 @@ function WebSearchSection({ state, on }: { state?: ProvidersState; on: SettingsH
             ? <Select options={WEB_SEARCH_BACKENDS.map(v => ({ value: v, label: t(WEB_SEARCH_KEYS[v].label) }))} value={backend} onChange={pick} label={t('settings.agent.webSearch')} />
             : <Shimmer active>{t('settings.loading')}</Shimmer>}
         </Field>
-        {state && backend === 'jina' && <JinaKeyField stored={!!state.view.webKeys?.includes('jina')} on={on} />}
+        {state && backend === 'jina' && <WebKeyField backend="jina" stored={!!state.view.webKeys?.includes('jina')} on={on} />}
+        {state && backend === 'deepseek' && <DeepSeekRows state={state} on={on} />}
       </Section>
     </div>
   );
 }
 
-// Jina's key: typed, then saved with the button or Enter. The box empties once sent; the status line says whether one
-// is stored, which is all the page ever learns about it
-function JinaKeyField({ stored, on }: { stored: boolean; on: SettingsHandlers }) {
+// Where DeepSeek's search goes: DeepSeek's own API (with the key row below) or a model source that serves the same
+// /v1/tools/search, such as a gateway, whose address and key are used. Sources with a key are offered, plus the one
+// already picked
+function DeepSeekRows({ state, on }: { state: ProvidersState; on: SettingsHandlers }) {
+  const [picked, setPicked] = useState<string>();
+  useEffect(() => { setPicked(undefined); }, [state.view]);
+  const via = picked ?? state.view.webSearchVia ?? '';
+  const sources = state.view.providers.filter(p => p.hasKey || p.id === via);
+  const pick = (v: string) => {
+    if (v === via) return;
+    setPicked(v);
+    on.providerAction?.({ kind: 'webSearch', backend: 'deepseek', via: v });
+  };
+  const options = [{ value: '', label: t('settings.agent.webSearch.via.official') }, ...sources.map(p => ({ value: p.id, label: p.name || p.id }))];
+  return (
+    <>
+      <Field label={t('settings.agent.webSearch.via')} desc={t('settings.agent.webSearch.via.desc')}>
+        <Select options={options} value={via} onChange={pick} label={t('settings.agent.webSearch.via')} />
+      </Field>
+      {via === '' && <WebKeyField backend="deepseek" stored={!!state.view.webKeys?.includes('deepseek')} on={on} />}
+    </>
+  );
+}
+
+// A keyed backend's key: typed, then saved with the button or Enter. The box empties once sent; the status line says
+// whether one is stored, which is all the page ever learns about it
+function WebKeyField({ backend, stored, on }: { backend: Exclude<WebSearchBackend, 'default'>; stored: boolean; on: SettingsHandlers }) {
   const [key, setKey] = useState('');
   const [show, setShow] = useState(false);
   const save = () => {
     const k = key.trim();
     if (!k) return;
-    on.providerAction?.({ kind: 'webSearch', backend: 'jina', key: k });
+    on.providerAction?.({ kind: 'webSearch', backend, key: k });
     setKey('');
     setShow(false);
   };
   const eyeLabel = show ? t('settings.providers.hideKey') : t('settings.providers.showKey');
   return (
-    <Field stack label={t('settings.agent.webSearch.key')} desc={
+    <Field stack label={t(WEB_KEY_FIELDS[backend].label)} desc={
       <span className="inline-flex items-center gap-2">
         <Dot ok={stored} warn={!stored} />
         {stored ? t('settings.providers.keySaved') : t('settings.agent.webSearch.noKey')}
@@ -294,7 +327,7 @@ function JinaKeyField({ stored, on }: { stored: boolean; on: SettingsHandlers })
       <div className="flex h-ctl min-w-0 flex-1 items-center rounded-md border border-line bg-chip pl-3 focus-within:border-line-strong">
         <input type={show ? 'text' : 'password'} autoComplete="off" spellCheck={false} value={key} onChange={e => setKey(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') save(); }}
-          aria-label={t('settings.agent.webSearch.key')} placeholder={stored ? t('settings.providers.keyKept') : t('settings.agent.webSearch.key.placeholder')}
+          aria-label={t(WEB_KEY_FIELDS[backend].label)} placeholder={stored ? t('settings.providers.keyKept') : t(WEB_KEY_FIELDS[backend].placeholder)}
           className="min-w-0 flex-1 border-0 bg-transparent text-2 text-fg-1 outline-none placeholder:text-fg-3" />
         <IconButton title={eyeLabel} aria-label={eyeLabel} aria-pressed={show} onClick={() => setShow(v => !v)} className="text-fg-2">
           {show ? <EyeOff strokeWidth={1.5} /> : <Eye strokeWidth={1.5} />}

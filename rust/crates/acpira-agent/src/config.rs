@@ -40,11 +40,24 @@ impl Config {
     self.providers.compaction.as_deref() == Some(crate::chunk::STRATEGY)
   }
 
-  /// The search setup picked on the settings page: Jina's key when Jina is the backend and has one
+  /// The search setup picked on the settings page. The default backend uses no key; a keyed pick brings every keyed
+  /// backend that is set up, the picked one first. DeepSeek goes through `web_search_via`'s source (its address and
+  /// key) when one is named, else DeepSeek's own API with its search key
   pub fn web_search(&self) -> crate::tools::web::SearchSetup {
-    let jina = self.providers.web_search.as_deref() == Some("jina");
-    let key = || self.secrets.get(&web_secret_key("jina")).map(|k| k.trim().to_owned()).filter(|k| !k.is_empty());
-    crate::tools::web::SearchSetup { jina_key: if jina { key() } else { None } }
+    use crate::tools::web::{DeepSeekSearch, SearchSetup, tools_search_url};
+    let pick = self.providers.web_search.as_deref();
+    if !matches!(pick, Some("jina" | "deepseek")) {
+      return SearchSetup::default();
+    }
+    let key = |backend: &str| self.secrets.get(&web_secret_key(backend)).map(|k| k.trim().to_owned()).filter(|k| !k.is_empty());
+    let deepseek = match self.providers.web_search_via.as_deref() {
+      // A named source that is gone or has no key turns DeepSeek off rather than sending its queries elsewhere
+      Some(via) => self.providers.providers.iter().find(|p| p.id == via).and_then(|p| {
+        self.api_key(&p.id).map(|k| DeepSeekSearch { url: tools_search_url(&p.base_url), key: k.trim().to_owned() })
+      }),
+      None => key("deepseek").map(DeepSeekSearch::official),
+    };
+    SearchSetup { jina_key: key("jina"), deepseek, deepseek_first: pick == Some("deepseek") }
   }
 
   /// The fast model picked on the settings page, while it is still usable
@@ -142,6 +155,22 @@ mod tests {
     )
     .unwrap();
     assert_eq!(cache.get().web_search().jina_key.as_deref(), Some("j-1"));
+    assert_eq!(cache.get().web_search().deepseek, None);
+    // DeepSeek through the `ds` source: its address and key, ahead of the stored Jina key
+    std::fs::write(
+      dir.path().join(PROVIDERS_FILE),
+      json!({ "version": 1, "webSearch": "deepseek", "webSearchVia": "ds", "providers": [{ "id": "ds", "baseUrl": "http://x/v1", "models": [{ "id": "m" }] }] }).to_string(),
+    )
+    .unwrap();
+    let setup = cache.get().web_search();
+    assert_eq!((setup.deepseek.map(|d| (d.url, d.key)), setup.jina_key.as_deref(), setup.deepseek_first), (Some(("http://x/v1/tools/search".into(), "sk-1".into())), Some("j-1"), true));
+    // A named source that is gone turns DeepSeek off instead of falling back to its own API
+    std::fs::write(
+      dir.path().join(PROVIDERS_FILE),
+      json!({ "version": 1, "webSearch": "deepseek", "webSearchVia": "gone", "providers": [] }).to_string(),
+    )
+    .unwrap();
+    assert_eq!(cache.get().web_search().deepseek, None);
     std::fs::write(dir.path().join(PROVIDERS_FILE), "{ broken").unwrap();
     assert!(cache.get().error.is_some());
   }
