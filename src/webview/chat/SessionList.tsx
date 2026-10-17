@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { Check, ChevronDown, ChevronRight, Ellipsis, Folder, FolderInput, FolderOpen, Import, Inbox, ListFilter, LoaderCircle, Pencil, Pin, PinOff, Search, SquarePen, Trash2 } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Circle, Ellipsis, Folder, FolderInput, FolderOpen, Import, Inbox, ListFilter, LoaderCircle, Pencil, Pin, PinOff, Search, SquarePen, Trash2 } from 'lucide-react';
 import type { AgentId, AgentInfo, CategoryOp, NativeSessionInfo, SessionCategories, SessionCategory, SessionSummary } from '@shared/transcript';
 import type { ExportFormat, NativeSessionsState, SessionHit } from '@shared/protocol';
 import { inWorkspace, type SessionScope } from '@shared/settings';
@@ -21,7 +21,7 @@ import { buildSessionTree, categoryOf, draggable, dropAction, type CategoryNode,
 // A running session shows a spinning ring (the one place a spinner is allowed: a list has no verb to shimmer); the other states are plain dots.
 // Unread (a turn that finished unwatched) is a slightly larger dot in the strongest foreground with a halo rippling out of it;
 // motion=none / reduced motion drop the halo and leave the dot lit. Not the accent: its default brand amber is indistinguishable from waiting's warn
-const STATE_DOT: Record<Exclude<NonNullable<SessionSummary['state']>, 'working'>, string> = {
+const STATE_DOT: Record<Exclude<NonNullable<SessionSummary['state']>, 'working' | 'background'>, string> = {
   waiting: 'size-1.5 bg-warn',
   unread: 'size-unread-dot bg-fg-strong unread-halo',
   error: 'size-1.5 bg-danger',
@@ -32,12 +32,21 @@ const SEARCH_DEBOUNCE = 180;
 
 // Ring and dots share one fixed slot so every mark sits on the same centre line, and each names its meaning on hover.
 // The ring is drawn smaller than the slot: at full size its arc outweighed even an 8 px dot
-function StateMark({ state }: { state: NonNullable<SessionSummary['state']> }) {
-  const label = t(`session.state.${state}`);
+// Background (the turn ended, a task it started still runs) is the working ring at rest: a closed, still circle in the
+// faint foreground, so it reads as "not done, nothing to do". A reply that came in meanwhile lights it in the strongest
+// foreground with a dot inside, never the unread dot itself, which means finished
+interface Mark { state: NonNullable<SessionSummary['state']>; unread?: boolean }
+function StateMark({ state, unread }: Mark) {
+  const label = t(state === 'background' && unread ? 'session.state.backgroundUnread' : `session.state.${state}`);
   return <span className="flex size-3 shrink-0 items-center justify-center" title={label} aria-label={label} role="img">
     {state === 'working'
       ? <LoaderCircle className="size-2.5 animate-spin live-spin text-fg-2" strokeWidth={2.5} />
-      : <span className={cn('rounded-full', STATE_DOT[state])} />}
+      : state === 'background'
+        ? <span className="relative flex items-center justify-center">
+          <Circle className={cn('size-2.5', unread ? 'text-fg-strong' : 'text-fg-3')} strokeWidth={2.5} />
+          {unread && <span className="absolute size-1 rounded-full bg-fg-strong" />}
+        </span>
+        : <span className={cn('rounded-full', STATE_DOT[state])} />}
   </span>;
 }
 
@@ -98,10 +107,12 @@ type Over =
 const sameOver = (a?: Over, b?: Over) => JSON.stringify(a) === JSON.stringify(b);
 const newCategoryId = () => `c-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
-// What a collapsed group still tells about its sessions: the most urgent state inside
-const STATE_RANK: NonNullable<SessionSummary['state']>[] = ['working', 'waiting', 'error', 'unread'];
-function aggregate(sessions: SessionSummary[]): SessionSummary['state'] {
-  return STATE_RANK.find(state => sessions.some(s => s.state === state));
+// What a collapsed group still tells about its sessions: the most urgent state inside. A finished reply outranks
+// background work, which asks nothing of the user
+const STATE_RANK: NonNullable<SessionSummary['state']>[] = ['working', 'waiting', 'error', 'unread', 'background'];
+function aggregate(sessions: SessionSummary[]): Mark | undefined {
+  const state = STATE_RANK.find(state => sessions.some(s => s.state === state));
+  return state && { state, unread: state === 'background' && sessions.some(s => s.state === 'background' && s.unread) };
 }
 
 // Session list: search and agent filters stay visible even without history; pinned sessions get their own section on top.
@@ -433,7 +444,7 @@ function GroupHeader({ project, icon, name, title, badge, count, open, state, dr
   badge?: string;
   count: number;
   open: boolean;
-  state?: SessionSummary['state'];
+  state?: Mark;
   dragging?: boolean;
   editing?: boolean;
   onDragStart?: (e: DragEvent) => void;
@@ -481,7 +492,7 @@ function GroupHeader({ project, icon, name, title, badge, count, open, state, dr
       {!editing && (
         <span className="ml-auto flex shrink-0 items-center text-3 font-normal text-fg-3 tabular-nums">
           <span className={cn('flex items-center gap-2', actions && 'group-hover:hidden group-focus-within:hidden group-data-[menu-open]:hidden')}>
-            {state && <StateMark state={state} />}
+            {state && <StateMark {...state} />}
             <span className="text-right">{count}</span>
           </span>
           {actions && (
@@ -702,7 +713,7 @@ function Item({ session: s, agentName, terms, snippet, active, time, project, ed
         <span className="ml-auto flex shrink-0 items-center text-3 text-fg-3 tabular-nums">
           <span className="flex items-center gap-2 group-hover:hidden group-focus-within:hidden group-data-[menu-open]:hidden">
             {project && <span className="max-w-project truncate text-fg-3/70" title={s.cwd}>{project}</span>}
-            {s.state && <StateMark state={s.state} />}
+            {s.state && <StateMark state={s.state} unread={s.unread} />}
             <span className="min-w-session-time text-right">{time}</span>
           </span>
           <span className="hidden items-center gap-0.5 group-hover:flex group-focus-within:flex group-data-[menu-open]:flex">

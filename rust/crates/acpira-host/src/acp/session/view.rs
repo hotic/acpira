@@ -13,6 +13,7 @@ use serde_json::value::RawValue;
 
 use crate::acp::session::controls::picked_controls;
 use crate::acp::session::queue::queue_snapshot;
+use crate::acp::transcript::normalize::has_live_async_task;
 use crate::acp::session::{AcpSession, Core};
 use crate::store::record::{ForkedFrom, ImportedFrom, RecordSource, SessionRecord};
 
@@ -32,11 +33,13 @@ impl AcpSession {
       pinned: c.pinned,
       category: c.category.clone(),
       state: None,
+      unread: None,
     }
   }
 
-  /// The session list's state dot: waiting on the user, working, or ended in error. A permission card or question keeps
-  /// its turn running, so waiting is checked first: otherwise a turn blocked on the user shows the same spinner as one at work
+  /// The session list's state dot: waiting on the user, working, ended in error, or ended with background work still
+  /// running. A permission card or question keeps its turn running, so waiting is checked first: otherwise a turn blocked
+  /// on the user shows the same spinner as one at work
   pub fn list_state(&self) -> Option<SummaryState> {
     let c = self.core.lock();
     let waiting = visible_turns(&c).any(|t| {
@@ -52,8 +55,15 @@ impl AcpSession {
     }
     match visible_turns(&c).last() {
       Some(Turn::Agent(a)) if a.stop == Some(TurnStop::Error) => Some(SummaryState::Error),
+      _ if has_live_async_task(&c.state) => Some(SummaryState::Background),
       _ => None,
     }
+  }
+
+  /// A background task the agent reported (AIR `asyncTasks`: Claude's background Bash, Monitor, workflows) still runs and
+  /// is observed. A task whose process went away is marked unknown on disconnect, so this cannot outlive the agent
+  pub fn background_running(&self) -> bool {
+    has_live_async_task(&self.core.lock().state)
   }
 
   /// Still inside a turn: running, a prompt waiting on its pre-send compaction, or the workspace gate deciding about a follow-up

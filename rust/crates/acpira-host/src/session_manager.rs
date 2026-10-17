@@ -1233,7 +1233,10 @@ impl SessionManager {
       .into_iter()
       .map(|mut s| {
         let live_state = live.get(&s.id).and_then(|l| l.list_state());
-        s.state = live_state.or_else(|| unread.contains(&s.id).then_some(SummaryState::Unread));
+        let seen = !unread.contains(&s.id);
+        s.state = live_state.or_else(|| (!seen).then_some(SummaryState::Unread));
+        // A reply that came in while background work runs: the ring brightens instead of the finished dot showing
+        s.unread = (live_state == Some(SummaryState::Background) && !seen).then_some(true);
         s
       })
       .collect();
@@ -1454,12 +1457,13 @@ impl SessionManager {
 
   /// Announce the edges a user away from the session wants to hear about: a card waiting for them (at once), and a turn that
   /// has settled, once it stayed settled for ATTENTION_SETTLE (a queued follow-up or a hook's follow-up keeps it busy).
+  /// Background work the agent reported counts as busy too: a turn that ends on "I'll report when it's done" is not done.
   /// A turn the user cancelled is not announced. Whether the user is already looking is the shell's call
   fn watch_attention(&self, s: &Arc<AcpSession>) {
     let Some(announce) = self.deps.attention.clone() else { return };
     let id = s.id.clone();
     let waiting = s.list_state() == Some(SummaryState::Waiting);
-    let busy = s.turn_busy();
+    let busy = s.turn_busy() || s.background_running();
     let (asked, settled) = {
       let mut st = self.state.lock();
       let asked = if waiting {
@@ -1491,7 +1495,11 @@ impl SessionManager {
       let Some(m) = me.upgrade() else { return };
       let Some(s) = m.live(&id) else { return };
       // Another turn began meanwhile (it announces itself when it settles), or the session now waits on the user
-      if m.state.lock().settle_seq.get(&id) != Some(&seq) || s.turn_busy() || s.list_state() == Some(SummaryState::Waiting) {
+      if m.state.lock().settle_seq.get(&id) != Some(&seq)
+        || s.turn_busy()
+        || s.background_running()
+        || s.list_state() == Some(SummaryState::Waiting)
+      {
         return;
       }
       let kind = match s.last_stop() {
