@@ -459,7 +459,7 @@ export interface UserTurn {
 // `retry`: the previous turn failed after doing part of the work; Retry asked the agent to carry on instead of resending the message
 // `gate`: the workspace gate (`.agents/hooks.json`) blocked the previous turn and sent its findings back to the agent
 // `goal`: a goal control from the dock (set as goal, resume, clear) went out as its `/goal …` command; the goal row stands for it
-export type AutoReason = 'compact' | 'accountSwitch' | 'retry' | 'gate' | 'goal';
+export type AutoReason = 'compact' | 'accountSwitch' | 'retry' | 'gate' | 'goal' | 'subagents';
 
 export interface TurnSettings {
   modeId?: string;

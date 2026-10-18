@@ -136,6 +136,7 @@ fn auto_label(reason: Option<AutoReason>) -> &'static str {
     Some(AutoReason::Retry) => "automatic: retry",
     Some(AutoReason::Gate) => "automatic: workspace gate findings",
     Some(AutoReason::Goal) => "automatic: goal control",
+    Some(AutoReason::Subagents) => "automatic: summoned agents reported back",
   }
 }
 

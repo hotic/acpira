@@ -38,7 +38,7 @@ pub struct Staged {
 /// Who sent a prompt: the user (or the queue on the user's behalf), the over-threshold /compact, the continue that
 /// follows an automatic account switch, the continue a Retry sends after a failed turn that already did some work, or
 /// the workspace gate sending what blocked the last turn back to the agent (`hooks.rs`), or a goal control from the dock
-/// sent as its `/goal …` command (`session/goal.rs`)
+/// sent as its `/goal …` command (`session/goal.rs`), or the results summoned agents owe the root (`relay.rs`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Origin {
   User,
@@ -47,6 +47,7 @@ pub(crate) enum Origin {
   Retry,
   Gate,
   Goal,
+  Subagents,
 }
 
 impl Origin {
@@ -148,8 +149,11 @@ impl AcpSession {
         return;
       }
       // A reservation (the gate's follow-up, the switch's continue) was let go in `claim`; the queue stays where it is,
-      // since every entry it sent would be refused the same way
+      // since every entry it sent would be refused the same way. Owed results stay owed
       Gate::Elsewhere(reason) => {
+        if origin == Origin::Subagents {
+          self.core.lock().relays.delivered(false);
+        }
         self.log(&format!("turn refused: {reason}"));
         self.notify(&reason);
         return;
@@ -211,7 +215,22 @@ impl AcpSession {
   fn claim(&self, text: &str, drafts: &[Draft], origin: Origin, staged: Option<&Staged>) -> Gate {
     let auto = origin == Origin::Compact;
     let mut c = self.core.lock();
-    if origin.reserved() && (c.status != SessionStatus::Ready || c.phase.running) {
+    // Owed results go only into a free session, never behind anything (the queue is the user's): taken first, they stay
+    // owed for the next turn's end
+    if origin == Origin::Subagents
+      && (c.status != SessionStatus::Ready
+        || c.phase.running
+        || c.switching
+        || c.hooks.gating
+        || c.picks.adopt_pending
+        || c.ultracode.rebuilding
+        || c.peer.detached
+        || c.pending_prompt.is_some()
+        || !c.queue.entries.is_empty())
+    {
+      c.relays.delivered(false);
+      Gate::Drop
+    } else if origin.reserved() && (c.status != SessionStatus::Ready || c.phase.running) {
       // The switch (or the gate) reserved the session for this prompt; anything else taking it first makes it moot
       self.release_reservation(&mut c, origin);
       Gate::Drop
@@ -241,6 +260,11 @@ impl AcpSession {
       c.switching = false;
       if origin == Origin::Gate {
         c.hooks.gating = false;
+      }
+      match origin {
+        Origin::Subagents => c.relays.delivered(true),
+        Origin::User | Origin::Goal => c.relays.user_prompted(),
+        _ => {}
       }
       c.peer.idle = false;
       if origin != Origin::Compact {
@@ -352,7 +376,7 @@ impl AcpSession {
     let command_name = command_name(text).map(str::to_owned);
     let user_turn = match origin {
       Origin::Compact => UserTurn { text: text.to_owned(), auto: Some(true), ..Default::default() },
-      Origin::Continue | Origin::Retry | Origin::Gate | Origin::Goal => UserTurn {
+      Origin::Continue | Origin::Retry | Origin::Gate | Origin::Goal | Origin::Subagents => UserTurn {
         id: Some(random_uuid()),
         text: text.to_owned(),
         settings: Some(before.clone()),
@@ -361,6 +385,7 @@ impl AcpSession {
           Origin::Retry => AutoReason::Retry,
           Origin::Gate => AutoReason::Gate,
           Origin::Goal => AutoReason::Goal,
+          Origin::Subagents => AutoReason::Subagents,
           _ => AutoReason::AccountSwitch,
         }),
         ..Default::default()
@@ -761,6 +786,8 @@ impl AcpSession {
       self.relay_cancel(&mut c, &summoned);
       self.touch(&mut c);
     }
+    // Nothing they finished is delivered after a stop either
+    c.relays.void(None);
     let Some(proc) = c.proc.clone() else { return };
     if !c.phase.running {
       return;

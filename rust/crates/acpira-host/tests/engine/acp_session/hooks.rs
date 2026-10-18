@@ -551,7 +551,7 @@ async fn the_gate_waits_for_summoned_children_and_covers_what_they_wrote_meanwhi
   let target = p.file("child.txt");
   // The child is summoned and keeps working after the call answered; it writes once the root turn is over
   let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-  let args = acpira_host::relay::wire::AskArgs { agent: "fake-worker".into(), prompt: format!("relay: slow write={target}"), wait_secs: Some(0), ..Default::default() };
+  let args = acpira_host::relay::wire::AskArgs { agent: "fake-worker".into(), prompt: format!("relay: slow write={target}"), ..Default::default() };
   tokio::spawn(s.clone().relay_ask(roster.clone(), None, 0, args, tx));
   while rx.recv().await.is_some() {}
   // The root turn that holds the call ends while the child still runs: no gate yet
@@ -560,7 +560,7 @@ async fn the_gate_waits_for_summoned_children_and_covers_what_they_wrote_meanwhi
   assert!(p.payloads("after.log").is_empty());
   // The child finishes with the session idle: the gate runs then, over the file it wrote
   decisions(&h, 1).await;
+  // The first gate is the deferred one (its follow-ups and the delivery of the reply may gate again later)
   let after = p.payloads("after.log");
-  assert_eq!(after.len(), 1);
   assert!(after[0]["turn_files"].as_array().unwrap().iter().any(|f| f.as_str().unwrap().replace('\\', "/").ends_with("child.txt")), "{after:?}");
 }

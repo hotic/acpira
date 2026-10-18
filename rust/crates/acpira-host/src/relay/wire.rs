@@ -90,6 +90,10 @@ pub struct AskArgs {
   /// How long the call may wait before it answers "still working" (seconds; the MCP side derives it from the client)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub wait_secs: Option<u64>,
+  /// A new task: true = the call waits for the reply; false = it answers at once and the reply is delivered to the
+  /// caller when the round ends. Absent = the caller's default (the root does not wait)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub wait: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

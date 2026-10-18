@@ -21,8 +21,9 @@ use serde_json::{Map, Value, json};
 use tokio::sync::{mpsc, watch};
 
 use acpira_shared::subagents::{RelayMode, SubagentHarness, SubagentPersona, SubagentState};
-use acpira_shared::transcript::{SessionStatus, TurnStop};
+use acpira_shared::transcript::SessionStatus;
 
+use crate::acp::session::prompt::Origin;
 use crate::acp::session::updates::current_turn_index;
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::transcript::normalize::runtime_info_of;
@@ -39,6 +40,8 @@ use crate::relay::{MAX_DEPTH, MAX_RUNNING};
 const DEFAULT_WAIT: Duration = Duration::from_secs(50);
 const MAX_WAIT: Duration = Duration::from_secs(30 * 60);
 const PROGRESS_EVERY: Duration = Duration::from_secs(5);
+/// Automatic messages delivering finished rounds to the root, per prompt of the user's own
+const MAX_WAKES: u32 = 6;
 const TITLE_MAX: usize = 48;
 /// Mode ids that mean "read only" across the built-in CLIs: codex-acp `read-only`, Claude / OpenCode / Grok `plan`
 const READ_ONLY_MODES: [&str; 3] = ["read-only", "plan", "ask"];
@@ -51,6 +54,27 @@ const MODE_KEYS: [&str; 1] = ["mode"];
 
 /// The final word of a round: the reply text for the caller, or why there is none
 type RoundEnd = Option<std::result::Result<String, String>>;
+
+/// Where a root-called round's result stands: read by a call, owed to the root, delivered in an automatic message, or
+/// voided (the user stopped, the turn it belonged to was edited away)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Owed {
+  Running,
+  Unread,
+  /// Sent with the automatic message being claimed now; back to unread should that message not go out
+  Delivering,
+  Read,
+  Delivered,
+  Void,
+}
+
+/// One root-called round in the delivery ledger: its node, and the root turn that sent it (rounds sent in one turn are
+/// delivered together, once all of them ended)
+struct Owing {
+  node: String,
+  cohort: usize,
+  state: Owed,
+}
 
 /// One thread's process and native session
 pub(crate) struct RelayProc {
@@ -83,11 +107,72 @@ pub(crate) struct Relays {
   starting: Arc<watch::Sender<usize>>,
   /// The session closed: no round starts, a process spawned afterwards is ended at once
   closed: bool,
+  /// Root-called rounds and whether their results reached the root (in memory only: the children end with the session,
+  /// so a reopened one owes nothing)
+  ledger: Vec<Owing>,
+  /// Automatic deliveries since the user last prompted (`MAX_WAKES`)
+  wakes: u32,
+  /// Calls waiting on a thread's round right now: a round ending under one is read by it, never delivered as well
+  waiters: HashMap<String, usize>,
+}
+
+impl Relays {
+  fn owing(&mut self, node: &str) -> Option<&mut Owing> {
+    self.ledger.iter_mut().find(|o| o.node == node)
+  }
+
+  /// A call answered with this round's outcome: nothing is owed for it any more
+  fn read(&mut self, node: &str) {
+    if let Some(o) = self.owing(node).filter(|o| matches!(o.state, Owed::Running | Owed::Unread)) {
+      o.state = Owed::Read;
+    }
+  }
+
+  /// Rounds whose results nobody will want: the user's stop, an edit removing their turn
+  pub(crate) fn void(&mut self, nodes: Option<&[String]>) {
+    for o in &mut self.ledger {
+      if matches!(o.state, Owed::Running | Owed::Unread | Owed::Delivering) && nodes.is_none_or(|n| n.contains(&o.node)) {
+        o.state = Owed::Void;
+      }
+    }
+  }
+
+  /// Finished results owed to the root whose whole turn's batch has ended
+  fn deliverable(&self) -> Vec<String> {
+    let running: HashSet<usize> = self.ledger.iter().filter(|o| o.state == Owed::Running).map(|o| o.cohort).collect();
+    self.ledger.iter().filter(|o| o.state == Owed::Unread && !running.contains(&o.cohort)).map(|o| o.node.clone()).collect()
+  }
+
+  /// The automatic message was claimed (`true`: its results are delivered) or did not go out (owed again)
+  pub(crate) fn delivered(&mut self, sent: bool) {
+    for o in self.ledger.iter_mut().filter(|o| o.state == Owed::Delivering) {
+      o.state = if sent { Owed::Delivered } else { Owed::Unread };
+    }
+    if !sent {
+      self.wakes = self.wakes.saturating_sub(1);
+    }
+  }
+
+  /// A prompt of the user's own: the automatic deliveries start counting again
+  pub(crate) fn user_prompted(&mut self) {
+    self.wakes = 0;
+  }
 }
 
 impl Default for Relays {
   fn default() -> Self {
-    Relays { procs: HashMap::new(), rounds: HashMap::new(), calls: vec![], rows: HashSet::new(), notes: HashMap::new(), starting: Arc::new(watch::channel(0).0), closed: false }
+    Relays {
+      procs: HashMap::new(),
+      rounds: HashMap::new(),
+      calls: vec![],
+      rows: HashSet::new(),
+      notes: HashMap::new(),
+      starting: Arc::new(watch::channel(0).0),
+      closed: false,
+      ledger: vec![],
+      wakes: 0,
+      waiters: HashMap::new(),
+    }
   }
 }
 
@@ -426,8 +511,15 @@ impl AcpSession {
   /// One `ask_agent` call from an agent of this session (the root, or a summoned child when `caller` names its thread)
   pub async fn relay_ask(self: Arc<Self>, roster: Arc<Roster>, caller: Option<String>, depth: u32, args: AskArgs, out: mpsc::UnboundedSender<HubReply>) {
     let deadline = args.wait_secs.map(Duration::from_secs).unwrap_or(DEFAULT_WAIT).min(MAX_WAIT);
+    // The root sends a new task off unless it asks to wait: the ledger delivers the reply. A summoned caller has no one to
+    // deliver to yet, so it waits
+    let owed = caller.is_none();
+    let wait = args.wait.unwrap_or(!owed);
     match self.clone().relay_start(&roster, caller, depth, args).await {
-      Ok(Start::Wait { thread, persona }) => self.relay_wait(&thread, &persona, deadline, &out).await,
+      Ok(Start::Started { thread, persona }) if !wait => {
+        let _ = out.send(HubReply::Done(dispatched_text(&thread, &persona)));
+      }
+      Ok(Start::Started { thread, persona }) | Ok(Start::Wait { thread, persona }) => self.relay_wait(&thread, &persona, deadline, owed, &out).await,
       Ok(Start::Ended(reply)) => {
         let _ = out.send(reply);
       }
@@ -459,7 +551,9 @@ impl AcpSession {
         return Err(busy(&shown, &th));
       }
       if prompt.is_empty() {
-        let end = round_result(&self.core.lock(), node);
+        let mut c = self.core.lock();
+        c.relays.read(node);
+        let end = round_result(&c, node);
         return Ok(Start::Ended(final_reply(end, &th, &shown)));
       }
     }
@@ -520,13 +614,16 @@ impl AcpSession {
         tree.relay_link_call(&node, &call.tool_call_id, &mut RouteCtx { turn_index, root_turns: &mut state.turns });
       }
       c.relays.rounds.insert(thread.clone(), rx);
+      if caller.is_none() {
+        c.relays.ledger.push(Owing { node: node.clone(), cohort: turn_index, state: Owed::Running });
+      }
       // Counted from here until its process is registered or ended, so a close right now still waits for it
       let starting = Starting::enter(&c.relays.starting);
       self.touch(&mut c);
       (node, thread, starting)
     };
     let me = self.clone();
-    let round = Round { thread: thread.clone(), node: node.clone(), persona: persona.clone(), mode, peer, depth, brief };
+    let round = Round { thread: thread.clone(), node, persona: persona.clone(), mode, peer, depth, brief };
     tokio::spawn(async move {
       let end = me.clone().relay_round(&round, starting).await;
       let reply = {
@@ -538,6 +635,10 @@ impl AcpSession {
           }
           Err(e) => c.tree.relay_end(&round.node, SubagentState::Failed, Some(e.to_string())),
         }
+        let waited = c.relays.waiters.get(&round.thread).is_some_and(|n| *n > 0);
+        if let Some(o) = c.relays.owing(&round.node).filter(|o| o.state == Owed::Running) {
+          o.state = if waited { Owed::Read } else { Owed::Unread };
+        }
         me.drain_terminal(&mut c);
         c.relays.rounds.remove(&round.thread);
         me.touch(&mut c);
@@ -546,7 +647,7 @@ impl AcpSession {
       let _ = tx.send(Some(reply));
       me.relay_settled();
     });
-    Ok(Start::Wait { thread, persona })
+    Ok(Start::Started { thread, persona })
   }
 
   /// Summoned rounds still running: the session has work in the background even while its own turn is over
@@ -554,40 +655,70 @@ impl AcpSession {
     !c.relays.rounds.is_empty()
   }
 
-  /// A round ended. When it was the last one and the session is idle, what the background held back goes now: the
-  /// workspace gate over the span the children extended
+  /// A round ended. With the session idle, what the background held back goes now: the workspace gate over the span
+  /// the children extended once the last one is done, then (through the queue's turn) the results owed to the root
   fn relay_settled(self: &Arc<Self>) {
-    let deferred = {
+    let (idle, deferred) = {
       let c = self.core.lock();
-      c.status == SessionStatus::Ready && !c.phase.running && !Self::relay_background(&c) && c.hooks.deferred
+      let idle = c.status == SessionStatus::Ready && !c.phase.running;
+      (idle, idle && !Self::relay_background(&c) && c.hooks.deferred)
     };
-    if deferred && !self.hooks_after_turn() {
-      self.after_prompt(false, TurnStop::EndTurn);
+    if deferred && self.hooks_after_turn() {
+      return;
+    }
+    if idle {
+      self.flush_queue();
     }
   }
 
+  /// The queue is empty and the session free: deliver the finished results owed to the root in one automatic message.
+  /// Rounds sent in one turn go together once all of them ended; at most `MAX_WAKES` deliveries per prompt of the user's
+  pub(crate) fn relay_wake(self: &Arc<Self>) -> bool {
+    let text = {
+      let mut c = self.core.lock();
+      if c.relays.closed || c.relays.wakes >= MAX_WAKES {
+        return false;
+      }
+      let nodes = c.relays.deliverable();
+      if nodes.is_empty() {
+        return false;
+      }
+      for n in &nodes {
+        if let Some(o) = c.relays.owing(n) {
+          o.state = Owed::Delivering;
+        }
+      }
+      c.relays.wakes += 1;
+      wake_text(&c, &nodes)
+    };
+    self.log("relay: delivering finished rounds to the root");
+    let me = self.clone();
+    crate::util::run_prefix(Box::pin(async move { me.prompt_inner(text, vec![], Origin::Subagents, None, None).await }));
+    true
+  }
+
   /// Wait for the thread's running round up to the deadline, with progress lines meanwhile
-  async fn relay_wait(&self, thread: &str, persona: &SubagentPersona, deadline: Duration, out: &mpsc::UnboundedSender<HubReply>) {
-    let rx = self.core.lock().relays.rounds.get(thread).cloned();
+  async fn relay_wait(&self, thread: &str, persona: &SubagentPersona, deadline: Duration, owed: bool, out: &mpsc::UnboundedSender<HubReply>) {
+    let rx = {
+      let mut c = self.core.lock();
+      let rx = c.relays.rounds.get(thread).cloned();
+      if rx.is_some() {
+        *c.relays.waiters.entry(thread.to_owned()).or_default() += 1;
+      }
+      rx
+    };
     let Some(mut rx) = rx else {
       // The round ended between the call's check and now: its outcome is on the node
-      let end = {
-        let c = self.core.lock();
-        match c.tree.relay_latest(thread) {
-          Some((id, ..)) => round_result(&c, &id),
-          None => Err("is gone.".into()),
-        }
-      };
-      let _ = out.send(final_reply(end, thread, persona));
+      let _ = out.send(self.relay_read(thread, persona));
       return;
     };
+    let _waiting = Waiting { session: self, thread };
     let until = tokio::time::Instant::now() + deadline;
     let mut tick = tokio::time::interval(PROGRESS_EVERY);
     tick.tick().await;
     loop {
-      let ended = rx.borrow().clone();
-      if let Some(end) = ended {
-        let _ = out.send(final_reply(end, thread, persona));
+      if rx.borrow().is_some() {
+        let _ = out.send(self.relay_read(thread, persona));
         return;
       }
       tokio::select! {
@@ -598,15 +729,35 @@ impl AcpSession {
           }
         }
         _ = tokio::time::sleep_until(until) => {
-          let _ = out.send(HubReply::Done(format!(
-            "{} is still working (thread: {thread}{}). Call ask_agent again with this thread and an empty prompt to keep waiting for its reply.",
-            who(persona),
-            self.relay_activity(thread).map(|a| format!("; latest: {a}")).unwrap_or_default()
-          )));
+          let latest = self.relay_activity(thread).map(|a| format!("; latest: {a}")).unwrap_or_default();
+          // The root is owed the reply anyway; a summoned caller has to come back for it
+          let still_owed = owed && {
+            let c = self.core.lock();
+            c.tree.relay_latest(thread).is_some_and(|(id, ..)| c.relays.ledger.iter().any(|o| o.node == id && o.state == Owed::Running))
+          };
+          let next = if still_owed {
+            "Acpira sends you its reply in a message when it is done: carry on with other work or end your turn, and do not poll."
+          } else {
+            "Call ask_agent again with this thread and an empty prompt to keep waiting for its reply."
+          };
+          let _ = out.send(HubReply::Done(format!("{} is still working (thread: {thread}{latest}). {next}", who(persona))));
           return;
         }
       }
     }
+  }
+
+  /// The thread's latest round as a call answers it, marking it read
+  fn relay_read(&self, thread: &str, persona: &SubagentPersona) -> HubReply {
+    let mut c = self.core.lock();
+    let end = match c.tree.relay_latest(thread) {
+      Some((id, ..)) => {
+        c.relays.read(&id);
+        round_result(&c, &id)
+      }
+      None => Err("is gone.".into()),
+    };
+    final_reply(end, thread, persona)
   }
 
   fn relay_activity(&self, thread: &str) -> Option<String> {
@@ -806,7 +957,9 @@ impl AcpSession {
     // repeats the tool's name, hence before the name check
     let ended = matches!(u.get("status").and_then(Value::as_str), Some("completed" | "failed"));
     let known = if ended { c.relays.rows.remove(&tool_call_id) } else { c.relays.rows.contains(&tool_call_id) };
-    if ended && !c.relays.calls.is_empty() {
+    // Only this row's own pending entry: another call still waiting must not keep an adapter that sends the arguments
+    // with the ending update alone from tying this one
+    if ended && c.relays.calls.iter().any(|p| p.tool_call_id == tool_call_id) {
       c.relays.calls.retain(|p| p.tool_call_id != tool_call_id);
       return;
     }
@@ -865,6 +1018,7 @@ impl AcpSession {
     c.relays.rounds.clear();
     c.relays.calls.clear();
     c.relays.notes.clear();
+    c.relays.ledger.clear();
     (c.relays.procs.drain().map(|(_, rp)| rp.proc).collect(), c.relays.starting.subscribe())
   }
 
@@ -873,6 +1027,9 @@ impl AcpSession {
   pub(crate) fn relay_truncate(&self, c: &mut Core, turn_index: usize) {
     let doomed = c.tree.relay_running_from(turn_index);
     self.relay_cancel(c, &doomed);
+    // Results owed for the removed turns go with them, finished or not
+    let gone: Vec<String> = c.relays.ledger.iter().filter(|o| o.cohort >= turn_index).map(|o| o.node.clone()).collect();
+    c.relays.void(Some(&gone));
     c.tree.truncate(turn_index);
   }
 
@@ -995,6 +1152,24 @@ async fn relay_mode(proc: &AgentProcess, sid: &str, opened: &mut Value, start: O
   }
 }
 
+/// One call waiting on a thread (`Relays::waiters`), counted for as long as it lives
+struct Waiting<'a> {
+  session: &'a AcpSession,
+  thread: &'a str,
+}
+
+impl Drop for Waiting<'_> {
+  fn drop(&mut self) {
+    let mut c = self.session.core.lock();
+    if let Some(n) = c.relays.waiters.get_mut(self.thread) {
+      *n = n.saturating_sub(1);
+      if *n == 0 {
+        c.relays.waiters.remove(self.thread);
+      }
+    }
+  }
+}
+
 /// What one round runs with
 struct Round {
   thread: String,
@@ -1008,6 +1183,9 @@ struct Round {
 }
 
 enum Start {
+  /// A new round is running
+  Started { thread: String, persona: SubagentPersona },
+  /// A wait call on a thread whose round is running
   Wait { thread: String, persona: SubagentPersona },
   Ended(HubReply),
 }
@@ -1042,6 +1220,34 @@ fn final_reply(end: std::result::Result<String, String>, thread: &str, persona: 
     Ok(reply) => HubReply::Done(done_text(&reply, thread, persona)),
     Err(e) => HubReply::Error(format!("{} {e}", who(persona))),
   }
+}
+
+/// What a call that sent a task off answers: the thread, and that the reply comes by itself
+fn dispatched_text(thread: &str, persona: &SubagentPersona) -> String {
+  format!(
+    "Sent to {} (thread: {thread}). Carry on with other work that does not depend on it, or end your turn if there is none: \
+Acpira sends you its reply in a message when it is done. Do not poll, and do not do this task yourself meanwhile.",
+    who(persona)
+  )
+}
+
+/// The automatic message delivering finished rounds: each one as a call would have read it, under its persona and thread
+fn wake_text(c: &Core, nodes: &[String]) -> String {
+  let mut parts = vec![if nodes.len() == 1 {
+    "(Acpira) A summoned agent you sent off has finished. Its reply:".to_owned()
+  } else {
+    format!("(Acpira) The {} summoned agents you sent off have finished. Their replies:", nodes.len())
+  }];
+  for node in nodes {
+    let Some((h, name)) = c.tree.relay_harness(node) else { continue };
+    let persona = node_persona(&h, name.as_deref());
+    let text = match final_reply(round_result(c, node), &h.thread, &persona) {
+      HubReply::Done(t) | HubReply::Error(t) => t,
+      _ => continue,
+    };
+    parts.push(format!("## {}\n\n{text}", who(&persona)));
+  }
+  parts.join("\n\n")
 }
 
 fn done_text(reply: &str, thread: &str, persona: &SubagentPersona) -> String {
