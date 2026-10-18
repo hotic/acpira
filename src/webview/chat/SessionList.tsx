@@ -474,16 +474,16 @@ function GroupHeader({ project, icon, name, title, badge, count, open, state, dr
       onClick={() => { if (!editing) onToggle?.(); }}
       onKeyDown={e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onToggle?.(); } }}
       className={cn(
-        'group flex min-h-row items-center gap-gap rounded-md px-2 text-2 transition-colors hover:bg-hover focus-visible:bg-hover',
+        'group flex min-h-row items-center gap-gap rounded-md px-2 text-2 transition-colors hover:bg-hover focus-visible:bg-hover data-[menu-open]:bg-hover',
         onToggle && 'cursor-pointer',
         project ? 'font-semibold text-fg-strong' : 'text-fg-1',
         dragging && 'opacity-40',
       )}
     >
       <span className="flex size-lead shrink-0 items-center justify-center text-fg-3">
-        <span className={cn('flex', onToggle && 'group-hover:hidden group-focus-visible:hidden')}>{icon}</span>
+        <span className={cn('flex', onToggle && 'group-hover:hidden group-focus-visible:hidden group-data-[menu-open]:hidden')}>{icon}</span>
         {onToggle && (
-          <span className="hidden group-hover:flex group-focus-visible:flex">
+          <span className="hidden group-hover:flex group-focus-visible:flex group-data-[menu-open]:flex">
             {open ? <ChevronDown className="size-icon" strokeWidth={1.5} /> : <ChevronRight className="size-icon" strokeWidth={1.5} />}
           </span>
         )}
@@ -512,9 +512,9 @@ function GroupHeader({ project, icon, name, title, badge, count, open, state, dr
                 </button>
               )}
               {menu && (
-                <DropdownMenu.Root onOpenChange={setMenuOpen}>
+                <DropdownMenu.Root onOpenLifecycle={setMenuOpen}>
                   <DropdownMenu.Trigger render={<button type="button" title={t('session.more')} aria-label={t('session.more')} className={act}><Ellipsis className="size-3" strokeWidth={1.5} /></button>} />
-                  <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="end" width="md"><DropdownMenu.Popup>{menu}</DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
+                  <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="end" width="md"><DropdownMenu.Popup finalFocus={false}>{menu}</DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
                 </DropdownMenu.Root>
               )}
             </span>

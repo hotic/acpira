@@ -372,6 +372,8 @@ export const ja = {
   'turn.stats': '応答の統計',
   'stats.model': 'モデル',
   'stats.duration': '所要時間',
+  'stats.ttft': '初回トークン応答',
+  'stats.outputSpeed': '出力速度',
   'stats.toolCalls': 'ツール呼び出し',
   'stats.modelCalls': 'モデルのラウンド',
   'stats.input': '入力トークン',

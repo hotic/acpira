@@ -373,6 +373,8 @@ export const ru = {
   'turn.stats': 'Статистика ответа',
   'stats.model': 'Модель',
   'stats.duration': 'Длительность',
+  'stats.ttft': 'Время до первого токена',
+  'stats.outputSpeed': 'Скорость вывода',
   'stats.toolCalls': 'Вызовы инструментов',
   'stats.modelCalls': 'Раунды модели',
   'stats.input': 'Входные токены',

@@ -117,7 +117,7 @@ function CommandPrompt({ command }: { command: string }) {
     if (!wrap || !el) return;
     let width = -1;
     const measure = () => {
-      if (wrap.clientWidth === width) return;
+      if (!wrap.clientWidth || wrap.clientWidth === width) return;
       width = wrap.clientWidth;
       setCut(fitCommand(el, command));
     };

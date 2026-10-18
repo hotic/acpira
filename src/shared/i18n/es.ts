@@ -365,6 +365,8 @@ export const es = {
   'turn.stats': 'Estadísticas de la respuesta',
   'stats.model': 'Modelo',
   'stats.duration': 'Duración',
+  'stats.ttft': 'Tiempo al primer token',
+  'stats.outputSpeed': 'Velocidad de salida',
   'stats.toolCalls': 'Llamadas a herramientas',
   'stats.modelCalls': 'Rondas del modelo',
   'stats.input': 'Tokens de entrada',

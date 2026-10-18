@@ -380,6 +380,8 @@ export const zhTW = {
   'turn.stats': '回覆統計',
   'stats.model': '模型',
   'stats.duration': '用時',
+  'stats.ttft': '首字回應',
+  'stats.outputSpeed': '輸出速度',
   'stats.toolCalls': '工具呼叫',
   'stats.modelCalls': '模型輪次',
   'stats.input': '輸入 token',

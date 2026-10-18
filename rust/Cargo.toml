@@ -34,5 +34,4 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 
 [profile.release]
 lto = "thin"
-codegen-units = 1
 strip = "symbols"

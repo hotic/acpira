@@ -370,6 +370,8 @@ export const en = {
   'turn.stats': 'Response statistics',
   'stats.model': 'Model',
   'stats.duration': 'Duration',
+  'stats.ttft': 'Time to first token',
+  'stats.outputSpeed': 'Output speed',
   'stats.toolCalls': 'Tool calls',
   'stats.modelCalls': 'Model rounds',
   'stats.input': 'Input tokens',
