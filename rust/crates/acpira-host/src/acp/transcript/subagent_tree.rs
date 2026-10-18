@@ -1333,13 +1333,20 @@ impl SubagentTree {
     self.by_tool.contains_key(tool_call_id)
   }
 
-  /// The model the child really runs (what its config options say after the persona's choice was applied)
-  pub fn relay_set_model(&mut self, id: &str, model: Option<String>) {
+  /// The model and reasoning effort the child really runs (what its config options say after the persona's choice was
+  /// applied)
+  pub fn relay_set_controls(&mut self, id: &str, model: Option<String>, effort: Option<String>) {
     let Some(i) = self.idx(id) else { return };
-    if self.nodes[i].model != model {
-      self.nodes[i].model = model;
-      self.bump(id);
+    let n = &mut self.nodes[i];
+    let effort_changed = n.harness.as_ref().is_some_and(|h| h.effort != effort);
+    if n.model == model && !effort_changed {
+      return;
     }
+    n.model = model;
+    if let Some(h) = n.harness.as_mut() {
+      h.effort = effort;
+    }
+    self.bump(id);
   }
 
   /// Mark a running summoned node cancelled-on-request, bound to its native session or not yet (a round still

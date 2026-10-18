@@ -48,6 +48,7 @@ export interface SubagentHarness {
   thread: string;
   round: number;
   sessionId?: string;  // the child CLI's own session id (peer.sessionId is Acpira's routing key)
+  effort?: string;     // the reasoning effort the child session really runs (the CLI's option name); absent = none reported
 }
 
 // bypass = work without approvals: the CLI's own full-access mode where it has one, and its permission requests are

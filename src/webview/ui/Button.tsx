@@ -100,17 +100,23 @@ export interface ChipProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 // A badge inside a Chip's `tags`: --text-4 on the active fill; `ultra` tints it, an icon (Fast's bolt) leads the text.
 // `short` replaces the text below the sm container tier, together with the caret going ('' keeps only the icon), so a
-// narrow toolbar shows [M] [⚡] instead of clipping the badges away
-export function ChipTag({ tone, icon, short, children }: { tone?: 'ultra'; icon?: ReactNode; short?: string; children: ReactNode }) {
+// narrow toolbar shows [M] [⚡] instead of clipping the badges away. `small` is the quieter badge next to faint row text
+// (a summoned subagent's effort): a shorter box in the row's own faint tone
+export function ChipTag({ tone, icon, short, small, children }: { tone?: 'ultra'; icon?: ReactNode; short?: string; small?: boolean; children: ReactNode }) {
   const compact = short !== undefined;
   return (
-    <span className={cn('inline-flex h-4 shrink-0 items-center gap-0.5 rounded-xs px-1 text-4 leading-none', tone === 'ultra' ? 'bg-ultra/15 text-ultra' : 'bg-active text-fg-2')}>
+    <span className={cn('inline-flex shrink-0 items-center gap-0.5 rounded-xs px-1 text-4 leading-none', small ? 'h-3.5' : 'h-4',
+      tone === 'ultra' ? 'bg-ultra/15 text-ultra' : cn('bg-active', small ? 'text-fg-3' : 'text-fg-2'))}>
       {icon}
-      <span className={cn(compact && '@max-sm:hidden')}>{children}</span>
-      {short && <span className="hidden @max-sm:inline">{short}</span>}
+      <span className={cn(TRIM_CAPS, compact && '@max-sm:hidden')}>{children}</span>
+      {short && <span className={cn(TRIM_CAPS, 'hidden @max-sm:inline')}>{short}</span>}
     </span>
   );
 }
+
+// The badge text's box is trimmed to cap height and baseline, so centring it centres the capitals; untrimmed, Inter's
+// ascender space sits them about 1px low in the 16px box. Hosts without text-box support keep the untrimmed look
+const TRIM_CAPS = '[text-box:trim-both_cap_alphabetic]';
 
 // Turns a trigger's down arrow over while its menu is open; the trigger carries `group/chip`. Shared by the hand-built
 // triggers (SelectRow, the session list filter) so every dropdown arrow behaves alike
