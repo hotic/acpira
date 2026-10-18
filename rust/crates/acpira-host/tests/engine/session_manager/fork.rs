@@ -128,7 +128,8 @@ async fn forking_onto_another_agent_starts_it_like_a_new_session_and_records_whe
   let record = v(store.load(&fork).await.unwrap());
   expect_match(&record, json!({ "agent": "fake2", "historyPending": true, "forkedFrom": { "sessionId": src, "turnIndex": 1, "agent": "fake", "model": "Model 2" } }));
   m.handle(json!({ "type": "send", "text": "again" })).await;
-  assert!(last_turn(&m.active().unwrap())["blocks"].to_string().contains("resource:acpira://history/"));
+  let reply = last_turn(&m.active().unwrap())["blocks"].to_string();
+  assert!(reply.contains("resource:acpira://history/") && reply.contains("All of it ran on another agent (fake, model Model 2)"), "{reply}");
   // Naming the source's own agent is a plain fork; an agent this engine cannot launch is refused
   m.handle(json!({ "type": "forkSession", "sessionId": src, "turnIndex": 1, "agent": "fake" })).await;
   let same = m.active_id().unwrap();

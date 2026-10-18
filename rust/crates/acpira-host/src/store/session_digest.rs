@@ -252,11 +252,39 @@ fn header(r: &SessionRecord, meta: &DigestMeta, rounds: usize) -> String {
 
 /// Lines that hold whatever the session left behind: files, plan, documents, subagents, the last error
 fn key_facts(r: &SessionRecord) -> Vec<String> {
+  let mut out = turn_facts(&r.turns, &r.cwd);
+  let subs: Vec<String> = r
+    .subagents
+    .iter()
+    .flatten()
+    .take(10)
+    .map(|s| {
+      let name = s.core.title.as_deref().or(s.core.task.as_deref()).unwrap_or("subagent");
+      let state = match s.core.state {
+        SubagentState::Running => "running",
+        SubagentState::Completed => "completed",
+        SubagentState::Failed => "failed",
+        SubagentState::Cancelled => "cancelled",
+        SubagentState::Disconnected => "disconnected",
+      };
+      format!("{} ({state})", line(name, 80))
+    })
+    .collect();
+  if !subs.is_empty() {
+    // Ahead of the last error, which stays the closing fact
+    let at = out.iter().position(|l| l.starts_with("- Last error")).unwrap_or(out.len());
+    out.insert(at, format!("- Subagents: {}", subs.join(", ")));
+  }
+  out
+}
+
+/// The key facts the turns themselves hold: edited files, the last plan, plan documents, the last error
+fn turn_facts(turns: &[Turn], cwd: &str) -> Vec<String> {
   let mut edits: BTreeMap<String, (u64, u64, u32)> = BTreeMap::new();
   let mut plan: Option<&[PlanEntry]> = None;
   let mut docs: Vec<String> = vec![];
   let mut error: Option<(u32, String)> = None;
-  for round in rounds(&r.turns) {
+  for round in rounds(turns) {
     for a in round.agents() {
       for b in &a.blocks {
         match b {
@@ -269,7 +297,7 @@ fn key_facts(r: &SessionRecord) -> Vec<String> {
               && t.status == ToolStatus::Completed
               && let Some(p) = tool_path(t)
             {
-              let e = edits.entry(rel(p, &r.cwd).to_owned()).or_default();
+              let e = edits.entry(rel(p, cwd).to_owned()).or_default();
               if let Some(d) = &t.diff_stat {
                 e.0 += d.add;
                 e.1 += d.del;
@@ -304,26 +332,6 @@ fn key_facts(r: &SessionRecord) -> Vec<String> {
   }
   if !docs.is_empty() {
     out.push(format!("- Plan documents: {}", docs.join(", ")));
-  }
-  let subs: Vec<String> = r
-    .subagents
-    .iter()
-    .flatten()
-    .take(10)
-    .map(|s| {
-      let name = s.core.title.as_deref().or(s.core.task.as_deref()).unwrap_or("subagent");
-      let state = match s.core.state {
-        SubagentState::Running => "running",
-        SubagentState::Completed => "completed",
-        SubagentState::Failed => "failed",
-        SubagentState::Cancelled => "cancelled",
-        SubagentState::Disconnected => "disconnected",
-      };
-      format!("{} ({state})", line(name, 80))
-    })
-    .collect();
-  if !subs.is_empty() {
-    out.push(format!("- Subagents: {}", subs.join(", ")));
   }
   if let Some((n, e)) = error {
     out.push(format!("- Last error (turn {n}): {e}"));
@@ -422,6 +430,70 @@ pub fn outline(r: &SessionRecord, meta: &DigestMeta) -> String {
     }
   }
   out.push_str(&last_block);
+  out.push_str(&tail);
+  cut(&out, OUTLINE_BYTES)
+}
+
+/// Each turn's number as `read_session` counts it (`TurnCounter`), by index into `turns`
+pub fn round_numbers(turns: &[Turn]) -> Vec<u32> {
+  let mut counter = TurnCounter::default();
+  turns
+    .iter()
+    .map(|t| match t {
+      Turn::User(u) => counter.user(u.auto == Some(true)),
+      Turn::Agent(_) => counter.agent(),
+    })
+    .collect()
+}
+
+/// What a handoff puts in place of the turns it had to leave out: the key facts of the whole conversation (`turns`),
+/// then one line per omitted turn (numbers 1 to `omitted`), the middle folded when they do not fit. No last reply: the
+/// turns kept after it carry the end. `hint` closes it when the receiving agent can read the rest on its own
+pub fn handoff_outline(turns: &[Turn], cwd: &str, omitted: u32, hint: Option<&str>) -> String {
+  let rounds = rounds(turns);
+  let mut out = format!("Turns 1-{omitted} of this conversation were left out to fit the size limit; this outline stands in for them.\n");
+  let facts = turn_facts(turns, cwd);
+  if !facts.is_empty() {
+    out.push_str("\n## Key facts (whole conversation)\n");
+    out.push_str(&cut(&facts.join("\n"), 3 * 1024));
+    out.push('\n');
+  }
+  out.push_str("\n## Omitted turns\n");
+  let tail = hint.map(|h| format!("\n{h}\n")).unwrap_or_default();
+  let lines: Vec<String> = rounds.iter().take_while(|r| r.n <= omitted).map(round_line).collect();
+  let room = OUTLINE_BYTES.saturating_sub(out.len() + tail.len() + 80);
+  let total: usize = lines.iter().map(|l| l.len() + 1).sum();
+  if total <= room {
+    for l in &lines {
+      out.push_str(l);
+      out.push('\n');
+    }
+  } else {
+    // The opening turns set the task, the ones just before the kept history lead into it
+    let head: Vec<&String> = lines.iter().take(3).collect();
+    let mut used: usize = head.iter().map(|l| cut(l, room / 3).len() + 1).sum();
+    let mut closing: Vec<&String> = vec![];
+    for l in lines.iter().skip(head.len()).rev() {
+      if used + l.len() + 1 > room {
+        break;
+      }
+      used += l.len() + 1;
+      closing.push(l);
+    }
+    closing.reverse();
+    for l in &head {
+      out.push_str(&cut(l, room / 3));
+      out.push('\n');
+    }
+    let first_kept = lines.len() - closing.len();
+    if first_kept > head.len() {
+      out.push_str(&format!("(turns {}-{first_kept} folded)\n", head.len() + 1));
+    }
+    for l in closing {
+      out.push_str(l);
+      out.push('\n');
+    }
+  }
   out.push_str(&tail);
   cut(&out, OUTLINE_BYTES)
 }
