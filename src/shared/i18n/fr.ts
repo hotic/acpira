@@ -364,6 +364,7 @@ export const fr = {
   'turns.command.option': '{name} : {value}',
   'turn.copy': 'Copier la réponse',
   'turn.fork': 'Bifurquer à partir d’ici',
+  'turn.forkedFrom': 'Bifurqué depuis',
   'turn.stats': 'Statistiques de la réponse',
   'stats.model': 'Modèle',
   'stats.duration': 'Durée',

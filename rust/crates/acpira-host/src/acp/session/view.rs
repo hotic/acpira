@@ -139,6 +139,11 @@ impl AcpSession {
       goal: c.state.goal.as_ref(),
       goal_actions: Self::goal_actions_of(&c),
       subagents: subagents.as_deref(),
+      forked_from: c.lineage.forked_from.as_ref().filter(|f| f.turn_index >= 0).map(|f| ForkOrigin {
+        session_id: f.session_id.clone(),
+        turn_index: f.turn_index,
+        agent: f.agent.clone(),
+      }),
       created_at: &self.created_at,
       updated_at: &c.updated_at,
     };
@@ -260,6 +265,8 @@ struct ViewRef<'a> {
   goal_actions: Option<Vec<GoalAction>>,
   #[serde(skip_serializing_if = "Option::is_none")]
   subagents: Option<&'a [SubagentSummary]>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  forked_from: Option<ForkOrigin>,
   created_at: &'a str,
   updated_at: &'a str,
 }

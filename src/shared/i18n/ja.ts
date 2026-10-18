@@ -370,6 +370,7 @@ export const ja = {
   'turns.command.option': '{name}：{value}',
   'turn.copy': '返信をコピー',
   'turn.fork': 'ここからフォーク',
+  'turn.forkedFrom': 'フォーク元',
   'turn.stats': '応答の統計',
   'stats.model': 'モデル',
   'stats.duration': '所要時間',

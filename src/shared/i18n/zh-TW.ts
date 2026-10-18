@@ -378,6 +378,7 @@ export const zhTW = {
   'turns.command.option': '{name}：{value}',
   'turn.copy': '複製回覆',
   'turn.fork': '從這裡分支',
+  'turn.forkedFrom': '分支來源',
   'turn.stats': '回覆統計',
   'stats.model': '模型',
   'stats.duration': '用時',

@@ -373,6 +373,7 @@ export const ru = {
   'turns.command.mode': 'Режим изменён на {mode}',
   'turn.copy': 'Копировать ответ',
   'turn.fork': 'Ответвиться отсюда',
+  'turn.forkedFrom': 'Ответвлено от',
   'turn.stats': 'Статистика ответа',
   'stats.model': 'Модель',
   'stats.duration': 'Длительность',

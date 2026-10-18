@@ -402,6 +402,7 @@ pub fn chatgpt_view(r: &ChatGptRecord, now: i64) -> SessionView {
     goal: None,
     goal_actions: None,
     subagents: None,
+    forked_from: None,
     created_at: r.created_at.clone(),
     updated_at: r.updated_at.clone(),
   }

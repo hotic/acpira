@@ -368,6 +368,7 @@ export const en = {
   'turns.command.option': '{name}: {value}',
   'turn.copy': 'Copy reply',
   'turn.fork': 'Fork from here',
+  'turn.forkedFrom': 'Forked from',
   'turn.stats': 'Response statistics',
   'stats.model': 'Model',
   'stats.duration': 'Duration',

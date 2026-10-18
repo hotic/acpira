@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Check, CircleAlert, Network, Paperclip, X } from 'lucide-react';
-import type { ExternalSessionInfo, AccountInfo, AgentId, AgentInfo, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@shared/transcript';
+import type { ExternalSessionInfo, AccountInfo, AgentId, AgentInfo, ForkOrigin, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
 import type { ModelShapes } from '@shared/modelShapes';
 import type { HiddenMap, SessionScope } from '@shared/settings';
@@ -45,6 +45,7 @@ import { BUILTIN_AGENT_ID } from '@shared/providers';
 import type { SettingsPage } from '../settings/Nav';
 import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, DiffSourceContext, OpenBlobContext, OpenSessionContext, SessionTitleContext } from './fileLinks';
 import { TurnActionsContext } from './TurnActions';
+import { ForkBoundary } from './ForkBoundary';
 import { SubagentInspector } from './subagents/SubagentInspector';
 import { InspectorSplitter, clamp, usePreferredPaneWidth, type PaneBounds } from './subagents/InspectorSplitter';
 import { SubagentGraph } from './subagents/SubagentGraph';
@@ -156,6 +157,8 @@ export interface ShellProps {
   turns: Turn[];
   running: boolean;
   queued?: QueuedPrompt[];
+  // A fork's origin while its copied turns are still there (SessionView.forkedFrom): the thread draws the boundary under them
+  forkedFrom?: ForkOrigin;
   // The session goal and the controls the agent advertised for it (SessionView.goal / goalActions)
   goal?: SessionGoal;
   goalActions?: GoalAction[];
@@ -549,6 +552,7 @@ export function Shell(p: ShellProps) {
                         <TurnActionsContext.Provider value={turnActions}>
                           <Thread key={p.activeSessionId} turns={held.turns} running={held.running} wide={wide} replayKey={p.replayKey} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands} summons={summons}
                             onSetGoal={setGoal} subagents={p.subagents} onInspect={onInspect} onFailureAction={failureAction}
+                            forkedFrom={p.external ? undefined : p.forkedFrom} agents={p.agents} agentId={p.agent.id}
                             onPermission={(blockId, optionId) => { if (p.activeSessionId) on.permission(p.activeSessionId, blockId, optionId); }} />
                         </TurnActionsContext.Provider>
                       </OpenToolFileContext.Provider>
@@ -677,6 +681,10 @@ interface ThreadProps {
   // Enabled subagent persona names: sent user messages paint their `@name` tokens like the composer does
   summons?: readonly string[];
   subagents?: SubagentSummary[];
+  // The fork boundary: drawn after the exchange holding the last copied turn
+  forkedFrom?: ForkOrigin;
+  agents: AgentInfo[];
+  agentId: AgentId;
   onInspect?: (id: string) => void;
   onPermission: (blockId: string, optionId: string) => void;
   onFailureAction?: (action: FailureAction) => void;
@@ -697,7 +705,7 @@ const STAGGER_CAP = 12;
 // Conversation flow: stick-to-bottom following happens on transcript changes (new content / streaming growth) and on async growth
 // (images, diagrams) until the user touches the thread; user actions like expand / collapse never touch the scroll position —
 // the toggle under the mouse stays put while the content below it moves. Scrolling away from the bottom releases the follow; scrolling back to the bottom restores it
-function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands, summons, subagents, onInspect, onPermission, onFailureAction, onSetGoal }: ThreadProps) {
+function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands, summons, subagents, forkedFrom, agents, agentId, onInspect, onPermission, onFailureAction, onSetGoal }: ThreadProps) {
   const ref = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const bodyRef = useMergedRefs(contentRef, body);
@@ -767,21 +775,24 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
           turnIndex={ti} last={ti === turns.length - 1} settings={previous?.role === 'user' ? previous.settings : undefined} actions={!switchedAway} joined={switchedIn}
           subagents={mine} allSubagents={mine ? subagents : undefined} onInspect={onInspect} onFailureAction={onFailureAction} />);
   });
+  // The fork boundary follows the exchange that holds the last copied turn, as a row of its own: inside that exchange it
+  // would stand after the reply's action row, which the exchange spacing keys off
+  const forkAfter = forkedFrom ? exchanges.filter(e => e.key <= forkedFrom.turnIndex).length - 1 : -1;
   // The right padding gives the scrollbar gutter back, so the transcript's edges line up with the header and the dock
   return (
     <div ref={ref} data-thread className="thread-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter [container-type:size] [overflow-anchor:none]">
       {/* The tail clearance equals the message gap, so the last message sits as far from the composer as from the message above it */}
       <div key={replayKey} ref={bodyRef} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-chat-column')}><FollowContext.Provider value={follow}><QuietEntranceContext.Provider value={opening}>
-        {exchanges.map(exchange => (
+        {exchanges.map((exchange, k) => <Fragment key={exchange.key}>{
           // Positioned so the prompt's stuck-state sentinel can sit at the exchange's top edge. Paint containment gives each exchange
           // its own paint offset, so a fold opening mid-thread no longer re-walks every later exchange each frame (see docs/dev/webview.md,
           // transcript render budget); the clip it brings is pushed out by --hit on the left and bottom, where row hit areas and
           // card shadows reach past the column, and on the right only as far as the thread's right padding (--hit-end), and the top edge stays put for the sentinel. An exchange ending in a reply's action
           // row pulls the next one up to a row gap: the row's own height already separates them (TurnActions).
-          <section key={exchange.key} data-exchange className="relative -ml-hit -mr-hit-end -mb-hit flex min-w-0 flex-col gap-msg pl-hit pr-hit-end pb-hit contain-paint has-[>:last-child>[data-turn-actions]:last-child]:-mb-[calc(var(--spacing-hit)+var(--spacing-msg-join))]">
+          <section data-exchange className="relative -ml-hit -mr-hit-end -mb-hit flex min-w-0 flex-col gap-msg pl-hit pr-hit-end pb-hit contain-paint has-[>:last-child>[data-turn-actions]:last-child]:-mb-[calc(var(--spacing-hit)+var(--spacing-msg-join))]">
             {exchange.messages}
           </section>
-        ))}
+        }{k === forkAfter && forkedFrom && <ForkBoundary origin={forkedFrom} agents={agents} agentId={agentId} />}</Fragment>)}
       </QuietEntranceContext.Provider></FollowContext.Provider></div>
     </div>
   );

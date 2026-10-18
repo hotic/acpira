@@ -364,6 +364,7 @@ export const es = {
   'turns.command.mode': 'Modo cambiado a {mode}',
   'turn.copy': 'Copiar respuesta',
   'turn.fork': 'Bifurcar desde aquí',
+  'turn.forkedFrom': 'Bifurcado desde',
   'turn.stats': 'Estadísticas de la respuesta',
   'stats.model': 'Modelo',
   'stats.duration': 'Duración',
