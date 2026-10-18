@@ -2077,3 +2077,24 @@ mod local_path_tests {
     );
   }
 }
+
+#[cfg(test)]
+mod retitled_row_tests {
+  use super::*;
+  use serde_json::json;
+
+  // The built-in agent turns the row a stream opened for an edit into the row of the to-do list the edit carried
+  // (acpira-agent `turn.rs`, `ride_todo`), so the list sits above the edit
+  #[test]
+  fn a_streamed_row_retitled_todo_becomes_the_to_do_row() {
+    let mut s = NormalizeState::new(vec![]);
+    let todos = json!({ "todos": [{ "content": "fix it", "status": "in_progress" }] });
+    apply_update(&mut s, &json!({ "sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "Edit", "kind": "edit", "status": "pending" }));
+    apply_update(&mut s, &json!({ "sessionUpdate": "tool_call_update", "toolCallId": "call-1", "title": "todo", "kind": "other", "status": "pending", "rawInput": todos }));
+    apply_update(&mut s, &json!({ "sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "completed", "rawOutput": todos }));
+    let loc = find_tool(&s.turns, "call-1").unwrap();
+    let AgentBlock::ToolCall(b) = &agent(&mut s, loc.0).blocks[loc.1] else { panic!("not a tool row") };
+    assert!(acpira_shared::todo_tools::is_todo_tool(b), "{:?} {:?}", b.verb_key, b.kind);
+    assert_eq!(b.todo_entries.as_ref().expect("the to-do bar reads the list")[0].title, "fix it");
+  }
+}

@@ -1001,6 +1001,8 @@ struct Prepared {
   /// The `acpira/mcp` note of an MCP call, on its permission card too
   meta: Option<Value>,
   riders: Riders,
+  /// The note the call's result starts with when it carried the to-do list (`todos`), set while preparing
+  todo: Option<String>,
 }
 
 /// What a call of a built-in tool carries beside its own arguments, so a model that makes one call per reply needs no
@@ -1065,20 +1067,18 @@ async fn run_tools(
   let tool_names = &tool_names[..];
   let cwd = session.cwd.clone();
   let mut prepared = vec![];
-  for call in calls {
+  for (k, call) in calls.iter().enumerate() {
     let meta = mcp_meta(&call.name, setup);
-    let acp = match ids.remove(&call.id) {
-      Some(a) => a,
-      None => {
-        let a = session.next_tool_id();
-        let mut first = json!({ "sessionUpdate": "tool_call", "toolCallId": a, "title": call_title(&call.name, tool_names), "kind": kind_of(&call.name, tool_names), "status": "pending" });
-        if let Some(m) = &meta {
-          first["_meta"] = m.clone();
-        }
-        server.update(&session.id, first);
-        a
+    let announce = || {
+      let a = session.next_tool_id();
+      let mut first = json!({ "sessionUpdate": "tool_call", "toolCallId": a, "title": call_title(&call.name, tool_names), "kind": kind_of(&call.name, tool_names), "status": "pending" });
+      if let Some(m) = &meta {
+        first["_meta"] = m.clone();
       }
+      server.update(&session.id, first);
+      a
     };
+    let streamed = ids.remove(&call.id);
     let args: Result<Value, String> = serde_json::from_str::<Value>(&call.arguments)
       .map_err(|e| format!("The arguments are not valid JSON ({e}). Received: {}", crate::budget::cut(&call.arguments, 2000)))
       .and_then(|v| if v.is_object() { Ok(v) } else { Err(format!("The arguments must be a JSON object. Received: {}", crate::budget::cut(&call.arguments, 2000))) });
@@ -1095,6 +1095,21 @@ async fn run_tools(
       (Some(n), Ok(a)) if !setup.mcp.iter().any(|t| t.name == n) => Riders::of(n, a, &cwd),
       _ => Riders::default(),
     };
+    // The list a call carries is set now, on a row above the call's own, so the transcript reads in the order things
+    // happen. A row the stream opened for the reply's last call becomes the list's row and the call gets a new one
+    // below it; any other streamed row stays the call's (a new row would land below the calls after it), so the list
+    // follows it there
+    let (acp, todo) = match streamed {
+      Some(row) if k + 1 == calls.len() && todo_row_allowed(session, rules, &riders) => {
+        let todo = ride_todo(server, session, rules, &riders, Some(row));
+        (announce(), todo)
+      }
+      Some(row) => (row, ride_todo(server, session, rules, &riders, None)),
+      None => {
+        let todo = ride_todo(server, session, rules, &riders, None);
+        (announce(), todo)
+      }
+    };
     // A bad argument goes back with what was received, so the model can see its own mistake
     let action = name.and_then(|n| {
       let a = args.clone()?;
@@ -1109,7 +1124,7 @@ async fn run_tools(
       Ok(a) => {
         let p = a.describe(&cwd);
         let mut update = json!({ "sessionUpdate": "tool_call_update", "toolCallId": acp, "title": p.title, "kind": p.kind, "rawInput": raw_input,
-          "locations": p.locations.iter().map(|l| json!({ "path": l })).collect::<Vec<_>>(), "content": p.content });
+          "locations": p.locations.iter().map(tools::Location::json).collect::<Vec<_>>(), "content": p.content });
         if let Some(m) = &meta {
           update["_meta"] = m.clone();
         }
@@ -1119,7 +1134,7 @@ async fn run_tools(
         server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": acp, "rawInput": raw_input }));
       }
     }
-    prepared.push(Prepared { call: call.clone(), acp, action, note, meta, riders });
+    prepared.push(Prepared { call: call.clone(), acp, action, note, meta, riders, todo });
   }
 
   let mut rejected = false;
@@ -1133,10 +1148,8 @@ async fn run_tools(
     }
     if i > start {
       let mut handles = vec![];
-      let mut notes = vec![];
       for p in &prepared[start..i] {
         let Ok(action) = p.action.clone() else { unreachable!() };
-        notes.push(ride_todo(server, session, rules, p));
         let ctx = ctx_for(server, session, &p.acp);
         server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": "in_progress" }));
         // An MCP call waits on its server; the rest read files or the network on a blocking thread
@@ -1145,20 +1158,20 @@ async fn run_tools(
           other => tokio::task::spawn_blocking(move || other.run_sync(ctx)),
         });
       }
-      for ((p, h), note) in prepared[start..i].iter().zip(handles).zip(notes) {
+      for (p, h) in prepared[start..i].iter().zip(handles) {
         let out = h.await.unwrap_or_else(|e| Output::error(format!("The tool crashed: {e}")));
-        finish(server, session, p, out, note, p.riders.refused());
+        finish(server, session, p, out, p.todo.clone(), p.riders.refused());
       }
       continue;
     }
     let p = &prepared[i];
     i += 1;
     if rejected {
-      finish(server, session, p, Output::error("Skipped: the user rejected an earlier action in this round."), None, None);
+      finish(server, session, p, Output::error("Skipped: the user rejected an earlier action in this round."), p.todo.clone(), None);
       continue;
     }
-    // The list rides in front of the call: it moves on whatever comes of the call itself
-    let todo = ride_todo(server, session, rules, p);
+    // The list was set while preparing: it moves on whatever comes of the call itself
+    let todo = p.todo.clone();
     let action = match &p.action {
       Ok(a) => a.clone(),
       Err(e) => {
@@ -1364,7 +1377,7 @@ async fn ask(server: &Arc<Server>, session: &Arc<Session>, rules: &Rules, p: &Pr
     "sessionId": session.id,
     "toolCall": {
       "toolCallId": p.acp, "title": pres.title, "kind": pres.kind, "status": "pending", "rawInput": raw_input,
-      "locations": pres.locations.iter().map(|l| json!({ "path": l })).collect::<Vec<_>>(), "content": pres.content,
+      "locations": pres.locations.iter().map(tools::Location::json).collect::<Vec<_>>(), "content": pres.content,
     },
     "options": options,
   });
@@ -1382,23 +1395,40 @@ async fn ask(server: &Arc<Server>, session: &Arc<Session>, rules: &Rules, p: &Pr
   }
 }
 
+/// Whether a call's to-do list gets a row: it parses and the rules allow setting it
+fn todo_row_allowed(session: &Arc<Session>, rules: &Rules, riders: &Riders) -> bool {
+  match &riders.todos {
+    Some(Ok(todos)) => rules.decide(session, &Action::Todo { todos: todos.clone() }) == Decision::Allow,
+    _ => false,
+  }
+}
+
 /// The to-do list a call carries (`todos`), set before the call runs: a `todo` row of its own, the way the todo tool's
-/// call shows, so the host's to-do bar takes it unchanged. The note in front of the call's result
-fn ride_todo(server: &Arc<Server>, session: &Arc<Session>, rules: &Rules, p: &Prepared) -> Option<String> {
-  let todos = match p.riders.todos.as_ref()? {
+/// call shows, so the host's to-do bar takes it unchanged; on `row`, a row the stream opened, when given. The note in
+/// front of the call's result
+fn ride_todo(server: &Arc<Server>, session: &Arc<Session>, rules: &Rules, riders: &Riders, row: Option<String>) -> Option<String> {
+  let todos = match riders.todos.as_ref()? {
     Ok(todos) => todos.clone(),
     Err(e) => return Some(format!("The to-do list was not updated: {e}.")),
   };
-  let action = Action::Todo { todos };
-  if rules.decide(session, &action) != Decision::Allow {
+  if !todo_row_allowed(session, rules, riders) {
     return Some("The to-do list was not updated: the permission rules do not allow it.".into());
   }
-  let Action::Todo { todos } = &action else { unreachable!() };
-  let acp = session.next_tool_id();
-  let raw = tools::todo::raw(todos);
-  server.update(&session.id, json!({ "sessionUpdate": "tool_call", "toolCallId": acp, "title": tools::TODO, "kind": "other", "status": "pending", "rawInput": raw }));
-  report(server, session, &acp, tools::todo::run(todos));
-  Some(tools::todo::note(todos))
+  let raw = tools::todo::raw(&todos);
+  let acp = match row {
+    // The streamed row was the call's: every field it showed is set again
+    Some(row) => {
+      server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": row, "title": tools::TODO, "kind": "other", "status": "pending", "rawInput": raw }));
+      row
+    }
+    None => {
+      let acp = session.next_tool_id();
+      server.update(&session.id, json!({ "sessionUpdate": "tool_call", "toolCallId": acp, "title": tools::TODO, "kind": "other", "status": "pending", "rawInput": raw }));
+      acp
+    }
+  };
+  report(server, session, &acp, tools::todo::run(&todos));
+  Some(tools::todo::note(&todos))
 }
 
 /// The command an edit or a write carries (`then_run`), once the change is made: on a command row of its own, under
@@ -1419,7 +1449,7 @@ async fn ride_command(server: &Arc<Server>, session: &Arc<Session>, rules: &Rule
     }
     Decision::Ask => {
       let call = ToolCall { id: acp.clone(), name: tools::BASH.into(), arguments: raw_input.to_string() };
-      let p = Prepared { call, acp: acp.clone(), action: Ok(action.clone()), note: None, meta: None, riders: Riders::default() };
+      let p = Prepared { call, acp: acp.clone(), action: Ok(action.clone()), note: None, meta: None, riders: Riders::default(), todo: None };
       match ask(server, session, rules, &p, action).await {
         Answer::Once => {}
         Answer::Always(pattern) => session.state.lock().allowed.push(Rule::new(permission::BASH, &pattern, Decision::Allow)),

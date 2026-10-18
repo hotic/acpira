@@ -83,9 +83,31 @@ pub struct Presentation {
   pub title: String,
   /// ACP ToolKind
   pub kind: &'static str,
-  pub locations: Vec<PathBuf>,
+  pub locations: Vec<Location>,
   /// Shown before the run (an edit's diff)
   pub content: Vec<Value>,
+}
+
+/// A file a call touches, with the line a read window starts at (ACP `ToolCallLocation`): the host shows it after the
+/// file name and opens the file there
+pub struct Location {
+  pub path: PathBuf,
+  pub line: Option<usize>,
+}
+
+impl From<&PathBuf> for Location {
+  fn from(path: &PathBuf) -> Location {
+    Location { path: path.clone(), line: None }
+  }
+}
+
+impl Location {
+  pub fn json(&self) -> Value {
+    match self.line {
+      Some(line) => json!({ "path": self.path, "line": line }),
+      None => json!({ "path": self.path }),
+    }
+  }
 }
 
 /// What a finished call gives back
@@ -260,7 +282,10 @@ impl Action {
     match self {
       Action::Read { files } => {
         let paths = distinct(files.iter().map(|f| &f.path));
-        Presentation { title: format!("Read {}", names(&paths, cwd)), kind: "read", locations: paths, content: vec![] }
+        // One location per window, so two ranges of one file each show where they start; line 1 is left out, as the
+        // host takes it for a whole-file read
+        let locations = files.iter().map(|f| Location { path: f.path.clone(), line: (f.offset > 1).then_some(f.offset) }).collect();
+        Presentation { title: format!("Read {}", names(&paths, cwd)), kind: "read", locations, content: vec![] }
       }
       Action::Write { files } => {
         let verb = if files.iter().all(|f| f.before.is_none()) { "Write" } else { "Edit" };
@@ -268,7 +293,7 @@ impl Action {
         Presentation {
           title: format!("{verb} {}", names(&paths, cwd)),
           kind: "edit",
-          locations: paths,
+          locations: paths.iter().map(Location::from).collect(),
           content: files.iter().map(|f| diff_content(&f.path, f.before.as_deref(), &f.after)).collect(),
         }
       }
@@ -280,13 +305,13 @@ impl Action {
       Action::Grep { pattern, path, include, .. } => {
         let scope = [(path != cwd).then(|| shown(path, cwd)), include.clone()].into_iter().flatten().collect::<Vec<_>>().join(" ");
         let title = if scope.is_empty() { format!("grep \"{pattern}\"") } else { format!("grep \"{pattern}\" in {scope}") };
-        Presentation { title, kind: "search", locations: vec![path.clone()], content: vec![] }
+        Presentation { title, kind: "search", locations: vec![path.into()], content: vec![] }
       }
-      Action::Glob { pattern, path } => Presentation { title: format!("glob {pattern}"), kind: "search", locations: vec![path.clone()], content: vec![] },
-      Action::List { path, .. } => Presentation { title: format!("List {}", shown(path, cwd)), kind: "read", locations: vec![path.clone()], content: vec![] },
+      Action::Glob { pattern, path } => Presentation { title: format!("glob {pattern}"), kind: "search", locations: vec![path.into()], content: vec![] },
+      Action::List { path, .. } => Presentation { title: format!("List {}", shown(path, cwd)), kind: "read", locations: vec![path.into()], content: vec![] },
       // The host knows a to-do update by this exact title
       Action::Todo { .. } => Presentation { title: TODO.to_owned(), kind: "other", locations: vec![], content: vec![] },
-      Action::Skill { name, path } => Presentation { title: format!("Skill {name}"), kind: "read", locations: vec![path.clone()], content: vec![] },
+      Action::Skill { name, path } => Presentation { title: format!("Skill {name}"), kind: "read", locations: vec![path.into()], content: vec![] },
       // The webview localizes this exact heading
       Action::ExitPlan { .. } => Presentation { title: "Exit plan mode".to_owned(), kind: "switch_mode", locations: vec![], content: vec![] },
       Action::Question { questions } => Presentation { title: question::title(questions.len()), kind: "other", locations: vec![], content: vec![] },
