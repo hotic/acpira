@@ -11,6 +11,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [1.10.5] - 2026-10-18
+
+### Added
+
+- **Fewer steps for the built-in agent.** One tool call can carry more of a step. Read, write, edit and shell calls can set the to-do list, which shows as its own row above the call. An edit or write can name a command to run once the change is made, shown on its own command row and skipped when the change fails, is denied or changes nothing. One edit call can change several files at once, all or none, behind one permission card. Reads take line ranges and show where each window starts, and grep takes optional context lines. In a paired eval this cut requests per run by roughly a fifth to a third with pass rates unchanged.
+- **DeepSeek web search for the built-in agent.** Web search can use DeepSeek's Search API, either with a DeepSeek key or through a model source that serves `/v1/tools/search`. An empty DeepSeek answer counts as a failure, and a saved Jina key and the free services back it up.
+- **Background state in the session list.** A turn that ends while a background task still runs, such as a background shell command, a monitor or a workflow, shows a still ring instead of the unread dot. A reply that arrives meanwhile puts a dot inside the ring, and the done notification waits until the task ends.
+- The turn statistics card shows time to first token and output speed. The tool call and model round counts are gone from it.
+
+### Changed
+
+- Every session list state mark is animated. Background work orbits a small dot, waiting beats and an error double-flashes, so states differ by motion as well as colour. Reduced motion stops them on their resting frame.
+- An agent's own MCP servers, skills and rules are always shown on its settings page, without a Show / Hide toggle.
+- A session read that covers a single turn names one turn instead of a range such as 3–3.
+
+### Fixed
+
+- Workspace hooks no longer count edits made by other sessions in a shared work tree as the turn's own. A turn of reads takes no files, and a turn of edits that name their files takes only those. The audit and after-turn payloads add `turn_tools` and `file_sources`.
+- A built-in agent edit that names one file under two spellings, such as a `..` path or a symlink, merges into one change instead of dropping the earlier edits. A write that fails partway restores the files already written, and any it cannot restore are named on the card.
+- A failed turn is announced at once instead of waiting for a running background task.
+- The built-in agent's compaction work index keeps the diffs of every changed file instead of only the first.
+- Renaming a session from its right-click menu keeps the input focused instead of cancelling the rename, and the row keeps its hover fill while its menu is open.
+- A closed window's view no longer receives posts from the engine after it detaches.
+
 ## [1.10.4] - 2026-10-16
 
 ### Added
