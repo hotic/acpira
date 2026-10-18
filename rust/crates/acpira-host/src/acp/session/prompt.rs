@@ -734,8 +734,7 @@ impl AcpSession {
     if c.state.goal.as_ref().is_some_and(|g| g.status == GoalStatus::Complete) {
       c.state.goal = None;
     }
-    self.cancel_all_permissions(c);
-    self.cancel_all_questions(c);
+    self.cancel_turn_cards(c);
     c.phase.running = false;
     // A steer's detached peer turn continues this one: it keeps running until the peer reports its thread idle
     if c.peer.detached && !failed {

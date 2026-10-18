@@ -53,6 +53,19 @@ fn an_idle_session_flushes_at_once_and_replaces_the_coalesced_running_view() {
 }
 
 #[test]
+fn idle_views_after_the_edge_coalesce_like_running_ones() {
+  let mut b = MsgBatch::default();
+  b.push(session(true, 1, "hi"));
+  assert_eq!(posted(b.push(session(false, 2, "hi"))).len(), 1);
+  // A summoned child streams into the idle session: its views wait for the window
+  assert!(matches!(b.push(session(false, 3, "hi")), Pushed::Arm));
+  assert!(matches!(b.push(session(false, 4, "hi")), Pushed::Wait));
+  let out: Vec<Value> = b.flush().iter().map(v).collect();
+  assert_eq!(out.len(), 1);
+  assert_eq!(out[0]["session"]["rev"], 4);
+}
+
+#[test]
 fn a_pending_sessions_list_goes_out_with_the_idle_edge() {
   let mut b = MsgBatch::default();
   b.push(HostMsg::Sessions { sessions: vec![] });

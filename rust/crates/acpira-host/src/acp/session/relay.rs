@@ -21,6 +21,7 @@ use serde_json::{Map, Value, json};
 use tokio::sync::{mpsc, watch};
 
 use acpira_shared::subagents::{RelayMode, SubagentHarness, SubagentPersona, SubagentState};
+use acpira_shared::transcript::{SessionStatus, TurnStop};
 
 use crate::acp::session::updates::current_turn_index;
 use crate::acp::session::{AcpSession, Core};
@@ -543,8 +544,26 @@ impl AcpSession {
         round_result(&c, &round.node)
       };
       let _ = tx.send(Some(reply));
+      me.relay_settled();
     });
     Ok(Start::Wait { thread, persona })
+  }
+
+  /// Summoned rounds still running: the session has work in the background even while its own turn is over
+  pub(crate) fn relay_background(c: &Core) -> bool {
+    !c.relays.rounds.is_empty()
+  }
+
+  /// A round ended. When it was the last one and the session is idle, what the background held back goes now: the
+  /// workspace gate over the span the children extended
+  fn relay_settled(self: &Arc<Self>) {
+    let deferred = {
+      let c = self.core.lock();
+      c.status == SessionStatus::Ready && !c.phase.running && !Self::relay_background(&c) && c.hooks.deferred
+    };
+    if deferred && !self.hooks_after_turn() {
+      self.after_prompt(false, TurnStop::EndTurn);
+    }
   }
 
   /// Wait for the thread's running round up to the deadline, with progress lines meanwhile
@@ -847,6 +866,14 @@ impl AcpSession {
     c.relays.calls.clear();
     c.relays.notes.clear();
     (c.relays.procs.drain().map(|(_, rp)| rp.proc).collect(), c.relays.starting.subscribe())
+  }
+
+  /// History rewritten at turn_index (an edit, a retry): the summoned rounds of the removed turns are cancelled before
+  /// their nodes go, so no child keeps working for a turn that no longer exists
+  pub(crate) fn relay_truncate(&self, c: &mut Core, turn_index: usize) {
+    let doomed = c.tree.relay_running_from(turn_index);
+    self.relay_cancel(c, &doomed);
+    c.tree.truncate(turn_index);
   }
 
   /// The process and native session a summoned node's cancel goes to (None = not summoned, or still connecting)

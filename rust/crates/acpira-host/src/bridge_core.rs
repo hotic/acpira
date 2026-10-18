@@ -26,11 +26,14 @@ pub const BATCH_WINDOW: Duration = Duration::from_millis(30);
 pub type Post = Arc<dyn Fn(HostMsg) + Send + Sync>;
 
 /// Streaming updates are dense: within one batch window only the latest message per key survives, and an idle session edge
-/// goes out at once together with whatever was pending
+/// goes out at once together with whatever was pending. Only the edge: a session whose own turn is over may still stream
+/// (a summoned child the turn left running), and those idle views coalesce like running ones
 #[derive(Default)]
 pub struct MsgBatch {
   pending: Vec<(String, HostMsg)>,
   armed: bool,
+  /// The running flag of the last session view pushed; None before the first
+  running: Option<bool>,
 }
 
 /// What a push asks of the owner
@@ -45,7 +48,10 @@ pub enum Pushed {
 
 impl MsgBatch {
   pub fn push(&mut self, m: HostMsg) -> Pushed {
-    let idle = matches!(&m, HostMsg::Session { running: false, .. });
+    let idle = match &m {
+      HostMsg::Session { running, .. } => self.running.replace(*running) != Some(false) && !*running,
+      _ => false,
+    };
     let key = m.batch_key();
     match self.pending.iter().position(|(k, _)| *k == key) {
       Some(i) => self.pending[i].1 = m,

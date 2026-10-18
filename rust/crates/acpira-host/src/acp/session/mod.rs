@@ -454,10 +454,11 @@ impl AcpSession {
 
   /// The lease pin of a turn that has ended, taken out so it is released once (after the turn's final save); None while a
   /// turn runs or when no turn holds one. A prompt waiting on its pre-send compaction is still that turn, and so is a
-  /// turn the workspace gate is deciding about (its follow-up starts on the same pin)
+  /// turn the workspace gate is deciding about (its follow-up starts on the same pin), and so are the summoned children
+  /// it left running: another engine must not take the session while they still write into it
   pub fn take_ended_lease(&self) -> Option<u64> {
     let mut c = self.core.lock();
-    if c.phase.running || c.pending_prompt.is_some() || c.hooks.gating { None } else { c.lease_pin.take() }
+    if c.phase.running || c.pending_prompt.is_some() || c.hooks.gating || Self::relay_background(&c) { None } else { c.lease_pin.take() }
   }
 
   pub fn is_running(&self) -> bool {

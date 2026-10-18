@@ -42,11 +42,13 @@ impl AcpSession {
   /// on the user shows the same spinner as one at work
   pub fn list_state(&self) -> Option<SummaryState> {
     let c = self.core.lock();
+    // A child's card (a summoned one may ask long after the root turn ended) waits on the user just the same
     let waiting = visible_turns(&c).any(|t| {
       t.as_agent().is_some_and(|a| {
         a.blocks.iter().any(|b| matches!(b, AgentBlock::Permission(_)) || matches!(b, AgentBlock::Question(q) if q.outcome.is_none()))
       })
-    });
+    }) || c.perms.pending.iter().any(|p| p.node_id.is_some())
+      || c.questions.pending.iter().any(|q| q.node_id.is_some());
     if waiting {
       return Some(SummaryState::Waiting);
     }
@@ -55,15 +57,17 @@ impl AcpSession {
     }
     match visible_turns(&c).last() {
       Some(Turn::Agent(a)) if a.stop == Some(TurnStop::Error) => Some(SummaryState::Error),
-      _ if has_live_async_task(&c.state) => Some(SummaryState::Background),
+      _ if has_live_async_task(&c.state) || Self::relay_background(&c) => Some(SummaryState::Background),
       _ => None,
     }
   }
 
   /// A background task the agent reported (AIR `asyncTasks`: Claude's background Bash, Monitor, workflows) still runs and
-  /// is observed. A task whose process went away is marked unknown on disconnect, so this cannot outlive the agent
+  /// is observed, or a summoned child the root turn left running. A task whose process went away is marked unknown on
+  /// disconnect, so this cannot outlive the agent
   pub fn background_running(&self) -> bool {
-    has_live_async_task(&self.core.lock().state)
+    let c = self.core.lock();
+    has_live_async_task(&c.state) || Self::relay_background(&c)
   }
 
   /// Still inside a turn: running, a prompt waiting on its pre-send compaction, or the workspace gate deciding about a follow-up

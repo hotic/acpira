@@ -1394,6 +1394,16 @@ impl SubagentTree {
     self.nodes.iter().filter(|n| n.harness.is_some() && n.status == SubagentState::Running).map(|n| n.id.clone()).collect()
   }
 
+  /// Running summoned nodes announced at or after turn_index: the ones an edit's `truncate` would take away
+  pub fn relay_running_from(&self, turn_index: usize) -> Vec<String> {
+    self
+      .nodes
+      .iter()
+      .filter(|n| n.harness.is_some() && n.status == SubagentState::Running && n.turn_index >= turn_index as u64)
+      .map(|n| n.id.clone())
+      .collect()
+  }
+
   fn core_of(n: &Node) -> SubagentCore {
     SubagentCore {
       id: n.id.clone(),

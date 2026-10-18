@@ -217,7 +217,10 @@ impl AcpSession {
     let plan_auto_on = self.deps.plan_auto_approve.as_ref().is_some_and(|f| f(&self.agent));
     let rx = {
       let mut c = self.core.lock();
-      if cancel.is_cancelled() || epoch != c.perms.epoch {
+      // The epoch tells a request of an ended root turn (or replaced process); a summoned child outlives both, and its
+      // node going terminal is checked below
+      let summoned = matches!(&target, Target::Node(id) if c.tree.relay_thread_of(id).is_some());
+      if cancel.is_cancelled() || (!summoned && epoch != c.perms.epoch) {
         return Ok(cancelled_permission());
       }
       // The owner may have gone terminal while the plan file was being read
@@ -227,7 +230,7 @@ impl AcpSession {
       let options: Vec<Value> = req.get("options").and_then(Value::as_array).cloned().unwrap_or_default();
       // The root's yolo and plan auto-approval cover the root and its own native children; a summoned child answers to
       // its own round mode alone, so a consult or work child under a yolo root still gets cards
-      let root = !matches!(&target, Target::Node(id) if c.tree.relay_thread_of(id).is_some());
+      let root = !summoned;
       let auto = root && c.perms.auto_approve;
       // A summoned child in a bypass round: answered without a card, preferring the one-time allow so nothing lasting
       // lands in that CLI's own settings; a request with no plain allow still gets a card
@@ -392,6 +395,34 @@ impl AcpSession {
       let _ = p.tx.send(cancelled_permission());
     }
     remove_perm_blocks(c, None);
+  }
+
+  /// A root turn settled: the cards of the root and of its native children go. A summoned child's outlive it (its round
+  /// may run on after the call returned); they close with its node (`drain_terminal`, `relay_cancel`)
+  pub(crate) fn cancel_turn_cards(&self, c: &mut Core) {
+    let mut i = 0;
+    while i < c.perms.pending.len() {
+      if c.perms.pending[i].node_id.as_deref().is_some_and(|id| c.tree.relay_thread_of(id).is_some()) {
+        i += 1;
+        continue;
+      }
+      let p = c.perms.pending.remove(i);
+      let _ = p.tx.send(cancelled_permission());
+    }
+    let mut i = 0;
+    while i < c.questions.pending.len() {
+      if c.questions.pending[i].node_id.as_deref().is_some_and(|id| c.tree.relay_thread_of(id).is_some()) {
+        i += 1;
+        continue;
+      }
+      let p = c.questions.pending.remove(i);
+      settle_question(c, &p, QuestionOutcome::Cancelled, None);
+      let reply = cancel_reply(&p);
+      let _ = p.tx.send(reply);
+    }
+    // Every card block without a waiting request goes, summoned children's still waiting stay
+    let keep: Vec<String> = c.perms.pending.iter().map(|p| p.block_id.clone()).collect();
+    remove_perm_blocks_except(c, &keep);
   }
 
   pub(crate) fn cancel_permissions_for(&self, c: &mut Core, node_id: &str) {
@@ -702,11 +733,20 @@ fn state_of_block(c: &mut Core, block_id: &str) -> Option<Target> {
 
 /// Withdraw permission cards (one, or all) from every transcript
 pub(crate) fn remove_perm_blocks(c: &mut Core, only: Option<&str>) {
+  strip_perm_blocks(c, |id| only.is_none_or(|o| id == o));
+}
+
+/// Withdraw every permission card but the ones still waiting (`keep`)
+fn remove_perm_blocks_except(c: &mut Core, keep: &[String]) {
+  strip_perm_blocks(c, |id| !keep.iter().any(|k| k == id));
+}
+
+fn strip_perm_blocks(c: &mut Core, gone: impl Fn(&str) -> bool) {
   let strip = |st: &mut NormalizeState| -> bool {
     let mut removed = false;
     for t in st.turns.iter_mut().filter_map(Turn::as_agent_mut) {
       let before = t.blocks.len();
-      t.blocks.retain(|b| !matches!(b, AgentBlock::Permission(p) if only.is_none_or(|id| p.id == id)));
+      t.blocks.retain(|b| !matches!(b, AgentBlock::Permission(p) if gone(&p.id)));
       removed |= t.blocks.len() != before;
     }
     removed
