@@ -3,6 +3,7 @@ import { Bot, Check, ChevronRight, Compass, FileText, Hand, MessageCircleQuestio
 import type { AgentBlock, AgentTurn, CompactionBlock, FailureAction, NoticeBlock, PermissionBlock, SlashCommand, SteerBlock, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
 import { isImageResultBlock } from '@shared/imageTools';
+import { isSessionTool } from '@shared/sessionLinks';
 import { useAppearance, type Appearance } from '../appearance';
 import { getLocale, t } from '../i18n';
 import { commandSegments } from './PromptInput';
@@ -509,8 +510,9 @@ type LineItem = { kind: 'one'; block: AgentBlock } | { kind: 'fold'; blocks: Too
 
 const READ_ONLY: ReadonlySet<ToolKind> = new Set<ToolKind>(['read', 'search', 'fetch']);
 
+// Acpira's session tools (`other` to the engine) only look things up too
 function isFoldableRead(b: AgentBlock): b is ToolCallBlock {
-  return b.type === 'tool_call' && READ_ONLY.has(b.kind) && b.status !== 'in_progress' && b.status !== 'pending';
+  return b.type === 'tool_call' && (READ_ONLY.has(b.kind) || isSessionTool(b)) && b.status !== 'in_progress' && b.status !== 'pending';
 }
 
 function foldReadOnly(blocks: AgentBlock[]): LineItem[] {

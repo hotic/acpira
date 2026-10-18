@@ -71,9 +71,22 @@ export function splitSessionTarget(target: string | undefined): { id?: string; r
   return { ...(id ? { id } : {}), ...(rest ? { rest } : {}) };
 }
 
-// A read's range as shown: `3-5` → `3–5`, `3-3` → `3`, `3-` → `3–`, `-5` → `1–5`
-export function turnRange(range: string): string {
-  const [from = '', to = ''] = range.split('-');
-  const start = from || '1';
-  return start === to ? start : `${start}–${to}`;
+// What a read_session call read, from its range (`3-5`, `3-`, `-5`): no range is the session's outline, an open range
+// runs to the last turn, and a closed one lists its turns unless it is too long to list (`span`)
+export type SessionRead =
+  | { type: 'outline' }
+  | { type: 'turns'; turns: number[] }
+  | { type: 'from'; from: number }
+  | { type: 'span'; from: number; to: number };
+
+export const LISTED_TURNS = 20;
+
+export function sessionRead(range: string | undefined): SessionRead {
+  const m = /^(\d*)-(\d*)$/.exec(range ?? '');
+  if (!m || (!m[1] && !m[2])) return { type: 'outline' };
+  const from = m[1] ? Number(m[1]) : 1;
+  if (!m[2]) return { type: 'from', from };
+  const lo = Math.min(from, Number(m[2]));
+  const hi = Math.max(from, Number(m[2]));
+  return hi - lo < LISTED_TURNS ? { type: 'turns', turns: Array.from({ length: hi - lo + 1 }, (_, i) => lo + i) } : { type: 'span', from: lo, to: hi };
 }

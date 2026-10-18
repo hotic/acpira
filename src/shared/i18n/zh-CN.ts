@@ -361,7 +361,7 @@ export const zhCN = {
   'turns.done': '已完成',
   'turns.nameSep': '、',
   'turns.groupFiles': '{names} 等 {n} 个文件',
-  'turns.groupSessions': '{names} 等 {n} 个会话',
+  'turns.groupTurns': '{title} 中的 {n} 段对话',
   'turns.retrying': '正在重试',
   'turns.retryingAttempt': '正在重试（第 {attempt}/{max} 次）',
   'turns.compacting': '正在压缩上下文',
@@ -642,6 +642,8 @@ export const zhCN = {
   'verb.searchSessions': '搜索会话',
   'verb.readSession': '读取会话',
   'tool.sessionTurns': '第 {range} 段对话',
+  'tool.sessionOutline': '大纲',
+  'tool.sessionTurnsFrom': '第 {n} 段对话起',
   // Delegation calls: the tool that spawns a subagent (Devin run_subagent, Claude/Kimi Agent) and the one that blocks on it
   'verb.delegate': '委派',
   'verb.awaitSubagent': '等待子代理',

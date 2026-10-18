@@ -1,4 +1,4 @@
-import { isSessionTool, splitSessionTarget, turnRange } from '@shared/sessionLinks';
+import { isSessionTool, sessionRead, splitSessionTarget, type SessionRead } from '@shared/sessionLinks';
 import type { AgentBlock, AgentTurn, GoalBlock, NoticeBlock, TextBlock, ToolCallBlock, ToolKind } from '@shared/transcript';
 import type { MsgKey } from '@shared/i18n';
 import { getLocale, t } from '../i18n';
@@ -88,10 +88,20 @@ export function toolTarget(block: ToolCallBlock): string | undefined {
   // A session tool's session shows as its title on the row (ToolCall SessionToolTarget); this is the rest: a read's turns, a search's query
   if (isSessionTool(block)) {
     const { rest } = splitSessionTarget(block.target);
-    return rest && block.verbKey === 'verb.readSession' ? t('tool.sessionTurns', { range: turnRange(rest) }) : rest;
+    return block.verbKey === 'verb.readSession' ? sessionReadLabel(sessionRead(rest)) : rest;
   }
   return block.kind === 'switch_mode' && block.target && !block.targetMono
     ? planApprovalTitle(block.target, getLocale()) : block.target;
+}
+
+// A short run of turns is listed ("turns 2, 3"); only a long one shows as a span
+const LISTED_ON_ROW = 5;
+
+export function sessionReadLabel(read: SessionRead): string {
+  if (read.type === 'outline') return t('tool.sessionOutline');
+  if (read.type === 'from') return t('tool.sessionTurnsFrom', { n: read.from });
+  const [from, to] = read.type === 'span' ? [read.from, read.to] : [read.turns[0]!, read.turns.at(-1)!];
+  return t('tool.sessionTurns', { range: read.type === 'turns' && read.turns.length <= LISTED_ON_ROW ? read.turns.join(t('turns.nameSep')) : `${from}–${to}` });
 }
 
 export interface FoldActivity {

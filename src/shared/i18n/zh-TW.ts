@@ -359,7 +359,7 @@ export const zhTW = {
   'turns.done': '已完成',
   'turns.nameSep': '、',
   'turns.groupFiles': '{names} 等 {n} 個檔案',
-  'turns.groupSessions': '{names} 等 {n} 個工作階段',
+  'turns.groupTurns': '{title} 中的 {n} 段對話',
   'turns.retrying': '正在重試',
   'turns.retryingAttempt': '正在重試（第 {attempt}/{max} 次）',
   'turns.compacting': '正在壓縮上下文',
@@ -640,6 +640,8 @@ export const zhTW = {
   'verb.searchSessions': '搜尋會話',
   'verb.readSession': '讀取會話',
   'tool.sessionTurns': '第 {range} 段對話',
+  'tool.sessionOutline': '大綱',
+  'tool.sessionTurnsFrom': '第 {n} 段對話起',
   // Delegation calls: the tool that spawns a subagent (Devin run_subagent, Claude/Kimi Agent) and the one that blocks on it
   'verb.delegate': '委派',
   'verb.awaitSubagent': '等待子代理',
