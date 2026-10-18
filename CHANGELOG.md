@@ -11,6 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [1.10.6] - 2026-10-18
+
+### Added
+
+- **Forks can continue on another agent.** The fork button opens the agent list with the session's own agent first, and unavailable agents are greyed out. The new agent gets one handoff of the copied conversation that names the source agent and model, warns that the other agent's tool names are not its own and asks it to re-read files before editing. An oversized history keeps its most recent turns behind an outline of the left-out ones. A fork's agent can read its own session back through Acpira's session tools when it runs Acpira's MCP server.
+- **Fork boundary row.** A fork draws a row where its copied turns end, naming the source session, which a click opens. Across agents the row shows both agents' marks. Editing into the copied turns moves the boundary up.
+- **Fork from a failed reply.** A reply that failed before producing anything now shows an action row with the fork menu alone. The handoff says whether the forked reply produced nothing or failed partway.
+- **Summoned agents work in the background.** An `ask_agent` call that starts a new task answers at once with its thread, and the reply comes back in one automatic message once the session is free. A call can pass `wait` to block for the reply as before. The delivered replies show as one row naming who reported. Stopping the turn or editing history drops replies still owed.
+- **Summoned agents can ask their caller.** A summoned child gets an `ask_caller` tool, and its own CLI's questions also reach the caller. The caller answers through `ask_agent`, and whichever of the caller or the user answers first wins. An unanswered question tells the child to state its assumption and go on.
+- **Inherit access mode for summoned agents.** New personas default to `inherit`: each round takes the caller's current access, from read-only up to full access, and a call can only narrow it. Existing personas keep their saved mode. The root session's yolo setting no longer approves a summoned child's cards.
+- **Raw mode for the built-in agent.** Raw turns send the conversation to the endpoint alone, without tools, skills, MCP servers, project instructions or the agent's own prompt. The system prompt is set in a new Raw mode section on the agent's settings page, and a blank one sends none. Raw mode never compacts on its own, and it cannot be entered once the history holds tool calls.
+- Summoned rows and the subagent settings list show the reasoning effort next to the child's model.
+
+### Changed
+
+- Consecutive reads of one session fold under one head that names the session and counts the turns read. Session tools now fold with other read-only calls.
+
+### Fixed
+
+- A summoned child that outlives the root turn keeps its permission cards. The session counts it as background work, and the workspace gate waits for it and covers what it wrote.
+- Forks and edited histories now get the workspace hooks' context files on their first prompt.
+- A fork's history goes out exactly once. An edit before it went out shortens it, and a first prompt that failed or was stopped without output hands it over again on Retry or the next message.
+- An earlier message's attachment that is gone or cannot be sent is named in a rebuilt history instead of voiding the whole history.
+- A reply followed by an automatic compaction no longer folds away entirely. The compaction shows as a status row under the reply, and the copy button copies the reply again.
+
 ## [1.10.5] - 2026-10-18
 
 ### Added
