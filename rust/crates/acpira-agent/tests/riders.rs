@@ -69,13 +69,20 @@ async fn a_to_do_list_riding_on_an_edit_shows_as_a_todo_row_of_its_own() {
   server.push(mock::text("done"));
   assert_eq!(prompt(&h, &sid, "change it").await["stopReason"], "end_turn");
   assert_eq!(std::fs::read_to_string(h.cwd().join("a.txt")).unwrap(), "hello there\n");
-  // call-1 is the edit, call-2 the list it carried: titled like the todo tool's row, so the host's to-do bar takes it
-  let todo = row(&h, "call-2");
-  assert_eq!((todo[0]["sessionUpdate"].as_str(), todo[0]["title"].as_str()), (Some("tool_call"), Some("todo")));
+  // The stream opened call-1 for the edit; it becomes the list's row, titled like the todo tool's so the host's to-do
+  // bar takes it, and the edit moves to call-2 below it
+  let todo = row(&h, "call-1");
+  assert_eq!((todo[0]["sessionUpdate"].as_str(), todo[0]["kind"].as_str()), (Some("tool_call"), Some("edit")));
+  assert_eq!((todo[1]["sessionUpdate"].as_str(), todo[1]["title"].as_str(), todo[1]["kind"].as_str()), (Some("tool_call_update"), Some("todo"), Some("other")));
   let done = todo.last().unwrap();
   assert_eq!(done["status"], "completed");
   assert_eq!(done["rawOutput"]["todos"][1], json!({ "content": "run the tests", "status": "in_progress" }));
-  assert!(row(&h, "call-1").iter().any(|u| u["status"] == "completed" && u["content"][0]["type"] == "diff"));
+  let edit = row(&h, "call-2");
+  assert_eq!((edit[0]["sessionUpdate"].as_str(), edit[0]["kind"].as_str()), (Some("tool_call"), Some("edit")));
+  assert!(edit.iter().any(|u| u["status"] == "completed" && u["content"][0]["type"] == "diff"));
+  let first = |id: &str| h.updates().iter().position(|u| u["toolCallId"] == id).unwrap();
+  let list_done = h.updates().iter().position(|u| u["toolCallId"] == "call-1" && u["status"] == "completed").unwrap();
+  assert!(list_done < first("call-2"), "the list is set before the edit's row opens");
   // One result for the call, the list's note in front
   assert_eq!(message(&server, 1, 0), "To-do list updated (0 pending, 1 in progress, 1 completed).\n\nEdited a.txt.");
   assert!(message(&server, 2, 0).starts_with("/"), "no note for an empty list: {}", message(&server, 2, 0));
@@ -86,6 +93,37 @@ async fn a_to_do_list_riding_on_an_edit_shows_as_a_todo_row_of_its_own() {
   prompt(&h, &sid, "again").await;
   let result = message(&server, 4, 0);
   assert!(result.starts_with("The to-do list was not updated: todos[0] has an unknown status") && result.contains("\n\nran"), "{result}");
+}
+
+#[tokio::test]
+async fn a_list_on_a_call_before_another_one_keeps_the_rows_where_the_stream_put_them() {
+  let (h, server, sid) = setup().await;
+  h.approval("full");
+  std::fs::write(h.cwd().join("a.txt"), "a\n").unwrap();
+  let todos = json!([{ "content": "read", "status": "in_progress" }]);
+  server.push(mock::tools(&[("c1", "read", json!({ "path": "a.txt", "todos": todos })), ("c2", "read", json!({ "path": "a.txt", "offset": 1 }))]));
+  server.push(mock::text("done"));
+  prompt(&h, &sid, "read twice").await;
+  // A new row for the first read would land below the second: both keep their streamed rows, the list gets the next
+  let ids: Vec<String> = h.updates().iter().filter(|u| u["sessionUpdate"] == "tool_call").map(|u| u["toolCallId"].as_str().unwrap().to_owned()).collect();
+  assert_eq!(ids, ["call-1", "call-2", "call-3"]);
+  assert_eq!(row(&h, "call-3")[0]["title"], "todo");
+  assert!(row(&h, "call-1").iter().any(|u| u["title"].as_str().is_some_and(|t| t.starts_with("Read"))));
+  assert!(message(&server, 1, 1).starts_with("To-do list updated (0 pending, 1 in progress, 0 completed)."));
+}
+
+#[tokio::test]
+async fn a_ranged_read_names_the_line_each_window_starts_at() {
+  let (h, server, sid) = setup().await;
+  h.approval("full");
+  std::fs::write(h.cwd().join("a.txt"), (1..=50).map(|n| format!("l{n}\n")).collect::<String>()).unwrap();
+  std::fs::write(h.cwd().join("b.txt"), "b\n").unwrap();
+  server.push(mock::tools(&[("c1", "read", json!({ "path": "a.txt:10-12", "paths": ["a.txt:30", "b.txt"] }))]));
+  server.push(mock::text("done"));
+  prompt(&h, &sid, "read the parts").await;
+  let locations = row(&h, "call-1").into_iter().find_map(|u| u.get("locations").cloned()).unwrap();
+  let lines: Vec<Value> = locations.as_array().unwrap().iter().map(|l| l.get("line").cloned().unwrap_or(Value::Null)).collect();
+  assert_eq!(lines, [json!(10), json!(30), Value::Null], "a whole-file window names no line");
 }
 
 #[cfg(unix)]
