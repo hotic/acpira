@@ -362,6 +362,8 @@
   "turn.stats": "回复统计",
   "stats.model": "模型",
   "stats.duration": "用时",
+  "stats.ttft": "首字响应",
+  "stats.outputSpeed": "输出速度",
   "stats.toolCalls": "工具调用",
   "stats.modelCalls": "模型轮次",
   "stats.input": "输入 token",

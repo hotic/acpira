@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentTurn, SessionControls, ToolCallBlock } from '../src/shared/transcript';
-import { modelLabel, replyMarkdown, toolCallCount } from '../src/webview/chat/turnActionHelpers';
+import { modelLabel, replyMarkdown, turnOutputTps, turnTtft } from '../src/webview/chat/turnActionHelpers';
 
 const text = (markdown: string) => ({ type: 'text' as const, markdown });
 const read: ToolCallBlock = { type: 'tool_call', id: 'r1', kind: 'read', verb: 'Read', target: 'a.ts', status: 'completed' };
@@ -59,9 +59,61 @@ describe('modelLabel', () => {
   });
 });
 
-describe('toolCallCount', () => {
-  it('counts only tool_call blocks', () => {
-    expect(toolCallCount(turn([text('hi'), read, run, { type: 'thought', text: 't' }]))).toBe(2);
-    expect(toolCallCount(turn([text('hi')]))).toBe(0);
+describe('turnTtft', () => {
+  it('formats the latency from startedAt to respondedAt', () => {
+    expect(turnTtft({ ...turn([text('hi')]), startedAt: 1_000, respondedAt: 1_580 })).toBe('0.6s');
+    expect(turnTtft({ ...turn([text('hi')]), startedAt: 1_000, respondedAt: 1_040 })).toBe('<0.1s');
+  });
+
+  it('is undefined when either timestamp is missing', () => {
+    expect(turnTtft({ ...turn([text('hi')]), startedAt: 1_000 })).toBeUndefined();
+    expect(turnTtft({ ...turn([text('hi')]), respondedAt: 1_500 })).toBeUndefined();
+  });
+});
+
+describe('turnOutputTps', () => {
+  it('computes decode throughput after respondedAt using (tokens - 1) / decodeSeconds', () => {
+    // 167 tokens over 1100 ms decode window -> 166 / 1.1s ≈ 151 tok/s
+    expect(turnOutputTps({
+      ...turn([text('hi')]),
+      startedAt: 1_000, respondedAt: 1_600, endedAt: 2_700,
+      usage: { input: 18_951, output: 167, total: 19_118 },
+    })).toBe(151);
+  });
+
+  it('includes separate reasoning tokens without double-counting inclusive ones', () => {
+    // OpenAI-style: input (100) + output (101) === total (201), reasoning (60) is already inside output
+    expect(turnOutputTps({
+      ...turn([text('hi')]),
+      startedAt: 0, respondedAt: 500, endedAt: 1_500,
+      usage: { input: 100, output: 101, reasoning: 60, total: 201 },
+    })).toBe(100);
+    // Separate thoughtTokens: reasoning (150) > output (51) -> 201 generated tokens over 2s = 100 tok/s
+    expect(turnOutputTps({
+      ...turn([text('hi')]),
+      startedAt: 0, respondedAt: 500, endedAt: 2_500,
+      usage: { input: 100, output: 51, reasoning: 150 },
+    })).toBe(100);
+  });
+
+  it('subtracts merged foreground tool execution spans and ignores background tools', () => {
+    // Decode window [1000, 7000] = 6000 ms, minus merged foreground tools [2000, 5000] U [3000, 6000] = 4000 ms -> 2000 ms active
+    expect(turnOutputTps({
+      role: 'agent',
+      startedAt: 500, respondedAt: 1_000, endedAt: 7_000,
+      blocks: [
+        { ...read, startedAt: 2_000, endedAt: 5_000 },
+        { ...run, startedAt: 3_000, endedAt: 6_000 },
+        { ...run, id: 'bg', background: true, startedAt: 1_000, endedAt: 7_000 },
+        text('done'),
+      ],
+      usage: { output: 201 },
+    })).toBe(100);
+  });
+
+  it('is undefined for tiny token counts, sub-200ms single-chunk dumps, or missing respondedAt', () => {
+    expect(turnOutputTps({ ...turn([text('ok')]), startedAt: 0, respondedAt: 500, endedAt: 1_500, usage: { output: 3 } })).toBeUndefined();
+    expect(turnOutputTps({ ...turn([text('buffered')]), startedAt: 0, respondedAt: 1_450, endedAt: 1_500, usage: { output: 100 } })).toBeUndefined();
+    expect(turnOutputTps({ ...turn([text('legacy')]), startedAt: 0, endedAt: 2_000, usage: { output: 100 } })).toBeUndefined();
   });
 });

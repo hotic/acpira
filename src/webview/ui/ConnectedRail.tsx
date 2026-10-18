@@ -111,6 +111,10 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
   const measureRef = useRef<() => void>(() => {});
   const spans = useRef<(HTMLSpanElement | null)[]>([]);
   const lengths = useRef<number[]>([]);
+  // A segment stays unsettled until its first painted frame lands, so a synchronous layout cascade on mount
+  // (e.g. a child CommandPrompt cutting its text in useLayoutEffect) snaps to the final height instead of easing
+  // from the pre-cut height measured in the first commit pass.
+  const settled = useRef<boolean[]>([]);
   const growFrame = useRef<number | undefined>(undefined);
   // A rail switched off as its panel closes retracts with the panel instead of vanishing on the first frame of
   // the close: for --dur-close it keeps measuring (its own inert rows included, bottoms clamped to the shrinking
@@ -142,14 +146,28 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
       spans.current[index]?.style.setProperty('--rail-length', String(value));
     };
     lengths.current.length = targets.length;
+    settled.current.length = targets.length;
     const snap = motionDisabled(root) || retracting;
     let pending = false;
+    let fresh = false;
     targets.forEach((target, index) => {
       const current = lengths.current[index];
-      if (current === undefined || snap) write(index, target);
-      else if (current !== target) pending = true;
+      if (current === undefined || !settled.current[index] || snap) {
+        write(index, target);
+        if (snap) settled.current[index] = true;
+        else fresh = true;
+      } else if (current !== target) pending = true;
     });
-    if (!pending) return;
+    if (!pending) {
+      if (!fresh) return;
+      growFrame.current = requestAnimationFrame(() => {
+        growFrame.current = undefined;
+        settled.current.fill(true, 0, targets.length);
+      });
+      return () => {
+        if (growFrame.current !== undefined) { cancelAnimationFrame(growFrame.current); growFrame.current = undefined; }
+      };
+    }
     const duration = cssTimeVar(root, '--rail-grow-duration', DEFAULT_GROW_MS) || DEFAULT_GROW_MS;
     const tau = duration / 4;
     // Both ends read performance.now(): the rAF timestamp is the frame's start, which on a busy main thread
@@ -157,6 +175,7 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
     let last = performance.now();
     const tick = () => {
       growFrame.current = undefined;
+      settled.current.fill(true, 0, targets.length);
       const now = performance.now();
       const elapsed = now - last;
       last = now;
@@ -195,8 +214,8 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
       }
       observedLeads.current = currentLeads;
       if (!origin || !leads.length) {
-        // Under a closing ancestor the rail stays as drawn, clipped and faded along with that ancestor's panel
-        if (drawn && hidden) return;
+        // Under a closing ancestor or a hidden view (zero box) the rail stays as drawn
+        if (drawn && (hidden || !origin?.width || !origin?.height)) return;
         setSegments(previous => previous.length ? [] : previous);
         return;
       }

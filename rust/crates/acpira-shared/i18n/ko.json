@@ -358,6 +358,8 @@
   "turn.stats": "응답 통계",
   "stats.model": "모델",
   "stats.duration": "소요 시간",
+  "stats.ttft": "첫 토큰 응답",
+  "stats.outputSpeed": "출력 속도",
   "stats.toolCalls": "도구 호출",
   "stats.modelCalls": "모델 라운드",
   "stats.input": "입력 토큰",

@@ -355,6 +355,8 @@
   "turn.stats": "Statistiques de la réponse",
   "stats.model": "Modèle",
   "stats.duration": "Durée",
+  "stats.ttft": "Délai du premier token",
+  "stats.outputSpeed": "Vitesse de sortie",
   "stats.toolCalls": "Appels d’outils",
   "stats.modelCalls": "Tours du modèle",
   "stats.input": "Tokens d’entrée",

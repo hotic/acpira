@@ -17,11 +17,14 @@ function run(cmd, argv, cwd = root) {
   if (r.status !== 0) throw new Error(`${cmd} ${argv[0]} failed (${r.error?.message ?? `exit ${r.status}`})`);
 }
 
+const fastLocal = !process.env.CI && !args.includes('--all');
+
 for (const platform of platforms) {
   const { triple } = targetFor(platform);
   run('rustup', ['target', 'add', triple]);
   const zig = triple.includes('-linux-') && platform !== hostPlatform();
-  run('cargo', [zig ? 'zigbuild' : 'build', '--release', '--locked', '--target', triple, '--bin', 'acpira'], join(root, 'rust'));
+  const fastFlags = fastLocal && !zig ? ['--config', 'profile.release.lto=false', '--config', 'profile.release.incremental=true'] : [];
+  run('cargo', [zig ? 'zigbuild' : 'build', '--release', '--locked', '--target', triple, '--bin', 'acpira', ...fastFlags], join(root, 'rust'));
   const exe = exeName(platform);
   const out = join(root, 'dist', 'sidecar', platform);
   mkdirSync(out, { recursive: true });

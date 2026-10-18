@@ -367,6 +367,8 @@ export const de = {
   'turn.stats': 'Antwortstatistik',
   'stats.model': 'Modell',
   'stats.duration': 'Dauer',
+  'stats.ttft': 'Zeit bis zum ersten Token',
+  'stats.outputSpeed': 'Ausgabegeschwindigkeit',
   'stats.toolCalls': 'Tool-Aufrufe',
   'stats.modelCalls': 'Modellrunden',
   'stats.input': 'Eingabe-Tokens',

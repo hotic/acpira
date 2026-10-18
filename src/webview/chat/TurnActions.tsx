@@ -7,7 +7,7 @@ import { Popover } from '../ui/Popover';
 import { PanelFooter } from '../ui/Panel';
 import { useCopied } from '../ui/useCopied';
 import { elapsedDuration } from './folding';
-import { modelLabel, replyMarkdown, toolCallCount } from './turnActionHelpers';
+import { modelLabel, replyMarkdown, turnOutputTps, turnTtft } from './turnActionHelpers';
 
 // What the turn action row needs from the shell: the session it belongs to, the control list for resolving the model
 // name, and the fork action — absent for external (ChatGPT) sessions and in hosts that do not wire it (LAB)
@@ -79,9 +79,10 @@ function StatsCard({ turn, model }: { turn: AgentTurn; model?: string }) {
   const responseRows: ReactNode[] = [];
   if (model) responseRows.push(<StatRow key="model" label={t('stats.model')} value={model} />);
   if (turn.startedAt !== undefined && turn.endedAt !== undefined) responseRows.push(<StatRow key="duration" label={t('stats.duration')} value={elapsedDuration(turn)} />);
-  const tools = toolCallCount(turn);
-  if (tools > 0) responseRows.push(<StatRow key="tools" label={t('stats.toolCalls')} value={fmt(tools)} />);
-  if (usage?.modelCalls !== undefined) responseRows.push(<StatRow key="modelCalls" label={t('stats.modelCalls')} value={fmt(usage.modelCalls)} />);
+  const ttft = turnTtft(turn);
+  if (ttft) responseRows.push(<StatRow key="ttft" label={t('stats.ttft')} value={ttft} />);
+  const tps = turnOutputTps(turn);
+  if (tps !== undefined) responseRows.push(<StatRow key="speed" label={t('stats.outputSpeed')} value={`${fmt(tps)} tok/s`} />);
 
   const tokenFields: [key: 'input' | 'output' | 'cachedRead' | 'cachedWrite' | 'reasoning', label: string][] = [
     ['input', t('stats.input')], ['output', t('stats.output')], ['cachedRead', t('stats.cachedRead')],
