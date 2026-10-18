@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentTurn, SessionControls, ToolCallBlock } from '../src/shared/transcript';
-import { modelLabel, replyMarkdown, turnOutputTps, turnTtft } from '../src/webview/chat/turnActionHelpers';
+import type { AgentInfo, AgentTurn, SessionControls, ToolCallBlock } from '../src/shared/transcript';
+import { forkTargets, modelLabel, replyMarkdown, turnOutputTps, turnTtft } from '../src/webview/chat/turnActionHelpers';
 
 const text = (markdown: string) => ({ type: 'text' as const, markdown });
 const read: ToolCallBlock = { type: 'tool_call', id: 'r1', kind: 'read', verb: 'Read', target: 'a.ts', status: 'completed' };
@@ -115,5 +115,27 @@ describe('turnOutputTps', () => {
     expect(turnOutputTps({ ...turn([text('ok')]), startedAt: 0, respondedAt: 500, endedAt: 1_500, usage: { output: 3 } })).toBeUndefined();
     expect(turnOutputTps({ ...turn([text('buffered')]), startedAt: 0, respondedAt: 1_450, endedAt: 1_500, usage: { output: 100 } })).toBeUndefined();
     expect(turnOutputTps({ ...turn([text('legacy')]), startedAt: 0, endedAt: 2_000, usage: { output: 100 } })).toBeUndefined();
+  });
+});
+
+describe('forkTargets', () => {
+  const agents: AgentInfo[] = [
+    { id: 'claude', name: 'Claude Code' },
+    { id: 'codex', name: 'Codex', available: false },
+    { id: 'devin', name: 'Devin' },
+    { id: 'kimi', name: 'Kimi', disabled: true },
+    { id: 'chatgpt', name: 'ChatGPT', external: true },
+  ];
+
+  it('puts the session agent first and keeps the plus menu order after it', () => {
+    expect(forkTargets(agents, 'devin').map(a => a.id)).toEqual(['devin', 'claude', 'codex']);
+  });
+
+  it('keeps an unavailable agent in the list for the menu to grey out', () => {
+    expect(forkTargets(agents, 'claude').find(a => a.id === 'codex')?.available).toBe(false);
+  });
+
+  it('still offers a switched-off session agent first, but no other switched-off or external agent', () => {
+    expect(forkTargets(agents, 'kimi').map(a => a.id)).toEqual(['kimi', 'claude', 'codex', 'devin']);
   });
 });

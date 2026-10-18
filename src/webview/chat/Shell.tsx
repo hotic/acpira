@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Check, CircleAlert, Network, Paperclip, X } from 'lucide-react';
-import type { ExternalSessionInfo, AccountInfo, AgentInfo, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@shared/transcript';
+import type { ExternalSessionInfo, AccountInfo, AgentId, AgentInfo, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
 import type { ModelShapes } from '@shared/modelShapes';
 import type { HiddenMap, SessionScope } from '@shared/settings';
@@ -109,7 +109,8 @@ export interface ShellHandlers {
   steerQueued?: (sessionId: string, id: string) => void;
   editQueued?: (sessionId: string, id: string, text: string, retainedAttachments: number[], attachments: Draft[]) => void;
   // Start a new session whose transcript is this session's turns through the given agent turn
-  forkSession?: (sessionId: string, turnIndex: number) => void;
+  // `agent`: the agent the fork continues on (the session's own for a plain fork)
+  forkSession?: (sessionId: string, turnIndex: number, agent?: AgentId) => void;
   // Write the session as Markdown or JSON under the data dir's exports/; the toast that follows offers to open it
   exportSession?: (id: string, format: ExportFormat) => void;
   // The session as Markdown (the export's text, nothing written); rejects with the reason it could not be read
@@ -468,9 +469,10 @@ export function Shell(p: ShellProps) {
   // Per-turn actions (copy / fork / stats): memoized like the other contexts so a stream push does not re-render consumers;
   // external conversations have no ACP transcript to fork
   const turnActions = useMemo(() => p.activeSessionId ? {
-    sessionId: p.activeSessionId, controls: p.controls,
-    fork: on.forkSession && !p.external ? (turnIndex: number) => on.forkSession!(p.activeSessionId!, turnIndex) : undefined,
-  } : undefined, [p.activeSessionId, p.controls, on.forkSession, p.external]);
+    sessionId: p.activeSessionId, controls: p.controls, agents: p.agents, agentId: p.agent.id,
+    fork: on.forkSession && !p.external
+      ? (turnIndex: number, agent: AgentId) => on.forkSession!(p.activeSessionId!, turnIndex, agent === p.agent.id ? undefined : agent) : undefined,
+  } : undefined, [p.activeSessionId, p.controls, p.agents, p.agent.id, on.forkSession, p.external]);
 
   return (
     <AppearanceContext.Provider value={a}>
