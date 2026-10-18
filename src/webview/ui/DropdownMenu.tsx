@@ -47,8 +47,10 @@ function Popup({ className, ref: forwardedRef, ...props }: ComponentProps<typeof
 // shrink-0: rows sit in a capped flex column (max-h-pop); a two-line row drops its floor to min-h-0, and without this
 // an overflowing list squeezes every row below its content, stacking the caption over the next label.
 // The fill follows Base UI's highlight only: a :hover fill stayed on the row under a resting pointer after the arrow keys
-// moved the highlight on, so two rows were lit at once. Rows Base UI does not highlight (ui/RadioGroup) add their own states
-export const optionClass = 'flex min-h-row w-full shrink-0 items-center gap-2 rounded-md px-2 text-left text-2 text-fg-1 outline-none transition-colors data-[highlighted]:option-highlighted disabled:text-fg-3 data-[disabled]:text-fg-3';
+// moved the highlight on, so two rows were lit at once. Rows Base UI does not highlight (ui/RadioGroup) add their own states.
+// The fill fades only while the pointer is over the popup: the highlight an opening menu puts on the current row lands a
+// frame after the rows paint, and faded in from nothing it read as the row being clicked again (reported 2026-10-19)
+export const optionClass = 'flex min-h-row w-full shrink-0 items-center gap-2 rounded-md px-2 text-left text-2 text-fg-1 outline-none group-hover/popup:transition-colors data-[highlighted]:option-highlighted disabled:text-fg-3 data-[disabled]:text-fg-3';
 function Item({ className, ...props }: ComponentProps<typeof Base.Item>) {
   return <Base.Item render={<button type="button" />} nativeButton {...props} className={cnState(cn(optionClass), className)} />;
 }

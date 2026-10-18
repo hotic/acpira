@@ -17,6 +17,6 @@ function Item({ className, onKeyDownCapture, ...props }: ComponentProps<typeof B
         event.currentTarget.click();
       }
     }}
-    className={cnState(cn(optionClass, 'enabled:hover:option-highlighted focus-visible:option-highlighted'), className)} />;
+    className={cnState(cn(optionClass, 'transition-colors enabled:hover:option-highlighted focus-visible:option-highlighted'), className)} />;
 }
 export const RadioGroup = { Root, Item };

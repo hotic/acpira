@@ -309,6 +309,7 @@ impl AcpSession {
           .filter_map(|o| o.value.clone().map(|v| (o.id.clone(), v)))
           .chain(c.state.controls.mode_id.clone().map(|m| (MODE_PICK.to_owned(), m)))
           .collect();
+        c.picks.shapes = c.state.controls.options.clone();
         for (key, value) in shown {
           if c.picks.values.contains_key(&key) {
             continue;
@@ -393,6 +394,7 @@ impl AcpSession {
         c.picks.values.remove(&key);
       }
     }
+    c.picks.shapes.clear();
     c.ultracode.rebuilding = false;
     // The level picked to leave Ultra has been set (or refused) by the replay: agent truth shows from here
     if c.ultracode.on == c.ultracode.sent {
