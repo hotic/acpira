@@ -752,8 +752,9 @@ fn render_work(ix: &WorkIndex, id: &str, fit: Fit) -> String {
     let f = &ix.files[file];
     let span = if f.last != f.first { format!("{}-{}", f.first, f.last) } else { f.first.to_string() };
     out.push(format!("- {file}: {} change{} (step {span})", f.count, if f.count > 1 { "s" } else { "" }));
-    // The list itself is never shortened; only the most recently changed files keep their diffs when it is tight
-    if k + fit.diff_files >= ix.file_order.len() {
+    // The list itself is never shortened; only the most recently changed files keep their diffs when it is tight.
+    // Counted from the end: `k + diff_files` overflowed at `usize::MAX` (all diffs) from the second file on
+    if ix.file_order.len() - k <= fit.diff_files {
       for (step, lines) in &f.diffs {
         out.push(format!("  step {step}:"));
         out.extend(lines.iter().map(|l| format!("    {l}")));
