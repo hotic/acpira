@@ -22,9 +22,9 @@ import { buildSessionTree, categoryOf, draggable, dropAction, type CategoryNode,
 // Unread (a turn that finished unwatched) is a slightly larger dot in the strongest foreground with a halo rippling out of it;
 // motion=none / reduced motion drop the halo and leave the dot lit. Not the accent: its default brand amber is indistinguishable from waiting's warn
 const STATE_DOT: Record<Exclude<NonNullable<SessionSummary['state']>, 'working' | 'background'>, string> = {
-  waiting: 'size-1.5 bg-warn',
+  waiting: 'size-1.5 bg-warn waiting-pulse',
   unread: 'size-unread-dot bg-fg-strong unread-halo',
-  error: 'size-1.5 bg-danger',
+  error: 'size-1.5 bg-danger error-blink',
 };
 
 // Titles and agent names match locally on every key; the conversation search runs host-side once typing pauses
@@ -32,9 +32,9 @@ const SEARCH_DEBOUNCE = 180;
 
 // Ring and dots share one fixed slot so every mark sits on the same centre line, and each names its meaning on hover.
 // The ring is drawn smaller than the slot: at full size its arc outweighed even an 8 px dot
-// Background (the turn ended, a task it started still runs) is the working ring at rest: a closed, still circle in the
-// faint foreground, so it reads as "not done, nothing to do". A reply that came in meanwhile lights it in the strongest
-// foreground with a dot inside, never the unread dot itself, which means finished
+// Background (the turn ended, a task it started still runs) is the working ring at rest: a closed circle in the faint
+// foreground with a small dot orbiting it slowly, so it reads as "alive, not done, nothing to do". A reply that came in
+// meanwhile lights it in the strongest foreground with a dot inside, never the unread dot itself, which means finished
 interface Mark { state: NonNullable<SessionSummary['state']>; unread?: boolean }
 function StateMark({ state, unread }: Mark) {
   const label = t(state === 'background' && unread ? 'session.state.backgroundUnread' : `session.state.${state}`);
@@ -42,8 +42,11 @@ function StateMark({ state, unread }: Mark) {
     {state === 'working'
       ? <LoaderCircle className="size-2.5 animate-spin live-spin text-fg-2" strokeWidth={2.5} />
       : state === 'background'
-        ? <span className="relative flex items-center justify-center">
+        ? <span className="relative flex size-2.5 items-center justify-center">
           <Circle className={cn('size-2.5', unread ? 'text-fg-strong' : 'text-fg-3')} strokeWidth={2.5} />
+          <span className="bg-orbit absolute inset-px">
+            <span className={cn('absolute top-0 left-1/2 size-0.75 -translate-1/2 rounded-full', unread ? 'bg-fg-strong' : 'bg-fg-2')} />
+          </span>
           {unread && <span className="absolute size-1 rounded-full bg-fg-strong" />}
         </span>
         : <span className={cn('rounded-full', STATE_DOT[state])} />}
