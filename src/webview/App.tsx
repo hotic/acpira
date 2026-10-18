@@ -320,7 +320,7 @@ export function App() {
     sendQueued: (sessionId, id) => post({ type: 'sendQueued', sessionId, id }),
     steerQueued: (sessionId, id) => post({ type: 'steerQueued', sessionId, id }),
     editQueued: (sessionId, id, text, retainedAttachments, attachments) => post({ type: 'editQueued', sessionId, id, text, retainedAttachments, attachments }),
-    forkSession: (sessionId, turnIndex) => post({ type: 'forkSession', sessionId, turnIndex }),
+    forkSession: (sessionId, turnIndex, agent) => post({ type: 'forkSession', sessionId, turnIndex, ...(agent ? { agent } : {}) }),
     exportSession: (id, format) => post({ type: 'exportSession', id, format }),
     sessionMarkdown,
     openInEditor: sessionId => post({ type: 'openInEditor', sessionId }),

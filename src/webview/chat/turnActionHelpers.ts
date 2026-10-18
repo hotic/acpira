@@ -1,4 +1,5 @@
-import type { AgentTurn, SessionControls, TurnSettings, TurnUsage } from '@shared/transcript';
+import type { AgentId, AgentInfo, AgentTurn, SessionControls, TurnSettings, TurnUsage } from '@shared/transcript';
+import { launchable } from '@shared/agentOrder';
 import { commandDuration } from './commandDuration';
 import { splitCodexBlocks } from './folding';
 
@@ -75,4 +76,12 @@ export function turnOutputTps(turn: AgentTurn): number | undefined {
   if (activeMs < MIN_DECODE_MS) return undefined;
   const tps = Math.round(((tokens - 1) * 1000) / activeMs);
   return tps > 0 ? tps : undefined;
+}
+
+// The fork menu's agents: the ones the plus menu offers, in its order, with the session's own agent first (forking
+// onto it is the plain fork). An agent the list no longer has (switched off since) is still offered first
+export function forkTargets(agents: AgentInfo[], current: AgentId): AgentInfo[] {
+  const open = launchable(agents);
+  const own = open.find(a => a.id === current) ?? agents.find(a => a.id === current);
+  return own ? [own, ...open.filter(a => a.id !== current)] : open;
 }

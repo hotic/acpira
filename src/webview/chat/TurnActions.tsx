@@ -1,20 +1,26 @@
 import { createContext, Fragment, useContext, useState, type ReactNode } from 'react';
 import { ChartNoAxesColumn, Check, Copy, GitBranch } from 'lucide-react';
-import type { AgentTurn, SessionControls, TurnSettings } from '@shared/transcript';
+import type { AgentId, AgentInfo, AgentTurn, SessionControls, TurnSettings } from '@shared/transcript';
 import { t, useLocale } from '../i18n';
 import { IconButton } from '../ui/Button';
+import { DropdownMenu } from '../ui/DropdownMenu';
 import { Popover } from '../ui/Popover';
-import { PanelFooter } from '../ui/Panel';
+import { OptionContent, PanelFooter } from '../ui/Panel';
 import { useCopied } from '../ui/useCopied';
+import { AgentMark } from './AgentMark';
 import { elapsedDuration } from './folding';
-import { modelLabel, replyMarkdown, turnOutputTps, turnTtft } from './turnActionHelpers';
+import { forkTargets, modelLabel, replyMarkdown, turnOutputTps, turnTtft } from './turnActionHelpers';
 
 // What the turn action row needs from the shell: the session it belongs to, the control list for resolving the model
-// name, and the fork action — absent for external (ChatGPT) sessions and in hosts that do not wire it (LAB)
-export const TurnActionsContext = createContext<{ sessionId: string; controls: SessionControls; fork?: (turnIndex: number) => void } | undefined>(undefined);
+// name, and the fork action with the agents it can continue on — absent for external (ChatGPT) sessions and in hosts
+// that do not wire it (LAB)
+export const TurnActionsContext = createContext<{
+  sessionId: string; controls: SessionControls;
+  fork?: (turnIndex: number, agent: AgentId) => void; agents?: AgentInfo[]; agentId?: AgentId;
+} | undefined>(undefined);
 
-// The row under a finished agent reply (Cursor's trio): copy the reply · fork the session from this turn · open the
-// response statistics card. Hidden until the turn is hovered / focused (the last reply included), always shown without hover (touch).
+// The row under a finished agent reply (Cursor's trio): copy the reply · fork the session from this turn onto an agent
+// picked from a menu (the session's own first) · open the response statistics card. Hidden until the turn is hovered / focused (the last reply included), always shown without hover (touch).
 // The row keeps its height (hover must not shift the transcript) but stands in for the spacing around it: it hugs the reply
 // (`-mt-gap` cancels the turn's row gap, the buttons' own padding is the air) and the exchange below it starts one row gap
 // after it instead of a message gap (`Thread` in Shell.tsx keys that off `data-turn-actions`)
@@ -23,10 +29,11 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
   const reply = replyMarkdown(turn);
   const copyState = useCopied(reply);
   const [statsOpen, setStatsOpen] = useState(false);
+  const [forkOpen, setForkOpen] = useState(false);
   const copyLabel = copyState.state === 'copied' ? t('code.copied') : copyState.state === 'failed' ? t('code.copyFailed') : t('turn.copy');
   return (
     <div
-      data-open={statsOpen || undefined}
+      data-open={statsOpen || forkOpen || undefined}
       data-turn-actions
       className="-mt-gap flex h-ctl-sm items-center justify-end gap-0.5 opacity-0 transition-opacity duration-(--code-copy-duration) ease-out group-hover/turn:opacity-100 group-focus-within/turn:opacity-100 [@media(hover:none)]:opacity-100 motion-reduce:transition-none data-[open]:opacity-100"
     >
@@ -38,10 +45,24 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
           <span className="sr-only" role="status">{copyState.state === 'idle' ? '' : copyLabel}</span>
         </>
       )}
-      {ctx?.fork && (
-        <IconButton size="sm" title={t('turn.fork')} aria-label={t('turn.fork')} onClick={() => ctx.fork!(turnIndex)}>
-          <GitBranch strokeWidth={1.5} />
-        </IconButton>
+      {ctx?.fork && ctx.agentId && (
+        <DropdownMenu.Root open={forkOpen} onOpenChange={setForkOpen}>
+          <DropdownMenu.Trigger render={
+            <IconButton size="sm" data-open={forkOpen || undefined} title={t('turn.fork')} aria-label={t('turn.fork')} aria-expanded={forkOpen}>
+              <GitBranch strokeWidth={1.5} />
+            </IconButton>
+          } />
+          <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="end" width="md"><DropdownMenu.Popup>
+            <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
+              {forkTargets(ctx.agents ?? [], ctx.agentId).map(a => (
+                <DropdownMenu.Item key={a.id} disabled={a.available === false} title={a.available === false ? t('agent.notInstalled') : undefined}
+                  onClick={() => ctx.fork!(turnIndex, a.id)}>
+                  <OptionContent icon={<AgentMark id={a.id} name={a.name} />}>{a.name}</OptionContent>
+                </DropdownMenu.Item>
+              ))}
+            </div>
+          </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
+        </DropdownMenu.Root>
       )}
       <Popover.Root open={statsOpen} onOpenChange={setStatsOpen}>
         <Popover.Trigger render={
