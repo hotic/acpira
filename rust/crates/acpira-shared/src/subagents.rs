@@ -130,6 +130,9 @@ pub struct SubagentHarness {
   /// same id)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub session_id: Option<String>,
+  /// The reasoning effort the child session really runs, by the CLI's own option name; absent when it has none
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub effort: Option<String>,
 }
 
 fn first_round() -> u32 {

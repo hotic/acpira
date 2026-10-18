@@ -74,8 +74,9 @@ async fn a_summoned_round_runs_in_its_own_process_and_its_thread_continues_the_s
   assert_eq!(list.len(), 1);
   expect_match(&list[0], json!({
     "visibility": "session", "state": "completed", "title": "Look at the diff", "role": "Fake Review",
-    "task": "relay: look at the diff", "toolCount": 1,
-    "harness": { "agent": "fake", "persona": "fake-review", "mode": "consult", "thread": thread, "round": 1 },
+    "task": "relay: look at the diff", "toolCount": 1, "model": "Model 1",
+    // The model and effort the child session really runs, by the CLI's option names
+    "harness": { "agent": "fake", "persona": "fake-review", "mode": "consult", "thread": thread, "round": 1, "effort": "High" },
   }));
   assert!(list[0]["result"].as_str().unwrap().contains("(round 1, mode plan)"));
   // The child received the persona's brief and the consult rule along with the prompt; its transcript is its own

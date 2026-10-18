@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronLeft, Plus, Trash2 } from 'lucide-react';
 import type { AgentId, AgentInfo, ConfigControl } from '@shared/transcript';
 import type { SettingsView } from '@shared/settings';
+import { effortLabel } from '@shared/composerControls';
 import { PERSONA_MAX, sanitizePersonas, type RelayMode, type SubagentPersona } from '@shared/subagents';
 import { AgentMark } from '../chat/AgentMark';
 import { Button, ChipTag, IconButton } from '../ui/Button';
@@ -71,7 +72,7 @@ export function SubagentsPage({ settings, agents, controls, on }: PageProps) {
         : <Group>
           {list.map(p => (
             <ItemRow key={p.id} dim={!p.enabled} bigLead onClick={() => setOpen(p.id)}
-              lead={<AgentMark id={p.agent} name={p.name} />} title={p.name} desc={metaOf(p, agents)} />
+              lead={<AgentMark id={p.agent} name={p.name} />} title={p.name} desc={metaOf(p, agents, controls[p.agent])} />
           ))}
         </Group>}
     </Section>
@@ -87,12 +88,14 @@ function PersonaDetail({ persona: p, agents, controls, onBack, onChange, onDelet
   onDelete: () => void;
 }) {
   const DEFAULT = '';
-  const modelControl = controls?.find(c => c.category === 'model' || c.id === 'model');
+  const modelControl = modelControlOf(controls);
   const effortControl = controls?.find(c => c.category === 'thought_level' || /effort|reasoning/.test(c.id));
-  const choices = (c: ConfigControl | undefined, value: string | undefined): Option<string>[] => {
-    const own = (c?.options ?? []).map(o => ({ value: o.id, label: o.name }));
+  // Effort levels read as the composer chip names them (XHigh, not the CLI's Xhigh)
+  const choices = (c: ConfigControl | undefined, value: string | undefined, effort = false): Option<string>[] => {
+    const name = (o: { id: string; name: string }) => (effort ? effortLabel(o) : o.name);
+    const own = (c?.options ?? []).map(o => ({ value: o.id, label: name(o) }));
     // A stored value the latest session no longer lists still shows as itself
-    const kept = value && !own.some(o => o.value === value) ? [{ value, label: value }] : [];
+    const kept = value && !own.some(o => o.value === value) ? [{ value, label: name({ id: value, name: value }) }] : [];
     return [{ value: DEFAULT, label: t('subagents.page.cliDefault') }, ...kept, ...own];
   };
   const readOnly = READ_ONLY[p.agent];
@@ -121,7 +124,7 @@ function PersonaDetail({ persona: p, agents, controls, onBack, onChange, onDelet
       </Field>
       {(effortControl || p.effort) && (
         <Field label={t('subagents.page.effort')}>
-          <Select label={t('subagents.page.effort')} value={p.effort ?? DEFAULT} options={choices(effortControl, p.effort)}
+          <Select label={t('subagents.page.effort')} value={p.effort ?? DEFAULT} options={choices(effortControl, p.effort, true)}
             onChange={v => onChange({ effort: v || undefined })} />
         </Field>
       )}
@@ -171,13 +174,21 @@ function TextBox({ value, label, placeholder, multiline, onCommit }: {
       className={`${cls} h-ctl w-(--ctl-w)`} />;
 }
 
-// The row's second line: the CLI, its model one step fainter, then the mode as a tag. Spacing and tone tell the parts
-// apart, with no separator glyph between them; the model gives up width first
-function metaOf(p: SubagentPersona, agents: AgentInfo[]): ReactNode {
+function modelControlOf(controls: ConfigControl[] | undefined): ConfigControl | undefined {
+  return controls?.find(c => c.category === 'model' || c.id === 'model');
+}
+
+// The row's second line: the CLI, its model one step fainter, then its reasoning effort and the mode as tags. Spacing and
+// tone tell the parts apart, with no separator glyph between them; the model gives up width first. The model reads as
+// the CLI names it (Codex `gpt-6-astra` → "6 Astra"), as in the detail page's select; the stored value shows only until
+// the CLI's latest session lists it
+function metaOf(p: SubagentPersona, agents: AgentInfo[], controls: ConfigControl[] | undefined): ReactNode {
   const cli = agents.find(a => a.id === p.agent)?.name ?? p.agent;
+  const model = p.model && (modelControlOf(controls)?.options.find(o => o.id === p.model)?.name ?? p.model);
   return <span className="flex min-w-0 items-center gap-gap">
     <span className="shrink-0">{cli}</span>
-    {p.model && <span className="min-w-0 truncate text-fg-3/70">{p.model}</span>}
+    {model && <span className="min-w-0 truncate text-fg-3/70">{model}</span>}
+    {p.effort && <ChipTag>{effortLabel({ id: p.effort, name: p.effort })}</ChipTag>}
     <ChipTag>{t(`subagents.page.${p.mode}`)}</ChipTag>
   </span>;
 }

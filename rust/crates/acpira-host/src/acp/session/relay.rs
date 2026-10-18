@@ -473,7 +473,7 @@ impl AcpSession {
       }
       let parent = caller.as_deref().and_then(|th| c.tree.relay_latest(th)).map(|(id, ..)| id);
       let turn_index = current_turn_index(&c);
-      let harness = SubagentHarness { agent: persona.agent.clone(), persona: Some(persona.id.clone()), mode, thread: thread.clone().unwrap_or_default(), round, session_id: peer.clone() };
+      let harness = SubagentHarness { agent: persona.agent.clone(), persona: Some(persona.id.clone()), mode, thread: thread.clone().unwrap_or_default(), round, session_id: peer.clone(), effort: None };
       let model = persona.model.clone();
       let node = c.tree.relay_open(RelayOpen { parent, turn_index, harness, role: persona.name.clone(), title, task: prompt.clone(), model });
       let thread = c.tree.relay_thread_of(&node).unwrap_or_else(|| node.clone());
@@ -569,7 +569,7 @@ impl AcpSession {
   /// with the node, so a later read of the round says them too
   async fn relay_round(self: Arc<Self>, r: &Round, starting: Starting) -> Result<String> {
     let mut notes = vec![];
-    let (proc, sid, model) = self.relay_connect(r, &mut notes, starting).await?;
+    let (proc, sid, (model, effort)) = self.relay_connect(r, &mut notes, starting).await?;
     for n in &notes {
       self.log(&format!("relay {}: {n}", short(&r.thread)));
     }
@@ -584,7 +584,7 @@ impl AcpSession {
       let turn_index = current_turn_index(&c);
       let Core { tree, state, .. } = &mut *c;
       tree.relay_bind(&r.node, &route_key(&r.thread), &sid, &mut RouteCtx { turn_index, root_turns: &mut state.turns });
-      tree.relay_set_model(&r.node, model);
+      tree.relay_set_controls(&r.node, model, effort);
       // Cancelled while connecting: the prompt never goes out
       let cancelled = tree.relay_cancel_requested(&r.node);
       self.touch(&mut c);
@@ -600,9 +600,9 @@ impl AcpSession {
   }
 
   /// The thread's live process and native session (with the round's settings applied), started when there is none.
-  /// Answers the model the session really runs
+  /// Answers the model and reasoning effort the session really runs
   /// `_starting` keeps the session's close waiting until this returns (the process registered, or ended)
-  async fn relay_connect(self: &Arc<Self>, r: &Round, notes: &mut Vec<String>, _starting: Starting) -> Result<(Arc<AgentProcess>, String, Option<String>)> {
+  async fn relay_connect(self: &Arc<Self>, r: &Round, notes: &mut Vec<String>, _starting: Starting) -> Result<(Arc<AgentProcess>, String, (Option<String>, Option<String>))> {
     let thread = r.thread.as_str();
     let wanted = (r.persona.model.clone(), r.persona.effort.clone());
     let live = {
@@ -620,13 +620,13 @@ impl AcpSession {
         relay_controls(&proc, &sid, &mut opened, &r.persona, notes).await;
       }
       let mode = if last == Some(r.mode) || relay_mode(&proc, &sid, &mut opened, start_mode.as_deref(), r.mode, &r.persona.agent, notes).await { Some(r.mode) } else { None };
-      let model = current_name(opened.get("configOptions"), &MODEL_KEYS);
+      let controls = running_controls(&opened);
       if let Some(rp) = self.core.lock().relays.procs.get_mut(thread) {
         rp.opened = opened;
         rp.mode = mode;
         rp.applied = wanted;
       }
-      return Ok((proc, sid, model));
+      return Ok((proc, sid, controls));
     }
     let def = self.deps.registry.get(&r.persona.agent)?.clone();
     let bin = self.deps.registry.resolve_binary(&r.persona.agent).await.ok_or_else(|| anyhow!("{} is not installed", def.name))?;
@@ -675,7 +675,7 @@ impl AcpSession {
     if !kept {
       return Err(anyhow!("the session closed"));
     }
-    Ok((proc, sid, current_name(opened.get("configOptions"), &MODEL_KEYS)))
+    Ok((proc, sid, running_controls(&opened)))
   }
 
   /// Open the thread's native session on a fresh process: resume / load the earlier one (never silently a new one in
@@ -838,6 +838,11 @@ impl AcpSession {
       }
     }
   }
+}
+
+/// The model and reasoning effort the session runs, by their option names
+fn running_controls(opened: &Value) -> (Option<String>, Option<String>) {
+  (current_name(opened.get("configOptions"), &MODEL_KEYS), current_name(opened.get("configOptions"), &EFFORT_KEYS))
 }
 
 /// The persona's model, then its effort, picked from the options the model switch answered (effort values depend on
@@ -1061,6 +1066,7 @@ mod tests {
       thread: thread.into(),
       round,
       session_id: None,
+      effort: None,
     };
     assert!(call_fits("codex-review", None, &h("codex-review", "n1", 1), Some("Codex Review")));
     assert!(call_fits("Codex Review", None, &h("codex-review", "n1", 1), Some("Codex Review")));

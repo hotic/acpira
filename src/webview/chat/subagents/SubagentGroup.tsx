@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import type { SubagentSummary } from '@shared/subagents';
+import { effortLabel } from '@shared/composerControls';
 import { t } from '../../i18n';
+import { ChipTag } from '../../ui/Button';
 import { Row } from '../../ui/Row';
 import { cn } from '../../ui/cn';
 import { AgentMark } from '../AgentMark';
@@ -36,7 +38,8 @@ export function SubagentGroup({ nodes, all, onInspect }: GroupProps) {
 // The activity gives up width first, the role before the title.
 // The mark fills the lead slot (--subagent-mark) so the dotted bars read; the ✓ scales back to a plain Check.
 // A summoned child (another CLI, `harness`) reads like any other row: its logo rides on the state mark's corner, the
-// task names the row, the model follows faintly; the persona name and CLI are in the tooltip
+// task names the row, the model follows faintly with its reasoning effort as the composer chip's badge; the persona name
+// and CLI are in the tooltip
 function SubagentRow({ node, all, onInspect }: { node: SubagentSummary; all: SubagentSummary[]; onInspect: GroupProps['onInspect'] }) {
   const title = subagentTitle(node, t);
   const descendants = descendantCount(node.id, all);
@@ -72,6 +75,7 @@ function SubagentRow({ node, all, onInspect }: { node: SubagentSummary; all: Sub
           {h
             ? <>
               {node.model && <span className="min-w-0 max-w-project truncate text-3 text-fg-3 [flex-shrink:4]">{node.model}</span>}
+              {h.effort && <ChipTag small>{effortLabel({ id: h.effort, name: h.effort })}</ChipTag>}
               {h.round > 1 && <span className="shrink-0 text-3 text-fg-3">{t('subagents.round', { n: h.round })}</span>}
             </>
             : node.role !== undefined && node.role !== title && <span className="min-w-0 max-w-project truncate text-3 text-fg-3 [flex-shrink:4]">{node.role}</span>}
