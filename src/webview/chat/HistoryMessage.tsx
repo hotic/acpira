@@ -9,6 +9,9 @@ import { EditAttachments } from './Attachments';
 import { UserMessage } from './Turns';
 import { cn } from '../ui/cn';
 import { cssTimeVar } from '../ui/cssTime';
+import { Row, RowLabel, RowTarget } from '../ui/Row';
+import { AtSign } from 'lucide-react';
+import { t } from '../i18n';
 
 // Every prompt card reads this, so it must stay stable across stream pushes: editability is a flag,
 // and the composer props (which change with each chunk) travel in HistoryComposerContext for the mounted editor alone
@@ -64,7 +67,7 @@ export const HistoryMessage = memo(function HistoryMessage(p: {
     animation.oncancel = done;
     return () => animation.cancel();
   }, [editing, motion]);
-  if (p.turn.auto) return null;
+  if (p.turn.auto) return p.turn.autoReason === 'subagents' ? <SubagentsReported text={p.turn.text} /> : null;
   const editable = !!context?.editable;
   return (
     <div data-sticky-prompt className="peer/prompt pointer-events-none sticky top-0 z-10 flex min-w-0 shrink-0 flex-col">
@@ -122,4 +125,16 @@ function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
     />
     {error && <p role="alert" className="px-pad text-2 text-danger">{error}</p>}
   </div>;
+}
+
+// The automatic message that hands summoned agents' replies back to the agent (relay.rs `wake_text`): the message itself
+// is for the agent, the user reads one line naming who reported, from its `## Persona (cli)` headings
+function SubagentsReported({ text }: { text: string }) {
+  const names = [...text.matchAll(/^## (.+?)(?: \([^()]*\))?$/gm)].map(m => m[1]!);
+  return (
+    <Row lead={<AtSign className="size-icon" strokeWidth={1.5} />}>
+      <RowLabel>{t('chat.subagentsReported')}</RowLabel>
+      {names.length > 0 && <RowTarget>{names.join(', ')}</RowTarget>}
+    </Row>
+  );
 }

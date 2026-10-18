@@ -612,6 +612,7 @@ export const zhTW = {
   'export.label.autoContinue': '切換帳號後自動繼續',
   'export.label.autoRetry': '重試：從失敗處繼續',
   'export.label.autoGate': '工作區門禁退回',
+  'export.label.autoSubagents': "子代理交回的結果",
   'export.label.error': '錯誤',
 
   // Tool verbs (ToolKind)
@@ -943,6 +944,7 @@ export const zhTW = {
   'settings.rules.none': '沒有規則檔案',
   'settings.nav.shared': '共享',
   'subagents.round': "第 {n} 輪",
+  'chat.subagentsReported': "子代理回報",
   'summon.entry': "召喚",
   'summon.hint': "在它自己的 CLI 裡接手，看不到這段對話",
   'settings.nav.subagents': "子代理",

@@ -614,6 +614,7 @@ export const zhCN = {
   'export.label.autoContinue': '切换账号后自动继续',
   'export.label.autoRetry': '重试：从失败处继续',
   'export.label.autoGate': '工作区门禁打回',
+  'export.label.autoSubagents': "子代理交回的结果",
   'export.label.error': '错误',
 
   // Tool verbs (ToolKind)
@@ -958,6 +959,7 @@ export const zhCN = {
   'settings.rules.none': '没有规则文件',
   'settings.nav.shared': '共享',
   'subagents.round': "第 {n} 轮",
+  'chat.subagentsReported': "子代理回报",
   'summon.entry': "召唤",
   'summon.hint': "在它自己的 CLI 里接手，看不到这段对话",
   'settings.nav.subagents': "子代理",

@@ -593,6 +593,7 @@ export const fr = {
   'export.label.autoContinue': 'Poursuivi automatiquement après un changement de compte',
   'export.label.autoRetry': 'Réessayé : repris là où le tour avait échoué',
   'export.label.autoGate': 'Renvoyé par la barrière de l’espace de travail',
+  'export.label.autoSubagents': "Réponses des agents invoqués",
   'export.label.error': 'Erreur',
 
   'verb.read': 'Lecture',
@@ -911,6 +912,7 @@ export const fr = {
   'settings.rules.none': 'Aucun fichier de règles',
   'settings.nav.shared': 'Partagé',
   'subagents.round': "Tour {n}",
+  'chat.subagentsReported': "Réponses de",
   'summon.entry': "Convoquer",
   'summon.hint': "Confier à un autre agent : il ouvre sa propre session dans sa CLI et lit ce dépôt, mais pas cette conversation",
   'settings.nav.subagents': "Sous-agents",

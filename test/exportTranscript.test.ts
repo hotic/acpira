@@ -72,6 +72,13 @@ describe('exportMarkdown', () => {
     expect(goal).not.toContain('_Automatic');
   });
 
+  it('marks the automatic message that brought summoned agents\' replies back', () => {
+    const md = exportMarkdown({ title: 't', agentName: 'Fake', cwd: '/repo', exportedAt: 'x', turns: [
+      { role: 'user', text: '(Acpira) A summoned agent you sent off has finished.', auto: true, autoReason: 'subagents' },
+    ] });
+    expect(md).toContain('_Sent back by summoned agents_');
+  });
+
   it('renders agent blocks: thought, prose, plan, tools, question, compaction, plan doc', () => {
     expect(md).toContain('### Fake');
     expect(md).toContain('<details><summary>Thinking</summary>');
