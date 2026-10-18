@@ -339,7 +339,7 @@ impl AcpSession {
     let mut fork_history = None;
     let mut fork_error = None;
     if let (Some(turns), Some(proc)) = (turns_copy, proc.as_ref()) {
-      let spec = Handoff { lead: FORK_HISTORY_LEAD, fork: fork.as_ref(), cwd: &cwd, trim: true };
+      let spec = Handoff { lead: FORK_HISTORY_LEAD, fork: fork.as_ref(), cwd: &cwd, trim: true, readable: fork.is_some() && self.reads_itself() };
       match history_context(&self.id, &turns, proc, &self.deps.blobs, caps, spec).await {
         Ok(h) => fork_history = h,
         Err(e) => {

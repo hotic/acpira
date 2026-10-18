@@ -98,6 +98,8 @@ pub struct DigestMeta<'a> {
   pub agent_name: &'a str,
   /// A live session may be mid-turn: its last turn can still change
   pub live: bool,
+  /// A fork from another agent: that agent's name, for the turns it copied
+  pub fork_agent: Option<&'a str>,
 }
 
 /// At most `max` bytes of `s`, cut on a char boundary, with an ellipsis when cut
@@ -244,6 +246,12 @@ fn header(r: &SessionRecord, meta: &DigestMeta, rounds: usize) -> String {
   let from = if r.created_at.is_empty() { None } else { Some(iso_stamp(&r.created_at)) };
   s.push_str(&format!("Time: {}{}\n", from.map(|f| format!("{f} → ")).unwrap_or_default(), iso_stamp(&r.updated_at)));
   s.push_str(&format!("Turns: {rounds}\n"));
+  if let Some(f) = r.forked_from.as_ref()
+    && let Some(n) = usize::try_from(f.turn_index).ok().and_then(|i| round_numbers(&r.turns).get(i).copied())
+  {
+    let from = meta.fork_agent.map(|a| format!(", run by {a}")).unwrap_or_default();
+    s.push_str(&format!("Forked: turns 1-{n} were copied from {}{from}\n", session_link(&f.session_id)));
+  }
   if meta.live {
     s.push_str("This session is open right now; its last turn may still be running.\n");
   }
@@ -713,7 +721,7 @@ mod tests {
     .unwrap()
   }
 
-  const META: DigestMeta<'static> = DigestMeta { agent_name: "Claude", live: false };
+  const META: DigestMeta<'static> = DigestMeta { agent_name: "Claude", live: false, fork_agent: None };
 
   fn sample() -> SessionRecord {
     record(serde_json::json!([
