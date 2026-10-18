@@ -149,6 +149,16 @@
 .unread-halo { position: relative; }
 .unread-halo::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: inherit; opacity: 0; animation: acp-halo 2s ease-out infinite; }
 @keyframes acp-halo { from { opacity: 0.6; transform: scale(1); } to { opacity: 0; transform: scale(2.6); } }
+/* The other session list marks each move their own way, so a glance tells them apart without relying on colour alone.
+   Waiting beats like a heart (it needs the user), error double-flashes every few seconds, and background work is a dot
+   orbiting the still ring: alive, slower than the working spinner, nothing to do. The kill switches below stop all three
+   on their resting frame (full dot, lit dot, dot at the top) */
+.waiting-pulse { animation: acp-mark-beat 1.4s ease-in-out infinite; }
+@keyframes acp-mark-beat { 0%, 100% { transform: scale(1); } 20% { transform: scale(1.5); } 40% { transform: scale(1.1); } 55% { transform: scale(1.35); } 75% { transform: scale(1); } }
+.error-blink { animation: acp-mark-flash 3s linear infinite; }
+@keyframes acp-mark-flash { 0%, 64%, 76%, 88%, 100% { opacity: 1; } 70%, 82% { opacity: 0.2; } }
+.bg-orbit { animation: acp-orbit 3.6s linear infinite; }
+@keyframes acp-orbit { to { transform: rotate(1turn); } }
 @keyframes acp-fade-in { from { opacity: 0; } }
 
 /* acpira.appearance.motion = none: the same kill switch as the OS preference. Two live-status signals
