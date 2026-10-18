@@ -45,6 +45,8 @@ export const MODELS: Record<string, ModelSpec> = {
   },
   // Devin's SWE model; not in the catalogue, so priced as Kimi K3. The gateway reports no cache reads for it
   'swe-2': { id: 'swe-2', api: 'responses', catalog: 'kimi-k3', context: 262_144, output: 32_000 },
+  // V4.1 Flash on the gateway (2026-10-18), for when there is no DeepSeek key; its cache numbers are unchecked
+  'deepseek-v4.1-flash': { id: 'deepseek-v4.1-flash', api: 'chat', catalog: 'deepseek-flash', context: 1_000_000, output: 32_000 },
   // DeepSeek's own API (deepseek-flash is V4.1 Flash), whose usage reports real cache hits
   'deepseek-flash': { id: 'deepseek-flash', upstream: 'ds', api: 'chat', catalog: 'deepseek-flash', context: 1_000_000, output: 32_000 },
 };

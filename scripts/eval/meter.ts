@@ -155,10 +155,10 @@ export function startMeter(opts: { log?: string; keys?: Record<string, string>; 
       const up = https.request(target, { method: req.method, headers }, r => {
         res.writeHead(r.statusCode ?? 502, r.headers);
         const got: Buffer[] = [];
-        r.on('data', d => { got.push(d); res.write(d); });
-        r.on('end', () => {
-          res.end();
-          if (req.method !== 'POST') return;
+        let logged = false;
+        const record = () => {
+          if (logged || req.method !== 'POST') return;
+          logged = true;
           const text = Buffer.concat(got).toString('utf8');
           const usage = readUsage(text);
           const status = r.statusCode ?? 0;
@@ -166,6 +166,17 @@ export function startMeter(opts: { log?: string; keys?: Record<string, string>; 
           const call: Call = { run, t: started, path, model, status, ms: Date.now() - started, ...usage };
           calls.push(call);
           if (log) appendFileSync(log, JSON.stringify(call) + '\n');
+        };
+        r.on('data', d => { got.push(d); res.write(d); });
+        r.on('end', () => {
+          res.end();
+          record();
+        });
+        // A client that hangs up first (the agent stops reading at an in-stream error the gateway leaves open, seen
+        // 2026-10-18 with "The usage limit has been reached") still gets its call recorded, error included
+        res.on('close', () => {
+          record();
+          r.destroy();
         });
         r.on('error', e => res.destroy(e));
       });
