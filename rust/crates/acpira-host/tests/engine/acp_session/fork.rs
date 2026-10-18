@@ -245,3 +245,22 @@ async fn a_same_agent_forks_lead_is_the_plain_fork_lead() {
   let lead = acpira_host::acp::session::edit::FORK_HISTORY_LEAD;
   assert!(history.starts_with(&format!("{lead}\n[")), "{history}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_fork_whose_agent_can_read_its_own_session_is_told_how_and_pi_is_not() {
+  let fake = fake_or_skip!();
+  // Pi takes the handed-over servers and starts none of them, so the pointer would send it to a tool it does not have
+  for (id, readable) in [("fake", true), ("pi", false)] {
+    let mut h = Harness::for_agent(&fake, id, json!({ "env": { "FAKE_PROMPT_CAPS": "strict" } }));
+    h.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new("/opt/acpira/bin/acpira"));
+    let record = fork_record(&h, two_pairs(), |r| {
+      r.forked_from = serde_json::from_value(json!({ "sessionId": "source-session-id", "turnIndex": 3 })).unwrap();
+    });
+    let s = reopened(&h, record).await;
+    prompt(&s, "inspect-history").await;
+    let wire = wire_prompt(&last_turn(&view(&s)))["prompt"].to_string();
+    let pointer = format!("This conversation is the Acpira session acpira://session/{}", s.id);
+    assert_eq!(wire.contains(&pointer), readable, "{id}: {wire}");
+    assert!(wire.contains("alpha"), "{id}: {wire}");
+  }
+}

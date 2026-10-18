@@ -3187,14 +3187,15 @@ impl SessionLibrary for SessionManager {
       // Inside one session: a fixed-string search over its record
       if let Some(r) = args.session.as_deref().filter(|r| !r.trim().is_empty()) {
         let id = resolve_ref(r, &sessions).ok_or_else(|| format!("No Acpira session is called {r:?}; search_sessions without `session` lists them."))?;
-        if caller.is_self_session(&id) {
-          return Ok(SELF_READ.to_owned());
-        }
         if query.is_empty() {
           return Err("Give a query to search inside a session; read_session reads it.".into());
         }
         let snap = self.snapshot(&id).await.map_err(|e| e.to_string())?;
-        return Ok(session_digest::grep(&snap.into_record(), &query, args.limit.unwrap_or(session_digest::GREP_HITS)));
+        let record = snap.into_record();
+        if caller.is_self_session(&id) && !holds_unseen_turns(&record) {
+          return Ok(SELF_READ.to_owned());
+        }
+        return Ok(session_digest::grep(&record, &query, args.limit.unwrap_or(session_digest::GREP_HITS)));
       }
       let all = args.scope.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("all"));
       let agents = self.agents();
@@ -3230,19 +3231,26 @@ impl SessionLibrary for SessionManager {
         return Err("Name the session: its link, its id, or the agent's own session id. search_sessions finds them.".into());
       }
       let id = resolve_ref(r, &sessions).ok_or_else(|| format!("No Acpira session is called {r:?}; search_sessions lists them."))?;
-      if caller.is_self_session(&id) {
-        return Ok(SELF_READ.to_owned());
-      }
       let snap = self.snapshot(&id).await.map_err(|e| e.to_string())?;
       let agent_name = self.agent_name(snap.agent());
-      let meta = DigestMeta { agent_name: &agent_name, live: self.live(&id).is_some_and(|s| s.is_running()) };
       let record = snap.into_record();
+      if caller.is_self_session(&id) && !holds_unseen_turns(&record) {
+        return Ok(SELF_READ.to_owned());
+      }
+      let fork_agent = record.forked_from.as_ref().and_then(|f| f.agent.as_ref()).map(|a| self.agent_name(a));
+      let meta = DigestMeta { agent_name: &agent_name, live: self.live(&id).is_some_and(|s| s.is_running()), fork_agent: fork_agent.as_deref() };
       Ok(match (args.from, args.to) {
         (None, None) => session_digest::outline(&record, &meta),
         (from, to) => session_digest::range(&record, &meta, from.unwrap_or(1), to, args.offset.unwrap_or(0), args.detail.as_deref() == Some("full")),
       })
     })
   }
+}
+
+/// A fork's agent was handed its copied turns as a clipped (possibly trimmed) history, never as its own conversation:
+/// reading its own session is how it gets them in full. Any other session's own agent has its conversation in context
+fn holds_unseen_turns(record: &SessionRecord) -> bool {
+  record.forked_from.as_ref().is_some_and(|f| f.turn_index >= 0)
 }
 
 /// Same agent / account / cwd and still empty: keep the process instead of spawning another

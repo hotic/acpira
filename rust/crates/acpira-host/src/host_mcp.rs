@@ -133,6 +133,11 @@ impl HostMcp {
   pub fn refuse(&self, agent: &str) {
     self.refused.lock().insert(agent.to_owned());
   }
+
+  /// The agent failed to start the server once and gets no entry any more
+  pub fn refused(&self, agent: &str) -> bool {
+    self.refused.lock().contains(agent)
+  }
 }
 
 /// The `mcpServers` entry for a session request (ACP stdio server: no `type` field, env as name/value pairs)

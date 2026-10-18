@@ -100,5 +100,18 @@ async fn agents_search_and_read_sessions_through_the_hub_within_their_grant() {
   assert!(op(&addr, &root, read("no-such-session")).await.unwrap().is_err());
   assert!(op(&addr, &root, read("two words")).await.unwrap().is_err());
   assert_eq!(op(&addr, "nope", read(&a)).await, None);
+
+  // A fork's agent never had its copied turns as its own conversation: it reads them back in full, but its list still
+  // leaves it out
+  m.handle(json!({ "type": "forkSession", "sessionId": a, "turnIndex": 1 })).await;
+  let f = m.active_id().unwrap();
+  let session_f = m.m.live_session(&f).expect("the fork is open");
+  let fork_root = hub.env(&session_f, None, 1)[1]["value"].as_str().unwrap().to_owned();
+  let own = op(&addr, &fork_root, read(&f)).await.unwrap().unwrap();
+  assert!(own.contains(&format!("Forked: turns 1-1 were copied from {}", link(&a))) && own.contains("1. User: zebracorn alpha question"), "{own}");
+  let inside = HubOp::SearchSessions(SessionSearchArgs { query: Some("alpha".into()), session: Some(f.clone()), ..Default::default() });
+  assert!(op(&addr, &fork_root, inside).await.unwrap().unwrap().contains("zebracorn alpha question"));
+  let recent = op(&addr, &fork_root, search("")).await.unwrap().unwrap();
+  assert!(!recent.contains(&link(&f)) && recent.contains(&link(&a)), "{recent}");
   m.dispose().await;
 }

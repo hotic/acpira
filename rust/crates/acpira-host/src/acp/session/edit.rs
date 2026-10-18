@@ -21,6 +21,8 @@ use crate::acp::session::prompt::{Origin, Staged};
 use crate::i18n::{t, tp};
 use crate::json::{len16, slice16};
 use crate::limits::EDIT_CONTEXT_MAX_BYTES;
+use acpira_shared::session_links::session_link;
+
 use crate::store::record::ForkedFrom;
 use crate::store::session_digest::{OUTLINE_BYTES, handoff_outline, round_numbers};
 use crate::store::transcript_store::TranscriptStore;
@@ -201,6 +203,16 @@ pub struct Handoff<'a> {
   pub fork: Option<&'a ForkedFrom>,
   pub cwd: &'a str,
   pub trim: bool,
+  /// The agent can call Acpira's read_session on this session: the history says how to read what it clips or leaves out
+  pub readable: bool,
+}
+
+/// How an agent that can read its own session gets back what the handoff clipped or left out
+fn read_pointer(session_id: &str) -> String {
+  let link = session_link(session_id);
+  format!(
+    "This conversation is the Acpira session {link}. read_session {{session: \"{link}\", from, to, detail: \"full\"}} returns any of its turns in full, tool output included; search_sessions {{session: \"{link}\", query}} finds text in it."
+  )
 }
 
 /// The lead with its cross-agent note: turns another agent ran come with that agent's tool names and an older view of
@@ -238,7 +250,8 @@ pub async fn history_context(
   let items: Vec<String> = source.iter().map(|t| compact_turn(t).to_string()).collect();
   let omit_note = |n: u32| format!("\n{n} earlier turns were omitted to fit the size limit.");
   let last = rounds.last().copied().unwrap_or(0);
-  let budget = EDIT_CONTEXT_MAX_BYTES as i64 - (lead.len() + omit_note(last).len()) as i64 - 1;
+  let pointer = if spec.readable { read_pointer(session_id).len() + 1 } else { 0 };
+  let budget = EDIT_CONTEXT_MAX_BYTES as i64 - (lead.len() + omit_note(last).len() + pointer) as i64 - 1;
   let (start, outline) = match fit_start(&items, &rounds, budget, false) {
     Some(start) => (start, None),
     None if !spec.trim => return Ok(None),
@@ -253,6 +266,10 @@ pub async fn history_context(
   let mut history = lead;
   if omitted > 0 {
     history.push_str(&omit_note(omitted));
+  }
+  if spec.readable {
+    history.push('\n');
+    history.push_str(&read_pointer(session_id));
   }
   if let Some(o) = &outline {
     history.push_str("\n\n");
@@ -339,6 +356,16 @@ fn unchanged_failed_retry(c: &Core, edit: &EditTurnRequest) -> bool {
 }
 
 impl AcpSession {
+  /// Whether this session's agent can read the session back through Acpira's MCP server: the last session request
+  /// carried it, the agent has not refused it since, and the agent launches handed-over servers at all (Pi takes the
+  /// list and starts none of it)
+  pub(crate) fn reads_itself(&self) -> bool {
+    let sent = self.core.lock().mcp_sent.iter().any(|n| n == crate::host_mcp::SERVER_NAME);
+    sent
+      && self.deps.host_mcp.as_ref().is_some_and(|h| !h.refused(&self.agent))
+      && crate::agent_ext::agent_ext(&self.agent).is_none_or(|e| e.shared.mcp)
+  }
+
   fn check_edit_active(&self) -> Result<()> {
     let c = self.core.lock();
     if c.phase.staging_aborted || c.status != SessionStatus::Ready { Err(anyhow!(t("history.cancelled"))) } else { Ok(()) }
@@ -516,7 +543,8 @@ impl AcpSession {
           let c = self.core.lock();
           (c.lineage.forked_from.clone(), self.cwd.clone())
         };
-        let spec = Handoff { lead: EDIT_HISTORY_LEAD, fork: fork.as_ref(), cwd: &cwd, trim: false };
+        let readable = self.reads_itself();
+        let spec = Handoff { lead: EDIT_HISTORY_LEAD, fork: fork.as_ref(), cwd: &cwd, trim: false, readable: readable && fork.is_some() };
         let history = history_context(&self.id, &prefix, &proc, &self.deps.blobs, caps, spec).await?;
         let blocks = history.map(|h| {
           let mut b = h.blocks;
