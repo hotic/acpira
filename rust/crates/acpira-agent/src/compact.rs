@@ -348,17 +348,34 @@ fn carried_messages(before: &[String], omitted: usize, items: &[Item], budget: u
   (all.into_iter().skip(dropped).collect(), omitted + dropped)
 }
 
-/// The last to-do list `head` wrote (the `todo` tool's result), else the one carried before, unless `tail` writes a
-/// later one the model still sees
-fn last_todo(head: &[Item], tail: &[Item], before: Option<&str>) -> Option<String> {
-  let todo = |i: &Item| match i {
-    Item::ToolResult { name, content, is_error: false, .. } if name == tools::TODO && content != PRUNED => Some(content.clone()),
-    _ => None,
-  };
-  if tail.iter().any(|i| todo(i).is_some()) {
+/// The to-do list a call set, as the todo tool answers with it: the todo tool's own list, or the one a call of another
+/// built-in tool carried (`todos`, `tools::todo::rider`). Read off the call rather than its result, which a prune
+/// may have cleared
+fn todo_of(c: &llm::ToolCall) -> Option<String> {
+  if !tools::names::ALL.contains(&c.name.as_str()) {
     return None;
   }
-  head.iter().rev().find_map(todo).or_else(|| before.map(str::to_owned))
+  let args = serde_json::from_str::<Value>(&c.arguments).ok()?;
+  let todos = match tools::todo::prepare(&args) {
+    Ok(tools::Action::Todo { todos }) if c.name == tools::TODO => todos,
+    _ if c.name == tools::TODO => return None,
+    _ => tools::todo::rider(&args)?.ok()?,
+  };
+  Some(tools::todo::listing(&todos))
+}
+
+/// The last to-do list `head` set, else the one carried before, unless `tail` sets a later one the model still sees
+fn last_todo(head: &[Item], tail: &[Item], before: Option<&str>) -> Option<String> {
+  let last = |items: &[Item]| {
+    items.iter().rev().find_map(|i| match i {
+      Item::Assistant { tool_calls, .. } => tool_calls.iter().rev().find_map(todo_of),
+      _ => None,
+    })
+  };
+  if last(tail).is_some() {
+    return None;
+  }
+  last(head).or_else(|| before.map(str::to_owned))
 }
 
 /// Files the tool calls of an item read, wrote or edited, absolute; only the calls `counts` lets through (by call id)
@@ -367,9 +384,7 @@ fn touched_paths(item: &Item, cwd: &Path, counts: &dyn Fn(&str) -> bool) -> Vec<
   let mut out = vec![];
   for c in tool_calls.iter().filter(|c| [tools::READ, tools::WRITE, tools::EDIT].contains(&c.name.as_str()) && counts(&c.id)) {
     let Ok(args) = serde_json::from_str::<Value>(&c.arguments) else { continue };
-    let first = args.get("path").or_else(|| args.get("file_path")).and_then(Value::as_str);
-    let more = args.get("paths").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str);
-    out.extend(first.into_iter().chain(more).map(|p| tools::resolve(p, cwd)));
+    out.extend(tools::files_of(&c.name, &args, cwd));
   }
   out
 }
@@ -1131,10 +1146,28 @@ mod tests {
 
   #[test]
   fn the_last_to_do_list_is_carried_unless_the_tail_has_a_later_one() {
-    let todo = |id: &str, text: &str| Item::ToolResult { call_id: id.into(), name: "todo".into(), content: text.into(), is_error: false, images: vec![] };
-    let head = vec![user("go"), call("1", "todo"), todo("1", "old list"), call("2", "todo"), todo("2", "new list")];
-    assert_eq!(last_todo(&head, &[], Some("carried")).as_deref(), Some("new list"));
-    assert_eq!(last_todo(&head, &[call("3", "todo"), todo("3", "tail list")], Some("carried")), None);
+    let set = |id: &str, name: &str, args: Value| Item::Assistant {
+      text: String::new(),
+      reasoning: String::new(),
+      tool_calls: vec![ToolCall { id: id.into(), name: name.into(), arguments: args.to_string() }],
+      native: None,
+    };
+    let list = |content: &str| json!([{ "content": content, "status": "in_progress" }]);
+    let head = vec![
+      user("go"),
+      set("1", "todo", json!({ "todos": list("old") })),
+      result("1", "todo", 10),
+      set("2", "todo", json!({ "todos": list("new") })),
+      // A prune cleared the result; the call still says what the list became
+      Item::ToolResult { call_id: "2".into(), name: "todo".into(), content: PRUNED.into(), is_error: false, images: vec![] },
+    ];
+    assert_eq!(last_todo(&head, &[], Some("carried")).as_deref(), Some("To-do list updated (0 pending, 1 in progress, 0 completed):\n[in_progress] new\n"));
+    assert_eq!(last_todo(&head, &[set("3", "todo", json!({ "todos": list("tail") }))], Some("carried")), None);
+    // A list another call carried counts the same; one an MCP tool or a refused todo call names does not
+    let rode = [set("4", "edit", json!({ "path": "a.rs", "todos": list("rode") })), set("5", "notes_add", json!({ "todos": list("mcp") })), set("6", "todo", json!({ "todos": [{ "content": "x", "status": "later" }] }))];
+    let head: Vec<Item> = head.into_iter().chain(rode).collect();
+    assert!(last_todo(&head, &[], None).is_some_and(|t| t.ends_with("[in_progress] rode\n")), "{:?}", last_todo(&head, &[], None));
+    assert_eq!(last_todo(&head, &[set("7", "bash", json!({ "command": "ls", "todos": list("t") }))], None), None);
     assert_eq!(last_todo(&[user("go")], &[], None), None);
     // Nothing newer: the list carried before goes on
     assert_eq!(last_todo(&[user("go")], &[], Some("carried")).as_deref(), Some("carried"));

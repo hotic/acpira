@@ -401,6 +401,23 @@ fn rel(path: &str, cwd: &Path) -> String {
   crate::tools::shown(&crate::tools::resolve(path, cwd), cwd)
 }
 
+/// A result without the to-do note a call that carried the list gets in front (`tools::todo::note`)
+fn own_result(output: &str) -> &str {
+  match output.strip_prefix(crate::tools::todo::NOTE_PREFIX).and_then(|rest| rest.split_once("\n\n")) {
+    Some((_, rest)) => rest,
+    None => output,
+  }
+}
+
+/// What the command an edit or a write ran after its change (`then_run`) printed: the section after its `$ command`
+/// line, when it ran
+fn then_run_output<'a>(output: &'a str, command: &str) -> Option<&'a str> {
+  let marker = format!("\n\n$ {command}\n");
+  let at = output.rfind(&marker)?;
+  let rest = &output[at + marker.len()..];
+  (!rest.starts_with("Not run: ")).then_some(rest)
+}
+
 /// The exit code a `bash` result ends with (`[exit code N]`)
 fn exit_code(output: &str) -> Option<i64> {
   output.trim_end().rsplit('\n').next()?.strip_prefix("[exit code ")?.strip_suffix(']')?.parse().ok()
@@ -424,24 +441,27 @@ fn failed(call: &Call) -> bool {
   }
 }
 
-/// The files a call wrote, with the changed lines (`-` / `+`, a few of them)
+/// The files a call wrote, with the changed lines (`-` / `+`, a few of them); an edit's items may name their own files
 fn file_changes(call: &Call, cwd: &Path) -> Vec<(String, Vec<String>)> {
   let Some(path) = arg(&call.args, &["path", "file_path"]) else { return vec![] };
   let file = rel(path, cwd);
   match call.name {
     crate::tools::WRITE => vec![(file, edit_lines("", arg(&call.args, &["content"]).unwrap_or("")))],
-    crate::tools::EDIT => {
-      let mut lines = vec![];
-      match call.args.get("edits").and_then(Value::as_array).filter(|a| !a.is_empty()) {
-        Some(edits) => {
-          for e in edits {
-            lines.extend(edit_lines(arg(e, &["old_string"]).unwrap_or(""), arg(e, &["new_string"]).unwrap_or("")));
+    crate::tools::EDIT => match call.args.get("edits").and_then(Value::as_array).filter(|a| !a.is_empty()) {
+      Some(edits) => {
+        let mut out: Vec<(String, Vec<String>)> = vec![];
+        for e in edits {
+          let f = arg(e, &["path", "file_path"]).filter(|p| !p.trim().is_empty()).map_or_else(|| file.clone(), |p| rel(p.trim(), cwd));
+          let lines = edit_lines(arg(e, &["old_string"]).unwrap_or(""), arg(e, &["new_string"]).unwrap_or(""));
+          match out.iter_mut().find(|(name, _)| *name == f) {
+            Some((_, l)) => l.extend(lines),
+            None => out.push((f, lines)),
           }
         }
-        None => lines = edit_lines(arg(&call.args, &["old_string"]).unwrap_or(""), arg(&call.args, &["new_string"]).unwrap_or("")),
+        out
       }
-      vec![(file, lines)]
-    }
+      None => vec![(file, edit_lines(arg(&call.args, &["old_string"]).unwrap_or(""), arg(&call.args, &["new_string"]).unwrap_or("")))],
+    },
     _ => vec![],
   }
 }
@@ -685,19 +705,35 @@ fn work_index(region: &[Item], cwd: &Path) -> WorkIndex {
             entry.diffs.remove(0);
           }
         }
+        // The command the change ran (`then_run`) counts like a bash call of its own
+        if let Some(command) = arg(&c.args, &["then_run"]).map(str::trim)
+          && let Some(out) = then_run_output(c.result.map_or("", |(o, _)| o), command)
+        {
+          let key = format!("command:{command}");
+          match exit_code(out) {
+            Some(code) if code != 0 => {
+              let detail = preview(&out.trim().lines().take(8).collect::<Vec<_>>().join("\n"), 200);
+              ix.errors.push(ErrorEntry { step, key, what: format!("then_run `{}`", one_line(command, 40)), detail, resolved: None });
+            }
+            _ => {
+              for e in ix.errors.iter_mut().filter(|e| e.resolved.is_none() && e.key == key) {
+                e.resolved = Some(step);
+              }
+            }
+          }
+          ix.commands.push(command_entry(step, command, out));
+        }
       }
       crate::tools::READ => {
-        let mut paths: Vec<&str> = arg(&c.args, &["path", "file_path"]).into_iter().collect();
-        paths.extend(c.args.get("paths").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str));
-        for p in paths {
-          push_step(&mut ix.reads, rel(p, cwd), step);
+        for p in crate::tools::read::targets(&c.args, cwd) {
+          push_step(&mut ix.reads, crate::tools::shown(&p, cwd), step);
         }
       }
       crate::tools::GREP | crate::tools::GLOB | crate::tools::LIST => {
         let target = arg(&c.args, &["path"]).map(|p| format!(" in {}", rel(p, cwd))).unwrap_or_default();
         let include = arg(&c.args, &["include"]).map(|i| format!(" ({i})")).unwrap_or_default();
         let key = one_line(&format!("{} {}{target}{include}", c.name, arg(&c.args, &["pattern"]).unwrap_or("")), 60);
-        let head = one_line(c.result.map_or("", |(o, _)| o).trim().lines().next().unwrap_or(""), 25);
+        let head = one_line(own_result(c.result.map_or("", |(o, _)| o)).trim().lines().next().unwrap_or(""), 25);
         match ix.searches.iter_mut().find(|s| s.0 == key) {
           Some(s) => {
             s.1.push(step);
@@ -707,15 +743,20 @@ fn work_index(region: &[Item], cwd: &Path) -> WorkIndex {
         }
       }
       crate::tools::BASH if arg(&c.args, &["command", "cmd"]).is_some() => {
-        let out = c.result.map_or("", |(o, _)| o).trim();
-        let lines: Vec<&str> = out.lines().filter(|l| !l.starts_with("[exit code ")).collect();
-        let tail = lines[lines.len().saturating_sub(3)..].iter().map(|l| one_line(l, 40)).collect();
-        ix.commands.push(CommandEntry { step, command: one_line(arg(&c.args, &["command", "cmd"]).unwrap_or(""), 40), exit: exit_code(out), lines: lines.len(), tail });
+        ix.commands.push(command_entry(step, arg(&c.args, &["command", "cmd"]).unwrap_or(""), own_result(c.result.map_or("", |(o, _)| o))));
       }
       _ => push_step(&mut ix.other, format!("{} {}", c.name, one_line(c.raw_args, 40)), step),
     }
   }
   ix
+}
+
+/// A command's line in the index: its exit code, how many lines it printed and the last few
+fn command_entry(step: usize, command: &str, output: &str) -> CommandEntry {
+  let out = output.trim();
+  let lines: Vec<&str> = out.lines().filter(|l| !l.starts_with("[exit code ")).collect();
+  let tail = lines[lines.len().saturating_sub(3)..].iter().map(|l| one_line(l, 40)).collect();
+  CommandEntry { step, command: one_line(command, 40), exit: exit_code(out), lines: lines.len(), tail }
 }
 
 fn step_list(steps: &[usize]) -> String {
@@ -1258,6 +1299,28 @@ mod tests {
     // A tight budget keeps the file list and the errors
     let small = work_state(&region, "DDDDDDDD", cwd(), 300);
     assert!(small.contains("- src/p.rs: 1 change") && small.contains("UNRESOLVED"), "{small}");
+  }
+
+  #[test]
+  fn the_work_index_reads_ranges_item_paths_and_commands_run_after_a_change() {
+    let todos = |status: &str| json!([{ "content": "rename", "status": status }]);
+    let region = vec![
+      user("rename it"),
+      call("c1", "read", json!({ "path": "src/a.rs:10-20", "paths": ["src/b.rs:5"] })),
+      result("c1", "read", "...", false),
+      call("c2", "edit", json!({ "path": "src/a.rs", "edits": [{ "old_string": "old_name", "new_string": "new_name" }, { "path": "src/b.rs", "old_string": "old_name()", "new_string": "new_name()" }], "then_run": "cargo test" })),
+      result("c2", "edit", "Edited 2 files: src/a.rs, src/b.rs.\n\n$ cargo test\ntest a ... FAILED\n[exit code 101]", false),
+      call("c3", "edit", json!({ "path": "src/b.rs", "old_string": "x", "new_string": "y", "then_run": "cargo test", "todos": todos("in_progress") })),
+      result("c3", "edit", "To-do list updated (0 pending, 1 in progress, 0 completed).\n\nEdited src/b.rs.\n\n$ cargo test\ntest a ... ok", false),
+      call("c4", "grep", json!({ "pattern": "old_name", "todos": todos("completed") })),
+      result("c4", "grep", "To-do list updated (0 pending, 0 in progress, 1 completed).\n\nNo matches.", false),
+    ];
+    let s = work_state(&region, "EEEEEEEE", cwd(), 8000);
+    assert!(s.contains("- src/a.rs: 1 change (step 2)") && s.contains("- src/b.rs: 2 changes (step 2-3)"), "an item's own path counts: {s}");
+    assert!(s.contains("- src/a.rs @ 1") && s.contains("- src/b.rs @ 1"), "ranges left out: {s}");
+    assert!(s.contains("- step 2 then_run `cargo test` (resolved at step 3)"), "{s}");
+    assert!(s.contains("- 2. `cargo test` exit=101, 1 output lines") && s.contains("- 3. `cargo test` exit=?, 1 output lines"), "{s}");
+    assert!(s.contains("- grep old_name → No matches. (step 4)"), "the to-do note is not the search's summary: {s}");
   }
 
   #[test]

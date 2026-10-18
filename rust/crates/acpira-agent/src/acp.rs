@@ -40,6 +40,9 @@ pub struct SessionState {
   /// Text and reasoning of the model call in flight, kept if the turn is cancelled mid-stream
   pub partial_text: String,
   pub partial_reasoning: String,
+  /// (model call id, result) of a call whose change already landed while the command it carries still runs
+  /// (`then_run`): what the model is told if the turn ends before the call's result is in
+  pub landed: Vec<(String, String)>,
   /// The running turn's cancel signal
   pub turn: Option<Cancel>,
   /// Rules the user added from permission cards ("always allow"), for this session only
