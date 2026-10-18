@@ -337,6 +337,43 @@ async fn set_config(proc: &AgentProcess, sid: &str, opened: &mut Value, id: &str
   Ok(())
 }
 
+/// The mode a round runs in. A call may ask for a consult or for work, never for bypass on its own: work on a bypass
+/// persona stays bypass. An inherit persona takes the caller's access this round, and the call can only narrow it, so a
+/// caller in plan mode cannot hand out work by asking for it
+fn round_mode(persona: RelayMode, asked: Option<&str>, caller: impl FnOnce() -> RelayMode) -> RelayMode {
+  let base = if persona == RelayMode::Inherit { caller() } else { persona };
+  match asked {
+    Some("consult") => RelayMode::Consult,
+    Some("work" | "bypass") if base == RelayMode::Bypass => RelayMode::Bypass,
+    Some("work" | "bypass") if persona == RelayMode::Inherit => base,
+    Some("work" | "bypass") => RelayMode::Work,
+    _ => base,
+  }
+}
+
+/// The caller's current access, for an inherit persona: a summoned caller's own round mode; the root's mode by id (a
+/// read-only one, a full-access one by id or `_meta.kind`, yolo included) — anything else, or no mode at all, is work
+fn caller_access(c: &Core, caller: Option<&str>) -> RelayMode {
+  if let Some(th) = caller {
+    return c.tree.relay_latest(th).map(|(_, h, ..)| h.mode).filter(|m| *m != RelayMode::Inherit).unwrap_or(RelayMode::Consult);
+  }
+  let controls = &c.state.controls;
+  let Some(id) = controls.mode_id.as_deref() else {
+    return if c.perms.auto_approve { RelayMode::Bypass } else { RelayMode::Work };
+  };
+  let marked = || {
+    let select = controls.mode_config_id.as_deref().and_then(|cid| controls.options.iter().find(|o| o.id == cid)).map(|o| o.options.as_slice()).unwrap_or(&[]);
+    controls.modes.iter().chain(select).any(|m| m.id == id && m.kind.as_deref() == Some("full_access"))
+  };
+  if c.perms.auto_approve || BYPASS_MODES.contains(&id) || marked() {
+    RelayMode::Bypass
+  } else if is_read_only(id) {
+    RelayMode::Consult
+  } else {
+    RelayMode::Work
+  }
+}
+
 /// The thread's display: persona name and CLI
 fn who(persona: &SubagentPersona) -> String {
   format!("{} ({})", persona.name, persona.agent)
@@ -437,13 +474,7 @@ impl AcpSession {
     if prompt.is_empty() {
       return Err(anyhow!("`prompt` is empty: say what {} should do.", who(&persona)));
     }
-    // A call may ask for a consult or for work, never for bypass on its own: work on a bypass persona stays bypass
-    let mode = match args.mode.as_deref() {
-      Some("consult") => RelayMode::Consult,
-      Some("work" | "bypass") if persona.mode == RelayMode::Bypass => RelayMode::Bypass,
-      Some("work" | "bypass") => RelayMode::Work,
-      _ => persona.mode,
-    };
+    let mode = round_mode(persona.mode, args.mode.as_deref(), || caller_access(&self.core.lock(), caller.as_deref()));
     if self.deps.registry.try_get(&persona.agent).is_none() {
       return Err(anyhow!("{} runs in {:?}, which is not an agent Acpira knows.", persona.name, persona.agent));
     }
@@ -898,7 +929,8 @@ async fn relay_mode(proc: &AgentProcess, sid: &str, opened: &mut Value, start: O
       Some(m) if !in_bypass => m.clone(),
       _ => return true,
     },
-    RelayMode::Work => match current.as_deref() {
+    // Resolved before a round starts (`round_mode`); taken as work should one ever get here
+    RelayMode::Work | RelayMode::Inherit => match current.as_deref() {
       Some(c) if !ordinary(c) => match back() {
         Some(m) => m,
         None => return true,

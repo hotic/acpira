@@ -150,6 +150,9 @@ pub enum RelayMode {
   /// Work without approvals: the CLI runs in its own full-access mode where it has one, and Acpira answers the child's
   /// permission requests itself instead of showing cards
   Bypass,
+  /// A persona setting only: each round takes the caller's current access (a read-only or plan caller summons a
+  /// consult, a full-access one a bypass, anything else work). A node's round mode is never this
+  Inherit,
 }
 
 impl RelayMode {
@@ -158,6 +161,7 @@ impl RelayMode {
     match s {
       Some("work") => Self::Work,
       Some("bypass") => Self::Bypass,
+      Some("inherit") => Self::Inherit,
       _ => Self::Consult,
     }
   }

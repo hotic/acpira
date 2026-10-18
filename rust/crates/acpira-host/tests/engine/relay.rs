@@ -550,3 +550,56 @@ async fn a_thread_whose_session_cannot_be_reopened_fails_instead_of_starting_ove
   assert!(!ok && text.contains("could not be reopened"), "{text}");
   expect_match(&nodes(&s)[1], json!({ "state": "failed" }));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_inherit_persona_follows_the_callers_mode_and_a_call_can_only_narrow_it() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let roster = Arc::new(Roster::new(h.dir.path()));
+  roster.save(&json!([{ "name": "Fake Twin", "agent": "fake", "mode": "inherit", "when": "anything" }])).await.unwrap();
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  // The root runs its ordinary mode: the child works
+  let (ok, text) = last_text(&run(&s, &roster, 0, ask("fake-twin", "relay: first")).await);
+  assert!(ok && text.starts_with("reply to relay: first (round 1, mode agent)"), "{text}");
+  assert_eq!(nodes(&s)[0]["harness"]["mode"], "work");
+  let thread = thread_of(&text);
+  // The root in plan mode: the next round is a consult, and asking for work does not widen it
+  s.set_mode("plan".into()).await.unwrap();
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), mode: Some("work".into()), ..ask("", "relay: write") }).await);
+  assert!(ok && text.starts_with("reply to relay: write (round 2, mode plan)"), "{text}");
+  assert_eq!(nodes(&s)[1]["harness"]["mode"], "consult");
+  // Back in the ordinary mode, a consult still narrows it
+  s.set_mode("agent".into()).await.unwrap();
+  let (_, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread), mode: Some("consult".into()), ..ask("", "relay: look") }).await);
+  assert!(text.starts_with("reply to relay: look (round 3, mode plan)"), "{text}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_yolo_root_leaves_a_summoned_childs_approval_to_its_own_mode() {
+  let fake = fake_or_skip!();
+  let modes = json!([{ "id": "agent", "name": "Agent" }, { "id": "plan", "name": "Plan" }, { "id": "yolo", "name": "YOLO" }]);
+  let h = Harness::new(&fake, json!({ "modes": modes }));
+  let roster = Arc::new(Roster::new(h.dir.path()));
+  roster
+    .save(&json!([
+      { "name": "Fake Review", "agent": "fake", "mode": "consult", "when": "opinions" },
+      { "name": "Fake Twin", "agent": "fake", "mode": "inherit", "when": "anything" },
+    ]))
+    .await
+    .unwrap();
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  s.set_mode("yolo".into()).await.unwrap();
+  // A consult child under the yolo root still asks
+  let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+  tokio::spawn(s.0.clone().relay_ask(roster.clone(), None, 0, ask("fake-review", "relay: perm edit"), tx));
+  until(|| nodes(&s).first().is_some_and(|n| n["permissions"].as_array().is_some_and(|p| p.len() == 1)), 8000).await;
+  let block = nodes(&s)[0]["permissions"][0]["id"].as_str().unwrap().to_owned();
+  s.resolve_permission(&block, "no");
+  while tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.unwrap().is_some() {}
+  // An inherit child takes the yolo as bypass: answered without a card
+  let (ok, text) = last_text(&run(&s, &roster, 0, ask("fake-twin", "relay: perm edit")).await);
+  assert!(ok, "{text}");
+  expect_match(&nodes(&s)[1], json!({ "state": "completed", "harness": { "mode": "bypass" } }));
+}
