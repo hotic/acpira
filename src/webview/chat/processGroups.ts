@@ -1,19 +1,23 @@
 import type { AgentBlock, SteerBlock, ToolCallBlock } from '@shared/transcript';
 import { toolFiles, visibleToolContents } from './toolDetails';
 import { parseFileLink, type FileLink } from './fileLinks';
+import { sessionRead, splitSessionTarget, type SessionRead } from '@shared/sessionLinks';
 
-// One item of a turn's process list: a block on its own, or a run of consecutive reads / edits under one head.
+// One item of a turn's process list: a block on its own, or a run of consecutive reads / edits / session reads under one head.
 // `id` names the item for its fold and entrance: a group goes by its first call, so a single call that gains a
 // neighbour keeps its identity; unkeyed blocks go by transcript position
 export type ProcessItem =
   | { type: 'block'; id: string; block: AgentBlock }
   | { type: 'group'; id: string; kind: GroupKind; blocks: ToolCallBlock[] };
-export type GroupKind = 'read' | 'edit';
+export type GroupKind = 'read' | 'edit' | 'session';
 
 // Failed and cancelled calls stay visible on their own row; a completed read without a file reference has nothing
-// to list. Running calls join, so a group grows as the agent works instead of a live row trailing it
+// to list. Running calls join, so a group grows as the agent works instead of a live row trailing it.
+// read_session calls are `other` to the engine; an agent paging through a session reads it in a burst of calls, and a
+// group holds one session (`sameRun`) so its head names it once and every entry is just the turns read
 function groupKind(block: AgentBlock): GroupKind | undefined {
   if (block.type !== 'tool_call' || block.status === 'failed' || block.status === 'cancelled' || block.asyncTask || isDelegation(block)) return;
+  if (block.verbKey === 'verb.readSession') return 'session';
   if (block.kind === 'read') return block.status !== 'completed' || toolFiles(block).length ? 'read' : undefined;
   if (block.kind === 'edit') return 'edit';
 }
@@ -68,7 +72,7 @@ export function groupProcess(blocks: AgentBlock[]): ProcessItem[] {
   };
   blocks.forEach((block, at) => {
     const kind = groupKind(block);
-    if (kind && kind === runKind) { run.push(block as ToolCallBlock); return; }
+    if (kind && kind === runKind && (kind !== 'session' || sessionOf(block as ToolCallBlock) === sessionOf(run[0]!))) { run.push(block as ToolCallBlock); return; }
     flush();
     runKind = kind;
     if (kind) { run.push(block as ToolCallBlock); runAt = at; } else out.push({ type: 'block', id: blockItemId(block, at), block });
@@ -152,6 +156,36 @@ export function editReference(blocks: ToolCallBlock[]): FileLink | undefined {
 export function groupNames(blocks: ToolCallBlock[]): string[] {
   return [...new Set(blocks.map(fileName).filter(Boolean))];
 }
+
+// The session a read_session call read: its id, else the raw target of a call that named no link
+export function sessionOf(block: ToolCallBlock): string {
+  return splitSessionTarget(block.target).id ?? block.target ?? '';
+}
+
+// A session group's entries: the outline, then one per turn read in turn order, then the reads that name no turns to
+// list (open or long ranges). A turn read again, or paged on inside, adds no line. `turns` counts the listed turns
+export interface SessionEntry { key: string; read: SessionRead; blocks: ToolCallBlock[] }
+
+export function sessionEntries(blocks: ToolCallBlock[]): { entries: SessionEntry[]; turns: number } {
+  const entries = new Map<string, SessionEntry>();
+  const add = (key: string, read: SessionRead, block: ToolCallBlock) => {
+    const entry = entries.get(key);
+    if (entry) entry.blocks.push(block);
+    else entries.set(key, { key, read, blocks: [block] });
+  };
+  for (const block of blocks) {
+    const read = sessionRead(splitSessionTarget(block.target).rest);
+    if (read.type === 'turns') for (const n of read.turns) add(`turn:${n}`, { type: 'turns', turns: [n] }, block);
+    else add(read.type === 'outline' ? 'outline' : read.type === 'from' ? `from:${read.from}` : `span:${read.from}-${read.to}`, read, block);
+  }
+  const rank = (e: SessionEntry) => e.read.type === 'outline' ? 0 : e.read.type === 'turns' ? 1 : 2;
+  const list = [...entries.values()];
+  const listed = list.filter(e => e.read.type === 'turns');
+  const order = [...list.filter(e => rank(e) === 0), ...listed.sort((a, b) => turnOf(a) - turnOf(b)), ...list.filter(e => rank(e) === 2)];
+  return { entries: order, turns: listed.length };
+}
+
+const turnOf = (e: SessionEntry) => e.read.type === 'turns' ? e.read.turns[0]! : 0;
 
 // Consecutive edits of one file share an entry, their diffs stacked in call order
 export function editEntries(blocks: ToolCallBlock[]): { key: string; blocks: ToolCallBlock[] }[] {

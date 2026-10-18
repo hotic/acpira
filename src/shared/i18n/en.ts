@@ -350,7 +350,7 @@ export const en = {
   'turns.done': 'Done',
   'turns.nameSep': ', ',
   'turns.groupFiles': '{names} and more ({n} files)',
-  'turns.groupSessions': '{names} and more ({n} sessions)',
+  'turns.groupTurns': '{title} ({n} turns)',
   'turns.retrying': 'Retrying',
   'turns.retryingAttempt': 'Retrying (attempt {attempt}/{max})',
   'turns.compacting': 'Compacting context',
@@ -627,6 +627,8 @@ export const en = {
   'verb.searchSessions': 'Search sessions',
   'verb.readSession': 'Read session',
   'tool.sessionTurns': 'turns {range}',
+  'tool.sessionOutline': 'outline',
+  'tool.sessionTurnsFrom': 'from turn {n}',
   // Delegation calls: the tool that spawns a subagent (Devin run_subagent, Claude/Kimi Agent) and the one that blocks on it
   'verb.delegate': 'Delegate',
   'verb.awaitSubagent': 'Wait for subagent',
