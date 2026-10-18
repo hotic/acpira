@@ -1301,6 +1301,11 @@ impl SubagentTree {
     Some((n.id.clone(), h, n.role.clone(), native, n.status))
   }
 
+  /// A summoned node's harness and persona name
+  pub fn relay_harness(&self, id: &str) -> Option<(SubagentHarness, Option<String>)> {
+    self.nodes.iter().find(|n| n.id == id).and_then(|n| Some((n.harness.clone()?, n.role.clone())))
+  }
+
   /// Whether a summoned node runs without approvals (its round's mode is bypass)
   pub fn relay_bypass(&self, id: &str) -> bool {
     self.nodes.iter().find(|n| n.id == id).and_then(|n| n.harness.as_ref()).is_some_and(|h| h.mode == acpira_shared::subagents::RelayMode::Bypass)

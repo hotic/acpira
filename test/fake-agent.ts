@@ -639,6 +639,14 @@ const app = acp.agent({ name: 'fake-agent' })
       await send({ sessionUpdate: 'tool_call_update', toolCallId: 'ak1', rawInput: { agent: 'fake-review', prompt: text.slice('relay-call-air:'.length) } });
       return { stopReason: 'end_turn' };
     }
+    // "relay-call-late:<prompt>" → an adapter that sends the arguments only with the ending update, while another call
+    // (ak0, which never gets a round) is still waiting for its node
+    if (text.startsWith('relay-call-late:')) {
+      await send({ sessionUpdate: 'tool_call', toolCallId: 'ak0', title: 'mcp__acpira__ask_agent', kind: 'other', status: 'in_progress', rawInput: { agent: 'fake-worker', prompt: 'never run' } });
+      await send({ sessionUpdate: 'tool_call', toolCallId: 'ak1', title: 'mcp__acpira__ask_agent', kind: 'other', status: 'pending' });
+      await send({ sessionUpdate: 'tool_call_update', toolCallId: 'ak1', status: 'completed', rawInput: { agent: 'fake-review', prompt: text.slice('relay-call-late:'.length) } });
+      return { stopReason: 'end_turn' };
+    }
     if (text.startsWith('relay-call-failed:')) {
       const rawInput = { agent: 'fake-review', prompt: text.slice('relay-call-failed:'.length) };
       await send({ sessionUpdate: 'tool_call', toolCallId: 'ak1', title: 'mcp__acpira__ask_agent', kind: 'other', status: 'in_progress', rawInput });

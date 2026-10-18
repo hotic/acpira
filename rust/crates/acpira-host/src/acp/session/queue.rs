@@ -152,9 +152,13 @@ impl AcpSession {
         || c.pending_prompt.is_some()
         || c.queue.steering_id.is_some()
         || c.peer.detached
-        || c.queue.entries.is_empty()
       {
         return false;
+      }
+      // Nothing of the user's waits: results owed to the root by summoned agents may go now
+      if c.queue.entries.is_empty() {
+        drop(c);
+        return self.relay_wake();
       }
       c.queue.sending_id = None;
       c.queue.entries.remove(0)

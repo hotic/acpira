@@ -366,6 +366,7 @@ impl Relay {
       mode: text("mode"),
       thread: text("thread"),
       wait_secs: Some(self.wait_secs.load(std::sync::atomic::Ordering::Relaxed)),
+      wait: args.get("wait").and_then(Value::as_bool),
     };
     let token = params.get("_meta").and_then(|m| m.get("progressToken")).cloned();
     let mut n = 0u64;
@@ -452,8 +453,11 @@ Use it when one of the agents below fits the task better (a second opinion, a re
 the user names one with @name: those names are these agents, not your own subagents, so call this tool directly without \
 listing or searching for agents. To ask several agents, make one call per agent in the same message; they run in parallel. \
 It cannot see this conversation but reads files and runs commands itself: write a short, \
-self-contained prompt that points at paths instead of pasting code. To follow up with the same agent, pass the `thread` its \
-previous answer named. If the answer says it is still working, call again with that thread and an empty prompt to wait.\n\nAgents:\n{}",
+self-contained prompt that points at paths instead of pasting code. A new task answers at once with its thread while the \
+agent works: carry on with other work or end your turn, and Acpira sends you its reply in a message when it is done (several \
+sent together come back together), so do not poll and do not do the task yourself meanwhile. Set `wait` when you need the \
+reply before going on; a call with a thread and an empty prompt waits for that thread. To follow up with the same agent, \
+pass the `thread` its answer named.\n\nAgents:\n{}",
     lines.join("\n")
   );
   let ids: Vec<&str> = personas.iter().map(|p| p.id.as_str()).collect();
@@ -469,6 +473,7 @@ previous answer named. If the answer says it is still working, call again with t
         "title": { "type": "string", "description": "A few words naming the task, shown to the user." },
         "mode": { "type": "string", "enum": ["consult", "work"], "description": "consult = read-only opinion; work = may edit files. Defaults to the agent's own setting; an agent that follows your mode never gets more than you have." },
         "thread": { "type": "string", "description": "Continue the conversation an earlier answer named." },
+        "wait": { "type": "boolean", "description": "Wait in this call for the reply (up to your tool timeout) instead of getting it in a message later." },
       },
       "required": [],
     },

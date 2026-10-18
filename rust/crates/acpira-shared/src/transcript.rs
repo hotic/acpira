@@ -976,6 +976,8 @@ pub enum AutoReason {
   Gate,
   /// A goal control from the dock went out as its `/goal …` command; the goal row stands for it
   Goal,
+  /// Summoned agents the root sent off without waiting finished: their replies go to it in one message
+  Subagents,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
