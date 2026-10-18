@@ -1268,6 +1268,34 @@ impl SubagentTree {
     self.bump(id);
   }
 
+  /// The child's prompt answered while rounds it sent off are still out: its row says it waits for them
+  pub fn relay_waiting(&mut self, id: &str) {
+    let Some(i) = self.idx(id) else { return };
+    let label = t("verb.awaitSubagent");
+    let Some(Turn::Agent(turn)) = self.nodes[i].state.turns.last_mut() else { return };
+    if turn.activity.as_ref().is_some_and(|a| a.label == label) {
+      return;
+    }
+    turn.activity = Some(acpira_shared::transcript::Activity { kind: acpira_shared::transcript::ToolKind::Other, label });
+    self.bump(id);
+  }
+
+  /// The results of rounds the child sent off go back to it within its own round: its answer so far is sealed, and the
+  /// automatic message carrying them opens the next turn of its transcript
+  pub fn relay_follow_up(&mut self, id: &str, text: &str) {
+    let Some(i) = self.idx(id) else { return };
+    let st = &mut self.nodes[i].state;
+    end_turn(st, TurnStop::EndTurn);
+    st.turns.push(Turn::User(acpira_shared::transcript::UserTurn {
+      text: text.to_owned(),
+      auto: Some(true),
+      auto_reason: Some(acpira_shared::transcript::AutoReason::Subagents),
+      ..Default::default()
+    }));
+    st.turns.push(Turn::Agent(AgentTurn { started_at: Some(now_ms()), ..Default::default() }));
+    self.bump(id);
+  }
+
   /// The round ended (`result` = the child's reply, or the error shown in its place)
   pub fn relay_end(&mut self, id: &str, state: SubagentState, result: Option<String>) {
     let Some(i) = self.idx(id) else { return };

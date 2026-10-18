@@ -55,8 +55,8 @@ const MODE_KEYS: [&str; 1] = ["mode"];
 /// The final word of a round: the reply text for the caller, or why there is none
 type RoundEnd = Option<std::result::Result<String, String>>;
 
-/// Where a root-called round's result stands: read by a call, owed to the root, delivered in an automatic message, or
-/// voided (the user stopped, the turn it belonged to was edited away)
+/// Where a round's result stands: read by a call, owed to its caller, delivered in an automatic message, or voided (the
+/// user stopped, the turn it belonged to was edited away, its caller's round ended without it)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Owed {
   Running,
@@ -68,10 +68,12 @@ enum Owed {
   Void,
 }
 
-/// One root-called round in the delivery ledger: its node, and the root turn that sent it (rounds sent in one turn are
-/// delivered together, once all of them ended)
+/// One round in the delivery ledger: its node, its caller (None = the root, else the summoned thread that sent it), and
+/// the caller's turn that sent it (rounds sent in one turn are delivered together, once all of them ended): the root's
+/// turn index, or a summoned caller's follow-up count within its round
 struct Owing {
   node: String,
+  owner: Option<String>,
   cohort: usize,
   state: Owed,
 }
@@ -107,9 +109,13 @@ pub(crate) struct Relays {
   starting: Arc<watch::Sender<usize>>,
   /// The session closed: no round starts, a process spawned afterwards is ended at once
   closed: bool,
-  /// Root-called rounds and whether their results reached the root (in memory only: the children end with the session,
-  /// so a reopened one owes nothing)
+  /// Rounds and whether their results reached their callers (in memory only: the children end with the session, so a
+  /// reopened one owes nothing)
   ledger: Vec<Owing>,
+  /// Bumped whenever a round ends: a summoned caller waiting to hear from the rounds it sent off looks again
+  ended: Arc<watch::Sender<u64>>,
+  /// A summoned caller's follow-ups so far in its running round, by thread: the cohort of the rounds it sends now
+  follow_ups: HashMap<String, usize>,
   /// Automatic deliveries since the user last prompted (`MAX_WAKES`)
   wakes: u32,
   /// Calls waiting on a thread's round right now: a round ending under one is read by it, never delivered as well
@@ -143,10 +149,16 @@ impl Relays {
     }
   }
 
-  /// Finished results owed to the root whose whole turn's batch has ended
-  fn deliverable(&self) -> Vec<String> {
-    let running: HashSet<usize> = self.ledger.iter().filter(|o| o.state == Owed::Running).map(|o| o.cohort).collect();
-    self.ledger.iter().filter(|o| o.state == Owed::Unread && !running.contains(&o.cohort)).map(|o| o.node.clone()).collect()
+  /// Finished results owed to one caller whose whole turn's batch has ended
+  fn deliverable(&self, owner: Option<&str>) -> Vec<String> {
+    let mine = |o: &&Owing| o.owner.as_deref() == owner;
+    let running: HashSet<usize> = self.ledger.iter().filter(mine).filter(|o| o.state == Owed::Running).map(|o| o.cohort).collect();
+    self.ledger.iter().filter(mine).filter(|o| o.state == Owed::Unread && !running.contains(&o.cohort)).map(|o| o.node.clone()).collect()
+  }
+
+  /// Rounds a summoned caller sent off whose results it has not had yet
+  fn owes(&self, owner: &str) -> bool {
+    self.ledger.iter().any(|o| o.owner.as_deref() == Some(owner) && matches!(o.state, Owed::Running | Owed::Unread))
   }
 
   /// The automatic message was claimed (`true`: its results are delivered) or did not go out (owed again)
@@ -179,6 +191,8 @@ impl Default for Relays {
       starting: Arc::new(watch::channel(0).0),
       closed: false,
       ledger: vec![],
+      ended: Arc::new(watch::channel(0).0),
+      follow_ups: HashMap::new(),
       wakes: 0,
       waiters: HashMap::new(),
       asked: Arc::new(watch::channel(0).0),
@@ -524,10 +538,9 @@ impl AcpSession {
   /// One `ask_agent` call from an agent of this session (the root, or a summoned child when `caller` names its thread)
   pub async fn relay_ask(self: Arc<Self>, roster: Arc<Roster>, caller: Option<String>, depth: u32, args: AskArgs, out: mpsc::UnboundedSender<HubReply>) {
     let deadline = args.wait_secs.map(Duration::from_secs).unwrap_or(DEFAULT_WAIT).min(MAX_WAIT);
-    // The root sends a new task off unless it asks to wait: the ledger delivers the reply. A summoned caller has no one to
-    // deliver to yet, so it waits
-    let owed = caller.is_none();
-    let wait = args.wait.unwrap_or(!owed);
+    // A new task is sent off unless the call asks to wait: the ledger delivers the reply, to the root in an automatic
+    // message, to a summoned caller in a follow-up within its own round (`relay_follow_ups`)
+    let wait = args.wait.unwrap_or(false);
     match self.clone().relay_start(&roster, caller, depth, args).await {
       Ok(Start::Started { thread, persona }) if !wait => {
         let _ = out.send(HubReply::Done(dispatched_text(&thread, &persona)));
@@ -538,8 +551,8 @@ impl AcpSession {
           who(&persona)
         )));
       }
-      Ok(Start::Answered { thread, persona }) => self.relay_wait(&thread, &persona, deadline, owed, &out).await,
-      Ok(Start::Started { thread, persona }) | Ok(Start::Wait { thread, persona }) => self.relay_wait(&thread, &persona, deadline, owed, &out).await,
+      Ok(Start::Answered { thread, persona }) => self.relay_wait(&thread, &persona, deadline, &out).await,
+      Ok(Start::Started { thread, persona }) | Ok(Start::Wait { thread, persona }) => self.relay_wait(&thread, &persona, deadline, &out).await,
       Ok(Start::Ended(reply)) => {
         let _ = out.send(reply);
       }
@@ -716,9 +729,11 @@ impl AcpSession {
         tree.relay_link_call(&node, &call.tool_call_id, &mut RouteCtx { turn_index, root_turns: &mut state.turns });
       }
       c.relays.rounds.insert(thread.clone(), rx);
-      if caller.is_none() {
-        c.relays.ledger.push(Owing { node: node.clone(), cohort: turn_index, state: Owed::Running });
-      }
+      let cohort = match caller.as_deref() {
+        None => turn_index,
+        Some(th) => c.relays.follow_ups.get(th).copied().unwrap_or(0),
+      };
+      c.relays.ledger.push(Owing { node: node.clone(), owner: caller.clone(), cohort, state: Owed::Running });
       // Counted from here until its process is registered or ended, so a close right now still waits for it
       let starting = Starting::enter(&c.relays.starting);
       self.touch(&mut c);
@@ -743,6 +758,7 @@ impl AcpSession {
         }
         me.drain_terminal(&mut c);
         c.relays.rounds.remove(&round.thread);
+        c.relays.ended.send_modify(|n| *n += 1);
         me.touch(&mut c);
         round_result(&c, &round.node)
       };
@@ -804,14 +820,14 @@ impl AcpSession {
       if c.relays.closed || c.relays.wakes >= MAX_WAKES {
         return false;
       }
-      let nodes = c.relays.deliverable();
+      let nodes = c.relays.deliverable(None);
       // Questions of rounds the root sent off, not told yet: their children are blocked, so these go without waiting for
       // the rest of the batch. A thread a call waits on hears it from that call instead
       let asks: Vec<(String, String)> = c
         .relays
         .ledger
         .iter()
-        .filter(|o| o.state == Owed::Running)
+        .filter(|o| o.owner.is_none() && o.state == Owed::Running)
         .filter(|o| c.tree.relay_thread_of(&o.node).is_none_or(|th| !c.relays.waiters.contains_key(&th)))
         .filter_map(|o| Self::relay_question(&c, &o.node).map(|(b, _)| (o.node.clone(), b)))
         .filter(|(_, b)| !c.relays.told.contains(b))
@@ -835,7 +851,7 @@ impl AcpSession {
   }
 
   /// Wait for the thread's running round up to the deadline, with progress lines meanwhile
-  async fn relay_wait(&self, thread: &str, persona: &SubagentPersona, deadline: Duration, owed: bool, out: &mpsc::UnboundedSender<HubReply>) {
+  async fn relay_wait(&self, thread: &str, persona: &SubagentPersona, deadline: Duration, out: &mpsc::UnboundedSender<HubReply>) {
     let rx = {
       let mut c = self.core.lock();
       let rx = c.relays.rounds.get(thread).cloned();
@@ -875,8 +891,8 @@ impl AcpSession {
         }
         _ = tokio::time::sleep_until(until) => {
           let latest = self.relay_activity(thread).map(|a| format!("; latest: {a}")).unwrap_or_default();
-          // The root is owed the reply anyway; a summoned caller has to come back for it
-          let still_owed = owed && {
+          // The caller is owed the reply anyway, unless its entry was settled meanwhile
+          let still_owed = {
             let c = self.core.lock();
             c.tree.relay_latest(thread).is_some_and(|(id, ..)| c.relays.ledger.iter().any(|o| o.node == id && o.state == Owed::Running))
           };
@@ -947,11 +963,88 @@ impl AcpSession {
         return Ok("cancelled".into());
       }
     }
-    let answer = proc
-      .request("session/prompt", json!({ "sessionId": sid, "prompt": [{ "type": "text", "text": r.brief }] }))
-      .await
-      .map_err(anyhow::Error::new)?;
+    self.core.lock().relays.follow_ups.remove(&r.thread);
+    let end = self.relay_prompt(&proc, &sid, &r.brief).await;
+    let end = match end {
+      Ok(stop) => self.relay_follow_ups(&proc, &sid, r, stop).await,
+      Err(e) => Err(e),
+    };
+    // Whatever this thread sent off and has not had by now goes unread: its round is over
+    let mut c = self.core.lock();
+    c.relays.follow_ups.remove(&r.thread);
+    for o in c.relays.ledger.iter_mut().filter(|o| o.owner.as_deref() == Some(r.thread.as_str())) {
+      if matches!(o.state, Owed::Running | Owed::Unread) {
+        o.state = Owed::Void;
+      }
+    }
+    end
+  }
+
+  async fn relay_prompt(&self, proc: &AgentProcess, sid: &str, text: &str) -> Result<String> {
+    let answer = proc.request("session/prompt", json!({ "sessionId": sid, "prompt": [{ "type": "text", "text": text }] })).await.map_err(anyhow::Error::new)?;
     Ok(answer.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn").to_owned())
+  }
+
+  /// The child answered, but rounds it sent off are still out: its round goes on. Once a batch of them has ended (or one
+  /// asks something), the results go to its native session as one more prompt, after its answer so far is sealed and an
+  /// automatic message opens the next turn of its transcript; at most `MAX_WAKES` follow-ups, then the last answer is
+  /// the round's reply
+  async fn relay_follow_ups(&self, proc: &AgentProcess, sid: &str, r: &Round, mut stop: String) -> Result<String> {
+    let mut sent = 0;
+    loop {
+      if stop == "cancelled" {
+        return Ok(stop);
+      }
+      let (mut ended, mut asked) = {
+        let c = self.core.lock();
+        (c.relays.ended.subscribe(), c.relays.asked.subscribe())
+      };
+      let text = {
+        let mut c = self.core.lock();
+        if c.relays.closed || c.tree.relay_cancel_requested(&r.node) || !c.relays.owes(&r.thread) || sent >= MAX_WAKES {
+          return Ok(stop);
+        }
+        let nodes = c.relays.deliverable(Some(&r.thread));
+        let asks: Vec<(String, String)> = c
+          .relays
+          .ledger
+          .iter()
+          .filter(|o| o.owner.as_deref() == Some(r.thread.as_str()) && o.state == Owed::Running)
+          .filter_map(|o| Self::relay_question(&c, &o.node).map(|(b, _)| (o.node.clone(), b)))
+          .filter(|(_, b)| !c.relays.told.contains(b))
+          .collect();
+        if nodes.is_empty() && asks.is_empty() {
+          c.tree.relay_waiting(&r.node);
+          self.touch(&mut c);
+          None
+        } else {
+          for n in &nodes {
+            if let Some(o) = c.relays.owing(n) {
+              o.state = Owed::Delivered;
+            }
+          }
+          c.relays.told.extend(asks.iter().map(|(_, b)| b.clone()));
+          let text = wake_text(&c, &nodes, &asks.into_iter().map(|(n, _)| n).collect::<Vec<_>>());
+          sent += 1;
+          c.relays.follow_ups.insert(r.thread.clone(), sent as usize);
+          c.tree.relay_follow_up(&r.node, &text);
+          self.touch(&mut c);
+          Some(text)
+        }
+      };
+      match text {
+        Some(text) => {
+          self.log(&format!("relay {}: follow-up {sent} with the rounds it sent off", short(&r.thread)));
+          stop = self.relay_prompt(proc, sid, &text).await?;
+        }
+        None => {
+          tokio::select! {
+            _ = ended.changed() => {}
+            _ = asked.changed() => {}
+          }
+        }
+      }
+    }
   }
 
   /// The thread's live process and native session (with the round's settings applied), started when there is none.
