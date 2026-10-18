@@ -141,7 +141,7 @@ const PRUNE_AT_TENTHS: u64 = 7;
 fn prune_due(server: &Server, session: &Session, params: &Value, pick: Option<&str>) -> bool {
   let policy = Policy::from_prompt(params);
   let config = server.config.get();
-  if !policy.auto || config.chunked() {
+  if !policy.auto || config.chunked() || session.state.lock().mode == modes::RAW {
     return false;
   }
   let Some((used, size)) = session.state.lock().reported else { return false };
@@ -209,6 +209,8 @@ struct Setup {
   mcp: Vec<crate::mcp::Tool>,
   /// The model takes images, so images an MCP tool returns go to it
   images: bool,
+  /// Raw mode (`modes::RAW`): no tools, no composed prompt, and no compaction but an explicit /compact
+  raw: bool,
 }
 
 impl Setup {
@@ -236,9 +238,13 @@ fn setup(server: &Server, session: &Session, params: &Value, mcp: &[crate::mcp::
   let fast = fast && llm::fast::offered(provider, model);
   let endpoint = Endpoint::of(provider, model, config.api_key(&provider.id))
     .ok_or_else(|| format!("{}: the API format \"{}\" is not supported", provider.display_name(), provider.format))?;
-  // The prompt changes only when the model now matches another variant (a view change at a turn boundary)
+  let raw = mode.id == modes::RAW;
+  // The prompt changes only when the model now matches another variant (a view change at a turn boundary). Raw mode
+  // sends the settings page's text alone and leaves the session's composed prompt for the turn that switches back
   let places = prompt::Places::new(&session.cwd, user_home().as_deref());
-  let composed = {
+  let composed = if raw {
+    prompt::raw(config.raw_system_prompt())
+  } else {
     let variant = prompt::variant_name(&places, Some((provider, model)));
     let mut st = session.state.lock();
     if st.prompt.variant != variant || st.prompt.text.is_empty() {
@@ -266,13 +272,16 @@ fn setup(server: &Server, session: &Session, params: &Value, mcp: &[crate::mcp::
   // Limits the configuration leaves open come from the catalogue, marked estimated (never sent as max_tokens)
   let mut model = model.clone();
   let cost = crate::catalog::complete(&mut model, &server.catalog.get());
-  let skills = skills::scan(&places);
+  // Raw mode offers nothing: no tools, skills or MCP servers (so no `/skill` expansion either)
+  let skills = if raw { vec![] } else { skills::scan(&places) };
+  let mcp = if raw { &[] } else { mcp };
   // Chunk compaction brings its history tools; the set is fixed for the turn like the rest
-  let tools = match (config.chunked(), skills.is_empty()) {
-    (false, true) => modes::TOOLS,
-    (false, false) => modes::TOOLS_WITH_SKILL,
-    (true, true) => modes::TOOLS_CHUNKED,
-    (true, false) => modes::TOOLS_CHUNKED_WITH_SKILL,
+  let tools: &'static [&'static str] = match (raw, config.chunked(), skills.is_empty()) {
+    (true, _, _) => &[],
+    (false, false, true) => modes::TOOLS,
+    (false, false, false) => modes::TOOLS_WITH_SKILL,
+    (false, true, true) => modes::TOOLS_CHUNKED,
+    (false, true, false) => modes::TOOLS_CHUNKED_WITH_SKILL,
   };
   let mut specs = tools::specs(tools);
   if !skills.is_empty() {
@@ -280,6 +289,9 @@ fn setup(server: &Server, session: &Session, params: &Value, mcp: &[crate::mcp::
   }
   specs.extend(mcp.iter().map(crate::mcp::Tool::spec));
   let images = model.takes_images();
+  // Raw mode never compacts on its own: a summary in the history is the agent's text, so only /compact writes one
+  let mut policy = Policy::from_prompt(params);
+  policy.auto &= !raw;
   Ok(Setup {
     pick,
     provider: provider.clone(),
@@ -295,10 +307,11 @@ fn setup(server: &Server, session: &Session, params: &Value, mcp: &[crate::mcp::
     tools,
     specs,
     rules,
-    policy: Policy::from_prompt(params),
+    policy,
     skills,
     mcp: mcp.to_vec(),
     images,
+    raw,
   })
 }
 
@@ -340,7 +353,8 @@ fn summary_call<'a>(server: &Server, s: &'a Setup) -> compact::Call<'a> {
 /// call, `chunk.rs`), the summary when chunking found nothing to fold (except on `/compact`, which then has nothing to
 /// do) or could not read the log. Ok(Some(chunked)) when the history changed
 async fn compact_history(server: &Server, session: &Session, s: &Setup, reason: Reason) -> Result<Option<bool>, String> {
-  if server.config.get().chunked() {
+  // Chunks point the model at history tools Raw mode does not offer, so a /compact there always summarizes
+  if server.config.get().chunked() && !s.raw {
     let context = s.model.context.unwrap_or(DEFAULT_CONTEXT);
     let usable = compact::usable(context, s.model.output);
     let limits = crate::chunk::Limits {
@@ -420,17 +434,22 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
   }
   {
     let mut st = session.state.lock();
-    // A mode entered since the model last heard about it is announced in the user message: the system prompt stays fixed
+    // A mode entered since the model last heard about it is announced in the user message: the system prompt stays fixed.
+    // Raw mode is announced to no one, and Agent mode right after it needs no note: its system prompt says it all
     if st.mode != st.announced {
       let overlay = modes::get(&st.mode).overlay(&server.plan_file(&session.id));
+      let silent = s.raw || (st.mode == modes::AGENT && st.announced == modes::RAW);
       st.announced = st.mode.clone();
-      match parts.first_mut() {
-        Some(Part::Text(t)) => *t = format!("<mode>\n{overlay}\n</mode>\n\n{t}"),
-        _ => parts.insert(0, Part::Text(format!("<mode>\n{overlay}\n</mode>"))),
+      if !silent {
+        match parts.first_mut() {
+          Some(Part::Text(t)) => *t = format!("<mode>\n{overlay}\n</mode>\n\n{t}"),
+          _ => parts.insert(0, Part::Text(format!("<mode>\n{overlay}\n</mode>"))),
+        }
       }
     }
-    // The MCP servers' instructions (and the ones that failed) the same way, when they changed since the model heard
-    if offer.note != st.mcp_note {
+    // The MCP servers' instructions (and the ones that failed) the same way, when they changed since the model heard.
+    // Raw mode offers no MCP tools; the note waits for the first turn of a mode that does
+    if !s.raw && offer.note != st.mcp_note {
       st.mcp_note = offer.note.clone();
       if let Some(note) = &offer.note {
         match parts.first_mut() {
@@ -541,7 +560,8 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       log_request(session, &s, started, attempt, None, None, false, Some(&e.to_string()), None);
       // Refused for its size: the provider says so, or refuses a request near the window without saying why
       let near = input_estimate >= s.model.context.unwrap_or(DEFAULT_CONTEXT) * 4 / 5;
-      let overflow = (compact::is_overflow(&e) || (near && compact::is_refusal(&e))) && !summarized_overflow && overflows < 2;
+      // Raw mode leaves the provider's refusal as the turn's error rather than writing a summary of its own
+      let overflow = !s.raw && (compact::is_overflow(&e) || (near && compact::is_refusal(&e))) && !summarized_overflow && overflows < 2;
       if !overflow && (attempt >= MAX_ATTEMPTS || !retriable(&e)) {
         return Err(describe(s.provider.display_name(), &e));
       }

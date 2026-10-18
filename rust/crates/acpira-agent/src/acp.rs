@@ -385,6 +385,11 @@ impl Server {
       return Err(RpcError::new(-32602, format!("Unknown mode: {mode}")));
     }
     let mut st = session.state.lock();
+    // Raw mode sends no tools, and Anthropic refuses a request whose history holds tool calls without them (other
+    // formats vary), so a session that has used tools stays out of it; Raw → Agent / Plan is always fine
+    if mode == modes::RAW && st.mode != modes::RAW && st.items.iter().any(uses_tools) {
+      return Err(RpcError::new(-32602, "Raw mode needs a session without tool calls; start a new session for it"));
+    }
     st.mode = mode.to_owned();
     session.save_state(&st);
     Ok(json!({}))
@@ -628,6 +633,15 @@ pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState, boo
     }
   }
   out
+}
+
+/// A history item a request without tools cannot carry: a reply with tool calls, or a tool's result
+fn uses_tools(item: &Item) -> bool {
+  match item {
+    Item::Assistant { tool_calls, .. } => !tool_calls.is_empty(),
+    Item::ToolResult { .. } => true,
+    Item::User(_) => false,
+  }
 }
 
 fn title_case(s: &str) -> String {

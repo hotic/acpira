@@ -19,7 +19,7 @@ import { Collapsible } from '../ui/Collapsible';
 import { useScrollFade } from '../ui/useScrollFade';
 import { t } from '../i18n';
 import { ModelMark } from '../chat/ModelMark';
-import { Count, Dot, FactRow, Field, Group, ItemRow, ListHead, ModelLine, Note, PathText, SearchRow, Section, SectionAction, SectionDescription, SectionHead, Select, SourceLink, Switch, shortPath, type ModelTags } from './controls';
+import { Count, Dot, FactRow, Field, Group, ItemRow, ListHead, ModelLine, Note, PathText, SearchRow, Section, SectionAction, SectionDescription, SectionHead, Select, SourceLink, Switch, TextBox, shortPath, type ModelTags } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 import { ProvidersSection, type ProvidersState } from './ProvidersSection';
 import { APPROVAL_LEVELS, approvalOf, BUILTIN_AGENT_ID, COMPACTION_STRATEGIES, compactionOf, usableModels, WEB_SEARCH_BACKENDS, webSearchOf, type ApprovalLevel, type CompactionStrategy, type WebSearchBackend } from '@shared/providers';
@@ -126,6 +126,7 @@ export function AgentPage({ agent, accounts, install, inventory, controls, provi
       {agent.id === BUILTIN_AGENT_ID && <ProvidersSection state={providers} on={on} />}
       {agent.id === BUILTIN_AGENT_ID && <FastModelSection state={providers} on={on} />}
       {agent.id === BUILTIN_AGENT_ID && <CompactionSection state={providers} on={on} />}
+      {agent.id === BUILTIN_AGENT_ID && <RawModeSection state={providers} on={on} />}
       {agent.id === BUILTIN_AGENT_ID && <WebSearchSection state={providers} on={on} />}
       {agent.id === BUILTIN_AGENT_ID && <ApprovalSection state={providers} on={on} />}
 
@@ -223,6 +224,24 @@ function CompactionSection({ state, on }: { state?: ProvidersState; on: Settings
         <Field label={t('settings.agent.compaction')} desc={<StableText current={strategy} items={COMPACTION_STRATEGIES.map(v => ({ key: v, text: t(COMPACTION_KEYS[v].desc) }))} />}>
           {state
             ? <Select options={COMPACTION_STRATEGIES.map(v => ({ value: v, label: t(COMPACTION_KEYS[v].label) }))} value={strategy} onChange={pick} label={t('settings.agent.compaction')} />
+            : <Shimmer active>{t('settings.loading')}</Shimmer>}
+        </Field>
+      </Section>
+    </div>
+  );
+}
+
+// The system prompt of the built-in agent's Raw mode (`rawSystemPrompt` in providers.json), committed on blur. Raw mode
+// sends nothing else of the agent's own, so an empty box means no system prompt at all
+function RawModeSection({ state, on }: { state?: ProvidersState; on: SettingsHandlers }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <SectionHead>{t('settings.agent.raw')}</SectionHead>
+      <Section>
+        <Field stack label={t('settings.agent.rawPrompt')} desc={t('settings.agent.rawPrompt.desc')}>
+          {state
+            ? <TextBox multiline value={state.view.rawSystemPrompt ?? ''} label={t('settings.agent.rawPrompt')} placeholder={t('settings.agent.rawPrompt.placeholder')}
+              onCommit={text => on.providerAction?.({ kind: 'rawSystemPrompt', text: text.trim() ? text : undefined })} />
             : <Shimmer active>{t('settings.loading')}</Shimmer>}
         </Field>
       </Section>

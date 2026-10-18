@@ -26,6 +26,8 @@ const BUILTIN: &[(&str, &str)] = &[
 ];
 
 pub const BASE: &str = "base";
+/// The variant name Raw mode's prompt records
+pub const RAW: &str = "raw";
 /// An AGENTS.md longer than this is cut, with a note
 const MAX_INSTRUCTIONS: usize = 32 * 1024;
 
@@ -180,8 +182,18 @@ pub fn compose(places: &Places, target: Option<(&Provider, &ProviderModel)>) -> 
     Some("auto") => Some(Thinking::Auto),
     _ => None,
   };
-  let digest = Sha256::digest(text.as_bytes()).iter().take(6).map(|b| format!("{b:02x}")).collect();
+  let digest = digest(&text);
   Composed { text, variant: chosen.map(|v| v.name.clone()).unwrap_or_else(|| BASE.to_owned()), version, digest, sampling, thinking }
+}
+
+/// Raw mode's prompt: the settings page's text as it is, with nothing composed around it and no variant defaults
+pub fn raw(text: &str) -> Composed {
+  Composed { text: text.to_owned(), variant: RAW.to_owned(), digest: digest(text), ..Default::default() }
+}
+
+/// SHA-256 of a prompt, first 12 hex digits
+fn digest(text: &str) -> String {
+  Sha256::digest(text.as_bytes()).iter().take(6).map(|b| format!("{b:02x}")).collect()
 }
 
 fn instructions(places: &Places) -> String {

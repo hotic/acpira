@@ -45,7 +45,7 @@ fn tool_result(server: &MockModel, request: usize, nth_from_end: usize) -> Strin
 async fn plan_mode_writes_only_the_plan_and_an_approval_builds_in_the_same_turn() {
   let (h, server, sid) = setup().await;
   let modes = h.new_session().await["modes"].clone();
-  assert_eq!(modes["availableModes"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect::<Vec<_>>(), ["agent", "plan"]);
+  assert_eq!(modes["availableModes"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect::<Vec<_>>(), ["agent", "plan", "raw"]);
   set_mode(&h, &sid, "plan").await;
   let plan = h.home().join("agent/sessions").join(&sid).join("plan.md");
   server.push(mock::tools(&[

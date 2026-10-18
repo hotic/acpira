@@ -14,7 +14,8 @@ use super::{Endpoint, Event, Item, LlmError, Part, Reply, Request, StopReason, T
 
 /// The request body
 pub fn body(req: &Request, family: &Family) -> Value {
-  let mut messages = vec![json!({ "role": "system", "content": req.system })];
+  // An empty prompt (Raw mode without one) sends no system message: some servers refuse an empty one
+  let mut messages = if req.system.is_empty() { vec![] } else { vec![json!({ "role": "system", "content": req.system })] };
   // Assistant messages after the latest user message belong to the running turn
   let turn_start = req.items.iter().rposition(|i| matches!(i, Item::User(_))).unwrap_or(0);
   let mut pending: Vec<Value> = vec![];

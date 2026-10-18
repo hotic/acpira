@@ -55,7 +55,7 @@ impl ProviderStore {
         web_keys.push(backend.to_owned());
       }
     }
-    ProvidersView { providers, error: None, approval: file.approval, fast_model: file.fast_model, web_search: file.web_search, web_search_via: file.web_search_via, web_keys, compaction: file.compaction, ..tables() }
+    ProvidersView { providers, error: None, approval: file.approval, fast_model: file.fast_model, web_search: file.web_search, web_search_via: file.web_search_via, web_keys, compaction: file.compaction, raw_system_prompt: file.raw_system_prompt, ..tables() }
   }
 
   /// The key a probe uses: one typed into the form, else the stored key of the source with that id
@@ -196,6 +196,16 @@ impl ProviderStore {
           .edit(|file| {
             // The default is written as no entry, like the search backend
             file.compaction = (strategy != COMPACTION_STRATEGIES[0]).then_some(strategy);
+            Ok(())
+          })
+          .await
+      }
+      ProviderAction::RawSystemPrompt { text } => {
+        // Kept as typed (a prompt may start or end with a deliberate line), but blank is no prompt at all
+        let text = text.filter(|t| !t.trim().is_empty());
+        self
+          .edit(|file| {
+            file.raw_system_prompt = text;
             Ok(())
           })
           .await

@@ -8,7 +8,7 @@ import { AgentMark } from '../chat/AgentMark';
 import { Button, ChipTag, IconButton } from '../ui/Button';
 import { StableText } from '../ui/StableText';
 import { t } from '../i18n';
-import { FactRow, Field, Group, ItemRow, Section, SectionAction, Select, Switch, type Option } from './controls';
+import { FactRow, Field, Group, ItemRow, Section, SectionAction, Select, Switch, TextBox, type Option } from './controls';
 import type { SettingsHandlers } from './SettingsShell';
 
 // The read-only mode the relay finds on the CLIs whose modes are recorded (docs/acp-agents-compat.md; null = none);
@@ -156,23 +156,6 @@ function PersonaDetail({ persona: p, agents, controls, onBack, onChange, onDelet
       <Button onClick={onDelete}><Trash2 className="size-icon" strokeWidth={1.5} />{t('subagents.page.delete')}</Button>
     </div>
   </>;
-}
-
-// Local text until blur (or Enter on a one-line box), so half-typed values never round-trip through the host
-function TextBox({ value, label, placeholder, multiline, onCommit }: {
-  value: string; label: string; placeholder?: string; multiline?: boolean; onCommit: (v: string) => void;
-}) {
-  const [text, setText] = useState(value);
-  useEffect(() => setText(value), [value]);
-  const commit = () => { if (text !== value) onCommit(text); };
-  const cls = 'w-full min-w-0 rounded-md border border-line bg-hover px-3 text-2 text-fg-1 outline-none transition-colors placeholder:text-fg-3 focus:bg-active';
-  return multiline
-    // Grows with its text; no manual resize handle (it could be dragged to cut a line in half)
-    ? <textarea aria-label={label} placeholder={placeholder} value={text} onChange={e => setText(e.target.value)} onBlur={commit}
-      className={`${cls} resize-none py-(--setting-row-pad) [field-sizing:content]`} />
-    : <input aria-label={label} placeholder={placeholder} value={text} onChange={e => setText(e.target.value)} onBlur={commit}
-      onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setText(value); }}
-      className={`${cls} h-ctl w-(--ctl-w)`} />;
 }
 
 function modelControlOf(controls: ConfigControl[] | undefined): ConfigControl | undefined {
