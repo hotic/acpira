@@ -73,6 +73,7 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // FAKE_MIRROR_MODES → pi-acp 0.0.33's shape: session/new's modes are the effort levels (`Thinking: <id>`, the thought_level ids)
 // and every effort pick is echoed as current_mode_update before the set answers;
 // FAKE_BOOL → offer a `type: 'boolean'` model_config option, but only to clients advertising clientCapabilities.session.configOptions.boolean;
+// FAKE_BOOL_MODEL → that boolean only while this model is current (Claude's Fast exists on Opus only)
 // FAKE_NO_EFFORT_MODEL → while that model is current, configOptions carry no effort select
 // FAKE_EFFORTS → comma-separated extra effort options (`unavailable` is offered yet refused on set, like every `unavailable` value);
 // FAKE_SPEED → Devin-shaped per-model controls (3000.11.3): m1 offers a `speed` Standard / Fast select and every effort, while any
@@ -107,7 +108,7 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // FAKE_SLOW_STEP_MS → the pause between the 50 chunks of a "slow" turn (default 40 ms, so 2 s in all)
 // FAKE_META_LOG → append `{ method, meta }` (the request's `_meta`) for every session/new, resume and load
 // FAKE_REBUILD → claude-agent-acp 0.87.0's getOrCreateSession: a resume of a live session whose
-// `_meta.claudeCode.options.settings` changed recreates it, which resets model / effort / Fast to the defaults and keeps
+// `_meta.claudeCode.options.settings` changed recreates it (a session/new starts there too), which resets model / effort / Fast to the defaults and keeps
 // the live mode; the response carries modes and configOptions. A recreate of a session that never got a prompt fails with
 // -32002 Resource not found, since Claude Code writes no transcript before the first turn. FAKE_REBUILD_FAIL=ultracode
 // fails such a recreate when it asks for ultracode, =always fails every recreate (the session stays torn down either way)
@@ -325,6 +326,8 @@ const app = acp.agent({ name: 'fake-agent' })
     }
     logMeta('new', params._meta);
     builtWith.set(sessionId, settingsOf(params._meta));
+    // Like the recreate below, a new claude-agent-acp session starts on the adapter's defaults
+    if (process.env.FAKE_REBUILD) Object.assign(config, { model: 'm1', effort: 'high', fast: 'false' });
     saveSession(sessionId, [], canonicalCwd(params.cwd));
     // FAKE_IDLE_FAILURE: a session-scoped failure lands while no prompt is in flight — it must synthesize
     // its own transcript row (the prompt-triggered failure-idle script appends into the last agent turn)
@@ -1794,7 +1797,7 @@ function configOptions(): acp.SessionConfigOption[] {
       ...(process.env.FAKE_MODELS ?? '').split(',').map(s => s.trim()).filter(Boolean).map(value => ({ value, name: value })),
     ] },
     // FAKE_BOOL: a model_config toggle offered only when the client declared the boolean capability
-    ...(process.env.FAKE_BOOL && booleanCap
+    ...(process.env.FAKE_BOOL && booleanCap && (!process.env.FAKE_BOOL_MODEL || config.model === process.env.FAKE_BOOL_MODEL)
       ? [{ id: 'fast', name: 'Fast mode', category: 'model_config' as const, type: 'boolean' as const, currentValue: config.fast === 'true' }]
       : []),
   ];

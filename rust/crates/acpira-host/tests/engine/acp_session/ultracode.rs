@@ -108,6 +108,32 @@ async fn ultra_is_the_last_effort_level_and_rebuilds_the_live_session_with_xhigh
   assert_eq!(last_turn(&view(&s))["stop"], "end_turn");
 }
 
+/// The recreated query reports the default model, which lacks Fast, until the replay sets the shown model again: Fast
+/// stays on screen through the rebuild instead of blinking out of the model panel (Claude's Fast exists on Opus only)
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rebuild_keeps_a_control_only_the_shown_model_has_on_screen() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let h = claude(&fake, dir.path(), json!({ "FAKE_BOOL": "1", "FAKE_BOOL_MODEL": "m2", "FAKE_CONFIG_DELAY_MS": "150" }));
+  let s = started(&h, dir.path().to_str().unwrap()).await;
+  assert_eq!(ids(&view(&s)), ["model", "effort"]);
+  s.select_config("model".into(), "m2".into()).await.unwrap();
+  assert_eq!(ids(&view(&s)), ["model", "effort", "fast"]);
+
+  let seen = h.sample(&s, |vw| vw.controls.options.iter().map(|o| o.id.clone()).collect::<Vec<_>>());
+  s.select_config("effort".into(), ULTRA.into()).await.unwrap();
+  until(|| !seen.lock().unwrap().is_empty(), 5000).await;
+  let seen = seen.lock().unwrap().clone();
+  eprintln!("SEEN {seen:?} META {:?}", lines(&dir.path().join("meta.log")).iter().map(|m| m["method"].clone()).collect::<Vec<_>>());
+  assert!(seen.iter().all(|ids| ids == &["model", "effort", "fast"]), "{seen:?}");
+  // Never prompted, so the rebuild is a fresh session/new, whose answer is pushed before the replay runs
+  assert_eq!(lines(&dir.path().join("meta.log")).iter().map(|m| m["method"].clone()).collect::<Vec<_>>(), ["new", "new"]);
+  let vw = view(&s);
+  assert_eq!(option_value(&vw, "model"), "m2");
+  assert_eq!(option_value(&vw, "effort"), ULTRA);
+  assert_eq!(ids(&vw), ["model", "effort", "fast"]);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn without_xhigh_ultra_takes_the_highest_level_the_model_offers() {
   let fake = fake_or_skip!();

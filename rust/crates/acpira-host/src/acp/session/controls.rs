@@ -428,6 +428,10 @@ pub(crate) struct ControlPicks {
   pub adopt_pending: bool,
   /// `sync_thought` is correcting the effort: the set_config calls it makes do not start another correction
   pub syncing_thought: bool,
+  /// The controls a rebuild found on screen (`rebuild_ultracode`). The recreated query reports the adapter's defaults
+  /// until the replay sets them again, and a control only the shown model has (Claude's Fast on Opus) is missing
+  /// meanwhile; while its hold lasts it stays in place instead of blinking out
+  pub shapes: Vec<ConfigControl>,
 }
 
 impl AcpSession {
@@ -505,6 +509,11 @@ impl AcpSession {
 /// leaves agent truth showing
 pub(crate) fn picked_controls(c: &Core) -> SessionControls {
   let mut out = c.state.controls.clone();
+  for (i, shape) in c.picks.shapes.iter().enumerate() {
+    if c.picks.values.contains_key(&shape.id) && !out.options.iter().any(|o| o.id == shape.id) {
+      out.options.insert(i.min(out.options.len()), shape.clone());
+    }
+  }
   if let Some((v, _)) = c.picks.values.get(MODE_PICK)
     && out.modes.iter().any(|m| &m.id == v)
   {
