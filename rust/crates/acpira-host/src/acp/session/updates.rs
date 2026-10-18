@@ -75,6 +75,10 @@ impl AcpSession {
           if let Some(node) = node {
             tree.apply_child(&node, &u, &mut RouteCtx { turn_index, root_turns: &mut state.turns });
           }
+          // A child's question tool input names its options' descriptions, like the root's
+          if matches!(kind.as_str(), "tool_call" | "tool_call_update") {
+            c.questions.raw.remember(&session_id, &u);
+          }
           self.drain_terminal(&mut c);
         }
         self.touch(&mut c);
@@ -238,7 +242,7 @@ impl AcpSession {
       }
       self.relay_annotate(&mut c, &u, turn_index);
       self.drain_terminal(&mut c);
-      c.questions.raw.remember(&u);
+      c.questions.raw.remember(&session_id, &u);
       let plan = capture_plan(&mut c.state.turns, &u);
       // Kimi 0.41.0 confirms the plan exit in tool output but omits current_mode_update
       let tool_call_id = u.get("toolCallId").and_then(Value::as_str).unwrap_or("");

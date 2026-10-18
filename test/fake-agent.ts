@@ -669,13 +669,24 @@ const app = acp.agent({ name: 'fake-agent' })
         const picked = perm.outcome.outcome === 'selected' ? perm.outcome.optionId : perm.outcome.outcome;
         await send({ sessionUpdate: 'tool_call_update', toolCallId: `rw${round}`, status: picked === 'yes' ? 'completed' : 'failed' });
       }
+      // "askme" → a form question first (Which colour? Blue / Green), its answer quoted in the reply
+      let answered = '';
+      if (first.includes('askme')) {
+        const questions = [{ question: 'Which colour?', options: [{ label: 'Blue', description: 'calm' }, { label: 'Green' }] }];
+        await send({ sessionUpdate: 'tool_call', toolCallId: `ra${round}`, title: 'AskUserQuestion', kind: 'other', status: 'pending', rawInput: { questions } });
+        const r = await client.request(acp.methods.client.elicitation.create, {
+          sessionId: sid, mode: 'form', toolCallId: `ra${round}`, message: 'Which colour?',
+          requestedSchema: { type: 'object', required: ['q0'], properties: { q0: { type: 'string', title: 'Colour', oneOf: [{ const: 'Blue', title: 'Blue' }, { const: 'Green', title: 'Green' }] } } },
+        });
+        answered = ` answer=${JSON.stringify(r)}`;
+      }
       if (first.includes('slow')) await new Promise(r => setTimeout(r, 1500));
       // "write=<path>" → the child writes "bad\n" there without asking, after any slow wait
       const write = /write=(\S+)/.exec(first);
       if (write) writeFileSync(write[1]!, 'bad\n');
       if (cancelled.has(sid)) return { stopReason: 'cancelled' };
       if (first.includes('fail')) throw acp.RequestError.internalError(undefined, 'model overloaded');
-      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `reply to ${first} (round ${round}, mode ${modes.get(sid) ?? 'agent'})` } });
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `reply to ${first} (round ${round}, mode ${modes.get(sid) ?? 'agent'})${answered}` } });
       // "relay:exit" → the process goes away after its reply (the thread's next round has to reopen the session)
       if (first.includes('exit')) setTimeout(() => process.exit(0), 50);
       return { stopReason: 'end_turn' };

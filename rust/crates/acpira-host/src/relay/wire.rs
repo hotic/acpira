@@ -94,6 +94,9 @@ pub struct AskArgs {
   /// caller when the round ends. Absent = the caller's default (the root does not wait)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub wait: Option<bool>,
+  /// With a thread whose child waits on a question: one answer per question, in order (an option's label or free text)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub answers: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -486,6 +486,7 @@
   "host.terminalAuthMethod": "登入方式 {id} 需要在終端中執行，不走 authenticate",
   "host.noCompact": "這個 agent 沒有 /compact",
   "host.needApproval": "需要批准",
+  "host.questionToCaller": "已同時交給召喚它的代理，誰先答算誰。",
   "host.needApprovalFor": "需要批准：{what}",
   "host.noPermissionOptions": "權限請求沒有選項",
   "host.planOptionsStale": "計畫審批選項已失效",

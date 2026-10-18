@@ -495,6 +495,7 @@ export const es = {
   'host.terminalAuthMethod': 'El método de inicio de sesión {id} se ejecuta en una terminal, no mediante authenticate',
   'host.noCompact': 'Este agente no tiene /compact',
   'host.needApproval': 'Se necesita aprobación',
+  'host.questionToCaller': "También se le pregunta al agente que lo invocó; vale la primera respuesta.",
   'host.needApprovalFor': 'Se necesita aprobación: {what}',
   'host.noPermissionOptions': 'La solicitud de permiso no tiene opciones',
   'host.planOptionsStale': 'Las opciones de aprobación del plan ya no son válidas',
