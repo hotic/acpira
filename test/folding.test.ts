@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AgentTurn, GoalBlock, NoticeBlock, PermissionBlock, QuestionBlock, ToolCallBlock } from '../src/shared/transcript';
+import type { AgentBlock, AgentTurn, CompactionBlock, GoalBlock, NoticeBlock, PermissionBlock, QuestionBlock, ToolCallBlock } from '../src/shared/transcript';
 import { setLocale } from '../src/webview/i18n';
 import { elapsedDuration, foldActivity, splitCodexBlocks, toolTarget, toolVerb } from '../src/webview/chat/folding';
 
@@ -25,10 +25,10 @@ describe('Codex process folding', () => {
     const progress = { type: 'text' as const, phase: 'commentary' as const, markdown: 'Checking.' };
     const final = { type: 'text' as const, phase: 'final' as const, markdown: 'Done.' };
     expect(splitCodexBlocks([progress, run, final, progress])).toEqual({
-      process: [progress, run, progress], reply: [final], permissions: [], notices: [], goalsLead: [], goals: [],
+      process: [progress, run, progress], reply: [final], permissions: [], notices: [], goalsLead: [], goals: [], compactions: [],
     });
-    expect(splitCodexBlocks([progress])).toEqual({ process: [progress], reply: [], permissions: [], notices: [], goalsLead: [], goals: [] });
-    expect(splitCodexBlocks([final, read])).toEqual({ process: [read], reply: [final], permissions: [], notices: [], goalsLead: [], goals: [] });
+    expect(splitCodexBlocks([progress])).toEqual({ process: [progress], reply: [], permissions: [], notices: [], goalsLead: [], goals: [], compactions: [] });
+    expect(splitCodexBlocks([final, read])).toEqual({ process: [read], reply: [final], permissions: [], notices: [], goalsLead: [], goals: [], compactions: [] });
   });
 
   it('keeps one process history across commentary and leaves the trailing reply outside', () => {
@@ -36,7 +36,7 @@ describe('Codex process folding', () => {
     const progress = { type: 'text' as const, markdown: '继续验证。' };
     const reply = { type: 'text' as const, markdown: '检查完成。' };
     expect(splitCodexBlocks([intro, read, progress, run, reply])).toEqual({
-      process: [intro, read, progress, run], reply: [reply], permissions: [], notices: [], goalsLead: [], goals: [],
+      process: [intro, read, progress, run], reply: [reply], permissions: [], notices: [], goalsLead: [], goals: [], compactions: [],
     });
     // Appending an action reclassifies the previous prose as history without duplicating it.
     expect(splitCodexBlocks([intro, read, progress]).reply).toEqual([progress]);
@@ -50,7 +50,7 @@ describe('Codex process folding', () => {
     const todo = { type: 'plan' as const, entries: [] };
     // Summary → thought → coda: both paragraphs are the reply; the thought joins the process fold.
     expect(splitCodexBlocks([read, think, summary, { ...think, streaming: true }, coda])).toEqual({
-      process: [read, think, { ...think, streaming: true }], reply: [summary, coda], permissions: [], notices: [], goalsLead: [], goals: [],
+      process: [read, think, { ...think, streaming: true }], reply: [summary, coda], permissions: [], notices: [], goalsLead: [], goals: [], compactions: [],
     });
     // A settled turn that ended on a thought keeps the summary as its reply.
     expect(splitCodexBlocks([read, summary, think]).reply).toEqual([summary]);
@@ -61,30 +61,48 @@ describe('Codex process folding', () => {
     });
     expect(splitCodexBlocks([read, summary, think, coda], true)).toMatchObject({ process: [read, summary, think], reply: [coda] });
     // Ticking the to-do list after the summary is bookkeeping, not a new action.
-    expect(splitCodexBlocks([read, summary, todo])).toEqual({ process: [read, todo], reply: [summary], permissions: [], notices: [], goalsLead: [], goals: [] });
+    expect(splitCodexBlocks([read, summary, todo])).toEqual({ process: [read, todo], reply: [summary], permissions: [], notices: [], goalsLead: [], goals: [], compactions: [] });
     // A real action after the summary still turns it into process history.
     expect(splitCodexBlocks([read, summary, think, run]).reply).toEqual([]);
     // Without tool calls nothing folds and the blocks render in order, so only the trailing text is the reply.
-    expect(splitCodexBlocks([think, summary, think, coda])).toEqual({ process: [think, summary, think], reply: [coda], permissions: [], notices: [], goalsLead: [], goals: [] });
+    expect(splitCodexBlocks([think, summary, think, coda])).toEqual({ process: [think, summary, think], reply: [coda], permissions: [], notices: [], goalsLead: [], goals: [], compactions: [] });
+  });
+
+  it('keeps the reply outside the fold when a compaction runs after it', () => {
+    const think = { type: 'thought' as const, text: 'checking the numbers' };
+    const steer: AgentBlock = { type: 'steer', id: 's', text: 'and the egress?' };
+    const reply = { type: 'text' as const, markdown: 'Found it.' };
+    const done: CompactionBlock = { type: 'compaction', id: 'c', status: 'completed' };
+    // The built-in agent's threshold compaction after the last call: the reply stays the reply, the compaction follows it
+    expect(splitCodexBlocks([read, steer, run, think, reply, done])).toEqual({
+      process: [read, steer, run, think], reply: [reply], permissions: [], notices: [], goalsLead: [], goals: [], compactions: [done],
+    });
+    // Still running, the same split: the row shimmers under the reply instead of swallowing it into the open fold
+    const live = { ...done, status: 'in_progress' as const };
+    expect(splitCodexBlocks([read, reply, live], true)).toMatchObject({ process: [read], reply: [reply], compactions: [live] });
+    // A compaction before the reply text stays in the process where it happened
+    expect(splitCodexBlocks([read, done, reply])).toMatchObject({ process: [read, done], reply: [reply], compactions: [] });
+    // A /compact reply with nothing but its row keeps it in place
+    expect(splitCodexBlocks([done])).toMatchObject({ process: [done], reply: [], compactions: [] });
   });
 
   it('keeps approval actions accessible outside a collapsed process', () => {
     const permission: PermissionBlock = { type: 'permission', id: 'p', title: '运行测试', options: [] };
     const blocks = [read, run, permission];
-    expect(splitCodexBlocks(blocks)).toEqual({ process: [read, run], reply: [], permissions: [permission], notices: [], goalsLead: [], goals: [] });
+    expect(splitCodexBlocks(blocks)).toEqual({ process: [read, run], reply: [], permissions: [permission], notices: [], goalsLead: [], goals: [], compactions: [] });
     expect(foldActivity({ role: 'agent', blocks })).toEqual({ kind: 'other', label: 'Awaiting approval' });
   });
 
   it('keeps sessionFailure notices out of the collapsed process and the reply', () => {
     const notice: NoticeBlock = { type: 'notice', id: 't1:error', revision: 2, category: 'connection', severity: 'warning', title: 'Reconnecting...', actions: [] };
     const reply = { type: 'text' as const, markdown: 'Done.' };
-    expect(splitCodexBlocks([read, notice, run, reply])).toEqual({ process: [read, run], reply: [reply], permissions: [], notices: [notice], goalsLead: [], goals: [] });
+    expect(splitCodexBlocks([read, notice, run, reply])).toEqual({ process: [read, run], reply: [reply], permissions: [], notices: [notice], goalsLead: [], goals: [], compactions: [] });
   });
 
   it('keeps advisory notices in the process at their place (codex-acp compaction heads-up)', () => {
     const advisory: NoticeBlock = { type: 'notice', id: 't1:notice:1', revision: 1, category: 'unknown', severity: 'warning', title: 'Heads up: Long threads and multiple compactions …', actions: [] };
     const reply = { type: 'text' as const, markdown: 'Done.' };
-    expect(splitCodexBlocks([read, advisory, run, reply])).toEqual({ process: [read, advisory, run], reply: [reply], permissions: [], notices: [], goalsLead: [], goals: [] });
+    expect(splitCodexBlocks([read, advisory, run, reply])).toEqual({ process: [read, advisory, run], reply: [reply], permissions: [], notices: [], goalsLead: [], goals: [], compactions: [] });
   });
 
   it('places goal milestones: the leading ones open the turn, mid-process ones stay in place, the last ones follow the reply', () => {
@@ -92,12 +110,12 @@ describe('Codex process folding', () => {
     const paused: GoalBlock = { type: 'goal', event: 'paused', timeUsedSeconds: 40 };
     const reply = { type: 'text' as const, markdown: 'Done.' };
     expect(splitCodexBlocks([set, read, run, reply, paused])).toEqual({
-      process: [read, run], reply: [reply], permissions: [], notices: [], goalsLead: [set], goals: [paused],
+      process: [read, run], reply: [reply], permissions: [], notices: [], goalsLead: [set], goals: [paused], compactions: [],
     });
     // A turn holding only milestones keeps them all in the lead
-    expect(splitCodexBlocks([set, paused])).toMatchObject({ process: [], reply: [], goalsLead: [set, paused], goals: [] });
+    expect(splitCodexBlocks([set, paused])).toMatchObject({ process: [], reply: [], goalsLead: [set, paused], goals: [], compactions: [] });
     // A goal set mid-turn stays where it happened while actions follow it, instead of trailing the live process
-    expect(splitCodexBlocks([read, set, run])).toMatchObject({ process: [read, set, run], goalsLead: [], goals: [] });
+    expect(splitCodexBlocks([read, set, run])).toMatchObject({ process: [read, set, run], goalsLead: [], goals: [], compactions: [] });
     expect(splitCodexBlocks([read, set, run, reply, paused])).toMatchObject({ process: [read, set, run], reply: [reply], goals: [paused] });
     // Only prose after it: it still follows the reply
     expect(splitCodexBlocks([read, set, reply])).toMatchObject({ process: [read], reply: [reply], goals: [set] });
@@ -106,11 +124,11 @@ describe('Codex process folding', () => {
   it('keeps the open question card out of the message and the answered one in place in the process history', () => {
     const asked: QuestionBlock = { type: 'question', id: 'q', questions: [{ id: 'a', text: 'Which?', kind: 'single', options: [{ id: 'x', label: 'X' }] }] };
     const answered: QuestionBlock = { ...asked, outcome: 'answered', answers: { a: 'x' } };
-    expect(splitCodexBlocks([read, asked])).toEqual({ process: [read], reply: [], permissions: [], notices: [], goalsLead: [], goals: [] });
+    expect(splitCodexBlocks([read, asked])).toEqual({ process: [read], reply: [], permissions: [], notices: [], goalsLead: [], goals: [], compactions: [] });
     expect(foldActivity({ role: 'agent', blocks: [read, asked] })).toEqual({ kind: 'other', label: 'Waiting for your answers' });
     const reply = { type: 'text' as const, markdown: 'Done.' };
     // Later actions must not push the record below them: it stays where the question was asked.
-    expect(splitCodexBlocks([read, answered, run, reply])).toEqual({ process: [read, answered, run], reply: [reply], permissions: [], notices: [], goalsLead: [], goals: [] });
+    expect(splitCodexBlocks([read, answered, run, reply])).toEqual({ process: [read, answered, run], reply: [reply], permissions: [], notices: [], goalsLead: [], goals: [], compactions: [] });
   });
 
   it('selects the actual pending action despite stale activity or later completed calls', () => {
