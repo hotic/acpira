@@ -440,6 +440,7 @@ fn ask_tool_def(personas: &[acpira_shared::subagents::SubagentPersona]) -> Value
         RelayMode::Consult => " · read-only",
         RelayMode::Work => "",
         RelayMode::Bypass => " · edits without approval",
+        RelayMode::Inherit => " · follows your mode",
       };
       let when = if p.when.trim().is_empty() { String::new() } else { format!(": {}", p.when.trim()) };
       format!("- {} (@{}){when} [{}{model}{mode}]", p.id, p.name, p.agent)
@@ -466,7 +467,7 @@ previous answer named. If the answer says it is still working, call again with t
         "agent": { "type": "string", "enum": ids, "description": "Which agent to summon. Not needed with `thread`." },
         "prompt": { "type": "string", "description": "The task or question. Empty only when waiting on a thread." },
         "title": { "type": "string", "description": "A few words naming the task, shown to the user." },
-        "mode": { "type": "string", "enum": ["consult", "work"], "description": "consult = read-only opinion; work = may edit files. Defaults to the agent's own setting." },
+        "mode": { "type": "string", "enum": ["consult", "work"], "description": "consult = read-only opinion; work = may edit files. Defaults to the agent's own setting; an agent that follows your mode never gets more than you have." },
         "thread": { "type": "string", "description": "Continue the conversation an earlier answer named." },
       },
       "required": [],

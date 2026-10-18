@@ -14,8 +14,9 @@ import type { SettingsHandlers } from './SettingsShell';
 // The read-only mode the relay finds on the CLIs whose modes are recorded (docs/acp-agents-compat.md; null = none);
 // any other CLI is tried at run time against acp/session/relay.rs READ_ONLY_MODES
 const READ_ONLY: Partial<Record<AgentId, string | null>> = { codex: 'read-only', claude: 'plan', opencode: 'plan', dsh: null };
-// The persona's default access, least to most; the i18n keys are `subagents.page.<mode>` and `<mode>Desc`
-const MODES: RelayMode[] = ['consult', 'work', 'bypass'];
+// The persona's default access: following the caller first (a new persona's default), then least to most; the i18n keys
+// are `subagents.page.<mode>` and `<mode>Desc`
+const MODES: RelayMode[] = ['inherit', 'consult', 'work', 'bypass'];
 
 interface PageProps {
   settings: SettingsView;
@@ -53,7 +54,7 @@ export function SubagentsPage({ settings, agents, controls, on }: PageProps) {
     const agent = usable.find(a => a.available !== false)?.id ?? usable[0]?.id;
     if (!agent || full) return;
     // The id comes from the name the way the host derives it, so the page knows what to open when the list comes back
-    const next = sanitizePersonas([...list, { name: uniqueName(t('subagents.page.newName'), list), agent, mode: 'consult', when: '', enabled: true }]);
+    const next = sanitizePersonas([...list, { name: uniqueName(t('subagents.page.newName'), list), agent, mode: 'inherit', when: '', enabled: true }]);
     const id = next[next.length - 1]!.id;
     save(next);
     setAdding(id);

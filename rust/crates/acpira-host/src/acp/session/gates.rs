@@ -225,7 +225,10 @@ impl AcpSession {
         return Ok(cancelled_permission());
       }
       let options: Vec<Value> = req.get("options").and_then(Value::as_array).cloned().unwrap_or_default();
-      let auto = c.perms.auto_approve;
+      // The root's yolo and plan auto-approval cover the root and its own native children; a summoned child answers to
+      // its own round mode alone, so a consult or work child under a yolo root still gets cards
+      let root = !matches!(&target, Target::Node(id) if c.tree.relay_thread_of(id).is_some());
+      let auto = root && c.perms.auto_approve;
       // A summoned child in a bypass round: answered without a card, preferring the one-time allow so nothing lasting
       // lands in that CLI's own settings; a request with no plain allow still gets a card
       let bypass = matches!(&target, Target::Node(id) if c.tree.relay_bypass(id));
@@ -255,7 +258,7 @@ impl AcpSession {
       // so read-only probes would each ask. Answer with the single allow_once (never allow_always, which would write a
       // lasting rule into the CLI's settings); the plan's own approval and a request the adapter marks default-to-no
       // still get a card
-      let in_plan = c.state.controls.mode_id.as_deref() == Some("plan");
+      let in_plan = root && c.state.controls.mode_id.as_deref() == Some("plan");
       if plan_auto_on
         && in_plan
         && captured.is_none()
@@ -373,10 +376,12 @@ impl AcpSession {
     self.touch(c);
   }
 
-  /// Switching into yolo approves the requests already waiting in one go; ambiguous ones stay open
+  /// Switching into yolo approves the requests already waiting in one go; ambiguous ones and summoned children's (which
+  /// follow their own round mode) stay open
   pub(crate) fn flush_permissions(&self, c: &mut Core) {
+    let summoned = |p: &PendingPermission| p.node_id.as_deref().is_some_and(|id| c.tree.relay_thread_of(id).is_some());
     let pending: Vec<(String, String)> =
-      c.perms.pending.iter().filter_map(|p| auto_allow(&p.options).map(|o| (p.block_id.clone(), o))).collect();
+      c.perms.pending.iter().filter(|p| !summoned(p)).filter_map(|p| auto_allow(&p.options).map(|o| (p.block_id.clone(), o))).collect();
     for (block, option) in pending {
       self.resolve_permission_locked(c, &block, &option);
     }

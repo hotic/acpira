@@ -54,6 +54,11 @@
       "name": "Free Hand",
       "agent": "claude",
       "mode": "bypass"
+    },
+    {
+      "name": "Follower",
+      "agent": "codex",
+      "mode": "inherit"
     }
   ],
   "output": [
@@ -120,6 +125,14 @@
       "name": "Free Hand",
       "agent": "claude",
       "mode": "bypass",
+      "when": "",
+      "enabled": true
+    },
+    {
+      "id": "follower",
+      "name": "Follower",
+      "agent": "codex",
+      "mode": "inherit",
       "when": "",
       "enabled": true
     }
