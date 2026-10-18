@@ -157,14 +157,19 @@ pub fn prepare(args: &Value, cwd: &Path) -> Result<Action, String> {
     None => vec![(default, edit_of(args)?)],
   };
   let several = items.len() > 1;
-  // One change per file, in the order the files first come up; a file's edits apply in the order given
+  // One change per file, in the order the files first come up; a file's edits apply in the order given. Files are told
+  // apart by what they resolve to, so `a.txt` and `nested/../a.txt` (or a symlink) share one change: two changes to one
+  // file would each be computed from the original and the later write would drop the earlier one's edits
   let mut files: Vec<Change> = vec![];
+  let mut ids: Vec<PathBuf> = vec![];
   for (i, (path, e)) in items.into_iter().enumerate() {
-    let k = match files.iter().position(|c| c.path == path) {
+    let id = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+    let k = match ids.iter().position(|x| *x == id) {
       Some(k) => k,
       None => {
         let before = read_text(&path)?.ok_or_else(|| format!("File not found: {} (use write to create it)", path.display()))?;
         files.push(Change { path, after: before.clone(), before: Some(before), edits: vec![] });
+        ids.push(id);
         files.len() - 1
       }
     };
@@ -246,7 +251,7 @@ fn unique_trimmed_match(content: &str, old: &str) -> Option<(usize, usize)> {
 }
 
 /// Write every change. A file that changed while the card waited gets its edits again, applied to what it holds now;
-/// nothing is written unless every file still takes them
+/// nothing is written unless every file still takes them, and a write that fails puts back the files written before it
 pub fn run(files: Vec<Change>, ctx: &Ctx) -> Output {
   let mut ready: Vec<Change> = vec![];
   for c in files {
@@ -265,19 +270,14 @@ pub fn run(files: Vec<Change>, ctx: &Ctx) -> Output {
     };
     ready.push(Change { path: c.path, before, after, edits: c.edits });
   }
-  let mut written: Vec<String> = vec![];
-  for c in &ready {
+  for (k, c) in ready.iter().enumerate() {
     let failed = match c.path.parent().map(std::fs::create_dir_all) {
       Some(Err(e)) => Some(format!("Cannot create {}: {e}", c.path.parent().unwrap_or(&c.path).display())),
       _ => std::fs::write(&c.path, &c.after).err().map(|e| format!("Cannot write {}: {e}", c.path.display())),
     };
-    if let Some(mut message) = failed {
-      if !written.is_empty() {
-        message.push_str(&format!("; already written: {}", written.join(", ")));
-      }
-      return Output::error(message);
+    if let Some(message) = failed {
+      return undo(&ready[..k], message, ctx);
     }
-    written.push(shown(&c.path, &ctx.cwd));
   }
   let model = match &ready[..] {
     [c] => {
@@ -302,6 +302,30 @@ pub fn run(files: Vec<Change>, ctx: &Ctx) -> Output {
   };
   let content = ready.iter().map(|c| diff_content(&c.path, c.before.as_deref(), &c.after)).collect();
   Output { model, is_error: false, content, raw_output: None }
+}
+
+/// Put back files a failed call already wrote, newest first. Any that cannot be restored are named, and their diffs
+/// stay on the card, so the failure never hides a change that is still on disk
+fn undo(written: &[Change], mut message: String, ctx: &Ctx) -> Output {
+  let stuck: Vec<&Change> = written
+    .iter()
+    .rev()
+    .filter(|c| match &c.before {
+      Some(b) => std::fs::write(&c.path, b).is_err(),
+      None => std::fs::remove_file(&c.path).is_err(),
+    })
+    .collect();
+  if stuck.is_empty() {
+    if !written.is_empty() {
+      message.push_str("; no file was changed (the ones already written were restored)");
+    }
+    return Output::error(message);
+  }
+  let names: Vec<String> = stuck.iter().rev().map(|c| shown(&c.path, &ctx.cwd)).collect();
+  message.push_str(&format!("; could not restore, still changed: {}", names.join(", ")));
+  let mut out = Output::error(message);
+  out.content.extend(stuck.iter().rev().map(|c| diff_content(&c.path, c.before.as_deref(), &c.after)));
+  out
 }
 
 #[cfg(test)]
@@ -396,5 +420,40 @@ mod tests {
     assert_eq!(std::fs::read_to_string(&a).unwrap(), "fn new() {}\nnew();\n", "nothing was written");
     assert_eq!(then_run(&json!({ "then_run": "  cargo test " })).as_deref(), Some("cargo test"));
     assert_eq!(then_run(&json!({ "then_run": " " })), None);
+  }
+
+  #[test]
+  fn one_file_under_two_spellings_takes_both_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("nested")).unwrap();
+    let a = dir.path().join("a.txt");
+    std::fs::write(&a, "alpha beta\n").unwrap();
+    let args = json!({ "path": "a.txt", "edits": [
+      { "old_string": "alpha", "new_string": "ALPHA" },
+      { "path": "nested/../a.txt", "old_string": "beta", "new_string": "BETA" },
+    ] });
+    let files = changes(args, dir.path());
+    assert_eq!(files.len(), 1, "one change for the file");
+    assert!(!run(files, &ctx(dir.path())).is_error);
+    assert_eq!(std::fs::read_to_string(&a).unwrap(), "ALPHA BETA\n");
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn a_failed_write_restores_the_files_written_before_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+    std::fs::write(&a, "one\n").unwrap();
+    std::fs::write(&b, "two\n").unwrap();
+    let files = changes(json!({ "path": "a.txt", "edits": [
+      { "old_string": "one", "new_string": "ONE" },
+      { "path": "b.txt", "old_string": "two", "new_string": "TWO" },
+    ] }), dir.path());
+    std::fs::set_permissions(&b, std::fs::Permissions::from_mode(0o444)).unwrap();
+    let out = run(files, &ctx(dir.path()));
+    std::fs::set_permissions(&b, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(out.is_error && out.model.contains("Cannot write") && out.model.contains("no file was changed"), "{}", out.model);
+    assert_eq!((std::fs::read_to_string(&a).unwrap(), std::fs::read_to_string(&b).unwrap()), ("one\n".into(), "two\n".into()));
   }
 }

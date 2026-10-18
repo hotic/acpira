@@ -191,6 +191,30 @@ async fn a_turn_ending_on_a_running_background_task_shows_background_and_announc
   m.dispose().await;
 }
 
+// A failed turn is announced while an earlier turn's background task still runs: a long-lived monitor must not hold
+// the error back, and stopping the task afterwards announces nothing more
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_turn_is_announced_without_waiting_for_background_work() {
+  use acpira_host::session_manager::AttentionKind;
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let m = Mgr::new(dir.path(), Opts::fake(&fake));
+  m.init().await;
+  let state_of = |id: &str| m.sessions().iter().find(|s| s["id"] == id).map(|s| s["state"].clone()).unwrap_or(Value::Null);
+  let kinds = || m.attentions.lock().unwrap().iter().map(|a| a.kind).collect::<Vec<_>>();
+  m.new_session(None).await;
+  let id = m.active_id().unwrap();
+  m.handle(json!({ "type": "send", "text": "async-stop" })).await;
+  until(|| state_of(&id) == "background", 5000).await;
+  m.handle(json!({ "type": "send", "text": "fail now" })).await;
+  until(|| kinds() == [AttentionKind::Error], 5000).await;
+
+  m.handle(json!({ "type": "stopAsyncTask", "sessionId": id, "taskId": "task-1" })).await;
+  tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+  assert_eq!(kinds(), [AttentionKind::Error]);
+  m.dispose().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn observe_subagent_streams_only_to_the_observing_viewer_until_unobserved() {
   let fake = fake_or_skip!();
