@@ -603,3 +603,52 @@ async fn a_yolo_root_leaves_a_summoned_childs_approval_to_its_own_mode() {
   assert!(ok, "{text}");
   expect_match(&nodes(&s)[1], json!({ "state": "completed", "harness": { "mode": "bypass" } }));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_childs_card_and_round_outlive_the_root_turn_that_left_it_running() {
+  use acpira_shared::transcript::SummaryState;
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let roster = roster(h.dir.path()).await;
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  // The call answers before the round does (a client with a short tool timeout), and the child asks afterwards
+  let (_, text) = last_text(&run(&s, &roster, 0, AskArgs { wait_secs: Some(0), ..ask("fake-worker", "relay: perm slow edit") }).await);
+  let thread = thread_of(&text);
+  until(|| nodes(&s).first().is_some_and(|n| n["permissions"].as_array().is_some_and(|p| p.len() == 1)), 8000).await;
+  // The root turn ends meanwhile: the child's card stays, and the list says the session waits on the user
+  prompt(&s, "say:handed it off").await;
+  assert_eq!(nodes(&s)[0]["permissions"].as_array().map(Vec::len), Some(1));
+  assert_eq!(s.list_state(), Some(SummaryState::Waiting));
+  let block = nodes(&s)[0]["permissions"][0]["id"].as_str().unwrap().to_owned();
+  s.resolve_permission(&block, "yes");
+  // Still working with the root idle: background, not idle
+  until(|| s.list_state() == Some(SummaryState::Background), 4000).await;
+  assert!(s.background_running() && !s.is_running());
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread), ..ask("", "") }).await);
+  assert!(ok && text.starts_with("reply to relay: perm slow edit"), "{text}");
+  assert_eq!(s.list_state(), None);
+  assert!(!s.background_running());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editing_history_cancels_the_summoned_rounds_of_the_removed_turns() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let roster = roster(h.dir.path()).await;
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  prompt(&s, "say:first").await;
+  // A round of the second turn, left running when that turn ended
+  prompt(&s, "relay-call:relay: slow orphan").await;
+  let (_, text) = last_text(&run(&s, &roster, 0, AskArgs { wait_secs: Some(0), ..ask("fake-review", "relay: slow orphan") }).await);
+  let thread = thread_of(&text);
+  until(|| nodes(&s).first().is_some_and(|n| n["peer"]["sessionId"].is_string()), 8000).await;
+  // Editing the second prompt takes its turn, and the round with it
+  s.edit_turn(crate::acp_session::history_edit(&s, 2, "say:instead")).await.unwrap();
+  assert!(nodes(&s).is_empty());
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread), ..ask("", "") }).await);
+  assert!(!ok && text.contains("Unknown thread"), "{text}");
+  // The cancelled round winds down by itself
+  until(|| !s.background_running(), 4000).await;
+}

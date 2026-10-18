@@ -60,6 +60,9 @@ pub(crate) struct HookState {
   pub gating: bool,
   /// A detached turn ended while the gate was deciding: the gate runs once more over it before letting go
   pub rerun: bool,
+  /// A turn ended while summoned children still ran: its gate waits for them, so the span covers what they change
+  /// meanwhile; the first turn to end without any (or the last child ending while the session is idle) runs it
+  pub deferred: bool,
   /// The last hooks-file error shown, so a broken file is reported once rather than every turn
   pub reported: Option<String>,
 }
@@ -354,7 +357,10 @@ impl AcpSession {
       if matches!(origin, Origin::User | Origin::Goal) {
         c.hooks.round = 0;
       }
-      c.hooks.denied.clear();
+      // A deferred gate still owes the agent the edits beforeEdit rejected before it
+      if !c.hooks.deferred {
+        c.hooks.denied.clear();
+      }
       c.hooks.settled = None;
       // A turn that ended without its gate left the span open: this turn joins it, so its edits are still audited.
       // Only while the same trees are watched; a changed watch list starts over
@@ -504,6 +510,14 @@ impl AcpSession {
         c.hooks.rerun = true;
         return true;
       }
+      // Summoned children still at work: the span stays open (`before`, `since` untouched) until they are done
+      if c.hooks.config.is_some() && Self::relay_background(&c) {
+        if !c.hooks.deferred {
+          self.log("hooks: gate deferred until the summoned agents finish");
+        }
+        c.hooks.deferred = true;
+        return false;
+      }
       self.gate_job(&mut c)
     };
     match job {
@@ -533,6 +547,7 @@ impl AcpSession {
 
   /// Reserve the session for a gate run (`gating`) and take what it needs; None: the project gates nothing
   fn gate_job(&self, c: &mut Core) -> Option<GateJob> {
+    c.hooks.deferred = false;
     let cfg = c.hooks.config.clone()?;
     if !cfg.tracks_changes() && c.hooks.denied.is_empty() {
       return None;

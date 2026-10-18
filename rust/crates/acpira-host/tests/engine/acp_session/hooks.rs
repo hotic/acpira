@@ -536,3 +536,31 @@ async fn a_file_a_shell_command_changed_is_still_audited_and_marked_snapshot() {
   // The follow-up fixed it through an edit row: from then on the session counts it as the agent's own
   assert_eq!(stops[1]["file_sources"].as_object().unwrap().values().collect::<Vec<_>>(), [&json!("tool")]);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_gate_waits_for_summoned_children_and_covers_what_they_wrote_meanwhile() {
+  let fake = fake_or_skip!();
+  if !git_or_skip() {
+    return;
+  }
+  let p = Project::new(json!({ "afterTurn": "after.cjs" }));
+  let h = Harness::new(&fake, json!({}));
+  let roster = std::sync::Arc::new(acpira_host::relay::roster::Roster::new(h.dir.path()));
+  roster.save(&json!([{ "name": "Fake Worker", "agent": "fake", "mode": "work", "when": "edits" }])).await.unwrap();
+  let s = started(&h, &p.cwd()).await;
+  let target = p.file("child.txt");
+  // The child is summoned and keeps working after the call answered; it writes once the root turn is over
+  let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+  let args = acpira_host::relay::wire::AskArgs { agent: "fake-worker".into(), prompt: format!("relay: slow write={target}"), wait_secs: Some(0), ..Default::default() };
+  tokio::spawn(s.clone().relay_ask(roster.clone(), None, 0, args, tx));
+  while rx.recv().await.is_some() {}
+  // The root turn that holds the call ends while the child still runs: no gate yet
+  prompt(&s, "relay-call:relay: slow write").await;
+  assert_eq!(count(&h, "hooks: gate deferred"), 1, "{:?}", h.logs());
+  assert!(p.payloads("after.log").is_empty());
+  // The child finishes with the session idle: the gate runs then, over the file it wrote
+  decisions(&h, 1).await;
+  let after = p.payloads("after.log");
+  assert_eq!(after.len(), 1);
+  assert!(after[0]["turn_files"].as_array().unwrap().iter().any(|f| f.as_str().unwrap().replace('\\', "/").ends_with("child.txt")), "{after:?}");
+}

@@ -495,7 +495,7 @@ impl AcpSession {
           let mut c = self.core.lock();
           c.state.controls = controls;
           c.state.turns.truncate(idx);
-          c.tree.truncate(idx);
+          self.relay_truncate(&mut c, idx);
           // The edited turn's ultracode: the prompt below rebuilds the native session with it first when it differs
           // from what that session was built with (`claim`)
           self.seed_ultracode(&mut c, Some(&edit.settings));
@@ -543,7 +543,7 @@ impl AcpSession {
         c.ultracode.unprompted = true;
         c.state.controls = controls;
         c.state.turns.truncate(idx);
-        c.tree.truncate(idx);
+        self.relay_truncate(&mut c, idx);
         c.state.usage = None;
         c.state.commands = vec![];
         c.compaction.at = None;
@@ -637,7 +637,7 @@ impl AcpSession {
         if !has_output {
           let keep = c.state.turns.len() - 2;
           c.state.turns.truncate(keep);
-          c.tree.truncate(keep);
+          self.relay_truncate(&mut c, keep);
         }
         c.retry_pending = true;
       }
@@ -673,7 +673,7 @@ impl AcpSession {
       }
       let keep = c.state.turns.len() - 2;
       c.state.turns.truncate(keep);
-      c.tree.truncate(keep);
+      self.relay_truncate(&mut c, keep);
       c.retry_pending = true;
     }
     self.prompt(user.text, drafts, false, None, plan_id).await;
