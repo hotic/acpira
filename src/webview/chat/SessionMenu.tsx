@@ -148,16 +148,16 @@ export function SessionMenu({ trigger, align = 'start', onOpenChange, ...items }
 // a narrow session column left no room, so the align shift pinned the menu to the same spot wherever the row was clicked.
 // Shifting stays as the fallback when neither side fits.
 // `editing`: the row is being renamed. The menu stays mounted but disabled (the input keeps the native menu), so the row
-// element is not remounted. Closing does not return focus then: the trigger is the row being edited, and when it was not
-// connected Base UI fell back to whatever was focused before the menu opened (another row right-clicked earlier), which
-// took the focus from the fresh rename input, whose blur committed and closed it at once
+// element is not remounted. Closing never returns focus: a context menu has no trigger button to return to, and returning
+// focus to the row (or to a row right-clicked earlier) either stole focus from the fresh rename input or left the row's
+// focus-within action cluster showing without a hover fill
 const contextMenuCollision = { side: 'flip', align: 'flip', fallbackAxisSide: 'none' } as const;
 export function SessionContextMenu({ children, onOpenChange, editing, ...items }: SessionMenuItemsProps & { children: ReactElement<Record<string, unknown>>; onOpenChange?: (open: boolean) => void; editing?: boolean }) {
   return (
     <ContextMenu.Root disabled={editing} onOpenChange={open => onOpenChange?.(open)}>
       <ContextMenu.Trigger render={children} />
       {/* Portaled, but React events still bubble up the component tree: a menu click must not reach the row and select it */}
-      <DropdownMenu.Portal><DropdownMenu.Positioner className="w-max min-w-pop-sm" collisionAvoidance={contextMenuCollision}><DropdownMenu.Popup finalFocus={editing ? false : undefined} onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
+      <DropdownMenu.Portal><DropdownMenu.Positioner className="w-max min-w-pop-sm" collisionAvoidance={contextMenuCollision}><DropdownMenu.Popup finalFocus={false} onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
         {sessionMenuItems(items)}
       </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
     </ContextMenu.Root>
