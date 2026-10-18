@@ -156,6 +156,36 @@ async fn the_first_prompt_carries_the_context_files_and_later_prompts_do_not() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_peer_that_never_saw_the_context_files_gets_them_after_a_fork_or_an_edit_rebuild() {
+  let fake = fake_or_skip!();
+  if !git_or_skip() {
+    return;
+  }
+  let p = Project::new(json!({ "context": ["RULES.md"], "beforePrompt": "prompt.cjs" }));
+  let h = Harness::new(&fake, json!({}));
+  // A fork: the copied turns are already in the transcript, yet its native session has seen none of them
+  let mut record = Disposing(h.session(&p.cwd())).to_record();
+  record.turns = turns(json!([
+    { "role": "user", "text": "earlier" },
+    { "role": "agent", "blocks": [{ "type": "text", "markdown": "before" }], "stop": "end_turn" },
+  ]));
+  record.history_pending = true;
+  record.acp_session_id = None;
+  let s = reopened(&h, record).await;
+  prompt(&s, "echo-blocks").await;
+  assert!(h.logs().iter().any(|l| l.contains("hooks: context") && l.contains("RULES.md")), "{:?}", h.logs());
+  assert_eq!(p.payloads("prompt.log").last().unwrap()["first"], true);
+  prompt(&s, "echo-blocks").await;
+  assert_eq!(p.payloads("prompt.log").last().unwrap()["first"], false);
+  // An edit rebuilds the native session from scratch: its first prompt is that peer's first too
+  let before = count(&h, "hooks: context");
+  s.edit_turn(history_edit(&s, 2, "echo-blocks again")).await.unwrap();
+  until(|| !s.is_running() && turn_count(&s) == 4 && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
+  assert_eq!(count(&h, "hooks: context"), before + 1, "{:?}", h.logs());
+  assert_eq!(p.payloads("prompt.log").last().unwrap()["first"], true);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn before_prompt_context_rides_behind_the_prompt_on_the_wire_only() {
   let fake = fake_or_skip!();
   if !git_or_skip() {

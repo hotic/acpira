@@ -187,7 +187,7 @@ impl AcpSession {
     let turn = self.open_turn(&text, origin, plan_id.as_deref(), &mut accepted);
     let blocks = std::mem::take(&mut accepted.prepared.blocks);
     // From here on Claude Code has a transcript for this native session to resume
-    self.core.lock().ultracode.unprompted = false;
+    self.core.lock().unprompted = false;
     let result = match &turn.proc {
       Some(p) => p.request("session/prompt", self.prompt_params(turn.acp_id.as_deref(), blocks)).await,
       None => Err(RpcError::internal("no process")),
@@ -196,8 +196,29 @@ impl AcpSession {
       Ok(r) => self.prompt_answered(r, &turn, &accepted, auto).await,
       Err(e) => self.prompt_failed(e, &turn).await,
     };
+    if accepted.forked {
+      self.reclaim_fork_history(&turn);
+    }
     if let Some(settled) = settled {
       self.finish_turn(&turn, auto, accepted.compacting, settled);
+    }
+  }
+
+  /// A fork's first prompt that failed or was stopped before the agent produced anything may never have reached it:
+  /// the history is owed again, so a Retry or the next message carries it (`retry_turn` assumes the same of an empty attempt)
+  fn reclaim_fork_history(&self, turn: &OpenTurn) {
+    let mut c = self.core.lock();
+    let Some(a) = agent_turn_mut(&mut c, turn.agent_idx, turn.started_at) else { return };
+    let empty = a.blocks.iter().all(|b| match b {
+      AgentBlock::Text(x) => x.markdown.trim().is_empty(),
+      AgentBlock::Notice(_) | AgentBlock::Goal(_) => true,
+      _ => false,
+    });
+    if empty && matches!(a.stop, Some(TurnStop::Error | TurnStop::Cancelled)) {
+      c.lineage.history_pending = true;
+      self.touch(&mut c);
+      drop(c);
+      self.log("fork history owed again: the first prompt ended without output");
     }
   }
 

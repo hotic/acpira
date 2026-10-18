@@ -139,3 +139,65 @@ async fn a_fork_never_adopts_the_agents_own_title() {
   prompt(&s, "again").await;
   assert_eq!(view(&s)["title"], "Fork: earlier");
 }
+
+fn two_pairs() -> Value {
+  json!([
+    { "role": "user", "text": "alpha" },
+    { "role": "agent", "blocks": [{ "type": "text", "markdown": "first reply" }], "stop": "end_turn" },
+    { "role": "user", "text": "beta" },
+    { "role": "agent", "blocks": [{ "type": "text", "markdown": "second reply" }], "stop": "end_turn" },
+  ])
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editing_a_copied_message_before_the_history_went_out_hands_the_shortened_prefix_over_once() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let s = reopened(&h, fork_record(&h, two_pairs(), |_| {})).await;
+  let peer = s.to_record().acp_session_id;
+  s.edit_turn(history_edit(&s, 2, "gamma")).await.unwrap();
+  until(|| !s.is_running() && turn_count(&s) == 4 && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
+  let vw = view(&s);
+  expect_match(&vw["turns"][2], json!({ "role": "user", "text": "gamma", "edited": true }));
+  let text = agent_text(&vw["turns"][3]);
+  // One history block, the fork's own lead, the edit point moved: the dropped pair is not in it
+  assert_eq!(text.matches("resource:acpira://history/").count(), 1, "{text}");
+  assert!(text.contains("forked from an earlier session") && text.contains("alpha") && !text.contains("beta"), "{text}");
+  assert!(!text.contains("acpira://edit/"), "{text}");
+  // The never-prompted native session is used as it is, not replaced by a rebuild
+  assert_eq!(s.to_record().acp_session_id, peer);
+  assert!(!s.to_record().history_pending);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_forks_first_prompt_that_fails_empty_owes_its_history_again_and_retry_hands_it_over() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let s = reopened(&h, fork_record(&h, two_pairs(), |_| {})).await;
+  prompt(&s, "please fail").await;
+  expect_match(last_turn(&view(&s)), json!({ "stop": "error" }));
+  assert!(s.to_record().history_pending);
+  s.retry_turn().await.unwrap();
+  until(|| !s.is_running() && turn_count(&s) == 6 && last_turn(&view(&s))["stop"] == "end_turn", 5000).await;
+  let text = agent_text(&last_turn(&view(&s)));
+  assert_eq!(text.matches("resource:acpira://history/").count(), 1, "{text}");
+  assert!(text.contains("alpha") && text.contains("beta"), "{text}");
+  assert!(!s.to_record().history_pending);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_forks_first_prompt_stopped_before_any_output_owes_its_history_to_the_next_message() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let s = reopened(&h, fork_record(&h, two_pairs(), |_| {})).await;
+  prompt(&s, "cancel-empty-once").await;
+  expect_match(last_turn(&view(&s)), json!({ "stop": "cancelled" }));
+  assert!(s.to_record().history_pending);
+  prompt(&s, "next").await;
+  let text = agent_text(&last_turn(&view(&s)));
+  assert!(text.contains("resource:acpira://history/") && text.contains("alpha"), "{text}");
+  assert!(!s.to_record().history_pending);
+  // Once delivered, a later prompt carries no history
+  prompt(&s, "after").await;
+  assert!(!agent_text(&last_turn(&view(&s))).contains("resource:acpira://history/"));
+}

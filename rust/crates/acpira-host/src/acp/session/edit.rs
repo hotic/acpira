@@ -451,9 +451,12 @@ impl AcpSession {
         return Err(anyhow!(prepared.problems.join("\n")));
       }
       let retry = unchanged_failed_retry(&self.core.lock(), &edit);
+      // A fork whose history has not gone out yet: its native session holds nothing to rebuild or supersede, so the
+      // edit moves the fork point and the prompt hands the shortened prefix over as the fork's first message
+      let pending = self.core.lock().lineage.history_pending;
       let mut continuing = edit.intent == Some(EditIntent::Continue);
       let mut rebuilt = None;
-      if !continuing && !retry && !prefix.is_empty() {
+      if !continuing && !retry && !pending && !prefix.is_empty() {
         let history = history_context(&self.id, &prefix, &proc, &self.deps.blobs, EDIT_HISTORY_LEAD, caps, false).await?;
         let blocks = history.map(|h| {
           let mut b = h.blocks;
@@ -465,10 +468,11 @@ impl AcpSession {
           rebuilt = blocks;
         }
       }
-      if continuing || retry {
+      if continuing || retry || pending {
         {
           let c = self.core.lock();
           if !continuing
+            && !pending
             && let Some(Turn::Agent(last)) = c.state.turns.last()
             && is_context_length_error(last.error.as_ref())
           {
@@ -488,7 +492,7 @@ impl AcpSession {
         self.check_edit_active()?;
         // Both replace the edited turn and what followed it on screen; a continuing edit tells the peer, which still holds
         // the original, that it is superseded, so the transcript and the model agree on where the conversation resumes
-        if continuing {
+        if continuing && !pending {
           prepared.blocks.insert(0, context_block(&proc, &format!("acpira://edit/{}", self.id), superseded_note(&user.text)));
         }
         let notes = {
@@ -506,14 +510,17 @@ impl AcpSession {
         };
         self.replay_edit_notifications(notes, Some(sid.as_str()), true);
         accepted = true;
-        self.log(if continuing {
+        self.log(if pending {
+          "Edit before the fork's history went out: the prompt hands over the shortened prefix"
+        } else if continuing {
           "Continuing in the native session without rebuilding history"
         } else {
           "Retrying unchanged failed or cancelled message in the native session"
         });
         let me = self.clone();
         let text = edit.text.clone();
-        crate::util::run_prefix(me.prompt(text, drafts, false, Some(Staged { prepared, edited: continuing, id: None }), None));
+        let edited = (continuing && !pending) || (pending && !retry);
+        crate::util::run_prefix(me.prompt(text, drafts, false, Some(Staged { prepared, edited, id: None }), None));
         return Ok(());
       }
       if let Some(b) = rebuilt {
@@ -540,7 +547,7 @@ impl AcpSession {
       let notes = {
         let mut c = self.core.lock();
         c.acp_session_id = Some(fresh_id.clone());
-        c.ultracode.unprompted = true;
+        c.unprompted = true;
         c.state.controls = controls;
         c.state.turns.truncate(idx);
         self.relay_truncate(&mut c, idx);
