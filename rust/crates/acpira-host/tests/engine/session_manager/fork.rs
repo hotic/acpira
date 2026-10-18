@@ -101,6 +101,47 @@ async fn forking_re_homes_the_images_the_agent_produced() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn forking_onto_another_agent_starts_it_like_a_new_session_and_records_where_it_came_from() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let agents = merged(&[
+    ("fake", agent_setting(&fake, "fake", json!({}))),
+    ("fake2", agent_setting(&fake, "fake2", json!({ "name": "Fake 2", "env": { "FAKE_MODELS": "only-two" } }))),
+  ]);
+  let m = Mgr::new(dir.path(), Opts::with_agents(agents, "fake"));
+  m.init().await;
+  m.new_session(None).await;
+  let src = m.active_id().unwrap();
+  m.handle(json!({ "type": "setConfig", "configId": "model", "value": "m2" })).await;
+  m.handle(json!({ "type": "send", "text": "hi" })).await;
+  m.handle(json!({ "type": "forkSession", "sessionId": src, "turnIndex": 1, "agent": "fake2" })).await;
+  let fork = m.active_id().unwrap();
+  assert_ne!(fork, src);
+  let view = m.active().unwrap();
+  assert_eq!(view["agent"], "fake2");
+  assert_eq!(turns_len(Some(view.clone())), 2);
+  // The target's own model list, its default model: the source's m2 is not replayed onto it
+  let model = view["controls"]["options"].as_array().unwrap().iter().find(|c| c["id"] == "model").cloned().expect("model control");
+  assert!(model["options"].to_string().contains("only-two"), "{model}");
+  assert_eq!(model["value"], "m1");
+  let store = TranscriptStore::new(dir.path().to_path_buf(), Arc::new(|_: &str| {}), None);
+  let record = v(store.load(&fork).await.unwrap());
+  expect_match(&record, json!({ "agent": "fake2", "historyPending": true, "forkedFrom": { "sessionId": src, "turnIndex": 1, "agent": "fake", "model": "Model 2" } }));
+  m.handle(json!({ "type": "send", "text": "again" })).await;
+  assert!(last_turn(&m.active().unwrap())["blocks"].to_string().contains("resource:acpira://history/"));
+  // Naming the source's own agent is a plain fork; an agent this engine cannot launch is refused
+  m.handle(json!({ "type": "forkSession", "sessionId": src, "turnIndex": 1, "agent": "fake" })).await;
+  let same = m.active_id().unwrap();
+  let record = v(store.load(&same).await.unwrap());
+  assert_eq!(record["agent"], "fake");
+  assert!(record["forkedFrom"].get("agent").is_none(), "{record}");
+  m.handle(json!({ "type": "forkSession", "sessionId": src, "turnIndex": 1, "agent": "nope" })).await;
+  assert!(m.toasts().iter().any(|t| t.starts_with("nope is not an agent")), "{:?}", m.toasts());
+  assert_eq!(m.active_id().as_deref(), Some(same.as_str()));
+  m.dispose().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn forking_a_non_agent_turn_or_the_running_last_turn_is_refused() {
   let fake = fake_or_skip!();
   let dir = tempfile::tempdir().unwrap();

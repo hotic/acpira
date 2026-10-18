@@ -26,8 +26,10 @@ describe('isSafeExternalUrl', () => {
 describe('fork / export message variants', () => {
   it('forkSession and exportSession are WebviewMsg shapes the host routes', () => {
     const fork: WebviewMsg = { type: 'forkSession', sessionId: 's1', turnIndex: 1 };
+    const across: WebviewMsg = { type: 'forkSession', sessionId: 's1', turnIndex: 1, agent: 'codex' };
     const exp: WebviewMsg = { type: 'exportSession', id: 's1', format: 'markdown' };
     expect(fork.type).toBe('forkSession');
+    expect(across).toMatchObject({ agent: 'codex' });
     expect(exp.type).toBe('exportSession');
   });
 

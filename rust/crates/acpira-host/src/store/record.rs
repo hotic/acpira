@@ -15,6 +15,12 @@ pub struct ForkedFrom {
   pub session_id: String,
   #[serde(deserialize_with = "acpira_shared::num::lenient_i64")]
   pub turn_index: i64,
+  /// The source's agent when the fork moved to another one (absent: same agent, and every record written before)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub agent: Option<AgentId>,
+  /// The source's model as shown when it was forked, for the cross-agent handoff (the fork no longer has its controls)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

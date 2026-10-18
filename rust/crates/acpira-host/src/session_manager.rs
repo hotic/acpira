@@ -18,7 +18,7 @@ use acpira_shared::agent_order::{AgentPrefs, arrange_agents};
 use acpira_shared::chatgpt_integration::{ChatGptIntegrationStatus, ProjectMirrors};
 use acpira_shared::export_transcript::{ExportInput, ExportLabels, export_file_name, export_markdown, export_text};
 use acpira_shared::inventory::{AgentHealth, AgentHealthStage, AgentRuntimeInfo, HealthSource};
-use acpira_shared::model_shapes::learn_shape;
+use acpira_shared::model_shapes::{is_model_control, learn_shape};
 use acpira_shared::protocol::{
   AccountAction, AccountActionStatus, AccountActionVia, AddAccountVia, EditTurnRequest, ExportFormat, HostMsg, RawJson, SessionHit,
   WebviewMsg,
@@ -2193,7 +2193,7 @@ impl SessionManager {
         }
       }
       W::MoveSession { id, cwd, category } => self.move_session(&id, cwd, category).await?,
-      W::ForkSession { session_id, turn_index } => self.fork_session(v, &session_id, turn_index).await?,
+      W::ForkSession { session_id, turn_index, agent } => self.fork_session(v, &session_id, turn_index, agent).await?,
       W::ObserveSubagent { session_id, subagent_id } => {
         {
           let mut vs = v.state.lock();
@@ -2576,8 +2576,9 @@ impl SessionManager {
       .await
   }
 
-  /// Fork from an agent turn: a fresh session whose transcript is the source's turns up to that reply
-  pub async fn fork_session(self: &Arc<Self>, v: &Arc<Viewer>, source_id: &str, turn_index: i64) -> Result<()> {
+  /// Fork from an agent turn: a fresh session whose transcript is the source's turns up to that reply. `agent` moves the
+  /// fork onto another agent, which starts the way a new session of it does (default account, remembered settings)
+  pub async fn fork_session(self: &Arc<Self>, v: &Arc<Viewer>, source_id: &str, turn_index: i64, agent: Option<String>) -> Result<()> {
     if !is_session_id(source_id) {
       return Ok(());
     }
@@ -2599,6 +2600,14 @@ impl SessionManager {
     if live.as_ref().is_some_and(|l| l.is_running()) && idx == source.turns.len() - 1 {
       return Err(anyhow!(t("host.forkRunning")));
     }
+    // Another agent only when it is one this engine can launch; naming the source's own agent is a plain fork
+    let target = agent.filter(|a| a != &source.agent);
+    if let Some(id) = &target
+      && !self.agents().iter().any(|a| &a.id == id && a.external != Some(true))
+    {
+      return Err(anyhow!(tp("host.forkAgentUnknown", &[("agent", id)])));
+    }
+    let model = target.as_ref().and_then(|_| fork_model_label(&source, idx));
     let mut turns: Vec<Turn> = source.turns[..=idx].to_vec();
     // Live-only state does not travel
     for turn in turns.iter_mut().filter_map(Turn::as_agent_mut) {
@@ -2628,24 +2637,30 @@ impl SessionManager {
         n
       })
       .collect();
+    // A fork onto another agent takes nothing of the source's agent setup: the target's default account, and its
+    // controls come from its own start (seeded below like a new session's), not the source's model list
+    let (agent_id, account_id, controls) = match &target {
+      Some(id) => (id.clone(), self.default_account(id), SessionControls::default()),
+      None => (source.agent.clone(), source.account_id.clone(), source.controls.clone()),
+    };
     let mut record = SessionRecord {
       id: random_uuid(),
-      agent: source.agent.clone(),
-      account_id: source.account_id.clone(),
+      agent: agent_id,
+      account_id,
       acp_session_id: None,
       cwd: source.cwd.clone(),
       title: clip(&tp("session.forkTitle", &[("title", &source.title)]), RENAME_MAX),
       created_at: now.clone(),
       updated_at: now,
       turns,
-      controls: source.controls.clone(),
+      controls,
       usage: None,
       commands: vec![],
       pinned: None,
       // A fork stays in its source's category
       category: source.category.clone(),
       history_pending: true,
-      forked_from: Some(ForkedFrom { session_id: source.id.clone(), turn_index }),
+      forked_from: Some(ForkedFrom { session_id: source.id.clone(), turn_index, agent: target.as_ref().map(|_| source.agent.clone()), model }),
       import_pending: false,
       imported_from: None,
       subagents: (!subagents.is_empty()).then_some(subagents),
@@ -2677,12 +2692,28 @@ impl SessionManager {
     self.deps.store.flush(Arc::new(record.clone())).await?;
     self.drop_empty_current(v).await;
     let s = AcpSession::new(record, self.session_deps());
+    // The target's controls the way new_session_for seeds them: its known controls with the remembered settings laid
+    // over before the spawn (held, so a prompt sent while it spawns waits for them), adopted once it is up
+    let last = target.as_ref().and_then(|id| self.last_settings(id));
+    if let Some(id) = &target {
+      s.preview_controls(&self.known_start_controls(id).await, last.as_ref());
+      if let Some(last) = &last {
+        s.hold_settings(last);
+      }
+    }
     self.state.lock().live.insert(s.id.clone(), s.clone());
     self.set_active(v, Some(s.id.clone()));
     self.process_change(&s.id);
     s.start().await;
-    if s.status() == SessionStatus::Ready {
-      s.adopt_controls(capture_turn_settings(&source.controls)).await;
+    match &target {
+      Some(id) => {
+        self.state.lock().probed.remove(id);
+        if let Some(last) = last {
+          s.adopt_controls(last).await;
+        }
+      }
+      None if s.status() == SessionStatus::Ready => s.adopt_controls(capture_turn_settings(&source.controls)).await,
+      None => {}
     }
     Ok(())
   }
@@ -3215,6 +3246,20 @@ impl SessionLibrary for SessionManager {
 }
 
 /// Same agent / account / cwd and still empty: keep the process instead of spawning another
+/// The model the forked reply came from, as the source showed it: the prompt's recorded model resolved against the
+/// source's model list, else the id the turn's usage reported, else the source's current model
+fn fork_model_label(source: &SessionRecord, idx: usize) -> Option<String> {
+  let control = source.controls.options.iter().find(|c| is_model_control(c));
+  let name_of = |id: &str| control.and_then(|c| c.options.iter().find(|o| o.id == id)).map(|o| o.name.clone()).unwrap_or_else(|| id.to_owned());
+  let prompt = source.turns[..idx].iter().rev().find_map(|t| match t {
+    Turn::User(u) => Some(u),
+    _ => None,
+  });
+  let chosen = control.and_then(|c| prompt.and_then(|u| u.settings.as_ref()).and_then(|s| s.config.get(&c.id)));
+  let reported = source.turns[idx].as_agent().and_then(|a| a.usage.as_ref()).and_then(|u| u.model.as_deref());
+  chosen.map(|id| name_of(id)).or_else(|| reported.map(name_of)).or_else(|| control.and_then(|c| c.value.as_deref()).map(name_of))
+}
+
 fn keep_empty(cur: &AcpSession, agent: &str, account: Option<&str>, cwd: &str) -> bool {
   if cur.agent != agent || cur.account_id().as_deref() != account || cur.cwd != cwd {
     return false;

@@ -569,6 +569,7 @@
   "host.mcpSkipped": "MCP 伺服器 {name} 找不到執行檔 {command}，已跳過",
   "host.forkStale": "這條回覆已不在工作階段裡，無法從這裡分支。",
   "host.forkRunning": "等這條回覆結束後再從這裡分支。",
+  "host.forkAgentUnknown": "{agent} 不是可以接著分支的 agent。",
   "host.forkContextTooLarge": "分支的歷史太長，無法交給 agent；這次分支不帶早先的上下文繼續。",
   "host.forkContextTrimmed": "分支的歷史較長，交給 agent 的上下文省略了最早的 {count} 輪。",
   "host.forkContextFailed": "無法把分支的歷史交給 agent（{error}），這次分支不帶早先的上下文繼續。",

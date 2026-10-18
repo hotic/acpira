@@ -221,9 +221,10 @@ export type WebviewMsg =
   // Re-home a session into another project folder: `cwd` (absent: this window's workspace folder) becomes its cwd and the agent
   // works there from the next open on; `category`, one of that project's, files it there in the same step
   | { type: 'moveSession'; id: string; cwd?: string; category?: string }
-  // Start a new session of the same agent / account / project whose transcript is this session's turns up to and including
-  // `turnIndex` (an agent turn); the native context is rebuilt from that transcript on the fork's first prompt, like editTurn
-  | { type: 'forkSession'; sessionId: string; turnIndex: number }
+  // Start a new session of the same project whose transcript is this session's turns up to and including `turnIndex` (an
+  // agent turn); the native context is rebuilt from that transcript on the fork's first prompt, like editTurn. `agent`
+  // continues it on another agent (its default account and remembered settings); absent, the same agent and account
+  | { type: 'forkSession'; sessionId: string; turnIndex: number; agent?: string }
   // Write the session as a file under the data dir's exports/ folder (an unchanged transcript reuses its last export); the toast offers to open it
   | { type: 'exportSession'; id: string; format: ExportFormat }
   // "Copy as Markdown": the export's Markdown as text, nothing written; answered with a `sessionMarkdown` message echoing seq
