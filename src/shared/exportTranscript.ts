@@ -18,6 +18,7 @@ export interface ExportLabels {
   autoContinue: string;
   autoRetry: string;
   autoGate: string;
+  autoSubagents: string;
   error: string;
 }
 
@@ -33,6 +34,7 @@ export const EXPORT_LABELS_EN: ExportLabels = {
   autoContinue: 'Continued automatically after an account switch',
   autoRetry: 'Retried: continued from where the failed turn stopped',
   autoGate: 'Sent back by the workspace gate',
+  autoSubagents: 'Sent back by summoned agents',
   error: 'Error',
 };
 
@@ -70,6 +72,7 @@ function userTurn(turn: Extract<Turn, { role: 'user' }>, labels: ExportLabels): 
     const label = turn.autoReason === 'accountSwitch' ? labels.autoContinue
       : turn.autoReason === 'retry' ? labels.autoRetry
       : turn.autoReason === 'gate' ? labels.autoGate
+      : turn.autoReason === 'subagents' ? labels.autoSubagents
       : labels.autoCompact;
     return `_${label}_`;
   }

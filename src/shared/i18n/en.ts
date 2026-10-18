@@ -599,6 +599,7 @@ export const en = {
   'export.label.autoContinue': 'Continued automatically after an account switch',
   'export.label.autoRetry': 'Retried: continued from where the failed turn stopped',
   'export.label.autoGate': 'Sent back by the workspace gate',
+  'export.label.autoSubagents': 'Sent back by summoned agents',
   'export.label.error': 'Error',
 
   'verb.read': 'Read',
@@ -944,6 +945,7 @@ export const en = {
   'settings.rules.none': 'No rule files',
   'settings.nav.shared': 'Shared',
   'subagents.round': 'Round {n}',
+  'chat.subagentsReported': 'Replies from',
   'summon.entry': 'Summon',
   'summon.hint': 'Takes over in its own CLI; it cannot see this conversation',
   'settings.nav.subagents': 'Subagents',

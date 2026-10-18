@@ -608,6 +608,7 @@ export const ru = {
   'export.label.autoContinue': 'Продолжено автоматически после смены аккаунта',
   'export.label.autoRetry': 'Повтор: продолжено с места сбоя',
   'export.label.autoGate': 'Возвращено шлюзом рабочей области',
+  'export.label.autoSubagents': "Ответы вызванных агентов",
   'export.label.error': 'Ошибка',
 
   'verb.read': 'Чтение',
@@ -938,6 +939,7 @@ export const ru = {
   'settings.rules.none': 'Файлов правил нет',
   'settings.nav.shared': 'Общие ресурсы',
   'subagents.round': "Раунд {n}",
+  'chat.subagentsReported': "Ответы от",
   'summon.entry': "Позвать",
   'summon.hint': "Передать другому агенту: он открывает свою сессию в своём CLI и читает этот репозиторий, но не этот разговор",
   'settings.nav.subagents': "Субагенты",

@@ -594,6 +594,7 @@ export const de = {
   'export.label.autoContinue': 'Nach einem Kontowechsel automatisch fortgesetzt',
   'export.label.autoRetry': 'Erneut versucht: an der Abbruchstelle fortgesetzt',
   'export.label.autoGate': 'Vom Workspace-Gate zurückgegeben',
+  'export.label.autoSubagents': "Antworten aufgerufener Agenten",
   'export.label.error': 'Fehler',
 
   'verb.read': 'Lesen',
@@ -907,6 +908,7 @@ export const de = {
   'settings.rules.none': 'Keine Regeldateien',
   'settings.nav.shared': 'Geteilt',
   'subagents.round': "Runde {n}",
+  'chat.subagentsReported': "Antworten von",
   'summon.entry': "Hinzuziehen",
   'summon.hint': "An einen anderen Agenten übergeben: Er öffnet eine eigene Sitzung in seiner CLI und liest dieses Repository, aber nicht dieses Gespräch",
   'settings.nav.subagents': "Subagenten",

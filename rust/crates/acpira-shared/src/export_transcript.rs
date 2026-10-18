@@ -14,6 +14,7 @@ pub struct ExportLabels {
   pub auto_continue: String,
   pub auto_retry: String,
   pub auto_gate: String,
+  pub auto_subagents: String,
   pub error: String,
 }
 
@@ -71,6 +72,7 @@ fn user_turn(turn: &UserTurn, labels: &ExportLabels) -> String {
       Some(AutoReason::AccountSwitch) => &labels.auto_continue,
       Some(AutoReason::Retry) => &labels.auto_retry,
       Some(AutoReason::Gate) => &labels.auto_gate,
+      Some(AutoReason::Subagents) => &labels.auto_subagents,
       _ => &labels.auto_compact,
     };
     return format!("_{label}_");
@@ -330,6 +332,7 @@ mod tests {
       auto_continue: "Continued".into(),
       auto_retry: "Retried".into(),
       auto_gate: "Gate".into(),
+      auto_subagents: "Subagents".into(),
       error: "Error".into(),
     };
     let md = user_turn(&turn, &labels);
@@ -385,6 +388,7 @@ mod tests {
       auto_continue: "Continued".into(),
       auto_retry: "Retried".into(),
       auto_gate: "Gate".into(),
+      auto_subagents: "Subagents".into(),
       error: "Error".into(),
     };
     let md = agent_turn(&turn, "Fake", &labels, &|_| None);
