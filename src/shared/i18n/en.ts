@@ -501,6 +501,7 @@ export const en = {
   'host.terminalAuthMethod': 'Sign-in method {id} runs in a terminal, not over authenticate',
   'host.noCompact': 'This agent has no /compact',
   'host.needApproval': 'Approval needed',
+  'host.questionToCaller': 'The agent that summoned it is asked too; the first answer counts.',
   'host.needApprovalFor': 'Approval needed: {what}',
   'host.noPermissionOptions': 'Permission request has no options',
   'host.planOptionsStale': 'Plan approval options are no longer valid',

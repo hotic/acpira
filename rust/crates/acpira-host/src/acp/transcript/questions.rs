@@ -26,14 +26,16 @@ pub struct RawQuestion {
 
 const RAW_KEEP: usize = 8;
 
-/// Remembered ask-user-question tool inputs, a handful is plenty
+/// Remembered ask-user-question tool inputs, a handful is plenty. Each is kept under the session id its update came with
+/// (the root's, or a summoned child's routing key), so a child's form never takes the root's input or the other way round
 #[derive(Default)]
 pub struct RawMemory {
-  items: Vec<(String, Vec<RawQuestion>)>,
+  items: Vec<(String, String, Vec<RawQuestion>)>,
 }
 
 impl RawMemory {
-  pub fn remember(&mut self, u: &Value) {
+  pub fn remember(&mut self, scope: &str, u: &Value) {
+    let scope = scope.to_owned();
     let Some(questions) = u.get("rawInput").and_then(|r| r.get("questions")).and_then(Value::as_array) else { return };
     let id = u.get("toolCallId").and_then(Value::as_str).unwrap_or("").to_owned();
     let parsed: Vec<RawQuestion> = questions
@@ -53,20 +55,23 @@ impl RawMemory {
         }),
       })
       .collect();
-    self.items.retain(|(i, _)| *i != id);
-    self.items.push((id, parsed));
+    self.items.retain(|(s, i, _)| *s != scope || *i != id);
+    self.items.push((scope, id, parsed));
     if self.items.len() > RAW_KEEP {
       let drop = self.items.len() - RAW_KEEP;
       self.items.drain(..drop);
     }
   }
 
-  /// Devin sends no toolCallId with the form: fall back to the latest input with the same number of questions
-  pub fn for_call(&self, tool_call_id: Option<&str>, count: usize) -> Option<Vec<RawQuestion>> {
+  /// Devin sends no toolCallId with the form: fall back to the latest input of the same session with the same number of
+  /// questions
+  pub fn for_call(&self, scope: &str, tool_call_id: Option<&str>, count: usize) -> Option<Vec<RawQuestion>> {
+    // A request scoped to no session (an elicitation outside any) may take any session's input
+    let mine = self.items.iter().filter(|(s, ..)| scope.is_empty() || s == scope);
     if let Some(id) = tool_call_id.filter(|x| !x.is_empty()) {
-      return self.items.iter().find(|(i, _)| i == id).map(|(_, q)| q.clone());
+      return mine.into_iter().find(|(_, i, _)| i == id).map(|(.., q)| q.clone());
     }
-    self.items.iter().rev().find(|(_, q)| q.len() == count).map(|(_, q)| q.clone())
+    mine.rev().find(|(.., q)| q.len() == count).map(|(.., q)| q.clone())
   }
 }
 

@@ -490,6 +490,7 @@
   "host.terminalAuthMethod": "Способ входа {id} выполняется в терминале, а не через authenticate",
   "host.noCompact": "У этого агента нет /compact",
   "host.needApproval": "Требуется подтверждение",
+  "host.questionToCaller": "Вопрос передан и вызвавшему агенту; засчитывается первый ответ.",
   "host.needApprovalFor": "Требуется подтверждение: {what}",
   "host.noPermissionOptions": "В запросе разрешения нет вариантов",
   "host.planOptionsStale": "Варианты утверждения плана больше не действительны",

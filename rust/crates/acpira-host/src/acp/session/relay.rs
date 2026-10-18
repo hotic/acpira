@@ -114,6 +114,12 @@ pub(crate) struct Relays {
   wakes: u32,
   /// Calls waiting on a thread's round right now: a round ending under one is read by it, never delivered as well
   waiters: HashMap<String, usize>,
+  /// Bumped whenever a summoned child opens a question card: a call waiting on its thread answers with the question
+  pub(crate) asked: Arc<watch::Sender<u64>>,
+  /// Child question cards a caller has been told about (by a waiting call or an automatic message), and the ones the
+  /// automatic message being claimed now carries
+  told: HashSet<String>,
+  telling: Vec<String>,
 }
 
 impl Relays {
@@ -148,7 +154,10 @@ impl Relays {
     for o in self.ledger.iter_mut().filter(|o| o.state == Owed::Delivering) {
       o.state = if sent { Owed::Delivered } else { Owed::Unread };
     }
-    if !sent {
+    let telling = std::mem::take(&mut self.telling);
+    if sent {
+      self.told.extend(telling);
+    } else {
       self.wakes = self.wakes.saturating_sub(1);
     }
   }
@@ -172,6 +181,9 @@ impl Default for Relays {
       ledger: vec![],
       wakes: 0,
       waiters: HashMap::new(),
+      asked: Arc::new(watch::channel(0).0),
+      told: HashSet::new(),
+      telling: vec![],
     }
   }
 }
@@ -519,6 +531,13 @@ impl AcpSession {
       Ok(Start::Started { thread, persona }) if !wait => {
         let _ = out.send(HubReply::Done(dispatched_text(&thread, &persona)));
       }
+      Ok(Start::Answered { thread, persona }) if !wait => {
+        let _ = out.send(HubReply::Done(format!(
+          "Your answer went to {} (thread: {thread}). It carries on; Acpira sends you its reply in a message when it is done.",
+          who(&persona)
+        )));
+      }
+      Ok(Start::Answered { thread, persona }) => self.relay_wait(&thread, &persona, deadline, owed, &out).await,
       Ok(Start::Started { thread, persona }) | Ok(Start::Wait { thread, persona }) => self.relay_wait(&thread, &persona, deadline, owed, &out).await,
       Ok(Start::Ended(reply)) => {
         let _ = out.send(reply);
@@ -545,10 +564,26 @@ impl AcpSession {
       let th = thread.clone().unwrap_or_default();
       let shown = node_persona(h, name.as_deref());
       if *state == SubagentState::Running {
+        // A child waiting on a question: `answers` (or a prompt, for a single question) answers it, like the user's card
+        let open = { Self::relay_question(&self.core.lock(), node) };
+        if let Some((block, questions)) = open
+          && (args.answers.is_some() || !prompt.is_empty())
+        {
+          let answers = caller_answers(&questions, args.answers.as_deref(), &prompt).map_err(|e| anyhow!("{} {e}", who(&shown)))?;
+          self.answer_questions(&block, &answers, false);
+          self.core.lock().relays.told.insert(block);
+          return Ok(Start::Answered { thread: th, persona: shown });
+        }
+        if args.answers.is_some() {
+          return Err(anyhow!("{} has no open question now (the user may have answered it already).", who(&shown)));
+        }
         if prompt.is_empty() {
           return Ok(Start::Wait { thread: th, persona: shown });
         }
         return Err(busy(&shown, &th));
+      }
+      if args.answers.is_some() {
+        return Err(anyhow!("{} has no open question: its round is over.", who(&shown)));
       }
       if prompt.is_empty() {
         let mut c = self.core.lock();
@@ -650,6 +685,29 @@ impl AcpSession {
     Ok(Start::Started { thread, persona })
   }
 
+  /// The question card a summoned node is waiting on: (block id, its questions)
+  pub(crate) fn relay_question(c: &Core, node: &str) -> Option<(String, Vec<acpira_shared::transcript::Question>)> {
+    c.questions.pending.iter().find(|p| p.node_id.as_deref() == Some(node)).map(|p| (p.block_id.clone(), p.questions.clone()))
+  }
+
+  /// A question card opened somewhere: with the session idle, an automatic message may carry a child's question now
+  pub(crate) fn relay_nudge(self: &Arc<Self>) {
+    let idle = {
+      let c = self.core.lock();
+      c.status == SessionStatus::Ready && !c.phase.running && !c.relays.closed
+    };
+    if idle {
+      self.flush_queue();
+    }
+  }
+
+  /// The dialect of the CLI behind a summoned child's routing key (None: not a summoned child)
+  pub(crate) fn relay_vendor(&self, session_id: &str) -> Option<crate::acp::vendors::Vendor> {
+    let thread = session_id.strip_prefix("relay:")?;
+    let c = self.core.lock();
+    c.tree.relay_latest(thread).map(|(_, h, ..)| crate::acp::vendors::Vendor::of(&h.agent))
+  }
+
   /// Summoned rounds still running: the session has work in the background even while its own turn is over
   pub(crate) fn relay_background(c: &Core) -> bool {
     !c.relays.rounds.is_empty()
@@ -680,7 +738,17 @@ impl AcpSession {
         return false;
       }
       let nodes = c.relays.deliverable();
-      if nodes.is_empty() {
+      // Questions of rounds the root sent off, not told yet: their children are blocked, so these go without waiting for
+      // the rest of the batch
+      let asks: Vec<(String, String)> = c
+        .relays
+        .ledger
+        .iter()
+        .filter(|o| o.state == Owed::Running)
+        .filter_map(|o| Self::relay_question(&c, &o.node).map(|(b, _)| (o.node.clone(), b)))
+        .filter(|(_, b)| !c.relays.told.contains(b))
+        .collect();
+      if nodes.is_empty() && asks.is_empty() {
         return false;
       }
       for n in &nodes {
@@ -688,8 +756,9 @@ impl AcpSession {
           o.state = Owed::Delivering;
         }
       }
+      c.relays.telling = asks.iter().map(|(_, b)| b.clone()).collect();
       c.relays.wakes += 1;
-      wake_text(&c, &nodes)
+      wake_text(&c, &nodes, &asks.into_iter().map(|(n, _)| n).collect::<Vec<_>>())
     };
     self.log("relay: delivering finished rounds to the root");
     let me = self.clone();
@@ -713,6 +782,8 @@ impl AcpSession {
       return;
     };
     let _waiting = Waiting { session: self, thread };
+    let mut asked = self.core.lock().relays.asked.subscribe();
+    asked.borrow_and_update();
     let until = tokio::time::Instant::now() + deadline;
     let mut tick = tokio::time::interval(PROGRESS_EVERY);
     tick.tick().await;
@@ -721,7 +792,13 @@ impl AcpSession {
         let _ = out.send(self.relay_read(thread, persona));
         return;
       }
+      // The child asks something: the call answers with the question, so the caller can answer it
+      if let Some(text) = self.relay_asking(thread, persona) {
+        let _ = out.send(HubReply::Done(text));
+        return;
+      }
       tokio::select! {
+        r = asked.changed() => if r.is_err() { return; },
         r = rx.changed() => if r.is_err() { let _ = out.send(HubReply::Error(format!("{} stopped.", who(persona)))); return; },
         _ = tick.tick() => {
           if out.send(HubReply::Progress(self.relay_activity(thread).unwrap_or_else(|| "Working".into()))).is_err() {
@@ -745,6 +822,15 @@ impl AcpSession {
         }
       }
     }
+  }
+
+  /// The question the thread's running round waits on, as a call answers it (marked told)
+  fn relay_asking(&self, thread: &str, persona: &SubagentPersona) -> Option<String> {
+    let mut c = self.core.lock();
+    let (node, ..) = c.tree.relay_latest(thread)?;
+    let (block, questions) = Self::relay_question(&c, &node)?;
+    c.relays.told.insert(block);
+    Some(question_text(&questions, thread, persona))
   }
 
   /// The thread's latest round as a call answers it, marking it read
@@ -1185,6 +1271,8 @@ struct Round {
 enum Start {
   /// A new round is running
   Started { thread: String, persona: SubagentPersona },
+  /// The call answered the running round's question
+  Answered { thread: String, persona: SubagentPersona },
   /// A wait call on a thread whose round is running
   Wait { thread: String, persona: SubagentPersona },
   Ended(HubReply),
@@ -1231,13 +1319,23 @@ Acpira sends you its reply in a message when it is done. Do not poll, and do not
   )
 }
 
-/// The automatic message delivering finished rounds: each one as a call would have read it, under its persona and thread
-fn wake_text(c: &Core, nodes: &[String]) -> String {
-  let mut parts = vec![if nodes.len() == 1 {
-    "(Acpira) A summoned agent you sent off has finished. Its reply:".to_owned()
-  } else {
-    format!("(Acpira) The {} summoned agents you sent off have finished. Their replies:", nodes.len())
-  }];
+/// The automatic message delivering finished rounds (each one as a call would have read it, under its persona and
+/// thread) and the questions of rounds still running
+fn wake_text(c: &Core, nodes: &[String], asking: &[String]) -> String {
+  let mut parts = vec![];
+  if !nodes.is_empty() {
+    parts.push(if nodes.len() == 1 {
+      "(Acpira) A summoned agent you sent off has finished. Its reply:".to_owned()
+    } else {
+      format!("(Acpira) The {} summoned agents you sent off have finished. Their replies:", nodes.len())
+    });
+  }
+  for node in asking {
+    let Some((h, name)) = c.tree.relay_harness(node) else { continue };
+    let Some((_, questions)) = AcpSession::relay_question(c, node) else { continue };
+    let persona = node_persona(&h, name.as_deref());
+    parts.push(format!("## {} asks\n\n{}", who(&persona), question_text(&questions, &h.thread, &persona)));
+  }
   for node in nodes {
     let Some((h, name)) = c.tree.relay_harness(node) else { continue };
     let persona = node_persona(&h, name.as_deref());
@@ -1248,6 +1346,80 @@ fn wake_text(c: &Core, nodes: &[String]) -> String {
     parts.push(format!("## {}\n\n{text}", who(&persona)));
   }
   parts.join("\n\n")
+}
+
+/// A child's open question as its caller reads it: every question with its options, and how to answer
+fn question_text(questions: &[acpira_shared::transcript::Question], thread: &str, persona: &SubagentPersona) -> String {
+  let mut out = vec![format!("{} is waiting for an answer before it goes on (thread: {thread}):", who(persona))];
+  for (i, q) in questions.iter().enumerate() {
+    let title = q.title.as_deref().filter(|t| !t.trim().is_empty() && t.trim() != q.text.trim()).map(|t| format!("{}: ", t.trim())).unwrap_or_default();
+    let many = if q.kind == acpira_shared::transcript::QuestionKind::Multiple { " (one or more)" } else { "" };
+    out.push(format!("{}. {title}{}{many}", i + 1, q.text.trim()));
+    for o in &q.options {
+      out.push(match o.description.as_deref().filter(|d| !d.trim().is_empty()) {
+        Some(d) => format!("   - {}: {}", o.label, d.trim()),
+        None => format!("   - {}", o.label),
+      });
+    }
+    if !q.options.is_empty() && q.other != Some(false) {
+      out.push("   - (or an answer of your own)".into());
+    }
+  }
+  let how = if questions.len() == 1 {
+    "pass the answer as `prompt`, or as `answers` with one entry"
+  } else {
+    "pass `answers`, one entry per question in this order"
+  };
+  out.push(format!(
+    "Answer with ask_agent, thread {thread:?}: {how} (an option's label, or your own words). The user sees the same question and may answer first."
+  ));
+  out.join("\n")
+}
+
+/// A caller's answers as the card's would be: by question order, an option's label or id (any case) picks it, anything
+/// else is the question's own text; one question may take the prompt instead
+fn caller_answers(
+  questions: &[acpira_shared::transcript::Question],
+  given: Option<&[String]>,
+  prompt: &str,
+) -> std::result::Result<acpira_shared::transcript::QuestionAnswers, String> {
+  use acpira_shared::transcript::QuestionKind;
+  let fallback = [prompt.to_owned()];
+  let given = match given {
+    Some(g) if !g.is_empty() => g,
+    _ if questions.len() == 1 && !prompt.trim().is_empty() => &fallback[..],
+    _ => return Err(format!("asks {} questions: pass `answers`, one entry per question.", questions.len())),
+  };
+  let mut out = acpira_shared::transcript::QuestionAnswers::new();
+  for (q, a) in questions.iter().zip(given) {
+    let a = a.trim();
+    if a.is_empty() {
+      continue;
+    }
+    let pick = |x: &str| q.options.iter().find(|o| o.label.trim().eq_ignore_ascii_case(x.trim()) || o.id.eq_ignore_ascii_case(x.trim())).map(|o| o.id.clone());
+    let closed = !q.options.is_empty() && q.other == Some(false);
+    let one = |x: &str| -> std::result::Result<String, String> {
+      match pick(x) {
+        Some(id) => Ok(id),
+        None if closed => Err(format!(
+          "only takes one of its options for {:?}: {}.",
+          q.text.trim(),
+          q.options.iter().map(|o| o.label.as_str()).collect::<Vec<_>>().join(", ")
+        )),
+        None => Ok(x.trim().to_owned()),
+      }
+    };
+    let value = if q.kind == QuestionKind::Multiple && pick(a).is_none() {
+      let items = a.split([',', '\n']).map(str::trim).filter(|x| !x.is_empty()).map(one).collect::<std::result::Result<Vec<_>, _>>()?;
+      Value::from(items)
+    } else if q.kind == QuestionKind::Multiple {
+      Value::from(vec![one(a)?])
+    } else {
+      Value::from(one(a)?)
+    };
+    out.insert(q.id.clone(), value);
+  }
+  Ok(out)
 }
 
 fn done_text(reply: &str, thread: &str, persona: &SubagentPersona) -> String {
@@ -1339,6 +1511,30 @@ mod tests {
     assert!(!call_fits("codex-review", None, &h("codex-review", "n1", 2), Some("Codex Review")));
     assert!(call_fits("", Some("n1"), &h("codex-review", "n1", 2), None));
     assert!(!call_fits("", Some("n2"), &h("codex-review", "n1", 2), None));
+  }
+
+  #[test]
+  fn caller_answers_map_labels_to_option_ids_by_question_order() {
+    use acpira_shared::transcript::{Question, QuestionKind, QuestionOption};
+    let opt = |id: &str, label: &str| QuestionOption { id: id.into(), label: label.into(), description: None };
+    let q = |id: &str, kind, other| Question {
+      id: id.into(),
+      title: None,
+      text: format!("{id}?"),
+      kind,
+      options: vec![opt("a", "Alpha, first"), opt("b", "Beta")],
+      other,
+      numeric: None,
+      required: None,
+    };
+    let qs = [q("one", QuestionKind::Single, Some(false)), q("many", QuestionKind::Multiple, None)];
+    let got = caller_answers(&qs, Some(&["alpha, FIRST".into(), "beta, my own".into()]), "").unwrap();
+    assert_eq!(got["one"], "a");
+    assert_eq!(got["many"], json!(["b", "my own"]));
+    // A closed question takes only its options; several questions need `answers`
+    assert!(caller_answers(&qs, Some(&["gamma".into()]), "").unwrap_err().contains("Alpha, first, Beta"));
+    assert!(caller_answers(&qs, None, "Beta").unwrap_err().contains("2 questions"));
+    assert_eq!(caller_answers(&qs[..1], None, " beta ").unwrap()["one"], "b");
   }
 
   #[test]

@@ -494,6 +494,7 @@ export const fr = {
   'host.terminalAuthMethod': 'La méthode de connexion {id} s’exécute dans un terminal, pas via authenticate',
   'host.noCompact': 'Cet agent n’a pas de /compact',
   'host.needApproval': 'Approbation requise',
+  'host.questionToCaller': "L'agent qui l'a invoqué est aussi sollicité ; la première réponse compte.",
   'host.needApprovalFor': 'Approbation requise : {what}',
   'host.noPermissionOptions': 'La demande d’autorisation n’a aucune option',
   'host.planOptionsStale': 'Les options d’approbation du plan ne sont plus valides',

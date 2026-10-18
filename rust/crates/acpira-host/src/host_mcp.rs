@@ -367,6 +367,7 @@ impl Relay {
       thread: text("thread"),
       wait_secs: Some(self.wait_secs.load(std::sync::atomic::Ordering::Relaxed)),
       wait: args.get("wait").and_then(Value::as_bool),
+      answers: args.get("answers").and_then(Value::as_array).map(|l| l.iter().filter_map(|a| a.as_str().map(str::to_owned)).collect()),
     };
     let token = params.get("_meta").and_then(|m| m.get("progressToken")).cloned();
     let mut n = 0u64;
@@ -474,6 +475,7 @@ pass the `thread` its answer named.\n\nAgents:\n{}",
         "mode": { "type": "string", "enum": ["consult", "work"], "description": "consult = read-only opinion; work = may edit files. Defaults to the agent's own setting; an agent that follows your mode never gets more than you have." },
         "thread": { "type": "string", "description": "Continue the conversation an earlier answer named." },
         "wait": { "type": "boolean", "description": "Wait in this call for the reply (up to your tool timeout) instead of getting it in a message later." },
+        "answers": { "type": "array", "items": { "type": "string" }, "description": "With `thread`, when that agent asks you something: one answer per question, in order (an option's label or your own words)." },
       },
       "required": [],
     },

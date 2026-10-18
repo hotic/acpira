@@ -147,7 +147,9 @@ impl AcpSession {
     let session_id = req.get("sessionId").and_then(Value::as_str).map(str::to_owned);
     let tool_call = req.get("toolCall").cloned().unwrap_or(Value::Null);
     let tool_call_id = tool_call.get("toolCallId").and_then(Value::as_str).unwrap_or("").to_owned();
-    if self.vendor.question_permission(&tool_call) {
+    // A summoned child's request is read in its own CLI's dialect
+    let vendor = session_id.as_deref().and_then(|sid| self.relay_vendor(sid)).unwrap_or(self.vendor);
+    if vendor.question_permission(&tool_call) {
       return Ok(self.on_permission_question(req, tool_call_id, cancel).await);
     }
     let (target, epoch, plan_file, last_agent, captured, edit) = {
@@ -462,7 +464,7 @@ impl AcpSession {
         return json!({ "action": "cancel" });
       };
       let count = form_question_count(&schema);
-      let raw = c.questions.raw.for_call(tool_call_id.as_deref(), count);
+      let raw = c.questions.raw.for_call(session_id.as_deref().unwrap_or(""), tool_call_id.as_deref(), count);
       let questions = form_questions(&schema, &message, req.get("_meta"), raw.as_deref());
       if questions.is_empty() {
         return json!({ "action": "decline" });
@@ -577,6 +579,8 @@ impl AcpSession {
   }
 
   async fn await_question(self: &Arc<Self>, rx: oneshot::Receiver<Value>, block_id: String, cancel: Cancel, fallback: Value) -> Value {
+    // A summoned child asking while the root is idle: the automatic message carries the question now
+    self.relay_nudge();
     tokio::select! {
       r = rx => r.unwrap_or(fallback),
       _ = cancel.cancelled() => {
@@ -601,6 +605,17 @@ impl AcpSession {
   ) -> String {
     c.questions.seq += 1;
     let id = format!("q-{}", c.questions.seq);
+    // A summoned child's question goes to the agent that summoned it as well (`relay.rs`): the card says so
+    let summoned = matches!(target, Target::Node(n) if c.tree.relay_thread_of(n).is_some());
+    let message = if summoned {
+      c.relays.asked.send_modify(|n| *n += 1);
+      Some(match message {
+        Some(m) => format!("{m}\n\n{}", t("host.questionToCaller")),
+        None => t("host.questionToCaller"),
+      })
+    } else {
+      message
+    };
     let block = QuestionBlock {
       id: id.clone(),
       tool_call_id: tool_call_id.filter(|x| !x.is_empty()),

@@ -502,6 +502,7 @@ export const ja = {
   'host.terminalAuthMethod': 'サインイン方法 {id} は authenticate ではなくターミナルで実行します',
   'host.noCompact': 'このエージェントには /compact がありません',
   'host.needApproval': '承認が必要です',
+  'host.questionToCaller': "呼び出し元のエージェントにも尋ねています。先に答えた方が採用されます。",
   'host.needApprovalFor': '承認が必要：{what}',
   'host.noPermissionOptions': '権限リクエストに選択肢がありません',
   'host.planOptionsStale': 'プランの承認オプションは無効になりました',

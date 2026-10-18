@@ -749,3 +749,71 @@ async fn automatic_deliveries_stop_after_six_per_prompt_of_the_users() {
   until(|| deliveries(&s).len() == 7, 8000).await;
   assert!(deliveries(&s)[6]["text"].as_str().unwrap().contains(&thread_of(&text)));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_waiting_call_answers_with_the_childs_question_and_the_caller_answers_it_by_label() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let roster = roster(h.dir.path()).await;
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  let (ok, text) = last_text(&run(&s, &roster, 0, ask("fake-worker", "relay: askme which")).await);
+  assert!(ok && text.contains("is waiting for an answer") && text.contains("1. Colour: Which colour?") && text.contains("- Blue: calm"), "{text}");
+  let thread = thread_of(&text);
+  // The user's card says the caller was asked as well
+  let card = nodes(&s)[0]["question"].clone();
+  assert!(card["message"].as_str().is_some_and(|m| m.contains("summoned it is asked too")), "{card}");
+  // Waiting again answers with the same question at once
+  let (_, again) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), ..ask("", "") }).await);
+  assert!(again.contains("1. Colour: Which colour?"), "{again}");
+  // A label in any case picks the option
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), answers: Some(vec!["green".into()]), ..ask("", "") }).await);
+  assert!(ok && text.contains(r#""content":{"q0":"Green"}"#), "{text}");
+  // Nothing is open any more: another answer is refused
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread), answers: Some(vec!["blue".into()]), ..ask("", "") }).await);
+  assert!(!ok, "{text}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_single_question_takes_the_prompt_as_its_answer_and_the_users_card_counts_first() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let roster = roster(h.dir.path()).await;
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  let (_, text) = last_text(&run(&s, &roster, 0, ask("fake-worker", "relay: askme one")).await);
+  let thread = thread_of(&text);
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread), ..ask("", "Blue") }).await);
+  assert!(ok && text.contains(r#""q0":"Blue""#), "{text}");
+  // The user answers first: the caller is told the question is gone
+  let (_, text) = last_text(&run(&s, &roster, 0, ask("fake-worker", "relay: askme two")).await);
+  let thread = thread_of(&text);
+  let card = nodes(&s)[1]["question"].clone();
+  let qid = card["questions"][0]["id"].as_str().unwrap().to_owned();
+  let mut answers = serde_json::Map::new();
+  answers.insert(qid, json!("Green"));
+  s.answer_questions(card["id"].as_str().unwrap(), &answers, false);
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread), answers: Some(vec!["Blue".into()]), ..ask("", "") }).await);
+  assert!(!ok && text.contains("no open question"), "{text}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_idle_root_hears_a_childs_question_once_and_then_its_reply() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let roster = roster(h.dir.path()).await;
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  last_text(&run(&s, &roster, 0, send_off("fake-worker", "relay: askme later")).await);
+  until(|| deliveries(&s).len() == 1 && !s.is_running(), 8000).await;
+  let text = deliveries(&s)[0]["text"].as_str().unwrap().to_owned();
+  assert!(text.contains("## Fake Worker (fake) asks") && text.contains("Which colour?"), "{text}");
+  // Answered on the card: the child finishes, and its reply is the next delivery (the question is not repeated)
+  let card = nodes(&s)[0]["question"].clone();
+  let mut answers = serde_json::Map::new();
+  answers.insert(card["questions"][0]["id"].as_str().unwrap().to_owned(), json!("Blue"));
+  s.answer_questions(card["id"].as_str().unwrap(), &answers, false);
+  until(|| deliveries(&s).len() == 2 && !s.is_running(), 8000).await;
+  let text = deliveries(&s)[1]["text"].as_str().unwrap().to_owned();
+  assert!(text.contains("reply to relay: askme later") && !text.contains("asks"), "{text}");
+}

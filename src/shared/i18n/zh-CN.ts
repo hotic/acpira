@@ -516,6 +516,7 @@ export const zhCN = {
   'host.terminalAuthMethod': '登录方式 {id} 需要在终端中运行，不走 authenticate',
   'host.noCompact': '这个 agent 没有 /compact',
   'host.needApproval': '需要批准',
+  'host.questionToCaller': "已同时交给召唤它的代理，谁先答算谁。",
   'host.needApprovalFor': '需要批准：{what}',
   'host.noPermissionOptions': '权限请求没有选项',
   'host.planOptionsStale': '计划审批选项已失效',
