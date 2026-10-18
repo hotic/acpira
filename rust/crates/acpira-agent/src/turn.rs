@@ -169,8 +169,14 @@ pub(crate) fn settle(st: &mut SessionState) {
     .collect();
   let Item::Assistant { tool_calls, .. } = &st.items[last_call] else { return };
   let missing: Vec<ToolCall> = tool_calls.iter().filter(|c| !answered.contains(c.id.as_str())).cloned().collect();
+  // A change that landed before its command was cut off is reported as made, so the model does not make it again
+  let landed = std::mem::take(&mut st.landed);
   for c in missing {
-    st.items.push(Item::ToolResult { call_id: c.id, name: c.name, content: "Cancelled by the user before it finished.".into(), is_error: true, images: vec![] });
+    let item = match landed.iter().find(|(id, _)| *id == c.id) {
+      Some((_, text)) => Item::ToolResult { call_id: c.id, name: c.name, content: text.clone(), is_error: false, images: vec![] },
+      None => Item::ToolResult { call_id: c.id, name: c.name, content: "Cancelled by the user before it finished.".into(), is_error: true, images: vec![] },
+    };
+    st.items.push(item);
   }
 }
 
@@ -911,10 +917,20 @@ impl Rules {
         Decision::Deny => 2,
       })
       .unwrap_or(Decision::Ask);
-    match action {
-      Action::Write { path, .. } if d == Decision::Allow && self.guard.protects(path) => Decision::Ask,
-      _ => d,
+    if d == Decision::Allow && action.written().iter().any(|p| self.guard.protects(p)) {
+      return Decision::Ask;
     }
+    d
+  }
+
+  /// The (permission, target) a call the rules deny is denied on: the first of its targets that is
+  fn denied(&self, session: &Session, action: &Action) -> (&'static str, String) {
+    let allowed = session.state.lock().allowed.clone();
+    action
+      .permissions(&session.cwd)
+      .into_iter()
+      .find(|(key, target)| permission::evaluate(&[&self.defaults, &self.approval, &allowed, &self.mode], key, target) == Decision::Deny)
+      .unwrap_or_else(|| action.permission(&session.cwd))
   }
 }
 
@@ -984,6 +1000,47 @@ struct Prepared {
   note: Option<String>,
   /// The `acpira/mcp` note of an MCP call, on its permission card too
   meta: Option<Value>,
+  riders: Riders,
+}
+
+/// What a call of a built-in tool carries beside its own arguments, so a model that makes one call per reply needs no
+/// request of its own for it (`tools::todo::rider`, `tools::edit::then_run`). Each rider shows as a row of its own,
+/// under the rules its own tool would be; the model gets one result for the call
+#[derive(Default)]
+struct Riders {
+  /// `todos`: the to-do list, set before the call runs
+  todos: Option<Result<Vec<tools::todo::Todo>, String>>,
+  /// `then_run` of an edit or a write: the command to run once the change is made, or why it will not run
+  then_run: Option<Result<Action, String>>,
+}
+
+impl Riders {
+  /// The riders of a call of this built-in tool (an MCP tool's arguments are its server's; the todo tool's list is its
+  /// own argument)
+  fn of(name: &str, args: &Value, cwd: &std::path::Path) -> Riders {
+    let todos = if name == tools::TODO { None } else { tools::todo::rider(args) };
+    let then_run = tools::edit::then_run(args).map(|command| match name {
+      tools::EDIT | tools::WRITE => tools::bash::prepare(&json!({ "command": command }), cwd),
+      _ => Err(format!("then_run is taken only by edit and write, so `{command}` was not run.")),
+    });
+    Riders { todos, then_run }
+  }
+
+  /// The note on a then_run that cannot run whatever the call does
+  fn refused(&self) -> Option<String> {
+    match &self.then_run {
+      Some(Err(e)) => Some(e.clone()),
+      _ => None,
+    }
+  }
+
+  /// The note on a then_run left out, and why: the change was never made
+  fn skipped(&self, why: &str) -> Option<String> {
+    match &self.then_run {
+      Some(Ok(Action::Bash { command, .. })) => Some(format!("then_run `{command}` was not run: {why}.")),
+      _ => self.refused(),
+    }
+  }
 }
 
 /// How a tool round leaves the turn
@@ -1034,6 +1091,10 @@ async fn run_tools(
       Resolved::Corrected(n) => (Err(format!("Unknown tool \"{}\" (did you mean \"{n}\"?). Tool names must match exactly: {}.", call.name, tool_names.join(", "))), None),
       Resolved::Unknown(message) => (Err(message), None),
     };
+    let riders = match (name.as_ref().ok().copied(), &args) {
+      (Some(n), Ok(a)) if !setup.mcp.iter().any(|t| t.name == n) => Riders::of(n, a, &cwd),
+      _ => Riders::default(),
+    };
     // A bad argument goes back with what was received, so the model can see its own mistake
     let action = name.and_then(|n| {
       let a = args.clone()?;
@@ -1058,7 +1119,7 @@ async fn run_tools(
         server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": acp, "rawInput": raw_input }));
       }
     }
-    prepared.push(Prepared { call: call.clone(), acp, action, note, meta });
+    prepared.push(Prepared { call: call.clone(), acp, action, note, meta, riders });
   }
 
   let mut rejected = false;
@@ -1072,8 +1133,10 @@ async fn run_tools(
     }
     if i > start {
       let mut handles = vec![];
+      let mut notes = vec![];
       for p in &prepared[start..i] {
         let Ok(action) = p.action.clone() else { unreachable!() };
+        notes.push(ride_todo(server, session, rules, p));
         let ctx = ctx_for(server, session, &p.acp);
         server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": "in_progress" }));
         // An MCP call waits on its server; the rest read files or the network on a blocking thread
@@ -1082,22 +1145,24 @@ async fn run_tools(
           other => tokio::task::spawn_blocking(move || other.run_sync(ctx)),
         });
       }
-      for (p, h) in prepared[start..i].iter().zip(handles) {
+      for ((p, h), note) in prepared[start..i].iter().zip(handles).zip(notes) {
         let out = h.await.unwrap_or_else(|e| Output::error(format!("The tool crashed: {e}")));
-        finish(server, session, p, out);
+        finish(server, session, p, out, note, p.riders.refused());
       }
       continue;
     }
     let p = &prepared[i];
     i += 1;
     if rejected {
-      finish(server, session, p, Output::error("Skipped: the user rejected an earlier action in this round."));
+      finish(server, session, p, Output::error("Skipped: the user rejected an earlier action in this round."), None, None);
       continue;
     }
+    // The list rides in front of the call: it moves on whatever comes of the call itself
+    let todo = ride_todo(server, session, rules, p);
     let action = match &p.action {
       Ok(a) => a.clone(),
       Err(e) => {
-        finish(server, session, p, Output::error(e.clone()));
+        finish(server, session, p, Output::error(e.clone()), todo, p.riders.skipped("the change failed"));
         continue;
       }
     };
@@ -1105,7 +1170,7 @@ async fn run_tools(
     if let Action::ExitPlan { plan } = &action {
       server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": "in_progress" }));
       let (out, approved) = exit_plan(server, session, p, plan.as_deref()).await;
-      finish(server, session, p, out);
+      finish(server, session, p, out, todo, p.riders.refused());
       match approved {
         Some(true) => switched = true,
         Some(false) => rejected = true,
@@ -1117,15 +1182,15 @@ async fn run_tools(
     if let Action::Question { questions } = &action {
       server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": "in_progress" }));
       let (out, dismissed) = question(server, session, p, questions).await;
-      finish(server, session, p, out);
+      finish(server, session, p, out, todo, p.riders.refused());
       rejected |= dismissed;
       continue;
     }
     match rules.decide(session, &action) {
       Decision::Allow => {}
       Decision::Deny => {
-        let (key, target) = action.permission(&cwd);
-        finish(server, session, p, Output::error(format!("Not allowed: the permission rules deny {key} on {target}. Do not retry it.")));
+        let (key, target) = rules.denied(session, &action);
+        finish(server, session, p, Output::error(format!("Not allowed: the permission rules deny {key} on {target}. Do not retry it.")), todo, p.riders.skipped("the change was not allowed"));
         continue;
       }
       Decision::Ask => match ask(server, session, rules, p, &action).await {
@@ -1136,14 +1201,38 @@ async fn run_tools(
         }
         Answer::Reject => {
           rejected = true;
-          finish(server, session, p, Output::error("The user rejected this action. Do not retry it; wait for the user's direction."));
+          finish(server, session, p, Output::error("The user rejected this action. Do not retry it; wait for the user's direction."), todo, None);
           continue;
         }
       },
     }
     server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": "in_progress" }));
+    // A write of what the file already holds is no change to check
+    let unchanged = matches!(&action, Action::Write { files } if files.iter().all(tools::edit::Change::unchanged));
     let out = action.run(ctx_for(server, session, &p.acp)).await;
-    finish(server, session, p, out);
+    let command = match &p.riders.then_run {
+      Some(Ok(command)) => command,
+      _ => {
+        finish(server, session, p, out, todo, p.riders.refused());
+        continue;
+      }
+    };
+    if out.is_error || unchanged {
+      let why = if out.is_error { "the change failed" } else { "the file already held this content" };
+      finish(server, session, p, out, todo, p.riders.skipped(why));
+      continue;
+    }
+    let Action::Bash { command: line, .. } = command else { unreachable!("then_run prepares a bash action") };
+    // The change is made: its row completes now, the command gets a row of its own, and the call's one result waits
+    // for both (a turn cancelled meanwhile still tells the model the change was made)
+    let images = images_of(p, &out);
+    let (model, is_error) = report(server, session, &p.acp, out);
+    let cut = format!("then_run `{line}` was cancelled by the user before it finished.");
+    session.state.lock().landed.push((p.call.id.clone(), joined(todo.as_deref(), &model, Some(&cut))));
+    let (section, stop) = ride_command(server, session, rules, command).await;
+    session.state.lock().landed.retain(|(id, _)| *id != p.call.id);
+    rejected |= stop;
+    record(session, p, joined(todo.as_deref(), &model, Some(&section)), is_error, images);
   }
   if rejected {
     Flow::Stop
@@ -1293,13 +1382,105 @@ async fn ask(server: &Arc<Server>, session: &Arc<Session>, rules: &Rules, p: &Pr
   }
 }
 
-/// Report a finished call and add its result to the history
-fn finish(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, mut out: Output) {
-  // An MCP result's images go to the model when it takes them; the card shows them either way
-  let images = match &p.action {
+/// The to-do list a call carries (`todos`), set before the call runs: a `todo` row of its own, the way the todo tool's
+/// call shows, so the host's to-do bar takes it unchanged. The note in front of the call's result
+fn ride_todo(server: &Arc<Server>, session: &Arc<Session>, rules: &Rules, p: &Prepared) -> Option<String> {
+  let todos = match p.riders.todos.as_ref()? {
+    Ok(todos) => todos.clone(),
+    Err(e) => return Some(format!("The to-do list was not updated: {e}.")),
+  };
+  let action = Action::Todo { todos };
+  if rules.decide(session, &action) != Decision::Allow {
+    return Some("The to-do list was not updated: the permission rules do not allow it.".into());
+  }
+  let Action::Todo { todos } = &action else { unreachable!() };
+  let acp = session.next_tool_id();
+  let raw = tools::todo::raw(todos);
+  server.update(&session.id, json!({ "sessionUpdate": "tool_call", "toolCallId": acp, "title": tools::TODO, "kind": "other", "status": "pending", "rawInput": raw }));
+  report(server, session, &acp, tools::todo::run(todos));
+  Some(tools::todo::note(todos))
+}
+
+/// The command an edit or a write carries (`then_run`), once the change is made: on a command row of its own, under
+/// the rules a `bash` call would be, with its own card when they ask. The section for the call's result, and whether
+/// the user rejected the command, which ends the turn after the round as a rejected call does
+async fn ride_command(server: &Arc<Server>, session: &Arc<Session>, rules: &Rules, action: &Action) -> (String, bool) {
+  let Action::Bash { command, .. } = action else { unreachable!("then_run prepares a bash action") };
+  let acp = session.next_tool_id();
+  let raw_input = json!({ "command": command });
+  server.update(&session.id, json!({ "sessionUpdate": "tool_call", "toolCallId": acp, "title": command, "kind": "execute", "status": "pending", "rawInput": raw_input }));
+  let header = format!("$ {command}");
+  match rules.decide(session, action) {
+    Decision::Allow => {}
+    Decision::Deny => {
+      let (key, target) = rules.denied(session, action);
+      report(server, session, &acp, Output::error(format!("Not allowed: the permission rules deny {key} on {target}.")));
+      return (format!("{header}\nNot run: the permission rules deny {key} on {target}. Do not retry it."), false);
+    }
+    Decision::Ask => {
+      let call = ToolCall { id: acp.clone(), name: tools::BASH.into(), arguments: raw_input.to_string() };
+      let p = Prepared { call, acp: acp.clone(), action: Ok(action.clone()), note: None, meta: None, riders: Riders::default() };
+      match ask(server, session, rules, &p, action).await {
+        Answer::Once => {}
+        Answer::Always(pattern) => session.state.lock().allowed.push(Rule::new(permission::BASH, &pattern, Decision::Allow)),
+        Answer::Reject => {
+          report(server, session, &acp, Output::error("The user rejected this action."));
+          return (format!("{header}\nNot run: the user rejected it. Do not retry it; wait for the user's direction."), true);
+        }
+      }
+    }
+  }
+  server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": acp, "status": "in_progress" }));
+  let out = action.clone().run(ctx_for(server, session, &acp)).await;
+  let section = format!("{header}\n{}", out.model);
+  report(server, session, &acp, out);
+  (section, false)
+}
+
+/// A call's result with the riders' notes: the to-do note in front (a command's exit code stays its last line, where
+/// the chunk index reads it), the command after the change behind it
+fn joined(front: Option<&str>, model: &str, back: Option<&str>) -> String {
+  let mut text = String::new();
+  if let Some(f) = front {
+    text.push_str(f);
+    text.push_str("\n\n");
+  }
+  text.push_str(model);
+  if let Some(b) = back {
+    text.push_str("\n\n");
+    text.push_str(b);
+  }
+  text
+}
+
+/// An MCP result's images go to the model when it takes them; the card shows them either way
+fn images_of(p: &Prepared, out: &Output) -> Vec<crate::llm::Image> {
+  match &p.action {
     Ok(Action::Mcp { images: true, .. }) => tools::mcp::model_images(&out.content),
     _ => vec![],
+  }
+}
+
+/// Report a finished call on its row and add its result, with the riders' notes, to the history
+fn finish(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, out: Output, front: Option<String>, back: Option<String>) {
+  let images = images_of(p, &out);
+  let (model, is_error) = report(server, session, &p.acp, out);
+  record(session, p, joined(front.as_deref(), &model, back.as_deref()), is_error, images);
+}
+
+/// The model's result of a call, into the history
+fn record(session: &Arc<Session>, p: &Prepared, model: String, is_error: bool, images: Vec<crate::llm::Image>) {
+  let content = match &p.note {
+    Some(note) => format!("{note}\n{model}"),
+    None => model,
   };
+  let item = Item::ToolResult { call_id: p.call.id.clone(), name: p.call.name.clone(), content, is_error, images };
+  session.store.item(&item);
+  session.state.lock().items.push(item);
+}
+
+/// Report a finished call on its row (`acp`); the model's copy and whether it failed come back
+fn report(server: &Arc<Server>, session: &Arc<Session>, acp: &str, mut out: Output) -> (String, bool) {
   for c in &mut out.content {
     let emptied = c.get_mut("_meta").and_then(Value::as_object_mut).is_some_and(|m| {
       m.remove("acpira/notForModel");
@@ -1309,7 +1490,7 @@ fn finish(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, mut out: O
       o.remove("_meta");
     }
   }
-  let mut update = json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": if out.is_error { "failed" } else { "completed" } });
+  let mut update = json!({ "sessionUpdate": "tool_call_update", "toolCallId": acp, "status": if out.is_error { "failed" } else { "completed" } });
   if !out.content.is_empty() {
     update["content"] = Value::Array(out.content);
   }
@@ -1321,13 +1502,7 @@ fn finish(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, mut out: O
     update["_meta"] = json!({ "terminal_exit": { "exit_code": code } });
   }
   server.update(&session.id, update);
-  let content = match &p.note {
-    Some(note) => format!("{note}\n{}", out.model),
-    None => out.model,
-  };
-  let item = Item::ToolResult { call_id: p.call.id.clone(), name: p.call.name.clone(), content, is_error: out.is_error, images };
-  session.store.item(&item);
-  session.state.lock().items.push(item);
+  (out.model, out.is_error)
 }
 
 #[cfg(test)]

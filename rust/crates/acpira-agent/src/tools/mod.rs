@@ -47,16 +47,16 @@ pub struct Ctx {
 /// A validated call, ready to describe and run
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
-  /// `more`: further files read whole in the same call
-  Read { path: PathBuf, offset: usize, limit: usize, more: Vec<PathBuf> },
-  /// The whole file replaced (`write`) or a computed edit (`edit`): `before` None for a new file
-  /// `edits` empty for a whole-file write
-  Write { path: PathBuf, before: Option<String>, after: String, edits: Vec<edit::Edit> },
+  /// The windows of one call, the first as the call names it in `path`
+  Read { files: Vec<read::Slice> },
+  /// The whole file replaced (`write`) or computed edits (`edit`, one change per file)
+  Write { files: Vec<edit::Change> },
   /// `background`: start it as a job and return at once
   Bash { command: String, workdir: PathBuf, timeout_ms: u64, background: bool },
   /// Check (or stop) a background job
   Job { id: String, wait_s: u64, kill: bool },
-  Grep { pattern: String, path: PathBuf, include: Option<String> },
+  /// `context`: lines shown around each match
+  Grep { pattern: String, path: PathBuf, include: Option<String>, context: usize },
   Glob { pattern: String, path: PathBuf },
   List { path: PathBuf, ignore: Vec<String> },
   Todo { todos: Vec<todo::Todo> },
@@ -130,30 +130,39 @@ pub const QUESTION: &str = "question";
 pub const HISTORY_GREP: &str = "history_grep";
 pub const HISTORY_LIST: &str = "history_list";
 
+/// The tools whose calls take the to-do list as `todos` (`todo::rider`): the ones the model mostly calls right after
+/// moving the list on (edits, writes and commands, then reads, in the 2026-10-18 count)
+pub const TODO_RIDERS: &[&str] = &[READ, WRITE, EDIT, BASH];
+
 /// The specs of these tools, in the given order (a mode's tool set). `skill` is not among them: its spec lists the
 /// session's skills (`skill::spec`), so the turn adds it when there are any
 pub fn specs(names: &[&str]) -> Vec<ToolSpec> {
-  names
-    .iter()
-    .filter_map(|n| match *n {
-      READ => Some(read::spec()),
-      WRITE => Some(edit::write_spec()),
-      EDIT => Some(edit::spec()),
-      BASH => Some(bash::spec()),
-      JOB => Some(jobs::spec()),
-      GREP => Some(search::grep_spec()),
-      GLOB => Some(search::glob_spec()),
-      LIST => Some(search::list_spec()),
-      TODO => Some(todo::spec()),
-      EXIT_PLAN => Some(plan::spec()),
-      WEBFETCH => Some(web::fetch_spec()),
-      WEBSEARCH => Some(web::search_spec()),
-      QUESTION => Some(question::spec()),
-      HISTORY_GREP => Some(history::grep_spec()),
-      HISTORY_LIST => Some(history::list_spec()),
-      _ => None,
-    })
-    .collect()
+  let mut specs: Vec<ToolSpec> = names.iter().filter_map(|n| spec(n)).collect();
+  for s in specs.iter_mut().filter(|s| TODO_RIDERS.contains(&s.name.as_str())) {
+    s.parameters["properties"]["todos"] = todo::rider_property();
+  }
+  specs
+}
+
+fn spec(name: &str) -> Option<ToolSpec> {
+  match name {
+    READ => Some(read::spec()),
+    WRITE => Some(edit::write_spec()),
+    EDIT => Some(edit::spec()),
+    BASH => Some(bash::spec()),
+    JOB => Some(jobs::spec()),
+    GREP => Some(search::grep_spec()),
+    GLOB => Some(search::glob_spec()),
+    LIST => Some(search::list_spec()),
+    TODO => Some(todo::spec()),
+    EXIT_PLAN => Some(plan::spec()),
+    WEBFETCH => Some(web::fetch_spec()),
+    WEBSEARCH => Some(web::search_spec()),
+    QUESTION => Some(question::spec()),
+    HISTORY_GREP => Some(history::grep_spec()),
+    HISTORY_LIST => Some(history::list_spec()),
+    _ => None,
+  }
 }
 
 /// Validate a call of a tool by its real name (`names::resolve` first); the error goes back to the model as the result
@@ -192,8 +201,9 @@ impl Action {
   pub fn permission(&self, cwd: &Path) -> (&'static str, String) {
     use crate::permission::{self as perm, path_target};
     match self {
-      Action::Read { path, .. } | Action::Grep { path, .. } | Action::Glob { path, .. } | Action::List { path, .. } | Action::Skill { path, .. } => (perm::READ, path_target(path, cwd)),
-      Action::Write { path, .. } => (perm::EDIT, path_target(path, cwd)),
+      Action::Read { files } => (perm::READ, files.first().map_or_else(String::new, |f| path_target(&f.path, cwd))),
+      Action::Grep { path, .. } | Action::Glob { path, .. } | Action::List { path, .. } | Action::Skill { path, .. } => (perm::READ, path_target(path, cwd)),
+      Action::Write { files } => (perm::EDIT, files.first().map_or_else(String::new, |f| path_target(&f.path, cwd))),
       Action::Bash { command, .. } => (perm::BASH, command.clone()),
       Action::Todo { .. } => (perm::TODO, "*".to_owned()),
       // Starting the job was the permission
@@ -212,13 +222,21 @@ impl Action {
     }
   }
 
-  /// Every (permission, target) the call touches: a read of several files is checked for each of them
+  /// Every (permission, target) the call touches: a read or an edit of several files is checked for each of them
   pub fn permissions(&self, cwd: &Path) -> Vec<(&'static str, String)> {
+    use crate::permission::{self as perm, path_target};
     match self {
-      Action::Read { more, .. } => {
-        std::iter::once(self.permission(cwd)).chain(more.iter().map(|p| (crate::permission::READ, crate::permission::path_target(p, cwd)))).collect()
-      }
+      Action::Read { files } => files.iter().map(|f| (perm::READ, path_target(&f.path, cwd))).collect(),
+      Action::Write { files } => files.iter().map(|f| (perm::EDIT, path_target(&f.path, cwd))).collect(),
       _ => vec![self.permission(cwd)],
+    }
+  }
+
+  /// The files a write or an edit changes
+  pub fn written(&self) -> Vec<&Path> {
+    match self {
+      Action::Write { files } => files.iter().map(|f| f.path.as_path()).collect(),
+      _ => vec![],
     }
   }
 
@@ -240,26 +258,26 @@ impl Action {
 
   pub fn describe(&self, cwd: &Path) -> Presentation {
     match self {
-      Action::Read { path, more, .. } => {
-        let title = match more.len() {
-          0 => format!("Read {}", shown(path, cwd)),
-          1 => format!("Read {}, {}", shown(path, cwd), shown(&more[0], cwd)),
-          n => format!("Read {}, {} and {} more", shown(path, cwd), shown(&more[0], cwd), n - 1),
-        };
-        Presentation { title, kind: "read", locations: std::iter::once(path).chain(more).cloned().collect(), content: vec![] }
+      Action::Read { files } => {
+        let paths = distinct(files.iter().map(|f| &f.path));
+        Presentation { title: format!("Read {}", names(&paths, cwd)), kind: "read", locations: paths, content: vec![] }
       }
-      Action::Write { path, before, after, .. } => Presentation {
-        title: format!("{} {}", if before.is_some() { "Edit" } else { "Write" }, shown(path, cwd)),
-        kind: "edit",
-        locations: vec![path.clone()],
-        content: vec![diff_content(path, before.as_deref(), after)],
-      },
+      Action::Write { files } => {
+        let verb = if files.iter().all(|f| f.before.is_none()) { "Write" } else { "Edit" };
+        let paths = distinct(files.iter().map(|f| &f.path));
+        Presentation {
+          title: format!("{verb} {}", names(&paths, cwd)),
+          kind: "edit",
+          locations: paths,
+          content: files.iter().map(|f| diff_content(&f.path, f.before.as_deref(), &f.after)).collect(),
+        }
+      }
       Action::Bash { command, .. } => Presentation { title: command.clone(), kind: "execute", locations: vec![], content: vec![] },
       Action::Job { id, wait_s, kill } => {
         let title = if *kill { format!("Stop job {id}") } else if *wait_s > 0 { format!("Check job {id} (wait {wait_s}s)") } else { format!("Check job {id}") };
         Presentation { title, kind: "execute", locations: vec![], content: vec![] }
       }
-      Action::Grep { pattern, path, include } => {
+      Action::Grep { pattern, path, include, .. } => {
         let scope = [(path != cwd).then(|| shown(path, cwd)), include.clone()].into_iter().flatten().collect::<Vec<_>>().join(" ");
         let title = if scope.is_empty() { format!("grep \"{pattern}\"") } else { format!("grep \"{pattern}\" in {scope}") };
         Presentation { title, kind: "search", locations: vec![path.clone()], content: vec![] }
@@ -291,8 +309,8 @@ impl Action {
   /// A read-only call, on a blocking thread so several run side by side
   pub fn run_sync(self, ctx: Ctx) -> Output {
     match self {
-      Action::Read { path, offset, limit, more } => read::run(&path, offset, limit, &more, &ctx),
-      Action::Grep { pattern, path, include } => search::grep(&pattern, &path, include.as_deref(), &ctx),
+      Action::Read { files } => read::run(&files, &ctx),
+      Action::Grep { pattern, path, include, context } => search::grep(&pattern, &path, include.as_deref(), context, &ctx),
       Action::Glob { pattern, path } => search::glob(&pattern, &path, &ctx),
       Action::List { path, ignore } => search::list(&path, &ignore, &ctx),
       Action::Todo { todos } => todo::run(&todos),
@@ -307,8 +325,8 @@ impl Action {
 
   pub async fn run(self, ctx: Ctx) -> Output {
     match self {
-      Action::Read { path, offset, limit, more } => read::run(&path, offset, limit, &more, &ctx),
-      Action::Write { path, before, after, edits } => edit::run(&path, before, after, edits, &ctx),
+      Action::Read { files } => read::run(&files, &ctx),
+      Action::Write { files } => edit::run(files, &ctx),
       Action::Bash { command, workdir, background: true, .. } => ctx.jobs.clone().start(&command, &workdir, &ctx).await,
       Action::Bash { command, workdir, timeout_ms, .. } => bash::run(&command, &workdir, timeout_ms, &ctx).await,
       Action::Job { id, wait_s, kill } => ctx.jobs.clone().check(&id, wait_s, kill, &ctx).await,
@@ -319,6 +337,38 @@ impl Action {
       }
       read_only => read_only.run_sync(ctx),
     }
+  }
+}
+
+/// Each path once, in order
+fn distinct<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Vec<PathBuf> {
+  let mut out: Vec<PathBuf> = vec![];
+  for p in paths {
+    if !out.contains(p) {
+      out.push(p.clone());
+    }
+  }
+  out
+}
+
+/// A title's file list: one or two names, else the first two and how many more
+fn names(paths: &[PathBuf], cwd: &Path) -> String {
+  match paths {
+    [] => String::new(),
+    [a] => shown(a, cwd),
+    [a, b] => format!("{}, {}", shown(a, cwd), shown(b, cwd)),
+    [a, b, rest @ ..] => format!("{}, {} and {} more", shown(a, cwd), shown(b, cwd), rest.len()),
+  }
+}
+
+/// The files a call of read, write or edit names (compaction's file restore and the chunk index read them off the
+/// session log): read's ranges left out, edit's items with their own paths included
+pub fn files_of(name: &str, args: &Value, cwd: &Path) -> Vec<PathBuf> {
+  match name {
+    READ => read::targets(args, cwd),
+    EDIT => edit::targets(args, cwd),
+    WRITE => args.get("path").or_else(|| args.get("file_path")).and_then(Value::as_str).map(|p| resolve(p, cwd)).into_iter().collect(),
+    _ => vec![],
   }
 }
 

@@ -1,5 +1,7 @@
 //! `grep`, `glob` and `list`: read-only views of the workspace over the file set of `files.rs`. Each caps its output
-//! and says so, so the model narrows the search instead of reading a silent cut
+//! and says so, so the model narrows the search instead of reading a silent cut. `grep` can show lines around each
+//! match (`context`): a model that greps a name usually reads the hit's neighbourhood next, a median of 50 lines in the
+//! local logs (2026-10-18), and with them in the result it can edit straight away
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -8,7 +10,7 @@ use regex::RegexBuilder;
 use serde_json::{Value, json};
 
 use super::files::{self, Glob};
-use super::{Action, Ctx, Output, budgeted, resolve, shown, str_arg};
+use super::{Action, Ctx, Output, budgeted, num_arg, resolve, shown, str_arg};
 use crate::budget::Keep;
 use crate::llm::ToolSpec;
 
@@ -21,12 +23,15 @@ const MAX_LIST: usize = 500;
 const MAX_LINE: usize = 400;
 /// Larger files are not searched
 const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
+/// Context lines a grep shows at most on each side of a match
+pub const MAX_CONTEXT: usize = 50;
 
 pub fn grep_spec() -> ToolSpec {
   ToolSpec {
     name: super::GREP.into(),
     description: "Search file contents with a regular expression (Rust regex syntax). Returns `path:line: text` for up to 100 matches, \
-                  skipping ignored and binary files."
+                  skipping ignored and binary files. With context, each file's matches come under its path as `line: text`, with the \
+                  lines around them as `line- text`."
       .into(),
     parameters: json!({
       "type": "object",
@@ -34,6 +39,7 @@ pub fn grep_spec() -> ToolSpec {
         "pattern": { "type": "string", "description": "Regular expression; prefix (?i) for case-insensitive" },
         "path": { "type": "string", "description": "File or folder to search (default: the session folder)" },
         "include": { "type": "string", "description": "Only files matching this glob, e.g. *.rs or src/**/*.{ts,tsx}" },
+        "context": { "type": "integer", "description": "Lines to show before and after each match (default 0, at most 50), often enough to edit from without a read" },
       },
       "required": ["pattern"],
     }),
@@ -88,7 +94,9 @@ pub fn prepare_grep(args: &Value, cwd: &Path) -> Result<Action, String> {
   if let Some(g) = &include {
     Glob::new(g)?;
   }
-  Ok(Action::Grep { pattern, path: root_arg(args, cwd), include })
+  // `-C` is Claude Code's name for it
+  let context = ["context", "-C", "context_lines"].iter().find_map(|k| num_arg(args, k)).unwrap_or(0).min(MAX_CONTEXT as u64) as usize;
+  Ok(Action::Grep { pattern, path: root_arg(args, cwd), include, context })
 }
 
 pub fn prepare_glob(args: &Value, cwd: &Path) -> Result<Action, String> {
@@ -113,7 +121,7 @@ fn missing(path: &Path) -> Option<Output> {
   (!path.exists()).then(|| Output::error(format!("Not found: {}", path.display())))
 }
 
-pub fn grep(pattern: &str, path: &Path, include: Option<&str>, ctx: &Ctx) -> Output {
+pub fn grep(pattern: &str, path: &Path, include: Option<&str>, context: usize, ctx: &Ctx) -> Output {
   if let Some(e) = missing(path) {
     return e;
   }
@@ -144,20 +152,34 @@ pub fn grep(pattern: &str, path: &Path, include: Option<&str>, ctx: &Ctx) -> Out
       continue;
     }
     let text = String::from_utf8_lossy(&bytes);
-    let mut hit = false;
-    for (n, line) in text.lines().enumerate() {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut hits = vec![];
+    for (n, line) in lines.iter().enumerate() {
       if !re.is_match(line) {
         continue;
       }
       if count == MAX_MATCHES {
         more = true;
-        break 'files;
+        break;
       }
-      hit = true;
+      hits.push(n);
       count += 1;
-      let _ = writeln!(out, "{}:{}: {}", shown(&abs, &ctx.cwd), n + 1, crate::budget::cut(line.trim_end(), MAX_LINE));
     }
-    in_files += usize::from(hit);
+    if !hits.is_empty() {
+      in_files += 1;
+      let name = shown(&abs, &ctx.cwd);
+      if context == 0 {
+        for &n in &hits {
+          let _ = writeln!(out, "{name}:{}: {}", n + 1, crate::budget::cut(lines[n].trim_end(), MAX_LINE));
+        }
+      } else {
+        let _ = writeln!(out, "{name}");
+        around(&mut out, &lines, &hits, context);
+      }
+    }
+    if more {
+      break 'files;
+    }
   }
   if count == 0 {
     return Output { model: "No matches.".into(), is_error: false, content: vec![], raw_output: Some(json!({ "matches": 0 })) };
@@ -172,6 +194,28 @@ pub fn grep(pattern: &str, path: &Path, include: Option<&str>, ctx: &Ctx) -> Out
   model.push_str(":\n");
   model.push_str(&out);
   Output { model: budgeted(&model, Keep::Head, ctx), is_error: false, content: vec![], raw_output: Some(json!({ "matches": count })) }
+}
+
+/// A file's matches with `context` lines on each side, windows that touch merged: `n: text` for a match, `n- text`
+/// around it (grep's marks), `--` between windows
+fn around(out: &mut String, lines: &[&str], hits: &[usize], context: usize) {
+  let mut windows: Vec<(usize, usize)> = vec![];
+  for &h in hits {
+    let (from, to) = (h.saturating_sub(context), (h + context).min(lines.len() - 1));
+    match windows.last_mut() {
+      Some(w) if from <= w.1 + 1 => w.1 = w.1.max(to),
+      _ => windows.push((from, to)),
+    }
+  }
+  for (k, &(from, to)) in windows.iter().enumerate() {
+    if k > 0 {
+      out.push_str("--\n");
+    }
+    for (n, line) in lines.iter().enumerate().take(to + 1).skip(from) {
+      let mark = if hits.binary_search(&n).is_ok() { ':' } else { '-' };
+      let _ = writeln!(out, "{}{mark} {}", n + 1, crate::budget::cut(line.trim_end(), MAX_LINE));
+    }
+  }
 }
 
 pub fn glob(pattern: &str, path: &Path, ctx: &Ctx) -> Output {
@@ -254,15 +298,33 @@ mod tests {
     let dir = tempfile::tempdir().unwrap();
     tree(dir.path());
     let c = ctx(dir.path());
-    let out = grep("(?i)todo", dir.path(), None, &c);
+    let out = grep("(?i)todo", dir.path(), None, 0, &c);
     assert!(out.model.starts_with("3 matches in 3 files"), "{}", out.model);
     assert!(out.model.contains("src/a.rs:2:     let todo = 1;") && !out.model.contains("bin.dat"), "{}", out.model);
-    let only_rs = grep("todo", dir.path(), Some("*.rs"), &c);
+    let only_rs = grep("todo", dir.path(), Some("*.rs"), 0, &c);
     assert!(only_rs.model.starts_with("1 matches"), "{}", only_rs.model);
-    assert_eq!(grep("nothing-here", dir.path(), None, &c).model, "No matches.");
-    let file = grep("TODO", &dir.path().join("src/util/b.rs"), None, &c);
+    assert_eq!(grep("nothing-here", dir.path(), None, 0, &c).model, "No matches.");
+    let file = grep("TODO", &dir.path().join("src/util/b.rs"), None, 0, &c);
     assert!(file.model.contains("src/util/b.rs:1:"), "{}", file.model);
     assert!(prepare_grep(&json!({ "pattern": "(" }), dir.path()).is_err());
+  }
+
+  #[test]
+  fn grep_context_shows_the_lines_around_each_match_under_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let body: String = (1..=20).map(|n| if n == 5 || n == 7 || n == 16 { format!("    hit {n}\n") } else { format!("line {n}\n") }).collect();
+    std::fs::write(dir.path().join("a.rs"), body).unwrap();
+    let c = ctx(dir.path());
+    let out = grep("hit", dir.path(), None, 2, &c).model;
+    assert_eq!(
+      out,
+      "3 matches in 1 files:\na.rs\n3- line 3\n4- line 4\n5:     hit 5\n6- line 6\n7:     hit 7\n8- line 8\n9- line 9\n--\n14- line 14\n15- line 15\n16:     hit 16\n17- line 17\n18- line 18\n",
+      "windows that touch are merged; the text after the mark is the line as it stands"
+    );
+    // Clamped at the file's edges and at MAX_CONTEXT; Claude Code's -C is taken too
+    assert!(grep("line 1$", dir.path(), None, 3, &c).model.ends_with("a.rs\n1: line 1\n2- line 2\n3- line 3\n4- line 4\n"));
+    let Ok(Action::Grep { context, .. }) = prepare_grep(&json!({ "pattern": "x", "-C": 500 }), dir.path()) else { panic!() };
+    assert_eq!(context, MAX_CONTEXT);
   }
 
   #[test]

@@ -1,7 +1,10 @@
-//! `write` (a whole file) and `edit` (replace exact snippets: one, or several to the same file applied in order, which
-//! saves a model round trip per extra change). The edit is computed while preparing, so the permission card shows the
-//! real result; at run time it is re-applied to whatever the file holds then. Matching tolerates the
-//! two slips models make most: LF written for a CRLF file, and trailing whitespace
+//! `write` (a whole file) and `edit` (replace exact snippets: one, or several applied in order, also across files,
+//! which saves a model round trip per extra change). The edit is computed while preparing, so the permission card shows
+//! the real result; at run time it is re-applied to whatever the file holds then. Matching tolerates the two slips models
+//! make most: LF written for a CRLF file, and trailing whitespace.
+//!
+//! Both take `then_run`, a command run once the change is made, on a command row of its own (`turn.rs`): the check
+//! after an edit was a request of its own in 14% of the steps of the 2026-10-15 eval runs (SoL-Pi's Action Fusion)
 
 use std::path::{Path, PathBuf};
 
@@ -17,6 +20,34 @@ pub struct Edit {
   pub all: bool,
 }
 
+/// One file a call changes: `before` None for a new file, `edits` empty for a whole-file write
+#[derive(Debug, Clone, PartialEq)]
+pub struct Change {
+  pub path: PathBuf,
+  pub before: Option<String>,
+  pub after: String,
+  pub edits: Vec<Edit>,
+}
+
+impl Change {
+  /// The file ends up as it was
+  pub fn unchanged(&self) -> bool {
+    self.before.as_deref() == Some(self.after.as_str())
+  }
+}
+
+fn then_run_property() -> Value {
+  json!({
+    "type": "string",
+    "description": "A command to run right after the change, such as the tests, a build or a linter; its output comes back with this result. Not run when the change fails or leaves the file as it was",
+  })
+}
+
+/// The command a write or an edit asks to run after the change
+pub fn then_run(args: &Value) -> Option<String> {
+  args.get("then_run").and_then(Value::as_str).map(str::trim).filter(|c| !c.is_empty()).map(str::to_owned)
+}
+
 pub fn write_spec() -> ToolSpec {
   ToolSpec {
     name: super::WRITE.into(),
@@ -26,6 +57,7 @@ pub fn write_spec() -> ToolSpec {
       "properties": {
         "path": { "type": "string", "description": "File path, absolute or relative to the session folder" },
         "content": { "type": "string", "description": "The complete new content" },
+        "then_run": then_run_property(),
       },
       "required": ["path", "content"],
     }),
@@ -36,8 +68,9 @@ pub fn spec() -> ToolSpec {
   ToolSpec {
     name: super::EDIT.into(),
     description: "Replace an exact snippet of an existing file. old_string must match the file text exactly (copy it from read output, \
-                  without the line-number prefix) and be unique, unless replace_all is set. For several changes to one file, give \
-                  edits instead: they apply in order, each to the result of the previous one, and all or none are made."
+                  without the line-number prefix) and be unique, unless replace_all is set. For several changes, give edits instead: \
+                  they apply in order, each to the result of the previous one in its file, and all or none are made. An item may name \
+                  its own path, so one call can change several files."
       .into(),
     parameters: json!({
       "type": "object",
@@ -48,13 +81,19 @@ pub fn spec() -> ToolSpec {
         "replace_all": { "type": "boolean", "description": "Replace every occurrence (default false)" },
         "edits": {
           "type": "array",
-          "description": "Several replacements in this file, instead of old_string / new_string",
+          "description": "Several replacements, instead of old_string / new_string",
           "items": {
             "type": "object",
-            "properties": { "old_string": { "type": "string" }, "new_string": { "type": "string" }, "replace_all": { "type": "boolean" } },
+            "properties": {
+              "path": { "type": "string", "description": "The file of this replacement, when it is not path" },
+              "old_string": { "type": "string" },
+              "new_string": { "type": "string" },
+              "replace_all": { "type": "boolean" },
+            },
             "required": ["old_string", "new_string"],
           },
         },
+        "then_run": then_run_property(),
       },
       "required": ["path"],
     }),
@@ -63,6 +102,11 @@ pub fn spec() -> ToolSpec {
 
 fn path_arg(args: &Value, cwd: &Path) -> Result<PathBuf, String> {
   Ok(resolve(str_arg(args, "path").or_else(|_| str_arg(args, "file_path"))?, cwd))
+}
+
+/// An edits item's own file, when it names one
+fn item_path(v: &Value, cwd: &Path) -> Option<PathBuf> {
+  v.get("path").or_else(|| v.get("file_path")).and_then(Value::as_str).map(str::trim).filter(|p| !p.is_empty()).map(|p| resolve(p, cwd))
 }
 
 fn read_text(path: &Path) -> Result<Option<String>, String> {
@@ -80,7 +124,7 @@ pub fn prepare_write(args: &Value, cwd: &Path) -> Result<Action, String> {
     return Err(format!("{} is a directory", path.display()));
   }
   let before = read_text(&path)?;
-  Ok(Action::Write { path, before, after, edits: vec![] })
+  Ok(Action::Write { files: vec![Change { path, before, after, edits: vec![] }] })
 }
 
 fn edit_of(v: &Value) -> Result<Edit, String> {
@@ -91,15 +135,44 @@ fn edit_of(v: &Value) -> Result<Edit, String> {
   })
 }
 
+/// The files an edit call's arguments name: `path`, then the items' own paths
+pub fn targets(args: &Value, cwd: &Path) -> Vec<PathBuf> {
+  let mut out: Vec<PathBuf> = path_arg(args, cwd).into_iter().collect();
+  for p in args.get("edits").and_then(Value::as_array).into_iter().flatten().filter_map(|v| item_path(v, cwd)) {
+    if !out.contains(&p) {
+      out.push(p);
+    }
+  }
+  out
+}
+
 pub fn prepare(args: &Value, cwd: &Path) -> Result<Action, String> {
-  let path = path_arg(args, cwd)?;
-  let edits = match args.get("edits").and_then(Value::as_array).filter(|a| !a.is_empty()) {
-    Some(list) => list.iter().map(edit_of).collect::<Result<Vec<_>, _>>()?,
-    None => vec![edit_of(args)?],
+  let default = path_arg(args, cwd)?;
+  let items: Vec<(PathBuf, Edit)> = match args.get("edits").and_then(Value::as_array).filter(|a| !a.is_empty()) {
+    Some(list) => list
+      .iter()
+      .enumerate()
+      .map(|(i, v)| edit_of(v).map(|e| (item_path(v, cwd).unwrap_or_else(|| default.clone()), e)).map_err(|err| format!("edits[{i}]: {err}")))
+      .collect::<Result<_, _>>()?,
+    None => vec![(default, edit_of(args)?)],
   };
-  let before = read_text(&path)?.ok_or_else(|| format!("File not found: {} (use write to create it)", path.display()))?;
-  let after = apply_all(&before, &edits).map_err(|e| format!("{e} in {}", path.display()))?;
-  Ok(Action::Write { path, before: Some(before), after, edits })
+  let several = items.len() > 1;
+  // One change per file, in the order the files first come up; a file's edits apply in the order given
+  let mut files: Vec<Change> = vec![];
+  for (i, (path, e)) in items.into_iter().enumerate() {
+    let k = match files.iter().position(|c| c.path == path) {
+      Some(k) => k,
+      None => {
+        let before = read_text(&path)?.ok_or_else(|| format!("File not found: {} (use write to create it)", path.display()))?;
+        files.push(Change { path, after: before.clone(), before: Some(before), edits: vec![] });
+        files.len() - 1
+      }
+    };
+    let c = &mut files[k];
+    c.after = apply(&c.after, &e).map_err(|err| if several { format!("edits[{i}]: {err} in {}", c.path.display()) } else { format!("{err} in {}", c.path.display()) })?;
+    c.edits.push(e);
+  }
+  Ok(Action::Write { files })
 }
 
 /// The file with every edit applied in order; the first that does not apply fails the whole call
@@ -172,37 +245,63 @@ fn unique_trimmed_match(content: &str, old: &str) -> Option<(usize, usize)> {
   found
 }
 
-pub fn run(path: &PathBuf, before: Option<String>, after: String, edits: Vec<Edit>, ctx: &Ctx) -> Output {
-  // The file may have changed while the card waited: an edit is re-applied to the current text
-  let current = match read_text(path) {
-    Ok(c) => c,
-    Err(e) => return Output::error(e),
-  };
-  let edited = !edits.is_empty();
-  let (before, after) = match current {
-    Some(now) if edited && Some(&now) != before.as_ref() => match apply_all(&now, &edits) {
-      Ok(a) => (Some(now), a),
-      Err(err) => return Output::error(format!("The file changed since the edit was prepared and the edit no longer applies: {err}")),
-    },
-    None if edited => return Output::error(format!("{} was deleted before the edit ran", path.display())),
-    now => (now.or(before), after),
-  };
-  if let Some(dir) = path.parent()
-    && let Err(e) = std::fs::create_dir_all(dir)
-  {
-    return Output::error(format!("Cannot create {}: {e}", dir.display()));
+/// Write every change. A file that changed while the card waited gets its edits again, applied to what it holds now;
+/// nothing is written unless every file still takes them
+pub fn run(files: Vec<Change>, ctx: &Ctx) -> Output {
+  let mut ready: Vec<Change> = vec![];
+  for c in files {
+    let current = match read_text(&c.path) {
+      Ok(x) => x,
+      Err(e) => return Output::error(e),
+    };
+    let edited = !c.edits.is_empty();
+    let (before, after) = match current {
+      Some(now) if edited && Some(&now) != c.before.as_ref() => match apply_all(&now, &c.edits) {
+        Ok(a) => (Some(now), a),
+        Err(err) => return Output::error(format!("The file {} changed since the edit was prepared and the edit no longer applies: {err}", shown(&c.path, &ctx.cwd))),
+      },
+      None if edited => return Output::error(format!("{} was deleted before the edit ran", c.path.display())),
+      now => (now.or(c.before), c.after),
+    };
+    ready.push(Change { path: c.path, before, after, edits: c.edits });
   }
-  if let Err(e) = std::fs::write(path, &after) {
-    return Output::error(format!("Cannot write {}: {e}", path.display()));
+  let mut written: Vec<String> = vec![];
+  for c in &ready {
+    let failed = match c.path.parent().map(std::fs::create_dir_all) {
+      Some(Err(e)) => Some(format!("Cannot create {}: {e}", c.path.parent().unwrap_or(&c.path).display())),
+      _ => std::fs::write(&c.path, &c.after).err().map(|e| format!("Cannot write {}: {e}", c.path.display())),
+    };
+    if let Some(mut message) = failed {
+      if !written.is_empty() {
+        message.push_str(&format!("; already written: {}", written.join(", ")));
+      }
+      return Output::error(message);
+    }
+    written.push(shown(&c.path, &ctx.cwd));
   }
-  let name = shown(path, &ctx.cwd);
-  let model = match (edited, &before) {
-    (true, _) if edits.len() > 1 => format!("Edited {name} ({} changes).", edits.len()),
-    (true, _) => format!("Edited {name}."),
-    (false, Some(_)) => format!("Replaced {name} ({} lines).", after.lines().count()),
-    (false, None) => format!("Created {name} ({} lines).", after.lines().count()),
+  let model = match &ready[..] {
+    [c] => {
+      let name = shown(&c.path, &ctx.cwd);
+      match (c.edits.len(), &c.before) {
+        (0, Some(_)) => format!("Replaced {name} ({} lines).", c.after.lines().count()),
+        (0, None) => format!("Created {name} ({} lines).", c.after.lines().count()),
+        (1, _) => format!("Edited {name}."),
+        (n, _) => format!("Edited {name} ({n} changes)."),
+      }
+    }
+    several => {
+      let names: Vec<String> = several
+        .iter()
+        .map(|c| match c.edits.len() {
+          n if n > 1 => format!("{} ({n} changes)", shown(&c.path, &ctx.cwd)),
+          _ => shown(&c.path, &ctx.cwd),
+        })
+        .collect();
+      format!("Edited {} files: {}.", several.len(), names.join(", "))
+    }
   };
-  Output { model, is_error: false, content: vec![diff_content(path, before.as_deref(), &after)], raw_output: None }
+  let content = ready.iter().map(|c| diff_content(&c.path, c.before.as_deref(), &c.after)).collect();
+  Output { model, is_error: false, content, raw_output: None }
 }
 
 #[cfg(test)]
@@ -221,13 +320,22 @@ mod tests {
     assert!(apply("abc", &e("zzz", "y")).unwrap_err().contains("not found"));
   }
 
+  fn changes(args: Value, cwd: &Path) -> Vec<Change> {
+    let Action::Write { files } = prepare(&args, cwd).unwrap() else { panic!() };
+    files
+  }
+
+  fn ctx(dir: &Path) -> Ctx {
+    Ctx { cwd: dir.to_owned(), outputs: dir.join("o"), call_id: "c".into(), progress: std::sync::Arc::new(|_| {}), jobs: Default::default(), search: Default::default(), mcp: Default::default(), history: Default::default() }
+  }
+
   #[test]
   fn several_edits_apply_in_order_or_not_at_all() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("x.txt"), "a b c\n").unwrap();
     let args = json!({ "path": "x.txt", "edits": [{ "old_string": "a", "new_string": "x" }, { "old_string": "x b", "new_string": "y" }] });
-    let Action::Write { after, edits, .. } = prepare(&args, dir.path()).unwrap() else { panic!() };
-    assert_eq!((after.as_str(), edits.len()), ("y c\n", 2));
+    let [c] = &changes(args, dir.path())[..] else { panic!() };
+    assert_eq!((c.after.as_str(), c.edits.len()), ("y c\n", 2));
     let bad = json!({ "path": "x.txt", "edits": [{ "old_string": "a", "new_string": "x" }, { "old_string": "zzz", "new_string": "y" }] });
     let Err(e) = prepare(&bad, dir.path()) else { panic!() };
     assert!(e.starts_with("edits[1]: old_string not found"), "{e}");
@@ -249,15 +357,44 @@ mod tests {
     let dir = tempfile::tempdir().unwrap();
     let f = dir.path().join("x.txt");
     std::fs::write(&f, "alpha beta\n").unwrap();
-    let Action::Write { path, before, after, edits } =
-      prepare(&json!({ "path": "x.txt", "old_string": "beta", "new_string": "gamma" }), dir.path()).unwrap()
-    else {
-      panic!()
-    };
+    let files = changes(json!({ "path": "x.txt", "old_string": "beta", "new_string": "gamma" }), dir.path());
     std::fs::write(&f, "first line\nalpha beta\n").unwrap();
-    let ctx = Ctx { cwd: dir.path().to_owned(), outputs: dir.path().join("o"), call_id: "c".into(), progress: std::sync::Arc::new(|_| {}), jobs: Default::default(), search: Default::default(), mcp: Default::default(), history: Default::default() };
-    let out = run(&path, before, after, edits, &ctx);
+    let out = run(files, &ctx(dir.path()));
     assert!(!out.is_error, "{}", out.model);
     assert_eq!(std::fs::read_to_string(&f).unwrap(), "first line\nalpha gamma\n");
+  }
+
+  #[test]
+  fn one_call_edits_several_files_all_or_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (dir.path().join("a.rs"), dir.path().join("src/b.rs"));
+    std::fs::create_dir_all(b.parent().unwrap()).unwrap();
+    std::fs::write(&a, "fn old() {}\nold();\n").unwrap();
+    std::fs::write(&b, "use old;\n").unwrap();
+    let args = json!({ "path": "a.rs", "edits": [
+      { "old_string": "fn old()", "new_string": "fn new()" },
+      { "path": "src/b.rs", "old_string": "use old;", "new_string": "use new;" },
+      { "path": "./a.rs", "old_string": "old();", "new_string": "new();" },
+    ] });
+    let files = changes(args.clone(), dir.path());
+    assert_eq!(files.iter().map(|c| (c.path.clone(), c.edits.len())).collect::<Vec<_>>(), [(a.clone(), 2), (b.clone(), 1)], "one change per file, the same file under another spelling included");
+    assert_eq!(targets(&args, dir.path()), [a.clone(), b.clone()]);
+    let out = run(files, &ctx(dir.path()));
+    assert_eq!(out.model, "Edited 2 files: a.rs (2 changes), src/b.rs.");
+    assert_eq!(out.content.len(), 2, "a diff per file");
+    assert_eq!((std::fs::read_to_string(&a).unwrap(), std::fs::read_to_string(&b).unwrap()), ("fn new() {}\nnew();\n".into(), "use new;\n".into()));
+    // One item that does not apply leaves every file alone
+    let bad = json!({ "path": "a.rs", "edits": [{ "old_string": "fn new()", "new_string": "fn x()" }, { "path": "src/b.rs", "old_string": "nope", "new_string": "y" }] });
+    let e = prepare(&bad, dir.path()).unwrap_err();
+    assert!(e.starts_with("edits[1]: old_string not found") && e.ends_with("b.rs"), "{e}");
+    assert!(prepare(&json!({ "path": "a.rs", "edits": [{ "path": "gone.rs", "old_string": "a", "new_string": "b" }] }), dir.path()).unwrap_err().starts_with("File not found"));
+    // At run time too: the second file changed meanwhile and no longer takes its edit
+    let files = changes(json!({ "path": "a.rs", "edits": [{ "old_string": "fn new()", "new_string": "fn x()" }, { "path": "src/b.rs", "old_string": "use new;", "new_string": "use x;" }] }), dir.path());
+    std::fs::write(&b, "rewritten\n").unwrap();
+    let out = run(files, &ctx(dir.path()));
+    assert!(out.is_error && out.model.contains("src/b.rs changed since the edit was prepared"), "{}", out.model);
+    assert_eq!(std::fs::read_to_string(&a).unwrap(), "fn new() {}\nnew();\n", "nothing was written");
+    assert_eq!(then_run(&json!({ "then_run": "  cargo test " })).as_deref(), Some("cargo test"));
+    assert_eq!(then_run(&json!({ "then_run": " " })), None);
   }
 }
