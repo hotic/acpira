@@ -11,7 +11,7 @@ use acpira_shared::sidecar::{BrowserOpened, BrowserReuse};
 use acpira_host::relay::roster::Roster;
 use acpira_host::relay::wire::{AskArgs, AskCallerArgs, HubOp, HubReply, HubRequest};
 
-use crate::acp_session::{agent_blocks, prompt, view};
+use crate::acp_session::{agent_blocks, last_turn, prompt, view};
 use crate::fake_or_skip;
 use crate::support::{Disposing, Harness, expect_match, until, v};
 
@@ -655,6 +655,29 @@ async fn editing_history_cancels_the_summoned_rounds_of_the_removed_turns() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_round_still_connecting_when_its_turn_is_edited_away_never_sends_its_task() {
+  let fake = fake_or_skip!();
+  // The persona's model switch keeps the child connecting long enough for the edit to land first
+  let h = Harness::new(&fake, json!({ "env": { "FAKE_CONFIG_DELAY_MS": "1500" } }));
+  let roster = Arc::new(Roster::new(h.dir.path()));
+  roster.save(&json!([{ "name": "Fake Slow", "agent": "fake", "mode": "work", "when": "edits", "model": "m2" }])).await.unwrap();
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  prompt(&s, "say:first").await;
+  prompt(&s, "relay-call:relay: orphan").await;
+  let target = h.dir.path().join("written-by-orphan.txt");
+  let task = format!("relay: write={}", target.display());
+  last_text(&run(&s, &roster, 0, AskArgs { wait_secs: Some(0), ..ask("fake-slow", &task) }).await);
+  assert_eq!(nodes(&s).len(), 1);
+  s.edit_turn(crate::acp_session::history_edit(&s, 2, "say:instead")).await.unwrap();
+  assert!(nodes(&s).is_empty());
+  // The child finishes connecting after its node is gone: the round ends there, the task never reaches it
+  until(|| !s.background_running(), 8000).await;
+  tokio::time::sleep(Duration::from_millis(300)).await;
+  assert!(!target.exists(), "the edited-away round still ran its task");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_row_whose_arguments_come_with_its_end_ties_even_while_another_call_waits() {
   let fake = fake_or_skip!();
   let h = Harness::new(&fake, json!({}));
@@ -698,6 +721,26 @@ async fn a_root_call_returns_at_once_and_its_turns_replies_arrive_together_in_on
   assert!(ok);
   tokio::time::sleep(Duration::from_millis(300)).await;
   assert_eq!(deliveries(&s).len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn retrying_a_delivery_that_failed_before_any_output_sends_the_same_replies_again() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  // The persona's name puts "fail" in the delivery, which the fake root fails once before any output
+  let roster = Arc::new(Roster::new(h.dir.path()));
+  roster.save(&json!([{ "name": "Fake failover", "agent": "fake", "mode": "consult", "when": "checks" }])).await.unwrap();
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  last_text(&run(&s, &roster, 0, send_off("fake-failover", "relay: quick look")).await);
+  until(|| deliveries(&s).len() == 1 && !s.is_running() && !last_turn(&view(&s))["stop"].is_null(), 8000).await;
+  expect_match(last_turn(&view(&s)), json!({ "role": "agent", "stop": "error" }));
+  s.retry_turn().await.unwrap();
+  until(|| !s.is_running() && last_turn(&view(&s))["stop"] == "end_turn", 8000).await;
+  // The failed attempt is replaced by the resent message, still an automatic delivery with the same replies
+  let sent = deliveries(&s);
+  assert_eq!(sent.len(), 1, "{sent:?}");
+  assert!(sent[0]["text"].as_str().unwrap().contains("reply to relay: quick look"), "{}", sent[0]);
 }
 
 #[tokio::test(flavor = "multi_thread")]

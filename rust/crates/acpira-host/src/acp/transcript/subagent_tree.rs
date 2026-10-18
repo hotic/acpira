@@ -1395,8 +1395,10 @@ impl SubagentTree {
     true
   }
 
+  /// Cancelled on request, or gone: an edit truncating the turn removes the node right after flagging it, so a round
+  /// still connecting must read a missing node as cancelled too
   pub fn relay_cancel_requested(&self, id: &str) -> bool {
-    self.nodes.iter().any(|n| n.id == id && n.cancel_requested)
+    self.nodes.iter().find(|n| n.id == id).is_none_or(|n| n.cancel_requested)
   }
 
   /// How a summoned round ended: its state, the last text the child wrote, and the error shown in its place

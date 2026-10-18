@@ -152,6 +152,11 @@ fn compact_turn(turn: &Turn) -> Value {
   match turn {
     Turn::User(u) => {
       let mut v = json!({ "role": "user", "text": u.text });
+      // Kept among automatic messages because it carries the results summoned agents delivered; marked so the reader
+      // does not take it for the user's own words
+      if is_delivery(u) {
+        v["from"] = Value::from("acpira: summoned agents' replies");
+      }
       if let Some(a) = u.attachments.as_ref().filter(|a| !a.is_empty()) {
         v["attachments"] = attachment_labels(a);
       }
@@ -260,7 +265,7 @@ pub async fn history_context(
 ) -> Result<Option<HistoryContext>> {
   let numbers = round_numbers(all);
   let (source, rounds): (Vec<&Turn>, Vec<u32>) =
-    all.iter().zip(numbers.iter().copied()).filter(|(t, _)| !matches!(t, Turn::User(u) if u.auto == Some(true))).unzip();
+    all.iter().zip(numbers.iter().copied()).filter(|(t, _)| !matches!(t, Turn::User(u) if u.auto == Some(true) && !is_delivery(u))).unzip();
   if source.is_empty() {
     return Ok(Some(HistoryContext { blocks: vec![], omitted: 0 }));
   }
@@ -550,13 +555,18 @@ impl AcpSession {
       if !prepared.problems.is_empty() {
         return Err(anyhow!(prepared.problems.join("\n")));
       }
-      let retry = unchanged_failed_retry(&self.core.lock(), &edit);
       // A fork whose history has not gone out yet: its native session holds nothing to rebuild or supersede, so the
-      // edit moves the fork point and the prompt hands the shortened prefix over as the fork's first message
-      let pending = self.core.lock().lineage.history_pending;
-      let mut continuing = edit.intent == Some(EditIntent::Continue);
+      // edit moves the fork point and the prompt hands the shortened prefix over as the fork's first message.
+      // `stale`: the history is owed again after a first prompt that ended without output (`reclaim_fork_history`), yet
+      // that prompt went out and the peer may hold it, so a fresh native session takes the handoff instead
+      let (pending, stale) = {
+        let c = self.core.lock();
+        (c.lineage.history_pending && c.unprompted, c.lineage.history_pending && !c.unprompted)
+      };
+      let retry = !stale && unchanged_failed_retry(&self.core.lock(), &edit);
+      let mut continuing = !stale && edit.intent == Some(EditIntent::Continue);
       let mut rebuilt = None;
-      if !continuing && !retry && !pending && !prefix.is_empty() {
+      if !continuing && !retry && !pending && !stale && !prefix.is_empty() {
         let (fork, cwd) = {
           let c = self.core.lock();
           (c.lineage.forked_from.clone(), self.cwd.clone())
@@ -718,8 +728,9 @@ impl AcpSession {
       else {
         return Ok(());
       };
-      // Only the continues (Retry's own, an account switch's, the gate's) are retried among automatic turns; /compact is not
-      if user.auto == Some(true) && !is_continue(user) {
+      // Only the continues (Retry's own, an account switch's, the gate's) and a delivery of summoned agents' replies are
+      // retried among automatic turns; /compact is not
+      if user.auto == Some(true) && !is_continue(user) && !is_delivery(user) {
         return Ok(());
       }
       if is_context_length_error(agent.error.as_ref()) {
@@ -778,6 +789,26 @@ impl AcpSession {
         })
         .await;
     }
+    // A delivery of summoned agents' replies that failed before any output goes out again as the same automatic message:
+    // its rounds were marked delivered when it was claimed, so nothing else would bring their results back
+    if is_delivery(&user) {
+      {
+        let mut c = self.core.lock();
+        let same = matches!(c.state.turns.last(), Some(Turn::Agent(a)) if a.started_at == turn_id_check && *a == agent);
+        // The claim takes a delivery only into a free session with an empty queue: checked first, so a refused resend
+        // never drops the failed turn
+        if c.phase.running || c.status != SessionStatus::Ready || !same || !c.queue.entries.is_empty() || c.pending_prompt.is_some() {
+          return Ok(());
+        }
+        let keep = c.state.turns.len() - 2;
+        c.state.turns.truncate(keep);
+        self.relay_truncate(&mut c, keep);
+        c.retry_pending = true;
+      }
+      self.clone().prompt_inner(user.text, vec![], Origin::Subagents, None, None).await;
+      self.core.lock().retry_pending = false;
+      return Ok(());
+    }
     let drafts = restore_drafts(&self.id, user.attachments.as_deref().unwrap_or(&[]), &self.deps.blobs).await?;
     {
       // Attachment reads yield; a second click or another send may have claimed the turn
@@ -795,6 +826,11 @@ impl AcpSession {
     self.core.lock().retry_pending = false;
     Ok(())
   }
+}
+
+/// The automatic message delivering summoned agents' replies to the root
+fn is_delivery(user: &UserTurn) -> bool {
+  user.auto == Some(true) && user.auto_reason == Some(AutoReason::Subagents)
 }
 
 /// A hidden turn that asks the agent to carry on from its own context: Retry's, the one after an account switch, or the

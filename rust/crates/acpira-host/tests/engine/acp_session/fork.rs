@@ -181,12 +181,31 @@ async fn a_forks_first_prompt_that_fails_empty_owes_its_history_again_and_retry_
   prompt(&s, "please fail").await;
   expect_match(last_turn(&view(&s)), json!({ "stop": "error" }));
   assert!(s.to_record().history_pending);
+  let tried = s.to_record().acp_session_id;
   s.retry_turn().await.unwrap();
   until(|| !s.is_running() && turn_count(&s) == 6 && last_turn(&view(&s))["stop"] == "end_turn", 5000).await;
   let text = agent_text(&last_turn(&view(&s)));
   assert_eq!(text.matches("resource:acpira://history/").count(), 1, "{text}");
   assert!(text.contains("alpha") && text.contains("beta"), "{text}");
   assert!(!s.to_record().history_pending);
+  // The failed attempt went out and may sit in that native session: the handoff goes to a fresh one
+  assert_ne!(s.to_record().acp_session_id, tried);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_forks_history_keeps_the_summoned_agents_replies_an_automatic_message_delivered() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let record = fork_record(&h, json!([
+    { "role": "user", "text": "look into it" },
+    { "role": "agent", "blocks": [{ "type": "text", "markdown": "sent it off" }], "stop": "end_turn" },
+    { "role": "user", "text": "(Acpira) A summoned agent you sent off has finished. Its reply: the-finding", "auto": true, "autoReason": "subagents" },
+    { "role": "agent", "blocks": [{ "type": "text", "markdown": "noted" }], "stop": "end_turn" },
+  ]), |_| {});
+  let s = reopened(&h, record).await;
+  prompt(&s, "now").await;
+  let text = agent_text(&last_turn(&view(&s)));
+  assert!(text.contains("the-finding") && text.contains("summoned agents' replies"), "{text}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
