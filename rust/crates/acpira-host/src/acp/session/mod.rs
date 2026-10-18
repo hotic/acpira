@@ -142,6 +142,18 @@ pub(crate) struct Lineage {
   pub agent_title_muted: bool,
 }
 
+impl Lineage {
+  /// The transcript was cut back to `len` turns: a fork's copied prefix shrinks with it (-1 when none of it is left).
+  /// The origin itself stays, since it still mutes the agent's titles
+  pub fn truncated(&mut self, len: usize) {
+    if let Some(f) = self.forked_from.as_mut()
+      && f.turn_index >= len as i64
+    {
+      f.turn_index = len as i64 - 1;
+    }
+  }
+}
+
 pub(crate) struct Core {
   pub account_id: Option<String>,
   pub updated_at: String,

@@ -86,10 +86,14 @@ async fn an_oversized_fork_history_is_compacted_keeping_its_most_recent_turns() 
   prompt(&s, "now").await;
   let text = agent_text(&last_turn(&view(&s)));
   assert!(text.contains("resource:acpira://history/"));
-  assert!(text.contains("26 earlier turns were omitted"), "{}", &text[..text.len().min(400)]);
-  assert!(text.contains("recent"));
-  assert!(!text.contains("old-big"));
-  assert!(notes.lock().unwrap().iter().any(|n| n.contains("26")));
+  // Counted in turns as read_session numbers them (a message and its reply are one), behind an outline of the left-out
+  // ones that opens with the task
+  assert!(text.contains("13 earlier turns were omitted"), "{}", &text[..text.len().min(400)]);
+  assert!(text.contains("Turns 1-13 of this conversation were left out") && text.contains("\n1. User: ask-0 | Reply: reply-0"), "{}", &text[..text.len().min(2000)]);
+  let (outline, json) = text.split_once("The most recent turns follow as JSON.").expect("outline ahead of the JSON");
+  assert!(outline.contains("13. User: old-big") && !outline.contains("recent"));
+  assert!(json.contains("recent") && !json.contains("old-big"));
+  assert!(notes.lock().unwrap().iter().any(|n| n.contains("13")));
 }
 
 #[cfg(unix)]
@@ -200,4 +204,44 @@ async fn a_forks_first_prompt_stopped_before_any_output_owes_its_history_to_the_
   // Once delivered, a later prompt carries no history
   prompt(&s, "after").await;
   assert!(!agent_text(&last_turn(&view(&s))).contains("resource:acpira://history/"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cross_agent_fork_names_the_source_agent_and_an_unsendable_history_image_becomes_a_label() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({ "env": { "FAKE_PROMPT_CAPS": "strict" } }));
+  let record = fork_record(&h, json!([
+    { "role": "user", "text": "alpha", "attachments": [{ "kind": "image", "mimeType": "image/png", "blob": "gone.png", "name": "shot.png" }] },
+    { "role": "agent", "blocks": [{ "type": "text", "markdown": "first reply" }], "stop": "end_turn" },
+  ]), |r| {
+    r.forked_from = serde_json::from_value(json!({ "sessionId": "source-session-id", "turnIndex": 1, "agent": "claude", "model": "Opus" })).unwrap();
+  });
+  let s = reopened(&h, record).await;
+  prompt(&s, "inspect-history").await;
+  let wire = wire_prompt(&last_turn(&view(&s)))["prompt"].to_string();
+  assert!(wire.contains("forked from an earlier session") && wire.contains("All of it ran on another agent (claude, model Opus), not on you"), "{wire}");
+  assert!(wire.contains("re-read a file before editing it"), "{wire}");
+  assert!(wire.contains("Attachments from earlier user message: alpha (not included: shot.png)"), "{wire}");
+  assert!(!s.to_record().history_pending);
+  // An edit's rebuilt history says the same of the copied turns, and only of them
+  prompt(&s, "later").await;
+  s.edit_turn(history_edit(&s, 4, "inspect-history")).await.unwrap();
+  until(|| !s.is_running() && turn_count(&s) == 6 && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
+  let wire = wire_prompt(&last_turn(&view(&s)))["prompt"].to_string();
+  assert!(wire.contains("Conversation before the edited message") && wire.contains("Turns 1-1 of it ran on another agent (claude, model Opus)"), "{wire}");
+  assert!(wire.contains("(not included: shot.png)"), "{wire}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_same_agent_forks_lead_is_the_plain_fork_lead() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({ "env": { "FAKE_PROMPT_CAPS": "strict" } }));
+  let s = reopened(&h, fork_record(&h, two_pairs(), |r| {
+    r.forked_from = serde_json::from_value(json!({ "sessionId": "source-session-id", "turnIndex": 3 })).unwrap();
+  })).await;
+  prompt(&s, "inspect-history").await;
+  let wire = wire_prompt(&last_turn(&view(&s)));
+  let history = wire["prompt"][0]["text"].as_str().unwrap();
+  let lead = acpira_host::acp::session::edit::FORK_HISTORY_LEAD;
+  assert!(history.starts_with(&format!("{lead}\n[")), "{history}");
 }

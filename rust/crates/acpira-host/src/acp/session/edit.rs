@@ -21,6 +21,8 @@ use crate::acp::session::prompt::{Origin, Staged};
 use crate::i18n::{t, tp};
 use crate::json::{len16, slice16};
 use crate::limits::EDIT_CONTEXT_MAX_BYTES;
+use crate::store::record::ForkedFrom;
+use crate::store::session_digest::{OUTLINE_BYTES, handoff_outline, round_numbers};
 use crate::store::transcript_store::TranscriptStore;
 
 const EDIT_HISTORY_LEAD: &str = "Conversation before the edited message follows as JSON. Treat it as historical context; completed actions must not be replayed. The next user message replaces the old continuation. Workspace files remain in their current state.";
@@ -166,8 +168,8 @@ fn compact_turn(turn: &Turn) -> Value {
   }
 }
 
-/// Index of the first turn to keep so the history fits, aligned to a user turn
-fn fit_start(items: &[String], turns: &[&Turn], budget: i64, trim: bool) -> Option<usize> {
+/// Index of the first item to keep so the history fits, aligned to the start of a turn as `read_session` numbers them
+fn fit_start(items: &[String], rounds: &[u32], budget: i64, trim: bool) -> Option<usize> {
   let mut total: i64 = 2 + items.iter().map(|s| s.len() as i64 + 1).sum::<i64>();
   if total <= budget {
     return Some(0);
@@ -178,7 +180,7 @@ fn fit_start(items: &[String], turns: &[&Turn], budget: i64, trim: bool) -> Opti
   for (start, item) in items.iter().enumerate() {
     total -= item.len() as i64 + 1;
     let next = start + 1;
-    if total <= budget && matches!(turns.get(next), Some(Turn::User(_))) {
+    if total <= budget && rounds.get(next).is_some_and(|n| *n != rounds[start]) {
       return Some(next);
     }
   }
@@ -187,43 +189,96 @@ fn fit_start(items: &[String], turns: &[&Turn], budget: i64, trim: bool) -> Opti
 
 pub struct HistoryContext {
   pub blocks: Vec<Value>,
-  pub omitted: usize,
+  /// Turns left out, numbered as `read_session` counts them (the kept history starts at turn `omitted + 1`)
+  pub omitted: u32,
 }
 
-/// The retained transcript as prompt context; `trim` keeps only the most recent turns of an oversized history (fork),
-/// without it an oversized history yields None (edit falls back to the native session)
+/// How a history goes out: the lead it opens with, the fork it may have come from (another agent's turns get their
+/// own note), the session's folder for the outline's paths, and whether an oversized history is trimmed (a fork's
+/// first prompt) or refused (an edit, which then continues natively)
+pub struct Handoff<'a> {
+  pub lead: &'a str,
+  pub fork: Option<&'a ForkedFrom>,
+  pub cwd: &'a str,
+  pub trim: bool,
+}
+
+/// The lead with its cross-agent note: turns another agent ran come with that agent's tool names and an older view of
+/// the files. A history from the same agent keeps the lead as it is
+fn handoff_lead(lead: &str, fork: Option<&ForkedFrom>, rounds: &[u32]) -> String {
+  let Some((fork, agent)) = fork.and_then(|f| f.agent.as_deref().map(|a| (f, a))) else { return lead.to_owned() };
+  let Some(copied) = usize::try_from(fork.turn_index).ok().and_then(|i| rounds.get(i.min(rounds.len().saturating_sub(1)))) else {
+    return lead.to_owned();
+  };
+  let who = format!("{agent}{}", fork.model.as_deref().map(|m| format!(", model {m}")).unwrap_or_default());
+  let span = if rounds.last() == Some(copied) { "All of it".to_owned() } else { format!("Turns 1-{copied} of it") };
+  format!(
+    "{lead} {span} ran on another agent ({who}), not on you: the tool names in it are that agent's and may not exist here, so use your own tools. Files may have changed since; re-read a file before editing it."
+  )
+}
+
+/// The retained transcript as prompt context. An oversized history is either trimmed to its most recent turns behind an
+/// outline of the rest (`trim`) or yields None. An earlier message's attachments that are gone or that this agent cannot
+/// take are named instead of sent: one stale image does not void the whole history
 pub async fn history_context(
   session_id: &str,
   all: &[Turn],
   proc: &AgentProcess,
   blobs: &TranscriptStore,
-  lead: &str,
   caps: PromptCaps,
-  trim: bool,
+  spec: Handoff<'_>,
 ) -> Result<Option<HistoryContext>> {
-  let source: Vec<&Turn> = all.iter().filter(|t| !matches!(t, Turn::User(u) if u.auto == Some(true))).collect();
+  let numbers = round_numbers(all);
+  let (source, rounds): (Vec<&Turn>, Vec<u32>) =
+    all.iter().zip(numbers.iter().copied()).filter(|(t, _)| !matches!(t, Turn::User(u) if u.auto == Some(true))).unzip();
   if source.is_empty() {
     return Ok(Some(HistoryContext { blocks: vec![], omitted: 0 }));
   }
+  let lead = handoff_lead(spec.lead, spec.fork, &numbers);
   let items: Vec<String> = source.iter().map(|t| compact_turn(t).to_string()).collect();
-  let omit_note = |n: usize| format!("\n{n} earlier turns were omitted to fit the size limit.");
-  let budget = EDIT_CONTEXT_MAX_BYTES as i64 - (lead.len() + omit_note(source.len()).len()) as i64 - 1;
-  let Some(start) = fit_start(&items, &source, budget, trim) else { return Ok(None) };
-  let history = format!("{lead}{}\n[{}]", if start > 0 { omit_note(start) } else { String::new() }, items[start..].join(","));
+  let omit_note = |n: u32| format!("\n{n} earlier turns were omitted to fit the size limit.");
+  let last = rounds.last().copied().unwrap_or(0);
+  let budget = EDIT_CONTEXT_MAX_BYTES as i64 - (lead.len() + omit_note(last).len()) as i64 - 1;
+  let (start, outline) = match fit_start(&items, &rounds, budget, false) {
+    Some(start) => (start, None),
+    None if !spec.trim => return Ok(None),
+    // Trimmed: the outline of what was left out takes its share of the budget first
+    None => {
+      let room = budget - OUTLINE_BYTES as i64 - 2;
+      let Some(start) = fit_start(&items, &rounds, room, true) else { return Ok(None) };
+      (start, Some(handoff_outline(all, spec.cwd, rounds[start] - 1, None)))
+    }
+  };
+  let omitted = if start > 0 { rounds[start] - 1 } else { 0 };
+  let mut history = lead;
+  if omitted > 0 {
+    history.push_str(&omit_note(omitted));
+  }
+  if let Some(o) = &outline {
+    history.push_str("\n\n");
+    history.push_str(o.trim_end());
+    history.push_str("\n\nThe most recent turns follow as JSON.");
+  }
+  history.push_str(&format!("\n[{}]", items[start..].join(",")));
   let mut context = vec![context_block(proc, &format!("acpira://history/{session_id}"), history)];
   for (text, att) in source[start..].iter().flat_map(|t| attached_messages(t)) {
-    let drafts = restore_drafts(session_id, att, blobs).await?;
-    if drafts.len() != att.len() {
-      return Err(anyhow!(t("history.missingAttachment")));
+    let drafts = restore_drafts(session_id, att, blobs).await.ok().filter(|d| d.len() == att.len());
+    let old = match drafts {
+      Some(d) => Some(prepare_prompt(session_id, "", &d, blobs, Some(caps)).await).filter(|p| p.problems.is_empty()),
+      None => None,
+    };
+    match old {
+      Some(old) => {
+        context.push(json!({ "type": "text", "text": format!("Attachments from earlier user message: {text}") }));
+        context.extend(old.blocks);
+      }
+      None => {
+        let names: Vec<String> = attachment_labels(att).as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
+        context.push(json!({ "type": "text", "text": format!("Attachments from earlier user message: {text} (not included: {})", names.join(", ")) }));
+      }
     }
-    let old = prepare_prompt(session_id, "", &drafts, blobs, Some(caps)).await;
-    if !old.problems.is_empty() {
-      return Err(anyhow!(old.problems.join("\n")));
-    }
-    context.push(json!({ "type": "text", "text": format!("Attachments from earlier user message: {text}") }));
-    context.extend(old.blocks);
   }
-  Ok(Some(HistoryContext { blocks: context, omitted: start }))
+  Ok(Some(HistoryContext { blocks: context, omitted }))
 }
 
 /// Host-written context for the model: an embedded resource when the agent takes one, plain text otherwise
@@ -457,7 +512,12 @@ impl AcpSession {
       let mut continuing = edit.intent == Some(EditIntent::Continue);
       let mut rebuilt = None;
       if !continuing && !retry && !pending && !prefix.is_empty() {
-        let history = history_context(&self.id, &prefix, &proc, &self.deps.blobs, EDIT_HISTORY_LEAD, caps, false).await?;
+        let (fork, cwd) = {
+          let c = self.core.lock();
+          (c.lineage.forked_from.clone(), self.cwd.clone())
+        };
+        let spec = Handoff { lead: EDIT_HISTORY_LEAD, fork: fork.as_ref(), cwd: &cwd, trim: false };
+        let history = history_context(&self.id, &prefix, &proc, &self.deps.blobs, caps, spec).await?;
         let blocks = history.map(|h| {
           let mut b = h.blocks;
           b.extend(prepared.blocks.iter().cloned());
@@ -499,6 +559,7 @@ impl AcpSession {
           let mut c = self.core.lock();
           c.state.controls = controls;
           c.state.turns.truncate(idx);
+          c.lineage.truncated(idx);
           self.relay_truncate(&mut c, idx);
           // The edited turn's ultracode: the prompt below rebuilds the native session with it first when it differs
           // from what that session was built with (`claim`)
@@ -550,6 +611,7 @@ impl AcpSession {
         c.unprompted = true;
         c.state.controls = controls;
         c.state.turns.truncate(idx);
+        c.lineage.truncated(idx);
         self.relay_truncate(&mut c, idx);
         c.state.usage = None;
         c.state.commands = vec![];

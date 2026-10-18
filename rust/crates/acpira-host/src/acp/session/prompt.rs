@@ -12,7 +12,7 @@ use acpira_shared::turn_settings::capture_turn_settings;
 
 use crate::acp::session::attachments::{PreparedPrompt, prepare_prompt, prompt_caps_of};
 use crate::acp::session::compaction::{CompactionCompletion, is_compact_command};
-use crate::acp::session::edit::{FORK_HISTORY_LEAD, HistoryContext, history_context};
+use crate::acp::session::edit::{FORK_HISTORY_LEAD, Handoff, HistoryContext, history_context};
 use crate::acp::session::errors::{is_auth, is_session_gone, turn_error_of};
 use crate::acp::session::failure::{failure_of, failure_turn_error};
 use crate::acp::session::turn_usage::turn_usage_of;
@@ -331,14 +331,16 @@ impl AcpSession {
       }
     };
     // A fork's copied transcript has never reached the peer: its first prompt carries it as retained context
-    let (proc, caps, turns_copy) = {
+    let (proc, caps, turns_copy, fork, cwd) = {
       let c = self.core.lock();
-      (c.proc.clone(), self.caps(&c), if !auto && c.lineage.history_pending { Some(c.state.turns.clone()) } else { None })
+      let copy = if !auto && c.lineage.history_pending { Some(c.state.turns.clone()) } else { None };
+      (c.proc.clone(), self.caps(&c), copy, c.lineage.forked_from.clone(), self.cwd.clone())
     };
     let mut fork_history = None;
     let mut fork_error = None;
     if let (Some(turns), Some(proc)) = (turns_copy, proc.as_ref()) {
-      match history_context(&self.id, &turns, proc, &self.deps.blobs, FORK_HISTORY_LEAD, caps, true).await {
+      let spec = Handoff { lead: FORK_HISTORY_LEAD, fork: fork.as_ref(), cwd: &cwd, trim: true };
+      match history_context(&self.id, &turns, proc, &self.deps.blobs, caps, spec).await {
         Ok(h) => fork_history = h,
         Err(e) => {
           self.log(&format!("fork context skipped: {e}"));
