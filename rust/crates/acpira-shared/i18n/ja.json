@@ -571,6 +571,7 @@
   "host.mcpSkipped": "MCP サーバー {name}：実行ファイル {command} が見つからないためスキップしました",
   "host.forkStale": "フォーク元の返信はもうありません。",
   "host.forkRunning": "この返信が終わってからフォークしてください。",
+  "host.forkAgentUnknown": "{agent} ではこのフォークを続けられません。",
   "host.forkContextTooLarge": "フォークした履歴が大きすぎてエージェントに渡せません。以前のコンテキストなしでフォークを続けます。",
   "host.forkContextTrimmed": "フォークした履歴が長いため、エージェントに渡すコンテキストから最初の {count} ターンを省きました。",
   "host.forkContextFailed": "フォークした履歴をエージェントに渡せませんでした（{error}）。以前のコンテキストなしでフォークを続けます。",

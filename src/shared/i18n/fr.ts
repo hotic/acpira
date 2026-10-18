@@ -579,6 +579,7 @@ export const fr = {
   'host.mcpSkipped': 'Serveur MCP {name} : exécutable {command} introuvable, ignoré',
   'host.forkStale': 'Cette réponse n’existe plus pour bifurquer à partir d’elle.',
   'host.forkRunning': 'Attendez la fin de cette réponse avant de bifurquer à partir d’elle.',
+  'host.forkAgentUnknown': '{agent} n’est pas un agent sur lequel cette bifurcation peut continuer.',
   'host.forkContextTooLarge': 'L’historique bifurqué est trop volumineux pour être transmis à l’agent ; la bifurcation continue sans le contexte antérieur.',
   'host.forkContextTrimmed': 'L’historique bifurqué est long ; les {count} tours les plus anciens ont été omis du contexte transmis à l’agent.',
   'host.forkContextTrimmed#one': 'L’historique bifurqué est long ; le tour le plus ancien a été omis du contexte transmis à l’agent.',

@@ -565,6 +565,7 @@
   "host.mcpSkipped": "MCP 서버 {name}: 실행 파일 {command}을(를) 찾을 수 없어 건너뜀",
   "host.forkStale": "포크할 응답이 더 이상 없습니다.",
   "host.forkRunning": "이 응답이 끝난 뒤에 포크하세요.",
+  "host.forkAgentUnknown": "{agent}에서는 이 포크를 이어 갈 수 없습니다.",
   "host.forkContextTooLarge": "포크한 기록이 너무 커서 에이전트에 넘길 수 없습니다. 이전 컨텍스트 없이 포크를 계속합니다.",
   "host.forkContextTrimmed": "포크한 기록이 길어서 에이전트에 넘긴 컨텍스트에서 가장 앞의 {count}턴을 뺐습니다.",
   "host.forkContextFailed": "포크한 기록을 에이전트에 넘기지 못했습니다 ({error}). 이전 컨텍스트 없이 포크를 계속합니다.",

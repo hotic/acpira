@@ -512,10 +512,13 @@ pub enum WebviewMsg {
     #[serde(default)]
     category: Option<String>,
   },
+  /// `agent`: continue the fork on another agent (absent: the source's own)
   ForkSession {
     session_id: String,
     #[serde(deserialize_with = "crate::num::lenient_i64")]
     turn_index: i64,
+    #[serde(default)]
+    agent: Option<String>,
   },
   ExportSession {
     id: String,

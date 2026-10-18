@@ -580,6 +580,7 @@ export const es = {
   'host.mcpSkipped': 'Servidor MCP {name}: no se encontró el ejecutable {command}, se omitió',
   'host.forkStale': 'Esa respuesta ya no existe para bifurcar desde ella.',
   'host.forkRunning': 'Espera a que termine esta respuesta antes de bifurcar desde ella.',
+  'host.forkAgentUnknown': '{agent} no es un agente en el que pueda continuar esta bifurcación.',
   'host.forkContextTooLarge': 'El historial bifurcado es demasiado grande para pasarlo al agente; la bifurcación continúa sin el contexto anterior.',
   'host.forkContextTrimmed': 'El historial bifurcado es largo; se omitieron los {count} turnos más antiguos del contexto pasado al agente.',
   'host.forkContextTrimmed#one': 'El historial bifurcado es largo; se omitió el turno más antiguo del contexto pasado al agente.',

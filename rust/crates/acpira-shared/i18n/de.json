@@ -566,6 +566,7 @@
   "host.mcpSkipped": "MCP-Server {name}: ausführbare Datei {command} nicht gefunden, übersprungen",
   "host.forkStale": "Diese Antwort ist nicht mehr vorhanden, um davon abzuzweigen.",
   "host.forkRunning": "Vor dem Abzweigen warten, bis diese Antwort fertig ist.",
+  "host.forkAgentUnknown": "{agent} ist kein Agent, auf dem dieser Abzweig weiterlaufen kann.",
   "host.forkContextTooLarge": "Der abgezweigte Verlauf ist zu groß, um ihn dem Agenten zu übergeben; die Abzweigung läuft ohne den früheren Kontext weiter.",
   "host.forkContextTrimmed": "Der abgezweigte Verlauf ist lang; die {count} ältesten Durchläufe wurden aus dem an den Agenten übergebenen Kontext weggelassen.",
   "host.forkContextTrimmed#one": "Der abgezweigte Verlauf ist lang; der älteste Durchlauf wurde aus dem an den Agenten übergebenen Kontext weggelassen.",
