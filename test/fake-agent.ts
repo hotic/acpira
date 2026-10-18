@@ -710,9 +710,12 @@ const app = acp.agent({ name: 'fake-agent' })
       return { stopReason: 'end_turn' };
     }
     // "mcp-call:<tool> <json arguments>" → start the session's `acpira` MCP server the way a CLI does, list its tools, call one,
-    // and reply with JSON { tools, result } (or { error }). Only the first line counts (a summoned child's brief follows it)
-    if (text.startsWith('mcp-call:')) {
-      const [tool = '', ...rest] = text.split('\n')[0]!.slice('mcp-call:'.length).trim().split(' ');
+    // and reply with JSON { tools, result } (or { error }). Only the first line counts (a summoned child's brief follows it).
+    // "mcp-call-loop:…" → the same, and again on every automatic "(Acpira) …" prompt of that session afterwards
+    if (text.startsWith('mcp-call-loop:')) loopCalls.set(sid, `mcp-call:${text.split('\n')[0]!.slice('mcp-call-loop:'.length)}`);
+    const call = text.startsWith('mcp-call:') || text.startsWith('mcp-call-loop:') ? text.replace(/^mcp-call-loop:/, 'mcp-call:') : text.startsWith('(Acpira)') ? loopCalls.get(sid) : undefined;
+    if (call) {
+      const [tool = '', ...rest] = call.split('\n')[0]!.slice('mcp-call:'.length).trim().split(' ');
       const server = mcpBySession.get(sid)?.find(m => m.name === 'acpira' && 'command' in m) as Extract<acp.McpServer, { command: string }> | undefined;
       const reply = server ? await callMcp(server, tool, JSON.parse(rest.join(' ') || '{}') as unknown).catch((e: unknown) => ({ error: String(e) })) : { error: 'no acpira MCP server' };
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(reply) } });
@@ -1751,6 +1754,8 @@ let authed = false;
 // The api key the last authenticate handed over (FAKE_EXHAUSTED_KEYS)
 let apiKey: string | undefined;
 const cancelled = new Set<string>();
+// mcp-call-loop: the MCP call a session repeats on every automatic prompt
+const loopCalls = new Map<string, string>();
 const relayRounds = new Map<string, number>();
 // Subagent scripts block on a child permission; a session/cancel for that child's id unblocks them
 const cancelWaiters = new Map<string, (() => void)[]>();
