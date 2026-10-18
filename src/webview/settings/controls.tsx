@@ -447,3 +447,20 @@ export function SourceLink({ path, env, onOpen }: { path: string; env: { home: s
     </button>
   );
 }
+
+// Local text until blur (or Enter on a one-line box), so half-typed values never round-trip through the host
+export function TextBox({ value, label, placeholder, multiline, onCommit }: {
+  value: string; label: string; placeholder?: string; multiline?: boolean; onCommit: (v: string) => void;
+}) {
+  const [text, setText] = useState(value);
+  useEffect(() => setText(value), [value]);
+  const commit = () => { if (text !== value) onCommit(text); };
+  const cls = 'w-full min-w-0 rounded-md border border-line bg-hover px-3 text-2 text-fg-1 outline-none transition-colors placeholder:text-fg-3 focus:bg-active';
+  return multiline
+    // Grows with its text; no manual resize handle (it could be dragged to cut a line in half)
+    ? <textarea aria-label={label} placeholder={placeholder} value={text} onChange={e => setText(e.target.value)} onBlur={commit}
+      className={`${cls} resize-none py-(--setting-row-pad) [field-sizing:content]`} />
+    : <input aria-label={label} placeholder={placeholder} value={text} onChange={e => setText(e.target.value)} onBlur={commit}
+      onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setText(value); }}
+      className={`${cls} h-ctl w-(--ctl-w)`} />;
+}

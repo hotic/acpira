@@ -2,9 +2,11 @@
 //! every other layer (`turn.rs` evaluates them last, so an earlier "always allow" cannot widen them). A mode's `ask`
 //! rules are the exception: the approval level sits above them, so full access drops them and a command of Plan mode
 //! runs without a card (its `deny` rules hold whatever the level is). `{plan}` in a text or a rule pattern stands for
-//! the session's plan file. Every mode offers the same
-//! tools, so a mode switch leaves the request prefix (and the provider's prompt cache) intact; `exit_plan` outside
-//! Plan mode answers with an error
+//! the session's plan file. Agent and Plan offer the same
+//! tools, so a switch between them leaves the request prefix (and the provider's prompt cache) intact; `exit_plan`
+//! outside Plan mode answers with an error. Raw mode is the exception: it talks to the model with nothing of the
+//! agent's own around the conversation (no system prompt but the settings page's, no tools, no mode notes), so
+//! entering or leaving it changes the prefix once
 
 use std::path::Path;
 
@@ -13,6 +15,7 @@ use crate::tools::{BASH as T_BASH, EDIT as T_EDIT, EXIT_PLAN, GLOB, GREP, HISTOR
 
 pub const AGENT: &str = "agent";
 pub const PLAN: &str = "plan";
+pub const RAW: &str = "raw";
 
 pub struct Mode {
   pub id: &'static str,
@@ -71,6 +74,17 @@ in the order they must be done, one checkable change each. Keep the list in step
     // An MCP tool its server does not mark read-only may change anything, so it asks like a command (the engine's own
     // tools excepted)
     rules: &[(EDIT, "*", Decision::Deny), (EDIT, "{plan}", Decision::Allow), (BASH, "*", Decision::Ask), (MCP, "*", Decision::Ask), (MCP, ENGINE_MCP, Decision::Allow)],
+  },
+  // The plain endpoint: the turn sends the conversation alone (`turn::setup` leaves the tools, the composed prompt and
+  // the variant's sampling out; compaction only runs on /compact). No overlay: the model is told nothing on entering
+  // it, and Agent mode after it needs no note either, since its system prompt arrives with it. The rules only back up
+  // the empty tool set
+  Mode {
+    id: RAW,
+    name: "Raw",
+    description: "Talks to the model directly: no system prompt, tools or project instructions",
+    overlay: "",
+    rules: &[(EDIT, "*", Decision::Deny), (BASH, "*", Decision::Deny), (MCP, "*", Decision::Deny)],
   },
 ];
 

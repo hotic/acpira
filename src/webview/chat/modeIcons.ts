@@ -1,4 +1,4 @@
-import { Bug, CircleDashed, Code, Eye, Infinity as InfinityIcon, ListTodo, MessageCircleQuestionMark, ShieldOff, Sparkles, type LucideIcon } from 'lucide-react';
+import { Bug, CircleDashed, Code, Eye, Infinity as InfinityIcon, ListTodo, MessageCircleQuestionMark, ShieldOff, Sparkles, Unplug, type LucideIcon } from 'lucide-react';
 import type { MsgKey } from '@shared/i18n';
 import type { SessionOption } from '@shared/transcript';
 import { t } from '../i18n';
@@ -6,6 +6,8 @@ import { t } from '../i18n';
 // ACP modes carry only id / name / description, so the glyph is inferred from keywords in id + name (Devin: code / smart / ask / plan / bypass;
 // Grok synthetic: default / plan / yolo; Kimi and custom agents fall through the same table). First match wins; unknown modes get a dashed circle
 const RULES: [RegExp, LucideIcon][] = [
+  // The built-in agent's Raw mode: the agent's tools unplugged, the model reached directly
+  [/\braw\b/, Unplug],
   [/bypass|yolo|auto[\s-]?accept|full[\s-]?access|unsafe/, ShieldOff],
   [/debug/, Bug],
   [/plan/, ListTodo],
@@ -31,6 +33,7 @@ const SHORT: Record<string, MsgKey> = {
   agent: 'composer.modeShort.default',
   build: 'composer.modeShort.build',
   plan: 'composer.modeShort.plan',
+  raw: 'composer.modeShort.raw',
   acceptEdits: 'composer.modeShort.autoEdit',
   auto: 'composer.modeShort.auto',
   smart: 'composer.modeShort.smart',

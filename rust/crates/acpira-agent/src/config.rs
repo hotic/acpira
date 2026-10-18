@@ -40,6 +40,11 @@ impl Config {
     self.providers.compaction.as_deref() == Some(crate::chunk::STRATEGY)
   }
 
+  /// The Raw mode's system prompt from the settings page; empty when none is set
+  pub fn raw_system_prompt(&self) -> &str {
+    self.providers.raw_system_prompt.as_deref().filter(|t| !t.trim().is_empty()).unwrap_or("")
+  }
+
   /// The search setup picked on the settings page. The default backend uses no key; a keyed pick brings every keyed
   /// backend that is set up, the picked one first. DeepSeek goes through `web_search_via`'s source (its address and
   /// key) when one is named, else DeepSeek's own API with its search key

@@ -81,6 +81,8 @@ export interface ProvidersView {
   webKeys?: string[];
   // The compaction strategy as the file holds it; absent reads as 'summary'
   compaction?: string;
+  // The system prompt of the agent's Raw mode; absent sends none
+  rawSystemPrompt?: string;
 }
 
 // How the built-in agent compacts its history (`COMPACTION_STRATEGIES` in acpira-shared/src/providers.rs), the default
@@ -159,7 +161,9 @@ export type ProviderAction =
   // key: that backend's; absent keeps the stored key, empty removes it. via: the model source DeepSeek-shaped search goes
   // through; absent keeps it, empty goes back to DeepSeek's own API
   | { kind: 'webSearch'; backend: WebSearchBackend; key?: string; via?: string }
-  | { kind: 'compaction'; strategy: CompactionStrategy };
+  | { kind: 'compaction'; strategy: CompactionStrategy }
+  // text: absent or blank removes it
+  | { kind: 'rawSystemPrompt'; text?: string };
 
 // A model entry with the file's defaults, for a hand-typed id
 export function newModel(id: string): ProviderModel {

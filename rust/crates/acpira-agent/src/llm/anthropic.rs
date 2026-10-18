@@ -109,7 +109,8 @@ pub fn body(req: &Request, family: &Family, origin: &str) -> Value {
   let mut system = json!([{ "type": "text", "text": req.system }]);
   for bp in breakpoints {
     match bp {
-      Breakpoint::System => system[0]["cache_control"] = ephemeral(),
+      Breakpoint::System if !req.system.is_empty() => system[0]["cache_control"] = ephemeral(),
+      Breakpoint::System => {}
       Breakpoint::LastMessage => mark_last_block(messages.last_mut()),
       Breakpoint::PreviousRequest => {
         // The user message before the latest assistant message ended the previous request of this turn
@@ -123,7 +124,10 @@ pub fn body(req: &Request, family: &Family, origin: &str) -> Value {
   let mut body = Map::new();
   body.insert("model".into(), Value::from(req.model.as_str()));
   body.insert("max_tokens".into(), Value::from(max_tokens));
-  body.insert("system".into(), system);
+  // An empty prompt (Raw mode without one) sends no `system`: the API refuses an empty text block
+  if !req.system.is_empty() {
+    body.insert("system".into(), system);
+  }
   body.insert("messages".into(), Value::Array(messages));
   if !req.tools.is_empty() {
     body.insert("tools".into(), req.tools.iter().map(|t| json!({ "name": t.name, "description": t.description, "input_schema": t.parameters })).collect());

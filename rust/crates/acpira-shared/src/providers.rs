@@ -62,6 +62,10 @@ pub struct ProvidersFile {
   /// `summary`. Read when a compaction runs
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub compaction: Option<String>,
+  /// The system prompt of the agent's Raw mode (`acpira_agent::modes::RAW`); absent or blank sends none. Read at the
+  /// start of every Raw turn
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub raw_system_prompt: Option<String>,
   #[serde(flatten)]
   pub extra: Map<String, Value>,
 }
@@ -313,6 +317,9 @@ pub struct ProvidersView {
   /// The file's compaction strategy as written (`ProvidersFile::compaction`)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub compaction: Option<String>,
+  /// The Raw mode's system prompt as written (`ProvidersFile::raw_system_prompt`)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub raw_system_prompt: Option<String>,
 }
 
 /// A network question from the settings page; none of them changes providers.json. `key`: a key typed into the form
@@ -395,6 +402,11 @@ pub enum ProviderAction {
   },
   /// Set the compaction strategy (one of `COMPACTION_STRATEGIES`)
   Compaction { strategy: String },
+  /// Set the Raw mode's system prompt; absent or blank removes it
+  RawSystemPrompt {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+  },
 }
 
 #[cfg(test)]
