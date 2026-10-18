@@ -179,18 +179,19 @@ function modelControlOf(controls: ConfigControl[] | undefined): ConfigControl | 
   return controls?.find(c => c.category === 'model' || c.id === 'model');
 }
 
-// The row's second line: the CLI, its model one step fainter, then its reasoning effort and the mode as tags. Spacing and
-// tone tell the parts apart, with no separator glyph between them; the model gives up width first. The model reads as
-// the CLI names it (Codex `gpt-6-astra` → "6 Astra"), as in the detail page's select; the stored value shows only until
-// the CLI's latest session lists it
+// The row's second line: the CLI, its model one step fainter, then its reasoning effort and the mode as tags. Tone tells
+// the parts apart, with no separator glyph between them, so they sit half a gap apart and the tags use the small badge
+// of the chat's subagent rows; the model gives up width first. The model reads as the CLI names it (Codex
+// `gpt-6-astra` → "6 Astra"), as in the detail page's select; the stored value shows only until the CLI's latest
+// session lists it
 function metaOf(p: SubagentPersona, agents: AgentInfo[], controls: ConfigControl[] | undefined): ReactNode {
   const cli = agents.find(a => a.id === p.agent)?.name ?? p.agent;
   const model = p.model && (modelControlOf(controls)?.options.find(o => o.id === p.model)?.name ?? p.model);
-  return <span className="flex min-w-0 items-center gap-gap">
+  return <span className="flex min-w-0 items-center gap-gap-half">
     <span className="shrink-0">{cli}</span>
     {model && <span className="min-w-0 truncate text-fg-3/70">{model}</span>}
-    {p.effort && <ChipTag>{effortLabel({ id: p.effort, name: p.effort })}</ChipTag>}
-    <ChipTag>{t(`subagents.page.${p.mode}`)}</ChipTag>
+    {p.effort && <ChipTag small>{effortLabel({ id: p.effort, name: p.effort })}</ChipTag>}
+    <ChipTag small>{t(`subagents.page.${p.mode}`)}</ChipTag>
   </span>;
 }
 
