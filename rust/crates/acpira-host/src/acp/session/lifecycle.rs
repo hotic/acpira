@@ -337,7 +337,7 @@ impl AcpSession {
               }
               self.apply_controls(&mut c, r.get("modes"), r.get("configOptions"));
               c.status = SessionStatus::Ready;
-              c.ultracode.unprompted = false;
+              c.unprompted = false;
               drop(c);
               drop(handoff);
               self.log(&format!("{method} ok"));
@@ -441,7 +441,7 @@ impl AcpSession {
     let mut c = self.core.lock();
     let sid = r.get("sessionId").and_then(Value::as_str).unwrap_or("").to_owned();
     c.acp_session_id = Some(sid.clone());
-    c.ultracode.unprompted = true;
+    c.unprompted = true;
     Self::note_startup_banner(&mut c, r.get("_meta"));
     self.apply_controls(&mut c, r.get("modes"), r.get("configOptions"));
     c.status = SessionStatus::Ready;

@@ -148,6 +148,10 @@ pub(crate) struct Core {
   pub pinned: Option<bool>,
   pub category: Option<String>,
   pub acp_session_id: Option<String>,
+  /// The native session came from session/new and no prompt has reached it yet. Claude Code has written no transcript,
+  /// so a resume would fail (claude-agent-acp answers -32002 Resource not found) and an ultracode rebuild takes a fresh
+  /// session/new; the workspace hooks hand such a peer their context files, since it has never seen them
+  pub unprompted: bool,
   pub proc: Option<Arc<AgentProcess>>,
   /// Bumped with every process replacement: callbacks and answers of an older generation are ignored
   pub proc_gen: u64,
@@ -314,6 +318,7 @@ impl AcpSession {
           start_outcome: None,
           lock_holder: None,
           mcp_sent: vec![],
+          unprompted: false,
           mcp_skip: vec![],
           reconnect_after_turn: false,
           retry_pending: false,

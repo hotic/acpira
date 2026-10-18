@@ -317,7 +317,9 @@ impl AcpSession {
       return Ok(TurnContext::default());
     }
     let cfg = self.load_hooks();
-    let first_of = |c: &Core| origin == Origin::User && !c.state.turns.iter().any(|t| matches!(t, Turn::User(u) if u.auto != Some(true)));
+    // The first prompt this peer sees: a fork's history still owed, or a native session no prompt reached yet (a new
+    // session, an edit's rebuilt one), whatever the transcript already holds
+    let first_of = |c: &Core| origin == Origin::User && (c.lineage.history_pending || c.unprompted);
     let mut tail = vec![];
     // Only what the user (or their goal) asks for; Acpira's own follow-ups and continues are not prompts of theirs
     if matches!(origin, Origin::User | Origin::Goal)

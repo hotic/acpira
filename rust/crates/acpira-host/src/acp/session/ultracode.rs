@@ -36,9 +36,6 @@ pub(crate) struct UltracodeState {
   pub wire: Option<String>,
   /// The level picked to leave Ultra, shown and set by the rebuild that turns ultracode off
   pub level: Option<String>,
-  /// The native session came from session/new and no prompt has reached it yet: Claude Code has written no transcript,
-  /// so a resume would fail (claude-agent-acp answers -32002 Resource not found) and a rebuild takes a fresh session/new
-  pub unprompted: bool,
 }
 
 /// What an effort pick on a Claude session means for ultracode (`ultracode_pick`)
@@ -288,7 +285,7 @@ impl AcpSession {
       target.and_then(|(proc, sid)| {
         let caps = proc.caps();
         // Nothing to keep in a never-prompted native session, and nothing to resume either: a fresh one replaces it
-        let method = if c.ultracode.unprompted {
+        let method = if c.unprompted {
           "session/new"
         } else if crate::json::truthy(caps.get("sessionCapabilities").and_then(|s| s.get("resume"))) {
           "session/resume"
