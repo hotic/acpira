@@ -4,12 +4,15 @@
 
 mod support;
 
+#[cfg(unix)]
 use std::time::Duration;
 
 use serde_json::{Value, json};
 
 use acpira_agent::mock::{self, MockModel};
-use support::{Answer, Harness};
+use support::Harness;
+#[cfg(unix)]
+use support::Answer;
 
 async fn setup() -> (Harness, MockModel, String) {
   let h = Harness::start().await;

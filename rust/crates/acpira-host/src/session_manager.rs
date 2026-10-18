@@ -1458,12 +1458,14 @@ impl SessionManager {
   /// Announce the edges a user away from the session wants to hear about: a card waiting for them (at once), and a turn that
   /// has settled, once it stayed settled for ATTENTION_SETTLE (a queued follow-up or a hook's follow-up keeps it busy).
   /// Background work the agent reported counts as busy too: a turn that ends on "I'll report when it's done" is not done.
+  /// A turn that failed is announced without waiting for it, since a long-lived monitor would hold the error back indefinitely.
   /// A turn the user cancelled is not announced. Whether the user is already looking is the shell's call
   fn watch_attention(&self, s: &Arc<AcpSession>) {
     let Some(announce) = self.deps.attention.clone() else { return };
     let id = s.id.clone();
     let waiting = s.list_state() == Some(SummaryState::Waiting);
-    let busy = s.turn_busy() || s.background_running();
+    let held = |s: &AcpSession| s.turn_busy() || (s.background_running() && s.last_stop() != Some(TurnStop::Error));
+    let busy = held(s);
     let (asked, settled) = {
       let mut st = self.state.lock();
       let asked = if waiting {
@@ -1496,8 +1498,7 @@ impl SessionManager {
       let Some(s) = m.live(&id) else { return };
       // Another turn began meanwhile (it announces itself when it settles), or the session now waits on the user
       if m.state.lock().settle_seq.get(&id) != Some(&seq)
-        || s.turn_busy()
-        || s.background_running()
+        || held(&s)
         || s.list_state() == Some(SummaryState::Waiting)
       {
         return;
