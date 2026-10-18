@@ -33,7 +33,7 @@ use crate::acp::transport::process::{AgentProcess, ClientHandlers};
 use crate::acp::transport::rpc::{BoxFuture, RpcError};
 use crate::i18n::t;
 use crate::relay::roster::Roster;
-use crate::relay::wire::{AskArgs, HubReply};
+use crate::relay::wire::{AskArgs, AskCallerArgs, HubReply};
 use crate::relay::{MAX_DEPTH, MAX_RUNNING};
 
 /// How long a call waits for the round when the MCP side names no deadline
@@ -315,7 +315,8 @@ fn compose_brief(prompt: &str, persona: &SubagentPersona, mode: RelayMode) -> St
     parts.push("You are consulted for an opinion: read whatever you need, but do not modify any file.".into());
   }
   parts.push(
-    "(Another agent working in this same repository asked you this. It reads only your final reply, so end with a self-contained answer.)"
+    "(Another agent working in this same repository asked you this. It reads only your final reply, so end with a self-contained \
+answer. When a decision only it can make blocks you, ask it with ask_caller; otherwise decide yourself and say what you assumed.)"
       .into(),
   );
   parts.join("\n\n")
@@ -548,6 +549,72 @@ impl AcpSession {
     }
   }
 
+  /// `ask_caller` from the CLI of a summoned thread: the question becomes a card on the thread's running round and travels
+  /// like one its CLI asked itself (a call waiting on the thread, the automatic message, the user's card). No answer
+  /// within the client's bound settles it skipped, and the child goes on with an assumption it states
+  pub async fn relay_ask_caller(self: Arc<Self>, thread: String, args: AskCallerArgs, out: mpsc::UnboundedSender<HubReply>) {
+    use acpira_shared::transcript::{Question, QuestionKind, QuestionOption, QuestionOutcome};
+    let text = args.question.trim().to_owned();
+    if text.is_empty() {
+      let _ = out.send(HubReply::Error("`question` is empty: say what you need decided.".into()));
+      return;
+    }
+    let deadline = args.wait_secs.map(Duration::from_secs).unwrap_or(DEFAULT_WAIT).min(MAX_WAIT);
+    let mut options: Vec<QuestionOption> = vec![];
+    for label in args.options.iter().map(|o| o.trim()).filter(|o| !o.is_empty()) {
+      if !options.iter().any(|o| o.label == label) {
+        options.push(QuestionOption { id: label.to_owned(), label: label.to_owned(), description: None });
+      }
+    }
+    let kind = if options.is_empty() { QuestionKind::Text } else { QuestionKind::Single };
+    let question = Question { id: "answer".into(), title: None, text, kind, options, other: None, numeric: None, required: None };
+    let opened = {
+      let mut c = self.core.lock();
+      match c.tree.relay_latest(&thread) {
+        Some((node, .., SubagentState::Running)) if Self::relay_question(&c, &node).is_none() => Ok(self.open_caller_question(&mut c, &node, vec![question])),
+        Some((.., SubagentState::Running)) => Err("You already have a question waiting for an answer; wait for it before asking another."),
+        _ => Err("Your round is over, so there is no caller waiting to answer."),
+      }
+    };
+    let (mut rx, block) = match opened {
+      Ok(o) => o,
+      Err(e) => {
+        let _ = out.send(HubReply::Error(e.into()));
+        return;
+      }
+    };
+    // With the root idle, the automatic message carries the question now
+    self.relay_nudge();
+    let until = tokio::time::Instant::now() + deadline;
+    let mut tick = tokio::time::interval(PROGRESS_EVERY);
+    tick.tick().await;
+    let reply = loop {
+      tokio::select! {
+        r = &mut rx => break r.ok(),
+        // A progress line that cannot be written: the tool call was abandoned
+        _ = tick.tick() => if out.send(HubReply::Progress("Waiting for an answer".into())).is_err() {
+          self.close_question(&block, QuestionOutcome::Cancelled);
+          return;
+        },
+        _ = tokio::time::sleep_until(until) => {
+          self.close_question(&block, QuestionOutcome::Skipped);
+          let _ = out.send(HubReply::Done(
+            "No answer came in time. Go on with the most reasonable assumption, and state it in your final reply.".into(),
+          ));
+          return;
+        }
+      }
+    };
+    let _ = out.send(match reply {
+      Some(v) if v.get("cancelled").is_some() || v.is_null() => HubReply::Error("The question was withdrawn: your round is being stopped.".into()),
+      Some(v) => match v.get("answers").and_then(|a| a.get("answer")).filter(|_| v.get("skipped") != Some(&Value::Bool(true))) {
+        Some(a) => HubReply::Done(format!("Answer: {}", answer_text(a))),
+        None => HubReply::Done("The question was skipped. Go on with the most reasonable assumption, and state it in your final reply.".into()),
+      },
+      None => HubReply::Error("The question was withdrawn: your round is being stopped.".into()),
+    });
+  }
+
   async fn relay_start(self: Arc<Self>, roster: &Roster, caller: Option<String>, depth: u32, args: AskArgs) -> Result<Start> {
     if depth >= MAX_DEPTH {
       return Err(anyhow!("Summoned agents may not summon further than {MAX_DEPTH} levels deep."));
@@ -739,12 +806,13 @@ impl AcpSession {
       }
       let nodes = c.relays.deliverable();
       // Questions of rounds the root sent off, not told yet: their children are blocked, so these go without waiting for
-      // the rest of the batch
+      // the rest of the batch. A thread a call waits on hears it from that call instead
       let asks: Vec<(String, String)> = c
         .relays
         .ledger
         .iter()
         .filter(|o| o.state == Owed::Running)
+        .filter(|o| c.tree.relay_thread_of(&o.node).is_none_or(|th| !c.relays.waiters.contains_key(&th)))
         .filter_map(|o| Self::relay_question(&c, &o.node).map(|(b, _)| (o.node.clone(), b)))
         .filter(|(_, b)| !c.relays.told.contains(b))
         .collect();
@@ -1025,11 +1093,8 @@ impl AcpSession {
       Some(provider) => provider(agent.to_owned(), self.cwd.clone(), runtime_info_of(&proc.init).mcp).await.0,
       None => vec![],
     };
-    let entry = if depth < MAX_DEPTH {
-      self.deps.host_mcp.as_ref().and_then(|h| h.entry_for_session(agent, &self.arc(), Some(thread), depth))
-    } else {
-      self.deps.host_mcp.as_ref().and_then(|h| h.entry_for(agent))
-    };
+    // Past the depth limit the entry still leads back here (`ask_caller`, the session tools); the hub lists no personas
+    let entry = self.deps.host_mcp.as_ref().and_then(|h| h.entry_for_session(agent, &self.arc(), Some(thread), depth));
     crate::host_mcp::push_entry(&mut servers, entry);
     json!({ "cwd": self.cwd, "mcpServers": servers })
   }
@@ -1420,6 +1485,15 @@ fn caller_answers(
     out.insert(q.id.clone(), value);
   }
   Ok(out)
+}
+
+/// An answer as `ask_caller` reports it: the text, or the picks joined
+fn answer_text(a: &Value) -> String {
+  match a {
+    Value::String(s) => s.trim().to_owned(),
+    Value::Array(l) => l.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", "),
+    other => other.to_string(),
+  }
 }
 
 fn done_text(reply: &str, thread: &str, persona: &SubagentPersona) -> String {

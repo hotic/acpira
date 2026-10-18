@@ -9,9 +9,9 @@ use serde_json::{Value, json};
 use acpira_host::relay::hub::{HostBrowser, RelayHub, call};
 use acpira_shared::sidecar::{BrowserOpened, BrowserReuse};
 use acpira_host::relay::roster::Roster;
-use acpira_host::relay::wire::{AskArgs, HubOp, HubReply, HubRequest};
+use acpira_host::relay::wire::{AskArgs, AskCallerArgs, HubOp, HubReply, HubRequest};
 
-use crate::acp_session::prompt;
+use crate::acp_session::{agent_blocks, prompt, view};
 use crate::fake_or_skip;
 use crate::support::{Disposing, Harness, expect_match, until, v};
 
@@ -816,4 +816,92 @@ async fn an_idle_root_hears_a_childs_question_once_and_then_its_reply() {
   until(|| deliveries(&s).len() == 2 && !s.is_running(), 8000).await;
   let text = deliveries(&s)[1]["text"].as_str().unwrap().to_owned();
   assert!(text.contains("reply to relay: askme later") && !text.contains("asks"), "{text}");
+}
+
+/// The node's open question card once it has one
+async fn question_card(s: &Disposing, i: usize) -> Value {
+  until(|| nodes(s).get(i).is_some_and(|n| n["question"].is_object()), 8000).await;
+  nodes(s)[i]["question"].clone()
+}
+
+/// A summoned child held on a permission card (its round stays running), and the reply lines of one `ask_caller` from it
+async fn ask_caller_from_held_child(s: &Disposing, roster: &Arc<Roster>, wait_secs: u64) -> tokio::sync::mpsc::UnboundedReceiver<HubReply> {
+  let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+  tokio::spawn(s.0.clone().relay_ask(roster.clone(), None, 0, send_off("fake-worker", "relay: perm hold"), tx));
+  until(|| nodes(s).first().is_some_and(|n| n["permissions"].as_array().is_some_and(|p| p.len() == 1)), 8000).await;
+  let thread = nodes(s)[0]["harness"]["thread"].as_str().unwrap().to_owned();
+  let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+  let args = AskCallerArgs { question: "Tabs or spaces?".into(), options: vec!["Tabs".into(), "Spaces".into(), "Tabs".into()], wait_secs: Some(wait_secs) };
+  tokio::spawn(s.0.clone().relay_ask_caller(thread, args, tx));
+  rx
+}
+
+async fn final_of(rx: &mut tokio::sync::mpsc::UnboundedReceiver<HubReply>) -> HubReply {
+  loop {
+    match tokio::time::timeout(Duration::from_secs(20), rx.recv()).await.expect("reply in time") {
+      Some(HubReply::Progress(_)) => continue,
+      Some(r) => return r,
+      None => panic!("closed without a reply"),
+    }
+  }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_childs_ask_caller_goes_through_acpira_mcp_and_the_hub_to_the_waiting_caller_and_back() {
+  let fake = fake_or_skip!();
+  let mut h = Harness::new(&fake, json!({}));
+  let roster = roster(h.dir.path()).await;
+  let hub = RelayHub::start(roster.clone(), Arc::new(|_: &str| {})).await.unwrap();
+  h.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub));
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  let call = r#"mcp-call:ask_caller {"question":"Tabs or spaces?","options":["Tabs","Spaces"]}"#;
+  let (ok, text) = last_text(&run(&s, &roster, 0, ask("fake-worker", call)).await);
+  assert!(ok && text.contains("is waiting for an answer") && text.contains("1. Tabs or spaces?") && text.contains("   - Spaces"), "{text}");
+  let card = nodes(&s)[0]["question"].clone();
+  assert!(card["message"].as_str().is_some_and(|m| m.contains("summoned it is asked too")), "{card}");
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread_of(&text)), answers: Some(vec!["spaces".into()]), ..ask("", "") }).await);
+  assert!(ok && text.contains("Answer: Spaces") && text.contains(r#""ask_caller""#), "{text}");
+  expect_match(&nodes(&s)[0], json!({ "state": "completed" }));
+  // The root's own server has no caller: the tool is not listed, and a call anyway is refused
+  // The question went to the waiting call only: no automatic message told it again
+  assert!(deliveries(&s).is_empty(), "{:?}", deliveries(&s));
+  prompt(&s, r#"mcp-call:ask_caller {"question":"x"}"#).await;
+  until(|| !s.is_running(), 8000).await;
+  let text = agent_blocks(&view(&s)).into_iter().filter(|b| b["type"] == "text").filter_map(|b| b["markdown"].as_str().map(str::to_owned)).next_back().unwrap_or_else(|| panic!("{}", view(&s)["turns"]));
+  let reply: Value = serde_json::from_str(&text).unwrap_or_else(|e| panic!("{e}: {text}"));
+  assert!(!reply["tools"].as_array().unwrap().iter().any(|t| t == "ask_caller"), "{reply}");
+  assert!(reply["result"]["content"][0]["text"].as_str().is_some_and(|t| t.contains("Only a summoned agent")), "{reply}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_ask_caller_the_user_answers_on_the_card_reaches_the_child_and_one_nobody_answers_is_skipped() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let roster = roster(h.dir.path()).await;
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  let mut rx = ask_caller_from_held_child(&s, &roster, 20).await;
+  let card = question_card(&s, 0).await;
+  // Duplicate options are offered once
+  let labels: Vec<&str> = card["questions"][0]["options"].as_array().unwrap().iter().map(|o| o["label"].as_str().unwrap()).collect();
+  assert_eq!(labels, ["Tabs", "Spaces"]);
+  let mut answers = serde_json::Map::new();
+  answers.insert(card["questions"][0]["id"].as_str().unwrap().to_owned(), json!("Tabs"));
+  s.answer_questions(card["id"].as_str().unwrap(), &answers, false);
+  let HubReply::Done(text) = final_of(&mut rx).await else { panic!() };
+  assert_eq!(text, "Answer: Tabs");
+  // Asked again with a short bound and left alone: the call answers that no answer came, and the card is settled skipped
+  let thread = nodes(&s)[0]["harness"]["thread"].as_str().unwrap().to_owned();
+  let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+  tokio::spawn(s.0.clone().relay_ask_caller(thread, AskCallerArgs { question: "Which file?".into(), wait_secs: Some(1), ..Default::default() }, tx));
+  let HubReply::Done(text) = final_of(&mut rx).await else { panic!() };
+  assert!(text.starts_with("No answer came in time"), "{text}");
+  until(|| nodes(&s)[0]["question"].is_null(), 4000).await;
+  let id = nodes(&s)[0]["id"].as_str().unwrap().to_owned();
+  let turns = serde_json::to_string(&s.subagent_transcript(&id).unwrap().0).unwrap();
+  assert!(turns.contains(r#""outcome":"skipped""#), "{turns}");
+  let block = nodes(&s)[0]["permissions"][0]["id"].as_str().unwrap().to_owned();
+  s.resolve_permission(&block, "no");
+  until(|| !s.background_running(), 8000).await;
 }
