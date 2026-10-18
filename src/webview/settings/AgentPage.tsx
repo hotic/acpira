@@ -149,21 +149,14 @@ export function AgentPage({ agent, accounts, install, inventory, controls, provi
   );
 }
 
-// The agent's own MCP servers, skills and rules under one heading, closed until asked for
+// The agent's own MCP servers, skills and rules under one heading, always laid out in full
 function NativeBlock({ agent, count, children }: { agent: AgentInfo; count?: number; children: ReactNode }) {
-  const [open, setOpen] = useState(false);
   return (
-    <Collapsible.Root open={open} onOpenChange={setOpen} className="flex flex-col gap-2">
-      <SectionHead count={count} action={
-        <Chip caret={false} aria-expanded={open} icon={open ? <ChevronUp /> : <ChevronDown />} className="shrink-0" onClick={() => setOpen(v => !v)}>
-          {open ? t('settings.agent.native.hide') : t('settings.agent.native.show')}
-        </Chip>
-      }>{t('settings.agent.native', { agent: agent.name })}</SectionHead>
+    <div className="flex flex-col gap-2">
+      <SectionHead count={count}>{t('settings.agent.native', { agent: agent.name })}</SectionHead>
       <SectionDescription>{t('settings.agent.native.desc', { agent: agent.name })}</SectionDescription>
-      <Collapsible.Panel>
-        <div className="flex flex-col gap-(--section-gap) pt-2">{children}</div>
-      </Collapsible.Panel>
-    </Collapsible.Root>
+      <div className="flex flex-col gap-(--section-gap) pt-2">{children}</div>
+    </div>
   );
 }
 

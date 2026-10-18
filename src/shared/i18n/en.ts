@@ -1127,8 +1127,6 @@ export const en = {
   'settings.shared.footer': 'Changes apply to new sessions; open sessions need to reconnect.',
   'settings.agent.native': 'Built into {agent}',
   'settings.agent.native.desc': 'Read-only, from {agent}’s own config. Shared items live on the Shared page.',
-  'settings.agent.native.show': 'Show',
-  'settings.agent.native.hide': 'Hide',
   'settings.config.desc': 'Configuration files for {agent}. Open a path to edit.',
   'settings.file.missing': 'Missing',
   'settings.loading': 'Scanning…',

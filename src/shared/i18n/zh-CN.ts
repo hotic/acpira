@@ -1141,8 +1141,6 @@ export const zhCN = {
   'settings.shared.footer': '改动对新会话生效，已打开的会话需重新连接。',
   'settings.agent.native': '{agent} 自带',
   'settings.agent.native.desc': '只读，来自 {agent} 自身的配置文件。共享内容在「共享」页管理。',
-  'settings.agent.native.show': '展开',
-  'settings.agent.native.hide': '收起',
   'settings.config.desc': '{agent} 的配置文件。点击路径打开编辑。',
   'settings.file.missing': '不存在',
   'settings.loading': '正在扫描…',

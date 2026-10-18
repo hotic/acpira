@@ -1095,8 +1095,6 @@ export const ja = {
   'settings.shared.footer': '変更は新しいセッションに適用されます。開いているセッションは再接続が必要です。',
   'settings.agent.native': '{agent} に組み込み',
   'settings.agent.native.desc': '読み取り専用。{agent} 自身の設定ファイルの内容です。共有の項目は「共有」ページにあります。',
-  'settings.agent.native.show': '表示',
-  'settings.agent.native.hide': '隠す',
   'settings.config.desc': '{agent} の設定ファイルです。パスを開いて編集します。',
   'settings.file.missing': 'なし',
   'settings.loading': 'スキャン中…',

@@ -1088,8 +1088,6 @@ export const fr = {
   'settings.shared.footer': 'Les changements s’appliquent aux nouvelles sessions ; les sessions ouvertes doivent se reconnecter.',
   'settings.agent.native': 'Intégré à {agent}',
   'settings.agent.native.desc': 'Lecture seule, depuis la configuration propre à {agent}. Les éléments partagés sont sur la page Partagé.',
-  'settings.agent.native.show': 'Afficher',
-  'settings.agent.native.hide': 'Masquer',
   'settings.config.desc': 'Fichiers de configuration de {agent}. Ouvrez un chemin pour le modifier.',
   'settings.file.missing': 'Absent',
   'settings.loading': 'Analyse…',
