@@ -10,6 +10,7 @@ import { useCopied } from '../ui/useCopied';
 import { AgentMark } from './AgentMark';
 import { elapsedDuration } from './folding';
 import { forkTargets, modelLabel, replyMarkdown, turnOutputTps, turnTtft } from './turnActionHelpers';
+import { hasTurnContent } from './turnOutcome';
 
 // What the turn action row needs from the shell: the session it belongs to, the control list for resolving the model
 // name, and the fork action with the agents it can continue on — absent for external (ChatGPT) sessions and in hosts
@@ -30,7 +31,10 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
   const copyState = useCopied(reply);
   const [statsOpen, setStatsOpen] = useState(false);
   const [forkOpen, setForkOpen] = useState(false);
+  // A failed reply with nothing in it offers the fork alone: there is nothing to copy or measure
+  const content = hasTurnContent(turn);
   const copyLabel = copyState.state === 'copied' ? t('code.copied') : copyState.state === 'failed' ? t('code.copyFailed') : t('turn.copy');
+  if (!content && !ctx?.fork) return null;
   return (
     <div
       data-open={statsOpen || forkOpen || undefined}
@@ -64,7 +68,7 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
           </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
         </DropdownMenu.Root>
       )}
-      <Popover.Root open={statsOpen} onOpenChange={setStatsOpen}>
+      {content && <Popover.Root open={statsOpen} onOpenChange={setStatsOpen}>
         <Popover.Trigger render={
           <IconButton size="sm" data-open={statsOpen || undefined} title={t('turn.stats')} aria-label={t('turn.stats')} aria-expanded={statsOpen}>
             <ChartNoAxesColumn strokeWidth={1.5} />
@@ -73,7 +77,7 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
         <Popover.Portal><Popover.Positioner side="bottom" align="end" width="lg"><Popover.Popup>
           <StatsCard turn={turn} model={modelLabel(turn.usage, settings, ctx?.controls ?? { modes: [], options: [] })} />
         </Popover.Popup></Popover.Positioner></Popover.Portal>
-      </Popover.Root>
+      </Popover.Root>}
     </div>
   );
 }

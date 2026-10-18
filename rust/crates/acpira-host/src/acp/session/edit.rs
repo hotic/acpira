@@ -215,18 +215,36 @@ fn read_pointer(session_id: &str) -> String {
   )
 }
 
-/// The lead with its cross-agent note: turns another agent ran come with that agent's tool names and an older view of
-/// the files. A history from the same agent keeps the lead as it is
-fn handoff_lead(lead: &str, fork: Option<&ForkedFrom>, rounds: &[u32]) -> String {
-  let Some((fork, agent)) = fork.and_then(|f| f.agent.as_deref().map(|a| (f, a))) else { return lead.to_owned() };
-  let Some(copied) = usize::try_from(fork.turn_index).ok().and_then(|i| rounds.get(i.min(rounds.len().saturating_sub(1)))) else {
-    return lead.to_owned();
-  };
-  let who = format!("{agent}{}", fork.model.as_deref().map(|m| format!(", model {m}")).unwrap_or_default());
-  let span = if rounds.last() == Some(copied) { "All of it".to_owned() } else { format!("Turns 1-{copied} of it") };
-  format!(
-    "{lead} {span} ran on another agent ({who}), not on you: the tool names in it are that agent's and may not exist here, so use your own tools. Files may have changed since; re-read a file before editing it."
-  )
+/// The lead with the notes a fork's history needs. Turns another agent ran come with that agent's tool names and an
+/// older view of the files. A history that ends on the failed reply it was forked from says how far that reply got: no
+/// answer at all leaves the last message to take over, a partial one left work to check first. Any other history keeps
+/// the lead as it is
+fn handoff_lead(lead: &str, fork: Option<&ForkedFrom>, all: &[Turn], rounds: &[u32]) -> String {
+  let Some(fork) = fork else { return lead.to_owned() };
+  let mut out = lead.to_owned();
+  if let Some(agent) = fork.agent.as_deref()
+    && let Some(copied) = usize::try_from(fork.turn_index).ok().and_then(|i| rounds.get(i.min(rounds.len().saturating_sub(1))))
+  {
+    let who = format!("{agent}{}", fork.model.as_deref().map(|m| format!(", model {m}")).unwrap_or_default());
+    let span = if rounds.last() == Some(copied) { "All of it".to_owned() } else { format!("Turns 1-{copied} of it") };
+    out.push_str(&format!(
+      " {span} ran on another agent ({who}), not on you: the tool names in it are that agent's and may not exist here, so use your own tools. Files may have changed since; re-read a file before editing it."
+    ));
+  }
+  let tail = usize::try_from(fork.turn_index).ok().filter(|i| i + 1 == all.len()).and_then(|i| all[i].as_agent());
+  if let Some(a) = tail.filter(|a| a.stop == Some(TurnStop::Error) || a.error.is_some()) {
+    let answered = a.blocks.iter().any(|b| match b {
+      AgentBlock::Text(x) => !x.markdown.trim().is_empty(),
+      AgentBlock::Notice(_) | AgentBlock::Goal(_) => false,
+      _ => true,
+    });
+    out.push_str(if answered {
+      " Its last reply failed partway through: check the actions it lists, and the workspace, before carrying that request on."
+    } else {
+      " Its last message got no reply, the agent failed before answering: that request is still open."
+    });
+  }
+  out
 }
 
 /// The retained transcript as prompt context. An oversized history is either trimmed to its most recent turns behind an
@@ -246,7 +264,7 @@ pub async fn history_context(
   if source.is_empty() {
     return Ok(Some(HistoryContext { blocks: vec![], omitted: 0 }));
   }
-  let lead = handoff_lead(spec.lead, spec.fork, &numbers);
+  let lead = handoff_lead(spec.lead, spec.fork, all, &numbers);
   let items: Vec<String> = source.iter().map(|t| compact_turn(t).to_string()).collect();
   let omit_note = |n: u32| format!("\n{n} earlier turns were omitted to fit the size limit.");
   let last = rounds.last().copied().unwrap_or(0);
