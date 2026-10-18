@@ -20,7 +20,8 @@ import { type Call, startMeter } from './meter';
 const TASKS_DIR = resolve(import.meta.dirname, 'tasks');
 // The gateway itself out of capacity (seen 2026-10-11 on every model in turn): a run that failed with one of these says
 // nothing about the harness, so it goes to infra.ndjson instead and is run again on the next launch
-const OUTAGE = /no eligible upstream channel|no route configured for model|rate limited or quota exhausted/;
+// "The usage limit has been reached": the gateway's GPT route out of quota mid-run (2026-10-18), on both builds at once
+const OUTAGE = /no eligible upstream channel|no route configured for model|rate limited or quota exhausted|usage limit has been reached/;
 const VERIFY_TIMEOUT_MS = 300_000;
 
 function arg(name: string, fallback?: string): string | undefined {
