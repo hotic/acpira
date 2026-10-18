@@ -428,6 +428,7 @@ export function App() {
       queued={session?.queued}
       goal={session?.goal}
       goalActions={session?.goalActions}
+      forkedFrom={session?.forkedFrom}
       controls={session?.controls ?? { modes: [], options: [] }}
       modelShapes={session?.modelShapes}
       usage={session?.usage}

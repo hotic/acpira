@@ -1320,8 +1320,23 @@ pub struct SessionView {
   pub goal_actions: Option<Vec<GoalAction>>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub subagents: Option<Vec<SubagentSummary>>,
+  /// A fork whose copied turns are still in its transcript: where they came from (the boundary drawn under them)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub forked_from: Option<ForkOrigin>,
   pub created_at: String,
   pub updated_at: String,
+}
+
+/// A fork's origin as the view shows it: the source session, the last copied turn's index, and the source's agent when
+/// the fork moved to another one
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForkOrigin {
+  pub session_id: String,
+  #[serde(deserialize_with = "crate::num::lenient_i64")]
+  pub turn_index: i64,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub agent: Option<AgentId>,
 }
 
 #[cfg(test)]

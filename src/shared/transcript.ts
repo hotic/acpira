@@ -622,6 +622,12 @@ export interface ExternalSessionInfo {
   lastEventAt: string;
 }
 
+export interface ForkOrigin {
+  sessionId: string;
+  turnIndex: number;
+  agent?: AgentId;
+}
+
 export interface SessionView {
   id: string;
   external?: ExternalSessionInfo;
@@ -657,6 +663,9 @@ export interface SessionView {
   goalActions?: GoalAction[];
   // Delegated child nodes announced during this session; each carries its own transcript via the `subagent` message
   subagents?: SubagentSummary[];
+  // A fork whose copied turns are still in its transcript: the source session, the last copied turn's index, and the
+  // source's agent when the fork moved to another one; the thread draws the boundary under that turn
+  forkedFrom?: ForkOrigin;
   createdAt: string;
   updatedAt: string;
 }

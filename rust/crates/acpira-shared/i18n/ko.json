@@ -356,6 +356,7 @@
   "turns.command.mode": "모드가 {mode}(으)로 변경됨",
   "turn.copy": "응답 복사",
   "turn.fork": "여기서 포크",
+  "turn.forkedFrom": "포크 원본",
   "turn.stats": "응답 통계",
   "stats.model": "모델",
   "stats.duration": "소요 시간",

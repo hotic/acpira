@@ -264,3 +264,24 @@ async fn a_fork_whose_agent_can_read_its_own_session_is_told_how_and_pi_is_not()
     assert!(wire.contains("alpha"), "{id}: {wire}");
   }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_views_fork_boundary_shrinks_with_an_edit_into_the_copied_turns_and_goes_when_none_are_left() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let s = reopened(&h, fork_record(&h, two_pairs(), |r| {
+    r.forked_from = serde_json::from_value(json!({ "sessionId": "source-session-id", "turnIndex": 3, "agent": "claude" })).unwrap();
+    r.title = "Fork: alpha".into();
+  })).await;
+  expect_match(view(&s), json!({ "forkedFrom": { "sessionId": "source-session-id", "turnIndex": 3, "agent": "claude" } }));
+  s.edit_turn(history_edit(&s, 2, "gamma")).await.unwrap();
+  until(|| !s.is_running() && turn_count(&s) == 4 && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
+  expect_match(view(&s), json!({ "forkedFrom": { "turnIndex": 1 } }));
+  s.edit_turn(history_edit(&s, 0, "delta")).await.unwrap();
+  until(|| !s.is_running() && turn_count(&s) == 2 && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
+  expect_absent(view(&s), "forkedFrom");
+  // The origin itself stays on the record: it still keeps the agent's own titles away
+  let record = s.to_record();
+  assert_eq!(record.forked_from.map(|f| f.turn_index), Some(-1));
+  assert_eq!(view(&s)["title"], "Fork: alpha");
+}

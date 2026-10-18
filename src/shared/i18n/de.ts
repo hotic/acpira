@@ -366,6 +366,7 @@ export const de = {
   'turns.command.mode': 'Modus zu {mode} gewechselt',
   'turn.copy': 'Antwort kopieren',
   'turn.fork': 'Ab hier abzweigen',
+  'turn.forkedFrom': 'Abgezweigt aus',
   'turn.stats': 'Antwortstatistik',
   'stats.model': 'Modell',
   'stats.duration': 'Dauer',

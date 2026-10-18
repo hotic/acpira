@@ -360,6 +360,7 @@
   "turns.command.option": "{name}：{value}",
   "turn.copy": "复制回复",
   "turn.fork": "从这里分支",
+  "turn.forkedFrom": "分支来源",
   "turn.stats": "回复统计",
   "stats.model": "模型",
   "stats.duration": "用时",

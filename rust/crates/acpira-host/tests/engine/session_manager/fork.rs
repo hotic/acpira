@@ -120,6 +120,7 @@ async fn forking_onto_another_agent_starts_it_like_a_new_session_and_records_whe
   let view = m.active().unwrap();
   assert_eq!(view["agent"], "fake2");
   assert_eq!(turns_len(Some(view.clone())), 2);
+  expect_match(&view, json!({ "forkedFrom": { "sessionId": src, "turnIndex": 1, "agent": "fake" } }));
   // The target's own model list, its default model: the source's m2 is not replayed onto it
   let model = view["controls"]["options"].as_array().unwrap().iter().find(|c| c["id"] == "model").cloned().expect("model control");
   assert!(model["options"].to_string().contains("only-two"), "{model}");
