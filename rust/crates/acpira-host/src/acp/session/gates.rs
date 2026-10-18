@@ -32,6 +32,8 @@ pub(crate) enum QuestionReply {
   Grok,
   /// A `session/request_permission` asked as a question (`Vendor::question_permission`): the answer is the picked option
   Permission,
+  /// A summoned child's `ask_caller` (`relay.rs`): the answers as given, or skipped
+  Caller,
 }
 
 pub(crate) struct PendingQuestion {
@@ -664,8 +666,30 @@ impl AcpSession {
           json!({ "action": "accept", "content": form_content(schema, &p.questions, &given) })
         }
       }
+      QuestionReply::Caller => json!({ "skipped": skip || empty, "answers": given }),
     };
     let _ = p.tx.send(reply);
+    self.touch(&mut c);
+  }
+
+  /// A summoned child's own question (`ask_caller`) as a card on its running round: it routes like any question of that
+  /// child, to its caller and to the user (`open_question`)
+  pub(crate) fn open_caller_question(&self, c: &mut Core, node: &str, questions: Vec<Question>) -> (oneshot::Receiver<Value>, String) {
+    let target = Target::Node(node.to_owned());
+    let block_id = self.open_question(c, &target, questions.clone(), None, None);
+    Self::bump_target(c, &target);
+    let (tx, rx) = oneshot::channel();
+    c.questions.pending.push(PendingQuestion { tx, block_id: block_id.clone(), questions, node_id: Some(node.to_owned()), reply: QuestionReply::Caller });
+    self.touch(c);
+    (rx, block_id)
+  }
+
+  /// Close a card nobody answered (the asking call gave up or timed out), recording why
+  pub(crate) fn close_question(&self, block_id: &str, outcome: QuestionOutcome) {
+    let mut c = self.core.lock();
+    let Some(i) = c.questions.pending.iter().position(|p| p.block_id == block_id) else { return };
+    let p = c.questions.pending.remove(i);
+    settle_question(&mut c, &p, outcome, None);
     self.touch(&mut c);
   }
 
@@ -698,6 +722,7 @@ fn cancel_reply(p: &PendingQuestion) -> Value {
     QuestionReply::Grok => json!({ "outcome": "skip_interview" }),
     QuestionReply::Form { .. } => json!({ "action": "cancel" }),
     QuestionReply::Permission => cancelled_permission(),
+    QuestionReply::Caller => json!({ "cancelled": true }),
   }
 }
 

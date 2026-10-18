@@ -65,6 +65,18 @@ a page goes on with offset). detail \"full\" adds \
 tool output and diffs. `session` takes a link (acpira://session/<id>, vscode://hotic.acpira/session/<id>), an id, or the \
 agent's own session id.";
 
+/// Appended to the instructions of a summoned child's server, so a deferred `ask_caller` is still found
+const CALLER_INSTRUCTIONS: &str = "Another agent summoned you through Acpira and reads only your final reply. When a decision \
+only it can make blocks you (a choice between approaches it would care about, a missing requirement), ask it with ask_caller \
+and wait for the answer; for anything you can reasonably decide yourself, decide and say what you assumed.";
+
+const CALLER_DESCRIPTION: &str = "Ask the agent that summoned you a question and wait for its answer. Use it only for a \
+decision that blocks you and that you cannot reasonably make yourself; one question at a time, short and self-contained, with \
+`options` when there are clear choices. The user sees the question too and may answer first. When no answer comes in time the \
+result says so: go on with the most reasonable assumption and state it in your final reply.";
+
+pub const CALLER_TOOL: &str = "ask_caller";
+
 /// Appended to the instructions while the serving shell can show pages, so a deferred `open_browser` is still found
 const BROWSER_INSTRUCTIONS: &str = "When the user wants to see a web page (a local dev server, a tool's web UI), call open_browser \
 with its URL: Acpira opens it in a browser tab inside their editor, forwarding the port when the workspace is remote. \
@@ -172,7 +184,7 @@ pub fn run(version: &str) -> i32 {
       continue;
     }
     let mut initialize = false;
-    let mut browser = false;
+    let mut features = crate::relay::wire::HostFeatures::default();
     if let Some(relay) = &relay
       && let Ok(msg) = serde_json::from_str::<Value>(&line)
     {
@@ -180,14 +192,18 @@ pub fn run(version: &str) -> i32 {
       if method == "initialize" {
         relay.note_client(msg.get("params"));
         initialize = true;
-        browser = relay.features().browser;
+        features = relay.features();
       }
       if method == "tools/list"
         && let Some(id) = msg.get("id").cloned()
       {
         let mut tools = vec![tool_def(), hooks_tool_def()];
         tools.extend(relay.tool_def());
-        if relay.features().browser {
+        let features = relay.features();
+        if features.summoned {
+          tools.push(caller_tool_def());
+        }
+        if features.browser {
           tools.push(browser_tool_def());
         }
         tools.extend(session_tool_defs());
@@ -197,14 +213,16 @@ pub fn run(version: &str) -> i32 {
         continue;
       }
       if method == "tools/call"
-        && msg.get("params").and_then(|p| p.get("name")).and_then(Value::as_str) == Some(ASK_TOOL)
+        && let Some(name @ (ASK_TOOL | CALLER_TOOL)) = msg.get("params").and_then(|p| p.get("name")).and_then(Value::as_str)
         && let Some(id) = msg.get("id").cloned()
       {
         let (relay, out, params) = (relay.clone(), out.clone(), msg.get("params").cloned().unwrap_or(Value::Null));
+        let caller = name == CALLER_TOOL;
         std::thread::spawn(move || {
-          let result = relay.ask(&params, &mut |progress: Value| {
+          let mut progress = |progress: Value| {
             write(&out, &progress);
-          });
+          };
+          let result = if caller { relay.ask_caller(&params, &mut progress) } else { relay.ask(&params, &mut progress) };
           write(&out, &json!({ "jsonrpc": "2.0", "id": id, "result": result }));
         });
         continue;
@@ -236,7 +254,13 @@ pub fn run(version: &str) -> i32 {
     }
     let Some(mut reply) = handle_line(&line, version) else { continue };
     if initialize && let Some(result) = reply.get_mut("result") {
-      let extra = if browser { format!("\n\n{BROWSER_INSTRUCTIONS}") } else { String::new() };
+      let mut extra = String::new();
+      if features.summoned {
+        extra.push_str(&format!("\n\n{CALLER_INSTRUCTIONS}"));
+      }
+      if features.browser {
+        extra.push_str(&format!("\n\n{BROWSER_INSTRUCTIONS}"));
+      }
       result["instructions"] = json!(format!("{INSTRUCTIONS}\n\n{RELAY_INSTRUCTIONS}{extra}\n\n{SESSIONS_INSTRUCTIONS}"));
     }
     if !write(&out, &reply) {
@@ -356,7 +380,7 @@ impl Relay {
   }
 
   fn ask(&self, params: &Value, progress: &mut dyn FnMut(Value)) -> Value {
-    use crate::relay::wire::{AskArgs, HubOp, HubReply};
+    use crate::relay::wire::{AskArgs, HubOp};
     let args = params.get("arguments").cloned().unwrap_or(Value::Null);
     let text = |k: &str| args.get(k).and_then(Value::as_str).map(str::to_owned);
     let ask = AskArgs {
@@ -369,10 +393,28 @@ impl Relay {
       wait: args.get("wait").and_then(Value::as_bool),
       answers: args.get("answers").and_then(Value::as_array).map(|l| l.iter().filter_map(|a| a.as_str().map(str::to_owned)).collect()),
     };
+    self.streamed(HubOp::Ask(ask), params, progress)
+  }
+
+  /// `ask_caller`: the question goes to the hub, which waits for the caller's (or the user's) answer
+  fn ask_caller(&self, params: &Value, progress: &mut dyn FnMut(Value)) -> Value {
+    use crate::relay::wire::{AskCallerArgs, HubOp};
+    let args = params.get("arguments").cloned().unwrap_or(Value::Null);
+    let ask = AskCallerArgs {
+      question: args.get("question").and_then(Value::as_str).unwrap_or("").to_owned(),
+      options: args.get("options").and_then(Value::as_array).map(|l| l.iter().filter_map(|a| a.as_str().map(str::to_owned)).collect()).unwrap_or_default(),
+      wait_secs: Some(self.wait_secs.load(std::sync::atomic::Ordering::Relaxed)),
+    };
+    self.streamed(HubOp::AskCaller(ask), params, progress)
+  }
+
+  /// One request answered with progress lines (forwarded as MCP progress when the call has a token), then a final line
+  fn streamed(&self, op: crate::relay::wire::HubOp, params: &Value, progress: &mut dyn FnMut(Value)) -> Value {
+    use crate::relay::wire::HubReply;
     let token = params.get("_meta").and_then(|m| m.get("progressToken")).cloned();
     let mut n = 0u64;
     let mut end: Option<Value> = None;
-    let r = crate::relay::hub::call(&self.addr, &self.request(HubOp::Ask(ask)), |reply| match reply {
+    let r = crate::relay::hub::call(&self.addr, &self.request(op), |reply| match reply {
       HubReply::Progress(message) => {
         if let Some(t) = &token {
           n += 1;
@@ -493,6 +535,25 @@ pass the `thread` its answer named.\n\nAgents:\n{}",
       "anthropic/alwaysLoad": true,
       "anthropic/searchHint": "summon ask subagent persona @name second opinion review delegate another agent CLI",
     },
+  })
+}
+
+/// `ask_caller`, offered only to a summoned child's server
+fn caller_tool_def() -> Value {
+  json!({
+    "name": CALLER_TOOL,
+    "title": "Ask the caller",
+    "description": CALLER_DESCRIPTION,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "question": { "type": "string", "description": "The question, self-contained: the caller has not seen your work." },
+        "options": { "type": "array", "items": { "type": "string" }, "description": "Suggested answers, when there are clear choices; the caller may still answer in its own words." },
+      },
+      "required": ["question"],
+    },
+    "annotations": { "readOnlyHint": true, "openWorldHint": false },
+    "_meta": { "anthropic/searchHint": "ask caller parent question decision clarify summoned" },
   })
 }
 

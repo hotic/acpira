@@ -710,9 +710,9 @@ const app = acp.agent({ name: 'fake-agent' })
       return { stopReason: 'end_turn' };
     }
     // "mcp-call:<tool> <json arguments>" → start the session's `acpira` MCP server the way a CLI does, list its tools, call one,
-    // and reply with JSON { tools, result } (or { error })
+    // and reply with JSON { tools, result } (or { error }). Only the first line counts (a summoned child's brief follows it)
     if (text.startsWith('mcp-call:')) {
-      const [tool = '', ...rest] = text.slice('mcp-call:'.length).trim().split(' ');
+      const [tool = '', ...rest] = text.split('\n')[0]!.slice('mcp-call:'.length).trim().split(' ');
       const server = mcpBySession.get(sid)?.find(m => m.name === 'acpira' && 'command' in m) as Extract<acp.McpServer, { command: string }> | undefined;
       const reply = server ? await callMcp(server, tool, JSON.parse(rest.join(' ') || '{}') as unknown).catch((e: unknown) => ({ error: String(e) })) : { error: 'no acpira MCP server' };
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(reply) } });

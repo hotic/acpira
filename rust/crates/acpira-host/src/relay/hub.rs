@@ -157,11 +157,13 @@ impl RelayHub {
     };
     match req.op {
       HubOp::List => {
-        let _ = write.write_all(reply(HubReply::Personas(self.roster.enabled())).as_bytes()).await;
+        // A grant at the depth limit has the entry for its caller and the session tools, but nobody to summon
+        let personas = if depth >= crate::relay::MAX_DEPTH { vec![] } else { self.roster.enabled() };
+        let _ = write.write_all(reply(HubReply::Personas(personas)).as_bytes()).await;
       }
       HubOp::Features => {
         let browser = self.browser.read().as_ref().is_some_and(|b| b.available());
-        let _ = write.write_all(reply(HubReply::Features(HostFeatures { browser })).as_bytes()).await;
+        let _ = write.write_all(reply(HubReply::Features(HostFeatures { browser, summoned: caller.is_some() })).as_bytes()).await;
       }
       HubOp::OpenBrowser { url } => {
         let browser = self.browser.read().clone();
@@ -175,13 +177,24 @@ impl RelayHub {
         let r = self.library_op(&session, caller.is_some(), req.op).await;
         let _ = write.write_all(reply(r).as_bytes()).await;
       }
-      HubOp::Ask(args) => {
+      HubOp::Ask(_) | HubOp::AskCaller(_) => {
         let Some(session) = session.upgrade() else {
           let _ = write.write_all(reply(HubReply::Error("The Acpira session that started this agent is gone.".into())).as_bytes()).await;
           return;
         };
         let (tx, mut rx) = mpsc::unbounded_channel::<HubReply>();
-        tokio::spawn(session.relay_ask(self.roster.clone(), caller, depth, args, tx));
+        match (req.op, caller) {
+          (HubOp::Ask(args), caller) => {
+            tokio::spawn(session.relay_ask(self.roster.clone(), caller, depth, args, tx));
+          }
+          (HubOp::AskCaller(args), Some(thread)) => {
+            tokio::spawn(session.relay_ask_caller(thread, args, tx));
+          }
+          _ => {
+            let _ = write.write_all(reply(HubReply::Error("Only a summoned agent has a caller to ask.".into())).as_bytes()).await;
+            return;
+          }
+        }
         // Lines until the final one; a closed socket (the tool call was abandoned) leaves the child running
         while let Some(r) = rx.recv().await {
           let last = !matches!(r, HubReply::Progress(_));

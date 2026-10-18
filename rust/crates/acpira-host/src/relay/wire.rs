@@ -18,6 +18,9 @@ pub struct HubRequest {
 pub enum HubOp {
   List,
   Ask(AskArgs),
+  /// `ask_caller`: a summoned child's question to the agent that summoned it (only for a summoned grant); progress
+  /// lines while it waits, then `Done` / `Error`
+  AskCaller(AskCallerArgs),
   /// Which host tools this sidecar's shell can carry out right now (`HubReply::Features`)
   Features,
   /// `open_browser`: show an http(s) page in the user's editor; answered `Done` / `Error`
@@ -99,6 +102,20 @@ pub struct AskArgs {
   pub answers: Option<Vec<String>>,
 }
 
+/// `ask_caller`'s arguments
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AskCallerArgs {
+  #[serde(default)]
+  pub question: String,
+  /// Suggested answers; the caller may still answer in its own words
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub options: Vec<String>,
+  /// How long the call may wait for the answer (seconds; the MCP side derives it from the client)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub wait_secs: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum HubReply {
@@ -120,4 +137,7 @@ pub struct HostFeatures {
   /// The shell shows web pages inside the editor (`open_browser`)
   #[serde(default)]
   pub browser: bool,
+  /// The grant is a summoned child's: it has a caller to ask (`ask_caller`)
+  #[serde(default)]
+  pub summoned: bool,
 }
