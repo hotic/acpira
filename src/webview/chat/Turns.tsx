@@ -572,7 +572,7 @@ function CursorFold({ blocks }: { blocks: ToolCallBlock[] }) {
 // Permission cards stay outside; the latest reply remains visible while it streams.
 // `working` is false while a /compact reply shows only its compaction row, which retires the head the same way a settled turn does
 function CodexMessage({ turn, running, working = running, onPermission, memoryKey, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; running: boolean; working?: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
-  const { process, reply, permissions, notices, goalsLead, goals } = splitCodexBlocks(turn.blocks, running);
+  const { process, reply, permissions, notices, goalsLead, goals, compactions } = splitCodexBlocks(turn.blocks, running);
   const hasTools = turn.blocks.some(block => block.type === 'tool_call');
   // The process folds away only once the reply has finished drawing, not when its last chunk arrived
   const [replyBusy, setReplyBusy] = useState(false);
@@ -588,6 +588,8 @@ function CodexMessage({ turn, running, working = running, onPermission, memoryKe
         </>
       )}
       {reply.map((block, i) => <Prose key={i} block={block} onBusy={i === reply.length - 1 ? setReplyBusy : undefined} />)}
+      {/* A compaction run after the reply was written: a status row under it, outside the fold */}
+      {compactions.map(block => <Compaction key={block.id} block={block} />)}
       {/* Later milestones (paused / met / cleared …) close the reply they followed */}
       {goals.map((b, i) => <GoalRow key={`goal${i}`} block={b} />)}
       {permissions.filter(block => !block.planId).map(block => <Permission key={block.id} block={block} onChoose={id => onPermission(block.id, id)} />)}

@@ -1,5 +1,5 @@
 import { isSessionTool, sessionRead, splitSessionTarget, type SessionRead } from '@shared/sessionLinks';
-import type { AgentBlock, AgentTurn, GoalBlock, NoticeBlock, TextBlock, ToolCallBlock, ToolKind } from '@shared/transcript';
+import type { AgentBlock, AgentTurn, CompactionBlock, GoalBlock, NoticeBlock, TextBlock, ToolCallBlock, ToolKind } from '@shared/transcript';
 import type { MsgKey } from '@shared/i18n';
 import { getLocale, t } from '../i18n';
 import { planApprovalTitle } from './permissionOptions';
@@ -35,13 +35,21 @@ export function splitCodexBlocks(blocks: AgentBlock[], live = false) {
   // actions follow (a `/goal` steered into a running turn) keeps its place in the process history; lifted out, it would
   // sit under the whole live process until the turn ends
   const isAction = (b: AgentBlock) => b.type !== 'goal' && b.type !== 'text' && b.type !== 'permission' && b.type !== 'notice' && (b.type !== 'question' || !!b.outcome);
+  // A compaction after the reply (the built-in agent's threshold compaction once the last call is answered) is upkeep
+  // for the next turn, not work the reply came out of: counted as an action it turned the whole reply into process
+  // history, and a collapsed fold showed nothing of it. It follows the reply as a status row instead; a compaction
+  // before the reply text stays in the process where it happened
+  let lastWork = blocks.length - 1;
+  while (lastWork >= 0 && (!isAction(blocks[lastWork]!) || blocks[lastWork]!.type === 'compaction')) lastWork--;
+  const firstReply = blocks.findIndex((b, i) => i > lastWork && b.type === 'text');
+  const upkeep = (b: AgentBlock, i: number): b is CompactionBlock => b.type === 'compaction' && firstReply >= 0 && i > firstReply;
   const firstOther = blocks.findIndex(b => b.type !== 'goal');
   let lastAction = blocks.length - 1;
-  while (lastAction >= 0 && !isAction(blocks[lastAction]!)) lastAction--;
+  while (lastAction >= 0 && (!isAction(blocks[lastAction]!) || upkeep(blocks[lastAction]!, lastAction))) lastAction--;
   const goalsLead = blocks.filter((b, i): b is GoalBlock => b.type === 'goal' && (firstOther < 0 || i < firstOther));
   const goals = blocks.filter((b, i): b is GoalBlock => b.type === 'goal' && firstOther >= 0 && i > firstOther && i > lastAction);
   const content = blocks.filter((b, i) => b.type === 'goal' ? firstOther >= 0 && i > firstOther && i < lastAction
-    : b.type !== 'permission' && !lifted(b) && (b.type !== 'question' || !!b.outcome));
+    : b.type !== 'permission' && !lifted(b) && !upkeep(b, i) && (b.type !== 'question' || !!b.outcome));
   const foldable = content.some(b => b.type === 'tool_call');
   let end = content.length;
   while (end > 0 && (content[end - 1]!.type === 'text' || (foldable && !live && TAIL_PROCESS.has(content[end - 1]!.type)))) end--;
@@ -56,6 +64,7 @@ export function splitCodexBlocks(blocks: AgentBlock[], live = false) {
     notices,
     goalsLead,
     goals,
+    compactions: blocks.filter(upkeep),
   };
 }
 
