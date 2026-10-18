@@ -32,13 +32,13 @@ describe('session tool rows', () => {
 
   it('name the turns in the fold heading while the read runs', () => {
     setLocale('zh-CN');
-    expect(foldActivity({ role: 'agent', blocks: [{ ...read!, status: 'in_progress' }] })).toMatchObject({ label: '正在读取会话', target: '第 2–3 回合' });
+    expect(foldActivity({ role: 'agent', blocks: [{ ...read!, status: 'in_progress' }] })).toMatchObject({ label: '正在读取会话', target: '第 2–3 段对话' });
   });
 
   it('split targets back into session and rest', () => {
     expect(splitSessionTarget('acpira://session/abc parser speed')).toEqual({ id: 'abc', rest: 'parser speed' });
     expect(splitSessionTarget('parser speed')).toEqual({ rest: 'parser speed' });
     expect(splitSessionTarget(undefined)).toEqual({});
-    expect([turnRange('3-5'), turnRange('3-'), turnRange('-5')]).toEqual(['3–5', '3–', '1–5']);
+    expect([turnRange('3-5'), turnRange('3-3'), turnRange('-1'), turnRange('3-'), turnRange('-5')]).toEqual(['3–5', '3', '1', '3–', '1–5']);
   });
 });

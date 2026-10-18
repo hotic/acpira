@@ -603,7 +603,7 @@
   "verb.showImage": "展示图片",
   "verb.searchSessions": "搜索会话",
   "verb.readSession": "读取会话",
-  "tool.sessionTurns": "第 {range} 回合",
+  "tool.sessionTurns": "第 {range} 段对话",
   "verb.delegate": "委派",
   "verb.awaitSubagent": "等待子代理",
   "verb.workflow": "运行工作流",

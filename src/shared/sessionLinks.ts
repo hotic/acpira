@@ -71,8 +71,9 @@ export function splitSessionTarget(target: string | undefined): { id?: string; r
   return { ...(id ? { id } : {}), ...(rest ? { rest } : {}) };
 }
 
-// A read's range as shown: `3-5` → `3–5`, `3-` → `3–`, `-5` → `1–5`
+// A read's range as shown: `3-5` → `3–5`, `3-3` → `3`, `3-` → `3–`, `-5` → `1–5`
 export function turnRange(range: string): string {
   const [from = '', to = ''] = range.split('-');
-  return `${from || '1'}–${to}`;
+  const start = from || '1';
+  return start === to ? start : `${start}–${to}`;
 }

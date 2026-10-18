@@ -601,7 +601,7 @@
   "verb.showImage": "展示圖片",
   "verb.searchSessions": "搜尋會話",
   "verb.readSession": "讀取會話",
-  "tool.sessionTurns": "第 {range} 回合",
+  "tool.sessionTurns": "第 {range} 段對話",
   "verb.delegate": "委派",
   "verb.awaitSubagent": "等待子代理",
   "verb.workflow": "執行工作流程",
