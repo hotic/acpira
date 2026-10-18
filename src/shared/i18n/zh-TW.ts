@@ -1125,8 +1125,6 @@ export const zhTW = {
   'settings.shared.footer': '改動對新工作階段生效，已開啟的工作階段需重新連線。',
   'settings.agent.native': '{agent} 自帶',
   'settings.agent.native.desc': '唯讀，來自 {agent} 自身的設定檔。共享內容在「共享」頁管理。',
-  'settings.agent.native.show': '展開',
-  'settings.agent.native.hide': '收起',
   'settings.config.desc': '{agent} 的設定檔。點選路徑開啟編輯。',
   'settings.file.missing': '不存在',
   'settings.loading': '正在掃描…',

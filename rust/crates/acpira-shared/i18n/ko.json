@@ -1071,8 +1071,6 @@
   "settings.shared.footer": "변경 사항은 새 세션에 적용됩니다. 열려 있는 세션은 다시 연결해야 합니다.",
   "settings.agent.native": "{agent} 기본 제공",
   "settings.agent.native.desc": "읽기 전용. {agent} 자체 설정 파일의 내용입니다. 공유 항목은 공유 페이지에 있습니다.",
-  "settings.agent.native.show": "보기",
-  "settings.agent.native.hide": "숨기기",
   "settings.config.desc": "{agent}의 구성 파일입니다. 경로를 열어 편집하세요.",
   "settings.file.missing": "없음",
   "settings.loading": "검색 중…",

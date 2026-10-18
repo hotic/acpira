@@ -1098,8 +1098,6 @@
   "settings.shared.footer": "Изменения применяются к новым сессиям; открытым сессиям нужно переподключиться.",
   "settings.agent.native": "Встроено в {agent}",
   "settings.agent.native.desc": "Только чтение, из собственной конфигурации {agent}. Общие элементы — на странице «Общие ресурсы».",
-  "settings.agent.native.show": "Показать",
-  "settings.agent.native.hide": "Скрыть",
   "settings.config.desc": "Файлы конфигурации {agent}. Откройте путь для правки.",
   "settings.file.missing": "Отсутствует",
   "settings.loading": "Сканирование…",

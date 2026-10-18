@@ -1084,8 +1084,6 @@ export const de = {
   'settings.shared.footer': 'Änderungen gelten für neue Sitzungen; offene Sitzungen müssen sich neu verbinden.',
   'settings.agent.native': 'In {agent} integriert',
   'settings.agent.native.desc': 'Schreibgeschützt, aus der eigenen Konfiguration von {agent}. Geteiltes steht auf der Seite „Geteilt“.',
-  'settings.agent.native.show': 'Anzeigen',
-  'settings.agent.native.hide': 'Ausblenden',
   'settings.config.desc': 'Konfigurationsdateien von {agent}. Einen Pfad zum Bearbeiten öffnen.',
   'settings.file.missing': 'Fehlt',
   'settings.loading': 'Wird durchsucht…',
