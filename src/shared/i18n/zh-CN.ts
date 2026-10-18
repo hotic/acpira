@@ -636,7 +636,7 @@ export const zhCN = {
   'verb.showImage': '展示图片',
   'verb.searchSessions': '搜索会话',
   'verb.readSession': '读取会话',
-  'tool.sessionTurns': '第 {range} 回合',
+  'tool.sessionTurns': '第 {range} 段对话',
   // Delegation calls: the tool that spawns a subagent (Devin run_subagent, Claude/Kimi Agent) and the one that blocks on it
   'verb.delegate': '委派',
   'verb.awaitSubagent': '等待子代理',

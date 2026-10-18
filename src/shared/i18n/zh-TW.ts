@@ -634,7 +634,7 @@ export const zhTW = {
   'verb.showImage': '展示圖片',
   'verb.searchSessions': '搜尋會話',
   'verb.readSession': '讀取會話',
-  'tool.sessionTurns': '第 {range} 回合',
+  'tool.sessionTurns': '第 {range} 段對話',
   // Delegation calls: the tool that spawns a subagent (Devin run_subagent, Claude/Kimi Agent) and the one that blocks on it
   'verb.delegate': '委派',
   'verb.awaitSubagent': '等待子代理',
