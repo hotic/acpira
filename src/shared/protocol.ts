@@ -101,17 +101,25 @@ export interface BrowserLook {
   locale: Locale;
 }
 
+// A page opened in the browser panel before, for the address bar's suggestions (most recent first)
+export interface BrowserPage {
+  url: string;
+  title: string;
+}
+
 export type BrowserHostMsg =
   // `target`: the page as asked for (what the address bar shows); `src`: the proxy address as this webview reaches it;
   // `token`: what the picker stamps its messages with
   | { type: 'browserFrame'; target: string; src: string; token: string }
   | { type: 'browserError'; target: string; error: string }
-  | { type: 'browserLook'; look: BrowserLook };
+  | { type: 'browserLook'; look: BrowserLook }
+  | { type: 'browserHistory'; pages: BrowserPage[] };
 
 export type BrowserMsg =
   | { type: 'browserReady' }
   | { type: 'browserNavigate'; url: string }
-  | { type: 'browserTitle'; title: string }
+  // The page the frame shows now (also after in-page navigation), recorded in the history
+  | { type: 'browserTitle'; url: string; title: string }
   // Picked elements with the user's comment, bound for the chat
   | { type: 'browserAdd'; item: ContextItem }
   | { type: 'browserOpenExternal'; url: string };
