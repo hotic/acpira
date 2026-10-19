@@ -109,7 +109,8 @@ export const PLAN_AUTO_APPROVE_AGENTS: readonly AgentId[] = ['claude'];
 export const DEFAULT_SETTINGS: SettingsView = {
   language: 'auto',
   locale: 'en',
-  defaultAgent: 'grok',
+  // The built-in agent ships inside the sidecar, so a fresh install can open a session without any CLI
+  defaultAgent: 'acpira',
   agentOrder: [],
   disabledAgents: [],
   sessionScope: 'workspace',

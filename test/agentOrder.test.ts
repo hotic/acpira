@@ -35,6 +35,17 @@ describe('agent order', () => {
     expect(pickDefaultAgent(allOff, 'grok')).toBe('grok');
   });
 
+  it('falls back from a default whose CLI is missing to the first enabled installed agent', () => {
+    expect(pickDefaultAgent(arrangeAgents(list, { order: ['kimi', 'pi'], disabled: [] }), 'kimi')).toBe('pi');
+    // Nothing installed to take over: the missing default stays, so its error card names it
+    const none: AgentInfo[] = [{ id: 'kimi', name: 'Kimi', available: false }, { id: 'pi', name: 'Pi', available: false }];
+    expect(pickDefaultAgent(none, 'kimi')).toBe('kimi');
+  });
+
+  it('defaults to the built-in agent', () => {
+    expect(sanitizeSetting('defaultAgent', undefined)).toBe('acpira');
+  });
+
   it('moves an id to a clamped position', () => {
     expect(moveAgent(['a', 'b', 'c'], 'c', 0)).toEqual(['c', 'a', 'b']);
     expect(moveAgent(['a', 'b', 'c'], 'a', 9)).toEqual(['b', 'c', 'a']);

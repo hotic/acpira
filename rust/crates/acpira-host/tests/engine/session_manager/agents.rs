@@ -71,6 +71,26 @@ async fn probing_binaries_marks_the_fake_agent_available_and_an_uninstalled_one_
   m2.dispose().await;
 }
 
+// A fresh machine without the configured CLI: new sessions take the first installed agent instead of an error card,
+// while an explicit pick of the missing one still opens it (its Retry / install path)
+#[tokio::test(flavor = "multi_thread")]
+async fn a_default_whose_cli_is_missing_gives_way_to_an_installed_agent() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let ghost = json!({ "name": "Ghost", "command": "/nonexistent/ghost-cli" });
+  let mut opts = Opts::with_agents(merged(&[("ghost", ghost), ("fake", agent_setting(&fake, "fake", json!({})))]), "ghost");
+  // Ahead of whatever built-in CLIs this machine has installed
+  opts.prefs = Arc::new(Mutex::new(AgentPrefs { order: vec!["ghost".into(), "fake".into()], disabled: vec![] }));
+  let m = Mgr::new(dir.path(), opts);
+  m.init().await;
+  assert_eq!(m.m.agents().iter().find(|a| a.id == "ghost").unwrap().available, Some(false));
+  m.new_session(None).await;
+  assert_eq!(m.active().unwrap()["agent"], "fake");
+  m.new_session(Some("ghost")).await;
+  assert_eq!(m.active().unwrap()["agent"], "ghost");
+  m.dispose().await;
+}
+
 // A CLI installed while the window is open: the registry's notification re-pushes agents to every viewer, and the poll keeps looking while
 // something is missing; the terminal fallback runs the vendor line through the shell in a host terminal
 #[tokio::test(flavor = "multi_thread")]

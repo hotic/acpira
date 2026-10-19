@@ -569,14 +569,20 @@ impl SessionManager {
     let _ = self.first_probe.subscribe().wait_for(|done| *done).await;
   }
 
+  /// Same rule as `pickDefaultAgent` (src/shared/agentOrder.ts): the configured agent unless it is switched off or its
+  /// CLI is missing, then the first enabled installed agent (the built-in one leads the registry). A missing default
+  /// with nothing installed to take over stays, so the error names it; an unknown id stays (a custom agent not probed yet)
   fn default_agent(&self) -> String {
     let preferred = (self.deps.default_agent)();
     let agents = self.agents();
-    if agents.iter().find(|a| a.id == preferred).is_none_or(|a| a.disabled != Some(true)) {
+    let Some(own) = agents.iter().find(|a| a.id == preferred) else { return preferred };
+    let disabled = own.disabled == Some(true);
+    if !disabled && own.available != Some(false) {
       return preferred;
     }
     let open: Vec<&AgentInfo> = agents.iter().filter(|a| a.external != Some(true) && a.disabled != Some(true)).collect();
-    open.iter().find(|a| a.available != Some(false)).or(open.first()).map(|a| a.id.clone()).unwrap_or(preferred)
+    let installed = open.iter().find(|a| a.available != Some(false));
+    installed.or(if disabled { open.first() } else { None }).map(|a| a.id.clone()).unwrap_or(preferred)
   }
 
   pub fn emit_agents(&self) {
