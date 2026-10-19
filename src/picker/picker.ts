@@ -158,7 +158,9 @@ import { serialize } from './serialize';
 
   let picking = false;
   let drag: { x: number; y: number; moved: boolean } | undefined;
+  let lastClick: { el: Element; at: number } | undefined;
   const DRAG_PX = 4;
+  const DOUBLE_MS = 400;
 
   const swallow = (e: Event) => {
     e.preventDefault();
@@ -199,13 +201,26 @@ import { serialize } from './serialize';
       marquee = undefined;
       const r = { x: Math.min(d.x, e.clientX), y: Math.min(d.y, e.clientY), width: Math.abs(e.clientX - d.x), height: Math.abs(e.clientY - d.y) };
       const found = inside(r);
-      setPicked(e.shiftKey ? [...picked, ...found.filter(f => !picked.includes(f))] : found);
+      setPicked(adding(e) ? [...picked, ...found.filter(f => !picked.includes(f))] : found);
       return;
     }
     const el = under(e.clientX, e.clientY);
     if (!el) return;
-    if (!e.shiftKey) { setPicked([el]); return; }
+    // The second click of a double-click leaves the pick alone: the double-click itself adds it (onDouble)
+    const now = Date.now();
+    const repeat = lastClick?.el === el && now - lastClick.at < DOUBLE_MS;
+    lastClick = { el, at: now };
+    if (repeat) return;
+    if (!adding(e)) { setPicked([el]); return; }
     setPicked(picked.includes(el) ? picked.filter(p => p !== el) : [...picked, el]);
+  }
+
+  // Shift (design tools) or Ctrl / Cmd (browsers, file managers) adds to the pick instead of replacing it
+  const adding = (e: MouseEvent) => e.shiftKey || e.ctrlKey || e.metaKey;
+
+  function onDouble(e: MouseEvent) {
+    swallow(e);
+    if (picked.length) send({ type: 'add' });
   }
 
   function onKey(e: KeyboardEvent) {
@@ -219,7 +234,7 @@ import { serialize } from './serialize';
   // While picking the page sees no pointer input at all: links do not navigate, buttons do not fire
   const CAPTURE: [string, (e: never) => void][] = [
     ['pointermove', onMove], ['pointerdown', onDown], ['pointerup', onUp],
-    ['mousedown', swallow], ['mouseup', swallow], ['click', swallow], ['dblclick', swallow], ['auxclick', swallow], ['contextmenu', swallow],
+    ['mousedown', swallow], ['mouseup', swallow], ['click', swallow], ['dblclick', onDouble], ['auxclick', swallow], ['contextmenu', swallow],
     ['keydown', onKey],
   ];
 

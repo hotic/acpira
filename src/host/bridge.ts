@@ -1,11 +1,12 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
 import { appearanceFromSettings } from '@shared/appearance';
-import type { BrowserHostMsg, BrowserLook, BrowserMsg, ContextItem, HostMsg, WebviewHost, WebviewMsg } from '@shared/protocol';
+import type { BrowserHostMsg, BrowserLook, BrowserMsg, BrowserPage, ContextItem, HostMsg, WebviewHost, WebviewMsg } from '@shared/protocol';
 import type { SessionView } from '@shared/transcript';
 import { normalizePreviewUrl } from '@shared/picker';
 import type { SidecarClient, SidecarState, ShellView } from './shell/SidecarClient';
 import { PostQueue } from './outbox';
+import { t } from './i18n';
 
 // The page's own probe gives up sooner (effects/probeUrl.ts); this only covers a page that never answers
 const PROBE_WITHIN_MS = 10_000;
@@ -173,6 +174,9 @@ export interface BrowserPanelOpts {
   client: SidecarClient;
   extensionUri: vscode.Uri;
   look: () => BrowserLook;
+  // Recently shown pages, and a page the panel just showed
+  history: () => BrowserPage[];
+  visited: (page: BrowserPage) => void;
   // Picked elements with their comment, for the chat
   onAdd: (item: ContextItem) => void;
   // The page in VS Code's own browser (the platform's openBrowser)
@@ -184,29 +188,30 @@ export interface BrowserPanelOpts {
 // the element picker (src/picker) to it. The panel is its own webview running the same bundle (host 'browser',
 // webview/browser/BrowserPanel.tsx) and has no sidecar view: the shell holds its proxy lease and asks again after a reconnect.
 // In a remote window the proxy runs on the remote, and asExternalUri forwards its port to the user's machine, where the
-// iframe loads. Picked elements go to the chat like another extension's `acpira.context.add`
+// iframe loads. Picked elements go to the chat like another extension's `acpira.context.add`. Opened without a page it
+// starts empty, on the address bar and its recent pages
 export class BrowserPanel implements vscode.Disposable {
   readonly panelId = randomUUID();
-  // The page as asked for: what the address bar shows and what a reconnect asks for again
-  target: string;
+  // The page as asked for: what the address bar shows and what a reconnect asks for again; undefined while empty
+  target?: string;
   private release?: () => void;
   private ready = false;
+  private disposed = false;
   // The frame (or error) waits for the page to listen
   private pending?: BrowserHostMsg;
   private disposables: vscode.Disposable[] = [];
   private onDisposed = new vscode.EventEmitter<void>();
   readonly onDidDispose = this.onDisposed.event;
 
-  constructor(readonly panel: vscode.WebviewPanel, url: string, private opts: BrowserPanelOpts) {
-    this.target = url;
+  constructor(readonly panel: vscode.WebviewPanel, url: string | undefined, private opts: BrowserPanelOpts) {
     panel.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(opts.extensionUri, 'dist', 'webview')] };
     panel.webview.html = this.html();
-    panel.title = titleOf(url);
+    panel.title = url ? titleOf(url) : t('browser.source');
     this.disposables.push(
       panel.webview.onDidReceiveMessage((m: BrowserMsg) => this.onMessage(m)),
       panel.onDidDispose(() => this.dispose()),
     );
-    this.navigate(url);
+    if (url) this.navigate(url);
   }
 
   // Another page, through the same lease: the engine keeps the proxy when the site stays the same
@@ -218,6 +223,10 @@ export class BrowserPanel implements vscode.Disposable {
 
   postLook() {
     if (this.ready) void this.panel.webview.postMessage({ type: 'browserLook', look: this.opts.look() } satisfies BrowserHostMsg);
+  }
+
+  postHistory() {
+    if (this.ready) void this.panel.webview.postMessage({ type: 'browserHistory', pages: this.opts.history() } satisfies BrowserHostMsg);
   }
 
   private async opened(url: string, r: { url: string; token: string } | { error: string }) {
@@ -243,6 +252,7 @@ export class BrowserPanel implements vscode.Disposable {
       case 'browserReady':
         this.ready = true;
         this.postLook();
+        this.postHistory();
         if (this.pending) void this.panel.webview.postMessage(this.pending);
         break;
       case 'browserNavigate': {
@@ -250,7 +260,12 @@ export class BrowserPanel implements vscode.Disposable {
         if (url) this.navigate(url);
         break;
       }
-      case 'browserTitle': this.panel.title = m.title.trim().slice(0, 80) || titleOf(this.target); break;
+      case 'browserTitle': {
+        const title = m.title.trim().slice(0, 80);
+        this.panel.title = title || titleOf(m.url);
+        if (normalizePreviewUrl(m.url)) this.opts.visited({ url: m.url, title });
+        break;
+      }
       case 'browserAdd': this.opts.onAdd(m.item); break;
       case 'browserOpenExternal': this.opts.openExternal(m.url); break;
     }
@@ -292,8 +307,9 @@ export class BrowserPanel implements vscode.Disposable {
   }
 
   dispose() {
-    if (!this.release) return;
-    this.release();
+    if (this.disposed) return;
+    this.disposed = true;
+    this.release?.();
     this.release = undefined;
     for (const d of this.disposables.splice(0)) d.dispose();
     this.onDisposed.fire();

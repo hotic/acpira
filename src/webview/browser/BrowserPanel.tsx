@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, ExternalLink, MessageSquarePlus, MessageSquareText, RotateCw, SquareDashedMousePointer, TriangleAlert } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ExternalLink, Globe, MessageSquarePlus, MessageSquareText, RotateCw, SquareDashedMousePointer, TriangleAlert } from 'lucide-react';
 import { envelopeOf, normalizePreviewUrl, pickedContext, type PanelMsg, type PickedElement, type PickedRect, type PickerMsg } from '@shared/picker';
-import type { BrowserHostMsg, BrowserLook, BrowserMsg } from '@shared/protocol';
+import type { BrowserHostMsg, BrowserLook, BrowserMsg, BrowserPage } from '@shared/protocol';
+import { optionClass } from '../ui/DropdownMenu';
+import { popupClass } from '../ui/Overlay';
 import { AppearanceContext, appearanceDataAttrs, BASE_APPEARANCE } from '../appearance';
 import { LocaleContext, setLocale, t } from '../i18n';
 import { lookAttrs, resolveTheme, ThemeContext } from '../look';
@@ -40,6 +42,7 @@ function targetOf(url: string, frame: Frame): string {
 // The pick toolbar's two actions, like the transcript quote's "Add to chat"
 const PICK_ACTION = 'inline-flex h-ctl-sm items-center gap-1 whitespace-nowrap rounded-sm px-2 text-3 font-medium text-fg-1 outline-none transition-colors hover:bg-active focus-visible:bg-active [&_svg]:size-icon [&_svg]:text-fg-3';
 const MOD_KEY = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+';
+const MAX_SUGGESTIONS = 8;
 
 // Toolbar buttons: a step the current page cannot take reads as unavailable
 const TOOL = 'disabled:pointer-events-none disabled:opacity-40';
@@ -61,6 +64,11 @@ export function BrowserPanel() {
   // What the address bar shows, and what is being typed into it
   const [shown, setShown] = useState('');
   const [typed, setTyped] = useState<string>();
+  // Recent pages (from the shell) offered under the address bar while it has focus; `hl` is the arrow-key highlight
+  const [history, setHistory] = useState<BrowserPage[]>([]);
+  const [addressFocused, setAddressFocused] = useState(false);
+  const [hl, setHl] = useState(-1);
+  const addressInput = useRef<HTMLInputElement>(null);
   const [title, setTitle] = useState('');
   // undefined until the first page settles
   const [pickable, setPickable] = useState<boolean>();
@@ -108,12 +116,13 @@ export function BrowserPanel() {
         case 'browserLook': setLook(m.look); setLocale(m.look.locale); break;
         case 'browserFrame': setFrame(m); setError(undefined); setShown(m.target); setPickable(undefined); setPicked([]); setRects([]); break;
         case 'browserError': setError(m); setShown(m.target); break;
+        case 'browserHistory': setHistory(m.pages); break;
       }
     };
     const moved = (url: string, pageTitle: string) => {
       setShown(targetOf(url, frame!));
       setTitle(pageTitle);
-      post({ type: 'browserTitle', title: pageTitle });
+      post({ type: 'browserTitle', url: targetOf(url, frame!), title: pageTitle });
     };
     const onPicker = (msg: PickerMsg) => {
       switch (msg.type) {
@@ -173,19 +182,28 @@ export function BrowserPanel() {
     }, HELLO_GRACE_MS);
   };
 
-  const go = () => {
-    if (typed === undefined) return;
-    const url = normalizePreviewUrl(typed);
+  const open = (raw: string) => {
+    const url = normalizePreviewUrl(raw);
     if (!url) return;
     setTyped(undefined);
     setShown(url);
+    setHl(-1);
+    addressInput.current?.blur();
     post({ type: 'browserNavigate', url });
   };
+  // Recent pages matching what is typed (all of them before anything is), at most a short list
+  const query = (typed ?? '').trim().toLowerCase();
+  const suggestions = history.filter(p => !query || p.url.toLowerCase().includes(query) || p.title.toLowerCase().includes(query)).slice(0, MAX_SUGGESTIONS);
+  const suggesting = addressFocused && suggestions.length > 0 && (typed !== undefined || !frame);
   const onAddressKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.nativeEvent.isComposing) return;
-    if (e.key === 'Enter') { e.preventDefault(); go(); }
-    if (e.key === 'Escape') { e.preventDefault(); setTyped(undefined); e.currentTarget.blur(); }
+    if (e.key === 'ArrowDown' && suggesting) { e.preventDefault(); setHl(i => Math.min(i + 1, suggestions.length - 1)); }
+    if (e.key === 'ArrowUp' && suggesting) { e.preventDefault(); setHl(i => Math.max(i - 1, -1)); }
+    if (e.key === 'Enter') { e.preventDefault(); open(suggesting && hl >= 0 ? suggestions[hl]!.url : typed ?? shown); }
+    if (e.key === 'Escape') { e.preventDefault(); setTyped(undefined); setHl(-1); e.currentTarget.blur(); }
   };
+  // An empty panel starts on its address bar
+  useEffect(() => { if (!frame && !error) addressInput.current?.focus(); }, [frame, error]);
   const reload = () => {
     if (pickable) toPicker({ type: 'reload' });
     else setReloads(n => n + 1);
@@ -232,10 +250,28 @@ export function BrowserPanel() {
               <IconButton size="sm" className={TOOL} title={t('browser.back')} aria-label={t('browser.back')} disabled={!pickable} onClick={() => toPicker({ type: 'history', go: -1 })}><ArrowLeft strokeWidth={1.5} /></IconButton>
               <IconButton size="sm" className={TOOL} title={t('browser.forward')} aria-label={t('browser.forward')} disabled={!pickable} onClick={() => toPicker({ type: 'history', go: 1 })}><ArrowRight strokeWidth={1.5} /></IconButton>
               <IconButton size="sm" className={TOOL} title={t('browser.reload')} aria-label={t('browser.reload')} disabled={!frame} onClick={reload}><RotateCw strokeWidth={1.5} /></IconButton>
-              <div className={cn('mx-1 flex h-ctl-sm min-w-0 flex-1 items-center rounded-sm border border-line bg-chip px-2 focus-within:border-line-strong', badAddress && 'border-danger focus-within:border-danger')}>
-                <input value={address} spellCheck={false} aria-label={t('browser.address')} aria-invalid={badAddress} placeholder={t('browser.empty')}
-                  onChange={e => setTyped(e.target.value)} onKeyDown={onAddressKey} onBlur={() => { if (!badAddress) setTyped(undefined); }}
+              <div className={cn('relative mx-1 flex h-ctl-sm min-w-0 flex-1 items-center rounded-sm border border-line bg-chip px-2 focus-within:border-line-strong', badAddress && 'border-danger focus-within:border-danger')}>
+                <input ref={addressInput} value={address} spellCheck={false} aria-label={t('browser.address')} aria-invalid={badAddress} placeholder={t('browser.empty')}
+                  role="combobox" aria-expanded={suggesting} aria-autocomplete="list"
+                  onChange={e => { setTyped(e.target.value); setHl(-1); }} onKeyDown={onAddressKey}
+                  onFocus={e => { setAddressFocused(true); e.currentTarget.select(); }}
+                  onBlur={() => { setAddressFocused(false); setHl(-1); if (!badAddress) setTyped(undefined); }}
                   className="min-w-0 flex-1 border-0 bg-transparent text-3 text-fg-1 outline-none placeholder:text-fg-3" />
+                {suggesting && (
+                  <div role="listbox" className={cn(popupClass, 'absolute inset-x-0 top-full z-30 mt-1')} data-palette="widget">
+                    {suggestions.map((p, i) => (
+                      // Pressing keeps the caret in the address bar until the click picks the page
+                      <div key={p.url} role="option" aria-selected={i === hl} data-highlighted={i === hl ? '' : undefined}
+                        onMouseDown={e => e.preventDefault()} onMouseEnter={() => setHl(i)} onClick={() => open(p.url)}
+                        className={cn(optionClass, 'cursor-default')}>
+                        <Globe strokeWidth={1.5} className="size-icon shrink-0 text-fg-3" />
+                        <span className="min-w-0 shrink truncate">{p.title || p.url}</span>
+                        {p.title && <span className="min-w-0 flex-1 truncate text-3 text-fg-3">{p.url}</span>}
+                        {i === 0 && !query && <span className="ml-auto shrink-0 text-3 text-fg-3">{t('browser.recent')}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               <IconButton size="sm" title={pickable === false ? t('browser.notPickable') : t('browser.pick')} aria-label={t('browser.pick')} aria-pressed={picking}
                 disabled={!pickable} onClick={() => togglePicking(!picking)} className={cn(TOOL, picking && 'bg-active text-fg-1')}>
@@ -255,10 +291,16 @@ export function BrowserPanel() {
                   <p className="text-2 text-fg-2 break-words">{error.error === 'engine-too-old' ? t('browser.engineTooOld') : t('browser.failed', { url: error.target, error: error.error })}</p>
                   {error.error !== 'engine-too-old' && <Button onClick={() => post({ type: 'browserNavigate', url: error.target })}>{t('browser.retry')}</Button>}
                 </div>
-              ) : frame && (
+              ) : frame ? (
                 // Pages expect an opaque canvas: one that paints nothing would show the editor theme through
                 <iframe key={`${frame.src}#${reloads}`} ref={iframe} src={frame.src} title={title || shown} onLoad={onLoad}
                   className="absolute inset-0 size-full border-0 bg-web-page" />
+              ) : !shown && (
+                <div className="flex h-full flex-col items-center justify-center gap-1 px-page text-center">
+                  <Globe strokeWidth={1} className="mb-gap size-ctl text-fg-3" />
+                  <p className="m-0 text-2 font-medium text-fg-1">{t('browser.source')}</p>
+                  <p className="m-0 text-2 text-fg-3">{t('browser.emptyHint')}</p>
+                </div>
               )}
             </div>
             {/* Under the pick: "Comment to chat" (Cmd / Ctrl+J, a comment field with a confirm button) and "Add to chat" (Enter) */}
@@ -278,7 +320,7 @@ export function BrowserPanel() {
                           <span aria-hidden className="mx-0.5 h-icon w-px shrink-0 bg-line" />
                           <button type="button" onClick={() => add('')} className={PICK_ACTION}>
                             <MessageSquarePlus strokeWidth={1.5} />
-                            {picked.length > 1 ? t('browser.addCount', { n: picked.length }) : t('quote.add')}
+                            {t('browser.add')}
                             <span className="text-fg-3">↵</span>
                           </button>
                         </>}

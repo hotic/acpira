@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import * as vscode from 'vscode';
 import { appearanceFromSettings } from '@shared/appearance';
 import { normalizePreviewUrl } from '@shared/picker';
-import type { BrowserLook, ContextItem, EditorSelection, HostMsg } from '@shared/protocol';
+import type { BrowserLook, BrowserPage, ContextItem, EditorSelection, HostMsg } from '@shared/protocol';
 import { sanitizeSetting } from '@shared/settings';
 import type { BrowserOpened, PlatformRequest } from '@shared/sidecar';
 import type { SessionView } from '@shared/transcript';
@@ -202,7 +202,15 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Browser panels (bridge.ts BrowserPanel), one per site: opening a page of a site already shown navigates that panel
   const browsers = new Set<BrowserPanel>();
-  let lastPreview: string | undefined;
+  // Pages shown in any browser panel, most recent first, for the address bar's suggestions (kept per machine)
+  const HISTORY_KEY = 'acpira.browserHistory';
+  const MAX_HISTORY = 20;
+  const browserHistory = (): BrowserPage[] => context.globalState.get<BrowserPage[]>(HISTORY_KEY) ?? [];
+  const visited = (page: BrowserPage) => {
+    const pages = [page, ...browserHistory().filter(p => p.url !== page.url)].slice(0, MAX_HISTORY);
+    void context.globalState.update(HISTORY_KEY, pages);
+    for (const b of browsers) b.postHistory();
+  };
   const browserLook = (): BrowserLook => {
     const cfg = vscode.workspace.getConfiguration('acpira');
     return {
@@ -223,19 +231,20 @@ export async function activate(context: vscode.ExtensionContext) {
       void vscode.window.showWarningMessage(e instanceof Error ? e.message : String(e));
     }
   };
-  // Show a loopback page in a browser panel: the one already showing its site (brought up, navigated when the page differs),
-  // else a new panel next to the chat. `preserveFocus` for an agent's open_browser, so the composer keeps the caret
-  const showPreview = (url: string, preserveFocus = false): BrowserOpened['reused'] => {
-    lastPreview = url;
-    const origin = new URL(url).origin;
-    const shown = [...browsers].find(b => new URL(b.target).origin === origin);
-    if (shown) {
+  // Show a loopback page in a browser panel (undefined: an empty one, on its address bar): the one already showing its site
+  // (brought up, navigated when the page differs), else a new panel next to the chat. `preserveFocus` for an agent's
+  // open_browser, so the composer keeps the caret
+  const showPreview = (url: string | undefined, preserveFocus = false): BrowserOpened['reused'] => {
+    const origin = url && new URL(url).origin;
+    const shown = [...browsers].find(b => (origin ? b.target !== undefined && new URL(b.target).origin === origin : b.target === undefined));
+    if (shown && !url) { shown.panel.reveal(undefined, preserveFocus); return 'revealed'; }
+    if (shown && url) {
       shown.panel.reveal(undefined, preserveFocus);
       if (shown.target === url) return 'revealed';
       shown.navigate(url);
       return 'navigated';
     }
-    const panel = vscode.window.createWebviewPanel('acpira.browser', new URL(url).host, { viewColumn: fileColumn(), preserveFocus }, { retainContextWhenHidden: true });
+    const panel = vscode.window.createWebviewPanel('acpira.browser', url ? new URL(url).host : t('browser.source'), { viewColumn: fileColumn(), preserveFocus }, { retainContextWhenHidden: true });
     panel.iconPath = {
       light: vscode.Uri.joinPath(context.extensionUri, 'media', 'icon-light.svg'),
       dark: vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.svg'),
@@ -244,6 +253,8 @@ export async function activate(context: vscode.ExtensionContext) {
       client: sidecar,
       extensionUri: context.extensionUri,
       look: browserLook,
+      history: browserHistory,
+      visited,
       onAdd: item => addPicked(browser, item),
       openExternal: page => { void platform.handle({ method: 'openBrowser', url: page }).catch((e: unknown) => log.warn(`open in browser failed: ${String(e)}`)); },
       log: line => log.info(line),
@@ -252,19 +263,8 @@ export async function activate(context: vscode.ExtensionContext) {
     browser.onDidDispose(() => browsers.delete(browser));
     return undefined;
   };
-  const openPreview = async (raw?: unknown) => {
-    let url = typeof raw === 'string' ? normalizePreviewUrl(raw) : undefined;
-    if (!url) {
-      const typed = await vscode.window.showInputBox({
-        prompt: t('host.previewPrompt'),
-        value: lastPreview ?? 'http://localhost:',
-        validateInput: v => (normalizePreviewUrl(v) ? undefined : t('browser.empty')),
-      });
-      url = typed === undefined ? undefined : normalizePreviewUrl(typed);
-      if (!url) return;
-    }
-    showPreview(url);
-  };
+  // The palette command: a URL argument opens it, none opens the panel on its address bar
+  const openPreview = (raw?: unknown) => { showPreview(typeof raw === 'string' ? normalizePreviewUrl(raw) : undefined); };
 
   // The sidebar exists once VS Code resolves it; a command that needs it before then waits for it
   const withSidebar = (fn: (b: WebviewBridge) => void) => {
