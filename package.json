@@ -108,6 +108,16 @@
         "title": "%acpira.cmd.addSelection%",
         "category": "Acpira",
         "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "acpira.context.set",
+        "title": "%acpira.cmd.contextSet%",
+        "category": "Acpira"
+      },
+      {
+        "command": "acpira.context.add",
+        "title": "%acpira.cmd.contextAdd%",
+        "category": "Acpira"
       }
     ],
     "menus": {
@@ -122,6 +132,14 @@
         {
           "command": "acpira.addSelection",
           "when": "editorTextFocus && resourceScheme == file"
+        },
+        {
+          "command": "acpira.context.set",
+          "when": "false"
+        },
+        {
+          "command": "acpira.context.add",
+          "when": "false"
         }
       ],
       "view/title": [

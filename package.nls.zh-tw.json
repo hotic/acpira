@@ -26,7 +26,7 @@
   "acpira.conf.codeFontSize": "程式碼塊、工具輸出與差異檢視的基準字級，px（9–20）",
   "acpira.conf.diffMarkers": "差異標記：color 給改動行上底色，signs 只靠 +/- 字首",
   "acpira.conf.fontSmoothing": "用 -webkit-font-smoothing: antialiased 渲染文字（筆畫更細，僅 macOS 生效）",
-  "acpira.conf.shareEditorSelection": "把編輯器裡目前選取的程式碼帶進聊天：模式旁顯示一個標籤，隨下一條訊息發出",
+  "acpira.conf.shareEditorSelection": "把編輯器或其他工具中目前選取的內容帶進聊天：模式旁顯示一個標籤，隨下一條訊息發出",
   "acpira.conf.steerQueued": "回合執行中發出的訊息直接插進目前回合，不再排隊。僅 Claude、Codex 支援。",
   "acpira.conf.notifySound": "工作階段需要你處理或已完成、而你沒在看它時，響一聲提示音。",
   "acpira.conf.notifySystem": "在同樣的時機彈出系統通知。VS Code 遠端視窗裡改為視窗內通知。",
@@ -50,5 +50,7 @@
   "acpira.conf.appearance.fold": "過程行的摺疊：整輪過程收在一欄，執行時顯示目前動作，結束後顯示用時，點選展開 / 只收唯讀動作（編輯與命令保持可見）",
   "acpira.conf.appearance.autoExpand": "自動展開過程細節：執行時展開正在做的那一項（思考、讀取與編輯列表、命令輸出），做完即收起；off 只保留整輪過程的展開與收起",
   "acpira.cmd.addSelection": "新增到對話",
+  "acpira.cmd.contextSet": "設定共享上下文（供擴充功能呼叫）",
+  "acpira.cmd.contextAdd": "新增上下文到對話（供擴充功能呼叫）",
   "acpira.cmd.connectChatgpt": "連線 ChatGPT 工作階段"
 }

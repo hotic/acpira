@@ -26,7 +26,7 @@
   "acpira.conf.codeFontSize": "코드 블록, 도구 출력, 차이 보기의 기본 글꼴 크기(px, 9–20)",
   "acpira.conf.diffMarkers": "차이 표시: color는 변경된 줄에 색을 입히고, signs는 +/- 접두사만 사용합니다",
   "acpira.conf.fontSmoothing": "-webkit-font-smoothing: antialiased로 텍스트를 렌더링합니다(획이 더 얇음, macOS 전용)",
-  "acpira.conf.shareEditorSelection": "현재 편집기 선택 영역을 채팅에 제공합니다. 모드 옆에 칩으로 표시되고 다음 메시지와 함께 전송됩니다",
+  "acpira.conf.shareEditorSelection": "편집기나 다른 도구에서 선택한 내용을 채팅에 제공합니다. 모드 옆에 칩으로 표시되며 다음 메시지와 함께 전송됩니다",
   "acpira.conf.steerQueued": "턴 실행 중 보낸 메시지를 대기열에 넣지 않고 진행 중인 턴에 끼워 넣습니다. Claude, Codex만 지원합니다.",
   "acpira.conf.notifySound": "세션이 확인을 기다리거나 완료되었을 때 보고 있지 않으면 알림음을 재생합니다.",
   "acpira.conf.notifySystem": "같은 시점에 시스템 알림을 표시합니다. VS Code 원격 창에서는 창 안에 표시합니다.",
@@ -50,5 +50,7 @@
   "acpira.conf.appearance.fold": "처리 줄 접기: 턴 전체를 하나로 접어 실행 중에는 현재 작업, 끝나면 소요 시간을 표시하고 클릭하면 펼침 / 읽기 작업만 접기(편집과 명령은 계속 표시)",
   "acpira.conf.appearance.autoExpand": "처리 세부 정보 자동 펼치기: 턴이 실행되는 동안 작업 중인 항목(생각, 읽기·편집 목록, 명령 출력)을 펼치고 끝나면 접습니다. 끄면 턴 전체 접기만 진행을 따라갑니다",
   "acpira.cmd.addSelection": "채팅에 추가",
+  "acpira.cmd.contextSet": "공유 컨텍스트 설정(확장용)",
+  "acpira.cmd.contextAdd": "채팅에 컨텍스트 추가(확장용)",
   "acpira.cmd.connectChatgpt": "ChatGPT 세션 연결"
 }

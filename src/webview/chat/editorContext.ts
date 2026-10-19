@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { EditorSelection } from '@shared/protocol';
+import type { ContextItem, ContextSource, EditorSelection } from '@shared/protocol';
 import type { Draft } from '@shared/transcript';
 import { nameOf } from './drafts';
 
@@ -71,4 +71,75 @@ export function selectionDraft(s: EditorSelection, cwd: string): Extract<Draft, 
 export function sameRange(a: Draft, b: Draft): boolean {
   return a.kind === 'selection' && b.kind === 'selection' && a.uri === b.uri && a.startLine === b.startLine && a.endLine === b.endLine
     && a.text === b.text;
+}
+
+// Other tools' live selections (`contextSelection`), one slot per source id beside the editor's. Each slot is offered until it
+// goes out with a prompt, then stays hidden until that source reports something else; the shell decides which instance owns a slot
+export interface LiveContext {
+  source: ContextSource;
+  items: ContextItem[];
+  // Identity of this content, for the sent mark and the composer's exclusion toggle
+  key: string;
+}
+
+let contexts: LiveContext[] = [];
+const contextConsumed = new Map<string, string>();
+// Snapshot handed to React: rebuilt only when a slot or a sent mark changes, so useSyncExternalStore sees a stable value
+let offeredContexts: LiveContext[] = [];
+
+const rebuildOffered = () => {
+  offeredContexts = contexts.filter(c => contextConsumed.get(c.source.id) !== c.key);
+  notify();
+};
+
+export function setContextSelection(source: ContextSource, items: ContextItem[] | undefined) {
+  const rest = contexts.filter(c => c.source.id !== source.id);
+  if (!items?.length) {
+    if (rest.length === contexts.length) return;
+    contexts = rest;
+    contextConsumed.delete(source.id);
+    rebuildOffered();
+    return;
+  }
+  const key = contextKey(items);
+  const cur = contexts.find(c => c.source.id === source.id);
+  if (cur?.key === key && cur.source.name === source.name) return;
+  // A new slot keeps its source's place in the toolbar, so chips never swap places while one source updates
+  const next = { source, items, key };
+  contexts = cur ? contexts.map(c => (c === cur ? next : c)) : [...contexts, next];
+  rebuildOffered();
+}
+
+export function markContextSent(c: LiveContext) {
+  contextConsumed.set(c.source.id, c.key);
+  rebuildOffered();
+}
+
+// Every source's live content, minus what already went out
+export function offeredLiveContexts(): LiveContext[] {
+  return offeredContexts;
+}
+
+export function useLiveContexts(): LiveContext[] {
+  return useSyncExternalStore(subscribe, offeredLiveContexts);
+}
+
+function contextKey(items: ContextItem[]): string {
+  return JSON.stringify(items.map(i => [i.label, i.text, i.uri ?? '', i.comment ?? '']));
+}
+
+// The text drafts a source's items go out as: each keeps where it came from, so the engine can head it with its source
+export function contextDrafts(source: ContextSource, items: ContextItem[]): Extract<Draft, { kind: 'text' }>[] {
+  return items.map(i => ({
+    kind: 'text',
+    name: i.label,
+    text: i.text,
+    context: { sourceId: source.id, sourceName: source.name, ...(i.uri ? { uri: i.uri } : {}), ...(i.comment ? { comment: i.comment } : {}) },
+  }));
+}
+
+// Whether two drafts are the same shared context (pinning it twice only duplicates it)
+export function sameContext(a: Draft, b: Draft): boolean {
+  return a.kind === 'text' && b.kind === 'text' && !!a.context && !!b.context && a.context.sourceId === b.context.sourceId
+    && a.name === b.name && a.text === b.text && a.context.uri === b.context.uri;
 }

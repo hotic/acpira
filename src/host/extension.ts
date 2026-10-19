@@ -14,6 +14,7 @@ import { sidecarCommands } from './shell/sidecarLocator';
 import { acpiraHome, migrateOnce } from './store/dataDir';
 import { EDITOR_VIEW_TYPE, VscodePlatform } from './vscodePlatform';
 import { editorSelectionOf } from './editorSelection';
+import { ContextPayloadError, ContextSlots, parseContextPayload } from './contextApi';
 import { availableChromeCommands, columnPicks, columnsLayout, defaultColumnPick, type ColumnPick } from './multiOpen';
 import { showSystemNotification } from './systemNotify';
 
@@ -72,6 +73,7 @@ export async function activate(context: vscode.ExtensionContext) {
       onPageReady: ready => {
         ready.postShell({ type: 'editorSelection', selection: liveSelection });
         if (lastCopy) ready.postShell({ type: 'editorCopy', selection: lastCopy });
+        if (shareSelection()) for (const m of contextSlots.replay()) ready.postShell(m);
       },
       onFocus: focused => { lastFocused = focused; },
     }, initial);
@@ -104,9 +106,24 @@ export async function activate(context: vscode.ExtensionContext) {
     selectionTimer = setTimeout(() => publishSelection(shareSelection() ? selectionIn(editor) : undefined), 150);
   };
 
+  // Other extensions' live selections (`acpira.context.set`), one slot per source, under the same sharing switch as the editor's
+  const contextSlots = new ContextSlots();
+  const publishContext = (m: HostMsg | undefined) => { if (m && shareSelection()) broadcast(m); };
+  // A slot whose owner's tab closed without clearing it (the extension crashed, or never clears) goes with the tab
+  const tabUris = (tabs: readonly vscode.Tab[]) => tabs.flatMap(tab => {
+    const uri = (tab.input as { uri?: unknown } | undefined)?.uri;
+    return uri instanceof vscode.Uri ? [uri.toString()] : [];
+  });
+  const releaseClosedOwners = (closed: readonly vscode.Tab[]) => {
+    const owners = contextSlots.owners();
+    if (!owners.size) return;
+    const open = new Set(tabUris(vscode.window.tabGroups.all.flatMap(g => g.tabs)));
+    const gone = new Set(tabUris(closed).filter(u => owners.has(u) && !open.has(u)));
+    if (gone.size) for (const m of contextSlots.release(gone)) publishContext(m);
+  };
+
   // "Add to chat" lands in the chat the user last looked at: an editor tab if one was active since, else the sidebar
-  const addToChat = (selection: EditorSelection) => {
-    const m: HostMsg = { type: 'addSelection', selection };
+  const addToChat = (m: HostMsg) => {
     const panel = lastFocused && panels.get(lastFocused);
     if (panel && lastFocused) {
       panel.reveal(undefined, false);
@@ -257,14 +274,30 @@ export async function activate(context: vscode.ExtensionContext) {
       clearTimeout(selectionTimer);
       publishSelection(undefined);
     }),
-    vscode.workspace.onDidChangeConfiguration(e => { if (e.affectsConfiguration('acpira.shareEditorSelection')) trackSelection(vscode.window.activeTextEditor); }),
+    vscode.workspace.onDidChangeConfiguration(e => {
+      if (!e.affectsConfiguration('acpira.shareEditorSelection')) return;
+      trackSelection(vscode.window.activeTextEditor);
+      for (const m of shareSelection() ? contextSlots.replay() : contextSlots.hidden()) broadcast(m);
+    }),
+    vscode.window.tabGroups.onDidChangeTabs(e => { if (e.closed.length) releaseClosedOwners(e.closed); }),
     { dispose: () => clearTimeout(selectionTimer) },
     // Editor context menu: pin the selection (or, without one, the caret's line) into the chat regardless of the live-selection setting
     vscode.commands.registerTextEditorCommand('acpira.addSelection', editor => {
       const s = editor.selection;
       const range = s.isEmpty ? editor.document.lineAt(s.active.line).range : s;
       const picked = editorSelectionOf(editor.document.uri.toString(), range.start, range.end, editor.document.getText(range));
-      if (picked) addToChat(picked);
+      if (picked) addToChat({ type: 'addSelection', selection: picked });
+    }),
+    // The context API other extensions call (docs/context-api.md). Contributed in package.json so a first call activates Acpira;
+    // hidden from the palette, since they take a payload. A bad payload rejects the caller's promise with the reason
+    vscode.commands.registerCommand('acpira.context.set', (raw: unknown) => {
+      publishContext(contextSlots.set(parseContextPayload(raw)));
+      return { shown: shareSelection() };
+    }),
+    vscode.commands.registerCommand('acpira.context.add', (raw: unknown) => {
+      const p = parseContextPayload(raw);
+      if (!p.items.length) throw new ContextPayloadError('acpira.context: add needs at least one item');
+      addToChat({ type: 'addContext', source: p.source, items: p.items });
     }),
     // Copy capture: VS Code hands paste providers the copied ranges, which is the only way to learn where clipboard text came from.
     // Nothing is ever pasted by this provider; the webview turns a matching paste into a selection chip (`editorCopy`)

@@ -26,7 +26,7 @@
   "acpira.conf.codeFontSize": "Taille de police de base des blocs de code, de la sortie des outils et des diffs en px (9–20)",
   "acpira.conf.diffMarkers": "Marqueurs de diff : color colore les lignes modifiées, signs s’appuie sur les seuls préfixes +/-",
   "acpira.conf.fontSmoothing": "Afficher le texte avec -webkit-font-smoothing: antialiased (traits plus fins ; macOS uniquement)",
-  "acpira.conf.shareEditorSelection": "Proposer au chat la sélection actuelle de l’éditeur : elle apparaît comme une puce à côté du mode et part avec le prochain message",
+  "acpira.conf.shareEditorSelection": "Propose au chat ce qui est sélectionné dans l’éditeur ou un autre outil : une puce s’affiche à côté du mode et part avec le prochain message",
   "acpira.conf.steerQueued": "Les messages envoyés pendant un tour s’y insèrent au lieu d’attendre. Claude et Codex uniquement.",
   "acpira.conf.notifySound": "Jouer un carillon quand une session a besoin de vous ou se termine pendant que vous ne la regardez pas.",
   "acpira.conf.notifySystem": "Afficher une notification système aux mêmes moments. Dans une fenêtre VS Code distante, elle s’affiche dans la fenêtre.",
@@ -50,5 +50,7 @@
   "acpira.conf.appearance.fold": "Repli des lignes de processus : garder tout le tour dans un seul pli qui montre l’action en cours pendant l’exécution et la durée à la fin, clic pour développer / ne replier que les actions de lecture (modifications et commandes restent visibles)",
   "acpira.conf.appearance.autoExpand": "Développer automatiquement les détails du processus : pendant un tour, ouvrir l’élément en cours (réflexion, listes de lecture et de modification, sortie des commandes) et le refermer une fois terminé ; désactivé, seul le pli du tour entier suit l’exécution",
   "acpira.cmd.addSelection": "Ajouter au chat",
+  "acpira.cmd.contextSet": "Définir le contexte partagé (pour les extensions)",
+  "acpira.cmd.contextAdd": "Ajouter du contexte au chat (pour les extensions)",
   "acpira.cmd.connectChatgpt": "Connecter une session ChatGPT"
 }

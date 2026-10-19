@@ -14,7 +14,7 @@ import { lookFromSettings, resolveTheme } from './look';
 import { useVsCodeTheme } from './useVsCodeTheme';
 import { vscodeApi } from './vscodeApi';
 import { SettingsShell, type SettingsHandlers } from './settings/SettingsShell';
-import { sameRange, selectionDraft, setEditorCopy, setEditorSelection } from './chat/editorContext';
+import { contextDrafts, sameContext, sameRange, selectionDraft, setContextSelection, setEditorCopy, setEditorSelection } from './chat/editorContext';
 import { updateMainComposer } from './chat/useComposerDraft';
 import { playChime } from './effects/chime';
 import { probeUrl } from './probeUrl';
@@ -236,6 +236,13 @@ export function App() {
         case 'sessionMarkdown': settleMarkdown(m.seq, m.markdown, m.error); break;
         case 'editorSelection': setEditorSelection(m.selection); break;
         case 'editorCopy': setEditorCopy(m.selection); break;
+        case 'contextSelection': setContextSelection(m.source, m.items); break;
+        case 'addContext': {
+          const pinned = contextDrafts(m.source, m.items);
+          setView('chat');
+          updateMainComposer(d => [...d, ...pinned.filter(x => !d.some(y => sameContext(x, y)))], true);
+          break;
+        }
         case 'chime': playChime(); break;
         case 'probeUrl': { const { id, url } = m; void probeUrl(url).then(r => post({ type: 'probeResult', id, ...r })); break; }
         case 'showSession': post({ type: 'selectSession', id: m.id }); setView('chat'); break;

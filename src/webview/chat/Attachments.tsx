@@ -1,5 +1,5 @@
 import { useContext, useState, type ReactNode } from 'react';
-import { FileText, Image as ImageIcon, TextSelect, X } from 'lucide-react';
+import { FileText, Image as ImageIcon, SquareDashedMousePointer, TextSelect, X } from 'lucide-react';
 import type { Attachment, Draft } from '@shared/transcript';
 import { attachmentLabel, imageMimeOf } from '@shared/attachments';
 import { t } from '../i18n';
@@ -119,8 +119,14 @@ function chipKey(a: Named, i: number): string {
 }
 
 const isImage = (a: Named) => a.kind === 'image' || (a.kind === 'file' && !!imageMimeOf(a.name));
-const chipIcon = (a: Named) => (a.kind === 'selection' ? <TextSelect strokeWidth={1.5} /> : undefined);
-const chipTitle = (a: Named) => (a.kind === 'file' ? ('data' in a && a.data ? a.name : a.uri) : a.kind === 'selection' ? `${a.uri}#L${a.startLine}-${a.endLine}` : undefined);
+const chipIcon = (a: Named) => (a.kind === 'selection' ? <TextSelect strokeWidth={1.5} />
+  : a.kind === 'text' && a.context ? <SquareDashedMousePointer strokeWidth={1.5} /> : undefined);
+const chipTitle = (a: Named) => {
+  if (a.kind === 'file') return 'data' in a && a.data ? a.name : a.uri;
+  if (a.kind === 'selection') return `${a.uri}#L${a.startLine}-${a.endLine}`;
+  // Shared context: the tool it came from, where, and the remark sent with it
+  if (a.kind === 'text' && a.context) return [`${a.context.sourceName}: ${a.name}`, a.context.uri, a.context.comment].filter(Boolean).join('\n');
+};
 
 // Quotes and everything else, each with its index in the original list
 function split<T extends Attachment | Draft>(items: T[], indices?: number[]) {
