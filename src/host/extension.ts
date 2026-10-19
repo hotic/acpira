@@ -5,7 +5,7 @@ import { appearanceFromSettings } from '@shared/appearance';
 import { normalizePreviewUrl } from '@shared/picker';
 import type { BrowserLook, ContextItem, EditorSelection, HostMsg } from '@shared/protocol';
 import { sanitizeSetting } from '@shared/settings';
-import type { PlatformRequest } from '@shared/sidecar';
+import type { BrowserOpened, PlatformRequest } from '@shared/sidecar';
 import type { SessionView } from '@shared/transcript';
 import { sessionIdOfLink } from '@shared/sessionLinks';
 import { FileVault } from './accounts/AccountStore';
@@ -15,7 +15,7 @@ import { SidecarClient } from './shell/SidecarClient';
 import { engineEndpoint } from './shell/engine';
 import { sidecarCommands } from './shell/sidecarLocator';
 import { acpiraHome, migrateOnce } from './store/dataDir';
-import { EDITOR_VIEW_TYPE, VscodePlatform } from './vscodePlatform';
+import { EDITOR_VIEW_TYPE, fileColumn, VscodePlatform } from './vscodePlatform';
 import { editorSelectionOf } from './editorSelection';
 import { ContextPayloadError, ContextSlots, parseContextPayload } from './contextApi';
 import { availableChromeCommands, columnPicks, columnsLayout, defaultColumnPick, type ColumnPick } from './multiOpen';
@@ -30,7 +30,7 @@ let client: SidecarClient | undefined;
 // there, the extension renders webviews and carries out IDE actions. Same protocol as the IntelliJ plugin
 export async function activate(context: vscode.ExtensionContext) {
   const log = vscode.window.createOutputChannel('Acpira', { log: true });
-  const platform = new VscodePlatform(context, id => { openEditor(id); }, r => announce(r), url => probeUrl(url));
+  const platform = new VscodePlatform(context, id => { openEditor(id); }, r => announce(r), url => probeUrl(url), url => showPreview(url, true));
   setHostLocale(platform.locale());
 
   // The legacy globalStorage / SecretStorage tree only VS Code can read is merged before the sidecar takes over ~/.acpira
@@ -223,26 +223,19 @@ export async function activate(context: vscode.ExtensionContext) {
       void vscode.window.showWarningMessage(e instanceof Error ? e.message : String(e));
     }
   };
-  const openPreview = async (raw?: unknown) => {
-    let url = typeof raw === 'string' ? normalizePreviewUrl(raw) : undefined;
-    if (!url) {
-      const typed = await vscode.window.showInputBox({
-        prompt: t('host.previewPrompt'),
-        value: lastPreview ?? 'http://localhost:',
-        validateInput: v => (normalizePreviewUrl(v) ? undefined : t('browser.empty')),
-      });
-      url = typed === undefined ? undefined : normalizePreviewUrl(typed);
-      if (!url) return;
-    }
+  // Show a loopback page in a browser panel: the one already showing its site (brought up, navigated when the page differs),
+  // else a new panel next to the chat. `preserveFocus` for an agent's open_browser, so the composer keeps the caret
+  const showPreview = (url: string, preserveFocus = false): BrowserOpened['reused'] => {
     lastPreview = url;
     const origin = new URL(url).origin;
     const shown = [...browsers].find(b => new URL(b.target).origin === origin);
     if (shown) {
-      shown.panel.reveal(undefined, false);
-      if (shown.target !== url) shown.navigate(url);
-      return;
+      shown.panel.reveal(undefined, preserveFocus);
+      if (shown.target === url) return 'revealed';
+      shown.navigate(url);
+      return 'navigated';
     }
-    const panel = vscode.window.createWebviewPanel('acpira.browser', new URL(url).host, vscode.ViewColumn.Active, { retainContextWhenHidden: true });
+    const panel = vscode.window.createWebviewPanel('acpira.browser', new URL(url).host, { viewColumn: fileColumn(), preserveFocus }, { retainContextWhenHidden: true });
     panel.iconPath = {
       light: vscode.Uri.joinPath(context.extensionUri, 'media', 'icon-light.svg'),
       dark: vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.svg'),
@@ -257,6 +250,20 @@ export async function activate(context: vscode.ExtensionContext) {
     });
     browsers.add(browser);
     browser.onDidDispose(() => browsers.delete(browser));
+    return undefined;
+  };
+  const openPreview = async (raw?: unknown) => {
+    let url = typeof raw === 'string' ? normalizePreviewUrl(raw) : undefined;
+    if (!url) {
+      const typed = await vscode.window.showInputBox({
+        prompt: t('host.previewPrompt'),
+        value: lastPreview ?? 'http://localhost:',
+        validateInput: v => (normalizePreviewUrl(v) ? undefined : t('browser.empty')),
+      });
+      url = typed === undefined ? undefined : normalizePreviewUrl(typed);
+      if (!url) return;
+    }
+    showPreview(url);
   };
 
   // The sidebar exists once VS Code resolves it; a command that needs it before then waits for it

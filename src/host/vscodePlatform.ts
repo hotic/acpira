@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import * as vscode from 'vscode';
 import { resolveLocale, type Language, type Locale } from '@shared/i18n';
+import { normalizePreviewUrl } from '@shared/picker';
 import type { BrowserOpened, PlatformEvent, PlatformMethod, PlatformRequest } from '@shared/sidecar';
 import type { SecretVault } from './accounts/AccountStore';
 import { WorkspaceFiles } from './files';
@@ -25,7 +26,7 @@ function showsChat(g: vscode.TabGroup): boolean {
 // ViewColumn.Beside split the active group every time (with the chat in a sidebar, the code group itself got halved).
 // With the chat in a sidebar the active group is the code group; with the chat as an editor tab, the first other
 // group (preferring one that holds tabs) takes the file, and only a lone chat group opens a split beside itself
-function fileColumn(): vscode.ViewColumn {
+export function fileColumn(): vscode.ViewColumn {
   const { activeTabGroup, all } = vscode.window.tabGroups;
   if (!showsChat(activeTabGroup)) return activeTabGroup.viewColumn;
   const other = all.find(g => !showsChat(g) && g.tabs.length > 0) ?? all.find(g => !showsChat(g));
@@ -140,6 +141,8 @@ export class VscodePlatform {
     private announce: (r: Extract<PlatformRequest, { method: 'notify' }>) => void,
     // Asks a chat webview on the user's machine; undefined when no chat page is up to ask
     private probe: UrlProbe,
+    // Acpira's own browser panel (extension.ts showPreview), where loopback http pages go
+    private preview?: (url: string) => BrowserOpened['reused'],
   ) {
     // Each IDE's globalStorage / SecretStorage tree is merged into ~/.acpira once (dataDir.migrateOnce), before the sidecar starts
     this.legacy = {
@@ -184,6 +187,15 @@ export class VscodePlatform {
   // unchanged), and that address must answer from the user's side before a tab opens. The integrated browser's
   // experimental remote proxy loads pages on the remote itself, so it gets the original URL and no local check
   private async openBrowser(url: string): Promise<BrowserOpened> {
+    // A loopback http page opens in Acpira's browser panel, where its elements can be picked into the chat. The engine has
+    // already found it listening on its machine (relay hub), and its preview proxy reaches it from there, so a remote dev
+    // server needs no forward and no probe from the user's side. https and other hosts are beyond that proxy and stay with
+    // VS Code's browser
+    const page = this.preview && normalizePreviewUrl(url);
+    if (page && this.preview) {
+      const reused = this.preview(page);
+      return { url: page, ...(reused ? { reused } : {}) };
+    }
     const target = browsable(vscode.Uri.parse(url, true));
     const proxied = !!vscode.env.remoteName && vscode.workspace.getConfiguration('workbench.browser').get<boolean>('enableRemoteProxy') === true
       && (await vscode.commands.getCommands(true)).includes(INTEGRATED_BROWSER);
