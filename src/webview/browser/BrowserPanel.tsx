@@ -173,6 +173,11 @@ export function BrowserPanel() {
   });
 
   useEffect(() => { post({ type: 'browserReady' }); }, []);
+  // The address VS Code hands back after a window reload (src/host/extension.ts deserializes on BROWSER_STATE_URL)
+  useEffect(() => {
+    const api = vscodeApi();
+    if (normalizePreviewUrl(shown)) api.setState?.({ acpiraBrowserUrl: shown });
+  }, [shown]);
 
   // A page without the picker (another site, a non-HTML response) never says hello: picking and history are off there
   const onLoad = () => {
@@ -212,7 +217,7 @@ export function BrowserPanel() {
   const add = (comment: string) => {
     const elements = pickedRef.current;
     if (!elements.length) return;
-    const { label, text } = pickedContext(elements, shown, title);
+    const { label, text } = pickedContext(elements);
     post({ type: 'browserAdd', item: { label, text, uri: shown, ...(comment ? { comment } : {}) } });
     togglePicking(false);
   };

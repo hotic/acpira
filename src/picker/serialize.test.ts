@@ -57,13 +57,10 @@ describe('picker messages', () => {
 
   it('turns picked elements into one context item', () => {
     const one: PickedElement = { label: 'h1#title', selector: '#title', text: 'Hello', html: '<h1 id="title">Hello</h1>', rect: { x: 0, y: 0, width: 1, height: 1 } };
-    expect(pickedContext([one], 'http://localhost:8765/post', 'Blog')).toEqual({
-      label: 'h1#title',
-      text: 'Page: Blog <http://localhost:8765/post>\n\nElement: `#title`  \nText: Hello\n\n```html\n<h1 id="title">Hello</h1>\n```',
-    });
-    const two = pickedContext([one, { ...one, label: 'p', selector: 'body > p', text: '' }], 'http://localhost/', '');
+    expect(pickedContext([one])).toEqual({ label: 'h1#title', text: '```html\n<!-- #title -->\n<h1 id="title">Hello</h1>\n```' });
+    const two = pickedContext([one, { ...one, label: 'p', selector: 'body > p', html: '<p>x</p>' }]);
     expect(two.label).toBe('h1#title +1');
-    expect(two.text).toContain('\n\nElement 2: `body > p`\n\n```html');
+    expect(two.text).toBe('```html\n<!-- #title -->\n<h1 id="title">Hello</h1>\n\n<!-- body > p -->\n<p>x</p>\n```');
   });
 });
 

@@ -42,8 +42,7 @@ import { serialize } from './serialize';
     style.textContent = `.box{position:fixed;box-sizing:border-box;pointer-events:none;border:1.5px solid var(--a);border-radius:4px;transition:left .08s,top .08s,width .08s,height .08s}
 .hover{background:color-mix(in srgb,var(--a) 10%,transparent)}
 .picked{border-width:2px;border-radius:2px}
-.marquee{border-style:dashed;background:color-mix(in srgb,var(--a) 5%,transparent)}
-.tag{position:absolute;left:-2px;bottom:100%;margin-bottom:4px;padding:2px 8px;border-radius:5px;background:var(--a);color:var(--f);font:500 11px/16px ui-sans-serif,system-ui,sans-serif;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.2)}`;
+.marquee{border-style:dashed;background:color-mix(in srgb,var(--a) 5%,transparent)}`;
     root.append(style);
     (document.documentElement ?? document.body).append(host);
     return root;
@@ -102,12 +101,8 @@ import { serialize } from './serialize';
   function drawPicked() {
     for (const d of pickedBoxes) d.remove();
     pickedBoxes = picked.map(el => {
+      // The outline alone: the chip and the prompt carry the selector
       const d = box('picked');
-      const tag = document.createElement('span');
-      tag.className = 'tag';
-      // The tag name alone; the chip and the prompt carry the full selector
-      tag.textContent = el.tagName.toLowerCase();
-      d.append(tag);
       place(d, rectOf(el));
       return d;
     });
