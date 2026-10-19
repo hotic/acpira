@@ -120,6 +120,11 @@
   --row-enter-duration: 460ms;
   --row-enter-part: 65ms;
   --row-enter-file: 180ms;
+  /* Result list rows entering together tick in one step apart, the whole run capped, each with a shorter fade; the rail
+     draws down to each row over one step (picked in lab/read-stagger.preview.html, 2026-10-19) */
+  --row-enter-stagger: 60ms;
+  --row-enter-stagger-max: 600ms;
+  --row-enter-list-duration: 220ms;
   --rail-width: 1px;
   --rail-dot-size: 4px;
   /* A rail fades in over this length below its icon, so it reads as leaving the icon rather than growing out of it */
