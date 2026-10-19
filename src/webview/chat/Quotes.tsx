@@ -1,5 +1,5 @@
 import { useState, type ClipboardEvent, type KeyboardEvent } from 'react';
-import { MessageSquareText, Pencil, Trash2 } from 'lucide-react';
+import { Check, MessageSquareText, Pencil, Trash2 } from 'lucide-react';
 import type { Draft } from '@shared/transcript';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
@@ -87,11 +87,13 @@ function QuoteEntry({ index, quote, editing, onStartEdit, onSave, onCancel, onRe
 
 // One-line remark field shared by the card and the transcript toolbar: Enter saves, Shift+Enter breaks the line, Escape leaves it as it was.
 // With `acceptImages` a pasted screenshot shows as a thumbnail under the text and is handed to `onSave` with it (Escape drops it too).
-// No focus ring: the field only exists while it is being typed in, so the caret is focus enough
-export function CommentEditor({ initial = '', autoFocus = true, acceptImages = false, className, onSave, onCancel }: {
+// No focus ring: the field only exists while it is being typed in, so the caret is focus enough. `submit` adds a confirm
+// button at the end of the line, labelled with it, for a field whose Enter is not obvious (the browser panel's pick)
+export function CommentEditor({ initial = '', autoFocus = true, acceptImages = false, submit, className, onSave, onCancel }: {
   initial?: string;
   autoFocus?: boolean;
   acceptImages?: boolean;
+  submit?: string;
   className?: string;
   onSave: (comment: string, images: ImageDraft[]) => void;
   onCancel: () => void;
@@ -119,6 +121,7 @@ export function CommentEditor({ initial = '', autoFocus = true, acceptImages = f
   };
   return (
     <div className={cn('flex min-w-0 flex-col rounded-sm bg-bg-0', className)}>
+      <div className="flex min-w-0 items-end">
       <textarea
         rows={1}
         autoFocus={autoFocus}
@@ -128,8 +131,10 @@ export function CommentEditor({ initial = '', autoFocus = true, acceptImages = f
         onChange={e => setValue(e.target.value)}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
-        className="field-sizing-content max-h-[calc(6*var(--text-2-lh))] min-w-0 resize-none bg-transparent px-2 py-1 text-2 text-fg-strong outline-none placeholder:text-fg-3"
+        className="field-sizing-content max-h-[calc(6*var(--text-2-lh))] min-w-0 flex-1 resize-none bg-transparent px-2 py-1 text-2 text-fg-strong outline-none placeholder:text-fg-3"
       />
+      {submit && <IconButton size="sm" title={submit} aria-label={submit} onClick={() => onSave(value.trim(), images)}><Check strokeWidth={1.5} /></IconButton>}
+      </div>
       {images.length > 0 && (
         // Room above for the remove badges riding each thumbnail's corner
         <div className="flex flex-wrap gap-gap px-2 pt-1 pb-1.5">
