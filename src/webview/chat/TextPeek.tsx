@@ -34,17 +34,20 @@ export function TextPeek({ name, text, failed, comment, onClose }: { name: strin
             </IconButton>}
             <IconButton size="sm" title={t('common.close')} aria-label={t('common.close')} onClick={onClose}><X strokeWidth={1.5} /></IconButton>
           </div>
-          {comment && (
-            <div className="flex shrink-0 flex-col gap-0.5 border-b border-line px-pad py-1.5">
-              <span className="text-3 text-fg-3">{t('quote.comment')}</span>
-              <p className="m-0 text-2 whitespace-pre-wrap break-words text-fg-1">{comment}</p>
-            </div>
-          )}
-          {rendered
-            ? <div className="scroll-thin min-h-0 flex-1 overflow-auto p-pad"><Prose block={{ type: 'text', markdown: text! }} /></div>
-            : <pre className="scroll-thin m-0 min-h-0 flex-1 overflow-auto p-pad font-mono text-mono whitespace-pre-wrap [overflow-wrap:anywhere] text-fg-1">
-              {text ?? (failed ? t('attach.loadFailed', { name }) : t('attach.loading'))}
-            </pre>}
+          {/* The comment and the text share one column, so their left edges and spacing line up */}
+          <div className="scroll-thin flex min-h-0 flex-1 flex-col gap-gap overflow-auto p-pad">
+            {comment && (
+              <div className="flex flex-col gap-0.5">
+                <span className="text-3 text-fg-3">{t('quote.comment')}</span>
+                <p className="m-0 text-2 whitespace-pre-wrap break-words text-fg-1">{comment}</p>
+              </div>
+            )}
+            {rendered
+              ? <Prose block={{ type: 'text', markdown: text! }} />
+              : <pre className="m-0 font-mono text-mono whitespace-pre-wrap [overflow-wrap:anywhere] text-fg-1">
+                {text ?? (failed ? t('attach.loadFailed', { name }) : t('attach.loading'))}
+              </pre>}
+          </div>
         </div>
       </Dialog.Popup>
     </Dialog.Portal>

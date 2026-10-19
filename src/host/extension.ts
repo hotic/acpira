@@ -23,6 +23,9 @@ import { showSystemNotification } from './systemNotify';
 
 const VIEW_ID = 'acpira.chat';
 const EDITOR_STATE_SESSION = 'acpiraSessionId';
+const BROWSER_VIEW_TYPE = 'acpira.browser';
+// Kept in sync with webview/browser/BrowserPanel.tsx
+const BROWSER_STATE_URL = 'acpiraBrowserUrl';
 
 let client: SidecarClient | undefined;
 
@@ -244,7 +247,13 @@ export async function activate(context: vscode.ExtensionContext) {
       shown.navigate(url);
       return 'navigated';
     }
-    const panel = vscode.window.createWebviewPanel('acpira.browser', url ? new URL(url).host : t('browser.source'), { viewColumn: fileColumn(), preserveFocus }, { retainContextWhenHidden: true });
+    const panel = vscode.window.createWebviewPanel(BROWSER_VIEW_TYPE, url ? new URL(url).host : t('browser.source'), { viewColumn: fileColumn(), preserveFocus }, { retainContextWhenHidden: true });
+    bindBrowser(panel, url);
+    return undefined;
+  };
+  // A browser panel's shell side, for a new panel and for one VS Code restores after a window reload (the page keeps its
+  // address in the webview state, BROWSER_STATE_URL)
+  const bindBrowser = (panel: vscode.WebviewPanel, url: string | undefined) => {
     panel.iconPath = {
       light: vscode.Uri.joinPath(context.extensionUri, 'media', 'icon-light.svg'),
       dark: vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.svg'),
@@ -261,7 +270,6 @@ export async function activate(context: vscode.ExtensionContext) {
     });
     browsers.add(browser);
     browser.onDidDispose(() => browsers.delete(browser));
-    return undefined;
   };
   // The palette command: a URL argument opens it, none opens the panel on its address bar
   const openPreview = (raw?: unknown) => { showPreview(typeof raw === 'string' ? normalizePreviewUrl(raw) : undefined); };
@@ -328,6 +336,14 @@ export async function activate(context: vscode.ExtensionContext) {
         for (const fn of sidebarPending.splice(0)) fn(b);
       },
     }, { webviewOptions: { retainContextWhenHidden: true } }),
+    // Browser panels come back after a window reload on the page they showed (or empty)
+    vscode.window.registerWebviewPanelSerializer(BROWSER_VIEW_TYPE, {
+      deserializeWebviewPanel(panel, state) {
+        const saved = state && typeof state === 'object' ? (state as Record<string, unknown>)[BROWSER_STATE_URL] : undefined;
+        bindBrowser(panel, typeof saved === 'string' ? normalizePreviewUrl(saved) : undefined);
+        return Promise.resolve();
+      },
+    }),
     vscode.window.registerWebviewPanelSerializer(EDITOR_VIEW_TYPE, {
       deserializeWebviewPanel(panel, state) {
         const saved = state && typeof state === 'object' ? (state as Record<string, unknown>)[EDITOR_STATE_SESSION] : undefined;

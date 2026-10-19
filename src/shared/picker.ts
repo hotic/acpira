@@ -103,18 +103,13 @@ function decodeSafe(s: string): string {
   try { return decodeURIComponent(s); } catch { return s; }
 }
 
-// What a set of picked elements becomes in the composer: one item, its label and the text the agent reads. Markdown, since
-// the attachment peek renders it: the page and each element's facts are one paragraph of hard-broken lines (two trailing
-// spaces), so they keep one line spacing, and the HTML follows in a fence
-export function pickedContext(elements: PickedElement[], pageUrl: string, pageTitle: string): { label: string; text: string } {
-  const lines = [`Page: ${pageTitle ? `${pageTitle} ` : ''}<${pageUrl}>`];
-  elements.forEach((e, i) => {
-    const facts = [`Element${elements.length > 1 ? ` ${i + 1}` : ''}: \`${e.selector}\``];
-    if (e.text) facts.push(`Text: ${e.text}`);
-    lines.push('', facts.join('  \n'), '', '```html', e.html, '```');
-  });
+// What a set of picked elements becomes in the composer: one item, its label and the text the agent reads. One html fence
+// (the attachment peek shows it as a single code block), each element led by an HTML comment with its CSS path. The page's
+// address travels as the item's `uri`, which the prompt header names as the source
+export function pickedContext(elements: PickedElement[]): { label: string; text: string } {
+  const body = elements.map(e => `<!-- ${e.selector.replace(/--/g, '- -')} -->\n${e.html}`).join('\n\n');
   const first = elements[0]?.label ?? 'element';
-  return { label: elements.length > 1 ? `${first} +${elements.length - 1}` : first, text: lines.join('\n') };
+  return { label: elements.length > 1 ? `${first} +${elements.length - 1}` : first, text: `\`\`\`html\n${body}\n\`\`\`` };
 }
 
 // What the address bar or the open command was given, as a page the preview proxy takes: `5173` and `localhost:5173/a`

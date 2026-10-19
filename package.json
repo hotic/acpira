@@ -39,6 +39,7 @@
   "main": "./dist/extension.cjs",
   "activationEvents": [
     "onWebviewPanel:acpira.editor",
+    "onWebviewPanel:acpira.browser",
     "onUri"
   ],
   "contributes": {
