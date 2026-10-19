@@ -25,8 +25,9 @@ import type { ProvidersState } from './settings/ProvidersSection';
 
 declare global {
   // `font`: the configured UI face, for fontPreload.ts (VS Code only says so; other hosts get the default).
-  // `sessionLinkBase`: the clickable session-link base the VS Code shell injects (chat/sessionLinkBase.ts)
-  interface Window { __acpira?: { host: 'sidebar' | 'editor'; font?: Appearance['font']; sessionLinkBase?: string } }
+  // `sessionLinkBase`: the clickable session-link base the VS Code shell injects (chat/sessionLinkBase.ts).
+  // `host: 'browser'`: the browser panel's webview (main.tsx renders browser/BrowserPanel there)
+  interface Window { __acpira?: { host: 'sidebar' | 'editor' | 'browser'; font?: Appearance['font']; sessionLinkBase?: string } }
 }
 
 // Always through the memo: acquireVsCodeApi() throws when called twice, and other components (Link) reach the api via vscodeApi()

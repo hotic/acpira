@@ -1,12 +1,15 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
-import type { EditorSelection, HostMsg } from '@shared/protocol';
+import { appearanceFromSettings } from '@shared/appearance';
+import { normalizePreviewUrl } from '@shared/picker';
+import type { BrowserLook, ContextItem, EditorSelection, HostMsg } from '@shared/protocol';
+import { sanitizeSetting } from '@shared/settings';
 import type { PlatformRequest } from '@shared/sidecar';
 import type { SessionView } from '@shared/transcript';
 import { sessionIdOfLink } from '@shared/sessionLinks';
 import { FileVault } from './accounts/AccountStore';
-import { WebviewBridge } from './bridge';
+import { BrowserPanel, WebviewBridge } from './bridge';
 import { setHostLocale, t } from './i18n';
 import { SidecarClient } from './shell/SidecarClient';
 import { engineEndpoint } from './shell/engine';
@@ -122,11 +125,12 @@ export async function activate(context: vscode.ExtensionContext) {
     if (gone.size) for (const m of contextSlots.release(gone)) publishContext(m);
   };
 
-  // "Add to chat" lands in the chat the user last looked at: an editor tab if one was active since, else the sidebar
-  const addToChat = (m: HostMsg) => {
+  // "Add to chat" lands in the chat the user last looked at: an editor tab if one was active since, else the sidebar. A chat tab
+  // in the `from` column (the browser panel's group) stays behind it: bringing it up would hide the page being picked from
+  const addToChat = (m: HostMsg, from?: vscode.ViewColumn) => {
     const panel = lastFocused && panels.get(lastFocused);
     if (panel && lastFocused) {
-      panel.reveal(undefined, false);
+      if (from === undefined || panel.viewColumn !== from) panel.reveal(undefined, false);
       lastFocused.postShell(m);
       return;
     }
@@ -194,6 +198,65 @@ export async function activate(context: vscode.ExtensionContext) {
       log.error(`open in editor columns failed: ${String(e)}`);
       void vscode.window.showErrorMessage(t('host.columnsFailed', { detail: e instanceof Error ? e.message : String(e) }));
     }
+  };
+
+  // Browser panels (bridge.ts BrowserPanel), one per site: opening a page of a site already shown navigates that panel
+  const browsers = new Set<BrowserPanel>();
+  let lastPreview: string | undefined;
+  const browserLook = (): BrowserLook => {
+    const cfg = vscode.workspace.getConfiguration('acpira');
+    return {
+      appearance: appearanceFromSettings(key => cfg.get(`appearance.${key}`)),
+      theme: sanitizeSetting('theme', cfg.get('theme')),
+      uiFontSize: sanitizeSetting('uiFontSize', cfg.get('uiFontSize')),
+      codeFontSize: sanitizeSetting('codeFontSize', cfg.get('codeFontSize')),
+      fontSmoothing: sanitizeSetting('fontSmoothing', cfg.get('fontSmoothing')),
+      locale: platform.locale(),
+    };
+  };
+  // Elements picked on a page, capped like any other tool's context before a chat sees them
+  const addPicked = (browser: BrowserPanel, item: ContextItem) => {
+    try {
+      const p = parseContextPayload({ source: { id: 'browser', name: t('browser.source') }, items: [item] });
+      addToChat({ type: 'addContext', source: p.source, items: p.items }, browser.panel.viewColumn);
+    } catch (e) {
+      void vscode.window.showWarningMessage(e instanceof Error ? e.message : String(e));
+    }
+  };
+  const openPreview = async (raw?: unknown) => {
+    let url = typeof raw === 'string' ? normalizePreviewUrl(raw) : undefined;
+    if (!url) {
+      const typed = await vscode.window.showInputBox({
+        prompt: t('host.previewPrompt'),
+        value: lastPreview ?? 'http://localhost:',
+        validateInput: v => (normalizePreviewUrl(v) ? undefined : t('browser.empty')),
+      });
+      url = typed === undefined ? undefined : normalizePreviewUrl(typed);
+      if (!url) return;
+    }
+    lastPreview = url;
+    const origin = new URL(url).origin;
+    const shown = [...browsers].find(b => new URL(b.target).origin === origin);
+    if (shown) {
+      shown.panel.reveal(undefined, false);
+      if (shown.target !== url) shown.navigate(url);
+      return;
+    }
+    const panel = vscode.window.createWebviewPanel('acpira.browser', new URL(url).host, vscode.ViewColumn.Active, { retainContextWhenHidden: true });
+    panel.iconPath = {
+      light: vscode.Uri.joinPath(context.extensionUri, 'media', 'icon-light.svg'),
+      dark: vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.svg'),
+    };
+    const browser: BrowserPanel = new BrowserPanel(panel, url, {
+      client: sidecar,
+      extensionUri: context.extensionUri,
+      look: browserLook,
+      onAdd: item => addPicked(browser, item),
+      openExternal: page => { void platform.handle({ method: 'openBrowser', url: page }).catch((e: unknown) => log.warn(`open in browser failed: ${String(e)}`)); },
+      log: line => log.info(line),
+    });
+    browsers.add(browser);
+    browser.onDidDispose(() => browsers.delete(browser));
   };
 
   // The sidebar exists once VS Code resolves it; a command that needs it before then waits for it
@@ -279,6 +342,10 @@ export async function activate(context: vscode.ExtensionContext) {
       trackSelection(vscode.window.activeTextEditor);
       for (const m of shareSelection() ? contextSlots.replay() : contextSlots.hidden()) broadcast(m);
     }),
+    vscode.workspace.onDidChangeConfiguration(e => {
+      if (e.affectsConfiguration('acpira')) for (const b of browsers) b.postLook();
+    }),
+    { dispose: () => { for (const b of [...browsers]) b.panel.dispose(); } },
     vscode.window.tabGroups.onDidChangeTabs(e => { if (e.closed.length) releaseClosedOwners(e.closed); }),
     { dispose: () => clearTimeout(selectionTimer) },
     // Editor context menu: pin the selection (or, without one, the caret's line) into the chat regardless of the live-selection setting
@@ -323,6 +390,8 @@ export async function activate(context: vscode.ExtensionContext) {
         else void vscode.window.showWarningMessage(t('sessionLink.notHere'));
       },
     }),
+    // A local page in Acpira's browser panel, where elements can be picked into the chat; without a URL it asks for one
+    vscode.commands.registerCommand('acpira.openPreview', (url?: unknown) => openPreview(url)),
     vscode.commands.registerCommand('acpira.openView', () => vscode.commands.executeCommand(`${VIEW_ID}.focus`)),
     vscode.commands.registerCommand('acpira.newSession', () => withSidebar(b => b.send({ type: 'newSession' }))),
     vscode.commands.registerCommand('acpira.showLog', () => log.show()),

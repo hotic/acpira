@@ -411,6 +411,8 @@
   --color-danger: var(--danger);
   --color-fast: var(--fast);
   --color-ultra: var(--ultra);
+  /* The canvas behind a page in the browser panel: pages assume an opaque white one, whatever the editor theme */
+  --color-web-page: #fff;
   --color-transparent: transparent;
   --color-current: currentColor;
 

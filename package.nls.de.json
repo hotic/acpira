@@ -4,6 +4,7 @@
   "acpira.cmd.newSession": "Neue Sitzung",
   "acpira.cmd.openInEditor": "Im Editor öffnen",
   "acpira.cmd.openInEditorColumns": "In Editor-Spalten öffnen",
+  "acpira.cmd.openPreview": "Lokale Seite im Acpira-Browser öffnen",
   "acpira.cmd.openInNewWindow": "In neuem Fenster öffnen",
   "acpira.cmd.showLog": "Log anzeigen",
   "acpira.conf.defaultAgent": "Der Standard-Agent für neue Sitzungen",

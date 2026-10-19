@@ -90,6 +90,32 @@ export interface ContextItem {
   comment?: string;
 }
 
+// The browser panel: its own webview (window.__acpira.host === 'browser'), with no sidecar view behind it. The shell keeps
+// the engine's preview proxy for it and hands picked elements on to the chat as context (src/host/browserPanel.ts)
+export interface BrowserLook {
+  appearance: Appearance;
+  theme: SettingsView['theme'];
+  uiFontSize: number;
+  codeFontSize: number;
+  fontSmoothing: boolean;
+  locale: Locale;
+}
+
+export type BrowserHostMsg =
+  // `target`: the page as asked for (what the address bar shows); `src`: the proxy address as this webview reaches it;
+  // `token`: what the picker stamps its messages with
+  | { type: 'browserFrame'; target: string; src: string; token: string }
+  | { type: 'browserError'; target: string; error: string }
+  | { type: 'browserLook'; look: BrowserLook };
+
+export type BrowserMsg =
+  | { type: 'browserReady' }
+  | { type: 'browserNavigate'; url: string }
+  | { type: 'browserTitle'; title: string }
+  // Picked elements with the user's comment, bound for the chat
+  | { type: 'browserAdd'; item: ContextItem }
+  | { type: 'browserOpenExternal'; url: string };
+
 // Links in agent output open on the host side; only these schemes are ever handed to openExternal
 export function isSafeExternalUrl(url: string): boolean {
   try {
