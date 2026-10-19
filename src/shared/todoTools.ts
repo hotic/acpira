@@ -22,22 +22,34 @@ export function todoEntries(value: unknown): PlanEntry[] | undefined {
     }
     try { value = JSON.parse(value); } catch { return; }
   }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return;
-  const object = value as Record<string, unknown>;
-  const result = object.type === 'Todo' ? object.TodosUpdated : object;
-  if (!result || typeof result !== 'object' || Array.isArray(result)) return;
-  const todos = (result as Record<string, unknown>).todos;
-  if (!Array.isArray(todos)) return;
+  const todos = todoList(value);
+  if (!todos) return;
   const entries: PlanEntry[] = [];
   for (const item of todos) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) return;
     const { content, status, priority } = item as Record<string, unknown>;
     if (typeof content !== 'string' || !content.trim()) return;
-    if (status !== 'pending' && status !== 'in_progress' && status !== 'completed') return;
+    // OpenCode's todowrite has a fourth status; a cancelled item is closed, so it counts as done rather than hiding the list
+    const planStatus = status === 'cancelled' ? 'completed' : status;
+    if (planStatus !== 'pending' && planStatus !== 'in_progress' && planStatus !== 'completed') return;
     if (priority !== undefined && priority !== 'low' && priority !== 'medium' && priority !== 'high') return;
-    entries.push({ title: content, status, ...(priority ? { priority } : {}) });
+    entries.push({ title: content, status: planStatus, ...(priority ? { priority } : {}) });
   }
   return entries;
+}
+
+// The list inside a result: Grok's `{ type: 'Todo', TodosUpdated: { todos } }`, a plain `{ todos }`, OpenCode's
+// rawOutput `{ output, metadata: { todos } }` or its output text, which is the bare array
+function todoList(value: unknown): unknown[] | undefined {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== 'object') return;
+  const object = value as Record<string, unknown>;
+  const result = object.type === 'Todo' ? object.TodosUpdated : object;
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return;
+  const { todos, metadata } = result as Record<string, unknown>;
+  if (Array.isArray(todos)) return todos;
+  const nested = metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>).todos : undefined;
+  return Array.isArray(nested) ? nested : undefined;
 }
 
 // Old transcripts retain the result as JSON text; render them with the same UI.

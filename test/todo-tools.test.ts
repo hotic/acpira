@@ -42,11 +42,19 @@ describe('todo tool presentation', () => {
     expect(todoEntries(receipt)).toEqual([{ title: 'Inspect status', status: 'completed' }, { title: 'Verify result', status: 'pending' }]);
   });
 
+  it('parses OpenCode todowrite output, counting a cancelled item as closed', () => {
+    const list = [{ content: 'Inspect status', status: 'completed', priority: 'low' }, { content: 'Drop it', status: 'cancelled', priority: 'medium' }];
+    const expected = [{ title: 'Inspect status', status: 'completed', priority: 'low' }, { title: 'Drop it', status: 'completed', priority: 'medium' }];
+    // rawOutput (opencode 1.18.15) and the output text the row keeps
+    expect(todoEntries({ output: JSON.stringify(list, null, 2), metadata: { todos: list } })).toEqual(expected);
+    expect(todoEntries(JSON.stringify(list, null, 2))).toEqual(expected);
+  });
+
   it('does not hide errors or misrepresent partial input, unknown statuses, or malformed output', () => {
     expect(toolTodoEntries({ ...stored, status: 'failed' })).toBeUndefined();
     expect(toolTodoEntries({ ...stored, status: 'pending' })).toBeUndefined();
     expect(todoEntries('{"todos":[')).toBeUndefined();
-    expect(todoEntries({ todos: [{ content: 'Unknown', status: 'cancelled' }] })).toBeUndefined();
+    expect(todoEntries({ todos: [{ content: 'Unknown', status: 'blocked' }] })).toBeUndefined();
     expect(todoEntries({ todos: [] })).toEqual([]);
   });
 
