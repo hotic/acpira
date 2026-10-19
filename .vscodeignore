@@ -1,5 +1,6 @@
 **
 !dist/extension.cjs
+!dist/picker.js
 !bin/acpira
 !bin/acpira.exe
 !docs/chatgpt-bridge.md

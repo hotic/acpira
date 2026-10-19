@@ -1,10 +1,12 @@
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { HostMsg } from '../src/shared/protocol';
 import type { PlatformRequest } from '../src/shared/sidecar';
-import { SidecarClient, type SidecarCommand, type SidecarState, type ShellView } from '../src/host/shell/SidecarClient';
+import { SidecarClient, type PreviewLease, type SidecarCommand, type SidecarState, type ShellView } from '../src/host/shell/SidecarClient';
 import { sidecarCommands } from '../src/host/shell/sidecarLocator';
 import { FAKE, SIDECAR, NODE } from './sidecarShell';
 
@@ -234,5 +236,60 @@ describe('sidecarCommands', () => {
   it('honours ACPIRA_SIDECAR_BIN', () => {
     const r = root(['bin/acpira']);
     expect(sidecarCommands({ root: r, env: { ACPIRA_SIDECAR_BIN: '/opt/acpira' }, platform: 'darwin', arch: 'arm64' }).map(c => c.command)).toEqual(['/opt/acpira']);
+  });
+});
+
+describe('SidecarClient previews', () => {
+  const servers: Server[] = [];
+  afterEach(() => { for (const s of servers.splice(0)) s.close(); });
+
+  // A dev server stand-in: one HTML page
+  async function site(): Promise<string> {
+    const server = createServer((_, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end('<!doctype html><html><head><title>t</title></head><body>hi</body></html>'); });
+    servers.push(server);
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+    return `http://127.0.0.1:${(server.address() as AddressInfo).port}/page`;
+  }
+
+  function lease(url: string, picker: string) {
+    const answers: ({ url: string; token: string } | { error: string })[] = [];
+    const l: PreviewLease = { panelId: 'P', url, picker, onOpened: r => answers.push(r) };
+    return { l, answers };
+  }
+
+  it('serves the page with the picker through the engine, again after a restart, and closes with the lease', async () => {
+    const home = tmp('acpira-client-home-');
+    const picker = join(tmp('acpira-picker-'), 'picker.js');
+    writeFileSync(picker, '/* picker */');
+    const target = await site();
+    const c = client([engine(home)]);
+    const { l, answers } = lease(target, picker);
+    // Asked before the handshake: it waits for helloOk and its features
+    const close = c.preview(l);
+    c.start();
+    await expect.poll(() => answers.length, { timeout: 15_000 }).toBe(1);
+    const first = answers[0] as { url: string; token: string };
+    expect(first.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/page$/);
+    const html = await (await fetch(first.url)).text();
+    expect(html).toContain(`<script src="/__acpira/picker.js?t=${first.token}"></script>`);
+    expect(await (await fetch(new URL(`/__acpira/picker.js?t=${first.token}`, first.url))).text()).toBe('/* picker */');
+
+    // A new engine has new ports: the lease is asked for again
+    process.kill((c as unknown as { proc: { pid: number } }).proc.pid, 'SIGTERM');
+    await expect.poll(() => answers.length, { timeout: 15_000 }).toBe(2);
+    const second = answers[1] as { url: string; token: string };
+    expect(await (await fetch(second.url)).text()).toContain('/__acpira/picker.js');
+
+    close();
+    await expect.poll(async () => fetch(second.url).then(() => 'open', () => 'closed')).toBe('closed');
+  });
+
+  it('answers a refused target with the reason', async () => {
+    const c = client([engine(tmp('acpira-client-home-'))]);
+    const { l, answers } = lease('http://example.com/', join(tmp('acpira-picker-'), 'missing.js'));
+    c.preview(l);
+    c.start();
+    await expect.poll(() => answers.length, { timeout: 15_000 }).toBe(1);
+    expect((answers[0] as { error: string }).error).toMatch(/only http:\/\/ pages on this machine|only pages on this machine/);
   });
 });

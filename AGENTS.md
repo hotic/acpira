@@ -47,6 +47,7 @@ A chat shell for VS Code / Cursor (and IntelliJ) that drives official agent CLIs
 - `src/host/` — the VS Code shell: `extension.ts`, `bridge.ts` (webview panels), `vscodePlatform.ts` (platform RPCs), `files.ts` / `fileRank.ts`, `shell/` the sidecar client and locator, `store/` + `accounts/AccountStore.ts` for the legacy migration
 - `src/webview/` — React UI: `ui/` primitives, `chat/`, `settings/`, `effects/`, `styles/`
 - `rust/` the engine (`acpira-shared` contracts, `acpira-host`: `acp/` the ACP client — `transport/` JSON-RPC + agent process, `agents/` registry / launching / pool / probes / native-release installer, `session/` the session state machine, `transcript/` update normalization, `vendors/` per-agent quirks — `session_manager.rs`, `store/`, `accounts/`, `external/` ChatGPT mirrors, `sidecar/` envelope server + harness; binary `acpira`)
+- `src/picker/` the element picker the engine's preview proxy adds to pages in the browser panel (→ `dist/picker.js`)
 - `test/` vitest suites and `fake-agent.ts`; `scripts/` probes; `idea/` the IntelliJ plugin; `ios/` the iOS app (Xcode project + local package `AcpiraKit`); `lab/` + `src/lab/` the LAB (local only)
 
 ## Read before changing

@@ -73,6 +73,8 @@ pub struct Engine {
   changed: tokio::sync::Notify,
   /// This process's `SSH_CONNECTION`: the SSH login, and so the macOS security session, the engine was started in
   ssh_connection: Option<String>,
+  /// The browser panels' preview proxies, leased per wire
+  previews: Arc<crate::preview::Previews>,
 }
 
 /// What one shell message did to its wire
@@ -94,7 +96,9 @@ impl Engine {
   }
 
   fn create(opts: ServerOpts, persistent: bool) -> Arc<Engine> {
+    let previews = crate::preview::Previews::new(opts.log.clone());
     Arc::new(Engine {
+      previews,
       opts,
       persistent,
       init: tokio::sync::Mutex::new(()),
@@ -184,6 +188,7 @@ impl Engine {
     if let Some(p) = &platform {
       p.fail_wire(wire.id, reason);
     }
+    self.previews.release_wire(wire.id);
     self.log(&format!("wire {} left ({reason}); {} still connected", wire.id, self.wire_count()));
     self.changed.notify_waiters();
   }
@@ -245,6 +250,7 @@ impl Engine {
     };
     self.log(&format!("sidecar finishing: {reason}"));
     self.closing.store(true, Ordering::Release);
+    self.previews.close_all();
     if let Some(p) = &platform {
       p.dispose(reason);
     }
@@ -328,6 +334,7 @@ impl Engine {
       protocol_version: SIDECAR_PROTOCOL_VERSION,
       sidecar: SidecarInfo { version: self.opts.version.clone(), pid: std::process::id() },
       sessions_dir,
+      features: vec!["preview".into()],
     }
   }
 }
@@ -424,6 +431,18 @@ impl Wire {
         }
       },
       ShellMsg::PlatformResponse { request_id, result, error } => platform.on_response(&request_id, result, error),
+      ShellMsg::PreviewOpen { request_id, panel_id, url, picker } => {
+        // Answered on its own task: binding and reading the script must not hold up the wire's next message
+        let (previews, send, wire) = (self.engine.previews.clone(), self.engine.sender_of(&self.me), self.id);
+        tokio::spawn(async move {
+          let reply = match previews.open(wire, &panel_id, &url, std::path::Path::new(&picker)).await {
+            Ok(o) => SidecarMsg::PreviewOpened { request_id, url: Some(o.url), token: Some(o.token), error: None },
+            Err(e) => SidecarMsg::PreviewOpened { request_id, url: None, token: None, error: Some(e) },
+          };
+          send(reply);
+        });
+      }
+      ShellMsg::PreviewClose { panel_id } => self.engine.previews.close(self.id, &panel_id),
       ShellMsg::PlatformEvent { event } => {
         if matches!(event, PlatformEvent::WindowFocus) {
           self.engine.activate(self.id);
@@ -549,6 +568,8 @@ fn shell_kind(m: &ShellMsg) -> &'static str {
     ShellMsg::WebviewMessage { .. } => "webviewMessage",
     ShellMsg::PlatformResponse { .. } => "platformResponse",
     ShellMsg::PlatformEvent { .. } => "platformEvent",
+    ShellMsg::PreviewOpen { .. } => "previewOpen",
+    ShellMsg::PreviewClose { .. } => "previewClose",
     ShellMsg::Shutdown => "shutdown",
   }
 }

@@ -47,6 +47,15 @@ export interface SidecarClientOpts {
   engine?: (cmd: SidecarCommand) => EngineEndpoint | undefined;
 }
 
+// A preview the shell keeps open: asked for again after every reconnect (the engine and its ports may be new)
+export interface PreviewLease {
+  panelId: string;
+  url: string;
+  picker: string;
+  // Each answer: the proxied page and its picker token, or why it cannot be shown
+  onOpened(r: { url: string; token: string } | { error: string }): void;
+}
+
 const MAX_RESTARTS = 5;
 // A run longer than this starts a new burst of restarts instead of adding to the current one
 const STABLE_MS = 60_000;
@@ -79,6 +88,11 @@ export class SidecarClient {
   private timer?: NodeJS.Timeout;
   private disposed = false;
   private helloSeq = 0;
+  private previews = new Map<string, PreviewLease>();
+  private previewSeq = 0;
+  // previewOpen request id → the panel it was for; an answer for a panel that moved on since is dropped
+  private previewAsks = new Map<string, { panelId: string; url: string }>();
+  private features = new Set<string>();
   sessionsDir?: string;
 
   constructor(private opts: SidecarClientOpts) {}
@@ -164,6 +178,25 @@ export class SidecarClient {
     else this.outbox = this.outbox.filter(m => !('viewId' in m && m.viewId === viewId));
   }
 
+  // Keep a page open through the engine's preview proxy for this panel; again with another url navigates it. The returned
+  // function closes it. Answers arrive through onOpened, once now and once after every reconnect
+  preview(lease: PreviewLease): () => void {
+    this.previews.set(lease.panelId, lease);
+    if (this.ready) this.askPreview(lease);
+    return () => {
+      if (this.previews.get(lease.panelId) !== lease) return;
+      this.previews.delete(lease.panelId);
+      if (this.ready) this.write({ type: 'previewClose', panelId: lease.panelId });
+    };
+  }
+
+  private askPreview(lease: PreviewLease) {
+    if (!this.features.has('preview')) { lease.onOpened({ error: 'engine-too-old' }); return; }
+    const requestId = `p${++this.previewSeq}`;
+    this.previewAsks.set(requestId, { panelId: lease.panelId, url: lease.url });
+    this.write({ type: 'previewOpen', requestId, panelId: lease.panelId, url: lease.url, picker: lease.picker });
+  }
+
   send(viewId: string, message: WebviewMsg) {
     if (!this.views.has(viewId)) return;
     this.post({ type: 'webviewMessage', viewId, message });
@@ -200,12 +233,15 @@ export class SidecarClient {
         this.ready = true;
         this.candidate = 0;
         this.sessionsDir = m.sessionsDir;
+        this.features = new Set(m.features ?? []);
         this.opts.log(`sidecar ready: pid ${m.sidecar.pid}, version ${m.sidecar.version}, sessions ${m.sessionsDir}`);
         // Queued facts first: a view reads the environment when it attaches
         const queued = this.outbox.splice(0);
         for (const m of queued) if (m.type === 'platformEvent') this.write(m);
         for (const a of this.views.values()) this.write(this.attachEnvelope(a));
         for (const m of queued) if (m.type !== 'platformEvent') this.write(m);
+        this.previewAsks.clear();
+        for (const lease of this.previews.values()) this.askPreview(lease);
         this.setState('ready');
         return;
       }
@@ -227,6 +263,14 @@ export class SidecarClient {
         return;
       }
       case 'platformRequest': void this.onRequest(gen, m.requestId, m.request); return;
+      case 'previewOpened': {
+        const ask = this.previewAsks.get(m.requestId);
+        this.previewAsks.delete(m.requestId);
+        const lease = ask && this.previews.get(ask.panelId);
+        if (!lease || lease.url !== ask.url) return;
+        lease.onOpened(m.url && m.token ? { url: m.url, token: m.token } : { error: m.error ?? 'no answer' });
+        return;
+      }
       case 'shutdownOk': return;
       default: this.opts.log(`sidecar sent an unknown envelope: ${(m as { type?: unknown }).type}`);
     }
@@ -310,6 +354,7 @@ export class SidecarClient {
     this.ready = false;
     this.outbox = [];
     this.views.clear();
+    this.previews.clear();
     this.state = 'stopped';
     if (sock) await new Promise<void>(resolve => { sock.end(resolve); setTimeout(() => { sock.destroy(); resolve(); }, 1000).unref(); });
     await this.stop(proc);
