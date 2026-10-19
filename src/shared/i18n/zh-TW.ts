@@ -865,6 +865,7 @@ export const zhTW = {
   'browser.empty': '輸入本機網址，例如 localhost:5173',
   'quote.add': '新增到對話',
   'quote.commentPlaceholder': '新增選填評論…',
+  'quote.saveComment': '儲存評論',
   'quote.chip': '{n} 條註釋',
   'quote.chipOne': '1 條註釋',
   'quote.selected': '所選文字',

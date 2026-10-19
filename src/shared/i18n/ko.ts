@@ -840,6 +840,7 @@ export const ko = {
   'browser.empty': 'localhost:5173 같은 로컬 주소를 입력하세요',
   'quote.add': '채팅에 추가',
   'quote.commentPlaceholder': '댓글 추가 (선택)…',
+  'quote.saveComment': '댓글 저장',
   'quote.chip': '주석 {n}개',
   'quote.chipOne': '주석 1개',
   'quote.selected': '선택한 텍스트',

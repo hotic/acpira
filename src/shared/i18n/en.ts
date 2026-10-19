@@ -867,6 +867,7 @@ export const en = {
   'browser.empty': 'Enter a local address, such as localhost:5173',
   'quote.add': 'Add to chat',
   'quote.commentPlaceholder': 'Add an optional comment…',
+  'quote.saveComment': 'Save comment',
   'quote.chip': '{n} annotations',
   'quote.chipOne': '1 annotation',
   'quote.selected': 'Selected text',

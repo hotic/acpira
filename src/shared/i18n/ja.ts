@@ -845,6 +845,7 @@ export const ja = {
   'browser.empty': 'localhost:5173 のようなローカルアドレスを入力',
   'quote.add': 'チャットに追加',
   'quote.commentPlaceholder': 'コメントを追加（任意）…',
+  'quote.saveComment': 'コメントを保存',
   'quote.chip': '注釈 {n} 件',
   'quote.chipOne': '注釈 1 件',
   'quote.selected': '選択したテキスト',

@@ -843,6 +843,7 @@ export const de = {
   'browser.empty': 'Lokale Adresse eingeben, etwa localhost:5173',
   'quote.add': 'Zum Chat hinzufügen',
   'quote.commentPlaceholder': 'Optionalen Kommentar hinzufügen…',
+  'quote.saveComment': 'Kommentar speichern',
   'quote.chip': '{n} Anmerkungen',
   'quote.chipOne': '1 Anmerkung',
   'quote.selected': 'Markierter Text',

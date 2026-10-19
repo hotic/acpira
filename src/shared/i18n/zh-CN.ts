@@ -880,6 +880,7 @@ export const zhCN = {
   'browser.empty': '输入本机地址，例如 localhost:5173',
   'quote.add': '添加到对话',
   'quote.commentPlaceholder': '添加可选评论…',
+  'quote.saveComment': '保存评论',
   'quote.chip': '{n} 条注释',
   'quote.chipOne': '1 条注释',
   'quote.selected': '所选文本',

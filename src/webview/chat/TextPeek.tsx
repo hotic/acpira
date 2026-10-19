@@ -3,6 +3,8 @@ import { CodeXml, Eye, X } from 'lucide-react';
 import { t } from '../i18n';
 import { Dialog } from '../ui/Dialog';
 import { IconButton } from '../ui/Button';
+import { cn } from '../ui/cn';
+import { CODE_CARD, CODE_INSET } from './CodeBlock';
 import { Prose } from './Prose';
 import { looksLikeMarkdown } from './markdownGuess';
 
@@ -34,10 +36,11 @@ export function TextPeek({ name, text, failed, comment, onClose }: { name: strin
             </IconButton>}
             <IconButton size="sm" title={t('common.close')} aria-label={t('common.close')} onClick={onClose}><X strokeWidth={1.5} /></IconButton>
           </div>
-          {/* The comment and the text share one column, so their left edges and spacing line up */}
+          {/* The comment and the text share one column; the comment is a card cut like the code card below it, so the
+              label and remark start where the code does */}
           <div className="scroll-thin flex min-h-0 flex-1 flex-col gap-gap overflow-auto p-pad">
             {comment && (
-              <div className="flex flex-col gap-0.5">
+              <div className={cn('flex shrink-0 flex-col gap-0.5', CODE_CARD, CODE_INSET)}>
                 <span className="text-3 text-fg-3">{t('quote.comment')}</span>
                 <p className="m-0 text-2 whitespace-pre-wrap break-words text-fg-1">{comment}</p>
               </div>

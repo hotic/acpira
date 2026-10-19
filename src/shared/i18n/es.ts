@@ -844,6 +844,7 @@ export const es = {
   'browser.empty': 'Escribe una dirección local, como localhost:5173',
   'quote.add': 'Añadir al chat',
   'quote.commentPlaceholder': 'Añade un comentario opcional…',
+  'quote.saveComment': 'Guardar comentario',
   'quote.chip': '{n} anotaciones',
   'quote.chipOne': '1 anotación',
   'quote.selected': 'Texto seleccionado',
