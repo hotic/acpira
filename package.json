@@ -94,6 +94,12 @@
         "icon": "$(multiple-windows)"
       },
       {
+        "command": "acpira.openPreview",
+        "title": "%acpira.cmd.openPreview%",
+        "category": "Acpira",
+        "icon": "$(globe)"
+      },
+      {
         "command": "acpira.showLog",
         "title": "%acpira.cmd.showLog%",
         "category": "Acpira"

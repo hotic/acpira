@@ -4,6 +4,7 @@
   "acpira.cmd.newSession": "Новая сессия",
   "acpira.cmd.openInEditor": "Открыть в редакторе",
   "acpira.cmd.openInEditorColumns": "Открыть в колонках редактора",
+  "acpira.cmd.openPreview": "Открыть локальную страницу в браузере Acpira",
   "acpira.cmd.openInNewWindow": "Открыть в новом окне",
   "acpira.cmd.showLog": "Показать журнал",
   "acpira.conf.defaultAgent": "Агент по умолчанию для новых сессий",

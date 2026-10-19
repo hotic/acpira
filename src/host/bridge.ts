@@ -1,8 +1,9 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
 import { appearanceFromSettings } from '@shared/appearance';
-import type { HostMsg, WebviewHost, WebviewMsg } from '@shared/protocol';
+import type { BrowserHostMsg, BrowserLook, BrowserMsg, ContextItem, HostMsg, WebviewHost, WebviewMsg } from '@shared/protocol';
 import type { SessionView } from '@shared/transcript';
+import { normalizePreviewUrl } from '@shared/picker';
 import type { SidecarClient, SidecarState, ShellView } from './shell/SidecarClient';
 import { PostQueue } from './outbox';
 
@@ -166,4 +167,141 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
     for (const d of this.disposables) d.dispose();
     this.detach();
   }
+}
+
+export interface BrowserPanelOpts {
+  client: SidecarClient;
+  extensionUri: vscode.Uri;
+  look: () => BrowserLook;
+  // Picked elements with their comment, for the chat
+  onAdd: (item: ContextItem) => void;
+  // The page in VS Code's own browser (the platform's openBrowser)
+  openExternal: (url: string) => void;
+  log?: (line: string) => void;
+}
+
+// The browser panel: a page from the user's own dev server in an iframe, served through the engine's preview proxy, which adds
+// the element picker (src/picker) to it. The panel is its own webview running the same bundle (host 'browser',
+// webview/browser/BrowserPanel.tsx) and has no sidecar view: the shell holds its proxy lease and asks again after a reconnect.
+// In a remote window the proxy runs on the remote, and asExternalUri forwards its port to the user's machine, where the
+// iframe loads. Picked elements go to the chat like another extension's `acpira.context.add`
+export class BrowserPanel implements vscode.Disposable {
+  readonly panelId = randomUUID();
+  // The page as asked for: what the address bar shows and what a reconnect asks for again
+  target: string;
+  private release?: () => void;
+  private ready = false;
+  // The frame (or error) waits for the page to listen
+  private pending?: BrowserHostMsg;
+  private disposables: vscode.Disposable[] = [];
+  private onDisposed = new vscode.EventEmitter<void>();
+  readonly onDidDispose = this.onDisposed.event;
+
+  constructor(readonly panel: vscode.WebviewPanel, url: string, private opts: BrowserPanelOpts) {
+    this.target = url;
+    panel.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(opts.extensionUri, 'dist', 'webview')] };
+    panel.webview.html = this.html();
+    panel.title = titleOf(url);
+    this.disposables.push(
+      panel.webview.onDidReceiveMessage((m: BrowserMsg) => this.onMessage(m)),
+      panel.onDidDispose(() => this.dispose()),
+    );
+    this.navigate(url);
+  }
+
+  // Another page, through the same lease: the engine keeps the proxy when the site stays the same
+  navigate(url: string) {
+    this.target = url;
+    const picker = vscode.Uri.joinPath(this.opts.extensionUri, 'dist', 'picker.js').fsPath;
+    this.release = this.opts.client.preview({ panelId: this.panelId, url, picker, onOpened: r => { void this.opened(url, r); } });
+  }
+
+  postLook() {
+    if (this.ready) void this.panel.webview.postMessage({ type: 'browserLook', look: this.opts.look() } satisfies BrowserHostMsg);
+  }
+
+  private async opened(url: string, r: { url: string; token: string } | { error: string }) {
+    if (url !== this.target) return;
+    if ('error' in r) { this.post({ type: 'browserError', target: url, error: r.error }); return; }
+    let src: string;
+    try {
+      src = (await vscode.env.asExternalUri(vscode.Uri.parse(r.url, true))).toString(true);
+    } catch (e) {
+      this.post({ type: 'browserError', target: url, error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+    if (url === this.target) this.post({ type: 'browserFrame', target: url, src, token: r.token });
+  }
+
+  private post(m: BrowserHostMsg) {
+    this.pending = m;
+    if (this.ready) void this.panel.webview.postMessage(m);
+  }
+
+  private onMessage(m: BrowserMsg) {
+    switch (m.type) {
+      case 'browserReady':
+        this.ready = true;
+        this.postLook();
+        if (this.pending) void this.panel.webview.postMessage(this.pending);
+        break;
+      case 'browserNavigate': {
+        const url = normalizePreviewUrl(m.url);
+        if (url) this.navigate(url);
+        break;
+      }
+      case 'browserTitle': this.panel.title = m.title.trim().slice(0, 80) || titleOf(this.target); break;
+      case 'browserAdd': this.opts.onAdd(m.item); break;
+      case 'browserOpenExternal': this.opts.openExternal(m.url); break;
+    }
+  }
+
+  private html(): string {
+    const dist = vscode.Uri.joinPath(this.opts.extensionUri, 'dist', 'webview');
+    const js = this.panel.webview.asWebviewUri(vscode.Uri.joinPath(dist, 'main.js'));
+    const css = this.panel.webview.asWebviewUri(vscode.Uri.joinPath(dist, 'main.css'));
+    const nonce = randomBytes(16).toString('base64url');
+    const { appearance, locale } = this.opts.look();
+    const cspSource = this.panel.webview.cspSource;
+    // Frames only from loopback, where the proxy and its forwarded port listen; a remote whose forwarding hands out a public
+    // https address (Codespaces) needs https too
+    const frames = ['http://127.0.0.1:*', 'http://localhost:*', ...(vscode.env.remoteName ? ['https:'] : [])].join(' ');
+    const csp = [
+      "default-src 'none'",
+      `img-src ${cspSource} data:`,
+      `style-src ${cspSource} 'unsafe-inline'`,
+      `font-src ${cspSource}`,
+      `script-src 'nonce-${nonce}' 'wasm-unsafe-eval'`,
+      `frame-src ${frames}`,
+    ].join('; ');
+    return `<!doctype html>
+<html lang="${locale}">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="${csp}">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="${css}">
+<style>html,body,#root{margin:0;padding:0;height:100%;overflow:hidden}.acp-shell :focus,.acp-shell :focus-visible{outline:none!important}</style>
+</head>
+<body>
+<div id="root"></div>
+<script nonce="${nonce}">window.__acpira={host:"browser",font:${JSON.stringify(appearance.font)}}</script>
+<script type="module" nonce="${nonce}" src="${js}"></script>
+</body>
+</html>`;
+  }
+
+  dispose() {
+    if (!this.release) return;
+    this.release();
+    this.release = undefined;
+    for (const d of this.disposables.splice(0)) d.dispose();
+    this.onDisposed.fire();
+    this.onDisposed.dispose();
+  }
+}
+
+// `localhost:5173` until the page names itself
+function titleOf(url: string): string {
+  try { return new URL(url).host; } catch { return url; }
 }

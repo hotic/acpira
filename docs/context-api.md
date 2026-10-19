@@ -46,6 +46,7 @@ When Acpira is not installed, `executeCommand` rejects with "command not found".
 - **Owners.** Any push with items takes over the source's slot. A clear (empty `items`) only works when its `owner` equals the owner that filled the slot. So when canvas A is closed after the user moved on to canvas B, A's clear leaves B's selection alone. When the slot's owner is a URI and every tab showing it closes, Acpira clears the slot by itself. Still, send the clear when your view loses its selection or closes.
 - **Sharing switch.** `set` follows the "Share selections" setting (`acpira.shareEditorSelection`). While it is off, nothing is shown, and the command returns `{ shown: false }`. `add` always works.
 - **Each source is separate.** The editor selection and every source keep their own chip. Several sources selected at once all go out with the message. With more than two sources, the toolbar shows one chip with the count, and its menu switches each source on or off.
+- **Reserved id.** `browser` is Acpira's own browser panel (elements picked on a local page); pick another id for your tool.
 - **Never sent on its own.** Content only goes out when the user sends a message.
 
 ## What the agent receives
