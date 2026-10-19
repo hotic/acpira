@@ -413,11 +413,20 @@ export interface GoalBlock {
 
 export type AgentBlock = ThoughtBlock | PlanBlock | ToolCallBlock | TextBlock | PermissionBlock | CompactionBlock | PlanDocumentBlock | QuestionBlock | ImageBlock | NoticeBlock | SteerBlock | GoalBlock;
 
+// Where a shared text came from (another extension's selection, a picked web page); absent on dropped text. It rides on the
+// `text` kind so engines released before it still read the record, as a plain text attachment
+export interface TextContext {
+  sourceId: string;
+  sourceName: string;
+  uri?: string;
+  comment?: string;
+}
+
 // What the composer attaches to a prompt before the host has seen it: images and dropped text carry their payload (base64 / text),
 // files carry a URI (Explorer drag / @ mention) that the host resolves — image files become `image`, everything else stays a link
 export type Draft =
   | { kind: 'image'; mimeType: string; data: string; name?: string }
-  | { kind: 'text'; name: string; text: string }
+  | { kind: 'text'; name: string; text: string; context?: TextContext }
   // `data`: base64 bytes of an OS file the webview only holds as a blob (paste / Finder drop); the host stages it and links the staged path
   | { kind: 'file'; uri: string; name: string; data?: string }
   // A line range of an editor document (the IDE's selection, its "Add to chat" action, or a paste of text copied there); lines are 1-based and inclusive
@@ -429,7 +438,7 @@ export type Draft =
 // the webview loads it via blobBase; absent when the write failed — the prompt still went out, only the preview is gone); files are paths the agent reads by itself (sent as resource_link)
 export type Attachment =
   | { kind: 'image'; blob?: string; mimeType: string; name?: string }
-  | { kind: 'text'; blob?: string; name: string }
+  | { kind: 'text'; blob?: string; name: string; context?: TextContext }
   | { kind: 'file'; uri: string; name: string }
   // The selected text is in the blob store like dropped text
   | { kind: 'selection'; blob?: string; uri: string; name: string; startLine: number; endLine: number }

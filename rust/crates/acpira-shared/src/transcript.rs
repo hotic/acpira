@@ -837,6 +837,23 @@ pub enum AgentBlock {
   Goal(GoalBlock),
 }
 
+/// Where a shared text came from. It rides on the `text` kind instead of a kind of its own: engines released before it
+/// ignore the unknown field and read a plain text attachment, where an unknown kind would fail the whole record
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextContext {
+  /// Stable id of the sharing tool (`asgard.questCanvas`, `browser`)
+  pub source_id: String,
+  /// Its display name, written into the prompt header
+  pub source_name: String,
+  /// What the text was taken from (a document, a page URL)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub uri: Option<String>,
+  /// The user's remark on it
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub comment: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Draft {
@@ -850,6 +867,9 @@ pub enum Draft {
   Text {
     name: String,
     text: String,
+    /// Set when the text was shared from another tool (an extension, a picked web page) rather than dropped as a file
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context: Option<TextContext>,
   },
   File {
     uri: String,
@@ -891,6 +911,8 @@ pub enum Attachment {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     blob: Option<String>,
     name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context: Option<TextContext>,
   },
   File {
     uri: String,

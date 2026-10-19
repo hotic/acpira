@@ -36,6 +36,31 @@ async fn forking_copies_the_prefix_records_its_origin_re_homes_blobs_and_hands_o
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_forked_shared_context_keeps_its_source_and_blob_after_the_original_is_deleted() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let m = Mgr::new(dir.path(), Opts::fake(&fake));
+  m.init().await;
+  m.new_session(None).await;
+  let src = m.active_id().unwrap();
+  let context = json!({ "sourceId": "asgard.questCanvas", "sourceName": "Quest canvas", "uri": "file:///w/a.canvas" });
+  m.handle(json!({ "type": "send", "text": "hi", "attachments": [{ "kind": "text", "name": "2 nodes", "text": "node a\nnode b", "context": context }] })).await;
+  m.handle(json!({ "type": "forkSession", "sessionId": src, "turnIndex": 1 })).await;
+  let fork = m.active_id().unwrap();
+  m.handle(json!({ "type": "deleteSession", "id": src })).await;
+  let store = TranscriptStore::new(dir.path().to_path_buf(), Arc::new(|_: &str| {}), None);
+  let record = v(store.load(&fork).await.unwrap());
+  let a = &record["turns"][0]["attachments"][0];
+  assert_eq!(a["context"], context);
+  let blob = a["blob"].as_str().expect("copied blob");
+  assert_eq!(std::fs::read_to_string(dir.path().join(&fork).join(blob)).unwrap(), "node a\nnode b");
+  // The fork's first prompt carries the copied turn, its shared context included
+  m.handle(json!({ "type": "send", "text": "again" })).await;
+  assert!(last_turn(&m.active().unwrap())["blocks"].to_string().contains("resource:acpira://history/"));
+  m.dispose().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn forking_re_homes_the_blobs_of_a_steered_prompt_and_hands_them_over() {
   let fake = fake_or_skip!();
   let dir = tempfile::tempdir().unwrap();

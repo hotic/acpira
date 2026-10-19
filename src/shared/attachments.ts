@@ -51,7 +51,7 @@ export function attachmentLabel(a: Attachment | Draft): string | undefined {
 export function attachmentOfDraft(d: Draft): Attachment {
   switch (d.kind) {
     case 'image': return { kind: 'image', mimeType: d.mimeType, name: d.name };
-    case 'text': return { kind: 'text', name: d.name };
+    case 'text': return d.context ? { kind: 'text', name: d.name, context: d.context } : { kind: 'text', name: d.name };
     case 'file': return { kind: 'file', uri: d.uri, name: d.name };
     case 'selection': return { kind: 'selection', uri: d.uri, name: d.name, startLine: d.startLine, endLine: d.endLine };
     case 'quote': return d.comment ? { kind: 'quote', text: d.text, comment: d.comment } : { kind: 'quote', text: d.text };
