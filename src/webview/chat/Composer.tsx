@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { Plus, TextSelect, X } from 'lucide-react';
+import { Plus, SquareDashedMousePointer, TextSelect, X } from 'lucide-react';
 import type { Draft, SessionControls, SessionOption, SlashCommand, Turn, Usage } from '@shared/transcript';
 import type { EditorSelection, FileHit } from '@shared/protocol';
 import type { HiddenMap } from '@shared/settings';
@@ -10,7 +10,7 @@ import { useAppearance } from '../appearance';
 import { getLocale, t } from '../i18n';
 import { cn } from '../ui/cn';
 import { Chip, IconButton } from '../ui/Button';
-import { DropdownMenu } from '../ui/DropdownMenu';
+import { DropdownMenu, optionClass } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { WorkingBeam } from '../effects/WorkingBeam';
 import { SendButton } from '../effects/SendButton';
@@ -23,7 +23,7 @@ import { modeIcon, modeLabel } from './modeIcons';
 import { ModelControl, OptionControl, ReasoningControl } from './ModelPicker';
 import { ContextRing } from './ContextUsage';
 import { useComposerDraft } from './useComposerDraft';
-import { copiedSelection, markSelectionSent, sameRange, selectionDraft, selectionKey, useEditorSelection } from './editorContext';
+import { contextDrafts, copiedSelection, markContextSent, markSelectionSent, sameContext, sameRange, selectionDraft, selectionKey, useEditorSelection, useLiveContexts, type LiveContext } from './editorContext';
 import { PromptInput } from './PromptInput';
 
 export interface ComposerProps {
@@ -86,6 +86,18 @@ export function Composer(p: ComposerProps) {
   const offered = p.main && p.shareSelection && !p.edit ? live : undefined;
   const [excluded, setExcluded] = useState<string>();
   const offeredOn = !!offered && selectionKey(offered) !== excluded;
+  // Other tools' live selections, one chip per source beside the editor's; clicking one leaves its current content out
+  const liveContexts = useLiveContexts();
+  const contexts = p.main && p.shareSelection && !p.edit ? liveContexts : NO_CONTEXTS;
+  const [excludedContexts, setExcludedContexts] = useState<ReadonlySet<string>>(() => new Set());
+  const contextOn = (c: LiveContext) => !excludedContexts.has(c.key);
+  // Two or more live chips fold to their icons on anything narrower than a wide editor tab, so the model name keeps its room
+  const liveNarrow = (offered ? 1 : 0) + Math.min(contexts.length, MAX_CONTEXT_CHIPS + 1) > 1 ? 'icon-xl' : 'icon';
+  const toggleContext = (c: LiveContext) => setExcludedContexts(cur => {
+    const next = new Set(cur);
+    if (!next.delete(c.key)) next.add(c.key);
+    return next;
+  });
   const flush = !p.edit && composer === 'flush';
   // The beam lights up while the composer is focused (focus-within semantics), not while it's working.
   // Overlays portal to the shell root, so opening a menu blurs the composer; "a menu is open" therefore also counts as focused
@@ -110,8 +122,12 @@ export function Composer(p: ComposerProps) {
     setSending(true);
     try {
       const sel = offeredOn ? selectionDraft(offered, p.cwd) : undefined;
-      await p.onSend(text, sel && !drafts.some(d => sameRange(d, sel)) ? [...drafts, sel] : drafts);
+      const included = contexts.filter(contextOn);
+      const offeredDrafts = [...(sel ? [sel] : []), ...included.flatMap(c => contextDrafts(c.source, c.items))]
+        .filter(l => !drafts.some(d => sameRange(d, l) || sameContext(d, l)));
+      await p.onSend(text, [...drafts, ...offeredDrafts]);
       if (offeredOn) markSelectionSent(offered);
+      for (const c of included) markContextSent(c);
       setText('');
       setDrafts([]);
       setDismissed(undefined);
@@ -343,7 +359,13 @@ export function Composer(p: ComposerProps) {
             ))}
           </div>
         </fieldset>
-        {offered && <SelectionChip selection={offered} cwd={p.cwd} on={offeredOn} onToggle={() => setExcluded(offeredOn ? selectionKey(offered) : undefined)} />}
+        {/* The live chips share one slot of the free width with the model side, however many sources there are */}
+        {(offered || contexts.length > 0) && <div className="flex min-w-0 max-w-fit flex-1 items-center gap-1">
+          {offered && <SelectionChip selection={offered} cwd={p.cwd} on={offeredOn} narrow={liveNarrow} onToggle={() => setExcluded(offeredOn ? selectionKey(offered) : undefined)} />}
+          {contexts.length > MAX_CONTEXT_CHIPS
+            ? <ContextsMenu contexts={contexts} on={contextOn} narrow={liveNarrow} onToggle={toggleContext} onOpenChange={onOpenChange} />
+            : contexts.map(c => <ContextChip key={c.source.id} context={c} on={contextOn(c)} narrow={liveNarrow} onToggle={() => toggleContext(c)} />)}
+        </div>}
         {!p.edit && p.toolbarStart}
         {!p.edit && p.main && !!personas?.length && <SummonMenu personas={personas} onOpenChange={onOpenChange} onPick={persona => summon(persona.name, caret)} />}
         <fieldset disabled={p.disabled || p.controlsLocked || sending} className="m-0 flex min-w-0 flex-1 items-center gap-1 border-0 p-0">
@@ -412,15 +434,67 @@ function ModeMenu({ modes, value, title, onSelect, onOpenChange, labelOf = modeL
   );
 }
 
+const NO_CONTEXTS: LiveContext[] = [];
+type LiveNarrow = 'icon' | 'icon-xl';
+// Beyond this many sources the toolbar shows one count chip whose menu toggles each
+const MAX_CONTEXT_CHIPS = 2;
+
+// A source's chip label: its one item's label, or the source name with the item count
+function contextLabel(c: LiveContext): string {
+  return c.items.length === 1 ? c.items[0]!.label : t('composer.context.items', { source: c.source.name, n: c.items.length });
+}
+
+// Another tool's live selection in the toolbar, styled and folded like the editor's
+function ContextChip({ context, on, narrow, onToggle }: { context: LiveContext; on: boolean; narrow: LiveNarrow; onToggle: () => void }) {
+  const label = contextLabel(context);
+  const hint = on ? t('composer.context.include') : t('composer.selection.excluded');
+  return (
+    <Chip caret={false} narrow={narrow} aria-pressed={on} onClick={onToggle}
+      className={cn('min-w-0 max-w-fit flex-1', !on && 'opacity-50 hover:opacity-80')}
+      title={`${context.source.name}: ${label}\n${hint}`} aria-label={`${context.source.name}: ${label}. ${hint}`}
+      icon={<SquareDashedMousePointer strokeWidth={1.5} />}>
+      <span className="min-w-0 truncate">{label}</span>
+    </Chip>
+  );
+}
+
+// More live sources than the toolbar holds: one chip with the count, its menu switching each source in or out
+function ContextsMenu({ contexts, on, narrow, onToggle, onOpenChange }: {
+  contexts: LiveContext[];
+  narrow: LiveNarrow;
+  on: (c: LiveContext) => boolean;
+  onToggle: (c: LiveContext) => void;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const included = contexts.filter(on).length;
+  return (
+    <DropdownMenu.Root onOpenLifecycle={onOpenChange}>
+      <DropdownMenu.Trigger render={<Chip caret={false} narrow={narrow} className={cn('min-w-0 max-w-fit flex-1', !included && 'opacity-50 hover:opacity-80')}
+        title={t('composer.context.sources', { n: contexts.length })} icon={<SquareDashedMousePointer strokeWidth={1.5} />}>
+        <span className="min-w-0 truncate">{t('composer.context.sources', { n: contexts.length })}</span>
+      </Chip>} />
+      <DropdownMenu.Portal><DropdownMenu.Positioner side="top" width="sm"><DropdownMenu.Popup>
+        {contexts.map(c => (
+          <DropdownMenu.CheckboxItem key={c.source.id} checked={on(c)} closeOnClick={false} onCheckedChange={() => onToggle(c)}
+            render={<button type="button" />} nativeButton className={cn(optionClass)} title={`${c.source.name}: ${contextLabel(c)}`}>
+            <OptionContent checked={on(c)} checkSlot
+              description={c.items.length === 1 ? c.items[0]!.label : t('composer.context.count', { n: c.items.length })}>{c.source.name}</OptionContent>
+          </DropdownMenu.CheckboxItem>
+        ))}
+      </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+}
+
 // The editor's live selection in the toolbar: `name (12-19)`, dimmed while left out. The name truncates first so the range stays readable
-function SelectionChip({ selection, cwd, on, onToggle }: { selection: EditorSelection; cwd: string; on: boolean; onToggle: () => void }) {
+function SelectionChip({ selection, cwd, on, narrow, onToggle }: { selection: EditorSelection; cwd: string; on: boolean; narrow: LiveNarrow; onToggle: () => void }) {
   const draft = selectionDraft(selection, cwd);
   const range = lineRangeLabel(draft.startLine, draft.endLine);
   const hint = on ? t('composer.selection.include') : t('composer.selection.excluded');
   return (
     // Splits the free width with the right-hand controls (both basis 0, this one capped at its content) and folds to its icon
     // on a narrow toolbar, so a long file name never squeezes the model name
-    <Chip caret={false} narrow="icon" aria-pressed={on} onClick={onToggle}
+    <Chip caret={false} narrow={narrow} aria-pressed={on} onClick={onToggle}
       className={cn('min-w-0 max-w-fit flex-1', !on && 'opacity-50 hover:opacity-80')}
       title={`${draft.name} ${range}\n${hint}`} aria-label={`${draft.name} ${range}. ${hint}`}
       icon={<TextSelect strokeWidth={1.5} />}>

@@ -26,7 +26,7 @@
   "acpira.conf.codeFontSize": "代码块、工具输出与差异视图的基准字号，px（9–20）",
   "acpira.conf.diffMarkers": "差异标记：color 给改动行上底色，signs 只靠 +/- 前缀",
   "acpira.conf.fontSmoothing": "用 -webkit-font-smoothing: antialiased 渲染文字（笔画更细，仅 macOS 生效）",
-  "acpira.conf.shareEditorSelection": "把编辑器里当前选中的代码带进聊天：模式旁显示一个标签，随下一条消息发出",
+  "acpira.conf.shareEditorSelection": "把编辑器或其他工具里当前选中的内容带进聊天：模式旁显示一个标签，随下一条消息发出",
   "acpira.conf.steerQueued": "回合运行中发出的消息直接插进当前回合，不再排队。仅 Claude、Codex 支持。",
   "acpira.conf.notifySound": "会话需要你处理或已完成、而你没在看它时，响一声提示音。",
   "acpira.conf.notifySystem": "在同样的时机弹出系统通知。VS Code 远程窗口里改为窗口内通知。",
@@ -50,5 +50,7 @@
   "acpira.conf.appearance.fold": "过程行的折叠：整轮过程收在一栏，运行时显示当前动作，结束后显示用时，点击展开 / 只收只读动作（编辑与命令保持可见）",
   "acpira.conf.appearance.autoExpand": "自动展开过程细节：运行时展开正在做的那一项（思考、读取与编辑列表、命令输出），做完即收起；off 只保留整轮过程的展开与收起",
   "acpira.cmd.addSelection": "添加到对话",
+  "acpira.cmd.contextSet": "设置共享上下文（供扩展调用）",
+  "acpira.cmd.contextAdd": "添加上下文到对话（供扩展调用）",
   "acpira.cmd.connectChatgpt": "连接 ChatGPT 会话"
 }

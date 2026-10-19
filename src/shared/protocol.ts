@@ -71,6 +71,25 @@ export interface EditorSelection {
   text: string;
 }
 
+// Context another tool shares into the composer (an extension's selection, elements picked on a web page): who shares it,
+// and the pieces. The shells validate and cap it before a page sees it (`src/host/contextApi.ts`)
+export interface ContextSource {
+  // Stable id, one live slot per id (`asgard.questCanvas`, `browser`)
+  id: string;
+  // Display name, also written into the prompt header
+  name: string;
+}
+
+export interface ContextItem {
+  // Chip label
+  label: string;
+  // What the agent receives
+  text: string;
+  // What it was taken from (a document, a page URL)
+  uri?: string;
+  comment?: string;
+}
+
 // Links in agent output open on the host side; only these schemes are ever handed to openExternal
 export function isSafeExternalUrl(url: string): boolean {
   try {
@@ -86,13 +105,18 @@ export type HostMsg =
   // The VS Code shell asks the page whether a URL answers from the user's machine (the page renders there even when the
   // extension host is remote); answered with probeResult. Never sent by the sidecar
   | { type: 'probeUrl'; id: string; url: string }
-  // The next three come from the IDE shell itself, not the sidecar: editor state is UI, and the engine never sees it until a prompt carries it.
+  // The next five come from the IDE shell itself, not the sidecar: editor state is UI, and the engine never sees it until a prompt carries it.
   // The editor's current selection, on every change; absent when nothing (or no file: document) is selected
   | { type: 'editorSelection'; selection?: EditorSelection }
   // The editor's "Add to chat" action: pin this range into the composer
   | { type: 'addSelection'; selection: EditorSelection }
   // Text just copied from an editor, so pasting the same text into the composer becomes a selection chip instead
   | { type: 'editorCopy'; selection: EditorSelection }
+  // Another tool's live selection, one slot per source: it replaces what that source offered before, absent items clear it.
+  // Shell-originated like the editor's (`acpira.context.set`)
+  | { type: 'contextSelection'; source: ContextSource; items?: ContextItem[] }
+  // Pin context into the composer like "Add to chat" (`acpira.context.add`, a pick in the browser panel)
+  | { type: 'addContext'; source: ContextSource; items: ContextItem[] }
   // The shell brings a session up in this page (a session link opened from outside, a notification's Open button): the page
   // selects it and leaves the settings page if it is there. Never sent by the sidecar
   | { type: 'showSession'; id: string }

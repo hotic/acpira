@@ -93,8 +93,9 @@ export interface ChipProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   // wrap onto a clipped second line, so the trailing ones give way first
   tags?: ReactNode;
   // What survives below the sm container tier (the toolbar of a 380 sidebar has ~324px): 'icon' keeps just the icon, 'text' keeps just the label;
-  // the caret goes first either way (as in Devin's own composer, which has none). The title keeps the full name. Needs an @container ancestor
-  narrow?: 'icon' | 'text';
+  // the caret goes first either way (as in Devin's own composer, which has none). The title keeps the full name. Needs an @container ancestor.
+  // 'icon-xl' keeps just the icon below the xl tier already: several live-context chips sharing the composer toolbar
+  narrow?: 'icon' | 'icon-xl' | 'text';
   children: ReactNode;
 }
 
@@ -130,7 +131,7 @@ export function Chip({ className, children, variant = 'quiet', caret = true, ico
       {...rest}
     >
       {icon && <span className={cn('flex shrink-0 items-center [&_svg]:size-icon', variant === 'quiet' && 'text-fg-3')}>{icon}</span>}
-      <span className={cn('truncate text-left', tags ? 'shrink-0' : 'grow', narrow === 'icon' && '@max-sm:hidden')}>
+      <span className={cn('truncate text-left', tags ? 'shrink-0' : 'grow', narrow === 'icon' && '@max-sm:hidden', narrow === 'icon-xl' && '@max-xl:hidden')}>
         {children}
         {meta && <span className="text-fg-3"> {meta}</span>}
       </span>

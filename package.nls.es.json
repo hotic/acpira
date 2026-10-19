@@ -26,7 +26,7 @@
   "acpira.conf.codeFontSize": "Tamaño de fuente base de los bloques de código, la salida de herramientas y los diffs en px (9–20)",
   "acpira.conf.diffMarkers": "Marcadores de diff: color tiñe las líneas cambiadas, signs usa solo los prefijos +/-",
   "acpira.conf.fontSmoothing": "Renderizar el texto con -webkit-font-smoothing: antialiased (trazos más finos; solo macOS)",
-  "acpira.conf.shareEditorSelection": "Ofrecer al chat la selección actual del editor: aparece como una ficha junto al modo y se envía con el siguiente mensaje",
+  "acpira.conf.shareEditorSelection": "Ofrece al chat lo seleccionado en el editor o en otra herramienta: aparece como una ficha junto al modo y se envía con el siguiente mensaje",
   "acpira.conf.steerQueued": "Los mensajes enviados durante un turno se integran en él en lugar de quedar en cola. Solo Claude y Codex.",
   "acpira.conf.notifySound": "Reproducir un aviso sonoro cuando una sesión te necesita o termina mientras no la estás mirando.",
   "acpira.conf.notifySystem": "Mostrar una notificación del sistema en los mismos momentos. En una ventana remota de VS Code aparece dentro de la ventana.",
@@ -50,5 +50,7 @@
   "acpira.conf.appearance.fold": "Plegado de las líneas de proceso: mantener todo el turno en un pliegue que muestra la acción actual durante la ejecución y el tiempo empleado al terminar, clic para expandir / plegar solo las acciones de lectura (las ediciones y los comandos siguen visibles)",
   "acpira.conf.appearance.autoExpand": "Expandir automáticamente los detalles del proceso: mientras se ejecuta un turno, abre el elemento en el que trabaja (razonamiento, listas de lectura y edición, salida de comandos) y lo cierra al terminar; desactivado solo mantiene el pliegue del turno completo siguiendo la ejecución",
   "acpira.cmd.addSelection": "Añadir al chat",
+  "acpira.cmd.contextSet": "Establecer contexto compartido (para extensiones)",
+  "acpira.cmd.contextAdd": "Añadir contexto al chat (para extensiones)",
   "acpira.cmd.connectChatgpt": "Conectar sesión de ChatGPT"
 }

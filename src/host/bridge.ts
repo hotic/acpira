@@ -98,8 +98,9 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
   // Editor state from the extension itself (never through the sidecar): selection, copy, "Add to chat"
   postShell(m: HostMsg) {
     if (this.pageReady) { this.outbox.push(m); return; }
-    // Only the latest live selection matters; pinned ranges all wait
+    // Only the latest live selection matters (per source for other tools'); pinned ranges all wait
     if (m.type === 'editorSelection') this.shellQueue = this.shellQueue.filter(q => q.type !== 'editorSelection');
+    if (m.type === 'contextSelection') this.shellQueue = this.shellQueue.filter(q => q.type !== 'contextSelection' || q.source.id !== m.source.id);
     this.shellQueue.push(m);
   }
 

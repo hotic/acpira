@@ -26,7 +26,7 @@
   "acpira.conf.codeFontSize": "Grundschriftgröße von Codeblöcken, Tool-Ausgabe und Diffs in px (9–20)",
   "acpira.conf.diffMarkers": "Diff-Markierungen: color färbt geänderte Zeilen ein, signs nutzt nur die Präfixe +/-",
   "acpira.conf.fontSmoothing": "Text mit -webkit-font-smoothing: antialiased darstellen (dünnere Striche; nur macOS)",
-  "acpira.conf.shareEditorSelection": "Die aktuelle Editor-Auswahl dem Chat anbieten: Sie erscheint als Chip neben dem Modus und wird mit der nächsten Nachricht gesendet",
+  "acpira.conf.shareEditorSelection": "Bietet dem Chat an, was im Editor oder einem anderen Werkzeug markiert ist: Es erscheint als Chip neben dem Modus und geht mit der nächsten Nachricht mit",
   "acpira.conf.steerQueued": "Während eines Durchlaufs gesendete Nachrichten fließen direkt in ihn ein, statt zu warten. Nur Claude und Codex.",
   "acpira.conf.notifySound": "Einen Hinweiston abspielen, wenn eine Sitzung eine Eingabe braucht oder fertig ist, während sie nicht angezeigt wird.",
   "acpira.conf.notifySystem": "Zu denselben Zeitpunkten eine Systembenachrichtigung anzeigen. In einem Remote-Fenster von VS Code erscheint sie stattdessen im Fenster.",
@@ -50,5 +50,7 @@
   "acpira.conf.appearance.fold": "Falten der Ablaufzeilen: den ganzen Durchlauf in einer Falte halten, die während der Ausführung die aktuelle Aktion und danach die Dauer zeigt, Klick zum Ausklappen / nur lesende Aktionen falten (Bearbeitungen und Befehle bleiben sichtbar)",
   "acpira.conf.appearance.autoExpand": "Ablaufdetails automatisch ausklappen: Während ein Durchlauf läuft, wird das gerade bearbeitete Element (Denken, Lese- und Bearbeitungslisten, Befehlsausgabe) geöffnet und danach geschlossen; aus lässt nur die Falte des ganzen Durchlaufs dem Ablauf folgen",
   "acpira.cmd.addSelection": "Zum Chat hinzufügen",
+  "acpira.cmd.contextSet": "Geteilten Kontext setzen (für Erweiterungen)",
+  "acpira.cmd.contextAdd": "Kontext zum Chat hinzufügen (für Erweiterungen)",
   "acpira.cmd.connectChatgpt": "ChatGPT-Sitzung verbinden"
 }

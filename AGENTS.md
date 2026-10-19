@@ -65,4 +65,4 @@ A chat shell for VS Code / Cursor (and IntelliJ) that drives official agent CLIs
 | `ios/`: Xcode project, `AcpiraKit` modules, the phone's role toward the engine, simulator checks | `docs/dev/ios.md` |
 | Windows compatibility boundaries, native regression checks and remaining acceptance coverage | `docs/dev/windows-compatibility.md` |
 
-Also committed: `docs/chatgpt-bridge.md` (ChatGPT conversation mirrors). The rest of `docs/` is local only and may be absent (`HANDOFF.md`, `history-editing.md`, `compaction-queue.md`, `plan-modes.md`, `grok-controls-verification.md`, `ios-app-plan.md` the phased iOS plan).
+Also committed: `docs/chatgpt-bridge.md` (ChatGPT conversation mirrors) and `docs/context-api.md` (`acpira.context.set` / `add`, the public contract other extensions call). The rest of `docs/` is local only and may be absent (`HANDOFF.md`, `history-editing.md`, `compaction-queue.md`, `plan-modes.md`, `grok-controls-verification.md`, `ios-app-plan.md` the phased iOS plan).

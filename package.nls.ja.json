@@ -26,7 +26,7 @@
   "acpira.conf.codeFontSize": "コードブロック、ツール出力、差分の基準フォントサイズ（px、9–20）",
   "acpira.conf.diffMarkers": "差分の表示：color は変更行に色を付け、signs は +/- の記号だけで示します",
   "acpira.conf.fontSmoothing": "-webkit-font-smoothing: antialiased でテキストを描画します（線が細くなります。macOS のみ）",
-  "acpira.conf.shareEditorSelection": "エディターの現在の選択範囲をチャットに渡します：モードの横にチップとして表示され、次のメッセージと一緒に送られます",
+  "acpira.conf.shareEditorSelection": "エディターや他のツールで選択中の内容をチャットに渡します。モードの横にチップが表示され、次のメッセージと一緒に送られます",
   "acpira.conf.steerQueued": "ターン実行中に送ったメッセージをキューに入れず、そのターンに割り込ませます。Claude と Codex のみ。",
   "acpira.conf.notifySound": "セッションが対応を待っているときや完了したとき、それを見ていなければ通知音を鳴らします。",
   "acpira.conf.notifySystem": "同じタイミングでシステム通知を表示します。VS Code のリモートウィンドウではウィンドウ内に表示します。",
@@ -50,5 +50,7 @@
   "acpira.conf.appearance.fold": "処理行の折りたたみ：ターン全体を 1 つにまとめ、実行中は現在の操作、終了後は所要時間を表示してクリックで展開 / 読み取り系の操作だけを折りたたむ（編集とコマンドは表示したまま）",
   "acpira.conf.appearance.autoExpand": "処理の詳細を自動で展開：ターンの実行中は作業中の項目（思考、読み取りと編集の一覧、コマンド出力）を開き、終わったら閉じます。オフにするとターン全体の折りたたみだけが追従します",
   "acpira.cmd.addSelection": "チャットに追加",
+  "acpira.cmd.contextSet": "共有コンテキストを設定（拡張機能用）",
+  "acpira.cmd.contextAdd": "コンテキストをチャットに追加（拡張機能用）",
   "acpira.cmd.connectChatgpt": "ChatGPT セッションに接続"
 }
