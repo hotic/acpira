@@ -223,10 +223,34 @@ describe('modelBrand', () => {
     expect(modelBrand('gpt4o-mini')).toBe('openai');
   });
 
+  it('maps model-only vendors and product lines', () => {
+    expect(modelBrand('Composer 2.5')).toBe('cursor');
+    expect(modelBrand('Nemotron 3 Ultra')).toBe('nvidia');
+    expect(modelBrand('minimax-m3')).toBe('minimax');
+    expect(modelBrand('muse-spark-open')).toBe('meta');
+    expect(modelBrand('clef')).toBe('cloudflare');
+    expect(modelBrand('qwq-plus')).toBe('qwen');
+    expect(modelBrand('ministral-14b-2512')).toBe('mistral');
+    expect(modelBrand('o4-mini')).toBe('openai');
+    expect(modelBrand('text-embedding-3-large')).toBe('openai');
+    expect(modelBrand('veo-3.1-generate-preview')).toBe('google');
+    expect(modelBrand('ernie-4.5-turbo')).toBe('wenxin');
+    expect(modelBrand('ring-flash-2.0')).toBe('antgroup');
+  });
+
+  it('prefers a derived model\'s vendor over its base family', () => {
+    expect(modelBrand('o3-deep-research')).toBe('openai');
+    expect(modelBrand('google/deep-research-preview-04-2026')).toBe('google');
+    expect(modelBrand('deepcogito/cogito-v2-preview-llama-405b')).toBe('cogito');
+    expect(modelBrand('nvidia/llama-3.1-nemotron-70b-instruct')).toBe('nvidia');
+    expect(modelBrand('doubao-seed-1.6')).toBe('doubao');
+    expect(modelBrand('bytedance-seed/seed-oss-36b')).toBe('bytedance');
+    expect(modelBrand('Cursor Grok 4.6')).toBe('grok');
+  });
+
   it('returns undefined for unbranded names', () => {
-    expect(modelBrand('Composer 2.5')).toBeUndefined();
     expect(modelBrand('Inkling')).toBeUndefined();
-    expect(modelBrand('Nemotron 3 Ultra')).toBeUndefined();
+    expect(modelBrand('Beam')).toBeUndefined();
   });
 
   it('matches on word boundaries only', () => {
@@ -243,7 +267,8 @@ describe('optionBrand', () => {
     // An opaque id falls back to the display name
     expect(optionBrand({ id: 'asgard', name: 'K3' })).toBe('kimi');
     expect(optionBrand({ id: 'custom-1', name: 'Claude Opus 5' })).toBe('claude');
-    expect(optionBrand({ id: 'model-1', name: 'Composer 2.5' })).toBeUndefined();
+    expect(optionBrand({ id: 'model-1', name: 'Composer 2.5' })).toBe('cursor');
+    expect(optionBrand({ id: 'model-1', name: 'Beam' })).toBeUndefined();
     // claude-agent-acp's short ids: no "claude" anywhere, the family word alone is the brand
     expect(optionBrand({ id: 'opus[1m]', name: 'Opus 5.5' })).toBe('claude');
     expect(optionBrand({ id: 'sonnet', name: 'Sonnet 5' })).toBe('claude');
