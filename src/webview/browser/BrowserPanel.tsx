@@ -12,6 +12,7 @@ import { vscodeApi } from '../vscodeApi';
 import { Button, IconButton } from '../ui/Button';
 import { cn } from '../ui/cn';
 import { Popover, ShellLayerContext } from '../ui/Popover';
+import { useMorph } from '../ui/useMorph';
 import { CommentEditor } from '../chat/Quotes';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 
@@ -41,7 +42,6 @@ function targetOf(url: string, frame: Frame): string {
 
 // The pick toolbar's two actions, like the transcript quote's "Add to chat"
 const PICK_ACTION = 'inline-flex h-ctl-sm items-center gap-1 whitespace-nowrap rounded-sm px-2 text-3 font-medium text-fg-1 outline-none transition-colors hover:bg-active focus-visible:bg-active [&_svg]:size-icon [&_svg]:text-fg-3';
-const MOD_KEY = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+';
 const MAX_SUGGESTIONS = 8;
 
 // Toolbar buttons: a step the current page cannot take reads as unavailable
@@ -77,6 +77,7 @@ export function BrowserPanel() {
   const [rects, setRects] = useState<PickedRect[]>([]);
   // "Comment to chat" swapped the pick's toolbar for a comment field
   const [commenting, setCommenting] = useState(false);
+  const morph = useMorph<HTMLDivElement>(commenting);
   // Bumped to reload a page the picker is not in
   const [reloads, setReloads] = useState(0);
   const iframe = useRef<HTMLIFrameElement>(null);
@@ -308,25 +309,23 @@ export function BrowserPanel() {
                 </div>
               )}
             </div>
-            {/* Under the pick: "Comment to chat" (Cmd / Ctrl+J, a comment field with a confirm button) and "Add to chat" (Enter) */}
+            {/* Under the pick: "Comment" (Cmd / Ctrl+J; grows into a comment field with a confirm button) and "Add" (Enter, a double click) */}
             <Popover.Root open={!!anchor && picked.length > 0} onOpenChange={(next, details) => { if (!next && details.reason === 'escape-key') togglePicking(false); }}>
               <Popover.Portal>
                 <Popover.Positioner side="bottom" align="start" width={commenting ? 'lg' : 'anchor'} anchor={anchor}
                   className={cn('pointer-events-auto', !commenting && 'w-auto')}>
-                  <Popover.Popup className={cn(!commenting && 'flex-row items-center p-0.5')}>
+                  <Popover.Popup ref={morph} className={cn(!commenting && 'flex-row items-center p-0.5')}>
                     {commenting
                       ? <CommentEditor className="w-full" submit={t('browser.addComment')} onSave={comment => add(comment)} onCancel={() => setCommenting(false)} />
                       : <>
                           <button type="button" onClick={() => setCommenting(true)} className={PICK_ACTION}>
                             <MessageSquareText strokeWidth={1.5} />
                             {t('browser.comment')}
-                            <span className="text-fg-3">{MOD_KEY}J</span>
                           </button>
                           <span aria-hidden className="mx-0.5 h-icon w-px shrink-0 bg-line" />
                           <button type="button" onClick={() => add('')} className={PICK_ACTION}>
                             <MessageSquarePlus strokeWidth={1.5} />
                             {t('browser.add')}
-                            <span className="text-fg-3">↵</span>
                           </button>
                         </>}
                   </Popover.Popup>

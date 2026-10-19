@@ -866,6 +866,7 @@ export const ru = {
   'browser.empty': 'Введите локальный адрес, например localhost:5173',
   'quote.add': 'Добавить в чат',
   'quote.commentPlaceholder': 'Добавьте комментарий (необязательно)…',
+  'quote.saveComment': 'Сохранить комментарий',
   'quote.chip': '{n} заметок',
   'quote.chip#one': '{n} заметка',
   'quote.chip#few': '{n} заметки',

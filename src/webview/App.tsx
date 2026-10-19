@@ -241,7 +241,12 @@ export function App() {
         case 'addContext': {
           const pinned = contextDrafts(m.source, m.items);
           setView('chat');
-          updateMainComposer(d => [...d, ...pinned.filter(x => !d.some(y => sameContext(x, y)))], true);
+          // Pinning the same context again replaces it in place, so a second pick of an element with a comment (or without one)
+          // takes over the earlier chip instead of being dropped as a duplicate
+          updateMainComposer(d => [
+            ...d.map(y => pinned.find(x => sameContext(x, y)) ?? y),
+            ...pinned.filter(x => !d.some(y => sameContext(x, y))),
+          ], true);
           break;
         }
         case 'chime': playChime(); break;

@@ -4,6 +4,7 @@ import type { Draft } from '@shared/transcript';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
 import { Popover, ShellLayerContext } from '../ui/Popover';
+import { useMorph } from '../ui/useMorph';
 import { CommentEditor } from './Quotes';
 import { updateMainComposer } from './useComposerDraft';
 
@@ -42,6 +43,8 @@ export function QuoteToolbar({ root }: { root: RefObject<HTMLElement | null> }) 
   const [added, setAdded] = useState<QuoteDraft>();
   const addedRef = useRef(added);
   addedRef.current = added;
+  // The "Add to chat" button grows into the comment field
+  const morph = useMorph<HTMLDivElement>(!!added);
 
   useEffect(() => {
     // Shown only once the pointer / keyboard gesture ends, so the toolbar never chases a drag in progress
@@ -139,9 +142,9 @@ export function QuoteToolbar({ root }: { root: RefObject<HTMLElement | null> }) 
             {/* The bare button leaves once the quote has scrolled out of the thread; the comment field keeps its focus and is only clipped */}
             <Popover.Positioner side="top" align="center" width={added ? 'xl' : 'anchor'} className={cn('pointer-events-auto', !added && 'w-auto data-[anchor-hidden]:invisible')}
               anchor={range ? { getBoundingClientRect: () => range.getBoundingClientRect(), contextElement: range.startContainer.parentElement ?? undefined } : null}>
-              <Popover.Popup data-quote-toolbar>
+              <Popover.Popup ref={morph} data-quote-toolbar>
                 {added
-                  ? <CommentEditor className="w-full" acceptImages onSave={comment} onCancel={() => { document.getSelection()?.removeAllRanges(); close(); }} />
+                  ? <CommentEditor className="w-full" acceptImages submit={t('quote.saveComment')} onSave={comment} onCancel={() => { document.getSelection()?.removeAllRanges(); close(); }} />
                   : <button type="button"
                       // Pressing the button must not collapse the selection it acts on
                       onMouseDown={e => e.preventDefault()}

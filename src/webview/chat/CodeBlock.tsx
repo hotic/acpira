@@ -8,11 +8,15 @@ import { OutputCopy } from './OutputCopy';
 import { DiffSourceContext } from './fileLinks';
 import { t } from '../i18n';
 
+// The code surface's card and inset, for a card that sits beside one and must line its text up with the code's
+export const CODE_CARD = 'rounded-lg border border-conversation-line';
+export const CODE_INSET = 'px-pad py-[calc(var(--pad)-2px)]';
+
 // Code surface: all monospace content (code blocks / tool output / diffs) shares this one surface,
 // outlined with the conversation ring so it reads as a card next to the composer and bubbles
 export function CodeSurface({ children, className, padded = true }: { children: ReactNode; className?: string; padded?: boolean }) {
   return (
-    <pre className={cn('m-0 overflow-auto rounded-lg border border-conversation-line bg-code font-mono text-mono text-fg-1', padded && 'px-pad py-[calc(var(--pad)-2px)]', className)}>
+    <pre className={cn('m-0 overflow-auto bg-code font-mono text-mono text-fg-1', CODE_CARD, padded && CODE_INSET, className)}>
       {children}
     </pre>
   );

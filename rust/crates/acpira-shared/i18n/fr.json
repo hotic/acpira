@@ -825,6 +825,7 @@
   "browser.empty": "Saisissez une adresse locale, par exemple localhost:5173",
   "quote.add": "Ajouter au chat",
   "quote.commentPlaceholder": "Ajouter un commentaire facultatif…",
+  "quote.saveComment": "Enregistrer le commentaire",
   "quote.chip": "{n} annotations",
   "quote.chipOne": "1 annotation",
   "quote.selected": "Texte sélectionné",
