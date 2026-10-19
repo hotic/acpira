@@ -229,6 +229,18 @@ pub enum ShellMsg {
   PlatformEvent {
     event: PlatformEvent,
   },
+  /// A browser panel wants `url` (a loopback dev page) through a preview proxy; answered by `previewOpened`. `picker` is the
+  /// script the proxy adds to the page (a file the shell ships). Sent again for the same panel when it navigates elsewhere
+  PreviewOpen {
+    request_id: String,
+    panel_id: String,
+    url: String,
+    picker: String,
+  },
+  /// The panel closed; its proxy goes when no other panel holds it
+  PreviewClose {
+    panel_id: String,
+  },
   Shutdown,
 }
 
@@ -247,6 +259,9 @@ pub enum SidecarMsg {
     protocol_version: i64,
     sidecar: SidecarInfo,
     sessions_dir: String,
+    /// Additions a shell may use without a protocol bump (older shells, the IDEA plugin and the phone ignore the field):
+    /// `preview` = previewOpen / previewClose
+    features: Vec<String>,
   },
   HelloReject {
     request_id: String,
@@ -261,6 +276,16 @@ pub enum SidecarMsg {
     #[serde(skip_serializing_if = "Option::is_none")]
     request_id: Option<String>,
     request: PlatformRequest,
+  },
+  /// The answer to previewOpen: the proxied address and the picker's token, or why not
+  PreviewOpened {
+    request_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
   },
   ShutdownOk,
 }

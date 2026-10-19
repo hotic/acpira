@@ -21,6 +21,7 @@ pub mod model_catalog;
 pub mod net_proxy;
 pub mod node_files;
 pub mod platform;
+pub mod preview;
 pub mod providers;
 pub mod relay;
 pub mod runtime;

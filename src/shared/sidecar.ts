@@ -63,6 +63,10 @@ export type ShellMsg =
   | { type: 'webviewMessage'; viewId: string; message: WebviewMsg }
   | { type: 'platformResponse'; requestId: string; result?: unknown; error?: string }
   | { type: 'platformEvent'; event: PlatformEvent }
+  // A browser panel wants a loopback dev page through a preview proxy (helloOk.features has 'preview'); answered by
+  // previewOpened. `picker` is the script file the proxy adds to the page. Sent again when the panel navigates elsewhere
+  | { type: 'previewOpen'; requestId: string; panelId: string; url: string; picker: string }
+  | { type: 'previewClose'; panelId: string }
   | { type: 'shutdown' };
 
 export type PlatformEvent =
@@ -72,10 +76,13 @@ export type PlatformEvent =
   | { type: 'envChanged'; env: Partial<ShellEnv> };
 
 export type SidecarMsg =
-  | { type: 'helloOk'; requestId: string; protocolVersion: number; sidecar: { version: string; pid: number }; sessionsDir: string }
+  // features: additions a shell may use without a protocol bump; absent on engines before them
+  | { type: 'helloOk'; requestId: string; protocolVersion: number; sidecar: { version: string; pid: number }; sessionsDir: string; features?: string[] }
   | { type: 'helloReject'; requestId: string; protocolVersion: number; reason: string }
   | { type: 'hostMessage'; viewId: string; message: HostMsg }
   | { type: 'platformRequest'; requestId?: string; request: PlatformRequest }
+  // The proxied address of a previewed page and the token its picker stamps messages with, or why not
+  | { type: 'previewOpened'; requestId: string; url?: string; token?: string; error?: string }
   | { type: 'shutdownOk' };
 
 export function isShellMsg(v: unknown): v is ShellMsg {

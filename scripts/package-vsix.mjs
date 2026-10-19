@@ -18,7 +18,7 @@ const hostTarget = targetFor(hostPlatform()).vsce[0];
 const targets = args.includes('--all') ? allTargets : args.length ? args : [hostTarget];
 const bin = join(root, 'bin');
 
-for (const f of ['dist/extension.cjs', 'dist/webview/main.js']) {
+for (const f of ['dist/extension.cjs', 'dist/picker.js', 'dist/webview/main.js']) {
   if (!existsSync(join(root, f))) throw new Error(`${f} is missing: run \`pnpm build\` first`);
 }
 
