@@ -21,12 +21,16 @@ export function arrangeAgents<A extends AgentInfo>(list: A[], prefs: AgentPrefs)
 // Agents a new-session entry point offers (the plus menu, the default agent picker)
 export const launchable = (agents: AgentInfo[]) => agents.filter(a => !a.external && !a.disabled);
 
-// The configured default unless it was switched off; then the first enabled agent, preferring an installed one.
+// The configured default unless it was switched off or its CLI is missing; then the first enabled installed agent
+// (the built-in one leads the registry, so a fresh install lands there). A missing default with nothing installed to
+// take over stays, so its error card names it; a switched-off one gives way to any enabled agent.
 // An id the list does not know stays as configured (a custom agent not probed yet)
 export function pickDefaultAgent(agents: AgentInfo[], preferred: AgentId): AgentId {
-  if (!agents.find(a => a.id === preferred)?.disabled) return preferred;
+  const own = agents.find(a => a.id === preferred);
+  if (!own || (!own.disabled && own.available !== false)) return preferred;
   const open = launchable(agents);
-  return (open.find(a => a.available !== false) ?? open[0])?.id ?? preferred;
+  const installed = open.find(a => a.available !== false);
+  return (installed ?? (own.disabled ? open[0] : undefined))?.id ?? preferred;
 }
 
 // Move one id to another position of the full visible list; the result is what agentOrder stores

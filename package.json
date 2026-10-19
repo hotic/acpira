@@ -176,7 +176,7 @@
       "properties": {
         "acpira.defaultAgent": {
           "type": "string",
-          "default": "grok",
+          "default": "acpira",
           "description": "%acpira.conf.defaultAgent%"
         },
         "acpira.agentOrder": {

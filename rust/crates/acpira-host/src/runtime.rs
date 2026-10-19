@@ -21,7 +21,7 @@ use crate::accounts::codex::CodexAccountProvider;
 use crate::accounts::devin::{BinaryFn, DevinAccountProvider};
 use crate::accounts::local::LocalAccounts;
 use crate::accounts::switch::SwitchStrategy;
-use crate::acp::agents::registry::AgentRegistry;
+use crate::acp::agents::registry::{AgentRegistry, SELF_AGENT_ID};
 use crate::acp::session::CompactionPolicy;
 use crate::bridge_core::{BridgeCore, Post};
 use crate::external::chatgpt_store::ChatGptBridgeStore;
@@ -158,7 +158,7 @@ impl HostRuntime {
         chatgpt: Some(chatgpt),
         log: log.clone(),
         cwd: Arc::new(move || cwd_p.cwd()),
-        default_agent: Arc::new(move || r1("defaultAgent").and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_else(|| "grok".into())),
+        default_agent: Arc::new(move || r1("defaultAgent").and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_else(|| SELF_AGENT_ID.into())),
         agent_prefs: Arc::new(move || AgentPrefs {
           order: id_list(&r2("agentOrder").unwrap_or(Value::Null)),
           disabled: id_list(&r2("disabledAgents").unwrap_or(Value::Null)),

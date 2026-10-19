@@ -163,7 +163,7 @@ pub fn is_hidden_map(v: &Value) -> bool {
 pub fn sanitize_setting(key: &str, value: &Value) -> Value {
   match key {
     "language" => Value::from(one_of(value, &LANGUAGE_TAGS, "auto")),
-    "defaultAgent" => Value::from(value.as_str().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("grok")),
+    "defaultAgent" => Value::from(value.as_str().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("acpira")),
     "autoCompact" => Value::from(value.as_bool().unwrap_or(true)),
     "fontSmoothing" => Value::from(value.as_bool().unwrap_or(false)),
     "shareEditorSelection" => Value::from(value.as_bool().unwrap_or(true)),
