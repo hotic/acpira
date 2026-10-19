@@ -3,12 +3,12 @@ import { PlanCard } from './Plan';
 import { dockPlan } from './dockPlan';
 
 export function PlanBar({ turns, running }: { turns: Turn[]; running: boolean }) {
-  const plan = dockPlan(turns, running);
-  if (!plan) return null;
+  const entries = dockPlan(turns, running);
+  if (!entries) return null;
   return (
     <div className="pointer-events-none px-dock pb-(--dock-gap)">
       <div className="pointer-events-auto">
-        <PlanCard entries={plan.entries} live={running} />
+        <PlanCard entries={entries} live={running} />
       </div>
     </div>
   );

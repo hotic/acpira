@@ -41,9 +41,7 @@ pub fn todo_entries(value: &Value) -> Option<Vec<PlanEntry>> {
   } else {
     value
   };
-  let object = value.as_object()?;
-  let result = if object.get("type").and_then(Value::as_str) == Some("Todo") { object.get("TodosUpdated")?.as_object()? } else { object };
-  let todos = result.get("todos")?.as_array()?;
+  let todos = todo_list(value)?;
   let mut entries = vec![];
   for item in todos {
     let item = item.as_object()?;
@@ -54,7 +52,8 @@ pub fn todo_entries(value: &Value) -> Option<Vec<PlanEntry>> {
     let st = match item.get("status")?.as_str()? {
       "pending" => PlanStatus::Pending,
       "in_progress" => PlanStatus::InProgress,
-      "completed" => PlanStatus::Completed,
+      // OpenCode's todowrite has a fourth status; a cancelled item is closed, so it counts as done rather than hiding the list
+      "completed" | "cancelled" => PlanStatus::Completed,
       _ => return None,
     };
     let priority = match item.get("priority") {
@@ -67,4 +66,34 @@ pub fn todo_entries(value: &Value) -> Option<Vec<PlanEntry>> {
     entries.push(PlanEntry { title: content.to_owned(), status: st, priority });
   }
   Some(entries)
+}
+
+/// The list inside a result: Grok's `{ type: "Todo", TodosUpdated: { todos } }`, a plain `{ todos }`, OpenCode's
+/// rawOutput `{ output, metadata: { todos } }` or its output text, which is the bare array
+fn todo_list(value: &Value) -> Option<&Vec<Value>> {
+  if let Some(list) = value.as_array() {
+    return Some(list);
+  }
+  let object = value.as_object()?;
+  let result = if object.get("type").and_then(Value::as_str) == Some("Todo") { object.get("TodosUpdated")?.as_object()? } else { object };
+  result.get("todos").or_else(|| result.get("metadata").and_then(|m| m.get("todos")))?.as_array()
+}
+
+#[cfg(test)]
+mod tests {
+  use serde_json::json;
+
+  use super::*;
+
+  #[test]
+  fn opencode_todowrite_output_parses_with_cancelled_items_closed() {
+    let list = json!([{ "content": "Inspect", "status": "completed", "priority": "low" }, { "content": "Drop", "status": "cancelled" }]);
+    // rawOutput as opencode 1.18.15 sends it, then the output text the row keeps
+    let raw = json!({ "output": serde_json::to_string_pretty(&list).unwrap(), "metadata": { "todos": list } });
+    let entries = todo_entries(&raw).expect("metadata.todos");
+    assert_eq!(entries.iter().map(|e| e.status).collect::<Vec<_>>(), [PlanStatus::Completed, PlanStatus::Completed]);
+    assert_eq!(entries[0].priority, Some(PlanPriority::Low));
+    assert_eq!(todo_entries(&Value::String(serde_json::to_string_pretty(&list).unwrap())).map(|e| e.len()), Some(2));
+    assert!(todo_entries(&json!({ "todos": [{ "content": "x", "status": "blocked" }] })).is_none());
+  }
 }
