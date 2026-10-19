@@ -316,7 +316,7 @@ export function BrowserPanel() {
                   className={cn('pointer-events-auto', !commenting && 'w-auto')}>
                   <Popover.Popup ref={morph} className={cn(!commenting && 'flex-row items-center p-0.5')}>
                     {commenting
-                      ? <CommentEditor className="w-full" submit={t('browser.addComment')} onSave={comment => add(comment)} onCancel={() => setCommenting(false)} />
+                      ? <CommentEditor className="w-full bg-transparent" submit={t('browser.addComment')} onSave={comment => add(comment)} onCancel={() => setCommenting(false)} />
                       : <>
                           <button type="button" onClick={() => setCommenting(true)} className={PICK_ACTION}>
                             <MessageSquareText strokeWidth={1.5} />

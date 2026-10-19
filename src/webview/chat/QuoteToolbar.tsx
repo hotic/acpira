@@ -144,7 +144,7 @@ export function QuoteToolbar({ root }: { root: RefObject<HTMLElement | null> }) 
               anchor={range ? { getBoundingClientRect: () => range.getBoundingClientRect(), contextElement: range.startContainer.parentElement ?? undefined } : null}>
               <Popover.Popup ref={morph} data-quote-toolbar>
                 {added
-                  ? <CommentEditor className="w-full" acceptImages submit={t('quote.saveComment')} onSave={comment} onCancel={() => { document.getSelection()?.removeAllRanges(); close(); }} />
+                  ? <CommentEditor className="w-full bg-transparent" acceptImages submit={t('quote.saveComment')} onSave={comment} onCancel={() => { document.getSelection()?.removeAllRanges(); close(); }} />
                   : <button type="button"
                       // Pressing the button must not collapse the selection it acts on
                       onMouseDown={e => e.preventDefault()}
