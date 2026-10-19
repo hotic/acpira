@@ -12,7 +12,8 @@ const MD_NAME = /\.(md|markdown|mdx|mdown)$/i;
 // In-shell peek at a text attachment, the image Lightbox's twin: backdrop click / Esc / the corner button close it.
 // Markdown-looking text renders through Prose (the same pipeline as agent messages); the header toggle falls back to raw text.
 // The name rides a header bar, the content a scrollable body; `text` still absent means the blob read is in flight
-export function TextPeek({ name, text, failed, onClose }: { name: string; text?: string; failed?: boolean; onClose: () => void }) {
+// `comment`: the remark sent with shared context, above the text like a quote's
+export function TextPeek({ name, text, failed, comment, onClose }: { name: string; text?: string; failed?: boolean; comment?: string; onClose: () => void }) {
   const [mode, setMode] = useState<'auto' | 'raw' | 'rendered'>('auto');
   const markdown = text != null && (MD_NAME.test(name) || looksLikeMarkdown(text));
   const rendered = mode === 'rendered' || (mode === 'auto' && markdown);
@@ -33,6 +34,12 @@ export function TextPeek({ name, text, failed, onClose }: { name: string; text?:
             </IconButton>}
             <IconButton size="sm" title={t('common.close')} aria-label={t('common.close')} onClick={onClose}><X strokeWidth={1.5} /></IconButton>
           </div>
+          {comment && (
+            <div className="flex shrink-0 flex-col gap-0.5 border-b border-line px-pad py-1.5">
+              <span className="text-3 text-fg-3">{t('quote.comment')}</span>
+              <p className="m-0 text-2 whitespace-pre-wrap break-words text-fg-1">{comment}</p>
+            </div>
+          )}
           {rendered
             ? <div className="scroll-thin min-h-0 flex-1 overflow-auto p-pad"><Prose block={{ type: 'text', markdown: text! }} /></div>
             : <pre className="scroll-thin m-0 min-h-0 flex-1 overflow-auto p-pad font-mono text-mono whitespace-pre-wrap [overflow-wrap:anywhere] text-fg-1">

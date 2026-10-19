@@ -59,11 +59,11 @@ describe('picker messages', () => {
     const one: PickedElement = { label: 'h1#title', selector: '#title', text: 'Hello', html: '<h1 id="title">Hello</h1>', rect: { x: 0, y: 0, width: 1, height: 1 } };
     expect(pickedContext([one], 'http://localhost:8765/post', 'Blog')).toEqual({
       label: 'h1#title',
-      text: 'Page: Blog (http://localhost:8765/post)\n\n#title\nText: Hello\n```html\n<h1 id="title">Hello</h1>\n```',
+      text: 'Page: Blog <http://localhost:8765/post>\n\nElement: `#title`  \nText: Hello\n\n```html\n<h1 id="title">Hello</h1>\n```',
     });
     const two = pickedContext([one, { ...one, label: 'p', selector: 'body > p', text: '' }], 'http://localhost/', '');
     expect(two.label).toBe('h1#title +1');
-    expect(two.text).toContain('\n\n2. body > p\n```html');
+    expect(two.text).toContain('\n\nElement 2: `body > p`\n\n```html');
   });
 });
 

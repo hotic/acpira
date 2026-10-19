@@ -30,11 +30,15 @@ export type PickerMsg =
   | { type: 'picked'; elements: PickedElement[] }
   // Where the selected elements sit now (scroll, resize), in frame coordinates
   | { type: 'rects'; rects: PickedRect[] }
-  | { type: 'escape' };
+  // Keys pressed in the page while picking: Escape leaves picking, Enter adds the pick, Cmd / Ctrl+J comments on it
+  | { type: 'escape' }
+  | { type: 'add' }
+  | { type: 'comment' };
 
 // Panel → picker
 export type PanelMsg =
-  | { type: 'pick'; on: boolean }
+  // `accent` / `accentFg`: the panel's accent colours (any CSS colour), so the outlines match the chat rather than the page
+  | { type: 'pick'; on: boolean; accent?: string; accentFg?: string }
   | { type: 'clear' }
   | { type: 'history'; go: -1 | 1 }
   | { type: 'reload' };
@@ -99,13 +103,15 @@ function decodeSafe(s: string): string {
   try { return decodeURIComponent(s); } catch { return s; }
 }
 
-// What a set of picked elements becomes in the composer: one item, its label and the text the agent reads
+// What a set of picked elements becomes in the composer: one item, its label and the text the agent reads. Markdown, since
+// the attachment peek renders it: the page and each element's facts are one paragraph of hard-broken lines (two trailing
+// spaces), so they keep one line spacing, and the HTML follows in a fence
 export function pickedContext(elements: PickedElement[], pageUrl: string, pageTitle: string): { label: string; text: string } {
-  const lines = [`Page: ${pageTitle ? `${pageTitle} ` : ''}(${pageUrl})`];
+  const lines = [`Page: ${pageTitle ? `${pageTitle} ` : ''}<${pageUrl}>`];
   elements.forEach((e, i) => {
-    lines.push('', `${elements.length > 1 ? `${i + 1}. ` : ''}${e.selector}`);
-    if (e.text) lines.push(`Text: ${e.text}`);
-    lines.push('```html', e.html, '```');
+    const facts = [`Element${elements.length > 1 ? ` ${i + 1}` : ''}: \`${e.selector}\``];
+    if (e.text) facts.push(`Text: ${e.text}`);
+    lines.push('', facts.join('  \n'), '', '```html', e.html, '```');
   });
   const first = elements[0]?.label ?? 'element';
   return { label: elements.length > 1 ? `${first} +${elements.length - 1}` : first, text: lines.join('\n') };

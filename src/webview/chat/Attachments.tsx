@@ -28,6 +28,8 @@ function previewOf(a: Named, src: string, openBlob?: (blob: string) => void): Pr
 // A text chip opened for reading; `url` doubles as the race token — a blob answer lands only while its peek is still the one on screen
 interface Peek {
   name: string;
+  // Shared context's remark, shown above the text
+  comment?: string;
   url?: string;
   text?: string;
   failed?: boolean;
@@ -73,16 +75,16 @@ function readBlobText(url: string): Promise<string> {
 // Shared open-a-text-attachment state for the chip rows below: `open` takes a draft's in-memory text, `openBlob` fetches a staged one
 function useTextPeek() {
   const [peek, setPeek] = useState<Peek | null>(null);
-  const open = (name: string, text: string) => setPeek({ name, text });
-  const openBlob = (name: string, url: string) => {
-    setPeek({ name, url });
+  const open = (name: string, text: string, comment?: string) => setPeek({ name, text, comment });
+  const openBlob = (name: string, url: string, comment?: string) => {
+    setPeek({ name, url, comment });
     readBlobText(url).then(
-      text => setPeek(p => (p?.url === url ? { name, url, text } : p)),
-      () => setPeek(p => (p?.url === url ? { name, url, failed: true } : p)),
+      text => setPeek(p => (p?.url === url ? { name, url, text, comment } : p)),
+      () => setPeek(p => (p?.url === url ? { name, url, failed: true, comment } : p)),
     );
   };
   // Keyed on the blob url / the draft text itself so view state (raw vs rendered) resets between attachments
-  const card = peek && <TextPeek key={peek.url ?? peek.text} name={peek.name} text={peek.text} failed={peek.failed} onClose={() => setPeek(null)} />;
+  const card = peek && <TextPeek key={peek.url ?? peek.text} name={peek.name} text={peek.text} failed={peek.failed} comment={peek.comment} onClose={() => setPeek(null)} />;
   return { open, openBlob, card };
 }
 
@@ -92,12 +94,13 @@ function useTextPeek() {
 function openFor(a: Draft | Attachment, ctx: {
   blobUrl?: (blob: string) => string;
   openFile?: (path: string, line?: number) => void;
-  peek: { open: (name: string, text: string) => void; openBlob: (name: string, url: string) => void };
+  peek: { open: (name: string, text: string, comment?: string) => void; openBlob: (name: string, url: string, comment?: string) => void };
 }): (() => void) | undefined {
   if (a.kind === 'text') {
-    if ('text' in a) return () => ctx.peek.open(a.name, a.text);
+    const comment = a.context?.comment;
+    if ('text' in a) return () => ctx.peek.open(a.name, a.text, comment);
     const url = a.blob && ctx.blobUrl ? ctx.blobUrl(a.blob) : undefined;
-    return url ? () => ctx.peek.openBlob(a.name, url) : undefined;
+    return url ? () => ctx.peek.openBlob(a.name, url, comment) : undefined;
   }
   if ((a.kind === 'file' || a.kind === 'selection') && ctx.openFile) {
     const file = parseFileLink(a.uri);

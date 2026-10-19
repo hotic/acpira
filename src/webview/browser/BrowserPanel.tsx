@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { ArrowLeft, ArrowRight, ExternalLink, RotateCw, SquareDashedMousePointer, TriangleAlert } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, ArrowRight, ExternalLink, MessageSquarePlus, MessageSquareText, RotateCw, SquareDashedMousePointer, TriangleAlert } from 'lucide-react';
 import { envelopeOf, normalizePreviewUrl, pickedContext, type PanelMsg, type PickedElement, type PickedRect, type PickerMsg } from '@shared/picker';
 import type { BrowserHostMsg, BrowserLook, BrowserMsg } from '@shared/protocol';
 import { AppearanceContext, appearanceDataAttrs, BASE_APPEARANCE } from '../appearance';
@@ -11,6 +11,7 @@ import { Button, IconButton } from '../ui/Button';
 import { cn } from '../ui/cn';
 import { Popover, ShellLayerContext } from '../ui/Popover';
 import { CommentEditor } from '../chat/Quotes';
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 
 const post = (m: BrowserMsg) => vscodeApi().postMessage(m);
 
@@ -35,6 +36,10 @@ function targetOf(url: string, frame: Frame): string {
     return url;
   }
 }
+
+// The pick toolbar's two actions, like the transcript quote's "Add to chat"
+const PICK_ACTION = 'inline-flex h-ctl-sm items-center gap-1 whitespace-nowrap rounded-sm px-2 text-3 font-medium text-fg-1 outline-none transition-colors hover:bg-active focus-visible:bg-active [&_svg]:size-icon [&_svg]:text-fg-3';
+const MOD_KEY = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+';
 
 // Toolbar buttons: a step the current page cannot take reads as unavailable
 const TOOL = 'disabled:pointer-events-none disabled:opacity-40';
@@ -62,8 +67,8 @@ export function BrowserPanel() {
   const [picking, setPicking] = useState(false);
   const [picked, setPicked] = useState<PickedElement[]>([]);
   const [rects, setRects] = useState<PickedRect[]>([]);
-  // A new pick set gets a fresh comment field
-  const [pickSeq, setPickSeq] = useState(0);
+  // "Comment to chat" swapped the pick's toolbar for a comment field
+  const [commenting, setCommenting] = useState(false);
   // Bumped to reload a page the picker is not in
   const [reloads, setReloads] = useState(0);
   const iframe = useRef<HTMLIFrameElement>(null);
@@ -77,16 +82,18 @@ export function BrowserPanel() {
     if (frame) iframe.current?.contentWindow?.postMessage({ acpiraPicker: frame.token, msg }, '*');
   }, [frame]);
 
-  const togglePicking = (on: boolean) => {
-    setPicking(on);
-    toPicker({ type: 'pick', on });
-    if (!on) { toPicker({ type: 'clear' }); setPicked([]); setRects([]); }
+  // The outlines in the page take the panel's accent
+  const pickMsg = (on: boolean): PanelMsg => {
+    const css = root.current ? getComputedStyle(root.current) : undefined;
+    const accent = css?.getPropertyValue('--accent').trim(), accentFg = css?.getPropertyValue('--accent-fg').trim();
+    return { type: 'pick', on, ...(accent ? { accent } : {}), ...(accentFg ? { accentFg } : {}) };
   };
 
-  const clearPicked = () => {
-    toPicker({ type: 'clear' });
-    setPicked([]);
-    setRects([]);
+  const togglePicking = (on: boolean) => {
+    setCommenting(false);
+    setPicking(on);
+    toPicker(pickMsg(on));
+    if (!on) { toPicker({ type: 'clear' }); setPicked([]); setRects([]); }
   };
 
   useEffect(() => {
@@ -116,27 +123,45 @@ export function BrowserPanel() {
           setPicked([]);
           setRects([]);
           // A page that loaded while picking picks too
-          if (pickingRef.current) toPicker({ type: 'pick', on: true });
+          if (pickingRef.current) toPicker(pickMsg(true));
           moved(msg.url, msg.title);
           break;
         case 'location': moved(msg.url, msg.title); break;
         case 'picked':
+          setCommenting(false);
           setPicked(msg.elements);
           setRects(msg.elements.map(el => el.rect));
-          setPickSeq(n => (msg.elements.length ? n : n + 1));
           break;
         case 'rects': setRects(msg.rects); break;
-        case 'escape':
-          if (pickedRef.current.length) clearPicked();
-          else togglePicking(false);
-          break;
+        // Keys pressed while the page has focus
+        case 'escape': togglePicking(false); break;
+        case 'add': add(''); break;
+        case 'comment': if (pickedRef.current.length) setCommenting(true); break;
       }
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   });
+
   const pickedRef = useRef(picked);
   pickedRef.current = picked;
+
+  // The same keys with focus in the panel itself (the pick toggle was just clicked), which the page never sees: Escape
+  // leaves picking, Enter adds the pick, Cmd / Ctrl+J comments on it. Fields with keys of their own (address bar, comment)
+  // stop them first
+  useEffect(() => {
+    if (!picking) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.isComposing || commenting) return;
+      if ((e.target as Element | null)?.closest?.('input, textarea')) return;
+      if (e.key === 'Escape') { e.preventDefault(); togglePicking(false); return; }
+      if (!picked.length) return;
+      if (e.key === 'Enter') { e.preventDefault(); add(''); }
+      else if (e.key.toLowerCase() === 'j' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); setCommenting(true); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  });
 
   useEffect(() => { post({ type: 'browserReady' }); }, []);
 
@@ -156,7 +181,7 @@ export function BrowserPanel() {
     setShown(url);
     post({ type: 'browserNavigate', url });
   };
-  const onAddressKey = (e: KeyboardEvent<HTMLInputElement>) => {
+  const onAddressKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.nativeEvent.isComposing) return;
     if (e.key === 'Enter') { e.preventDefault(); go(); }
     if (e.key === 'Escape') { e.preventDefault(); setTyped(undefined); e.currentTarget.blur(); }
@@ -167,8 +192,9 @@ export function BrowserPanel() {
   };
 
   const add = (comment: string) => {
-    if (!picked.length) return;
-    const { label, text } = pickedContext(picked, shown, title);
+    const elements = pickedRef.current;
+    if (!elements.length) return;
+    const { label, text } = pickedContext(elements, shown, title);
     post({ type: 'browserAdd', item: { label, text, uri: shown, ...(comment ? { comment } : {}) } });
     togglePicking(false);
   };
@@ -235,17 +261,27 @@ export function BrowserPanel() {
                   className="absolute inset-0 size-full border-0 bg-web-page" />
               )}
             </div>
-            <Popover.Root open={!!anchor && picked.length > 0} onOpenChange={(next, details) => { if (!next && details.reason === 'escape-key') clearPicked(); }}>
+            {/* Under the pick: "Comment to chat" (Cmd / Ctrl+J, a comment field with a confirm button) and "Add to chat" (Enter) */}
+            <Popover.Root open={!!anchor && picked.length > 0} onOpenChange={(next, details) => { if (!next && details.reason === 'escape-key') togglePicking(false); }}>
               <Popover.Portal>
-                <Popover.Positioner side="bottom" align="start" width="lg" anchor={anchor}>
-                  <Popover.Popup className="flex flex-col gap-1 p-1">
-                    <div className="flex min-w-0 items-center gap-1 px-1 text-3 text-fg-3">
-                      <SquareDashedMousePointer strokeWidth={1.5} className="size-icon shrink-0" />
-                      <span className="truncate font-mono">{picked.length > 1 ? t('browser.picked', { n: picked.length }) : picked[0]?.selector}</span>
-                    </div>
-                    {/* Enter adds, with or without a comment; Escape drops the pick */}
-                    <CommentEditor key={pickSeq} onSave={comment => add(comment)} onCancel={clearPicked} />
-                    <span className="px-1 text-3 text-fg-3">{t('browser.addHint')}</span>
+                <Popover.Positioner side="bottom" align="start" width={commenting ? 'lg' : 'anchor'} anchor={anchor}
+                  className={cn('pointer-events-auto', !commenting && 'w-auto')}>
+                  <Popover.Popup className={cn(!commenting && 'flex-row items-center p-0.5')}>
+                    {commenting
+                      ? <CommentEditor className="w-full" submit={t('browser.addComment')} onSave={comment => add(comment)} onCancel={() => setCommenting(false)} />
+                      : <>
+                          <button type="button" onClick={() => setCommenting(true)} className={PICK_ACTION}>
+                            <MessageSquareText strokeWidth={1.5} />
+                            {t('browser.comment')}
+                            <span className="text-fg-3">{MOD_KEY}J</span>
+                          </button>
+                          <span aria-hidden className="mx-0.5 h-icon w-px shrink-0 bg-line" />
+                          <button type="button" onClick={() => add('')} className={PICK_ACTION}>
+                            <MessageSquarePlus strokeWidth={1.5} />
+                            {picked.length > 1 ? t('browser.addCount', { n: picked.length }) : t('quote.add')}
+                            <span className="text-fg-3">↵</span>
+                          </button>
+                        </>}
                   </Popover.Popup>
                 </Popover.Positioner>
               </Popover.Portal>

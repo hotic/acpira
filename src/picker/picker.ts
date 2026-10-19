@@ -17,21 +17,33 @@ import { serialize } from './serialize';
 
   // Overlay: a fixed, full-viewport host above the page
   let root: ShadowRoot | undefined;
+  let overlayHost: HTMLElement | undefined;
+  const paintAccent = () => {
+    overlayHost?.style.setProperty('--a', accent);
+    overlayHost?.style.setProperty('--f', accentFg);
+  };
   let hoverBox: HTMLDivElement | undefined;
   let marquee: HTMLDivElement | undefined;
   let picked: Element[] = [];
   let pickedBoxes: HTMLDivElement[] = [];
-  const ACCENT = '#3b82f6';
+  // Until the panel sends its own accent with `pick`
+  let accent = '#3b82f6';
+  let accentFg = '#ffffff';
 
   function overlay(): ShadowRoot {
     if (root) return root;
     const host = document.createElement('acpira-picker');
     host.style.cssText = 'all:initial;position:fixed;inset:0;z-index:2147483647;pointer-events:none;';
+    overlayHost = host;
+    paintAccent();
     root = host.attachShadow({ mode: 'closed' });
     const style = document.createElement('style');
-    style.textContent = `.box{position:fixed;box-sizing:border-box;pointer-events:none;border:1px solid ${ACCENT};border-radius:2px}
-.hover{background:${ACCENT}1a}.picked{border-width:2px;background:${ACCENT}14}.marquee{border-style:dashed;background:${ACCENT}0f}
-.tag{position:absolute;left:-1px;bottom:100%;margin-bottom:2px;padding:1px 4px;border-radius:2px;background:${ACCENT};color:#fff;font:11px/1.4 ui-monospace,Menlo,monospace;white-space:nowrap}`;
+    // Outlines in the panel's accent, fills faint enough to keep the page's own colours readable underneath
+    style.textContent = `.box{position:fixed;box-sizing:border-box;pointer-events:none;border:1.5px solid var(--a);border-radius:4px;transition:left .08s,top .08s,width .08s,height .08s}
+.hover{background:color-mix(in srgb,var(--a) 10%,transparent)}
+.picked{border-width:2px;border-radius:2px}
+.marquee{border-style:dashed;background:color-mix(in srgb,var(--a) 5%,transparent)}
+.tag{position:absolute;left:-2px;bottom:100%;margin-bottom:4px;padding:2px 8px;border-radius:5px;background:var(--a);color:var(--f);font:500 11px/16px ui-sans-serif,system-ui,sans-serif;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.2)}`;
     root.append(style);
     (document.documentElement ?? document.body).append(host);
     return root;
@@ -93,7 +105,8 @@ import { serialize } from './serialize';
       const d = box('picked');
       const tag = document.createElement('span');
       tag.className = 'tag';
-      tag.textContent = labelOf(el);
+      // The tag name alone; the chip and the prompt carry the full selector
+      tag.textContent = el.tagName.toLowerCase();
       d.append(tag);
       place(d, rectOf(el));
       return d;
@@ -102,6 +115,8 @@ import { serialize } from './serialize';
 
   function setPicked(next: Element[]) {
     picked = next.slice(0, PICKER_LIMITS.elements);
+    hoverBox?.remove();
+    hoverBox = undefined;
     drawPicked();
     send({ type: 'picked', elements: picked.map(describe) });
   }
@@ -162,7 +177,8 @@ import { serialize } from './serialize';
       return;
     }
     const el = under(e.clientX, e.clientY);
-    if (!el) { hoverBox?.remove(); hoverBox = undefined; return; }
+    // A picked element shows its own outline only
+    if (!el || picked.includes(el)) { hoverBox?.remove(); hoverBox = undefined; return; }
     hoverBox ??= box('hover');
     place(hoverBox, rectOf(el));
   }
@@ -193,9 +209,11 @@ import { serialize } from './serialize';
   }
 
   function onKey(e: KeyboardEvent) {
-    if (e.key !== 'Escape') return;
-    swallow(e);
-    send({ type: 'escape' });
+    if (e.isComposing) return;
+    if (e.key === 'Escape') { swallow(e); send({ type: 'escape' }); return; }
+    if (!picked.length) return;
+    if (e.key === 'Enter') { swallow(e); send({ type: 'add' }); return; }
+    if (e.key.toLowerCase() === 'j' && (e.metaKey || e.ctrlKey)) { swallow(e); send({ type: 'comment' }); }
   }
 
   // While picking the page sees no pointer input at all: links do not navigate, buttons do not fire
@@ -221,7 +239,12 @@ import { serialize } from './serialize';
     const msg = envelopeOf<PanelMsg>(e.data, token);
     if (!msg) return;
     switch (msg.type) {
-      case 'pick': setPicking(msg.on); break;
+      case 'pick':
+        if (msg.accent) accent = msg.accent;
+        if (msg.accentFg) accentFg = msg.accentFg;
+        paintAccent();
+        setPicking(msg.on);
+        break;
       case 'clear': setPicked([]); break;
       case 'history': history.go(msg.go); break;
       case 'reload': location.reload(); break;
