@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { BookOpen, Ban, Check, ChevronDown, ChevronUp, CircleAlert, Copy, Download, Eye, EyeOff, FileText, Globe, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, SlidersHorizontal, Sparkles, SquareTerminal, X } from 'lucide-react';
 import type { AccountInfo, AgentInfo, ConfigControl } from '@shared/transcript';
 import type { AgentInstallProgress } from '@shared/protocol';
@@ -26,7 +26,7 @@ import { APPROVAL_LEVELS, approvalOf, BUILTIN_AGENT_ID, COMPACTION_STRATEGIES, c
 
 type AgentSection = 'models' | 'mcp' | 'skills' | 'rules' | 'config';
 // What the CLI's own files declare; shared resources live on the Shared page, so these fold away by default
-const NATIVE: AgentSection[] = ['mcp', 'skills', 'rules'];
+const NATIVE: AgentSection[] = ['mcp', 'skills', 'rules', 'config'];
 
 export interface AgentPageProps {
   agent: AgentInfo;
@@ -68,12 +68,14 @@ export function AgentPage({ agent, accounts, install, inventory, controls, provi
     rules: inventory?.rules.filter(r => r.exists).length ?? 0,
     config: inventory?.config.filter(c => c.exists).length ?? 0,
   };
+  // The native lists title their own cards, so the label sits inside the surface rather than as a third line of copy above it
+  const head = (id: AgentSection): CardHead => ({ title: t(`settings.tab.${id}` as const), count: inventory ? counts[id] : undefined });
   const sections: Record<AgentSection, ReactNode> = {
     models: <ModelsSection key={agent.id} agent={agent} controls={modelControls} settings={settings} on={on} />,
-    mcp: <McpSection agent={agent} inventory={inventory} env={env} on={on} />,
-    skills: <SkillsSection agent={agent} inventory={inventory} env={env} on={on} />,
-    rules: <FilesSection kind="rules" agent={agent} files={inventory?.rules} env={env} on={on} />,
-    config: <FilesSection kind="config" agent={agent} files={inventory?.config} env={env} on={on} />,
+    mcp: <McpSection head={head('mcp')} inventory={inventory} env={env} on={on} />,
+    skills: <SkillsSection head={head('skills')} agent={agent} inventory={inventory} env={env} on={on} />,
+    rules: <FilesSection head={head('rules')} kind="rules" agent={agent} files={inventory?.rules} env={env} on={on} />,
+    config: <FilesSection head={head('config')} kind="config" agent={agent} files={inventory?.config} env={env} on={on} />,
   };
 
   const block = (id: AgentSection) => (
@@ -134,32 +136,27 @@ export function AgentPage({ agent, accounts, install, inventory, controls, provi
 
       {/* The built-in agent's models are its sources' models, edited above */}
       {agent.id !== BUILTIN_AGENT_ID && block('models')}
-      <NativeBlock agent={agent} count={inventory ? counts.mcp + counts.skills + counts.rules : undefined}>
-        {NATIVE.map(id => (
-          <div key={id} className="flex flex-col gap-2">
-            <h3 className="m-0 flex items-baseline gap-2 text-2 font-normal text-fg-1">
-              <span>{t(`settings.tab.${id}` as const)}</span>
-              {inventory && <Count n={counts[id]} />}
-            </h3>
-            <div className="flex flex-col gap-pad">{sections[id]}</div>
-          </div>
-        ))}
+      <NativeBlock agent={agent} count={inventory ? NATIVE.reduce((n, id) => n + counts[id], 0) : undefined}>
+        {NATIVE.map(id => <Fragment key={id}>{sections[id]}</Fragment>)}
       </NativeBlock>
-      {block('config')}
     </>
   );
 }
 
-// The agent's own MCP servers, skills and rules under one heading, always laid out in full
+// The agent's own MCP servers, skills, rules and config files under one heading, always laid out in full: one titled card
+// each, like the account and model sections. Their labels used to be bare text lines between the copy, which read as one paragraph
 function NativeBlock({ agent, count, children }: { agent: AgentInfo; count?: number; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-2">
       <SectionHead count={count}>{t('settings.agent.native', { agent: agent.name })}</SectionHead>
       <SectionDescription>{t('settings.agent.native.desc', { agent: agent.name })}</SectionDescription>
-      <div className="flex flex-col gap-(--section-gap) pt-2">{children}</div>
+      <div className="flex flex-col gap-pad">{children}</div>
     </div>
   );
 }
+
+// A native list's card title and count (no count before the first scan)
+interface CardHead { title: string; count?: number }
 
 // The built-in agent's fast model (`fastModel` in providers.json): a cheap model for side jobs such as naming a session
 // from its first message. A pick no longer usable reads as off, as the agent treats it
@@ -789,7 +786,7 @@ function Grouped<T>({ items, sourceOf, row, env, on, empty, loading }: { items: 
 const asCards = (n: number | undefined) => (n ?? 0) > 0;
 
 // The MCP servers the CLI reads from its own files (read-only). Injecting servers over ACP is not offered yet: the wire supports it, the UI does not
-function McpSection({ agent, inventory, env, on }: { agent: AgentInfo; inventory?: AgentInventory; env: SettingsEnv; on: SettingsHandlers }) {
+function McpSection({ head, inventory, env, on }: { head: CardHead; inventory?: AgentInventory; env: SettingsEnv; on: SettingsHandlers }) {
   const row = (m: InventoryMcp) => (
     <ItemRow
       key={`${m.source}:${m.name}`}
@@ -800,7 +797,7 @@ function McpSection({ agent, inventory, env, on }: { agent: AgentInfo; inventory
     />
   );
   return (
-    <Section desc={t('settings.mcp.native.desc', { agent: agent.name })} cards={asCards(inventory?.mcp.length)}>
+    <Section {...head} cards={asCards(inventory?.mcp.length)}>
       <Grouped items={inventory?.mcp} sourceOf={m => m.source} row={row} env={env} on={on} empty={t('settings.mcp.none')} loading={!inventory} />
     </Section>
   );
@@ -809,25 +806,25 @@ function McpSection({ agent, inventory, env, on }: { agent: AgentInfo; inventory
 // Skills grouped by the directory they were found in (…/skills/<name>/SKILL.md → …/skills)
 const skillsRoot = (s: InventorySkill) => dirName(dirName(s.path));
 
-function SkillsSection({ agent, inventory, env, on }: { agent: AgentInfo; inventory?: AgentInventory; env: SettingsEnv; on: SettingsHandlers }) {
+function SkillsSection({ head, agent, inventory, env, on }: { head: CardHead; agent: AgentInfo; inventory?: AgentInventory; env: SettingsEnv; on: SettingsHandlers }) {
   const row = (s: InventorySkill) => (
     <ItemRow key={s.path} lead={<Sparkles strokeWidth={1.5} />} title={s.name} desc={s.description ?? shortPath(s.path, env)} onOpen={() => on.openPath(s.path)} />
   );
   return (
-    <Section desc={t('settings.skills.desc', { agent: agent.name })} cards={asCards(inventory?.skills.length)}>
+    <Section {...head} desc={t('settings.skills.desc', { agent: agent.name })} cards={asCards(inventory?.skills.length)}>
       <Grouped items={inventory?.skills} sourceOf={skillsRoot} row={row} env={env} on={on} empty={t('settings.skills.none')} loading={!inventory} />
     </Section>
   );
 }
 
 // Rules and config share one shape: files that may or may not exist; existing ones first, missing ones dimmed so the candidate locations stay visible
-function FilesSection({ kind, agent, files, env, on }: { kind: 'rules' | 'config'; agent: AgentInfo; files?: InventoryFile[]; env: SettingsEnv; on: SettingsHandlers }) {
+function FilesSection({ head, kind, agent, files, env, on }: { head: CardHead; kind: 'rules' | 'config'; agent: AgentInfo; files?: InventoryFile[]; env: SettingsEnv; on: SettingsHandlers }) {
   const sorted = useMemo(() => [...(files ?? [])].sort((a, b) => Number(b.exists) - Number(a.exists)), [files]);
   const Icon = kind === 'rules' ? FileText : SlidersHorizontal;
   return (
-    <Section desc={kind === 'rules' ? t('settings.rules.desc') : t('settings.config.desc', { agent: agent.name })}>
+    <Section {...head} desc={kind === 'rules' ? t('settings.rules.desc') : t('settings.config.desc', { agent: agent.name })}>
       {!files && <Note shimmer>{t('settings.loading')}</Note>}
-      {files && sorted.length === 0 && <Note>{t('settings.rules.none')}</Note>}
+      {files && sorted.length === 0 && <Note>{t(kind === 'rules' ? 'settings.rules.none' : 'settings.config.none')}</Note>}
       {sorted.map(f => (
         <ItemRow
           key={f.path}
