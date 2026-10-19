@@ -1,10 +1,12 @@
-import { useImperativeHandle, useLayoutEffect, useRef, useState, type HTMLAttributes, type ReactNode, type Ref } from 'react';
+import { useImperativeHandle, useLayoutEffect, useRef, useState, type AnimationEvent, type CSSProperties, type HTMLAttributes, type ReactNode, type Ref } from 'react';
 import { cn } from './cn';
 import { cssTimeVar } from './cssTime';
 import { railStep } from './railStep';
 
 type Anchor = { x: number; top: number; bottom: number };
-type Segment = Anchor & { terminal: boolean };
+// `step`: the list entrance step (`--row-enter-step`, set by Row) of the row a new segment leads to, so motion.css
+// draws the segment down to that row just before it fades in; the terminal segment counts as one step after its row
+type Segment = Anchor & { terminal: boolean; step?: number };
 type CachedAnchor = { signature: string; anchor: Anchor };
 
 // Cache by mounted SVG, so streamed text does not repeatedly scan icon paths and
@@ -66,6 +68,22 @@ function iconAnchor(svg: SVGSVGElement): Anchor | null {
   }
 }
 
+// The entrance step of the row holding `lead`, while that row is entering as part of a result list
+function entranceStep(lead: Element | undefined): number | undefined {
+  const row = lead?.parentElement;
+  const step = row?.classList.contains('process-row-enter') ? row.style.getPropertyValue('--row-enter-step') : '';
+  return step === '' ? undefined : Number(step);
+}
+
+// Ends the draw: `data-entered` keeps the segment out of the head row's fade rule, whose animation would otherwise
+// start from transparent once `data-enter` is gone. Removed rather than kept, since a hidden webview replays every
+// CSS animation on its return; React leaves both attributes alone as long as the segment's step does not change
+function endDraw(event: AnimationEvent<HTMLSpanElement>) {
+  if (event.animationName !== 'acp-rail-draw') return;
+  event.currentTarget.removeAttribute('data-enter');
+  event.currentTarget.setAttribute('data-entered', '');
+}
+
 function leadAnchor(lead: Element): Anchor | null {
   const svg = lead.matches('svg') ? lead as SVGSVGElement : lead.querySelector<SVGSVGElement>('svg');
   if (svg) return iconAnchor(svg);
@@ -86,6 +104,8 @@ export interface ConnectedRailProps extends HTMLAttributes<HTMLDivElement> {
   /** Result rails end at the last row, before its optional full-width output. */
   endAtLastRow?: boolean;
 }
+
+const stepAfter = (step: number | undefined) => step === undefined ? undefined : step + 1;
 
 const DEFAULT_GROW_MS = 220;
 const DEFAULT_CLOSE_MS = 320;
@@ -219,7 +239,8 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
         setSegments(previous => previous.length ? [] : previous);
         return;
       }
-      const icons = leads.map(leadAnchor).filter((anchor): anchor is Anchor => anchor !== null);
+      const anchored = leads.flatMap(lead => { const icon = leadAnchor(lead); return icon ? [{ lead, icon }] : []; });
+      const icons = anchored.map(({ icon }) => icon);
       const scaleX = root.offsetWidth ? origin.width / root.offsetWidth : 1;
       const scaleY = root.offsetHeight ? origin.height / root.offsetHeight : 1;
       const round = (value: number) => Math.round(value * COORDINATE_PRECISION) / COORDINATE_PRECISION;
@@ -234,11 +255,16 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
         // A retracting rail never reaches past its shrinking root (the rows below are being clipped away)
         retracting ? root.clientHeight - endInset : Infinity)),
         terminal: index === icons.length - 1,
+        step: index < icons.length - 1 ? entranceStep(anchored[index + 1]!.lead) : stepAfter(entranceStep(anchored[index]!.lead)),
       })).filter(segment => segment.bottom > segment.top);
-      setSegments(previous => previous.length === next.length && previous.every((segment, index) => {
-        const other = next[index]!;
-        return segment.x === other.x && segment.top === other.top && segment.bottom === other.bottom && segment.terminal === other.terminal;
-      }) ? previous : next);
+      setSegments(previous => {
+        // Only a segment created now draws in; one that already showed keeps its step (or none) and just eases to its new length
+        const merged = next.map((segment, index) => index < previous.length ? { ...segment, step: previous[index]!.step } : segment);
+        return previous.length === merged.length && previous.every((segment, index) => {
+          const other = merged[index]!;
+          return segment.x === other.x && segment.top === other.top && segment.bottom === other.bottom && segment.terminal === other.terminal;
+        }) ? previous : merged;
+      });
     };
     measureRef.current = measure;
     measure();
@@ -291,6 +317,7 @@ export function ConnectedRail({ ref: forwardedRef, children, enabled = true, cla
     {drawn && segments.map((segment, index) => <span key={index} aria-hidden="true" className="rail-segment"
       ref={span => { spans.current[index] = span; }}
       data-terminal={segment.terminal || undefined}
-      style={{ left: segment.x, top: segment.top }} />)}
+      data-enter={segment.step !== undefined || undefined} onAnimationEnd={endDraw}
+      style={{ left: segment.x, top: segment.top, ...(segment.step !== undefined && { '--rail-step': segment.step }) } as CSSProperties} />)}
   </div>;
 }

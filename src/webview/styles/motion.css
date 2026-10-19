@@ -118,7 +118,12 @@
 
 /* Row slots enter once, independently of the active verb's continuous shimmer. */
 .process-row-enter { --row-enter-delay: 0ms; }
-.tool-results .process-row-enter { --row-enter-delay: var(--row-enter-file); }
+/* A result list's rows wait for the head, then come in one stagger step apart by their place in the batch that entered
+   together (`--row-enter-step`, set by Row), the run capped at --row-enter-stagger-max */
+.tool-results .process-row-enter {
+  --row-enter-duration: var(--row-enter-list-duration);
+  --row-enter-delay: calc(var(--row-enter-file) + min(var(--row-enter-step, 0) * var(--row-enter-stagger), var(--row-enter-stagger-max)));
+}
 .process-row-enter > .row-lead { animation: acp-row-part-in var(--row-enter-duration) var(--row-enter-delay) ease-out both; }
 .process-row-enter > .row-content > * { --row-part-delay: calc(var(--row-enter-delay) + var(--row-enter-part)); animation: acp-row-part-in var(--row-enter-duration) var(--row-part-delay) ease-out both; }
 .process-row-enter > .row-content > :nth-child(n + 2), .process-row-enter > .row-trailing { --row-part-delay: calc(var(--row-enter-delay) + var(--row-enter-part) * 2); }
@@ -140,7 +145,14 @@
 .rail-segment[data-terminal]::after { content: ''; position: absolute; left: 50%; bottom: 0; width: var(--rail-dot-size); height: var(--rail-dot-size); border-radius: 50%; background: var(--rail-color); transform: translate(-50%, 50%); }
 /* A rail whose panel is closing retracts with it (ConnectedRail clamps its length) and fades on the close curve */
 .connected-rail[data-retracting] > .rail-segment { opacity: 0; transition: opacity var(--dur-close) var(--ease-close); }
-.connected-rail:has(> .process-row-enter) > .rail-segment { animation: acp-row-part-in var(--row-enter-duration) var(--row-enter-file) ease-out both; }
+.connected-rail:has(> .process-row-enter) > .rail-segment:not([data-enter], [data-entered]) { animation: acp-row-part-in var(--row-enter-duration) var(--row-enter-file) ease-out both; }
+/* A new segment leading to an entering list row draws from the top down over one step, ending as that row starts to
+   fade in (ConnectedRail sets `data-enter` and `--rail-step`). The clip reaches past the sides and bottom so the end dot,
+   wider than the line and hanging below it, is never cut */
+.connected-rail > .rail-segment[data-enter] {
+  animation: acp-rail-draw var(--row-enter-stagger) calc(var(--row-enter-file) + min(var(--rail-step) * var(--row-enter-stagger), var(--row-enter-stagger-max)) - var(--row-enter-stagger)) linear both;
+}
+@keyframes acp-rail-draw { from { clip-path: inset(0 -1em 100% -1em); } to { clip-path: inset(0 -1em -1em -1em); } }
 
 @keyframes acp-enter { from { opacity: 0; transform: translateY(var(--enter-y)); } }
 @keyframes acp-pulse { 50% { opacity: 0.3; } }

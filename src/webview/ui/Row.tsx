@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, type HTMLAttributes, type ReactNode, type Ref } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type HTMLAttributes, type ReactNode, type Ref } from 'react';
 import { cn } from './cn';
 import { useMergedRefs } from './mergeRefs';
 import { cva } from 'class-variance-authority';
@@ -38,6 +38,21 @@ export function EntranceOnce({ id, children }: { id: string; children: ReactNode
   return <RowEntranceContext.Provider value={enter}>{children}</RowEntranceContext.Provider>;
 }
 
+// Rows of one result list (`.tool-results`) that enter in the same commit tick in one after another: each gets its
+// place in that batch as `--row-enter-step`, which motion.css turns into a delay and ConnectedRail reads to draw the
+// segment leading to the row just ahead of it. Steps reset once the commit is done, so a row appended on its own
+// (the next call joining a read group) enters at once instead of waiting behind rows that entered earlier
+let listSteps: Map<Element, number> | undefined;
+function nextListStep(list: Element): number {
+  if (!listSteps) {
+    listSteps = new Map();
+    queueMicrotask(() => { listSteps = undefined; });
+  }
+  const step = listSteps.get(list) ?? 0;
+  listSteps.set(list, step + 1);
+  return step;
+}
+
 // True while the page draws no frames (occluded window, background tab). Absent `document` (tests without a DOM) counts as visible
 const pageHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
 
@@ -74,6 +89,13 @@ export function Row({ lead, trailing, children, interactive, as = 'div', classNa
   const [enter, setEnter] = useState(() => live && !quiet.current && !pageHidden());
   const self = useRef<HTMLElement>(null);
   const merged = useMergedRefs(self, ref);
+  // Layout effects run children first, so every row of the batch is numbered before the rail around it measures
+  // Only the mount enters: `enter` goes false afterwards and never back
+  useLayoutEffect(() => {
+    const row = self.current;
+    const list = enter ? row?.closest('.tool-results') : null;
+    if (row && list) row.style.setProperty('--row-enter-step', String(nextListStep(list)));
+  }, []);
   // Drop the entrance class once it has played: a hidden webview (display: none) restarts every CSS animation when
   // it is shown again, so a class left behind replays the fade on each return to the window. The rail segment
   // beside the row shares the keyframes, so the sibling animations are awaited as well. A page that goes hidden
