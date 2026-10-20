@@ -84,6 +84,7 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // FAKE_CONFIG_LOG → append the raw session/set_config_option payload (configId / type / value) to that file;
 // FAKE_CONFIG_DELAY_MS → setConfigOption and setMode wait that long before answering (rejections too), so tests can watch in-flight picks;
 // FAKE_BYPASS_START → sessions also offer `bypassPermissions`, start in it and refuse to leave it (a CLI stuck in full access);
+// =only offers no other mode, so there is nothing to switch to;
 // FAKE_SESSION_DIR → a native session store on disk: sessions persist as <id>.json, resume/load restore them (load replays a
 // "NATIVE_REPLAY" message), and the agent advertises sessionCapabilities.list, answering session/list with the dir's sessions
 // (title "Fake <id8>", updatedAt = file mtime, newest first; cursor is a numeric offset, page size 50)
@@ -351,7 +352,7 @@ const app = acp.agent({ name: 'fake-agent' })
       // when cwd contains no-modes, mimic Grok: omit modes, forcing the client to use the registry's synthesized modes
       ...(params.cwd.includes('no-modes') ? {} : { modes: process.env.FAKE_MIRROR_MODES ? mirrorModes()
         : process.env.FAKE_BYPASS_START
-          ? { currentModeId: 'bypassPermissions', availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }, { id: 'bypassPermissions', name: 'Bypass' }] }
+          ? { currentModeId: 'bypassPermissions', availableModes: [...(process.env.FAKE_BYPASS_START === 'only' ? [] : [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }]), { id: 'bypassPermissions', name: 'Bypass' }] }
           : { currentModeId: 'agent', availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }] } }),
       configOptions: configOptions(),
     };
