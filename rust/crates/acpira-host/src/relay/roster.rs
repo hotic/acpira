@@ -43,6 +43,11 @@ impl Roster {
     Roster { path: root.join("subagents.json") }
   }
 
+  /// The directory subagents.json lives in, where the strategy files beside it (`handoff.json`) are read from
+  pub fn dir(&self) -> PathBuf {
+    self.path.parent().map(PathBuf::from).unwrap_or_default()
+  }
+
   /// Every persona, as sanitized as a hand edit would be; a missing or unreadable file is an empty list
   pub fn list(&self) -> Vec<SubagentPersona> {
     std::fs::read_to_string(&self.path).map(|t| parse(&t)).unwrap_or_default()

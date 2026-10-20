@@ -1066,6 +1066,116 @@ async fn a_round_reply_ends_with_the_files_it_changed_and_what_its_commands_chan
   assert!(!ok && text.contains("model overloaded") && text.contains("(Acpira: files it edited: a.txt"), "{text}");
 }
 
+fn git(root: &std::path::Path, args: &[&str]) {
+  let out = std::process::Command::new("git").arg("-C").arg(root).args(args).output().unwrap();
+  assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+async fn handing_roster(dir: &std::path::Path) -> Arc<Roster> {
+  let r = Arc::new(Roster::new(dir));
+  r.save(&json!([
+    { "name": "Fake Review", "agent": "fake", "mode": "consult" },
+    { "name": "Handed", "agent": "fake", "mode": "consult", "changes": true },
+  ]))
+  .await
+  .unwrap();
+  r
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_thread_is_handed_the_callers_changes_once_and_then_hears_what_moved_since() {
+  let fake = fake_or_skip!();
+  let Some((_keep, root)) = repo() else { return };
+  let h = Harness::new(&fake, json!({}));
+  let roster = handing_roster(h.dir.path()).await;
+  let s = Disposing(h.session(&root.to_string_lossy()));
+  s.start().await;
+  std::fs::write(root.join("a.txt"), "one\ntwo\n").unwrap();
+
+  // The first round: the brief says a pack is attached, and the pack is an embedded resource (the fake CLI takes them)
+  let (ok, first) = last_text(&run(&s, &roster, 0, AskArgs { changes: Some(true), ..ask("fake-review", "relay: echo") }).await);
+  assert!(ok, "{first}");
+  assert!(first.contains("Attached is the handoff pack of the caller's uncommitted changes"), "{first}");
+  assert!(first.contains("[resource file://") && first.contains("# Handoff: uncommitted changes") && first.contains("+two"), "{first}");
+  assert!(!first.contains("(Acpira:"), "{first}");
+  let thread = thread_of(&first);
+
+  // A later round of the thread is told in one line what moved, without asking again; an untracked file counts
+  std::fs::write(root.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+  std::fs::write(root.join("b.txt"), "new\n").unwrap();
+  let (_, second) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), ..ask("", "relay: echo again") }).await);
+  assert!(second.contains("Changed since your last round: a.txt (+2 -0 now), b.txt (newly changed, +1 -0)."), "{second}");
+  assert!(!second.contains("[resource") && !second.contains("Attached is the handoff pack"), "{second}");
+  // Nothing moved: no line at all
+  let (_, third) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), ..ask("", "relay: echo once more") }).await);
+  assert!(!third.contains("Changed since") && !third.contains("[resource"), "{third}");
+  // Unless the call opts out
+  std::fs::write(root.join("b.txt"), "new\nmore\n").unwrap();
+  let (_, quiet) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread), changes: Some(false), ..ask("", "relay: echo quiet") }).await);
+  assert!(!quiet.contains("Changed since"), "{quiet}");
+
+  // A persona whose user switched handover on gets the pack without asking, and a call can switch it off
+  let (_, handed) = last_text(&run(&s, &roster, 0, ask("handed", "relay: echo")).await);
+  assert!(handed.contains("[resource file://") && handed.contains("b.txt"), "{handed}");
+  let (_, off) = last_text(&run(&s, &roster, 0, AskArgs { changes: Some(false), ..ask("handed", "relay: echo") }).await);
+  assert!(!off.contains("[resource") && !off.contains("Attached is the handoff pack"), "{off}");
+  // A plain call hands nothing over
+  let (_, plain) = last_text(&run(&s, &roster, 0, ask("fake-review", "relay: echo")).await);
+  assert!(!plain.contains("[resource") && !plain.contains("handoff"), "{plain}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pack_goes_inline_where_the_cli_takes_no_embedded_context_and_a_clean_tree_gets_a_note() {
+  let fake = fake_or_skip!();
+  let Some((_keep, root)) = repo() else { return };
+  let h = Harness::new(&fake, json!({ "env": { "FAKE_PROMPT_CAPS": "strict" } }));
+  let roster = handing_roster(h.dir.path()).await;
+  let s = Disposing(h.session(&root.to_string_lossy()));
+  s.start().await;
+  std::fs::write(root.join("a.txt"), "one\ntwo\n").unwrap();
+  let (ok, text) = last_text(&run(&s, &roster, 0, ask("handed", "relay: echo")).await);
+  assert!(ok, "{text}");
+  assert!(text.contains("[Attachment: handoff-pack.md]\n# Handoff: uncommitted changes") && text.contains("[End of attachment: handoff-pack.md]"), "{text}");
+  assert!(!text.contains("[resource"), "{text}");
+  // Nothing uncommitted: the round runs on its brief alone and the caller is told why no pack came along
+  git(&root, &["checkout", "--", "a.txt"]);
+  let (ok, text) = last_text(&run(&s, &roster, 0, ask("handed", "relay: echo")).await);
+  assert!(ok && !text.contains("Attachment:"), "{text}");
+  assert!(text.contains("(Acpira: there were no uncommitted changes to hand over.)"), "{text}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_pack_covers_the_files_the_caller_edited_until_a_round_it_summoned_could_write_anywhere() {
+  let fake = fake_or_skip!();
+  let Some((_keep, root)) = repo() else { return };
+  let h = Harness::new(&fake, json!({}));
+  // `relay-call:` names fake-review, here a persona that may edit
+  let roster = Arc::new(Roster::new(h.dir.path()));
+  roster
+    .save(&json!([
+      { "name": "Handed", "agent": "fake", "mode": "consult", "changes": true },
+      { "name": "Fake Review", "agent": "fake", "mode": "work" },
+    ]))
+    .await
+    .unwrap();
+  let s = Disposing(h.session(&root.to_string_lossy()));
+  s.start().await;
+  // Someone else's change in the work tree, then the caller's own edit row
+  std::fs::write(root.join("theirs.txt"), "not mine\n").unwrap();
+  prompt(&s, &format!("hook-fix:{}", root.join("a.txt").display())).await;
+  let (_, text) = last_text(&run(&s, &roster, 0, ask("handed", "relay: echo")).await);
+  assert!(text.contains("a.txt") && text.contains("+fixed"), "{text}");
+  assert!(!text.contains("theirs.txt"), "only the caller's own edits: {text}");
+  // A round the caller summoned in work mode (its row tied to the node) may have written anywhere: from then on the
+  // whole work tree goes along
+  let task = format!("relay: run={}", root.join("gen.txt").display());
+  prompt(&s, &format!("relay-call:{task}")).await;
+  let (ok, ran) = last_text(&run(&s, &roster, 0, ask("fake-review", &task)).await);
+  assert!(ok && ran.contains("gen.txt"), "{ran}");
+  let (_, text) = last_text(&run(&s, &roster, 0, ask("handed", "relay: echo")).await);
+  assert!(text.contains("theirs.txt") && text.contains("gen.txt") && text.contains("a.txt"), "{text}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_scout_or_an_executor_continues_its_idle_thread_and_a_reviewer_starts_fresh() {
   let fake = fake_or_skip!();

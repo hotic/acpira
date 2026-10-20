@@ -1072,6 +1072,8 @@ export const ru = {
   'subagents.page.readOnlyUnknown': "Собственный режим только чтения (plan / read-only / ask), если он есть",
   'subagents.page.when': "Когда звать",
   'subagents.page.whenDesc': "По этой строке модель решает, звать ли его.",
+  'subagents.page.changes': "Передавать изменения сессии",
+  'subagents.page.changesDesc': "Каждый новый разговор начинается с diff незакоммиченных изменений.",
   'subagents.page.brief': "Постоянные указания",
   'subagents.page.briefDesc': "Добавляются к каждой задаче; можно оставить пустым.",
   'subagents.page.delete': "Удалить",

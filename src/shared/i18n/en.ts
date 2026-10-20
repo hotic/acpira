@@ -1077,6 +1077,8 @@ export const en = {
   'subagents.page.readOnlyUnknown': 'Its read-only mode (plan / read-only / ask) when it offers one',
   'subagents.page.when': 'When to use',
   'subagents.page.whenDesc': 'Written for the model, which judges from it whether to summon this agent; not a keyword. To name it yourself, type @name in the composer.',
+  'subagents.page.changes': "Hand over this session's changes",
+  'subagents.page.changesDesc': "Each new conversation starts with the diff of the session's uncommitted changes.",
   'subagents.page.whenPlaceholder': 'e.g. Review finished changes for bugs and missed edge cases',
   'subagents.page.brief': 'Standing instructions',
   'subagents.page.briefDesc': 'Appended to every task it gets; may stay empty.',

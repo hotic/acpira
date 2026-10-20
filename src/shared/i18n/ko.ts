@@ -1042,6 +1042,8 @@ export const ko = {
   'subagents.page.readOnlyUnknown': "읽기 전용 모드(plan / read-only / ask)가 있으면 전환합니다",
   'subagents.page.when': "호출 시점",
   'subagents.page.whenDesc': "모델은 이 문장으로 호출 여부를 정합니다.",
+  'subagents.page.changes': "이 세션의 변경 사항 넘기기",
+  'subagents.page.changesDesc': "새 대화마다 커밋하지 않은 변경 사항의 diff를 함께 보냅니다.",
   'subagents.page.brief': "상시 지침",
   'subagents.page.briefDesc': "맡기는 작업마다 뒤에 붙습니다. 비워 둬도 됩니다.",
   'subagents.page.delete': "삭제",

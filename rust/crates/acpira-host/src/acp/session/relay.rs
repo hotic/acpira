@@ -22,8 +22,9 @@ use serde_json::{Map, Value, json};
 use tokio::sync::{mpsc, watch};
 
 use acpira_shared::subagents::{RelayMode, SubagentDuty, SubagentHarness, SubagentPersona, SubagentState};
-use acpira_shared::transcript::{AgentBlock, DiffKind, SessionStatus, ToolContent, ToolKind, ToolStatus, Turn};
+use acpira_shared::transcript::{AgentBlock, DiffKind, Draft, SessionStatus, ToolCallBlock, ToolContent, ToolKind, ToolStatus, Turn};
 
+use crate::acp::session::attachments::{prepare_prompt, prompt_caps_of};
 use crate::acp::session::hooks::{Reach, edit_paths, row_reach};
 use crate::acp::session::prompt::Origin;
 use crate::acp::session::updates::current_turn_index;
@@ -33,6 +34,7 @@ use crate::acp::transcript::subagent_tree::{RelayOpen, RouteCtx};
 use crate::acp::transport::cancel::Cancel;
 use crate::acp::transport::process::{AgentProcess, ClientHandlers};
 use crate::acp::transport::rpc::{BoxFuture, RpcError};
+use crate::handoff::{self, Level, Pack, PackFile, Recipe, Scope};
 use crate::hooks::snapshot::{Snapshot, in_work_tree};
 use crate::i18n::t;
 use crate::relay::roster::Roster;
@@ -48,6 +50,11 @@ const MAX_WAKES: u32 = 6;
 const TITLE_MAX: usize = 48;
 /// Files a round's change note names, at most (the rest are counted)
 const NOTE_FILES: usize = 20;
+/// The handoff pack's name as an attachment
+const PACK_NAME: &str = "handoff-pack.md";
+/// What the brief says of an attached pack
+const PACK_LINE: &str = "Attached is the handoff pack of the caller's uncommitted changes: their diff and, where they are small, the \
+changed files in full. Start from it, and open other files only for what it does not show.";
 /// Mode ids that mean "read only" across the built-in CLIs: codex-acp `read-only`, Claude / OpenCode / Grok `plan`
 const READ_ONLY_MODES: [&str; 3] = ["read-only", "plan", "ask"];
 /// Modes that skip the CLI's own approvals: Claude `bypassPermissions`, Codex `agent-full-access`, Devin `bypass`,
@@ -131,6 +138,9 @@ pub(crate) struct Relays {
   /// automatic message being claimed now carries
   told: HashSet<String>,
   telling: Vec<String>,
+  /// What each thread was last told of the caller's changes: the pack's base and the files with their line counts, so
+  /// its next round hears only what moved since
+  packs: HashMap<String, (String, Vec<PackFile>)>,
 }
 
 impl Relays {
@@ -203,6 +213,7 @@ impl Default for Relays {
       asked: Arc::new(watch::channel(0).0),
       told: HashSet::new(),
       telling: vec![],
+      packs: HashMap::new(),
     }
   }
 }
@@ -324,16 +335,19 @@ fn clip(s: &str, max: usize) -> String {
   out
 }
 
-/// The task the child receives: the caller's prompt, the persona's standing brief, the read-only rule for a consult, and
-/// how to end: the caller reads only the final reply, so it says what was changed, checked and assumed (a reviewer:
+/// The task the child receives: the caller's prompt, the persona's standing brief, the read-only rule for a consult, what
+/// is handed over of the caller's changes, and how to end: the caller reads only the final reply, so it says what was changed, checked and assumed (a reviewer:
 /// its findings by severity and place), which is what the caller weighs before it acts on any of it
-fn compose_brief(prompt: &str, persona: &SubagentPersona, mode: RelayMode) -> String {
+fn compose_brief(prompt: &str, persona: &SubagentPersona, mode: RelayMode, handover: Option<&str>) -> String {
   let mut parts = vec![prompt.trim().to_owned()];
   if let Some(b) = persona.brief.as_deref().filter(|b| !b.trim().is_empty()) {
     parts.push(b.trim().to_owned());
   }
   if mode == RelayMode::Consult {
     parts.push("You are consulted for an opinion: read whatever you need, but do not modify any file.".into());
+  }
+  if let Some(h) = handover {
+    parts.push(h.to_owned());
   }
   parts.push(format!(
     "(Another agent working in this same repository asked you this. It reads only your final reply, so make that reply \
@@ -693,7 +707,7 @@ impl AcpSession {
     // A new task is sent off unless the call asks to wait: the ledger delivers the reply, to the root in an automatic
     // message, to a summoned caller in a follow-up within its own round (`relay_follow_ups`)
     let wait = args.wait.unwrap_or(false);
-    match self.clone().relay_start(&roster, caller, depth, args).await {
+    match self.clone().relay_start(&roster, caller, depth, args, None).await {
       Ok(Start::Started { thread, persona }) if !wait => {
         let _ = out.send(HubReply::Done(dispatched_text(&thread, &persona)));
       }
@@ -780,7 +794,7 @@ impl AcpSession {
     });
   }
 
-  async fn relay_start(self: Arc<Self>, roster: &Roster, caller: Option<String>, depth: u32, args: AskArgs) -> Result<Start> {
+  async fn relay_start(self: Arc<Self>, roster: &Roster, caller: Option<String>, depth: u32, args: AskArgs, shared: Option<Arc<Option<Pack>>>) -> Result<Start> {
     if depth >= MAX_DEPTH {
       return Err(anyhow!("Summoned agents may not summon further than {MAX_DEPTH} levels deep."));
     }
@@ -847,7 +861,13 @@ impl AcpSession {
     if self.deps.registry.try_get(&persona.agent).is_none() {
       return Err(anyhow!("{} runs in {:?}, which is not an agent Acpira knows.", persona.name, persona.agent));
     }
-    let brief = compose_brief(&prompt, &persona, mode);
+    // `changes` decides, else the persona's switch; a thread that was handed the pack keeps hearing what moved since
+    let told = thread.as_deref().is_some_and(|th| self.core.lock().relays.packs.contains_key(th));
+    let handoff = args.changes.unwrap_or(persona.changes || told).then(|| Handoff {
+      scope: caller_scope(&self.core.lock(), caller.as_deref()),
+      recipe: handoff::recipe_in(&roster.dir()),
+      shared: shared.clone(),
+    });
     let title = args.title.as_deref().map(str::trim).filter(|x| !x.is_empty()).map(|x| clip(x, TITLE_MAX)).unwrap_or_else(|| clip(&prompt, TITLE_MAX));
     let round = latest.as_ref().map(|(_, h, ..)| h.round + 1).unwrap_or(1);
     let peer = latest.as_ref().and_then(|(_, _, _, p, _)| p.clone());
@@ -899,7 +919,7 @@ impl AcpSession {
       (node, thread, starting)
     };
     let me = self.clone();
-    let round = Round { thread: thread.clone(), node, persona: persona.clone(), mode, peer, depth, brief };
+    let round = Round { thread: thread.clone(), node, persona: persona.clone(), mode, peer, depth, prompt: prompt.clone(), handoff };
     tokio::spawn(async move {
       let end = me.clone().relay_round(&round, starting).await;
       let reply = {
@@ -1127,7 +1147,11 @@ impl AcpSession {
     // edit rows name
     let watch = [PathBuf::from(&self.cwd)];
     let before = if in_work_tree(&watch[0]).await { Some(Snapshot::take(&watch).await) } else { None };
-    let end = self.relay_prompt(&proc, &sid, &r.brief).await;
+    let (blocks, handed) = self.relay_blocks(r, &proc).await;
+    if let Some(n) = handed {
+      self.core.lock().relays.notes.entry(r.node.clone()).or_default().push(n);
+    }
+    let end = self.relay_prompt(&proc, &sid, blocks).await;
     let end = match end {
       Ok(stop) => self.relay_follow_ups(&proc, &sid, r, stop).await,
       Err(e) => Err(e),
@@ -1155,9 +1179,59 @@ impl AcpSession {
     end
   }
 
-  async fn relay_prompt(&self, proc: &AgentProcess, sid: &str, text: &str) -> Result<String> {
-    let answer = proc.request("session/prompt", json!({ "sessionId": sid, "prompt": [{ "type": "text", "text": text }] })).await.map_err(anyhow::Error::new)?;
+  async fn relay_prompt(&self, proc: &AgentProcess, sid: &str, blocks: Vec<Value>) -> Result<String> {
+    let answer = proc.request("session/prompt", json!({ "sessionId": sid, "prompt": blocks })).await.map_err(anyhow::Error::new)?;
     Ok(answer.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn").to_owned())
+  }
+
+  /// The round's prompt: its brief, then what it hands over of the caller's changes. A thread's first handover is the
+  /// whole pack, staged like a dropped text file (an embedded resource where the CLI takes them, inline text
+  /// otherwise); a later round of the same thread hears in one line what moved since. Answers a note for the caller
+  /// when there was nothing to hand over, or the pack had to be cut down to fit
+  async fn relay_blocks(&self, r: &Round, proc: &AgentProcess) -> (Vec<Value>, Option<String>) {
+    let plain = |handover: Option<&str>| vec![json!({ "type": "text", "text": compose_brief(&r.prompt, &r.persona, r.mode, handover) })];
+    let Some(h) = &r.handoff else { return (plain(None), None) };
+    let cwd = PathBuf::from(&self.cwd);
+    let told = self.core.lock().relays.packs.get(&r.thread).cloned();
+    if let Some((base, before)) = told {
+      let now = match handoff::file_stats(&cwd, Some(&base), h.scope.as_ref()).await {
+        Ok(Some(now)) => now,
+        _ => return (plain(None), None),
+      };
+      let moved = handoff::changed_since(&before, &now);
+      self.core.lock().relays.packs.insert(r.thread.clone(), (base, now));
+      if moved.is_empty() {
+        return (plain(None), None);
+      }
+      let shown = if moved.len() > NOTE_FILES {
+        format!("{} and {} more", moved[..NOTE_FILES].join(", "), moved.len() - NOTE_FILES)
+      } else {
+        moved.join(", ")
+      };
+      return (plain(Some(&format!("Changed since your last round: {shown}."))), None);
+    }
+    let pack = match &h.shared {
+      Some(p) => (**p).clone(),
+      None => handoff::build(&cwd, None, h.scope.as_ref(), &h.recipe).await.unwrap_or_else(|e| {
+        self.log(&format!("relay {}: handoff pack: {e:#}", short(&r.thread)));
+        None
+      }),
+    };
+    let Some(pack) = pack else { return (plain(None), Some("there were no uncommitted changes to hand over".into())) };
+    self.core.lock().relays.packs.insert(r.thread.clone(), (pack.base.clone(), pack.files.clone()));
+    // Staged like a dropped text file in the child's own CLI: the recipe's cap keeps the pack under the attachment limit
+    let def = self.deps.registry.try_get(&r.persona.agent).cloned().unwrap_or_default();
+    let caps = prompt_caps_of(Some(&proc.init), &def);
+    let draft = Draft::Text { name: PACK_NAME.into(), text: pack.text.clone(), context: None };
+    let brief = compose_brief(&r.prompt, &r.persona, r.mode, Some(PACK_LINE));
+    let prepared = prepare_prompt(&self.id, &brief, &[draft], &self.deps.blobs, Some(caps)).await;
+    let cut = match pack.level {
+      Level::Full => None,
+      Level::Trimmed => Some("some full texts left out"),
+      Level::Plain => Some("plain hunks, no full texts"),
+      Level::Stat => Some("paths and line counts, with only the smallest diffs"),
+    };
+    (prepared.blocks, cut.map(|c| format!("the handoff pack was cut down to fit its size cap ({c})")))
   }
 
   /// The child answered, but rounds it sent off are still out: its round goes on. Once a batch of them has ended (or one
@@ -1210,7 +1284,7 @@ impl AcpSession {
       match text {
         Some(text) => {
           self.log(&format!("relay {}: follow-up {sent} with the rounds it sent off", short(&r.thread)));
-          stop = self.relay_prompt(proc, sid, &text).await?;
+          stop = self.relay_prompt(proc, sid, vec![json!({ "type": "text", "text": text })]).await?;
         }
         None => {
           tokio::select! {
@@ -1608,7 +1682,57 @@ struct Round {
   /// The thread's native session from its earlier rounds, to resume
   peer: Option<String>,
   depth: u32,
-  brief: String,
+  /// The caller's task, which `compose_brief` wraps
+  prompt: String,
+  handoff: Option<Handoff>,
+}
+
+/// What a round hands over of its caller's changes (`ask_agent` `changes`, or the persona's switch)
+struct Handoff {
+  /// None: every uncommitted change of the work tree
+  scope: Option<Scope>,
+  recipe: Recipe,
+  /// The pack a group call built once for all its members, so each gets the same one
+  shared: Option<Arc<Option<Pack>>>,
+}
+
+/// Which changes a caller hands over: the files its own edit rows name, and every uncommitted change once it ran
+/// something that can write anywhere (a command, an MCP tool, a summoned round that was allowed to edit: the rule the
+/// workspace gate's `row_reach` follows, with read-only rounds left out). A caller that changed nothing itself hands
+/// over the whole work tree's uncommitted changes, which are then someone else's (the user's own work, say). The
+/// paths it read go along for a recipe that lists them
+fn caller_scope(c: &Core, caller: Option<&str>) -> Option<Scope> {
+  // A summoned caller's rounds so far: its earlier ones' edits are just as uncommitted
+  let rounds: Vec<&[Turn]> = match caller {
+    None => vec![&c.state.turns],
+    Some(th) => c.tree.relay_thread_turns(th),
+  };
+  // An `ask_agent` row with no round behind it (this very call, one still waiting, one refused) changed nothing
+  let asking = |tc: &ToolCallBlock| {
+    c.relays.rows.contains(&tc.id)
+      || c.relays.calls.iter().any(|p| p.tool_call_id == tc.id)
+      || is_ask_name(&tc.verb)
+      || tc.target.as_deref().is_some_and(is_ask_name)
+  };
+  let mut scope = Scope::default();
+  for turn in rounds.into_iter().flatten().filter_map(Turn::as_agent) {
+    for b in &turn.blocks {
+      let AgentBlock::ToolCall(tc) = b else { continue };
+      if let Some(h) = tc.subagent_id.as_deref().and_then(|n| c.tree.relay_harness(n)).map(|(h, _)| h) {
+        scope.anywhere |= h.mode != RelayMode::Consult;
+        continue;
+      }
+      if asking(tc) {
+        continue;
+      }
+      match row_reach(tc) {
+        Reach::Any => scope.anywhere = true,
+        Reach::Edits => scope.files.extend(edit_paths(tc)),
+        Reach::None => scope.read.extend(tc.locations.iter().flatten().map(|l| l.path.clone())),
+      }
+    }
+  }
+  (scope.anywhere || !scope.files.is_empty()).then_some(scope)
 }
 
 enum Start {
@@ -1783,10 +1907,15 @@ fn done_text(reply: &str, thread: &str, persona: &SubagentPersona) -> String {
 /// The arguments of an `ask_agent` row. `known`: an earlier update of this row already named the tool, so this one
 /// counts even without the name
 fn names_ask_agent(u: &Value) -> bool {
+  let named = |x: Option<&Value>| x.and_then(Value::as_str).is_some_and(is_ask_name);
+  named(u.get("title")) || named(u.get("name")) || named(u.get("rawInput").and_then(|r| r.get("tool")))
+}
+
+/// Whether a tool name is Acpira's `ask_agent` (bare, or the way an adapter prefixes its server)
+fn is_ask_name(x: &str) -> bool {
   static ASK: std::sync::LazyLock<regex::Regex> =
     std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)(?:^|acpira[_.:/-]{1,2})ask_agent$").unwrap());
-  let named = |x: Option<&Value>| x.and_then(Value::as_str).map(str::trim).is_some_and(|x| ASK.is_match(x));
-  named(u.get("title")) || named(u.get("name")) || named(u.get("rawInput").and_then(|r| r.get("tool")))
+  ASK.is_match(x.trim())
 }
 
 /// The call's arguments, codex-acp's `{ server, tool, arguments }` unwrapped; None while no input arrived yet
@@ -1924,19 +2053,23 @@ mod tests {
       duty: SubagentDuty::General,
       changes: false,
     };
-    let consult = compose_brief(" review the diff ", &p, RelayMode::Consult);
+    let consult = compose_brief(" review the diff ", &p, RelayMode::Consult, None);
     assert!(consult.starts_with("review the diff\n\nThree severity levels."));
     assert!(consult.contains("do not modify any file"));
-    assert!(!compose_brief("fix it", &p, RelayMode::Work).contains("do not modify"));
+    assert!(!compose_brief("fix it", &p, RelayMode::Work, None).contains("do not modify"));
     // How the reply ends follows what the round is for: findings by severity and place for a reviewer, sources for a
     // consult, changes, checks and assumptions for work
     assert!(consult.contains("each point with its path:line, and what you assumed"));
-    let work = compose_brief("fix it", &p, RelayMode::Work);
+    let work = compose_brief("fix it", &p, RelayMode::Work, None);
     assert!(work.contains("End with the files you changed (or that you changed none), what you ran to check the work"));
     let reviewer = SubagentPersona { duty: SubagentDuty::Reviewer, ..p };
-    let review = compose_brief("review", &reviewer, RelayMode::Work);
+    let review = compose_brief("review", &reviewer, RelayMode::Work, None);
     assert!(review.contains("severity (high / medium / low), path:line") && !review.contains("files you changed"));
     assert!(review.ends_with("otherwise decide yourself.)"));
+    // What is handed over sits after the persona's brief and before how the reply ends
+    let handed = compose_brief("review", &reviewer, RelayMode::Consult, Some(PACK_LINE));
+    let at = handed.find(PACK_LINE).unwrap();
+    assert!(at > handed.find("Three severity levels.").unwrap() && at < handed.find("severity (high / medium / low)").unwrap(), "{handed}");
   }
 
   fn row(kind: ToolKind, paths: &[&str], f: impl FnOnce(&mut ToolCallBlock)) -> AgentBlock {

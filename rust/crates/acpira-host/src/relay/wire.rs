@@ -103,6 +103,10 @@ pub struct AskArgs {
   /// With a thread whose child waits on a question: one answer per question, in order (an option's label or free text)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub answers: Option<Vec<String>>,
+  /// A new task: true = hand over the caller's uncommitted changes (the handoff pack on a thread's first round, what
+  /// moved since on a later one). Absent = the persona's own switch
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub changes: Option<bool>,
 }
 
 /// `ask_caller`'s arguments

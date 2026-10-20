@@ -1075,6 +1075,8 @@ export const zhTW = {
   'subagents.page.readOnlyUnknown': "CLI 有唯讀模式（plan / read-only / ask）時自動切換",
   'subagents.page.when': "適用情境",
   'subagents.page.whenDesc': "供模型判斷何時呼叫它，不做關鍵字比對。手動指定請在輸入框中輸入 @名稱。",
+  'subagents.page.changes': "交接本工作階段的變更",
+  'subagents.page.changesDesc': "每次新對話都附上本工作階段未提交變更的 diff。",
   'subagents.page.whenPlaceholder': "例：程式碼改完後做一輪審查，找出 bug 和遺漏的邊界情況",
   'subagents.page.brief': "附加指令",
   'subagents.page.briefDesc': "每次呼叫都會附在任務之後，可留空。",

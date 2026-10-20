@@ -1419,6 +1419,11 @@ impl SubagentTree {
     self.nodes.iter().find(|n| n.id == id && n.harness.is_some()).map(|n| n.state.turns.as_slice())
   }
 
+  /// Every round of a thread so far, oldest first: the turns of each
+  pub fn relay_thread_turns(&self, thread: &str) -> Vec<&[Turn]> {
+    self.nodes.iter().filter(|n| n.harness.as_ref().is_some_and(|h| h.thread == thread)).map(|n| n.state.turns.as_slice()).collect()
+  }
+
   /// The last text the child wrote in its current round
   pub fn relay_reply(&self, id: &str) -> Option<String> {
     let n = self.nodes.iter().find(|n| n.id == id)?;
