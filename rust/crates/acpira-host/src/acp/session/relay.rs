@@ -20,7 +20,7 @@ use anyhow::{Result, anyhow};
 use serde_json::{Map, Value, json};
 use tokio::sync::{mpsc, watch};
 
-use acpira_shared::subagents::{RelayMode, SubagentHarness, SubagentPersona, SubagentState};
+use acpira_shared::subagents::{RelayMode, SubagentDuty, SubagentHarness, SubagentPersona, SubagentState};
 use acpira_shared::transcript::SessionStatus;
 
 use crate::acp::session::prompt::Origin;
@@ -499,12 +499,13 @@ fn who(persona: &SubagentPersona) -> String {
   format!("{} ({})", persona.name, persona.agent)
 }
 
-/// Whether a call (its `agent` and `thread` arguments) is the one that opened a round with this harness / persona name
+/// Whether a call (its `agent` and `thread` arguments) is the one that opened a round with this harness / persona name.
+/// A call without `thread` usually opens a thread's first round, but a scout's or an executor's continues its idle one
 fn call_fits(agent: &str, thread: Option<&str>, h: &SubagentHarness, role: Option<&str>) -> bool {
   let agent = agent.trim();
   match thread.map(str::trim).filter(|t| !t.is_empty()) {
     Some(th) => h.thread == th && h.round > 1,
-    None => h.round == 1 && (h.persona.as_deref() == Some(agent) || role.is_some_and(|r| r.eq_ignore_ascii_case(agent))),
+    None => h.persona.as_deref() == Some(agent) || role.is_some_and(|r| r.eq_ignore_ascii_case(agent)),
   }
 }
 
@@ -520,7 +521,27 @@ fn node_persona(h: &SubagentHarness, name: Option<&str>) -> SubagentPersona {
     when: String::new(),
     brief: None,
     enabled: true,
+    duty: SubagentDuty::General,
+    changes: false,
   }
+}
+
+/// The persona's latest conversation this caller started in the session, when it is idle and its process still up: a
+/// scout or an executor called without `thread` continues it. Otherwise the call starts fresh rather than fall back to
+/// an older conversation (one the caller may have left with `new_thread`): a busy one is busy, reopening one whose
+/// process is gone might fail, and one in a CLI the persona no longer runs in is another agent
+fn idle_thread(c: &Core, persona: &SubagentPersona, caller: Option<&str>) -> Option<String> {
+  let latest = c
+    .relays
+    .ledger
+    .iter()
+    .rev()
+    .filter(|o| o.owner.as_deref() == caller)
+    .filter_map(|o| c.tree.relay_harness(&o.node).map(|(h, _)| h))
+    .find(|h| h.persona.as_deref() == Some(persona.id.as_str()))?;
+  let idle = c.tree.relay_latest(&latest.thread).is_some_and(|(.., state)| state != SubagentState::Running);
+  let alive = c.relays.procs.get(&latest.thread).is_some_and(|rp| rp.proc.alive() && !rp.peer.is_empty());
+  (latest.agent == persona.agent && idle && alive).then_some(latest.thread)
 }
 
 /// The persona a thread continues with: its current settings, in the CLI the thread was started in
@@ -639,8 +660,15 @@ impl AcpSession {
     if depth >= MAX_DEPTH {
       return Err(anyhow!("Summoned agents may not summon further than {MAX_DEPTH} levels deep."));
     }
-    let thread = args.thread.as_deref().map(str::trim).filter(|x| !x.is_empty()).map(str::to_owned);
+    let mut thread = args.thread.as_deref().map(str::trim).filter(|x| !x.is_empty()).map(str::to_owned);
     let prompt = args.prompt.trim().to_owned();
+    // A scout or an executor keeps its conversation: a new task without `thread` continues the idle one this caller
+    // started (unless the call asks for a fresh start); a reviewer, and any other persona, starts fresh
+    if thread.is_none() && !prompt.is_empty() && args.new_thread != Some(true)
+      && let Some(p) = roster.find(&args.agent).filter(|p| p.duty.keeps_thread())
+    {
+      thread = idle_thread(&self.core.lock(), &p, caller.as_deref());
+    }
     let latest = thread.as_deref().and_then(|th| self.core.lock().tree.relay_latest(th));
     if thread.is_some() && latest.is_none() {
       return Err(anyhow!("Unknown thread {}. Start a new one by leaving `thread` out.", thread.unwrap_or_default()));
@@ -1709,7 +1737,8 @@ mod tests {
     assert!(call_fits("codex-review", None, &h("codex-review", "n1", 1), Some("Codex Review")));
     assert!(call_fits("Codex Review", None, &h("codex-review", "n1", 1), Some("Codex Review")));
     assert!(!call_fits("claude-planner", None, &h("codex-review", "n1", 1), Some("Codex Review")));
-    assert!(!call_fits("codex-review", None, &h("codex-review", "n1", 2), Some("Codex Review")));
+    // A scout's or an executor's call without a thread may continue its idle conversation
+    assert!(call_fits("codex-review", None, &h("codex-review", "n1", 2), Some("Codex Review")));
     assert!(call_fits("", Some("n1"), &h("codex-review", "n1", 2), None));
     assert!(!call_fits("", Some("n2"), &h("codex-review", "n1", 2), None));
   }
@@ -1750,6 +1779,8 @@ mod tests {
       when: String::new(),
       brief: Some("Three severity levels.".into()),
       enabled: true,
+      duty: SubagentDuty::General,
+      changes: false,
     };
     let consult = compose_brief(" review the diff ", &p, RelayMode::Consult);
     assert!(consult.starts_with("review the diff\n\nThree severity levels."));

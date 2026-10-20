@@ -90,6 +90,9 @@ pub struct AskArgs {
   /// Continue an earlier conversation with the same child
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub thread: Option<String>,
+  /// true = start a new conversation even where the persona would continue its idle one (a scout, an executor)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub new_thread: Option<bool>,
   /// How long the call may wait before it answers "still working" (seconds; the MCP side derives it from the client)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub wait_secs: Option<u64>,

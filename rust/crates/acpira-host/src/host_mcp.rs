@@ -394,6 +394,7 @@ impl Relay {
       title: text("title"),
       mode: text("mode"),
       thread: text("thread"),
+      new_thread: args.get("new_thread").and_then(Value::as_bool),
       wait_secs: Some(self.wait_secs.load(std::sync::atomic::Ordering::Relaxed)),
       wait: args.get("wait").and_then(Value::as_bool),
       answers: args.get("answers").and_then(Value::as_array).map(|l| l.iter().filter_map(|a| a.as_str().map(str::to_owned)).collect()),
@@ -480,10 +481,16 @@ pub fn handle_line(line: &str, version: &str) -> Option<Value> {
 
 /// `ask_agent`: the personas are the enum of `agent`, and their "when" lines are the menu the model picks from
 fn ask_tool_def(personas: &[acpira_shared::subagents::SubagentPersona]) -> Value {
-  use acpira_shared::subagents::RelayMode;
+  use acpira_shared::subagents::{RelayMode, SubagentDuty};
   let lines: Vec<String> = personas
     .iter()
     .map(|p| {
+      let duty = match p.duty {
+        SubagentDuty::General => "",
+        SubagentDuty::Scout => "scout · ",
+        SubagentDuty::Executor => "executor · ",
+        SubagentDuty::Reviewer => "reviewer · ",
+      };
       let model = p.model.as_deref().map(|m| format!(" · {m}")).unwrap_or_default();
       let mode = match p.mode {
         RelayMode::Consult => " · read-only",
@@ -492,7 +499,7 @@ fn ask_tool_def(personas: &[acpira_shared::subagents::SubagentPersona]) -> Value
         RelayMode::Inherit => " · follows your mode",
       };
       let when = if p.when.trim().is_empty() { String::new() } else { format!(": {}", p.when.trim()) };
-      format!("- {} (@{}){when} [{}{model}{mode}]", p.id, p.name, p.agent)
+      format!("- {} (@{}){when} [{duty}{}{model}{mode}]", p.id, p.name, p.agent)
     })
     .collect();
   let description = format!(
@@ -505,7 +512,9 @@ self-contained prompt that points at paths instead of pasting code. A new task a
 agent works: carry on with other work or end your turn, and Acpira sends you its reply in a message when it is done (several \
 sent together come back together), so do not poll and do not do the task yourself meanwhile. Set `wait` when you need the \
 reply before going on; a call with a thread and an empty prompt waits for that thread. To follow up with the same agent, \
-pass the `thread` its answer named.\n\nAgents:\n{}",
+pass the `thread` its answer named. A scout or an executor continues its idle conversation in this session even without \
+`thread` (set `new_thread` to start over); a reviewer starts fresh on every call without `thread`, which keeps it \
+independent.\n\nAgents:\n{}",
     lines.join("\n")
   );
   let ids: Vec<&str> = personas.iter().map(|p| p.id.as_str()).collect();
@@ -521,6 +530,7 @@ pass the `thread` its answer named.\n\nAgents:\n{}",
         "title": { "type": "string", "description": "A few words naming the task, shown to the user." },
         "mode": { "type": "string", "enum": ["consult", "work", "bypass"], "description": "Only for an agent marked \"follows your mode\": consult = read-only opinion; work = may edit files; bypass = edits without approval. Without it that agent takes your own current access. Every other agent always runs in the access its user set, whatever you pass." },
         "thread": { "type": "string", "description": "Continue the conversation an earlier answer named." },
+        "new_thread": { "type": "boolean", "description": "Start a new conversation with a scout or an executor instead of continuing its idle one." },
         "wait": { "type": "boolean", "description": "Wait in this call for the reply (up to your tool timeout) instead of getting it in a message later." },
         "answers": { "type": "array", "items": { "type": "string" }, "description": "With `thread`, when that agent asks you something: one answer per question, in order (an option's label or your own words)." },
       },
@@ -786,7 +796,13 @@ mod tests {
     assert_eq!(def["annotations"]["readOnlyHint"], true);
     // Kept out of ToolSearch, so a summon is one step
     assert_eq!(def["_meta"]["anthropic/alwaysLoad"], true);
-    assert!(def["description"].as_str().unwrap().contains("- son-1 (@Son)"));
+    assert!(def["description"].as_str().unwrap().contains("- son-1 (@Son) [codex]"));
+    // A duty is named on the persona's line, so the caller knows which ones keep their conversation
+    let scout: acpira_shared::subagents::SubagentPersona =
+      serde_json::from_value(json!({ "id": "look", "name": "Look", "agent": "kimi", "mode": "consult", "duty": "scout" })).unwrap();
+    let def = ask_tool_def(&[scout]);
+    assert!(def["description"].as_str().unwrap().contains("- look (@Look) [scout · kimi · read-only]"), "{}", def["description"]);
+    assert_eq!(def["inputSchema"]["properties"]["new_thread"]["type"], "boolean");
   }
 
   // Listed with the relay env (tools/list in `run`): read-only so Claude Code runs them side by side, found through a

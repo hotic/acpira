@@ -59,6 +59,25 @@
       "name": "Follower",
       "agent": "codex",
       "mode": "inherit"
+    },
+    {
+      "name": "Scout",
+      "agent": "codex",
+      "mode": "consult",
+      "duty": "scout",
+      "changes": true
+    },
+    {
+      "name": "Odd duty",
+      "agent": "codex",
+      "duty": "captain",
+      "changes": "yes"
+    },
+    {
+      "name": "Reviewer",
+      "agent": "codex",
+      "duty": "reviewer",
+      "changes": false
     }
   ],
   "output": [
@@ -135,6 +154,33 @@
       "mode": "inherit",
       "when": "",
       "enabled": true
+    },
+    {
+      "id": "scout",
+      "name": "Scout",
+      "agent": "codex",
+      "mode": "consult",
+      "when": "",
+      "enabled": true,
+      "duty": "scout",
+      "changes": true
+    },
+    {
+      "id": "odd-duty",
+      "name": "Odd duty",
+      "agent": "codex",
+      "mode": "consult",
+      "when": "",
+      "enabled": true
+    },
+    {
+      "id": "reviewer",
+      "name": "Reviewer",
+      "agent": "codex",
+      "mode": "consult",
+      "when": "",
+      "enabled": true,
+      "duty": "reviewer"
     }
   ]
 }

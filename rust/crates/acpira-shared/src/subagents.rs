@@ -167,6 +167,76 @@ impl RelayMode {
   }
 }
 
+/// What a persona is for. Picking one on the settings page fills in its default access and standing instructions
+/// (`duty_defaults`, both still the user's to change), and it decides how a call without `thread` continues
+/// (`keeps_thread`, `fresh_thread`)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubagentDuty {
+  /// No defaults and no thread policy: a call continues a conversation only when it names the thread
+  #[default]
+  General,
+  /// Finds out and reports with `path:line`; read-only, keeps its conversation within a session
+  Scout,
+  /// Carries out the caller's plan and is invited to push back on it; the caller's access, keeps its conversation
+  Executor,
+  /// Looks for defects in a change; read-only, a fresh conversation every time so it stays independent
+  Reviewer,
+}
+
+impl SubagentDuty {
+  /// A stored duty name; anything unknown is general
+  pub fn parse(s: Option<&str>) -> Self {
+    match s {
+      Some("scout") => Self::Scout,
+      Some("executor") => Self::Executor,
+      Some("reviewer") => Self::Reviewer,
+      _ => Self::General,
+    }
+  }
+
+  pub fn is_general(&self) -> bool {
+    *self == Self::General
+  }
+
+  /// A call without `thread` continues this persona's idle conversation in the session (unless it asks for a new one)
+  pub fn keeps_thread(self) -> bool {
+    matches!(self, Self::Scout | Self::Executor)
+  }
+
+  /// A call never continues a conversation on its own: each one starts fresh (an explicit `thread` is still honoured)
+  pub fn fresh_thread(self) -> bool {
+    self == Self::Reviewer
+  }
+}
+
+/// The standing instructions each duty starts with (mirror of `DUTY_BRIEFS` in src/shared/subagents.ts; both are checked
+/// against test/fixtures/duty-presets.json). Written for the model, so in English whatever the UI language
+pub const SCOUT_BRIEF: &str = "You are a scout: find things out and report them; do not change anything. Back every claim with \
+where it comes from as path:line (or path:start-end), quoting the line when it matters, so the caller can act on your \
+report without opening the files again. Say what you looked for and did not find as well as what you found, and mark \
+guesses as guesses.";
+pub const EXECUTOR_BRIEF: &str = "You carry out a plan another agent made. If a step looks wrong, would break something, or \
+misses a case, stop before doing it and say so, with the reason and what you would do instead: pushing back early is part \
+of the job. Otherwise do what was asked and no more, and run the checks the task names (or the obvious ones).";
+pub const REVIEWER_BRIEF: &str = "You are a reviewer. Look for real defects in the change: bugs, regressions, missed cases, \
+broken contracts or docs that no longer match. Read the changed code, its callers and its tests yourself, and judge the \
+change against the requirement, not against how its author describes it. Leave out style preferences.";
+
+/// The access and standing instructions a duty fills in when it is picked (None: general leaves both as they are)
+pub fn duty_defaults(duty: SubagentDuty) -> Option<(RelayMode, &'static str)> {
+  match duty {
+    SubagentDuty::General => None,
+    SubagentDuty::Scout => Some((RelayMode::Consult, SCOUT_BRIEF)),
+    SubagentDuty::Executor => Some((RelayMode::Inherit, EXECUTOR_BRIEF)),
+    SubagentDuty::Reviewer => Some((RelayMode::Consult, REVIEWER_BRIEF)),
+  }
+}
+
+fn is_false(b: &bool) -> bool {
+  !*b
+}
+
 /// A cross-harness subagent defined once in the settings (`~/.acpira/subagents.json`); every session can summon it
 /// through Acpira's MCP tool `ask_agent`, or the user names it with `@name`
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -196,6 +266,11 @@ pub struct SubagentPersona {
   pub brief: Option<String>,
   #[serde(default = "enabled_default")]
   pub enabled: bool,
+  #[serde(default, skip_serializing_if = "SubagentDuty::is_general")]
+  pub duty: SubagentDuty,
+  /// Every new conversation starts with the handoff pack of the session's changes (`handoff.rs`), whatever the call says
+  #[serde(default, skip_serializing_if = "is_false")]
+  pub changes: bool,
 }
 
 fn enabled_default() -> bool {
@@ -261,6 +336,8 @@ pub fn sanitize_personas(v: &serde_json::Value) -> Vec<SubagentPersona> {
       when: text("when", TEXT_MAX),
       brief: opt("brief", TEXT_MAX),
       enabled: o.get("enabled") != Some(&serde_json::Value::Bool(false)),
+      duty: SubagentDuty::parse(o.get("duty").and_then(serde_json::Value::as_str)),
+      changes: o.get("changes") == Some(&serde_json::Value::Bool(true)),
     });
   }
   out
@@ -276,6 +353,21 @@ mod persona_tests {
     let fixture: serde_json::Value = serde_json::from_str(include_str!("../../../../test/fixtures/personas-sanitize.json")).unwrap();
     let out = serde_json::to_value(sanitize_personas(&fixture["input"])).unwrap();
     assert_eq!(out, fixture["output"]);
+  }
+
+  /// The duty presets the settings page fills in (TS) and the engine uses for the implicit sidekick (Rust)
+  #[test]
+  fn duty_presets_match_the_typescript_mirror() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!("../../../../test/fixtures/duty-presets.json")).unwrap();
+    for duty in [SubagentDuty::General, SubagentDuty::Scout, SubagentDuty::Executor, SubagentDuty::Reviewer] {
+      let key = serde_json::to_value(duty).unwrap();
+      let want = &fixture[key.as_str().unwrap()];
+      let got = match duty_defaults(duty) {
+        Some((mode, brief)) => serde_json::json!({ "mode": mode, "brief": brief, "keepsThread": duty.keeps_thread(), "freshThread": duty.fresh_thread() }),
+        None => serde_json::json!({ "keepsThread": false, "freshThread": false }),
+      };
+      assert_eq!(&got, want, "{duty:?}");
+    }
   }
 }
 

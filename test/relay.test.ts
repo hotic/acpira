@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { personaSlug, sanitizePersonas } from '../src/shared/subagents';
+import { DUTIES, dutyDefaults, freshThread, keepsThread, personaSlug, sanitizePersonas } from '../src/shared/subagents';
 import { sanitizeSetting } from '../src/shared/settings';
 import { personaHits, personaOfHit } from '../src/webview/chat/personaHits';
 import fixture from './fixtures/personas-sanitize.json';
+import dutyPresets from './fixtures/duty-presets.json';
 
 // Cross-harness subagents: the persona list mirrors acpira_shared::subagents::sanitize_personas (relay/roster.rs tests the Rust side)
 describe('subagent personas', () => {
@@ -25,6 +26,15 @@ describe('subagent personas', () => {
   // The same fixture runs through acpira_shared::subagents::sanitize_personas (persona_tests)
   it('sanitize the shared boundary fixture exactly like the Rust side', () => {
     expect(sanitizePersonas(fixture.input)).toEqual(fixture.output);
+  });
+
+  // The same presets are checked by acpira_shared::subagents::persona_tests (the engine's implicit sidekick uses them)
+  it('fill in the same duty presets and thread policies as the Rust side', () => {
+    for (const duty of DUTIES) {
+      const d = dutyDefaults(duty);
+      expect({ ...(d ? { mode: d.mode, brief: d.brief } : {}), keepsThread: keepsThread(duty), freshThread: freshThread(duty) })
+        .toEqual(dutyPresets[duty]);
+    }
   });
 
   it('lead the @ list by name or id and resolve back from their hit', () => {
