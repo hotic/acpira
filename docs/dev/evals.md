@@ -31,6 +31,22 @@ pnpm exec tsx scripts/eval/review/mine.ts          # candidates, spends nothing
 pnpm exec tsx scripts/eval/review/bench.ts materialize <target> <dir>
 ```
 
+### Results, 2026-10-21
+
+Engine pinned at ebf8ebb3 (Acpira 1.10.7). Reviewers: Codex 0.162.1 with codex-acp 2.2.2 (GPT-6 Astra, xhigh), the built-in agent (Gemini 4 Argon, high), Claude Code 2.1.299 with claude-agent-acp 0.93.0 (`opus` at xhigh on the Max login). Judge `deepseek-v4-pro`. Each cell ran the dev set twice; the scores are after the rescore of 62aed117.
+
+| cell | bugs found | flips between reruns | median wall | $ per run |
+|---|---|---|---|---|
+| A astra | 30 of 32 | 0% | 3.0 min | 1.81 |
+| B astra | 31 of 32 | 6% | 2.8 min | 1.78 |
+| C astra | 30 of 32 | 0% | 3.0 min | 1.80 |
+| B astra+argon+opus | 30 of 32 | 0% | 7.3 min | 3.39, plus Opus on its Max login (1.51 at list price) |
+
+- The dev set is close to saturated: every run of every cell found the bug of 15 of the 16 targets. Only `stale-tool-activity` (an open tool call that keeps naming the activity after later output) tells the cells apart. The one B run credited with it cites the neighbouring `latest_step`, which the judge took for the same root cause.
+- Neither the handoff pack (B) nor the uses of changed definitions (C) gains beyond the noise. B finds one bug more than A, within its 6% flip rate, and is 5% faster by median, short of the 10% the rule asks for. Reviewer personas therefore keep `changes` off by default, and the recipe keeps `refs` off.
+- The group (one summon, the same pack to each member) found no more than one reviewer: each member found 30 of the 32 on its own, no bug was found by one member only, and all three missed `stale-tool-activity` both times. The slowest member sets its pace (Argon in 24 of the 32 runs, 6.7 min by median; Opus 4.6, Astra 2.9), so it took 2.6 times as long as Astra alone, and it reported 9.3 findings per run that match no known bug against 2.1 (Opus 5.1 of them). A saturated set cannot show what a group catches that one reviewer misses, only what a group costs.
+- Before the rescore, two target definitions hid found bugs, so variant B looked two bugs worse than A. Both B reviews of `inherit-mode-sanitize` named `sanitizePersonas` but placed the finding at its caller in the settings page.
+
 ## Fusion bench
 
 `run.ts --config …` (configurations in `configs.ts`): does Acpira's orchestration on the vendors' own CLIs match or beat Devin's Fusion, and does the built-in agent's sidekick do as well as Fusion on the same pair of models? Same tasks, hidden tests and permission handling as the harness comparison; a run waits out the background work its lead started (summoned rounds and the automatic messages delivering them, idle for 5 s with nothing running) within the task's time limit.
