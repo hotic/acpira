@@ -18,6 +18,9 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // Scripts: default → thought + text; "tool" → tool call + permission request; "slow" → streams slowly, waits for cancel; "auth" → session/new fails with -32000;
 // "big" → reports a very large usage; "/compact" → compaction_update in_progress → completed, usage drops;
 // "autonomous" → claude-agent-acp's task-notification followup streaming after end_turn and ending with an origin-stamped usage_update ("autonomous-hang": no end);
+// "task-stopped" → claude-agent-acp 0.93.0's acknowledgement of a background task stopped after end_turn, with no result after it:
+// a `notice` with FAKE_NOTICES (the adapter's answer to clientCapabilities.session.notices, which this SDK's schema strips
+// from initialize), else its bold-label agent text;
 // "fail" → session/prompt rejects with a typed upstream error the way Devin does (once: the same prompt succeeds when sent again);
 // "refuse" → stopReason refusal with no output; "truncate" → some text, then stopReason max_tokens; "mode:<id>" → current_mode_update to that mode;
 // "tool-downgrade" / "tool-downgrade-late" → OpenCode's write: a permission request whose embedded toolCall is a low-fidelity copy
@@ -946,6 +949,17 @@ const app = acp.agent({ name: 'fake-agent' })
         }, 80);
       }
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'started in background' } });
+      return { stopReason: 'end_turn' };
+    }
+
+    if (text === 'task-stopped') {
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'waiting in background' } });
+      const name = 'grep -E "^[08:(0[0-9]|1[0-9])" log';
+      setTimeout(() => {
+        void send((process.env.FAKE_NOTICES
+          ? { sessionUpdate: 'notice', severity: 'info', title: 'Task stopped by user', description: `${name}.` }
+          : { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `**Task stopped by user:** ${name}.` } }) as never);
+      }, 80);
       return { stopReason: 'end_turn' };
     }
 

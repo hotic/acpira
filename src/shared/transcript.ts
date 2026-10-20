@@ -175,13 +175,14 @@ export type FailureCategory = 'connection' | 'access' | 'limit' | 'request' | 's
 // An AIR sessionFailure warning or advisory delivered out of band: lives on the turn that was active
 // when it arrived, upserted by id (a higher revision replaces the row in place). The error that ends a
 // turn additionally lands on AgentTurn.error and is rendered by the alert card, so a notice row whose
-// id matches the turn error's failureId is not drawn a second time
+// id matches the turn error's failureId is not drawn a second time. An ACP `notice` update (ids `notice:<n>`,
+// category `unknown`, no actions) is a row too, and the only source of the `info` severity
 export interface NoticeBlock {
   type: 'notice';
   id: string;
   revision: number;
   category: FailureCategory;
-  severity: 'warning' | 'error';
+  severity: 'info' | 'warning' | 'error';
   title: string;
   details?: string;
   actions: FailureAction[];

@@ -401,6 +401,7 @@ fn apply_update_kind(s: &mut NormalizeState, u: &Value) -> bool {
       }
       true
     }
+    "notice" => apply_notice(s, u),
     "compaction_update" => {
       close_user_turn(s);
       let i = current_agent_turn(s);
@@ -636,6 +637,37 @@ pub fn apply_goal(s: &mut NormalizeState, next: Option<SessionGoal>, mark: bool)
     }
     push_standalone(s, AgentBlock::Goal(b));
   }
+  true
+}
+
+/// An ACP `notice` (RFD session-notices; claude-agent-acp 0.93.0, codex-acp 2.2.2): fire-and-forget information with
+/// no id and no remedy, so it becomes a notice row of its own on the last agent turn, live or settled. It never counts as
+/// conversation content: a stopped background task's acknowledgement after `end_turn` must not reopen the turn
+fn apply_notice(s: &mut NormalizeState, u: &Value) -> bool {
+  let Some(title) = text_of(u, "title").map(str::trim).filter(|t| !t.is_empty()) else { return false };
+  // An unknown severity string reads as information, the quietest level
+  let severity = match str_of(u, "severity") {
+    Some("error") => Severity::Error,
+    Some("warning") => Severity::Warning,
+    _ => Severity::Info,
+  };
+  // Positional ids stay stable across a reload of the same transcript; AIR rows carry their own ids
+  let n = s.turns.iter().filter_map(Turn::as_agent).flat_map(|t| &t.blocks).filter(|b| matches!(b, AgentBlock::Notice(_))).count();
+  let notice = AgentBlock::Notice(NoticeBlock {
+    id: format!("notice:{}", n + 1),
+    revision: Num(1.0),
+    category: FailureCategory::Unknown,
+    severity,
+    title: title.to_owned(),
+    details: text_of(u, "description").map(str::trim).filter(|d| !d.is_empty()).map(str::to_owned),
+    actions: vec![],
+  });
+  // Text streamed before the notice stays above it; what follows starts a new block
+  if matches!(s.turns.last(), Some(Turn::Agent(_))) {
+    let i = s.turns.len() - 1;
+    seal(s, i);
+  }
+  push_standalone(s, notice);
   true
 }
 
@@ -2096,5 +2128,33 @@ mod retitled_row_tests {
     let AgentBlock::ToolCall(b) = &agent(&mut s, loc.0).blocks[loc.1] else { panic!("not a tool row") };
     assert!(acpira_shared::todo_tools::is_todo_tool(b), "{:?} {:?}", b.verb_key, b.kind);
     assert_eq!(b.todo_entries.as_ref().expect("the to-do bar reads the list")[0].title, "fix it");
+  }
+}
+
+#[cfg(test)]
+mod notice_tests {
+  use super::*;
+  use serde_json::json;
+
+  // claude-agent-acp 0.93.0 acknowledges a stopped background task with an info notice after the turn ended
+  #[test]
+  fn a_notice_after_the_reply_becomes_its_own_row_on_the_settled_turn() {
+    let mut s = NormalizeState::new(vec![]);
+    apply_update(&mut s, &json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "waiting on [08:" } }));
+    end_turn(&mut s, TurnStop::EndTurn);
+    let task = json!({ "sessionUpdate": "notice", "severity": "info", "title": "Task stopped by user", "description": "grep \"^[08:(0[0-9]\" log." });
+    assert!(apply_update(&mut s, &task));
+    assert!(apply_update(&mut s, &json!({ "sessionUpdate": "notice", "severity": "warning", "title": "Model fallback" })));
+    assert!(!apply_update(&mut s, &json!({ "sessionUpdate": "notice", "severity": "info", "title": " " })));
+    assert_eq!(s.turns.len(), 1);
+    let Some(Turn::Agent(t)) = s.turns.last() else { panic!("no agent turn") };
+    assert_eq!(t.stop, Some(TurnStop::EndTurn));
+    let AgentBlock::Text(reply) = &t.blocks[0] else { panic!("reply first") };
+    assert_eq!(reply.markdown, "waiting on [08:");
+    let AgentBlock::Notice(n) = &t.blocks[1] else { panic!("notice row") };
+    assert_eq!((n.id.as_str(), n.severity, n.title.as_str()), ("notice:1", Severity::Info, "Task stopped by user"));
+    assert_eq!(n.details.as_deref(), Some("grep \"^[08:(0[0-9]\" log."));
+    let AgentBlock::Notice(n) = &t.blocks[2] else { panic!("second notice row") };
+    assert_eq!((n.id.as_str(), n.severity), ("notice:2", Severity::Warning));
   }
 }
