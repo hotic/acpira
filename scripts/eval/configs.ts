@@ -60,6 +60,8 @@ export const CONFIGS: Record<string, Config> = {
   // The built-in agent's sidekick on Devin's pairs, both models on the gateway (P1)
   'acpira-opus-luna': { harness: 'acpira', model: 'claude-opus-5.5', sidekick: 'gpt-6-luna' },
   'acpira-astra-swe': { harness: 'acpira', model: 'gpt-6-astra', sidekick: 'swe-2' },
+  // The same lead without a sidekick, which tells the sidekick's effect apart from the harness's
+  'acpira-astra': { harness: 'acpira', model: 'gpt-6-astra' },
 };
 
 // Writes a configuration's helpers into the run's homes: each Codex helper's config (one per run: a second would
