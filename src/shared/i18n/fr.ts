@@ -131,6 +131,7 @@ export const fr = {
   'session.noMatch': 'Aucune session correspondante',
   'session.none': 'Aucune session pour l’instant',
   'session.group.pinned': 'Épinglées',
+  'session.group.projects': 'Projets',
   'session.titleAria': 'Titre de la session',
   'session.listAria': 'Sessions',
   'session.state.working': 'En cours',

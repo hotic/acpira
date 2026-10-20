@@ -36,6 +36,8 @@ export interface HeaderProps {
   drawerOpen?: boolean;
   sessionPanel?: 'hidden' | 'left' | 'right';
   sessionPanelDocked?: boolean;
+  // The docked left column carries new session and settings itself (Shell's nav layout); the header leaves them out
+  sessionNav?: boolean;
   // Swaps the chat for the settings page (webview-local view state)
   onOpenSettings?: () => void;
 }
@@ -44,13 +46,13 @@ export interface HeaderProps {
 // A narrow session panel gets a drawer toggle; collapsed navigation uses the history popover.
 // The person icon is the account layer's home (login state, switching, adding) for the current agent only; agents without accounts have no person icon.
 // The plus menu lists the enabled agents in the configured order (acpira.agentOrder / acpira.disabledAgents)
-export function Header({ title, sessions, categories, agent, agents, accounts, accountId, activeSessionId, workspace, sessionScope, nativeSessions, on, onToggleDrawer, onOpenSettings, drawerOpen, sessionPanel = 'hidden', sessionPanelDocked = false }: HeaderProps) {
+export function Header({ title, sessions, categories, agent, agents, accounts, accountId, activeSessionId, workspace, sessionScope, nativeSessions, on, onToggleDrawer, onOpenSettings, drawerOpen, sessionPanel = 'hidden', sessionPanelDocked = false, sessionNav = false }: HeaderProps) {
   const [accountOpen, setAccountOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const account = accounts?.find(a => a.id === accountId);
   // Tooltip: agent, account, with the remaining allowance appended once known ("Devin, s@x.io, Weekly 94%")
   const accountTitle = account ? [agent.name, account.label, account.quota && quotaSummary(account.quota)].filter(Boolean).join(t('common.metaSep')) : agent.name;
-  const settingsButton = onOpenSettings && (
+  const settingsButton = onOpenSettings && !sessionNav && (
     <IconButton onClick={() => onOpenSettings()} title={t('session.settings')} aria-label={t('session.settings')}>
       <Settings2 strokeWidth={1.5} />
     </IconButton>
@@ -75,7 +77,7 @@ export function Header({ title, sessions, categories, agent, agents, accounts, a
       {/* The icon is 6px smaller than the button box; the negative margin makes the right edge of the last icon bite into the page-margin line */}
       <div className="-mr-1.5 flex shrink-0 items-center gap-0.5">
         {/* New sessions start after choosing an agent from the plus menu. */}
-        <DropdownMenu.Root>
+        {!sessionNav && <DropdownMenu.Root>
           <DropdownMenu.Trigger render={<IconButton title={t('session.new')} aria-label={t('session.new')}><Plus strokeWidth={1.5} /></IconButton>} />
           <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="end" width="md"><DropdownMenu.Popup>
             <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
@@ -84,7 +86,7 @@ export function Header({ title, sessions, categories, agent, agents, accounts, a
               </DropdownMenu.Item>)}
             </div>
           </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
-        </DropdownMenu.Root>
+        </DropdownMenu.Root>}
         {sessionPanel === 'hidden' && <Popover.Root open={historyOpen} onOpenChange={setHistoryOpen}>
           <Popover.Trigger render={<IconButton title={t('session.history')} aria-label={t('session.history')}><History strokeWidth={1.5} /></IconButton>} />
           <Popover.Portal><Popover.Positioner side="bottom" align="end" width="xl"><Popover.Popup initialFocus={interaction => interaction === 'keyboard'}>

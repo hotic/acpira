@@ -133,6 +133,7 @@ export const ru = {
   'session.noMatch': 'Подходящих сессий нет',
   'session.none': 'Сессий пока нет',
   'session.group.pinned': 'Закреплённые',
+  'session.group.projects': 'Проекты',
   'session.titleAria': 'Заголовок сессии',
   'session.listAria': 'Сессии',
   'session.state.working': 'Выполняется',

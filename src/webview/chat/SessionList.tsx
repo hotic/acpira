@@ -92,6 +92,11 @@ export interface SessionListProps {
   onCategoryOp?: (op: CategoryOp, file?: string) => void;
   // "New session in this category" (only offered for the window's own project, where a new session starts)
   onNewInCategory?: (category: string) => void;
+  // The docked left column's navigation layout (Codex / Claude desktop style): new session, search and import as rows on
+  // top, then quiet section labels (pinned, projects / sessions) carrying the filter and "new category"
+  nav?: boolean;
+  // The nav layout's "new session" row: picks the agent from the same menu as the header's plus
+  onNew?: (agent: AgentId) => void;
 }
 
 // The drag payload's type: only rows of this list carry it, so files or text dragged in are left alone
@@ -127,7 +132,7 @@ function aggregate(sessions: SessionSummary[]): Mark | undefined {
 // to its loose area; under "all", dropped on another project's group (or one of its categories) they move to that project.
 // Pinned rows are locked and do not drag; category headers drag to reorder within their project.
 // Deletion applies immediately, undo lives on the Toast at the shell's bottom
-export function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onMove, onExport, onCopy, onSearch, categories: categoryState, onFile, onCategoryOp, onNewInCategory }: SessionListProps) {
+export function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onMove, onExport, onCopy, onSearch, categories: categoryState, onFile, onCategoryOp, onNewInCategory, nav, onNew }: SessionListProps) {
   const locale = useLocale();
   const [query, setQuery] = useState('');
   const [agentFilter, setAgentFilter] = useState<string>();
@@ -367,19 +372,88 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
   const rest = tree.projects.some(p => p.loose.length || p.categories.length);
   const empty = searching ? t('session.searching') : q ? t('session.noMatch') : agentFilter ? t('session.noneAgent', { name: nameOf(agentFilter) }) : scope === 'workspace' && workspace ? t('session.noneWorkspace') : t('session.none');
 
+  const searchInput = (
+    <input
+      autoFocus={autoFocus}
+      value={query}
+      onChange={e => setQuery(e.target.value)}
+      placeholder={onSearch ? t('session.searchContent') : t('session.search')}
+      aria-label={onSearch ? t('session.searchContent') : t('session.search')}
+      className="min-w-0 flex-1 bg-transparent text-2 text-fg-1 outline-none placeholder:text-fg-3"
+    />
+  );
+  const importer = onListNative && onImportNative && (
+    <ImportSessions
+      agents={agents} agentFilter={agentFilter} activeAgent={activeAgent}
+      native={nativeSessions}
+      onList={onListNative}
+      onImport={onImportNative}
+      onSelect={onSelect}
+      row={nav}
+    />
+  );
+  const emptyRow = !shown.length && !visibleCategories && <div className="mt-1 flex min-h-row items-center justify-center px-2 text-2 text-fg-3">{empty}</div>;
+  const restRows = tree.grouped ? tree.projects.map(renderProject) : tree.projects.map(p => <Fragment key={p.cwd}>{renderBody(p)}</Fragment>);
+  const onEscape = (e: KeyboardEvent<HTMLDivElement>) => { if (e.key === 'Escape' && editing) { e.stopPropagation(); setEditing(undefined); } };
+
+  // Nav layout: the actions are rows of the column itself, and each section names itself in a quiet label. "New category"
+  // has one home per scope: the section label when the list is the window's own project, the project rows when grouped
+  if (nav) {
+    const fresh = launchable(agents);
+    return (
+      <div className="flex min-h-0 flex-1 flex-col" onKeyDown={onEscape}>
+        <div className="flex shrink-0 flex-col">
+          {onNew && fresh.length > 0 && (
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger render={<button type="button" className={NAV_ROW}><span className={NAV_LEAD}><SquarePen className="size-icon" strokeWidth={1.5} /></span><span className="min-w-0 truncate">{t('session.new')}</span></button>} />
+              <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="start" width="md"><DropdownMenu.Popup>
+                <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
+                  {fresh.map(a => <DropdownMenu.Item key={a.id} disabled={a.available === false} title={a.available === false ? t('agent.notInstalled') : undefined} onClick={() => onNew(a.id)}>
+                    <OptionContent icon={<AgentMark id={a.id} name={a.name} />}>{a.name}</OptionContent>
+                  </DropdownMenu.Item>)}
+                </div>
+              </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
+            </DropdownMenu.Root>
+          )}
+          <label className={cn(NAV_ROW, 'cursor-text text-fg-3 focus-within:bg-hover')}>
+            <span className={NAV_LEAD}><Search className="size-icon" strokeWidth={1.5} /></span>
+            {searchInput}
+          </label>
+          {importer}
+        </div>
+        {/* The scroller bleeds through the panel's padding like the other layout's, so the thumb rides the panel edge */}
+        <div className="scroll-thin mt-gap-half -mx-gap-half flex min-h-0 flex-col overflow-y-auto px-gap-half pb-1" role="listbox" aria-label={t('session.listAria')}
+          style={timeCh ? { '--session-time': `${timeCh}ch` } as CSSProperties : undefined}
+          onDragOver={onDragOver} onDrop={onDrop}>
+          {tree.pinned.length > 0 && (
+            <div className="flex flex-col" role="group" aria-label={t('session.group.pinned')}>
+              <SectionLabel>{t('session.group.pinned')}</SectionLabel>
+              {tree.pinned.map(renderItem)}
+            </div>
+          )}
+          <SectionLabel actions={<>
+            {filing && workspace && !tree.grouped && (
+              <button type="button" title={t('session.category.new')} aria-label={t('session.category.new')} onClick={() => createCategory(workspace)} className={SECTION_ACT}>
+                <CategoryAddIcon />
+              </button>
+            )}
+            <ChannelFilter agents={agents} value={agentFilter} onChange={setAgentFilter} compact />
+          </>}>
+            {tree.grouped ? t('session.group.projects') : t('session.listAria')}
+          </SectionLabel>
+          {emptyRow}
+          {rest && <div className="flex flex-col">{restRows}</div>}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className={cn('flex flex-col', fill ? 'min-h-0 flex-1' : 'max-h-[60vh]')} onKeyDown={e => { if (e.key === 'Escape' && editing) { e.stopPropagation(); setEditing(undefined); } }}>
+    <div className={cn('flex flex-col', fill ? 'min-h-0 flex-1' : 'max-h-[60vh]')} onKeyDown={onEscape}>
       <div className="flex items-center gap-1 px-1 pt-1">
         <label className="flex h-ctl min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-fg-3 focus-within:bg-hover">
           <Search className="size-icon shrink-0" strokeWidth={1.5} />
-          <input
-            autoFocus={autoFocus}
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder={onSearch ? t('session.searchContent') : t('session.search')}
-            aria-label={onSearch ? t('session.searchContent') : t('session.search')}
-            className="min-w-0 flex-1 bg-transparent text-2 text-fg-1 outline-none placeholder:text-fg-3"
-          />
+          {searchInput}
         </label>
       </div>
       <div className="flex min-w-0 shrink-0 items-center gap-1 px-1 pt-1">
@@ -390,15 +464,7 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
               <CategoryAddIcon />
             </IconButton>
           )}
-          {onListNative && onImportNative && (
-            <ImportSessions
-              agents={agents} agentFilter={agentFilter} activeAgent={activeAgent}
-              native={nativeSessions}
-              onList={onListNative}
-              onImport={onImportNative}
-              onSelect={onSelect}
-            />
-          )}
+          {importer}
         </span>
       </div>
       {/* The scroller bleeds through its container's padding (docked panel p-gap-half, popover p-1) and pads it back, so the
@@ -407,7 +473,7 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
         style={timeCh ? { '--session-time': `${timeCh}ch` } as CSSProperties : undefined}
         onDragOver={onDragOver} onDrop={onDrop}>
         {/* Empty state takes exactly one item row (pt-1 + min-h-row) so the popover keeps its height whether the filter matches 0 or 1 session */}
-        {!shown.length && !visibleCategories && <div className="mt-1 flex min-h-row items-center justify-center px-2 text-2 text-fg-3">{empty}</div>}
+        {emptyRow}
         {tree.pinned.length > 0 && (
           <div className="flex flex-col pt-1" role="group" aria-label={t('session.group.pinned')}>
             {tree.pinned.map(renderItem)}
@@ -421,12 +487,23 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
             tree.pinned.length > 0 && rest ? 'my-1 h-px scale-x-100 opacity-100' : 'my-0 h-0 scale-x-0 opacity-0',
           )}
         />
-        {rest && (
-          <div className="flex flex-col pt-1">
-            {tree.grouped ? tree.projects.map(renderProject) : tree.projects.map(p => <Fragment key={p.cwd}>{renderBody(p)}</Fragment>)}
-          </div>
-        )}
+        {rest && <div className="flex flex-col pt-1">{restRows}</div>}
       </div>
+    </div>
+  );
+}
+
+// The nav layout's action rows share the session rows' box (height, inset, radius, lead slot), so the column reads as one list
+const NAV_ROW = 'flex min-h-row w-full items-center gap-gap rounded-md px-2 text-left text-2 text-fg-1 transition-colors hover:bg-hover focus-visible:bg-hover data-[popup-open]:bg-hover';
+const NAV_LEAD = 'flex size-lead shrink-0 items-center justify-center text-fg-2';
+const SECTION_ACT = 'inline-flex size-ctl-sm items-center justify-center rounded-md text-fg-3 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1 data-[popup-open]:bg-hover data-[popup-open]:text-fg-1';
+
+// A section's quiet label in the nav layout (Pinned, Projects / Sessions), its actions always showing at the end
+function SectionLabel({ children, actions }: { children: ReactNode; actions?: ReactNode }) {
+  return (
+    <div className="mt-gap flex min-h-row items-center gap-gap px-2 text-3 text-fg-3">
+      <span className="min-w-0 truncate">{children}</span>
+      {actions && <span className="-mr-1 ml-auto flex shrink-0 items-center gap-0.5">{actions}</span>}
     </div>
   );
 }
@@ -477,6 +554,8 @@ function GroupHeader({ project, icon, name, title, badge, count, open, state, dr
         'group flex min-h-row items-center gap-gap rounded-md px-2 text-2 transition-colors hover:bg-hover focus-visible:bg-hover data-[menu-open]:bg-hover',
         onToggle && 'cursor-pointer',
         project ? 'font-semibold text-fg-strong' : 'text-fg-1',
+        // Renaming keeps the hover fill, as on a session row
+        editing && 'bg-hover',
         dragging && 'opacity-40',
       )}
     >
@@ -527,7 +606,8 @@ function GroupHeader({ project, icon, name, title, badge, count, open, state, dr
 
 // Only the channel filter uses a picker; the session rows retain their own search,
 // rename, pin and selection behavior. Adding ACPs never adds rows to the toolbar.
-function ChannelFilter({ agents, value, onChange }: { agents: AgentInfo[]; value?: string; onChange: (id: string | undefined) => void }) {
+// `compact`: the nav layout's section-label action, a bare filter glyph until a channel is picked, then that channel's mark and name
+function ChannelFilter({ agents, value, onChange, compact }: { agents: AgentInfo[]; value?: string; onChange: (id: string | undefined) => void; compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const options = [{ id: '', name: t('session.channels') }, ...agents];
   const current = options.find(a => a.id === (value ?? '')) ?? { id: value!, name: value! };
@@ -536,12 +616,18 @@ function ChannelFilter({ agents, value, onChange }: { agents: AgentInfo[]; value
   const mark = (a: { id: string; name: string }) => a.id
     ? <AgentMark id={a.id} name={a.name} />
     : <ListFilter className="size-icon" strokeWidth={1.5} />;
-  const trigger = <button type="button" aria-label={`${t('session.filterChannel')}: ${current.name}`} title={current.name}
-    className={cn('group/chip inline-flex h-[calc(var(--ctl)-4px)] min-w-0 max-w-full items-center gap-1.5 rounded-md px-2 text-3 transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 data-[open]:bg-active data-[popup-open]:bg-active', value ? 'text-fg-1' : 'text-fg-2')}>
-    <span className="flex size-icon shrink-0 items-center justify-center">{mark(current)}</span>
-    <span className="min-w-0 truncate">{current.name}</span>
-    <ChevronDown className={cn('size-3 shrink-0 text-fg-3', CARET_TURN)} strokeWidth={1.5} />
-  </button>;
+  const trigger = compact
+    ? <button type="button" aria-label={`${t('session.filterChannel')}: ${current.name}`} title={value ? current.name : t('session.filterChannel')}
+      className={cn('inline-flex h-ctl-sm min-w-ctl-sm max-w-full items-center justify-center gap-1.5 rounded-md text-3 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1 data-[popup-open]:bg-hover', value ? 'px-1.5 text-fg-1' : 'text-fg-3')}>
+      <span className="flex size-icon shrink-0 items-center justify-center">{mark(current)}</span>
+      {value && <span className="min-w-0 truncate">{current.name}</span>}
+    </button>
+    : <button type="button" aria-label={`${t('session.filterChannel')}: ${current.name}`} title={current.name}
+      className={cn('group/chip inline-flex h-[calc(var(--ctl)-4px)] min-w-0 max-w-full items-center gap-1.5 rounded-md px-2 text-3 transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 data-[open]:bg-active data-[popup-open]:bg-active', value ? 'text-fg-1' : 'text-fg-2')}>
+      <span className="flex size-icon shrink-0 items-center justify-center">{mark(current)}</span>
+      <span className="min-w-0 truncate">{current.name}</span>
+      <ChevronDown className={cn('size-3 shrink-0 text-fg-3', CARET_TURN)} strokeWidth={1.5} />
+    </button>;
   const content = (a: { id: string; name: string }) => <OptionContent icon={mark(a)} checked={a.id === current.id} checkSlot>{a.name}</OptionContent>;
 
   return <div className="min-w-0 max-w-full" onKeyDownCapture={e => {
@@ -567,8 +653,9 @@ function ChannelFilter({ agents, value, onChange }: { agents: AgentInfo[]; value
 
 // The filter row's import entry: lists the chosen agent's own sessions over ACP (the host spawns a throwaway process for
 // session/list — nothing is created on the agent's side). A session already imported is dimmed and jumps to its record;
-// the rest import on click. The agent switcher in the header re-requests the list for the agent it lands on
-function ImportSessions({ agents, agentFilter, activeAgent, native, onList, onImport, onSelect }: {
+// the rest import on click. The agent switcher in the header re-requests the list for the agent it lands on.
+// `row`: the nav layout's full-width action row instead of the filter row's icon
+function ImportSessions({ agents, agentFilter, activeAgent, native, onList, onImport, onSelect, row }: {
   agents: AgentInfo[];
   agentFilter?: AgentId;
   activeAgent?: AgentId;
@@ -576,6 +663,7 @@ function ImportSessions({ agents, agentFilter, activeAgent, native, onList, onIm
   onList: (agent: AgentId) => void;
   onImport: (agent: AgentId, s: NativeSessionInfo) => void;
   onSelect: (id: string) => void;
+  row?: boolean;
 }) {
   const locale = useLocale();
   const [open, setOpen] = useState(false);
@@ -597,12 +685,14 @@ function ImportSessions({ agents, agentFilter, activeAgent, native, onList, onIm
   const dayOf = (iso: string) => Math.floor((startOfDay(now) - startOfDay(new Date(iso))) / 86_400_000);
 
   return (
-    <span className="ml-auto shrink-0" onKeyDownCapture={e => {
+    <span className={row ? 'flex flex-col' : 'ml-auto shrink-0'} onKeyDownCapture={e => {
       // Nested inside the history popover / drawer: consume the first Escape like ChannelFilter does
       if (open && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(false); }
     }}>
       <Popover.Root open={open} onOpenChange={o => { setOpen(o); if (!o) setPicked(undefined); }}>
-        <Popover.Trigger render={<IconButton title={t('session.import.action')} aria-label={t('session.import.action')}><Import strokeWidth={1.5} /></IconButton>} />
+        <Popover.Trigger render={row
+          ? <button type="button" className={NAV_ROW}><span className={NAV_LEAD}><Import className="size-icon" strokeWidth={1.5} /></span><span className="min-w-0 truncate">{t('session.import.action')}</span></button>
+          : <IconButton title={t('session.import.action')} aria-label={t('session.import.action')}><Import strokeWidth={1.5} /></IconButton>} />
         <Popover.Portal><Popover.Positioner width="xl"><Popover.Popup initialFocus={interaction => interaction === 'keyboard'} aria-label={t('session.import.action')}>
           <PanelHeader tail={<ChannelFilter agents={candidates} value={agent} onChange={id => setPicked(id || undefined)} />}>
             {t('session.import.title', { agent: name })}
@@ -699,6 +789,8 @@ function Item({ session: s, agentName, terms, snippet, active, time, project, ed
         // The row whose context menu is open keeps the hover fill: the popup under the pointer ends the row's :hover
         'group flex min-h-row cursor-pointer items-center gap-gap rounded-md px-2 text-2 text-fg-2 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover data-[menu-open]:bg-hover data-[menu-open]:text-fg-1',
         snippet && !editing && 'py-1',
+        // Renaming keeps the fill too: the menu that started it has closed and the focused input is not the row's focus-visible
+        editing && 'bg-hover text-fg-1',
         active && 'bg-active text-fg-strong hover:bg-active data-[menu-open]:bg-active data-[menu-open]:text-fg-strong',
         dragging && 'opacity-40',
       )}

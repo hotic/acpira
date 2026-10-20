@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Check, CircleAlert, Network, Paperclip, X } from 'lucide-react';
+import { Check, CircleAlert, Network, Paperclip, Settings2, X } from 'lucide-react';
 import type { ExternalSessionInfo, AccountInfo, AgentId, AgentInfo, ForkOrigin, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
 import type { ModelShapes } from '@shared/modelShapes';
@@ -375,9 +375,14 @@ export function Shell(p: ShellProps) {
   const questionSubtitle = !rootQuestion && childQuestion
     ? t('subagents.provenance', { path: breadcrumb(childQuestion.id, p.subagents ?? []).map(n => subagentTitle(n, t)).join(' › ') })
     : undefined;
+  // On the left the column is the app's navigation (Codex / Claude desktop): new session, search and import lead it,
+  // settings sit at its foot, and the chat header drops its own plus and settings while the column is docked
+  const nav = position === 'left';
   const sessionsPanel = (
     <SessionList
       fill
+      nav={nav}
+      onNew={agent => { on.newSession(agent); closeDrawer(); }}
       sessions={p.sessions}
       agents={p.agents}
       activeId={p.activeSessionId}
@@ -509,11 +514,23 @@ export function Shell(p: ShellProps) {
                   !canDock && (position === 'right' ? 'right-0' : 'left-0'),
                   !canDock && !drawerOpen && 'hidden',
                 )}>
-                <div className="flex h-hdr shrink-0 items-center justify-between gap-gap-half border-b border-line px-pad">
-                  <span className="text-2 font-medium text-fg-strong">{t('session.history')}</span>
-                  {!canDock && <IconButton onClick={closeDrawer} aria-label={t('common.close')} title={t('common.close')}><X strokeWidth={1.5} /></IconButton>}
-                </div>
-                <div className="flex min-h-0 flex-1 flex-col p-gap-half">{sessionsPanel}</div>
+                {(!nav || !canDock) && (
+                  <div className="flex h-hdr shrink-0 items-center justify-between gap-gap-half border-b border-line px-pad">
+                    <span className="text-2 font-medium text-fg-strong">{t('session.history')}</span>
+                    {!canDock && <IconButton onClick={closeDrawer} aria-label={t('common.close')} title={t('common.close')}><X strokeWidth={1.5} /></IconButton>}
+                  </div>
+                )}
+                {/* Docked nav: the first action row is centred on the chat header's line */}
+                <div className={cn('flex min-h-0 flex-1 flex-col p-gap-half', nav && canDock && 'pt-[calc((var(--hdr)-var(--row))/2)]')}>{sessionsPanel}</div>
+                {nav && p.onOpenSettings && (
+                  <div className="shrink-0 border-t border-line p-gap-half">
+                    <button type="button" onClick={() => p.onOpenSettings!()}
+                      className="flex min-h-row w-full items-center gap-gap rounded-md px-2 text-left text-2 text-fg-1 transition-colors hover:bg-hover focus-visible:bg-hover">
+                      <span className="flex size-lead shrink-0 items-center justify-center text-fg-2"><Settings2 className="size-icon" strokeWidth={1.5} /></span>
+                      <span className="min-w-0 truncate">{t('session.settings')}</span>
+                    </button>
+                  </div>
+                )}
               </aside>
             </>
           )}
@@ -537,6 +554,7 @@ export function Shell(p: ShellProps) {
               drawerOpen={drawerOpen}
               sessionPanel={position}
               sessionPanelDocked={canDock}
+              sessionNav={nav && canDock}
               onOpenSettings={p.onOpenSettings}
             />
             </div>

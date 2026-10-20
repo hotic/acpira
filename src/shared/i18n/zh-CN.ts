@@ -137,6 +137,7 @@ export const zhCN = {
   'session.noMatch': '没有匹配的会话',
   'session.none': '还没有会话',
   'session.group.pinned': '置顶',
+  'session.group.projects': '项目',
   'session.titleAria': '会话标题',
   'session.listAria': '会话',
   'session.state.working': '运行中',

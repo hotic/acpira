@@ -134,6 +134,7 @@ export const ja = {
   'session.noMatch': '一致するセッションはありません',
   'session.none': 'セッションはまだありません',
   'session.group.pinned': 'ピン留め',
+  'session.group.projects': 'プロジェクト',
   'session.titleAria': 'セッションのタイトル',
   'session.listAria': 'セッション',
   'session.state.working': '実行中',
