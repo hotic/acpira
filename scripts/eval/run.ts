@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { AgentTurn, PermissionBlock, QuestionBlock, SessionView } from '@shared/transcript';
 import { FAKE, bundleFakeAgent } from '../../test/fakeAgentBundle';
@@ -28,7 +29,9 @@ import { cost } from './prices';
 // ACPIRA_SIDECAR_BIN pins the engine under test (otherwise the workspace's debug build, rebuilt before every run)
 
 const TASKS_DIR = resolve(import.meta.dirname, 'tasks');
-const VERIFY_TIMEOUT_MS = 300_000;
+const REPO = resolve(import.meta.dirname, '../..');
+// A Rust task's hidden tests build first and bound each target themselves (rust-tests.sh)
+const VERIFY_TIMEOUT_MS = 900_000;
 const DRY = process.argv.includes('--dry');
 // Background work counts as over once the session has stayed idle this long with no summoned round running: the
 // automatic message delivering the last round starts within it
@@ -39,7 +42,19 @@ function arg(name: string, fallback?: string): string | undefined {
   return i > 0 ? process.argv[i + 1] : fallback;
 }
 
-interface Task { id: string; kind: string; prompt: string; verify: string; timeoutMin: number }
+// A task's starting tree is its `repo/` folder, or with `base` a revision of this repository (a task from its own
+// history): `git archive` of it, so no later history comes along, then the task's `patch` (test scaffolding the hidden
+// tests need) and the files under its `add/` (the task's own ISSUES.md or TASK.md). Its hidden tests are its `hidden/`
+// folder, or with `hidden` those paths as the reference change left them, under `.eval_hidden/` at their own paths.
+// `env`: set for the agent and the hidden tests on top of the run's HOME, for a task that needs the user's own toolchains
+// (a Rust task's RUSTUP_HOME / CARGO_HOME); a value starting with `~/` is under the real home, since HOME is the run's
+interface Task {
+  id: string; kind: string; prompt: string; verify: string; timeoutMin: number; env?: Record<string, string>;
+  base?: string; patch?: string; hidden?: { rev: string; paths: string[] };
+}
+
+const taskEnv = (t: Task): Record<string, string> =>
+  Object.fromEntries(Object.entries(t.env ?? {}).map(([k, v]) => [k, v.startsWith('~/') ? join(homedir(), v.slice(2)) : v]));
 
 function loadTask(id: string): Task {
   return JSON.parse(readFileSync(join(TASKS_DIR, id, 'task.json'), 'utf8')) as Task;
@@ -47,6 +62,30 @@ function loadTask(id: string): Task {
 
 function sh(cmd: string, cwd: string, timeout = 60_000, env: Record<string, string> = {}) {
   return spawnSync('bash', ['-c', cmd], { cwd, timeout, encoding: 'utf8', env: { ...process.env, ...env }, maxBuffer: 64 << 20 });
+}
+
+function must(cmd: string, cwd: string) {
+  const r = sh(cmd, cwd);
+  if (r.status !== 0) throw new Error(`${cmd}: ${(r.stderr ?? '').trim().slice(-500)}`);
+}
+
+// `git archive` of a revision's paths (all of it without any) unpacked into a folder
+const unpack = (rev: string, into: string, paths: string[] = []) =>
+  must(`git -C '${REPO}' archive --format=tar '${rev}' ${paths.map(p => `'${p}'`).join(' ')} | tar -x -C '${into}'`, into);
+
+function materialize(t: Task, work: string) {
+  const dir = join(TASKS_DIR, t.id);
+  if (!t.base) return cpSync(join(dir, 'repo'), work, { recursive: true });
+  unpack(t.base, work);
+  if (t.patch) must(`git apply '${join(dir, t.patch)}'`, work);
+  if (existsSync(join(dir, 'add'))) cpSync(join(dir, 'add'), work, { recursive: true });
+}
+
+function hideTests(t: Task, work: string) {
+  const into = join(work, '.eval_hidden');
+  mkdirSync(into, { recursive: true });
+  if (t.hidden) unpack(t.hidden.rev, into, t.hidden.paths);
+  else cpSync(join(TASKS_DIR, t.id, 'hidden'), into, { recursive: true });
 }
 
 // Hidden tests run one at a time across every runner process (a timing test must not compete with another verify);
@@ -70,8 +109,13 @@ async function verifyLock<T>(root: string, f: () => T): Promise<T> {
   }
 }
 
-// unittest's summary: tests run and how many failed or errored
-function unittestCounts(out: string): { total: number; passed: number } {
+// Python unittest's summary, or the sum of cargo test's per-binary `test result:` lines (a build that fails has none)
+function testCounts(out: string): { total: number; passed: number } {
+  const cargo = [...out.matchAll(/^test result: \w+\. (\d+) passed; (\d+) failed;/gm)];
+  if (cargo.length) {
+    const passed = cargo.reduce((a, m) => a + Number(m[1]), 0);
+    return { total: passed + cargo.reduce((a, m) => a + Number(m[2]), 0), passed };
+  }
   const ran = /Ran (\d+) tests?/.exec(out);
   const total = ran ? Number(ran[1]) : 0;
   const failed = /FAILED \(([^)]*)\)/.exec(out);
@@ -99,11 +143,11 @@ interface Outcome {
 }
 
 // A harness that is its own CLI (no ACP), run once in the work tree with the prompt; its stdout is kept as cli.out
-function driveCli(cli: NonNullable<HarnessSetup['cli']>, o: { runId: string; dir: string; work: string; home: string; prompt: string; timeoutMin: number }): Outcome {
+function driveCli(cli: NonNullable<HarnessSetup['cli']>, o: { runId: string; dir: string; work: string; home: string; prompt: string; timeoutMin: number; env: Record<string, string> }): Outcome {
   console.log(`[${o.runId}] cli ${cli.cmd[0]}`);
   const r = spawnSync(cli.cmd[0]!, [...cli.cmd.slice(1), o.prompt], {
     cwd: o.work, encoding: 'utf8', timeout: o.timeoutMin * 60_000, killSignal: 'SIGTERM', maxBuffer: 256 << 20,
-    env: { ...process.env, HOME: o.home, PYTHONDONTWRITEBYTECODE: '1', ...cli.env },
+    env: { ...process.env, HOME: o.home, PYTHONDONTWRITEBYTECODE: '1', ...o.env, ...cli.env },
   });
   writeFileSync(join(o.dir, 'cli.out'), r.stdout ?? '');
   writeFileSync(join(o.dir, 'cli.err'), r.stderr ?? '');
@@ -184,12 +228,12 @@ async function applyPicks(view: View, picks: Record<string, string>) {
 // background (summoned rounds and the automatic messages delivering them) waited out within the same time limit
 async function driveSidecar(setup: HarnessSetup, o: {
   runId: string; work: string; home: string; acpiraHome: string; prompt: string; timeoutMin: number;
-  picks: Record<string, string>; agents?: Record<string, unknown>;
+  picks: Record<string, string>; agents?: Record<string, unknown>; env: Record<string, string>;
 }): Promise<Outcome> {
   const { work, home, acpiraHome } = o;
   const host = await Host.start({
     cwd: work, home: acpiraHome, defaultAgent: setup.agent, agents: o.agents,
-    env: { HOME: home, PYTHONDONTWRITEBYTECODE: '1', ...setup.env },
+    env: { HOME: home, PYTHONDONTWRITEBYTECODE: '1', ...o.env, ...setup.env },
   });
   const view = await host.view();
   const approver = approve(view);
@@ -291,7 +335,7 @@ async function runOne(o: { task: Task; cell: Cell; rep: number; root: string; me
   const bodies = join(o.root, 'bodies');
   for (const f of existsSync(bodies) ? readdirSync(bodies) : []) if (f.startsWith(`${runId}.`)) rmSync(join(bodies, f));
   for (const d of [work, home, acpiraHome]) mkdirSync(d, { recursive: true });
-  cpSync(join(TASKS_DIR, o.task.id, 'repo'), work, { recursive: true });
+  materialize(o.task, work);
   sh('git init -q && git add -A && git -c user.name=eval -c user.email=eval@localhost commit -qm "Initial state"', work);
 
   const spec = MODELS[cell.model]!;
@@ -304,9 +348,10 @@ async function runOne(o: { task: Task; cell: Cell; rep: number; root: string; me
   const quotaBefore = natives.length ? readQuota(natives) : undefined;
   const started = Date.now();
   const prompt = DRY ? dryPrompt(cell) : o.task.prompt;
+  const env = taskEnv(o.task);
   const outcome = setup.cli
-    ? driveCli(setup.cli, { runId, dir, work, home, prompt, timeoutMin: o.timeoutMin })
-    : await driveSidecar(setup, { runId, work, home, acpiraHome, prompt, timeoutMin: o.timeoutMin, picks, agents });
+    ? driveCli(setup.cli, { runId, dir, work, home, prompt, timeoutMin: o.timeoutMin, env })
+    : await driveSidecar(setup, { runId, work, home, acpiraHome, prompt, timeoutMin: o.timeoutMin, picks, agents, env });
   const { timedOut, failure, tools } = outcome;
   const wallS = Math.round((Date.now() - started) / 1000);
   const quotaAfter = natives.length ? readQuota(natives) : undefined;
@@ -315,11 +360,11 @@ async function runOne(o: { task: Task; cell: Cell; rep: number; root: string; me
   scrub(setup);
 
   // The hidden tests, copied in only now so the agent never saw them
-  cpSync(join(TASKS_DIR, o.task.id, 'hidden'), join(work, '.eval_hidden'), { recursive: true });
-  const ver = await verifyLock(o.root, () => sh(o.task.verify, work, VERIFY_TIMEOUT_MS, { HOME: home, PYTHONDONTWRITEBYTECODE: '1' }));
+  hideTests(o.task, work);
+  const ver = await verifyLock(o.root, () => sh(o.task.verify, work, VERIFY_TIMEOUT_MS, { HOME: home, PYTHONDONTWRITEBYTECODE: '1', EVAL_DIR: import.meta.dirname, ...env }));
   const out = `${ver.stdout ?? ''}\n${ver.stderr ?? ''}`;
   writeFileSync(join(dir, 'verify.txt'), out);
-  const counts = unittestCounts(out);
+  const counts = testCounts(out);
   const verifyTimedOut = ver.error?.message.includes('ETIMEDOUT') ?? false;
 
   const mine = o.calls.filter(c => c.run === runId);

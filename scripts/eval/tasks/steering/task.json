@@ -1,0 +1,11 @@
+{
+  "id": "steering",
+  "kind": "feature in this repository (Rust)",
+  "base": "916c80b1^",
+  "patch": "setup.patch",
+  "hidden": { "rev": "916c80b1", "paths": ["rust/crates/acpira-agent/tests"] },
+  "prompt": "Implement the feature described in TASK.md in Acpira's built-in agent, the Rust crate in rust/crates/acpira-agent. Keep existing behaviour that TASK.md does not change, and keep the crate's public API working as its existing tests use it. Add tests for the feature under rust/crates/acpira-agent/tests/. The crate's tests run with `cd rust && cargo test -p acpira-agent`; the TypeScript side and the other crates are not part of this task. Work autonomously until it is done and the tests pass; do not ask questions.",
+  "verify": "bash \"$EVAL_DIR/rust-tests.sh\" acpira-agent",
+  "timeoutMin": 45,
+  "env": { "RUSTUP_HOME": "~/.rustup", "CARGO_HOME": "~/.cargo" }
+}

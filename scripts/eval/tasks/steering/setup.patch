@@ -1,0 +1,117 @@
+diff --git a/rust/crates/acpira-agent/src/mock.rs b/rust/crates/acpira-agent/src/mock.rs
+index 908ea853..029d1ac5 100644
+--- a/rust/crates/acpira-agent/src/mock.rs
++++ b/rust/crates/acpira-agent/src/mock.rs
+@@ -22,6 +22,26 @@ pub enum Reply {
+   Hang,
+   /// A plain answer with this status and body
+   Status(u16, String),
++  /// The inner reply once the gate opens: the request is recorded at once, the answer waits (a reply still streaming)
++  Held(Gate, Box<Reply>),
++}
++
++/// Holds a `Reply::Held` until the test opens it
++#[derive(Clone, Default)]
++pub struct Gate(Arc<(parking_lot::Mutex<bool>, parking_lot::Condvar)>);
++
++impl Gate {
++  pub fn open(&self) {
++    *self.0.0.lock() = true;
++    self.0.1.notify_all();
++  }
++
++  fn wait(&self) {
++    let mut open = self.0.0.lock();
++    while !*open {
++      self.0.1.wait(&mut open);
++    }
++  }
+ }
+ 
+ #[derive(Debug, Clone)]
+@@ -134,7 +154,11 @@ fn serve(conn: TcpStream, st: &State) {
+   }
+   let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+   st.requests.lock().push(Recorded { path, headers, body });
+-  let reply = st.script.lock().pop_front().unwrap_or_else(|| Reply::Status(500, r#"{"error":{"message":"mock: no scripted reply"}}"#.into()));
++  let mut reply = st.script.lock().pop_front().unwrap_or_else(|| Reply::Status(500, r#"{"error":{"message":"mock: no scripted reply"}}"#.into()));
++  while let Reply::Held(gate, inner) = reply {
++    gate.wait();
++    reply = *inner;
++  }
+   let mut out = conn;
+   let sse_head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache\r\nconnection: close\r\n\r\n";
+   match reply {
+@@ -182,6 +206,8 @@ fn serve(conn: TcpStream, st: &State) {
+       }
+       st.hanging.fetch_sub(1, Ordering::AcqRel);
+     }
++    // Opened above
++    Reply::Held(..) => unreachable!(),
+   }
+   let _ = out.flush();
+   let _ = out.shutdown(std::net::Shutdown::Both);
+diff --git a/rust/crates/acpira-agent/tests/support/mod.rs b/rust/crates/acpira-agent/tests/support/mod.rs
+index 34926747..156c4e57 100644
+--- a/rust/crates/acpira-agent/tests/support/mod.rs
++++ b/rust/crates/acpira-agent/tests/support/mod.rs
+@@ -20,6 +20,8 @@ pub enum Answer {
+   Reject,
+   /// Never answer (the turn stays parked on the card)
+   Hold,
++  /// Answer once the test calls `Harness::release`: allow once, or reject
++  Wait { allow: bool },
+ }
+ 
+ pub struct Client {
+@@ -29,6 +31,8 @@ pub struct Client {
+   pub forms: parking_lot::Mutex<Vec<Value>>,
+   /// The response to every form
+   pub form_reply: parking_lot::Mutex<Value>,
++  /// Lets an `Answer::Wait` card be answered
++  pub gate: Arc<tokio::sync::Notify>,
+ }
+ 
+ impl Inbound for Client {
+@@ -39,6 +43,7 @@ impl Inbound for Client {
+   }
+   fn request(&self, method: String, params: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
+     let answer = *self.answer.lock();
++    let gate = self.gate.clone();
+     if method == "session/request_permission" {
+       self.permissions.lock().push(params.clone());
+     }
+@@ -59,6 +64,13 @@ impl Inbound for Client {
+           cancel.cancelled().await;
+           return Ok(json!({ "outcome": { "outcome": "cancelled" } }));
+         }
++        Answer::Wait { allow } => {
++          tokio::select! {
++            _ = gate.notified() => {}
++            _ = cancel.cancelled() => return Ok(json!({ "outcome": { "outcome": "cancelled" } })),
++          }
++          if allow { "allow_once" } else { "reject_once" }
++        }
+       };
+       let option = params["options"].as_array().into_iter().flatten().find(|o| o["kind"] == kind).cloned().unwrap_or(Value::Null);
+       Ok(json!({ "outcome": { "outcome": "selected", "optionId": option["optionId"] } }))
+@@ -95,6 +107,7 @@ impl Harness {
+       answer: parking_lot::Mutex::new(Answer::Allow),
+       forms: Default::default(),
+       form_reply: parking_lot::Mutex::new(json!({ "action": "cancel" })),
++      gate: Default::default(),
+     });
+     let inbound: Arc<dyn Inbound> = client.clone();
+     let conn = Connection::start(client_r, client_w, Arc::new(move || inbound.clone()), Arc::new(|l: &str| eprintln!("client: {l}")));
+@@ -137,6 +150,11 @@ impl Harness {
+     self.conn.request("session/new", json!({ "cwd": self.cwd.path(), "mcpServers": [] })).await.unwrap()
+   }
+ 
++  /// Answer the permission card an `Answer::Wait` holds
++  pub fn release(&self) {
++    self.client.gate.notify_one();
++  }
++
+   pub fn updates(&self) -> Vec<Value> {
+     self.client.updates.lock().clone()
+   }
