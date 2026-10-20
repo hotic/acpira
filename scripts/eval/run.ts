@@ -156,12 +156,22 @@ function approve(view: View) {
   return { counts: n, stop: () => clearInterval(timer) };
 }
 
+const scrub = (setup: HarnessSetup) => {
+  for (const f of setup.scrub ?? []) rmSync(f, { force: true });
+};
+
 // Sets each picked session option (by config id, else category) and waits until the session shows it. A value the
 // option does not offer fails the run: a run on another model says nothing about the configuration
 async function applyPicks(view: View, picks: Record<string, string>) {
   for (const [key, value] of Object.entries(picks)) {
+    // A new session's options arrive after the view shows it (the agent answers session/new first), so wait for this one
+    const find = () => {
+      const options = view.active()?.controls.options ?? [];
+      return options.find(x => x.id === key) ?? options.find(x => x.category === key);
+    };
+    await view.until(() => !!find(), 60_000, `session option ${key}`).catch(() => {});
     const v = view.active()!;
-    const opt = v.controls.options.find(x => x.id === key) ?? v.controls.options.find(x => x.category === key);
+    const opt = find();
     if (!opt) throw new Error(`no session option ${key} (have ${v.controls.options.map(x => x.id).join(', ')})`);
     if (!opt.options.some(x => x.id === value)) throw new Error(`${opt.id} offers no ${value}`);
     if (opt.value === value) continue;
@@ -189,7 +199,7 @@ async function driveSidecar(setup: HarnessSetup, o: {
   let firstTurn = 0;
   try {
     if (setup.importLogin && !DRY) {
-      const a = await view.addAccount(setup.agent, 'import');
+      const a = await view.addAccount(setup.agent, 'import').finally(() => scrub(setup));
       if (a.status !== 'success') throw new Error(`importing the ${setup.agent} login: ${a.status} ${a.error ?? ''}`);
     }
     await view.newSession(setup.agent);
@@ -300,8 +310,9 @@ async function runOne(o: { task: Task; cell: Cell; rep: number; root: string; me
   const { timedOut, failure, tools } = outcome;
   const wallS = Math.round((Date.now() - started) / 1000);
   const quotaAfter = natives.length ? readQuota(natives) : undefined;
-  // The run's sidecar home held an imported login's key: it goes once the run is over
+  // The run's sidecar home held an imported login's key: it goes once the run is over, with any copy the import read
   if (setup.importLogin) rmSync(join(acpiraHome, 'secrets.json'), { force: true });
+  scrub(setup);
 
   // The hidden tests, copied in only now so the agent never saw them
   cpSync(join(TASKS_DIR, o.task.id, 'hidden'), join(work, '.eval_hidden'), { recursive: true });
