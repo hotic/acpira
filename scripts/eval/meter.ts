@@ -36,8 +36,10 @@ export interface Meter {
 
 // The gateway itself out of capacity (seen 2026-10-11 on every model in turn): a run that failed with one of these says
 // nothing about the harness, so it goes to infra.ndjson instead and is run again on the next launch
-// "The usage limit has been reached": the gateway's GPT route out of quota mid-run (2026-10-18), on both builds at once
-export const OUTAGE = /no eligible upstream channel|no route configured for model|rate limited or quota exhausted|usage limit has been reached/;
+// "The usage limit has been reached": the gateway's GPT route out of quota mid-run (2026-10-18), on both builds at once.
+// "Upstream request failed.": a 502 after the gateway's 60 s upstream timeout, which the SWE-2 route returned now and
+// then on 2026-10-21 (a sidekick round that ended on it left its lead waiting for nothing)
+export const OUTAGE = /no eligible upstream channel|no route configured for model|rate limited or quota exhausted|usage limit has been reached|Upstream request failed/;
 
 const UPSTREAMS: Record<string, string> = { gw: 'https://ai.sacredcraft.cn', ds: 'https://api.deepseek.com' };
 
