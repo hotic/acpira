@@ -92,6 +92,9 @@ export class SidecarClient {
   private previewSeq = 0;
   // previewOpen request id → the panel it was for; an answer for a panel that moved on since is dropped
   private previewAsks = new Map<string, { panelId: string; url: string }>();
+  // The newest ask per panel: an older answer (the engine refusing an open it superseded) must not land on the page
+  // the panel shows now, even when both asked for the same URL
+  private previewLatest = new Map<string, string>();
   private features = new Set<string>();
   sessionsDir?: string;
 
@@ -186,6 +189,7 @@ export class SidecarClient {
     return () => {
       if (this.previews.get(lease.panelId) !== lease) return;
       this.previews.delete(lease.panelId);
+      this.previewLatest.delete(lease.panelId);
       if (this.ready) this.write({ type: 'previewClose', panelId: lease.panelId });
     };
   }
@@ -194,6 +198,7 @@ export class SidecarClient {
     if (!this.features.has('preview')) { lease.onOpened({ error: 'engine-too-old' }); return; }
     const requestId = `p${++this.previewSeq}`;
     this.previewAsks.set(requestId, { panelId: lease.panelId, url: lease.url });
+    this.previewLatest.set(lease.panelId, requestId);
     this.write({ type: 'previewOpen', requestId, panelId: lease.panelId, url: lease.url, picker: lease.picker });
   }
 
@@ -267,7 +272,7 @@ export class SidecarClient {
         const ask = this.previewAsks.get(m.requestId);
         this.previewAsks.delete(m.requestId);
         const lease = ask && this.previews.get(ask.panelId);
-        if (!lease || lease.url !== ask.url) return;
+        if (!lease || lease.url !== ask.url || this.previewLatest.get(ask.panelId) !== m.requestId) return;
         lease.onOpened(m.url && m.token ? { url: m.url, token: m.token } : { error: m.error ?? 'no answer' });
         return;
       }

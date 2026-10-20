@@ -406,6 +406,11 @@ fn is_read_only(mode: &str) -> bool {
 
 /// The session's full-access mode ids: a known id, or one whose `_meta.kind` is `full_access` (in the `modes` list or
 /// among the values of a `mode` select)
+/// Whether the CLI is still in a full-access mode although the round asked for less
+fn stuck_in_bypass(opened: &Value, mode: RelayMode) -> bool {
+  mode != RelayMode::Bypass && current_mode(opened).is_some_and(|c| bypass_modes(opened).contains(&c))
+}
+
 fn bypass_modes(opened: &Value) -> Vec<String> {
   let full = |m: &Value| m.pointer("/_meta/kind").and_then(Value::as_str) == Some("full_access");
   let mut marked: Vec<String> = vec![];
@@ -1070,11 +1075,16 @@ impl AcpSession {
         relay_controls(&proc, &sid, &mut opened, &r.persona, notes).await;
       }
       let mode = if last == Some(r.mode) || relay_mode(&proc, &sid, &mut opened, start_mode.as_deref(), r.mode, &r.persona.agent, notes).await { Some(r.mode) } else { None };
+      // A refused step down from full access: the prompt would run without the approvals this round asked for
+      let stuck = mode.is_none() && stuck_in_bypass(&opened, r.mode);
       let controls = running_controls(&opened);
       if let Some(rp) = self.core.lock().relays.procs.get_mut(thread) {
         rp.opened = opened;
         rp.mode = mode;
         rp.applied = wanted;
+      }
+      if stuck {
+        return Err(anyhow!("{} stayed in its full-access mode, so this {:?} round was not sent: {}", r.persona.agent, r.mode, notes.join("; ")));
       }
       return Ok((proc, sid, controls));
     }
@@ -1146,6 +1156,10 @@ impl AcpSession {
     let start_mode = current_mode(&opened);
     relay_controls(proc, &sid, &mut opened, &r.persona, notes).await;
     let mode_ok = relay_mode(proc, &sid, &mut opened, start_mode.as_deref(), r.mode, &r.persona.agent, notes).await;
+    // A CLI that starts in full access and refuses to leave it gets no prompt for a round that wants approvals
+    if !mode_ok && stuck_in_bypass(&opened, r.mode) {
+      return Err(anyhow!("{} stayed in its full-access mode, so this {:?} round was not sent: {}", r.persona.agent, r.mode, notes.join("; ")));
+    }
     Ok((sid, opened, start_mode, mode_ok))
   }
 

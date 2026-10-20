@@ -284,6 +284,24 @@ describe('SidecarClient previews', () => {
     await expect.poll(async () => fetch(second.url).then(() => 'open', () => 'closed')).toBe('closed');
   });
 
+  it('drops the answer of an open a newer one for the same panel superseded', async () => {
+    const picker = join(tmp('acpira-picker-'), 'picker.js');
+    writeFileSync(picker, '/* picker */');
+    const target = await site();
+    const c = client([engine(tmp('acpira-client-home-'))]);
+    const { l, answers } = lease(target, picker);
+    c.start();
+    c.preview(l);
+    await expect.poll(() => answers.length, { timeout: 15_000 }).toBe(1);
+    // Asked twice in a row: the engine refuses the first as superseded, and only the second may reach the panel
+    c.preview(l);
+    c.preview(l);
+    await expect.poll(() => answers.length, { timeout: 15_000 }).toBeGreaterThan(1);
+    await new Promise(r => setTimeout(r, 300));
+    expect(answers.filter(a => 'error' in a)).toEqual([]);
+    expect(answers).toHaveLength(2);
+  });
+
   it('answers a refused target with the reason', async () => {
     const c = client([engine(tmp('acpira-client-home-'))]);
     const { l, answers } = lease('http://example.com/', join(tmp('acpira-picker-'), 'missing.js'));
