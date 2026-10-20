@@ -49,6 +49,7 @@ export interface SubagentHarness {
   round: number;
   sessionId?: string;  // the child CLI's own session id (peer.sessionId is Acpira's routing key)
   effort?: string;     // the reasoning effort the child session really runs (the CLI's option name); absent = none reported
+  group?: string;      // the group the round was summoned through (SubagentGroup.id)
 }
 
 // bypass = work without approvals: the CLI's own full-access mode where it has one, and its permission requests are
@@ -135,6 +136,46 @@ export function sanitizePersonas(value: unknown): SubagentPersona[] {
       ...(o.duty === 'scout' || o.duty === 'executor' || o.duty === 'reviewer' ? { duty: o.duty } : {}),
       ...(o.changes === true ? { changes: true } : {}),
     });
+  }
+  return out;
+}
+
+// Personas summoned together (subagents.json `groups`): one ask_agent call naming the group starts a round for each
+// enabled member, same task and handoff pack, each on its own; the replies come back together. Mirror of
+// acpira_shared::subagents::SubagentGroup
+export interface SubagentGroup {
+  id: string;           // stable slug, unique among groups and never a persona's id (the tool's `agent` names either)
+  name: string;
+  members: string[];    // persona ids, in the order their rounds start
+  when: string;         // tells the model when to summon the group
+  enabled: boolean;
+}
+
+export const GROUP_MAX = 16;
+// The summoned rounds a session runs at once
+export const GROUP_MEMBERS_MAX = 6;
+
+// Mirror of sanitize_groups: unnamed entries drop, text is clipped, ids are unique slugs no persona has, members are
+// the ids of `personas` it names, each once, in order, at most GROUP_MEMBERS_MAX
+export function sanitizeGroups(value: unknown, personas: SubagentPersona[]): SubagentGroup[] {
+  const out: SubagentGroup[] = [];
+  const str = (v: unknown, max: number) => (typeof v === 'string' ? [...v.trim()].slice(0, max).join('') : '');
+  for (const item of Array.isArray(value) ? value.slice(0, GROUP_MAX) : []) {
+    if (!item || typeof item !== 'object') continue;
+    const o = item as Record<string, unknown>;
+    const name = str(o.name, NAME_MAX);
+    if (!name) continue;
+    const base = personaSlug(str(o.id, 200)) || personaSlug(name) || 'group';
+    const taken = (id: string) => out.some(g => g.id === id) || personas.some(p => p.id === id);
+    let id = base;
+    for (let n = 2; taken(id); n++) id = `${base}-${n}`;
+    const members: string[] = [];
+    for (const m of Array.isArray(o.members) ? o.members : []) {
+      if (typeof m !== 'string') continue;
+      const want = m.trim();
+      if (members.length < GROUP_MEMBERS_MAX && personas.some(p => p.id === want) && !members.includes(want)) members.push(want);
+    }
+    out.push({ id, name, members, when: str(o.when, TEXT_MAX), enabled: o.enabled !== false });
   }
   return out;
 }

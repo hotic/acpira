@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Summoned agents report back in a fixed shape.** A summoned agent is asked to end with what it changed, how it checked the work and what it assumed, and a reviewer with findings by severity and location. Acpira then adds the files the round really changed, with line counts, including files its commands wrote.
 - **Subagent duties.** A subagent can be a scout, an executor or a reviewer. Picking one fills in its access and standing instructions, which stay editable. Scouts and executors keep their conversation within a session when they are asked again, and reviewers start fresh every time.
 - **Hand a summoned agent your changes.** `ask_agent` can pass `changes`, or a subagent can have "Hand over this session's changes" switched on. Its first round then starts with a pack of the session's uncommitted diff, and the small changed files in full. Later rounds of the same conversation hear only which files moved since.
+- **Subagent groups.** Settings → Orchestration, formerly Subagents, now has a Groups section. One `@name` of a group summons every member with the same task and the same changes. The members work independently, and their replies come back together in one message.
 
 ### Planned
 

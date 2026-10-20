@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import { FileText, Image as ImageIcon } from 'lucide-react';
+import { FileText, Image as ImageIcon, Users } from 'lucide-react';
 import type { FileHit } from '@shared/protocol';
 import { imageMimeOf } from '@shared/attachments';
 import { t } from '../i18n';
@@ -8,6 +8,13 @@ import { CompletionList } from './Completion';
 import { personaOfHit, type MentionPersona } from './personaHits';
 
 export { PERSONA_SCHEME, personaHits, personaOfHit, type MentionPersona } from './personaHits';
+
+// What leads a summonable entry: its CLI's mark, or for a group the people glyph
+export function SummonMark({ persona, className }: { persona: MentionPersona; className: string }) {
+  return persona.group
+    ? <Users className={className} strokeWidth={1.5} aria-hidden />
+    : <AgentMark id={persona.agent} name={persona.name} className={className} />;
+}
 
 // An @ token under the caret: where it starts in the text and what has been typed after it
 export interface MentionSpan {
@@ -58,7 +65,7 @@ export function MentionList({ anchor, hits, personas, active, empty, onHover, on
     {h => {
       const persona = personaOfHit(h, personas);
       if (persona) return <>
-        <AgentMark id={persona.agent} name={persona.name} className="size-icon shrink-0 text-fg-2" />
+        <SummonMark persona={persona} className="size-icon shrink-0 text-fg-2" />
         <span className="shrink-0 truncate">{persona.name}</span>
         {persona.cli && <span className="shrink-0 text-3 text-fg-2">{persona.cli}</span>}
         {persona.model && <span className="min-w-0 truncate text-3 text-fg-3/70">{persona.model}</span>}

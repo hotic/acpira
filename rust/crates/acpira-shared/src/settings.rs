@@ -79,6 +79,9 @@ pub struct SettingsView {
   /// Cross-harness subagents (`~/.acpira/subagents.json`, not a host setting: every window and IDE shares the file)
   #[serde(default)]
   pub subagents: Vec<crate::subagents::SubagentPersona>,
+  /// Groups of those personas, summoned together (the same file's `groups`)
+  #[serde(default)]
+  pub subagent_groups: Vec<crate::subagents::SubagentGroup>,
   /// CPU hard cap over every agent process and its descendants, percent of all cores (`AGENT_CPU_CAP`, Windows job objects)
   #[serde(default = "default_agent_cpu_cap")]
   pub agent_cpu_cap: i64,

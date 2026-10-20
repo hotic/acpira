@@ -3,8 +3,7 @@ import { Chip } from '../ui/Button';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { t } from '../i18n';
-import { AgentMark } from './AgentMark';
-import type { MentionPersona } from './Mention';
+import { SummonMark, type MentionPersona } from './Mention';
 
 // The composer's summon chip: the user's cross-harness subagents in a menu; picking one writes `@name ` into the draft, the
 // same as choosing it from the @ list. The agent then calls it through ask_agent; the child runs in its own CLI, sees the
@@ -27,7 +26,7 @@ export function SummonMenu({ personas, onPick, onOpenChange }: {
           {personas.map(p => (
             <DropdownMenu.Item key={p.id} className="py-1.5" onClick={() => onPick(p)}>
               {/* The CLI's mark spans both lines (lead size, not the one-line icon); the CLI's name outranks the model */}
-              <AgentMark id={p.agent} name={p.name} className="size-lead shrink-0" />
+              <SummonMark persona={p} className="size-lead shrink-0" />
               <OptionContent extra={(p.cli || p.model) && (
                 <span className="flex min-w-0 items-center gap-gap text-3">
                   {p.cli && <span className="shrink-0 text-fg-1">{p.cli}</span>}

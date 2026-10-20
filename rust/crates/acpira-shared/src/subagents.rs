@@ -133,6 +133,9 @@ pub struct SubagentHarness {
   /// The reasoning effort the child session really runs, by the CLI's own option name; absent when it has none
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub effort: Option<String>,
+  /// The group the round was summoned through (`SubagentGroup.id`), when a call named a group
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub group: Option<String>,
 }
 
 fn first_round() -> u32 {
@@ -343,6 +346,68 @@ pub fn sanitize_personas(v: &serde_json::Value) -> Vec<SubagentPersona> {
   out
 }
 
+/// Personas summoned together (`subagents.json` `groups`): one `ask_agent` call naming the group starts a round for
+/// each enabled member, with the same task and the same handoff pack, each on its own; their replies come back together
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentGroup {
+  /// Stable slug, unique among the groups and never a persona's id, since the tool's `agent` value names either
+  #[serde(default)]
+  pub id: String,
+  #[serde(default)]
+  pub name: String,
+  /// Persona ids, in the order their rounds start
+  #[serde(default)]
+  pub members: Vec<String>,
+  /// Tells the model when to summon the group
+  #[serde(default)]
+  pub when: String,
+  #[serde(default = "enabled_default")]
+  pub enabled: bool,
+}
+
+pub const GROUP_MAX: usize = 16;
+/// Members of one group, at most: the summoned rounds a session runs at once
+pub const GROUP_MEMBERS_MAX: usize = 6;
+
+/// Like `sanitize_personas` (mirror of `sanitizeGroups`): unnamed entries drop, text is clipped, ids are unique slugs
+/// that no persona has (a missing or taken one is derived from the name, then numbered), and members are the ids of
+/// `personas` it names, each once, in order, at most `GROUP_MEMBERS_MAX`
+pub fn sanitize_groups(v: &serde_json::Value, personas: &[SubagentPersona]) -> Vec<SubagentGroup> {
+  let mut out: Vec<SubagentGroup> = vec![];
+  for item in v.as_array().into_iter().flatten().take(GROUP_MAX) {
+    let Some(o) = item.as_object() else { continue };
+    let text = |k: &str, max: usize| o.get(k).and_then(serde_json::Value::as_str).map(|s| clip(s, max)).unwrap_or_default();
+    let name = text("name", NAME_MAX);
+    if name.is_empty() {
+      continue;
+    }
+    let mut base = persona_slug(&text("id", ID_MAX));
+    if base.is_empty() {
+      base = persona_slug(&name);
+    }
+    if base.is_empty() {
+      base = "group".into();
+    }
+    let taken = |id: &str| out.iter().any(|g| g.id == id) || personas.iter().any(|p| p.id == id);
+    let mut id = base.clone();
+    let mut n = 2;
+    while taken(&id) {
+      id = format!("{base}-{n}");
+      n += 1;
+    }
+    let mut members: Vec<String> = vec![];
+    for m in o.get("members").and_then(serde_json::Value::as_array).into_iter().flatten().filter_map(serde_json::Value::as_str) {
+      let m = m.trim();
+      if members.len() < GROUP_MEMBERS_MAX && personas.iter().any(|p| p.id == m) && !members.iter().any(|x| x == m) {
+        members.push(m.to_owned());
+      }
+    }
+    out.push(SubagentGroup { id, name, members, when: text("when", TEXT_MAX), enabled: o.get("enabled") != Some(&serde_json::Value::Bool(false)) });
+  }
+  out
+}
+
 #[cfg(test)]
 mod persona_tests {
   use super::*;
@@ -352,6 +417,15 @@ mod persona_tests {
   fn sanitizes_exactly_like_the_typescript_mirror() {
     let fixture: serde_json::Value = serde_json::from_str(include_str!("../../../../test/fixtures/personas-sanitize.json")).unwrap();
     let out = serde_json::to_value(sanitize_personas(&fixture["input"])).unwrap();
+    assert_eq!(out, fixture["output"]);
+  }
+
+  /// The group cases `test/relay.test.ts` runs through `sanitizeGroups`
+  #[test]
+  fn sanitizes_groups_exactly_like_the_typescript_mirror() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!("../../../../test/fixtures/groups-sanitize.json")).unwrap();
+    let personas = sanitize_personas(&fixture["personas"]);
+    let out = serde_json::to_value(sanitize_groups(&fixture["input"], &personas)).unwrap();
     assert_eq!(out, fixture["output"]);
   }
 

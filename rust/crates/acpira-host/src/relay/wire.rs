@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use acpira_shared::subagents::SubagentPersona;
+use acpira_shared::subagents::{SubagentGroup, SubagentPersona};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -126,7 +126,11 @@ pub struct AskCallerArgs {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum HubReply {
+  /// The answer to `List` from a hub before groups: the personas alone (still read, for an MCP server that outlives an
+  /// engine upgrade)
   Personas(Vec<SubagentPersona>),
+  /// The answer to `List`: what the caller may summon
+  Roster { personas: Vec<SubagentPersona>, groups: Vec<SubagentGroup> },
   /// The child's current activity, while an `ask` waits
   Progress(String),
   /// The tool's answer text

@@ -150,11 +150,22 @@ export function App() {
   // The theme setting resolved against the host; the document carries it too so color-scheme reaches native controls outside the shell
   const { theme } = resolveTheme(settings?.theme ?? 'auto', hostTheme);
   const look = useMemo(() => settings && lookFromSettings(settings), [settings]);
-  // Settings → Subagents, the enabled ones, as the composer offers them: name, CLI logo, CLI name and model
-  const personas = useMemo(() => settings?.subagents.filter(p => p.enabled).map(p => ({
-    id: p.id, name: p.name, agent: p.agent,
-    cli: agents.find(a => a.id === p.agent)?.name ?? p.agent, model: p.model || undefined,
-  })), [settings?.subagents, agents]);
+  // Settings → Orchestration, the enabled subagents as the composer offers them (name, CLI logo, CLI name and model), then
+  // the enabled groups with an enabled member, their members' names in place of a CLI
+  const subagents = settings?.subagents;
+  const subagentGroups = settings?.subagentGroups;
+  const personas = useMemo(() => {
+    if (!subagents) return undefined;
+    const on = subagents.filter(p => p.enabled);
+    const groups = (subagentGroups ?? []).flatMap(g => {
+      const names = g.members.flatMap(m => on.find(p => p.id === m)?.name ?? []);
+      return g.enabled && names.length ? [{ id: g.id, name: g.name, agent: '', cli: names.join(t('common.listSep')), group: true }] : [];
+    });
+    return [...on.map(p => ({
+      id: p.id, name: p.name, agent: p.agent,
+      cli: agents.find(a => a.id === p.agent)?.name ?? p.agent, model: p.model || undefined,
+    })), ...groups];
+  }, [subagents, subagentGroups, agents]);
 
   useEffect(() => { document.documentElement.lang = locale; }, [locale]);
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
@@ -352,6 +363,7 @@ export function App() {
     openChatgpt: id => { post({ type: 'selectSession', id }); setView('chat'); },
     setSetting: (key, value) => post({ type: 'setSetting', key, value }),
     saveSubagents: (base, personas) => post({ type: 'setSetting', key: 'subagents', value: { base, personas } }),
+    saveSubagentGroups: (base, groups) => post({ type: 'setSetting', key: 'subagents', value: { baseGroups: base, groups } }),
     setAppearance: (axis, value) => post({ type: 'setAppearance', axis, value }),
     openPath: path => post({ type: 'openPath', path }),
     // Drop the cached copy first so the page shows the scanning shimmer until the reply lands

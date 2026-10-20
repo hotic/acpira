@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { DUTIES, dutyDefaults, freshThread, keepsThread, personaSlug, sanitizePersonas } from '../src/shared/subagents';
+import { DUTIES, dutyDefaults, freshThread, keepsThread, personaSlug, sanitizeGroups, sanitizePersonas } from '../src/shared/subagents';
 import { sanitizeSetting } from '../src/shared/settings';
 import { personaHits, personaOfHit } from '../src/webview/chat/personaHits';
 import fixture from './fixtures/personas-sanitize.json';
+import groupsFixture from './fixtures/groups-sanitize.json';
 import dutyPresets from './fixtures/duty-presets.json';
 
 // Cross-harness subagents: the persona list mirrors acpira_shared::subagents::sanitize_personas (relay/roster.rs tests the Rust side)
@@ -26,6 +27,11 @@ describe('subagent personas', () => {
   // The same fixture runs through acpira_shared::subagents::sanitize_personas (persona_tests)
   it('sanitize the shared boundary fixture exactly like the Rust side', () => {
     expect(sanitizePersonas(fixture.input)).toEqual(fixture.output);
+  });
+
+  // The same fixture runs through acpira_shared::subagents::sanitize_groups
+  it('sanitize groups exactly like the Rust side: ids apart from every persona, members only known personas', () => {
+    expect(sanitizeGroups(groupsFixture.input, sanitizePersonas(groupsFixture.personas))).toEqual(groupsFixture.output);
   });
 
   // The same presets are checked by acpira_shared::subagents::persona_tests (the engine's implicit sidekick uses them)

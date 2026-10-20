@@ -84,6 +84,7 @@ impl SettingsCenter {
       notify_system: self.read("notifySystem").as_bool().unwrap_or(false),
       plan_auto_approve: list("planAutoApprove"),
       subagents: self.deps.roster.list(),
+      subagent_groups: self.deps.roster.groups(),
       agent_cpu_cap: self.read("agentCpuCap").as_i64().unwrap_or(acpira_shared::settings::AGENT_CPU_CAP.2),
       proxy: str_of("proxy"),
     }

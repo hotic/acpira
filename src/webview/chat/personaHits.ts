@@ -8,8 +8,11 @@ export interface MentionPersona {
   name: string;
   agent: string;
   // Faint second part of the row: the CLI's name and the persona's model, set apart by spacing rather than a separator
+  // (for a group, its members' names)
   cli?: string;
   model?: string;
+  // A group of personas (settings → Orchestration): one @name summons every member
+  group?: boolean;
 }
 export const personaOfHit = (hit: FileHit, personas: MentionPersona[] = []) =>
   hit.uri.startsWith(PERSONA_SCHEME) ? personas.find(p => p.id === hit.uri.slice(PERSONA_SCHEME.length)) : undefined;

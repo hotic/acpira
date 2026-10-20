@@ -21,7 +21,7 @@ use anyhow::{Result, anyhow};
 use serde_json::{Map, Value, json};
 use tokio::sync::{mpsc, watch};
 
-use acpira_shared::subagents::{RelayMode, SubagentDuty, SubagentHarness, SubagentPersona, SubagentState};
+use acpira_shared::subagents::{GROUP_MEMBERS_MAX, RelayMode, SubagentDuty, SubagentGroup, SubagentHarness, SubagentPersona, SubagentState};
 use acpira_shared::transcript::{AgentBlock, DiffKind, Draft, SessionStatus, ToolCallBlock, ToolContent, ToolKind, ToolStatus, Turn};
 
 use crate::acp::session::attachments::{prepare_prompt, prompt_caps_of};
@@ -643,7 +643,9 @@ fn call_fits(agent: &str, thread: Option<&str>, h: &SubagentHarness, role: Optio
   let agent = agent.trim();
   match thread.map(str::trim).filter(|t| !t.is_empty()) {
     Some(th) => h.thread == th && h.round > 1,
-    None => h.persona.as_deref() == Some(agent) || role.is_some_and(|r| r.eq_ignore_ascii_case(agent)),
+    None => {
+      h.persona.as_deref() == Some(agent) || role.is_some_and(|r| r.eq_ignore_ascii_case(agent)) || h.group.as_deref() == Some(agent)
+    }
   }
 }
 
@@ -703,6 +705,14 @@ fn thread_persona(roster: &Roster, h: &SubagentHarness, name: Option<&str>) -> R
 impl AcpSession {
   /// One `ask_agent` call from an agent of this session (the root, or a summoned child when `caller` names its thread)
   pub async fn relay_ask(self: Arc<Self>, roster: Arc<Roster>, caller: Option<String>, depth: u32, args: AskArgs, out: mpsc::UnboundedSender<HubReply>) {
+    // A new task naming a group (and no persona of that name) goes to each of its members
+    let new_task = args.thread.as_deref().is_none_or(|t| t.trim().is_empty()) && !args.prompt.trim().is_empty();
+    if new_task
+      && roster.find(&args.agent).is_none()
+      && let Some((group, members)) = roster.find_group(&args.agent)
+    {
+      return self.relay_group(roster, caller, depth, args, group, members, out).await;
+    }
     let deadline = args.wait_secs.map(Duration::from_secs).unwrap_or(DEFAULT_WAIT).min(MAX_WAIT);
     // A new task is sent off unless the call asks to wait: the ledger delivers the reply, to the root in an automatic
     // message, to a summoned caller in a follow-up within its own round (`relay_follow_ups`)
@@ -726,6 +736,113 @@ impl AcpSession {
         let _ = out.send(HubReply::Error(e.to_string()));
       }
     }
+  }
+
+  /// A new task for a group: a round per enabled member, each with the same task and the same handoff pack (built once,
+  /// before any round starts), all started by this one call so their replies are delivered together. Refused whole
+  /// when the members would not all fit beside the rounds already running. With `wait` the call answers once every
+  /// member has (or the deadline came), all the replies in one answer
+  #[allow(clippy::too_many_arguments)]
+  async fn relay_group(
+    self: Arc<Self>,
+    roster: Arc<Roster>,
+    caller: Option<String>,
+    depth: u32,
+    args: AskArgs,
+    group: SubagentGroup,
+    members: Vec<SubagentPersona>,
+    out: mpsc::UnboundedSender<HubReply>,
+  ) {
+    let deadline = args.wait_secs.map(Duration::from_secs).unwrap_or(DEFAULT_WAIT).min(MAX_WAIT);
+    if depth >= MAX_DEPTH {
+      let _ = out.send(HubReply::Error(format!("Summoned agents may not summon further than {MAX_DEPTH} levels deep.")));
+      return;
+    }
+    let running = self.core.lock().tree.relay_running().len();
+    if running + members.len() > MAX_RUNNING {
+      let _ = out.send(HubReply::Error(format!(
+        "{} has {} members, but {running} summoned agents are already running in this session (at most {MAX_RUNNING} at once). \
+Wait for some of them first: call ask_agent with their thread and an empty prompt.",
+        group.name,
+        members.len()
+      )));
+      return;
+    }
+    let pack = if members.iter().any(|p| args.changes.unwrap_or(p.changes)) {
+      let scope = caller_scope(&self.core.lock(), caller.as_deref());
+      let recipe = handoff::recipe_in(&roster.dir());
+      let built = handoff::build(std::path::Path::new(&self.cwd), None, scope.as_ref(), &recipe).await.unwrap_or_else(|e| {
+        self.log(&format!("relay group {}: handoff pack: {e:#}", group.id));
+        None
+      });
+      Some(Arc::new(built))
+    } else {
+      None
+    };
+    let via = Via { group: group.id.clone(), pack };
+    let mut started: Vec<(String, SubagentPersona)> = vec![];
+    let mut refused: Vec<String> = vec![];
+    for p in &members {
+      let one = AskArgs { agent: p.id.clone(), thread: None, answers: None, ..args.clone() };
+      match self.clone().relay_start(&roster, caller.clone(), depth, one, Some(via.clone())).await {
+        Ok(Start::Started { thread, persona }) => started.push((thread, persona)),
+        Ok(_) => {}
+        Err(e) => refused.push(format!("{}: {e}", p.name)),
+      }
+    }
+    let refused_text = (!refused.is_empty()).then(|| format!("Could not start: {}", refused.join(" ")));
+    if started.is_empty() {
+      let _ = out.send(HubReply::Error(format!("No member of {} could start. {}", group.name, refused.join(" "))));
+      return;
+    }
+    if !args.wait.unwrap_or(false) {
+      let text = group_dispatched_text(&group, &started);
+      let _ = out.send(HubReply::Done(refused_text.map(|r| format!("{text} {r}")).unwrap_or(text)));
+      return;
+    }
+    let Some(replies) = self.relay_wait_all(&started, deadline, &out).await else { return };
+    let mut parts = vec![format!("The replies of {} ({} of its members):", group.name, started.len())];
+    for ((_, persona), r) in started.iter().zip(replies) {
+      let text = match r {
+        HubReply::Done(t) | HubReply::Error(t) => t,
+        _ => continue,
+      };
+      parts.push(format!("## {}\n\n{text}", who(persona)));
+    }
+    parts.extend(refused_text);
+    let _ = out.send(HubReply::Done(parts.join("\n\n")));
+  }
+
+  /// Waits on several threads at once, each the way a single call would (`relay_wait`), with progress lines naming whose
+  /// they are. Answers each thread's final line, in order; None once the call was abandoned
+  async fn relay_wait_all(self: &Arc<Self>, threads: &[(String, SubagentPersona)], deadline: Duration, out: &mpsc::UnboundedSender<HubReply>) -> Option<Vec<HubReply>> {
+    let (tx, mut rx) = mpsc::unbounded_channel::<(usize, HubReply)>();
+    for (i, (thread, persona)) in threads.iter().enumerate() {
+      let (one, mut lines) = mpsc::unbounded_channel::<HubReply>();
+      let (s, th, p) = (self.clone(), thread.clone(), persona.clone());
+      tokio::spawn(async move { s.relay_wait(&th, &p, deadline, &one).await });
+      let tx = tx.clone();
+      tokio::spawn(async move {
+        while let Some(r) = lines.recv().await {
+          if tx.send((i, r)).is_err() {
+            break;
+          }
+        }
+      });
+    }
+    drop(tx);
+    let mut finals: Vec<Option<HubReply>> = vec![None; threads.len()];
+    while let Some((i, r)) = rx.recv().await {
+      match r {
+        HubReply::Progress(line) => {
+          if out.send(HubReply::Progress(format!("{}: {line}", threads[i].1.name))).is_err() {
+            return None;
+          }
+        }
+        r => finals[i] = Some(r),
+      }
+    }
+    Some(finals.into_iter().zip(threads).map(|(r, (_, p))| r.unwrap_or_else(|| HubReply::Error(format!("{} stopped.", who(p))))).collect())
   }
 
   /// `ask_caller` from the CLI of a summoned thread: the question becomes a card on the thread's running round and travels
@@ -794,7 +911,7 @@ impl AcpSession {
     });
   }
 
-  async fn relay_start(self: Arc<Self>, roster: &Roster, caller: Option<String>, depth: u32, args: AskArgs, shared: Option<Arc<Option<Pack>>>) -> Result<Start> {
+  async fn relay_start(self: Arc<Self>, roster: &Roster, caller: Option<String>, depth: u32, args: AskArgs, via: Option<Via>) -> Result<Start> {
     if depth >= MAX_DEPTH {
       return Err(anyhow!("Summoned agents may not summon further than {MAX_DEPTH} levels deep."));
     }
@@ -866,7 +983,7 @@ impl AcpSession {
     let handoff = args.changes.unwrap_or(persona.changes || told).then(|| Handoff {
       scope: caller_scope(&self.core.lock(), caller.as_deref()),
       recipe: handoff::recipe_in(&roster.dir()),
-      shared: shared.clone(),
+      shared: via.as_ref().and_then(|v| v.pack.clone()),
     });
     let title = args.title.as_deref().map(str::trim).filter(|x| !x.is_empty()).map(|x| clip(x, TITLE_MAX)).unwrap_or_else(|| clip(&prompt, TITLE_MAX));
     let round = latest.as_ref().map(|(_, h, ..)| h.round + 1).unwrap_or(1);
@@ -893,7 +1010,16 @@ impl AcpSession {
       }
       let parent = caller.as_deref().and_then(|th| c.tree.relay_latest(th)).map(|(id, ..)| id);
       let turn_index = current_turn_index(&c);
-      let harness = SubagentHarness { agent: persona.agent.clone(), persona: Some(persona.id.clone()), mode, thread: thread.clone().unwrap_or_default(), round, session_id: peer.clone(), effort: None };
+      let harness = SubagentHarness {
+        agent: persona.agent.clone(),
+        persona: Some(persona.id.clone()),
+        mode,
+        thread: thread.clone().unwrap_or_default(),
+        round,
+        session_id: peer.clone(),
+        effort: None,
+        group: via.as_ref().map(|v| v.group.clone()),
+      };
       let model = persona.model.clone();
       let node = c.tree.relay_open(RelayOpen { parent, turn_index, harness, role: persona.name.clone(), title, task: prompt.clone(), model });
       let thread = c.tree.relay_thread_of(&node).unwrap_or_else(|| node.clone());
@@ -1687,6 +1813,17 @@ struct Round {
   handoff: Option<Handoff>,
 }
 
+/// A round one group call started among others: the group's id goes on the node, and the pack built once for every
+/// member that hands over
+#[derive(Clone)]
+struct Via {
+  group: String,
+  pack: Option<Arc<Option<Pack>>>,
+}
+
+// A whole group can always run at once in an idle session
+const _: () = assert!(GROUP_MEMBERS_MAX <= MAX_RUNNING);
+
 /// What a round hands over of its caller's changes (`ask_agent` `changes`, or the persona's switch)
 struct Handoff {
   /// None: every uncommitted change of the work tree
@@ -1775,6 +1912,19 @@ fn final_reply(end: std::result::Result<String, String>, thread: &str, persona: 
     Ok(reply) => HubReply::Done(done_text(&reply, thread, persona)),
     Err(e) => HubReply::Error(format!("{} {e}", who(persona))),
   }
+}
+
+/// What a group call that sent its task off answers: every member's thread, and that the replies come together
+fn group_dispatched_text(group: &SubagentGroup, started: &[(String, SubagentPersona)]) -> String {
+  let members: Vec<String> = started.iter().map(|(th, p)| format!("{} (thread: {th})", who(p))).collect();
+  let whom = if started.len() == 1 { "the one member".to_owned() } else { format!("the {} members", started.len()) };
+  format!(
+    "Sent to {whom} of {}: {}. Each works on its own, without seeing the others. Carry on with other work that does not \
+depend on them, or end your turn if there is none: Acpira sends you their replies together in one message when all are \
+done. Do not poll, and do not do this task yourself meanwhile.",
+    group.name,
+    members.join(", ")
+  )
 }
 
 /// What a call that sent a task off answers: the thread, and that the reply comes by itself
@@ -2004,6 +2154,7 @@ mod tests {
       round,
       session_id: None,
       effort: None,
+      group: None,
     };
     assert!(call_fits("codex-review", None, &h("codex-review", "n1", 1), Some("Codex Review")));
     assert!(call_fits("Codex Review", None, &h("codex-review", "n1", 1), Some("Codex Review")));
@@ -2012,6 +2163,10 @@ mod tests {
     assert!(call_fits("codex-review", None, &h("codex-review", "n1", 2), Some("Codex Review")));
     assert!(call_fits("", Some("n1"), &h("codex-review", "n1", 2), None));
     assert!(!call_fits("", Some("n2"), &h("codex-review", "n1", 2), None));
+    // A call naming a group fits the rounds that group started
+    let member = SubagentHarness { group: Some("reviewers".into()), ..h("codex-review", "n3", 1) };
+    assert!(call_fits("reviewers", None, &member, Some("Codex Review")));
+    assert!(!call_fits("reviewers", None, &h("codex-review", "n1", 1), Some("Codex Review")));
   }
 
   #[test]
