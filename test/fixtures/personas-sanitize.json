@@ -78,6 +78,12 @@
       "agent": "codex",
       "duty": "reviewer",
       "changes": false
+    },
+    {
+      "name": "Sidekick",
+      "agent": "acpira",
+      "mode": "inherit",
+      "duty": "executor"
     }
   ],
   "output": [
@@ -181,6 +187,15 @@
       "when": "",
       "enabled": true,
       "duty": "reviewer"
+    },
+    {
+      "id": "sidekick-2",
+      "name": "Sidekick",
+      "agent": "acpira",
+      "mode": "inherit",
+      "when": "",
+      "enabled": true,
+      "duty": "executor"
     }
   ]
 }

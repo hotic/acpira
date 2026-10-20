@@ -256,6 +256,72 @@ async fn the_hub_lists_enabled_personas_and_forwards_an_ask_to_the_session_its_g
   assert!(text.contains("levels deep"), "{text}");
 }
 
+/// The persona ids the hub lists for a grant
+async fn listed(hub: &Arc<RelayHub>, token: String) -> Vec<Value> {
+  let addr = hub.addr().to_owned();
+  tokio::task::spawn_blocking(move || {
+    let mut out = None;
+    call(&addr, &HubRequest { token, op: HubOp::List }, |r| {
+      out = Some(r);
+      false
+    })
+    .unwrap();
+    match out {
+      Some(HubReply::Roster { personas, .. }) => personas.iter().map(v).collect(),
+      other => panic!("{other:?}"),
+    }
+  })
+  .await
+  .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_built_in_agents_sidekick_is_listed_first_for_the_root_and_keeps_one_thread() {
+  let fake = fake_or_skip!();
+  // The fake offers the built-in agent's sidekick select, since the engine declares `acpira/sidekick`
+  let h = Harness::new(&fake, json!({ "env": { "FAKE_SIDEKICK": "1" } }));
+  let roster = roster(h.dir.path()).await;
+  let hub = RelayHub::start(roster.clone(), Arc::new(|_: &str| {})).await.unwrap();
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  let token = |caller: Option<&str>, depth: u32| hub.env(&s.0, caller, depth)[1]["value"].as_str().unwrap().to_owned();
+  let ids = |list: &[Value]| list.iter().map(|p| p["id"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
+
+  assert_eq!(ids(&listed(&hub, token(None, 0)).await), ["fake-review", "fake-worker"], "none picked yet");
+  s.0.set_config("sidekick".into(), "m2".into()).await.unwrap();
+  let root = listed(&hub, token(None, 0)).await;
+  assert_eq!(ids(&root), ["sidekick", "fake-review", "fake-worker"]);
+  expect_match(&root[0], json!({ "name": "Sidekick", "agent": "fake", "model": "m2", "mode": "inherit", "duty": "executor" }));
+  assert!(root[0]["brief"].as_str().unwrap().starts_with("You carry out a plan another agent made."));
+  // The root's own: a summoned child does not get it
+  assert_eq!(ids(&listed(&hub, token(Some("thr"), 1)).await), ["fake-review", "fake-worker"]);
+
+  // Summoned by its id in the root's own CLI on the picked model; the next task continues its thread
+  let (ok, text) = last_text(&run(&s, &roster, 0, ask("sidekick", "relay: rename the helper")).await);
+  assert!(ok, "{text}");
+  let thread = thread_of(&text);
+  let (ok, text) = last_text(&run(&s, &roster, 0, ask("sidekick", "relay: now the tests")).await);
+  assert!(ok && text.contains("(round 2,"), "{text}");
+  assert_eq!(thread_of(&text), thread);
+  let list = nodes(&s);
+  expect_match(&list[0], json!({ "role": "Sidekick", "model": "Model 2", "harness": { "agent": "fake", "persona": "sidekick", "thread": thread, "round": 1 } }));
+  expect_match(&list[1], json!({ "harness": { "thread": thread, "round": 2 } }));
+  assert_eq!(list[0]["peer"]["sessionId"], list[1]["peer"]["sessionId"]);
+
+  // Another pick: the same conversation goes on with the new model
+  s.0.set_config("sidekick".into(), "m1".into()).await.unwrap();
+  let (ok, text) = last_text(&run(&s, &roster, 0, ask("Sidekick", "relay: and the docs")).await);
+  assert!(ok && thread_of(&text) == thread, "{text}");
+  expect_match(&nodes(&s)[2], json!({ "model": "Model 1", "harness": { "thread": thread, "round": 3 } }));
+
+  // None: neither a new task nor its thread reaches it any more
+  s.0.set_config("sidekick".into(), "none".into()).await.unwrap();
+  let (ok, text) = last_text(&run(&s, &roster, 0, ask("sidekick", "relay: more")).await);
+  assert!(!ok && text.contains("No subagent named"), "{text}");
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), ..ask("", "relay: more") }).await);
+  assert!(!ok && text.contains("no sidekick now"), "{text}");
+}
+
 /// A shell that shows pages: every URL it is asked for, and the forwarded address it answers with
 struct FakeBrowser {
   can: bool,

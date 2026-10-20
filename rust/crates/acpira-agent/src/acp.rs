@@ -33,6 +33,12 @@ pub struct SessionState {
   pub effort: Option<String>,
   /// The Fast switch. Kept across model switches and applied only while the model offers it (`llm::fast::offered`)
   pub fast: bool,
+  /// The sidekick's `<provider>/<model>` (the `sidekick` select): the executor the engine's ask_agent lists first. Kept
+  /// while its model is not configured, when the select shows none (`sidekick_of`)
+  pub sidekick: Option<String>,
+  /// The sidekick the model last learned of, from acpira's tool list or a note: one picked since is told with the next
+  /// message (`turn.rs`), so the tool table stays as it was listed
+  pub sidekick_told: Option<String>,
   /// The system prompt, fixed while the model's variant stays the same (prompt caches key on it)
   pub prompt: crate::prompt::Composed,
   /// The conversation as the model sees it
@@ -103,6 +109,7 @@ impl Session {
   pub fn save_state(&self, st: &SessionState) {
     self.store.prelude(json!({
       "type": "state", "mode": st.mode, "announced": st.announced, "model": st.model, "effort": st.effort, "fast": st.fast,
+      "sidekick": st.sidekick,
     }));
   }
 
@@ -125,6 +132,8 @@ pub struct Server {
   booleans: AtomicBool,
   /// The client shows elicitation forms (`clientCapabilities.elicitation.form`): the `question` tool's card
   forms: AtomicBool,
+  /// The client runs a sidekick (`clientCapabilities._meta["acpira/sidekick"]`, the engine): the `sidekick` select is offered
+  sidekicks: AtomicBool,
   conn: OnceLock<Connection>,
   sessions: parking_lot::Mutex<HashMap<String, Arc<Session>>>,
 }
@@ -138,6 +147,7 @@ impl Server {
       http: crate::llm::default_http(),
       booleans: AtomicBool::new(false),
       forms: AtomicBool::new(false),
+      sidekicks: AtomicBool::new(false),
       conn: OnceLock::new(),
       sessions: Default::default(),
     })
@@ -187,6 +197,8 @@ impl Server {
     self.booleans.store(booleans, Ordering::Relaxed);
     let forms = params.pointer("/clientCapabilities/elicitation/form").is_some_and(|f| !f.is_null());
     self.forms.store(forms, Ordering::Relaxed);
+    let sidekicks = params.pointer("/clientCapabilities/_meta/acpira~1sidekick").and_then(Value::as_bool) == Some(true);
+    self.sidekicks.store(sidekicks, Ordering::Relaxed);
     json!({
       "protocolVersion": PROTOCOL_VERSION,
       "agentInfo": { "name": AGENT_NAME, "title": "Acpira", "version": self.version },
@@ -237,7 +249,7 @@ impl Server {
     let response = json!({
       "sessionId": id,
       "modes": modes_of(&state),
-      "configOptions": sent_options(&config, &catalog, &mut state, self.booleans()),
+      "configOptions": sent_options(&config, &catalog, &mut state, self.offers()),
     });
     let store = Store::new(self.session_file(&id), &id, std::path::Path::new(cwd));
     // The file starts with the first event; the prompt goes first so a reopen keeps the very same text
@@ -297,7 +309,7 @@ impl Server {
     if reconcile(&config, &catalog, &mut st) {
       session.save_state(&st);
     }
-    Ok(json!({ "modes": modes_of(&st), "configOptions": sent_options(&config, &catalog, &mut st, self.booleans()) }))
+    Ok(json!({ "modes": modes_of(&st), "configOptions": sent_options(&config, &catalog, &mut st, self.offers()) }))
   }
 
   /// A session object from its file: the history, the controls and the system prompt as they were
@@ -320,6 +332,9 @@ impl Server {
     };
     st.effort = s("effort").or_else(|| default_effort(&config, &catalog, st.model.as_deref()));
     st.fast = loaded.state.get("fast").and_then(Value::as_bool).unwrap_or(false);
+    st.sidekick = s("sidekick");
+    // The servers list their tools as the session reopens, with the sidekick the engine holds for it: this one
+    st.sidekick_told = sidekick_of(&config, &st);
     if let Some(p) = &loaded.prompt {
       let ps = |k: &str| p.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
       st.prompt = crate::prompt::Composed {
@@ -438,10 +453,24 @@ impl Server {
           _ => return Err(RpcError::new(-32602, format!("Unknown fast value: {raw}"))),
         };
       }
+      SIDEKICK => {
+        let next = match value {
+          NO_SIDEKICK => None,
+          pick if config.find(pick).is_some() => Some(pick.to_owned()),
+          _ => return Err(RpcError::new(-32602, format!("Unknown model: {value}"))),
+        };
+        st.sidekick = next;
+        // Before the first message nothing went out with the tool table yet: acpira lists its tools again, so the first
+        // request names the sidekick in ask_agent. Later the next message carries a note instead (`turn.rs`)
+        if st.items.is_empty() {
+          st.sidekick_told = sidekick_of(&config, &st);
+          session.mcp.relist(ACPIRA_SERVER);
+        }
+      }
       other => return Err(RpcError::new(-32602, format!("Unknown config option: {other}"))),
     }
     session.save_state(&st);
-    Ok(json!({ "configOptions": sent_options(&config, &catalog, &mut st, self.booleans()) }))
+    Ok(json!({ "configOptions": sent_options(&config, &catalog, &mut st, self.offers()) }))
   }
 
   /// Send `config_option_update` to every open session whose options changed since the client last got them: a model
@@ -457,7 +486,7 @@ impl Server {
         if reconcile(&config, &catalog, &mut st) {
           s.save_state(&st);
         }
-        let options = config_options(&config, &catalog, &st, self.booleans());
+        let options = config_options(&config, &catalog, &st, self.offers());
         let options = if st.sent_options.as_ref().is_none_or(|sent| *sent == options) {
           None
         } else {
@@ -515,8 +544,9 @@ impl Server {
     }
   }
 
-  fn booleans(&self) -> bool {
-    self.booleans.load(Ordering::Relaxed)
+  /// What the client takes beside plain selects, for `config_options`
+  fn offers(&self) -> Offers {
+    Offers { booleans: self.booleans.load(Ordering::Relaxed), sidekick: self.sidekicks.load(Ordering::Relaxed) }
   }
 
   fn cancel(&self, params: &Value) {
@@ -574,8 +604,8 @@ pub(crate) fn reconcile(config: &Config, catalog: &Catalog, st: &mut SessionStat
 }
 
 /// `config_options`, remembered as what the client has
-fn sent_options(config: &Config, catalog: &Catalog, st: &mut SessionState, booleans: bool) -> Vec<Value> {
-  let options = config_options(config, catalog, st, booleans);
+fn sent_options(config: &Config, catalog: &Catalog, st: &mut SessionState, offers: Offers) -> Vec<Value> {
+  let options = config_options(config, catalog, st, offers);
   st.sent_options = Some(options.clone());
   options
 }
@@ -584,11 +614,29 @@ fn sent_options(config: &Config, catalog: &Catalog, st: &mut SessionState, boole
 const FAST: &str = "fast";
 const STANDARD: &str = "standard";
 
-/// The full configOptions set: the model select (every usable model, labelled with its source), the effort select when
-/// the current model offers levels, and the Fast switch when it has a fast tier (a boolean, or a Standard / Fast select
-/// for a client that does not take booleans; the composer shows either as its Fast toggle). The approval level is not a
-/// session control: it is the agent's setting in `providers.json` (`Config::approval`), so the composer shows one mode
-/// chip and nothing beside it
+/// The sidekick select: its id, the value for none, and its category (custom, so a client that does not know it shows it
+/// as a plain select rather than as a model or a model parameter)
+pub const SIDEKICK: &str = "sidekick";
+pub const NO_SIDEKICK: &str = "none";
+const SIDEKICK_CATEGORY: &str = "_sidekick";
+
+/// The engine's own MCP server (`acpira mcp`), whose ask_agent lists the sidekick
+pub const ACPIRA_SERVER: &str = "acpira";
+
+/// What the client takes beside plain selects
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Offers {
+  /// Boolean config options (`clientCapabilities.session.configOptions.boolean`): Fast goes out as a switch
+  pub booleans: bool,
+  /// A sidekick (`clientCapabilities._meta["acpira/sidekick"]`): the `sidekick` select is offered
+  pub sidekick: bool,
+}
+
+/// The session's sidekick while its model is configured: what the select shows and the model is told of
+pub fn sidekick_of(config: &Config, st: &SessionState) -> Option<String> {
+  st.sidekick.clone().filter(|p| config.find(p).is_some())
+}
+
 /// Where a data root keeps this agent's sessions: one `<id>.jsonl` log each, with an `<id>/` folder beside it (spilled
 /// tool output, the plan). The engine reads it to delete both together with the Acpira session that drove them
 pub fn sessions_root(home: &Path) -> PathBuf {
@@ -601,7 +649,12 @@ pub fn session_paths(home: &Path, id: &str) -> [PathBuf; 2] {
   [root.join(format!("{id}.jsonl")), root.join(id)]
 }
 
-pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState, booleans: bool) -> Vec<Value> {
+/// The full configOptions set: the model select (every usable model, labelled with its source), the effort select when
+/// the current model offers levels, the Fast switch when it has a fast tier (a boolean, or a Standard / Fast select
+/// for a client that does not take booleans; the composer shows either as its Fast toggle), and for a client that runs
+/// one the sidekick select (none, or any usable model). The approval level is not a session control: it is the agent's
+/// setting in `providers.json` (`Config::approval`), so the composer shows one mode chip and nothing beside it
+pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState, offers: Offers) -> Vec<Value> {
   let mut out = vec![];
   let current = st.model.as_deref().filter(|p| config.find(p).is_some()).map(str::to_owned).or_else(|| config.default_pick());
   if let Some(current) = current {
@@ -610,6 +663,11 @@ pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState, boo
       .usable()
       .map(|(p, m)| json!({ "value": acpira_shared::providers::model_pick(&p.id, &m.id), "name": m.display_name(), "description": p.display_name() }))
       .collect();
+    let sidekicks = offers.sidekick.then(|| {
+      let mut list = vec![json!({ "value": NO_SIDEKICK, "name": "None" })];
+      list.extend(options.iter().cloned());
+      list
+    });
     out.push(json!({ "id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": current, "options": options }));
     let efforts = efforts_of(config, catalog, Some(&current));
     if !efforts.is_empty() {
@@ -621,7 +679,7 @@ pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState, boo
     }
     if config.find(&current).is_some_and(|(p, m)| crate::llm::fast::offered(p, m)) {
       let description = "The provider's faster tier, billed at a higher rate";
-      out.push(if booleans {
+      out.push(if offers.booleans {
         json!({ "id": FAST, "name": "Fast", "description": description, "category": "model_config", "type": "boolean", "currentValue": st.fast })
       } else {
         json!({
@@ -630,6 +688,13 @@ pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState, boo
           "options": [{ "value": STANDARD, "name": "Standard" }, { "value": FAST, "name": "Fast" }],
         })
       });
+    }
+    if let Some(list) = sidekicks {
+      let value = sidekick_of(config, st).unwrap_or_else(|| NO_SIDEKICK.to_owned());
+      out.push(json!({
+        "id": SIDEKICK, "name": "Sidekick", "category": SIDEKICK_CATEGORY, "type": "select", "currentValue": value, "options": list,
+        "description": "A second model this agent can hand well-specified work to, in a conversation of its own",
+      }));
     }
   }
   out

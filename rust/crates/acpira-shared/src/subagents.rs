@@ -281,6 +281,10 @@ fn enabled_default() -> bool {
 }
 
 pub const PERSONA_MAX: usize = 32;
+
+/// The id the built-in agent's sidekick goes by (`acp/session/relay.rs`): the executor the hub lists first for a session
+/// whose built-in agent has one picked. No persona or group of the roster takes it, so `agent: "sidekick"` names one thing
+pub const SIDEKICK_ID: &str = "sidekick";
 const NAME_MAX: usize = 48;
 const TEXT_MAX: usize = 2000;
 /// Ids, agent ids, model and effort values
@@ -305,7 +309,7 @@ pub fn persona_slug(name: &str) -> String {
 
 /// A hand-edited file or a forged message, field by field like `sanitizePersonas` (one bad field never drops the
 /// entry): entries without a name or agent are dropped, text is clipped, an unknown mode is a consult, ids are slugs
-/// and unique (a missing or taken one is derived from the name, then numbered)
+/// and unique (a missing or taken one, `SIDEKICK_ID` included, is derived from the name, then numbered)
 pub fn sanitize_personas(v: &serde_json::Value) -> Vec<SubagentPersona> {
   let mut out: Vec<SubagentPersona> = vec![];
   for item in v.as_array().into_iter().flatten().take(PERSONA_MAX) {
@@ -325,7 +329,7 @@ pub fn sanitize_personas(v: &serde_json::Value) -> Vec<SubagentPersona> {
     }
     let mut id = base.clone();
     let mut n = 2;
-    while out.iter().any(|o| o.id == id) {
+    while id == SIDEKICK_ID || out.iter().any(|o| o.id == id) {
       id = format!("{base}-{n}");
       n += 1;
     }
@@ -389,7 +393,7 @@ pub fn sanitize_groups(v: &serde_json::Value, personas: &[SubagentPersona]) -> V
     if base.is_empty() {
       base = "group".into();
     }
-    let taken = |id: &str| out.iter().any(|g| g.id == id) || personas.iter().any(|p| p.id == id);
+    let taken = |id: &str| id == SIDEKICK_ID || out.iter().any(|g| g.id == id) || personas.iter().any(|p| p.id == id);
     let mut id = base.clone();
     let mut n = 2;
     while taken(&id) {

@@ -437,9 +437,12 @@ pub fn initialize_request(def: &AgentDef) -> Value {
     air.push("nativeSubagentSessions");
   }
   air.extend(["sessionFailure", "asyncTasks", "recommendedValue"]);
+  // `acpira/sidekick`: the built-in agent offers its `sidekick` select only to a client that runs the pick as the
+  // executor its ask_agent lists first (`acp/session/relay.rs`); every other agent ignores the key
   caps["_meta"] = json!({
     "terminal_output_delta": true,
     "jetbrains": { "air": { "version": 1, "capabilities": air } },
+    "acpira/sidekick": true,
   });
   json!({ "protocolVersion": PROTOCOL_VERSION, "clientInfo": { "name": CLIENT_NAME, "version": client_version() }, "clientCapabilities": caps })
 }

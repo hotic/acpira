@@ -77,6 +77,8 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // and every effort pick is echoed as current_mode_update before the set answers;
 // FAKE_BOOL → offer a `type: 'boolean'` model_config option, but only to clients advertising clientCapabilities.session.configOptions.boolean;
 // FAKE_BOOL_MODEL → that boolean only while this model is current (Claude's Fast exists on Opus only)
+// FAKE_SIDEKICK → the built-in agent's `sidekick` select (custom category `_sidekick`: none, m1, m2), offered only to clients that
+// declare clientCapabilities._meta["acpira/sidekick"]
 // FAKE_NO_EFFORT_MODEL → while that model is current, configOptions carry no effort select
 // FAKE_EFFORTS → comma-separated extra effort options (`unavailable` is offered yet refused on set, like every `unavailable` value);
 // FAKE_SPEED → Devin-shaped per-model controls (3000.11.3): m1 offers a `speed` Standard / Fast select and every effort, while any
@@ -160,6 +162,8 @@ const modes = new Map<string, string>();
 // What the client's initialize declared: a boolean configOption is only offered to clients that advertised
 // clientCapabilities.session.configOptions.boolean (codex-acp degrades fast-mode to an on/off select otherwise)
 let booleanCap = false;
+// The client runs a sidekick (`_meta["acpira/sidekick"]`, the engine): FAKE_SIDEKICK's select is offered
+let sidekickCap = false;
 // clientCapabilities._meta.jetbrains.air.capabilities: sessionFailure / asyncTasks payloads only go out
 // to clients that named them, the same gate both real adapters run through clientSupportsAirCapability
 let airCaps: string[] = [];
@@ -258,6 +262,7 @@ const app = acp.agent({ name: 'fake-agent' })
     if (process.env.FAKE_INIT_FAIL) throw acp.RequestError.internalError(undefined, 'initialize refused by fixture');
     if (process.env.FAKE_INIT_HANG) return new Promise<never>(() => {});
     booleanCap = params.clientCapabilities?.session?.configOptions?.boolean != null;
+    sidekickCap = (params.clientCapabilities?._meta as Record<string, unknown> | undefined)?.['acpira/sidekick'] === true;
     const air = (params.clientCapabilities?._meta as { jetbrains?: { air?: { capabilities?: unknown } } } | undefined)?.jetbrains?.air?.capabilities;
     airCaps = Array.isArray(air) ? air.filter((c): c is string => typeof c === 'string') : [];
     // FAKE_INIT_LOG: the client's _meta as received, so a test can assert the AIR capabilities on the wire
@@ -1849,6 +1854,9 @@ function configOptions(): acp.SessionConfigOption[] {
       // A "config file" the test edits between spawns: each listed value shows up as a model option
       ...(process.env.FAKE_MODELS ?? '').split(',').map(s => s.trim()).filter(Boolean).map(value => ({ value, name: value })),
     ] },
+    // FAKE_SIDEKICK: the sidekick select of a client that runs one (category `_sidekick`, which the SDK types do not list)
+    ...(process.env.FAKE_SIDEKICK && sidekickCap ? [{ id: 'sidekick', name: 'Sidekick', category: '_sidekick', type: 'select', currentValue: config.sidekick ?? 'none',
+      options: [{ value: 'none', name: 'None' }, { value: 'm1', name: 'Model 1' }, { value: 'm2', name: 'Model 2' }] } as unknown as acp.SessionConfigOption] : []),
     // FAKE_BOOL: a model_config toggle offered only when the client declared the boolean capability
     ...(process.env.FAKE_BOOL && booleanCap && (!process.env.FAKE_BOOL_MODEL || config.model === process.env.FAKE_BOOL_MODEL)
       ? [{ id: 'fast', name: 'Fast mode', category: 'model_config' as const, type: 'boolean' as const, currentValue: config.fast === 'true' }]

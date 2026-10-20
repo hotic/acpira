@@ -238,6 +238,7 @@ export const ja = {
   'composer.standard': '標準',
   'composer.lead': 'メイン',
   'composer.sidekick': 'サブ',
+  'composer.sidekickNone': 'なし',
   'composer.fusionSummary': 'メイン {leads}、サブ {sidekicks}',
   'composer.addAccount': 'アカウントを追加',
   'composer.accountsOf': '{agent} のアカウント',

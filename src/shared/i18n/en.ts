@@ -236,6 +236,7 @@ export const en = {
   'composer.standard': 'Standard',
   'composer.lead': 'Lead',
   'composer.sidekick': 'Sidekick',
+  'composer.sidekickNone': 'None',
   'composer.fusionSummary': '{leads} leads, {sidekicks} sidekicks',
   'composer.addAccount': 'Add account',
   'composer.accountsOf': '{agent} accounts',

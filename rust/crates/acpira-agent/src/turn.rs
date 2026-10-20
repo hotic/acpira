@@ -408,9 +408,51 @@ fn refresh_limits(server: &Server, s: &mut Setup) {
   }
 }
 
+/// acpira's ask_agent, which the sidekick is summoned through
+fn offers_ask(offer: &crate::mcp::Offer) -> bool {
+  offer.tools.iter().any(|t| t.server == crate::acp::ACPIRA_SERVER && t.tool == "ask_agent")
+}
+
+/// A sidekick the model has not learned of, with no ask_agent to summon it through (Raw mode offers no MCP tools at all)
+fn sidekick_unlisted(server: &Server, session: &Session, offer: &crate::mcp::Offer) -> bool {
+  if offers_ask(offer) {
+    return false;
+  }
+  let config = server.config.get();
+  let st = session.state.lock();
+  let now = crate::acp::sidekick_of(&config, &st);
+  st.mode != modes::RAW && now.is_some() && now != st.sidekick_told
+}
+
+/// What the model is told of a sidekick picked (`had`: there was one before), changed or dropped since it last heard
+fn sidekick_note(config: &crate::config::Config, had: bool, now: Option<&str>) -> String {
+  let name = |pick: &str| config.find(pick).map(|(_, m)| m.display_name().to_owned()).unwrap_or_else(|| pick.to_owned());
+  match (had, now) {
+    (_, None) => "You no longer have a sidekick: agent \"sidekick\" of acpira_ask_agent is gone. Do that work yourself or give it to \
+another agent."
+      .to_owned(),
+    (false, Some(pick)) => format!(
+      "You now have a sidekick, {}: summon it with acpira_ask_agent, agent \"sidekick\". Hand it well-specified work early \
+(edits you can describe precisely, scouting that does not decide the plan, running and fixing tests) and keep the decisions \
+yourself; check its diff afterwards, and when it falls short say so in the same thread.",
+      name(pick)
+    ),
+    (true, Some(pick)) => format!("Your sidekick now runs {} (acpira_ask_agent, agent \"sidekick\"); its thread continues.", name(pick)),
+  }
+}
+
 async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stats: &Arc<parking_lot::Mutex<Stats>>) -> Result<Stop, String> {
   // The MCP servers still starting are waited for here, so the tool set is complete from the first request on
-  let offer = session.mcp.offer(&tools::names::ALL).await;
+  let mut offer = session.mcp.offer(&tools::names::ALL).await;
+  // A sidekick picked where acpira offered no ask_agent at all (no persona when its tools were listed) has no tool a
+  // note could name: acpira lists its tools once more, and the table grows by ask_agent with the sidekick first
+  if sidekick_unlisted(server, session, &offer) {
+    session.mcp.relist(crate::acp::ACPIRA_SERVER);
+    offer = session.mcp.offer(&tools::names::ALL).await;
+    let config = server.config.get();
+    let mut st = session.state.lock();
+    st.sidekick_told = crate::acp::sidekick_of(&config, &st);
+  }
   let mut s = setup(server, session, params, &offer.tools)?;
   let prompt = params.get("prompt").unwrap_or(&Value::Null);
   let text = prompt_text(prompt);
@@ -456,6 +498,17 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
           Some(Part::Text(t)) => *t = format!("<mcp>\n{note}\n</mcp>\n\n{t}"),
           _ => parts.insert(0, Part::Text(format!("<mcp>\n{note}\n</mcp>"))),
         }
+      }
+    }
+    // A sidekick picked, changed or dropped since the model learned of it is told the same way while ask_agent is
+    // offered: the tool table stays as it was listed, so the prompt cache holds
+    let sidekick = crate::acp::sidekick_of(&server.config.get(), &st);
+    if !s.raw && sidekick != st.sidekick_told && offers_ask(&offer) {
+      let note = sidekick_note(&server.config.get(), st.sidekick_told.is_some(), sidekick.as_deref());
+      st.sidekick_told = sidekick;
+      match parts.first_mut() {
+        Some(Part::Text(t)) => *t = format!("<sidekick>\n{note}\n</sidekick>\n\n{t}"),
+        _ => parts.insert(0, Part::Text(format!("<sidekick>\n{note}\n</sidekick>"))),
       }
     }
     let item = Item::User(parts);

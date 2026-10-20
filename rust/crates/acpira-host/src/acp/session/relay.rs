@@ -21,10 +21,11 @@ use anyhow::{Result, anyhow};
 use serde_json::{Map, Value, json};
 use tokio::sync::{mpsc, watch};
 
-use acpira_shared::subagents::{GROUP_MEMBERS_MAX, RelayMode, SubagentDuty, SubagentGroup, SubagentHarness, SubagentPersona, SubagentState};
+use acpira_shared::subagents::{EXECUTOR_BRIEF, GROUP_MEMBERS_MAX, RelayMode, SIDEKICK_ID, SubagentDuty, SubagentGroup, SubagentHarness, SubagentPersona, SubagentState};
 use acpira_shared::transcript::{AgentBlock, DiffKind, Draft, SessionStatus, ToolCallBlock, ToolContent, ToolKind, ToolStatus, Turn};
 
 use crate::acp::session::attachments::{prepare_prompt, prompt_caps_of};
+use crate::acp::session::controls::picked_controls;
 use crate::acp::session::hooks::{Reach, edit_paths, row_reach};
 use crate::acp::session::prompt::Origin;
 use crate::acp::session::updates::current_turn_index;
@@ -684,10 +685,16 @@ fn idle_thread(c: &Core, persona: &SubagentPersona, caller: Option<&str>) -> Opt
   (latest.agent == persona.agent && idle && alive).then_some(latest.thread)
 }
 
-/// The persona a thread continues with: its current settings, in the CLI the thread was started in
-fn thread_persona(roster: &Roster, h: &SubagentHarness, name: Option<&str>) -> Result<SubagentPersona> {
+/// The persona a thread continues with: its current settings, in the CLI the thread was started in. A sidekick's thread
+/// goes on with the sidekick picked now (`sidekick`), on whatever model that is
+fn thread_persona(roster: &Roster, sidekick: Option<SubagentPersona>, h: &SubagentHarness, name: Option<&str>) -> Result<SubagentPersona> {
   let label = name.unwrap_or(h.persona.as_deref().unwrap_or(&h.agent));
-  let Some(p) = roster.find(h.persona.as_deref().unwrap_or("")) else {
+  let id = h.persona.as_deref().unwrap_or("");
+  let found = if id == SIDEKICK_ID { sidekick } else { roster.find(id) };
+  let Some(p) = found else {
+    if id == SIDEKICK_ID {
+      return Err(anyhow!("This session has no sidekick now, so thread {} cannot continue.", h.thread));
+    }
     return Err(anyhow!("{label} is no longer an enabled subagent, so thread {} cannot continue.", h.thread));
   };
   if p.agent != h.agent {
@@ -702,13 +709,60 @@ fn thread_persona(roster: &Roster, h: &SubagentHarness, name: Option<&str>) -> R
   Ok(p)
 }
 
+/// The built-in agent's sidekick select (`acpira-agent/src/acp.rs`): its id, its custom category and the value for none
+const SIDEKICK_CONFIG: &str = "sidekick";
+const SIDEKICK_CATEGORY: &str = "_sidekick";
+const NO_SIDEKICK: &str = "none";
+
+/// The sidekick's line in ask_agent: Fusion's split of the work, where the lead plans, decides and checks while the
+/// sidekick does the well-specified parts, handed over early
+const SIDEKICK_WHEN: &str = "Your sidekick, the second model picked for this session. Hand it well-specified work early \
+instead of doing it yourself: edits you can describe precisely (across files, repetitive, boilerplate), scouting that does \
+not decide the plan (where something lives, what a log says), running and fixing tests. Brief it with the goal, the \
+constraints and what done means; keep the plan and the decisions yourself, check its diff before building on it, and when \
+it falls short say so in the same thread.";
+
 impl AcpSession {
+  /// The sidekick this session's built-in agent has picked (its `sidekick` select, picks in flight and a reopened
+  /// record's value included), as the executor the hub lists first for the root: the built-in agent on that model,
+  /// following the caller's mode, in one conversation that later calls continue
+  pub(crate) fn sidekick_persona(&self) -> Option<SubagentPersona> {
+    let pick = {
+      let c = self.core.lock();
+      picked_controls(&c).options.into_iter().find(|o| o.id == SIDEKICK_CONFIG && o.category.as_deref() == Some(SIDEKICK_CATEGORY))?.value
+    }?;
+    (!pick.is_empty() && pick != NO_SIDEKICK).then(|| SubagentPersona {
+      id: SIDEKICK_ID.into(),
+      name: "Sidekick".into(),
+      agent: self.agent.clone(),
+      model: Some(pick),
+      effort: None,
+      mode: RelayMode::Inherit,
+      when: SIDEKICK_WHEN.into(),
+      brief: Some(EXECUTOR_BRIEF.into()),
+      enabled: true,
+      duty: SubagentDuty::Executor,
+      changes: false,
+    })
+  }
+
+  /// A persona by id or name as this caller sees it: to the root, `sidekick` is its own sidekick while it has one
+  fn find_persona(&self, roster: &Roster, caller: Option<&str>, id: &str) -> Option<SubagentPersona> {
+    if caller.is_none()
+      && id.trim().eq_ignore_ascii_case(SIDEKICK_ID)
+      && let Some(p) = self.sidekick_persona()
+    {
+      return Some(p);
+    }
+    roster.find(id)
+  }
+
   /// One `ask_agent` call from an agent of this session (the root, or a summoned child when `caller` names its thread)
   pub async fn relay_ask(self: Arc<Self>, roster: Arc<Roster>, caller: Option<String>, depth: u32, args: AskArgs, out: mpsc::UnboundedSender<HubReply>) {
     // A new task naming a group (and no persona of that name) goes to each of its members
     let new_task = args.thread.as_deref().is_none_or(|t| t.trim().is_empty()) && !args.prompt.trim().is_empty();
     if new_task
-      && roster.find(&args.agent).is_none()
+      && self.find_persona(&roster, caller.as_deref(), &args.agent).is_none()
       && let Some((group, members)) = roster.find_group(&args.agent)
     {
       return self.relay_group(roster, caller, depth, args, group, members, out).await;
@@ -920,7 +974,7 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
     // A scout or an executor keeps its conversation: a new task without `thread` continues the idle one this caller
     // started (unless the call asks for a fresh start); a reviewer, and any other persona, starts fresh
     if thread.is_none() && !prompt.is_empty() && args.new_thread != Some(true)
-      && let Some(p) = roster.find(&args.agent).filter(|p| p.duty.keeps_thread())
+      && let Some(p) = self.find_persona(roster, caller.as_deref(), &args.agent).filter(|p| p.duty.keeps_thread())
     {
       thread = idle_thread(&self.core.lock(), &p, caller.as_deref());
     }
@@ -964,10 +1018,11 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
     }
     // A new round: the thread's persona as it is set now, else the named one
     let persona = match &latest {
-      Some((_, h, name, _, _)) => thread_persona(roster, h, name.as_deref())?,
+      Some((_, h, name, _, _)) => thread_persona(roster, self.sidekick_persona(), h, name.as_deref())?,
       None if args.agent.trim().is_empty() => return Err(anyhow!("Name the agent to summon (`agent`), or a `thread` to continue.")),
-      None => roster.find(&args.agent).ok_or_else(|| {
-        let ids: Vec<String> = roster.enabled().into_iter().map(|p| p.id).collect();
+      None => self.find_persona(roster, caller.as_deref(), &args.agent).ok_or_else(|| {
+        let sidekick = caller.is_none().then(|| self.sidekick_persona()).flatten();
+        let ids: Vec<String> = sidekick.into_iter().chain(roster.enabled()).map(|p| p.id).collect();
         anyhow!("No subagent named {:?}. Available: {}.", args.agent, if ids.is_empty() { "none".into() } else { ids.join(", ") })
       })?,
     };

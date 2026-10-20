@@ -228,6 +228,7 @@
   "composer.effort": "Denkaufwand",
   "composer.lead": "Hauptmodell",
   "composer.sidekick": "Helfer",
+  "composer.sidekickNone": "Keiner",
   "composer.fusionSummary": "{leads} Hauptmodelle, {sidekicks} Helfer",
   "composer.addAccount": "Konto hinzufügen",
   "composer.accountsOf": "Konten von {agent}",

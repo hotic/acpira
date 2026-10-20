@@ -158,7 +158,13 @@ impl RelayHub {
     match req.op {
       HubOp::List => {
         // A grant at the depth limit has the entry for its caller and the session tools, but nobody to summon
-        let (personas, groups) = if depth >= crate::relay::MAX_DEPTH { (vec![], vec![]) } else { (self.roster.enabled(), self.roster.enabled_groups()) };
+        let (mut personas, groups) = if depth >= crate::relay::MAX_DEPTH { (vec![], vec![]) } else { (self.roster.enabled(), self.roster.enabled_groups()) };
+        // The root's own sidekick goes first: the executor its built-in agent picked, not a persona of the roster
+        if caller.is_none()
+          && let Some(p) = session.upgrade().and_then(|s| s.sidekick_persona())
+        {
+          personas.insert(0, p);
+        }
         let _ = write.write_all(reply(HubReply::Roster { personas, groups }).as_bytes()).await;
       }
       HubOp::Features => {

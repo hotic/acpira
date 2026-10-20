@@ -108,7 +108,7 @@ export function Composer(p: ComposerProps) {
   const onOpenChange = useCallback((open: boolean) => setOpenMenus(n => n + (open ? 1 : -1)), []);
   const beamActive = focused || openMenus > 0;
   const dim = p.running || p.disabled;
-  const { models, reasoning, modelConfig, collaboration, permission, other } = composerControls(p.controls.options);
+  const { models, reasoning, modelConfig, collaboration, permission, sidekick, other } = composerControls(p.controls.options);
   const canCompact = !!p.commands?.some(c => c.name === 'compact');
   // Files are read asynchronously after a paste / drop; sending is held until every read has landed, so a message never leaves without its attachments
   const [reading, setReading] = useState(0);
@@ -372,13 +372,13 @@ export function Composer(p: ComposerProps) {
         {!p.edit && p.main && !!personas?.length && <SummonMenu personas={personas} onOpenChange={onOpenChange} onPick={persona => summon(persona.name, caret)} />}
         <fieldset disabled={p.disabled || p.controlsLocked || sending} className="m-0 flex min-w-0 flex-1 items-center gap-1 border-0 p-0">
           <div className="min-w-0 flex-1" />
-          {[...other, ...(!models.length ? modelConfig : [])].map(c => (
+          {[...other, ...(!models.length ? [...modelConfig, ...sidekick] : [])].map(c => (
             <OptionControl key={c.id} end control={c} hidden={p.hidden?.[c.id]} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
           ))}
           {p.usage && <ContextRing usage={p.usage} turns={p.turns} canCompact={canCompact} disabled={p.disabled} compactAt={p.compactAt} running={p.running} onCompact={p.onCompact} onOpenChange={onOpenChange} />}
           {models.map((c, i) => (
             <ModelControl key={c.id} control={c} hidden={p.hidden?.[c.id]} reasoning={i === 0 ? reasoning : undefined}
-              modelConfig={i === 0 ? modelConfig : undefined} hiddenConfig={p.hidden}
+              modelConfig={i === 0 ? modelConfig : undefined} sidekick={i === 0 ? sidekick[0] : undefined} hiddenConfig={p.hidden}
               onSetConfig={p.onSetConfig} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
           ))}
           {p.onAddModel && p.main && !p.edit && !p.controlsLocked && !models.length && (
