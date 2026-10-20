@@ -29,3 +29,17 @@ pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/review/report.ts DIR [-
 pnpm exec tsx scripts/eval/review/mine.ts          # candidates, spends nothing
 pnpm exec tsx scripts/eval/review/bench.ts materialize <target> <dir>
 ```
+
+## Fusion bench
+
+`run.ts --config …` (configurations in `configs.ts`): does Acpira's orchestration on the vendors' own CLIs match or beat Devin's Fusion, and does the built-in agent's sidekick do as well as Fusion on the same pair of models? Same tasks, hidden tests and permission handling as the harness comparison; a run waits out the background work its lead started (summoned rounds and the automatic messages delivering them, idle for 5 s with nothing running) within the task's time limit.
+
+- Configurations: `claude-opus` (Claude Code, `opus` at high, Max login) and `codex-astra` (Codex, GPT-6 Astra, the gateway) as single-model baselines; `devin-opus-luna` and `devin-astra-swe` (Devin on its own login with the Fusion pairs `fusion-claude-opus-5-5-high-sidekick-gpt-6-luna-high` and `fusion-gpt-6-astra-high-sidekick-swe-2-medium`, ids of Devin 3000.11.92); `acpira-orch` (Claude Code with Opus 5.5 leads, with a review group of Astra on Codex and Argon in the built-in agent plus an executor on GPT-6 Luna in the run's subagents.json, for the lead to use or not); `acpira-opus-luna` and `acpira-astra-swe` (the built-in agent on the gateway with the same pairs as Devin's, the second model as its sidekick).
+- A configuration's picks are set on the new session (by option id, else category) and checked: an option or value the session does not offer fails the run rather than running another model. Devin's login is imported into the run's sidecar home through the account menu's Import and its key removed once the run ends.
+- Usage: the lead's metered calls (or, for Claude Code on its Max login, the tokens of its own transcripts), each helper's calls on its own metering path (`/r/<run>.<helper>/gw`) priced at its model, the summoned rounds per run by persona, and for native logins the quota points spent per run (`acpira quota` around each run; Devin's on-demand balance is in the raw snapshots). Devin reports no tokens: quota is all there is.
+- Dry run: `--dry` makes the lead and every helper's CLI the fake agent under its own id; a configuration with helpers summons its first group (else its first helper) once. Checked 2026-10-21 for all seven configurations on `conf-bugs` (the roster and per-helper providers written, the picks skipped); `acpira-orch`'s group summon answered "No subagent named reviewers" until groups existed.
+
+```
+pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/run.ts --config claude-opus,devin-opus-luna,acpira-orch [--task …] [--reps N] [--out DIR] [--dry]
+pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/report.ts DIR [--by-task]
+```
