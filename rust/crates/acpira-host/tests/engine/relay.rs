@@ -170,14 +170,17 @@ async fn a_bypass_round_answers_its_childs_permission_without_a_card_whatever_th
 #[tokio::test(flavor = "multi_thread")]
 async fn a_round_is_not_sent_when_the_cli_refuses_to_leave_full_access() {
   let fake = fake_or_skip!();
-  let h = Harness::new(&fake, json!({ "env": { "FAKE_BYPASS_START": "1" } }));
-  let roster = Arc::new(Roster::new(h.dir.path()));
-  roster.save(&json!([{ "name": "Fake Hand", "agent": "fake", "mode": "work", "when": "edits" }])).await.unwrap();
-  let s = Disposing(h.session("/tmp"));
-  s.start().await;
-  let (ok, text) = last_text(&run(&s, &roster, 0, ask("fake-hand", "relay: perm edit")).await);
-  assert!(!ok && text.contains("full-access mode"), "{text}");
-  assert!(!text.contains("reply to relay"), "the prompt went out: {text}");
+  // A refused switch, and a CLI whose only mode is full access (nothing to switch to)
+  for fixture in ["1", "only"] {
+    let h = Harness::new(&fake, json!({ "env": { "FAKE_BYPASS_START": fixture } }));
+    let roster = Arc::new(Roster::new(h.dir.path()));
+    roster.save(&json!([{ "name": "Fake Hand", "agent": "fake", "mode": "work", "when": "edits" }])).await.unwrap();
+    let s = Disposing(h.session("/tmp"));
+    s.start().await;
+    let (ok, text) = last_text(&run(&s, &roster, 0, ask("fake-hand", "relay: perm edit")).await);
+    assert!(!ok && text.contains("full-access mode"), "{fixture}: {text}");
+    assert!(!text.contains("reply to relay"), "{fixture}: the prompt went out: {text}");
+  }
 }
 
 #[tokio::test(flavor = "multi_thread")]

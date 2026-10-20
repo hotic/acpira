@@ -1075,8 +1075,9 @@ impl AcpSession {
         relay_controls(&proc, &sid, &mut opened, &r.persona, notes).await;
       }
       let mode = if last == Some(r.mode) || relay_mode(&proc, &sid, &mut opened, start_mode.as_deref(), r.mode, &r.persona.agent, notes).await { Some(r.mode) } else { None };
-      // A refused step down from full access: the prompt would run without the approvals this round asked for
-      let stuck = mode.is_none() && stuck_in_bypass(&opened, r.mode);
+      // Still in full access (a refused step down, or no mode to step down to): the prompt would run without the
+      // approvals this round asked for
+      let stuck = stuck_in_bypass(&opened, r.mode);
       let controls = running_controls(&opened);
       if let Some(rp) = self.core.lock().relays.procs.get_mut(thread) {
         rp.opened = opened;
@@ -1156,8 +1157,8 @@ impl AcpSession {
     let start_mode = current_mode(&opened);
     relay_controls(proc, &sid, &mut opened, &r.persona, notes).await;
     let mode_ok = relay_mode(proc, &sid, &mut opened, start_mode.as_deref(), r.mode, &r.persona.agent, notes).await;
-    // A CLI that starts in full access and refuses to leave it gets no prompt for a round that wants approvals
-    if !mode_ok && stuck_in_bypass(&opened, r.mode) {
+    // A CLI that starts in full access and cannot leave it gets no prompt for a round that wants approvals
+    if stuck_in_bypass(&opened, r.mode) {
       return Err(anyhow!("{} stayed in its full-access mode, so this {:?} round was not sent: {}", r.persona.agent, r.mode, notes.join("; ")));
     }
     Ok((sid, opened, start_mode, mode_ok))
