@@ -79,6 +79,8 @@ export interface HarnessSetup {
   // The login the agent needs is the CLI's own, imported into the run's sidecar home through the account menu's Import
   // before the session starts (Devin: its ACP mode ignores the CLI's credentials file)
   importLogin?: boolean;
+  // Copies of the user's login put into the run's HOME for that import: removed once it ran, and again when the run ends
+  scrub?: string[];
 }
 
 const json = (path: string, value: unknown) => {
@@ -255,9 +257,16 @@ export const HARNESSES: Record<string, (c: HarnessCtx) => HarnessSetup> = {
   // Devin on its own login (the user's Devin plan), unmetered: its ACP mode takes the API key only through
   // `authenticate`, so the login is imported into the run's sidecar home (`importLogin`) and the session binds to it.
   // The run's HOME keeps Devin's config and data apart from the user's (rules, MCP servers, sessions). Which model or
-  // Fusion pair runs is the caller's pick on the session's model select (`run.ts --pick`)
-  devin() {
-    return { agent: 'devin', env: {}, unmetered: true, importLogin: true };
+  // Fusion pair runs is the caller's pick on the session's model select (`run.ts --pick`). The import reads the CLI's
+  // credentials file under the data home, so a private copy of the user's goes there just for it (`scrub`)
+  devin({ home }) {
+    const own = join(process.env.XDG_DATA_HOME || join(homedir(), '.local/share'), 'devin/credentials.toml');
+    if (!existsSync(own)) throw new Error(`no Devin login at ${own}: sign in with devin auth login first`);
+    const data = join(home, '.local/share');
+    const copy = join(data, 'devin/credentials.toml');
+    mkdirSync(dirname(copy), { recursive: true, mode: 0o700 });
+    writeFileSync(copy, readFileSync(own), { mode: 0o600 });
+    return { agent: 'devin', env: { XDG_DATA_HOME: data }, unmetered: true, importLogin: true, scrub: [copy] };
   },
 
   claude({ model, base, home }) {
