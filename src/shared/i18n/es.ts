@@ -1045,6 +1045,8 @@ export const es = {
   'subagents.page.readOnlyUnknown': "Su modo de solo lectura (plan / read-only / ask) si lo ofrece",
   'subagents.page.when': "Cuándo invocarlo",
   'subagents.page.whenDesc': "El modelo decide con esta línea si lo invoca.",
+  'subagents.page.changes': "Entregar los cambios de la sesión",
+  'subagents.page.changesDesc': "Cada conversación nueva empieza con el diff de los cambios sin confirmar.",
   'subagents.page.brief': "Instrucciones fijas",
   'subagents.page.briefDesc': "Se añaden a cada tarea que recibe; puede quedar vacío.",
   'subagents.page.delete': "Eliminar",

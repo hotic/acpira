@@ -626,7 +626,8 @@ const app = acp.agent({ name: 'fake-agent' })
     // the session's mode. "relay:perm" asks to write first; "relay:slow" takes a while (a call's deadline runs out before
     // the reply); "write=<path>" writes a file without asking, "edit=<path>" through an edit row, "run=<path>" from a
     // command row; "review=<path>" replies with that file's text; "relay:fail" errors instead of replying (after the slow
-    // wait when both are named); "relay:exit" exits after it
+    // wait when both are named); "relay:exit" exits after it; "echo" adds every prompt block to the reply (a resource as
+    // `[resource <uri>]` and its text), so a test reads what the round was handed
     // "relay-call:<prompt>" → the parent side: an ask_agent call on Acpira's MCP server, as claude-agent-acp names it, left
     // running (the test plays the hub's side afterwards); "relay-call-failed:<prompt>" → the same call ending without a
     // round (the hub refused it), then a retry ak2 with the same arguments
@@ -725,7 +726,12 @@ const app = acp.agent({ name: 'fake-agent' })
       }
       if (cancelled.has(sid)) return { stopReason: 'cancelled' };
       if (first.includes('fail')) throw acp.RequestError.internalError(undefined, 'model overloaded');
-      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `reply to ${first} (round ${round}, mode ${modes.get(sid) ?? 'agent'})${answered}` } });
+      const echo = !first.includes('echo') ? '' : `\n\n${params.prompt.map(p => {
+        if (p.type === 'text') return p.text;
+        if (p.type === 'resource') return `[resource ${p.resource.uri}]\n${'text' in p.resource ? p.resource.text : ''}`;
+        return `[${p.type}]`;
+      }).join('\n---\n')}`;
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `reply to ${first} (round ${round}, mode ${modes.get(sid) ?? 'agent'})${answered}${echo}` } });
       // "relay:exit" → the process goes away after its reply (the thread's next round has to reopen the session)
       if (first.includes('exit')) setTimeout(() => process.exit(0), 50);
       return { stopReason: 'end_turn' };

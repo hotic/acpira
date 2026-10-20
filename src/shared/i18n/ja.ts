@@ -1047,6 +1047,8 @@ export const ja = {
   'subagents.page.readOnlyUnknown': "読み取り専用モード（plan / read-only / ask）があれば切り替える",
   'subagents.page.when': "呼び出すタイミング",
   'subagents.page.whenDesc': "モデルはこの一文で呼び出すかどうかを決めます。",
+  'subagents.page.changes': "このセッションの変更を渡す",
+  'subagents.page.changesDesc': "新しい会話ごとに、未コミットの変更の diff を添えます。",
   'subagents.page.brief': "常設の指示",
   'subagents.page.briefDesc': "渡すタスクの末尾に毎回付けます。空でもかまいません。",
   'subagents.page.delete': "削除",

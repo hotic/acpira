@@ -1049,6 +1049,8 @@
   "subagents.page.readOnlyUnknown": "CLI 有只读模式（plan / read-only / ask）时自动切换",
   "subagents.page.when": "适用场景",
   "subagents.page.whenDesc": "供模型判断何时调用它，不做关键词匹配。手动指定请在输入框中输入 @名称。",
+  "subagents.page.changes": "交接本会话改动",
+  "subagents.page.changesDesc": "每次新对话都附上本会话未提交改动的 diff。",
   "subagents.page.whenPlaceholder": "例：代码改完后做一轮审查，找出 bug 和遗漏的边界情况",
   "subagents.page.brief": "附加指令",
   "subagents.page.briefDesc": "每次调用都会附在任务之后，可留空。",

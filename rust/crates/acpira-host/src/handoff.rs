@@ -551,6 +551,66 @@ fn lang_of(path: &str) -> &'static str {
   }
 }
 
+/// The work tree's changes against the base that the scope covers
+async fn in_scope(cwd: &Path, top: &Path, base: &str, scope: Option<&Scope>) -> Result<Vec<Changed>> {
+  let all = changes(top, base).await?;
+  Ok(match scope {
+    None => all,
+    Some(s) if s.anywhere => all,
+    Some(s) => {
+      let named: BTreeSet<String> = s.files.iter().filter_map(|f| repo_relative(top, cwd, f)).collect();
+      all.into_iter().filter(|c| named.contains(&c.path) || c.old_path.as_ref().is_some_and(|o| named.contains(o))).collect()
+    }
+  })
+}
+
+/// The files a pack of this scope would list now, with their line counts, against `base` (a pack's own base, so a
+/// later round compares like with like): what a summoned thread is told changed since its last round. None when `cwd`
+/// is not in a git work tree
+pub async fn file_stats(cwd: &Path, base: Option<&str>, scope: Option<&Scope>) -> Result<Option<Vec<PackFile>>> {
+  let Some((top, base)) = locate(cwd, base).await? else { return Ok(None) };
+  let files = in_scope(cwd, &top, &base, scope).await?;
+  let counts = numstat(&top, &base, &files).await;
+  Ok(Some(
+    files
+      .iter()
+      .map(|c| {
+        let (added, removed) = counts.get(&c.path).copied().unwrap_or((None, None));
+        PackFile { path: c.path.clone(), status: c.status.to_string(), old_path: c.old_path.clone(), added, removed }
+      })
+      .collect(),
+  ))
+}
+
+/// What moved between two listings of the same scope and base, one entry per file: its counts now, new to the list,
+/// or no longer changed. Empty when nothing moved
+pub fn changed_since(before: &[PackFile], now: &[PackFile]) -> Vec<String> {
+  let lines = |f: &PackFile| match (f.added, f.removed) {
+    (Some(a), Some(r)) => format!("+{a} -{r}"),
+    _ => "binary".to_owned(),
+  };
+  let mut out = vec![];
+  for f in now {
+    match before.iter().find(|b| b.path == f.path) {
+      Some(b) if b.added == f.added && b.removed == f.removed && b.status == f.status => {}
+      Some(_) => out.push(format!("{} ({} now)", f.path, lines(f))),
+      None => out.push(format!("{} (newly changed, {})", f.path, lines(f))),
+    }
+  }
+  for b in before.iter().filter(|b| !now.iter().any(|f| f.path == b.path)) {
+    out.push(format!("{} (no longer changed)", b.path));
+  }
+  out
+}
+
+/// The recipe file in the data root, next to subagents.json: the strategy the evaluation tunes
+pub const RECIPE_FILE: &str = "handoff.json";
+
+/// The recipe in `dir/handoff.json`; a missing or unreadable file is the default
+pub fn recipe_in(dir: &Path) -> Recipe {
+  std::fs::read_to_string(dir.join(RECIPE_FILE)).ok().and_then(|t| Recipe::from_json(&t).ok()).unwrap_or_default().clamped()
+}
+
 /// Everything the pack may hold, before the cap decides how much of it goes in
 struct Parts {
   header: String,
@@ -592,15 +652,7 @@ fn assemble(p: &Parts, diffs: &[&str], diff_title: &str, texts: &[&(String, Stri
 pub async fn build(cwd: &Path, base: Option<&str>, scope: Option<&Scope>, recipe: &Recipe) -> Result<Option<Pack>> {
   let recipe = recipe.clone().clamped();
   let Some((top, base)) = locate(cwd, base).await? else { return Ok(None) };
-  let all = changes(&top, &base).await?;
-  let files: Vec<Changed> = match scope {
-    None => all,
-    Some(s) if s.anywhere => all,
-    Some(s) => {
-      let named: BTreeSet<String> = s.files.iter().filter_map(|f| repo_relative(&top, cwd, f)).collect();
-      all.into_iter().filter(|c| named.contains(&c.path) || c.old_path.as_ref().is_some_and(|o| named.contains(o))).collect()
-    }
-  };
+  let files = in_scope(cwd, &top, &base, scope).await?;
   if files.is_empty() {
     return Ok(None);
   }
@@ -992,5 +1044,36 @@ mod tests {
     assert!(r.refs && r.function_context);
     assert_eq!(r.max_bytes, 2_000);
     assert!(Recipe::from_json("not json").is_err());
+    // The data root's file, or the default when it is missing or broken
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(recipe_in(dir.path()), Recipe::default());
+    std::fs::write(dir.path().join(RECIPE_FILE), r#"{ "refs": true }"#).unwrap();
+    assert!(recipe_in(dir.path()).refs);
+    std::fs::write(dir.path().join(RECIPE_FILE), "{").unwrap();
+    assert_eq!(recipe_in(dir.path()), Recipe::default());
+  }
+
+  #[tokio::test]
+  async fn a_later_listing_against_the_packs_base_names_only_what_moved() {
+    let Some(dir) = repo() else { return };
+    let root = dir.path();
+    write(root, "a.txt", "one\n");
+    write(root, "b.txt", "one\n");
+    commit(root);
+    write(root, "a.txt", "two\n");
+    write(root, "b.txt", "two\n");
+    let pack = build(root, None, None, &Recipe::default()).await.unwrap().unwrap();
+    // A commit in between does not move the base: the listing stays against the pack's own
+    sh(root, &["commit", "-q", "-am", "wip"]);
+    write(root, "a.txt", "three\nfour\n");
+    write(root, "b.txt", "one\n");
+    write(root, "c.txt", "new\n");
+    let now = file_stats(root, Some(&pack.base), None).await.unwrap().unwrap();
+    assert_eq!(changed_since(&pack.files, &now), ["a.txt (+2 -1 now)", "c.txt (newly changed, +1 -0)", "b.txt (no longer changed)"]);
+    assert!(changed_since(&now, &now).is_empty());
+    // A scope keeps to its files
+    let scope = Scope { files: vec!["a.txt".into()], ..Default::default() };
+    let only = file_stats(root, Some(&pack.base), Some(&scope)).await.unwrap().unwrap();
+    assert_eq!(only.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["a.txt"]);
   }
 }

@@ -1021,6 +1021,8 @@
   "subagents.page.readOnlyUnknown": "Sein Nur-lesen-Modus (plan / read-only / ask), wenn es einen anbietet",
   "subagents.page.when": "Wann hinzuziehen",
   "subagents.page.whenDesc": "Anhand dieser Zeile entscheidet das Modell, ob es ihn hinzuzieht.",
+  "subagents.page.changes": "Änderungen dieser Sitzung übergeben",
+  "subagents.page.changesDesc": "Jedes neue Gespräch beginnt mit dem Diff der nicht committeten Änderungen.",
   "subagents.page.brief": "Feste Anweisungen",
   "subagents.page.briefDesc": "Wird an jede Aufgabe angehängt; darf leer bleiben.",
   "subagents.page.delete": "Löschen",

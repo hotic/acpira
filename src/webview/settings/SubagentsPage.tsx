@@ -155,6 +155,10 @@ function PersonaDetail({ persona: p, agents, controls, onBack, onChange, onDelet
           <span className={readOnly === null ? 'text-warn' : 'text-fg-2'}>{readOnlyText}</span>
         </FactRow>
       )}
+      {/* Every new conversation starts with the handoff pack; a call can still pass `changes` either way */}
+      <Field label={t('subagents.page.changes')} desc={t('subagents.page.changesDesc')}>
+        <Switch checked={p.changes === true} label={t('subagents.page.changes')} onChange={on => onChange({ changes: on || undefined })} />
+      </Field>
       {/* Free text for the model, listed next to the persona in ask_agent's description; no keyword triggers it */}
       <Field stack label={t('subagents.page.when')} desc={t('subagents.page.whenDesc')}>
         <TextBox multiline value={p.when} label={t('subagents.page.when')} placeholder={t('subagents.page.whenPlaceholder')}

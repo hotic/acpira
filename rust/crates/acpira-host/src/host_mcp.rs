@@ -398,6 +398,7 @@ impl Relay {
       wait_secs: Some(self.wait_secs.load(std::sync::atomic::Ordering::Relaxed)),
       wait: args.get("wait").and_then(Value::as_bool),
       answers: args.get("answers").and_then(Value::as_array).map(|l| l.iter().filter_map(|a| a.as_str().map(str::to_owned)).collect()),
+      changes: args.get("changes").and_then(Value::as_bool),
     };
     self.streamed(HubOp::Ask(ask), params, progress)
   }
@@ -519,7 +520,10 @@ sends you its reply in a message when it is done (several sent together come bac
 the task yourself meanwhile. Set `wait` when you need the reply before going on; a call with a thread and an empty prompt \
 waits for that thread. To follow up with the same agent, pass the `thread` its answer named. A scout or an executor \
 continues its idle conversation in this session even without `thread` (set `new_thread` to start over); a reviewer starts \
-fresh on every call without `thread`, which keeps it independent.\n\nAgents:\n{}",
+fresh on every call without `thread`, which keeps it independent.\n\n\
+Set `changes` to hand the agent your uncommitted changes as a pack (their diff and the small changed files in full), so it \
+starts from them instead of reading its way there; a later round of the same thread is told only what moved since. Agents \
+whose user switched this on get it without asking.\n\nAgents:\n{}",
     lines.join("\n")
   );
   let ids: Vec<&str> = personas.iter().map(|p| p.id.as_str()).collect();
@@ -538,6 +542,7 @@ fresh on every call without `thread`, which keeps it independent.\n\nAgents:\n{}
         "new_thread": { "type": "boolean", "description": "Start a new conversation with a scout or an executor instead of continuing its idle one." },
         "wait": { "type": "boolean", "description": "Wait in this call for the reply (up to your tool timeout) instead of getting it in a message later." },
         "answers": { "type": "array", "items": { "type": "string" }, "description": "With `thread`, when that agent asks you something: one answer per question, in order (an option's label or your own words)." },
+        "changes": { "type": "boolean", "description": "Hand over your uncommitted changes (diff plus small changed files in full) with a new task." },
       },
       "required": [],
     },

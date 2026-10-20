@@ -1044,6 +1044,8 @@ export const fr = {
   'subagents.page.readOnlyUnknown': "Son mode lecture seule (plan / read-only / ask) s'il en propose un",
   'subagents.page.when': "Quand le convoquer",
   'subagents.page.whenDesc': "Le modèle décide avec cette ligne s’il le convoque.",
+  'subagents.page.changes': "Transmettre les modifications de la session",
+  'subagents.page.changesDesc': "Chaque nouvelle conversation commence par le diff des modifications non validées.",
   'subagents.page.brief': "Consignes permanentes",
   'subagents.page.briefDesc': "Ajoutées à chaque tâche qu’il reçoit ; peut rester vide.",
   'subagents.page.delete': "Supprimer",
