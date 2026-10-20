@@ -1022,3 +1022,63 @@ async fn a_child_gets_at_most_six_follow_ups_per_round() {
   until(|| !s.background_running(), 8000).await;
   assert!(deliveries(&s).is_empty(), "{:?}", deliveries(&s));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_scout_or_an_executor_continues_its_idle_thread_and_a_reviewer_starts_fresh() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let roster = Arc::new(Roster::new(h.dir.path()));
+  roster
+    .save(&json!([
+      { "name": "Scout", "agent": "fake", "mode": "consult", "duty": "scout" },
+      { "name": "Doer", "agent": "fake", "mode": "work", "duty": "executor" },
+      { "name": "Checker", "agent": "fake", "mode": "consult", "duty": "reviewer" },
+      { "name": "Plain", "agent": "fake", "mode": "consult" },
+    ]))
+    .await
+    .unwrap();
+  let s = Disposing(h.session("/tmp"));
+  s.start().await;
+  let call = |agent: &str, prompt: &str| ask(agent, prompt);
+
+  // A scout called again without a thread continues the same native session
+  let (_, first) = last_text(&run(&s, &roster, 0, call("scout", "relay: where is x")).await);
+  let (_, second) = last_text(&run(&s, &roster, 0, call("scout", "relay: and y")).await);
+  assert!(second.starts_with("reply to relay: and y (round 2, mode plan)"), "{second}");
+  assert_eq!(thread_of(&first), thread_of(&second));
+  // Unless the call asks for a fresh start
+  let (_, fresh) = last_text(&run(&s, &roster, 0, AskArgs { new_thread: Some(true), ..call("scout", "relay: start over") }).await);
+  assert!(fresh.starts_with("reply to relay: start over (round 1,"), "{fresh}");
+  assert_ne!(thread_of(&fresh), thread_of(&first));
+  // An executor too; the newest idle thread is the one continued
+  let (_, a) = last_text(&run(&s, &roster, 0, call("doer", "relay: step one")).await);
+  let (_, b) = last_text(&run(&s, &roster, 0, call("doer", "relay: step two")).await);
+  assert!(b.starts_with("reply to relay: step two (round 2, mode agent)"), "{b}");
+  assert_eq!(thread_of(&a), thread_of(&b));
+  let (_, c) = last_text(&run(&s, &roster, 0, call("scout", "relay: once more")).await);
+  assert_eq!(thread_of(&c), thread_of(&fresh), "{c}");
+  // A reviewer and a general persona start fresh every time
+  for agent in ["checker", "plain"] {
+    let (_, one) = last_text(&run(&s, &roster, 0, call(agent, "relay: review")).await);
+    let (_, two) = last_text(&run(&s, &roster, 0, call(agent, "relay: review again")).await);
+    assert!(two.starts_with("reply to relay: review again (round 1,"), "{two}");
+    assert_ne!(thread_of(&one), thread_of(&two));
+  }
+
+  // A busy thread is not continued: the new task gets a conversation of its own
+  let (_, busy) = last_text(&run(&s, &roster, 0, AskArgs { wait_secs: Some(0), ..call("doer", "relay: slow job") }).await);
+  assert!(busy.contains("is still working"), "{busy}");
+  let (_, other) = last_text(&run(&s, &roster, 0, call("doer", "relay: meanwhile")).await);
+  assert!(other.starts_with("reply to relay: meanwhile (round 1,"), "{other}");
+  assert_ne!(thread_of(&busy), thread_of(&other));
+  until(|| !s.background_running(), 8000).await;
+
+  // Nor one whose process is gone (reopening it is not what the call asked for), and the call does not fall back to the
+  // scout's older conversation either
+  let (_, gone) = last_text(&run(&s, &roster, 0, call("scout", "relay: exit after this")).await);
+  until(|| !s.background_running(), 4000).await;
+  tokio::time::sleep(Duration::from_millis(300)).await;
+  let (_, next) = last_text(&run(&s, &roster, 0, call("scout", "relay: after the exit")).await);
+  assert!(next.starts_with("reply to relay: after the exit (round 1,"), "{next}");
+  assert_ne!(thread_of(&gone), thread_of(&next));
+}

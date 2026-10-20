@@ -3,7 +3,7 @@ import { ChevronLeft, Plus, Trash2 } from 'lucide-react';
 import type { AgentId, AgentInfo, ConfigControl } from '@shared/transcript';
 import type { SettingsView } from '@shared/settings';
 import { effortLabel } from '@shared/composerControls';
-import { PERSONA_MAX, sanitizePersonas, type RelayMode, type SubagentPersona } from '@shared/subagents';
+import { DUTIES, DUTY_BRIEFS, dutyDefaults, PERSONA_MAX, sanitizePersonas, type RelayMode, type SubagentDuty, type SubagentPersona } from '@shared/subagents';
 import { AgentMark } from '../chat/AgentMark';
 import { Button, ChipTag, IconButton } from '../ui/Button';
 import { StableText } from '../ui/StableText';
@@ -17,6 +17,17 @@ const READ_ONLY: Partial<Record<AgentId, string | null>> = { codex: 'read-only',
 // The persona's default access: following the caller first (a new persona's default), then least to most; the i18n keys
 // are `subagents.page.<mode>` and `<mode>Desc`
 const MODES: RelayMode[] = ['inherit', 'consult', 'work', 'bypass'];
+// i18n keys `subagents.page.duty<Duty>` and `duty<Duty>Desc`
+const DUTY_KEY: Record<SubagentDuty, 'General' | 'Scout' | 'Executor' | 'Reviewer'> = { general: 'General', scout: 'Scout', executor: 'Executor', reviewer: 'Reviewer' };
+
+// Picking a duty fills in its access and standing instructions; instructions the user wrote stay (only an empty box or
+// another duty's preset is replaced), and general leaves both alone
+function pickDuty(p: SubagentPersona, duty: SubagentDuty): Partial<SubagentPersona> {
+  const preset = dutyDefaults(duty);
+  if (!preset) return { duty: undefined };
+  const own = p.brief?.trim() && !Object.values(DUTY_BRIEFS).includes(p.brief.trim());
+  return { duty, mode: preset.mode, ...(own ? {} : { brief: preset.brief }) };
+}
 
 interface PageProps {
   settings: SettingsView;
@@ -129,6 +140,11 @@ function PersonaDetail({ persona: p, agents, controls, onBack, onChange, onDelet
             onChange={v => onChange({ effort: v || undefined })} />
         </Field>
       )}
+      <Field label={t('subagents.page.duty')} desc={<StableText current={p.duty ?? 'general'} items={DUTIES.map(d => ({ key: d, text: t(`subagents.page.duty${DUTY_KEY[d]}Desc`) }))} />}>
+        <Select<SubagentDuty> label={t('subagents.page.duty')} value={p.duty ?? 'general'}
+          options={DUTIES.map(d => ({ value: d, label: t(`subagents.page.duty${DUTY_KEY[d]}`) }))}
+          onChange={duty => onChange(pickDuty(p, duty))} />
+      </Field>
       <Field label={t('subagents.page.mode')} desc={<StableText current={p.mode} items={MODES.map(m => ({ key: m, text: t(`subagents.page.${m}Desc`) }))} />}>
         <Select<RelayMode> label={t('subagents.page.mode')} value={p.mode}
           options={MODES.map(m => ({ value: m, label: t(`subagents.page.${m}`) }))}
@@ -145,13 +161,10 @@ function PersonaDetail({ persona: p, agents, controls, onBack, onChange, onDelet
           onCommit={when => onChange({ when })} />
       </Field>
     </Section>
-    {/* The standing brief is not offered for new personas; one already stored stays visible (and clearable) because
-        the relay still appends it to every task */}
-    {p.brief && (
-      <Section title={t('subagents.page.brief')} desc={t('subagents.page.briefDesc')}>
-        <Field stack><TextBox multiline value={p.brief} label={t('subagents.page.brief')} onCommit={brief => onChange({ brief: brief || undefined })} /></Field>
-      </Section>
-    )}
+    {/* Appended to every task; a duty fills it with its preset, which stays the user's to edit or clear */}
+    <Section title={t('subagents.page.brief')} desc={t('subagents.page.briefDesc')}>
+      <Field stack><TextBox multiline value={p.brief ?? ''} label={t('subagents.page.brief')} onCommit={brief => onChange({ brief: brief.trim() || undefined })} /></Field>
+    </Section>
     <div className="flex justify-end">
       <Button onClick={onDelete}><Trash2 className="size-icon" strokeWidth={1.5} />{t('subagents.page.delete')}</Button>
     </div>
@@ -162,7 +175,7 @@ function modelControlOf(controls: ConfigControl[] | undefined): ConfigControl | 
   return controls?.find(c => c.category === 'model' || c.id === 'model');
 }
 
-// The row's second line: the CLI, its model one step fainter, then its reasoning effort and the mode as tags. Tone tells
+// The row's second line: the CLI, its model one step fainter, then its reasoning effort, duty and mode as tags. Tone tells
 // the parts apart, with no separator glyph between them, so they sit half a gap apart and the tags use the small badge
 // of the chat's subagent rows; the model gives up width first. The model reads as the CLI names it (Codex
 // `gpt-6-astra` → "6 Astra"), as in the detail page's select; the stored value shows only until the CLI's latest
@@ -174,6 +187,7 @@ function metaOf(p: SubagentPersona, agents: AgentInfo[], controls: ConfigControl
     <span className="shrink-0">{cli}</span>
     {model && <span className="min-w-0 truncate text-fg-3/70">{model}</span>}
     {p.effort && <ChipTag small>{effortLabel({ id: p.effort, name: p.effort })}</ChipTag>}
+    {p.duty && p.duty !== 'general' && <ChipTag small>{t(`subagents.page.duty${DUTY_KEY[p.duty]}`)}</ChipTag>}
     <ChipTag small>{t(`subagents.page.${p.mode}`)}</ChipTag>
   </span>;
 }

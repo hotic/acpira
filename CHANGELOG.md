@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Subagent duties.** A subagent can be a scout, an executor or a reviewer. Picking one fills in its access and standing instructions, which stay editable. Scouts and executors keep their conversation within a session when they are asked again, and reviewers start fresh every time.
+
 ### Planned
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.

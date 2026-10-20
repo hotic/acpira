@@ -56,6 +56,36 @@ export interface SubagentHarness {
 // round takes the caller's current access: read-only / plan → consult, full access → bypass, anything else work
 export type RelayMode = 'consult' | 'work' | 'bypass' | 'inherit';
 
+// What a persona is for. Picking one fills in its default access and standing instructions (dutyDefaults, both still the
+// user's to change) and decides how a call without `thread` continues: scouts and executors keep their idle conversation
+// within a session, a reviewer starts fresh every time, general continues only when the call names the thread
+export type SubagentDuty = 'general' | 'scout' | 'executor' | 'reviewer';
+export const DUTIES: SubagentDuty[] = ['general', 'scout', 'executor', 'reviewer'];
+
+// Mirror of the Rust SCOUT_BRIEF / EXECUTOR_BRIEF / REVIEWER_BRIEF (both checked against test/fixtures/duty-presets.json).
+// Written for the model, so in English whatever the UI language
+export const DUTY_BRIEFS: Record<Exclude<SubagentDuty, 'general'>, string> = {
+  scout: 'You are a scout: find things out and report them; do not change anything. Back every claim with '
+    + 'where it comes from as path:line (or path:start-end), quoting the line when it matters, so the caller can act on your '
+    + 'report without opening the files again. Say what you looked for and did not find as well as what you found, and mark '
+    + 'guesses as guesses.',
+  executor: 'You carry out a plan another agent made. If a step looks wrong, would break something, or '
+    + 'misses a case, stop before doing it and say so, with the reason and what you would do instead: pushing back early is part '
+    + 'of the job. Otherwise do what was asked and no more, and run the checks the task names (or the obvious ones).',
+  reviewer: 'You are a reviewer. Look for real defects in the change: bugs, regressions, missed cases, '
+    + 'broken contracts or docs that no longer match. Read the changed code, its callers and its tests yourself, and judge the '
+    + 'change against the requirement, not against how its author describes it. Leave out style preferences.',
+};
+
+// The access and standing instructions a duty fills in when picked; general leaves both as they are
+export function dutyDefaults(duty: SubagentDuty): { mode: RelayMode; brief: string } | undefined {
+  if (duty === 'general') return undefined;
+  return { mode: duty === 'executor' ? 'inherit' : 'consult', brief: DUTY_BRIEFS[duty] };
+}
+
+export const keepsThread = (duty: SubagentDuty | undefined) => duty === 'scout' || duty === 'executor';
+export const freshThread = (duty: SubagentDuty | undefined) => duty === 'reviewer';
+
 // A cross-harness subagent defined once in the settings (~/.acpira/subagents.json): any session can summon it through
 // Acpira's MCP tool `ask_agent`, or the user names it with @name. Mirror of acpira_shared::subagents::SubagentPersona
 export interface SubagentPersona {
@@ -68,6 +98,8 @@ export interface SubagentPersona {
   when: string;         // tells the model when to summon it
   brief?: string;       // appended to every task
   enabled: boolean;
+  duty?: SubagentDuty;  // absent = general
+  changes?: boolean;    // every new conversation starts with the handoff pack of the session's changes
 }
 
 export const PERSONA_MAX = 32;
@@ -100,6 +132,8 @@ export function sanitizePersonas(value: unknown): SubagentPersona[] {
       when: str(o.when, TEXT_MAX),
       brief: opt(o.brief, TEXT_MAX),
       enabled: o.enabled !== false,
+      ...(o.duty === 'scout' || o.duty === 'executor' || o.duty === 'reviewer' ? { duty: o.duty } : {}),
+      ...(o.changes === true ? { changes: true } : {}),
     });
   }
   return out;
