@@ -11,6 +11,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [1.10.7] - 2026-10-20
+
+### Added
+
+- **Acpira browser panel for local pages.** "Open Local Page in Acpira Browser" opens an empty panel on its address bar with recent pages under it. Loopback http pages load through the engine's preview proxy. In a remote window the proxy runs on the remote and its port is forwarded to the panel. Pages an agent opens with `open_browser` on localhost now land in this panel beside the chat without taking focus. https pages and other hosts still go to VS Code's integrated browser. Panels come back after a window reload on the page they showed.
+- **Pick page elements into the chat.** In the browser panel, a click picks an element and Ctrl / Cmd or Shift adds more. "Add" sends the pick to the chat as browser context, and "Comment" opens a field for a remark first. A double-click adds at once, and Escape leaves picking. The pick carries each element's HTML and CSS path with secrets, handlers and code redacted.
+- **Context API for other extensions.** `acpira.context.set` shows another extension's live selection as a chip in the composer, and `acpira.context.add` pins content into the chat used last. Each source gets its own chip, and the agent reads the content headed by its source as reference data. The contract is documented in `docs/context-api.md`.
+- Vendor marks for MiniMax, Meta Muse and 29 more model makers, so their models no longer fall back to a letter tile.
+
+### Changed
+
+- **New sessions default to the built-in agent.** A fresh install opens on Acpira's own agent instead of Grok. Installs that never set `acpira.defaultAgent` switch too, so set it to `grok` to keep the old default. A default agent whose CLI is missing falls back to the first enabled installed agent.
+- The docked left session column is a desktop-style sidebar. New session, search and import lead it as full-width rows, and settings sits at its foot. The chat header drops its own new-session and settings buttons while the column is docked.
+- Each native list on an agent's settings page (MCP, skills, rules, config) sits in a titled card with a count.
+- Rows of a multi-file read or search result fade in one after another, and the rail draws down to each.
+- Pinning the same context again replaces the earlier chip, so a re-picked element with a new comment is kept.
+- The editor-selection sharing setting now covers selections from other tools too.
+- **Summoned agents' access follows the persona setting.** A persona set to consult, work or bypass now always runs in that access, whatever mode the call asks for. A consult call to a bypass persona no longer brings Codex's approval cards back. An inherit persona takes the call's mode in either direction, bypass included, and the caller's own access when the call names none.
+
+### Fixed
+
+- Claude's task notices no longer reopen a finished turn until a stop. They show as an info row on the last reply.
+- The to-do bar now docks lists reported through todo tools, such as the built-in agent's and OpenCode's.
+- Claude's Fast toggle no longer blinks out while an ultracode rebuild replays, and menu highlights no longer flash on open.
+- Info notices are stored so that Acpira 1.10.6 engines, such as an IntelliJ sidecar sharing `~/.acpira`, can still open the session.
+
 ## [1.10.6] - 2026-10-18
 
 ### Added
