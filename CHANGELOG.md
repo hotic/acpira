@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Claude's task notices no longer reopen a finished turn until a stop. They show as an info row on the last reply.
 - The to-do bar now docks lists reported through todo tools, such as the built-in agent's and OpenCode's.
 - Claude's Fast toggle no longer blinks out while an ultracode rebuild replays, and menu highlights no longer flash on open.
+- A summoned round that asked for consult or work is no longer sent when the agent's CLI cannot leave its full-access mode. The caller gets an error naming why instead.
 - Info notices are stored so that Acpira 1.10.6 engines, such as an IntelliJ sidecar sharing `~/.acpira`, can still open the session.
 
 ## [1.10.6] - 2026-10-18
