@@ -47,3 +47,21 @@ pnpm exec tsx scripts/eval/review/bench.ts materialize <target> <dir>
 pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/run.ts --config claude-opus,devin-opus-luna,acpira-orch [--task …] [--reps N] [--out DIR] [--dry]
 pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/report.ts DIR [--by-task]
 ```
+
+## Evolve loop
+
+`evolve.ts` tunes the strategy file the review bench reads (`--policy`, schema in `policy.ts`): the handoff pack's recipe (`functionContext`, `fullTextLines`, `refs`, `refsMax`, `maxBytes`) and the reviewer's standing brief. `readPaths` and the scout and executor briefs are left out, since the review bench exercises none of them.
+
+- A round starts with a proposer. It reads `schema.json`, `defaults.json`, `incumbent.json`, `ledger.md` and `analysis.md` (the bugs the last evaluation missed, with the reviews that missed them) in `DIR/round-N/brief`, and answers with one JSON block holding a hypothesis and a policy. The proposer is Claude Code on its Max login (`opus` at high) in a session of the loop's own sidecar home `DIR/proposer/acpira`, where every permission card is rejected so it only reads; `pnpm harness --home DIR/proposer/acpira` shows those sessions. `--proposer stub` takes the next change of a fixed list instead.
+- Validation refuses unknown keys, wrong types, values out of range, and a candidate equal to the incumbent or to one tried before. Such a round is recorded as invalid.
+- The candidate and the incumbent then run on the dev set as two review bench processes started together, with the same reviewers, variant and reps.
+- The rule compares bugs found. The noise is the flip rate between reruns under one policy (the review A/B's reruns via `--noise-from` while the incumbent is the shipped default, and the incumbent's own evaluations in earlier rounds) times the bugs evaluated. A candidate that finds more than the noise and at least one more bug is accepted, one that finds fewer beyond the noise is rejected, and one within the noise is accepted only when it finds at least as many and its median wall time is at most 90% of the incumbent's. More failed runs than the incumbent rejects it.
+- The loop stops at `--rounds`, `--hours`, `--max-rejects` rounds in a row without an acceptance, or when Claude's weekly quota is under `--quota-floor` (read before each round in which Claude proposes or reviews). Every round goes to `DIR/ledger.ndjson`, and a rerun with the same `DIR` resumes, an interrupted round keeping its saved proposal.
+- The wrap-up runs the incumbent against the shipped defaults on the held-out set and writes `output/evolve/<stamp>/report.md` and `defaults.patch` (`Recipe::default`, `REVIEWER_BRIEF`, `DUTY_BRIEFS.reviewer` and `test/fixtures/duty-presets.json`). The patch is applied by hand once approved. `--final-only` reruns just the wrap-up.
+- Dry run, checked 2026-10-21: two stub rounds with fake reviewers on the dev set (16 runs a side, both rejected within the noise), then `--final-only` with a forced incumbent (8 held-out runs a side, the report, and a patch that `git apply --check` accepts). A separate check applied such a patch to copies of the four files and read the brief back from the TypeScript module, the JSON fixture and the Rust literal.
+
+```
+pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/evolve.ts --out DIR [--rounds 2] [--hours 10] [--max-rejects 3]
+  [--reviewers astra] [--variant B] [--reps 1] [--parallel 4] [--proposer claude|stub] [--noise-from DIR]
+  [--quota-floor 0.25] [--no-final | --final-only] [--dry]
+```
