@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { MODELS } from './harnesses';
+import { join } from 'node:path';
+import { cost } from './prices';
 
 // Aggregates run.ts results: per model × harness the pass rate, the share of hidden tests passed, what the runs cost at
 // catalogue prices (failed runs included, so cost per pass charges the failures too), requests, cache hit and stops.
@@ -15,24 +15,6 @@ interface Result {
   input: number; cacheRead: number; cacheWrite: number; output: number; reasoning: number;
   // The harness reached its own backend, so no call went through the meter: tokens and cost are unknown
   unmetered?: boolean;
-}
-
-interface Price { input: number; output: number; cacheRead?: number; cacheWrite?: number }
-
-const catalog = JSON.parse(readFileSync(resolve(import.meta.dirname, '../../rust/crates/acpira-shared/assets/model-catalog.json'), 'utf8')) as { models: { id: string; cost?: Price }[] };
-
-function price(model: string): Price {
-  const id = MODELS[model]?.catalog ?? model;
-  const p = MODELS[model]?.price ?? catalog.models.find(m => m.id === id)?.cost;
-  if (!p) throw new Error(`no catalogue price for ${id}`);
-  return p;
-}
-
-// USD: uncached input, cache reads and writes, output (reasoning is part of output on every wire read here)
-export function cost(r: Pick<Result, 'model' | 'input' | 'cacheRead' | 'cacheWrite' | 'output'>): number {
-  const p = price(r.model);
-  const uncached = Math.max(0, r.input - r.cacheRead - r.cacheWrite);
-  return (uncached * p.input + r.cacheRead * (p.cacheRead ?? p.input) + r.cacheWrite * (p.cacheWrite ?? p.input) + r.output * p.output) / 1e6;
 }
 
 const dirs = process.argv.slice(2).filter(a => !a.startsWith('--'));

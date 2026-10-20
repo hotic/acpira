@@ -1,0 +1,13 @@
+diff --git a/rust/crates/acpira-host/src/handoff.rs b/rust/crates/acpira-host/src/handoff.rs
+index 007141f..16bcf7f 100644
+--- a/rust/crates/acpira-host/src/handoff.rs
++++ b/rust/crates/acpira-host/src/handoff.rs
+@@ -89,7 +89,7 @@ const STAT_ONLY: [&str; 11] = [
+ /// What goes into a pack and how big it may get: the strategy the evaluation compares and tunes. Every field has a
+ /// default, so a recipe file names only what it changes
+ #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+-#[serde(rename_all = "camelCase", default)]
++#[serde(default)]
+ pub struct Recipe {
+   /// Widen each hunk to its whole function (`git diff -W`); false = plain three-line hunks from the start
+   pub function_context: bool,

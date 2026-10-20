@@ -1,11 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { AgentTurn, PermissionBlock, QuestionBlock, SessionView } from '@shared/transcript';
 import { Host } from '../lib/host';
 import { HARNESSES, type HarnessSetup, MODELS } from './harnesses';
-import { type Call, startMeter } from './meter';
+import { deepseekKey, gatewayKey } from './keys';
+import { type Call, OUTAGE, startMeter } from './meter';
 
 // Harness comparison on long tasks (docs/dev/builtin-agent.md, "Harness comparison"). Spends real model calls.
 //
@@ -18,31 +18,11 @@ import { type Call, startMeter } from './meter';
 // ACPIRA_SIDECAR_BIN pins the engine under test (otherwise the workspace's debug build, rebuilt before every run)
 
 const TASKS_DIR = resolve(import.meta.dirname, 'tasks');
-// The gateway itself out of capacity (seen 2026-10-11 on every model in turn): a run that failed with one of these says
-// nothing about the harness, so it goes to infra.ndjson instead and is run again on the next launch
-// "The usage limit has been reached": the gateway's GPT route out of quota mid-run (2026-10-18), on both builds at once
-const OUTAGE = /no eligible upstream channel|no route configured for model|rate limited or quota exhausted|usage limit has been reached/;
 const VERIFY_TIMEOUT_MS = 300_000;
 
 function arg(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
   return i > 0 ? process.argv[i + 1] : fallback;
-}
-
-// The gateway key, read where Codex keeps it; never printed or written to a run's files
-function gatewayKey(): string {
-  if (process.env.EVAL_GW_KEY) return process.env.EVAL_GW_KEY;
-  const toml = readFileSync(join(homedir(), '.codex/config.toml'), 'utf8');
-  const section = toml.split(/^\[/m).find(s => s.startsWith('model_providers.asgard]'));
-  const m = section && /experimental_bearer_token\s*=\s*"([^"]+)"/.exec(section);
-  if (!m) throw new Error('no gateway key (EVAL_GW_KEY or ~/.codex/config.toml model_providers.asgard)');
-  return m[1]!;
-}
-
-// DeepSeek's own key, only when a model goes there: EVAL_DS_KEY, or the file EVAL_DS_KEY_FILE names; never printed
-function deepseekKey(): string | undefined {
-  if (process.env.EVAL_DS_KEY) return process.env.EVAL_DS_KEY;
-  return process.env.EVAL_DS_KEY_FILE ? readFileSync(process.env.EVAL_DS_KEY_FILE, 'utf8').trim() : undefined;
 }
 
 interface Task { id: string; kind: string; prompt: string; verify: string; timeoutMin: number }

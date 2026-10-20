@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { AgentId } from '@shared/transcript';
@@ -33,6 +33,10 @@ export const MODELS: Record<string, ModelSpec> = {
   // stream at a tool call with empty input (docs/dev/builtin-agent.md, real providers)
   'claude-sonnet-5.5': { id: 'claude-sonnet-5-5', api: 'anthropic', catalog: 'claude-sonnet-5-5', context: 200_000, output: 32_000 },
   'gpt-6.1-sol': { id: 'gpt-6.1-sol', api: 'responses', catalog: 'gpt-6.1-sol', context: 400_000, output: 32_000 },
+  // The review bench's reviewer and the Fusion pairs' other halves (all listed by the gateway's /v1/models on 2026-10-21)
+  'gpt-6-astra': { id: 'gpt-6-astra', api: 'responses', catalog: 'gpt-6-astra', context: 1_050_000, output: 128_000 },
+  'gpt-6-luna': { id: 'gpt-6-luna', api: 'responses', catalog: 'gpt-6-luna', context: 1_050_000, output: 128_000 },
+  'claude-opus-5.5': { id: 'claude-opus-5-5', api: 'anthropic', catalog: 'claude-opus-5-5', context: 1_000_000, output: 128_000 },
   // Served through Antigravity on the gateway; its Chat answers carry reasoning_content, its Responses answers no
   // encrypted reasoning (2026-10-11)
   'gemini-3.8-flash': { id: 'gemini-3.8-flash', api: 'chat', catalog: 'gemini-3.8-flash', context: 1_048_576, output: 65_536 },
@@ -61,6 +65,8 @@ export interface HarnessCtx {
   home: string;
   // The sidecar's data root (where the built-in agent reads providers.json)
   acpiraHome: string;
+  // A reasoning effort other than the harness's default, where its config sets one (Codex)
+  effort?: string;
 }
 
 export interface HarnessSetup {
@@ -70,12 +76,21 @@ export interface HarnessSetup {
   cli?: { cmd: string[]; env: Record<string, string> };
   // The agent talks to its own backend, so the metering proxy sees none of its calls
   unmetered?: boolean;
+  // The login the agent needs is the CLI's own, imported into the run's sidecar home through the account menu's Import
+  // before the session starts (Devin: its ACP mode ignores the CLI's credentials file)
+  importLogin?: boolean;
 }
 
 const json = (path: string, value: unknown) => {
   mkdirSync(join(path, '..'), { recursive: true });
   writeFileSync(path, JSON.stringify(value, null, 2) + '\n');
 };
+
+// The macOS keychain as the run's HOME sees it: CLIs that keep their login there find it through HOME
+function linkKeychain(home: string) {
+  mkdirSync(join(home, 'Library'), { recursive: true });
+  if (!existsSync(join(home, 'Library/Keychains'))) symlinkSync(join(homedir(), 'Library/Keychains'), join(home, 'Library/Keychains'));
+}
 
 const FORMATS: Record<Api, string> = { chat: 'openai-chat', responses: 'openai-responses', anthropic: 'anthropic' };
 
@@ -167,12 +182,14 @@ export const HARNESSES: Record<string, (c: HarnessCtx) => HarnessSetup> = {
     return { agent: 'kimi', env: {} };
   },
 
-  codex({ model, base, home }) {
+  // Codex on the gateway. On this machine Codex's own login is this same gateway (a custom provider in ~/.codex), so
+  // this metered harness also stands for "Codex on its own login"
+  codex({ model, base, home, effort }) {
     mkdirSync(join(home, '.codex'), { recursive: true });
     writeFileSync(join(home, '.codex/config.toml'), [
       `model = "${model.id}"`,
       'model_provider = "evalgw"',
-      'model_reasoning_effort = "high"',
+      `model_reasoning_effort = "${effort ?? 'high'}"`,
       '',
       '[model_providers.evalgw]',
       'name = "evalgw"',
@@ -198,12 +215,38 @@ export const HARNESSES: Record<string, (c: HarnessCtx) => HarnessSetup> = {
       mkdirSync(dirname(join(home, '.gemini', f)), { recursive: true });
       cpSync(join(real, f), join(home, '.gemini', f));
     }
-    mkdirSync(join(home, 'Library'), { recursive: true });
-    symlinkSync(join(homedir(), 'Library/Keychains'), join(home, 'Library/Keychains'));
+    linkKeychain(home);
     return {
       agent: 'antigravity', env: {}, unmetered: true,
       cli: { cmd: ['agy', '--model', 'gemini-4-argon-high', '--dangerously-skip-permissions', '--output-format', 'json', '-p'], env: { BROWSER: '/usr/bin/true' } },
     };
+  },
+
+  // Claude Code on its own claude.ai (Max) login, unmetered. Claude Code keeps the OAuth token in the macOS keychain
+  // under a service name derived from its secure-storage directory, unsuffixed when no CLAUDE_CONFIG_DIR /
+  // CLAUDE_SECURESTORAGE_CONFIG_DIR is set, so the run's HOME gets the default config dir, a link to the keychain and
+  // only the onboarding and account entries of ~/.claude.json (no settings, CLAUDE.md, skills, MCP servers or
+  // projects). A token refresh writes the same keychain item the user's own CLI reads. Checked 2026-10-21 with Claude
+  // Code 2.1.299: `claude auth status` in such a HOME is logged in through claude.ai. The model comes from the
+  // persona or the harness caller (`opus`, `fable`, …), not from `model`
+  'claude-max'({ home }) {
+    linkKeychain(home);
+    const real = join(homedir(), '.claude.json');
+    const own = existsSync(real) ? JSON.parse(readFileSync(real, 'utf8')) as Record<string, unknown> : {};
+    json(join(home, '.claude.json'), {
+      hasCompletedOnboarding: true,
+      ...(own.lastOnboardingVersion ? { lastOnboardingVersion: own.lastOnboardingVersion } : {}),
+      ...(own.oauthAccount ? { oauthAccount: own.oauthAccount } : {}),
+    });
+    return { agent: 'claude', env: { CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1' }, unmetered: true };
+  },
+
+  // Devin on its own login (the user's Devin plan), unmetered: its ACP mode takes the API key only through
+  // `authenticate`, so the login is imported into the run's sidecar home (`importLogin`) and the session binds to it.
+  // The run's HOME keeps Devin's config and data apart from the user's (rules, MCP servers, sessions). Which model or
+  // Fusion pair runs is the caller's pick on the session's model select (`run.ts --pick`)
+  devin() {
+    return { agent: 'devin', env: {}, unmetered: true, importLogin: true };
   },
 
   claude({ model, base, home }) {

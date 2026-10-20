@@ -1,0 +1,399 @@
+{
+  "targets": [
+    {
+      "id": "relay-full-access",
+      "kind": "mined",
+      "intro": "440484f5c72ff777bee3e751fc468bd214176473",
+      "requirement": "fix(relay): send no round while the CLI refuses to leave full access",
+      "difficulty": "easy",
+      "bugs": [
+        {
+          "files": [
+            "rust/crates/acpira-host/src/acp/session/relay.rs"
+          ],
+          "description": "The new full-access guard only fires when the mode switch reported a failure (`mode.is_none()` / `!mode_ok` combined with `stuck_in_bypass`). When the CLI offers no mode below full access at all, `relay_mode` has nothing to switch to and reports success, so a consult or work round is still prompted while the session sits in its full-access mode, without the approvals that round asked for. The guard should check `stuck_in_bypass` on its own after every switch attempt.",
+          "fix": "a5b1d2201ce42c4b4e7eb76044fe33e6c4c7888b",
+          "keywords": [
+            "stuck_in_bypass",
+            "mode_ok",
+            "mode.is_none",
+            "no mode",
+            "full access",
+            "full-access"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "brand-glued-version",
+      "kind": "mined",
+      "intro": "e09993fb53000c72dcbf8a1f2c740ba2d963e6b4",
+      "requirement": "feat(chat): vendor marks for model families",
+      "difficulty": "medium",
+      "bugs": [
+        {
+          "files": [
+            "src/shared/models.ts"
+          ],
+          "description": "The brand rules match model family words with `\\b...\\b`, but model ids often glue the version onto the family name (`qwen3.8-27b`, `glm4.6`, `gemma3-27b`, `gpt4o-mini`). There is no word boundary between a letter and a digit, so `\\bqwen\\b` and its siblings never match those ids and they get no vendor mark.",
+          "fix": "2eea8c2072fc5f9336c8425c1933aee2e77286b4",
+          "keywords": [
+            "word boundary",
+            "\\b",
+            "digit",
+            "qwen3",
+            "glm4",
+            "gpt4o",
+            "glued"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "paste-loopback-fetch",
+      "kind": "mined",
+      "intro": "f6794a3ac5b78c98678bb02874d5023de491671f",
+      "requirement": "fix(chat): keep both images and text when a paste carries them together",
+      "difficulty": "medium",
+      "bugs": [
+        {
+          "files": [
+            "src/webview/chat/drafts.ts"
+          ],
+          "description": "Images in pasted HTML are read by fetching each `<img src>` that is any http(s) URL. The chat page's CSP allows loopback ports (for open_browser), so pasting HTML whose image points at a localhost / 127.0.0.1 / [::1] service makes the webview send a request to that local service: a request forgery triggered by pasted content. Loopback sources other than the page's own origin must not be fetched.",
+          "fix": "029f4e35a54cdc53a36a17b5bd5f34c88029331b",
+          "keywords": [
+            "loopback",
+            "localhost",
+            "127.0.0.1",
+            "local service",
+            "SSRF",
+            "request forgery",
+            "CSP"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "release-reopen-race",
+      "kind": "mined",
+      "intro": "63663c100109e271ad5263472492eacc68cc4cf1",
+      "requirement": "feat(engine): release idle background sessions' agent processes",
+      "difficulty": "hard",
+      "bugs": [
+        {
+          "files": [
+            "rust/crates/acpira-host/src/session_manager.rs"
+          ],
+          "description": "`release` disposes an idle session's agent process without waiting for it to close, and drops the session's lease at once. If the session is opened again before the old process has closed its native session and exited, `load_session` starts a new process that resumes the same native session while the old one may still be writing to it, and another engine may take the lease meanwhile. A reopen should wait for the old process's close, and the lease should be held until then.",
+          "fix": "850a55067558a63cc690b15db9923bda7836ea8e",
+          "keywords": [
+            "dispose",
+            "close",
+            "lease",
+            "reopen",
+            "race",
+            "resume",
+            "still running"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "image-path-byte-slice",
+      "kind": "mined",
+      "intro": "e6a3b6824e076dcbeaec533272c0c7148c608440",
+      "requirement": "feat(chat): show agent images inline and unify the account menus",
+      "difficulty": "easy",
+      "bugs": [
+        {
+          "files": [
+            "rust/crates/acpira-host/src/acp/transcript/normalize.rs"
+          ],
+          "description": "`markdown_image_path` checks the `file:` scheme with `src[..5]`, slicing the string by bytes. A markdown image source whose first five bytes end inside a multibyte UTF-8 character (a path starting with non-ASCII text) makes the slice panic and takes the engine down. It should use `src.get(..5)` or compare bytes.",
+          "fix": "81df7caf748eb914eda449bc84cf688bcebf5c0c",
+          "keywords": [
+            "src[..5]",
+            "byte",
+            "multibyte",
+            "char boundary",
+            "UTF-8",
+            "panic",
+            "non-ASCII"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "concurrent-select-load",
+      "kind": "mined",
+      "intro": "3294c84aa70ecc7d342f3c565e37860ee76641f9",
+      "requirement": "feat(session): give every webview its own active session",
+      "difficulty": "medium",
+      "bugs": [
+        {
+          "files": [
+            "src/host/SessionManager.ts"
+          ],
+          "description": "Selecting a stored session that is not live awaits `store.load(id)` and then creates an `AcpSession` and puts it in `live`. Two viewers selecting the same stored session at about the same time both pass the `live.get(id)` check before either load finishes, so each builds its own `AcpSession` for the same id: two agent processes start and the second replaces the first in the map. Concurrent selects of one session should share a single load.",
+          "fix": "24a4b8a889367d93986b25f57dbbd9c707e82a7f",
+          "keywords": [
+            "concurrent",
+            "two viewers",
+            "both",
+            "duplicate",
+            "race",
+            "load",
+            "live"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "store-inflight-writes",
+      "kind": "mined",
+      "intro": "a3416f93062ef998be59e123d79ef5e9238068b6",
+      "requirement": "fix(store): stop windows clobbering each other's session list",
+      "difficulty": "medium",
+      "bugs": [
+        {
+          "files": [
+            "src/host/store/TranscriptStore.ts"
+          ],
+          "description": "Record writes that have left the debounce are not tracked. Two writes of the same record can run at once and share its temp file (tmp + rename), and `syncIndex`, `trash` and `remove` can list or move the directory while a write of that record is still in flight, so a record being written is reported missing (and dropped from the list) or a write lands after its deletion. Writes per id should be chained, and those operations should wait for in-flight writes.",
+          "fix": "ebaa93573278c0cf7d0eff7624178542cfa7e21b",
+          "keywords": [
+            "in-flight",
+            "inflight",
+            "temp file",
+            "concurrent write",
+            "syncIndex",
+            "rename",
+            "race"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "plan-dock-resurrect",
+      "kind": "mined",
+      "intro": "ca9d4c7d2ead39ad191be9850537b8c98f93ea29",
+      "requirement": "feat: surface failed turns and pin the live plan above the composer",
+      "difficulty": "easy",
+      "bugs": [
+        {
+          "files": [
+            "src/webview/chat/PlanBar.tsx"
+          ],
+          "description": "The plan dock hides a fully completed to-do list only while no turn is running (`!running && done === entries.length`). As soon as a later prompt starts a new turn, `running` is true again and the previous turn's finished list reappears above the composer for the whole new turn. A finished list should stay only while its own turn is still running.",
+          "fix": "f9d55996b942e14de5e9b47470d47b83214f0d2e",
+          "keywords": [
+            "running",
+            "completed",
+            "finished",
+            "later prompt",
+            "next turn",
+            "reappear",
+            "latestPlan"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "retry-drops-attachments",
+      "kind": "mined",
+      "intro": "5c5584268cbb08d4e520d252ede6203d0cefbce9",
+      "requirement": "feat(chat): paste, drop, and @-mention file attachments",
+      "difficulty": "medium",
+      "bugs": [
+        {
+          "files": [
+            "src/host/acp/AcpSession.ts"
+          ],
+          "description": "`retryTurn` sends the last user turn again with `this.prompt(user.text)` only, so a retried turn silently loses the images and dropped files it was sent with. The attachments recorded on the user turn need to be rebuilt into drafts (their blobs read back) and sent with the retry.",
+          "fix": "4e7b52b400880e04122677fcd5922d7d4723b466",
+          "keywords": [
+            "retryTurn",
+            "retry",
+            "attachments",
+            "drafts",
+            "images",
+            "blob"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "work-index-overflow",
+      "kind": "mined",
+      "intro": "691473c99846ea387788578f19b897f1d0feb7cd",
+      "requirement": "feat(agent): add chunk compaction to the built-in agent",
+      "difficulty": "hard",
+      "bugs": [
+        {
+          "files": [
+            "rust/crates/acpira-agent/src/chunk.rs"
+          ],
+          "description": "`render_work` decides which files keep their diffs with `k + fit.diff_files >= ix.file_order.len()`, but `diff_files` is `usize::MAX` when nothing needs cutting. From the second file on (k >= 1) the addition overflows: debug builds panic and release builds wrap around, so every file after the first loses its diffs in the work index. The check should count from the end (`len - k <= diff_files`).",
+          "fix": "58985f74eabda1af2077cabd31a1deb1bcf2987f",
+          "keywords": [
+            "usize::MAX",
+            "overflow",
+            "diff_files",
+            "render_work",
+            "wrap"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "init-failure-orphan",
+      "kind": "mined",
+      "intro": "b43dcbcb8e2a2fbbcd09bc3b25f5564e131890ba",
+      "requirement": "feat(host): ACP session layer and session manager",
+      "difficulty": "medium",
+      "bugs": [
+        {
+          "files": [
+            "src/host/acp/AgentProcess.ts"
+          ],
+          "description": "`AgentProcess.spawn` awaits `initialize` with no cleanup: when the CLI answers initialize with an error (or the race with its exit rejects), the spawned child process, its stdin and the ACP connection are left running as an orphan behind the error notice. `kill()` also sends only the default signal and never escalates, so a CLI that ignores SIGTERM lingers.",
+          "fix": "c2db963fd1eb4dc4ebb75013f99f9466a01b3633",
+          "keywords": [
+            "initialize",
+            "orphan",
+            "kill",
+            "SIGKILL",
+            "child process",
+            "cleanup",
+            "leak"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "stale-tool-activity",
+      "kind": "mined",
+      "intro": "67732d1d9fe078eeb3cb99497bf555e3913f5206",
+      "requirement": "feat(chat): unframe subagent rows and keep their latest step between tools",
+      "difficulty": "medium",
+      "bugs": [
+        {
+          "files": [
+            "rust/crates/acpira-host/src/acp/transcript/normalize.rs"
+          ],
+          "description": "`live_activity` names the latest open (pending or in-progress) tool call of the turn wherever it sits. A tool call the adapter never closes keeps naming the activity after the model has moved on to later thoughts and reply text, so the subagent row and the ask_agent wait progress show a command that never ran for the rest of the turn. An open call followed by later model output should no longer count.",
+          "fix": "707440a7f9b9cc6b89e3601fd7a9a7bca547cc04",
+          "keywords": [
+            "live_activity",
+            "open tool",
+            "pending",
+            "never closed",
+            "stale",
+            "later output",
+            "pinned"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "handoff-recipe-keys",
+      "kind": "planted",
+      "intro": "c2463a61e9c727218119a950771e7b67fc67f959",
+      "requirement": "feat(handoff): build a git-only handoff pack of uncommitted changes",
+      "difficulty": "medium",
+      "plant": "plants/handoff-recipe-keys.patch",
+      "bugs": [
+        {
+          "files": [
+            "rust/crates/acpira-host/src/handoff.rs"
+          ],
+          "description": "The `Recipe` struct derives `Deserialize` with `#[serde(default)]` but without `rename_all = \"camelCase\"`, so its fields are read as snake_case (`function_context`, `full_text_lines`, `max_bytes`). A recipe file written with the camelCase keys the rest of the change uses and documents (`fullTextLines`, `refsMax`, `maxBytes`, also what `--json` prints) is silently ignored: unknown keys are dropped and every field keeps its default, so `--recipe` has no effect.",
+          "fix": "planted",
+          "keywords": [
+            "camelCase",
+            "rename_all",
+            "snake_case",
+            "serde",
+            "ignored",
+            "recipe"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "new-thread-arg",
+      "kind": "planted",
+      "intro": "9884b7ec849065e7c09fde5c1ae6be8e36dbcdac",
+      "requirement": "feat(relay): give subagent personas a duty with presets and a thread policy",
+      "difficulty": "easy",
+      "plant": "plants/new-thread-arg.patch",
+      "bugs": [
+        {
+          "files": [
+            "rust/crates/acpira-host/src/host_mcp.rs"
+          ],
+          "description": "`ask()` reads the flag as `args.get(\"newThread\")`, but the tool's input schema declares the property as `new_thread`, so a model passing `new_thread: true` is never heard and a scout or an executor always continues its idle conversation.",
+          "fix": "planted",
+          "keywords": [
+            "newThread",
+            "new_thread",
+            "schema",
+            "camelCase",
+            "never honoured"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "inherit-mode-sanitize",
+      "kind": "planted",
+      "intro": "05bbab59199c78fddf6bde8c050a70460b0f3ddc",
+      "requirement": "feat(subagents): add an inherit access mode and scope yolo to the root",
+      "difficulty": "medium",
+      "plant": "plants/inherit-mode-sanitize.patch",
+      "bugs": [
+        {
+          "files": [
+            "src/shared/subagents.ts"
+          ],
+          "description": "The TypeScript `sanitizePersonas` keeps only `work` and `bypass` besides consult and maps `inherit` to `consult`, while the Rust `sanitize_personas` and the shared fixture keep `inherit`. The settings page runs its whole list through the TS function when it adds a persona, so every inherit persona, including the new one the page creates with mode `inherit`, is rewritten as a read-only consult on the next save.",
+          "fix": "planted",
+          "keywords": [
+            "inherit",
+            "sanitizePersonas",
+            "consult",
+            "mirror",
+            "fixture",
+            "TypeScript"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "effort-field-name",
+      "kind": "planted",
+      "intro": "043c4a34a87839e32782e4787afde52307b13fe4",
+      "requirement": "feat(subagents): show reasoning effort next to a summoned child's model",
+      "difficulty": "easy",
+      "plant": "plants/effort-field-name.patch",
+      "bugs": [
+        {
+          "files": [
+            "rust/crates/acpira-shared/src/subagents.rs"
+          ],
+          "description": "`SubagentHarness.effort` is serialized under `reasoningEffort` (a serde `rename`), but the TypeScript contract (`SubagentHarness.effort` in src/shared/subagents.ts) and the webview read `effort`, so the effort never reaches the summoned row, and records written this way read back without it.",
+          "fix": "planted",
+          "keywords": [
+            "reasoningEffort",
+            "rename",
+            "effort",
+            "serde",
+            "contract",
+            "TypeScript"
+          ]
+        }
+      ]
+    }
+  ]
+}

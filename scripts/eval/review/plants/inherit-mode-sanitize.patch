@@ -1,0 +1,13 @@
+diff --git a/src/shared/subagents.ts b/src/shared/subagents.ts
+index 872eaee..c4e6b26 100644
+--- a/src/shared/subagents.ts
++++ b/src/shared/subagents.ts
+@@ -96,7 +96,7 @@ export function sanitizePersonas(value: unknown): SubagentPersona[] {
+     out.push({
+       id, name, agent,
+       model: opt(o.model, 200), effort: opt(o.effort, 200),
+-      mode: o.mode === 'work' || o.mode === 'bypass' || o.mode === 'inherit' ? o.mode : 'consult',
++      mode: o.mode === 'work' || o.mode === 'bypass' ? o.mode : 'consult',
+       when: str(o.when, TEXT_MAX),
+       brief: opt(o.brief, TEXT_MAX),
+       enabled: o.enabled !== false,

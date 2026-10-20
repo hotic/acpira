@@ -163,7 +163,7 @@ Verified 2026-10-11 (acpira 1.9.1) through an OpenAI-compatible gateway, one `op
 
 ## Harness comparison
 
-`scripts/eval/run.ts` runs five tasks (`conf-bugs` eight bug reports, `inv-lots` a feature, `log-perf` a speed fix, `semver-port` a JavaScript-to-Python port, `calc-lang` an interpreter) in a fresh home per run, through a metering proxy in front of the gateway; hidden tests are copied in only after the run. Cost is at catalogue list prices per run, averaged over the five tasks; 1 to 3 runs per cell, 2026-10-11 (acpira 1.9.1), so a single task's difference is noise and only the totals carry signal.
+`scripts/eval/run.ts` runs five tasks (`conf-bugs` eight bug reports, `inv-lots` a feature, `log-perf` a speed fix, `semver-port` a JavaScript-to-Python port, `calc-lang` an interpreter) in a fresh home per run, through a metering proxy in front of the gateway; hidden tests are copied in only after the run (the meter, the harness table and the native-login runs: `docs/dev/evals.md`). Cost is at catalogue list prices per run, averaged over the five tasks; 1 to 3 runs per cell, 2026-10-11 (acpira 1.9.1), so a single task's difference is noise and only the totals carry signal.
 
 | Model | Harness | Passed | $ / run | Requests / run |
 |---|---|---|---|---|

@@ -1,0 +1,31 @@
+# Evaluation benches
+
+Scripts under `scripts/eval/` that measure orchestration choices against real CLIs and models: the review bench (what helps a summoned reviewer find real defects), the harness and Fusion comparison (`run.ts`, coding tasks with hidden tests; its first use is in `docs/dev/builtin-agent.md`, Harness comparison), and the evolve loop that tunes the strategy file between them. Every real run spends model calls or subscription quota; `--dry` runs swap the models for `test/fake-agent.ts` and spend nothing. The rule for reading results: quality first (a difference counts only beyond the noise measured by rerunning the same cell), time second, quota and cost recorded but not optimized.
+
+## Shared pieces
+
+- `meter.ts`: the metering proxy every gateway-backed harness points at (`/r/<run>/<upstream>`); one line per model call in `calls.ndjson`, the real key set by the proxy, `OUTAGE` the gateway errors that move a run to `infra.ndjson`.
+- `harnesses.ts`: one function per harness writing the run's fresh HOME (and sidecar home). Native-login harnesses use the CLI's own login and bypass the meter: `agy`, `claude-max` (Claude Code on its claude.ai login: a keychain link and the onboarding / account entries of `~/.claude.json`, no `CLAUDE_CONFIG_DIR`, since the keychain item's name derives from the config dir; checked 2026-10-21 with Claude Code 2.1.299, `claude auth status` logged in from such a HOME), `devin` (the login imported into the run's sidecar home through the account menu's Import, since Devin's ACP mode takes its key only through `authenticate`). Codex's own login on this machine is the gateway itself (a custom provider in `~/.codex/config.toml`), so the metered `codex` harness stands for it.
+- `native.ts`: `readQuota` runs `acpira quota --json` (the quota windows of the CLIs' own logins, read the way the account view reads them with nothing imported or stored; labels dropped) and `claudeUsage` sums Claude Code's own transcript usage under the run's HOME, one count per message id. Claude's usage endpoint rate-limits hard, so quota is read per batch.
+- `prices.ts`: catalogue prices for the reports.
+
+## Review bench
+
+`scripts/eval/review/`. Does the handoff pack help a reviewer, and does a group of reviewers from three model families find more than one?
+
+- Targets come from this repository's history. `mine.ts` lists the small fix commits (at most 40 changed source lines in at most 3 source files), blames the lines each removed in its parent (the anchor line for a pure insertion) and names the commit that last wrote them (`output/review-bench/candidates.json`; on 2026-10-21: 291 fix commits, 148 small enough and blamed back, 91 of them onto a change under 900 source lines). Kept by hand were defects visible from the introducing change's own code and docs: not ones that need a real CLI's wire behaviour, a later requirement, or runtime timing, and not blame that lands on a refactor or on an insertion's anchor line. Planted targets are real commits with a defect patched on top, each breaking a contract across files (a serde key, a wire argument, a TypeScript mirror).
+- 24 targets, 18 mined and 6 planted, split by a seeded hash within each kind with a third held out (`bench.ts split`): the dev set (12 mined, 4 planted) is `targets.json` with `plants/`; the holdout set (6 mined, 2 planted) and its plants live in the git-ignored `output/review-bench/holdout/`, out of the evolve loop's reach. Each bug carries the files it lives in, a description written from the fix, and keywords for the stub judge.
+- A target's work tree (`bench.ts materialize <id> <dir>`): `git archive` of the introducing commit's parent as the only commit of a new repository, then that commit's diff applied uncommitted (new files intent-to-add) and the plant on top, so no later history gives the fix away.
+- A run (`run.ts`): the fake agent is the lead and calls `ask_agent` through the session's own `acpira` MCP server, the same path a model's call takes; the delivery comes back as the automatic message. Reviewers are personas with the reviewer duty, consult mode and the reviewer brief: `astra` (Codex, GPT-6 Astra, xhigh, metered), `argon` (the built-in agent, Gemini 4 Argon, high, metered), `opus` (Claude Code, `opus` at xhigh on its own Max login, unmetered). Several reviewers joined by `+` are one group summon. Every permission card is allowed once and questions are skipped. The request is the same in every variant: where the change is and the original requirement (the commit subject), never the author's account of it.
+- Variants: A the request alone, B with the handoff pack (`changes`, the policy's recipe in the run's `handoff.json`), C the pack with the uses of changed definitions (`refs`).
+- Scoring (`judge.ts`): a fixed judge from a family no reviewer belongs to, `deepseek-v4-pro` on the gateway at temperature 0, lists the review's findings and matches each to a known defect or to none. A match that cites a file outside the defect's files does not count. Per run: bugs found, findings that match none (real or not, they are not graded), tools and their kinds, wall time, tokens and cost per reviewer. The evolve loop never changes the judge.
+- Outputs under `--out`: `results.ndjson` (one line per run, resumable), `calls.ndjson`, `quota.ndjson`, and per run the reviews, verdicts, node transcripts and the root session. `report.ts DIR [--by-target]` prints the cells, the flip rate between reruns of one cell, and every pair of cells compared target by target.
+- Dry run: `--dry` makes each reviewer the fake agent answering with a canned review that names the target's bugs (the fake agent's `review=<path>`), judged by the keyword stub. Checked 2026-10-21: all 24 targets materialize, run and score.
+
+```
+pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/review/run.ts --reviewers astra[,astra+argon+opus] [--variant A,B,C]
+  [--set dev|holdout] [--target id,…] [--reps N] [--parallel N] [--judge stub|MODEL] [--policy FILE] [--out DIR] [--dry]
+pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/review/report.ts DIR [--by-target]
+pnpm exec tsx scripts/eval/review/mine.ts          # candidates, spends nothing
+pnpm exec tsx scripts/eval/review/bench.ts materialize <target> <dir>
+```

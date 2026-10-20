@@ -1,0 +1,13 @@
+diff --git a/rust/crates/acpira-host/src/host_mcp.rs b/rust/crates/acpira-host/src/host_mcp.rs
+index 6abcdb3..939bf5b 100644
+--- a/rust/crates/acpira-host/src/host_mcp.rs
++++ b/rust/crates/acpira-host/src/host_mcp.rs
+@@ -394,7 +394,7 @@ impl Relay {
+       title: text("title"),
+       mode: text("mode"),
+       thread: text("thread"),
+-      new_thread: args.get("new_thread").and_then(Value::as_bool),
++      new_thread: args.get("newThread").and_then(Value::as_bool),
+       wait_secs: Some(self.wait_secs.load(std::sync::atomic::Ordering::Relaxed)),
+       wait: args.get("wait").and_then(Value::as_bool),
+       answers: args.get("answers").and_then(Value::as_array).map(|l| l.iter().filter_map(|a| a.as_str().map(str::to_owned)).collect()),

@@ -625,7 +625,8 @@ const app = acp.agent({ name: 'fake-agent' })
     // the first line it was given, the round count of this native session (so rounds of one thread can be told apart) and
     // the session's mode. "relay:perm" asks to write first; "relay:slow" takes a while (a call's deadline runs out before
     // the reply); "write=<path>" writes a file without asking, "edit=<path>" through an edit row, "run=<path>" from a
-    // command row; "relay:fail" errors instead of replying (after the slow wait when both are named); "relay:exit" exits after it
+    // command row; "review=<path>" replies with that file's text; "relay:fail" errors instead of replying (after the slow
+    // wait when both are named); "relay:exit" exits after it
     // "relay-call:<prompt>" → the parent side: an ask_agent call on Acpira's MCP server, as claude-agent-acp names it, left
     // running (the test plays the hub's side afterwards); "relay-call-failed:<prompt>" → the same call ending without a
     // round (the hub refused it), then a retry ak2 with the same arguments
@@ -671,6 +672,15 @@ const app = acp.agent({ name: 'fake-agent' })
       const round = (relayRounds.get(sid) ?? 0) + 1;
       relayRounds.set(sid, round);
       await send({ sessionUpdate: 'tool_call', toolCallId: `rr${round}`, title: 'Read file', kind: 'read', status: 'completed', locations: [{ path: '/tmp/a.ts' }] });
+      // "review=<path>" → that file's text is the reply (the review bench's dry run), with the prompt's block types after
+      // it, so a run can tell whether a handoff pack arrived and how it was staged. Checked before the other words, which
+      // the path may contain
+      const review = /review=(\S+)/.exec(first);
+      if (review) {
+        const blocks = params.prompt.map(p => p.type).join(',');
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `${readFileSync(review[1]!, 'utf8').trim()}\n\n(prompt blocks: ${blocks})` } });
+        return { stopReason: 'end_turn' };
+      }
       if (first.includes('perm')) {
         await send({ sessionUpdate: 'tool_call', toolCallId: `rw${round}`, title: 'Edit a.ts', kind: 'edit', status: 'pending' });
         const perm = await client.request(acp.methods.client.session.requestPermission, {
