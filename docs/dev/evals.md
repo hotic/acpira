@@ -75,10 +75,40 @@ pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/report.ts DIR [--by-tas
 - The rule compares bugs found. The noise is the flip rate between reruns under one policy (the review A/B's reruns via `--noise-from` while the incumbent is the shipped default, and the incumbent's own evaluations in earlier rounds) times the bugs evaluated. A candidate that finds more than the noise and at least one more bug is accepted, one that finds fewer beyond the noise is rejected, and one within the noise is accepted only when it finds at least as many and its median wall time is at most 90% of the incumbent's. Such a win on time alone is checked by evaluating both sides once more (`round-N/confirm`) and deciding again on the two evaluations pooled, since one evaluation's median varies about as much as the 10% asked (Results below). More failed runs than the incumbent rejects it.
 - The loop stops at `--rounds`, `--hours`, `--max-rejects` rounds in a row without an acceptance, or when Claude's weekly quota is under `--quota-floor` (read before each round in which Claude proposes or reviews). Every round goes to `DIR/ledger.ndjson`, and a rerun with the same `DIR` resumes, an interrupted round keeping its saved proposal.
 - The wrap-up runs the incumbent against the shipped defaults on the held-out set and writes `output/evolve/<stamp>/report.md` and `defaults.patch` (`Recipe::default`, `REVIEWER_BRIEF`, `DUTY_BRIEFS.reviewer` and `test/fixtures/duty-presets.json`). The patch is applied by hand once approved. `--final-only` reruns just the wrap-up.
-- Dry run, checked 2026-10-21: two stub rounds with fake reviewers on the dev set (16 runs a side, both rejected within the noise), then `--final-only` with a forced incumbent (8 held-out runs a side, the report, and a patch that `git apply --check` accepts). A separate check applied such a patch to copies of the four files and read the brief back from the TypeScript module, the JSON fixture and the Rust literal.
+- Dry run, checked 2026-10-21: two stub rounds with fake reviewers on the dev set (16 runs a side, both rejected within the noise), then `--final-only` with a forced incumbent (8 held-out runs a side, the report, and a patch that `git apply --check` accepts). A separate check applied such a patch to copies of the four files and read the brief back from the TypeScript module, the JSON fixture and the Rust literal. The confirmation of a win on time ran in a dry round with the bar loosened to equal medians for the check: both sides evaluated twice and decided on 32 pooled runs.
 
 ```
 pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/evolve.ts --out DIR [--rounds 2] [--hours 10] [--max-rejects 3]
   [--reviewers astra] [--variant B] [--reps 1] [--parallel 4] [--proposer claude|stub] [--noise-from DIR]
   [--quota-floor 0.25] [--no-final | --final-only] [--dry]
 ```
+
+### Results, 2026-10-21
+
+Engine pinned at ebf8ebb3.
+- Cell `astra` B: Codex 0.162.1 with GPT-6 Astra at xhigh, given the handoff pack. Each round ran one run a target per side on the dev set, three at a time.
+- Proposer: Claude Code 2.1.299 on its Max login (`opus` at high). Judge: `deepseek-v4-pro`.
+- A first start was stopped when the place check turned out to refuse found bugs (the review A/B's rescore), and the loop restarted on the corrected targets.
+- It ran five rounds and stopped at three rejections in a row.
+- Medians are as the loop recorded them, the upper middle run, before 68936a7b. Each pair is incumbent / candidate.
+
+| round | candidate | decision | bugs of 16 | median s | findings matching no known bug |
+|---|---|---|---|---|---|
+| 1 | a larger pack (`refs` up to 150, 800 lines whole, 160 KB) and a long method brief | rejected, slower | 15 / 15 | 150 / 328 | 35 / 98 |
+| 2 | `refs` up to 100, 1500 lines whole, 200 KB; a short brief: review from the pack first, no build or tests when dependencies are missing, two questions (callers, stale state) | accepted, as many and faster | 15 / 15 | 172 / 138 | 30 / 59 |
+| 3 | round 2's brief, plus every kind of later event that should end retained state, and keep looking after one finding | rejected, slower | 15 / 15 | 163 / 252 | 58 / 165 |
+| 4 | up to 4000 lines whole, 320 KB, `refs` up to 150; recheck unchanged helpers in their new use, one pass | rejected, short of 10% by under a second | 15 / 15 | 172 / 155 | 56 / 56 |
+| 5 | round 2's pack; break every selection rule the change adds, and assume outside inputs arrive incomplete | rejected, slower | 15 / 15 | 160 / 178 | 54 / 60 |
+
+On the held-out set, round 2's policy ran against the shipped defaults, one run per target. Both found the same 4 of the 8 bugs. The final policy was faster: 204 s by median against 224 (221 against 247 by the upper middle run, as the report shows). It cost $18.57 against $22.23, and it reported 41 findings that match no known bug against 30.
+
+The loop spent $308 at list price on the dev set and $41 on the held-out set, all of it Astra on the gateway, plus the proposer's share of Claude's quota.
+
+- Every evaluation of every policy found the same 15 of the dev set's 16 bugs. Only `stale-tool-activity` was missed. From round 3 on, the proposer built each candidate around that one bug (its function, its file's length), although the brief asks it not to tailor the policy to the bugs listed.
+- The one acceptance was a time win inside one policy's own spread. Round 2's policy measured 138 s by median as the candidate, then 163, 172 and 160 s as the incumbent of rounds 3 to 5. The shipped defaults measured 150 and 172. Since 68936a7b, a win on time alone is confirmed with a second evaluation.
+- Decision: the shipped defaults stay, and `defaults.patch` is not applied.
+  - Neither set shows a gain in bugs found.
+  - The difference in time is inside the spread.
+  - The final policy reports a third more findings that match no known bug, up to twice as many on the dev set.
+  - Its brief describes the pack as present, but reviewer personas send none by default (Review bench results).
+  - Its brief also skips builds and tests when dependencies are missing, which in the bench's work trees they always are.
