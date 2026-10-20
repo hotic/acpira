@@ -9,7 +9,7 @@ import { CONFIGS, type Config, setupHelpers } from './configs';
 import { HARNESSES, type HarnessSetup, MODELS } from './harnesses';
 import { deepseekKey, gatewayKey } from './keys';
 import { type Call, OUTAGE, startMeter } from './meter';
-import { claudeUsage, quotaSpent, readQuota } from './native';
+import { type QuotaSnap, claudeUsage, quotaSpent, readQuota } from './native';
 import { cost } from './prices';
 
 // Harness comparison on long tasks (docs/dev/builtin-agent.md, "Harness comparison") and the Fusion comparison
@@ -18,7 +18,7 @@ import { cost } from './prices';
 //   pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/run.ts --model glm-5.3 --harness acpira,opencode,pi
 //     [--task calc-lang,conf-bugs] [--reps 1] [--out DIR] [--timeout-min N] [--dump]
 //   pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/run.ts --config claude-opus,devin-opus-luna,acpira-orch
-//     [--task …] [--reps 1] [--out DIR] [--timeout-min N] [--dry]
+//     [--task …] [--reps 1] [--out DIR] [--timeout-min N] [--quota-floor claude.weekly=0.25,…] [--dry]
 //
 // Each run: a fresh copy of the task's repo (git initialised), a fresh HOME and sidecar home, the harness pointed at the
 // metering proxy (or at its own login), one prompt through the real sidecar with every permission card allowed (the
@@ -200,6 +200,24 @@ function approve(view: View) {
   return { counts: n, stop: () => clearInterval(timer) };
 }
 
+// --quota-floor agent.window=fraction,…: no run starts on a native login whose window has less left (the matrix stops
+// there and resumes later), so a configuration cannot use up the quota the user's own work needs
+const FLOORS = (arg('quota-floor') ?? '').split(',').filter(Boolean).map(f => {
+  const m = /^(\w+)\.(\w+)=([\d.]+)$/.exec(f);
+  if (!m) throw new Error(`--quota-floor ${f}: expected agent.window=fraction`);
+  return { agent: m[1]!, window: m[2]!, min: Number(m[3]) };
+});
+
+class FloorReached extends Error {}
+
+function belowFloor(q: QuotaSnap): string | undefined {
+  for (const f of FLOORS) {
+    const w = q.agents[f.agent]?.windows.find(x => x.id === f.window);
+    if (w && w.remaining < f.min) return `${f.agent} ${f.window} has ${Math.round(w.remaining * 100)}% left, under the floor of ${Math.round(f.min * 100)}%`;
+  }
+  return undefined;
+}
+
 const scrub = (setup: HarnessSetup) => {
   for (const f of setup.scrub ?? []) rmSync(f, { force: true });
 };
@@ -346,6 +364,8 @@ async function runOne(o: { task: Task; cell: Cell; rep: number; root: string; me
   const agents = DRY ? Object.fromEntries([setup.agent, ...(cell.config?.helpers ?? []).map(h => h.agent)].map(id => [id, { name: `Fake ${id}`, command: process.execPath, args: [FAKE] }])) : undefined;
   const natives = DRY ? [] : nativeAgents(setup);
   const quotaBefore = natives.length ? readQuota(natives) : undefined;
+  const low = quotaBefore && belowFloor(quotaBefore);
+  if (low) throw new FloorReached(`${runId} not started: ${low}`);
   const started = Date.now();
   const prompt = DRY ? dryPrompt(cell) : o.task.prompt;
   const env = taskEnv(o.task);
@@ -444,6 +464,9 @@ async function main() {
         }
       }
     }
+  } catch (e) {
+    if (!(e instanceof FloorReached)) throw e;
+    console.log(`stopped at the quota floor: ${e.message}`);
   } finally {
     await meter.stop();
   }
