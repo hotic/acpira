@@ -715,12 +715,15 @@ const SIDEKICK_CATEGORY: &str = "_sidekick";
 const NO_SIDEKICK: &str = "none";
 
 /// The sidekick's line in ask_agent: Fusion's split of the work, where the lead plans, decides and checks while the
-/// sidekick does the well-specified parts, handed over early
-const SIDEKICK_WHEN: &str = "Your sidekick, the second model picked for this session. Hand it well-specified work early \
-instead of doing it yourself: edits you can describe precisely (across files, repetitive, boilerplate), scouting that does \
-not decide the plan (where something lives, what a log says), running and fixing tests. Brief it with the goal, the \
-constraints and what done means; keep the plan and the decisions yourself, check its diff before building on it, and when \
-it falls short say so in the same thread.";
+/// sidekick does the well-specified parts. The Fusion bench (docs/dev/evals.md, 2026-10-21) showed the lead waiting on
+/// steps it would have finished sooner itself, while a second look at its finished change caught real defects
+const SIDEKICK_WHEN: &str = "Your sidekick, the second model picked for this session. It works at its own pace, often \
+slower than you, so hand it work that runs while you do something else: edits you can describe precisely (across files, \
+repetitive, boilerplate), scouting that does not decide the plan (where something lives, what a log says), or a second look \
+at your finished change against the requirements, which catches what you missed. A step you would finish sooner yourself, \
+such as a handful of tests, is faster done than handed over and waited for. Brief it with the goal, the constraints and \
+what done means; keep the plan and the decisions yourself, check its diff before building on it, and when it falls short \
+say so in the same thread.";
 
 impl AcpSession {
   /// The sidekick this session's built-in agent has picked (its `sidekick` select, picks in flight and a reopened
