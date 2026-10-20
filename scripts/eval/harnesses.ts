@@ -47,7 +47,8 @@ export const MODELS: Record<string, ModelSpec> = {
     id: 'antigravity/gemini-4-argon', api: 'responses', catalog: 'gemini-4-argon', context: 1_048_576, output: 32_768,
     price: { input: 2, output: 10, cacheRead: 0.1 },
   },
-  // Devin's SWE model; not in the catalogue, so priced as Kimi K3. The gateway reports no cache reads for it
+  // Devin's SWE model; not in the catalogue, so priced as Kimi K3, a rough figure: on 2026-10-21 the gateway reported
+  // cache reads on most of its calls (55% of the input) but under 1k input tokens on a fifth of them
   'swe-2': { id: 'swe-2', api: 'responses', catalog: 'kimi-k3', context: 262_144, output: 32_000 },
   // V4.1 Flash on the gateway (2026-10-18), for when there is no DeepSeek key; its cache numbers are unchecked
   'deepseek-v4.1-flash': { id: 'deepseek-v4.1-flash', api: 'chat', catalog: 'deepseek-flash', context: 1_000_000, output: 32_000 },
