@@ -1,0 +1,10 @@
+{
+  "id": "agent-gaps",
+  "kind": "bug hunt in this repository (Rust)",
+  "base": "58aff9c0^",
+  "hidden": { "rev": "58aff9c0", "paths": ["rust/crates/acpira-agent/tests"] },
+  "prompt": "ISSUES.md lists open bug reports against Acpira's built-in agent, the Rust crate in rust/crates/acpira-agent. Fix every issue without breaking anything else, and add a regression test for each under rust/crates/acpira-agent/tests/. Keep the crate's public API working as its existing tests use it. The crate's tests run with `cd rust && cargo test -p acpira-agent`; the TypeScript side and the other crates are not part of this task. Work autonomously until all of them are fixed; do not ask questions.",
+  "verify": "bash \"$EVAL_DIR/rust-tests.sh\" acpira-agent",
+  "timeoutMin": 45,
+  "env": { "RUSTUP_HOME": "~/.rustup", "CARGO_HOME": "~/.cargo" }
+}
