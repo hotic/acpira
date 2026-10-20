@@ -8,4 +8,5 @@ pub mod keychain;
 pub mod local;
 pub mod provider;
 pub mod quota_cache;
+pub mod quota_cli;
 pub mod switch;

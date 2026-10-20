@@ -13,6 +13,7 @@
 //!   acpira handoff-pack --cwd DIR [--base REV] [--recipe FILE] [--json]
 //!                                                the handoff pack of a work tree (diff with whole functions, small files,
 //!                                                optional references), as a summoned agent would get it
+//!   acpira quota [--json] [codex|claude|devin…]  the quota windows of each CLI's own login, read without storing anything
 //!   acpira install-agent <id> [--force] [--archive FILE]
 //!                                                download (or take FILE), verify and unpack an agent shipped as a native archive
 //!   acpira --version
@@ -67,6 +68,9 @@ fn main() {
     }
     if args.first().map(String::as_str) == Some("handoff-pack") {
       return acpira_host::handoff::cli(&args[1..]).await;
+    }
+    if args.first().map(String::as_str) == Some("quota") {
+      return acpira_host::accounts::quota_cli::cli(&args[1..]).await;
     }
     let explicit_home = flag(&args, "--home").filter(|h| !h.is_empty()).map(|h| absolute(&PathBuf::from(h)));
     let exe = std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned());
