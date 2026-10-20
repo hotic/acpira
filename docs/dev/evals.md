@@ -65,6 +65,67 @@ pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/run.ts --config claude-
 pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/report.ts DIR [--by-task]
 ```
 
+### Results, 2026-10-21
+
+The matrix ran on an engine pinned at ebf8ebb3 (Acpira 1.10.7), and the guidance check on f8fcbfd0's tree. CLIs: Claude Code 2.1.299 with claude-agent-acp 0.93.0, Codex 0.162.1 with codex-acp 2.2.2, and Devin 3000.11.92. Every cell ran twice.
+
+Two kinds of runs were run again:
+
+- A run that failed with a gateway outage in its own calls. From f49ab3c6 the SWE-2 route's 502 counts as an outage, and the rule was applied after the fact to the earlier runs. That covered three runs, and one of them had failed for its own reason: a guidance-check `semver-port` that returned floats.
+- A Devin run whose session came up without its Fusion pair (7ade1a09).
+
+Median wall minutes per task:
+
+| configuration | passed | conf-bugs | calc-lang | inv-lots | log-perf | semver-port | agent-gaps | steering | $ / run |
+|---|---|---|---|---|---|---|---|---|---|
+| codex-astra | 12/14 | 1.4 | 6.5 | 2.7 | 2.4 | 6.8 (2 failed) | 7.6 | 9.4 | 1.78 |
+| acpira-astra | 13/14 | 1.3 | 5.0 | 2.5 | 2.3 | 5.8 (1 failed) | 6.0 | 6.7 | 1.49 |
+| acpira-astra-swe | 14/14 | 4.2 | 18.7 | 2.8 | 6.7 | 25.0 | 20.1 | 33.3 | 3.83 |
+| acpira-astra-swe, f8fcbfd0 guidance | 14/14 | 1.2 | 12.4 | 5.1 | 4.9 | 17.7 | 25.9 | 31.1 | 3.46 |
+| devin-astra-swe | 13/14 | 2.0 | 8.7 (1 failed) | 3.5 | 3.5 | 8.9 | 16.8 | 22.2 | quota |
+| claude-opus | 14/14 | 1.2 | 3.4 | 1.9 | 1.4 | 11.6 | 9.3 | 9.1 | 1.33 |
+| acpira-orch | 14/14 | 1.0 | 18.9 | 2.0 | 1.2 | 23.6 | 6.5 | 8.0 | 1.64 |
+| acpira-opus-luna | 14/14 | 0.9 | 3.2 | 1.3 | 0.8 | 5.7 | 7.2 | 7.3 | 0.87 |
+| devin-opus-luna | 14/14 | 1.9 | 10.9 | 4.2 | 3.1 | 11.4 | 14.3 | 14.0 | quota |
+
+Dollars are at list price:
+- Claude Code on its Max login is priced from its transcripts, though it is paid from the plan (0.3 points of the 5-hour window a run).
+- SWE-2 has no list price and is priced as Kimi K3.
+- Devin reports no tokens, so its runs show only the quota they used.
+
+- Every configuration is at the quality ceiling, and every failure is the model's own:
+  - `semver-port` returning version numbers as floats, copying JavaScript's number type. Astra does this in about 4 of 10 runs across the harnesses: Codex 2 of 2, the built-in agent alone 1 of 2, with SWE-2 1 of 4, Devin 0 of 2.
+  - One Devin `calc-lang` whose error message lacks the word "token".
+
+  Three runs hit the 25-minute limit with a tree that passed: both of `acpira-astra-swe`'s `semver-port` runs and one of `acpira-orch`'s.
+- The hidden tests do not tell the leads apart, so every `calc-lang` tree also ran a post-hoc probe, `tasks/calc-lang/probes/nesting.py`. It runs five deeply nested valid programs, all of which the reference solution passes.
+  - Every Opus-led tree passed all five (8 trees).
+  - Astra-led trees failed 9 times out of 10, with a RecursionError or a CalcError on a valid program. Codex's best got 2 of the 5.
+  - The one exception was the first `acpira-astra-swe` run. There the sidekick's final review named the recursion limit, and the lead had the sidekick replace the recursion with an explicit parser stack.
+- On the same pairs, Acpira's sidekick against Devin's Fusion:
+  - With Opus leading and Luna as the sidekick, both pass everything. The built-in agent is faster on every task: medians of 0.8 to 7.3 min against 1.9 to 14.3. Its Opus lead never handed anything to the sidekick (0 rounds in 14 runs), so it ran as Opus alone.
+  - With Astra and SWE-2, Devin was faster on six of the seven tasks (medians of 2.0 to 22.2 min, against 1.2 to 31.1 with the committed guidance). It passed 13 of 14 against 14 of 14. Both are slower than Astra alone (1.3 to 6.7).
+  - Devin's sidekick is not visible over ACP, so whether Devin's lead used it is unknown. Devin reports no tokens; it used 0.6 points of its weekly window per run with the Opus pair and 0.2 with the Astra pair.
+- What the sidekick costs. `acpira-astra` runs the same lead with no sidekick: it passed 13 of 14 at medians of 1.3 to 6.7 min, at least as fast as Codex on the same model.
+  - With SWE-2 as its sidekick, the same lead took 1 to 5 times as long and passed no more hidden tests.
+  - The lead hands work over and then waits: 67% of its wall time went to `Wait for subagent` (59% with the committed guidance). Most of that was waiting for tests it had asked for at the start, long after its own part was done.
+  - SWE-2 is quick on a typical request (7 s at the median, against Astra's 8) but has a long tail (53 to 61 s at p90, against 24 to 26).
+  - 21 of SWE-2's 960 calls came back as the gateway's 502 after its 60 s upstream timeout.
+- What the sidekick bought. The sidekick reviewed eight times in the 28 sidekick runs and found a real defect twice: the nesting limit above, and a race in `agent-gaps` that made a resumed session announce a config change. The lead fixed both. Of the other six reviews, five found nothing to act on and one was still running at the time limit. Its test rounds caught nothing that the hidden tests or the lead's own checks did not.
+- The guidance check: f8fcbfd0's sidekick lines say to hand the sidekick work that runs in parallel, or a second look, not a step the lead would finish sooner itself.
+  - The same 14 runs passed, 13 before the outage rerun.
+  - Test hand-offs fell from 17 rounds to 9, and the time spent waiting from 67% to 59% of the wall time.
+  - Total wall time fell 11%. That is inside the spread between reruns of one cell, 42% by median.
+  - `conf-bugs` no longer goes to the sidekick at all, but on the larger tasks the lead still asks for tests and waits for them.
+  - The guidance stays as committed: this bench cannot measure further wording.
+- `acpira-orch` against `claude-opus`: both are Claude Code with Opus at high on its Max login, and both passed all 14.
+  - The lead used its helpers in 3 of the 14 runs, always the review group: `calc-lang` both times and one `semver-port`. It never used the Luna executor.
+  - The group's slowest member set the pace. Argon took 6 to 15 min a review, against Astra's 1.4 to 2.4. So `calc-lang` took 19 min by median against 3.4, and the `semver-port` that summoned the group twice ran out of time with Argon's second review unfinished.
+  - Astra's reviews named JavaScript-parity divergences that the hidden tests do not check, such as object coercion through `toString`. One `int()` conversion it suggested in `calc-lang` contradicts the reference solution; the lead adopted it, and no hidden test covers it.
+- The relay is not where the time goes. It takes 0 to 5 ms from a round's announcement to the sidekick's first request, and 37 to 42 ms for a persona in the built-in agent (Argon), which has to start a session first.
+- Codex 0.162.1 asked the gateway four times for a `codex-auto-review` model during the hard tasks. The gateway answered 400 (unknown model), and those runs passed.
+- Decision: the sidekick slot stays in the built-in agent's model panel, and other CLIs' panels get none. On this bench a sidekick bought no hidden-test quality and cost wall time. The one thing it measurably did, a second look at a finished change, other CLIs already get through reviewer personas and `ask_agent`. And Opus leads given a sidekick or helpers mostly did the work themselves.
+
 ## Evolve loop
 
 `evolve.ts` tunes the strategy file the review bench reads (`--policy`, schema in `policy.ts`): the handoff pack's recipe (`functionContext`, `fullTextLines`, `refs`, `refsMax`, `maxBytes`) and the reviewer's standing brief. `readPaths` and the scout and executor briefs are left out, since the review bench exercises none of them.
