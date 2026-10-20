@@ -94,18 +94,29 @@ function linkKeychain(home: string) {
 
 const FORMATS: Record<Api, string> = { chat: 'openai-chat', responses: 'openai-responses', anthropic: 'anthropic' };
 
+// One provider of the built-in agent: its own base path on the meter, so each one's calls stay apart
+export interface BuiltinProvider { id: string; api: Api; base: string; models: { spec: ModelSpec; efforts?: string[] }[] }
+
+// Adds providers to the run's providers.json (written whole, after any providers already there) with the dummy key
+// for each; a model is picked as `<provider id>/<model id>`
+export function addBuiltinProviders(acpiraHome: string, providers: BuiltinProvider[]) {
+  const file = join(acpiraHome, 'providers.json');
+  const keys = join(acpiraHome, 'secrets.json');
+  const before = existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as { providers: unknown[] }).providers : [];
+  json(file, {
+    version: 1,
+    providers: [...before, ...providers.map(p => ({
+      id: p.id, name: `Eval ${p.id}`, preset: 'custom', format: FORMATS[p.api], baseUrl: `${p.base}/v1`,
+      models: p.models.map(m => ({ id: m.spec.id, enabled: true, ...(m.efforts ? { efforts: m.efforts } : {}) })),
+    }))],
+  });
+  const secrets = existsSync(keys) ? JSON.parse(readFileSync(keys, 'utf8')) as Record<string, string> : {};
+  json(keys, { ...secrets, ...Object.fromEntries(providers.map(p => [`acpira.provider.${p.id}`, DUMMY_KEY])) });
+}
+
 // The built-in agent on the model's own wire, or on `api` when given (the Chat-versus-Responses comparison)
 function acpira({ model, base, acpiraHome }: HarnessCtx, efforts?: string[], api?: Api): HarnessSetup {
-  json(join(acpiraHome, 'providers.json'), {
-    version: 1,
-    providers: [{
-      id: 'evalgw', name: 'Eval gateway', preset: 'custom',
-      format: FORMATS[api ?? model.api],
-      baseUrl: `${base}/v1`,
-      models: [{ id: model.id, enabled: true, ...(efforts ? { efforts } : {}) }],
-    }],
-  });
-  json(join(acpiraHome, 'secrets.json'), { 'acpira.provider.evalgw': DUMMY_KEY });
+  addBuiltinProviders(acpiraHome, [{ id: 'evalgw', api: api ?? model.api, base, models: [{ spec: model, efforts }] }]);
   return { agent: 'acpira', env: {} };
 }
 

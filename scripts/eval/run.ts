@@ -2,23 +2,37 @@ import { spawnSync } from 'node:child_process';
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { AgentTurn, PermissionBlock, QuestionBlock, SessionView } from '@shared/transcript';
-import { Host } from '../lib/host';
+import { FAKE, bundleFakeAgent } from '../../test/fakeAgentBundle';
+import { Host, type View } from '../lib/host';
+import { CONFIGS, type Config, setupHelpers } from './configs';
 import { HARNESSES, type HarnessSetup, MODELS } from './harnesses';
 import { deepseekKey, gatewayKey } from './keys';
 import { type Call, OUTAGE, startMeter } from './meter';
+import { claudeUsage, quotaSpent, readQuota } from './native';
+import { cost } from './prices';
 
-// Harness comparison on long tasks (docs/dev/builtin-agent.md, "Harness comparison"). Spends real model calls.
+// Harness comparison on long tasks (docs/dev/builtin-agent.md, "Harness comparison") and the Fusion comparison
+// (docs/dev/evals.md, Fusion bench). Spends real model calls, and subscription quota for native-login configurations.
 //
 //   pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/run.ts --model glm-5.3 --harness acpira,opencode,pi
 //     [--task calc-lang,conf-bugs] [--reps 1] [--out DIR] [--timeout-min N] [--dump]
+//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/run.ts --config claude-opus,devin-opus-luna,acpira-orch
+//     [--task …] [--reps 1] [--out DIR] [--timeout-min N] [--dry]
 //
 // Each run: a fresh copy of the task's repo (git initialised), a fresh HOME and sidecar home, the harness pointed at the
-// metering proxy, one prompt through the real sidecar with every permission card allowed, then the hidden tests. One
-// line per run goes to DIR/results.ndjson and one per model call to DIR/calls.ndjson; work trees stay under DIR/runs.
+// metering proxy (or at its own login), one prompt through the real sidecar with every permission card allowed (the
+// summoned helpers' too), the background work it started waited out, then the hidden tests. One line per run goes to
+// DIR/results.ndjson and one per model call to DIR/calls.ndjson; work trees stay under DIR/runs. A configuration
+// (configs.ts) adds session picks, helpers and their usage, and the quota its native logins spent. --dry swaps every
+// agent for the fake one (a configuration's lead summons its helpers once) and spends nothing.
 // ACPIRA_SIDECAR_BIN pins the engine under test (otherwise the workspace's debug build, rebuilt before every run)
 
 const TASKS_DIR = resolve(import.meta.dirname, 'tasks');
 const VERIFY_TIMEOUT_MS = 300_000;
+const DRY = process.argv.includes('--dry');
+// Background work counts as over once the session has stayed idle this long with no summoned round running: the
+// automatic message delivering the last round starts within it
+const QUIET_MS = 5000;
 
 function arg(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -71,9 +85,15 @@ function lastAgent(v: SessionView | undefined): AgentTurn | undefined {
   return t?.role === 'agent' ? t : undefined;
 }
 
+interface NodeOutcome { persona?: string; agent?: string; role?: string; state: string; tools: number; wallS?: number }
+
 interface Outcome {
   timedOut: boolean; failure?: string; status?: string; stop?: string; error?: unknown;
   tools: number; cards: number; questions: number; harnessUsage?: unknown;
+  // Delegated children: summoned rounds (persona, CLI) and the harness's own subagents (role)
+  subagents?: NodeOutcome[];
+  // Automatic turns after the prompt's own (deliveries of summoned rounds, compaction, retries)
+  autoTurns?: number;
   // Token counts the harness reported itself, for one that bypasses the meter
   usage?: { requests: number; input: number; cacheRead: number; output: number; reasoning: number };
 }
@@ -102,67 +122,155 @@ function driveCli(cli: NonNullable<HarnessSetup['cli']>, o: { runId: string; dir
   return { timedOut, failure, stop: timedOut ? 'timeout' : r.status === 0 ? 'end_turn' : 'error', tools: 0, cards: 0, questions: 0, usage };
 }
 
-// One prompt through the real sidecar, every permission card allowed
-async function driveSidecar(setup: HarnessSetup, o: { runId: string; work: string; home: string; acpiraHome: string; prompt: string; timeoutMin: number }): Promise<Outcome> {
+// Every permission is allowed once, the root's and the summoned children's alike; a question is skipped (the prompt
+// asks for autonomous work). A card leaves its turn once answered, so each id is clicked only once
+function approve(view: View) {
+  const clicked = new Set<string>();
+  const n = { cards: 0, questions: 0 };
+  const allow = (sessionId: string, p: PermissionBlock) => {
+    if (clicked.has(p.id)) return;
+    const opt = p.options.find(x => x.kind === 'allow_once') ?? p.options.find(x => x.kind === 'allow_always') ?? p.options[0];
+    if (!opt) return;
+    clicked.add(p.id);
+    n.cards++;
+    view.post({ type: 'permission', sessionId, blockId: p.id, optionId: opt.id });
+  };
+  const skip = (sessionId: string, q: QuestionBlock) => {
+    if (clicked.has(q.id) || q.outcome) return;
+    clicked.add(q.id);
+    n.questions++;
+    view.post({ type: 'answer', sessionId, blockId: q.id, answers: {}, skip: true });
+  };
+  const timer = setInterval(() => {
+    const v = view.active();
+    if (!v) return;
+    for (const b of lastAgent(v)?.blocks ?? []) {
+      if (b.type === 'permission') allow(v.id, b as PermissionBlock);
+      else if (b.type === 'question') skip(v.id, b as QuestionBlock);
+    }
+    for (const c of v.subagents ?? []) {
+      for (const p of c.permissions ?? []) allow(v.id, p);
+      if (c.question) skip(v.id, c.question);
+    }
+  }, 200);
+  return { counts: n, stop: () => clearInterval(timer) };
+}
+
+// Sets each picked session option (by config id, else category) and waits until the session shows it. A value the
+// option does not offer fails the run: a run on another model says nothing about the configuration
+async function applyPicks(view: View, picks: Record<string, string>) {
+  for (const [key, value] of Object.entries(picks)) {
+    const v = view.active()!;
+    const opt = v.controls.options.find(x => x.id === key) ?? v.controls.options.find(x => x.category === key);
+    if (!opt) throw new Error(`no session option ${key} (have ${v.controls.options.map(x => x.id).join(', ')})`);
+    if (!opt.options.some(x => x.id === value)) throw new Error(`${opt.id} offers no ${value}`);
+    if (opt.value === value) continue;
+    view.post({ type: 'setConfig', sessionId: v.id, configId: opt.id, value });
+    await view.until(() => view.active()?.controls.options.find(x => x.id === opt.id)?.value === value, 60_000, `${opt.id} = ${value}`);
+  }
+}
+
+// One prompt through the real sidecar, every permission card allowed, then whatever it left running in the
+// background (summoned rounds and the automatic messages delivering them) waited out within the same time limit
+async function driveSidecar(setup: HarnessSetup, o: {
+  runId: string; work: string; home: string; acpiraHome: string; prompt: string; timeoutMin: number;
+  picks: Record<string, string>; agents?: Record<string, unknown>;
+}): Promise<Outcome> {
   const { work, home, acpiraHome } = o;
   const host = await Host.start({
-    cwd: work, home: acpiraHome, defaultAgent: setup.agent,
+    cwd: work, home: acpiraHome, defaultAgent: setup.agent, agents: o.agents,
     env: { HOME: home, PYTHONDONTWRITEBYTECODE: '1', ...setup.env },
   });
   const view = await host.view();
-  // Every permission is allowed once; a question is skipped (the prompt asks for autonomous work). A card leaves the turn
-  // once answered, so each id is clicked only once
-  const clicked = new Set<string>();
-  let cards = 0;
-  let questions = 0;
-  const approver = setInterval(() => {
-    const v = view.active();
-    for (const b of lastAgent(v)?.blocks ?? []) {
-      if (b.type !== 'permission' && b.type !== 'question') continue;
-      if (clicked.has(b.id)) continue;
-      if (b.type === 'permission') {
-        const p = b as PermissionBlock;
-        const opt = p.options.find(x => x.kind === 'allow_once') ?? p.options.find(x => x.kind === 'allow_always') ?? p.options[0];
-        if (!opt) continue;
-        clicked.add(b.id);
-        cards++;
-        view.post({ type: 'permission', sessionId: v!.id, blockId: p.id, optionId: opt.id });
-      } else if (!(b as QuestionBlock).outcome) {
-        clicked.add(b.id);
-        questions++;
-        view.post({ type: 'answer', sessionId: v!.id, blockId: b.id, answers: {}, skip: true });
-      }
-    }
-  }, 200);
-
+  const approver = approve(view);
+  const deadline = Date.now() + o.timeoutMin * 60_000;
   let timedOut = false;
   let failure: string | undefined;
+  let firstTurn = 0;
   try {
+    if (setup.importLogin && !DRY) {
+      const a = await view.addAccount(setup.agent, 'import');
+      if (a.status !== 'success') throw new Error(`importing the ${setup.agent} login: ${a.status} ${a.error ?? ''}`);
+    }
     await view.newSession(setup.agent);
+    if (!DRY) await applyPicks(view, o.picks);
     const v0 = view.active()!;
-    const modelOpt = v0.controls.options.find(x => x.category === 'model');
-    console.log(`[${o.runId}] session ${v0.id} status=${v0.status} model=${JSON.stringify(modelOpt?.value ?? null)}`);
+    const shown = v0.controls.options.filter(x => x.category === 'model' || x.id in o.picks).map(x => `${x.id}=${x.value}`);
+    console.log(`[${o.runId}] session ${v0.id} status=${v0.status} ${shown.join(' ')}`);
+    firstTurn = v0.turns.length;
     try {
-      await view.handle({ type: 'send', text: o.prompt }, o.timeoutMin * 60_000);
+      await view.handle({ type: 'send', text: o.prompt }, deadline - Date.now());
+      let quiet = 0;
+      await view.until(() => {
+        const v = view.active();
+        const busy = !v || v.running || (v.queued?.length ?? 0) > 0 || (v.subagents ?? []).some(c => c.harness && c.state === 'running');
+        if (busy) {
+          quiet = 0;
+          return false;
+        }
+        quiet ||= Date.now();
+        return Date.now() - quiet >= QUIET_MS;
+      }, Math.max(1, deadline - Date.now()), 'the background work');
     } catch (e) {
       timedOut = true;
       failure = String(e);
+      const v = view.active();
+      for (const c of (v?.subagents ?? []).filter(x => x.state === 'running')) view.post({ type: 'cancelSubagent', sessionId: v!.id, subagentId: c.id });
       view.post({ type: 'stop', sessionId: view.activeId });
       await view.until(() => !view.active()?.running, 30_000, 'the stopped turn').catch(() => {});
     }
   } catch (e) {
     failure = String(e);
   }
-  clearInterval(approver);
+  approver.stop();
   const v = view.active();
+  const turns = v?.turns.slice(firstTurn) ?? [];
+  const agentTurns = turns.filter((t): t is AgentTurn => t.role === 'agent');
+  const tools = agentTurns.reduce((a, t) => a + t.blocks.filter(b => b.type === 'tool_call').length, 0);
   const turn = lastAgent(v);
-  const tools = turn?.blocks.filter(b => b.type === 'tool_call').length ?? 0;
+  const subagents = (v?.subagents ?? []).map(c => ({
+    ...(c.harness ? { persona: c.harness.persona, agent: c.harness.agent } : { role: c.role }),
+    state: c.state, tools: c.toolCount,
+    ...(c.endedAt ? { wallS: Math.round((c.endedAt - c.announcedAt) / 1000) } : {}),
+  }));
+  const autoTurns = turns.filter(t => t.role === 'user' && t.auto).length;
+  writeFileSync(join(o.work, '..', 'session.json'), JSON.stringify(v ?? null, null, 2));
   await host.dispose().catch(() => {});
-  return { timedOut, failure, status: v?.status, stop: turn?.stop, error: turn?.error ?? v?.error, tools, cards, questions, harnessUsage: v?.usage as unknown };
+  return {
+    timedOut, failure, status: v?.status, stop: turn?.stop, error: turn?.error ?? v?.error, tools,
+    cards: approver.counts.cards, questions: approver.counts.questions, harnessUsage: v?.usage as unknown,
+    ...(subagents.length ? { subagents } : {}), ...(autoTurns ? { autoTurns } : {}),
+  };
 }
 
-async function runOne(o: { task: Task; harness: string; model: string; rep: number; root: string; meterUrl: string; calls: Call[]; timeoutMin: number }) {
-  const runId = `${o.task.id}.${o.harness}.${o.model}.${o.rep}`.replace(/[^\w.-]/g, '_');
+// One column of the matrix: a harness on a model (the harness comparison), or a named configuration
+interface Cell { name: string; harness: string; model: string; config?: Config }
+
+const runIdOf = (task: string, c: Cell, rep: number) =>
+  (c.config ? `${task}.${c.name}.${rep}` : `${task}.${c.harness}.${c.model}.${rep}`).replace(/[^\w.-]/g, '_');
+
+// What a dry run's lead does: summon the configuration's first group (else its first helper) once, so the roster, the
+// relay and the delivery are all exercised; a lead without helpers just answers
+function dryPrompt(c: Cell): string {
+  const target = c.config?.groups?.[0]?.id ?? c.config?.helpers?.[0]?.id;
+  return target ? `mcp-call:ask_agent ${JSON.stringify({ agent: target, prompt: 'relay: dry run', title: 'Dry run' })}` : 'hello';
+}
+
+const sumCalls = (calls: Call[]) => ({
+  requests: calls.length,
+  input: calls.reduce((a, c) => a + c.input, 0),
+  cacheRead: calls.reduce((a, c) => a + c.cacheRead, 0),
+  cacheWrite: calls.reduce((a, c) => a + c.cacheWrite, 0),
+  output: calls.reduce((a, c) => a + c.output, 0),
+  reasoning: calls.reduce((a, c) => a + c.reasoning, 0),
+});
+
+// The quota a native login spends, read around each run that uses one (the agents its lead runs in)
+const nativeAgents = (setup: HarnessSetup) => (setup.unmetered && !setup.cli && ['claude', 'devin'].includes(setup.agent) ? [setup.agent] : []);
+
+async function runOne(o: { task: Task; cell: Cell; rep: number; root: string; meterUrl: string; calls: Call[]; timeoutMin: number }) {
+  const { cell } = o;
+  const runId = runIdOf(o.task.id, cell, o.rep);
   const dir = join(o.root, 'runs', runId);
   const work = join(dir, 'work');
   const home = join(dir, 'home');
@@ -176,13 +284,24 @@ async function runOne(o: { task: Task; harness: string; model: string; rep: numb
   cpSync(join(TASKS_DIR, o.task.id, 'repo'), work, { recursive: true });
   sh('git init -q && git add -A && git -c user.name=eval -c user.email=eval@localhost commit -qm "Initial state"', work);
 
-  const setup = HARNESSES[o.harness]!({ model: MODELS[o.model]!, base: `${o.meterUrl}/r/${runId}/${MODELS[o.model]!.upstream ?? 'gw'}`, home, acpiraHome });
+  const spec = MODELS[cell.model]!;
+  const upstream = spec.upstream ?? 'gw';
+  const setup = HARNESSES[cell.harness]!({ model: spec, base: `${o.meterUrl}/r/${runId}/${upstream}`, home, acpiraHome });
+  const picks = { ...cell.config?.pick, ...(cell.config ? setupHelpers(cell.config, { home, acpiraHome, baseFor: id => `${o.meterUrl}/r/${runId}.${id}/gw` }) : {}) };
+  // A dry run's agents, lead and helpers alike, are the fake one under their own ids
+  const agents = DRY ? Object.fromEntries([setup.agent, ...(cell.config?.helpers ?? []).map(h => h.agent)].map(id => [id, { name: `Fake ${id}`, command: process.execPath, args: [FAKE] }])) : undefined;
+  const natives = DRY ? [] : nativeAgents(setup);
+  const quotaBefore = natives.length ? readQuota(natives) : undefined;
   const started = Date.now();
+  const prompt = DRY ? dryPrompt(cell) : o.task.prompt;
   const outcome = setup.cli
-    ? driveCli(setup.cli, { runId, dir, work, home, prompt: o.task.prompt, timeoutMin: o.timeoutMin })
-    : await driveSidecar(setup, { runId, work, home, acpiraHome, prompt: o.task.prompt, timeoutMin: o.timeoutMin });
+    ? driveCli(setup.cli, { runId, dir, work, home, prompt, timeoutMin: o.timeoutMin })
+    : await driveSidecar(setup, { runId, work, home, acpiraHome, prompt, timeoutMin: o.timeoutMin, picks, agents });
   const { timedOut, failure, tools } = outcome;
   const wallS = Math.round((Date.now() - started) / 1000);
+  const quotaAfter = natives.length ? readQuota(natives) : undefined;
+  // The run's sidecar home held an imported login's key: it goes once the run is over
+  if (setup.importLogin) rmSync(join(acpiraHome, 'secrets.json'), { force: true });
 
   // The hidden tests, copied in only now so the agent never saw them
   cpSync(join(TASKS_DIR, o.task.id, 'hidden'), join(work, '.eval_hidden'), { recursive: true });
@@ -193,52 +312,79 @@ async function runOne(o: { task: Task; harness: string; model: string; rep: numb
   const verifyTimedOut = ver.error?.message.includes('ETIMEDOUT') ?? false;
 
   const mine = o.calls.filter(c => c.run === runId);
-  const sum = (k: 'input' | 'cacheRead' | 'cacheWrite' | 'output' | 'reasoning') => mine.reduce((a, c) => a + c[k], 0);
+  const lead = sumCalls(mine);
+  // Claude Code on its own login: the tokens its transcripts recorded stand in for the meter's
+  const native = setup.agent === 'claude' && setup.unmetered && !DRY ? claudeUsage(home) : undefined;
+  const helpers = Object.fromEntries([...(cell.config?.helpers ?? []).map(h => [h.id, h.model] as const), ...(cell.config?.sidekick ? [['sidekick', cell.config.sidekick] as const] : [])]
+    .map(([id, model]) => {
+      const u = sumCalls(o.calls.filter(c => c.run === `${runId}.${id}`));
+      return [id, { ...u, costUsd: Math.round(cost({ model, ...u }) * 1000) / 1000 }];
+    })
+    .filter(([, u]) => (u as { requests: number }).requests > 0));
   const result = {
-    runId, task: o.task.id, harness: o.harness, model: o.model, rep: o.rep,
+    runId, task: o.task.id, harness: cell.harness, model: cell.model, ...(cell.config ? { config: cell.name } : {}), rep: o.rep,
     pass: ver.status === 0 && counts.total > 0, testsPassed: counts.passed, testsTotal: counts.total, verifyTimedOut,
     wallS, timedOut, failure, status: outcome.status, stop: outcome.stop, error: outcome.error,
     tools, cards: outcome.cards, questions: outcome.questions,
-    requests: mine.length, callErrors: mine.filter(c => c.error).length,
-    input: sum('input'), cacheRead: sum('cacheRead'), cacheWrite: sum('cacheWrite'), output: sum('output'), reasoning: sum('reasoning'),
+    callErrors: mine.filter(c => c.error).length,
+    ...lead,
+    ...(native ? { ...native, reasoning: 0, nativeUsage: true } : {}),
     ...(outcome.usage ? { ...outcome.usage, cacheWrite: 0 } : {}),
     harnessUsage: outcome.harnessUsage,
-    ...(setup.unmetered && !outcome.usage ? { unmetered: true } : {}),
+    ...(setup.unmetered && !outcome.usage && !native ? { unmetered: true } : {}),
+    ...(Object.keys(helpers).length ? { helpers } : {}),
+    ...(outcome.subagents ? { subagents: outcome.subagents } : {}),
+    ...(outcome.autoTurns ? { autoTurns: outcome.autoTurns } : {}),
+    ...(quotaBefore && quotaAfter ? { quota: quotaSpent(quotaBefore, quotaAfter), quotaAt: { before: quotaBefore, after: quotaAfter } } : {}),
+    ...(DRY ? { dry: true } : {}),
   };
-  const outage = !result.pass && mine.some(c => c.error && OUTAGE.test(c.error));
+  const outage = !result.pass && o.calls.some(c => (c.run === runId || c.run.startsWith(`${runId}.`)) && c.error && OUTAGE.test(c.error));
   appendFileSync(join(o.root, outage ? 'infra.ndjson' : 'results.ndjson'), JSON.stringify(result) + '\n');
   if (outage) console.log(`[${runId}] gateway outage: recorded in infra.ndjson, not counted`);
-  console.log(`[${runId}] pass=${result.pass} tests=${counts.passed}/${counts.total} wall=${wallS}s requests=${result.requests} in=${result.input} cached=${result.cacheRead} out=${result.output} stop=${result.stop}${failure ? ` failure=${failure}` : ''}`);
+  console.log(`[${runId}] pass=${result.pass} tests=${counts.passed}/${counts.total} wall=${wallS}s requests=${result.requests} in=${result.input} cached=${result.cacheRead} out=${result.output} stop=${result.stop}${outcome.subagents ? ` subagents=${outcome.subagents.length}` : ''}${result.quota ? ` quota=${JSON.stringify(result.quota)}` : ''}${failure ? ` failure=${failure}` : ''}`);
   return result;
 }
 
 async function main() {
   const model = arg('model');
   const harnesses = (arg('harness') ?? '').split(',').filter(Boolean);
+  const configs = (arg('config') ?? '').split(',').filter(Boolean);
   const tasks = (arg('task') ?? readdirSync(TASKS_DIR).filter(d => existsSync(join(TASKS_DIR, d, 'task.json'))).join(',')).split(',');
   const reps = Number(arg('reps', '1'));
-  if (!model || !MODELS[model] || !harnesses.length || harnesses.some(h => !HARNESSES[h])) {
+  const byHarness = !!model && !!MODELS[model] && harnesses.length > 0 && harnesses.every(h => HARNESSES[h]);
+  const byConfig = configs.length > 0 && configs.every(c => CONFIGS[c]);
+  if (byHarness === byConfig) {
     console.error(`usage: run.ts --model ${Object.keys(MODELS).join('|')} --harness ${Object.keys(HARNESSES).join(',')} [--task …] [--reps N] [--out DIR]`);
+    console.error(`   or: run.ts --config ${Object.keys(CONFIGS).join(',')} [--task …] [--reps N] [--out DIR] [--dry]`);
     process.exit(2);
   }
+  const cells: Cell[] = byConfig
+    ? configs.map(name => ({ name, harness: CONFIGS[name]!.harness, model: CONFIGS[name]!.model, config: CONFIGS[name] }))
+    : harnesses.map(h => ({ name: h, harness: h, model: model! }));
+  if (DRY) bundleFakeAgent();
   const root = resolve(arg('out') ?? join('/tmp/acpira-eval', new Date().toISOString().replace(/[:.]/g, '-')));
   mkdirSync(root, { recursive: true });
   // A run already in results.ndjson is skipped, so an interrupted matrix resumes where it stopped
   const resultsFile = join(root, 'results.ndjson');
   const done = new Set(existsSync(resultsFile) ? readFileSync(resultsFile, 'utf8').split('\n').filter(Boolean).map(l => (JSON.parse(l) as { runId: string }).runId) : []);
-  const upstream = MODELS[model]!.upstream ?? 'gw';
-  const keys: Record<string, string> = upstream === 'ds' ? { ds: deepseekKey() ?? '' } : { gw: gatewayKey() };
-  if (!Object.values(keys)[0]) throw new Error('no DeepSeek key (EVAL_DS_KEY or EVAL_DS_KEY_FILE)');
+  // The gateway's key for every lead and helper on it, DeepSeek's own only when a lead runs there
+  const keys: Record<string, string> = {};
+  if (DRY) keys.gw = 'dry';
+  else if (cells.some(c => MODELS[c.model]!.upstream !== 'ds' || c.config?.helpers?.length || c.config?.sidekick)) keys.gw = gatewayKey();
+  if (!DRY && cells.some(c => MODELS[c.model]!.upstream === 'ds')) {
+    keys.ds = deepseekKey() ?? '';
+    if (!keys.ds) throw new Error('no DeepSeek key (EVAL_DS_KEY or EVAL_DS_KEY_FILE)');
+  }
   const meter = await startMeter({ log: join(root, 'calls.ndjson'), keys, dump: process.argv.includes('--dump') ? join(root, 'bodies') : undefined });
-  console.log(`results in ${root}`);
+  console.log(`results in ${root}${DRY ? ' (dry)' : ''}`);
   try {
     for (let rep = 1; rep <= reps; rep++) {
       for (const t of tasks) {
         const task = loadTask(t);
-        for (const harness of harnesses) {
-          if (done.has(`${task.id}.${harness}.${model}.${rep}`.replace(/[^\w.-]/g, '_'))) continue;
+        for (const cell of cells) {
+          if (done.has(runIdOf(task.id, cell, rep))) continue;
           const timeoutMin = Number(arg('timeout-min', String(task.timeoutMin)));
-          await runOne({ task, harness, model, rep, root, meterUrl: meter.url, calls: meter.calls, timeoutMin });
+          await runOne({ task, cell, rep, root, meterUrl: meter.url, calls: meter.calls, timeoutMin });
         }
       }
     }
