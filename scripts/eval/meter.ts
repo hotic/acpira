@@ -34,6 +34,11 @@ export interface Meter {
   stop(): Promise<void>;
 }
 
+// The gateway itself out of capacity (seen 2026-10-11 on every model in turn): a run that failed with one of these says
+// nothing about the harness, so it goes to infra.ndjson instead and is run again on the next launch
+// "The usage limit has been reached": the gateway's GPT route out of quota mid-run (2026-10-18), on both builds at once
+export const OUTAGE = /no eligible upstream channel|no route configured for model|rate limited or quota exhausted|usage limit has been reached/;
+
 const UPSTREAMS: Record<string, string> = { gw: 'https://ai.sacredcraft.cn', ds: 'https://api.deepseek.com' };
 
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);

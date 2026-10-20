@@ -1,0 +1,13 @@
+diff --git a/rust/crates/acpira-shared/src/subagents.rs b/rust/crates/acpira-shared/src/subagents.rs
+index ae19d3c..86ff1f8 100644
+--- a/rust/crates/acpira-shared/src/subagents.rs
++++ b/rust/crates/acpira-shared/src/subagents.rs
+@@ -131,7 +131,7 @@ pub struct SubagentHarness {
+   #[serde(default, skip_serializing_if = "Option::is_none")]
+   pub session_id: Option<String>,
+   /// The reasoning effort the child session really runs, by the CLI's own option name; absent when it has none
+-  #[serde(default, skip_serializing_if = "Option::is_none")]
++  #[serde(default, skip_serializing_if = "Option::is_none", rename = "reasoningEffort")]
+   pub effort: Option<String>,
+ }
+ 
