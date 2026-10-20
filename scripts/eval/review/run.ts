@@ -9,6 +9,7 @@ import { gatewayKey } from '../keys';
 import { type Call, OUTAGE, startMeter } from '../meter';
 import { claudeUsage, quotaSpent, readQuota, type QuotaSnap } from '../native';
 import { cost } from '../prices';
+import type { Policy } from '../policy';
 import { type Target, materialize, targetsOf } from './bench';
 import { JUDGE_MODEL, type Verdict, judge } from './judge';
 
@@ -69,9 +70,8 @@ const VARIANTS: Record<string, { changes: boolean; recipe?: Record<string, unkno
   C: { changes: true, recipe: { refs: true } },
 };
 
-// The strategy file the evolve loop tunes (scripts/eval/evolve.ts): the pack's recipe and the reviewer's standing brief.
-// Absent = the shipped defaults
-interface Policy { handoff?: Record<string, unknown>; briefs?: { reviewer?: string } }
+// The strategy file the evolve loop tunes (scripts/eval/evolve.ts, schema in policy.ts): the pack's recipe and the
+// reviewer's standing brief. Absent = the shipped defaults
 
 const policy: Policy = arg('policy') ? JSON.parse(readFileSync(resolve(arg('policy')!), 'utf8')) as Policy : {};
 
