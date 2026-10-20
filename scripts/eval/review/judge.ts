@@ -15,6 +15,9 @@ export interface Finding {
   summary: string;
   // Index into target.bugs, when the judge took this finding for that bug and its place fits
   bug?: number;
+  // The bug the judge model matched when the place check then refused it, kept so a corrected file list can be
+  // rescored without asking the judge again
+  claimed?: number;
 }
 
 export interface Verdict {
@@ -113,7 +116,8 @@ export async function modelJudge(target: Target, review: string, model = JUDGE_M
         const base: Finding = { severity: f.severity?.toLowerCase(), path: f.path || undefined, line: typeof f.line === 'number' ? f.line : undefined, summary: f.summary ?? '' };
         const bug = typeof f.defect === 'number' ? target.bugs[f.defect] : undefined;
         // The prefilter by place: a match citing a file the defect is not in does not count
-        return bug && placeFits(bug, base.path) ? { ...base, bug: f.defect as number } : base;
+        if (!bug) return base;
+        return placeFits(bug, base.path) ? { ...base, bug: f.defect as number } : { ...base, claimed: f.defect as number };
       });
       return verdictOf(findings, target, model);
     } catch (e) {
