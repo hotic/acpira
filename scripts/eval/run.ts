@@ -226,12 +226,14 @@ const scrub = (setup: HarnessSetup) => {
 // option does not offer fails the run: a run on another model says nothing about the configuration
 async function applyPicks(view: View, picks: Record<string, string>) {
   for (const [key, value] of Object.entries(picks)) {
-    // A new session's options arrive after the view shows it (the agent answers session/new first), so wait for this one
+    // A new session's options arrive after the view shows it (the agent answers session/new first), so wait for this
+    // one, and for the value itself: one Devin session came up without the Fusion pair it was asked for, which a probe a
+    // minute later listed again (Devin 3000.11.92, 2026-10-21)
     const find = () => {
       const options = view.active()?.controls.options ?? [];
       return options.find(x => x.id === key) ?? options.find(x => x.category === key);
     };
-    await view.until(() => !!find(), 60_000, `session option ${key}`).catch(() => {});
+    await view.until(() => !!find()?.options.some(x => x.id === value), 60_000, `session option ${key} offering ${value}`).catch(() => {});
     const v = view.active()!;
     const opt = find();
     if (!opt) throw new Error(`no session option ${key} (have ${v.controls.options.map(x => x.id).join(', ')})`);
