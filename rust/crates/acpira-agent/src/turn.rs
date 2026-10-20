@@ -432,9 +432,10 @@ fn sidekick_note(config: &crate::config::Config, had: bool, now: Option<&str>) -
 another agent."
       .to_owned(),
     (false, Some(pick)) => format!(
-      "You now have a sidekick, {}: summon it with acpira_ask_agent, agent \"sidekick\". Hand it well-specified work early \
-(edits you can describe precisely, scouting that does not decide the plan, running and fixing tests) and keep the decisions \
-yourself; check its diff afterwards, and when it falls short say so in the same thread.",
+      "You now have a sidekick, {}: summon it with acpira_ask_agent, agent \"sidekick\". It works at its own pace, often \
+slower than you: hand it work that runs while you do something else (edits you can describe precisely, scouting that does \
+not decide the plan) or a second look at your finished change, not a quick step you would then wait for, and keep the \
+decisions yourself; check its diff afterwards, and when it falls short say so in the same thread.",
       name(pick)
     ),
     (true, Some(pick)) => format!("Your sidekick now runs {} (acpira_ask_agent, agent \"sidekick\"); its thread continues.", name(pick)),
