@@ -127,6 +127,7 @@
   "session.noMatch": "일치하는 세션 없음",
   "session.none": "아직 세션이 없습니다",
   "session.group.pinned": "고정됨",
+  "session.group.projects": "프로젝트",
   "session.titleAria": "세션 제목",
   "session.listAria": "세션",
   "session.state.working": "실행 중",

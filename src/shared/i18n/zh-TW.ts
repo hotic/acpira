@@ -137,6 +137,7 @@ export const zhTW = {
   'session.noMatch': '沒有匹配的工作階段',
   'session.none': '還沒有工作階段',
   'session.group.pinned': '置頂',
+  'session.group.projects': '專案',
   'session.titleAria': '工作階段標題',
   'session.listAria': '工作階段',
   'session.state.working': '執行中',

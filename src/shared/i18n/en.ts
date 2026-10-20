@@ -132,6 +132,7 @@ export const en = {
   'session.noMatch': 'No matching sessions',
   'session.none': 'No sessions yet',
   'session.group.pinned': 'Pinned',
+  'session.group.projects': 'Projects',
   'session.titleAria': 'Session title',
   'session.listAria': 'Sessions',
   'session.state.working': 'Running',
