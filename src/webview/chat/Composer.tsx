@@ -90,12 +90,14 @@ export function Composer(p: ComposerProps) {
   const liveContexts = useLiveContexts();
   const contexts = p.main && p.shareSelection && !p.edit ? liveContexts : NO_CONTEXTS;
   const [excludedContexts, setExcludedContexts] = useState<ReadonlySet<string>>(() => new Set());
-  const contextOn = (c: LiveContext) => !excludedContexts.has(c.key);
+  // Keyed by source as well: two sources offering the same content are still switched apart
+  const excludedKey = (c: LiveContext) => `${c.source.id}\n${c.key}`;
+  const contextOn = (c: LiveContext) => !excludedContexts.has(excludedKey(c));
   // Two or more live chips fold to their icons on anything narrower than a wide editor tab, so the model name keeps its room
   const liveNarrow = (offered ? 1 : 0) + Math.min(contexts.length, MAX_CONTEXT_CHIPS + 1) > 1 ? 'icon-xl' : 'icon';
   const toggleContext = (c: LiveContext) => setExcludedContexts(cur => {
     const next = new Set(cur);
-    if (!next.delete(c.key)) next.add(c.key);
+    if (!next.delete(excludedKey(c))) next.add(excludedKey(c));
     return next;
   });
   const flush = !p.edit && composer === 'flush';

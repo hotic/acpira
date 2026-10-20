@@ -171,7 +171,7 @@ function NoticeRow({ block }: { block: NoticeBlock }) {
   const error = block.severity === 'error';
   const buttons = error && ctx?.showActions && ctx.onAction ? block.actions : [];
   // An ACP info notice (a stopped background task, a rerouted model) only informs: no warning triangle
-  const Glyph = block.id.startsWith(HOOK_NOTICE) ? (error ? ShieldX : ShieldAlert) : block.severity === 'info' ? Info : TriangleAlert;
+  const Glyph = block.id.startsWith(HOOK_NOTICE) ? (error ? ShieldX : ShieldAlert) : block.info ? Info : TriangleAlert;
   const lead = <Glyph className={cn('size-icon', error && 'text-warn')} strokeWidth={1.5} />;
   return (
     <div className="flex min-w-0 flex-col gap-0.5">

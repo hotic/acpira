@@ -53,7 +53,7 @@ async fn a_stopped_task_notice_after_end_turn_does_not_reopen_the_turn() {
   assert!(!s.is_running(), "the notice must not reopen the turn: {}", view(&s));
   let vw = view(&s);
   expect_match(&vw["turns"][1], json!({ "stop": "end_turn" }));
-  expect_match(&vw["turns"][1]["blocks"][1], json!({ "type": "notice", "severity": "info", "title": "Task stopped by user" }));
+  expect_match(&vw["turns"][1]["blocks"][1], json!({ "type": "notice", "severity": "warning", "info": true, "title": "Task stopped by user" }));
   assert_eq!(agent_text(&vw["turns"][1]), "waiting in background");
 }
 
