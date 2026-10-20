@@ -425,8 +425,10 @@ pub fn initialize_request(def: &AgentDef) -> Value {
   }
   caps["elicitation"] = json!({ "form": {} });
   // ACP boolean session config options (RFD boolean-config-option). `compaction` opts into structured
-  // compaction_update: without it claude-agent-acp 0.81.0 reports compaction as a `think` tool call
-  caps["session"] = json!({ "configOptions": { "boolean": {} }, "compaction": {} });
+  // compaction_update: without it claude-agent-acp 0.81.0 reports compaction as a `think` tool call. `notices` opts into
+  // the `notice` update (RFD session-notices): without it claude-agent-acp 0.93.0 writes its notices (a stopped background
+  // task, a model fallback) as bold-label agent text, which reads as the model talking and reopens a settled Claude turn
+  caps["session"] = json!({ "configOptions": { "boolean": {} }, "compaction": {}, "notices": {} });
   if def.subagents {
     caps["subagents"] = json!({});
   }
@@ -450,5 +452,11 @@ mod tests {
   fn initialize_advertises_structured_compaction() {
     let req = initialize_request(&AgentDef::default());
     assert!(req["clientCapabilities"]["session"]["compaction"].is_object());
+  }
+
+  #[test]
+  fn initialize_advertises_session_notices() {
+    let req = initialize_request(&AgentDef::default());
+    assert!(req["clientCapabilities"]["session"]["notices"].is_object());
   }
 }

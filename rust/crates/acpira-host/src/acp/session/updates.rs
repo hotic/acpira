@@ -126,6 +126,10 @@ impl AcpSession {
     if c.replaying && kind == "session_info_update" && failure_of(u.get("_meta"), None).is_some() {
       return;
     }
+    // ACP notices are live events, not history: a replay that repeats one must not stack another row on every reopen
+    if c.replaying && kind == "notice" {
+      return;
+    }
     if c.phase.running
       && kind == "session_info_update"
       && let Some(f) = failure_of(u.get("_meta"), None).filter(|f| f.severity == Severity::Error)

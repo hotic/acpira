@@ -386,6 +386,8 @@ pub enum FailureCategory {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {
+  /// Only from an ACP `notice` (AIR sessionFailure has no info level)
+  Info,
   Warning,
   Error,
 }

@@ -40,6 +40,23 @@ async fn stopping_an_autonomous_cycle_settles_it_without_a_prompt_response() {
   expect_match(&view(&s)["turns"][1], json!({ "stop": "cancelled" }));
 }
 
+// claude-agent-acp 0.93.0 acknowledges a stopped background Bash after end_turn. As agent text it opened a cycle no result
+// ever closed (the turn spun until a stop); as the `notice` the host now asks for, it is a row on the settled turn
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_task_notice_after_end_turn_does_not_reopen_the_turn() {
+  let fake = fake_or_skip!();
+  let h = Harness::for_agent(&fake, "claude", json!({ "env": { "FAKE_NOTICES": "1" } }));
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "task-stopped").await;
+  until(|| view(&s)["turns"][1]["blocks"].as_array().is_some_and(|b| b.iter().any(|b| b["type"] == "notice")), 5000).await;
+  tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+  assert!(!s.is_running(), "the notice must not reopen the turn: {}", view(&s));
+  let vw = view(&s);
+  expect_match(&vw["turns"][1], json!({ "stop": "end_turn" }));
+  expect_match(&vw["turns"][1]["blocks"][1], json!({ "type": "notice", "severity": "info", "title": "Task stopped by user" }));
+  assert_eq!(agent_text(&vw["turns"][1]), "waiting in background");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn another_agent_s_late_prose_does_not_reopen_the_turn() {
   let fake = fake_or_skip!();

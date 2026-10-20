@@ -1,5 +1,5 @@
 import { Fragment, createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Bot, Check, ChevronRight, Compass, FileText, Hand, MessageCircleQuestion, ShieldAlert, ShieldX, Shrink, TriangleAlert, X } from 'lucide-react';
+import { Bot, Check, ChevronRight, Compass, FileText, Hand, Info, MessageCircleQuestion, ShieldAlert, ShieldX, Shrink, TriangleAlert, X } from 'lucide-react';
 import type { AgentBlock, AgentTurn, CompactionBlock, FailureAction, NoticeBlock, PermissionBlock, SlashCommand, SteerBlock, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
 import { isImageResultBlock } from '@shared/imageTools';
@@ -163,14 +163,15 @@ function NoticeDetails({ text }: { text: string }) {
 
 // One row per failure id. A notice with details folds like a thought (picked as E in `lab/hook-gate-pick.preview.html`):
 // one line with the title and the details' first line as a quiet summary, the full details on the rail once opened.
-// An error opens by default and marks only its glyph with the warn tone; a bare warning keeps the quiet color.
+// An error opens by default and marks only its glyph with the warn tone; a bare warning or info keeps the quiet color.
 // The adapter's own actions render as small secondary buttons under the fold, in payload order
 function NoticeRow({ block }: { block: NoticeBlock }) {
   const ctx = useContext(NoticeActionContext);
   if (block.id === ctx?.suppressId || ctx?.absorbed?.includes(block)) return null;
   const error = block.severity === 'error';
   const buttons = error && ctx?.showActions && ctx.onAction ? block.actions : [];
-  const Glyph = !block.id.startsWith(HOOK_NOTICE) ? TriangleAlert : error ? ShieldX : ShieldAlert;
+  // An ACP info notice (a stopped background task, a rerouted model) only informs: no warning triangle
+  const Glyph = block.id.startsWith(HOOK_NOTICE) ? (error ? ShieldX : ShieldAlert) : block.severity === 'info' ? Info : TriangleAlert;
   const lead = <Glyph className={cn('size-icon', error && 'text-warn')} strokeWidth={1.5} />;
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
