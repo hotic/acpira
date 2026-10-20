@@ -10,6 +10,9 @@
 //!   acpira model-catalog [--out FILE]            fetch models.dev, print (or write) the trimmed model catalogue
 //!   acpira mcp                                   the MCP server handed to agents (show_image), over stdio
 //!   acpira agent [--home DIR]                    the built-in agent: ACP over stdio, model sources from DIR/providers.json
+//!   acpira handoff-pack --cwd DIR [--base REV] [--recipe FILE] [--json]
+//!                                                the handoff pack of a work tree (diff with whole functions, small files,
+//!                                                optional references), as a summoned agent would get it
 //!   acpira install-agent <id> [--force] [--archive FILE]
 //!                                                download (or take FILE), verify and unpack an agent shipped as a native archive
 //!   acpira --version
@@ -61,6 +64,9 @@ fn main() {
     }
     if args.first().map(String::as_str) == Some("model-catalog") {
       return model_catalog_cli(&args[1..]).await;
+    }
+    if args.first().map(String::as_str) == Some("handoff-pack") {
+      return acpira_host::handoff::cli(&args[1..]).await;
     }
     let explicit_home = flag(&args, "--home").filter(|h| !h.is_empty()).map(|h| absolute(&PathBuf::from(h)));
     let exe = std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned());
