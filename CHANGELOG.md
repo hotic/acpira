@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Summoned agents report back in a fixed shape.** A summoned agent is asked to end with what it changed, how it checked the work and what it assumed, and a reviewer with findings by severity and location. Acpira then adds the files the round really changed, with line counts, including files its commands wrote.
 - **Subagent duties.** A subagent can be a scout, an executor or a reviewer. Picking one fills in its access and standing instructions, which stay editable. Scouts and executors keep their conversation within a session when they are asked again, and reviewers start fresh every time.
 
 ### Planned

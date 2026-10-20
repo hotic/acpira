@@ -60,6 +60,11 @@ async fn dirty(dir: &Path) -> Vec<PathBuf> {
   porcelain_paths(&out).into_iter().map(|p| top.join(p)).collect()
 }
 
+/// Whether `dir` lies in a git work tree: outside one a snapshot sees nothing, whatever changed
+pub async fn in_work_tree(dir: &Path) -> bool {
+  git(dir, &["rev-parse", "--show-toplevel"]).await.is_some()
+}
+
 impl Snapshot {
   pub async fn take(watch: &[PathBuf]) -> Snapshot {
     let mut files = BTreeMap::new();

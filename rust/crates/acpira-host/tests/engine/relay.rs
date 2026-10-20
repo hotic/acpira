@@ -1023,6 +1023,49 @@ async fn a_child_gets_at_most_six_follow_ups_per_round() {
   assert!(deliveries(&s).is_empty(), "{:?}", deliveries(&s));
 }
 
+/// A git work tree holding a committed `a.txt`, for rounds whose changes are counted
+fn repo() -> Option<(tempfile::TempDir, std::path::PathBuf)> {
+  let git = |root: &std::path::Path, args: &[&str]| {
+    std::process::Command::new("git").arg("-C").arg(root).args(args).output().is_ok_and(|o| o.status.success())
+  };
+  let dir = tempfile::tempdir().unwrap();
+  let root = acpira_host::platform::paths::canonical_for_cli(dir.path()).unwrap();
+  let ok = git(&root, &["init", "-q"]) && git(&root, &["config", "user.email", "t@t"]) && git(&root, &["config", "user.name", "t"]);
+  std::fs::write(root.join("a.txt"), "one\n").unwrap();
+  (ok && git(&root, &["add", "."]) && git(&root, &["commit", "-q", "-m", "base"])).then_some((dir, root))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_round_reply_ends_with_the_files_it_changed_and_what_its_commands_changed_besides() {
+  let fake = fake_or_skip!();
+  let Some((_keep, root)) = repo() else { return };
+  let h = Harness::new(&fake, json!({}));
+  let roster = roster(h.dir.path()).await;
+  let s = Disposing(h.session(&root.to_string_lossy()));
+  s.start().await;
+  // The edit row is counted from its diff; the command wrote gen.txt, which only the work tree snapshot shows
+  let task = format!("relay: edit={} run={}", root.join("a.txt").display(), root.join("gen.txt").display());
+  let (ok, text) = last_text(&run(&s, &roster, 0, ask("fake-worker", &task)).await);
+  assert!(ok, "{text}");
+  assert!(
+    text.contains("(Acpira: files it edited: a.txt (+1 -0); these also changed while its commands ran: gen.txt.)"),
+    "{text}"
+  );
+  // A work round that only read says so
+  let (_, text) = last_text(&run(&s, &roster, 0, ask("fake-worker", "relay: just look")).await);
+  assert!(text.contains("(Acpira: it changed no files.)"), "{text}");
+  // A read-only round gets a note only when it changed something anyway
+  let (_, text) = last_text(&run(&s, &roster, 0, ask("fake-review", "relay: look")).await);
+  assert!(!text.contains("(Acpira:"), "{text}");
+  let task = format!("relay: run={}", root.join("other.txt").display());
+  let (_, text) = last_text(&run(&s, &roster, 0, ask("fake-review", &task)).await);
+  assert!(text.contains("(Acpira: it edited no file itself, but these changed while its commands ran: other.txt.)"), "{text}");
+  // A round that failed after changing files still reports them with its failure
+  let task = format!("relay: fail edit={}", root.join("a.txt").display());
+  let (ok, text) = last_text(&run(&s, &roster, 0, ask("fake-worker", &task)).await);
+  assert!(!ok && text.contains("model overloaded") && text.contains("(Acpira: files it edited: a.txt"), "{text}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_scout_or_an_executor_continues_its_idle_thread_and_a_reviewer_starts_fresh() {
   let fake = fake_or_skip!();

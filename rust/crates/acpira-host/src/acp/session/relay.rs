@@ -11,6 +11,7 @@
 //! hard-kill list of a host shutdown); a process that finishes spawning after the close is ended at once
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Weak;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,8 +22,9 @@ use serde_json::{Map, Value, json};
 use tokio::sync::{mpsc, watch};
 
 use acpira_shared::subagents::{RelayMode, SubagentDuty, SubagentHarness, SubagentPersona, SubagentState};
-use acpira_shared::transcript::SessionStatus;
+use acpira_shared::transcript::{AgentBlock, DiffKind, SessionStatus, ToolContent, ToolKind, ToolStatus, Turn};
 
+use crate::acp::session::hooks::{Reach, edit_paths, row_reach};
 use crate::acp::session::prompt::Origin;
 use crate::acp::session::updates::current_turn_index;
 use crate::acp::session::{AcpSession, Core};
@@ -31,6 +33,7 @@ use crate::acp::transcript::subagent_tree::{RelayOpen, RouteCtx};
 use crate::acp::transport::cancel::Cancel;
 use crate::acp::transport::process::{AgentProcess, ClientHandlers};
 use crate::acp::transport::rpc::{BoxFuture, RpcError};
+use crate::hooks::snapshot::{Snapshot, in_work_tree};
 use crate::i18n::t;
 use crate::relay::roster::Roster;
 use crate::relay::wire::{AskArgs, AskCallerArgs, HubReply};
@@ -43,6 +46,8 @@ const PROGRESS_EVERY: Duration = Duration::from_secs(5);
 /// Automatic messages delivering finished rounds to the root, per prompt of the user's own
 const MAX_WAKES: u32 = 6;
 const TITLE_MAX: usize = 48;
+/// Files a round's change note names, at most (the rest are counted)
+const NOTE_FILES: usize = 20;
 /// Mode ids that mean "read only" across the built-in CLIs: codex-acp `read-only`, Claude / OpenCode / Grok `plan`
 const READ_ONLY_MODES: [&str; 3] = ["read-only", "plan", "ask"];
 /// Modes that skip the CLI's own approvals: Claude `bypassPermissions`, Codex `agent-full-access`, Devin `bypass`,
@@ -319,7 +324,9 @@ fn clip(s: &str, max: usize) -> String {
   out
 }
 
-/// The task the child receives: the caller's prompt, the persona's standing brief, the read-only rule for a consult
+/// The task the child receives: the caller's prompt, the persona's standing brief, the read-only rule for a consult, and
+/// how to end: the caller reads only the final reply, so it says what was changed, checked and assumed (a reviewer:
+/// its findings by severity and place), which is what the caller weighs before it acts on any of it
 fn compose_brief(prompt: &str, persona: &SubagentPersona, mode: RelayMode) -> String {
   let mut parts = vec![prompt.trim().to_owned()];
   if let Some(b) = persona.brief.as_deref().filter(|b| !b.trim().is_empty()) {
@@ -328,12 +335,129 @@ fn compose_brief(prompt: &str, persona: &SubagentPersona, mode: RelayMode) -> St
   if mode == RelayMode::Consult {
     parts.push("You are consulted for an opinion: read whatever you need, but do not modify any file.".into());
   }
-  parts.push(
-    "(Another agent working in this same repository asked you this. It reads only your final reply, so end with a self-contained \
-answer. When a decision only it can make blocks you, ask it with ask_caller; otherwise decide yourself and say what you assumed.)"
-      .into(),
-  );
+  parts.push(format!(
+    "(Another agent working in this same repository asked you this. It reads only your final reply, so make that reply \
+self-contained. {} When a decision only it can make blocks you, ask it with ask_caller; otherwise decide yourself.)",
+    closing(persona.duty, mode)
+  ));
   parts.join("\n\n")
+}
+
+/// What the final reply ends with, by what the round was for
+fn closing(duty: SubagentDuty, mode: RelayMode) -> &'static str {
+  match (duty, mode) {
+    (SubagentDuty::Reviewer, _) => {
+      "End with your findings, most severe first, each as: severity (high / medium / low), path:line, what is wrong and a \
+concrete way it fails; if you found nothing wrong, say so plainly."
+    }
+    (_, RelayMode::Consult) => "End with what you found, each point with its path:line, and what you assumed.",
+    _ => "End with the files you changed (or that you changed none), what you ran to check the work and its result, and what you assumed.",
+  }
+}
+
+/// The files a round's edit rows name, with the lines their diffs add and remove (repeated edits of a file add up), and
+/// whether it also ran something that can write anywhere (a command, an MCP tool, an edit naming no file): the rule the
+/// workspace gate's `row_reach` follows
+fn round_edits(turns: &[Turn]) -> (Vec<(String, u64, u64)>, bool) {
+  let mut files: Vec<(String, u64, u64)> = vec![];
+  let mut anywhere = false;
+  let mut bump = |path: &str, add: u64, del: u64| match files.iter_mut().find(|f| f.0 == path) {
+    Some(f) => {
+      f.1 += add;
+      f.2 += del;
+    }
+    None => files.push((path.to_owned(), add, del)),
+  };
+  for turn in turns.iter().filter_map(Turn::as_agent) {
+    for b in &turn.blocks {
+      let AgentBlock::ToolCall(tc) = b else { continue };
+      if row_reach(tc) == Reach::Any {
+        anywhere = true;
+      }
+      if !matches!(tc.kind, ToolKind::Edit | ToolKind::Delete | ToolKind::Move) || tc.status == ToolStatus::Failed {
+        continue;
+      }
+      // `contents` holds every item when there are several, `content` the primary one otherwise
+      let items: Vec<&ToolContent> = match &tc.contents {
+        Some(list) => list.iter().collect(),
+        None => tc.content.iter().collect(),
+      };
+      let mut counted = false;
+      for item in items {
+        if let ToolContent::Diff { lines, source: Some(src) } = item {
+          let n = |k: DiffKind| lines.iter().filter(|l| l.kind == k).count() as u64;
+          bump(&src.path, n(DiffKind::Add), n(DiffKind::Del));
+          counted = true;
+        }
+      }
+      if !counted {
+        let paths = edit_paths(tc);
+        let stat = tc.diff_stat.filter(|_| paths.len() == 1);
+        for p in paths {
+          bump(&p, stat.map_or(0, |s| s.add), stat.map_or(0, |s| s.del));
+        }
+      }
+    }
+  }
+  (files, anywhere)
+}
+
+/// A path as the caller reads it: relative to the session's folder when inside it
+fn shown_path(cwd: &str, path: &str) -> String {
+  let p = std::path::Path::new(path);
+  let rel = p.strip_prefix(cwd).ok().map(|r| r.to_path_buf()).or_else(|| {
+    let top = std::fs::canonicalize(cwd).ok()?;
+    let canon = std::fs::canonicalize(p).ok().or_else(|| Some(std::fs::canonicalize(p.parent()?).ok()?.join(p.file_name()?)))?;
+    canon.strip_prefix(&top).ok().map(|r| r.to_path_buf())
+  });
+  match rel {
+    Some(r) if !r.as_os_str().is_empty() => r.to_string_lossy().replace('\\', "/"),
+    _ => path.to_owned(),
+  }
+}
+
+/// The round's change note the caller reads after the reply: what its edit rows changed, and, when it also ran something
+/// that can write anywhere, the other files whose state changed meanwhile (`changed`: None outside a git work tree,
+/// where nothing can be seen)
+fn change_note(cwd: &str, edits: &[(String, u64, u64)], anywhere: bool, changed: Option<&[PathBuf]>) -> String {
+  let listed: Vec<(String, u64, u64)> = {
+    let mut out: Vec<(String, u64, u64)> = vec![];
+    for (p, a, d) in edits {
+      let shown = shown_path(cwd, p);
+      match out.iter_mut().find(|f| f.0 == shown) {
+        Some(f) => {
+          f.1 += a;
+          f.2 += d;
+        }
+        None => out.push((shown, *a, *d)),
+      }
+    }
+    out
+  };
+  let extra: Vec<String> = match (anywhere, changed) {
+    (true, Some(paths)) => {
+      paths.iter().map(|p| shown_path(cwd, &p.to_string_lossy())).filter(|p| !listed.iter().any(|f| &f.0 == p)).collect()
+    }
+    _ => vec![],
+  };
+  let names = |list: Vec<String>| {
+    let more = list.len().saturating_sub(NOTE_FILES);
+    let mut out = list.into_iter().take(NOTE_FILES).collect::<Vec<_>>().join(", ");
+    if more > 0 {
+      out.push_str(&format!(" and {more} more"));
+    }
+    out
+  };
+  let edited = names(listed.iter().map(|(p, a, d)| if a + d > 0 { format!("{p} (+{a} -{d})") } else { p.clone() }).collect());
+  match (listed.is_empty(), extra.is_empty()) {
+    (true, true) if anywhere && changed.is_none() => {
+      "it reported no file edits, and outside a git work tree Acpira cannot see what its commands changed".into()
+    }
+    (true, true) => "it changed no files".into(),
+    (false, true) => format!("files it edited: {edited}"),
+    (true, false) => format!("it edited no file itself, but these changed while its commands ran: {}", names(extra)),
+    (false, false) => format!("files it edited: {edited}; these also changed while its commands ran: {}", names(extra)),
+  }
 }
 
 /// The config option whose category or id is one of `keys`
@@ -999,13 +1123,29 @@ impl AcpSession {
       }
     }
     self.core.lock().relays.follow_ups.remove(&r.thread);
+    // The work tree before the prompt: a round that runs commands is told what changed meanwhile, not only what its
+    // edit rows name
+    let watch = [PathBuf::from(&self.cwd)];
+    let before = if in_work_tree(&watch[0]).await { Some(Snapshot::take(&watch).await) } else { None };
     let end = self.relay_prompt(&proc, &sid, &r.brief).await;
     let end = match end {
       Ok(stop) => self.relay_follow_ups(&proc, &sid, r, stop).await,
       Err(e) => Err(e),
     };
+    let (edits, anywhere) = round_edits(self.core.lock().tree.relay_turns(&r.node).unwrap_or(&[]));
+    let changed = match &before {
+      Some(b) if anywhere => Some(Snapshot::take(&watch).await.changed_since(b)),
+      Some(_) => Some(vec![]),
+      None => None,
+    };
+    // A read-only round is told about only when it did change something
+    let clean = edits.is_empty() && changed.as_ref().is_none_or(|c| c.is_empty());
+    let note = (r.mode != RelayMode::Consult || !clean).then(|| change_note(&self.cwd, &edits, anywhere, changed.as_deref()));
     // Whatever this thread sent off and has not had by now goes unread: its round is over
     let mut c = self.core.lock();
+    if let Some(note) = note {
+      c.relays.notes.entry(r.node.clone()).or_default().push(note);
+    }
     c.relays.follow_ups.remove(&r.thread);
     for o in c.relays.ledger.iter_mut().filter(|o| o.owner.as_deref() == Some(r.thread.as_str())) {
       if matches!(o.state, Owed::Running | Owed::Unread) {
@@ -1489,19 +1629,19 @@ fn busy(persona: &SubagentPersona, thread: &str) -> anyhow::Error {
   anyhow!("{} is still working on the previous round of thread {thread}. Call ask_agent with this thread and an empty prompt to wait for it.", who(persona))
 }
 
-/// A finished round as the caller reads it, the same live and later: the reply (and the round's setup notes), or why
-/// there is none
+/// A finished round as the caller reads it, the same live and later: the reply (and the round's notes: its setup and
+/// what it changed), or why there is none (with the same notes: a stopped round may have changed files already)
 fn round_result(c: &Core, node: &str) -> std::result::Result<String, String> {
   let Some((state, reply, result)) = c.tree.relay_outcome(node) else { return Err("is gone.".into()) };
-  let notes = c.relays.notes.get(node).filter(|n| !n.is_empty());
+  let notes = c.relays.notes.get(node).filter(|n| !n.is_empty()).map(|n| format!("\n\n(Acpira: {}.)", n.join("; "))).unwrap_or_default();
   match state {
-    SubagentState::Completed => Ok(match notes {
-      Some(n) => format!("{}\n\n(Acpira: {}.)", reply.trim(), n.join("; ")),
-      None => reply,
-    }),
-    SubagentState::Cancelled if reply.trim().is_empty() => Err("was cancelled.".into()),
-    SubagentState::Cancelled => Err(format!("was cancelled. Its last words:\n\n{}", reply.trim())),
-    SubagentState::Failed | SubagentState::Disconnected => Err(format!("failed: {}", result.as_deref().map(str::trim).filter(|r| !r.is_empty()).unwrap_or("no reason given"))),
+    SubagentState::Completed if notes.is_empty() => Ok(reply),
+    SubagentState::Completed => Ok(format!("{}{notes}", reply.trim())),
+    SubagentState::Cancelled if reply.trim().is_empty() => Err(format!("was cancelled.{notes}")),
+    SubagentState::Cancelled => Err(format!("was cancelled. Its last words:\n\n{}{notes}", reply.trim())),
+    SubagentState::Failed | SubagentState::Disconnected => {
+      Err(format!("failed: {}{notes}", result.as_deref().map(str::trim).filter(|r| !r.is_empty()).unwrap_or("no reason given")))
+    }
     SubagentState::Running => Err("is still working.".into()),
   }
 }
@@ -1658,6 +1798,8 @@ fn ask_agent_args(u: &Value) -> Option<Map<String, Value>> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use acpira_shared::transcript::{AgentTurn, DiffLine, DiffSource, DiffStat, Location, ToolCallBlock};
+  use crate::util::random_uuid;
 
   #[test]
   fn a_fixed_persona_ignores_the_calls_mode_and_an_inherit_one_takes_it() {
@@ -1786,5 +1928,101 @@ mod tests {
     assert!(consult.starts_with("review the diff\n\nThree severity levels."));
     assert!(consult.contains("do not modify any file"));
     assert!(!compose_brief("fix it", &p, RelayMode::Work).contains("do not modify"));
+    // How the reply ends follows what the round is for: findings by severity and place for a reviewer, sources for a
+    // consult, changes, checks and assumptions for work
+    assert!(consult.contains("each point with its path:line, and what you assumed"));
+    let work = compose_brief("fix it", &p, RelayMode::Work);
+    assert!(work.contains("End with the files you changed (or that you changed none), what you ran to check the work"));
+    let reviewer = SubagentPersona { duty: SubagentDuty::Reviewer, ..p };
+    let review = compose_brief("review", &reviewer, RelayMode::Work);
+    assert!(review.contains("severity (high / medium / low), path:line") && !review.contains("files you changed"));
+    assert!(review.ends_with("otherwise decide yourself.)"));
+  }
+
+  fn row(kind: ToolKind, paths: &[&str], f: impl FnOnce(&mut ToolCallBlock)) -> AgentBlock {
+    let mut tc = ToolCallBlock {
+      observation: None,
+      id: random_uuid(),
+      kind,
+      verb: String::new(),
+      verb_key: None,
+      mcp_server: None,
+      target: None,
+      target_mono: None,
+      locations: Some(paths.iter().map(|p| Location { path: (*p).to_owned(), line: None }).collect()),
+      read_range: None,
+      status: ToolStatus::Completed,
+      background: None,
+      async_task: None,
+      started_at: None,
+      ended_at: None,
+      meta: None,
+      diff_stat: None,
+      todo_entries: None,
+      content: None,
+      contents: None,
+      subagent_id: None,
+    };
+    f(&mut tc);
+    AgentBlock::ToolCall(tc)
+  }
+
+  fn diff(path: &str, add: usize, del: usize) -> ToolContent {
+    let line = |kind| DiffLine { kind, text: "x".into(), old_line: None, new_line: None };
+    let mut lines: Vec<DiffLine> = (0..add).map(|_| line(DiffKind::Add)).collect();
+    lines.extend((0..del).map(|_| line(DiffKind::Del)));
+    lines.push(line(DiffKind::Ctx));
+    ToolContent::Diff { lines, source: Some(DiffSource { path: path.into(), old_text: String::new(), new_text: String::new(), omitted: false }) }
+  }
+
+  #[test]
+  fn a_rounds_edit_rows_add_up_per_file_and_commands_mark_it_as_reaching_anywhere() {
+    let turns = |blocks| vec![Turn::Agent(AgentTurn { blocks, ..Default::default() })];
+    let (files, anywhere) = round_edits(&turns(vec![
+      row(ToolKind::Edit, &["/w/a.rs"], |t| t.content = Some(diff("/w/a.rs", 2, 1))),
+      row(ToolKind::Edit, &["/w/a.rs"], |t| t.content = Some(diff("/w/a.rs", 3, 0))),
+      // `contents` holds every item when there are several; `content` repeats the first and is not counted again
+      row(ToolKind::Edit, &["/w/b.rs", "/w/c.rs"], |t| {
+        t.content = Some(diff("/w/b.rs", 1, 0));
+        t.contents = Some(vec![diff("/w/b.rs", 1, 0), diff("/w/c.rs", 0, 4)]);
+      }),
+      // No diff: the row's own stat, when it names one file
+      row(ToolKind::Edit, &["/w/d.rs"], |t| t.diff_stat = Some(DiffStat { add: 7, del: 2 })),
+      // A failed edit changed nothing
+      row(ToolKind::Edit, &["/w/e.rs"], |t| {
+        t.status = ToolStatus::Failed;
+        t.content = Some(diff("/w/e.rs", 9, 9));
+      }),
+      row(ToolKind::Read, &["/w/f.rs"], |_| {}),
+    ]));
+    let want: Vec<(String, u64, u64)> =
+      vec![("/w/a.rs".into(), 5, 1), ("/w/b.rs".into(), 1, 0), ("/w/c.rs".into(), 0, 4), ("/w/d.rs".into(), 7, 2)];
+    assert_eq!(files, want);
+    assert!(!anywhere, "edits naming their files and reads stay within what the rows say");
+    let (_, anywhere) = round_edits(&turns(vec![row(ToolKind::Execute, &[], |_| {})]));
+    assert!(anywhere);
+  }
+
+  #[test]
+  fn the_change_note_names_edited_files_relative_to_the_folder_and_what_commands_changed_besides() {
+    let edits = vec![("/w/src/a.rs".to_owned(), 5, 1), ("/elsewhere/b.rs".to_owned(), 0, 0)];
+    assert_eq!(change_note("/w", &edits, false, Some(&[])), "files it edited: src/a.rs (+5 -1), /elsewhere/b.rs");
+    assert_eq!(change_note("/w", &[], false, Some(&[])), "it changed no files");
+    assert_eq!(change_note("/w", &[], true, Some(&[])), "it changed no files");
+    assert_eq!(
+      change_note("/w", &[], true, None),
+      "it reported no file edits, and outside a git work tree Acpira cannot see what its commands changed"
+    );
+    // What the snapshot saw besides the edit rows; a file the rows already name is not repeated
+    let seen = [PathBuf::from("/w/src/a.rs"), PathBuf::from("/w/gen/out.txt")];
+    assert_eq!(
+      change_note("/w", &edits[..1], true, Some(&seen)),
+      "files it edited: src/a.rs (+5 -1); these also changed while its commands ran: gen/out.txt"
+    );
+    assert_eq!(change_note("/w", &[], true, Some(&seen[1..])), "it edited no file itself, but these changed while its commands ran: gen/out.txt");
+    // Without commands the snapshot is not consulted
+    assert_eq!(change_note("/w", &edits[..1], false, Some(&seen)), "files it edited: src/a.rs (+5 -1)");
+    let many: Vec<(String, u64, u64)> = (0..NOTE_FILES + 3).map(|i| (format!("/w/f{i}"), 1, 0)).collect();
+    assert!(change_note("/w", &many, false, Some(&[])).ends_with("f19 (+1 -0) and 3 more"));
   }
 }

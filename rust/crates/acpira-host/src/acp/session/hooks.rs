@@ -94,7 +94,7 @@ impl Source {
 
 /// How far the span's tool calls can have reached on disk; the span takes its widest row
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
-enum Reach {
+pub(crate) enum Reach {
   /// Reads, searches, fetches and Acpira's own bookkeeping: nothing on disk is the span's
   #[default]
   None,
@@ -107,7 +107,7 @@ enum Reach {
 
 /// What a row of this tool call can have changed. Unknown tools count as able to change anything, so an agent whose
 /// tools are not classified keeps the snapshot's account
-fn row_reach(tc: &ToolCallBlock) -> Reach {
+pub(crate) fn row_reach(tc: &ToolCallBlock) -> Reach {
   // A subagent's own tool calls are not root rows, and an MCP tool (`ask_agent` included) can write anything
   if tc.subagent_id.is_some() || tc.mcp_server.is_some() {
     return Reach::Any;

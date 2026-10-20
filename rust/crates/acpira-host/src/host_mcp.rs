@@ -479,7 +479,9 @@ pub fn handle_line(line: &str, version: &str) -> Option<Value> {
   Some(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
 }
 
-/// `ask_agent`: the personas are the enum of `agent`, and their "when" lines are the menu the model picks from
+/// `ask_agent`: the personas are the enum of `agent`, and their "when" lines are the menu the model picks from. The
+/// description is also where the caller learns to brief (goal, constraints, done, leads, what to return), to keep a
+/// review independent of its own account, and to weigh a reply against the code before acting on it
 fn ask_tool_def(personas: &[acpira_shared::subagents::SubagentPersona]) -> Value {
   use acpira_shared::subagents::{RelayMode, SubagentDuty};
   let lines: Vec<String> = personas
@@ -506,15 +508,18 @@ fn ask_tool_def(personas: &[acpira_shared::subagents::SubagentPersona]) -> Value
     "Summon another coding agent that runs in its own CLI on this same repository, and answer with its reply. \
 Use it when one of the agents below fits the task better (a second opinion, a review, fast mechanical edits), and always when \
 the user names one with @name: those names are these agents, not your own subagents, so call this tool directly without \
-listing or searching for agents. To ask several agents, make one call per agent in the same message; they run in parallel. \
-It cannot see this conversation but reads files and runs commands itself: write a short, \
-self-contained prompt that points at paths instead of pasting code. A new task answers at once with its thread while the \
-agent works: carry on with other work or end your turn, and Acpira sends you its reply in a message when it is done (several \
-sent together come back together), so do not poll and do not do the task yourself meanwhile. Set `wait` when you need the \
-reply before going on; a call with a thread and an empty prompt waits for that thread. To follow up with the same agent, \
-pass the `thread` its answer named. A scout or an executor continues its idle conversation in this session even without \
-`thread` (set `new_thread` to start over); a reviewer starts fresh on every call without `thread`, which keeps it \
-independent.\n\nAgents:\n{}",
+listing or searching for agents. To ask several agents, make one call per agent in the same message; they run in parallel.\n\n\
+It cannot see this conversation but reads files and runs commands itself, so the prompt is its whole brief: state the goal, \
+the constraints, what counts as done, what you already know (point at paths instead of pasting code) and what its reply \
+should contain. To have work reviewed, give the original requirement and where the change is, not your own account of it, so \
+the reviewer judges the change itself. A reply is advice: check each point against the code before acting on it, and tell \
+the user which points you rejected and why.\n\n\
+A new task answers at once with its thread while the agent works: carry on with other work or end your turn, and Acpira \
+sends you its reply in a message when it is done (several sent together come back together), so do not poll and do not do \
+the task yourself meanwhile. Set `wait` when you need the reply before going on; a call with a thread and an empty prompt \
+waits for that thread. To follow up with the same agent, pass the `thread` its answer named. A scout or an executor \
+continues its idle conversation in this session even without `thread` (set `new_thread` to start over); a reviewer starts \
+fresh on every call without `thread`, which keeps it independent.\n\nAgents:\n{}",
     lines.join("\n")
   );
   let ids: Vec<&str> = personas.iter().map(|p| p.id.as_str()).collect();

@@ -1414,6 +1414,11 @@ impl SubagentTree {
     live_activity(turns).or_else(|| latest_step(turns)).or_else(|| activity_of(turns)).map(|a| a.label)
   }
 
+  /// A summoned node's own transcript: the turns of its round
+  pub fn relay_turns(&self, id: &str) -> Option<&[Turn]> {
+    self.nodes.iter().find(|n| n.id == id && n.harness.is_some()).map(|n| n.state.turns.as_slice())
+  }
+
   /// The last text the child wrote in its current round
   pub fn relay_reply(&self, id: &str) -> Option<String> {
     let n = self.nodes.iter().find(|n| n.id == id)?;
