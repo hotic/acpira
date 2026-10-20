@@ -144,7 +144,7 @@ async fn the_childs_permission_request_lands_on_its_node_and_the_answer_reaches_
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_bypass_round_answers_its_childs_permission_without_a_card_and_a_consult_round_shows_one_again() {
+async fn a_bypass_round_answers_its_childs_permission_without_a_card_whatever_the_call_asks() {
   let fake = fake_or_skip!();
   let h = Harness::new(&fake, json!({}));
   let roster = Arc::new(Roster::new(h.dir.path()));
@@ -156,20 +156,14 @@ async fn a_bypass_round_answers_its_childs_permission_without_a_card_and_a_consu
   assert!(ok && text.starts_with("reply to relay: perm edit (round 1, mode agent)"), "{text}");
   expect_match(&nodes(&s)[0], json!({ "state": "completed", "harness": { "mode": "bypass" } }));
   let thread = thread_of(&text);
-  // `work` from the caller keeps the persona's bypass; the edit is still allowed without a card
-  let (ok, text) =
-    last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), mode: Some("work".into()), ..ask("", "relay: perm again") }).await);
-  assert!(ok && text.starts_with("reply to relay: perm again (round 2, mode agent)"), "{text}");
-  assert_eq!(nodes(&s)[1]["harness"]["mode"], "bypass");
-  // A consult round on the same thread asks again
-  let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-  let args = AskArgs { thread: Some(thread), mode: Some("consult".into()), ..ask("", "relay: perm look") };
-  tokio::spawn(s.0.clone().relay_ask(roster.clone(), None, 0, args, tx));
-  until(|| nodes(&s).get(2).is_some_and(|n| n["permissions"].as_array().is_some_and(|p| p.len() == 1)), 8000).await;
-  let block = nodes(&s)[2]["permissions"][0]["id"].as_str().unwrap().to_owned();
-  s.resolve_permission(&block, "no");
-  while tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.unwrap().is_some() {}
-  expect_match(&nodes(&s)[2], json!({ "state": "completed", "harness": { "mode": "consult" } }));
+  // The call's mode does not touch a fixed persona: `work` and `consult` both stay bypass, the edit allowed without a card
+  for (round, asked) in [(2, "work"), (3, "consult")] {
+    let prompt = format!("relay: perm {asked}");
+    let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), mode: Some(asked.into()), ..ask("", &prompt) }).await);
+    assert!(ok && text.starts_with(&format!("reply to {prompt} (round {round}, mode agent)")), "{text}");
+    expect_match(&nodes(&s)[round - 1], json!({ "state": "completed", "harness": { "mode": "bypass" } }));
+    assert!(nodes(&s)[round - 1]["permissions"].as_array().is_none_or(|p| p.is_empty()), "no card on round {round}");
+  }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -346,13 +340,16 @@ async fn a_thread_switches_its_mode_per_round_and_one_round_at_a_time() {
   let h = Harness::new(&fake, json!({}));
   let roster = roster(h.dir.path()).await;
   let s = Disposing(h.session("/tmp"));
+  roster.save(&json!([{ "name": "Fake Twin", "agent": "fake", "mode": "inherit", "when": "anything" }])).await.unwrap();
   s.start().await;
-  let (_, text) = last_text(&run(&s, &roster, 0, ask("fake-review", "relay: first")).await);
+  let (_, text) = last_text(&run(&s, &roster, 0, AskArgs { mode: Some("consult".into()), ..ask("fake-twin", "relay: first") }).await);
+  assert!(text.starts_with("reply to relay: first (round 1, mode plan)"), "{text}");
   let thread = thread_of(&text);
   // A work round on a consult thread leaves the read-only mode, a consult round goes back to it
   let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), mode: Some("work".into()), ..ask("", "relay: write it") }).await);
   assert!(ok && text.starts_with("reply to relay: write it (round 2, mode agent)"), "{text}");
-  let (_, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), ..ask("", "relay: review it") }).await);
+  let (_, text) =
+    last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), mode: Some("consult".into()), ..ask("", "relay: review it") }).await);
   assert!(text.starts_with("reply to relay: review it (round 3, mode plan)"), "{text}");
   // Two prompts on the thread at once: one round starts, the other is told to wait
   let a = run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), ..ask("", "relay: slow a") });
@@ -553,7 +550,7 @@ async fn a_thread_whose_session_cannot_be_reopened_fails_instead_of_starting_ove
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_inherit_persona_follows_the_callers_mode_and_a_call_can_only_narrow_it() {
+async fn an_inherit_persona_follows_the_callers_mode_and_a_call_overrides_it() {
   let fake = fake_or_skip!();
   let h = Harness::new(&fake, json!({}));
   let roster = Arc::new(Roster::new(h.dir.path()));
@@ -565,15 +562,19 @@ async fn an_inherit_persona_follows_the_callers_mode_and_a_call_can_only_narrow_
   assert!(ok && text.starts_with("reply to relay: first (round 1, mode agent)"), "{text}");
   assert_eq!(nodes(&s)[0]["harness"]["mode"], "work");
   let thread = thread_of(&text);
-  // The root in plan mode: the next round is a consult, and asking for work does not widen it
+  // The root in plan mode: a round without a mode is a consult
   s.set_mode("plan".into()).await.unwrap();
-  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), mode: Some("work".into()), ..ask("", "relay: write") }).await);
-  assert!(ok && text.starts_with("reply to relay: write (round 2, mode plan)"), "{text}");
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), ..ask("", "relay: look") }).await);
+  assert!(ok && text.starts_with("reply to relay: look (round 2, mode plan)"), "{text}");
   assert_eq!(nodes(&s)[1]["harness"]["mode"], "consult");
-  // Back in the ordinary mode, a consult still narrows it
+  // The call's mode overrides the caller's access: work under a plan-mode root
+  let (ok, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread.clone()), mode: Some("work".into()), ..ask("", "relay: write") }).await);
+  assert!(ok && text.starts_with("reply to relay: write (round 3, mode agent)"), "{text}");
+  assert_eq!(nodes(&s)[2]["harness"]["mode"], "work");
+  // and a consult under an ordinary one
   s.set_mode("agent".into()).await.unwrap();
-  let (_, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread), mode: Some("consult".into()), ..ask("", "relay: look") }).await);
-  assert!(text.starts_with("reply to relay: look (round 3, mode plan)"), "{text}");
+  let (_, text) = last_text(&run(&s, &roster, 0, AskArgs { thread: Some(thread), mode: Some("consult".into()), ..ask("", "relay: look again") }).await);
+  assert!(text.starts_with("reply to relay: look again (round 4, mode plan)"), "{text}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

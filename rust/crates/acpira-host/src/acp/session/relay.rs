@@ -450,17 +450,19 @@ async fn set_config(proc: &AgentProcess, sid: &str, opened: &mut Value, id: &str
   Ok(())
 }
 
-/// The mode a round runs in. A call may ask for a consult or for work, never for bypass on its own: work on a bypass
-/// persona stays bypass. An inherit persona takes the caller's access this round, and the call can only narrow it, so a
-/// caller in plan mode cannot hand out work by asking for it
+/// The mode a round runs in. A persona with a fixed access (consult, work, bypass) runs in it whatever the call asks:
+/// the setting is the user's, and a caller asking for a consult must not bring approval cards back to a bypass persona.
+/// Only an inherit persona leaves it to the caller: the call's mode overrides it either way (a caller in plan mode may
+/// hand out work, one in work mode may ask for bypass), and without one it takes the caller's own access this round
 fn round_mode(persona: RelayMode, asked: Option<&str>, caller: impl FnOnce() -> RelayMode) -> RelayMode {
-  let base = if persona == RelayMode::Inherit { caller() } else { persona };
+  if persona != RelayMode::Inherit {
+    return persona;
+  }
   match asked {
     Some("consult") => RelayMode::Consult,
-    Some("work" | "bypass") if base == RelayMode::Bypass => RelayMode::Bypass,
-    Some("work" | "bypass") if persona == RelayMode::Inherit => base,
-    Some("work" | "bypass") => RelayMode::Work,
-    _ => base,
+    Some("work") => RelayMode::Work,
+    Some("bypass") => RelayMode::Bypass,
+    _ => caller(),
   }
 }
 
@@ -1613,6 +1615,23 @@ fn ask_agent_args(u: &Value) -> Option<Map<String, Value>> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn a_fixed_persona_ignores_the_calls_mode_and_an_inherit_one_takes_it() {
+    use RelayMode::*;
+    for fixed in [Consult, Work, Bypass] {
+      for asked in [None, Some("consult"), Some("work"), Some("bypass")] {
+        assert_eq!(round_mode(fixed, asked, || panic!("a fixed persona never asks the caller")), fixed, "{fixed:?} asked {asked:?}");
+      }
+    }
+    // The call overrides the caller's access either way
+    assert_eq!(round_mode(Inherit, Some("work"), || Consult), Work);
+    assert_eq!(round_mode(Inherit, Some("bypass"), || Work), Bypass);
+    assert_eq!(round_mode(Inherit, Some("consult"), || Bypass), Consult);
+    // Without one (or with an unknown one) it is the caller's access
+    assert_eq!(round_mode(Inherit, None, || Bypass), Bypass);
+    assert_eq!(round_mode(Inherit, Some("yolo"), || Work), Work);
+  }
 
   #[test]
   fn full_access_modes_are_known_ids_or_marked_full_access() {
