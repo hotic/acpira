@@ -104,6 +104,8 @@ export interface SubagentPersona {
 }
 
 export const PERSONA_MAX = 32;
+// The id the built-in agent's sidekick goes by (mirror of SIDEKICK_ID): no persona or group of the roster takes it
+export const SIDEKICK_ID = 'sidekick';
 const NAME_MAX = 48;
 const TEXT_MAX = 2000;
 
@@ -112,7 +114,7 @@ export function personaSlug(name: string): string {
   return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
-// Mirror of sanitize_personas: unnamed / agentless entries drop, text is clipped, ids are unique slugs
+// Mirror of sanitize_personas: unnamed / agentless entries drop, text is clipped, ids are unique slugs (never SIDEKICK_ID)
 export function sanitizePersonas(value: unknown): SubagentPersona[] {
   const out: SubagentPersona[] = [];
   const str = (v: unknown, max: number) => (typeof v === 'string' ? [...v.trim()].slice(0, max).join('') : '');
@@ -124,7 +126,7 @@ export function sanitizePersonas(value: unknown): SubagentPersona[] {
     if (!name || !agent) continue;
     const base = personaSlug(str(o.id, 200)) || personaSlug(name) || 'agent';
     let id = base;
-    for (let n = 2; out.some(p => p.id === id); n++) id = `${base}-${n}`;
+    for (let n = 2; id === SIDEKICK_ID || out.some(p => p.id === id); n++) id = `${base}-${n}`;
     const opt = (v: unknown, max: number) => str(v, max) || undefined;
     out.push({
       id, name, agent,
@@ -166,7 +168,7 @@ export function sanitizeGroups(value: unknown, personas: SubagentPersona[]): Sub
     const name = str(o.name, NAME_MAX);
     if (!name) continue;
     const base = personaSlug(str(o.id, 200)) || personaSlug(name) || 'group';
-    const taken = (id: string) => out.some(g => g.id === id) || personas.some(p => p.id === id);
+    const taken = (id: string) => id === SIDEKICK_ID || out.some(g => g.id === id) || personas.some(p => p.id === id);
     let id = base;
     for (let n = 2; taken(id); n++) id = `${base}-${n}`;
     const members: string[] = [];

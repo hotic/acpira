@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Subagent duties.** A subagent can be a scout, an executor or a reviewer. Picking one fills in its access and standing instructions, which stay editable. Scouts and executors keep their conversation within a session when they are asked again, and reviewers start fresh every time.
 - **Hand a summoned agent your changes.** `ask_agent` can pass `changes`, or a subagent can have "Hand over this session's changes" switched on. Its first round then starts with a pack of the session's uncommitted diff, and the small changed files in full. Later rounds of the same conversation hear only which files moved since.
 - **Subagent groups.** Settings → Orchestration, formerly Subagents, now has a Groups section. One `@name` of a group summons every member with the same task and the same changes. The members work independently, and their replies come back together in one message.
+- **A sidekick for the built-in agent.** Its model panel has a Sidekick row under the effort, where a second configured model can be picked. The lead model can then hand well-specified work to it through `ask_agent`, in one conversation that later tasks continue, and check its diff. A sidekick picked before the first message is part of the tool list from the start. Picked later, it is announced with the next message, so the prompt cache holds.
 
 ### Planned
 

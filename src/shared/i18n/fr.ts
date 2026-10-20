@@ -232,6 +232,7 @@ export const fr = {
   'composer.effort': 'Effort de raisonnement',
   'composer.lead': 'Principal',
   'composer.sidekick': 'Assistant',
+  'composer.sidekickNone': 'Aucun',
   'composer.fusionSummary': '{leads} principaux, {sidekicks} assistants',
   'composer.addAccount': 'Ajouter un compte',
   'composer.accountsOf': 'Comptes {agent}',

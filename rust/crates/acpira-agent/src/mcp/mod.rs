@@ -223,6 +223,8 @@ struct Server {
   key: String,
   cwd: PathBuf,
   live: tokio::sync::OnceCell<Result<Arc<Live>, String>>,
+  /// Set by `Hub::relist`: the next turn lists again, like `Live::stale`, also when the server was still starting
+  relist: AtomicBool,
 }
 
 impl Server {
@@ -337,7 +339,7 @@ impl Hub {
         continue;
       }
       keys.push(key.clone());
-      servers.push(Arc::new(Server { spec, key, cwd: cwd.to_owned(), live: Default::default() }));
+      servers.push(Arc::new(Server { spec, key, cwd: cwd.to_owned(), live: Default::default(), relist: AtomicBool::new(false) }));
     }
     for s in &servers {
       let s = s.clone();
@@ -362,7 +364,8 @@ impl Hub {
           continue;
         }
       };
-      if live.stale.swap(false, Ordering::AcqRel) {
+      // Both flags are taken, whichever asked
+      if live.stale.swap(false, Ordering::AcqRel) | server.relist.swap(false, Ordering::AcqRel) {
         match list(&live.transport).await {
           Ok(listed) => *live.listed.lock() = listed,
           Err(e) => eprintln!("[acpira agent] MCP {}: listing again failed ({e}); keeping the earlier list", server.spec.name()),
@@ -390,6 +393,14 @@ impl Hub {
       note.push_str(&format!("These MCP servers are configured but unavailable, so their tools are missing; tell the user if the task needs them:\n{}", lines.join("\n")));
     }
     Offer { tools, note: (!note.is_empty()).then_some(note) }
+  }
+
+  /// Have the next `offer` list the named server's tools again: what the engine's own server lists depends on the
+  /// session (the sidekick its `ask_agent` names first), and it never sends `tools/list_changed`
+  pub fn relist(&self, name: &str) {
+    if let Some(s) = self.servers.iter().find(|s| s.spec.name() == name) {
+      s.relist.store(true, Ordering::Release);
+    }
   }
 
   /// Call a tool of a started server

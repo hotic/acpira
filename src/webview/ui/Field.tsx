@@ -36,7 +36,8 @@ export function SwitchRow({ label, checked, disabled, onChange }: SwitchRowProps
 
 export interface SelectRowProps<V extends string> {
   label: string;
-  options: { value: V; label: string; disabled?: boolean }[];
+  // `description` is a second line under the label in the menu (a model's source)
+  options: { value: V; label: string; description?: string; disabled?: boolean }[];
   value: V;
   onChange: (value: V) => void;
 }
@@ -45,6 +46,7 @@ export interface SelectRowProps<V extends string> {
 // For dimensions with too many values to lay out as pills (a Fusion lead / sidekick); disabled entries stay listed so the menu keeps its shape
 export function SelectRow<V extends string>({ label, options, value, onChange }: SelectRowProps<V>) {
   const cur = options.find(o => o.value === value);
+  const twoLine = options.some(o => o.description);
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger aria-label={label}
@@ -53,10 +55,10 @@ export function SelectRow<V extends string>({ label, options, value, onChange }:
         <span className="min-w-0 truncate text-fg-2">{cur?.label ?? value}</span>
         <ChevronDown className={cn('size-3 shrink-0 text-fg-3', CARET_TURN)} strokeWidth={1.75} />
       </DropdownMenu.Trigger>
-      <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="end" width="sm"><DropdownMenu.Popup>
+      <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="end" width={twoLine ? 'md' : 'sm'}><DropdownMenu.Popup>
         <DropdownMenu.RadioGroup value={value} className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
-          {options.map(o => <DropdownMenu.RadioItem key={o.value} value={o.value} disabled={o.disabled} onClick={() => onChange(o.value)}>
-            <OptionContent checked={o.value === value} checkSlot={!!cur}>{o.label}</OptionContent>
+          {options.map(o => <DropdownMenu.RadioItem key={o.value} value={o.value} disabled={o.disabled} onClick={() => onChange(o.value)} className={twoLine ? 'min-h-0 py-1.5' : undefined}>
+            <OptionContent description={o.description} checked={o.value === value} checkSlot={!!cur}>{o.label}</OptionContent>
           </DropdownMenu.RadioItem>)}
         </DropdownMenu.RadioGroup>
       </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>

@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Zap } from 'lucide-react';
 import type { ConfigControl } from '@shared/transcript';
 import { findFusionVariant, findVariant, fusionLabel, groupModels, optionBrand, visibleOptions, type ModelFamily, type ModelVariant } from '@shared/models';
-import { chipTags, fastOn, fastValue, isFastControl, isUltraLevel, presentReasoning, reasoningChip, reasoningVisible } from '@shared/composerControls';
+import { chipTags, fastOn, fastValue, isFastControl, isUltraLevel, NO_SIDEKICK, presentReasoning, reasoningChip, reasoningVisible } from '@shared/composerControls';
 import { t } from '../i18n';
 import { Chip, ChipTag } from '../ui/Button';
 import { HeaderToggle, SegmentScale, SelectRow, SwitchRow } from '../ui/Field';
@@ -47,15 +47,19 @@ export function ModelOptions({ control, hidden, onSelect, close }: {
 
 // Every ACP uses the Devin-style model chip and panel. Native reasoning and model
 // parameters join the footer, while embedded variants retain their wire IDs.
-export function ModelControl({ control, hidden, reasoning = [], modelConfig = [], hiddenConfig, onSetConfig, onSelect, onOpenChange }: OptionMenuProps & {
+export function ModelControl({ control, hidden, reasoning = [], modelConfig = [], sidekick, hiddenConfig, onSetConfig, onSelect, onOpenChange }: OptionMenuProps & {
   hidden?: string[];
   reasoning?: ConfigControl[];
   modelConfig?: ConfigControl[];
+  // The built-in agent's sidekick select: a row under the model's parameters, nothing on the chip
+  sidekick?: ConfigControl;
   hiddenConfig?: Record<string, string[]>;
   onSetConfig: (id: string, value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const c = useMemo(() => ({ ...control, options: visibleOptions(control.options, hidden, control.value) }), [control, hidden]);
+  // The sidekick offers the models the model list does: the ones hidden there stay out (unless picked)
+  const sk = useMemo(() => sidekick && { ...sidekick, options: visibleOptions(sidekick.options, hidden, sidekick.value) }, [sidekick, hidden]);
   const families = useMemo(() => groupModels(c.options), [c.options]);
   const cur = families.find(f => f.variants.some(v => v.id === c.value));
   const curVar = cur?.variants.find(v => v.id === c.value);
@@ -76,7 +80,7 @@ export function ModelControl({ control, hidden, reasoning = [], modelConfig = []
       } />
       <Popover.Portal><Popover.Positioner side="top" align="end" width="lg"><Popover.Popup palette="menu">
         <ModelPanel families={families} cur={cur} curVar={curVar} onSelect={onSelect} close={() => setOpen(false)}
-          reasoning={reasoning} modelConfig={modelConfig} hiddenConfig={hiddenConfig} onSetConfig={onSetConfig} />
+          reasoning={reasoning} modelConfig={modelConfig} sidekick={sk} hiddenConfig={hiddenConfig} onSetConfig={onSetConfig} />
       </Popover.Popup></Popover.Positioner></Popover.Portal>
     </Popover.Root>
   );
@@ -108,6 +112,7 @@ interface ModelPanelProps {
   close: () => void;
   reasoning?: ConfigControl[];
   modelConfig?: ConfigControl[];
+  sidekick?: ConfigControl;
   hiddenConfig?: Record<string, string[]>;
   onSetConfig?: (id: string, value: string) => void;
 }
@@ -115,7 +120,7 @@ interface ModelPanelProps {
 // One Fast toggle per panel, whatever its source: an embedded model-name variant, a Fusion pair, or a native model_config control
 interface FastState { on: boolean; disabled: boolean; set: (on: boolean) => void }
 
-function ModelPanel({ families, cur, curVar, onSelect, close, reasoning = [], modelConfig = [], hiddenConfig, onSetConfig }: ModelPanelProps) {
+function ModelPanel({ families, cur, curVar, onSelect, close, reasoning = [], modelConfig = [], sidekick, hiddenConfig, onSetConfig }: ModelPanelProps) {
   const pickFamily = (key: string) => {
     const f = families.find(x => x.key === key);
     if (!f) return;
@@ -154,7 +159,7 @@ function ModelPanel({ families, cur, curVar, onSelect, close, reasoning = [], mo
           </Command.Item>}
         </Command.List>
       </Command.Root>
-      {(showParams || shown.length > 0 || modelConfig.length > 0) && <div className="mt-1 flex flex-col gap-0.5 border-t border-line pt-1.5">
+      {(showParams || shown.length > 0 || modelConfig.length > 0 || !!sidekick) && <div className="mt-1 flex flex-col gap-0.5 border-t border-line pt-1.5">
         {showParams && (cur!.fusion
           ? <FusionParams family={cur!} variant={curVar!} onSelect={onSelect} actions={owner === 'embedded' ? toggle : undefined} />
           : <ModelParams family={cur!} variant={curVar!} onSelect={onSelect} actions={owner === 'embedded' ? toggle : undefined} />)}
@@ -162,6 +167,7 @@ function ModelPanel({ families, cur, curVar, onSelect, close, reasoning = [], mo
           actions={owner === 'reasoning' && i === reasoningScale ? toggle : undefined} />)}
         {owner === 'row' && <SwitchRow label="Fast" checked={fast!.on} disabled={fast!.disabled} onChange={fast!.set} />}
         {rest.map(control => <ModelConfigParams key={control.id} control={control} hidden={hiddenConfig?.[control.id]} onChange={value => onSetConfig?.(control.id, value)} />)}
+        {sidekick && <SidekickParams control={sidekick} onChange={value => onSetConfig?.(sidekick.id, value)} />}
       </div>}
     </>
   );
@@ -234,6 +240,13 @@ function FusionParams({ family: f, variant: v, onSelect, actions }: { family: Mo
       <SelectRow label={t('composer.sidekick')} options={sidekicks.map(s => ({ value: s, label: s, disabled: !offers(s) }))} value={v.sidekick ?? ''} onChange={s => pick({ sidekick: s })} />
     </div>
   );
+}
+
+// The built-in agent's sidekick, under the lead's parameters the way Devin's Fusion pair shows its sidekick: none, or any model
+// the model list offers, each with its source on the second line
+function SidekickParams({ control, onChange }: { control: ConfigControl; onChange: (value: string) => void }) {
+  const options = control.options.map(o => (o.id === NO_SIDEKICK ? { value: o.id, label: t('composer.sidekickNone') } : { value: o.id, label: o.name, description: o.description }));
+  return <SelectRow label={t('composer.sidekick')} options={options} value={control.value ?? NO_SIDEKICK} onChange={onChange} />;
 }
 
 // Params of the current family as a small form under the list: reasoning levels as one segmented scale (every level spelled out, one click),

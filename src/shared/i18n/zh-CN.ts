@@ -242,6 +242,7 @@ export const zhCN = {
   'composer.standard': '标准',
   'composer.lead': '主模型',
   'composer.sidekick': '副手',
+  'composer.sidekickNone': '无',
   'composer.fusionSummary': '{leads} 个主模型，{sidekicks} 个副手',
   'composer.addAccount': '添加账号',
   'composer.accountsOf': '{agent} 账号',

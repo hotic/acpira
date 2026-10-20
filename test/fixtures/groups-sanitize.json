@@ -111,6 +111,12 @@
       "name": "  Spaced   Out!  ",
       "when": 5,
       "enabled": "no"
+    },
+    {
+      "name": "Sidekick",
+      "members": [
+        "astra"
+      ]
     }
   ],
   "output": [
@@ -180,6 +186,15 @@
       "id": "spaced-out",
       "name": "Spaced   Out!",
       "members": [],
+      "when": "",
+      "enabled": true
+    },
+    {
+      "id": "sidekick-2",
+      "name": "Sidekick",
+      "members": [
+        "astra"
+      ],
       "when": "",
       "enabled": true
     }
