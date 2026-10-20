@@ -89,6 +89,9 @@ export function materialize(t: Target, targetDir: string, dir: string, repo = RO
   const diff = run('git', ['-C', repo, 'diff', '--binary', `${t.intro}^`, t.intro], repo);
   run('git', ['apply', '--whitespace=nowarn', '--intent-to-add', '-'], work, diff);
   if (t.plant) run('git', ['apply', '--whitespace=nowarn', join(targetDir, t.plant)], work);
+  // The place check matches findings against a bug's files, so a path this tree lacks (one a later commit moved, as the
+  // fix commit names it) would make the bug impossible to score
+  for (const b of t.bugs) for (const f of b.files) if (!existsSync(join(work, f))) throw new Error(`target ${t.id}: bug file ${f} is not in the work tree`);
   return work;
 }
 

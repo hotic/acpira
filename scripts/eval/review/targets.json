@@ -280,7 +280,7 @@
       "bugs": [
         {
           "files": [
-            "rust/crates/acpira-host/src/acp/transcript/normalize.rs"
+            "rust/crates/acpira-host/src/acp/normalize.rs"
           ],
           "description": "`live_activity` names the latest open (pending or in-progress) tool call of the turn wherever it sits. A tool call the adapter never closes keeps naming the activity after the model has moved on to later thoughts and reply text, so the subagent row and the ask_agent wait progress show a command that never ran for the rest of the turn. An open call followed by later model output should no longer count.",
           "fix": "707440a7f9b9cc6b89e3601fd7a9a7bca547cc04",
@@ -355,7 +355,8 @@
       "bugs": [
         {
           "files": [
-            "src/shared/subagents.ts"
+            "src/shared/subagents.ts",
+            "src/webview/settings/SubagentsPage.tsx"
           ],
           "description": "The TypeScript `sanitizePersonas` keeps only `work` and `bypass` besides consult and maps `inherit` to `consult`, while the Rust `sanitize_personas` and the shared fixture keep `inherit`. The settings page runs its whole list through the TS function when it adds a persona, so every inherit persona, including the new one the page creates with mode `inherit`, is rewritten as a read-only consult on the next save.",
           "fix": "planted",
