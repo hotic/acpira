@@ -1,5 +1,5 @@
 import type { AgentId } from './transcript';
-import { sanitizePersonas, type SubagentPersona } from './subagents';
+import { sanitizePersonas, type SubagentGroup, type SubagentPersona } from './subagents';
 import { isLanguage, type Language, type Locale } from './i18n';
 
 // Hidden option families (acpira.hiddenOptions): agent → configOption id → source-qualified family keys (legacy family names remain readable; see models.ts) kept out of the composer menus.
@@ -90,6 +90,8 @@ export interface SettingsView {
   planAutoApprove: AgentId[];
   // Cross-harness subagents: kept in ~/.acpira/subagents.json (shared by every window and IDE), not a host setting
   subagents: SubagentPersona[];
+  // Groups of those personas, summoned together (the same file's `groups`)
+  subagentGroups: SubagentGroup[];
   // CPU hard cap over every agent process tree, percent of all cores (AGENT_CPU_CAP)
   agentCpuCap: number;
   // `auto`, `off` or a proxy URL (DEFAULT_PROXY)
@@ -130,6 +132,7 @@ export const DEFAULT_SETTINGS: SettingsView = {
   notifySystem: false,
   planAutoApprove: [],
   subagents: [],
+  subagentGroups: [],
   agentCpuCap: AGENT_CPU_CAP.default,
   proxy: DEFAULT_PROXY,
 };

@@ -43,7 +43,8 @@ call show_image with its absolute path instead of only printing the path. Projec
 /// the client defers tools behind a search, so `@name` is tied to `ask_agent` before the model goes looking for it
 const RELAY_INSTRUCTIONS: &str = "When the user writes @name for an agent listed by the ask_agent tool, that is an \
 Acpira agent, not one of your own subagents: call ask_agent for it right away, without listing agents first. \
-Several agents named = one ask_agent call each, all in the same message; they run in parallel.";
+Several agents named = one ask_agent call each, all in the same message; they run in parallel. A group named = one call \
+with the group as `agent`, which summons every member.";
 
 /// Appended with the relay env: the session tools are found by their links even where the client defers them
 const SESSIONS_INSTRUCTIONS: &str = "Links like `acpira://session/<id>` or `vscode://hotic.acpira/session/<id>` point at \
@@ -371,17 +372,19 @@ impl Relay {
     }
   }
 
-  /// The tool, listing the personas the hub offers; none (or no hub) = no tool
+  /// The tool, listing the personas and groups the hub offers; no persona (or no hub) = no tool
   fn tool_def(&self) -> Option<Value> {
     use crate::relay::wire::{HubOp, HubReply};
-    let mut personas = vec![];
+    let (mut personas, mut groups) = (vec![], vec![]);
     let _ = crate::relay::hub::call(&self.addr, &self.request(HubOp::List), |r| {
-      if let HubReply::Personas(p) = r {
-        personas = p;
+      match r {
+        HubReply::Personas(p) => personas = p,
+        HubReply::Roster { personas: p, groups: g } => (personas, groups) = (p, g),
+        _ => {}
       }
       false
     });
-    (!personas.is_empty()).then(|| ask_tool_def(&personas))
+    (!personas.is_empty()).then(|| ask_tool_def(&personas, &groups))
   }
 
   fn ask(&self, params: &Value, progress: &mut dyn FnMut(Value)) -> Value {
@@ -437,7 +440,7 @@ impl Relay {
         end = Some(tool_error(text));
         false
       }
-      HubReply::Personas(_) | HubReply::Features(_) => true,
+      HubReply::Personas(_) | HubReply::Roster { .. } | HubReply::Features(_) => true,
     });
     match (end, r) {
       (Some(v), _) => v,
@@ -480,10 +483,30 @@ pub fn handle_line(line: &str, version: &str) -> Option<Value> {
   Some(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
 }
 
-/// `ask_agent`: the personas are the enum of `agent`, and their "when" lines are the menu the model picks from. The
+/// The groups' part of `ask_agent`'s description: each with its members, and what one call naming it does
+fn group_lines(groups: &[acpira_shared::subagents::SubagentGroup]) -> String {
+  if groups.is_empty() {
+    return String::new();
+  }
+  let lines: Vec<String> = groups
+    .iter()
+    .map(|g| {
+      let when = if g.when.trim().is_empty() { String::new() } else { format!(": {}", g.when.trim()) };
+      format!("- {} (@{}){when} [group: {}]", g.id, g.name, g.members.join(", "))
+    })
+    .collect();
+  format!(
+    "\n\nGroups: one call naming a group gives every member the same task (and the same handoff pack), each working on \
+its own without seeing the others; their replies come back together, in one message or, with `wait`, in this call's \
+answer. Follow up with one member through the `thread` its reply named.\n{}",
+    lines.join("\n")
+  )
+}
+
+/// `ask_agent`: the personas (and groups) are the enum of `agent`, and their "when" lines are the menu the model picks from. The
 /// description is also where the caller learns to brief (goal, constraints, done, leads, what to return), to keep a
 /// review independent of its own account, and to weigh a reply against the code before acting on it
-fn ask_tool_def(personas: &[acpira_shared::subagents::SubagentPersona]) -> Value {
+fn ask_tool_def(personas: &[acpira_shared::subagents::SubagentPersona], groups: &[acpira_shared::subagents::SubagentGroup]) -> Value {
   use acpira_shared::subagents::{RelayMode, SubagentDuty};
   let lines: Vec<String> = personas
     .iter()
@@ -523,10 +546,11 @@ continues its idle conversation in this session even without `thread` (set `new_
 fresh on every call without `thread`, which keeps it independent.\n\n\
 Set `changes` to hand the agent your uncommitted changes as a pack (their diff and the small changed files in full), so it \
 starts from them instead of reading its way there; a later round of the same thread is told only what moved since. Agents \
-whose user switched this on get it without asking.\n\nAgents:\n{}",
-    lines.join("\n")
+whose user switched this on get it without asking.\n\nAgents:\n{}{}",
+    lines.join("\n"),
+    group_lines(groups)
   );
-  let ids: Vec<&str> = personas.iter().map(|p| p.id.as_str()).collect();
+  let ids: Vec<&str> = personas.iter().map(|p| p.id.as_str()).chain(groups.iter().map(|g| g.id.as_str())).collect();
   json!({
     "name": ASK_TOOL,
     "title": "Ask another agent",
@@ -534,7 +558,7 @@ whose user switched this on get it without asking.\n\nAgents:\n{}",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "agent": { "type": "string", "enum": ids, "description": "Which agent to summon. Not needed with `thread`." },
+        "agent": { "type": "string", "enum": ids, "description": "Which agent (or group) to summon. Not needed with `thread`." },
         "prompt": { "type": "string", "description": "The task or question. Empty only when waiting on a thread." },
         "title": { "type": "string", "description": "A few words naming the task, shown to the user." },
         "mode": { "type": "string", "enum": ["consult", "work", "bypass"], "description": "Only for an agent marked \"follows your mode\": consult = read-only opinion; work = may edit files; bypass = edits without approval. Without it that agent takes your own current access. Every other agent always runs in the access its user set, whatever you pass." },
@@ -801,7 +825,7 @@ mod tests {
   fn ask_agent_runs_concurrently_and_stays_loaded_in_claude_code() {
     let persona: acpira_shared::subagents::SubagentPersona =
       serde_json::from_value(json!({ "id": "son-1", "name": "Son", "agent": "codex", "mode": "work" })).unwrap();
-    let def = ask_tool_def(&[persona]);
+    let def = ask_tool_def(std::slice::from_ref(&persona), &[]);
     assert_eq!(def["name"], ASK_TOOL);
     assert_eq!(def["annotations"]["readOnlyHint"], true);
     // Kept out of ToolSearch, so a summon is one step
@@ -810,9 +834,17 @@ mod tests {
     // A duty is named on the persona's line, so the caller knows which ones keep their conversation
     let scout: acpira_shared::subagents::SubagentPersona =
       serde_json::from_value(json!({ "id": "look", "name": "Look", "agent": "kimi", "mode": "consult", "duty": "scout" })).unwrap();
-    let def = ask_tool_def(&[scout]);
+    let def = ask_tool_def(std::slice::from_ref(&scout), &[]);
     assert!(def["description"].as_str().unwrap().contains("- look (@Look) [scout · kimi · read-only]"), "{}", def["description"]);
     assert_eq!(def["inputSchema"]["properties"]["new_thread"]["type"], "boolean");
+    assert!(!def["description"].as_str().unwrap().contains("Groups:"));
+    // A group is one more value of `agent`, listed with its members under the agents
+    let group: acpira_shared::subagents::SubagentGroup =
+      serde_json::from_value(json!({ "id": "pair", "name": "Pair", "members": ["son-1", "look"], "when": "two views at once" })).unwrap();
+    let def = ask_tool_def(&[persona, scout], &[group]);
+    assert_eq!(def["inputSchema"]["properties"]["agent"]["enum"], json!(["son-1", "look", "pair"]));
+    let text = def["description"].as_str().unwrap();
+    assert!(text.contains("\n\nGroups: one call naming a group") && text.ends_with("- pair (@Pair): two views at once [group: son-1, look]"), "{text}");
   }
 
   // Listed with the relay env (tools/list in `run`): read-only so Claude Code runs them side by side, found through a

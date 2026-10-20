@@ -1,0 +1,187 @@
+{
+  "personas": [
+    {
+      "name": "Astra",
+      "agent": "codex"
+    },
+    {
+      "name": "Argon",
+      "agent": "acpira"
+    },
+    {
+      "name": "Opus",
+      "agent": "claude",
+      "enabled": false
+    },
+    {
+      "name": "Reviewers",
+      "agent": "codex"
+    },
+    {
+      "name": "A1",
+      "agent": "codex"
+    },
+    {
+      "name": "A2",
+      "agent": "codex"
+    },
+    {
+      "name": "A3",
+      "agent": "codex"
+    },
+    {
+      "name": "A4",
+      "agent": "codex"
+    },
+    {
+      "name": "A5",
+      "agent": "codex"
+    },
+    {
+      "name": "A6",
+      "agent": "codex"
+    },
+    {
+      "name": "A7",
+      "agent": "codex"
+    }
+  ],
+  "input": [
+    {
+      "name": "Reviewers",
+      "members": [
+        "astra",
+        " argon ",
+        "astra",
+        "ghost",
+        "opus"
+      ],
+      "when": "  two reviews  "
+    },
+    {
+      "name": "",
+      "members": [
+        "astra"
+      ]
+    },
+    "garbage",
+    {
+      "name": "Panel",
+      "id": "Big Panel",
+      "members": [
+        "astra",
+        "argon",
+        "opus",
+        "reviewers",
+        "astra"
+      ],
+      "enabled": false
+    },
+    {
+      "name": "全员",
+      "members": "astra"
+    },
+    {
+      "name": "全员2",
+      "members": [
+        1,
+        null,
+        "argon"
+      ]
+    },
+    {
+      "name": "Panel",
+      "members": [
+        "astra"
+      ]
+    },
+    {
+      "name": "Many",
+      "members": [
+        "a1",
+        "a2",
+        "a3",
+        "a4",
+        "a5",
+        "a6",
+        "a7"
+      ]
+    },
+    {
+      "name": "  Spaced   Out!  ",
+      "when": 5,
+      "enabled": "no"
+    }
+  ],
+  "output": [
+    {
+      "id": "reviewers-2",
+      "name": "Reviewers",
+      "members": [
+        "astra",
+        "argon",
+        "opus"
+      ],
+      "when": "two reviews",
+      "enabled": true
+    },
+    {
+      "id": "big-panel",
+      "name": "Panel",
+      "members": [
+        "astra",
+        "argon",
+        "opus",
+        "reviewers"
+      ],
+      "when": "",
+      "enabled": false
+    },
+    {
+      "id": "group",
+      "name": "全员",
+      "members": [],
+      "when": "",
+      "enabled": true
+    },
+    {
+      "id": "2",
+      "name": "全员2",
+      "members": [
+        "argon"
+      ],
+      "when": "",
+      "enabled": true
+    },
+    {
+      "id": "panel",
+      "name": "Panel",
+      "members": [
+        "astra"
+      ],
+      "when": "",
+      "enabled": true
+    },
+    {
+      "id": "many",
+      "name": "Many",
+      "members": [
+        "a1",
+        "a2",
+        "a3",
+        "a4",
+        "a5",
+        "a6"
+      ],
+      "when": "",
+      "enabled": true
+    },
+    {
+      "id": "spaced-out",
+      "name": "Spaced   Out!",
+      "members": [],
+      "when": "",
+      "enabled": true
+    }
+  ]
+}

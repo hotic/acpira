@@ -6,7 +6,7 @@ import type { AccountInfo, AgentId, AgentInfo, ConfigControl } from '@shared/tra
 import type { AgentInventory } from '@shared/inventory';
 import type { AgentInstallProgress } from '@shared/protocol';
 import type { SettingKey, SettingsView } from '@shared/settings';
-import type { SubagentPersona } from '@shared/subagents';
+import type { SubagentGroup, SubagentPersona } from '@shared/subagents';
 import type { Locale } from '@shared/i18n';
 import { AppearanceContext, appearanceDataAttrs, type Appearance, type AxisKey } from '../appearance';
 import { lookAttrs, ThemeContext, type ShellLook, type Theme } from '../look';
@@ -65,6 +65,8 @@ export interface SettingsHandlers {
   // Subagents page: the list it showed and the list it wants; the host applies only the difference to the shared file,
   // so another window's edits made meanwhile survive (relay/roster.rs). Without it the page writes the whole list
   saveSubagents?: (base: SubagentPersona[], next: SubagentPersona[]) => void;
+  // The same for the groups (the same file's `groups`); without it the page cannot change them
+  saveSubagentGroups?: (base: SubagentGroup[], next: SubagentGroup[]) => void;
   // Storage tab: measure the data directory (plus what an open review needs), run a cleanup (the reply is the fresh view)
   storage?: (detail?: StorageDetail[]) => void;
   storageAction?: (action: StorageAction, detail?: StorageDetail[]) => void;

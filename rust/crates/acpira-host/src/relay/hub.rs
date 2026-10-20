@@ -158,8 +158,8 @@ impl RelayHub {
     match req.op {
       HubOp::List => {
         // A grant at the depth limit has the entry for its caller and the session tools, but nobody to summon
-        let personas = if depth >= crate::relay::MAX_DEPTH { vec![] } else { self.roster.enabled() };
-        let _ = write.write_all(reply(HubReply::Personas(personas)).as_bytes()).await;
+        let (personas, groups) = if depth >= crate::relay::MAX_DEPTH { (vec![], vec![]) } else { (self.roster.enabled(), self.roster.enabled_groups()) };
+        let _ = write.write_all(reply(HubReply::Roster { personas, groups }).as_bytes()).await;
       }
       HubOp::Features => {
         let browser = self.browser.read().as_ref().is_some_and(|b| b.available());
