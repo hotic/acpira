@@ -624,7 +624,8 @@ const app = acp.agent({ name: 'fake-agent' })
     // "relay:…" → a summoned child (Acpira's cross-harness subagent, acp/session/relay.rs): one read, then a reply naming
     // the first line it was given, the round count of this native session (so rounds of one thread can be told apart) and
     // the session's mode. "relay:perm" asks to write first; "relay:slow" takes a while (a call's deadline runs out before
-    // the reply); "write=<path>" writes a file without asking; "relay:fail" errors instead of replying (after the slow wait when both are named); "relay:exit" exits after it
+    // the reply); "write=<path>" writes a file without asking, "edit=<path>" through an edit row, "run=<path>" from a
+    // command row; "relay:fail" errors instead of replying (after the slow wait when both are named); "relay:exit" exits after it
     // "relay-call:<prompt>" → the parent side: an ask_agent call on Acpira's MCP server, as claude-agent-acp names it, left
     // running (the test plays the hub's side afterwards); "relay-call-failed:<prompt>" → the same call ending without a
     // round (the hub refused it), then a retry ak2 with the same arguments
@@ -695,6 +696,23 @@ const app = acp.agent({ name: 'fake-agent' })
       // "write=<path>" → the child writes "bad\n" there without asking, after any slow wait
       const write = /write=(\S+)/.exec(first);
       if (write) writeFileSync(write[1]!, 'bad\n');
+      // "edit=<path>" → an edit row with its diff (the file's text gets a line "edited"); "run=<path>" → a command row
+      // that writes "ran\n" there, which no row names
+      const edit = /edit=(\S+)/.exec(first);
+      if (edit) {
+        const path = edit[1]!;
+        const oldText = existsSync(path) ? readFileSync(path, 'utf8') : null;
+        const newText = `${oldText ?? ''}edited\n`;
+        writeFileSync(path, newText);
+        await send({ sessionUpdate: 'tool_call', toolCallId: `re${round}`, title: `Edit ${path}`, kind: 'edit', status: 'completed',
+          locations: [{ path }], content: [{ type: 'diff', path, oldText, newText }] });
+      }
+      const run = /run=(\S+)/.exec(first);
+      if (run) {
+        await send({ sessionUpdate: 'tool_call', toolCallId: `rx${round}`, title: `make ${run[1]}`, kind: 'execute', status: 'in_progress', rawInput: { command: `make ${run[1]}` } });
+        writeFileSync(run[1]!, 'ran\n');
+        await send({ sessionUpdate: 'tool_call_update', toolCallId: `rx${round}`, status: 'completed' });
+      }
       if (cancelled.has(sid)) return { stopReason: 'cancelled' };
       if (first.includes('fail')) throw acp.RequestError.internalError(undefined, 'model overloaded');
       await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `reply to ${first} (round ${round}, mode ${modes.get(sid) ?? 'agent'})${answered}` } });
