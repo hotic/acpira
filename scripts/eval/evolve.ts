@@ -67,6 +67,7 @@ const ofCell = (rs: Result[]) => rs.filter(r => r.reviewers === REVIEWERS && r.v
 
 function summarize(rs: Result[]): Side {
   const walls = rs.map(r => r.wallS).sort((a, b) => a - b);
+  const mid = walls.length >> 1;
   const byTarget: Record<string, number> = {};
   for (const r of rs) byTarget[r.target] = (byTarget[r.target] ?? 0) + r.found;
   return {
@@ -74,7 +75,7 @@ function summarize(rs: Result[]): Side {
     found: rs.reduce((a, r) => a + r.found, 0),
     bugs: rs.reduce((a, r) => a + r.bugs, 0),
     others: rs.reduce((a, r) => a + r.others, 0),
-    wallMedianS: walls.length ? walls[Math.floor(walls.length / 2)]! : 0,
+    wallMedianS: !walls.length ? 0 : walls.length % 2 ? walls[mid]! : Math.round((walls[mid - 1]! + walls[mid]!) / 2),
     costUsd: Math.round(rs.reduce((a, r) => a + r.perReviewer.reduce((b, p) => b + (p.costUsd ?? 0), 0), 0) * 100) / 100,
     failed: rs.filter(r => r.timedOut || r.failure || r.perReviewer.some(p => p.state !== 'completed')).length,
     byTarget,
@@ -110,14 +111,15 @@ function incumbentAt(entries: Entry[], round: number): Policy {
   return p;
 }
 
-// The rule (docs/dev/evals.md): quality first, beyond the noise; time only between candidates within it
-function decide(inc: Side, cand: Side, noise: number): { accepted: boolean; reason: string } {
+// The rule (docs/dev/evals.md): quality first, beyond the noise; time only between candidates within it. `onTime` marks
+// an acceptance on time alone, which main checks with a second evaluation
+function decide(inc: Side, cand: Side, noise: number): { accepted: boolean; onTime?: boolean; reason: string } {
   const d = cand.found - inc.found;
   if (cand.failed > inc.failed) return { accepted: false, reason: `${cand.failed} failed runs against ${inc.failed}` };
   if (d > noise && d >= 1) return { accepted: true, reason: `found ${d} more bugs, beyond the noise of ${noise.toFixed(1)}` };
   if (d < -noise) return { accepted: false, reason: `found ${-d} fewer bugs, beyond the noise of ${noise.toFixed(1)}` };
   if (d >= 0 && cand.wallMedianS <= inc.wallMedianS * FASTER) {
-    return { accepted: true, reason: `within the noise (${d >= 0 ? '+' : ''}${d}) and faster: median ${cand.wallMedianS}s against ${inc.wallMedianS}s` };
+    return { accepted: true, onTime: true, reason: `within the noise (${d >= 0 ? '+' : ''}${d}) and faster: median ${cand.wallMedianS}s against ${inc.wallMedianS}s` };
   }
   return { accepted: false, reason: `within the noise (${d >= 0 ? '+' : ''}${d} of ${noise.toFixed(1)}) and not 10% faster (median ${cand.wallMedianS}s against ${inc.wallMedianS}s)` };
 }
@@ -347,15 +349,26 @@ async function main() {
       record({ hypothesis: proposal.hypothesis, candidate: proposal.policy, decision: 'invalid', reason: v.error ?? (tried ? 'tried before' : 'the same as the incumbent') });
       continue;
     }
-    const [inc, cand] = await paired(dir, 'dev', incumbent, v.policy);
+    let [inc, cand] = await paired(dir, 'dev', incumbent, v.policy);
     // The incumbent reruns the same cell every round, so its earlier evaluations under the same policy sharpen the noise
     const same = entries.filter(e => e.incumbent && samePolicy(incumbentAt(entries, e.round), incumbent));
-    const group = [...(samePolicy(incumbent, {}) ? prior : []), ...same.flatMap(e => ofCell(readResults(join(OUT, `round-${e.round}`, 'incumbent')))), ...inc];
-    const { rate } = flipRate([group]);
-    const si = summarize(inc);
-    const sc = summarize(cand);
-    const noise = rate * si.bugs;
-    const d = decide(si, sc, noise);
+    const earlier = same.flatMap(e => ['incumbent', 'confirm/incumbent'].flatMap(side => ofCell(readResults(join(OUT, `round-${e.round}`, side)))));
+    const judge = () => {
+      const { rate } = flipRate([[...(samePolicy(incumbent, {}) ? prior : []), ...earlier, ...inc]]);
+      const [si, sc] = [summarize(inc), summarize(cand)];
+      const noise = rate * si.bugs;
+      return { si, sc, noise, d: decide(si, sc, noise) };
+    };
+    let { si, sc, noise, d } = judge();
+    // One evaluation's median wall time varies about as much as the 10% asked (one policy measured 138 to 172 s over
+    // four rounds, docs/dev/evals.md), so a win on time alone is checked with a second evaluation and both pooled
+    if (d.onTime) {
+      console.log(`round ${round}: ${d.reason}; evaluating both once more`);
+      const [inc2, cand2] = await paired(join(dir, 'confirm'), 'dev', incumbent, v.policy);
+      [inc, cand] = [[...inc, ...inc2], [...cand, ...cand2]];
+      ({ si, sc, noise, d } = judge());
+      d = { ...d, reason: `${d.reason}, two evaluations pooled` };
+    }
     record({ hypothesis: proposal.hypothesis, candidate: v.policy, decision: d.accepted ? 'accepted' : 'rejected', reason: d.reason, noise, incumbent: si, challenger: sc });
     if (d.accepted) {
       incumbent = v.policy;
