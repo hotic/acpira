@@ -265,7 +265,7 @@ export async function activate(context: vscode.ExtensionContext) {
       history: browserHistory,
       visited,
       onAdd: item => addPicked(browser, item),
-      openExternal: page => { void platform.handle({ method: 'openBrowser', url: page }).catch((e: unknown) => log.warn(`open in browser failed: ${String(e)}`)); },
+      openExternal: page => { void platform.openInVsCodeBrowser(page).catch((e: unknown) => log.warn(`open in browser failed: ${String(e)}`)); },
       log: line => log.info(line),
     });
     browsers.add(browser);

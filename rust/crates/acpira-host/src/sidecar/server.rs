@@ -433,9 +433,10 @@ impl Wire {
       ShellMsg::PlatformResponse { request_id, result, error } => platform.on_response(&request_id, result, error),
       ShellMsg::PreviewOpen { request_id, panel_id, url, picker } => {
         // Answered on its own task: binding and reading the script must not hold up the wire's next message
-        let (previews, send, wire) = (self.engine.previews.clone(), self.engine.sender_of(&self.me), self.id);
+        // The open takes its place in line here, so a close or a later open sent after it wins even if this one binds last
+        let (opening, send) = (self.engine.previews.open(self.id, &panel_id, &url, picker), self.engine.sender_of(&self.me));
         tokio::spawn(async move {
-          let reply = match previews.open(wire, &panel_id, &url, std::path::Path::new(&picker)).await {
+          let reply = match opening.await {
             Ok(o) => SidecarMsg::PreviewOpened { request_id, url: Some(o.url), token: Some(o.token), error: None },
             Err(e) => SidecarMsg::PreviewOpened { request_id, url: None, token: None, error: Some(e) },
           };

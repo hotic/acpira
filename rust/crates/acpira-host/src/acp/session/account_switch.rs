@@ -64,6 +64,7 @@ impl AcpSession {
           revision: acpira_shared::num::Num(1.0),
           category: FailureCategory::Limit,
           severity: Severity::Warning,
+          info: false,
           title: tp("host.accountSwitched", &[("from", &from), ("to", &to)]),
           details: None,
           actions: vec![],

@@ -100,8 +100,11 @@ async fn chunked_html_is_decoded_even_when_head_spans_two_chunks() {
     vec![
       b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec(),
       chunk("<html><he"),
-      chunk("ad><title>a</title></head>"),
-      chunk("<body>b</body></html>"),
+      chunk("ad><title>a</title>"),
+      // A meta CSP flushed after `<head>` went out in an earlier chunk still goes
+      chunk(r#"<meta http-equiv="Content-Security-Policy" content="style-src 'none'"></head>"#),
+      // Larger than one read piece
+      chunk(&format!("<body>{}</body></html>", "b".repeat(40_000))),
       b"0\r\n\r\n".to_vec(),
     ]
   })
@@ -112,7 +115,26 @@ async fn chunked_html_is_decoded_even_when_head_spans_two_chunks() {
   let res = fetch(port, &get("/", port)).await;
   assert!(!res.to_ascii_lowercase().contains("transfer-encoding"), "{res}");
   let body = res.split("\r\n\r\n").nth(1).unwrap();
-  assert_eq!(body, format!(r#"<html><head><script src="/__acpira/picker.js?t={}"></script><title>a</title></head><body>b</body></html>"#, o.token));
+  assert_eq!(
+    body,
+    format!(r#"<html><head><script src="/__acpira/picker.js?t={}"></script><title>a</title></head><body>{}</body></html>"#, o.token, "b".repeat(40_000))
+  );
+}
+
+// A page on another name that now resolves to 127.0.0.1 (DNS rebinding) must not reach the dev server with its Host
+// rewritten to the server's own
+#[tokio::test]
+async fn a_request_under_a_foreign_host_name_is_refused() {
+  let (up, mut heads) = upstream(|_| vec![b"HTTP/1.1 204 No Content\r\n\r\n".to_vec()]).await;
+  let (_d, picker, p) = previews();
+  let o = p.open(1, "panel", &format!("http://localhost:{up}/"), &picker).await.unwrap();
+  let port = port_of(&o.url);
+  let res = fetch(port, &format!("GET / HTTP/1.1\r\nHost: rebind.evil.test:{port}\r\nOrigin: http://rebind.evil.test:{port}\r\n\r\n")).await;
+  assert!(res.starts_with("HTTP/1.1 403"), "{res}");
+  assert!(fetch(port, &format!("GET /__acpira/picker.js HTTP/1.1\r\nHost: rebind.evil.test:{port}\r\n\r\n")).await.starts_with("HTTP/1.1 403"));
+  assert!(fetch(port, &format!("GET / HTTP/1.1\r\nHost: localhost:{port}\r\n\r\n")).await.starts_with("HTTP/1.1 204"));
+  assert_eq!(heads.recv().await.map(|h| h.contains(&format!("Host: localhost:{up}"))), Some(true));
+  assert!(heads.try_recv().is_err(), "only the trusted request reached upstream");
 }
 
 #[tokio::test]
@@ -269,5 +291,30 @@ async fn proxies_are_shared_by_target_and_close_with_their_last_lease() {
   assert_eq!(p.ports(), vec![port_of(&other.url)]);
   p.close(2, "p9");
   assert!(!listening(port_of(&other.url)).await);
+  assert!(p.ports().is_empty());
+}
+
+// An open runs on its own task: a close or a later open of the same panel that finishes first must win
+#[tokio::test]
+async fn an_open_overtaken_by_a_close_or_a_later_open_takes_no_lease() {
+  let (a, _) = upstream(|_| vec![b"HTTP/1.1 204 No Content\r\n\r\n".to_vec()]).await;
+  let (b, _) = upstream(|_| vec![b"HTTP/1.1 204 No Content\r\n\r\n".to_vec()]).await;
+  let (_d, picker, p) = previews();
+  let closed = p.open(1, "panel", &format!("http://127.0.0.1:{a}/"), &picker);
+  p.close(1, "panel");
+  assert!(closed.await.is_err());
+  assert!(p.ports().is_empty(), "no proxy left without a lease");
+  let gone = p.open(1, "panel", &format!("http://127.0.0.1:{a}/"), &picker);
+  p.release_wire(1);
+  assert!(gone.await.is_err());
+  assert!(p.ports().is_empty());
+  // A to B, with A binding last: B keeps its lease and A's proxy never stays up
+  let first = p.open(1, "panel", &format!("http://127.0.0.1:{a}/"), &picker);
+  let second = p.open(1, "panel", &format!("http://127.0.0.1:{b}/#/settings"), &picker);
+  let shown = second.await.unwrap();
+  assert!(shown.url.ends_with("/#/settings"), "{}", shown.url);
+  assert!(first.await.is_err());
+  assert_eq!(p.ports(), vec![port_of(&shown.url)]);
+  p.close(1, "panel");
   assert!(p.ports().is_empty());
 }

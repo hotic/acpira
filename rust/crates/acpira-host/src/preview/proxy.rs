@@ -30,9 +30,13 @@ pub(super) struct Ctx {
 const PICKER_PATH: &str = "/__acpira/picker.js";
 /// A request or response head larger than this is refused
 const MAX_HEAD: usize = 64 * 1024;
-/// How much HTML is held back looking for `<head>` before the script goes in anyway
+/// How much HTML is held back looking for the end of the head before the script goes in anyway
 const SNIFF: usize = 64 * 1024;
+/// The most body bytes read at once, whatever a chunk header announces
+const PIECE: usize = 16 * 1024;
 
+/// Where the head is over: the held-back part then holds every meta CSP the page declares up front
+static HEAD_END: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)</head\s*>|<body[\s>]").unwrap());
 static HEAD_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)<head(?:\s[^>]*)?>").unwrap());
 static HTML_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)<html(?:\s[^>]*)?>").unwrap());
 static DOCTYPE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)<!doctype[^>]*>").unwrap());
@@ -110,12 +114,36 @@ async fn read_head(r: &mut (impl AsyncRead + Unpin)) -> io::Result<Option<(Head,
   }
 }
 
+/// Whether the browser reached the proxy under a name an attacker cannot point at this machine. The proxy rewrites Host and
+/// Origin to the dev server's own, which would defeat a dev server's DNS-rebinding check (a page on `evil.test` whose name
+/// now resolves to 127.0.0.1), so the name is checked here instead: an IP literal or `localhost` like Vite's default, or a
+/// remote window's forwarding service whose DNS belongs to that service (Codespaces, dev tunnels; not exercised yet)
+pub(super) fn trusted_host(host: &str) -> bool {
+  let name = match host.strip_prefix('[') {
+    Some(v6) => return v6.split_once(']').is_some_and(|(ip, rest)| ip.parse::<std::net::Ipv6Addr>().is_ok() && (rest.is_empty() || rest.starts_with(':'))),
+    None => host.rsplit_once(':').map_or(host, |(h, _)| h).to_ascii_lowercase(),
+  };
+  name.parse::<std::net::Ipv4Addr>().is_ok()
+    || name == "localhost"
+    || [".localhost", ".github.dev", ".devtunnels.ms"].iter().any(|s| name.ends_with(s))
+}
+
 async fn serve(mut client: TcpStream, ctx: &Ctx) -> io::Result<()> {
   let Some((mut req, leftover)) = read_head(&mut client).await? else { return Ok(()) };
+  if !req.get("host").is_some_and(trusted_host) {
+    let body = "this address is not one the Acpira preview answers to";
+    let head = format!(
+      "HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+      body.len()
+    );
+    client.write_all(head.as_bytes()).await?;
+    client.write_all(body.as_bytes()).await?;
+    return client.shutdown().await;
+  }
   let mut parts = req.start.splitn(3, ' ');
   let (method, path) = (parts.next().unwrap_or_default().to_owned(), parts.next().unwrap_or_default().to_owned());
   // What the browser called us: a forwarded port in a remote window has its own address
-  let proxy_origin = format!("http://{}", req.get("host").unwrap_or("127.0.0.1"));
+  let proxy_origin = format!("http://{}", req.get("host").unwrap_or_default());
   if path.split('?').next() == Some(PICKER_PATH) {
     let body = ctx.picker.lock().clone();
     let head = format!(
@@ -209,32 +237,40 @@ async fn respond(client: &mut (impl AsyncWrite + Unpin), upstream: impl AsyncRea
   let sink = |piece: Vec<u8>, held: &mut Option<Vec<u8>>| -> Option<Vec<u8>> {
     let Some(buf) = held.as_mut() else { return Some(piece) };
     buf.extend_from_slice(&piece);
-    if HEAD_TAG.is_match(buf) || buf.len() > SNIFF { held.take().map(|b| inject(&b, &ctx.token)) } else { None }
+    // Held until the head is complete, so a meta CSP that arrives in a later piece than `<head>` is dropped too
+    if HEAD_END.is_match(buf) || buf.len() > SNIFF { held.take().map(|b| inject(&b, &ctx.token)) } else { None }
   };
   if chunked {
+    let mut piece = vec![0u8; PIECE];
     loop {
       let mut line = String::new();
-      if body.read_line(&mut line).await? == 0 {
+      // A size line is a few hex digits; one that runs on is not chunked framing
+      if (&mut body).take(MAX_HEAD as u64).read_line(&mut line).await? == 0 {
         break;
       }
       let size = u64::from_str_radix(line.trim().split(';').next().unwrap_or("0"), 16).unwrap_or(0);
       if size == 0 {
         break;
       }
-      let mut piece = vec![0u8; size as usize];
-      body.read_exact(&mut piece).await?;
+      // Read in bounded pieces: the announced size is the server's word, not an allocation
+      let mut left = size;
+      while left > 0 {
+        let want = left.min(PIECE as u64) as usize;
+        body.read_exact(&mut piece[..want]).await?;
+        left -= want as u64;
+        if let Some(out) = sink(piece[..want].to_vec(), &mut held) {
+          client.write_all(&out).await?;
+        }
+      }
       let mut crlf = [0u8; 2];
       body.read_exact(&mut crlf).await?;
-      if let Some(out) = sink(piece, &mut held) {
-        client.write_all(&out).await?;
-      }
     }
   } else {
     let mut limited: Box<dyn AsyncRead + Unpin + Send + '_> = match length {
       Some(n) => Box::new((&mut body).take(n)),
       None => Box::new(&mut body),
     };
-    let mut chunk = vec![0u8; 16 * 1024];
+    let mut chunk = vec![0u8; PIECE];
     loop {
       let n = limited.read(&mut chunk).await?;
       if n == 0 {
@@ -294,6 +330,16 @@ mod tests {
     assert_eq!(out, r#"<!DOCTYPE html><html lang="en"><head><script src="/__acpira/picker.js?t=T"></script><title>x</title></head><header>h</header></html>"#);
     assert_eq!(String::from_utf8(inject(b"<!doctype html><p>no head", "T")).unwrap(), r#"<!doctype html><script src="/__acpira/picker.js?t=T"></script><p>no head"#);
     assert_eq!(String::from_utf8(inject(b"<p>bare", "T")).unwrap(), r#"<script src="/__acpira/picker.js?t=T"></script><p>bare"#);
+  }
+
+  #[test]
+  fn only_names_that_cannot_be_rebound_reach_the_proxy() {
+    for ok in ["127.0.0.1:5173", "localhost:41000", "LOCALHOST", "[::1]:8080", "app.localhost:3000", "x-41000.app.github.dev", "abc-41000.usw2.devtunnels.ms", "192.168.1.4:80"] {
+      assert!(trusted_host(ok), "{ok}");
+    }
+    for bad in ["evil.test:41000", "localhost.evil.test", "github.dev.evil.test", "[::1", "[evil]:80", ""] {
+      assert!(!trusted_host(bad), "{bad}");
+    }
   }
 
   #[test]

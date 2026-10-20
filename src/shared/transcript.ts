@@ -176,13 +176,15 @@ export type FailureCategory = 'connection' | 'access' | 'limit' | 'request' | 's
 // when it arrived, upserted by id (a higher revision replaces the row in place). The error that ends a
 // turn additionally lands on AgentTurn.error and is rendered by the alert card, so a notice row whose
 // id matches the turn error's failureId is not drawn a second time. An ACP `notice` update (ids `notice:<n>`,
-// category `unknown`, no actions) is a row too, and the only source of the `info` severity
+// category `unknown`, no actions) is a row too, and the only source of `info`
 export interface NoticeBlock {
   type: 'notice';
   id: string;
   revision: number;
   category: FailureCategory;
-  severity: 'info' | 'warning' | 'error';
+  severity: 'warning' | 'error';
+  // An informational ACP notice, stored as a warning plus this flag so engines up to 1.10.6 still read the record
+  info?: boolean;
   title: string;
   details?: string;
   actions: FailureAction[];

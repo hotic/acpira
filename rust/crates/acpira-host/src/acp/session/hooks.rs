@@ -245,6 +245,7 @@ fn notice(severity: Severity, title: String, details: Option<String>) -> AgentBl
     revision: acpira_shared::num::Num(1.0),
     category: FailureCategory::Request,
     severity,
+    info: false,
     title,
     details,
     actions: vec![],

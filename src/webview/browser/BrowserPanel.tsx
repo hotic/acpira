@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, ExternalLink, Globe, MessageSquarePlus, MessageSquareText, RotateCw, SquareDashedMousePointer, TriangleAlert } from 'lucide-react';
-import { envelopeOf, normalizePreviewUrl, pickedContext, type PanelMsg, type PickedElement, type PickedRect, type PickerMsg } from '@shared/picker';
+import { envelopeOf, normalizePreviewUrl, pickedContext, redactUrl, type PanelMsg, type PickedElement, type PickedRect, type PickerMsg } from '@shared/picker';
 import type { BrowserHostMsg, BrowserLook, BrowserMsg, BrowserPage } from '@shared/protocol';
 import { optionClass } from '../ui/DropdownMenu';
 import { popupClass } from '../ui/Overlay';
@@ -46,6 +46,22 @@ const MAX_SUGGESTIONS = 8;
 
 // Toolbar buttons: a step the current page cannot take reads as unavailable
 const TOOL = 'disabled:pointer-events-none disabled:opacity-40';
+
+// The shell's messages come from the webview host, this document's parent. The page's own frames can post here too (a
+// nested iframe is not the picker's window), so anything else is dropped, and a message is used only in the shape it has
+const str = (v: unknown): v is string => typeof v === 'string';
+function hostMsgOf(e: MessageEvent): BrowserHostMsg | undefined {
+  if (e.source !== window.parent) return undefined;
+  const m = e.data as Partial<Record<string, unknown>> | null;
+  switch (m?.type) {
+    case 'browserFrame': return str(m.target) && str(m.src) && str(m.token) ? m as BrowserHostMsg : undefined;
+    case 'browserError': return str(m.target) && str(m.error) ? m as BrowserHostMsg : undefined;
+    case 'browserLook': return m.look && typeof m.look === 'object' ? m as BrowserHostMsg : undefined;
+    case 'browserHistory':
+      return Array.isArray(m.pages) && m.pages.every(p => p && typeof p === 'object' && str((p as BrowserPage).url) && str((p as BrowserPage).title)) ? m as BrowserHostMsg : undefined;
+  }
+  return undefined;
+}
 
 function union(rects: PickedRect[]): PickedRect | undefined {
   if (!rects.length) return undefined;
@@ -112,7 +128,7 @@ export function BrowserPanel() {
         if (msg) onPicker(msg);
         return;
       }
-      const m = e.data as BrowserHostMsg | undefined;
+      const m = hostMsgOf(e);
       switch (m?.type) {
         case 'browserLook': setLook(m.look); setLocale(m.look.locale); break;
         case 'browserFrame': setFrame(m); setError(undefined); setShown(m.target); setPickable(undefined); setPicked([]); setRects([]); break;
@@ -219,7 +235,8 @@ export function BrowserPanel() {
     const elements = pickedRef.current;
     if (!elements.length) return;
     const { label, text } = pickedContext(elements);
-    post({ type: 'browserAdd', item: { label, text, uri: shown, ...(comment ? { comment } : {}) } });
+    // The address goes to the model as the pick's source: secret-looking query parameters are redacted like the page's own URLs
+    post({ type: 'browserAdd', item: { label, text, uri: redactUrl(shown), ...(comment ? { comment } : {}) } });
     togglePicking(false);
   };
 

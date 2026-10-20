@@ -386,8 +386,6 @@ pub enum FailureCategory {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {
-  /// Only from an ACP `notice` (AIR sessionFailure has no info level)
-  Info,
   Warning,
   Error,
 }
@@ -398,6 +396,10 @@ pub struct NoticeBlock {
   pub revision: Num,
   pub category: FailureCategory,
   pub severity: Severity,
+  /// An ACP `info` notice: stored as a warning plus this flag, because engines up to 1.10.6 know only warning / error and
+  /// would refuse the whole record over an unknown severity (`~/.acpira` is shared with older IDE sidecars)
+  #[serde(default, skip_serializing_if = "is_false")]
+  pub info: bool,
   pub title: String,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub details: Option<String>,

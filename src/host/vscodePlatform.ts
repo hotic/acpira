@@ -186,12 +186,18 @@ export class VscodePlatform {
   // A remote workspace's loopback page gets a tunnel to the user's machine (asExternalUri; local windows get the URL back
   // unchanged), and that address must answer from the user's side before a tab opens. The integrated browser's
   // experimental remote proxy loads pages on the remote itself, so it gets the original URL and no local check
-  private async openBrowser(url: string): Promise<BrowserOpened> {
+  // The browser panel's "open in VS Code's browser": the same path without the preview routing, which would only bring
+  // the panel itself up again
+  openInVsCodeBrowser(url: string): Promise<BrowserOpened> {
+    return this.openBrowser(url, false);
+  }
+
+  private async openBrowser(url: string, viaPreview = true): Promise<BrowserOpened> {
     // A loopback http page opens in Acpira's browser panel, where its elements can be picked into the chat. The engine has
     // already found it listening on its machine (relay hub), and its preview proxy reaches it from there, so a remote dev
     // server needs no forward and no probe from the user's side. https and other hosts are beyond that proxy and stay with
     // VS Code's browser
-    const page = this.preview && normalizePreviewUrl(url);
+    const page = viaPreview && this.preview && normalizePreviewUrl(url);
     if (page && this.preview) {
       const reused = this.preview(page);
       return { url: page, ...(reused ? { reused } : {}) };

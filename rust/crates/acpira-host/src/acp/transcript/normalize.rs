@@ -614,6 +614,7 @@ pub fn apply_session_failure(s: &mut NormalizeState, f: &SessionFailure) -> bool
     revision: Num(f.revision),
     category: f.category,
     severity: f.severity,
+    info: false,
     title: f.title.clone(),
     details: f.details.clone().filter(|d| !d.is_empty()),
     actions: f.actions.clone(),
@@ -646,10 +647,10 @@ pub fn apply_goal(s: &mut NormalizeState, next: Option<SessionGoal>, mark: bool)
 fn apply_notice(s: &mut NormalizeState, u: &Value) -> bool {
   let Some(title) = text_of(u, "title").map(str::trim).filter(|t| !t.is_empty()) else { return false };
   // An unknown severity string reads as information, the quietest level
-  let severity = match str_of(u, "severity") {
-    Some("error") => Severity::Error,
-    Some("warning") => Severity::Warning,
-    _ => Severity::Info,
+  let (severity, info) = match str_of(u, "severity") {
+    Some("error") => (Severity::Error, false),
+    Some("warning") => (Severity::Warning, false),
+    _ => (Severity::Warning, true),
   };
   // Positional ids stay stable across a reload of the same transcript; AIR rows carry their own ids
   let n = s.turns.iter().filter_map(Turn::as_agent).flat_map(|t| &t.blocks).filter(|b| matches!(b, AgentBlock::Notice(_))).count();
@@ -658,6 +659,7 @@ fn apply_notice(s: &mut NormalizeState, u: &Value) -> bool {
     revision: Num(1.0),
     category: FailureCategory::Unknown,
     severity,
+    info,
     title: title.to_owned(),
     details: text_of(u, "description").map(str::trim).filter(|d| !d.is_empty()).map(str::to_owned),
     actions: vec![],
@@ -2152,9 +2154,9 @@ mod notice_tests {
     let AgentBlock::Text(reply) = &t.blocks[0] else { panic!("reply first") };
     assert_eq!(reply.markdown, "waiting on [08:");
     let AgentBlock::Notice(n) = &t.blocks[1] else { panic!("notice row") };
-    assert_eq!((n.id.as_str(), n.severity, n.title.as_str()), ("notice:1", Severity::Info, "Task stopped by user"));
+    assert_eq!((n.id.as_str(), n.severity, n.info, n.title.as_str()), ("notice:1", Severity::Warning, true, "Task stopped by user"));
     assert_eq!(n.details.as_deref(), Some("grep \"^[08:(0[0-9]\" log."));
     let AgentBlock::Notice(n) = &t.blocks[2] else { panic!("second notice row") };
-    assert_eq!((n.id.as_str(), n.severity), ("notice:2", Severity::Warning));
+    assert_eq!((n.id.as_str(), n.severity, n.info), ("notice:2", Severity::Warning, false));
   }
 }
