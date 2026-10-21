@@ -15,7 +15,7 @@ import { OptionContent } from '../ui/Panel';
 import { WorkingBeam } from '../effects/WorkingBeam';
 import { SendButton } from '../effects/SendButton';
 import { DraftChips } from './Attachments';
-import { collectDrafts, collectImageSources, hasPayload, imageSources, pastedText, pathlessWorkbenchDrag, type Collected } from './drafts';
+import { collectDrafts, collectImageSources, hasPayload, hiddenText, imageSources, pastedText, pathlessWorkbenchDrag, typeInto, type Collected } from './drafts';
 import { MentionList, mentionAt, personaHits, personaOfHit, useMentionHits, type MentionPersona } from './Mention';
 import { SummonMenu } from './SummonMenu';
 import { SlashList, commandAt, commandHint, completeCommand, promptMarks, useSlashHits } from './Slash';
@@ -190,22 +190,34 @@ export function Composer(p: ComposerProps) {
     if (files) void addFrom(collectDrafts(dt, p.cwd));
     else if (sources.length) void addFrom(collectImageSources(sources));
     const pasted = pastedText(dt);
-    // Nothing to type (or only the copied files' names): keep the textarea from inserting anything
-    if (!pasted.trim()) { if (files || sources.length || pasted !== dt.getData('text/plain')) e.preventDefault(); return; }
-    // Lines copied from an editor come back as the range they were copied from, like Cursor's code references
+    // Text that is not the event's text/plain (taken from the HTML flavour) is typed here, the textarea would insert nothing
+    const insert = pasted !== dt.getData('text/plain');
+    if (!pasted.trim()) {
+      // Nothing to type (or only the copied files' names): keep the textarea from inserting anything
+      if (files || sources.length || insert) e.preventDefault();
+      // Text the event withheld beside the files is read back and typed once it arrives
+      void hiddenText(dt)?.then(text => { if (text.trim()) typeText(text, true); });
+      return;
+    }
+    if (insert) e.preventDefault();
+    if (typeText(pasted, insert)) e.preventDefault();
+  };
+  // Pasted text: lines copied from an editor come back as the range they were copied from (like Cursor's code references), large text
+  // becomes an attachment, the rest is typed at the caret when `insert` is set or left to the textarea. True when the paste was taken
+  const typeText = (pasted: string, insert: boolean): boolean => {
     const copied = copiedSelection(pasted);
     if (copied) {
-      e.preventDefault();
       const sel = selectionDraft(copied, p.cwd);
       setDrafts(current => (current.some(d => sameRange(d, sel)) ? current : [...current, sel]));
-      return;
+      return true;
     }
     const name = t('attach.pastedText');
     const { draft, tooBig } = collectPastedText(pasted, name);
-    if (!draft && !tooBig) return;
-    e.preventDefault();
     if (tooBig) p.onNotice(t('attach.tooBigText', { name, kb: MAX_TEXT_BYTES >> 10 }));
     if (draft) setDrafts(current => [...current, draft]);
+    if (draft || tooBig) return true;
+    if (insert) typeInto(textarea.current, pasted);
+    return insert;
   };
 
   // @ mention: the span under the caret drives the file list (only with a collapsed selection); Esc parks it for that @ until the caret leaves or the message is sent
