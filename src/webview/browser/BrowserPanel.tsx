@@ -47,11 +47,14 @@ const MAX_SUGGESTIONS = 8;
 // Toolbar buttons: a step the current page cannot take reads as unavailable
 const TOOL = 'disabled:pointer-events-none disabled:opacity-40';
 
-// The shell's messages come from the webview host, this document's parent. The page's own frames can post here too (a
-// nested iframe is not the picker's window), so anything else is dropped, and a message is used only in the shape it has
+// The shell's messages come from the webview host, which shares this document's origin. `e.source === window.parent` cannot
+// tell: VS Code's webview script sets `window.parent = window` (and `top`), so the outer frame that relays them is never
+// `window.parent` (verified on VS Code 1.142.0). The page's own frames can post here too (a nested iframe is not the
+// picker's window), but they are served from the proxy's http origin, so anything from another origin is dropped, and a
+// message is used only in the shape it has
 const str = (v: unknown): v is string => typeof v === 'string';
 function hostMsgOf(e: MessageEvent): BrowserHostMsg | undefined {
-  if (e.source !== window.parent) return undefined;
+  if (e.origin !== window.origin) return undefined;
   const m = e.data as Partial<Record<string, unknown>> | null;
   switch (m?.type) {
     case 'browserFrame': return str(m.target) && str(m.src) && str(m.token) ? m as BrowserHostMsg : undefined;
