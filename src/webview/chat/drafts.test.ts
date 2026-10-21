@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MAX_FILE_BYTES, MAX_TEXT_BYTES } from '@shared/attachments';
-import { collectDrafts, collectImageSources, hasPayload, imageSources, pastedText, pathlessWorkbenchDrag, workbenchUris } from './drafts';
+import { collectDrafts, collectImageSources, hasPayload, hiddenText, imageSources, pastedText, pathlessWorkbenchDrag, workbenchUris } from './drafts';
 
 // Minimal DataTransfer: lowercased types like the DOM one, no files
 function transfer(data: Record<string, string>): DataTransfer {
@@ -153,6 +153,38 @@ describe('mixed pastes', () => {
     const { drafts, refused } = await collectImageSources(sources);
     expect(refused).toEqual([]);
     expect(drafts).toEqual([{ kind: 'image', mimeType: 'image/png', data: png }]);
+  });
+
+  it('takes the text of a mixed message that only carries it in HTML', () => {
+    // Qt-style fragment: head and style, comments, source line breaks, <br>, entities, an inline image
+    const html = '<html><head><style>p { margin: 0 }</style></head><body><!--StartFragment--><p>你好，\n  这是&nbsp;文字 &amp; 图</p>'
+      + '<img src="file:///tmp/a.png"><p>第二行<br />第三行&#x1F600;</p><!--EndFragment--></body></html>';
+    expect(pastedText(clip({ 'text/html': html }, [osFile('image.png', 'x')]))).toBe('你好， 这是 文字 & 图\n第二行\n第三行😀');
+    // text/plain holding only the attached files' paths does not hide it either
+    expect(pastedText(clip({ 'text/plain': '/tmp/a.png', 'text/html': html }, [osFile('a.png', 'x')]))).toContain('第二行');
+    // An image-only HTML flavour still types nothing
+    expect(pastedText(clip({ 'text/html': '<img src="https://e.com/a.png">' }))).toBe('');
+  });
+
+  it('reads back the text Chromium withholds beside pasted files', async () => {
+    const onlyFiles = (names: string[]) => clip({}, names.map(n => osFile(n, 'x')));
+    const read = vi.fn(async () => [{
+      types: ['text/html'],
+      getType: async () => new Blob(['<p>看这张图</p><img src="file:///tmp/a.png">'], { type: 'text/html' }),
+    }]);
+    // Only clipboard is mocked: replacing the whole navigator global leaks into the fetch path of later tests
+    Object.defineProperty(navigator, 'clipboard', { value: { read }, configurable: true });
+    try {
+      // A bare screenshot (synthetic image.png) or a paste that already has text never touches the clipboard
+      expect(hiddenText(onlyFiles(['image.png']))).toBeUndefined();
+      expect(hiddenText(clip({ 'text/plain': 'x' }, [osFile('a.png', 'x')]))).toBeUndefined();
+      expect(read).not.toHaveBeenCalled();
+      expect(await hiddenText(onlyFiles(['a.png']))).toBe('看这张图');
+      read.mockRejectedValueOnce(new DOMException('denied', 'NotAllowedError'));
+      expect(await hiddenText(onlyFiles(['a.png']))).toBe('');
+    } finally {
+      Reflect.deleteProperty(navigator, 'clipboard');
+    }
   });
 
   it('never requests a pasted image on a loopback port, which the page may reach for open_browser', async () => {

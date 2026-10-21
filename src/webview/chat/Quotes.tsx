@@ -6,7 +6,7 @@ import { cn } from '../ui/cn';
 import { IconButton } from '../ui/Button';
 import { Popover } from '../ui/Popover';
 import { Removable } from './Attachments';
-import { collectDrafts, collectImageSources, imageSources, pastedText } from './drafts';
+import { collectDrafts, collectImageSources, hiddenText, imageSources, pastedText, typeInto } from './drafts';
 
 type ImageDraft = Extract<Draft, { kind: 'image' }>;
 
@@ -105,15 +105,20 @@ export function CommentEditor({ initial = '', autoFocus = true, acceptImages = f
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSave(value.trim(), images); }
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onCancel(); }
   };
-  // Images are taken (clipboard files, else the <img> copies in the HTML flavour); the text beside them still pastes into the field as usual
+  // Images are taken (clipboard files, else the <img> copies in the HTML flavour); the text beside them still pastes into the field as usual,
+  // typed here when it is not the event's text/plain (only in the HTML flavour, or withheld beside files: drafts.hiddenText)
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!acceptImages) return;
     const dt = e.clipboardData;
+    const field = e.currentTarget;
+    const text = pastedText(dt);
+    if (text.trim() && text !== dt.getData('text/plain')) { e.preventDefault(); typeInto(field, text); }
+    else if (!text.trim()) void hiddenText(dt)?.then(more => { if (more.trim()) typeInto(field, more); });
+    if (!acceptImages) return;
     const files = [...dt.files].some(f => f.type.startsWith('image/'));
     const sources = files ? [] : imageSources(dt);
     if (!files && !sources.length) return;
     // Only the copied files' names (or nothing) as text: nothing to type
-    if (!pastedText(dt).trim()) e.preventDefault();
+    if (!text.trim()) e.preventDefault();
     void (files ? collectDrafts(dt, '') : collectImageSources(sources)).then(({ drafts }) => {
       const more = drafts.filter((d): d is ImageDraft => d.kind === 'image');
       if (more.length) setImages(list => [...list, ...more]);

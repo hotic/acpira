@@ -67,24 +67,86 @@ export async function collectDrafts(dt: DataTransfer, cwd: string): Promise<Coll
 // `<img src>` values of a paste's HTML flavour. A selection copied from a web page or from this transcript carries its images only there,
 // beside the text in text/plain. Parsed with a pattern rather than DOMParser so nothing in the markup is ever instantiated
 const IMG_SRC = /<img\b[^>]*?\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/gi;
-const ENTITIES: Record<string, string> = { amp: '&', quot: '"', apos: "'", '#39': "'", lt: '<', gt: '>' };
+const ENTITIES: Record<string, string> = { amp: '&', quot: '"', apos: "'", '#39': "'", lt: '<', gt: '>', nbsp: ' ' };
+function decodeEntities(s: string): string {
+  return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+\d*);/gi, (whole, e: string) => {
+    if (e[0] !== '#') return ENTITIES[e.toLowerCase()] ?? whole;
+    const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+    return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
+  });
+}
+function srcsOf(html: string): string[] {
+  const found = Array.from(html.matchAll(IMG_SRC), m => decodeEntities(m[1] ?? m[2] ?? m[3] ?? '').trim());
+  return [...new Set(found.filter(Boolean))];
+}
 export function imageSources(dt: DataTransfer): string[] {
   const html = dt.getData('text/html');
-  if (!html) return [];
-  const found = Array.from(html.matchAll(IMG_SRC), m => (m[1] ?? m[2] ?? m[3] ?? '').replace(/&(amp|quot|apos|#39|lt|gt);/g, (_, e: string) => ENTITIES[e]!).trim());
-  return [...new Set(found.filter(Boolean))];
+  return html ? srcsOf(html) : [];
+}
+
+// The readable text of an HTML flavour, for pastes that carry their words only there (a Qt chat app's mixed message has text/html and
+// images but no text/plain). Pattern-based like IMG_SRC: source whitespace collapses, <br> and block ends break lines, every tag drops
+const BLOCK_END = /<br\b[^>]*>|<\/(?:p|div|li|tr|h[1-6]|blockquote|pre|table|ul|ol|section|article|header|footer)\s*>/gi;
+export function htmlText(html: string): string {
+  const body = html
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(head|script|style|title|template)\b[\s\S]*?<\/\1\s*>/gi, '')
+    .replace(/\s+/g, ' ')
+    .replace(BLOCK_END, '\n')
+    .replace(/<[^>]*>/g, '');
+  return decodeEntities(body).split('\n').map(l => l.trim()).join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 // The text a paste should type. A file copied in Finder also puts its name in text/plain, and a browser's "Copy image" may put the image's
-// address there; neither is message text, so either comes back empty
+// address there; neither is message text, so either comes back empty. Without anything left in text/plain the HTML flavour's text is used
 export function pastedText(dt: DataTransfer): string {
-  const text = dt.getData('text/plain');
+  return typedText(dt.getData('text/plain'), dt.getData('text/html'), Array.from(dt.files, f => f.name));
+}
+function typedText(text: string, html: string, files: string[]): string {
+  const plain = plainText(text, html, files);
+  if (plain.trim() || !html) return plain;
+  return htmlText(html) || plain;
+}
+function plainText(text: string, html: string, files: string[]): string {
   const lines = text.split(/\r\n|\r|\n/).map(l => l.trim()).filter(Boolean);
   if (!lines.length) return text;
-  const names = new Set(Array.from(dt.files, f => f.name));
+  const names = new Set(files);
   if (names.size && lines.every(l => names.has(l.split(/[\\/]/).pop()!))) return '';
-  if (lines.length === 1 && imageSources(dt).includes(lines[0]!)) return '';
+  if (lines.length === 1 && html && srcsOf(html).includes(lines[0]!)) return '';
   return text;
+}
+
+// Chromium on macOS gives a paste only its files once the pasteboard also holds file URLs (a mixed message copied from WeChat: the images
+// as files beside HTML and text), so text/plain and text/html read empty. The async Clipboard API still reads them; VS Code grants its
+// webviews clipboard-read, elsewhere a refusal just leaves the text out. Only for real files: a bare screenshot arrives as the synthetic
+// image.png, and Finder copies come back as their own names, which typedText drops. Undefined when nothing can be hidden
+export function hiddenText(dt: DataTransfer): Promise<string> | undefined {
+  const files = Array.from(dt.files, f => f.name);
+  if (!files.length || [...dt.types].some(type => type !== 'Files') || files.every(n => n === 'image.png')) return undefined;
+  if (typeof navigator === 'undefined' || !navigator.clipboard?.read) return undefined;
+  return readClipboardText(files);
+}
+async function readClipboardText(files: string[]): Promise<string> {
+  try {
+    const items = await navigator.clipboard.read();
+    const read = async (type: string) => {
+      const item = items.find(i => i.types.includes(type));
+      return item ? (await item.getType(type)).text() : '';
+    };
+    return typedText(await read('text/plain'), await read('text/html'), files);
+  } catch {
+    return '';
+  }
+}
+
+// Types text at the caret like a native paste: execCommand keeps the textarea's undo stack and fires the input event React reads;
+// setRangeText plus a synthetic input event where the command is refused
+export function typeInto(el: HTMLTextAreaElement | null, text: string): void {
+  if (!el || !text) return;
+  el.focus();
+  if (document.execCommand('insertText', false, text)) return;
+  el.setRangeText(text, el.selectionStart, el.selectionEnd, 'end');
+  el.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 // Image drafts for `imageSources`: data: URLs decode in place (the CSP's connect-src keeps fetch() from them), anything else is fetched,
