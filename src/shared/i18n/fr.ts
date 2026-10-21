@@ -233,6 +233,7 @@ export const fr = {
   'composer.lead': 'Principal',
   'composer.sidekick': 'Assistant',
   'composer.sidekickNone': 'Aucun',
+  'composer.pairSide': '{role} : {model}',
   'composer.fusionSummary': '{leads} principaux, {sidekicks} assistants',
   'composer.addAccount': 'Ajouter un compte',
   'composer.accountsOf': 'Comptes {agent}',

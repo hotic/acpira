@@ -143,4 +143,43 @@
   .process-content > :is(.acp-prose, .steered-message) + * {
     margin-block-start: calc(var(--process-prose-gap) - var(--process-row-gap));
   }
+
+  /* Model panel's lead / sidekick switch (chat/SidekickPair.tsx). The side being edited grows and spells out its model;
+     the other folds to its mark and short level. Width moves through flex-grow and the name's grid track (0fr → 1fr), so
+     both ends land on their natural sizes; the side's gap is cancelled while its name is folded */
+  .pair-side { flex: 0 0 auto; transition: flex-grow var(--dur-open) ease-out, background-color var(--dur), color var(--dur); }
+  .pair-side[data-on] { flex: 1 1 auto; }
+  .pair-name {
+    display: grid; grid-template-columns: 0fr; flex: 0 1 auto; min-width: 0; margin-inline-start: calc(var(--spacing) * -1.5); opacity: 0;
+    transition: grid-template-columns var(--dur-open) ease-out, margin var(--dur-open) ease-out, flex-grow var(--dur-open) ease-out, opacity var(--dur);
+  }
+  .pair-side[data-on] .pair-name { grid-template-columns: 1fr; flex-grow: 1; margin-inline-start: 0; opacity: 1; transition-delay: 0s, 0s, 0s, calc(var(--dur) / 2); }
+  .pair-name > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  /* The sidekick's mark with a + badge, a notch cut out of the mark around it so it reads on either side's surface */
+  .pair-plus { position: relative; display: flex; flex-shrink: 0; }
+  .pair-plus > :first-child {
+    --pair-notch-at: calc(100% - var(--pair-badge) / 2 + var(--pair-notch));
+    mask: radial-gradient(circle at var(--pair-notch-at) var(--pair-notch-at), transparent calc(var(--pair-badge) / 2 + var(--pair-notch)), #000 calc(var(--pair-badge) / 2 + var(--pair-notch) + 0.5px));
+  }
+  .pair-plus-badge {
+    position: absolute; inset-inline-end: calc(-1 * var(--pair-notch)); inset-block-end: calc(-1 * var(--pair-notch));
+    display: flex; align-items: center; justify-content: center; width: var(--pair-badge); height: var(--pair-badge);
+    border-radius: 999px; background: currentColor;
+  }
+  .pair-plus-badge > svg { width: calc(var(--pair-badge) - 1px); height: calc(var(--pair-badge) - 1px); color: var(--menu-bg, var(--bg-1)); }
+  /* Both sides' bodies share one grid cell, so the panel is as tall as the taller one and a switch never moves it (each side's
+     spare height sits above its parameters, so the two effort scales line up); the side
+     taking over slides in from where its half of the switch sits. The side leaving fades out in half a --dur and the one
+     taking over starts fading in after it, so the two lists never show through each other */
+  .pair-stack { display: grid; }
+  .pair-view {
+    grid-area: 1 / 1; display: flex; flex-direction: column; min-width: 0; opacity: 0; visibility: hidden;
+    transition: opacity calc(var(--dur) / 2) ease-out, transform var(--dur-open) ease-out, visibility 0s linear calc(var(--dur) / 2);
+  }
+  .pair-view[data-side="lead"] { transform: translateX(calc(-1 * var(--pair-shift))); }
+  .pair-view[data-side="sidekick"] { transform: translateX(var(--pair-shift)); }
+  .pair-view[data-on] {
+    opacity: 1; visibility: visible; transform: none;
+    transition: opacity var(--dur-open) ease-out calc(var(--dur) / 2), transform var(--dur-open) ease-out, visibility 0s;
+  }
 }

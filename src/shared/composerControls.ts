@@ -159,10 +159,17 @@ export function familyLabel(control: Pick<ConfigControl, 'id' | 'category'>, fam
   return family.name;
 }
 
-// The built-in agent's sidekick select (custom category): a row of the model panel, never a chip or a badge
+// The built-in agent's sidekick select (custom category): the model panel's second side, never a chip or a badge
 export const SIDEKICK_CATEGORY = '_sidekick';
 // Its value for none
 export const NO_SIDEKICK = 'none';
+// The sidekick's effort select, offered while the sidekick's model has levels (custom category, so it is never the lead's)
+export const SIDEKICK_EFFORT_CATEGORY = '_sidekick_effort';
+
+// A level as the folded side of the model panel's lead / sidekick switch shows it: the narrow chip's short form
+export function levelShort(label: string): string {
+  return LEVEL_SHORT[label] ?? label;
+}
 
 // ACP capabilities choose the contents of one composer, never its layout.
 // Recognize native reasoning and model parameters before applying model-name decomposition.
@@ -170,16 +177,17 @@ export const NO_SIDEKICK = 'none';
 // and so does a permission level offered as a config option (custom category `_permission_mode`, after the modes): the right side
 // is the model's. The built-in agent no longer sends one; its approval level is a settings-page setting
 export function composerControls(options: ConfigControl[]) {
-  const models: ConfigControl[] = [], reasoning: ConfigControl[] = [], modelConfig: ConfigControl[] = [], collaboration: ConfigControl[] = [], permission: ConfigControl[] = [], sidekick: ConfigControl[] = [], other: ConfigControl[] = [];
+  const models: ConfigControl[] = [], reasoning: ConfigControl[] = [], modelConfig: ConfigControl[] = [], collaboration: ConfigControl[] = [], permission: ConfigControl[] = [], sidekick: ConfigControl[] = [], sidekickEffort: ConfigControl[] = [], other: ConfigControl[] = [];
   for (const c of options) {
     if (isReasoningControl(c)) reasoning.push(c);
     else if (c.category === 'collaboration_mode' && c.type !== 'boolean') collaboration.push(c);
     else if (c.category === '_permission_mode' && c.type !== 'boolean') permission.push(c);
     else if (c.category === SIDEKICK_CATEGORY && c.type !== 'boolean') sidekick.push(c);
+    else if (c.category === SIDEKICK_EFFORT_CATEGORY && c.type !== 'boolean') sidekickEffort.push(c);
     else if (c.category === 'model_config') modelConfig.push(c);
     // A boolean's synthetic Off/On pair is not a model family even under a `model` category; it chips in `other`
     else if (c.type !== 'boolean' && (c.category === 'model' || (!c.category && (c.id === 'model' || groupModels(c.options).length < c.options.length)))) models.push(c);
     else other.push(c);
   }
-  return { models, reasoning, modelConfig, collaboration, permission, sidekick, other };
+  return { models, reasoning, modelConfig, collaboration, permission, sidekick, sidekickEffort, other };
 }

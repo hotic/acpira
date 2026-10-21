@@ -173,6 +173,11 @@
   --pop-w-md: 260px;
   --pop-w-lg: 300px;
   --pop-w-xl: 360px;
+  /* Model panel's lead / sidekick switch (chat/SidekickPair.tsx): the sidekick mark's + badge, the gap of the notch cut
+     around it, and how far a side's list slides as it takes over */
+  --pair-badge: 7px;
+  --pair-notch: 1.5px;
+  --pair-shift: 8px;
   /* A 260px session column leaves at least 500px for the conversation. */
   --session-dock-min: 760px;
   /* The subagent inspector docks beside the conversation when the main column still has room, else it drills down as an overlay */

@@ -296,16 +296,19 @@ async fn the_built_in_agents_sidekick_is_listed_first_for_the_root_and_keeps_one
   // The root's own: a summoned child does not get it
   assert_eq!(ids(&listed(&hub, token(Some("thr"), 1)).await), ["fake-review", "fake-worker"]);
 
-  // Summoned by its id in the root's own CLI on the picked model; the next task continues its thread
+  // Summoned by its id in the root's own CLI on the picked model and effort; the next task continues its thread, at the
+  // effort picked since
+  s.0.set_config("sidekick_effort".into(), "low".into()).await.unwrap();
   let (ok, text) = last_text(&run(&s, &roster, 0, ask("sidekick", "relay: rename the helper")).await);
   assert!(ok, "{text}");
   let thread = thread_of(&text);
+  s.0.set_config("sidekick_effort".into(), "high".into()).await.unwrap();
   let (ok, text) = last_text(&run(&s, &roster, 0, ask("sidekick", "relay: now the tests")).await);
   assert!(ok && text.contains("(round 2,"), "{text}");
   assert_eq!(thread_of(&text), thread);
   let list = nodes(&s);
-  expect_match(&list[0], json!({ "role": "Sidekick", "model": "Model 2", "harness": { "agent": "fake", "persona": "sidekick", "thread": thread, "round": 1 } }));
-  expect_match(&list[1], json!({ "harness": { "thread": thread, "round": 2 } }));
+  expect_match(&list[0], json!({ "role": "Sidekick", "model": "Model 2", "harness": { "agent": "fake", "persona": "sidekick", "thread": thread, "round": 1, "effort": "Low" } }));
+  expect_match(&list[1], json!({ "harness": { "thread": thread, "round": 2, "effort": "High" } }));
   assert_eq!(list[0]["peer"]["sessionId"], list[1]["peer"]["sessionId"]);
 
   // Another pick: the same conversation goes on with the new model

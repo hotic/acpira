@@ -237,6 +237,7 @@ export const en = {
   'composer.lead': 'Lead',
   'composer.sidekick': 'Sidekick',
   'composer.sidekickNone': 'None',
+  'composer.pairSide': '{role}: {model}',
   'composer.fusionSummary': '{leads} leads, {sidekicks} sidekicks',
   'composer.addAccount': 'Add account',
   'composer.accountsOf': '{agent} accounts',

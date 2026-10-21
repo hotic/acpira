@@ -235,6 +235,7 @@ export const es = {
   'composer.lead': 'Principal',
   'composer.sidekick': 'Asistente',
   'composer.sidekickNone': 'Ninguno',
+  'composer.pairSide': '{role}: {model}',
   'composer.fusionSummary': '{leads} principales, {sidekicks} asistentes',
   'composer.addAccount': 'Añadir cuenta',
   'composer.accountsOf': 'Cuentas de {agent}',
