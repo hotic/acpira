@@ -231,6 +231,7 @@
   "composer.lead": "主模型",
   "composer.sidekick": "副手",
   "composer.sidekickNone": "無",
+  "composer.pairSide": "{role}：{model}",
   "composer.fusionSummary": "{leads} 個主模型，{sidekicks} 個副手",
   "composer.addAccount": "新增帳號",
   "composer.accountsOf": "{agent} 帳號",

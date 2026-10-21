@@ -238,6 +238,7 @@ export const ru = {
   'composer.lead': 'Ведущая',
   'composer.sidekick': 'Помощник',
   'composer.sidekickNone': 'Нет',
+  'composer.pairSide': '{role}: {model}',
   'composer.fusionSummary': 'Ведущих: {leads}, помощников: {sidekicks}',
   'composer.addAccount': 'Добавить аккаунт',
   'composer.accountsOf': 'Аккаунты {agent}',

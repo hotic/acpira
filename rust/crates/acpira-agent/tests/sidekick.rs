@@ -268,3 +268,49 @@ async fn the_pick_comes_back_with_the_session() {
   prompt(&h, &sid, "second").await;
   assert_eq!(last_user(&model.requests()[1].body), "second");
 }
+
+#[tokio::test]
+async fn the_sidekick_effort_follows_the_sidekicks_model_and_comes_back_with_the_session() {
+  let h = engine().await;
+  let model = MockModel::start();
+  // m2 has levels, m3 has others, m1 none
+  h.providers(&model.base_url(), json!([
+    { "id": "m1", "name": "Model One" },
+    { "id": "m2", "name": "Model Two", "efforts": ["low", "medium", "high"] },
+    { "id": "m3", "name": "Model Three", "efforts": ["medium", "max"] },
+  ]));
+  let effort = |options: &Value| options.as_array().unwrap().iter().find(|o| o["id"] == "sidekick_effort").cloned();
+  let set = |sid: String, value: &'static str| {
+    let conn = &h.conn;
+    async move { conn.request("session/set_config_option", json!({ "sessionId": sid, "configId": "sidekick_effort", "value": value })).await.map_err(|e| e.message) }
+  };
+  let (sid, options) = session(&h, json!([])).await;
+  assert!(effort(&options).is_none(), "no sidekick, no effort: {options}");
+  assert!(set(sid.clone(), "low").await.unwrap_err().contains("Unknown sidekick effort"));
+
+  let picked = pick(&h, &sid, "mock/m2").await.unwrap();
+  let select = effort(&picked["configOptions"]).unwrap();
+  // Its own custom category, so the composer does not take it for the lead's effort; the model's default to begin with
+  assert_eq!((&select["category"], &select["currentValue"]), (&json!("_sidekick_effort"), &json!("high")));
+  let values: Vec<&str> = select["options"].as_array().unwrap().iter().map(|o| o["value"].as_str().unwrap()).collect();
+  assert_eq!(values, ["low", "medium", "high"]);
+  assert_eq!(effort(&set(sid.clone(), "medium").await.unwrap()["configOptions"]).unwrap()["currentValue"], "medium");
+  assert!(set(sid.clone(), "max").await.unwrap_err().contains("Unknown sidekick effort"), "m2 has no max");
+
+  // Medium carries over to a sidekick that offers it; a model without levels drops the select
+  assert_eq!(effort(&pick(&h, &sid, "mock/m3").await.unwrap()["configOptions"]).unwrap()["currentValue"], "medium");
+  assert!(effort(&pick(&h, &sid, "mock/m1").await.unwrap()["configOptions"]).is_none());
+  pick(&h, &sid, "mock/m3").await.unwrap();
+  set(sid.clone(), "max").await.unwrap();
+  // A level the next sidekick lacks falls back to its default
+  assert_eq!(effort(&pick(&h, &sid, "mock/m2").await.unwrap()["configOptions"]).unwrap()["currentValue"], "high");
+  set(sid.clone(), "low").await.unwrap();
+  model.push(mock::text("one"));
+  prompt(&h, &sid, "first").await;
+
+  let Harness { conn, home, cwd, .. } = h;
+  drop(conn);
+  let h = Harness::start_with(home, cwd, engine_caps()).await;
+  let loaded = h.conn.request("session/load", json!({ "sessionId": sid, "cwd": h.cwd(), "mcpServers": [] })).await.unwrap();
+  assert_eq!(effort(&loaded["configOptions"]).unwrap()["currentValue"], "low");
+}

@@ -36,6 +36,9 @@ pub struct SessionState {
   /// The sidekick's `<provider>/<model>` (the `sidekick` select): the executor the engine's ask_agent lists first. Kept
   /// while its model is not configured, when the select shows none (`sidekick_of`)
   pub sidekick: Option<String>,
+  /// The sidekick's reasoning effort (the `sidekick_effort` select). None, or a level its model does not offer, shows and
+  /// runs as that model's default (`sidekick_effort_of`)
+  pub sidekick_effort: Option<String>,
   /// The sidekick the model last learned of, from acpira's tool list or a note: one picked since is told with the next
   /// message (`turn.rs`), so the tool table stays as it was listed
   pub sidekick_told: Option<String>,
@@ -109,7 +112,7 @@ impl Session {
   pub fn save_state(&self, st: &SessionState) {
     self.store.prelude(json!({
       "type": "state", "mode": st.mode, "announced": st.announced, "model": st.model, "effort": st.effort, "fast": st.fast,
-      "sidekick": st.sidekick,
+      "sidekick": st.sidekick, "sidekick_effort": st.sidekick_effort,
     }));
   }
 
@@ -333,6 +336,7 @@ impl Server {
     st.effort = s("effort").or_else(|| default_effort(&config, &catalog, st.model.as_deref()));
     st.fast = loaded.state.get("fast").and_then(Value::as_bool).unwrap_or(false);
     st.sidekick = s("sidekick");
+    st.sidekick_effort = s("sidekick_effort");
     // The servers list their tools as the session reopens, with the sidekick the engine holds for it: this one
     st.sidekick_told = sidekick_of(&config, &st);
     if let Some(p) = &loaded.prompt {
@@ -460,12 +464,25 @@ impl Server {
           _ => return Err(RpcError::new(-32602, format!("Unknown model: {value}"))),
         };
         st.sidekick = next;
+        // A level the new sidekick does not offer falls back to its default
+        let efforts = efforts_of(&config, &catalog, st.sidekick.as_deref());
+        if !st.sidekick_effort.as_ref().is_some_and(|e| efforts.contains(e)) {
+          st.sidekick_effort = None;
+        }
         // Before the first message nothing went out with the tool table yet: acpira lists its tools again, so the first
         // request names the sidekick in ask_agent. Later the next message carries a note instead (`turn.rs`)
         if st.items.is_empty() {
           st.sidekick_told = sidekick_of(&config, &st);
           session.mcp.relist(ACPIRA_SERVER);
         }
+      }
+      SIDEKICK_EFFORT => {
+        // The sidekick runs on another model, so its levels are that model's; the lead is never told of them
+        let pick = sidekick_of(&config, &st);
+        if !efforts_of(&config, &catalog, pick.as_deref()).iter().any(|e| e == value) {
+          return Err(RpcError::new(-32602, format!("Unknown sidekick effort: {value}")));
+        }
+        st.sidekick_effort = Some(value.to_owned());
       }
       other => return Err(RpcError::new(-32602, format!("Unknown config option: {other}"))),
     }
@@ -619,6 +636,10 @@ const STANDARD: &str = "standard";
 pub const SIDEKICK: &str = "sidekick";
 pub const NO_SIDEKICK: &str = "none";
 const SIDEKICK_CATEGORY: &str = "_sidekick";
+/// The sidekick's effort select, offered while the sidekick's model has levels. Its own custom category, so a client
+/// does not take it for the lead's effort
+pub const SIDEKICK_EFFORT: &str = "sidekick_effort";
+const SIDEKICK_EFFORT_CATEGORY: &str = "_sidekick_effort";
 
 /// The engine's own MCP server (`acpira mcp`), whose ask_agent lists the sidekick
 pub const ACPIRA_SERVER: &str = "acpira";
@@ -637,6 +658,14 @@ pub fn sidekick_of(config: &Config, st: &SessionState) -> Option<String> {
   st.sidekick.clone().filter(|p| config.find(p).is_some())
 }
 
+/// The sidekick's effort as the select shows it: the level picked while its model offers it, else the model's default.
+/// None while there is no sidekick or its model has no levels
+fn sidekick_effort_of(config: &Config, catalog: &Catalog, st: &SessionState) -> Option<String> {
+  let pick = sidekick_of(config, st)?;
+  let efforts = efforts_of(config, catalog, Some(&pick));
+  st.sidekick_effort.clone().filter(|e| efforts.contains(e)).or_else(|| default_effort(config, catalog, Some(&pick)))
+}
+
 /// Where a data root keeps this agent's sessions: one `<id>.jsonl` log each, with an `<id>/` folder beside it (spilled
 /// tool output, the plan). The engine reads it to delete both together with the Acpira session that drove them
 pub fn sessions_root(home: &Path) -> PathBuf {
@@ -652,7 +681,7 @@ pub fn session_paths(home: &Path, id: &str) -> [PathBuf; 2] {
 /// The full configOptions set: the model select (every usable model, labelled with its source), the effort select when
 /// the current model offers levels, the Fast switch when it has a fast tier (a boolean, or a Standard / Fast select
 /// for a client that does not take booleans; the composer shows either as its Fast toggle), and for a client that runs
-/// one the sidekick select (none, or any usable model). The approval level is not a session control: it is the agent's
+/// one the sidekick select (none, or any usable model) and, while the sidekick's model has levels, its effort select. The approval level is not a session control: it is the agent's
 /// setting in `providers.json` (`Config::approval`), so the composer shows one mode chip and nothing beside it
 pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState, offers: Offers) -> Vec<Value> {
   let mut out = vec![];
@@ -695,6 +724,13 @@ pub fn config_options(config: &Config, catalog: &Catalog, st: &SessionState, off
         "id": SIDEKICK, "name": "Sidekick", "category": SIDEKICK_CATEGORY, "type": "select", "currentValue": value, "options": list,
         "description": "A second model this agent can hand well-specified work to, in a conversation of its own",
       }));
+      if let Some(value) = sidekick_effort_of(config, catalog, st) {
+        let efforts = efforts_of(config, catalog, sidekick_of(config, st).as_deref());
+        out.push(json!({
+          "id": SIDEKICK_EFFORT, "name": "Sidekick effort", "category": SIDEKICK_EFFORT_CATEGORY, "type": "select", "currentValue": value,
+          "options": efforts.iter().map(|e| json!({ "value": e, "name": title_case(e) })).collect::<Vec<_>>(),
+        }));
+      }
     }
   }
   out

@@ -713,6 +713,9 @@ fn thread_persona(roster: &Roster, sidekick: Option<SubagentPersona>, h: &Subage
 const SIDEKICK_CONFIG: &str = "sidekick";
 const SIDEKICK_CATEGORY: &str = "_sidekick";
 const NO_SIDEKICK: &str = "none";
+/// Its effort select, there while the sidekick's model has levels
+const SIDEKICK_EFFORT_CONFIG: &str = "sidekick_effort";
+const SIDEKICK_EFFORT_CATEGORY: &str = "_sidekick_effort";
 
 /// The sidekick's line in ask_agent: Fusion's split of the work, where the lead plans, decides and checks while the
 /// sidekick does the well-specified parts. The Fusion bench (docs/dev/evals.md, 2026-10-21) showed the lead waiting on
@@ -728,18 +731,21 @@ say so in the same thread.";
 impl AcpSession {
   /// The sidekick this session's built-in agent has picked (its `sidekick` select, picks in flight and a reopened
   /// record's value included), as the executor the hub lists first for the root: the built-in agent on that model,
-  /// following the caller's mode, in one conversation that later calls continue
+  /// following the caller's mode, at the effort picked for it, in one conversation that later calls continue
   pub(crate) fn sidekick_persona(&self) -> Option<SubagentPersona> {
-    let pick = {
+    let (pick, effort) = {
       let c = self.core.lock();
-      picked_controls(&c).options.into_iter().find(|o| o.id == SIDEKICK_CONFIG && o.category.as_deref() == Some(SIDEKICK_CATEGORY))?.value
-    }?;
+      let options = picked_controls(&c).options;
+      let value = |id: &str, category: &str| options.iter().find(|o| o.id == id && o.category.as_deref() == Some(category)).and_then(|o| o.value.clone());
+      (value(SIDEKICK_CONFIG, SIDEKICK_CATEGORY), value(SIDEKICK_EFFORT_CONFIG, SIDEKICK_EFFORT_CATEGORY))
+    };
+    let pick = pick?;
     (!pick.is_empty() && pick != NO_SIDEKICK).then(|| SubagentPersona {
       id: SIDEKICK_ID.into(),
       name: "Sidekick".into(),
       agent: self.agent.clone(),
       model: Some(pick),
-      effort: None,
+      effort: effort.filter(|e| !e.is_empty()),
       mode: RelayMode::Inherit,
       when: SIDEKICK_WHEN.into(),
       brief: Some(EXECUTOR_BRIEF.into()),
