@@ -166,6 +166,10 @@ intellijPlatform {
         ides {
             recommended()
         }
+        // 261.27258+ ships intellij.libraries.jcef as an internal module and the verifier flags browser-modular's dependency on it.
+        // On 261 that module never loads (its intellij.platform.ui.jcef dependency is absent there; browser-legacy serves 261), and
+        // 262 / 263 report it compatible, so only this one problem is ignored
+        ignoredProblemsFile = layout.projectDirectory.file("verifier-ignored-problems.txt")
     }
 }
 
