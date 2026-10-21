@@ -1,0 +1,1 @@
+com.github.hotic.acpira::.*Module 'acpira\.browser\.modular' illegally accesses internal module 'intellij\.libraries\.jcef'.*
