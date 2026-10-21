@@ -26,7 +26,8 @@ function Input({ className, visible = true, ref, ...props }: ComponentProps<type
       className={cnState(cn('min-w-0 flex-1 bg-transparent text-2 text-fg-1 outline-none placeholder:text-fg-3'), className)} />
   </label>;
 }
-function List({ className, searchable = false, ref, ...props }: ComponentProps<typeof Base.List> & { searchable?: boolean }) {
+// `fill`: the list takes the height its flex column leaves instead of capping at --pop rows (the model panel's sidekick side)
+function List({ className, searchable = false, fill = false, ref, ...props }: ComponentProps<typeof Base.List> & { searchable?: boolean; fill?: boolean }) {
   const list = useRef<HTMLDivElement>(null);
   const listRef = useMergedRefs(list, ref);
   useLayoutEffect(() => {
@@ -64,7 +65,7 @@ function List({ className, searchable = false, ref, ...props }: ComponentProps<t
     };
   }, [searchable]);
   return <Base.List ref={listRef} tabIndex={searchable ? -1 : 0} {...props}
-    className={cnState(cn('scroll-thin flex max-h-pop flex-col overflow-y-auto outline-none', searchable && 'scroll-stable'), className)} />;
+    className={cnState(cn('scroll-thin flex flex-col overflow-y-auto outline-none', fill ? 'min-h-0 flex-1' : 'max-h-pop', searchable && 'scroll-stable'), className)} />;
 }
 function Item({ className, ...props }: ComponentProps<typeof Base.Item>) {
   return <Base.Item render={<button type="button" />} nativeButton {...props}

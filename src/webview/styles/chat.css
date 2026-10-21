@@ -167,17 +167,17 @@
     border-radius: 999px; background: currentColor;
   }
   .pair-plus-badge > svg { width: calc(var(--pair-badge) - 1px); height: calc(var(--pair-badge) - 1px); color: var(--menu-bg, var(--bg-1)); }
-  /* Both sides' bodies share one grid cell, so the panel is as tall as the taller one and a switch never moves it (each side's
-     spare height sits above its parameters, so the two effort scales line up); the side
-     taking over slides in from where its half of the switch sits. The side leaving fades out in half a --dur and the one
-     taking over starts fading in after it, so the two lists never show through each other */
-  .pair-stack { display: grid; }
+  /* The lead's body sets the panel's height and the sidekick's lies over it (its list scrolling in what is left), so neither a
+     switch nor a pick moves the panel; the side taking over slides in from where its half of the switch sits. The side
+     leaving fades out in half a --dur and the one taking over starts fading in after it, so the two lists never show through
+     each other */
+  .pair-stack { position: relative; }
   .pair-view {
-    grid-area: 1 / 1; display: flex; flex-direction: column; min-width: 0; opacity: 0; visibility: hidden;
+    display: flex; flex-direction: column; min-width: 0; opacity: 0; visibility: hidden;
     transition: opacity calc(var(--dur) / 2) ease-out, transform var(--dur-open) ease-out, visibility 0s linear calc(var(--dur) / 2);
   }
   .pair-view[data-side="lead"] { transform: translateX(calc(-1 * var(--pair-shift))); }
-  .pair-view[data-side="sidekick"] { transform: translateX(var(--pair-shift)); }
+  .pair-view[data-side="sidekick"] { position: absolute; inset: 0; transform: translateX(var(--pair-shift)); }
   .pair-view[data-on] {
     opacity: 1; visibility: visible; transform: none;
     transition: opacity var(--dur-open) ease-out calc(var(--dur) / 2), transform var(--dur-open) ease-out, visibility 0s;
