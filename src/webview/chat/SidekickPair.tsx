@@ -47,7 +47,8 @@ function Side({ role, side, on, onClick }: { role: PairRole; side: PairSide; on:
   );
 }
 
-// Both sides' bodies in one grid cell (`.pair-stack`): the panel keeps the taller one's height, the hidden side is inert
+// Both sides' bodies in one box (`.pair-stack`): the lead's sets the panel's height and the sidekick's fills it from above, so
+// neither a switch nor a pick resizes the open panel; the hidden side is inert
 export function PairViews({ role, lead, sidekick }: { role: PairRole; lead: ReactNode; sidekick: ReactNode }) {
   return (
     <div className="pair-stack">

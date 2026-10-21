@@ -13,6 +13,7 @@ import { Command } from '../ui/Command';
 import { OptionContent } from '../ui/Panel';
 import { ModelMark } from './ModelMark';
 import { PairSwitch, PairViews, type PairRole } from './SidekickPair';
+import { Collapsible } from '../ui/Collapsible';
 
 // Only offer search once the option count passes this threshold; short lists are scannable at a glance
 const SEARCH_FROM = 12;
@@ -134,14 +135,13 @@ function ModelPanel(props: ModelPanelProps) {
     <PairSwitch role={role} onRole={setRole}
       lead={{ name: cur?.name, brand: cur?.brand, level: leadLevel }}
       sidekick={{ name: picked?.name, brand: picked && optionBrand(picked), level: picked && sidekickEffort ? reasoningChip(sidekickEffort) : undefined }} />
-    <PairViews role={role} lead={<LeadPanel {...props} fill />}
+    <PairViews role={role} lead={<LeadPanel {...props} />}
       sidekick={<SidekickPanel control={sidekick} effort={sidekickEffort} onSetConfig={(id, value) => onSetConfig?.(id, value)} />} />
   </>;
 }
 
-// The model list and the lead's parameters: the whole panel, or the lead's side of PairSwitch (`fill`: the spare height of the
-// shared cell goes above the parameters, so both sides' effort scales sit at the same height)
-function LeadPanel({ families, cur, curVar, onSelect, close, reasoning = [], modelConfig = [], hiddenConfig, onSetConfig, fill }: ModelPanelProps & { fill?: boolean }) {
+// The model list and the lead's parameters: the whole panel, or the lead's side of PairSwitch (which sets the panel's height)
+function LeadPanel({ families, cur, curVar, onSelect, close, reasoning = [], modelConfig = [], hiddenConfig, onSetConfig }: ModelPanelProps) {
   const pickFamily = (key: string) => {
     const f = families.find(x => x.key === key);
     if (!f) return;
@@ -180,7 +180,6 @@ function LeadPanel({ families, cur, curVar, onSelect, close, reasoning = [], mod
           </Command.Item>}
         </Command.List>
       </Command.Root>
-      {fill && <div className="flex-1" aria-hidden />}
       {(showParams || shown.length > 0 || modelConfig.length > 0) && <div className="mt-1 flex flex-col gap-0.5 border-t border-line pt-1.5">
         {showParams && (cur!.fusion
           ? <FusionParams family={cur!} variant={curVar!} onSelect={onSelect} actions={owner === 'embedded' ? toggle : undefined} />
@@ -265,8 +264,8 @@ function FusionParams({ family: f, variant: v, onSelect, actions }: { family: Mo
 
 // The built-in agent's sidekick side: none, or any model the model list offers (its source on the second line), then the
 // sidekick's own effort scale while its model has levels. A pick keeps the panel open, since the effort is set right below.
-// A pick that takes the scale away (none, a model without levels) leaves the last one in place, disabled, so the open
-// panel does not shrink under the pointer
+// The side fills the lead's height (`.pair-view`), its list taking what the scale leaves: the scale slides in under the list
+// once a model with levels is picked and back out for none, keeping the last levels while it closes
 function SidekickPanel({ control, effort, onSetConfig }: { control: ConfigControl; effort?: ConfigControl; onSetConfig: (id: string, value: string) => void }) {
   const cur = control.options.find(o => o.id === (control.value ?? NO_SIDEKICK));
   const live = effort && reasoningVisible(effort) ? effort : undefined;
@@ -279,7 +278,7 @@ function SidekickPanel({ control, effort, onSetConfig }: { control: ConfigContro
       itemToStringLabel={o => (o.id === NO_SIDEKICK ? t('composer.sidekickNone') : [o.name, o.description].filter(Boolean).join(' '))}>
       <Command.Input visible={control.options.length >= SEARCH_FROM} />
       <Command.Empty />
-      <Command.List searchable={control.options.length >= SEARCH_FROM}>
+      <Command.List searchable={control.options.length >= SEARCH_FROM} fill>
         {(o: ConfigControl['options'][number]) => <Command.Item key={o.id} value={o} onClick={() => onSetConfig(control.id, o.id)} className={twoLine ? 'min-h-0 py-1.5' : undefined}>
           {o.id === NO_SIDEKICK
             ? <OptionContent icon={<span aria-hidden />} checked={o === cur} checkSlot={!!cur}>{t('composer.sidekickNone')}</OptionContent>
@@ -287,10 +286,11 @@ function SidekickPanel({ control, effort, onSetConfig }: { control: ConfigContro
         </Command.Item>}
       </Command.List>
     </Command.Root>
-    <div className="flex-1" aria-hidden />
-    {scale && <div className="mt-1 flex flex-col gap-0.5 border-t border-line pt-1.5">
-      <ReasoningParams control={scale} disabled={!live} onChange={value => onSetConfig(scale.id, value)} />
-    </div>}
+    <Collapsible.Section open={!!live} className="shrink-0">
+      {scale && <div className="mt-1 flex flex-col gap-0.5 border-t border-line pt-1.5">
+        <ReasoningParams control={scale} onChange={value => onSetConfig(scale.id, value)} />
+      </div>}
+    </Collapsible.Section>
   </>;
 }
 
@@ -312,14 +312,14 @@ function ModelParams({ family: f, variant: v, onSelect, actions }: { family: Mod
 }
 
 // Native thought_level: effort segments (Codex's Ultra tinted as the last one), plus a Thinking switch when the agent can turn it off.
-function ReasoningParams({ control, onChange, actions, disabled }: { control: ConfigControl; onChange: (value: string) => void; actions?: ReactNode; disabled?: boolean }) {
+function ReasoningParams({ control, onChange, actions }: { control: ConfigControl; onChange: (value: string) => void; actions?: ReactNode }) {
   const p = presentReasoning(control);
   const turnOn = p.efforts.find(o => o.id === 'high')?.id ?? p.efforts[0]?.id ?? p.onId;
   return (
     <div className="flex flex-col">
       {p.offId && <SwitchRow label="Thinking" checked={!p.off} onChange={on => { if (on) { if (turnOn) onChange(turnOn); } else onChange(p.offId!); }} />}
       {p.efforts.length > 1 && (
-        <EffortField options={p.efforts.map(o => ({ value: o.id, label: o.name, ultra: isUltraLevel(o.name), disabled }))} value={p.off ? '' : (p.value ?? '')} onChange={onChange} actions={actions} />
+        <EffortField options={p.efforts.map(o => ({ value: o.id, label: o.name, ultra: isUltraLevel(o.name) }))} value={p.off ? '' : (p.value ?? '')} onChange={onChange} actions={actions} />
       )}
     </div>
   );
@@ -327,7 +327,7 @@ function ReasoningParams({ control, onChange, actions, disabled }: { control: Co
 
 // Shared ordinal field for embedded variants, Fusion leads and native thought_level: one segmented scale for any level count
 function EffortField({ options, value, onChange, actions, label = t('composer.effort') }: {
-  options: { value: string; label: string; ultra?: boolean; disabled?: boolean }[];
+  options: { value: string; label: string; ultra?: boolean }[];
   value: string;
   onChange: (value: string) => void;
   actions?: ReactNode;
