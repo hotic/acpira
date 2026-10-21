@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import type { AgentTurn, PermissionBlock, QuestionBlock, SessionView } from '@shared/transcript';
 import { FAKE, bundleFakeAgent } from '../../test/fakeAgentBundle';
 import { Host, type View } from '../lib/host';
-import { CONFIGS, type Config, setupHelpers } from './configs';
+import { CONFIGS, type Config, nativeHelpers, setupHelpers } from './configs';
 import { HARNESSES, type HarnessSetup, MODELS } from './harnesses';
 import { deepseekKey, gatewayKey } from './keys';
 import { type Call, OUTAGE, startMeter } from './meter';
@@ -339,8 +339,11 @@ const sumCalls = (calls: Call[]) => ({
   reasoning: calls.reduce((a, c) => a + c.reasoning, 0),
 });
 
-// The quota a native login spends, read around each run that uses one (the agents its lead runs in)
-const nativeAgents = (setup: HarnessSetup) => (setup.unmetered && !setup.cli && ['claude', 'devin'].includes(setup.agent) ? [setup.agent] : []);
+// The quota a native login spends, read around each run that uses one (the agents its lead and its helpers run in)
+const nativeAgents = (setup: HarnessSetup, c?: Config) => [...new Set([
+  ...(setup.unmetered && !setup.cli && ['claude', 'devin'].includes(setup.agent) ? [setup.agent] : []),
+  ...nativeHelpers(c).map(h => h.agent),
+])];
 
 async function runOne(o: { task: Task; cell: Cell; rep: number; root: string; meterUrl: string; calls: Call[]; timeoutMin: number }) {
   const { cell } = o;
@@ -361,10 +364,11 @@ async function runOne(o: { task: Task; cell: Cell; rep: number; root: string; me
   const spec = MODELS[cell.model]!;
   const upstream = spec.upstream ?? 'gw';
   const setup = HARNESSES[cell.harness]!({ model: spec, base: `${o.meterUrl}/r/${runId}/${upstream}`, home, acpiraHome });
-  const picks = { ...cell.config?.pick, ...(cell.config ? setupHelpers(cell.config, { home, acpiraHome, baseFor: id => `${o.meterUrl}/r/${runId}.${id}/gw` }) : {}) };
+  const helped = cell.config ? setupHelpers(cell.config, { home, acpiraHome, baseFor: id => `${o.meterUrl}/r/${runId}.${id}/gw` }) : { picks: {}, env: {} };
+  const picks = { ...cell.config?.pick, ...helped.picks };
   // A dry run's agents, lead and helpers alike, are the fake one under their own ids
   const agents = DRY ? Object.fromEntries([setup.agent, ...(cell.config?.helpers ?? []).map(h => h.agent)].map(id => [id, { name: `Fake ${id}`, command: process.execPath, args: [FAKE] }])) : undefined;
-  const natives = DRY ? [] : nativeAgents(setup);
+  const natives = DRY ? [] : nativeAgents(setup, cell.config);
   const quotaBefore = natives.length ? readQuota(natives) : undefined;
   const low = quotaBefore && belowFloor(quotaBefore);
   if (low) throw new FloorReached(`${runId} not started: ${low}`);
@@ -373,7 +377,7 @@ async function runOne(o: { task: Task; cell: Cell; rep: number; root: string; me
   const env = taskEnv(o.task);
   const outcome = setup.cli
     ? driveCli(setup.cli, { runId, dir, work, home, prompt, timeoutMin: o.timeoutMin, env })
-    : await driveSidecar(setup, { runId, work, home, acpiraHome, prompt, timeoutMin: o.timeoutMin, picks, agents, env });
+    : await driveSidecar(setup, { runId, work, home, acpiraHome, prompt, timeoutMin: o.timeoutMin, picks, agents, env: { ...env, ...helped.env } });
   const { timedOut, failure, tools } = outcome;
   const wallS = Math.round((Date.now() - started) / 1000);
   const quotaAfter = natives.length ? readQuota(natives) : undefined;
@@ -393,9 +397,12 @@ async function runOne(o: { task: Task; cell: Cell; rep: number; root: string; me
   const lead = sumCalls(mine);
   // Claude Code on its own login: the tokens its transcripts recorded stand in for the meter's
   const native = setup.agent === 'claude' && setup.unmetered && !DRY ? claudeUsage(home) : undefined;
+  // A Claude helper's tokens are its own transcripts under the run's HOME, which holds no other Claude session (no
+  // Claude lead beside a Claude helper, setupHelpers)
+  const nativeIds = new Set(nativeHelpers(cell.config).map(h => h.id));
   const helpers = Object.fromEntries([...(cell.config?.helpers ?? []).map(h => [h.id, h.model] as const), ...(cell.config?.sidekick ? [['sidekick', cell.config.sidekick] as const] : [])]
     .map(([id, model]) => {
-      const u = sumCalls(o.calls.filter(c => c.run === `${runId}.${id}`));
+      const u = nativeIds.has(id) && !DRY ? { ...claudeUsage(home), reasoning: 0, nativeUsage: true } : sumCalls(o.calls.filter(c => c.run === `${runId}.${id}`));
       return [id, { ...u, costUsd: Math.round(cost({ model, ...u }) * 1000) / 1000 }];
     })
     .filter(([, u]) => (u as { requests: number }).requests > 0));

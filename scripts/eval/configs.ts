@@ -10,10 +10,12 @@ import { HARNESSES, MODELS, addBuiltinProviders, type BuiltinProvider } from './
 export interface Helper {
   id: string;
   name: string;
-  // The CLI the persona runs in
-  agent: 'codex' | 'acpira';
-  // A MODELS key
+  // The CLI the persona runs in: Claude Code runs on its own Max login (the claude-max harness), unmetered
+  agent: 'codex' | 'acpira' | 'claude';
+  // A MODELS key (what its calls are priced as)
   model: string;
+  // The value of the CLI's own model select, for a CLI whose models are not MODELS ids (Claude Code: `opus`)
+  select?: string;
   effort?: string;
   duty: 'scout' | 'executor' | 'reviewer';
   mode: 'consult' | 'work' | 'bypass' | 'inherit';
@@ -62,18 +64,33 @@ export const CONFIGS: Record<string, Config> = {
   'acpira-astra-swe': { harness: 'acpira', model: 'gpt-6-astra', sidekick: 'swe-2' },
   // The same lead without a sidekick, which tells the sidekick's effect apart from the harness's
   'acpira-astra': { harness: 'acpira', model: 'gpt-6-astra' },
+  // The same lead with only a reviewer persona and no sidekick: does a second look alone buy what the sidekick did, at
+  // less wall time? The reviewer is the review bench's `opus` (Claude Code, Opus at xhigh, Max login), a model family
+  // other than the lead's
+  'acpira-astra-rev': {
+    harness: 'acpira', model: 'gpt-6-astra',
+    helpers: [{ id: 'opus', name: 'Opus', agent: 'claude', model: 'claude-opus-5.5', select: 'opus', effort: 'xhigh', duty: 'reviewer', mode: 'consult', when: REVIEW_WHEN }],
+  },
 };
 
+// The configuration's helpers that run on a CLI's own login, so the metering proxy sees none of their calls
+export const nativeHelpers = (c: Config | undefined) => (c?.helpers ?? []).filter(h => h.agent === 'claude');
+
 // Writes a configuration's helpers into the run's homes: each Codex helper's config (one per run: a second would
-// share it), the built-in agent's providers (one per helper and one for the sidekick), and subagents.json. Answers the
-// session options to pick on top of the config's own
-export function setupHelpers(c: Config, o: { home: string; acpiraHome: string; baseFor: (id: string) => string }): Record<string, string> {
+// share it), the built-in agent's providers (one per helper and one for the sidekick), Claude Code's login for a Claude
+// helper, and subagents.json. Answers the session options to pick on top of the config's own, and the environment the
+// helpers need from the sidecar (which every agent it spawns inherits)
+export function setupHelpers(c: Config, o: { home: string; acpiraHome: string; baseFor: (id: string) => string }): { picks: Record<string, string>; env: Record<string, string> } {
   const builtin: BuiltinProvider[] = [];
+  const env: Record<string, string> = {};
   const codex = (c.helpers ?? []).filter(h => h.agent === 'codex');
   if (codex.length > 1 || (codex.length && c.harness === 'codex')) throw new Error('one Codex config per run: at most one Codex helper, and none beside a Codex lead');
+  // Claude Code's usage is read from the transcripts under the run's HOME, so only one Claude session may write there
+  if (nativeHelpers(c).length > 1 || (nativeHelpers(c).length && c.harness.startsWith('claude'))) throw new Error('one Claude session per run: at most one Claude helper, and none beside a Claude lead');
   for (const h of c.helpers ?? []) {
     const spec = MODELS[h.model]!;
     if (h.agent === 'codex') HARNESSES.codex!({ model: spec, base: o.baseFor(h.id), home: o.home, acpiraHome: o.acpiraHome, effort: h.effort });
+    else if (h.agent === 'claude') Object.assign(env, HARNESSES['claude-max']!({ model: spec, base: o.baseFor(h.id), home: o.home, acpiraHome: o.acpiraHome }).env);
     else builtin.push({ id: `eval-${h.id}`, api: spec.api, base: o.baseFor(h.id), models: [{ spec }] });
   }
   const picks: Record<string, string> = {};
@@ -87,12 +104,12 @@ export function setupHelpers(c: Config, o: { home: string; acpiraHome: string; b
   if (c.helpers?.length) {
     const personas = c.helpers.map(h => ({
       id: h.id, name: h.name, agent: h.agent,
-      model: h.agent === 'acpira' ? `eval-${h.id}/${MODELS[h.model]!.id}` : MODELS[h.model]!.id,
+      model: h.select ?? (h.agent === 'acpira' ? `eval-${h.id}/${MODELS[h.model]!.id}` : MODELS[h.model]!.id),
       ...(h.effort ? { effort: h.effort } : {}),
       mode: h.mode, duty: h.duty, brief: DUTY_BRIEFS[h.duty], when: h.when, enabled: true,
     }));
     mkdirSync(o.acpiraHome, { recursive: true });
     writeFileSync(join(o.acpiraHome, 'subagents.json'), JSON.stringify({ version: 1, personas, groups: c.groups ?? [] }, null, 2) + '\n');
   }
-  return picks;
+  return { picks, env };
 }
