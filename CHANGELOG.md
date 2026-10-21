@@ -7,17 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planned
+
+- An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
+
+## [1.10.8] - 2026-10-22
+
 ### Added
 
 - **Summoned agents report back in a fixed shape.** A summoned agent is asked to end with what it changed, how it checked the work and what it assumed, and a reviewer with findings by severity and location. Acpira then adds the files the round really changed, with line counts, including files its commands wrote.
 - **Subagent duties.** A subagent can be a scout, an executor or a reviewer. Picking one fills in its access and standing instructions, which stay editable. Scouts and executors keep their conversation within a session when they are asked again, and reviewers start fresh every time.
 - **Hand a summoned agent your changes.** `ask_agent` can pass `changes`, or a subagent can have "Hand over this session's changes" switched on. Its first round then starts with a pack of the session's uncommitted diff, and the small changed files in full. Later rounds of the same conversation hear only which files moved since.
 - **Subagent groups.** Settings → Orchestration, formerly Subagents, now has a Groups section. One `@name` of a group summons every member with the same task and the same changes. The members work independently, and their replies come back together in one message.
-- **A sidekick for the built-in agent.** Its model panel has a Sidekick row under the effort, where a second configured model can be picked. The lead model can then hand well-specified work to it through `ask_agent`, in one conversation that later tasks continue, and check its diff. A sidekick picked before the first message is part of the tool list from the start. Picked later, it is announced with the next message, so the prompt cache holds.
+- **A sidekick for the built-in agent.** Its model panel switches between the lead and a sidekick, each side with its own model list and reasoning effort. The sidekick's effort scale appears once a model is picked for it, and a level picked later applies to its next round. The lead model can then hand well-specified work to it through `ask_agent`, in one conversation that later tasks continue, and check its diff. The lead is steered to hand it work that runs while the lead does something else, or a second look at a finished change. A sidekick picked before the first message is part of the tool list from the start. Picked later, it is announced with the next message, so the prompt cache holds.
+- `acpira quota [--json] [codex|claude|devin…]` prints each CLI's plan and quota windows from its own local login. Nothing is imported or stored, and no token is refreshed.
+- `acpira handoff-pack --cwd DIR [--base REV] [--json]` prints the pack a summoned agent receives for a work tree's uncommitted changes.
 
-### Planned
+### Fixed
 
-- An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
+- **The Acpira browser panel shows the page in VS Code.** In 1.10.7 a VS Code panel dropped every message from its own shell and never loaded the page.
+- Pasting a mix of image and text keeps the text. Text that only the HTML flavour carried, as WeChat and other Qt chat apps write it, was lost, as was text Chrome on macOS withholds once the clipboard holds files. Undo still works after such a paste, in the composer and in the quote comment field.
+- **The JetBrains plugin is published again.** 1.10.7 reached the VS Code Marketplace and Open VSX but not JetBrains Marketplace, because the plugin verifier began flagging a module dependency on IDE 2026.1 that never loads there. 1.10.8 carries the 1.10.7 changes to JetBrains IDEs.
 
 ## [1.10.7] - 2026-10-20
 
