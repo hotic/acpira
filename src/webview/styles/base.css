@@ -92,9 +92,9 @@
 @utility scroll-stable { scrollbar-gutter: stable; }
 /* Lists inside overlays and text inside cards: a 2px thumb in a 6px gutter, revealed the same way, so the bar never crowds the text.
    Plain unlayered class, not @utility: the host's unlayered ::-webkit-scrollbar { width: 10px } would beat a layered one. */
-.acp-shell .scroll-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+.acp-shell .scroll-thin::-webkit-scrollbar { width: var(--scrollbar-thin); height: var(--scrollbar-thin); }
 .acp-shell .scroll-thin { --scrollbar-inset: 2px; }
-.acp-shell .scroll-thin::-webkit-scrollbar-thumb { --scrollbar-gutter: 6px; }
+.acp-shell .scroll-thin::-webkit-scrollbar-thumb { --scrollbar-gutter: var(--scrollbar-thin); }
 /* Same widening for the thin variant (2px → 4px); one class more than the rules above, so it wins */
 .acp-shell .scroll-thin[data-scrollbar-hover] { --scrollbar-inset: 1px; }
 .acp-shell .scroll-thin::-webkit-scrollbar-thumb:active { --scrollbar-inset: 1px; }
