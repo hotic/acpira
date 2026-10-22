@@ -504,3 +504,25 @@ async fn a_goal_set_from_the_dock_is_continued_until_the_model_marks_it_complete
   env.assert_prefix_stable(&env.log_of(&s));
   env.golden(&s, "builtin-goal", &vw["turns"]);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_edited_first_message_carries_the_workspace_context_again_after_the_rewind() {
+  let env = Env::new();
+  let git = std::process::Command::new("git").arg("init").arg("-q").current_dir(env.cwd()).status();
+  if !git.is_ok_and(|s| s.success()) {
+    return;
+  }
+  std::fs::create_dir_all(env.cwd().join(".agents")).unwrap();
+  std::fs::write(env.cwd().join(".agents/hooks.json"), json!({ "context": ["RULES.md"] }).to_string()).unwrap();
+  std::fs::write(env.cwd().join("RULES.md"), "house rule: answer briefly\n").unwrap();
+  let s = env.session().await;
+  env.server.push(mock::text("one"));
+  run(&s, "first message").await;
+  assert!(env.server.requests()[0].body["messages"].to_string().contains("house rule"));
+  env.server.push(mock::text("two"));
+  s.edit_turn(crate::acp_session::history_edit(&s, 0, "first message, edited")).await.unwrap();
+  until(|| !s.is_running() && view(&s)["turns"].as_array().unwrap().len() == 2 && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
+  // The rewound session holds nothing, so the edited message is its first and brings the context files along
+  let sent = env.server.requests().last().unwrap().body["messages"].to_string();
+  assert!(sent.contains("house rule") && sent.contains("first message, edited") && !sent.contains("\"one\""), "{sent}");
+}

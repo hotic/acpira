@@ -16,7 +16,7 @@ use acpira_shared::turn_settings::capture_turn_settings;
 
 use crate::acp::transport::process::AgentProcess;
 use crate::acp::session::attachments::{PromptCaps, prepare_prompt, restore_drafts};
-use crate::acp::transcript::normalize::{apply_config_options, config_option_set_value};
+use crate::acp::transcript::normalize::{apply_config_options, apply_goal, config_option_set_value};
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::session::prompt::{Origin, Staged};
 use crate::i18n::{t, tp};
@@ -633,13 +633,16 @@ impl AcpSession {
         }
         applied?;
         self.check_edit_active()?;
+        let mut rewound_goal = None;
         // The settings went first so a refused one leaves the native history whole; the rewind is the last step that can
         // fail, and from its success on the transcript has to follow
         if let Some(turn_id) = &rewind_to {
-          let rewound = proc.request(REWIND_METHOD, json!({ "sessionId": sid, "turnId": turn_id })).await;
-          if let Err(e) = rewound {
-            self.core.lock().state.controls = controls;
-            return Err(anyhow!(e.message));
+          match proc.request(REWIND_METHOD, json!({ "sessionId": sid, "turnId": turn_id })).await {
+            Ok(r) => rewound_goal = crate::acp::vendors::goal::snapshot_of(&r),
+            Err(e) => {
+              self.core.lock().state.controls = controls;
+              return Err(anyhow!(e.message));
+            }
           }
         }
         // Both replace the edited turn and what followed it on screen; a continuing edit tells the peer, which still holds
@@ -653,6 +656,16 @@ impl AcpSession {
           if rewind_to.is_some() {
             // The context shrank with the history; the next call reports it again
             c.state.usage = None;
+            // The goal went back with it (the agent's answer: the updates are held while editing), without a milestone
+            // row, since the rows of the cut turns go too
+            if let Some(goal) = rewound_goal.take() {
+              apply_goal(&mut c.state, goal, false);
+            }
+            // Back to before the first message, the agent holds none: the edited one is its first again and carries
+            // what a first prompt does (the workspace hooks' context files)
+            if idx == 0 {
+              c.unprompted = true;
+            }
           }
           c.state.turns.truncate(idx);
           c.lineage.truncated(idx);

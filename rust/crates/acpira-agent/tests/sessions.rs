@@ -256,3 +256,31 @@ async fn a_rewind_takes_the_conversation_back_to_before_a_named_turn() {
   let sent = server.requests().last().unwrap().body["messages"].to_string();
   assert!(sent.contains("the right message") && !sent.contains("the wrong message"), "{sent}");
 }
+
+#[tokio::test]
+async fn a_rewind_takes_the_goal_back_to_how_it_stood_without_refunding_or_restarting_it() {
+  let h = Harness::start().await;
+  let server = MockModel::start();
+  h.providers(&server.base_url(), json!([{ "id": "m1" }]));
+  let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
+  server.push(mock::text("on it"));
+  named_prompt(&h, &sid, "t1", "/goal make a.txt say beta").await;
+  // The next turn meets the goal
+  server.push(mock::tools(&[("c1", "update_goal", json!({ "status": "complete" }))])).push(mock::text("done"));
+  named_prompt(&h, &sid, "t2", "/goal continue").await;
+  let goal_of = |r: &Value| r["_meta"]["goal"].clone();
+
+  // Back to before the turn that met it: the goal is unfinished again, paused rather than running, its tokens kept
+  let r = h.conn.request("_session/rewind", json!({ "sessionId": sid, "turnId": "t2" })).await.unwrap();
+  let g = goal_of(&r);
+  assert_eq!((g["objective"].as_str(), g["status"].as_str()), (Some("make a.txt say beta"), Some("paused")), "{r}");
+  // 110 when t2 started; t2's first call counted too, the one after the goal was met did not
+  assert_eq!(g["tokensUsed"], 220, "the spending stays spent: {r}");
+  // Back to before the turn that set it: no goal
+  let r = h.conn.request("_session/rewind", json!({ "sessionId": sid, "turnId": "t1" })).await.unwrap();
+  assert_eq!(goal_of(&r), Value::Null, "{r}");
+  // A reopen reads the same from the log
+  let h = reopen(h).await;
+  h.conn.request("session/load", json!({ "sessionId": sid, "cwd": h.cwd(), "mcpServers": [] })).await.unwrap();
+  assert!(!h.updates().iter().any(|u| u["_meta"]["goal"].is_object()), "{:?}", h.updates());
+}
