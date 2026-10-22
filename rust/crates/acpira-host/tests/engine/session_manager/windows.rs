@@ -109,11 +109,15 @@ async fn a_session_open_in_one_manager_is_read_only_in_the_other_until_taken_ove
   until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
   a.m.refresh_index().await;
   b.m.refresh_index().await;
+  // File links resolve against the session's folder before B opens it (the index) and on B's read-only copy
+  let cwd = a.m.session_cwd(&id).unwrap();
+  assert_eq!(b.m.session_cwd(&id).as_deref(), Some(cwd.as_str()));
   b.m.select_session_for(&b.v, &id).await;
   let shown = b.active().unwrap();
   assert_eq!(shown["status"], "readonly", "{shown}");
   assert_eq!(shown["canTakeOver"], true);
   assert_eq!(turns_in(&shown), 2);
+  assert_eq!(b.m.session_cwd(&id).as_deref(), Some(cwd.as_str()));
 
   // A runs a long turn; B's record edits are refused meanwhile
   let running = a.spawn_handle(json!({ "type": "send", "text": "slow" }));
