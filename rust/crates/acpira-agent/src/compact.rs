@@ -507,7 +507,8 @@ fn serialize(item: &Item, whole: bool) -> String {
       format!("{}\n[{} more characters left out of this excerpt; the assistant saw the whole result]", crate::budget::cut(s, TOOL_OUTPUT_CHARS), s.len() - TOOL_OUTPUT_CHARS)
     }
   };
-  if let Some(words) = crate::steer::text_of(item) {
+  // A note steered in alone (the goal's budget note) reads as the message it is, below
+  if let Some(words) = crate::steer::text_of(item).filter(|w| !w.is_empty()) {
     return format!("[User, while the assistant was working]: {}", edges(&words, USER_EDGE_CHARS));
   }
   match item {

@@ -155,10 +155,11 @@ impl AcpSession {
       {
         return false;
       }
-      // Nothing of the user's waits: results owed to the root by summoned agents may go now
+      // Nothing of the user's waits: results owed to the root by summoned agents may go now, else an active goal's next
+      // turn
       if c.queue.entries.is_empty() {
         drop(c);
-        return self.relay_wake();
+        return self.relay_wake() || self.goal_wake();
       }
       c.queue.sending_id = None;
       c.queue.entries.remove(0)

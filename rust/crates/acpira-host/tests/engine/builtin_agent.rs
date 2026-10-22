@@ -1,7 +1,8 @@
 //! The built-in agent end to end: the engine drives the real `acpira agent` binary against the scripted model server.
-//! Seven scenarios (an edit behind a permission card, a Plan-mode approval, a question card, a cancel before the model's
+//! Eight scenarios (an edit behind a permission card, a Plan-mode approval, a question card, a cancel before the model's
 //! first chunk, a reopen that resumes the session, the engine's own MCP server called over stdio, a message steered into
-//! a command round) each check that the request prefix stays byte for byte between two model calls
+//! a command round, a goal the engine continues until the model marks it complete) each check that the request prefix
+//! stays byte for byte between two model calls
 //! unless the session log records a view change. The final transcripts are golden output in
 //! test/fixtures/engine-builtin.json, which the webview suites render (ACPIRA_UPDATE_FIXTURES=1 rewrites it)
 
@@ -16,6 +17,7 @@ use acpira_agent::mock::{self, MockModel, Reply};
 use acpira_host::acp::agents::registry::AgentRegistry;
 use acpira_host::acp::session::{AcpSession, SessionDeps};
 use acpira_host::store::transcript_store::{LogFn, TranscriptStore};
+use acpira_shared::transcript::GoalAction;
 
 use crate::acp_session::{agent_blocks, drafts, find_block, last_turn, spawn_prompt, view, wait_block};
 use crate::support::{Disposing, expect_match, until};
@@ -454,4 +456,51 @@ async fn an_edited_message_rewinds_the_agents_own_history_instead_of_superseding
   let reqs = env.server.requests();
   let (before, after) = (reqs[0].body["messages"].as_array().unwrap(), reqs[2].body["messages"].as_array().unwrap());
   assert!(after.len() > before.len() && before.iter().zip(after).all(|(x, y)| x == y), "{before:?}\n{after:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_goal_set_from_the_dock_is_continued_until_the_model_marks_it_complete() {
+  let env = Env::new();
+  std::fs::write(env.cwd().join("a.txt"), "alpha\n").unwrap();
+  let s = env.session().await;
+  assert_eq!(view(&s)["goalActions"], json!(["set", "pause", "resume", "clear"]));
+  // The set turn reads and stops short; the engine continues the goal, where the edit lands and the model marks it met
+  env.server.push(mock::tools(&[("c1", "read", json!({ "path": "a.txt" }))]));
+  env.server.push(mock::text("It says alpha; the edit comes next."));
+  env.server.push(mock::tools(&[("c2", "edit", json!({ "path": "a.txt", "old_string": "alpha", "new_string": "beta" }))]));
+  env.server.push(mock::tools(&[("c3", "update_goal", json!({ "status": "complete" }))]));
+  env.server.push(mock::text("Done: a.txt says beta."));
+  s.control_goal(GoalAction::Set, Some("make a.txt say beta".into())).await.unwrap();
+  // The continuation's edit asks like any other: answered here, since no prompt of the test's own runs it
+  let mut answered = HashSet::new();
+  let t0 = Instant::now();
+  while s.is_running() || env.server.requests().len() < 5 || !view(&s)["goal"].is_null() {
+    assert!(t0.elapsed() < Duration::from_secs(20), "the goal did not settle: {}", view(&s));
+    if let Some(card) = find_block(&view(&s), "permission").filter(|c| !answered.contains(&c["id"].to_string())) {
+      let allow = card["options"].as_array().unwrap().iter().find(|o| o["kind"] == "allow_once").expect("an allow-once option")["id"].clone();
+      answered.insert(card["id"].to_string());
+      s.resolve_permission(card["id"].as_str().unwrap(), allow.as_str().unwrap());
+    }
+    tokio::time::sleep(Duration::from_millis(20)).await;
+  }
+  assert_eq!(std::fs::read_to_string(env.cwd().join("a.txt")).unwrap(), "beta\n");
+  let vw = view(&s);
+  let turns = vw["turns"].as_array().unwrap();
+  assert_eq!(turns.len(), 4, "{}", vw["turns"]);
+  expect_match(&turns[0], json!({ "role": "user", "text": "/goal make a.txt say beta", "auto": true, "autoReason": "goal" }));
+  expect_match(&turns[2], json!({ "role": "user", "text": "/goal continue", "auto": true, "autoReason": "goalContinue" }));
+  let blocks = agent_blocks(&vw);
+  let goals: Vec<Value> = blocks.iter().filter(|b| b["type"] == "goal").map(|b| b["event"].clone()).collect();
+  assert_eq!(goals, [json!("set"), json!("complete")]);
+  // The goal's tool shows no row; the goal rows stand for it
+  let tools: Vec<Value> = blocks.iter().filter(|b| b["type"] == "tool_call").map(|b| b["kind"].clone()).collect();
+  assert_eq!(tools, [json!("read"), json!("edit")]);
+  // The continuation opened with the goal's note, and a met goal is not continued
+  let reqs = env.server.requests();
+  let note = reqs[2].body["messages"].as_array().unwrap().last().unwrap()["content"].as_str().unwrap().to_owned();
+  assert!(note.starts_with("<goal>\nContinue working toward the active goal.") && note.contains("<objective>\nmake a.txt say beta\n</objective>"), "{note}");
+  tokio::time::sleep(Duration::from_millis(300)).await;
+  assert_eq!(env.server.requests().len(), 5);
+  env.assert_prefix_stable(&env.log_of(&s));
+  env.golden(&s, "builtin-goal", &vw["turns"]);
 }

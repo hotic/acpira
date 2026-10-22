@@ -111,7 +111,11 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // a "goal-done" prompt publishes the goal complete. `_session/goal` pause / clear publish the snapshot with no turn;
 // FAKE_GOAL_LOG appends every request's action. =codex: an objective starting with "continue" leaves the goal active when
 // its prompt returns, then runs one automatic continuation the way Codex does for an idle thread — threadStatus active,
-// a `continued` chunk, the goal complete, idle 300 ms later — with no session/prompt
+// a `continued` chunk, the goal complete, idle 300 ms later — with no session/prompt. =acpira is the built-in agent: the
+// codex-acp capability plus `acpira/continue: "/goal continue"`, so the client continues the goal; each `/goal continue`
+// (logged as `continue`) answers `continued <n>` and meets the goal on the FAKE_GOAL_ROUNDS-th one (default 2), finds
+// nothing to do once the goal is no longer active, and for an objective starting with "slow" takes 1 s and a stop, which
+// pauses the goal
 // FAKE_SLOW_STEP_MS → the pause between the 50 chunks of a "slow" turn (default 40 ms, so 2 s in all)
 // FAKE_META_LOG → append `{ method, meta }` (the request's `_meta`) for every session/new, resume and load
 // FAKE_REBUILD → claude-agent-acp 0.87.0's getOrCreateSession: a resume of a live session whose
@@ -146,9 +150,12 @@ const steerMode = process.env.FAKE_STEERING ?? '';
 const goalMode = process.env.FAKE_GOAL ?? '';
 // The goal snapshot per session, published at the dialect's key
 const goals = new Map<string, { objective: string; status: string; tokensUsed: number; timeUsedSeconds: number } | null>();
-const goalMeta = (goal: unknown) => goalMode === 'codex' ? { goal } : { jetbrains: { air: { version: 1, goal } } };
+// =acpira: the continuations each session has run
+const goalRounds = new Map<string, number>();
+const goalMeta = (goal: unknown) => goalMode === 'codex' || goalMode === 'acpira' ? { goal } : { jetbrains: { air: { version: 1, goal } } };
 const goalCap = () => goalMode === 'codex'
   ? { goal: { version: 1, controlMethod: '_session/goal', actions: ['set', 'pause', 'resume', 'clear'] } }
+  : goalMode === 'acpira' ? { goal: { version: 1, controlMethod: '_session/goal', actions: ['set', 'pause', 'resume', 'clear'], 'acpira/continue': '/goal continue' } }
   : goalMode === 'claude' && airCaps.length ? { jetbrains: { air: { version: 1, goal: { version: 1, controlMethod: '_session/goal', actions: ['set', 'clear'] } } } } : {};
 const publishGoal = (client: acp.AgentContext, sessionId: string) => client.notify(acp.methods.client.session.update, { sessionId,
   update: { sessionUpdate: 'session_info_update', _meta: goalMeta(goals.get(sessionId) ?? null) } } as unknown as acp.SessionNotification);
@@ -565,6 +572,30 @@ const app = acp.agent({ name: 'fake-agent' })
     if (goalCommand || (goalMode && text === 'goal-done')) {
       const arg = goalCommand?.[1]!.trim() ?? 'done';
       const goal = goals.get(sid);
+      if (goalMode === 'acpira' && arg === 'continue') {
+        if (process.env.FAKE_GOAL_LOG) appendFileSync(process.env.FAKE_GOAL_LOG, 'continue\n');
+        // Nothing to continue: the client hears the goal as it is
+        if (goal?.status !== 'active') {
+          await publishGoal(client, sid);
+          return { stopReason: 'end_turn' };
+        }
+        const round = (goalRounds.get(sid) ?? 0) + 1;
+        goalRounds.set(sid, round);
+        for (let i = 0; goal.objective.startsWith('slow') && i < 20; i++) {
+          if (cancelled.has(sid)) {
+            goals.set(sid, { ...goal, status: 'paused' });
+            await publishGoal(client, sid);
+            return { stopReason: 'cancelled' };
+          }
+          await new Promise(r => setTimeout(r, 50));
+        }
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `continued ${round}` } });
+        if (round >= (Number(process.env.FAKE_GOAL_ROUNDS) || 2)) {
+          goals.set(sid, { ...(goals.get(sid) ?? goal), status: 'complete' });
+          await publishGoal(client, sid);
+        }
+        return { stopReason: 'end_turn' };
+      }
       if (arg === 'clear') goals.set(sid, null);
       else if (arg === 'pause' || arg === 'resume' || arg === 'done') {
         if (goal) goals.set(sid, { ...goal, status: arg === 'pause' ? 'paused' : arg === 'done' ? 'complete' : 'active', timeUsedSeconds: goal.timeUsedSeconds + 5 });

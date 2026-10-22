@@ -26,6 +26,17 @@ fn goal_meta(meta: &Value) -> Option<&Value> {
   meta.pointer("/jetbrains/air/goal").or_else(|| meta.get("goal"))
 }
 
+/// The prompt that continues an active goal, from an agent that leaves continuing to the client: the built-in agent names
+/// it as `acpira/continue` in its goal capability (`acpira-agent/src/goal.rs`); codex-acp continues on its own and names
+/// none
+pub fn continue_prompt(init: &Value) -> Option<String> {
+  let cap = goal_meta(init.get("_meta")?)?;
+  if cap.get("controlMethod").and_then(Value::as_str) != Some(METHOD) {
+    return None;
+  }
+  cap.get("acpira/continue").and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty()).map(str::to_owned)
+}
+
 /// The controls the agent advertises at initialize, or None when it has no goal extension
 pub fn actions(init: &Value) -> Option<Vec<GoalAction>> {
   let cap = goal_meta(init.get("_meta")?)?;
@@ -178,6 +189,10 @@ mod tests {
     assert_eq!(actions(&json!({ "_meta": { "steering": { "supported": true } } })), None);
     // Another control method is another protocol
     assert_eq!(actions(&json!({ "_meta": { "goal": { "controlMethod": "_x/goal", "actions": ["set"] } } })), None);
+    // Only the built-in agent leaves continuing to the client
+    assert_eq!(continue_prompt(&codex1), None);
+    let builtin = json!({ "_meta": { "goal": { "version": 1, "controlMethod": "_session/goal", "actions": ["set"], "acpira/continue": "/goal continue" } } });
+    assert_eq!(continue_prompt(&builtin).as_deref(), Some("/goal continue"));
   }
 
   #[test]

@@ -152,6 +152,159 @@
   ]
  },
  {
+  "name": "builtin-goal",
+  "turns": [
+   {
+    "role": "user",
+    "id": "user-1",
+    "text": "/goal make a.txt say beta",
+    "settings": {
+     "modeId": "agent",
+     "config": {
+      "model": "mock/m1",
+      "sidekick": "none"
+     }
+    },
+    "auto": true,
+    "autoReason": "goal"
+   },
+   {
+    "role": "agent",
+    "blocks": [
+     {
+      "type": "goal",
+      "event": "set",
+      "objective": "make a.txt say beta",
+      "tokensUsed": 0,
+      "timeUsedSeconds": 0
+     },
+     {
+      "type": "tool_call",
+      "id": "call-1",
+      "kind": "read",
+      "verb": "Read",
+      "target": "a.txt",
+      "targetMono": false,
+      "locations": [
+       {
+        "path": "/repo/a.txt"
+       }
+      ],
+      "status": "completed"
+     },
+     {
+      "type": "text",
+      "markdown": "It says alpha; the edit comes next.",
+      "streaming": false
+     }
+    ],
+    "usage": {
+     "input": 200,
+     "output": 20,
+     "cachedRead": 0,
+     "cachedWrite": 0,
+     "reasoning": 0,
+     "total": 220,
+     "modelCalls": 2,
+     "model": "mock/m1",
+     "context": {
+      "used": 110,
+      "size": 64000
+     }
+    },
+    "command": {
+     "name": "goal"
+    },
+    "stop": "end_turn"
+   },
+   {
+    "role": "user",
+    "id": "user-2",
+    "text": "/goal continue",
+    "settings": {
+     "modeId": "agent",
+     "config": {
+      "model": "mock/m1",
+      "sidekick": "none"
+     }
+    },
+    "auto": true,
+    "autoReason": "goalContinue"
+   },
+   {
+    "role": "agent",
+    "blocks": [
+     {
+      "type": "tool_call",
+      "id": "call-2",
+      "kind": "edit",
+      "verb": "Edit",
+      "target": "a.txt",
+      "targetMono": false,
+      "locations": [
+       {
+        "path": "/repo/a.txt"
+       }
+      ],
+      "status": "completed",
+      "content": {
+       "type": "diff",
+       "lines": [
+        {
+         "kind": "del",
+         "text": "-alpha",
+         "oldLine": 1
+        },
+        {
+         "kind": "add",
+         "text": "+beta",
+         "newLine": 1
+        }
+       ],
+       "source": {
+        "path": "/repo/a.txt",
+        "omitted": true
+       }
+      },
+      "diffStat": {
+       "add": 1,
+       "del": 1
+      }
+     },
+     {
+      "type": "goal",
+      "event": "complete",
+      "tokensUsed": 440,
+      "timeUsedSeconds": 0
+     },
+     {
+      "type": "text",
+      "markdown": "Done: a.txt says beta.",
+      "streaming": false
+     }
+    ],
+    "usage": {
+     "input": 300,
+     "output": 30,
+     "cachedRead": 0,
+     "cachedWrite": 0,
+     "reasoning": 0,
+     "total": 330,
+     "modelCalls": 3,
+     "model": "mock/m1",
+     "context": {
+      "used": 110,
+      "size": 64000
+     }
+    },
+    "command": {
+     "name": "goal"
+    },
+    "stop": "end_turn"
+   }
+  ]
+ },
+ {
   "name": "builtin-plan",
   "turns": [
    {

@@ -62,7 +62,7 @@ A chat shell for VS Code / Cursor (and IntelliJ) that drives official agent CLIs
 | `ui/` primitives, tokens, rows, buttons, menus, overlays, model panels, composer, question card, toolbar chips, model visibility | `docs/dev/ui-conventions.md` |
 | Orb and Working label, motion, rails, sticky user prompts, scrollbars, to-do presentation, folding modes, appearance axes, rendering preferences | `docs/dev/ui-motion-layout.md` |
 | Historical edits and retries, model identity, plan approval / execution, permissions, controls, follow-up queue, workspace hooks (`.agents/hooks.json`), session scope / deletion, remembered prefs, account binding, compaction, failed prompts, questions, to-do bar | `docs/dev/protocol-gotchas.md` |
-| The built-in agent (`rust/crates/acpira-agent`, `acpira agent`): providers and keys, ACP surface, MCP client, Plan mode, compaction (summary / chunks), the session JSONL, request / view records and prefix stability, model discovery, its tests | `docs/dev/builtin-agent.md` |
+| The built-in agent (`rust/crates/acpira-agent`, `acpira agent`): providers and keys, ACP surface, MCP client, Plan mode, goals, compaction (summary / chunks), the session JSONL, request / view records and prefix stability, model discovery, its tests | `docs/dev/builtin-agent.md` |
 | Eval benches: review targets and scoring, the Fusion comparison, native-login runs, the evolve loop | `docs/dev/evals.md` |
 | Anything specific to Devin, Grok, Kimi, Codex, Claude, OpenCode, DeepSeek Harness, Antigravity or Pi | `docs/dev/agent-quirks.md`, then `docs/acp-agents-compat.md` (verified / source / unverified matrix) |
 | `idea/`: Kotlin modules, JCEF, native RPC, sidecar service, split mode, distribution, release | `docs/dev/intellij.md` |

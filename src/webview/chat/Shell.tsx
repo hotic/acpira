@@ -816,8 +816,8 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
   );
 }
 
-// A hidden turn that carries the turn before it on (after an account switch, Retry after a failure with output, or the
-// workspace gate sending its findings back)
+// A hidden turn that carries the turn before it on (after an account switch, Retry after a failure with output, the
+// workspace gate sending its findings back, or an active goal's next turn)
 function isContinue(turn: UserTurn): boolean {
-  return turn.auto === true && (turn.autoReason === 'accountSwitch' || turn.autoReason === 'retry' || turn.autoReason === 'gate');
+  return turn.auto === true && (turn.autoReason === 'accountSwitch' || turn.autoReason === 'retry' || turn.autoReason === 'gate' || turn.autoReason === 'goalContinue');
 }

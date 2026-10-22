@@ -71,9 +71,9 @@ pub fn scan(places: &Places) -> Vec<Skill> {
   out
 }
 
-/// The `availableCommands` of a session: `/compact`, then the skills
+/// The `availableCommands` of a session: `/compact` and `/goal` (`goal.rs`), then the skills
 pub fn commands(skills: &[Skill]) -> Vec<Value> {
-  let mut out = vec![json!({ "name": COMPACT, "description": COMPACT_DESCRIPTION })];
+  let mut out = vec![json!({ "name": COMPACT, "description": COMPACT_DESCRIPTION }), crate::goal::slash_command()];
   for s in skills {
     let mut c = json!({ "name": s.name, "description": s.description });
     if let Some(h) = &s.hint {
@@ -167,8 +167,8 @@ mod tests {
     assert_eq!(skills[0].description, "project copy");
     assert_eq!(skills[2].hint.as_deref(), Some("version"));
     let cmds = commands(&skills);
-    assert_eq!(cmds[0]["name"], "compact");
-    assert_eq!(cmds[3], json!({ "name": "release", "description": "Cut a release", "input": { "hint": "version" } }));
+    assert_eq!((&cmds[0]["name"], &cmds[1]["name"]), (&json!("compact"), &json!("goal")));
+    assert_eq!(cmds[4], json!({ "name": "release", "description": "Cut a release", "input": { "hint": "version" } }));
 
     // Leading, mid-sentence, before punctuation; a path, a partial name and a second mention are not
     let m = mentioned("please /release 1.2 then /dig, not /tmp/release or /releaser or /release again", &skills);

@@ -69,8 +69,8 @@ async fn only_chunk_compaction_offers_the_history_tools() {
   server2.push(mock::text("ok"));
   prompt(&h2, &sid2, "hi", 0).await;
   let names = tool_names(&server2.requests()[0]);
-  // Right behind `question`, so the earlier specs keep their place (a session with skills has `skill` after them)
-  let at = names.iter().position(|n| n == "question").unwrap();
+  // Right behind the goal tools, so the earlier specs keep their place (a session with skills has `skill` after them)
+  let at = names.iter().position(|n| n == "update_goal").unwrap();
   assert_eq!(names[at + 1..at + 3], ["history_grep".to_owned(), "history_list".to_owned()], "{names:?}");
   drop((h, h2));
 }

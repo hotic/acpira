@@ -11,6 +11,7 @@
 use std::path::Path;
 
 use crate::permission::{Approval, BASH, Decision, EDIT, ENGINE_MCP, MCP, Rule, path_target};
+use crate::goal::{CREATE as CREATE_GOAL, GET as GET_GOAL, UPDATE as UPDATE_GOAL};
 use crate::tools::{BASH as T_BASH, EDIT as T_EDIT, EXIT_PLAN, GLOB, GREP, HISTORY_GREP, HISTORY_LIST, JOB, LIST, QUESTION, READ, SKILL, TODO, WEBFETCH, WEBSEARCH, WRITE};
 
 pub const AGENT: &str = "agent";
@@ -27,15 +28,18 @@ pub struct Mode {
   pub rules: &'static [(&'static str, &'static str, Decision)],
 }
 
-/// The tools every mode offers, in request order (the web tools came last, 2026-10-14, then `question`, so the earlier
-/// specs kept their place)
-pub const TOOLS: &[&str] = &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN, WEBFETCH, WEBSEARCH, QUESTION];
+/// The tools every mode offers, in request order (the web tools came last, 2026-10-14, then `question`, then the goal
+/// tools on 2026-10-22, so the earlier specs kept their place)
+pub const TOOLS: &[&str] = &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN, WEBFETCH, WEBSEARCH, QUESTION, GET_GOAL, CREATE_GOAL, UPDATE_GOAL];
 /// The same with `skill` behind them, for a session that has skills (the turn appends its spec, so it stays last)
-pub const TOOLS_WITH_SKILL: &[&str] = &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN, WEBFETCH, WEBSEARCH, QUESTION, SKILL];
-/// The same two with the history tools of chunk compaction (`chunk.rs`) behind `question`, while the settings page
+pub const TOOLS_WITH_SKILL: &[&str] =
+  &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN, WEBFETCH, WEBSEARCH, QUESTION, GET_GOAL, CREATE_GOAL, UPDATE_GOAL, SKILL];
+/// The same two with the history tools of chunk compaction (`chunk.rs`) behind the goal tools, while the settings page
 /// picks it; the other sessions' sets stay exactly as they were
-pub const TOOLS_CHUNKED: &[&str] = &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN, WEBFETCH, WEBSEARCH, QUESTION, HISTORY_GREP, HISTORY_LIST];
-pub const TOOLS_CHUNKED_WITH_SKILL: &[&str] = &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN, WEBFETCH, WEBSEARCH, QUESTION, HISTORY_GREP, HISTORY_LIST, SKILL];
+pub const TOOLS_CHUNKED: &[&str] =
+  &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN, WEBFETCH, WEBSEARCH, QUESTION, GET_GOAL, CREATE_GOAL, UPDATE_GOAL, HISTORY_GREP, HISTORY_LIST];
+pub const TOOLS_CHUNKED_WITH_SKILL: &[&str] =
+  &[READ, WRITE, T_EDIT, T_BASH, JOB, GREP, GLOB, LIST, TODO, EXIT_PLAN, WEBFETCH, WEBSEARCH, QUESTION, GET_GOAL, CREATE_GOAL, UPDATE_GOAL, HISTORY_GREP, HISTORY_LIST, SKILL];
 
 pub const MODES: &[Mode] = &[
   Mode {
@@ -143,5 +147,10 @@ mod tests {
     assert!(get(PLAN).overlay(plan).contains("/h/agent/sessions/s/plan.md"));
     assert!(get(AGENT).rules(plan, cwd, Approval::Full).is_empty() && get("nope").id == AGENT);
     assert!(TOOLS.contains(&EXIT_PLAN) && TOOLS.contains(&QUESTION));
+    // Every list carries the goal tools at the same place, behind question
+    for list in [TOOLS, TOOLS_WITH_SKILL, TOOLS_CHUNKED, TOOLS_CHUNKED_WITH_SKILL] {
+      let at = list.iter().position(|t| *t == QUESTION).unwrap();
+      assert_eq!(list[at + 1..at + 4], [GET_GOAL, CREATE_GOAL, UPDATE_GOAL]);
+    }
   }
 }

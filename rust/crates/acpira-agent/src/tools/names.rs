@@ -3,8 +3,10 @@
 //! `turn.rs`), anything else gets an error that lists the real names, so a turn never ends silently on a misspelt call
 
 use super::{BASH, EDIT, EXIT_PLAN, GLOB, GREP, HISTORY_GREP, HISTORY_LIST, JOB, LIST, QUESTION, READ, SKILL, TODO, WEBFETCH, WEBSEARCH, WRITE};
+use crate::goal::{CREATE as CREATE_GOAL, GET as GET_GOAL, UPDATE as UPDATE_GOAL};
 
-pub const ALL: [&str; 16] = [READ, WRITE, EDIT, BASH, JOB, GREP, GLOB, LIST, TODO, SKILL, EXIT_PLAN, WEBFETCH, WEBSEARCH, QUESTION, HISTORY_GREP, HISTORY_LIST];
+pub const ALL: [&str; 19] =
+  [READ, WRITE, EDIT, BASH, JOB, GREP, GLOB, LIST, TODO, SKILL, EXIT_PLAN, WEBFETCH, WEBSEARCH, QUESTION, HISTORY_GREP, HISTORY_LIST, GET_GOAL, CREATE_GOAL, UPDATE_GOAL];
 
 /// Other names models use for the tools, already folded (lowercase, letters and digits only)
 const ALIASES: &[(&str, &[&str])] = &[
@@ -24,6 +26,10 @@ const ALIASES: &[(&str, &[&str])] = &[
   (HISTORY_GREP, &["historysearch", "searchhistory", "grephistory", "historyfind"]),
   (HISTORY_LIST, &["historyread", "readhistory", "listhistory", "historyview", "viewhistory"]),
   (QUESTION, &["ask", "askuser", "askquestion", "askquestions", "askuserquestion", "askuserquestions", "askfollowupquestion", "requestuserinput", "userinput", "questions", "clarify"]),
+  // Not `goal` or `goalstatus` alone: `update_goal_status` would then read as two tools
+  (GET_GOAL, &["currentgoal", "showgoal", "readgoal", "checkgoal", "getgoalstatus"]),
+  (CREATE_GOAL, &["setgoal", "newgoal", "startgoal", "addgoal"]),
+  (UPDATE_GOAL, &["goalupdate", "completegoal", "finishgoal", "markgoal", "setgoalstatus", "updategoalstatus"]),
 ];
 
 #[derive(Debug, PartialEq, Eq)]

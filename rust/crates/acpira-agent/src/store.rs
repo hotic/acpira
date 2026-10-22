@@ -21,6 +21,8 @@
 //! - `prune` — the tool results cleared by a prune (`calls`, the tokens freed)
 //! - `mark` — the start of a `session/prompt` the client named (`_meta["acpira/turn"]`): the turn id, plus what the model
 //!   had been told up to there (`announced`, `mcp_note`, `sidekick_told`)
+//! - `goal` — the session's goal after a change (`goal.rs`), `null` once cleared; the last one is the goal. Like the
+//!   controls it describes the session, so a rewind keeps it
 //!
 //! A line cut short by a crash is skipped when the file is read back.
 //!
@@ -362,6 +364,8 @@ pub struct Loaded {
   pub folded: usize,
   /// How many `item` events the file holds
   pub logged: usize,
+  /// The latest `goal` event's goal
+  pub goal: Option<crate::goal::Goal>,
 }
 
 /// Every item the log holds, as first written (a prune does not touch them), and every chunk it recorded, the latest
@@ -413,10 +417,12 @@ pub fn load(path: &Path, only_summary: bool) -> std::io::Result<Loaded> {
       Some("item") => {
         let Some(item) = ev.get("item").and_then(item_from) else { continue };
         if out.title.is_none()
+          && !item.is_steer()
           && let Item::User(parts) = &item
         {
+          // A message of notes alone (a goal's continuation) names nothing; the next one may
           out.title = parts.iter().find_map(|p| match p {
-            Part::Text(t) if !t.trim().is_empty() => Some(title_of(t)),
+            Part::Text(t) => Some(title_of(t)).filter(|t| !t.is_empty()),
             _ => None,
           });
         }
@@ -464,6 +470,7 @@ pub fn load(path: &Path, only_summary: bool) -> std::io::Result<Loaded> {
         }
       }
       Some("prompt") => out.prompt = Some(ev),
+      Some("goal") => out.goal = ev.get("goal").filter(|g| !g.is_null()).and_then(|g| serde_json::from_value(g.clone()).ok()),
       _ => {}
     }
   }
@@ -476,13 +483,9 @@ pub fn load(path: &Path, only_summary: bool) -> std::io::Result<Loaded> {
 /// How a `title` event's line starts (`json!` keeps the key order it was written in)
 const TITLE_MARK: &str = r#"{"type":"title""#;
 
-/// A list title: the first line of the first message, without a mode note the agent put in front
+/// A list title: the first line of the first message, without the notes the agent put in front (`chunk::strip_notes`)
 fn title_of(text: &str) -> String {
-  let text = match text.strip_prefix("<mode>") {
-    Some(rest) => rest.split_once("</mode>").map(|(_, t)| t).unwrap_or(rest),
-    None => text,
-  };
-  let line = text.trim().lines().next().unwrap_or("").trim();
+  let line = crate::chunk::strip_notes(text).trim().lines().next().unwrap_or("").trim();
   let mut out: String = line.chars().take(80).collect();
   if line.chars().count() > 80 {
     out.push('…');
@@ -565,5 +568,38 @@ mod tests {
     assert_eq!(back.items[4], Item::User(vec![Part::Text("three".into())]));
     // The prune cleared the first result before the compaction dropped it; a later one would show in the tail
     assert_eq!(back.title.as_deref(), Some("one"));
+  }
+
+  #[test]
+  fn the_last_goal_event_is_the_goal_and_a_rewind_keeps_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("s.jsonl");
+    let store = Store::new(path.clone(), "s", Path::new("/w"));
+    // A goal turn's message: the title is the objective, behind the notes stacked in front of it
+    store.append(json!({ "type": "mark", "turn": "t1" }));
+    store.item(&Item::User(vec![Part::Text("<mcp>\nM\n</mcp>\n\n<goal>\nN\n</goal>\n\nPort the parser\nfully".into())]));
+    let mut goal = crate::goal::Goal::new("Port the parser", Some(9000));
+    store.append(json!({ "type": "goal", "goal": goal }));
+    store.append(json!({ "type": "mark", "turn": "t2" }));
+    store.item(&Item::User(vec![Part::Text("<goal>\ncontinue\n</goal>".into())]));
+    goal.tokens_used = 1500;
+    goal.status = crate::goal::Status::Paused;
+    store.append(json!({ "type": "goal", "goal": goal }));
+    let back = load(&path, false).unwrap();
+    assert_eq!(back.title.as_deref(), Some("Port the parser"));
+    assert_eq!(back.goal.as_ref(), Some(&goal));
+    // Like the controls, the goal is the session's, not the conversation's
+    store.rewind("t2", false).unwrap().unwrap();
+    let back = load(&path, false).unwrap();
+    assert_eq!((back.items.len(), back.goal.as_ref()), (1, Some(&goal)));
+    store.append(json!({ "type": "goal", "goal": null }));
+    assert_eq!(load(&path, false).unwrap().goal, None);
+    // A first message of notes alone names nothing; the next one does
+    let other = dir.path().join("o.jsonl");
+    let store = Store::new(other.clone(), "o", Path::new("/w"));
+    store.item(&Item::User(vec![Part::Text("<goal>\nN\n</goal>".into())]));
+    store.item(&Item::User(vec![Part::Text("<steer>\nS\n</steer>\n\nsteered".into())]));
+    store.item(&Item::User(vec![Part::Text("<sidekick>\nK\n</sidekick>\n\nthen this".into())]));
+    assert_eq!(load(&other, true).unwrap().title.as_deref(), Some("then this"));
   }
 }
