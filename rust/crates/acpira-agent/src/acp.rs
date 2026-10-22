@@ -213,9 +213,47 @@ impl Server {
         "mcpCapabilities": { "http": true, "sse": false },
       },
       "authMethods": [],
-      // The steering extension claude-agent-acp and codex-acp implement, advertised at the top level as they do
-      "_meta": { "steering": { "supported": true } },
+      // The steering extension claude-agent-acp and codex-acp implement, advertised at the top level as they do, and
+      // Acpira's own history rewind (`_session/rewind`)
+      "_meta": { "steering": { "supported": true }, "acpira/rewind": { "supported": true } },
     })
+  }
+
+  /// `_session/rewind` (Acpira's extension): the conversation goes back to just before the turn the client named in its
+  /// `session/prompt` (`_meta["acpira/turn"]`), as if that prompt and everything after it had never been sent; the
+  /// client then sends the edited message as a plain prompt. The log is cut back (`Store::rewind`) and the view read
+  /// again from it, so compactions and prunes made since are undone too. `dryRun` only answers whether the turn can be
+  /// rewound to. Refused while a turn runs, and for a turn this session never marked (one sent before marks existed,
+  /// or in another native session)
+  fn rewind(&self, params: &Value) -> Result<Value, RpcError> {
+    let session = self.session(str_param(params, "sessionId")?)?;
+    let turn = str_param(params, "turnId")?;
+    let dry = params.get("dryRun").and_then(Value::as_bool) == Some(true);
+    let mut st = session.state.lock();
+    if st.turn.is_some() {
+      return Err(RpcError::new(-32603, "A turn is running in this session"));
+    }
+    let io = |e: std::io::Error| RpcError::new(-32603, format!("Cannot rewind the session log: {e}"));
+    let mark = session.store.rewind(turn, dry).map_err(io)?.ok_or_else(|| RpcError::new(-32602, format!("No turn {turn} to rewind to in this session")))?;
+    if dry {
+      return Ok(json!({}));
+    }
+    let loaded = store::load(session.store.path(), false).map_err(io)?;
+    session.store.set_items_logged(loaded.logged);
+    st.items = loaded.items;
+    st.summarized = loaded.summarized;
+    st.carry = loaded.carry;
+    st.chunks = loaded.chunks;
+    st.folded = loaded.folded;
+    st.reported = loaded.updates.iter().rev().find(|u| u["sessionUpdate"] == "usage_update").and_then(|u| Some((u["used"].as_u64()?, u["size"].as_u64()?)));
+    // What the model was told lives in the cut messages: the next turn tells it again where it differs
+    let told = |k: &str| mark.get(k).and_then(Value::as_str).map(str::to_owned);
+    if let Some(a) = told("announced") {
+      st.announced = a;
+    }
+    st.mcp_note = told("mcp_note");
+    st.sidekick_told = told("sidekick_told");
+    Ok(json!({}))
   }
 
   /// `_session/steering`: a message for the running turn. It is answered at once and reaches the model with the turn's
@@ -786,6 +824,7 @@ impl Inbound for Handler {
         "session/set_config_option" => server.set_config_option(&params),
         "session/prompt" => crate::turn::run(server, params, cancel).await,
         "_session/steering" => server.steer(&params),
+        "_session/rewind" => server.rewind(&params),
         _ => Err(RpcError::method_not_found(&method)),
       }
     })

@@ -19,8 +19,13 @@
 //!   and the tail. With `strategy: "chunk"` (`chunk.rs`) it holds the `chunks` added or changed, `tail` and the
 //!   `budget`, and the view is the earlier summary (if any), the rendered chunks and the tail
 //! - `prune` — the tool results cleared by a prune (`calls`, the tokens freed)
+//! - `mark` — the start of a `session/prompt` the client named (`_meta["acpira/turn"]`): the turn id, plus what the model
+//!   had been told up to there (`announced`, `mcp_note`, `sidekick_told`)
 //!
-//! A line cut short by a crash is skipped when the file is read back
+//! A line cut short by a crash is skipped when the file is read back.
+//!
+//! The one exception to append-only is a rewind (`Store::rewind`, the client's history edit): the file is cut back to a
+//! turn's `mark`, so the log, the view, the replay and the chunks' ordinals all agree again on the shorter conversation
 
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
@@ -161,7 +166,58 @@ impl Store {
     self.append(json!({ "type": "item", "item": item_json(item) }));
     self.items.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
   }
+
+  /// Cut the file back to just before the latest `mark` of `turn`, returning that mark; None when the file holds no such
+  /// mark. Of the events after it, only those describing the session rather than the conversation stay (controls,
+  /// system prompt, title, the request and view records), so the controls and the cost records survive the cut. The
+  /// file is replaced through a temporary one, so a crash leaves either version whole. `dry` only looks the mark up
+  pub fn rewind(&self, turn: &str, dry: bool) -> std::io::Result<Option<Value>> {
+    let mut inner = self.inner.lock();
+    if !dry && let Some(p) = inner.pending.take() {
+      Self::write(&mut inner, &self.path, &self.header, update_event(p));
+    }
+    let text = match std::fs::read_to_string(&self.path) {
+      Ok(t) => t,
+      Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+      Err(e) => return Err(e),
+    };
+    let mut found = None;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+      if line.starts_with(MARK_LINE)
+        && let Ok(ev) = serde_json::from_str::<Value>(line)
+        && ev.get("turn").and_then(Value::as_str) == Some(turn)
+      {
+        found = Some((offset, ev));
+      }
+      offset += line.len();
+    }
+    let Some((at, mark)) = found else { return Ok(None) };
+    if dry {
+      return Ok(Some(mark));
+    }
+    let mut out = text[..at].to_owned();
+    // A last line without its newline was cut short by a crash and is dropped with the rest
+    for line in text[at..].split_inclusive('\n').skip(1).filter(|l| l.ends_with('\n')) {
+      if !CONVERSATION_LINES.iter().any(|p| line.starts_with(p)) {
+        out.push_str(line);
+      }
+    }
+    let tmp = self.path.with_extension("jsonl.tmp");
+    std::fs::write(&tmp, out)?;
+    std::fs::rename(&tmp, &self.path)?;
+    // The open handle still points at the replaced file: the next write opens the new one
+    inner.file = None;
+    Ok(Some(mark))
+  }
 }
+
+/// How a `mark` event's line starts (`json!` keeps the key order it was written in)
+const MARK_LINE: &str = r#"{"type":"mark""#;
+
+/// The events a rewind drops after the mark: the conversation itself, what the replay shows of it and what reshaped it
+const CONVERSATION_LINES: [&str; 5] =
+  [r#"{"type":"item""#, r#"{"type":"update""#, r#"{"type":"compaction""#, r#"{"type":"prune""#, MARK_LINE];
 
 fn update_event(update: Value) -> Value {
   json!({ "type": "update", "update": update })
