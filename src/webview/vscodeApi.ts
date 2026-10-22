@@ -13,3 +13,24 @@ const scope = globalThis as typeof globalThis & { __acpiraApi?: VsCodeApi };
 export function vscodeApi(): VsCodeApi {
   return (scope.__acpiraApi ??= acquireVsCodeApi());
 }
+
+// One key of the webview's persisted state: undefined without a host that keeps state, or when never set
+export function webviewState(key: string): unknown {
+  const state = host()?.getState?.();
+  return state && typeof state === 'object' ? (state as Record<string, unknown>)[key] : undefined;
+}
+
+// Writes one key (undefined removes it) and keeps the rest of the state as it was
+export function setWebviewState(key: string, value: unknown): void {
+  const api = host();
+  if (!api?.setState) return;
+  const previous = api.getState?.();
+  const next = { ...(previous && typeof previous === 'object' ? previous as Record<string, unknown> : {}) };
+  if (value === undefined) delete next[key];
+  else next[key] = value;
+  api.setState(next);
+}
+
+function host(): VsCodeApi | undefined {
+  try { return vscodeApi(); } catch { return undefined; }
+}

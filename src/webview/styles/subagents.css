@@ -107,7 +107,8 @@
     color: var(--fg-1);
   }
   .subagent-mark[data-phase="done"] .subagent-mark-check { stroke-dashoffset: 0; }
-  /* Resize edge of the docked inspector (Shell.tsx): a wide invisible grab strip centred on the pane's border line */
+  /* Resize edge of a docked pane, the subagent inspector or the session column (Shell.tsx): a wide invisible grab strip
+     centred on the pane's border line */
   .subagent-splitter {
     position: absolute;
     inset-block: 0;
@@ -117,6 +118,11 @@
     cursor: col-resize;
     touch-action: none;
     outline: none;
+  }
+  /* The session column docked on the left (Shell.tsx) drags its right edge */
+  .subagent-splitter[data-side="left"] {
+    left: auto;
+    right: calc(var(--splitter-hit) / -2);
   }
   .subagent-splitter::after {
     content: '';

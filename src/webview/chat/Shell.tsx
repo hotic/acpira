@@ -259,6 +259,18 @@ export function Shell(p: ShellProps) {
     observer.observe(dock);
     return () => observer.disconnect();
   }, []);
+  // The docked session column's width is the user's (drag its inner edge). CSS clamps it to the room the shell has, so a
+  // window resize re-renders nothing; the drag reads the same bounds
+  const [preferredSide, setPreferredSide] = usePreferredPaneWidth('sessionPaneW');
+  const [draggedSide, setDraggedSide] = useState<number>();
+  const sideBounds = useCallback((): PaneBounds => {
+    const element = root.current ?? document.documentElement;
+    const px = (name: string) => Number.parseFloat(getComputedStyle(element).getPropertyValue(name));
+    return { min: px('--session-pane-min'), max: element.clientWidth - px('--session-main-min'), initial: px('--pop-w-md') };
+  }, []);
+  const sideWidth = draggedSide ?? preferredSide;
+  const commitSide = useCallback((w: number) => { setDraggedSide(undefined); setPreferredSide(w); }, [setPreferredSide]);
+  const resetSide = useCallback(() => { setDraggedSide(undefined); setPreferredSide(undefined); }, [setPreferredSide]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const closeDrawer = useCallback(() => {
     if (sessionPanel.current?.contains(document.activeElement)) {
@@ -507,13 +519,18 @@ export function Shell(p: ShellProps) {
               <aside ref={sessionPanel} aria-label={t('session.listAria')} inert={!canDock && !drawerOpen}
                 data-session-panel={position} data-docked={canDock}
                 onKeyDown={e => { if (e.key === 'Escape' && !e.defaultPrevented && !canDock) { e.stopPropagation(); closeDrawer(); } }}
+                style={canDock && sideWidth !== undefined ? { width: `clamp(var(--session-pane-min), ${sideWidth}px, calc(100% - var(--session-main-min)))` } : undefined}
                 className={cn(
                   'flex min-h-0 shrink-0 flex-col bg-bg-0',
                   position === 'right' ? 'order-last border-l border-line' : 'border-r border-line',
-                  canDock ? 'w-pop-md' : 'absolute inset-y-0 z-20 w-pop-lg max-w-[calc(100%-var(--ctl))] shadow-pop',
+                  canDock ? 'relative w-pop-md' : 'absolute inset-y-0 z-20 w-pop-lg max-w-[calc(100%-var(--ctl))] shadow-pop',
                   !canDock && (position === 'right' ? 'right-0' : 'left-0'),
                   !canDock && !drawerOpen && 'hidden',
                 )}>
+                {canDock && (
+                  <InspectorSplitter side={position === 'right' ? 'right' : 'left'} bounds={sideBounds} width={sideWidth}
+                    onDrag={setDraggedSide} onCommit={commitSide} onReset={resetSide} />
+                )}
                 {(!nav || !canDock) && (
                   <div className="flex h-hdr shrink-0 items-center justify-between gap-gap-half border-b border-line px-pad">
                     <span className="text-2 font-medium text-fg-strong">{t('session.history')}</span>

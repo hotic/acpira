@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { Check, ChevronDown, ChevronRight, Circle, Ellipsis, Folder, FolderInput, FolderOpen, Import, Inbox, ListFilter, LoaderCircle, Pencil, Pin, PinOff, Search, SquarePen, Trash2 } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Circle, Ellipsis, Folder, FolderInput, FolderOpen, Import, ListFilter, LoaderCircle, Pencil, Pin, PinOff, Search, SquarePen, Trash2 } from 'lucide-react';
 import type { AgentId, AgentInfo, CategoryOp, NativeSessionInfo, SessionCategories, SessionCategory, SessionSummary } from '@shared/transcript';
 import type { ExportFormat, NativeSessionsState, SessionHit } from '@shared/protocol';
 import { inWorkspace, type SessionScope } from '@shared/settings';
@@ -15,6 +15,7 @@ import { dateFormat, t, useLocale } from '../i18n';
 import { AgentMark } from './AgentMark';
 import { CategoryAddIcon } from './CategoryIcon';
 import { SessionContextMenu, type MoveProject, type SessionCopyKind, type SessionMenuItemsProps } from './SessionMenu';
+import { setWebviewState, webviewState } from '../vscodeApi';
 import { markParts, matchesTitle, searchTerms } from './sessionSearch';
 import { buildSessionTree, categoryOf, draggable, dropAction, type CategoryNode, type MoveTarget, type ProjectNode } from './sessionTree';
 
@@ -141,6 +142,8 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
   const [editingCategory, setEditingCategory] = useState<string>();
   const [held, setHeld] = useState<Held>();
   const [over, setOver] = useState<Over>();
+  // Nav layout: the sections folded by their label, kept in the webview's state across reloads
+  const [folded, setFolded] = useState<Section[]>(storedFolds);
   const nameOf = (id: string) => agents.find(a => a.id === id)?.name ?? id;
   const here = (s: SessionSummary) => !workspace || inWorkspace(s, workspace);
   const filing = !!onFile && !!onCategoryOp;
@@ -283,8 +286,9 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
     />
   );
 
-  // A category: its header and, open, its sessions indented under it. The whole block is one drop zone and lights up as one;
-  // a collapsed category stays collapsed under a drag (no spring-open), so its frame is just the header
+  // A category: a quiet sub-label and, open, its sessions at the same inset (one level of nesting is the project's alone).
+  // The whole block is one drop zone and lights up as one; a collapsed category stays collapsed under a drag (no
+  // spring-open), so its frame is just the header
   const renderCategory = (node: CategoryNode, siblings: CategoryNode[]) => {
     const c = node.category;
     const hot = over?.kind === 'category' && over.id === c.id;
@@ -295,7 +299,7 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
         className={cn('relative flex flex-col rounded-lg transition-shadow', hot && FRAME)}>
         {gapBefore && <InsertLine edge="top" />}
         <GroupHeader
-          icon={<Inbox className="size-icon" strokeWidth={1.5} />}
+          sub
           name={c.name}
           count={node.sessions.length}
           open={node.open}
@@ -317,7 +321,7 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
           </>}
         />
         {node.open && (
-          <div className="ml-indent flex flex-col">
+          <div className="flex flex-col">
             {node.sessions.length
               ? node.sessions.map(renderItem)
               : <div className="flex min-h-row items-center px-2 text-3 text-fg-3">{t('session.category.empty')}</div>}
@@ -328,20 +332,21 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
     );
   };
 
-  // A project's body: its categories, then its loose sessions (the zone that takes a session out of its category)
+  // A project's body: its loose sessions (the zone that takes a session out of its category), then its categories. Rows share
+  // one inset, so a category runs on to the next sub-label or project: loose sessions after the last one would read as its
   const renderBody = (p: ProjectNode) => {
     // Only a session of this project lights the loose area; one from elsewhere frames the whole project group
     const looseHot = over?.kind === 'loose' && over.cwd === p.cwd && heldSession?.cwd === p.cwd;
     // A filed session of this project being dragged needs somewhere to land even when nothing is loose
     const strip = !p.loose.length && !!heldSession && heldSession.cwd === p.cwd && !!categoryOf(heldSession, categories);
     return <>
-      {p.categories.map(n => renderCategory(n, p.categories))}
       {(p.loose.length > 0 || strip) && (
         <div data-drop={`loose:${p.cwd}`} className={cn('flex flex-col rounded-lg transition-shadow', looseHot && FRAME)}>
           {p.loose.map(renderItem)}
           {strip && <div className="flex min-h-row items-center px-2 text-3 text-fg-3">{t('session.category.remove')}</div>}
         </div>
       )}
+      {p.categories.map(n => renderCategory(n, p.categories))}
     </>;
   };
 
@@ -364,7 +369,8 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
           onToggle={filing ? () => onCategoryOp?.({ op: 'collapseProject', cwd: p.cwd, collapsed: p.open }) : undefined}
           onNewCategory={filing ? () => createCategory(p.cwd) : undefined}
         />
-        {p.open && <div className="ml-indent flex flex-col">{renderBody(p)}</div>}
+        {/* Not indented: the agent marks line up under the folder glyph and the heavier project name sets the group apart */}
+        {p.open && <div className="flex flex-col">{renderBody(p)}</div>}
       </div>
     );
   };
@@ -400,6 +406,7 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
   // has one home per scope: the section label when the list is the window's own project, the project rows when grouped
   if (nav) {
     const fresh = launchable(agents);
+    const flip = (k: Section) => setFolded(prev => { const next = prev.includes(k) ? prev.filter(x => x !== k) : [...prev, k]; setWebviewState(FOLDED_KEY, next); return next; });
     return (
       <div className="flex min-h-0 flex-1 flex-col" onKeyDown={onEscape}>
         <div className="flex shrink-0 flex-col">
@@ -427,11 +434,11 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
           onDragOver={onDragOver} onDrop={onDrop}>
           {tree.pinned.length > 0 && (
             <div className="flex flex-col" role="group" aria-label={t('session.group.pinned')}>
-              <SectionLabel>{t('session.group.pinned')}</SectionLabel>
-              {tree.pinned.map(renderItem)}
+              <SectionLabel open={!folded.includes('pinned')} count={tree.pinned.length} onToggle={() => flip('pinned')}>{t('session.group.pinned')}</SectionLabel>
+              {!folded.includes('pinned') && tree.pinned.map(renderItem)}
             </div>
           )}
-          <SectionLabel actions={<>
+          <SectionLabel open={!folded.includes('rest')} onToggle={() => flip('rest')} actions={<>
             {filing && workspace && !tree.grouped && (
               <button type="button" title={t('session.category.new')} aria-label={t('session.category.new')} onClick={() => createCategory(workspace)} className={SECTION_ACT}>
                 <CategoryAddIcon />
@@ -441,8 +448,10 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
           </>}>
             {tree.grouped ? t('session.group.projects') : t('session.listAria')}
           </SectionLabel>
-          {emptyRow}
-          {rest && <div className="flex flex-col">{restRows}</div>}
+          {!folded.includes('rest') && <>
+            {emptyRow}
+            {rest && <div className="flex flex-col">{restRows}</div>}
+          </>}
         </div>
       </div>
     );
@@ -498,11 +507,25 @@ const NAV_ROW = 'flex min-h-row w-full items-center gap-gap rounded-md px-2 text
 const NAV_LEAD = 'flex size-lead shrink-0 items-center justify-center text-fg-2';
 const SECTION_ACT = 'inline-flex size-ctl-sm items-center justify-center rounded-md text-fg-3 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1 data-[popup-open]:bg-hover data-[popup-open]:text-fg-1';
 
-// A section's quiet label in the nav layout (Pinned, Projects / Sessions), its actions always showing at the end
-function SectionLabel({ children, actions }: { children: ReactNode; actions?: ReactNode }) {
+type Section = 'pinned' | 'rest';
+const FOLDED_KEY = 'sessionSectionsFolded';
+function storedFolds(): Section[] {
+  const v = webviewState(FOLDED_KEY);
+  return Array.isArray(v) ? v.filter((x): x is Section => x === 'pinned' || x === 'rest') : [];
+}
+
+// A section's quiet label in the nav layout (Pinned, Projects / Sessions), its actions always showing at the end. The label
+// folds the section: its chevron shows on hover and stays while folded, and folded Pinned keeps its count
+function SectionLabel({ children, actions, open, count, onToggle }: { children: ReactNode; actions?: ReactNode; open: boolean; count?: number; onToggle: () => void }) {
   return (
-    <div className="mt-gap flex min-h-row items-center gap-gap px-2 text-3 text-fg-3">
-      <span className="min-w-0 truncate">{children}</span>
+    <div className="group mt-gap flex min-h-row items-center gap-gap px-2 text-3 text-fg-3">
+      <button type="button" aria-expanded={open} onClick={onToggle}
+        className="-ml-1 inline-flex min-w-0 items-center gap-1 rounded-sm px-1 transition-colors hover:text-fg-1 focus-visible:text-fg-1">
+        <span className="min-w-0 truncate">{children}</span>
+        {!open && count !== undefined && <span className="tabular-nums">{count}</span>}
+        <ChevronRight strokeWidth={1.5} className={cn('size-3 shrink-0 transition-[rotate,opacity] duration-(--dur-open)',
+          open ? 'rotate-90 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100' : 'opacity-100')} />
+      </button>
       {actions && <span className="-mr-1 ml-auto flex shrink-0 items-center gap-0.5">{actions}</span>}
     </div>
   );
@@ -513,12 +536,13 @@ function InsertLine({ edge }: { edge: 'top' | 'bottom' }) {
   return <div role="presentation" className={cn('pointer-events-none absolute inset-x-2 z-10 h-0.5 rounded-full bg-accent', edge === 'top' ? '-top-px' : '-bottom-px')} />;
 }
 
-// Header of a project or a category. A project: folder glyph, heavier name, the "current" badge, a "new category" action.
-// A category: the inbox glyph, a "new session here" action and a "…" menu. The row toggles; on hover the glyph turns into
-// the chevron, and collapsed it still shows the most urgent state inside
-function GroupHeader({ project, icon, name, title, badge, count, open, state, dragging, editing, onDragStart, onDragEnd, onToggle, onRename, onNewSession, onNewCategory, menu }: {
+// Header of a project or a category. A project: folder glyph, heavier name, the "current" badge, a "new category" action;
+// the row toggles, and on hover the glyph turns into the chevron. A category (`sub`): a quiet label with no glyph, its
+// chevron after the name, a "new session here" action and a "…" menu. Collapsed, both still show the most urgent state inside
+function GroupHeader({ project, sub, icon, name, title, badge, count, open, state, dragging, editing, onDragStart, onDragEnd, onToggle, onRename, onNewSession, onNewCategory, menu }: {
   project?: boolean;
-  icon: ReactNode;
+  sub?: boolean;
+  icon?: ReactNode;
   name: string;
   title?: string;
   badge?: string;
@@ -553,23 +577,29 @@ function GroupHeader({ project, icon, name, title, badge, count, open, state, dr
       className={cn(
         'group flex min-h-row items-center gap-gap rounded-md px-2 text-2 transition-colors hover:bg-hover focus-visible:bg-hover data-[menu-open]:bg-hover',
         onToggle && 'cursor-pointer',
-        project ? 'font-semibold text-fg-strong' : 'text-fg-1',
+        project ? 'font-semibold text-fg-strong' : 'text-3 text-fg-3 hover:text-fg-1',
         // Renaming keeps the hover fill, as on a session row
         editing && 'bg-hover',
         dragging && 'opacity-40',
       )}
     >
-      <span className="flex size-lead shrink-0 items-center justify-center text-fg-3">
-        <span className={cn('flex', onToggle && 'group-hover:hidden group-focus-visible:hidden group-data-[menu-open]:hidden')}>{icon}</span>
-        {onToggle && (
-          <span className="hidden group-hover:flex group-focus-visible:flex group-data-[menu-open]:flex">
-            {open ? <ChevronDown className="size-icon" strokeWidth={1.5} /> : <ChevronRight className="size-icon" strokeWidth={1.5} />}
-          </span>
-        )}
-      </span>
+      {!sub && (
+        <span className="flex size-lead shrink-0 items-center justify-center text-fg-3">
+          <span className={cn('flex', onToggle && 'group-hover:hidden group-focus-visible:hidden group-data-[menu-open]:hidden')}>{icon}</span>
+          {onToggle && (
+            <span className="hidden group-hover:flex group-focus-visible:flex group-data-[menu-open]:flex">
+              {open ? <ChevronDown className="size-icon" strokeWidth={1.5} /> : <ChevronRight className="size-icon" strokeWidth={1.5} />}
+            </span>
+          )}
+        </span>
+      )}
       {editing && onRename
         ? <RenameInput initial={name} label={t('session.category.rename')} onDone={onRename} />
         : <span className="min-w-0 truncate">{name}</span>}
+      {sub && !editing && (
+        <ChevronRight strokeWidth={1.5} className={cn('-ml-1 size-3 shrink-0 transition-[rotate,opacity] duration-(--dur-open)',
+          open ? 'rotate-90 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 group-data-[menu-open]:opacity-100' : 'opacity-100')} />
+      )}
       {badge && !editing && <span className="shrink-0 rounded-sm bg-active px-1 text-3 font-normal text-fg-3">{badge}</span>}
       {!editing && (
         <span className="ml-auto flex shrink-0 items-center text-3 font-normal text-fg-3 tabular-nums">
