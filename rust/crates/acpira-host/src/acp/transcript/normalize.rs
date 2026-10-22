@@ -273,7 +273,9 @@ fn apply_update_kind(s: &mut NormalizeState, u: &Value) -> bool {
       clear_retry(s);
       seal(s, i);
       let id = str_of(u, "toolCallId").unwrap_or("").to_owned();
-      let loc = match find_tool(&s.turns, &id) {
+      // An announcement never revives a finished call of an earlier turn: that id came from another agent session
+      // (`settled_before`), so the call gets its own row here and its updates find that row first
+      let loc = match find_tool(&s.turns, &id).filter(|&loc| !settled_before(&s.turns, loc, i)) {
         Some(loc) => {
           let NormalizeState { turns, ctx, .. } = s;
           merge_tool(tool_at(turns, loc), u, Some(ctx));
@@ -702,6 +704,17 @@ fn task_status(st: AsyncTaskState) -> ToolStatus {
 /// The task is still observable and owns its row across turn ends
 pub fn async_task_live(b: &ToolCallBlock) -> bool {
   b.async_task.as_ref().is_some_and(|a| b.observation != Some(Observation::Unknown) && !task_terminal(a.state))
+}
+
+/// The row at `loc` belongs to a call that is over (its turn is earlier than `current`, its status is final and no
+/// background task keeps it alive). ACP keeps tool call ids unique per agent session only, and a historical edit
+/// continues the transcript on a fresh `session/new`: an agent numbering its calls per session (the built-in agent's
+/// `call-N`) then announces ids those rows already hold. Merging into them rewrote old turns and left the new turn
+/// without its tool rows (acpira 1.10.7, 2026-10-22)
+fn settled_before(turns: &[Turn], (ti, bi): (usize, usize), current: usize) -> bool {
+  ti < current
+    && matches!(turns[ti].as_agent().and_then(|t| t.blocks.get(bi)),
+      Some(AgentBlock::ToolCall(tc)) if !tc.status.is_open() && !async_task_live(tc))
 }
 
 /// Some background task of this transcript is still running and observed: ending the process would orphan it

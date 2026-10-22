@@ -317,3 +317,28 @@ async fn a_double_submission_is_rejected_and_a_cancel_lands_before_history_is_re
 async fn a_continue_cancelled_while_attachments_stage_still_accepts_a_normal_prompt() {
   rejects_double_submission_then_cancels(Some("continue")).await;
 }
+
+// The fresh peer of a rebuilt edit numbers its tool calls from the start again (the built-in agent's `call-N`; the fake
+// always sends `tc1` / `tc2`): the calls land on the new turn and the earlier turn keeps its own rows untouched
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rebuilt_peer_reusing_tool_call_ids_keeps_them_on_the_new_turn() {
+  let fake = fake_or_skip!();
+  std::fs::create_dir_all("/tmp/acpira-no-modes").unwrap();
+  // Plain-text history, so the edited prompt reaches the fake's tool script rather than its resource echo
+  let h = Harness::new(&fake, json!({ "modes": syn_modes(), "env": { "FAKE_PROMPT_CAPS": "strict" } }));
+  let s = started(&h, "/tmp/acpira-no-modes").await;
+  s.set_mode("yolo".into()).await.unwrap();
+  prompt(&s, "use tool").await;
+  prompt(&s, "original").await;
+  let before = view(&s)["turns"][1]["blocks"].clone();
+  let old_peer = s.to_record().acp_session_id;
+  s.edit_turn(history_edit(&s, 2, "use tool again")).await.unwrap();
+  until(|| !s.is_running() && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
+  assert_ne!(s.to_record().acp_session_id, old_peer);
+  let vw = view(&s);
+  expect_eq(&vw["turns"][1]["blocks"], before);
+  let last = last_turn(&vw);
+  let ids: Vec<_> = last["blocks"].as_array().unwrap().iter().filter(|b| b["type"] == "tool_call").map(|b| b["id"].clone()).collect();
+  assert_eq!(ids, [json!("tc1"), json!("tc2")]);
+  expect_match(last["blocks"].as_array().unwrap().iter().find(|b| b["id"] == "tc1").unwrap(), json!({ "status": "completed" }));
+}

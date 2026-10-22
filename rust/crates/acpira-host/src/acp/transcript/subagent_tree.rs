@@ -902,6 +902,15 @@ impl SubagentTree {
     if ctx.root_tool(&tool_call_id).is_none() {
       return;
     }
+    // A finished child of an earlier turn whose id a fresh agent session reused (a historical edit, see `normalize.rs`
+    // `settled_before`): the new row is not linked to it, so the stale mapping goes and the call may open its own child
+    if let Some(i) = self.by(&self.by_tool, &tool_call_id)
+      && terminal(self.nodes[i].status)
+      && self.nodes[i].turn_index < ctx.turn_index as u64
+      && ctx.root_tool(&tool_call_id).is_some_and(|b| b.subagent_id.as_deref() != Some(self.nodes[i].id.as_str()))
+    {
+      self.by_tool.remove(&tool_call_id);
+    }
     let meta = rec(u.get("_meta"));
     let raw = rec(u.get("rawInput"));
     if s(meta.and_then(|m| m.get("cognition.ai/inferenceToolName"))).as_deref() == Some("read_subagent") {

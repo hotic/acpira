@@ -1148,3 +1148,26 @@ fn replayed_turn_is_never_stamped() {
   apply(&mut s, json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "hi" } }));
   assert_eq!(s.turns[0].as_agent().unwrap().responded_at, None);
 }
+
+// A historical edit continues on a fresh agent session, and the built-in agent numbers its calls per session: its
+// `call-1` arrives again while an earlier turn still holds the finished `call-1` (acpira 1.10.7, 2026-10-22)
+#[test]
+fn a_reused_tool_call_id_opens_a_new_row_instead_of_rewriting_an_earlier_turn() {
+  let mut s = state();
+  s.turns.push(turn(json!({ "role": "agent", "blocks": [], "startedAt": 1000 })));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "Read", "kind": "read", "status": "pending", "locations": [{ "path": "/repo/old.ts" }] }));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "completed" }));
+  end_turn(&mut s, TurnStop::EndTurn);
+  let before = block(&s, 0, 0);
+  s.turns.push(turn(json!({ "role": "user", "text": "edited" })));
+  s.turns.push(turn(json!({ "role": "agent", "blocks": [], "startedAt": 2000 })));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "work_Edit", "kind": "other", "status": "pending" }));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "call-1", "rawInput": { "file_path": "/repo/new.ts" } }));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "failed" }));
+  // A re-announcement inside the live turn still merges into that turn's row
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "work_Edit", "kind": "other", "status": "failed" }));
+  expect_eq(block(&s, 0, 0), before);
+  let rows = s.turns[2].as_agent().unwrap().blocks.iter().filter(|b| matches!(b, AgentBlock::ToolCall(tc) if tc.id == "call-1")).count();
+  assert_eq!(rows, 1);
+  expect_match(block(&s, 2, 0), json!({ "type": "tool_call", "id": "call-1", "status": "failed" }));
+}
