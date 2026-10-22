@@ -637,6 +637,8 @@ export const ru = {
   'verb.kill': 'Остановка фоновой команды',
   'verb.imagegen': 'Создание изображения',
   'verb.showImage': 'Показ изображения',
+  'verb.showWidget': 'Показ виджета',
+  'widget.failed': 'Не удалось загрузить виджет',
   'verb.searchSessions': 'Поиск сессий',
   'verb.readSession': 'Чтение сессии',
   'tool.sessionTurns': 'ходы {range}',

@@ -622,6 +622,8 @@ export const de = {
   'verb.kill': 'Hintergrundbefehl stoppen',
   'verb.imagegen': 'Bild erzeugen',
   'verb.showImage': 'Bild anzeigen',
+  'verb.showWidget': 'Widget anzeigen',
+  'widget.failed': 'Das Widget konnte nicht geladen werden',
   'verb.searchSessions': 'Sitzungen suchen',
   'verb.readSession': 'Sitzung lesen',
   'tool.sessionTurns': 'Runden {range}',

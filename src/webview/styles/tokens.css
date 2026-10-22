@@ -155,6 +155,10 @@
   --thumb: 56px;
   /* Agent image height cap in the transcript; also the side of the image generation placeholder */
   --agent-image: 240px;
+  /* An HTML widget (show_widget): the space held before its first height report, and its cap. The cap also ends the loop
+     of a page sized to its own viewport (h-screen plus padding), which would otherwise grow with every report */
+  --widget-placeholder: 120px;
+  --widget-max: 900px;
   /* Sticky prompts keep one cap and scroll internally, leaving room for the reply on a small laptop screen.
      The cap is the card's scrollport (attachments + text): five text lines, the last one under the scroll fade.
      30cqh shrinks it in a very short sidebar; the floor keeps a hidden webview (cqh → 0) from collapsing the card to nothing. */
@@ -497,6 +501,8 @@
   --spacing-hdr: var(--hdr);
   --spacing-thumb: var(--thumb);
   --spacing-agent-image: var(--agent-image);
+  --spacing-widget-placeholder: var(--widget-placeholder);
+  --spacing-widget-max: var(--widget-max);
   --spacing-indent: calc(var(--lead) + var(--gap));
   --spacing-hit: var(--row-hit-outset);
   /* An exchange's paint clip on the thread's right side: the hit outset, but never past the thread's right padding

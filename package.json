@@ -591,6 +591,7 @@
     "@fontsource-variable/inter": "5.3.0",
     "@streamdown/math": "1.0.2",
     "@streamdown/mermaid": "1.0.2",
+    "@tailwindcss/browser": "4.3.3",
     "@tailwindcss/vite": "4.3.3",
     "@types/node": "22.15.3",
     "@types/react": "19.2.18",

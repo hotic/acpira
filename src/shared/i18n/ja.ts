@@ -627,6 +627,8 @@ export const ja = {
   'verb.kill': 'バックグラウンドコマンドを停止',
   'verb.imagegen': '画像を生成',
   'verb.showImage': '画像を表示',
+  'verb.showWidget': 'ウィジェットを表示',
+  'widget.failed': 'ウィジェットを読み込めませんでした',
   'verb.searchSessions': 'セッションを検索',
   'verb.readSession': 'セッションを読む',
   'tool.sessionTurns': 'ターン {range}',

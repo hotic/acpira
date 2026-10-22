@@ -621,6 +621,8 @@ export const ko = {
   'verb.kill': '백그라운드 명령 중지',
   'verb.imagegen': '이미지 생성',
   'verb.showImage': '이미지 표시',
+  'verb.showWidget': '위젯 표시',
+  'widget.failed': '위젯을 불러오지 못했습니다',
   'verb.searchSessions': '세션 검색',
   'verb.readSession': '세션 읽기',
   'tool.sessionTurns': '턴 {range}',

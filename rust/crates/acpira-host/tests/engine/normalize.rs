@@ -1074,6 +1074,38 @@ fn the_host_show_image_tool_becomes_an_image_row_for_claude_and_codex_wire_shape
 }
 
 #[test]
+fn the_host_show_widget_tool_reads_its_html_into_the_row_in_every_adapter_naming() {
+  let mut s = state();
+  s.ctx.save_image_file = Some(Arc::new(|p: &str| Some(format!("b-{}", p.rsplit('/').next().unwrap()))));
+  // claude-agent-acp: mcp__acpira__show_widget, the title names the row; the file is read only once the call completes
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "c1", "name": "mcp__acpira__show_widget", "title": "mcp__acpira__show_widget",
+    "kind": "other", "status": "pending", "rawInput": { "path": "/tmp/tuner.html", "title": "Latency tuner" } }));
+  expect_match(block(&s, 0, 0), json!({ "verbKey": "verb.showWidget", "kind": "other", "target": "Latency tuner", "locations": [{ "path": "/tmp/tuner.html" }] }));
+  expect_absent(block(&s, 0, 0), "mcpServer");
+  expect_absent(block(&s, 0, 0), "content");
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "c1", "status": "completed",
+    "content": [{ "type": "content", "content": { "type": "text", "text": "Shown to the user: tuner.html." } }] }));
+  // Stored as an image content of type text/html, which engines that predate widgets still read
+  expect_match(block(&s, 0, 0), json!({ "contents": [
+    { "type": "image", "blob": "b-tuner.html", "mimeType": "text/html", "uri": "/tmp/tuner.html" }, { "type": "text", "text": "Shown to the user: tuner.html." },
+  ] }));
+  // codex-acp: mcp.acpira.show_widget filed as execute with nested arguments; without a title the file names the row
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "x1", "title": "mcp.acpira.show_widget", "kind": "execute", "status": "in_progress",
+    "rawInput": { "server": "acpira", "tool": "show_widget", "arguments": { "path": "/tmp/w/plan.htm" } } }));
+  expect_match(block(&s, 0, 1), json!({ "verbKey": "verb.showWidget", "kind": "other", "target": "plan.htm", "targetMono": true }));
+  apply(&mut s, json!({ "sessionUpdate": "tool_call_update", "toolCallId": "x1", "status": "completed", "kind": "execute" }));
+  expect_match(block(&s, 0, 1), json!({ "kind": "other", "content": { "type": "image", "blob": "b-plan.htm", "mimeType": "text/html" } }));
+  // OpenCode's acpira_show_widget; a failed call (the server refused the file) reads nothing
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "f1", "title": "acpira_show_widget", "status": "failed", "rawInput": { "path": "/tmp/x.html" } }));
+  expect_match(block(&s, 0, 2), json!({ "verbKey": "verb.showWidget", "status": "failed" }));
+  expect_absent(block(&s, 0, 2), "content");
+  // A file that is not HTML is never read, whatever the call claimed
+  apply(&mut s, json!({ "sessionUpdate": "tool_call", "toolCallId": "n1", "title": "show_widget", "status": "completed", "rawInput": { "path": "/tmp/notes.txt" } }));
+  expect_match(block(&s, 0, 3), json!({ "verbKey": "verb.showWidget" }));
+  expect_absent(block(&s, 0, 3), "content");
+}
+
+#[test]
 fn the_host_session_tools_name_what_they_read_in_every_adapter_naming() {
   let mut s = state();
   // claude-agent-acp: mcp__acpira__read_session with the arguments as rawInput; a vscode link is stored canonical

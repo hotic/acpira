@@ -1340,6 +1340,14 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
       b.locations = Some(paths.into_iter().map(|path| Location { path, line: None }).collect());
     }
   }
+  // Acpira's show_widget: one HTML file, kept as the row's location until the call completes and the file is read
+  if b.verb_key.as_deref() == Some(SHOW_WIDGET_VERB) || is_show_widget_call(u, title, raw) {
+    set_verb(b, SHOW_WIDGET_VERB);
+    b.kind = ToolKind::Other;
+    if let Some(path) = show_image_args(raw).and_then(|a| a.get("path")).and_then(Value::as_str).map(str::trim).filter(|p| !p.is_empty()) {
+      b.locations = Some(vec![Location { path: path.to_owned(), line: None }]);
+    }
+  }
   // Acpira's session tools read "Search sessions" / "Read session" with what they looked for, not "Call Acpira"
   if let Some(key) = b.verb_key.as_deref().filter(|k| matches!(*k, SEARCH_SESSIONS_VERB | READ_SESSION_VERB)).map(str::to_owned).or_else(|| session_tool_verb(u, title, raw).map(str::to_owned)) {
     set_verb(b, &key);
@@ -1383,7 +1391,7 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   {
     b.background = Some(true);
   }
-  if let Some(locs) = u.get("locations").and_then(Value::as_array).filter(|_| b.verb_key.as_deref() != Some(SHOW_IMAGE_VERB)) {
+  if let Some(locs) = u.get("locations").and_then(Value::as_array).filter(|_| !matches!(b.verb_key.as_deref(), Some(SHOW_IMAGE_VERB | SHOW_WIDGET_VERB))) {
     b.locations = Some(
       locs
         .iter()
@@ -1417,7 +1425,7 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   }
   let named = matches!(
     b.verb_key.as_deref(),
-    Some("verb.todo" | "verb.ask" | "verb.wait" | "verb.kill" | IMAGE_GEN_VERB | SHOW_IMAGE_VERB | SEARCH_SESSIONS_VERB | READ_SESSION_VERB)
+    Some("verb.todo" | "verb.ask" | "verb.wait" | "verb.kill" | IMAGE_GEN_VERB | SHOW_IMAGE_VERB | SHOW_WIDGET_VERB | SEARCH_SESSIONS_VERB | READ_SESSION_VERB)
   );
   let target = if matches!(b.verb_key.as_deref(), Some("verb.wait" | "verb.kill")) {
     shell_target(raw, ctx.as_deref())
@@ -1428,6 +1436,8 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
     prompt_target(raw)
   } else if b.verb_key.as_deref() == Some(SHOW_IMAGE_VERB) {
     show_image_target(show_image_args(raw), b.locations.as_deref())
+  } else if b.verb_key.as_deref() == Some(SHOW_WIDGET_VERB) {
+    show_widget_target(show_image_args(raw), b.locations.as_deref())
   } else if let Some(key @ (SEARCH_SESSIONS_VERB | READ_SESSION_VERB)) = b.verb_key.as_deref() {
     session_tool_target(key, show_image_args(raw))
   } else if b.mcp_server.is_some() {
@@ -1503,6 +1513,9 @@ pub fn merge_tool(b: &mut ToolCallBlock, u: &Value, mut ctx: Option<&mut ToolCtx
   }
   if b.verb_key.as_deref() == Some(SHOW_IMAGE_VERB) {
     attach_shown_images(b, ctx.as_deref());
+  }
+  if b.verb_key.as_deref() == Some(SHOW_WIDGET_VERB) {
+    attach_shown_widget(b, ctx.as_deref());
   }
   // pi-acp and the claude / codex adapters stream terminal output through _meta
   let term_out = meta.and_then(|m| m.get("terminal_output").filter(|v| !v.is_null()).or_else(|| m.get("terminal_output_delta")));
@@ -1693,6 +1706,15 @@ fn show_image_target(args: Option<&Map<String, Value>>, locs: Option<&[Location]
   (!names.is_empty()).then(|| Target { text: names.join(", "), mono: true, from_title: false })
 }
 
+/// A show_widget row names its title, else the file it shows
+fn show_widget_target(args: Option<&Map<String, Value>>, locs: Option<&[Location]>) -> Option<Target> {
+  if let Some(title) = args.and_then(|a| a.get("title")).and_then(Value::as_str).map(str::trim).filter(|c| !c.is_empty()) {
+    return Some(Target { text: title.to_owned(), mono: false, from_title: false });
+  }
+  let path = locs?.first()?;
+  Some(Target { text: basename(&path.path).to_owned(), mono: true, from_title: false })
+}
+
 /// Every string inside a JSON value, depth first
 fn json_strings<'a>(v: &'a Value, out: &mut Vec<&'a str>) {
   match v {
@@ -1759,6 +1781,15 @@ pub const SHOW_IMAGE_VERB: &str = "verb.showImage";
 
 fn is_show_image_call(u: &Value, title: Option<&str>, raw: Option<&Map<String, Value>>) -> bool {
   let named = |x: Option<&str>| x.map(str::trim).is_some_and(|x| SHOW_IMAGE.is_match(x));
+  named(title) || named(str_of(u, "name")) || named(raw.and_then(|r| r.get("tool")).and_then(Value::as_str))
+}
+
+/// Acpira's `show_widget`, in the same namings as show_image
+static SHOW_WIDGET: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(?:^|acpira[_.:/-]{1,2})show_widget$").unwrap());
+pub const SHOW_WIDGET_VERB: &str = "verb.showWidget";
+
+fn is_show_widget_call(u: &Value, title: Option<&str>, raw: Option<&Map<String, Value>>) -> bool {
+  let named = |x: Option<&str>| x.map(str::trim).is_some_and(|x| SHOW_WIDGET.is_match(x));
   named(title) || named(str_of(u, "name")) || named(raw.and_then(|r| r.get("tool")).and_then(Value::as_str))
 }
 
@@ -1878,6 +1909,32 @@ fn attach_shown_images(b: &mut ToolCallBlock, ctx: Option<&ToolCtx>) {
   b.content = list.first().cloned();
   b.contents = if list.len() > 1 { Some(list) } else { None };
 }
+
+/// A finished show_widget call: its HTML file is read into the blob store as a `text/html` image content ahead of the
+/// receipt, which older engines still read (a new content type would make them refuse the whole record). The webview
+/// runs it in a sandboxed frame (`AgentWidget.tsx`). Read once, when the call completes: a later edit of the file is a
+/// new call
+fn attach_shown_widget(b: &mut ToolCallBlock, ctx: Option<&ToolCtx>) {
+  let is_widget = |c: &ToolContent| matches!(c, ToolContent::Image(i) if i.mime_type == WIDGET_MIME);
+  if b.status != ToolStatus::Completed || b.content.as_ref().is_some_and(is_widget) || b.contents.as_ref().is_some_and(|l| l.iter().any(is_widget)) {
+    return;
+  }
+  let Some(save) = ctx.and_then(|c| c.save_image_file.as_ref()) else { return };
+  let Some(widget) = b.locations.iter().flatten().find_map(|l| {
+    let path = local_path_of(&l.path)?;
+    crate::host_mcp::widget_mime_of(&path)?;
+    Some(ToolContent::Image(ImageRef { blob: Some(save(&path)?), mime_type: WIDGET_MIME.to_owned(), uri: Some(l.path.clone()) }))
+  }) else {
+    return;
+  };
+  let mut list = vec![widget];
+  list.extend(b.contents.take().unwrap_or_else(|| b.content.iter().cloned().collect()));
+  b.content = list.first().cloned();
+  b.contents = if list.len() > 1 { Some(list) } else { None };
+}
+
+/// The MIME type a widget's HTML is stored under
+pub const WIDGET_MIME: &str = "text/html";
 
 /// An image generation tool that answers with the saved file's path instead of an image block (Grok's `image_gen` returns the
 /// absolute path as text): the files named in its text results or rawOutput are read into the blob store and appended as images

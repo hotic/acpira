@@ -643,6 +643,8 @@ export const zhTW = {
   // Image generation tools (codex-acp "Image generation", Grok image_gen / image_edit), recognized by name
   'verb.imagegen': '生成圖片',
   'verb.showImage': '展示圖片',
+  'verb.showWidget': '展示元件',
+  'widget.failed': '元件載入失敗',
   'verb.searchSessions': '搜尋會話',
   'verb.readSession': '讀取會話',
   'tool.sessionTurns': '第 {range} 段對話',

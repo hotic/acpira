@@ -18,6 +18,7 @@ import { contextDrafts, sameContext, sameRange, selectionDraft, setContextSelect
 import { updateMainComposer } from './chat/useComposerDraft';
 import { playChime } from './effects/chime';
 import { probeUrl } from './probeUrl';
+import { isWidgetFrame } from './chat/AgentWidget';
 import type { SettingsPage } from './settings/Nav';
 import type { SharedState } from './settings/SharedPage';
 import type { StorageState } from './settings/StoragePage';
@@ -181,6 +182,8 @@ export function App() {
 
   useEffect(() => {
     const onMsg = (e: MessageEvent<HostMsg>) => {
+      // A widget frame (show_widget) runs an agent's page: whatever it posts is never a host message
+      if (isWidgetFrame(e.source)) return;
       const m = e.data;
       switch (m.type) {
         case 'editTurnResult': {

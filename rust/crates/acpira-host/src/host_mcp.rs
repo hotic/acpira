@@ -1,8 +1,9 @@
 //! `acpira mcp`: the MCP server Acpira hands every agent in `session/new` / `load` / `resume` (`mcpServers`).
-//! It offers one tool, `show_image`, that lets the model put a local image in front of the user: the call's arguments
+//! It offers `show_image`, that lets the model put a local image in front of the user: the call's arguments
 //! name the files, and the host reads them into the session's blob store when the tool call completes
 //! (`normalize.rs` `attach_shown_images`). The server itself only validates the paths and answers a receipt, so no
-//! pixels travel back through the model's context.
+//! pixels travel back through the model's context. `show_widget` does the same for one self-contained HTML file, which
+//! the webview runs as an interactive widget in a sandboxed frame (`attach_shown_widget`, `webview/chat/AgentWidget.tsx`).
 //!
 //! `workspace_hooks` explains `.agents/hooks.json` (`hooks/`, the gates Acpira runs for every agent) and checks a
 //! project's copy, so whichever model the user asks to add a gate writes one Acpira can read.
@@ -23,11 +24,12 @@ use serde_json::{Map, Value, json};
 
 use acpira_shared::attachments::image_mime_of;
 
-use crate::limits::MAX_OUT_IMAGE_BYTES;
+use crate::limits::{MAX_OUT_IMAGE_BYTES, MAX_WIDGET_BYTES};
 
 /// Server name in `mcpServers`; adapters prefix the tool with it (`mcp__acpira__show_image`, `mcp.acpira.show_image`)
 pub const SERVER_NAME: &str = "acpira";
 pub const TOOL_NAME: &str = "show_image";
+pub const WIDGET_TOOL: &str = "show_widget";
 pub const HOOKS_TOOL: &str = "workspace_hooks";
 pub const BROWSER_TOOL: &str = "open_browser";
 pub const SEARCH_SESSIONS_TOOL: &str = "search_sessions";
@@ -35,9 +37,11 @@ pub const READ_SESSION_TOOL: &str = "read_session";
 /// Answered when the client does not name a protocol version
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
-const INSTRUCTIONS: &str = "The user reads this conversation in Acpira, which can display images inline. \
+const INSTRUCTIONS: &str = "The user reads this conversation in Acpira, which can display images and interactive HTML widgets inline. \
 When the user should see an image (a screenshot you took, a chart or diagram you rendered, a generated or downloaded picture), \
-call show_image with its absolute path instead of only printing the path. Project gates and reviews live in `.agents/hooks.json`, which Acpira runs for every agent: before writing or changing that file (or a hook script it names), call workspace_hooks for the format, and again afterwards to check it.";
+call show_image with its absolute path instead of only printing the path. When a small interactive view would serve them better \
+than more text (tuning parameters with sliders, comparing options in tabs, exploring numbers), write it as one HTML file and \
+call show_widget. Project gates and reviews live in `.agents/hooks.json`, which Acpira runs for every agent: before writing or changing that file (or a hook script it names), call workspace_hooks for the format, and again afterwards to check it.";
 
 /// Appended to the instructions when the relay env is on the entry. Server instructions reach the model even where
 /// the client defers tools behind a search, so `@name` is tied to `ask_agent` before the model goes looking for it
@@ -95,6 +99,19 @@ Use it whenever the user should look at an image you produced or found: a screen
 Paths must be absolute. The image is shown to the user only; it is not returned to you. \
 Prefer this tool. To place an image at a specific point of a reply instead, embed it there with Markdown image syntax and an absolute path \
 (`![caption](/abs/path.png)`), which renders the same way; use one or the other for a given image, never both.";
+
+const WIDGET_DESCRIPTION: &str = "Show an interactive HTML widget to the user, inline in the conversation: a small \
+self-contained view (sliders, toggles, tabs, a live calculator, a mini chart) that lets them explore numbers or options without \
+more back-and-forth. Write it to an .html file first (absolute path, under 512 KB), then call this tool; the widget is shown \
+to the user only, not returned to you. Call it again after editing the file to show the new version.\n\n\
+It runs in a sandboxed frame with no network: no CDN, fetch, external images or fonts, so put all CSS and JavaScript inline \
+(classic scripts; inline event handlers such as onclick work). Tailwind CSS v4 is built in: use utility classes directly, no \
+build step (`<style type=\"text/tailwindcss\">` works too). Follow the conversation's light or dark theme with these colours \
+instead of fixed ones: bg-background, bg-card, bg-muted, text-foreground, text-muted-foreground, border-border, bg-primary with \
+text-primary-foreground, text-primary, ring-ring, and text-success / text-warning / text-danger; the same values are CSS \
+variables (--background, --card, --primary …) for canvas or SVG. The page background is transparent and the font is the \
+editor's. The frame is as wide as the conversation (from about 300 px) and as tall as the content: keep it compact, ideally \
+under 600 px. Forms do not submit and alerts, dialogs and new windows are blocked.";
 
 /// The host's server for session requests, shared by every session of one manager. An agent whose session/new failed
 /// with it (and worked without) is remembered, and its later requests leave the server out
@@ -203,7 +220,7 @@ pub fn run(version: &str) -> i32 {
       if method == "tools/list"
         && let Some(id) = msg.get("id").cloned()
       {
-        let mut tools = vec![tool_def(), hooks_tool_def()];
+        let mut tools = vec![tool_def(), widget_tool_def(), hooks_tool_def()];
         let roster = relay.roster();
         relay.served(roster.as_ref());
         tools.extend(roster.and_then(|(personas, groups)| (!personas.is_empty()).then(|| ask_tool_def(&personas, &groups))));
@@ -559,13 +576,14 @@ pub fn handle_line(line: &str, version: &str) -> Option<Value> {
       "instructions": INSTRUCTIONS,
     }),
     "ping" => json!({}),
-    "tools/list" => json!({ "tools": [tool_def(), hooks_tool_def()] }),
+    "tools/list" => json!({ "tools": [tool_def(), widget_tool_def(), hooks_tool_def()] }),
     "tools/call" => {
       let name = params.get("name").and_then(Value::as_str).unwrap_or("");
       let empty = Map::new();
       let args = params.get("arguments").and_then(Value::as_object).unwrap_or(&empty);
       match name {
         TOOL_NAME => call_show_image(args),
+        WIDGET_TOOL => call_show_widget(args),
         HOOKS_TOOL => call_workspace_hooks(args),
         _ => return Some(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32602, "message": format!("unknown tool: {name}") } })),
       }
@@ -715,6 +733,24 @@ fn tool_def() -> Value {
   })
 }
 
+fn widget_tool_def() -> Value {
+  json!({
+    "name": WIDGET_TOOL,
+    "title": "Show widget",
+    "description": WIDGET_DESCRIPTION,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Absolute path of the .html file to show." },
+        "title": { "type": "string", "description": "Optional short title naming what the widget shows." },
+      },
+      "required": ["path"],
+    },
+    "annotations": { "readOnlyHint": true, "openWorldHint": false },
+    "_meta": { "anthropic/searchHint": "show interactive html widget ui component slider chart calculator inline generative ui" },
+  })
+}
+
 /// The session tools, offered with the relay env. Read-only (Claude Code runs them concurrently); not `alwaysLoad`, so a
 /// Claude session that never needs them does not carry their definitions: the server instructions name them instead
 fn session_tool_defs() -> Vec<Value> {
@@ -843,6 +879,47 @@ fn check_image(path: &str) -> Result<(), String> {
   Ok(())
 }
 
+/// `.html` / `.htm`: the files `show_widget` takes, stored as `text/html` blobs beside the session's images
+pub fn widget_mime_of(path: &str) -> Option<&'static str> {
+  let tail = path.rsplit(['/', '\\']).next().unwrap_or(path);
+  let ext = tail.rfind('.').map(|dot| tail[dot..].to_ascii_lowercase())?;
+  matches!(ext.as_str(), ".html" | ".htm").then_some("text/html")
+}
+
+/// Validate the widget file; the host reads it into the session once the call completes
+fn call_show_widget(args: &Map<String, Value>) -> Value {
+  let path = args.get("path").and_then(Value::as_str).map(str::trim).unwrap_or("");
+  if path.is_empty() {
+    return tool_error("Pass `path` with the absolute path of an .html file.".into());
+  }
+  if let Err(problem) = check_widget(path) {
+    return tool_error(problem);
+  }
+  let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+  json!({
+    "content": [{ "type": "text", "text": format!("Shown to the user: {name}, as an interactive widget in the conversation. It is not returned to you; no need to describe it again.") }],
+    "isError": false,
+  })
+}
+
+fn check_widget(path: &str) -> Result<(), String> {
+  let p = Path::new(path);
+  if !p.is_absolute() {
+    return Err(format!("{path}: not an absolute path"));
+  }
+  if widget_mime_of(path).is_none() {
+    return Err(format!("{path}: not an .html file"));
+  }
+  let meta = std::fs::metadata(p).map_err(|e| format!("{path}: {e}"))?;
+  if !meta.is_file() {
+    return Err(format!("{path}: not a file"));
+  }
+  if meta.len() > MAX_WIDGET_BYTES {
+    return Err(format!("{path}: larger than {} KB; inline less data or split it into several widgets", MAX_WIDGET_BYTES / 1024));
+  }
+  Ok(())
+}
+
 fn tool_error(text: String) -> Value {
   json!({ "content": [{ "type": "text", "text": text }], "isError": true })
 }
@@ -887,9 +964,45 @@ mod tests {
   }
 
   #[test]
+  fn show_widget_takes_one_existing_html_file_and_teaches_the_sandbox() {
+    let list = call(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }));
+    let def = &list["result"]["tools"][1];
+    assert_eq!(def["name"], WIDGET_TOOL);
+    assert_eq!(def["annotations"]["readOnlyHint"], true);
+    // What the model must know lives in the description, which every CLI hands it: no network, Tailwind, the theme colours
+    let text = def["description"].as_str().unwrap();
+    assert!(text.contains("no network") && text.contains("Tailwind") && text.contains("bg-background"), "{text}");
+    let init = call(json!({ "jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {} }));
+    assert!(init["result"]["instructions"].as_str().unwrap().contains("show_widget"));
+
+    let dir = std::env::temp_dir().join(format!("acpira-mcp-widget-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let page = dir.join("Tuner.HTML");
+    std::fs::write(&page, "<div class=\"p-4\">hi</div>").unwrap();
+    let ok = call(json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": WIDGET_TOOL, "arguments": { "path": page } } }));
+    assert_eq!(ok["result"]["isError"], false);
+    assert!(ok["result"]["content"][0]["text"].as_str().unwrap().contains("Tuner.HTML"));
+    let big = dir.join("big.html");
+    std::fs::write(&big, vec![b'x'; MAX_WIDGET_BYTES as usize + 1]).unwrap();
+    for (path, problem) in [
+      (json!("tuner.html"), "not an absolute path"),
+      (json!(dir.join("notes.txt")), "not an .html file"),
+      (json!(dir.join("missing.html")), "missing.html"),
+      (json!(big), "larger than 512 KB"),
+      (json!(""), "Pass `path`"),
+    ] {
+      let bad = call(json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": { "name": WIDGET_TOOL, "arguments": { "path": path } } }));
+      assert_eq!(bad["result"]["isError"], true);
+      let text = bad["result"]["content"][0]["text"].as_str().unwrap();
+      assert!(text.contains(problem), "{text}");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
   fn workspace_hooks_explains_the_format_and_checks_the_project_file() {
     let list = call(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }));
-    assert_eq!(list["result"]["tools"][1]["name"], HOOKS_TOOL);
+    assert_eq!(list["result"]["tools"][2]["name"], HOOKS_TOOL);
     let init = call(json!({ "jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {} }));
     assert!(init["result"]["instructions"].as_str().unwrap().contains("workspace_hooks"));
 

@@ -621,6 +621,8 @@ export const fr = {
   'verb.kill': 'Arrêt d’une commande en arrière-plan',
   'verb.imagegen': 'Génération d’image',
   'verb.showImage': 'Affichage d’image',
+  'verb.showWidget': 'Affichage de widget',
+  'widget.failed': 'Impossible de charger le widget',
   'verb.searchSessions': 'Recherche de sessions',
   'verb.readSession': 'Lecture de session',
   'tool.sessionTurns': 'tours {range}',

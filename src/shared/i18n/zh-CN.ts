@@ -645,6 +645,8 @@ export const zhCN = {
   // Image generation tools (codex-acp "Image generation", Grok image_gen / image_edit), recognized by name
   'verb.imagegen': '生成图片',
   'verb.showImage': '展示图片',
+  'verb.showWidget': '展示组件',
+  'widget.failed': '组件加载失败',
   'verb.searchSessions': '搜索会话',
   'verb.readSession': '读取会话',
   'tool.sessionTurns': '第 {range} 段对话',
