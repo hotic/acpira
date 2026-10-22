@@ -51,8 +51,9 @@ async fn two_managers_over_one_directory_see_each_others_sessions_and_honor_dele
 async fn a_session_deleted_in_one_manager_closes_its_read_only_copy_in_the_other() {
   let fake = fake_or_skip!();
   let dir = tempfile::tempdir().unwrap();
-  let a = Mgr::new(dir.path(), Opts::fake(&fake));
-  let b = Mgr::new(dir.path(), Opts::fake(&fake));
+  // The record copy, as with an engine off the push bus (the pushed view closes the same way: it lives only with the copy)
+  let a = Mgr::new(dir.path(), Opts::fake(&fake).no_bus());
+  let b = Mgr::new(dir.path(), Opts::fake(&fake).no_bus());
   a.init().await;
   b.init().await;
   a.new_session(None).await;
@@ -96,9 +97,9 @@ async fn a_session_open_in_one_manager_is_read_only_in_the_other_until_taken_ove
   let fake = fake_or_skip!();
   let dir = tempfile::tempdir().unwrap();
   // The two agents share a native session store, as real CLIs do, so B's agent can resume what A's started. A slow turn of
-  // about 7.5 s is still running when B takes over
+  // about 7.5 s is still running when B takes over. Off the push bus, as with an engine from before it: B polls the record
   let native = tempfile::tempdir().unwrap();
-  let opts = || Opts::with_agents(fake.setting(json!({ "env": { "FAKE_SESSION_DIR": native.path(), "FAKE_SLOW_STEP_MS": "150" } })), "fake");
+  let opts = || Opts::with_agents(fake.setting(json!({ "env": { "FAKE_SESSION_DIR": native.path(), "FAKE_SLOW_STEP_MS": "150" } })), "fake").no_bus();
   let a = Mgr::new(dir.path(), opts());
   let b = Mgr::new(dir.path(), opts());
   a.init().await;
@@ -152,6 +153,54 @@ async fn a_session_open_in_one_manager_is_read_only_in_the_other_until_taken_ove
   b.dispose().await;
 }
 
+// The push bus (`bus.rs`, Codex's model): a session one engine runs shows live in another, whose page acts on it without a
+// takeover; the actions run in the owner, which keeps the session. Once the owner lets go, the other engine opens it itself
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_another_engine_owns_streams_here_and_takes_actions_without_a_takeover() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let native = tempfile::tempdir().unwrap();
+  let opts = || Opts::with_agents(fake.setting(json!({ "env": { "FAKE_SESSION_DIR": native.path(), "FAKE_SLOW_STEP_MS": "150" } })), "fake");
+  let a = Mgr::new(dir.path(), opts());
+  let b = Mgr::new(dir.path(), opts());
+  a.init().await;
+  b.init().await;
+  until(|| a.m.bus_connected() && b.m.bus_connected(), 3000).await;
+  a.new_session(None).await;
+  a.handle(json!({ "type": "send", "text": "first" })).await;
+  let id = a.active_id().unwrap();
+  until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
+  a.m.refresh_index().await;
+  b.m.refresh_index().await;
+
+  // B shows A's own view: not read-only, nothing to take over
+  b.m.select_session_for(&b.v, &id).await;
+  until(|| b.active().is_some_and(|s| s["id"] == id.as_str() && s["status"] != "readonly"), 3000).await;
+  let shown = b.active().unwrap();
+  assert_ne!(shown["canTakeOver"], true, "{shown}");
+  assert_eq!(turns_in(&shown), 2);
+
+  // A's slow turn streams into B while it runs, and ends there too
+  let running = a.spawn_handle(json!({ "type": "send", "text": "slow" }));
+  until(|| b.active().is_some_and(|s| s["running"] == true), 5000).await;
+  running.await.unwrap();
+  until(|| b.active().is_some_and(|s| s["running"] == false && turns_in(&s) == 4), 5000).await;
+
+  // B sends: the turn runs in A, both show it, A keeps the session
+  b.handle(json!({ "type": "send", "sessionId": id, "text": "from B" })).await;
+  until(|| a.active().is_some_and(|s| turns_in(&s) == 6), 5000).await;
+  until(|| b.active().is_some_and(|s| turns_in(&s) == 6 && s["running"] == false), 5000).await;
+  assert!(b.toasts().is_empty(), "{:?}", b.toasts());
+  assert_eq!(a.m.leased(), vec![id.clone()]);
+  assert!(b.m.leased().is_empty());
+
+  // A ends: B hears the session is gone and opens it here
+  a.dispose().await;
+  until(|| b.m.leased().contains(&id), 8000).await;
+  until(|| b.active().is_some_and(|s| s["status"] == "ready" && turns_in(&s) == 6), 5000).await;
+  b.dispose().await;
+}
+
 // A window reloaded onto a new engine (the binary was reinstalled) used to find its session read-only behind "Take over":
 // the old engine, with no window left, still held the lease. A session the holder runs nothing on and shows in no window
 // now goes to the engine that opens it, without a takeover (store::session_lease, `<id>.wanted`)
@@ -176,9 +225,9 @@ async fn an_idle_session_no_window_shows_moves_to_the_engine_that_opens_it() {
   b.m.refresh_index().await;
 
   b.m.select_session_for(&b.v, &id).await;
-  until(|| b.active().is_some_and(|s| s["id"] == id.as_str() && s["status"] == "ready"), 8000).await;
+  // Opened in B itself (A's pushed view is ready too, so the lease is what tells them apart)
+  until(|| b.m.leased().contains(&id) && b.active().is_some_and(|s| s["id"] == id.as_str() && s["status"] == "ready"), 8000).await;
   assert_eq!(turns_in(&b.active().unwrap()), 2, "{:?}", b.toasts());
-  assert!(b.m.leased().contains(&id));
   assert!(!a.m.leased().contains(&id));
   assert!(a.logs().iter().any(|l| l.contains("handing it over")), "{:?}", a.logs());
   a.dispose().await;

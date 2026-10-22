@@ -42,6 +42,8 @@ pub struct Opts {
   pub scope: Arc<Mutex<String>>,
   /// A project shell (`ShellEnv.projects`, the desktop app)
   pub projects: bool,
+  /// Off: the manager stays off the engines' push bus, like an engine from before it
+  pub bus: bool,
   pub prefs: Arc<Mutex<AgentPrefs>>,
   pub hidden: HiddenMap,
   pub local_accounts: Option<Arc<LocalAccounts>>,
@@ -60,6 +62,7 @@ impl Opts {
       cwd: Arc::new(Mutex::new("/tmp".into())),
       scope: Arc::new(Mutex::new("all".into())),
       projects: false,
+      bus: true,
       prefs: Arc::new(Mutex::new(AgentPrefs::default())),
       hidden: HiddenMap::default(),
       local_accounts: None,
@@ -75,6 +78,11 @@ impl Opts {
   /// No workspace: the shell's cwd is the home directory and sessions follow their project
   pub fn projects(mut self) -> Opts {
     self.projects = true;
+    self
+  }
+
+  pub fn no_bus(mut self) -> Opts {
+    self.bus = false;
     self
   }
 }
@@ -131,6 +139,7 @@ impl Mgr {
         host_mcp: None,
         // Inside the test's own directory (record scans only look at `<id>.json`), shared by managers on one directory
         lease_root: dir.join("lease-home"),
+        bus: opts.bus,
         attention: Some(Arc::new(move |a| at.lock().unwrap().push(a))),
       },
     );
