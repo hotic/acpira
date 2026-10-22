@@ -37,6 +37,8 @@ use crate::acp::agents::native_sessions::list_native_sessions;
 use crate::acp::agents::probe_controls::{ProbeResult, probe_agent_controls};
 use crate::acp::transport::rpc::BoxFuture;
 use crate::acp::session::errors::error_text;
+use crate::bus::{Bus, BusPeer, ViewFrame, apply_frame};
+use acpira_shared::session_patch::ViewParts;
 use crate::acp::session::{AcpSession, CompactionPolicy, SessionAccountHooks, SessionDeps, StartOutcome};
 use crate::external::chatgpt_events::CHATGPT_ID;
 use crate::external::chatgpt_store::ChatGptBridgeStore;
@@ -211,6 +213,8 @@ pub struct ManagerDeps {
   pub host_mcp: Option<crate::host_mcp::HostMcp>,
   /// ACPIRA_HOME: cross-engine session leases live under its `run/leases` (`store::session_lease`)
   pub lease_root: std::path::PathBuf,
+  /// Join the engines' push bus under `lease_root` (`bus.rs`); off, sessions another engine owns are polled from disk
+  pub bus: bool,
   /// Sessions that need the user or have settled (`watch_attention`); the runtime turns them into sound / system
   /// notifications per the settings, the shell decides whether the user is already looking. None: nobody listens
   pub attention: Option<AttentionFn>,
@@ -221,6 +225,14 @@ struct ViewerState {
   active_id: Option<String>,
   observing: Option<(String, String)>,
   last_subagent_rev: Option<i64>,
+}
+
+/// A mirrored session's view as its owner pushes it: rebuilt from the bus frames, then posted like a live view
+struct Remote {
+  // One line of views per subscription: a page takes the first one whole, then patches
+  epoch: u64,
+  parts: Option<ViewParts>,
+  msg: Option<HostMsg>,
 }
 
 /// One per webview: its own active session over the shared pool and list
@@ -284,6 +296,11 @@ struct State {
   dirty: HashMap<String, bool>,
   // Sessions another engine holds the lease of: read-only copies of their record, refreshed until the lease comes free
   mirrors: HashMap<String, Arc<AcpSession>>,
+  // Mirrored sessions whose owner pushes their view over the bus (`bus.rs`): shown instead of the record copy, and the
+  // pages' actions on them go to the owner
+  remote: HashMap<String, Remote>,
+  // Mirrored sessions to re-read on the next poll whatever the record's stamp (their pushed view just ended)
+  refresh: HashSet<String>,
   // Since when each live session has been unseen with nothing in flight (`release_idle`)
   idle_since: HashMap<String, tokio::time::Instant>,
   // Released sessions whose old agent process is still closing: reopening one waits for it (`release`)
@@ -311,6 +328,11 @@ pub struct SessionManager {
   leases: SessionLeases,
   // Sessions being handed over to another engine right now (a takeover request is being honoured)
   yielding: parking_lot::Mutex<HashSet<String>>,
+  // The other engines on this machine: pushes the views of sessions they show, runs the actions they forward
+  bus: Bus,
+  // Revs of every read-only view this engine shows (record copies and pushed views alike): one count, so a page never
+  // takes a newer copy for an older one when a session moves between the two
+  mirror_rev: std::sync::atomic::AtomicI64,
   // In-app agent installs (`acp/agents/installer.rs`), pushed to every webview as `agentInstalls`
   installs: Arc<crate::acp::agents::installer::Installs>,
   // Set once the first probe pass has run, which may be after `init` returned (it follows the login shell)
@@ -322,6 +344,7 @@ impl SessionManager {
   pub fn new(registry: Arc<AgentRegistry>, deps: ManagerDeps) -> Arc<Self> {
     let mgr = Arc::new_cyclic(|me: &Weak<SessionManager>| {
       let leases = SessionLeases::new(&deps.lease_root, deps.log.clone());
+      let bus = Bus::new(&deps.lease_root, deps.log.clone());
       let reg_me = me.clone();
       let env_me = me.clone();
       let install_me = me.clone();
@@ -370,6 +393,8 @@ impl SessionManager {
           sync_again: false,
           dirty: HashMap::new(),
           mirrors: HashMap::new(),
+          remote: HashMap::new(),
+          refresh: HashSet::new(),
           idle_since: HashMap::new(),
           closing: HashMap::new(),
         }),
@@ -385,6 +410,8 @@ impl SessionManager {
         exports: Default::default(),
         leases,
         yielding: Default::default(),
+        bus,
+        mirror_rev: std::sync::atomic::AtomicI64::new(MIRROR_REV_BASE),
         installs,
         first_probe: tokio::sync::watch::Sender::new(false),
         me: me.clone(),
@@ -394,6 +421,10 @@ impl SessionManager {
     let guard_me = mgr.me.clone();
     mgr.deps.store.set_write_guard(Arc::new(move |id: &str| guard_me.upgrade().is_none_or(|m| !m.leases.held_elsewhere(id))));
     mgr.watch_takeovers();
+    if mgr.deps.bus {
+      let peer: Weak<dyn BusPeer> = mgr.me.clone();
+      mgr.bus.start(peer);
+    }
     if let Some(a) = &mgr.deps.accounts {
       let me = mgr.me.clone();
       a.subscribe(Arc::new(move |accounts| {
@@ -574,7 +605,14 @@ impl SessionManager {
     }
     let mut list = self.sessions();
     list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    let cwds: Vec<String> = list.into_iter().map(|s| s.cwd).filter(|c| !c.is_empty()).collect();
+    // Folders a session merely ran in are not projects: the home directory (where windows without a workspace start)
+    // and folders that are gone
+    let home = crate::store::data_dir::home_dir();
+    let cwds: Vec<String> = list
+      .into_iter()
+      .map(|s| s.cwd)
+      .filter(|c| !c.is_empty() && std::path::Path::new(c) != home && std::path::Path::new(c).is_dir())
+      .collect();
     if cwds.is_empty() {
       return;
     }
@@ -1310,6 +1348,11 @@ impl SessionManager {
   /// The serialized view of a session (live, or a ChatGPT mirror)
   pub fn view_of(&self, id: Option<&str>) -> Option<(RawJson, bool)> {
     let id = id?;
+    if self.live(id).is_none()
+      && let Some(HostMsg::Session { session, running, .. }) = self.remote_msg(id)
+    {
+      return Some((session, running));
+    }
     if let Some(s) = self.live(id).or_else(|| self.mirror_of(id)) {
       return Some(s.view_json());
     }
@@ -1320,6 +1363,11 @@ impl SessionManager {
   /// The session push for one viewer, as `emit_session` would send it
   pub fn session_msg(&self, id: Option<&str>) -> Option<HostMsg> {
     let id = id?;
+    if self.live(id).is_none()
+      && let Some(m) = self.remote_msg(id)
+    {
+      return Some(m);
+    }
     if let Some(s) = self.live(id).or_else(|| self.mirror_of(id)) {
       return Some(s.view_msg());
     }
@@ -1374,6 +1422,15 @@ impl SessionManager {
   }
 
   fn emit_session(&self, s: &AcpSession) {
+    // A mirrored session whose owner pushes its view: that view, not the record copy
+    if self.live(&s.id).is_none()
+      && let Some(m) = self.remote_msg(&s.id)
+    {
+      for v in self.viewers_on(&s.id, None) {
+        v.emit(m.clone());
+      }
+      return;
+    }
     let mut view: Option<HostMsg> = None;
     for v in self.viewers() {
       if v.active_id().as_deref() != Some(s.id.as_str()) {
@@ -1396,6 +1453,57 @@ impl SessionManager {
         }
       }
     }
+    // Shown by another engine too: the same view goes out over the bus
+    if self.bus.watching(&s.id)
+      && self.live(&s.id).is_some_and(|l| std::ptr::eq(&*l, s))
+      && let HostMsg::Session { parts: Some(p), .. } = view.unwrap_or_else(|| s.view_msg())
+    {
+      self.bus.publish(&s.id, &p);
+    }
+  }
+
+  /// The pushed view of a mirrored session, once its owner sent one. Only while the mirror is there: a deletion or a
+  /// reconcile that drops the mirror ends the pushed view with it, before the mirror's poll unsubscribes
+  fn remote_msg(&self, id: &str) -> Option<HostMsg> {
+    let st = self.state.lock();
+    if !st.mirrors.contains_key(id) {
+      return None;
+    }
+    st.remote.get(id).and_then(|r| r.msg.clone())
+  }
+
+  fn next_mirror_rev(&self) -> i64 {
+    self.mirror_rev.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+  }
+
+  /// A mirror is no longer shown or no longer a mirror: its owner stops pushing to this engine
+  fn end_remote(&self, id: &str) {
+    self.state.lock().remote.remove(id);
+    self.bus.unsubscribe(id);
+  }
+
+  /// A page's action on a session another engine owns and pushes: run there
+  async fn forward(&self, id: &str, m: &WebviewMsg) -> Result<()> {
+    let msg = serde_json::to_value(m)?;
+    self.bus.act(id, msg).await.map_err(|e| anyhow!(e))
+  }
+
+  /// Run an action a page of another engine took on a session this one owns, as if from a page showing it here
+  async fn run_forwarded(self: Arc<Self>, session: String, msg: Value) -> Result<(), String> {
+    let m: WebviewMsg = serde_json::from_value(msg).map_err(|e| e.to_string())?;
+    if !is_forwarded(&m) || session_id_of(&m).is_some_and(|id| id != session) {
+      return Err(format!("not an action on {session}"));
+    }
+    if self.live(&session).is_none() {
+      return Err(t("history.unavailable"));
+    }
+    // A page of its own that nobody sees: not in the viewer list, so it neither receives pushes nor keeps the session here
+    let v = Arc::new(Viewer {
+      id: self.viewer_seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+      state: parking_lot::Mutex::new(ViewerState { active_id: Some(session), ..Default::default() }),
+      sink: Default::default(),
+    });
+    self.dispatch(&v, m).await.map_err(|e| error_text(&e))
   }
 
   /// Pages that join later get the list in their init state, so skipping an unchanged list leaves none behind. Built and
@@ -1926,6 +2034,7 @@ impl SessionManager {
   pub fn sync_leases(&self) {
     let wanted: HashSet<String> = self.live_sessions().into_iter().map(|s| s.id.clone()).collect();
     self.leases.sync(&wanted);
+    self.bus.announce(self.leases.held());
   }
 
   /// Watch for other engines asking to take over a session this one has open; ends with the manager
@@ -2039,6 +2148,11 @@ impl SessionManager {
     self.leases.held()
   }
 
+  /// On the engines' push bus right now (tests)
+  pub fn bus_connected(&self) -> bool {
+    self.bus.connected()
+  }
+
   /// Inert deps for a mirror: it never saves (the record belongs to the engine holding the lease), warms or switches
   fn mirror_deps(&self) -> SessionDeps {
     SessionDeps {
@@ -2063,22 +2177,23 @@ impl SessionManager {
   fn start_mirror(self: &Arc<Self>, id: &str, record: SessionRecord, note: String, elsewhere: bool) {
     // One epoch for this copy and every copy the poll below makes: their revs grow, so a viewer is patched between them
     let epoch = crate::acp::session::next_view_epoch();
-    let mirror = AcpSession::mirror(record, self.mirror_deps(), note.clone(), MIRROR_REV_BASE, elsewhere, epoch);
+    let mirror = AcpSession::mirror(record, self.mirror_deps(), note.clone(), self.next_mirror_rev(), elsewhere, epoch);
     let fresh = self.state.lock().mirrors.insert(id.to_owned(), mirror.clone()).is_none();
     self.log(&format!("session {id}: lease not taken, mirroring its record ({note})"));
     self.emit_session(&mirror);
     if !fresh {
       return;
     }
-    // Held by another engine: ask it to hand the session over once nobody there needs it (refreshed on every poll below)
+    // Held by another engine: ask it to hand the session over once nobody there needs it (refreshed on every poll below),
+    // and to push the session's view meanwhile
     if elsewhere {
       self.want_handover(id);
+      self.bus.subscribe(id);
     }
     let me = self.me.clone();
     let id = id.to_owned();
     tokio::spawn(async move {
       let mut seen = None;
-      let mut rev = MIRROR_REV_BASE;
       loop {
         tokio::time::sleep(MIRROR_POLL).await;
         let Some(m) = me.upgrade() else { return };
@@ -2088,6 +2203,7 @@ impl SessionManager {
         // Replaced by the session itself (taken over, deleted): this poll is done
         if m.mirror_of(&id).is_none() {
           m.leases.clear_handover(&id);
+          m.end_remote(&id);
           return;
         }
         let watchers = m.viewers_on(&id, None);
@@ -2095,12 +2211,14 @@ impl SessionManager {
           // Nobody looks at it any more; a later select starts over
           m.state.lock().mirrors.remove(&id);
           m.leases.clear_handover(&id);
+          m.end_remote(&id);
           return;
         }
         // Free and nobody else is about to take it (a takeover in flight frees it for the requester, not for this copy)
         if !m.leases.held_elsewhere(&id) && !m.leases.takeover_requested(&id) {
           m.state.lock().mirrors.remove(&id);
           m.leases.clear_handover(&id);
+          m.end_remote(&id);
           m.log(&format!("session {id}: the other engine let go, opening it here"));
           // The first watcher loads it (fresh from disk); the rest wait on that load inside select_session_for
           for v in watchers {
@@ -2112,15 +2230,15 @@ impl SessionManager {
         if elsewhere {
           m.want_handover(&id);
         }
-        // Re-read only when the other engine saved since the last look
+        // Re-read only when the other engine saved since the last look (or its pushed view just ended)
+        let forced = m.state.lock().refresh.remove(&id);
         let stamp = tokio::fs::metadata(m.record_path(&id)).await.and_then(|md| md.modified()).ok();
-        if stamp.is_none() || stamp == seen {
+        if stamp.is_none() || (stamp == seen && !forced) {
           continue;
         }
         seen = stamp;
         if let Ok(record) = m.deps.store.load_detailed(&id).await {
-          rev += 1;
-          let copy = AcpSession::mirror(record, m.mirror_deps(), note.clone(), rev, elsewhere, epoch);
+          let copy = AcpSession::mirror(record, m.mirror_deps(), note.clone(), m.next_mirror_rev(), elsewhere, epoch);
           let current = {
             let mut st = m.state.lock();
             match st.mirrors.get_mut(&id) {
@@ -2132,8 +2250,10 @@ impl SessionManager {
             }
           };
           if !current {
+            m.end_remote(&id);
             return;
           }
+          // The copy still serves reads (diff sources, exports); the screen keeps the pushed view while there is one
           m.emit_session(&copy);
         }
       }
@@ -2202,6 +2322,14 @@ impl SessionManager {
       && is_execution(&m)
     {
       return Err(anyhow!(t("chatgpt.externalOnly")));
+    }
+    // Shown here read-only while another engine owns it and pushes its view: the action runs there
+    if let Some(tid) = &target_id
+      && is_forwarded(&m)
+      && self.live(tid).is_none()
+      && self.state.lock().remote.get(tid).is_some_and(|r| r.parts.is_some())
+    {
+      return self.forward(tid, &m).await;
     }
     let valid = |id: &str| is_session_id(id);
     match m {
@@ -3213,6 +3341,7 @@ impl SessionManager {
 
   pub async fn dispose(self: &Arc<Self>) {
     self.installs.cancel_all();
+    self.bus.stop();
     {
       let mut st = self.state.lock();
       st.disposed = true;
@@ -3426,6 +3555,107 @@ fn is_execution(m: &WebviewMsg) -> bool {
       | W::StopAsyncTask { .. }
       | W::Goal { .. }
   )
+}
+
+impl BusPeer for SessionManager {
+  fn bus_watch(&self, session: &str, on: bool) {
+    // A new subscriber: the bus sends the next view whole, so push the current one now rather than at the next change
+    if on
+      && let Some(s) = self.live(session)
+      && let HostMsg::Session { parts: Some(p), .. } = s.view_msg()
+    {
+      self.bus.publish(session, &p);
+    }
+  }
+
+  fn bus_view(&self, session: &str, frame: ViewFrame) {
+    let built = {
+      let mut st = self.state.lock();
+      // Only for a session still shown read-only here
+      if !st.mirrors.contains_key(session) || st.live.contains_key(session) {
+        return;
+      }
+      let r = st.remote.entry(session.to_owned()).or_insert_with(|| Remote {
+        epoch: crate::acp::session::next_view_epoch(),
+        parts: None,
+        msg: None,
+      });
+      match apply_frame(r.parts.as_ref().map(|p| &*p.0), &frame) {
+        None => None,
+        Some((turns, last)) => {
+          let rev = self.next_mirror_rev();
+          remote_view(session, &frame.head, rev, r.epoch, turns, last).map(|(parts, msg)| {
+            r.parts = Some(parts);
+            r.msg = Some(msg.clone());
+            msg
+          })
+        }
+      }
+    };
+    match built {
+      Some(msg) => {
+        for v in self.viewers_on(session, None) {
+          v.emit(msg.clone());
+        }
+      }
+      // A step this engine cannot apply: subscribing again makes the owner send the whole view
+      None => {
+        self.log(&format!("session {session}: pushed view out of step, asking for the whole view"));
+        self.bus.subscribe(session);
+      }
+    }
+  }
+
+  fn bus_gone(&self, session: &str) {
+    let mut st = self.state.lock();
+    if st.remote.remove(session).is_some() {
+      // Back to the record copy: re-read it now, its rev counts on from the pushed views
+      st.refresh.insert(session.to_owned());
+    }
+  }
+
+  fn bus_act(&self, session: String, msg: Value) -> BoxFuture<Result<(), String>> {
+    let me = self.me.clone();
+    Box::pin(async move {
+      let Some(m) = me.upgrade() else { return Err("engine closing".into()) };
+      m.run_forwarded(session, msg).await
+    })
+  }
+
+  fn bus_owned(&self) -> Vec<String> {
+    self.leases.held()
+  }
+
+  fn bus_wanted(&self) -> Vec<String> {
+    self.state.lock().mirrors.keys().cloned().collect()
+  }
+}
+
+/// A pushed view as this engine posts it: the owner's head with this engine's rev, the whole view spliced from the turns
+fn remote_view(
+  id: &str,
+  head: &serde_json::value::RawValue,
+  rev: i64,
+  epoch: u64,
+  turns: Vec<Box<serde_json::value::RawValue>>,
+  last: Option<acpira_shared::session_patch::LastTurnParts>,
+) -> Option<(ViewParts, HostMsg)> {
+  let mut v: Value = serde_json::from_str(head.get()).ok()?;
+  v["rev"] = Value::from(rev);
+  let running = v["running"].as_bool().unwrap_or(false);
+  let head = serde_json::value::to_raw_value(&v).ok()?;
+  let whole = crate::bus::splice(&head, "turns", &turns)?;
+  let parts = ViewParts(Arc::new(acpira_shared::session_patch::ViewPartsData { id: id.to_owned(), epoch, rev, head, turns, last }));
+  let msg = HostMsg::Session { session: RawJson(Arc::from(whole)), running, parts: Some(parts.clone()) };
+  Some((parts, msg))
+}
+
+/// What a page may do on a session another engine owns: everything that acts on the session itself, but not what moves
+/// it here (take over, login) or binds it to this engine's accounts
+fn is_forwarded(m: &WebviewMsg) -> bool {
+  use WebviewMsg as W;
+  (is_execution(m) && !matches!(m, W::TakeOverSession { .. } | W::Login { .. } | W::SelectAccount { .. } | W::Reconnect { .. }))
+    || matches!(m, W::CancelSubagent { .. })
 }
 
 fn lower_first(s: &str) -> String {

@@ -185,6 +185,7 @@ impl HostRuntime {
           _ => "workspace".into(),
         }),
         lease_root: root.clone(),
+        bus: true,
         shared_mcp: Some(crate::shared_config::mcp_provider(Arc::new(move || mcp_home.home()))),
         host_mcp,
         // Both switches are off by default (`notifySound` / `notifySystem`); read at each edge, so a change applies to the next one

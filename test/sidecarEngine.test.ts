@@ -134,12 +134,11 @@ describe('persistent engine', { timeout: 60_000 }, () => {
     expect(existsSync(ep.socket)).toBe(false);
   });
 
-  it('mirrors a session another engine is mid-turn on, and takes it over on request', async () => {
+  it('pushes a session another engine is mid-turn on to the other engine, which stops the turn there', async () => {
     const home = tmp('acpira-engine-home-');
     // Two workspaces on one data dir: two engines, the same session list
     const [cwdA, cwdB] = [tmp('acpira-engine-a-'), tmp('acpira-engine-b-')];
-    // A turn of about 7.5 s: long enough for A's debounced save (at most 2 s behind) and B's start to land inside it. Both
-    // agents share a native session store on disk, as real CLIs do, so B's agent can resume what A's started
+    // A turn of about 7.5 s: long enough for A's debounced save (at most 2 s behind) and B's start to land inside it
     const agentEnv = { FAKE_SLOW_STEP_MS: '150', FAKE_SESSION_DIR: tmp('acpira-engine-native-') };
     const a = client(engineEndpoint({ binary: SIDECAR, home, cwd: cwdA }), cwdA, home, [], agentEnv);
     const va = new View('A', { mostRecent: true });
@@ -157,21 +156,15 @@ describe('persistent engine', { timeout: 60_000 }, () => {
     b.attach(vb);
     b.send('B', { type: 'ready' });
     b.start();
-    // Read-only while engine A holds the lease, and the copy follows the record A keeps saving (the running turn is not
-    // marked interrupted the way an ordinary reopen would)
-    const mirrored = await vb.session(s => s.id === id && s.status === 'readonly');
-    expect(mirrored.error).toContain('Another Acpira engine');
-    expect(lastAgent(mirrored)?.stop).toBeUndefined();
-    await vb.session(s => s.status === 'readonly' && textOf(s).includes(' 20 '));
+    // Engine A holds the lease and pushes the session over the engines' bus: B shows it live, with nothing to take over
+    const pushed = await vb.session(s => s.id === id && s.running && s.status !== 'readonly' && textOf(s).includes(' 20 '));
+    expect(pushed.canTakeOver).toBeFalsy();
 
-    // B takes it over: A's turn stops and A keeps a read-only copy it can take back; B has the session live with A's turn
-    expect(mirrored.canTakeOver).toBe(true);
-    b.send('B', { type: 'takeOverSession', sessionId: id });
-    const opened = await vb.session(s => s.id === id && s.status === 'ready');
-    expect(opened.turns).toHaveLength(2);
-    expect(textOf(opened)).toContain(' 20 ');
-    const left = await va.session(s => s.id === id && s.status === 'readonly');
-    expect(left.canTakeOver).toBe(true);
+    // B's stop runs in engine A: the turn ends there, and B shows it ended
+    b.send('B', { type: 'stop', sessionId: id });
+    const stopped = await va.session(s => s.id === id && !s.running && lastAgent(s)?.stop !== undefined);
+    expect(lastAgent(stopped)?.stop).toBe('cancelled');
+    await vb.session(s => s.id === id && !s.running && lastAgent(s)?.stop === 'cancelled');
   });
 
   // Blue-green: an engine whose windows are all gone (the extension was upgraded, the next window talks to a new engine) keeps
@@ -199,12 +192,14 @@ describe('persistent engine', { timeout: 60_000 }, () => {
     fresh.attach(w);
     fresh.send('W', { type: 'ready' });
     fresh.start();
-    const opened = await w.session(s => s.id === id && s.status === 'ready');
+    // Opened here: a live session's revs count from 0 up, every view of another engine's copy (the record read-only, or the
+    // view the old engine pushes) from far below
+    const opened = await w.session(s => s.id === id && s.status === 'ready' && (s.rev ?? 0) >= 0);
     // The old engine was gone by then: it ended after its one-second grace, and only then did the new one start an agent
     expect(alive(oldPid)).toBe(false);
-    // The read-only copy can reach the page inside init, which no longer waits for the agent, or as a later push
+    // The old engine's copy can reach the page inside init, which no longer waits for the agent, or as a later push
     const shown = w.messages.map(m => m.type === 'session' ? m.session : m.type === 'init' ? m.state.active : undefined);
-    expect(shown.some(s => s?.id === id && s.status === 'readonly')).toBe(true);
+    expect(shown.some(s => s?.id === id && (s.rev ?? 0) < 0)).toBe(true);
     expect(opened.turns).toHaveLength(2);
   });
 });

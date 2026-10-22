@@ -78,23 +78,30 @@ pub fn encode_turns(before: &[&Turn], last: Option<&mut Turn>) -> (Vec<Box<RawVa
 /// `head` with its `"blocks":[]` replaced by the encoded blocks. Inside a JSON string every quote is escaped, so the marker
 /// can only be a key; None when it is not unique (a nested object with an empty `blocks` key), and the caller encodes the turn
 fn splice_blocks(head: &RawValue, blocks: &[Box<RawValue>]) -> Option<Box<RawValue>> {
-  const MARK: &str = "\"blocks\":[]";
+  splice_array(head, "blocks", blocks)
+}
+
+/// `head` with its one empty `"<key>":[]` replaced by `items`; None when that key is missing or not unique
+pub fn splice_array(head: &RawValue, key: &str, items: &[Box<RawValue>]) -> Option<Box<RawValue>> {
+  let mark = format!("\"{key}\":[]");
   let h = head.get();
-  let at = h.find(MARK)?;
-  if h[at + MARK.len()..].contains(MARK) {
+  let at = h.find(&mark)?;
+  if h[at + mark.len()..].contains(&mark) {
     return None;
   }
-  let mut out = String::with_capacity(h.len() + blocks.iter().map(|b| b.get().len() + 1).sum::<usize>());
+  let mut out = String::with_capacity(h.len() + items.iter().map(|b| b.get().len() + 1).sum::<usize>());
   out.push_str(&h[..at]);
-  out.push_str("\"blocks\":[");
-  for (i, b) in blocks.iter().enumerate() {
+  out.push('"');
+  out.push_str(key);
+  out.push_str("\":[");
+  for (i, b) in items.iter().enumerate() {
     if i > 0 {
       out.push(',');
     }
     out.push_str(b.get());
   }
   out.push(']');
-  out.push_str(&h[at + MARK.len()..]);
+  out.push_str(&h[at + mark.len()..]);
   RawValue::from_string(out).ok()
 }
 
@@ -112,7 +119,7 @@ struct PatchRef<'a> {
   blocks: Option<Vec<&'a RawValue>>,
 }
 
-fn common_prefix(a: &[Box<RawValue>], b: &[Box<RawValue>]) -> usize {
+pub fn common_prefix(a: &[Box<RawValue>], b: &[Box<RawValue>]) -> usize {
   a.iter().zip(b).take_while(|(x, y)| x.get() == y.get()).count()
 }
 
