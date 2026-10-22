@@ -144,6 +144,8 @@
   --page: 20px;
   /* Scrollbar track width (base.css). A stable-gutter scroller that shares edges with unscrolled siblings pads its right side by --page minus this */
   --scrollbar: 10px;
+  /* The `scroll-thin` track (lists, card text) */
+  --scrollbar-thin: 6px;
   /* The composer dock is one stack: its cards use a smaller, stable rhythm than transcript exchanges. */
   --dock-gap: 8px;
   /* Conversation column in the editor panel */
@@ -488,6 +490,8 @@
   --spacing-chat-column: calc(var(--content-w) + 2 * min(var(--scrollbar), calc(var(--page) - var(--scrollbar))));
   --spacing-gap: var(--gap);
   --spacing-gap-half: calc(var(--gap) / 2);
+  /* A docked list's right padding beside its stable thin gutter: padding and gutter together match the left padding (gap-half) */
+  --spacing-list-gutter: max(0px, calc(var(--gap) / 2 - var(--scrollbar-thin)));
   --spacing-code-output: var(--code-output-max);
   --spacing-code-line: var(--code-output-line-height);
   /* Command card: compact padding around the command and its output, and the space after an open card */

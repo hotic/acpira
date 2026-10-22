@@ -428,13 +428,15 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
           </label>
           {importer}
         </div>
-        {/* The scroller bleeds through the panel's padding like the other layout's, so the thumb rides the panel edge */}
-        <div className="scroll-thin mt-gap-half -mx-gap-half flex min-h-0 flex-col overflow-y-auto px-gap-half pb-1" role="listbox" aria-label={t('session.listAria')}
+        {/* The scroller bleeds through the panel's padding like the other layout's, so the thumb rides the panel edge. Its gutter
+            stays reserved: folding a section must not take the scrollbar away and shift every right-aligned time and action.
+            The right padding gives way to that gutter, so the rows keep equal margins on both sides */}
+        <div className="scroll-thin scroll-stable mt-gap-half -mx-gap-half flex min-h-0 flex-col overflow-y-auto pb-1 pl-gap-half pr-list-gutter" role="listbox" aria-label={t('session.listAria')}
           style={timeCh ? { '--session-time': `${timeCh}ch` } as CSSProperties : undefined}
           onDragOver={onDragOver} onDrop={onDrop}>
           {tree.pinned.length > 0 && (
             <div className="flex flex-col" role="group" aria-label={t('session.group.pinned')}>
-              <SectionLabel open={!folded.includes('pinned')} count={tree.pinned.length} onToggle={() => flip('pinned')}>{t('session.group.pinned')}</SectionLabel>
+              <SectionLabel open={!folded.includes('pinned')} onToggle={() => flip('pinned')}>{t('session.group.pinned')}</SectionLabel>
               {!folded.includes('pinned') && tree.pinned.map(renderItem)}
             </div>
           )}
@@ -477,8 +479,9 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
         </span>
       </div>
       {/* The scroller bleeds through its container's padding (docked panel p-gap-half, popover p-1) and pads it back, so the
-          thumb rides the panel edge, the divider runs edge to edge and the rows stay where they were */}
-      <div className={cn('scroll-thin mt-1 flex min-h-0 flex-col overflow-y-auto border-t border-line pb-1', fill ? '-mx-gap-half px-gap-half' : '-mx-1 px-1')} role="listbox" aria-label={t('session.listAria')}
+          thumb rides the panel edge, the divider runs edge to edge and the rows stay where they were. The gutter stays
+          reserved, so a search that ends the overflow does not shift the times */}
+      <div className={cn('scroll-thin scroll-stable mt-1 flex min-h-0 flex-col overflow-y-auto border-t border-line pb-1', fill ? '-mx-gap-half pl-gap-half pr-list-gutter' : '-mx-1 pl-1 pr-0')} role="listbox" aria-label={t('session.listAria')}
         style={timeCh ? { '--session-time': `${timeCh}ch` } as CSSProperties : undefined}
         onDragOver={onDragOver} onDrop={onDrop}>
         {/* Empty state takes exactly one item row (pt-1 + min-h-row) so the popover keeps its height whether the filter matches 0 or 1 session */}
@@ -515,16 +518,16 @@ function storedFolds(): Section[] {
 }
 
 // A section's quiet label in the nav layout (Pinned, Projects / Sessions), its actions always showing at the end. The label
-// folds the section: its chevron shows on hover and stays while folded, and folded Pinned keeps its count
-function SectionLabel({ children, actions, open, count, onToggle }: { children: ReactNode; actions?: ReactNode; open: boolean; count?: number; onToggle: () => void }) {
+// folds the section and reads the same either way: no count, and the chevron (turned to the state) only on hover or focus,
+// so folding never makes anything appear or vanish. The text starts where the rows' glyphs do, not at the rows' padding
+function SectionLabel({ children, actions, open, onToggle }: { children: ReactNode; actions?: ReactNode; open: boolean; onToggle: () => void }) {
   return (
     <div className="group mt-gap flex min-h-row items-center gap-gap px-2 text-3 text-fg-3">
       <button type="button" aria-expanded={open} onClick={onToggle}
-        className="-ml-1 inline-flex min-w-0 items-center gap-1 rounded-sm px-1 transition-colors hover:text-fg-1 focus-visible:text-fg-1">
+        className="inline-flex min-w-0 items-center gap-1 rounded-sm px-[calc((var(--spacing-lead)-var(--spacing-icon))/2)] transition-colors hover:text-fg-1 focus-visible:text-fg-1">
         <span className="min-w-0 truncate">{children}</span>
-        {!open && count !== undefined && <span className="tabular-nums">{count}</span>}
-        <ChevronRight strokeWidth={1.5} className={cn('size-3 shrink-0 transition-[rotate,opacity] duration-(--dur-open)',
-          open ? 'rotate-90 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100' : 'opacity-100')} />
+        <ChevronRight strokeWidth={1.5} className={cn('size-3 shrink-0 opacity-0 transition-[rotate,opacity] duration-(--dur-open) group-hover:opacity-100 group-focus-within:opacity-100',
+          open && 'rotate-90')} />
       </button>
       {actions && <span className="-mr-1 ml-auto flex shrink-0 items-center gap-0.5">{actions}</span>}
     </div>
@@ -596,9 +599,10 @@ function GroupHeader({ project, sub, icon, name, title, badge, count, open, stat
       {editing && onRename
         ? <RenameInput initial={name} label={t('session.category.rename')} onDone={onRename} />
         : <span className="min-w-0 truncate">{name}</span>}
+      {/* Like a section label's: shown only on hover or focus in either state */}
       {sub && !editing && (
-        <ChevronRight strokeWidth={1.5} className={cn('-ml-1 size-3 shrink-0 transition-[rotate,opacity] duration-(--dur-open)',
-          open ? 'rotate-90 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 group-data-[menu-open]:opacity-100' : 'opacity-100')} />
+        <ChevronRight strokeWidth={1.5} className={cn('-ml-1 size-3 shrink-0 opacity-0 transition-[rotate,opacity] duration-(--dur-open) group-hover:opacity-100 group-focus-visible:opacity-100 group-data-[menu-open]:opacity-100',
+          open && 'rotate-90')} />
       )}
       {badge && !editing && <span className="shrink-0 rounded-sm bg-active px-1 text-3 font-normal text-fg-3">{badge}</span>}
       {!editing && (
