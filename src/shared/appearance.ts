@@ -66,8 +66,8 @@ export function decodeAppearance(code: string, fallback: Appearance): Appearance
   return out as unknown as Appearance;
 }
 
-// Baseline: finalized as 2011102003021001
-export const BASE_APPEARANCE: Appearance = decodeAppearance('2011102003021001', {
+// Baseline: finalized as 2011112003021001
+export const BASE_APPEARANCE: Appearance = decodeAppearance('2011112003021001', {
   density: 'airy', radius: '12', surface: 'tonal', font: 'inter',
   userMessage: 'block', toolLine: 'icon', thought: 'orb', sessions: 'dropdown',
   composer: 'island', beam: 'full', beamColor: 'mono', send: 'metal',

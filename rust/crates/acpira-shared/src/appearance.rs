@@ -22,8 +22,8 @@ pub const AXES: [(&str, &[&str]); 16] = [
   ("autoExpand", &["on", "off"]),
 ];
 
-/// Baseline combo code 2011102003021001 decoded
-const BASE: &str = "2011102003021001";
+/// Baseline combo code 2011112003021001 decoded
+const BASE: &str = "2011112003021001";
 
 pub type Appearance = Map<String, Value>;
 
@@ -54,6 +54,7 @@ mod tests {
   fn baseline() {
     let a = super::base_appearance();
     assert_eq!(a["density"], "airy");
+    assert_eq!(a["toolLine"], "icon");
     assert_eq!(a["thought"], "orb");
     assert_eq!(a["beam"], "full");
     assert_eq!(a["send"], "metal");
