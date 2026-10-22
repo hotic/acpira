@@ -657,6 +657,8 @@ impl AcpSession {
       Again(GateJob),
       Flush,
     }
+    // The gate gave up on a goal the engine continues: that goal is paused before the queue moves
+    let mut pause_goal = false;
     let next = {
       let mut c = self.core.lock();
       let ready = c.status == SessionStatus::Ready && !c.phase.running;
@@ -689,6 +691,7 @@ impl AcpSession {
       } else {
         self.log("hooks: gate gave up");
         push_notice(&mut c, notice(Severity::Error, tp("host.gateGaveUp", &[("rounds", &rounds)]), Some(reasons.join("\n\n"))));
+        pause_goal = Self::end_goal_run(&mut c);
         Next::Flush
       };
       // The follow-up keeps the session reserved until its claim, another run until it decides; otherwise the gate lets
@@ -707,7 +710,15 @@ impl AcpSession {
       Next::Again(job) => {
         tokio::spawn(self.clone().spawned_gate(job));
       }
-      Next::Flush => self.after_prompt(false, TurnStop::EndTurn),
+      Next::Flush => {
+        if pause_goal {
+          self.log("hooks: the gate gave up, pausing the goal");
+          if let Err(e) = self.control_goal(GoalAction::Pause, None).await {
+            self.log(&format!("hooks: pausing the goal failed: {e}"));
+          }
+        }
+        self.after_prompt(false, TurnStop::EndTurn)
+      }
     }
   }
 }
