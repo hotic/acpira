@@ -220,6 +220,14 @@ async fn a_spent_budget_limits_the_goal_and_tells_the_turn_to_wrap_up() {
   // A budget-limited goal is not continued
   prompt(&h, &sid, "/goal continue").await;
   assert_eq!(server.requests().len(), 4);
+  // Nor does a later, unrelated turn count toward it: only the turn that ran out of budget did, while it wrapped up
+  let goal_events = |h: &Harness| events(h, &sid).into_iter().filter(|e| e["type"] == "goal").count();
+  let (logged, published) = (goal_events(&h), snapshots(&h).len());
+  server.push(mock::text("4."));
+  prompt(&h, &sid, "What is 2 + 2?").await;
+  assert_eq!(server.requests().len(), 5);
+  assert_eq!((goal_events(&h), snapshots(&h).len()), (logged, published), "the goal did not move");
+  assert_eq!(snapshots(&h).last().unwrap()["tokensUsed"].as_u64(), Some(330));
 }
 
 #[tokio::test]

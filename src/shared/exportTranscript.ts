@@ -69,7 +69,7 @@ function userTurn(turn: Extract<Turn, { role: 'user' }>, labels: ExportLabels): 
   if (turn.auto) {
     // A goal control has nothing to say beyond its goal row, which the export leaves out too, and a goal's next turn
     // reads as the reply before it carried on
-    if (turn.autoReason === 'goal' || turn.autoReason === 'goalContinue') return '';
+    if (turn.autoReason === 'goal') return '';
     const label = turn.autoReason === 'accountSwitch' ? labels.autoContinue
       : turn.autoReason === 'retry' ? labels.autoRetry
       : turn.autoReason === 'gate' ? labels.autoGate

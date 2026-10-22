@@ -8,7 +8,7 @@ use anyhow::Result;
 
 use acpira_shared::transcript::{GoalAction, GoalStatus};
 
-use crate::acp::session::AcpSession;
+use crate::acp::session::{AcpSession, Core};
 use crate::acp::session::prompt::Origin;
 use crate::acp::transport::process::AgentProcess;
 use crate::acp::vendors::goal;
@@ -64,10 +64,19 @@ impl AcpSession {
     Ok(())
   }
 
+  /// The workspace gate gave up (`hooks.rs`): the goal's run ends there instead of continuing past the gate's round
+  /// limit. true when the goal is the engine's to continue and still active, so the caller pauses it at the agent
+  /// (`_session/goal`) and the dock shows it waiting for the user
+  pub(crate) fn end_goal_run(c: &mut Core) -> bool {
+    c.goal_due = false;
+    c.state.goal.as_ref().is_some_and(|g| g.status == GoalStatus::Active) && c.proc.as_ref().is_some_and(|p| goal::continue_prompt(&p.init).is_some())
+  }
+
   /// An active goal's next turn, for an agent that leaves continuing to the client (`goal::continue_prompt`): its
-  /// continue prompt goes out hidden (`AutoReason::GoalContinue`) once the turn before ended with the goal still active
+  /// continue prompt goes out hidden (`UserTurn::goal_continue`) once the turn before ended with the goal still active
   /// (`Core::goal_due`) and nothing of the user's waits (`flush_queue`). The agent's rules end the run (met, blocked,
-  /// budget, its own pause); a stop, a failure or the dock's pause ends it here. true when it went out
+  /// budget, its own pause); a stop, a failure, the workspace gate giving up or the dock's pause ends it here. true when
+  /// it went out
   pub(crate) fn goal_wake(self: &Arc<Self>) -> bool {
     let text = {
       let mut c = self.core.lock();

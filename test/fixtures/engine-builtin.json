@@ -229,7 +229,8 @@
      }
     },
     "auto": true,
-    "autoReason": "goalContinue"
+    "autoReason": "goal",
+    "goalContinue": true
    },
    {
     "role": "agent",

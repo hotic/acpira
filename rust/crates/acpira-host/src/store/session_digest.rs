@@ -138,13 +138,18 @@ fn auto_label(reason: Option<AutoReason>) -> &'static str {
     Some(AutoReason::Retry) => "automatic: retry",
     Some(AutoReason::Gate) => "automatic: workspace gate findings",
     Some(AutoReason::Goal) => "automatic: goal control",
-    Some(AutoReason::GoalContinue) => "automatic: the goal's next turn",
     Some(AutoReason::Subagents) => "automatic: summoned agents reported back",
   }
 }
 
 fn user_label(u: &UserTurn) -> String {
-  if u.auto == Some(true) { format!("User ({})", auto_label(u.auto_reason)) } else { "User".into() }
+  if u.is_goal_continue() {
+    "User (automatic: the goal's next turn)".into()
+  } else if u.auto == Some(true) {
+    format!("User ({})", auto_label(u.auto_reason))
+  } else {
+    "User".into()
+  }
 }
 
 fn status_word(s: ToolStatus) -> &'static str {

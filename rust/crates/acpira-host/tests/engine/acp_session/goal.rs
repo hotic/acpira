@@ -176,7 +176,7 @@ async fn a_goal_the_agent_leaves_to_the_client_is_continued_in_hidden_turns_unti
   let vw = view(&s);
   expect_match(&vw["turns"][0], json!({ "role": "user", "text": "/goal port the parser", "auto": true, "autoReason": "goal" }));
   for (i, n) in [(2, 1), (4, 2)] {
-    expect_match(&vw["turns"][i], json!({ "role": "user", "text": "/goal continue", "auto": true, "autoReason": "goalContinue" }));
+    expect_match(&vw["turns"][i], json!({ "role": "user", "text": "/goal continue", "auto": true, "autoReason": "goal", "goalContinue": true }));
     assert!(vw["turns"][i + 1]["blocks"].to_string().contains(&format!("continued {n}")), "{}", vw["turns"][i + 1]);
   }
   assert_eq!(turns_in(&vw), 6);
@@ -201,7 +201,7 @@ async fn the_queue_goes_before_the_goals_next_turn_and_a_stop_ends_the_run() {
   until(|| goal_log(&dir) == "continue\ncontinue\n" && s.is_running(), 5000).await;
   let vw = view(&s);
   expect_match(&vw["turns"][4], json!({ "role": "user", "text": "hi" }));
-  expect_match(&vw["turns"][6], json!({ "role": "user", "text": "/goal continue", "autoReason": "goalContinue" }));
+  expect_match(&vw["turns"][6], json!({ "role": "user", "text": "/goal continue", "autoReason": "goal", "goalContinue": true }));
   // The stop pauses the goal, and the host sends nothing after it
   s.cancel().await;
   until(|| !s.is_running() && view(&s)["goal"]["status"] == "paused", 5000).await;

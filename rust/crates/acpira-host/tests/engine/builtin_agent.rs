@@ -488,7 +488,7 @@ async fn a_goal_set_from_the_dock_is_continued_until_the_model_marks_it_complete
   let turns = vw["turns"].as_array().unwrap();
   assert_eq!(turns.len(), 4, "{}", vw["turns"]);
   expect_match(&turns[0], json!({ "role": "user", "text": "/goal make a.txt say beta", "auto": true, "autoReason": "goal" }));
-  expect_match(&turns[2], json!({ "role": "user", "text": "/goal continue", "auto": true, "autoReason": "goalContinue" }));
+  expect_match(&turns[2], json!({ "role": "user", "text": "/goal continue", "auto": true, "autoReason": "goal", "goalContinue": true }));
   let blocks = agent_blocks(&vw);
   let goals: Vec<Value> = blocks.iter().filter(|b| b["type"] == "goal").map(|b| b["event"].clone()).collect();
   assert_eq!(goals, [json!("set"), json!("complete")]);

@@ -421,11 +421,11 @@ impl AcpSession {
         auto_reason: Some(match origin {
           Origin::Retry => AutoReason::Retry,
           Origin::Gate => AutoReason::Gate,
-          Origin::Goal => AutoReason::Goal,
-          Origin::GoalContinue => AutoReason::GoalContinue,
+          Origin::Goal | Origin::GoalContinue => AutoReason::Goal,
           Origin::Subagents => AutoReason::Subagents,
           _ => AutoReason::AccountSwitch,
         }),
+        goal_continue: origin == Origin::GoalContinue,
         ..Default::default()
       },
       Origin::User => UserTurn {

@@ -90,6 +90,8 @@ pub struct SessionState {
   pub goal_note: Option<String>,
   /// The goal's counters moved since the log last recorded it (`goal::change`)
   pub goal_unsaved: bool,
+  /// The goal ran out of budget in the running turn, which still counts toward it while it wraps up (`goal::account`)
+  pub goal_wrapping: bool,
 }
 
 pub struct Session {

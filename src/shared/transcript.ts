@@ -465,15 +465,18 @@ export interface UserTurn {
   auto?: boolean;
   // Why an automatic turn was sent; absent on an automatic turn means the over-threshold /compact
   autoReason?: AutoReason;
+  // With autoReason `goal`: the goal's next turn, which the engine sent because the goal was still active when the turn
+  // before ended (the built-in agent leaves continuing to the client); it reads as the reply before it carried on. A flag
+  // rather than an AutoReason value, since engines released before it fail the whole record on an unknown value
+  goalContinue?: true;
 }
 
 // `accountSwitch`: the previous turn ran out of account quota and the session moved to another account
 // `retry`: the previous turn failed after doing part of the work; Retry asked the agent to carry on instead of resending the message
 // `gate`: the workspace gate (`.agents/hooks.json`) blocked the previous turn and sent its findings back to the agent
 // `goal`: a goal control from the dock (set as goal, resume, clear) went out as its `/goal …` command; the goal row stands for it
-// `goalContinue`: the goal was still active when the turn ended and the agent leaves continuing to the client (the built-in
-// agent): its next goal turn, which reads as the reply before it carried on
-export type AutoReason = 'compact' | 'accountSwitch' | 'retry' | 'gate' | 'goal' | 'goalContinue' | 'subagents';
+// (with `goalContinue`, the goal's next turn)
+export type AutoReason = 'compact' | 'accountSwitch' | 'retry' | 'gate' | 'goal' | 'subagents';
 
 export interface TurnSettings {
   modeId?: string;

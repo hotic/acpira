@@ -360,6 +360,26 @@ async fn the_gate_gives_up_after_its_rounds_and_says_so() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_goal_the_engine_continues_stops_and_is_paused_when_the_gate_gives_up() {
+  let fake = fake_or_skip!();
+  if !git_or_skip() {
+    return;
+  }
+  let p = Project::new(json!({ "afterTurn": { "run": "always.cjs", "rounds": 1 } }));
+  let log = p.root.join(".agents/goal.log");
+  let env = json!({ "FAKE_GOAL": "acpira", "FAKE_GOAL_ROUNDS": "10", "FAKE_GOAL_LOG": log });
+  let h = Harness::new(&fake, json!({ "env": env }));
+  let s = started(&h, &p.cwd()).await;
+  prompt(&s, "/goal port it").await;
+  until(|| count(&h, "hooks: gate gave up") == 1, 20_000).await;
+  until(|| !s.is_running() && view(&s)["goal"]["status"] == "paused", 5000).await;
+  tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+  // The goal turn and the gate's one follow-up, then nothing: no continuation went past the gate's round limit
+  assert_eq!(std::fs::read_to_string(&log).unwrap_or_default(), "pause\n");
+  assert_eq!((turns_in(&view(&s)), count(&h, "hooks: gate gave up")), (4, 1));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_prompt_sent_while_the_gate_decides_waits_behind_its_follow_up() {
   let fake = fake_or_skip!();
   if !git_or_skip() {

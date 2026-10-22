@@ -986,6 +986,19 @@ pub struct UserTurn {
   /// Why an automatic turn was sent; absent on an automatic turn means the over-threshold /compact
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub auto_reason: Option<AutoReason>,
+  /// With `AutoReason::Goal`: the goal's next turn, which the engine sent because the goal was still active when the turn
+  /// before ended and the agent leaves continuing to the client (the built-in agent's `acpira/continue`); it reads as
+  /// the reply before it carried on. A flag rather than an `AutoReason` value: `~/.acpira` is shared with engines released
+  /// before it, which fail the whole record on an unknown value but skip an unknown field (and read a goal control)
+  #[serde(default, skip_serializing_if = "is_false")]
+  pub goal_continue: bool,
+}
+
+impl UserTurn {
+  /// An active goal's next turn (`goal_continue`)
+  pub fn is_goal_continue(&self) -> bool {
+    self.auto == Some(true) && self.auto_reason == Some(AutoReason::Goal) && self.goal_continue
+  }
 }
 
 /// What made Acpira send an automatic user turn
@@ -1000,11 +1013,9 @@ pub enum AutoReason {
   Retry,
   /// The workspace gate (`.agents/hooks.json`) blocked the previous turn: its findings go back to the agent
   Gate,
-  /// A goal control from the dock went out as its `/goal …` command; the goal row stands for it
+  /// A goal control from the dock went out as its `/goal …` command; the goal row stands for it. Also the goal's next
+  /// turn, with `UserTurn::goal_continue`
   Goal,
-  /// The agent's goal was still active when its turn ended and the agent leaves continuing to the client (the built-in
-  /// agent's `acpira/continue`): its next goal turn, which reads as the reply before it carried on
-  GoalContinue,
   /// Summoned agents the root sent off without waiting finished: their replies go to it in one message
   Subagents,
 }

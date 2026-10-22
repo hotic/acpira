@@ -62,7 +62,8 @@ pub enum Status {
   Active,
   Paused,
   Blocked,
-  /// The token budget is spent: the turn running then wraps up, and no other turn continues the goal
+  /// The token budget is spent: the turn running then wraps up (and still counts, `SessionState::goal_wrapping`), and no
+  /// other turn continues the goal or counts toward it
   BudgetLimited,
   Complete,
 }
@@ -77,11 +78,6 @@ impl Status {
       Status::BudgetLimited => "budgetLimited",
       Status::Complete => "complete",
     }
-  }
-
-  /// Time and tokens still count toward the goal: while it is active, and in the turn that wraps up after the budget
-  fn counts(self) -> bool {
-    matches!(self, Status::Active | Status::BudgetLimited)
   }
 }
 
@@ -609,12 +605,18 @@ pub fn revive(goal: &mut Option<Goal>) -> bool {
   }
 }
 
+/// Time and tokens count toward the goal: while it is active, and in the turn that ran out of budget until it ends
+fn counting(st: &SessionState) -> bool {
+  st.goal.as_ref().is_some_and(|g| g.status == Status::Active || (g.status == Status::BudgetLimited && st.goal_wrapping))
+}
+
 /// Count the wall clock since the last tick toward a goal that counts, while a turn runs (`SessionState::goal_clock`)
 fn tick(st: &mut SessionState) {
   let Some(at) = st.goal_clock else { return };
   let now = Instant::now();
   st.goal_clock = Some(now);
-  if let Some(g) = st.goal.as_mut().filter(|g| g.status.counts()) {
+  let counts = counting(st);
+  if let Some(g) = st.goal.as_mut().filter(|_| counts) {
     g.time_used_ms += now.duration_since(at).as_millis() as u64;
   }
 }
@@ -623,12 +625,13 @@ fn tick(st: &mut SessionState) {
 pub fn start_clock(st: &mut SessionState) {
   st.goal_clock = Some(Instant::now());
   st.goal_note = None;
+  st.goal_wrapping = false;
 }
 
 /// After a model call: its tokens toward the goal, the time so far, and the budget check. An active goal that reached its
 /// budget turns budget-limited, and the turn's next call is told to wrap up (`take_note`)
 pub fn account(server: &Server, session: &Session, usage: Option<&Usage>) {
-  if !session.state.lock().goal.as_ref().is_some_and(|g| g.status.counts()) {
+  if !counting(&session.state.lock()) {
     return;
   }
   change(server, session, false, |st| {
@@ -641,6 +644,7 @@ pub fn account(server: &Server, session: &Session, usage: Option<&Usage>) {
       g.status = Status::BudgetLimited;
       let note = budget_note(g);
       st.goal_note = Some(note);
+      st.goal_wrapping = true;
     }
   });
 }
@@ -674,6 +678,7 @@ pub fn end_turn(server: &Server, session: &Session, kind: Option<Kind>, outcome:
     tick(st);
     st.goal_clock = None;
     st.goal_note = None;
+    st.goal_wrapping = false;
     let agent = st.mode == modes::AGENT;
     let Some(g) = st.goal.as_mut() else { return };
     if worked > 0 {
@@ -703,6 +708,7 @@ pub fn stop_clock(server: &Server, session: &Session) {
     tick(st);
     st.goal_clock = None;
     st.goal_note = None;
+    st.goal_wrapping = false;
   });
 }
 
