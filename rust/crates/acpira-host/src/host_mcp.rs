@@ -300,10 +300,33 @@ struct Relay {
 #[derive(Default)]
 struct Watch {
   started: std::sync::atomic::AtomicBool,
+  /// One lock for both, so a listing between a poll's check and its notification cannot be told of again
+  state: parking_lot::Mutex<WatchState>,
+}
+
+#[derive(Default)]
+struct WatchState {
   /// The roster's fingerprint at the client's latest `tools/list` (None before the first)
-  served: parking_lot::Mutex<Option<String>>,
+  served: Option<String>,
   /// The fingerprint a `list_changed` went out for since then, so a client that never lists again is told once
-  notified: parking_lot::Mutex<Option<String>>,
+  notified: Option<String>,
+}
+
+impl WatchState {
+  /// One poll's roster fingerprint: true when the client should be told its list changed
+  fn poll(&mut self, print: String) -> bool {
+    let stale = self.served.as_ref().is_some_and(|served| *served != print);
+    if !stale {
+      // Back to what the client holds: a later change away from it is news again (A → B → A → B)
+      self.notified = None;
+      return false;
+    }
+    if self.notified.as_deref() == Some(print.as_str()) {
+      return false;
+    }
+    self.notified = Some(print);
+    true
+  }
 }
 
 /// How often the server compares the roster with what it listed: one loopback request and one small file read
@@ -422,8 +445,7 @@ impl Relay {
   /// Note what a `tools/list` answer offered (an unreachable hub offered no ask_agent, which counts as an empty roster)
   fn served(&self, roster: Option<&(Vec<acpira_shared::subagents::SubagentPersona>, Vec<acpira_shared::subagents::SubagentGroup>)>) {
     let print = roster.map(|(p, g)| roster_fingerprint(p, g)).unwrap_or_else(|| roster_fingerprint(&[], &[]));
-    *self.watch.served.lock() = Some(print);
-    *self.watch.notified.lock() = None;
+    *self.watch.state.lock() = WatchState { served: Some(print), notified: None };
   }
 
   /// Poll the roster for the rest of the process and send `notifications/tools/list_changed` when it no longer matches
@@ -448,13 +470,9 @@ impl Relay {
         };
         failures = 0;
         let print = roster_fingerprint(&personas, &groups);
-        let w = &relay.watch;
-        let stale = w.served.lock().as_ref().is_some_and(|served| *served != print);
-        if !stale || w.notified.lock().as_deref() == Some(print.as_str()) {
-          continue;
-        }
-        *w.notified.lock() = Some(print);
-        if !send(&json!({ "jsonrpc": "2.0", "method": "notifications/tools/list_changed" })) {
+        // A listing already in flight may still be told once more; that costs the client one identical tools/list
+        let notify = relay.watch.state.lock().poll(print);
+        if notify && !send(&json!({ "jsonrpc": "2.0", "method": "notifications/tools/list_changed" })) {
           return;
         }
       }
@@ -934,6 +952,20 @@ mod tests {
     }
     assert_eq!(defs[1]["inputSchema"]["required"], json!(["session"]));
     assert!(SESSIONS_INSTRUCTIONS.contains("acpira://session/<id>") && SESSIONS_INSTRUCTIONS.contains("read_session"));
+  }
+
+  #[test]
+  fn a_roster_change_is_told_once_until_listed_and_again_after_a_change_back_and_forth() {
+    let mut st = WatchState::default();
+    // Nothing listed yet: nothing to tell
+    assert!(!st.poll("a".into()));
+    st = WatchState { served: Some("a".into()), notified: None };
+    assert!(!st.poll("a".into()));
+    assert!(st.poll("b".into()));
+    assert!(!st.poll("b".into()), "told twice of one change");
+    // Changed back before the client listed again, then once more: the second change is news
+    assert!(!st.poll("a".into()));
+    assert!(st.poll("b".into()));
   }
 
   #[test]
