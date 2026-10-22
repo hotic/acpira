@@ -76,6 +76,8 @@ pub enum Action {
   /// The folded history of chunk compaction (`history.rs`)
   HistoryGrep { pattern: String, chunk: Option<String>, case_sensitive: bool, limit: usize },
   HistoryList { chunk: String, offset: usize, limit: usize },
+  /// A goal tool's call (`goal.rs`); the turn runs it itself, without a row or a permission
+  Goal(crate::goal::Call),
 }
 
 /// How a call reads on the tool card and in the permission request
@@ -183,6 +185,7 @@ fn spec(name: &str) -> Option<ToolSpec> {
     QUESTION => Some(question::spec()),
     HISTORY_GREP => Some(history::grep_spec()),
     HISTORY_LIST => Some(history::list_spec()),
+    crate::goal::GET | crate::goal::CREATE | crate::goal::UPDATE => crate::goal::spec(name),
     _ => None,
   }
 }
@@ -206,6 +209,7 @@ pub fn prepare(name: &str, args: &Value, cwd: &Path) -> Result<Action, String> {
     QUESTION => question::prepare(args),
     HISTORY_GREP => history::prepare_grep(args),
     HISTORY_LIST => history::prepare_list(args),
+    crate::goal::GET | crate::goal::CREATE | crate::goal::UPDATE => crate::goal::prepare(name, args),
     other => Err(format!("Unknown tool \"{other}\". Available tools: {}.", names::ALL.join(", "))),
   }
 }
@@ -215,7 +219,13 @@ impl Action {
   pub fn read_only(&self) -> bool {
     !matches!(
       self,
-      Action::Write { .. } | Action::Bash { .. } | Action::Job { .. } | Action::ExitPlan { .. } | Action::Question { .. } | Action::Mcp { read_only: false, .. }
+      Action::Write { .. }
+        | Action::Bash { .. }
+        | Action::Job { .. }
+        | Action::ExitPlan { .. }
+        | Action::Question { .. }
+        | Action::Mcp { read_only: false, .. }
+        | Action::Goal(_)
     )
   }
 
@@ -241,6 +251,8 @@ impl Action {
       // The session's own log, allowed by default
       Action::HistoryGrep { pattern, .. } => (perm::HISTORY, pattern.clone()),
       Action::HistoryList { chunk, .. } => (perm::HISTORY, chunk.clone()),
+      // Never evaluated: the goal is the session's own
+      Action::Goal(_) => ("goal", "*".to_owned()),
     }
   }
 
@@ -328,6 +340,8 @@ impl Action {
         Presentation { title, kind: "search", locations: vec![], content: vec![] }
       }
       Action::HistoryList { chunk, offset, limit } => Presentation { title: format!("Read history {chunk} lines {offset}..{}", offset + limit), kind: "read", locations: vec![], content: vec![] },
+      // Shown only on a row the stream opened for a misnamed call; a goal call has none of its own
+      Action::Goal(_) => Presentation { title: "Goal".to_owned(), kind: "other", locations: vec![], content: vec![] },
     }
   }
 

@@ -67,8 +67,9 @@ export function exportMarkdown(input: ExportInput, labels: ExportLabels = EXPORT
 
 function userTurn(turn: Extract<Turn, { role: 'user' }>, labels: ExportLabels): string {
   if (turn.auto) {
-    // A goal control has nothing to say beyond its goal row, which the export leaves out too
-    if (turn.autoReason === 'goal') return '';
+    // A goal control has nothing to say beyond its goal row, which the export leaves out too, and a goal's next turn
+    // reads as the reply before it carried on
+    if (turn.autoReason === 'goal' || turn.autoReason === 'goalContinue') return '';
     const label = turn.autoReason === 'accountSwitch' ? labels.autoContinue
       : turn.autoReason === 'retry' ? labels.autoRetry
       : turn.autoReason === 'gate' ? labels.autoGate

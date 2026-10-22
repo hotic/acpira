@@ -22,6 +22,7 @@ use acpira_shared::providers::{Provider, ProviderModel, Sampling, Thinking, mode
 
 use crate::acp::{Server, Session, SessionState};
 use crate::compact::{self, Policy, Reason};
+use crate::goal;
 use crate::llm::{self, Endpoint, Event, Item, LlmError, Part, Request, StopReason, ToolCall, ToolSpec, Usage};
 use crate::{modes, prompt};
 use crate::permission::{self, Decision, Guard, Rule};
@@ -65,21 +66,31 @@ struct Stats {
   pick: Option<String>,
   /// (variant, version, digest) of the last call's system prompt
   prompt: Option<(String, String, String)>,
+  /// Tool calls run, the goal's own left out (`goal::end_turn`)
+  tools: u64,
+  /// The turn ended waiting for the user: an action rejected, the questions closed, the plan not approved
+  held: bool,
 }
 
 pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<Value, RpcError> {
   let sid = params.get("sessionId").and_then(Value::as_str).ok_or_else(|| RpcError::new(-32602, "sessionId is required"))?;
   let session = server.session(sid)?;
   let prompt = params.get("prompt").unwrap_or(&Value::Null);
-  let compacting = skills::is_compact(&prompt_text(prompt));
+  let text = prompt_text(prompt);
+  let compacting = skills::is_compact(&text);
+  // A `/goal …` command (`goal.rs`): set, resume and continue run a goal turn, the others are answered at once
+  let command = goal::command(&text);
+  let instant = matches!(command, Some(goal::Command::Show | goal::Command::Pause | goal::Command::Clear));
   let first = {
     let mut st = session.state.lock();
     if st.turn.is_some() {
       return Err(RpcError::new(-32603, "A turn is already running in this session"));
     }
     st.turn = Some(cancel.clone());
-    // Messages may be steered in from now on, except into a /compact: it calls no model they could reach
-    st.steerable = !compacting;
+    // Messages may be steered in from now on, except into a turn that calls no model they could reach (a /compact, a
+    // goal command answered at once)
+    st.steerable = !compacting && !instant;
+    goal::start_clock(&mut st);
     // A turn the client named can be rewound to (`_session/rewind`): the mark goes before anything the turn writes, with
     // what the model had been told so far, which the turn may change in its user message
     if let Some(turn) = params.pointer("/_meta/acpira~1turn").and_then(Value::as_str).filter(|t| !t.is_empty()) {
@@ -89,14 +100,39 @@ pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<V
     }
     !st.titled && !st.items.iter().any(|i| matches!(i, Item::User(_)))
   };
-  // The first prompt also names the session, beside the turn and outside its cancel (a /compact names nothing)
-  if first && !compacting && crate::title::spawn(&server, &session, prompt) {
-    session.state.lock().titled = true;
+  let (answer, kind) = match command.clone().map(|c| goal::begin(&server, &session, c)) {
+    Some(goal::Begin::Answer(a)) => (Some(a), None),
+    Some(goal::Begin::Turn(k)) => (None, Some(k)),
+    None => (None, None),
+  };
+  if answer.is_some() {
+    // A continue that found nothing to continue calls no model either
+    session.state.lock().steerable = false;
+  }
+  // The first prompt also names the session, beside the turn and outside its cancel: a goal set by its objective; a
+  // /compact and the other goal commands name nothing
+  if first && !compacting {
+    let source = match (&command, kind) {
+      (None, _) => Some(prompt.clone()),
+      (Some(goal::Command::Set(objective)), Some(goal::Kind::Set)) => Some(json!([{ "type": "text", "text": objective }])),
+      _ => None,
+    };
+    if let Some(source) = source
+      && crate::title::spawn(&server, &session, &source)
+    {
+      session.state.lock().titled = true;
+    }
   }
   let stats = Arc::new(parking_lot::Mutex::new(Stats::default()));
-  let result = tokio::select! {
-    r = body(&server, &session, &params, &stats) => r,
-    _ = cancel.cancelled() => Ok(Stop::Cancelled),
+  let result = match &answer {
+    Some(reply) => {
+      answer_goal_command(&server, &session, prompt, reply, command == Some(goal::Command::Continue));
+      Ok(Stop::EndTurn)
+    }
+    None => tokio::select! {
+      r = body(&server, &session, &params, &stats, kind) => r,
+      _ = cancel.cancelled() => Ok(Stop::Cancelled),
+    },
   };
   // No more steering. A message no call carried (cancelled, failed, stopped at a limit) stays in the history behind
   // what the turn left, so the next turn's model gets what the user sent and saw land in this turn
@@ -113,6 +149,23 @@ pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<V
     for item in &st.items[before..] {
       session.store.item(item);
     }
+  }
+  // The goal's side of the end: a turn that ran the model may leave it paused or blocked (`goal::end_turn`), before the
+  // response, so the client decides on continuing with the goal's new status
+  if answer.is_none() && !compacting {
+    let (worked, held) = {
+      let s = stats.lock();
+      (s.tools, s.held)
+    };
+    let outcome = match &result {
+      Ok(Stop::Cancelled) => goal::Outcome::Cancelled,
+      Ok(Stop::Refusal) | Err(_) => goal::Outcome::Failed,
+      Ok(_) if held => goal::Outcome::Held,
+      Ok(_) => goal::Outcome::Ended,
+    };
+    goal::end_turn(&server, &session, kind, outcome, worked);
+  } else {
+    goal::stop_clock(&server, &session);
   }
   // Old tool output is cleared between turns, as OpenCode does, once enough of it has piled up and a compaction is near
   let pick = stats.lock().pick.clone();
@@ -135,6 +188,19 @@ pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<V
     }
   }
   Ok(response)
+}
+
+/// A goal command answered at once: the prompt and the answer go into the replay, nothing into the history. A
+/// continuation is the client's, not the user's, so the replay leaves its prompt out
+fn answer_goal_command(server: &Server, session: &Session, prompt: &Value, reply: &str, continuation: bool) {
+  if !continuation {
+    for block in prompt.as_array().into_iter().flatten() {
+      session.store.record_update(&json!({ "sessionUpdate": "user_message_chunk", "content": block }));
+    }
+  }
+  if !reply.is_empty() {
+    server.update(&session.id, json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": reply } }));
+  }
 }
 
 /// The share of the compaction threshold (tenths) the last call must reach before old tool output is pruned
@@ -449,7 +515,7 @@ decisions yourself; check its diff afterwards, and when it falls short say so in
   }
 }
 
-async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stats: &Arc<parking_lot::Mutex<Stats>>) -> Result<Stop, String> {
+async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stats: &Arc<parking_lot::Mutex<Stats>>, kind: Option<goal::Kind>) -> Result<Stop, String> {
   // The MCP servers still starting are waited for here, so the tool set is complete from the first request on
   let mut offer = session.mcp.offer(&tools::names::ALL).await;
   // A sidekick picked where acpira offered no ask_agent at all (no persona when its tools were listed) has no tool a
@@ -473,9 +539,20 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     }
     return Ok(Stop::EndTurn);
   }
-  let mut parts = prompt_parts(prompt, s.model.takes_images());
-  // A `/name` anywhere in the text puts the skill's instructions behind the message
-  let expansion = skills::expansion(&skills::mentioned(&text, &s.skills));
+  // A goal turn's message opens with the goal's note (`goal::turn_parts`); the goal may have been cleared meanwhile
+  let goal_now = session.state.lock().goal.clone();
+  let (mut parts, words) = match (kind, &goal_now) {
+    (None, _) => (prompt_parts(prompt, s.model.takes_images()), text.as_str()),
+    (Some(kind), Some(g)) => {
+      let note = goal::note(kind, g, &goal::objective_file(server, session));
+      let words = if kind == goal::Kind::Set { g.objective.as_str() } else { "" };
+      (goal::turn_parts(kind, note, Some(&g.objective), prompt, s.model.takes_images()), words)
+    }
+    (Some(_), None) => return Ok(Stop::EndTurn),
+  };
+  // A `/name` anywhere in the user's words puts the skill's instructions behind the message (a goal's objective, not
+  // the `/goal` in front of it)
+  let expansion = skills::expansion(&skills::mentioned(words, &s.skills));
   if !expansion.is_empty() {
     match parts.last_mut() {
       Some(Part::Text(t)) => t.push_str(&expansion),
@@ -523,9 +600,12 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     session.store.item(&item);
     st.items.push(item);
   }
-  // The replay shows the prompt as the user sent it, without the mode note
-  for block in params.get("prompt").and_then(Value::as_array).into_iter().flatten() {
-    session.store.record_update(&json!({ "sessionUpdate": "user_message_chunk", "content": block }));
+  // The replay shows the prompt as the user sent it, without the mode note; a continuation is the client's, not the
+  // user's, and stays out
+  if kind != Some(goal::Kind::Continue) {
+    for block in params.get("prompt").and_then(Value::as_array).into_iter().flatten() {
+      session.store.record_update(&json!({ "sessionUpdate": "user_message_chunk", "content": block }));
+    }
   }
   let mut corrections = 0u32;
   let mut step = 0u32;
@@ -538,6 +618,8 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     // first call carries the prompt alone, as Codex samples a turn's own input first
     if step > 1 {
       crate::steer::take(session, s.model.takes_images(), &s.skills);
+      // The goal's budget ran out in this turn: the model is told to wrap up (`goal::account`)
+      goal::take_note(session);
     }
     {
       let mut st = stats.lock();
@@ -594,8 +676,11 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
             server.update(&session.id, json!({ "sessionUpdate": "agent_thought_chunk", "content": { "type": "text", "text": t } }));
           }
           Ok(Event::ToolCallStart { id, name }) => {
-            let acp = session.next_tool_id();
             let names = s.names();
+            if hidden(&name, &names) {
+              continue;
+            }
+            let acp = session.next_tool_id();
             let mut call = json!({ "sessionUpdate": "tool_call", "toolCallId": acp, "title": call_title(&name, &names), "kind": kind_of(&name, &names), "status": "pending" });
             if let Some(meta) = mcp_meta(&name, &s) {
               call["_meta"] = meta;
@@ -665,6 +750,8 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     let estimated = usage.is_some_and(|u| u.input == 0);
     let usage = usage.map(|u| if estimated { Usage { input: input_estimate, ..u } } else { u });
     log_request(session, &s, started, attempt, Some(&stop), usage.as_ref(), estimated, None, Some(&reply));
+    // The call's tokens toward the goal, and its budget (`goal::account`)
+    goal::account(server, session, usage.as_ref());
     if reply.cut.is_some() {
       // The call that was still streaming is lost: its row is settled
       for (_, acp) in ids.extract_if(|id, _| !reply.tool_calls.iter().any(|c| &c.id == id)) {
@@ -701,18 +788,29 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       session.store.item(&item);
       st.items.push(item);
     }
-    let flow = match stop {
-      _ if !reply.tool_calls.is_empty() && stop != StopReason::MaxTokens => run_tools(server, session, &s, &reply.tool_calls, &mut ids, &mut corrections).await,
+    // `stopped`: the user stopped the round (an action rejected, the questions closed, the plan not approved)
+    let (flow, stopped) = match stop {
+      _ if !reply.tool_calls.is_empty() && stop != StopReason::MaxTokens => {
+        let names = s.names();
+        stats.lock().tools += reply.tool_calls.iter().filter(|c| !hidden(&c.name, &names)).count() as u64;
+        let flow = run_tools(server, session, &s, &reply.tool_calls, &mut ids, &mut corrections).await;
+        let stopped = matches!(flow, Flow::Stop);
+        (flow, stopped)
+      }
       StopReason::MaxTokens => return Ok(Stop::MaxTokens),
       StopReason::Refusal => return Ok(Stop::Refusal),
-      _ => Flow::Stop,
+      _ => (Flow::Stop, false),
     };
     if over && let Ok(Some(_)) = compact_history(server, session, &s, Reason::Threshold).await {
       report_usage(server, session, &s);
     }
     match flow {
       Flow::Continue => {}
-      Flow::Stop if crate::steer::may_end(session) => return Ok(Stop::EndTurn),
+      Flow::Stop if crate::steer::may_end(session) => {
+        // A turn the user stopped waits for their direction, and so does its goal (`goal::Outcome::Held`)
+        stats.lock().held = stopped;
+        return Ok(Stop::EndTurn);
+      }
       // A message steered in meanwhile keeps the turn going: the model answers it here (Codex's follow-up rule), also
       // after a rejected card, where the message is the direction the model was told to wait for
       Flow::Stop => {}
@@ -923,6 +1021,11 @@ fn describe(source: &str, e: &LlmError) -> String {
     LlmError::Http { status: 404, message, .. } => format!("{source}: not found ({message}). Check the base URL and the model id."),
     other => format!("{source}: {other}"),
   }
+}
+
+/// A call of a goal tool, which shows no row: the goal's own rows stand for it (`goal.rs`)
+fn hidden(name: &str, tools: &[&str]) -> bool {
+  goal::is_tool(shown_name(name, tools))
 }
 
 /// The tool a model-given name stands for, for display before the call is prepared
@@ -1172,8 +1275,10 @@ async fn run_tools(
       Resolved::Corrected(n) => (Err(format!("Unknown tool \"{}\" (did you mean \"{n}\"?). Tool names must match exactly: {}.", call.name, tool_names.join(", "))), None),
       Resolved::Unknown(message) => (Err(message), None),
     };
+    // A goal tool's call has no row (`hidden`), unless the stream opened one for a name it took for another tool
+    let rowless = streamed.is_none() && matches!(&name, Ok(n) if goal::is_tool(n));
     let riders = match (name.as_ref().ok().copied(), &args) {
-      (Some(n), Ok(a)) if !setup.mcp.iter().any(|t| t.name == n) => Riders::of(n, a, &cwd),
+      (Some(n), Ok(a)) if !rowless && !setup.mcp.iter().any(|t| t.name == n) => Riders::of(n, a, &cwd),
       _ => Riders::default(),
     };
     // The list a call carries is set now, on a row above the call's own, so the transcript reads in the order things
@@ -1181,6 +1286,7 @@ async fn run_tools(
     // below it; any other streamed row stays the call's (a new row would land below the calls after it), so the list
     // follows it there
     let (acp, todo) = match streamed {
+      _ if rowless => (String::new(), None),
       Some(row) if k + 1 == calls.len() && todo_row_allowed(session, rules, &riders) => {
         let todo = ride_todo(server, session, rules, &riders, Some(row));
         (announce(), todo)
@@ -1202,6 +1308,7 @@ async fn run_tools(
     });
     let raw_input = args.unwrap_or_else(|_| Value::String(call.arguments.clone()));
     match &action {
+      _ if rowless => {}
       Ok(a) => {
         let p = a.describe(&cwd);
         let mut update = json!({ "sessionUpdate": "tool_call_update", "toolCallId": acp, "title": p.title, "kind": p.kind, "rawInput": raw_input,
@@ -1260,6 +1367,11 @@ async fn run_tools(
         continue;
       }
     };
+    // A goal tool works on the session itself: no permission to ask, and the result is the model's alone
+    if let Action::Goal(call) = &action {
+      finish(server, session, p, goal::run_tool(server, session, call), todo, None);
+      continue;
+    }
     // The plan approval card is this call's permission
     if let Action::ExitPlan { plan } = &action {
       server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": "in_progress" }));
@@ -1575,7 +1687,8 @@ fn images_of(p: &Prepared, out: &Output) -> Vec<crate::llm::Image> {
 /// Report a finished call on its row and add its result, with the riders' notes, to the history
 fn finish(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, out: Output, front: Option<String>, back: Option<String>) {
   let images = images_of(p, &out);
-  let (model, is_error) = report(server, session, &p.acp, out);
+  // A call without a row (a goal tool's) only goes into the history
+  let (model, is_error) = if p.acp.is_empty() { (out.model, out.is_error) } else { report(server, session, &p.acp, out) };
   record(session, p, joined(front.as_deref(), &model, back.as_deref()), is_error, images);
 }
 

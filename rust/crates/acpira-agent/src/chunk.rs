@@ -255,17 +255,24 @@ fn opens_turn(item: &Item) -> bool {
   matches!(item, Item::User(_)) && !item.is_steer()
 }
 
-/// The user's own words in a prompt: the mode and MCP notes the agent put in front, and the skill bodies it put behind,
-/// left out; images named
+/// A user message's text without the notes the agent put in front of it (mode, MCP servers, sidekick, goal), in
+/// whatever order they were stacked
+pub(crate) fn strip_notes(mut t: &str) -> &str {
+  const NOTES: [(&str, &str); 4] = [("<mode>\n", "</mode>"), ("<mcp>\n", "</mcp>"), ("<sidekick>\n", "</sidekick>"), ("<goal>\n", "</goal>")];
+  while let Some(after) = NOTES.iter().find_map(|(open, close)| t.strip_prefix(open)?.split_once(close).map(|(_, a)| a)) {
+    t = after.trim_start_matches('\n');
+  }
+  t
+}
+
+/// The user's own words in a prompt: the notes the agent put in front (`strip_notes`), and the skill bodies it put
+/// behind, left out; images named. A goal turn's are the objective a set turn carries, and none for a continuation
 fn prompt_words(parts: &[Part]) -> String {
   let mut out = vec![];
   for p in parts {
     match p {
       Part::Text(t) => {
-        let mut t = t.as_str();
-        while let Some(after) = [("<mode>\n", "</mode>"), ("<mcp>\n", "</mcp>")].iter().find_map(|(open, close)| t.strip_prefix(open)?.split_once(close).map(|(_, a)| a)) {
-          t = after.trim_start_matches('\n');
-        }
+        let t = strip_notes(t);
         let t = t.split("\n\n<skill name=\"").next().unwrap_or(t);
         if !t.trim().is_empty() {
           out.push(t.to_owned());
@@ -277,10 +284,11 @@ fn prompt_words(parts: &[Part]) -> String {
   out.join("\n\n")
 }
 
-/// The user's words in an item: a prompt's, or a message steered into the turn
+/// The user's words in an item: a prompt's, or a message steered into the turn (a note steered in alone, the goal's
+/// budget note, holds none)
 pub(crate) fn user_words(item: &Item) -> Option<String> {
   if let Some(t) = crate::steer::text_of(item) {
-    return Some(t);
+    return Some(t).filter(|t| !t.is_empty());
   }
   match item {
     Item::User(parts) => Some(prompt_words(parts)).filter(|t| !t.trim().is_empty()),

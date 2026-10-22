@@ -38,7 +38,8 @@ pub struct Staged {
 /// Who sent a prompt: the user (or the queue on the user's behalf), the over-threshold /compact, the continue that
 /// follows an automatic account switch, the continue a Retry sends after a failed turn that already did some work, or
 /// the workspace gate sending what blocked the last turn back to the agent (`hooks.rs`), or a goal control from the dock
-/// sent as its `/goal …` command (`session/goal.rs`), or the results summoned agents owe the root (`relay.rs`)
+/// sent as its `/goal …` command (`session/goal.rs`), or an active goal's next turn (`goal_wake`), or the results
+/// summoned agents owe the root (`relay.rs`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Origin {
   User,
@@ -47,6 +48,7 @@ pub(crate) enum Origin {
   Retry,
   Gate,
   Goal,
+  GoalContinue,
   Subagents,
 }
 
@@ -244,9 +246,9 @@ impl AcpSession {
   fn claim(&self, text: &str, drafts: &[Draft], origin: Origin, staged: Option<&Staged>) -> Gate {
     let auto = origin == Origin::Compact;
     let mut c = self.core.lock();
-    // Owed results go only into a free session, never behind anything (the queue is the user's): taken first, they stay
-    // owed for the next turn's end
-    if origin == Origin::Subagents
+    // Owed results and a goal's next turn go only into a free session, never behind anything (the queue is the
+    // user's): taken first, results stay owed and the goal is due again at the next turn's end
+    if matches!(origin, Origin::Subagents | Origin::GoalContinue)
       && (c.status != SessionStatus::Ready
         || c.phase.running
         || c.switching
@@ -257,7 +259,9 @@ impl AcpSession {
         || c.pending_prompt.is_some()
         || !c.queue.entries.is_empty())
     {
-      c.relays.delivered(false);
+      if origin == Origin::Subagents {
+        c.relays.delivered(false);
+      }
       Gate::Drop
     } else if origin.reserved() && (c.status != SessionStatus::Ready || c.phase.running) {
       // The switch (or the gate) reserved the session for this prompt; anything else taking it first makes it moot
@@ -296,6 +300,8 @@ impl AcpSession {
         _ => {}
       }
       c.peer.idle = false;
+      // Whatever goes out now, the goal is due again only when its turn ends with the goal still active
+      c.goal_due = false;
       if origin != Origin::Compact {
         // A new attempt may observe another autonomous cycle; late packets from the prior one are ignored.
         c.peer.autonomous_blocked = false;
@@ -407,7 +413,7 @@ impl AcpSession {
     let command_name = command_name(text).map(str::to_owned);
     let user_turn = match origin {
       Origin::Compact => UserTurn { text: text.to_owned(), auto: Some(true), ..Default::default() },
-      Origin::Continue | Origin::Retry | Origin::Gate | Origin::Goal | Origin::Subagents => UserTurn {
+      Origin::Continue | Origin::Retry | Origin::Gate | Origin::Goal | Origin::GoalContinue | Origin::Subagents => UserTurn {
         id: Some(random_uuid()),
         text: text.to_owned(),
         settings: Some(before.clone()),
@@ -416,6 +422,7 @@ impl AcpSession {
           Origin::Retry => AutoReason::Retry,
           Origin::Gate => AutoReason::Gate,
           Origin::Goal => AutoReason::Goal,
+          Origin::GoalContinue => AutoReason::GoalContinue,
           Origin::Subagents => AutoReason::Subagents,
           _ => AutoReason::AccountSwitch,
         }),
@@ -790,6 +797,12 @@ impl AcpSession {
     if c.state.goal.as_ref().is_some_and(|g| g.status == GoalStatus::Complete) {
       c.state.goal = None;
     }
+    // An agent that leaves continuing its goal to the client is asked once nothing of the user's waits (`goal_wake`),
+    // after a turn that ended on its own with the goal still active: a stop, a failure or a refusal ends the run there
+    c.goal_due = !failed
+      && matches!(stop, TurnStop::EndTurn | TurnStop::MaxTokens | TurnStop::MaxTurnRequests)
+      && c.state.goal.as_ref().is_some_and(|g| g.status == GoalStatus::Active)
+      && c.proc.as_ref().is_some_and(|p| goal::continue_prompt(&p.init).is_some());
     self.cancel_turn_cards(c);
     c.phase.running = false;
     // A steer's detached peer turn continues this one: it keeps running until the peer reports its thread idle

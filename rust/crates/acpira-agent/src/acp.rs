@@ -82,6 +82,14 @@ pub struct SessionState {
   /// The running turn takes steering: on from its start (except a `/compact`), off the moment the turn decides to end.
   /// Both sides switch it under this lock, so a steer either joins the turn or is handed back
   pub steerable: bool,
+  /// The session's goal (`goal.rs`), recorded in the log at every change
+  pub goal: Option<crate::goal::Goal>,
+  /// While a turn runs: when its time last counted toward the goal (`goal::tick`)
+  pub goal_clock: Option<std::time::Instant>,
+  /// The budget note waiting for the running turn's next call (`goal::take_note`)
+  pub goal_note: Option<String>,
+  /// The goal's counters moved since the log last recorded it (`goal::change`)
+  pub goal_unsaved: bool,
 }
 
 pub struct Session {
@@ -213,9 +221,9 @@ impl Server {
         "mcpCapabilities": { "http": true, "sse": false },
       },
       "authMethods": [],
-      // The steering extension claude-agent-acp and codex-acp implement, advertised at the top level as they do, and
-      // Acpira's own history rewind (`_session/rewind`)
-      "_meta": { "steering": { "supported": true }, "acpira/rewind": { "supported": true } },
+      // The steering extension claude-agent-acp and codex-acp implement, advertised at the top level as they do,
+      // codex-acp's goal extension (`goal.rs`), and Acpira's own history rewind (`_session/rewind`)
+      "_meta": { "steering": { "supported": true }, "goal": crate::goal::capability(), "acpira/rewind": { "supported": true } },
     })
   }
 
@@ -344,6 +352,11 @@ impl Server {
       }
     }
     self.announce_commands(id, &session.cwd);
+    // An unfinished goal, straight to the client like the commands: the replay carries none (`goal::publish`)
+    let goal = session.state.lock().goal.clone();
+    if let Some(g) = crate::goal::published(goal.as_ref()) {
+      crate::goal::publish(self, id, Some(g));
+    }
     let config = self.config.get();
     let catalog = self.catalog.get();
     let mut st = session.state.lock();
@@ -375,6 +388,9 @@ impl Server {
     st.fast = loaded.state.get("fast").and_then(Value::as_bool).unwrap_or(false);
     st.sidekick = s("sidekick");
     st.sidekick_effort = s("sidekick_effort");
+    // An active goal comes back paused: its run ended with the process that ran it (`goal::revive`)
+    st.goal = loaded.goal.clone();
+    let paused = crate::goal::revive(&mut st.goal);
     // The servers list their tools as the session reopens, with the sidekick the engine holds for it: this one
     st.sidekick_told = sidekick_of(&config, &st);
     if let Some(p) = &loaded.prompt {
@@ -395,6 +411,9 @@ impl Server {
     store.set_items_logged(loaded.logged);
     for item in &st.items[before..] {
       store.item(item);
+    }
+    if paused {
+      crate::goal::save(&store, st.goal.as_ref());
     }
     // Tool call ids continue after the ones the replay holds
     let seq = loaded
@@ -825,6 +844,7 @@ impl Inbound for Handler {
         "session/prompt" => crate::turn::run(server, params, cancel).await,
         "_session/steering" => server.steer(&params),
         "_session/rewind" => server.rewind(&params),
+        crate::goal::METHOD => crate::goal::control(&server, &params),
         _ => Err(RpcError::method_not_found(&method)),
       }
     })

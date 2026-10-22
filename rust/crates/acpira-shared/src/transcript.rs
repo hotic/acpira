@@ -1002,6 +1002,9 @@ pub enum AutoReason {
   Gate,
   /// A goal control from the dock went out as its `/goal …` command; the goal row stands for it
   Goal,
+  /// The agent's goal was still active when its turn ended and the agent leaves continuing to the client (the built-in
+  /// agent's `acpira/continue`): its next goal turn, which reads as the reply before it carried on
+  GoalContinue,
   /// Summoned agents the root sent off without waiting finished: their replies go to it in one message
   Subagents,
 }

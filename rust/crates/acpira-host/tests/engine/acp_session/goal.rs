@@ -159,3 +159,77 @@ async fn a_codex_goal_continuation_runs_as_a_turn_and_holds_the_queue() {
   assert_eq!(goal_rows(&vw).iter().map(|r| r["event"].clone()).collect::<Vec<_>>(), [json!("set"), json!("complete")]);
   expect_match(&vw["turns"][2], json!({ "role": "user", "text": "hi" }));
 }
+
+fn goal_events(vw: &Value) -> Vec<Value> {
+  goal_rows(vw).iter().map(|r| r["event"].clone()).collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_goal_the_agent_leaves_to_the_client_is_continued_in_hidden_turns_until_it_is_met() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let h = Harness::new(&fake, json!({ "env": { "FAKE_GOAL": "acpira", "FAKE_GOAL_LOG": dir.path().join("goal.log") } }));
+  let s = started(&h, "/tmp").await;
+  // The set turn ends with the goal active: the host asks for the next goal turn, and again, until the agent meets it
+  s.control_goal(GoalAction::Set, Some("port the parser".into())).await.unwrap();
+  until(|| goal_log(&dir) == "continue\ncontinue\n" && !s.is_running() && view(&s)["goal"].is_null(), 5000).await;
+  let vw = view(&s);
+  expect_match(&vw["turns"][0], json!({ "role": "user", "text": "/goal port the parser", "auto": true, "autoReason": "goal" }));
+  for (i, n) in [(2, 1), (4, 2)] {
+    expect_match(&vw["turns"][i], json!({ "role": "user", "text": "/goal continue", "auto": true, "autoReason": "goalContinue" }));
+    assert!(vw["turns"][i + 1]["blocks"].to_string().contains(&format!("continued {n}")), "{}", vw["turns"][i + 1]);
+  }
+  assert_eq!(turns_in(&vw), 6);
+  assert_eq!(goal_events(&vw), [json!("set"), json!("complete")]);
+  // Nothing more goes out once it is met
+  tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+  assert_eq!((goal_log(&dir).as_str(), turn_count(&s)), ("continue\ncontinue\n", 6));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_queue_goes_before_the_goals_next_turn_and_a_stop_ends_the_run() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let env = json!({ "FAKE_GOAL": "acpira", "FAKE_GOAL_ROUNDS": "5", "FAKE_GOAL_LOG": dir.path().join("goal.log") });
+  let h = Harness::new(&fake, json!({ "env": env }));
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "/goal slow port").await;
+  until(|| s.is_running() && goal_log(&dir) == "continue\n", 5000).await;
+  // A message sent meanwhile waits for the goal turn, then goes before the next one
+  prompt(&s, "hi").await;
+  assert_eq!(view(&s)["queued"].as_array().map(Vec::len), Some(1));
+  until(|| goal_log(&dir) == "continue\ncontinue\n" && s.is_running(), 5000).await;
+  let vw = view(&s);
+  expect_match(&vw["turns"][4], json!({ "role": "user", "text": "hi" }));
+  expect_match(&vw["turns"][6], json!({ "role": "user", "text": "/goal continue", "autoReason": "goalContinue" }));
+  // The stop pauses the goal, and the host sends nothing after it
+  s.cancel().await;
+  until(|| !s.is_running() && view(&s)["goal"]["status"] == "paused", 5000).await;
+  tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+  assert_eq!(goal_log(&dir), "continue\ncontinue\n");
+  assert_eq!(goal_events(&view(&s)), [json!("set"), json!("paused")]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_docks_pause_ends_the_run_and_clear_is_a_request_for_an_agent_that_leaves_continuing_to_the_client() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let env = json!({ "FAKE_GOAL": "acpira", "FAKE_GOAL_ROUNDS": "5", "FAKE_GOAL_LOG": dir.path().join("goal.log") });
+  let h = Harness::new(&fake, json!({ "env": env }));
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "/goal slow port").await;
+  until(|| s.is_running() && goal_log(&dir) == "continue\n", 5000).await;
+  // Paused during a goal turn: that turn finishes, and no other follows
+  s.control_goal(GoalAction::Pause, None).await.unwrap();
+  until(|| !s.is_running() && view(&s)["goal"]["status"] == "paused", 5000).await;
+  tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+  assert_eq!(goal_log(&dir), "continue\npause\n");
+  // The agent starts no turn of its own on any action, so its clear needs none either
+  let turns = turn_count(&s);
+  s.control_goal(GoalAction::Clear, None).await.unwrap();
+  until(|| view(&s)["goal"].is_null(), 5000).await;
+  assert_eq!((goal_log(&dir).as_str(), turn_count(&s)), ("continue\npause\nclear\n", turns));
+  // A goal set again from the dock runs again
+  s.control_goal(GoalAction::Set, Some("port it".into())).await.unwrap();
+  until(|| !s.is_running() && view(&s)["goal"].is_null() && goal_log(&dir).ends_with("continue\ncontinue\n"), 10000).await;
+}

@@ -875,8 +875,8 @@ fn is_delivery(user: &UserTurn) -> bool {
   user.auto == Some(true) && user.auto_reason == Some(AutoReason::Subagents)
 }
 
-/// A hidden turn that asks the agent to carry on from its own context: Retry's, the one after an account switch, or the
-/// workspace gate's findings
+/// A hidden turn that asks the agent to carry on from its own context: Retry's, the one after an account switch, the
+/// workspace gate's findings, or an active goal's next turn
 fn is_continue(user: &UserTurn) -> bool {
-  user.auto == Some(true) && matches!(user.auto_reason, Some(AutoReason::Retry | AutoReason::AccountSwitch | AutoReason::Gate))
+  user.auto == Some(true) && matches!(user.auto_reason, Some(AutoReason::Retry | AutoReason::AccountSwitch | AutoReason::Gate | AutoReason::GoalContinue))
 }

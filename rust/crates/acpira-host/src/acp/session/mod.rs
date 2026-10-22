@@ -196,6 +196,9 @@ pub(crate) struct Core {
   /// The `/goal …` command a goal control steered into the running turn over `_session/goal`: its echo is dropped like
   /// a sent prompt's (`goal::is_command_echo`); cleared when the turn settles
   pub goal_steered: Option<String>,
+  /// The last turn ended on its own with the goal still active, on an agent that leaves continuing to the client
+  /// (`vendors::goal::continue_prompt`): the goal's next turn goes out once nothing of the user's waits (`goal_wake`)
+  pub goal_due: bool,
   pub perms: PermissionGate,
   pub questions: QuestionGate,
   pub queue: PromptQueue,
@@ -339,6 +342,7 @@ impl AcpSession {
           replaying: false,
           startup_banner: None,
           goal_steered: None,
+          goal_due: false,
           perms: PermissionGate::default(),
           questions: QuestionGate::default(),
           queue: PromptQueue::default(),
