@@ -444,3 +444,24 @@ async fn old_tool_output_is_pruned_only_when_a_summary_compaction_is_near() {
   assert!(!pruned_after(false, 150, false).await, "automatic compaction off leaves the history alone");
   assert!(!pruned_after(true, 150, true).await, "chunks fold the finished turns themselves");
 }
+
+#[tokio::test]
+async fn a_rewind_to_before_a_compaction_brings_the_uncompacted_view_back() {
+  let (h, server, sid) = setup(json!([{ "id": "m1", "context": 64000 }])).await;
+  let named = |turn: &'static str, text: &'static str| {
+    json!({ "sessionId": sid, "prompt": [{ "type": "text", "text": text }], "_meta": { "acpira/turn": turn } })
+  };
+  server.push(mock::text("A done")).push(mock::text("B done"));
+  h.conn.request("session/prompt", named("t1", "first task")).await.unwrap();
+  h.conn.request("session/prompt", named("t2", "second task")).await.unwrap();
+  server.push(mock::text("## Objective\n- both"));
+  prompt(&h, &sid, "/compact", true, 0).await;
+  // Back to before the second task: the summary that took it in goes with it
+  h.conn.request("_session/rewind", json!({ "sessionId": sid, "turnId": "t2" })).await.unwrap();
+  assert!(log(&h, &sid).iter().all(|e| e["type"] != "compaction"));
+  server.push(mock::text("C done"));
+  h.conn.request("session/prompt", named("t3", "other task")).await.unwrap();
+  let sent = server.requests().last().unwrap().body["messages"].to_string();
+  assert!(sent.contains("first task") && sent.contains("A done") && sent.contains("other task"), "{sent}");
+  assert!(!sent.contains("second task") && !sent.contains("Objective"), "{sent}");
+}

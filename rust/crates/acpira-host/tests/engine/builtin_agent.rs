@@ -430,3 +430,28 @@ async fn read_session_goes_from_the_model_through_acpira_mcp_and_the_hub_into_a_
   let row = agent_blocks(&vw).into_iter().find(|b| b["type"] == "tool_call").unwrap();
   expect_match(&row, json!({ "verbKey": "verb.readSession", "target": "acpira://session/abc 2-3", "status": "completed" }));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_edited_message_rewinds_the_agents_own_history_instead_of_superseding_it() {
+  let env = Env::new();
+  let s = env.session().await;
+  env.server.push(mock::text("one"));
+  run(&s, "first message").await;
+  env.server.push(mock::text("bad answer"));
+  run(&s, "the wrong message").await;
+  let peer = s.to_record().acp_session_id;
+  env.server.push(mock::text("good answer"));
+  s.edit_turn(crate::acp_session::history_edit(&s, 2, "the right message")).await.unwrap();
+  until(|| !s.is_running() && view(&s)["turns"].as_array().unwrap().len() == 4 && !last_turn(&view(&s))["stop"].is_null(), 5000).await;
+  // The same native session, which no longer holds the original: no rebuilt history, no superseded note
+  assert_eq!(s.to_record().acp_session_id, peer);
+  let sent = env.server.requests().last().unwrap().body["messages"].to_string();
+  assert!(sent.contains("first message") && sent.contains("one") && sent.contains("the right message"), "{sent}");
+  assert!(!sent.contains("the wrong message") && !sent.contains("bad answer") && !sent.contains("superseded"), "{sent}");
+  let turns = view(&s)["turns"].clone();
+  expect_match(&turns[2], json!({ "text": "the right message", "edited": true }));
+  // The rewound history is what the model saw before the original: the prefix up to it stays byte for byte
+  let reqs = env.server.requests();
+  let (before, after) = (reqs[0].body["messages"].as_array().unwrap(), reqs[2].body["messages"].as_array().unwrap());
+  assert!(after.len() > before.len() && before.iter().zip(after).all(|(x, y)| x == y), "{before:?}\n{after:?}");
+}

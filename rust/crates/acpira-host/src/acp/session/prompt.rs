@@ -184,12 +184,20 @@ impl AcpSession {
     if compact_first && !self.compact_before(&accepted.user_turn).await {
       return;
     }
+    let turn_id = accepted.user_turn.id.clone();
     let turn = self.open_turn(&text, origin, plan_id.as_deref(), &mut accepted);
     let blocks = std::mem::take(&mut accepted.prepared.blocks);
     // From here on Claude Code has a transcript for this native session to resume
     self.core.lock().unprompted = false;
     let result = match &turn.proc {
-      Some(p) => p.request("session/prompt", self.prompt_params(turn.acp_id.as_deref(), blocks)).await,
+      Some(p) => {
+        let mut params = self.prompt_params(turn.acp_id.as_deref(), blocks);
+        // An agent that rewinds its own history (`edit::rewinds`) learns which user turn this prompt is, to rewind to
+        if let Some(id) = turn_id.filter(|_| crate::acp::session::edit::rewinds(&p.init)) {
+          params["_meta"]["acpira/turn"] = Value::String(id);
+        }
+        p.request("session/prompt", params).await
+      }
       None => Err(RpcError::internal("no process")),
     };
     let settled = match result {

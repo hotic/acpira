@@ -1,5 +1,6 @@
-//! History editing. ACP cannot rewind to a message: a fresh peer session
-//! receives the retained transcript as context, never replayed as executable prompts
+//! History editing. ACP cannot rewind to a message: a fresh peer session receives the retained transcript as context,
+//! never replayed as executable prompts. An agent that can rewind its own history (`_session/rewind`, the built-in one)
+//! goes back to just before the edited message instead
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -321,6 +322,15 @@ pub async fn history_context(
   Ok(Some(HistoryContext { blocks: context, omitted }))
 }
 
+/// Acpira's own extension: the agent cuts its history back to just before a turn named in that turn's `session/prompt`
+/// (`_meta["acpira/turn"]`); `dryRun` only asks whether it can
+const REWIND_METHOD: &str = "_session/rewind";
+
+/// Advertised at initialize (`_meta["acpira/rewind"].supported`); the built-in agent does
+pub(crate) fn rewinds(init: &Value) -> bool {
+  init.pointer("/_meta/acpira~1rewind/supported").and_then(Value::as_bool) == Some(true)
+}
+
 /// Host-written context for the model: an embedded resource when the agent takes one, plain text otherwise
 fn context_block(proc: &AgentProcess, uri: &str, text: String) -> Value {
   let embedded = crate::json::truthy(proc.caps().get("promptCapabilities").and_then(|p| p.get("embeddedContext")));
@@ -565,8 +575,24 @@ impl AcpSession {
       };
       let retry = !stale && unchanged_failed_retry(&self.core.lock(), &edit);
       let mut continuing = !stale && edit.intent == Some(EditIntent::Continue);
+      // An agent that rewinds its own history (the built-in one) goes back to just before the edited message the way the
+      // transcript does, so the edit is a plain prompt with nothing to rebuild or supersede. A turn it holds no mark of
+      // (sent before marks existed, or on an earlier native session) takes the paths below
+      let rewind_to = match user.id.clone() {
+        Some(turn_id) if !continuing && !pending && !stale && rewinds(&proc.init) => {
+          let sid = self.core.lock().acp_session_id.clone().unwrap_or_default();
+          match proc.request(REWIND_METHOD, json!({ "sessionId": sid, "turnId": turn_id, "dryRun": true })).await {
+            Ok(_) => Some(turn_id),
+            Err(e) => {
+              self.log(&format!("edit: no native rewind to this turn ({}), falling back", e.message));
+              None
+            }
+          }
+        }
+        _ => None,
+      };
       let mut rebuilt = None;
-      if !continuing && !retry && !pending && !stale && !prefix.is_empty() {
+      if rewind_to.is_none() && !continuing && !retry && !pending && !stale && !prefix.is_empty() {
         let (fork, cwd) = {
           let c = self.core.lock();
           (c.lineage.forked_from.clone(), self.cwd.clone())
@@ -584,10 +610,11 @@ impl AcpSession {
           rebuilt = blocks;
         }
       }
-      if continuing || retry || pending {
+      if rewind_to.is_some() || continuing || retry || pending {
         {
           let c = self.core.lock();
-          if !continuing
+          if retry
+            && !continuing
             && !pending
             && let Some(Turn::Agent(last)) = c.state.turns.last()
             && is_context_length_error(last.error.as_ref())
@@ -606,6 +633,15 @@ impl AcpSession {
         }
         applied?;
         self.check_edit_active()?;
+        // The settings went first so a refused one leaves the native history whole; the rewind is the last step that can
+        // fail, and from its success on the transcript has to follow
+        if let Some(turn_id) = &rewind_to {
+          let rewound = proc.request(REWIND_METHOD, json!({ "sessionId": sid, "turnId": turn_id })).await;
+          if let Err(e) = rewound {
+            self.core.lock().state.controls = controls;
+            return Err(anyhow!(e.message));
+          }
+        }
         // Both replace the edited turn and what followed it on screen; a continuing edit tells the peer, which still holds
         // the original, that it is superseded, so the transcript and the model agree on where the conversation resumes
         if continuing && !pending {
@@ -614,6 +650,10 @@ impl AcpSession {
         let notes = {
           let mut c = self.core.lock();
           c.state.controls = controls;
+          if rewind_to.is_some() {
+            // The context shrank with the history; the next call reports it again
+            c.state.usage = None;
+          }
           c.state.turns.truncate(idx);
           c.lineage.truncated(idx);
           self.relay_truncate(&mut c, idx);
@@ -627,7 +667,9 @@ impl AcpSession {
         };
         self.replay_edit_notifications(notes, Some(sid.as_str()), true);
         accepted = true;
-        self.log(if pending {
+        self.log(if rewind_to.is_some() {
+          "Rewound the native session to before the edited message"
+        } else if pending {
           "Edit before the fork's history went out: the prompt hands over the shortened prefix"
         } else if continuing {
           "Continuing in the native session without rebuilding history"
@@ -636,7 +678,7 @@ impl AcpSession {
         });
         let me = self.clone();
         let text = edit.text.clone();
-        let edited = (continuing && !pending) || (pending && !retry);
+        let edited = (continuing && !pending) || (pending && !retry) || (rewind_to.is_some() && !retry);
         crate::util::run_prefix(me.prompt(text, drafts, false, Some(Staged { prepared, edited, id: None }), None));
         return Ok(());
       }

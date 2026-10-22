@@ -80,6 +80,13 @@ pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<V
     st.turn = Some(cancel.clone());
     // Messages may be steered in from now on, except into a /compact: it calls no model they could reach
     st.steerable = !compacting;
+    // A turn the client named can be rewound to (`_session/rewind`): the mark goes before anything the turn writes, with
+    // what the model had been told so far, which the turn may change in its user message
+    if let Some(turn) = params.pointer("/_meta/acpira~1turn").and_then(Value::as_str).filter(|t| !t.is_empty()) {
+      session.store.append(json!({
+        "type": "mark", "turn": turn, "announced": st.announced, "mcp_note": st.mcp_note, "sidekick_told": st.sidekick_told,
+      }));
+    }
     !st.titled && !st.items.iter().any(|i| matches!(i, Item::User(_)))
   };
   // The first prompt also names the session, beside the turn and outside its cancel (a /compact names nothing)

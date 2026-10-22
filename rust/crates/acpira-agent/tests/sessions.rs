@@ -201,3 +201,58 @@ async fn without_a_usable_fast_model_the_session_keeps_its_prompt_title() {
   let listed = h.conn.request("session/list", json!({ "cwd": h.cwd() })).await.unwrap();
   assert_eq!(listed["sessions"][0]["title"], "the build fails");
 }
+
+async fn named_prompt(h: &Harness, sid: &str, turn: &str, text: &str) -> Value {
+  let params = json!({ "sessionId": sid, "prompt": [{ "type": "text", "text": text }], "_meta": { "acpira/turn": turn } });
+  h.conn.request("session/prompt", params).await.unwrap()
+}
+
+#[tokio::test]
+async fn a_rewind_takes_the_conversation_back_to_before_a_named_turn() {
+  let h = Harness::start().await;
+  let init = h.conn.request("initialize", json!({ "protocolVersion": 1, "clientCapabilities": {} })).await.unwrap();
+  assert_eq!(init["_meta"]["acpira/rewind"]["supported"], true);
+  let server = MockModel::start();
+  h.providers(&server.base_url(), json!([{ "id": "m1" }]));
+  std::fs::write(h.cwd().join("a.txt"), "alpha\n").unwrap();
+  let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
+  server.push(mock::text("one"));
+  named_prompt(&h, &sid, "t1", "first message").await;
+  server.push(mock::tools(&[("c1", "read", json!({ "path": "a.txt" }))]));
+  server.push(mock::text("read it"));
+  named_prompt(&h, &sid, "t2", "the wrong message").await;
+  // A prompt the client did not name leaves no mark to rewind to
+  server.push(mock::text("unnamed"));
+  prompt(&h, &sid, "unnamed").await;
+
+  let unknown = h.conn.request("_session/rewind", json!({ "sessionId": sid, "turnId": "t9" })).await.unwrap_err();
+  assert_eq!(unknown.code, -32602);
+  // A dry run changes nothing
+  let before = events(&h, &sid).len();
+  h.conn.request("_session/rewind", json!({ "sessionId": sid, "turnId": "t2", "dryRun": true })).await.unwrap();
+  assert_eq!(events(&h, &sid).len(), before);
+
+  h.conn.request("_session/rewind", json!({ "sessionId": sid, "turnId": "t2" })).await.unwrap();
+  // The cut turns' request records stay; their messages, updates and marks go
+  let evs = events(&h, &sid);
+  assert_eq!(evs.iter().filter(|e| e["type"] == "request").count(), 4);
+  assert_eq!(evs.iter().filter(|e| e["type"] == "mark").count(), 1);
+  assert!(!evs.iter().any(|e| e.to_string().contains("the wrong message") && e["type"] != "request"));
+
+  server.push(mock::text("better"));
+  named_prompt(&h, &sid, "t3", "the right message").await;
+  let sent = server.requests().last().unwrap().body["messages"].to_string();
+  assert!(sent.contains("first message") && sent.contains("one") && sent.contains("the right message"), "{sent}");
+  assert!(!sent.contains("the wrong message") && !sent.contains("read it") && !sent.contains("unnamed"), "{sent}");
+
+  // A reopened session sees the same shorter conversation, in its view and its replay
+  let h = reopen(h).await;
+  h.conn.request("session/load", json!({ "sessionId": sid, "cwd": h.cwd(), "mcpServers": [] })).await.unwrap();
+  let ups = h.updates();
+  let users: Vec<&str> = ups.iter().filter(|u| u["sessionUpdate"] == "user_message_chunk").map(|u| u["content"]["text"].as_str().unwrap()).collect();
+  assert_eq!(users, ["first message", "the right message"]);
+  server.push(mock::text("still here"));
+  prompt(&h, &sid, "again").await;
+  let sent = server.requests().last().unwrap().body["messages"].to_string();
+  assert!(sent.contains("the right message") && !sent.contains("the wrong message"), "{sent}");
+}
