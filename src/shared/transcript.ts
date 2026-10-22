@@ -588,6 +588,9 @@ export interface SessionCategory {
 export interface SessionCategories {
   categories: SessionCategory[];
   collapsedProjects: string[];
+  // Project folders in the order a project shell (the desktop app) lists them, folders without a session yet included;
+  // absent until a project shell first connects. IDE session trees do not read it
+  projects?: string[];
 }
 
 // One edit of the category list, applied by the host to what is on disk so concurrent windows compose.
@@ -599,7 +602,13 @@ export type CategoryOp =
   | { op: 'collapse'; id: string; collapsed: boolean }
   // Move `id` before `before` (same project), or to the end of its project's categories
   | { op: 'reorder'; id: string; before?: string }
-  | { op: 'collapseProject'; cwd: string; collapsed: boolean };
+  | { op: 'collapseProject'; cwd: string; collapsed: boolean }
+  // Project shells only: register a folder at the end of `projects`, take it off (its sessions stay), move it before
+  // `before` (or to the end), and the first order, which applies only while `projects` is absent
+  | { op: 'addProject'; cwd: string }
+  | { op: 'removeProject'; cwd: string }
+  | { op: 'reorderProject'; cwd: string; before?: string }
+  | { op: 'seedProjects'; cwds: string[] };
 
 // One entry of an agent's own session list (ACP session/list), for the history list's "Import from <agent>"
 export interface NativeSessionInfo {

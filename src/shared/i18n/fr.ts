@@ -525,6 +525,8 @@ export const fr = {
   'host.deletedElsewhere': 'Cette session a été supprimée dans une autre fenêtre',
   'host.moveWhileRunning': 'Attendez la fin de la réponse en cours avant de déplacer cette session',
   'host.moveFolderMissing': 'Le dossier {folder} n’existe plus : impossible d’y déplacer la session',
+  'host.folderMissing': 'Le dossier {folder} n’existe pas',
+  'host.noProject': 'Ouvrez d’abord un dossier pour démarrer une session',
   'host.loginTerminalTitle': 'Connexion à {agent}',
   'host.loginThenRetry': 'Terminez la connexion à {agent} dans le terminal, puis appuyez sur « Réessayer »',
   'host.attention.waiting': '{agent} attend votre réponse',

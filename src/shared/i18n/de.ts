@@ -526,6 +526,8 @@ export const de = {
   'host.deletedElsewhere': 'Diese Sitzung wurde in einem anderen Fenster gelöscht',
   'host.moveWhileRunning': 'Vor dem Verschieben dieser Sitzung warten, bis die aktuelle Antwort fertig ist',
   'host.moveFolderMissing': 'Der Ordner {folder} existiert nicht mehr, daher kann die Sitzung nicht dorthin verschoben werden',
+  'host.folderMissing': 'Der Ordner {folder} existiert nicht',
+  'host.noProject': 'Öffnen Sie zuerst einen Ordner, um eine Sitzung zu starten',
   'host.loginTerminalTitle': 'Anmeldung bei {agent}',
   'host.loginThenRetry': 'Die Anmeldung bei {agent} im Terminal abschließen und dann „Wiederholen“ drücken',
   'host.attention.waiting': '{agent} wartet auf eine Eingabe',

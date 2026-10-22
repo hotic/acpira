@@ -101,7 +101,6 @@ fn center(store: Store) -> SettingsCenter {
     runtime_info: Arc::new(|_| None),
     health: Arc::new(|_| None),
     home: Arc::new(|| "/home".into()),
-    cwd: Arc::new(|| "/cwd".into()),
     // Nothing here runs a shared action, so the ledger is never written
     shared: acpira_host::shared_config::SharedConfig::new(std::env::temp_dir().join("acpira-bridge-shared"), Arc::new(|_: &str| {})),
     roster: Arc::new(acpira_host::relay::roster::Roster::new(&std::env::temp_dir().join("acpira-bridge-roster"))),

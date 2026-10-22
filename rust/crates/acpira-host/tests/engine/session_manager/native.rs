@@ -16,7 +16,7 @@ async fn native_sessions_list_marks_imported_ones_import_replays_and_re_import_s
   m.new_session(None).await;
   m.handle(json!({ "type": "send", "text": "hi" })).await;
   let own_id = m.active_id().unwrap();
-  let own = m.m.list_native_sessions("fake").await.unwrap().into_iter().find(|s| s.local_id.as_deref() == Some(own_id.as_str())).expect("own session listed");
+  let own = m.m.list_native_sessions("fake", m.m.folder_for(None, None)).await.unwrap().into_iter().find(|s| s.local_id.as_deref() == Some(own_id.as_str())).expect("own session listed");
   // The fake stores the canonical cwd (codex-acp canonicalizes thread cwd the same way)
   assert_eq!(own.cwd, std::fs::canonicalize("/tmp").unwrap().to_string_lossy());
   assert!(own.title.as_deref().is_some_and(|t| t.starts_with("Fake ")));
@@ -45,7 +45,7 @@ async fn native_sessions_list_marks_imported_ones_import_replays_and_re_import_s
     s.dispose();
     id
   };
-  let target = m.m.list_native_sessions("fake").await.unwrap().into_iter().find(|s| s.session_id == other).expect("foreign listed");
+  let target = m.m.list_native_sessions("fake", m.m.folder_for(None, None)).await.unwrap().into_iter().find(|s| s.session_id == other).expect("foreign listed");
   assert!(target.local_id.is_none());
   let count = m.sessions().len();
   let viewer = m.m.attach(None);
@@ -127,7 +127,7 @@ async fn native_sessions_of_a_symlinked_project_still_list() {
   for (i, id) in foreign.iter().enumerate() {
     stamp(id, 2 + i as i64);
   }
-  let listed = m.m.list_native_sessions("fake").await.unwrap();
+  let listed = m.m.list_native_sessions("fake", m.m.folder_for(None, None)).await.unwrap();
   assert_eq!(listed.iter().map(|s| s.session_id.clone()).collect::<Vec<_>>(), [target_id]);
   assert_eq!(listed[0].cwd, std::fs::canonicalize(&link).unwrap().to_string_lossy());
   m.dispose().await;
@@ -140,7 +140,7 @@ async fn listing_native_sessions_of_an_agent_without_the_capability_is_unsupport
   // no FAKE_SESSION_DIR: the fixture advertises no list capability
   let m = Mgr::new(&dir.path().join("sessions"), Opts::fake(&fake));
   m.init().await;
-  let err = m.m.list_native_sessions("fake").await.expect_err("unsupported");
+  let err = m.m.list_native_sessions("fake", m.m.folder_for(None, None)).await.expect_err("unsupported");
   assert!(err.to_string().contains("does not list its sessions"), "{err}");
   m.dispose().await;
 }

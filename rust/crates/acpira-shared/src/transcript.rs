@@ -1240,6 +1240,10 @@ pub struct SessionCategories {
   pub categories: Vec<SessionCategory>,
   #[serde(default)]
   pub collapsed_projects: Vec<String>,
+  /// Project folders in the order a project shell (the desktop app) lists them, including folders without a session
+  /// yet; absent until a project shell first connects. IDE session trees do not read it
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub projects: Option<Vec<String>>,
 }
 
 /// One edit of the category list, applied under the file lock to what is on disk so concurrent windows compose
@@ -1258,6 +1262,18 @@ pub enum CategoryOp {
     before: Option<String>,
   },
   CollapseProject { cwd: String, collapsed: bool },
+  /// Register a project folder at the end of `projects` (a no-op when listed)
+  AddProject { cwd: String },
+  /// Take a folder off `projects`; its sessions stay and still list it
+  RemoveProject { cwd: String },
+  /// Move a registered folder before `before`, or to the end
+  ReorderProject {
+    cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    before: Option<String>,
+  },
+  /// The first order a project shell sees: the folders given, unless `projects` already exists
+  SeedProjects { cwds: Vec<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

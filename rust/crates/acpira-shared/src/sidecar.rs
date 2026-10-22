@@ -133,6 +133,10 @@ pub struct ShellEnv {
   pub host_language: String,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub blob_base: Option<String>,
+  /// The shell organizes sessions by project folder and has no single workspace (the desktop app): whatever needs a
+  /// folder follows the view's session instead of `cwd`, and no session starts on its own without a project
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub projects: Option<bool>,
 }
 
 /// envChanged carries a partial env: only the keys present change
@@ -142,6 +146,7 @@ pub struct ShellEnvPatch {
   pub cwd: Option<String>,
   pub host_language: Option<String>,
   pub blob_base: Option<String>,
+  pub projects: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

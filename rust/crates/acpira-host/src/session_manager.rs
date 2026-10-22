@@ -192,6 +192,8 @@ pub struct ManagerDeps {
   pub chatgpt: Option<Arc<ChatGptBridgeStore>>,
   pub log: LogFn,
   pub cwd: Arc<dyn Fn() -> String + Send + Sync>,
+  /// The shell has no single workspace and lists sessions by project folder (`ShellEnv.projects`): see `folder_for`
+  pub projects: Arc<dyn Fn() -> bool + Send + Sync>,
   pub default_agent: Arc<dyn Fn() -> String + Send + Sync>,
   pub agent_prefs: Arc<dyn Fn() -> AgentPrefs + Send + Sync>,
   pub run_in_terminal: RunInTerminal,
@@ -512,6 +514,7 @@ impl SessionManager {
       st.prefs = prefs;
       st.categories = categories;
     }
+    self.seed_projects().await;
     // The login shell's PATH decides where CLIs are found, and running the user's rc files takes a while (~0.6 s for an
     // oh-my-zsh setup, up to `FIRST_WAIT`). Nothing the first window shows needs it: a stored session is shown from its
     // record and a fresh one before its agent starts, so init (and with it the engine's handshake) does not wait for the
@@ -562,6 +565,52 @@ impl SessionManager {
     // process while it is still warming (`AgentPool::take`)
     let agent = self.default_agent();
     self.warm(&agent, None);
+  }
+
+  /// A project shell's first connect: the folders sessions already ran in, newest first, become the list's first order
+  async fn seed_projects(&self) {
+    if !(self.deps.projects)() || self.state.lock().categories.projects.is_some() {
+      return;
+    }
+    let mut list = self.sessions();
+    list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    let cwds: Vec<String> = list.into_iter().map(|s| s.cwd).filter(|c| !c.is_empty()).collect();
+    if cwds.is_empty() {
+      return;
+    }
+    if let Err(e) = self.category_op(&CategoryOp::SeedProjects { cwds }).await {
+      self.log(&format!("seeding the project list failed: {e}"));
+    }
+  }
+
+  /// The folder a view means when something needs one: a new session, warming, a probe, native sessions, @ search, the
+  /// settings page's project files, ChatGPT. An explicit folder wins; a shell with a workspace means its workspace (as it
+  /// always did); a project shell (`ManagerDeps.projects`) means the session the view shows, else the newest session's
+  /// folder, else its first registered project, else nothing: no session starts in the home directory on its own
+  pub fn folder_for(&self, v: Option<&Viewer>, explicit: Option<String>) -> Option<String> {
+    if let Some(dir) = explicit.filter(|d| !d.trim().is_empty()) {
+      return Some(dir);
+    }
+    if !(self.deps.projects)() {
+      return Some((self.deps.cwd)());
+    }
+    if let Some(dir) = v.and_then(|v| v.active_id()).and_then(|id| self.session_cwd(&id)) {
+      return Some(dir);
+    }
+    if let Some(s) = self.sessions().into_iter().filter(|s| !s.cwd.is_empty()).max_by(|a, b| a.updated_at.cmp(&b.updated_at)) {
+      return Some(s.cwd);
+    }
+    self.state.lock().categories.projects.as_ref().and_then(|p| p.first().cloned())
+  }
+
+  /// A folder a project shell starts something in joins its list (at the end) the first time
+  async fn register_project(&self, cwd: &str) {
+    if !(self.deps.projects)() || self.state.lock().categories.projects.as_ref().is_some_and(|p| p.iter().any(|x| x == cwd)) {
+      return;
+    }
+    if let Err(e) = self.category_op(&CategoryOp::AddProject { cwd: cwd.to_owned() }).await {
+      self.log(&format!("registering project {cwd} failed: {e}"));
+    }
   }
 
   /// Resolves once the first probe pass has run: `init` may return before it (see there)
@@ -641,8 +690,9 @@ impl SessionManager {
     if agent == CHATGPT_ID {
       return;
     }
+    let Some(cwd) = self.folder_for(None, None) else { return };
     let acc = account.or_else(|| self.default_account(agent));
-    self.pool.ensure(agent, &(self.deps.cwd)(), acc.as_deref());
+    self.pool.ensure(agent, &cwd, acc.as_deref());
   }
 
   fn default_account(&self, agent: &str) -> Option<String> {
@@ -1079,7 +1129,9 @@ impl SessionManager {
       (Some(a), Some(m)) => m.spawn_env_for(agent, a).await,
       _ => None,
     };
-    match probe_agent_controls(&def, &bin, &(self.deps.cwd)(), env.as_ref(), self.deps.log.clone(), None).await {
+    // A project shell without any project probes in the home directory, like a shell without a workspace always did
+    let cwd = self.folder_for(None, None).unwrap_or_else(|| (self.deps.cwd)());
+    match probe_agent_controls(&def, &bin, &cwd, env.as_ref(), self.deps.log.clone(), None).await {
       Ok(r) => {
         let options = r.options.clone();
         {
@@ -1146,7 +1198,9 @@ impl SessionManager {
     self.search.search(self.deps.store.dir().to_path_buf(), query).await
   }
 
-  pub async fn list_native_sessions(&self, agent: &str) -> Result<Vec<NativeSessionInfo>> {
+  /// `cwd`: the folder to list for (`folder_for`); nothing to list without one
+  pub async fn list_native_sessions(&self, agent: &str, cwd: Option<String>) -> Result<Vec<NativeSessionInfo>> {
+    let Some(cwd) = cwd else { return Ok(vec![]) };
     let registry = self.registry();
     let def = registry.get(agent)?.clone();
     let bin = registry
@@ -1158,7 +1212,7 @@ impl SessionManager {
       (Some(a), Some(m)) => m.spawn_env_for(agent, a).await,
       _ => None,
     };
-    let listed = list_native_sessions(&def, &bin, &(self.deps.cwd)(), env.as_ref(), self.deps.log.clone(), None).await?;
+    let listed = list_native_sessions(&def, &bin, &cwd, env.as_ref(), self.deps.log.clone(), None).await?;
     let local = self.native_owners(agent).await;
     let mut sessions: Vec<NativeSessionInfo> = listed
       .iter()
@@ -1558,8 +1612,10 @@ impl SessionManager {
     }
     match active {
       Some(id) => self.select_session_for(v, &id).await,
+      // A project shell with no project yet shows its empty state instead (`folder_for`)
+      None if self.folder_for(Some(v), None).is_none() => {}
       None => {
-        if let Err(e) = self.new_session_for(v, None, None, None).await {
+        if let Err(e) = self.new_session_for(v, None, None, None, None).await {
           self.log(&format!("new session failed: {e}"));
         }
       }
@@ -1572,20 +1628,33 @@ impl SessionManager {
     agent: Option<String>,
     account: Option<String>,
     category: Option<String>,
+    cwd: Option<String>,
   ) -> BoxFuture<Result<()>> {
     let me = self.clone();
     let v = v.clone();
     Box::pin(async move {
+      // A project shell's "new in this category" starts in the category's project
+      let explicit = cwd.or_else(|| {
+        let id = category.as_ref().filter(|_| (me.deps.projects)())?;
+        me.state.lock().categories.categories.iter().find(|c| &c.id == id).map(|c| c.cwd.clone())
+      });
+      if let Some(dir) = &explicit
+        && !tokio::fs::metadata(dir).await.is_ok_and(|m| m.is_dir())
+      {
+        return Err(anyhow!(tp("host.folderMissing", &[("folder", dir)])));
+      }
+      let Some(cwd) = me.folder_for(Some(&v), explicit) else {
+        return Err(anyhow!(t("host.noProject")));
+      };
       let id = agent.unwrap_or_else(|| me.default_agent());
       if id == CHATGPT_ID {
-        let view = me.connect_chatgpt(None, "ChatGPT").await?;
+        let view = me.connect_chatgpt(None, "ChatGPT", &cwd).await?;
         me.drop_empty_current(&v).await;
         me.set_active(&v, Some(view.id.clone()));
         v.emit(HostMsg::Session { session: RawJson::new(&view), running: view.running, parts: None });
         return Ok(());
       }
       let acc = if me.deps.accounts.as_ref().is_some_and(|a| a.supports(&id)) { account.or_else(|| me.default_account(&id)) } else { None };
-      let cwd = (me.deps.cwd)();
       // "New session in this category": filed on the session itself before anything awaits, so a switch made while it
       // spawns can never move the filing onto whichever session the viewer shows by then
       let category = me.category_for(category, &cwd).flatten();
@@ -1598,6 +1667,7 @@ impl SessionManager {
         return Ok(());
       }
       me.drop_empty_current(&v).await;
+      me.register_project(&cwd).await;
       // Inheritable settings are snapped before the session starts spawning
       let last = me.last_settings(&id);
       let s = AcpSession::fresh(&id, &cwd, me.session_deps(), acc);
@@ -1621,11 +1691,12 @@ impl SessionManager {
     })
   }
 
-  pub async fn chatgpt_status(&self) -> ChatGptIntegrationStatus {
+  /// `folder`: the project the view means (`folder_for`); a project shell without one counts no mirrors
+  pub async fn chatgpt_status(&self, folder: Option<String>) -> ChatGptIntegrationStatus {
     if let Some(c) = &self.deps.chatgpt {
       c.refresh().await;
     }
-    let raw_cwd = (self.deps.cwd)();
+    let raw_cwd = folder.unwrap_or_default();
     let cwd = tokio::fs::canonicalize(&raw_cwd).await.map(|p| p.to_string_lossy().into_owned()).unwrap_or(raw_cwd);
     let views: Vec<SessionView> = self
       .deps
@@ -1648,9 +1719,9 @@ impl SessionManager {
     }
   }
 
-  pub async fn connect_chatgpt(&self, source_key: Option<String>, title: &str) -> Result<SessionView> {
+  pub async fn connect_chatgpt(&self, source_key: Option<String>, title: &str, cwd: &str) -> Result<SessionView> {
     let c = self.deps.chatgpt.as_ref().ok_or_else(|| anyhow!("ChatGPT bridge is unavailable in this host"))?;
-    c.open(&source_key.unwrap_or_else(random_uuid), &(self.deps.cwd)(), title).await
+    c.open(&source_key.unwrap_or_else(random_uuid), cwd, title).await
   }
 
   /// A viewer's session that hasn't said a word yet is replaced directly, never left as an empty entry
@@ -2134,7 +2205,7 @@ impl SessionManager {
     }
     let valid = |id: &str| is_session_id(id);
     match m {
-      W::ConnectChatgpt => self.new_session_for(v, Some(CHATGPT_ID.into()), None, None).await?,
+      W::ConnectChatgpt => self.new_session_for(v, Some(CHATGPT_ID.into()), None, None, None).await?,
       W::Send { session_id, text, attachments, steer } => {
         if let Some(s) = self.target(v, session_id.as_deref()) {
           if steer == Some(true) {
@@ -2186,7 +2257,7 @@ impl SessionManager {
         }
       }
       W::SelectSession { id } => self.select_session_for(v, &id).await,
-      W::NewSession { agent, category } => self.new_session_for(v, agent, None, category).await?,
+      W::NewSession { agent, category, cwd } => self.new_session_for(v, agent, None, category, cwd).await?,
       W::RenameSession { id, title } => self.rename_session(&id, &title).await?,
       W::DeleteSession { id } => self.delete_session(&id).await?,
       W::RestoreSession { id } => self.restore_session(&id).await?,
@@ -2509,8 +2580,10 @@ impl SessionManager {
         me.set_active(&v, None);
         match me.most_recent() {
           Some(next) => me.select_session_for(&v, &next).await,
+          // A project shell whose last session went and that has no project left shows its empty state
+          None if me.folder_for(Some(&v), None).is_none() => v.emit(HostMsg::NoSession),
           None => {
-            if let Err(e) = me.new_session_for(&v, None, None, None).await {
+            if let Err(e) = me.new_session_for(&v, None, None, None, None).await {
               me.log(&format!("new session failed: {e}"));
             }
           }
@@ -2536,7 +2609,7 @@ impl SessionManager {
         return Err(anyhow!(tp("host.moveFolderMissing", &[("folder", &dir)])));
       }
       Some(dir) => dir,
-      None => (self.deps.cwd)(),
+      None => self.folder_for(None, None).ok_or_else(|| anyhow!(t("host.noProject")))?,
     };
     // A category belongs to the project the session leaves; only one of the destination's survives the move
     let category = self.category_for(category, &cwd).flatten();

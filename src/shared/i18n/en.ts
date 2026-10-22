@@ -531,6 +531,8 @@ export const en = {
   'host.deletedElsewhere': 'This session was deleted in another window',
   'host.moveWhileRunning': 'Wait for the current reply to finish before moving this session',
   'host.moveFolderMissing': 'Folder {folder} no longer exists, so the session cannot move there',
+  'host.folderMissing': 'Folder {folder} does not exist',
+  'host.noProject': 'Open a folder first to start a session',
   'host.loginTerminalTitle': '{agent} sign-in',
   'host.loginThenRetry': 'Finish signing in to {agent} in the terminal, then press “Retry”',
   'host.attention.waiting': '{agent} needs your input',

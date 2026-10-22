@@ -334,7 +334,7 @@ impl Engine {
       protocol_version: SIDECAR_PROTOCOL_VERSION,
       sidecar: SidecarInfo { version: self.opts.version.clone(), pid: std::process::id() },
       sessions_dir,
-      features: vec!["preview".into()],
+      features: vec!["preview".into(), "projects".into()],
     }
   }
 }

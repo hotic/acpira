@@ -546,6 +546,8 @@ export const zhCN = {
   'host.deletedElsewhere': '这个会话已在另一个窗口被删除',
   'host.moveWhileRunning': '等这轮回复结束再移动这个会话',
   'host.moveFolderMissing': '文件夹 {folder} 已不存在，没法把会话移过去',
+  'host.folderMissing': '文件夹 {folder} 不存在',
+  'host.noProject': '先打开一个文件夹，才能开始会话',
   'host.loginTerminalTitle': '{agent} 登录',
   'host.loginThenRetry': '在终端里完成 {agent} 登录后，点「重试」',
   'host.attention.waiting': '{agent} 在等你处理',

@@ -214,6 +214,9 @@ pub enum HostMsg {
   Categories {
     categories: SessionCategories,
   },
+  /// The view shows no session: a project shell (`ShellEnv.projects`) with no project left, so the page shows its
+  /// empty state instead of a session started in the home directory
+  NoSession,
   /// The session view, already serialized once for every viewer that shows it
   Session {
     session: RawJson,
@@ -333,6 +336,7 @@ impl HostMsg {
       HostMsg::Agents { .. } => "agents",
       HostMsg::Sessions { .. } => "sessions",
       HostMsg::Categories { .. } => "categories",
+      HostMsg::NoSession => "noSession",
       HostMsg::Session { .. } => "session",
       HostMsg::SessionPatch { .. } => "sessionPatch",
       HostMsg::Subagent { .. } => "subagent",
@@ -474,6 +478,9 @@ pub enum WebviewMsg {
     /// File the new session under this category (one of the window's project) from the start
     #[serde(default)]
     category: Option<String>,
+    /// The project folder to start in (a project shell); the shell's workspace when absent
+    #[serde(default)]
+    cwd: Option<String>,
   },
   RenameSession {
     id: String,
@@ -684,6 +691,9 @@ pub enum WebviewMsg {
   },
   ListNativeSessions {
     agent: AgentId,
+    /// The project folder to list for (a project shell); the view's folder when absent
+    #[serde(default)]
+    cwd: Option<String>,
   },
   ImportNativeSession {
     agent: AgentId,
