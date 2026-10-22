@@ -701,10 +701,18 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       }
       unfinished.event = None;
       let e = match outcome {
-        Ok((reply, stop, usage)) => break (reply, stop, usage, started),
-        Err(e) => e,
+        Ok((reply, stop, usage)) if !empty_reply(&reply, &stop) => break (reply, stop, usage, started),
+        // Nothing but reasoning: retried like a broken stream, the attempt logged with what it cost
+        Ok((reply, stop, usage)) => {
+          let e = LlmError::Protocol(EMPTY_REPLY.into());
+          log_request(session, &s, started, attempt, Some(&stop), usage.as_ref(), false, Some(&e.to_string()), Some(&reply));
+          e
+        }
+        Err(e) => {
+          log_request(session, &s, started, attempt, None, None, false, Some(&e.to_string()), None);
+          e
+        }
       };
-      log_request(session, &s, started, attempt, None, None, false, Some(&e.to_string()), None);
       // Refused for its size: the provider says so, or refuses a request near the window without saying why
       let near = input_estimate >= s.model.context.unwrap_or(DEFAULT_CONTEXT) * 4 / 5;
       // Raw mode leaves the provider's refusal as the turn's error rather than writing a summary of its own
@@ -935,6 +943,18 @@ fn stream_idle() -> std::time::Duration {
 
 /// Attempts per model call: the first and up to three retries
 const MAX_ATTEMPTS: u32 = 4;
+
+/// Why an empty reply is retried, also the turn's error once the attempts run out
+const EMPTY_REPLY: &str = "the model ended its reply without any text or tool call";
+
+/// A reply that ends the turn with nothing to show: no text, no tool call, at most reasoning. A gateway that converts
+/// Gemini's `functionCall` buffers the whole call and, past its own timeout, sends only the reasoning and then a normal
+/// `response.completed` (`gemini-4-argon` on the Responses gateway, 2026-10-22, after 130 s and 156 s while writing a
+/// long file); Gemini CLI retries such a stream too (`InvalidStreamError`). An output limit or a refusal is its own
+/// stop and is left alone
+fn empty_reply(reply: &llm::Reply, stop: &StopReason) -> bool {
+  !matches!(stop, StopReason::MaxTokens | StopReason::Refusal) && reply.cut.is_none() && reply.tool_calls.is_empty() && reply.text.trim().is_empty()
+}
 
 /// Worth another attempt: the connection, the stream or the service failed, not the request itself. A gateway ending a
 /// 200 stream with an `error` event ("response stream interrupted", seen on 2026-10-11 on a Claude route, 1 call in 40
