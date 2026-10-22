@@ -263,7 +263,29 @@ impl Server {
     }
     st.mcp_note = told("mcp_note");
     st.sidekick_told = told("sidekick_told");
-    Ok(json!({}))
+    // Back to before the first message: that message names the session again, and a sidekick picked meanwhile goes into
+    // acpira's tool table the way a pick before the first message does (`set_config_option`), not into a note
+    if !st.items.iter().any(|i| matches!(i, Item::User(_))) {
+      st.titled = false;
+      st.sidekick_told = sidekick_of(&self.config.get(), &st);
+      session.mcp.relist(ACPIRA_SERVER);
+    }
+    // The goal goes back with the history (`goal::rewound`); the client takes the result from the answer, since it
+    // holds back the session's updates while it edits. A mark older than goals says nothing, and the goal stays
+    let mut answer = json!({});
+    if let Some(then) = mark.get("goal") {
+      let then = serde_json::from_value(then.clone()).ok().flatten();
+      let goal = crate::goal::rewound(then, st.goal.as_ref());
+      if goal != st.goal {
+        crate::goal::save(&session.store, goal.as_ref());
+      }
+      st.goal = goal;
+      st.goal_note = None;
+      st.goal_unsaved = false;
+      st.goal_wrapping = false;
+      answer["_meta"] = json!({ "goal": st.goal.as_ref().map(crate::goal::Goal::snapshot) });
+    }
+    Ok(answer)
   }
 
   /// `_session/steering`: a message for the running turn. It is answered at once and reaches the model with the turn's

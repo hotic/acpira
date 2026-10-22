@@ -610,6 +610,27 @@ fn counting(st: &SessionState) -> bool {
   st.goal.as_ref().is_some_and(|g| g.status == Status::Active || (g.status == Status::BudgetLimited && st.goal_wrapping))
 }
 
+/// The goal after a rewind (`acp.rs` `Server::rewind`) to a turn that started with `then`, the session holding `now`: the
+/// goal goes back to how it stood then, so one created, met, blocked or spent in the cut turns does not outlive them.
+/// Two things stay as they are now: the tokens and time the same goal already spent (the budget caps real spending), and
+/// a goal that is not running now does not start running again by the rewind alone (it comes back paused, the dock
+/// resumes it)
+pub fn rewound(then: Option<Goal>, now: Option<&Goal>) -> Option<Goal> {
+  let mut g = then?;
+  if let Some(n) = now.filter(|n| n.created_at == g.created_at) {
+    g.tokens_used = g.tokens_used.max(n.tokens_used);
+    g.time_used_ms = g.time_used_ms.max(n.time_used_ms);
+  }
+  if g.status == Status::Active && now.is_none_or(|n| n.status != Status::Active) {
+    g.status = Status::Paused;
+  }
+  if matches!(g.status, Status::Active | Status::Paused) && g.remaining() == Some(0) {
+    g.status = Status::BudgetLimited;
+  }
+  g.updated_at = crate::store::now_ms();
+  Some(g)
+}
+
 /// Count the wall clock since the last tick toward a goal that counts, while a turn runs (`SessionState::goal_clock`)
 fn tick(st: &mut SessionState) {
   let Some(at) = st.goal_clock else { return };
