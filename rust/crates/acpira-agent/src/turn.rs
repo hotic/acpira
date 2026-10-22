@@ -830,8 +830,8 @@ fn log_view(session: &Session, s: &Setup, request: &Request) {
     "model": s.pick,
     "prompt": { "variant": s.prompt.0, "version": s.prompt.1, "digest": s.prompt.2 },
     "tools": request.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
-    "fast": request.fast,
     "toolsDigest": tools_digest(&request.tools),
+    "fast": request.fast,
   });
   let prev = session.state.lock().last_view.replace(view.clone());
   if let Some(prev) = prev
@@ -844,7 +844,6 @@ fn log_view(session: &Session, s: &Setup, request: &Request) {
   }
 }
 
-/// What every `request` event carries: the model, its source and the prompt and policies the call was built with, and
 /// A short digest of the tool definitions as the request sends them (name, description, parameters, in order)
 fn tools_digest(tools: &[crate::llm::ToolSpec]) -> String {
   use sha2::{Digest, Sha256};
@@ -858,6 +857,7 @@ fn tools_digest(tools: &[crate::llm::ToolSpec]) -> String {
   h.finalize().iter().take(6).map(|b| format!("{b:02x}")).collect()
 }
 
+/// What every `request` event carries: the model, its source and the prompt and policies the call was built with, and
 /// `fast` when the call asked for the fast tier
 fn request_event(s: &Setup) -> Value {
   let mut ev = json!({
