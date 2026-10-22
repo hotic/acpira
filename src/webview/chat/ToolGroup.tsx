@@ -2,7 +2,6 @@ import { memo, useContext, useState, type ReactNode } from 'react';
 import { MessagesSquare } from 'lucide-react';
 import { splitSessionTarget } from '@shared/sessionLinks';
 import type { ToolCallBlock } from '@shared/transcript';
-import { useAppearance } from '../appearance';
 import { Collapsible } from '../ui/Collapsible';
 import { Disclosure, DisclosureRow } from '../ui/Disclosure';
 import { EntranceOnce, Row, RowLabel, RowTarget } from '../ui/Row';
@@ -32,7 +31,6 @@ function namesLabel(names: string[]): string {
 // Entries hang on the head's rail; each takes its first call's entrance identity, so the row that was a single call
 // before the group formed keeps still. The grouping array is rebuilt on every render, so compare its members
 export const ToolGroup = memo(function ToolGroup({ kind, blocks }: { kind: GroupKind; blocks: ToolCallBlock[] }) {
-  const { toolLine } = useAppearance();
   const fold = useAutoFold();
   const current = [...blocks].reverse().find(live) ?? blocks.at(-1)!;
   const lead = useLead(kind);
@@ -52,7 +50,7 @@ export const ToolGroup = memo(function ToolGroup({ kind, blocks }: { kind: Group
   // Entries follow the head directly, so the head and its first entry keep the entries' own rhythm
   return (
     <Disclosure className="action-details" bodyClassName="pt-0" tone="action" lead={lead} trailing={stat && <DiffStat {...stat} />}
-      indent={false} rail={toolLine === 'text' ? false : 'rows'} open={fold?.open} onToggle={fold?.onToggle} body={body}>
+      indent={false} rail="rows" open={fold?.open} onToggle={fold?.onToggle} body={body}>
       <RowLabel shimmer={live(current)}>{toolVerb(current)}</RowLabel>
       {turns > 0 ? <TurnsTarget title={names[0]!} n={turns} /> : names.length > 0 && <RowTarget mono={kind !== 'session'}>{namesLabel(names)}</RowTarget>}
     </Disclosure>
@@ -72,9 +70,8 @@ function TurnsTarget({ title, n }: { title: string; n: number }) {
 }
 
 function useLead(kind: GroupKind) {
-  const { toolLine } = useAppearance();
   const Icon = kind === 'session' ? MessagesSquare : TOOL_ICON[kind];
-  return toolLine === 'text' ? undefined : <Icon className="size-icon" strokeWidth={1.5} />;
+  return <Icon className="size-icon" strokeWidth={1.5} />;
 }
 
 // A read in a group: its file references, or the target while the call has none yet

@@ -1185,8 +1185,6 @@ export const fr = {
   'mobile.agent.notInstalled': 'Non installé',
   'mobile.theme.system': 'Système',
   'mobile.language.system': 'Système',
-  'mobile.toolIcons': 'Icônes d’outils',
-  'mobile.toolIcons.desc': 'Icônes de tête et lignes de liaison sur les lignes d’outils',
   'mobile.engine': 'Moteur',
   'mobile.engine.status': 'Connexion',
   'mobile.engine.demo': 'Non connecté · données de démonstration',

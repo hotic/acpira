@@ -1192,8 +1192,6 @@ export const ja = {
   'mobile.agent.notInstalled': '未インストール',
   'mobile.theme.system': 'システムに合わせる',
   'mobile.language.system': 'システムに合わせる',
-  'mobile.toolIcons': 'ツールアイコン',
-  'mobile.toolIcons.desc': 'ツール行の先頭アイコンとつなぐ線',
   'mobile.engine': 'エンジン',
   'mobile.engine.status': '接続',
   'mobile.engine.demo': '未接続 · デモデータ',

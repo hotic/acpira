@@ -463,7 +463,6 @@
         "acpira.appearance.toolLine": {
           "type": "string",
           "enum": [
-            "text",
             "icon",
             "rich"
           ],

@@ -1217,8 +1217,6 @@ export const ru = {
   'mobile.agent.notInstalled': 'Не установлен',
   'mobile.theme.system': 'Как в системе',
   'mobile.language.system': 'Как в системе',
-  'mobile.toolIcons': 'Значки инструментов',
-  'mobile.toolIcons.desc': 'Значки и соединительные линии в строках инструментов',
   'mobile.engine': 'Движок',
   'mobile.engine.status': 'Подключение',
   'mobile.engine.demo': 'Не подключено · демоданные',

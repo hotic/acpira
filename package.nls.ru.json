@@ -39,7 +39,7 @@
   "acpira.conf.appearance.surface": "Поверхность: hairline тонкие линии / tonal слои без рамок / stroke контуры",
   "acpira.conf.appearance.font": "Шрифт",
   "acpira.conf.appearance.userMessage": "Стиль сообщений пользователя",
-  "acpira.conf.appearance.toolLine": "Строка инструмента: только текст / со значком / значок + метаданные",
+  "acpira.conf.appearance.toolLine": "Строка инструмента: со значком / значок + метаданные",
   "acpira.conf.appearance.thought": "Как выглядят размышления",
   "acpira.conf.appearance.sessions": "Список сессий: выпадающий / выдвижной",
   "acpira.conf.appearance.composer": "Поле ввода: остров / вплотную к краю",

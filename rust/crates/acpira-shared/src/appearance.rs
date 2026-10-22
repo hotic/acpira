@@ -9,7 +9,7 @@ pub const AXES: [(&str, &[&str]); 16] = [
   ("surface", &["hairline", "tonal", "stroke"]),
   ("font", &["system", "inter", "geist"]),
   ("userMessage", &["bubble", "block", "plain"]),
-  ("toolLine", &["text", "icon", "rich"]),
+  ("toolLine", &["icon", "rich"]),
   ("thought", &["text", "shimmer", "orb"]),
   ("sessions", &["dropdown", "drawer"]),
   ("composer", &["island", "flush"]),
@@ -22,8 +22,8 @@ pub const AXES: [(&str, &[&str]); 16] = [
   ("autoExpand", &["on", "off"]),
 ];
 
-/// Baseline combo code 2011112003021001 decoded
-const BASE: &str = "2011112003021001";
+/// Baseline combo code 2011102003021001 decoded
+const BASE: &str = "2011102003021001";
 
 pub type Appearance = Map<String, Value>;
 

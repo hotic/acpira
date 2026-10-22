@@ -39,7 +39,7 @@
   "acpira.conf.appearance.surface": "Surface : hairline traits fins / tonal couches sans bordure / stroke contours",
   "acpira.conf.appearance.font": "Police",
   "acpira.conf.appearance.userMessage": "Style des messages de l’utilisateur",
-  "acpira.conf.appearance.toolLine": "Ligne d’outil : texte seul / avec icône / icône + métadonnées",
+  "acpira.conf.appearance.toolLine": "Ligne d’outil : avec icône / icône + métadonnées",
   "acpira.conf.appearance.thought": "Apparence de la réflexion",
   "acpira.conf.appearance.sessions": "Liste des sessions : menu déroulant / tiroir",
   "acpira.conf.appearance.composer": "Zone de saisie : îlot / collée au bord",
