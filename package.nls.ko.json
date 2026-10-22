@@ -39,7 +39,7 @@
   "acpira.conf.appearance.surface": "표면: hairline 가는 선 / tonal 경계 없는 층 / stroke 외곽선",
   "acpira.conf.appearance.font": "글꼴",
   "acpira.conf.appearance.userMessage": "사용자 메시지 스타일",
-  "acpira.conf.appearance.toolLine": "도구 줄: 텍스트만 / 아이콘 포함 / 아이콘 + 메타 정보",
+  "acpira.conf.appearance.toolLine": "도구 줄: 아이콘 포함 / 아이콘 + 메타 정보",
   "acpira.conf.appearance.thought": "생각 중 표시 방식",
   "acpira.conf.appearance.sessions": "세션 목록: 드롭다운 / 서랍",
   "acpira.conf.appearance.composer": "입력창: 아일랜드 / 하단 고정",

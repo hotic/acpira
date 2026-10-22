@@ -383,10 +383,9 @@ function outcomeOf(turn: AgentTurn): string | undefined {
 // One faint row closing the message: a warning glyph for the short stops, none for "stopped" / "no reply"; the error's own words ride along as the target.
 // Error notices absorbed into the outcome follow as quiet detail lines at the label column
 function Outcome({ turn }: { turn: AgentTurn }) {
-  const { toolLine } = useAppearance();
   const absorbed = useContext(NoticeActionContext)?.absorbed;
   const warn = turn.stop !== 'cancelled' && turn.stop !== 'end_turn';
-  const lead = toolLine === 'text' || !warn ? undefined : <TriangleAlert className="size-icon" strokeWidth={1.5} />;
+  const lead = !warn ? undefined : <TriangleAlert className="size-icon" strokeWidth={1.5} />;
   const row = (
     <Row lead={lead} className="text-fg-3">
       <RowLabel>{outcomeOf(turn)}</RowLabel>
@@ -534,15 +533,14 @@ function foldReadOnly(blocks: AgentBlock[]): LineItem[] {
   return out;
 }
 
-// Disclosure shared by fold rows: lead-slot rules match other rows (toolLine=text has no slot), the trailing chevron rotates 90° when open;
+// Disclosure shared by fold rows: lead-slot rules match other rows, the trailing chevron rotates 90° when open;
 // the body isn't indented — expanded rows align vertically with the head row, and open/close alone marks the hierarchy
 function FoldRow({ icon, children, body, open, onToggle }: { icon: ReactNode; children: ReactNode; body: ReactNode; open?: boolean; onToggle?: (open: boolean) => void }) {
-  const { toolLine } = useAppearance();
   const [innerOpen, setInnerOpen] = useState(false);
   const expanded = open ?? innerOpen;
   return (
     <Disclosure tone="action" className="action-details"
-      lead={toolLine === 'text' ? undefined : icon}
+      lead={icon}
       indent={false}
       open={expanded}
       onToggle={next => { setInnerOpen(next); onToggle?.(next); }}
@@ -793,7 +791,6 @@ function LineBlock({ block }: { block: AgentBlock }) {
 // live status shimmers in place until the agent reports the outcome, while the icon's four arrows keep pushing inward. The host turns structured compaction_update and
 // adapter prose (rust `compaction_text`) into the same block, so every agent shares this one presentation.
 export function Compaction({ block }: { block: CompactionBlock }) {
-  const { toolLine } = useAppearance();
   const row = useRef<HTMLElement>(null);
   const phase = useCompactionPhase(block, row);
   // A completion still waiting for the arrows' rest beat keeps the running look, so label and icon change together
@@ -801,7 +798,7 @@ export function Compaction({ block }: { block: CompactionBlock }) {
   const label = running ? t('turns.compacting') : block.status === 'completed' ? t('turns.compacted') : block.status === 'failed' ? t('turns.compactFailed') : t('turns.compactCancelled');
   const Icon = block.status === 'failed' ? TriangleAlert : Shrink;
   return (
-    <Row ref={row} tone="action" className={cn(phase === 'settling' && 'compaction-settle')} lead={toolLine === 'text' ? undefined : <Icon className={cn('size-icon', running && 'compacting-icon')} strokeWidth={1.5} />}>
+    <Row ref={row} tone="action" className={cn(phase === 'settling' && 'compaction-settle')} lead={<Icon className={cn('size-icon', running && 'compacting-icon')} strokeWidth={1.5} />}>
       <RowLabel shimmer={running}>{label}</RowLabel>
       {block.status === 'failed' && block.error && <RowTarget className="text-fg-3">{block.error}</RowTarget>}
     </Row>

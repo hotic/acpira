@@ -1222,8 +1222,6 @@ export const zhTW = {
   'mobile.agent.notInstalled': '未安裝',
   'mobile.theme.system': '跟隨系統',
   'mobile.language.system': '跟隨系統',
-  'mobile.toolIcons': '工具圖示',
-  'mobile.toolIcons.desc': '工具列前的圖示和連接線',
   'mobile.engine': '引擎',
   'mobile.engine.status': '連線',
   'mobile.engine.demo': '未連線 · 示範資料',

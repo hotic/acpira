@@ -1196,8 +1196,6 @@
   "mobile.agent.notInstalled": "未安装",
   "mobile.theme.system": "跟随系统",
   "mobile.language.system": "跟随系统",
-  "mobile.toolIcons": "工具图标",
-  "mobile.toolIcons.desc": "工具行前的图标和连接线",
   "mobile.engine": "引擎",
   "mobile.engine.status": "连接",
   "mobile.engine.demo": "未连接 · 演示数据",

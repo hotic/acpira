@@ -1225,8 +1225,6 @@ export const en = {
   'mobile.agent.notInstalled': 'Not installed',
   'mobile.theme.system': 'System',
   'mobile.language.system': 'System',
-  'mobile.toolIcons': 'Tool icons',
-  'mobile.toolIcons.desc': 'Lead icons and connecting rails on tool rows',
   'mobile.engine': 'Engine',
   'mobile.engine.status': 'Connection',
   'mobile.engine.demo': 'Not connected · demo data',

@@ -5,7 +5,8 @@ export interface Appearance {
   surface: 'hairline' | 'tonal' | 'stroke';
   font: 'system' | 'inter' | 'geist';
   userMessage: 'bubble' | 'block' | 'plain';
-  toolLine: 'text' | 'icon' | 'rich';
+  // Process rows always lead with an icon; `rich` adds the tool's meta after the target
+  toolLine: 'icon' | 'rich';
   thought: 'text' | 'shimmer' | 'orb';
   sessions: 'dropdown' | 'drawer';
   composer: 'island' | 'flush';
@@ -39,7 +40,7 @@ export const AXES: AxisDef[] = [
   { key: 'surface', label: 'Surface', group: 'Structure', options: [{ value: 'hairline', label: 'hairline' }, { value: 'tonal', label: 'Tonal' }, { value: 'stroke', label: 'Stroke' }] },
   { key: 'font', label: 'Font', group: 'Structure', options: [{ value: 'system', label: 'System' }, { value: 'inter', label: 'Inter' }, { value: 'geist', label: 'Geist' }] },
   { key: 'userMessage', label: 'User message', group: 'Conversation', options: [{ value: 'bubble', label: 'Right bubble' }, { value: 'block', label: 'Block' }, { value: 'plain', label: 'Plain' }] },
-  { key: 'toolLine', label: 'Tool line', group: 'Conversation', options: [{ value: 'text', label: 'Text' }, { value: 'icon', label: 'Icon' }, { value: 'rich', label: 'Icon + meta' }] },
+  { key: 'toolLine', label: 'Tool line', group: 'Conversation', options: [{ value: 'icon', label: 'Icon' }, { value: 'rich', label: 'Icon + meta' }] },
   { key: 'thought', label: 'Thinking', group: 'Conversation', options: [{ value: 'text', label: 'Text' }, { value: 'shimmer', label: 'Shimmer' }, { value: 'orb', label: 'Orb' }] },
   { key: 'sessions', label: 'Sessions', group: 'Conversation', options: [{ value: 'dropdown', label: 'Dropdown' }, { value: 'drawer', label: 'Drawer' }] },
   { key: 'composer', label: 'Composer', group: 'Composer', options: [{ value: 'island', label: 'Island' }, { value: 'flush', label: 'Flush' }] },
@@ -66,8 +67,8 @@ export function decodeAppearance(code: string, fallback: Appearance): Appearance
   return out as unknown as Appearance;
 }
 
-// Baseline: finalized as 2011112003021001
-export const BASE_APPEARANCE: Appearance = decodeAppearance('2011112003021001', {
+// Baseline: finalized as 2011102003021001
+export const BASE_APPEARANCE: Appearance = decodeAppearance('2011102003021001', {
   density: 'airy', radius: '12', surface: 'tonal', font: 'inter',
   userMessage: 'block', toolLine: 'icon', thought: 'orb', sessions: 'dropdown',
   composer: 'island', beam: 'full', beamColor: 'mono', send: 'metal',

@@ -39,7 +39,7 @@
   "acpira.conf.appearance.surface": "表面：hairline 细线 / tonal 无边分层 / stroke 描边",
   "acpira.conf.appearance.font": "字体",
   "acpira.conf.appearance.userMessage": "用户消息样式",
-  "acpira.conf.appearance.toolLine": "工具行：纯文字 / 加图标 / 图标 + 元信息",
+  "acpira.conf.appearance.toolLine": "工具行：加图标 / 图标 + 元信息",
   "acpira.conf.appearance.thought": "思考中的样子",
   "acpira.conf.appearance.sessions": "会话列表：下拉 / 抽屉",
   "acpira.conf.appearance.composer": "输入框：浮岛 / 贴底",

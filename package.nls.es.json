@@ -39,7 +39,7 @@
   "acpira.conf.appearance.surface": "Superficie: hairline líneas finas / tonal capas sin bordes / stroke contornos",
   "acpira.conf.appearance.font": "Fuente",
   "acpira.conf.appearance.userMessage": "Estilo de los mensajes del usuario",
-  "acpira.conf.appearance.toolLine": "Línea de herramienta: solo texto / con icono / icono + metadatos",
+  "acpira.conf.appearance.toolLine": "Línea de herramienta: con icono / icono + metadatos",
   "acpira.conf.appearance.thought": "Aspecto del razonamiento",
   "acpira.conf.appearance.sessions": "Lista de sesiones: desplegable / cajón",
   "acpira.conf.appearance.composer": "Compositor: isla / pegado al borde",

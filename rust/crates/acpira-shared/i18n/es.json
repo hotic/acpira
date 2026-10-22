@@ -1169,8 +1169,6 @@
   "mobile.agent.notInstalled": "No instalado",
   "mobile.theme.system": "Sistema",
   "mobile.language.system": "Sistema",
-  "mobile.toolIcons": "Iconos de herramientas",
-  "mobile.toolIcons.desc": "Iconos iniciales y líneas de unión en las filas de herramientas",
   "mobile.engine": "Motor",
   "mobile.engine.status": "Conexión",
   "mobile.engine.demo": "Sin conexión · datos de demostración",

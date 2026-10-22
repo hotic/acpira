@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Check, MessageCircleQuestion } from 'lucide-react';
 import type { Question, QuestionAnswer, QuestionAnswers, QuestionBlock } from '@shared/transcript';
-import { useAppearance } from '../appearance';
 import { t } from '../i18n';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
@@ -220,14 +219,13 @@ function OptionRow({ keyLabel, selected, role, onClick, children }: {
 
 // The record a resolved card leaves in the message: one row, expandable to the questions and what was picked
 export function QuestionRecord({ block }: { block: QuestionBlock }) {
-  const { toolLine } = useAppearance();
   const answers = block.answers ?? {};
   const n = Object.keys(answers).length;
   const label = block.outcome === 'answered' ? (n === 1 ? t('question.answeredOne') : t('question.answered', { n }))
     : block.outcome === 'skipped' ? t('question.skipped') : t('question.cancelled');
   return (
     <Disclosure
-      lead={toolLine === 'text' ? undefined : <MessageCircleQuestion className="size-icon" strokeWidth={1.5} />}
+      lead={<MessageCircleQuestion className="size-icon" strokeWidth={1.5} />}
       defaultOpen={block.outcome === 'answered'}
       body={
         <dl className="m-0 flex flex-col gap-1.5 text-2">

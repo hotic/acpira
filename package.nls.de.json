@@ -39,7 +39,7 @@
   "acpira.conf.appearance.surface": "Oberfläche: hairline dünne Linien / tonal randlose Ebenen / stroke Umrisse",
   "acpira.conf.appearance.font": "Schrift",
   "acpira.conf.appearance.userMessage": "Stil der Benutzernachrichten",
-  "acpira.conf.appearance.toolLine": "Tool-Zeile: nur Text / mit Symbol / Symbol + Metadaten",
+  "acpira.conf.appearance.toolLine": "Tool-Zeile: mit Symbol / Symbol + Metadaten",
   "acpira.conf.appearance.thought": "Darstellung des Denkens",
   "acpira.conf.appearance.sessions": "Sitzungsliste: Dropdown / Schublade",
   "acpira.conf.appearance.composer": "Eingabefeld: Insel / bündig",

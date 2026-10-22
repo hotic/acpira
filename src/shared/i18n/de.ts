@@ -1182,8 +1182,6 @@ export const de = {
   'mobile.agent.notInstalled': 'Nicht installiert',
   'mobile.theme.system': 'System',
   'mobile.language.system': 'System',
-  'mobile.toolIcons': 'Werkzeug-Symbole',
-  'mobile.toolIcons.desc': 'Symbole und Verbindungslinien vor Werkzeugzeilen',
   'mobile.engine': 'Engine',
   'mobile.engine.status': 'Verbindung',
   'mobile.engine.demo': 'Nicht verbunden · Demodaten',

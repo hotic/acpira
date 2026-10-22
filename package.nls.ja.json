@@ -39,7 +39,7 @@
   "acpira.conf.appearance.surface": "サーフェス：hairline 細線 / tonal 境界なしの階調 / stroke 枠線",
   "acpira.conf.appearance.font": "フォント",
   "acpira.conf.appearance.userMessage": "ユーザーメッセージのスタイル",
-  "acpira.conf.appearance.toolLine": "ツール行：テキストのみ / アイコン付き / アイコン + メタ情報",
+  "acpira.conf.appearance.toolLine": "ツール行：アイコン付き / アイコン + メタ情報",
   "acpira.conf.appearance.thought": "思考中の表示",
   "acpira.conf.appearance.sessions": "セッション一覧：ドロップダウン / ドロワー",
   "acpira.conf.appearance.composer": "入力欄：アイランド / 下端に固定",

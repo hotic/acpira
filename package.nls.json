@@ -39,7 +39,7 @@
   "acpira.conf.appearance.surface": "Surface: hairline thin lines / tonal borderless layering / stroke outlines",
   "acpira.conf.appearance.font": "Font",
   "acpira.conf.appearance.userMessage": "User message style",
-  "acpira.conf.appearance.toolLine": "Tool line: text only / with icon / icon + meta",
+  "acpira.conf.appearance.toolLine": "Tool line: with icon / icon + meta",
   "acpira.conf.appearance.thought": "How thinking looks",
   "acpira.conf.appearance.sessions": "Session list: dropdown / drawer",
   "acpira.conf.appearance.composer": "Composer: island / flush",

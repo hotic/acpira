@@ -56,7 +56,7 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
   const todos = toolTodoEntries(block);
   const fold = useAutoFold();
 
-  const lead = toolLine === 'text' ? undefined : <Icon className="size-icon" strokeWidth={1.5} />;
+  const lead = <Icon className="size-icon" strokeWidth={1.5} />;
 
   // An AIR async task owns this row while it runs: the state tag replaces the generic status icon, and
   // a stoppable task gets a stop button that posts _session/async_task/stop through the host
@@ -173,7 +173,7 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
   }
   // Read and search responses expose references only, including failures and empty results.
   if (files.length) return (
-    <ConnectedRail enabled={toolLine !== 'text'} endAtLastRow className="action-details flex flex-col">
+    <ConnectedRail endAtLastRow className="action-details flex flex-col">
       <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>
       <EntranceOnce id={`${block.id}:files`}><ResultList items={files} kind={block.kind} /></EntranceOnce>
     </ConnectedRail>
@@ -299,13 +299,12 @@ function ToolBody({ block, items, command }: { block: ToolCallBlock; items: Retu
 
 // Result rows share the parent's connected icon rail, with a faint line/host suffix.
 export function ResultList({ items, kind, rail = true }: { items: string[]; kind: ToolCallBlock['kind']; rail?: boolean }) {
-  const { toolLine } = useAppearance();
   const Icon = kind === 'fetch' ? Globe : FileText;
   return (
     <div className={cn('flex flex-col', rail && 'tool-results')}>
       {items.map(it => {
         const { main, aside } = splitHit(it);
-        const lead = toolLine === 'text' ? undefined : <Icon className="size-icon" strokeWidth={1.5} />;
+        const lead = <Icon className="size-icon" strokeWidth={1.5} />;
         const target = <RowTarget mono={kind !== 'fetch'} className="text-fg-2">{main}</RowTarget>;
         if (kind === 'read' || kind === 'search') {
           return <FileResultRow key={it} hit={it} lead={lead} aside={aside}>{target}</FileResultRow>;

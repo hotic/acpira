@@ -1187,8 +1187,6 @@ export const ko = {
   'mobile.agent.notInstalled': '설치되지 않음',
   'mobile.theme.system': '시스템 설정',
   'mobile.language.system': '시스템 설정',
-  'mobile.toolIcons': '도구 아이콘',
-  'mobile.toolIcons.desc': '도구 행의 앞 아이콘과 연결선',
   'mobile.engine': '엔진',
   'mobile.engine.status': '연결',
   'mobile.engine.demo': '연결 안 됨 · 데모 데이터',

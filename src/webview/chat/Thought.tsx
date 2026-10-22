@@ -1,7 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Brain } from 'lucide-react';
 import type { TextBlock, ThoughtBlock } from '@shared/transcript';
-import { useAppearance } from '../appearance';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
 import { Disclosure } from '../ui/Disclosure';
@@ -15,9 +14,8 @@ import { useAutoFold } from './autoFold';
 // tool arguments finish generating. Keep the text, but never time that gap as thinking.
 // The turn heading owns the Orb; thought rows keep a static icon and shimmer only while streaming.
 export const Thought = memo(function Thought({ block }: { block: ThoughtBlock }) {
-  const { toolLine } = useAppearance();
   const live = !!block.streaming;
-  const lead = toolLine === 'text' ? undefined : <Brain className="size-icon" strokeWidth={1.5} />;
+  const lead = <Brain className="size-icon" strokeWidth={1.5} />;
   // Thoughts carry no id; the start stamp names them within the turn, so a remounted transcript (another
   // session and back) does not replay the entrance of a thought that already entered
   const fold = useAutoFold();
