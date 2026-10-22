@@ -551,6 +551,11 @@ fn change<R>(server: &Server, session: &Session, counters: bool, f: impl FnOnce(
     let mut st = session.state.lock();
     let before = st.goal.clone();
     let r = f(&mut st);
+    // The wrap-up note belongs to a budget-limited goal only: one the model met, blocked or paused meanwhile (the same
+    // call's update_goal, `account` running before the tools) or the user changed is not told to wrap up
+    if !st.goal.as_ref().is_some_and(|g| g.status == Status::BudgetLimited) {
+      st.goal_note = None;
+    }
     let changed = st.goal != before;
     let record = (changed && !counters_only(before.as_ref(), st.goal.as_ref())) || (counters && (changed || st.goal_unsaved));
     st.goal_unsaved = !record && (changed || st.goal_unsaved);
@@ -605,11 +610,6 @@ pub fn revive(goal: &mut Option<Goal>) -> bool {
   }
 }
 
-/// Time and tokens count toward the goal: while it is active, and in the turn that ran out of budget until it ends
-fn counting(st: &SessionState) -> bool {
-  st.goal.as_ref().is_some_and(|g| g.status == Status::Active || (g.status == Status::BudgetLimited && st.goal_wrapping))
-}
-
 /// The goal after a rewind (`acp.rs` `Server::rewind`) to a turn that started with `then`, the session holding `now`: the
 /// goal goes back to how it stood then, so one created, met, blocked or spent in the cut turns does not outlive them.
 /// Two things stay as they are now: the tokens and time the same goal already spent (the budget caps real spending), and
@@ -629,6 +629,11 @@ pub fn rewound(then: Option<Goal>, now: Option<&Goal>) -> Option<Goal> {
   }
   g.updated_at = crate::store::now_ms();
   Some(g)
+}
+
+/// Time and tokens count toward the goal: while it is active, and in the turn that ran out of budget until it ends
+fn counting(st: &SessionState) -> bool {
+  st.goal.as_ref().is_some_and(|g| g.status == Status::Active || (g.status == Status::BudgetLimited && st.goal_wrapping))
 }
 
 /// Count the wall clock since the last tick toward a goal that counts, while a turn runs (`SessionState::goal_clock`)

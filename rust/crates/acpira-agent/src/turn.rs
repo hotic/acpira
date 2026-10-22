@@ -92,10 +92,11 @@ pub async fn run(server: Arc<Server>, params: Value, cancel: Cancel) -> Result<V
     st.steerable = !compacting && !instant;
     goal::start_clock(&mut st);
     // A turn the client named can be rewound to (`_session/rewind`): the mark goes before anything the turn writes, with
-    // what the model had been told so far, which the turn may change in its user message
+    // what the model had been told so far, which the turn may change in its user message, and the goal as it stood
     if let Some(turn) = params.pointer("/_meta/acpira~1turn").and_then(Value::as_str).filter(|t| !t.is_empty()) {
       session.store.append(json!({
         "type": "mark", "turn": turn, "announced": st.announced, "mcp_note": st.mcp_note, "sidekick_told": st.sidekick_told,
+        "goal": st.goal,
       }));
     }
     !st.titled && !st.items.iter().any(|i| matches!(i, Item::User(_)))

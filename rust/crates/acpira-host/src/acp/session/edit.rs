@@ -822,7 +822,9 @@ impl AcpSession {
         }
         c.retry_pending = true;
       }
-      self.clone().prompt_inner(t("host.retryContinuePrompt"), vec![], Origin::Retry, None, None).await;
+      // A goal's next turn that failed before doing anything goes out again as itself, so the agent runs it as a goal turn
+      let (text, origin) = if user.is_goal_continue() && !has_output { (user.text.clone(), Origin::GoalContinue) } else { (t("host.retryContinuePrompt"), Origin::Retry) };
+      self.clone().prompt_inner(text, vec![], origin, None, None).await;
       self.core.lock().retry_pending = false;
       return Ok(());
     }

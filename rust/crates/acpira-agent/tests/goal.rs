@@ -231,6 +231,24 @@ async fn a_spent_budget_limits_the_goal_and_tells_the_turn_to_wrap_up() {
 }
 
 #[tokio::test]
+async fn a_goal_met_in_the_call_that_spent_its_budget_is_not_told_to_wrap_up() {
+  let (h, server, sid) = setup().await;
+  server.push(mock::tools(&[("c1", "create_goal", json!({ "objective": "make it work", "token_budget": 100 }))]));
+  // This call's own tokens reach the budget, and it marks the goal complete
+  server.push(mock::tools(&[("c2", "update_goal", json!({ "status": "complete" }))]));
+  server.push(mock::text("Done: it works."));
+  prompt(&h, &sid, "Keep going until it works, within 100 tokens").await;
+  assert_eq!(server.requests().len(), 3);
+  // The report call gets update_goal's result, not a wrap-up note contradicting it
+  let msgs = messages(&server, 2);
+  let last = msgs.last().unwrap();
+  assert_eq!(last["role"], "tool", "{last}");
+  assert!(last["content"].as_str().unwrap().contains("\"status\":\"complete\""), "{last}");
+  assert!(!msgs.iter().any(|m| m["content"].as_str().is_some_and(|c| c.contains("reached its token budget"))));
+  assert_eq!(last_status(&h), "complete");
+}
+
+#[tokio::test]
 async fn a_reopened_active_goal_comes_back_paused() {
   let (h, server, sid) = setup().await;
   server.push(mock::tools(&[("c1", "read", json!({ "path": "a.txt" }))])).push(mock::text("Started."));

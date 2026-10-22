@@ -233,3 +233,26 @@ async fn the_docks_pause_ends_the_run_and_clear_is_a_request_for_an_agent_that_l
   s.control_goal(GoalAction::Set, Some("port it".into())).await.unwrap();
   until(|| !s.is_running() && view(&s)["goal"].is_null() && goal_log(&dir).ends_with("continue\ncontinue\n"), 10000).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_goal_turn_that_failed_before_any_output_is_retried_as_the_goals_next_turn() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let env = json!({ "FAKE_GOAL": "acpira", "FAKE_GOAL_ROUNDS": "2", "FAKE_GOAL_FAIL_ROUND": "1", "FAKE_GOAL_LOG": dir.path().join("goal.log") });
+  let h = Harness::new(&fake, json!({ "env": env }));
+  let s = started(&h, "/tmp").await;
+  prompt(&s, "/goal port the parser").await;
+  // The first continuation fails: the run stops there, the goal still active
+  until(|| goal_log(&dir) == "continue\n" && !s.is_running(), 5000).await;
+  tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+  assert_eq!((goal_log(&dir).as_str(), view(&s)["goal"]["status"].as_str()), ("continue\n", Some("active")));
+  // Retry sends the goal's next turn again, not a plain "continue", and the run goes on until the goal is met
+  s.retry_turn().await.unwrap();
+  until(|| goal_log(&dir) == "continue\ncontinue\ncontinue\n" && !s.is_running() && view(&s)["goal"].is_null(), 5000).await;
+  let vw = view(&s);
+  assert_eq!(turns_in(&vw), 6, "{vw}");
+  for i in [2, 4] {
+    expect_match(&vw["turns"][i], json!({ "role": "user", "text": "/goal continue", "auto": true, "autoReason": "goal", "goalContinue": true }));
+  }
+  assert_eq!(goal_events(&vw), [json!("set"), json!("complete")]);
+}
