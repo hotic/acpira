@@ -257,6 +257,38 @@ async fn an_interrupted_stream_is_retried_and_only_the_retry_counts() {
 }
 
 #[tokio::test]
+async fn a_reply_of_reasoning_alone_is_retried() {
+  // A gateway that timed out on a long tool call sent the reasoning and then a normal finish (gemini-4-argon, 2026-10-22)
+  let (h, server, sid) = setup(json!([{ "id": "m1" }])).await;
+  let thought_only = || {
+    Reply::Sse(vec![mock::delta(json!({ "role": "assistant", "reasoning_content": "planning the file" })), mock::finish("stop"), mock::usage(100, 10, 0)])
+  };
+  server.push(thought_only());
+  server.push(mock::text("the answer"));
+  let r = prompt(&h, &sid, "hi").await;
+  assert_eq!(r["stopReason"], "end_turn");
+  assert_eq!(server.requests().len(), 2);
+  let log = std::fs::read_to_string(h.home().join("agent").join("sessions").join(format!("{sid}.jsonl"))).unwrap();
+  let events: Vec<Value> = log.lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).collect();
+  let reqs: Vec<&Value> = events.iter().filter(|e| e["type"] == "request").collect();
+  assert!(reqs[0]["error"].as_str().unwrap().contains("without any text or tool call"), "{}", reqs[0]);
+  assert_eq!(reqs[0]["usage"]["output"], 10, "the empty attempt's cost is logged");
+  assert_eq!((reqs[1]["attempt"].as_u64(), reqs[1].get("error")), (Some(2), None));
+  // Only the retried answer enters the history
+  let assistants: Vec<&Value> = events.iter().filter(|e| e["type"] == "item" && e["item"]["role"] == "assistant").collect();
+  assert_eq!(assistants.len(), 1);
+  assert_eq!(assistants[0]["item"]["text"], "the answer");
+
+  // Empty every time: the turn fails with the reason instead of ending as if answered
+  for _ in 0..4 {
+    server.push(thought_only());
+  }
+  let e = prompt_err(&h, &sid).await;
+  assert!(e.contains("without any text or tool call"), "{e}");
+  assert_eq!(server.requests().len(), 6);
+}
+
+#[tokio::test]
 async fn a_bad_request_is_not_retried() {
   let (h, server, sid) = setup(json!([{ "id": "m1" }])).await;
   server.push(Reply::Status(400, r#"{"error":{"message":"unknown parameter"}}"#.into()));

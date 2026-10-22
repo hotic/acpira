@@ -223,7 +223,7 @@ impl Assembler {
       "response.output_item.done" => {
         self.finish_item(index, v["item"].clone(), emit);
       }
-      "response.completed" | "response.incomplete" => {
+      kind @ ("response.completed" | "response.incomplete") => {
         let resp = &v["response"];
         // Items a server reported only here (no output_item.done)
         for (i, item) in resp["output"].as_array().into_iter().flatten().enumerate() {
@@ -242,6 +242,8 @@ impl Assembler {
           Some("max_output_tokens") => StopReason::MaxTokens,
           Some("content_filter") => StopReason::Refusal,
           Some(other) => StopReason::Other(other.to_owned()),
+          // An incomplete response that gives no reason did not end its turn either
+          None if kind == "response.incomplete" => StopReason::Other("incomplete".into()),
           None => StopReason::EndTurn,
         });
       }
@@ -491,5 +493,9 @@ mod tests {
     let (events, r) = run(&[json!({ "type": "response.incomplete", "response": { "incomplete_details": { "reason": "max_output_tokens" } } })]);
     r.unwrap();
     assert!(matches!(events.last(), Some(Event::Done { stop: StopReason::MaxTokens, .. })));
+    // Without a reason an incomplete response is not a finished turn
+    let (events, r) = run(&[json!({ "type": "response.incomplete", "response": {} })]);
+    r.unwrap();
+    assert!(matches!(events.last(), Some(Event::Done { stop: StopReason::Other(s), .. }) if s == "incomplete"));
   }
 }
