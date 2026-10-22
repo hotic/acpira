@@ -204,7 +204,9 @@ pub fn run(version: &str) -> i32 {
         && let Some(id) = msg.get("id").cloned()
       {
         let mut tools = vec![tool_def(), hooks_tool_def()];
-        tools.extend(relay.tool_def());
+        let roster = relay.roster();
+        relay.served(roster.as_ref());
+        tools.extend(roster.and_then(|(personas, groups)| (!personas.is_empty()).then(|| ask_tool_def(&personas, &groups))));
         let features = relay.features();
         if features.summoned {
           tools.push(caller_tool_def());
@@ -268,9 +270,15 @@ pub fn run(version: &str) -> i32 {
         extra.push_str(&format!("\n\n{BROWSER_INSTRUCTIONS}"));
       }
       result["instructions"] = json!(format!("{INSTRUCTIONS}\n\n{RELAY_INSTRUCTIONS}{extra}\n\n{SESSIONS_INSTRUCTIONS}"));
+      // ask_agent's agents follow the roster while the session runs (see `Relay::watch`)
+      result["capabilities"]["tools"]["listChanged"] = json!(true);
     }
     if !write(&out, &reply) {
       break;
+    }
+    if initialize && let Some(relay) = &relay {
+      let out = out.clone();
+      relay.watch(move |v| write(&out, v));
     }
   }
   0
@@ -285,6 +293,29 @@ struct Relay {
   token: String,
   /// How long one call may wait, picked from the MCP client at initialize
   wait_secs: Arc<std::sync::atomic::AtomicU64>,
+  watch: Arc<Watch>,
+}
+
+/// What `tools/list` last told the client about the roster, and the change it was last notified of
+#[derive(Default)]
+struct Watch {
+  started: std::sync::atomic::AtomicBool,
+  /// The roster's fingerprint at the client's latest `tools/list` (None before the first)
+  served: parking_lot::Mutex<Option<String>>,
+  /// The fingerprint a `list_changed` went out for since then, so a client that never lists again is told once
+  notified: parking_lot::Mutex<Option<String>>,
+}
+
+/// How often the server compares the roster with what it listed: one loopback request and one small file read
+const ROSTER_POLL: std::time::Duration = std::time::Duration::from_secs(2);
+/// Failed polls in a row after which the watch ends: the grant is gone (session closed) or the sidecar with it
+const ROSTER_POLL_FAILURES: u32 = 3;
+
+/// The part of the roster `ask_agent` lists, as compared between polls. The built-in agent's sidekick is left out:
+/// that agent keeps its tool table as first sent and tells a sidekick change in a note instead (`builtin-agent.md`)
+fn roster_fingerprint(personas: &[acpira_shared::subagents::SubagentPersona], groups: &[acpira_shared::subagents::SubagentGroup]) -> String {
+  let personas: Vec<_> = personas.iter().filter(|p| p.id != acpira_shared::subagents::SIDEKICK_ID).collect();
+  serde_json::to_string(&(personas, groups)).unwrap_or_default()
 }
 
 /// Claude Code waits for an MCP tool call far longer than a child round takes, and so does the built-in agent (client
@@ -301,6 +332,7 @@ impl Relay {
       addr: var(ENV_ADDR)?,
       token: var(ENV_TOKEN)?,
       wait_secs: Arc::new(SHORT_WAIT.into()),
+      watch: Default::default(),
     })
   }
 
@@ -372,19 +404,61 @@ impl Relay {
     }
   }
 
-  /// The tool, listing the personas and groups the hub offers; no persona (or no hub) = no tool
-  fn tool_def(&self) -> Option<Value> {
+  /// The personas and groups the hub offers this session; None when the hub cannot be reached or refused the grant
+  fn roster(&self) -> Option<(Vec<acpira_shared::subagents::SubagentPersona>, Vec<acpira_shared::subagents::SubagentGroup>)> {
     use crate::relay::wire::{HubOp, HubReply};
-    let (mut personas, mut groups) = (vec![], vec![]);
+    let mut roster = None;
     let _ = crate::relay::hub::call(&self.addr, &self.request(HubOp::List), |r| {
       match r {
-        HubReply::Personas(p) => personas = p,
-        HubReply::Roster { personas: p, groups: g } => (personas, groups) = (p, g),
+        HubReply::Personas(p) => roster = Some((p, vec![])),
+        HubReply::Roster { personas, groups } => roster = Some((personas, groups)),
         _ => {}
       }
       false
     });
-    (!personas.is_empty()).then(|| ask_tool_def(&personas, &groups))
+    roster
+  }
+
+  /// Note what a `tools/list` answer offered (an unreachable hub offered no ask_agent, which counts as an empty roster)
+  fn served(&self, roster: Option<&(Vec<acpira_shared::subagents::SubagentPersona>, Vec<acpira_shared::subagents::SubagentGroup>)>) {
+    let print = roster.map(|(p, g)| roster_fingerprint(p, g)).unwrap_or_else(|| roster_fingerprint(&[], &[]));
+    *self.watch.served.lock() = Some(print);
+    *self.watch.notified.lock() = None;
+  }
+
+  /// Poll the roster for the rest of the process and send `notifications/tools/list_changed` when it no longer matches
+  /// what the client last listed, so a persona added, edited or removed on the settings page reaches a running
+  /// session's `ask_agent` (Claude Code 2.1.299 lists again on it, so does the built-in agent at its next turn); started
+  /// once, at initialize. `send` writes one line to stdout and is false once it is closed
+  fn watch(&self, send: impl Fn(&Value) -> bool + Send + 'static) {
+    if self.watch.started.swap(true, std::sync::atomic::Ordering::Relaxed) {
+      return;
+    }
+    let relay = self.clone();
+    std::thread::spawn(move || {
+      let mut failures = 0;
+      loop {
+        std::thread::sleep(ROSTER_POLL);
+        let Some((personas, groups)) = relay.roster() else {
+          failures += 1;
+          if failures >= ROSTER_POLL_FAILURES {
+            return;
+          }
+          continue;
+        };
+        failures = 0;
+        let print = roster_fingerprint(&personas, &groups);
+        let w = &relay.watch;
+        let stale = w.served.lock().as_ref().is_some_and(|served| *served != print);
+        if !stale || w.notified.lock().as_deref() == Some(print.as_str()) {
+          continue;
+        }
+        *w.notified.lock() = Some(print);
+        if !send(&json!({ "jsonrpc": "2.0", "method": "notifications/tools/list_changed" })) {
+          return;
+        }
+      }
+    });
   }
 
   fn ask(&self, params: &Value, progress: &mut dyn FnMut(Value)) -> Value {

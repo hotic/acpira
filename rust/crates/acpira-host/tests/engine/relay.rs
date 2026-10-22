@@ -1395,3 +1395,103 @@ async fn every_member_of_a_group_gets_the_same_pack() {
   let body = |p: &str| p.split("\n---\n").next().unwrap_or("").to_owned();
   assert!(body(packs[0]).contains("+two") && body(packs[0]) == body(packs[1]), "{text}");
 }
+
+/// One `acpira mcp` process with a session's relay env, read line by line on a thread
+struct McpProcess {
+  child: std::process::Child,
+  stdin: std::process::ChildStdin,
+  lines: std::sync::mpsc::Receiver<Value>,
+}
+
+impl McpProcess {
+  fn spawn(env: &Value) -> McpProcess {
+    use std::io::BufRead;
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_acpira"));
+    cmd.arg("mcp").stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null());
+    for pair in env.as_array().unwrap() {
+      cmd.env(pair["name"].as_str().unwrap(), pair["value"].as_str().unwrap());
+    }
+    let mut child = cmd.spawn().unwrap();
+    let stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let (tx, lines) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+      for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
+        if let Ok(v) = serde_json::from_str::<Value>(&line)
+          && tx.send(v).is_err()
+        {
+          break;
+        }
+      }
+    });
+    McpProcess { child, stdin, lines }
+  }
+
+  fn send(&mut self, msg: Value) {
+    use std::io::Write;
+    writeln!(self.stdin, "{msg}").unwrap();
+    self.stdin.flush().unwrap();
+  }
+
+  /// The next line matching `pick` within `secs`, or None
+  fn next(&self, secs: u64, pick: impl Fn(&Value) -> bool) -> Option<Value> {
+    let end = std::time::Instant::now() + Duration::from_secs(secs);
+    while let Some(left) = end.checked_duration_since(std::time::Instant::now()) {
+      match self.lines.recv_timeout(left) {
+        Ok(v) if pick(&v) => return Some(v),
+        Ok(_) => {}
+        Err(_) => return None,
+      }
+    }
+    None
+  }
+
+  fn agents(&mut self, id: u64) -> Vec<String> {
+    self.send(json!({ "jsonrpc": "2.0", "id": id, "method": "tools/list" }));
+    let list = self.next(10, |v| v["id"] == id).expect("tools/list answered");
+    let tools = list["result"]["tools"].as_array().unwrap().clone();
+    let ask = tools.iter().find(|t| t["name"] == "ask_agent");
+    ask.map(|t| t["inputSchema"]["properties"]["agent"]["enum"].as_array().unwrap().iter().map(|a| a.as_str().unwrap().to_owned()).collect()).unwrap_or_default()
+  }
+}
+
+impl Drop for McpProcess {
+  fn drop(&mut self) {
+    let _ = self.child.kill();
+    let _ = self.child.wait();
+  }
+}
+
+fn list_changed(v: &Value) -> bool {
+  v["method"] == "notifications/tools/list_changed"
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_running_sessions_ask_agent_follows_the_roster_through_list_changed() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let roster = roster(h.dir.path()).await;
+  let hub = RelayHub::start(roster.clone(), Arc::new(|_: &str| {})).await.unwrap();
+  let s = Disposing(h.session("/tmp"));
+  let mut mcp = McpProcess::spawn(&hub.env(&s.0, None, 0));
+  mcp.send(json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "clientInfo": { "name": "claude-code" } } }));
+  let init = mcp.next(10, |v| v["id"] == 1).expect("initialize answered");
+  assert_eq!(init["result"]["capabilities"]["tools"]["listChanged"], true, "{init}");
+  assert_eq!(mcp.agents(2), ["fake-review", "fake-worker"]);
+
+  // Nothing changed: no notification
+  assert!(mcp.next(3, list_changed).is_none());
+  // A persona added on the settings page: told once, and the next listing offers it
+  let base = serde_json::to_value(roster.list()).unwrap();
+  let mut personas = base.as_array().unwrap().clone();
+  personas.push(json!({ "name": "Fresh", "agent": "fake", "mode": "consult" }));
+  roster.save(&json!({ "base": base, "personas": personas })).await.unwrap();
+  assert!(mcp.next(6, list_changed).is_some(), "no list_changed after a persona was added");
+  assert!(mcp.next(3, list_changed).is_none(), "told twice of one change");
+  assert_eq!(mcp.agents(3), ["fake-review", "fake-worker", "fresh"]);
+  // Removing it again is a change too, back to the first roster
+  let now = serde_json::to_value(roster.list()).unwrap();
+  roster.save(&json!({ "base": now, "personas": base })).await.unwrap();
+  assert!(mcp.next(6, list_changed).is_some(), "no list_changed after a persona was removed");
+  assert_eq!(mcp.agents(4), ["fake-review", "fake-worker"]);
+}
