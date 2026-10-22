@@ -356,8 +356,9 @@ impl AcpSession {
     }
     let (first, fresh) = {
       let mut c = self.core.lock();
-      // A goal set or resumed from the dock is a request of the user's own, like a typed prompt
-      if matches!(origin, Origin::User | Origin::Goal) {
+      // A goal set or resumed from the dock is a request of the user's own, like a typed prompt; each of the goal's next
+      // turns gets the gate's rounds afresh too, since a gate that gives up ends the goal's run (`end_goal_run`)
+      if matches!(origin, Origin::User | Origin::Goal | Origin::GoalContinue) {
         c.hooks.round = 0;
       }
       // A deferred gate still owes the agent the edits beforeEdit rejected before it

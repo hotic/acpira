@@ -11,6 +11,7 @@ use super::*;
 /// - before.cjs denies edits of `guarded.txt` until a tool has looked at RULES.md;
 /// - after.cjs blocks while a file the turn changed holds "bad\n", naming it with `hook-fix:` (the fake agent's cue);
 /// - always.cjs blocks every time, through exit code 2;
+/// - every-other.cjs blocks on its 1st, 3rd, 5th … run and passes on the others;
 /// - prompt.cjs adds context to a prompt naming `wish:` and blocks one naming `forbidden`
 struct Project {
   _dir: tempfile::TempDir,
@@ -42,6 +43,15 @@ process.stderr.write('nope');
 process.exit(2);
 "#;
 
+const EVERY_OTHER: &str = r#"
+const fs = require('fs'), path = require('path');
+require('fs').readFileSync(0);
+const file = path.join(__dirname, 'every-other.count');
+const n = (fs.existsSync(file) ? Number(fs.readFileSync(file, 'utf8')) : 0) + 1;
+fs.writeFileSync(file, String(n));
+if (n % 2 === 1) { process.stderr.write('odd run'); process.exit(2); }
+"#;
+
 const PROMPT: &str = r#"
 const fs = require('fs'), path = require('path');
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
@@ -69,7 +79,7 @@ impl Project {
     git(&root, &["commit", "-q", "-m", "base"]);
     let hooks_dir = root.join(".agents");
     std::fs::create_dir_all(&hooks_dir).unwrap();
-    for (name, body) in [("before.cjs", BEFORE), ("after.cjs", AFTER), ("always.cjs", ALWAYS), ("prompt.cjs", PROMPT)] {
+    for (name, body) in [("before.cjs", BEFORE), ("after.cjs", AFTER), ("always.cjs", ALWAYS), ("every-other.cjs", EVERY_OTHER), ("prompt.cjs", PROMPT)] {
       std::fs::write(hooks_dir.join(name), body).unwrap();
     }
     let command = |v: &Value| -> Value {
@@ -377,6 +387,25 @@ async fn a_goal_the_engine_continues_stops_and_is_paused_when_the_gate_gives_up(
   // The goal turn and the gate's one follow-up, then nothing: no continuation went past the gate's round limit
   assert_eq!(std::fs::read_to_string(&log).unwrap_or_default(), "pause\n");
   assert_eq!((turns_in(&view(&s)), count(&h, "hooks: gate gave up")), (4, 1));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn each_of_the_goals_next_turns_gets_the_gates_rounds_afresh() {
+  let fake = fake_or_skip!();
+  if !git_or_skip() {
+    return;
+  }
+  // One round: every goal turn is blocked once and passes on its follow-up
+  let p = Project::new(json!({ "afterTurn": { "run": "every-other.cjs", "rounds": 1 } }));
+  let log = p.root.join(".agents/goal.log");
+  let env = json!({ "FAKE_GOAL": "acpira", "FAKE_GOAL_ROUNDS": "2", "FAKE_GOAL_LOG": log });
+  let h = Harness::new(&fake, json!({ "env": env }));
+  let s = started(&h, &p.cwd()).await;
+  prompt(&s, "/goal port it").await;
+  until(|| !s.is_running() && view(&s)["goal"].is_null() && count(&h, "hooks: gate passed") == 3, 20_000).await;
+  // The set turn and both continuations each used their one round and passed: none ran out of rounds
+  assert_eq!(std::fs::read_to_string(&log).unwrap_or_default(), "continue\ncontinue\n");
+  assert_eq!((count(&h, "hooks: gate gave up"), turns_in(&view(&s))), (0, 12));
 }
 
 #[tokio::test(flavor = "multi_thread")]

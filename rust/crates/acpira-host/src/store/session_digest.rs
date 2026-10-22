@@ -131,8 +131,11 @@ fn iso_stamp(iso: &str) -> String {
   }
 }
 
-fn auto_label(reason: Option<AutoReason>) -> &'static str {
-  match reason {
+fn auto_label(u: &UserTurn) -> &'static str {
+  if u.is_goal_continue() {
+    return "automatic: the goal's next turn";
+  }
+  match u.auto_reason {
     None | Some(AutoReason::Compact) => "automatic: compaction",
     Some(AutoReason::AccountSwitch) => "automatic: continued on another account",
     Some(AutoReason::Retry) => "automatic: retry",
@@ -143,13 +146,7 @@ fn auto_label(reason: Option<AutoReason>) -> &'static str {
 }
 
 fn user_label(u: &UserTurn) -> String {
-  if u.is_goal_continue() {
-    "User (automatic: the goal's next turn)".into()
-  } else if u.auto == Some(true) {
-    format!("User ({})", auto_label(u.auto_reason))
-  } else {
-    "User".into()
-  }
+  if u.auto == Some(true) { format!("User ({})", auto_label(u)) } else { "User".into() }
 }
 
 fn status_word(s: ToolStatus) -> &'static str {
@@ -358,7 +355,7 @@ fn round_line(round: &Round) -> String {
   for u in round.users() {
     let text = if u.text.trim().is_empty() { u.command.clone().unwrap_or_default() } else { u.text.clone() };
     if u.auto == Some(true) {
-      parts.push(format!("({})", auto_label(u.auto_reason)));
+      parts.push(format!("({})", auto_label(u)));
     } else {
       parts.push(format!("User: {}", line(&text, 200)));
     }
@@ -718,6 +715,14 @@ fn context(text: &str, folded: &str, pos: usize, len: usize) -> String {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn a_goals_next_turn_is_labelled_apart_from_a_goal_control() {
+    let control = UserTurn { auto: Some(true), auto_reason: Some(AutoReason::Goal), ..Default::default() };
+    let next = UserTurn { goal_continue: true, ..control.clone() };
+    assert_eq!((auto_label(&control), auto_label(&next)), ("automatic: goal control", "automatic: the goal's next turn"));
+    assert_eq!(user_label(&next), "User (automatic: the goal's next turn)");
+  }
 
   fn record(turns: serde_json::Value) -> SessionRecord {
     serde_json::from_value(serde_json::json!({

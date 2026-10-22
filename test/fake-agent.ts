@@ -115,7 +115,7 @@ if (process.argv.slice(-4).join(' ') === '--cli auth status --json') {
 // codex-acp capability plus `acpira/continue: "/goal continue"`, so the client continues the goal; each `/goal continue`
 // (logged as `continue`) answers `continued <n>` and meets the goal on the FAKE_GOAL_ROUNDS-th one (default 2), finds
 // nothing to do once the goal is no longer active, and for an objective starting with "slow" takes 1 s and a stop, which
-// pauses the goal
+// pauses the goal; FAKE_GOAL_FAIL_ROUND=n fails the n-th continuation once, before any output
 // FAKE_SLOW_STEP_MS → the pause between the 50 chunks of a "slow" turn (default 40 ms, so 2 s in all)
 // FAKE_META_LOG → append `{ method, meta }` (the request's `_meta`) for every session/new, resume and load
 // FAKE_REBUILD → claude-agent-acp 0.87.0's getOrCreateSession: a resume of a live session whose
@@ -150,8 +150,9 @@ const steerMode = process.env.FAKE_STEERING ?? '';
 const goalMode = process.env.FAKE_GOAL ?? '';
 // The goal snapshot per session, published at the dialect's key
 const goals = new Map<string, { objective: string; status: string; tokensUsed: number; timeUsedSeconds: number } | null>();
-// =acpira: the continuations each session has run
+// =acpira: the continuations each session has run, and the sessions whose FAKE_GOAL_FAIL_ROUND already failed
 const goalRounds = new Map<string, number>();
+const goalFailed = new Set<string>();
 const goalMeta = (goal: unknown) => goalMode === 'codex' || goalMode === 'acpira' ? { goal } : { jetbrains: { air: { version: 1, goal } } };
 const goalCap = () => goalMode === 'codex'
   ? { goal: { version: 1, controlMethod: '_session/goal', actions: ['set', 'pause', 'resume', 'clear'] } }
@@ -580,6 +581,11 @@ const app = acp.agent({ name: 'fake-agent' })
           return { stopReason: 'end_turn' };
         }
         const round = (goalRounds.get(sid) ?? 0) + 1;
+        // FAKE_GOAL_FAIL_ROUND: that round fails once before any output, as a dropped gateway would
+        if (Number(process.env.FAKE_GOAL_FAIL_ROUND) === round && !goalFailed.has(sid)) {
+          goalFailed.add(sid);
+          throw acp.RequestError.internalError(undefined, 'gateway dropped the goal turn');
+        }
         goalRounds.set(sid, round);
         for (let i = 0; goal.objective.startsWith('slow') && i < 20; i++) {
           if (cancelled.has(sid)) {
