@@ -527,6 +527,8 @@ export const ko = {
   'host.deletedElsewhere': '이 세션은 다른 창에서 삭제되었습니다',
   'host.moveWhileRunning': '현재 응답이 끝난 뒤에 이 세션을 이동하세요',
   'host.moveFolderMissing': '폴더 {folder}이(가) 없어 세션을 옮길 수 없습니다',
+  'host.folderMissing': '폴더 {folder}이(가) 없습니다',
+  'host.noProject': '세션을 시작하려면 먼저 폴더를 여세요',
   'host.loginTerminalTitle': '{agent} 로그인',
   'host.loginThenRetry': '터미널에서 {agent} 로그인을 마친 뒤 “다시 시도”를 누르세요',
   'host.attention.waiting': '{agent}이(가) 입력을 기다리고 있습니다',

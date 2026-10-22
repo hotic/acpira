@@ -226,7 +226,8 @@ impl BridgeCore {
           settings: self.settings.view(),
           locale: self.settings.locale(),
           home: platform.home(),
-          cwd: platform.cwd(),
+          // A project shell without a project yet has the home directory here, like a shell without a workspace
+          cwd: manager.folder_for(Some(&self.viewer), None).unwrap_or_else(|| platform.home()),
           blob_base: self.blob_base.clone(),
         };
         // The page takes init's view as a whole and starts its cache over, keeping that view as the one on screen: it
@@ -251,7 +252,7 @@ impl BridgeCore {
         }
       }
       W::ChatgptStatus => {
-        let status = manager.chatgpt_status().await;
+        let status = manager.chatgpt_status(manager.folder_for(Some(&self.viewer), None)).await;
         self.post_now(HostMsg::ChatgptStatus { status });
       }
       W::OpenInEditor { session_id } => platform.open_in_editor(session_id.or_else(|| self.viewer.active_id())),
@@ -303,7 +304,8 @@ impl BridgeCore {
       }
       W::SearchFiles { query, seq } => {
         // Always answer, even on failure: the webview holds a promise per seq
-        let files: Vec<FileHit> = match platform.search_files(&query).await {
+        let root = manager.folder_for(Some(&self.viewer), None);
+        let files: Vec<FileHit> = match platform.search_files(root.as_deref(), &query).await {
           Ok(f) => f,
           Err(e) => {
             platform.log(&format!("searchFiles failed: {e}"));
@@ -340,9 +342,9 @@ impl BridgeCore {
         }
         Err(e) => platform.toast("error", &e.to_string()),
       },
-      W::ListNativeSessions { agent } => {
+      W::ListNativeSessions { agent, cwd } => {
         // Always answer: the popover is waiting on this agent's list
-        match manager.list_native_sessions(&agent).await {
+        match manager.list_native_sessions(&agent, manager.folder_for(Some(&self.viewer), cwd)).await {
           Ok(sessions) => self.post_now(HostMsg::NativeSessions { agent, sessions, error: None }),
           Err(e) => self.post_now(HostMsg::NativeSessions { agent, sessions: vec![], error: Some(e.to_string()) }),
         }
@@ -375,15 +377,15 @@ impl BridgeCore {
         }
       }
       W::Inventory { agent } => {
-        let inventory = self.settings.inventory(&agent).await;
+        let inventory = self.settings.inventory(&agent, &self.folder()).await;
         self.post_now(HostMsg::Inventory { agent, inventory });
       }
       W::Shared => {
-        let view = self.settings.shared_view().await;
+        let view = self.settings.shared_view(&self.folder()).await;
         self.post_now(HostMsg::Shared { view, error: None });
       }
       W::SharedAction { action } => {
-        let error = match self.settings.shared_action(action).await {
+        let error = match self.settings.shared_action(action, &self.folder()).await {
           Ok(outcome) => {
             // A created file opens in the editor, a folder is revealed in the OS
             if let Some(p) = outcome.open {
@@ -397,7 +399,7 @@ impl BridgeCore {
           }
           Err(e) => Some(format!("{e:#}")),
         };
-        let view = self.settings.shared_view().await;
+        let view = self.settings.shared_view(&self.folder()).await;
         self.post_now(HostMsg::Shared { view, error });
       }
       W::Storage { detail } => {
@@ -441,13 +443,19 @@ impl BridgeCore {
           // The probe's initialize brings the version back too; a fresh inventory keeps the facts card in step
           let controls = manager.probe_controls(&agent).await;
           self.post_now(HostMsg::Controls { agent: agent.clone(), controls });
-          let inventory = self.settings.inventory(&agent).await;
+          let inventory = self.settings.inventory(&agent, &self.folder()).await;
           self.post_now(HostMsg::Inventory { agent, inventory });
         }
       }
       other => manager.handle_for(&self.viewer, other).await,
     }
     Ok(())
+  }
+
+  /// The project the settings page's project files belong to: the view's (`SessionManager::folder_for`); the home
+  /// directory, which the scans read as "no project", when there is none
+  fn folder(&self) -> String {
+    self.manager.folder_for(Some(&self.viewer), None).unwrap_or_else(|| self.platform.home())
   }
 
   fn queue(&self, m: HostMsg) {

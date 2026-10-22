@@ -149,8 +149,10 @@ impl HostRuntime {
     };
     let (r1, r2, r3, r4, r5, r6) = (r(&platform), r(&platform), r(&platform), r(&platform), r(&platform), r(&platform));
     let cwd_p = platform.clone();
+    let projects_p = platform.clone();
     let mcp_home = platform.clone();
     let notify_p = platform.clone();
+    let scope_p = platform.clone();
     let manager = SessionManager::new(
       registry,
       ManagerDeps {
@@ -158,6 +160,7 @@ impl HostRuntime {
         chatgpt: Some(chatgpt),
         log: log.clone(),
         cwd: Arc::new(move || cwd_p.cwd()),
+        projects: Arc::new(move || projects_p.projects()),
         default_agent: Arc::new(move || r1("defaultAgent").and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_else(|| SELF_AGENT_ID.into())),
         agent_prefs: Arc::new(move || AgentPrefs {
           order: id_list(&r2("agentOrder").unwrap_or(Value::Null)),
@@ -175,7 +178,9 @@ impl HostRuntime {
         hidden: Arc::new(move || {
           r4("hiddenOptions").filter(is_hidden_map).and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default()
         }),
+        // A project shell has no workspace to scope to
         scope: Arc::new(move || match r5("sessionScope").and_then(|v| v.as_str().map(str::to_owned)).as_deref() {
+          _ if scope_p.projects() => "all".into(),
           Some("all") => "all".into(),
           _ => "workspace".into(),
         }),
@@ -206,7 +211,7 @@ impl HostRuntime {
     }
 
     let (m1, m2, m3) = (manager.clone(), manager.clone(), manager.clone());
-    let (pr, pw, ph, phome, pcwd) = (platform.clone(), platform.clone(), platform.clone(), platform.clone(), platform.clone());
+    let (pr, pw, ph, phome) = (platform.clone(), platform.clone(), platform.clone(), platform.clone());
     let settings = Arc::new(SettingsCenter::new(SettingsDeps {
       read: Arc::new(move |k| pr.read_setting(k)),
       write: Arc::new(move |k, v| {
@@ -218,7 +223,6 @@ impl HostRuntime {
       runtime_info: Arc::new(move |a| m2.runtime_info(a)),
       health: Arc::new(move |a| m3.agent_health(a)),
       home: Arc::new(move || phome.home()),
-      cwd: Arc::new(move || pcwd.cwd()),
       shared: crate::shared_config::SharedConfig::new(root.clone(), log.clone()),
       agent_config_path: agent_config.path().to_owned(),
       roster,
@@ -318,7 +322,8 @@ impl HostRuntime {
 
   /// Claude's project skill links, and user-level links once the link panel turned `auto` on (see `shared_config`)
   async fn maintain_shared(&self) {
-    if let Err(e) = self.settings.shared_maintain().await {
+    let cwd = self.manager.folder_for(None, None).unwrap_or_else(|| self.platform.home());
+    if let Err(e) = self.settings.shared_maintain(&cwd).await {
       self.platform.log(&format!("shared config: {e:#}"));
     }
   }

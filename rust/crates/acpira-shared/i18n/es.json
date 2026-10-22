@@ -512,6 +512,8 @@
   "host.deletedElsewhere": "Esta sesión se eliminó en otra ventana",
   "host.moveWhileRunning": "Espera a que termine la respuesta actual antes de mover esta sesión",
   "host.moveFolderMissing": "La carpeta {folder} ya no existe, así que la sesión no puede moverse allí",
+  "host.folderMissing": "La carpeta {folder} no existe",
+  "host.noProject": "Abre primero una carpeta para iniciar una sesión",
   "host.loginTerminalTitle": "Inicio de sesión en {agent}",
   "host.loginThenRetry": "Termina de iniciar sesión en {agent} en la terminal y pulsa «Reintentar»",
   "host.attention.waiting": "{agent} espera tu respuesta",

@@ -65,24 +65,19 @@ impl SidecarPlatform {
 
   /// Several shells over time (the persistent engine): `route` picks the one serving IDE actions right now
   pub fn routed(route: Route, hello: &Hello, stderr: Arc<dyn Fn(&str) + Send + Sync>, ignore_agents: bool) -> Arc<Self> {
-    Arc::new_cyclic(|me: &std::sync::Weak<SidecarPlatform>| {
-      let weak = me.clone();
-      SidecarPlatform {
-        route,
-        stderr,
-        ignore_agents,
-        caps: parking_lot::RwLock::new(hello.client.capabilities.iter().cloned().collect()),
-        settings: parking_lot::RwLock::new(hello.settings.clone()),
-        env: parking_lot::RwLock::new(hello.env.clone()),
-        pending: Default::default(),
-        settings_listeners: Default::default(),
-        focus_listeners: Default::default(),
-        files: NodeFiles::new(Arc::new(move || {
-          weak.upgrade().map(|p| p.cwd()).unwrap_or_else(|| home_dir().to_string_lossy().into_owned())
-        })),
-        seq: Default::default(),
-        closed: Default::default(),
-      }
+    Arc::new(SidecarPlatform {
+      route,
+      stderr,
+      ignore_agents,
+      caps: parking_lot::RwLock::new(hello.client.capabilities.iter().cloned().collect()),
+      settings: parking_lot::RwLock::new(hello.settings.clone()),
+      env: parking_lot::RwLock::new(hello.env.clone()),
+      pending: Default::default(),
+      settings_listeners: Default::default(),
+      focus_listeners: Default::default(),
+      files: NodeFiles::new(),
+      seq: Default::default(),
+      closed: Default::default(),
     })
   }
 
@@ -106,7 +101,12 @@ impl SidecarPlatform {
     }
     let env = hello.env.clone();
     self.on_event(PlatformEvent::EnvChanged {
-      env: ShellEnvPatch { cwd: env.cwd, host_language: Some(env.host_language), blob_base: env.blob_base },
+      env: ShellEnvPatch {
+        cwd: env.cwd,
+        host_language: Some(env.host_language),
+        blob_base: env.blob_base,
+        projects: Some(env.projects == Some(true)),
+      },
     });
   }
 
@@ -140,6 +140,11 @@ impl SidecarPlatform {
 
   pub fn cwd(&self) -> String {
     self.env.read().cwd.clone().unwrap_or_else(|| self.home())
+  }
+
+  /// A shell without a single workspace that lists sessions by project folder (`ShellEnv.projects`)
+  pub fn projects(&self) -> bool {
+    self.env.read().projects == Some(true)
   }
 
   pub fn read_setting(&self, key: &str) -> Option<Value> {
@@ -282,9 +287,11 @@ impl SidecarPlatform {
     }
   }
 
-  pub async fn search_files(&self, query: &str) -> Result<Vec<FileHit>> {
+  /// `root` is the folder the view means (`SessionManager::folder_for`); a shell with its own search covers its workspace
+  pub async fn search_files(&self, root: Option<&str>, query: &str) -> Result<Vec<FileHit>> {
     if !self.has_cap("searchFiles") {
-      return Ok(self.files.search(query).await);
+      let Some(root) = root else { return Ok(vec![]) };
+      return Ok(self.files.search(root, query).await);
     }
     let hits = self.rpc(PlatformRequest::SearchFiles { query: query.to_owned() }).await?;
     Ok(hits.as_array().map(|a| a.iter().filter_map(|h| serde_json::from_value::<FileHit>(h.clone()).ok()).collect()).unwrap_or_default())
@@ -367,6 +374,9 @@ impl SidecarPlatform {
           }
           if let Some(b) = env.blob_base {
             cur.blob_base = Some(b);
+          }
+          if let Some(p) = env.projects {
+            cur.projects = p.then_some(true);
           }
           changed
         };

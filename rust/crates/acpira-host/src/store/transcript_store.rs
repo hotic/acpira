@@ -712,6 +712,36 @@ pub fn apply_category_op(list: &mut SessionCategories, op: &CategoryOp) {
         list.collapsed_projects.push(cwd.clone());
       }
     }
+    CategoryOp::AddProject { cwd } => {
+      let projects = list.projects.get_or_insert_with(Vec::new);
+      if !cwd.is_empty() && !projects.contains(cwd) {
+        projects.push(cwd.clone());
+      }
+    }
+    CategoryOp::RemoveProject { cwd } => {
+      if let Some(projects) = &mut list.projects {
+        projects.retain(|p| p != cwd);
+      }
+    }
+    CategoryOp::ReorderProject { cwd, before } => {
+      let Some(projects) = &mut list.projects else { return };
+      let Some(from) = projects.iter().position(|p| p == cwd) else { return };
+      let moving = projects.remove(from);
+      let at = before.as_ref().and_then(|b| projects.iter().position(|p| p == b)).unwrap_or(projects.len());
+      projects.insert(at, moving);
+    }
+    // Two windows seeding at once: whichever lands second finds the list and keeps it
+    CategoryOp::SeedProjects { cwds } => {
+      if list.projects.is_none() {
+        let mut seeded: Vec<String> = vec![];
+        for c in cwds.iter().filter(|c| !c.is_empty()) {
+          if !seeded.contains(c) {
+            seeded.push(c.clone());
+          }
+        }
+        list.projects = Some(seeded);
+      }
+    }
   }
 }
 
@@ -772,6 +802,35 @@ mod tests {
     apply_category_op(&mut list, &CategoryOp::Rename { id: "gone".into(), name: "x".into() });
     apply_category_op(&mut list, &CategoryOp::Reorder { id: "gone".into(), before: None });
     assert_eq!(list, before);
+  }
+
+  #[test]
+  fn projects_keep_their_order_and_seeding_happens_once() {
+    let mut list = SessionCategories::default();
+    let seed = |cwds: &[&str]| CategoryOp::SeedProjects { cwds: cwds.iter().map(|c| c.to_string()).collect() };
+    apply_category_op(&mut list, &seed(&["/b", "/a", "/b", ""]));
+    assert_eq!(list.projects.as_deref(), Some(&["/b".to_string(), "/a".to_string()][..]));
+    // A second seed (another window, or a later connect) leaves the order alone
+    apply_category_op(&mut list, &seed(&["/z"]));
+    let add = |c: &str| CategoryOp::AddProject { cwd: c.into() };
+    for op in [add("/c"), add("/a"), add("")] {
+      apply_category_op(&mut list, &op);
+    }
+    let order = |l: &SessionCategories| l.projects.clone().unwrap_or_default();
+    assert_eq!(order(&list), ["/b", "/a", "/c"]);
+    apply_category_op(&mut list, &CategoryOp::ReorderProject { cwd: "/c".into(), before: Some("/b".into()) });
+    assert_eq!(order(&list), ["/c", "/b", "/a"]);
+    apply_category_op(&mut list, &CategoryOp::ReorderProject { cwd: "/c".into(), before: None });
+    assert_eq!(order(&list), ["/b", "/a", "/c"]);
+    apply_category_op(&mut list, &CategoryOp::ReorderProject { cwd: "/gone".into(), before: None });
+    apply_category_op(&mut list, &CategoryOp::RemoveProject { cwd: "/a".into() });
+    assert_eq!(order(&list), ["/b", "/c"]);
+    // Removing every folder keeps an empty list, so nothing seeds it again
+    for c in ["/b", "/c"] {
+      apply_category_op(&mut list, &CategoryOp::RemoveProject { cwd: c.into() });
+    }
+    apply_category_op(&mut list, &seed(&["/a"]));
+    assert_eq!(list.projects, Some(vec![]));
   }
 
   fn record(id: &str, updated: &str) -> SessionRecord {

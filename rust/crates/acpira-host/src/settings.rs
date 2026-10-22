@@ -29,7 +29,6 @@ pub struct SettingsDeps {
   pub runtime_info: Arc<dyn Fn(&str) -> Option<AgentRuntimeInfo> + Send + Sync>,
   pub health: Arc<dyn Fn(&str) -> Option<AgentHealth> + Send + Sync>,
   pub home: Arc<dyn Fn() -> String + Send + Sync>,
-  pub cwd: Arc<dyn Fn() -> String + Send + Sync>,
   pub shared: Arc<SharedConfig>,
   /// The persona file behind the `subagents` key (`relay/roster.rs`)
   pub roster: Arc<crate::relay::roster::Roster>,
@@ -115,15 +114,15 @@ impl SettingsCenter {
     (self.deps.write)(format!("appearance.{axis}"), Value::from(value)).await
   }
 
-  /// Scan one agent's extension points fresh
-  pub async fn inventory(&self, agent: &str) -> AgentInventory {
+  /// Scan one agent's extension points fresh; `cwd` is the project whose files count (the view's)
+  pub async fn inventory(&self, agent: &str, cwd: &str) -> AgentInventory {
     let registry = (self.deps.registry)();
     let binary = registry.resolve_binary(agent).await;
     let adapter = match (&binary, registry.try_get(agent)) {
       (Some(b), Some(def)) => read_adapter_info(b, def).await,
       _ => None,
     };
-    let env = ScanEnv::new((self.deps.home)(), (self.deps.cwd)());
+    let env = ScanEnv::new((self.deps.home)(), cwd.to_owned());
     scan_inventory(
       ScanInput {
         agent: agent.to_owned(),
@@ -156,28 +155,28 @@ impl SettingsCenter {
     out
   }
 
-  fn places(&self) -> Places {
-    Places::new(&(self.deps.home)(), &(self.deps.cwd)())
+  fn places(&self, cwd: &str) -> Places {
+    Places::new(&(self.deps.home)(), cwd)
   }
 
-  /// The Shared tab for the workspace (keeping links up to date first when "link all" is on)
-  pub async fn shared_view(&self) -> SharedView {
+  /// The Shared tab for the project `cwd` (keeping links up to date first when "link all" is on)
+  pub async fn shared_view(&self, cwd: &str) -> SharedView {
     let runtime_info = self.deps.runtime_info.clone();
     let caps = Arc::new(move |a: &str| runtime_info(a).and_then(|r| r.mcp));
     self.deps.shared.retire(&self.disabled_agents()).await;
-    self.deps.shared.view(self.places(), self.installed_agents().await, caps).await
+    self.deps.shared.view(self.places(cwd), self.installed_agents().await, caps).await
   }
 
-  pub async fn shared_action(&self, action: SharedAction) -> Result<Outcome> {
+  pub async fn shared_action(&self, action: SharedAction, cwd: &str) -> Result<Outcome> {
     let agents = self.installed_agents().await;
-    self.deps.shared.apply(action, &self.places(), &agents).await
+    self.deps.shared.apply(action, &self.places(cwd), &agents).await
   }
 
   /// Startup and window focus: new shared skills get their links without opening the page
-  pub async fn shared_maintain(&self) -> Result<()> {
+  pub async fn shared_maintain(&self, cwd: &str) -> Result<()> {
     self.deps.shared.retire(&self.disabled_agents()).await;
     let agents = self.installed_agents().await;
-    self.deps.shared.maintain(&self.places(), &agents).await
+    self.deps.shared.maintain(&self.places(cwd), &agents).await
   }
 
   pub async fn providers_view(&self) -> ProvidersView {

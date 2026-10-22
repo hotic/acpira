@@ -162,6 +162,8 @@ export type HostMsg =
   | { type: 'sessions'; sessions: SessionSummary[] }
   // The category list changed (here or in another window)
   | { type: 'categories'; categories: SessionCategories }
+  // The view shows no session: a project shell (`ShellEnv.projects`) with no project left shows its empty state
+  | { type: 'noSession' }
   | { type: 'session'; session: SessionView }
   // Only to pages that said `patches` in ready: the changes since the view sent last (sessionPatch.ts)
   | { type: 'sessionPatch'; patch: SessionPatch }
@@ -267,7 +269,8 @@ export type WebviewMsg =
   | { type: 'setConfig'; sessionId?: string; configId: string; value: string }
   | { type: 'selectSession'; id: string }
   // `category`: file the new session under that category (of the window's project) from the start
-  | { type: 'newSession'; agent?: AgentId; category?: string }
+  // cwd: the project folder to start in (a project shell, `ShellEnv.projects`); the shell's workspace when absent
+  | { type: 'newSession'; agent?: AgentId; category?: string; cwd?: string }
   | { type: 'renameSession'; id: string; title: string }
   | { type: 'deleteSession'; id: string }
   | { type: 'restoreSession'; id: string }
@@ -357,5 +360,6 @@ export type WebviewMsg =
   // fresh: the refresh button — host spawns a throwaway process to re-read the current configOptions; without it, the latest session's list
   | { type: 'controls'; agent: AgentId; fresh?: boolean }
   // History list → "Import from <agent>": the host spawns a throwaway process, initialize + session/list for this workspace; no session is created
-  | { type: 'listNativeSessions'; agent: AgentId }
+  // cwd: the project folder to list for (a project shell); the view's folder when absent
+  | { type: 'listNativeSessions'; agent: AgentId; cwd?: string }
   | { type: 'importNativeSession'; agent: AgentId; sessionId: string; cwd: string; title?: string; updatedAt?: string };

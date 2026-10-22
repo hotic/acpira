@@ -28,6 +28,7 @@ mod windows;
 mod fork;
 mod native;
 mod categories;
+mod projects;
 mod idle;
 
 type Terminal = (String, Vec<String>, Option<BTreeMap<String, Option<String>>>);
@@ -39,6 +40,8 @@ pub struct Opts {
   pub default_agent: String,
   pub cwd: Arc<Mutex<String>>,
   pub scope: Arc<Mutex<String>>,
+  /// A project shell (`ShellEnv.projects`, the desktop app)
+  pub projects: bool,
   pub prefs: Arc<Mutex<AgentPrefs>>,
   pub hidden: HiddenMap,
   pub local_accounts: Option<Arc<LocalAccounts>>,
@@ -56,6 +59,7 @@ impl Opts {
       default_agent: default_agent.into(),
       cwd: Arc::new(Mutex::new("/tmp".into())),
       scope: Arc::new(Mutex::new("all".into())),
+      projects: false,
       prefs: Arc::new(Mutex::new(AgentPrefs::default())),
       hidden: HiddenMap::default(),
       local_accounts: None,
@@ -65,6 +69,12 @@ impl Opts {
 
   pub fn cwd(self, cwd: &str) -> Opts {
     *self.cwd.lock().unwrap() = cwd.into();
+    self
+  }
+
+  /// No workspace: the shell's cwd is the home directory and sessions follow their project
+  pub fn projects(mut self) -> Opts {
+    self.projects = true;
     self
   }
 }
@@ -98,6 +108,7 @@ impl Mgr {
     let log: acpira_host::store::transcript_store::LogFn = Arc::new(move |line: &str| l.lock().unwrap().push(line.to_owned()));
     let store = TranscriptStore::new(dir.to_path_buf(), log.clone(), None);
     let (cwd, scope, prefs, hidden, default_agent) = (opts.cwd.clone(), opts.scope.clone(), opts.prefs.clone(), opts.hidden.clone(), opts.default_agent.clone());
+    let projects = opts.projects;
     let m = SessionManager::new(
       Arc::new(AgentRegistry::new(&opts.agents)),
       ManagerDeps {
@@ -105,6 +116,7 @@ impl Mgr {
         chatgpt: None,
         log,
         cwd: Arc::new(move || cwd.lock().unwrap().clone()),
+        projects: Arc::new(move || projects),
         default_agent: Arc::new(move || default_agent.clone()),
         agent_prefs: Arc::new(move || prefs.lock().unwrap().clone()),
         run_in_terminal: Arc::new(move |_title, command, args, env| tt.lock().unwrap().push((command, args, env))),
@@ -150,7 +162,7 @@ impl Mgr {
   }
 
   pub async fn new_session(&self, agent: Option<&str>) {
-    self.m.new_session_for(&self.v, agent.map(str::to_owned), None, None).await.unwrap();
+    self.m.new_session_for(&self.v, agent.map(str::to_owned), None, None, None).await.unwrap();
   }
 
   pub async fn handle(&self, msg: Value) {

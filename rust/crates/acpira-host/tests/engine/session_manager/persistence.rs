@@ -187,7 +187,7 @@ async fn a_stale_index_summary_gains_its_acp_session_id_and_the_index_file_is_up
   std::fs::write(sessions.join("index.json"), serde_json::to_string(&json!([stale])).unwrap()).unwrap();
   let m = Mgr::new(&sessions, Opts::with_agents(fake.setting(json!({ "env": { "FAKE_SESSION_DIR": native } })), "fake"));
   m.init().await;
-  m.m.list_native_sessions("fake").await.unwrap();
+  m.m.list_native_sessions("fake", m.m.folder_for(None, None)).await.unwrap();
   let index = || -> Option<String> {
     let list: Value = serde_json::from_str(&std::fs::read_to_string(sessions.join("index.json")).ok()?).ok()?;
     list.as_array()?.iter().find(|s| s["id"] == record.id.as_str())?["acpSessionId"].as_str().map(str::to_owned)

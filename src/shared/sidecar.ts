@@ -45,6 +45,10 @@ export interface ShellEnv {
   hostLanguage: string;
   // Where the view loads attachment blobs from: `${blobBase}/${sessionId}/${blob}`; the shell serves them from helloOk.sessionsDir
   blobBase?: string;
+  // The shell organizes sessions by project folder and has no single workspace (the desktop app): whatever needs a folder
+  // follows the view's session instead of cwd, and no session starts on its own without a project (helloOk.features has
+  // 'projects' on engines that know this)
+  projects?: boolean;
 }
 
 export type ShellMsg =
@@ -76,7 +80,8 @@ export type PlatformEvent =
   | { type: 'envChanged'; env: Partial<ShellEnv> };
 
 export type SidecarMsg =
-  // features: additions a shell may use without a protocol bump; absent on engines before them
+  // features: additions a shell may use without a protocol bump; absent on engines before them ('preview': previewOpen,
+  // 'projects': ShellEnv.projects with newSession / listNativeSessions cwd and the project list ops)
   | { type: 'helloOk'; requestId: string; protocolVersion: number; sidecar: { version: string; pid: number }; sessionsDir: string; features?: string[] }
   | { type: 'helloReject'; requestId: string; protocolVersion: number; reason: string }
   | { type: 'hostMessage'; viewId: string; message: HostMsg }
