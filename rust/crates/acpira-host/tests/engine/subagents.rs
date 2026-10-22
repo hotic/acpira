@@ -343,6 +343,25 @@ async fn a_kimi_agent_receipt_creates_the_node_and_its_completed_text_becomes_th
   expect_match(root_blocks(&s).into_iter().find(|b| b["id"] == "0:tool_01").unwrap(), json!({ "subagentId": node["id"], "verbKey": "verb.delegate" }));
 }
 
+// A finished receipt child of an earlier turn does not swallow a later call that reuses its tool call id (a fresh agent
+// session after a historical edit numbers its calls again): each row opens and links its own child
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reused_tool_call_id_opens_a_new_receipt_child_on_the_later_turn() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let s = session(&h).await;
+  prompt(&s, "subagents-receipt").await;
+  prompt(&s, "subagents-receipt").await;
+  let vw = view(&s);
+  let nodes = vw["subagents"].as_array().unwrap();
+  assert_eq!(nodes.len(), 2);
+  let turns = vw["turns"].as_array().unwrap();
+  let linked = |t: usize| turns[t]["blocks"].as_array().unwrap().iter().find(|b| b["id"] == "0:tool_01").unwrap()["subagentId"].clone();
+  assert_eq!(linked(1), nodes[0]["id"]);
+  assert_eq!(linked(3), nodes[1]["id"]);
+  expect_match(&nodes[1], json!({ "visibility": "receipt", "state": "completed" }));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_running_node_restores_disconnected_and_unchanged_summaries_stay_stable() {
   let fake = fake_or_skip!();
