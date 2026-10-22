@@ -33,7 +33,10 @@ export type PickerMsg =
   // Keys pressed in the page while picking: Escape leaves picking, Enter adds the pick, Cmd / Ctrl+J comments on it
   | { type: 'escape' }
   | { type: 'add' }
-  | { type: 'comment' };
+  | { type: 'comment' }
+  // The page called window.acpira.context.set / add (docs/context-api.md, "Web pages"). The payload is the page's own,
+  // untrusted until the shell parses it; `id` pairs the answer
+  | { type: 'context'; id: string; op: PageContextOp; payload: unknown };
 
 // Panel → picker
 export type PanelMsg =
@@ -41,7 +44,14 @@ export type PanelMsg =
   | { type: 'pick'; on: boolean; accent?: string; accentFg?: string }
   | { type: 'clear' }
   | { type: 'history'; go: -1 | 1 }
-  | { type: 'reload' };
+  | { type: 'reload' }
+  // The shell's answer to `context`: `error` is what the page's promise rejects with, `shown` what `set` resolves to
+  | { type: 'contextDone'; id: string; error?: string; shown?: boolean };
+
+// The two calls a page in the browser panel has, named like the commands they stand for (acpira.context.set / add)
+export type PageContextOp = 'set' | 'add';
+// Longest call id the panel passes on: the picker's are `<page>.<n>`, far shorter
+export const MAX_CONTEXT_CALL_ID = 64;
 
 // What goes over postMessage either way: the token names the proxy that served the page, `acpiraPicker` keeps the page's
 // own postMessage traffic apart

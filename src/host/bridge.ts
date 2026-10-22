@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { appearanceFromSettings } from '@shared/appearance';
 import type { BrowserHostMsg, BrowserLook, BrowserMsg, BrowserPage, ContextItem, HostMsg, WebviewHost, WebviewMsg } from '@shared/protocol';
 import type { SessionView } from '@shared/transcript';
-import { normalizePreviewUrl } from '@shared/picker';
+import { normalizePreviewUrl, type PageContextOp } from '@shared/picker';
 import type { SidecarClient, SidecarState, ShellView } from './shell/SidecarClient';
 import { PostQueue } from './outbox';
 import { t } from './i18n';
@@ -179,6 +179,12 @@ export interface BrowserPanelOpts {
   visited: (page: BrowserPage) => void;
   // Picked elements with their comment, for the chat
   onAdd: (item: ContextItem) => void;
+  // The page's own window.acpira.context call (docs/context-api.md): what `set` resolves to, or a throw naming the refused field
+  onContext: (op: PageContextOp, payload: unknown) => { shown?: boolean };
+  // The page the panel showed is gone (another frame, an error in its place, a restarted panel page, the panel closed): the
+  // live context it set goes with it. Called with the panel's id, since it may come before the constructor returns (an
+  // engine without previews answers at once)
+  onLeave: (panelId: string) => void;
   // The page in VS Code's own browser (the platform's openBrowser)
   openExternal: (url: string) => void;
   log?: (line: string) => void;
@@ -188,8 +194,9 @@ export interface BrowserPanelOpts {
 // the element picker (src/picker) to it. The panel is its own webview running the same bundle (host 'browser',
 // webview/browser/BrowserPanel.tsx) and has no sidecar view: the shell holds its proxy lease and asks again after a reconnect.
 // In a remote window the proxy runs on the remote, and asExternalUri forwards its port to the user's machine, where the
-// iframe loads. Picked elements go to the chat like another extension's `acpira.context.add`. Opened without a page it
-// starts empty, on the address bar and its recent pages
+// iframe loads. Picked elements go to the chat like another extension's `acpira.context.add`, and the page's own
+// window.acpira.context calls like the commands themselves. Opened without a page it starts empty, on the address bar and
+// its recent pages
 export class BrowserPanel implements vscode.Disposable {
   readonly panelId = randomUUID();
   // The page as asked for: what the address bar shows and what a reconnect asks for again; undefined while empty
@@ -242,7 +249,9 @@ export class BrowserPanel implements vscode.Disposable {
     if (url === this.target) this.post({ type: 'browserFrame', target: url, src, token: r.token });
   }
 
+  // A frame or an error, which takes the place of the page shown so far
   private post(m: BrowserHostMsg) {
+    this.opts.onLeave(this.panelId);
     this.pending = m;
     if (this.ready) void this.panel.webview.postMessage(m);
   }
@@ -250,6 +259,8 @@ export class BrowserPanel implements vscode.Disposable {
   private onMessage(m: BrowserMsg) {
     switch (m.type) {
       case 'browserReady':
+        // A panel page that starts again (its webview reloaded) shows the page anew; the old document is gone
+        this.opts.onLeave(this.panelId);
         this.ready = true;
         this.postLook();
         this.postHistory();
@@ -268,6 +279,16 @@ export class BrowserPanel implements vscode.Disposable {
       }
       case 'browserAdd': this.opts.onAdd(m.item); break;
       case 'browserOpenExternal': this.opts.openExternal(m.url); break;
+      case 'browserContext': {
+        let answer: BrowserHostMsg;
+        try {
+          answer = { type: 'browserContextDone', id: m.id, ...this.opts.onContext(m.op, m.payload) };
+        } catch (e) {
+          answer = { type: 'browserContextDone', id: m.id, error: e instanceof Error ? e.message : String(e) };
+        }
+        void this.panel.webview.postMessage(answer);
+        break;
+      }
     }
   }
 
@@ -309,6 +330,7 @@ export class BrowserPanel implements vscode.Disposable {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.opts.onLeave(this.panelId);
     this.release?.();
     this.release = undefined;
     for (const d of this.disposables.splice(0)) d.dispose();

@@ -8,6 +8,7 @@ import type { SharedAction, SharedView } from './sharedConfig';
 import type { StorageAction, StorageDetail, StorageOutcome, StorageView } from './storage';
 import type { ProbeOutcome, ProviderAction, ProviderProbe, ProvidersView } from './providers';
 import type { SessionPatch } from './sessionPatch';
+import type { PageContextOp } from './picker';
 
 // Session export formats: Markdown to read, JSON for tooling, plain text holding only what was said (export_transcript.rs export_text)
 export type ExportFormat = 'markdown' | 'json' | 'text';
@@ -113,7 +114,9 @@ export type BrowserHostMsg =
   | { type: 'browserFrame'; target: string; src: string; token: string }
   | { type: 'browserError'; target: string; error: string }
   | { type: 'browserLook'; look: BrowserLook }
-  | { type: 'browserHistory'; pages: BrowserPage[] };
+  | { type: 'browserHistory'; pages: BrowserPage[] }
+  // The answer to browserContext, for the page's promise: `error` when the payload was refused, `shown` for a `set`
+  | { type: 'browserContextDone'; id: string; error?: string; shown?: boolean };
 
 export type BrowserMsg =
   | { type: 'browserReady' }
@@ -122,7 +125,9 @@ export type BrowserMsg =
   | { type: 'browserTitle'; url: string; title: string }
   // Picked elements with the user's comment, bound for the chat
   | { type: 'browserAdd'; item: ContextItem }
-  | { type: 'browserOpenExternal'; url: string };
+  | { type: 'browserOpenExternal'; url: string }
+  // The page's own window.acpira.context call (src/picker), untrusted: the shell parses it like acpira.context.set / add
+  | { type: 'browserContext'; id: string; op: PageContextOp; payload: unknown };
 
 // Links in agent output open on the host side; only these schemes are ever handed to openExternal
 export function isSafeExternalUrl(url: string): boolean {

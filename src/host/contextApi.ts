@@ -57,6 +57,10 @@ export function parseContextPayload(raw: unknown): ContextPayload {
   return { source: { id: src!.id as string, name }, ...(str(p.owner) ? { owner: p.owner } : {}), items };
 }
 
+// A page in Acpira's browser panel (window.acpira.context, docs/context-api.md "Web pages") has its owner filed under the
+// panel: a page clears only what a page in the same panel set, never another tool's slot, and the panel can drop them all
+export const pageOwner = (panelId: string, owner = '') => `browser:${panelId}:${owner}`;
+
 interface Slot {
   source: ContextSource;
   owner?: string;
@@ -89,6 +93,12 @@ export class ContextSlots {
       out.push({ type: 'contextSelection', source: slot.source });
     }
     return out;
+  }
+
+  // Clears every slot a page in this browser panel filled (pageOwner): the page it showed is gone
+  releasePage(panelId: string): HostMsg[] {
+    const prefix = pageOwner(panelId);
+    return this.release(new Set([...this.owners()].filter(o => o.startsWith(prefix))));
   }
 
   owners(): Set<string> {

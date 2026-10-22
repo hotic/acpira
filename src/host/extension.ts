@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
 import { appearanceFromSettings } from '@shared/appearance';
-import { normalizePreviewUrl } from '@shared/picker';
+import { normalizePreviewUrl, type PageContextOp } from '@shared/picker';
 import type { BrowserLook, BrowserPage, ContextItem, EditorSelection, HostMsg } from '@shared/protocol';
 import { sanitizeSetting } from '@shared/settings';
 import type { BrowserOpened, PlatformRequest } from '@shared/sidecar';
@@ -17,7 +17,7 @@ import { sidecarCommands } from './shell/sidecarLocator';
 import { acpiraHome, migrateOnce } from './store/dataDir';
 import { EDITOR_VIEW_TYPE, fileColumn, VscodePlatform } from './vscodePlatform';
 import { editorSelectionOf } from './editorSelection';
-import { ContextPayloadError, ContextSlots, parseContextPayload } from './contextApi';
+import { ContextPayloadError, ContextSlots, pageOwner, parseContextPayload, type ContextPayload } from './contextApi';
 import { availableChromeCommands, columnPicks, columnsLayout, defaultColumnPick, type ColumnPick } from './multiOpen';
 import { showSystemNotification } from './systemNotify';
 
@@ -140,6 +140,11 @@ export async function activate(context: vscode.ExtensionContext) {
     void vscode.commands.executeCommand(`${VIEW_ID}.focus`);
     withSidebar(b => b.postShell(m));
   };
+  // `acpira.context.add` and a page's window.acpira.context.add: a parsed payload pinned into the chat used last
+  const pinContext = (p: ContextPayload, from?: vscode.ViewColumn) => {
+    if (!p.items.length) throw new ContextPayloadError('acpira.context: add needs at least one item');
+    addToChat({ type: 'addContext', source: p.source, items: p.items }, from);
+  };
 
   const bindEditor = (panel: vscode.WebviewPanel, sessionId?: string, watch?: (s: SessionView) => void): WebviewBridge => {
     panel.iconPath = {
@@ -234,6 +239,15 @@ export async function activate(context: vscode.ExtensionContext) {
       void vscode.window.showWarningMessage(e instanceof Error ? e.message : String(e));
     }
   };
+  // A page's own context (window.acpira.context, docs/context-api.md "Web pages"): the commands' payload and checks. Its owner
+  // is filed under the panel (pageOwner), and its live slot lasts as long as the page (onLeave)
+  const pageContext = (browser: BrowserPanel, op: PageContextOp, raw: unknown): { shown?: boolean } => {
+    const p = parseContextPayload(raw);
+    if (op === 'add') { pinContext(p, browser.panel.viewColumn); return {}; }
+    publishContext(contextSlots.set({ ...p, owner: pageOwner(browser.panelId, p.owner) }));
+    return { shown: shareSelection() };
+  };
+  const leavePage = (panelId: string) => { for (const m of contextSlots.releasePage(panelId)) publishContext(m); };
   // Show a loopback page in a browser panel (undefined: an empty one, on its address bar): the one already showing its site
   // (brought up, navigated when the page differs), else a new panel next to the chat. `preserveFocus` for an agent's
   // open_browser, so the composer keeps the caret
@@ -265,6 +279,8 @@ export async function activate(context: vscode.ExtensionContext) {
       history: browserHistory,
       visited,
       onAdd: item => addPicked(browser, item),
+      onContext: (op, raw) => pageContext(browser, op, raw),
+      onLeave: leavePage,
       openExternal: page => { void platform.openInVsCodeBrowser(page).catch((e: unknown) => log.warn(`open in browser failed: ${String(e)}`)); },
       log: line => log.info(line),
     });
@@ -384,11 +400,7 @@ export async function activate(context: vscode.ExtensionContext) {
       publishContext(contextSlots.set(parseContextPayload(raw)));
       return { shown: shareSelection() };
     }),
-    vscode.commands.registerCommand('acpira.context.add', (raw: unknown) => {
-      const p = parseContextPayload(raw);
-      if (!p.items.length) throw new ContextPayloadError('acpira.context: add needs at least one item');
-      addToChat({ type: 'addContext', source: p.source, items: p.items });
-    }),
+    vscode.commands.registerCommand('acpira.context.add', (raw: unknown) => { pinContext(parseContextPayload(raw)); }),
     // Copy capture: VS Code hands paste providers the copied ranges, which is the only way to learn where clipboard text came from.
     // Nothing is ever pasted by this provider; the webview turns a matching paste into a selection chip (`editorCopy`)
     vscode.languages.registerDocumentPasteEditProvider({ scheme: 'file' }, {
