@@ -822,24 +822,42 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
 
 /// Record what the request's prefix is built from, and a `view` event when that changed since the last request: a
 /// changed prompt, tool set or model is where a provider's prompt cache stops matching, and so is a switch between the
-/// standard and the fast tier (Anthropic documents that a speed change invalidates the cache)
+/// standard and the fast tier (Anthropic documents that a speed change invalidates the cache). The tool set counts as
+/// changed when a definition does, not only a name: an MCP server's relisting after `tools/list_changed` (acpira's
+/// `ask_agent` when the roster is edited) keeps the names and rewrites a description and an enum
 fn log_view(session: &Session, s: &Setup, request: &Request) {
   let view = json!({
     "model": s.pick,
     "prompt": { "variant": s.prompt.0, "version": s.prompt.1, "digest": s.prompt.2 },
     "tools": request.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
     "fast": request.fast,
+    "toolsDigest": tools_digest(&request.tools),
   });
   let prev = session.state.lock().last_view.replace(view.clone());
   if let Some(prev) = prev
     && prev != view
   {
-    let changed: Vec<&str> = ["model", "prompt", "tools", "fast"].into_iter().filter(|k| prev[k] != view[k]).collect();
+    let tools_changed = prev["tools"] != view["tools"] || prev["toolsDigest"] != view["toolsDigest"];
+    let changed: Vec<&str> =
+      ["model", "prompt", "tools", "fast"].into_iter().filter(|k| if *k == "tools" { tools_changed } else { prev[k] != view[k] }).collect();
     session.store.append(json!({ "type": "view", "changed": changed, "from": prev, "to": view }));
   }
 }
 
 /// What every `request` event carries: the model, its source and the prompt and policies the call was built with, and
+/// A short digest of the tool definitions as the request sends them (name, description, parameters, in order)
+fn tools_digest(tools: &[crate::llm::ToolSpec]) -> String {
+  use sha2::{Digest, Sha256};
+  let mut h = Sha256::new();
+  for t in tools {
+    for part in [t.name.as_str(), t.description.as_str(), &t.parameters.to_string()] {
+      h.update(part.as_bytes());
+      h.update([0]);
+    }
+  }
+  h.finalize().iter().take(6).map(|b| format!("{b:02x}")).collect()
+}
+
 /// `fast` when the call asked for the fast tier
 fn request_event(s: &Setup) -> Value {
   let mut ev = json!({

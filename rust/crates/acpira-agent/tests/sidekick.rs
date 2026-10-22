@@ -55,11 +55,20 @@ impl FakeAcpira {
           "initialize" => json!({ "protocolVersion": "2025-06-18", "capabilities": { "tools": { "listChanged": false } }, "serverInfo": { "name": "acpira", "version": "1" } }),
           "tools/list" => {
             listed.fetch_add(1, Ordering::SeqCst);
-            let mut tools = vec![json!({ "name": "show_image", "description": "Show an image", "inputSchema": { "type": "object", "properties": {} } })];
+            let mut tools = vec![json!({ "name": "show_image", "description": "Show an image", "inputSchema": { "type": "object", "properties": {} }, "annotations": { "readOnlyHint": true } })];
             if let Some(d) = description.lock().clone() {
               tools.push(json!({ "name": "ask_agent", "description": d, "inputSchema": { "type": "object", "properties": { "agent": { "type": "string" } } }, "annotations": { "readOnlyHint": true } }));
             }
             json!({ "tools": tools })
+          }
+          // A tool call is answered on an event stream that first says the tool list changed, as `acpira mcp` does
+          // once the roster moved (here: whenever the test changed `ask` since the last listing)
+          "tools/call" => {
+            let changed = json!({ "jsonrpc": "2.0", "method": "notifications/tools/list_changed" });
+            let done = json!({ "jsonrpc": "2.0", "id": id, "result": { "content": [{ "type": "text", "text": "shown" }] } });
+            let text = format!("data: {changed}\n\ndata: {done}\n\n");
+            let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}", text.len());
+            continue;
           }
           _ => Value::Null,
         };
@@ -313,4 +322,37 @@ async fn the_sidekick_effort_follows_the_sidekicks_model_and_comes_back_with_the
   let h = Harness::start_with(home, cwd, engine_caps()).await;
   let loaded = h.conn.request("session/load", json!({ "sessionId": sid, "cwd": h.cwd(), "mcpServers": [] })).await.unwrap();
   assert_eq!(effort(&loaded["configOptions"]).unwrap()["currentValue"], "low");
+}
+
+/// Every event of the session's log
+fn events(h: &Harness, sid: &str) -> Vec<Value> {
+  let file = h.home().join("agent").join("sessions").join(format!("{sid}.jsonl"));
+  std::fs::read_to_string(file).unwrap().lines().filter_map(|l| serde_json::from_str(l).ok()).collect()
+}
+
+#[tokio::test]
+async fn a_relisted_ask_agent_with_the_same_name_is_recorded_as_a_tools_change() {
+  let h = engine().await;
+  let model = MockModel::start();
+  models(&h, &model);
+  let acpira = FakeAcpira::start(Some("Agents:\n- one (@One) [codex]"));
+  let (sid, _) = session(&h, acpira.servers()).await;
+  acpira.listed_once().await;
+  // A persona added on the settings page while the first turn runs: its tool call's stream says the list changed
+  *acpira.ask.lock() = Some("Agents:\n- one (@One) [codex]\n- two (@Two) [kimi]".into());
+  model.push(mock::tools(&[("c1", "acpira_show_image", json!({}))]));
+  model.push(mock::text("Shown."));
+  prompt(&h, &sid, "show it").await;
+  assert!(events(&h, &sid).iter().all(|e| e["type"] != "view"), "the first turn keeps its tool table");
+  model.push(mock::text("ok"));
+  prompt(&h, &sid, "again").await;
+  assert_eq!(acpira.lists(), 2, "listed again for the second turn");
+  let reqs = model.requests();
+  let ask = |i: usize| reqs[i].body["tools"].as_array().unwrap().iter().find(|t| t["function"]["name"] == "acpira_ask_agent").unwrap()["function"]["description"].clone();
+  assert!(ask(2).as_str().unwrap().contains("(@Two)") && !ask(1).as_str().unwrap().contains("(@Two)"));
+  // Same tool names, another definition: still a recorded change of the prefix
+  let views: Vec<Value> = events(&h, &sid).into_iter().filter(|e| e["type"] == "view").collect();
+  assert_eq!(views.len(), 1, "{views:?}");
+  assert_eq!(views[0]["changed"], json!(["tools"]));
+  assert_eq!(views[0]["from"]["tools"], views[0]["to"]["tools"]);
 }
