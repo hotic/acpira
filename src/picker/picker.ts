@@ -1,12 +1,16 @@
 // The element picker the engine's preview proxy adds to every HTML page it serves (rust/crates/acpira-host/src/preview).
 // It runs inside someone else's page: everything it draws lives in a closed shadow root that takes no pointer events, it
 // listens in the capture phase only while picking, and it answers only its parent frame (the browser panel) when the
-// message carries the token this script was served with. Built to dist/picker.js (esbuild.host.mjs)
-import { envelopeOf, PICKER_LIMITS, type PanelMsg, type PickedElement, type PickedRect, type PickerMsg } from '@shared/picker';
+// message carries the token this script was served with. It also hands the page window.acpira.context, the web side of the
+// context API (docs/context-api.md). Built to dist/picker.js (esbuild.host.mjs)
+import { envelopeOf, PICKER_LIMITS, type PageContextOp, type PanelMsg, type PickedElement, type PickedRect, type PickerMsg } from '@shared/picker';
 import { serialize } from './serialize';
 
+// How long a page's context call waits for the shell before its promise gives up
+const CONTEXT_ANSWER_MS = 10_000;
+
 (() => {
-  const w = window as Window & { __acpiraPicker?: true };
+  const w = window as Window & { __acpiraPicker?: true; acpira?: unknown };
   // A page that pulls the script in twice (an injected document.write, an SPA re-rendering <head>) keeps the first
   if (w.__acpiraPicker || window.parent === window) return;
   w.__acpiraPicker = true;
@@ -14,6 +18,52 @@ import { serialize } from './serialize';
   if (!token) return;
 
   const send = (msg: PickerMsg) => window.parent.postMessage({ acpiraPicker: token, msg }, '*');
+
+  // The page's own way into the chat (docs/context-api.md, "Web pages"): window.acpira.context.set / add take the payload of
+  // the commands with the same names, and the shell answers through the panel. It exists only in a page the browser panel
+  // shows, set before the page's own scripts run, so a page checks for it and falls back without it
+  const pageId = Math.random().toString(36).slice(2, 10);
+  let calls = 0;
+  const waiting = new Map<string, { op: PageContextOp; resolve: (v: { shown: boolean } | undefined) => void; reject: (e: Error) => void; timer: number }>();
+  // The live slots this document filled, by source id, kept as the clears that empty them: leaving the page (a reload, a
+  // link, a form) sends them, so the next page does not inherit a selection it never made
+  const live = new Map<string, { source: { id: string; name: string }; owner?: string; items: [] }>();
+  const track = (payload: unknown) => {
+    const p = payload as { source?: { id?: unknown; name?: unknown }; owner?: unknown; items?: unknown } | null | undefined;
+    const id = p?.source?.id, name = p?.source?.name;
+    if (typeof id !== 'string' || typeof name !== 'string') return;
+    if (!Array.isArray(p!.items) || !p!.items.length) { live.delete(id); return; }
+    live.set(id, { source: { id, name }, ...(typeof p!.owner === 'string' ? { owner: p!.owner } : {}), items: [] });
+  };
+  const call = (op: PageContextOp, payload: unknown) => new Promise<{ shown: boolean } | undefined>((resolve, reject) => {
+    const id = `${pageId}.${++calls}`;
+    try {
+      send({ type: 'context', id, op, payload });
+    } catch (e) {
+      // postMessage cannot clone it (a function, a DOM node): refused before it leaves the page
+      reject(new TypeError(`acpira.context: the payload must be plain data (${e instanceof Error ? e.message : String(e)})`));
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      waiting.delete(id);
+      reject(new Error('acpira.context: no answer from Acpira'));
+    }, CONTEXT_ANSWER_MS);
+    waiting.set(id, { op, resolve, reject, timer });
+    if (op === 'set') track(payload);
+  });
+  w.acpira = Object.freeze({
+    context: Object.freeze({
+      version: 1,
+      set: (payload: unknown) => call('set', payload),
+      add: (payload: unknown) => call('add', payload),
+    }),
+  });
+  window.addEventListener('pagehide', () => {
+    for (const clear of live.values()) {
+      try { send({ type: 'context', id: `${pageId}.${++calls}`, op: 'set', payload: clear }); } catch { /* the panel went first */ }
+    }
+    live.clear();
+  });
 
   // Overlay: a fixed, full-viewport host above the page
   let root: ShadowRoot | undefined;
@@ -258,6 +308,15 @@ import { serialize } from './serialize';
       case 'clear': setPicked([]); break;
       case 'history': history.go(msg.go); break;
       case 'reload': location.reload(); break;
+      case 'contextDone': {
+        const pending = waiting.get(msg.id);
+        if (!pending) break;
+        waiting.delete(msg.id);
+        window.clearTimeout(pending.timer);
+        if (msg.error) pending.reject(new Error(msg.error));
+        else pending.resolve(pending.op === 'set' ? { shown: msg.shown !== false } : undefined);
+        break;
+      }
     }
   });
 

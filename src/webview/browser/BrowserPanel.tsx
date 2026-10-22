@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, ExternalLink, Globe, MessageSquarePlus, MessageSquareText, RotateCw, SquareDashedMousePointer, TriangleAlert } from 'lucide-react';
-import { envelopeOf, normalizePreviewUrl, pickedContext, redactUrl, type PanelMsg, type PickedElement, type PickedRect, type PickerMsg } from '@shared/picker';
+import { envelopeOf, MAX_CONTEXT_CALL_ID, normalizePreviewUrl, pickedContext, redactUrl, type PanelMsg, type PickedElement, type PickedRect, type PickerMsg } from '@shared/picker';
 import type { BrowserHostMsg, BrowserLook, BrowserMsg, BrowserPage } from '@shared/protocol';
 import { optionClass } from '../ui/DropdownMenu';
 import { popupClass } from '../ui/Overlay';
@@ -62,8 +62,30 @@ function hostMsgOf(e: MessageEvent): BrowserHostMsg | undefined {
     case 'browserLook': return m.look && typeof m.look === 'object' ? m as BrowserHostMsg : undefined;
     case 'browserHistory':
       return Array.isArray(m.pages) && m.pages.every(p => p && typeof p === 'object' && str((p as BrowserPage).url) && str((p as BrowserPage).title)) ? m as BrowserHostMsg : undefined;
+    case 'browserContextDone':
+      return str(m.id) && (m.error === undefined || str(m.error)) && (m.shown === undefined || typeof m.shown === 'boolean') ? m as BrowserHostMsg : undefined;
   }
   return undefined;
+}
+
+// A page's window.acpira.context call as the shell may see it. The page can post anything with the token it was served (its
+// own scripts can read the picker's URL), so only the call's frame is checked here; the payload is the shell's to parse
+function contextCallOf(msg: Extract<PickerMsg, { type: 'context' }>): BrowserMsg | undefined {
+  if (!str(msg.id) || !msg.id || msg.id.length > MAX_CONTEXT_CALL_ID || (msg.op !== 'set' && msg.op !== 'add')) return undefined;
+  return { type: 'browserContext', id: msg.id, op: msg.op, payload: msg.payload };
+}
+
+// The clears a leaving page posts from pagehide (src/picker) arrive once its document is gone, so with no source to match
+// against the frame (seen in Chrome when page and panel share a process). Taken only as what they are: a `set` with no
+// items, stamped with the frame's token, from the frame's origin
+function leavingClearOf(e: MessageEvent, frame: Frame): BrowserMsg | undefined {
+  let origin: string;
+  try { origin = new URL(frame.src, location.href).origin; } catch { return undefined; }
+  if (e.source !== null || e.origin !== origin) return undefined;
+  const msg = envelopeOf<PickerMsg>(e.data, frame.token);
+  if (msg?.type !== 'context' || msg.op !== 'set') return undefined;
+  const items = (msg.payload as { items?: unknown } | null | undefined)?.items;
+  return Array.isArray(items) && !items.length ? contextCallOf(msg) : undefined;
 }
 
 function union(rects: PickedRect[]): PickedRect | undefined {
@@ -75,7 +97,8 @@ function union(rects: PickedRect[]): PickedRect | undefined {
 
 // The browser panel's page (window.__acpira.host === 'browser', src/host/bridge.ts BrowserPanel): an address bar over the
 // proxied page and, while picking, a comment card under the picked elements. The picker inside the page does the
-// hovering and selecting (src/picker); this side only steers it and turns its picks into chat context
+// hovering and selecting (src/picker); this side only steers it, turns its picks into chat context and passes the page's own
+// context calls (window.acpira.context) on to the shell
 export function BrowserPanel() {
   const [look, setLook] = useState<BrowserLook>();
   const [frame, setFrame] = useState<Frame>();
@@ -131,12 +154,16 @@ export function BrowserPanel() {
         if (msg) onPicker(msg);
         return;
       }
+      const clear = frame && leavingClearOf(e, frame);
+      if (clear) { post(clear); return; }
       const m = hostMsgOf(e);
       switch (m?.type) {
         case 'browserLook': setLook(m.look); setLocale(m.look.locale); break;
         case 'browserFrame': setFrame(m); setError(undefined); setShown(m.target); setPickable(undefined); setPicked([]); setRects([]); break;
         case 'browserError': setError(m); setShown(m.target); break;
         case 'browserHistory': setHistory(m.pages); break;
+        // The shell's answer to the page's context call, back to the page that is showing (a page that left drops it)
+        case 'browserContextDone': toPicker({ type: 'contextDone', id: m.id, ...(m.error ? { error: m.error } : {}), ...(m.shown === undefined ? {} : { shown: m.shown }) }); break;
       }
     };
     const moved = (url: string, pageTitle: string) => {
@@ -166,6 +193,12 @@ export function BrowserPanel() {
         case 'escape': togglePicking(false); break;
         case 'add': add(''); break;
         case 'comment': if (pickedRef.current.length) setCommenting(true); break;
+        // The page's own window.acpira.context call, on to the shell
+        case 'context': {
+          const call = contextCallOf(msg);
+          if (call) post(call);
+          break;
+        }
       }
     };
     window.addEventListener('message', onMessage);

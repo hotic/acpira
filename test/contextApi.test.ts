@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { ContextSlots, MAX_CONTEXT_ITEMS, parseContextPayload } from '../src/host/contextApi';
+import { ContextSlots, MAX_CONTEXT_ITEMS, pageOwner, parseContextPayload } from '../src/host/contextApi';
 import { MAX_TEXT_BYTES } from '../src/shared/attachments';
 
 const source = { id: 'asgard.questCanvas', name: 'Quest canvas' };
@@ -49,6 +49,20 @@ describe('live context slots', () => {
     expect(slots.replay()).toHaveLength(2);
     expect(slots.owners()).toEqual(new Set(['A']));
     expect(slots.release(new Set(['A']))).toEqual([{ type: 'contextSelection', source }]);
+    expect(slots.replay().map(m => m.type === 'contextSelection' && m.source.id)).toEqual(['other']);
+  });
+
+  it("files a page's slot under its browser panel", () => {
+    const slots = new ContextSlots();
+    const page = (panel: string, owner: string, items = [item]) => slots.set({ ...parseContextPayload({ source, items }), owner: pageOwner(panel, owner) });
+    page('p1', 'quest-a');
+    // A page in another panel, or a tool naming the same owner, cannot clear it
+    expect(page('p2', 'quest-a', [])).toBeUndefined();
+    expect(set(slots, 'quest-a', [])).toBeUndefined();
+    // The page leaving drops what pages in its panel set, and nothing else
+    slots.set(parseContextPayload({ source: { id: 'other', name: 'Other' }, owner: 'file:///w/b.canvas', items: [item] }));
+    expect(slots.releasePage('p2')).toEqual([]);
+    expect(slots.releasePage('p1')).toEqual([{ type: 'contextSelection', source }]);
     expect(slots.replay().map(m => m.type === 'contextSelection' && m.source.id)).toEqual(['other']);
   });
 });

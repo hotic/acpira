@@ -49,6 +49,33 @@ When Acpira is not installed, `executeCommand` rejects with "command not found".
 - **Reserved id.** `browser` is Acpira's own browser panel (elements picked on a local page); pick another id for your tool.
 - **Never sent on its own.** Content only goes out when the user sends a message.
 
+## Web pages in Acpira's browser panel
+
+A local web app shown in Acpira's browser panel (an agent's `open_browser`, or "Open Local Page in Acpira Browser" with a `localhost` address) gets the same two calls on `window.acpira.context`. The script Acpira adds to the page sets it before the page's own scripts run. A page opened anywhere else has no `window.acpira`, so check for it and keep a fallback of your own.
+
+```ts
+const context = (window as { acpira?: { context?: AcpiraPageContext } }).acpira?.context;
+
+if (context) {
+  // Live: the payload of acpira.context.set; resolves to { shown }
+  await context.set({ version: 1, source: { id: 'asgard.contentEditor', name: 'Content editor' }, owner: location.href, items });
+  // Pin, for a button the user pressed: the payload of acpira.context.add; resolves to undefined
+  await context.add({ version: 1, source: { id: 'asgard.contentEditor', name: 'Content editor' }, items });
+} else {
+  await navigator.clipboard.writeText(reference);
+}
+
+interface AcpiraPageContext {
+  version: 1;
+  set(payload: ContextPayload): Promise<{ shown: boolean }>;
+  add(payload: ContextPayload): Promise<void>;
+}
+```
+
+- **Same payload, same rules.** The limits, the sharing switch and the reserved id above apply as they are. A payload that breaks a rule rejects the promise with the message the command would give. A payload the browser cannot copy into a message (a function, a DOM node) is refused in the page with a `TypeError`. A call that gets no answer within 10 seconds rejects.
+- **Owners stay inside the panel.** Acpira files a page's `owner` under the browser panel showing it. A page can clear only what a page in the same panel set, never another tool's slot, and another tool cannot clear the page's.
+- **The slot goes with the page.** Acpira clears what a page set live when the page leaves (a reload, a link or form to another document), when the panel shows another page, and when the panel closes. Still send the clear when your selection empties.
+
 ## What the agent receives
 
 Each item becomes a text attachment that remembers its source. With agents that accept embedded context, a header comes first, then the text as an embedded resource, then the comment:
