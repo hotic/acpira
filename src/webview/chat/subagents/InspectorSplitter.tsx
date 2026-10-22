@@ -1,39 +1,24 @@
-import { useCallback, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { memo, useCallback, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { t } from '../../i18n';
-import { vscodeApi } from '../../vscodeApi';
+import { setWebviewState, webviewState } from '../../vscodeApi';
 
-// Width of the docked subagent inspector. The user drags the pane's left edge; the choice survives a webview reload
-// through the host's webview state (next to the fold memory), and is clamped to the room the shell has right now.
-const KEY = 'subagentPaneW';
+// Width of a docked pane: the subagent inspector (`subagentPaneW`) or the session column (`sessionPaneW`). The user drags
+// the pane's inner edge; the choice survives a webview reload through the host's webview state (next to the fold memory),
+// and is clamped to the room the shell has right now.
 const STEP = 16;
 
-function host(): { getState?(): unknown; setState?(state: unknown): void } | undefined {
-  try { return vscodeApi(); } catch { return undefined; }
-}
-
-function stored(): number | undefined {
-  const state = host()?.getState?.();
-  const value = state && typeof state === 'object' ? (state as Record<string, unknown>)[KEY] : undefined;
+function stored(key: string): number | undefined {
+  const value = webviewState(key);
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-function persist(width: number | undefined) {
-  const api = host();
-  if (!api?.setState) return;
-  const previous = api.getState?.();
-  const rest = { ...(previous && typeof previous === 'object' ? previous as Record<string, unknown> : {}) };
-  if (width === undefined) delete rest[KEY];
-  else rest[KEY] = width;
-  api.setState(rest);
 }
 
 export interface PaneBounds { min: number; max: number; initial: number }
 
 // The user's chosen width (undefined = the token default); the shell clamps it to the room it has right now,
 // so a narrow window squeezes the pane without forgetting the choice.
-export function usePreferredPaneWidth() {
-  const [preferred, setPreferred] = useState<number | undefined>(stored);
-  const commit = useCallback((next: number | undefined) => { setPreferred(next); persist(next); }, []);
+export function usePreferredPaneWidth(key = 'subagentPaneW') {
+  const [preferred, setPreferred] = useState<number | undefined>(() => stored(key));
+  const commit = useCallback((next: number | undefined) => { setPreferred(next); setWebviewState(key, next); }, [key]);
   return [preferred, commit] as const;
 }
 
@@ -42,18 +27,24 @@ export function clamp(value: number, min: number, max: number) {
 }
 
 interface SplitterProps {
-  width: number;
+  // The pane's width as chosen (undefined: the default, `bounds().initial`)
+  width: number | undefined;
   bounds: () => PaneBounds;
   // Live width while dragging (not persisted) and the final width on release
   onDrag: (width: number) => void;
   onCommit: (width: number) => void;
   onReset: () => void;
+  // The pane's side of the shell: on the right its left edge drags (leftwards widens), on the left its right edge
+  side?: 'left' | 'right';
 }
 
-// The pane sits on the right, so dragging left widens it. Arrow keys nudge, double-click restores the default width.
-export function InspectorSplitter({ width, bounds, onDrag, onCommit, onReset }: SplitterProps) {
+// Arrow keys nudge, double-click restores the default width. Memoized: the session column's edge is mounted for good
+// beside a shell that renders on every stream chunk, and its bounds read computed styles
+export const InspectorSplitter = memo(function InspectorSplitter({ width: chosen, bounds, onDrag, onCommit, onReset, side = 'right' }: SplitterProps) {
+  const dir = side === 'right' ? 1 : -1;
   const [dragging, setDragging] = useState(false);
-  const { min, max } = bounds();
+  const { min, max, initial } = bounds();
+  const width = chosen ?? initial;
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -61,12 +52,13 @@ export function InspectorSplitter({ width, bounds, onDrag, onCommit, onReset }: 
     // Capture keeps the drag alive over iframes / outside the pane; a synthetic pointer has nothing to capture
     try { target.setPointerCapture(e.pointerId); } catch { /* keep the listeners */ }
     const startX = e.clientX;
-    const startW = width;
+    // The pane as laid out: CSS may have clamped the chosen width to a narrow shell
+    const startW = target.parentElement?.offsetWidth ?? width;
     let last = startW;
     setDragging(true);
     const move = (ev: globalThis.PointerEvent) => {
       const b = bounds();
-      last = clamp(startW + startX - ev.clientX, b.min, b.max);
+      last = clamp(startW + (startX - ev.clientX) * dir, b.min, b.max);
       onDrag(last);
     };
     const up = () => {
@@ -81,7 +73,7 @@ export function InspectorSplitter({ width, bounds, onDrag, onCommit, onReset }: 
     target.addEventListener('pointercancel', up);
   };
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const delta = e.key === 'ArrowLeft' ? STEP : e.key === 'ArrowRight' ? -STEP : 0;
+    const delta = (e.key === 'ArrowLeft' ? STEP : e.key === 'ArrowRight' ? -STEP : 0) * dir;
     if (!delta) return;
     e.preventDefault();
     const b = bounds();
@@ -98,10 +90,11 @@ export function InspectorSplitter({ width, bounds, onDrag, onCommit, onReset }: 
       aria-valuemax={Math.max(min, max)}
       tabIndex={0}
       data-dragging={dragging || undefined}
+      data-side={side}
       className="subagent-splitter"
       onPointerDown={onPointerDown}
       onKeyDown={onKeyDown}
       onDoubleClick={onReset}
     />
   );
-}
+});

@@ -184,6 +184,9 @@
   --pair-shift: 8px;
   /* A 260px session column leaves at least 500px for the conversation. */
   --session-dock-min: 760px;
+  /* Drag range of the docked session column: never narrower than this, and the conversation keeps at least the other */
+  --session-pane-min: 200px;
+  --session-main-min: 420px;
   /* The subagent inspector docks beside the conversation when the main column still has room, else it drills down as an overlay */
   --subagent-dock-min: 900px;
   --subagent-pane-w: 360px;
