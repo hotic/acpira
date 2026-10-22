@@ -3,7 +3,7 @@ import { memo, useContext, type ReactNode } from 'react';
 import type { AsyncTaskInfo, AsyncTaskState, ToolCallBlock } from '@shared/transcript';
 import type { MsgKey } from '@shared/i18n';
 import { toolTodoEntries } from '@shared/todoTools';
-import { isImageGenTool, isShowImageTool, toolTexts } from '@shared/imageTools';
+import { isImageGenTool, isShowImageTool, isShowWidgetTool, toolTexts } from '@shared/imageTools';
 import { useAppearance } from '../appearance';
 import { Disclosure } from '../ui/Disclosure';
 import { EntranceOnce, Row, RowLabel, RowTarget } from '../ui/Row';
@@ -16,6 +16,7 @@ import { PlanDetails } from './Plan';
 import { CodeSurface, DiffBlock } from './CodeBlock';
 import { AgentImage } from './AgentImage';
 import { GeneratedImages, ImageInFoldContext } from './GeneratedImage';
+import { ShownWidget } from './AgentWidget';
 import { TerminalOutput, ToolOutput } from './Terminal';
 import { isWorkflowRun, toolTarget, toolVerb } from './folding';
 import { AsyncTaskStopContext, OpenToolFileContext, SessionTitleContext, WorkflowProgressContext } from './fileLinks';
@@ -140,6 +141,12 @@ function ToolCallRows({ block, grouped }: { block: ToolCallBlock; grouped: boole
   if (isShowImageTool(block)) {
     const row = <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
     return <div className="flex flex-col gap-gap">{row}{(!grouped || imageInFold) && <GeneratedImages block={block} />}</div>;
+  }
+  // A shown widget (Acpira's show_widget) sits like a shown image: under its row in an open process fold, outside it
+  // once the fold closes; the receipt text is for the model only
+  if (isShowWidgetTool(block)) {
+    const row = <Row tone="action" lead={lead} trailing={trailing}>{label}</Row>;
+    return <div className="flex flex-col gap-gap">{row}{(!grouped || imageInFold) && <ShownWidget block={block} />}</div>;
   }
   // A Claude workflow run: the launch receipt is written for the model (transcript dir, resume instructions), so the row
   // opens to the run's own report instead; its agents are the subagent rows after the turn's content

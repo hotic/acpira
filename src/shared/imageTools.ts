@@ -17,15 +17,31 @@ export function isShowImageTool(block: Pick<ToolCallBlock, 'verbKey'>): boolean 
   return block.verbKey === 'verb.showImage';
 }
 
-// Tool calls whose images are results for the reader, not process detail: generated and shown images
-export function isImageResultBlock(block: AgentBlock): block is ToolCallBlock {
-  return block.type === 'tool_call' && (isImageGenTool(block) || isShowImageTool(block));
+// Acpira's `show_widget`: one HTML file the webview runs as an interactive widget (`chat/AgentWidget.tsx`)
+export function isShowWidgetTool(block: Pick<ToolCallBlock, 'verbKey'>): boolean {
+  return block.verbKey === 'verb.showWidget';
 }
+
+// Tool calls whose images are results for the reader, not process detail: generated and shown images, and widgets
+export function isImageResultBlock(block: AgentBlock): block is ToolCallBlock {
+  return block.type === 'tool_call' && (isImageGenTool(block) || isShowImageTool(block) || isShowWidgetTool(block));
+}
+
+// A widget's HTML is stored as an image content of this type, which engines that predate widgets still read
+export const WIDGET_MIME = 'text/html';
+
+type ImageContent = Extract<NonNullable<ToolCallBlock['content']>, { type: 'image' }>;
+const savedContents = (block: ToolCallBlock): ImageContent[] =>
+  (block.contents ?? (block.content ? [block.content] : [])).filter((c): c is ImageContent => c.type === 'image' && !!c.blob);
 
 // The saved images of a tool call, in wire order; `contents` holds every item when there is more than one
 export function toolImages(block: ToolCallBlock): ImageRef[] {
-  const items = block.contents ?? (block.content ? [block.content] : []);
-  return items.filter((c): c is Extract<typeof c, { type: 'image' }> => c.type === 'image' && !!c.blob);
+  return savedContents(block).filter(c => c.mimeType !== WIDGET_MIME);
+}
+
+// The saved widget of a show_widget call (its HTML in the blob store)
+export function toolWidget(block: ToolCallBlock): ImageRef | undefined {
+  return savedContents(block).find(c => c.mimeType === WIDGET_MIME);
 }
 
 // The text items beside the images (codex-acp's "Revised prompt: …", Grok's saved-path receipt)

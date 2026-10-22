@@ -2,7 +2,7 @@ import { Fragment, createContext, memo, useCallback, useContext, useEffect, useI
 import { Bot, Check, ChevronRight, Compass, FileText, Hand, Info, MessageCircleQuestion, ShieldAlert, ShieldX, Shrink, TriangleAlert, X } from 'lucide-react';
 import type { AgentBlock, AgentTurn, CompactionBlock, FailureAction, NoticeBlock, PermissionBlock, SlashCommand, SteerBlock, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
-import { isImageResultBlock } from '@shared/imageTools';
+import { isImageResultBlock, isShowWidgetTool } from '@shared/imageTools';
 import { isSessionTool } from '@shared/sessionLinks';
 import { useAppearance, type Appearance } from '../appearance';
 import { getLocale, t } from '../i18n';
@@ -28,6 +28,7 @@ import { useFollowing } from './useBottomFollow';
 import { Prose } from './Prose';
 import { AgentImage } from './AgentImage';
 import { GeneratedImages, ImageInFoldContext } from './GeneratedImage';
+import { ShownWidget } from './AgentWidget';
 import { Permission } from './Permission';
 import { QuestionRecord } from './Questions';
 import { BlobUrlContext, OpenToolFileContext, WorkflowProgressContext, parseFileLink } from './fileLinks';
@@ -694,7 +695,7 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
       )}
       {!open && imageResults.length > 0 && (
         <div className="flex min-w-0 flex-col gap-gap pt-gap">
-          {imageResults.map(block => <GeneratedImages key={block.id} block={block} />)}
+          {imageResults.map(block => isShowWidgetTool(block) ? <ShownWidget key={block.id} block={block} /> : <GeneratedImages key={block.id} block={block} />)}
         </div>
       )}
     </Collapsible.Root>

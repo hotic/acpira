@@ -623,6 +623,8 @@ export const es = {
   'verb.kill': 'Detención de comando en segundo plano',
   'verb.imagegen': 'Generación de imagen',
   'verb.showImage': 'Visualización de imagen',
+  'verb.showWidget': 'Visualización de widget',
+  'widget.failed': 'No se pudo cargar el widget',
   'verb.searchSessions': 'Búsqueda de sesiones',
   'verb.readSession': 'Lectura de sesión',
   'tool.sessionTurns': 'turnos {range}',

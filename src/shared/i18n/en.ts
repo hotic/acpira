@@ -630,6 +630,8 @@ export const en = {
   // Image generation tools (codex-acp "Image generation", Grok image_gen / image_edit), recognized by name
   'verb.imagegen': 'Generate image',
   'verb.showImage': 'Show image',
+  'verb.showWidget': 'Show widget',
+  'widget.failed': 'The widget could not be loaded',
   'verb.searchSessions': 'Search sessions',
   'verb.readSession': 'Read session',
   'tool.sessionTurns': 'turns {range}',

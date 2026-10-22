@@ -36,7 +36,15 @@ pub(crate) fn file_image_saver(me: Weak<AcpSession>) -> FileImageSaver {
   Arc::new(move |path: &str| {
     let s = me.upgrade()?;
     let meta = std::fs::metadata(path).ok()?;
-    if !meta.is_file() || acpira_shared::attachments::image_mime_of(path).is_none() || meta.len() > crate::limits::MAX_OUT_IMAGE_BYTES {
+    // Images, and the HTML of a `show_widget` call (kept as a `text/html` image content, which older engines still read)
+    let limit = if acpira_shared::attachments::image_mime_of(path).is_some() {
+      crate::limits::MAX_OUT_IMAGE_BYTES
+    } else if crate::host_mcp::widget_mime_of(path).is_some() {
+      crate::limits::MAX_WIDGET_BYTES
+    } else {
+      return None;
+    };
+    if !meta.is_file() || meta.len() > limit {
       return None;
     }
     let ext = std::path::Path::new(path).extension().map(|e| format!(".{}", e.to_string_lossy().to_lowercase())).unwrap_or_default();
