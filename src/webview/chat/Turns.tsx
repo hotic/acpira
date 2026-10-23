@@ -5,7 +5,7 @@ import type { SubagentSummary } from '@shared/subagents';
 import { isImageResultBlock, isShowWidgetTool } from '@shared/imageTools';
 import { isSessionTool } from '@shared/sessionLinks';
 import { useAppearance, type Appearance } from '../appearance';
-import { getLocale, t } from '../i18n';
+import { getLocale, t, useLocale } from '../i18n';
 import { commandSegments } from './PromptInput';
 import { promptMarks } from './slashCommands';
 import { absorbedNotices, hasTurnContent, turnOutcome } from './turnOutcome';
@@ -21,7 +21,7 @@ import { Thought } from './Thought';
 import { Plan } from './Plan';
 import { ToolCall } from './ToolCall';
 import { ToolGroup } from './ToolGroup';
-import { blockSettled, foldStates, groupProcess, isDelegation, itemEntrance, itemSettled, processParts, type FoldPart, type ProcessItem } from './processGroups';
+import { blockItemId, blockSettled, foldStates, groupProcess, isDelegation, itemEntrance, itemSettled, processParts, type FoldPart, type ProcessItem } from './processGroups';
 import { useTailWindow } from './tailWindow';
 import { AutoFoldContext, AutoFoldItem, AutoFoldStore } from './autoFold';
 import { useFollowing } from './useBottomFollow';
@@ -134,11 +134,6 @@ const UNDER_LABEL = 'pl-indent';
 // Workspace hook notices (`acp/session/hooks.rs`) carry this id prefix; they get the gate's shield glyph
 const HOOK_NOTICE = 'hooks:';
 
-// The folded row's summary: the first line of the details, without the colon that introduces a list
-function noticeSummary(details: string) {
-  return details.split('\n').find(line => line.trim())?.trim().replace(/[:：]$/, '') ?? '';
-}
-
 // Details under an open notice: `- path` lines become file rows that open the file, the rest stays verbatim
 function NoticeDetails({ text }: { text: string }) {
   const openFile = useContext(OpenToolFileContext);
@@ -163,7 +158,7 @@ function NoticeDetails({ text }: { text: string }) {
 }
 
 // One row per failure id. A notice with details folds like a thought (picked as E in `lab/hook-gate-pick.preview.html`):
-// one line with the title and the details' first line as a quiet summary, the full details on the rail once opened.
+// the title alone on the folded line (the row opens, so no summary beside it), the full details on the rail once opened.
 // An error opens by default and marks only its glyph with the warn tone; a bare warning or info keeps the quiet color.
 // The adapter's own actions render as small secondary buttons under the fold, in payload order
 function NoticeRow({ block }: { block: NoticeBlock }) {
@@ -177,10 +172,8 @@ function NoticeRow({ block }: { block: NoticeBlock }) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
       {block.details
-        ? <Disclosure className={cn('group/notice', error && 'rail-tint')} lead={lead} defaultOpen={error} body={<NoticeDetails text={block.details} />}>
-            {/* The title gives way first only when the summary has nothing left; the summary hides once the details show */}
-            <RowLabel className="min-w-0 shrink truncate">{block.title}</RowLabel>
-            <span className="min-w-0 flex-1 truncate text-fg-3 group-data-open/notice:hidden">{noticeSummary(block.details)}</span>
+        ? <Disclosure className={cn(error && 'rail-tint')} lead={lead} defaultOpen={error} body={<NoticeDetails text={block.details} />}>
+            <RowLabel className="min-w-0 truncate">{block.title}</RowLabel>
           </Disclosure>
         : <Row lead={lead} className={error ? 'text-fg-2' : 'text-fg-3'}>
             <RowLabel className="whitespace-pre-wrap">{block.title}</RowLabel>
@@ -215,6 +208,8 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   // Continues the turn above (the hidden continue after an account switch): one row gap instead of a message gap
   joined?: boolean;
 }) {
+  // memo keeps a row from rendering again; the locale context still reaches it after a language change
+  useLocale();
   const absorbed = useMemo(() => absorbedNotices(turn), [turn]);
   const base = compacting ? compactionForDisplay(turn, running) : turn;
   // Absorbed notices leave the block list, so an empty line group cannot leave a stray gap behind
@@ -572,8 +567,8 @@ function CursorFold({ blocks }: { blocks: ToolCallBlock[] }) {
 // Permission cards stay outside; the latest reply remains visible while it streams.
 // `working` is false while a /compact reply shows only its compaction row, which retires the head the same way a settled turn does
 function CodexMessage({ turn, running, working = running, onPermission, memoryKey, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; running: boolean; working?: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
-  const { process, reply, permissions, notices, goalsLead, goals, compactions } = splitCodexBlocks(turn.blocks, running);
-  const hasTools = turn.blocks.some(block => block.type === 'tool_call');
+  const { process, reply, permissions, notices, goalsLead, goals, compactions } = useMemo(() => splitCodexBlocks(turn.blocks, running), [turn.blocks, running]);
+  const hasTools = useMemo(() => turn.blocks.some(block => block.type === 'tool_call'), [turn.blocks]);
   // The process folds away only once the reply has finished drawing, not when its last chunk arrived
   const [replyBusy, setReplyBusy] = useState(false);
   return (
@@ -598,6 +593,9 @@ function CodexMessage({ turn, running, working = running, onPermission, memoryKe
   );
 }
 
+const EMPTY_ITEMS: ProcessItem[] = [];
+const EMPTY_PARTS: FoldPart[] = [];
+
 // The process fold follows the run: open while the turn works and while its reply is still drawing, closed once
 // both are done, however the turn was mounted (a live session opened mid-turn shows what it is doing). A reader
 // scrolled away from the bottom holds every automatic close until they return. A manual toggle always wins; it is
@@ -613,12 +611,18 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
   const held = useRef(false);
   const auto = running || replyBusy || (!following && held.current);
   held.current = auto;
-  const items = useMemo(() => groupProcess(blocks), [blocks]);
-  const store = useProcessFolds(items, manual === undefined, auto, following, memoryKey);
   // A turn that ends with no process worth a head (a plain reply, or only a compaction status) retires the head row
   // the way the Working row used to: fade, then collapse. A compaction status stays as a flat line.
   const retired = !running && !hasTools && !blocks.some(b => b.type !== 'compaction');
   const open = retired || (manual ?? auto);
+  // A settled fold that has never been opened and has no steered prompt or delegation row to keep visible outside
+  // the fold skips grouping its process blocks and computing per-item fold states until the reader opens it.
+  const hasExposed = useMemo(() => blocks.some(b => b.type === 'steer' || isDelegation(b)), [blocks]);
+  const everOpen = useRef(open);
+  if (open) everOpen.current = true;
+  const activeProcess = running || everOpen.current || hasExposed;
+  const items = useMemo(() => activeProcess ? groupProcess(blocks) : EMPTY_ITEMS, [activeProcess, blocks]);
+  const store = useProcessFolds(items, manual === undefined, auto, following, memoryKey);
   const imageResults = useMemo(() => blocks.filter(isImageResultBlock), [blocks]);
   const activity = liveActivity(turn, lead);
   const since = clockStart(turn);
@@ -630,9 +634,9 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
     ? elapsedDuration(turn)
     : undefined;
   // Steered prompts and the subagent rows at a delegation stay visible between the folding parts of the process
-  const parts = useMemo(() => processParts(items), [items]);
+  const parts = useMemo(() => activeProcess ? processParts(items) : EMPTY_PARTS, [activeProcess, items]);
   // Only items fold; a process of nothing but delegations has no chevron
-  const foldable = parts.some(part => part.type === 'items');
+  const foldable = activeProcess ? parts.some(part => part.type === 'items') : blocks.length > 0;
   const root = useRef<HTMLDivElement>(null);
   const tail = useTailWindow(items.length, running, root);
   const skips = useMemo(() => partSkips(parts, tail.start), [parts, tail.start]);
@@ -663,7 +667,7 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
       {blocks.length > 0 && (
         <ImageInFoldContext.Provider value={open}>
           <AutoFoldContext.Provider value={store}><QuietEntranceContext.Provider value={tail.quiet}>
-            {parts.map((part, i) => {
+            {activeProcess ? parts.map((part, i) => {
               // A steered prompt keeps the process prose gap open or closed: between two parts while they show, under
               // the head (or the previous card) once they have folded away
               if (part.type === 'steer') return skips[i] ? null : (
@@ -687,7 +691,7 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
               return i === parts.findIndex(p => p.type === 'items')
                 ? <Collapsible.Panel key={part.id} className="-mx-pad [&>div]:px-pad">{body}</Collapsible.Panel>
                 : <Collapsible.Section key={part.id} open={open} className="-mx-pad [&>div]:px-pad">{body}</Collapsible.Section>;
-            })}
+            }) : <Collapsible.Panel key={blockItemId(blocks[0]!, 0)} className="-mx-pad [&>div]:px-pad">{null}</Collapsible.Panel>}
           </QuietEntranceContext.Provider></AutoFoldContext.Provider>
         </ImageInFoldContext.Provider>
       )}

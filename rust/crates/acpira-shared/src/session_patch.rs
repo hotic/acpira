@@ -159,9 +159,9 @@ pub fn session_patch(prev: &ViewPartsData, next: &ViewPartsData) -> Option<RawJs
 
 /// Sessions whose last sent view a page keeps (`src/shared/sessionPatch.ts` `VIEW_CACHE_ENTRIES` keeps at least as many):
 /// switching back to one of them is sent as a patch against that view instead of the whole transcript again
-pub const SENT_VIEWS_MAX: usize = 8;
+pub const SENT_VIEWS_MAX: usize = 12;
 /// Encoded bytes the kept views may hold per page; the view on screen stays even when it alone is larger
-pub const SENT_VIEWS_BUDGET: usize = 32 << 20;
+pub const SENT_VIEWS_BUDGET: usize = 64 << 20;
 
 /// How one view goes to a page
 pub enum Delivery {

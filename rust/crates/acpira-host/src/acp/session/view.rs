@@ -6,7 +6,7 @@ use std::sync::Arc;
 use acpira_shared::protocol::{HostMsg, RawJson};
 use acpira_shared::session_patch::{ViewParts, ViewPartsData, encode_turns, raw};
 use acpira_shared::subagents::SubagentSummary;
-use acpira_shared::model_shapes::ModelShapes;
+use acpira_shared::model_shapes::{ModelShapes, session_model};
 use acpira_shared::transcript::*;
 use serde::Serialize;
 use serde_json::value::RawValue;
@@ -30,10 +30,12 @@ impl AcpSession {
       acp_session_id: c.acp_session_id.clone(),
       cwd: self.cwd.clone(),
       updated_at: c.updated_at.clone(),
+      created_at: Some(self.created_at.clone()).filter(|c| !c.is_empty()),
       pinned: c.pinned,
       category: c.category.clone(),
       state: None,
       unread: None,
+      model: session_model(&c.state.controls),
     }
   }
 
@@ -101,6 +103,14 @@ impl AcpSession {
   fn view_encoded(&self) -> (RawJson, bool, ViewParts) {
     let shapes = self.deps.model_shapes.as_ref().and_then(|f| f(&self.agent));
     let mut c = self.core.lock();
+    if let Some((rev, status, running, ref cached_shapes, ref full, ref parts)) = c.cached_view
+      && rev == c.rev
+      && status == c.status
+      && running == c.phase.running
+      && *cached_shapes == shapes
+    {
+      return (full.clone(), running, parts.clone());
+    }
     // Each visible turn is encoded on its own, the last one also block by block when it is an agent turn; the whole view
     // is spliced from the same fragments, so the transcript is still serialized once per change. Diff sources go without
     // their file texts (`encode_for_view`): the page asks for them when it needs them
@@ -150,7 +160,9 @@ impl AcpSession {
     let encoded_head = raw(&head);
     let full = RawJson::new(&ViewRef { turns: &turns, ..head });
     let parts = ViewParts(Arc::new(ViewPartsData { id: self.id.clone(), epoch: self.epoch, rev: c.rev, head: encoded_head, turns, last }));
-    (full, c.phase.running, parts)
+    let running = c.phase.running;
+    c.cached_view = Some((c.rev, c.status, running, shapes, full.clone(), parts.clone()));
+    (full, running, parts)
   }
 
   /// An owned view, for callers that inspect it (tests, plan lookups)

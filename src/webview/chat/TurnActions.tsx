@@ -57,14 +57,16 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
             </IconButton>
           } />
           <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align="end" width="md"><DropdownMenu.Popup>
-            <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
-              {forkTargets(ctx.agents ?? [], ctx.agentId).map(a => (
-                <DropdownMenu.Item key={a.id} disabled={a.available === false} title={a.available === false ? t('agent.notInstalled') : undefined}
-                  onClick={() => ctx.fork!(turnIndex, a.id)}>
-                  <OptionContent icon={<AgentMark id={a.id} name={a.name} />}>{a.name}</OptionContent>
-                </DropdownMenu.Item>
-              ))}
-            </div>
+            {forkOpen && (
+              <div className="scroll-thin flex max-h-pop flex-col overflow-y-auto">
+                {forkTargets(ctx.agents ?? [], ctx.agentId).map(a => (
+                  <DropdownMenu.Item key={a.id} disabled={a.available === false} title={a.available === false ? t('agent.notInstalled') : undefined}
+                    onClick={() => ctx.fork!(turnIndex, a.id)}>
+                    <OptionContent icon={<AgentMark id={a.id} name={a.name} />}>{a.name}</OptionContent>
+                  </DropdownMenu.Item>
+                ))}
+              </div>
+            )}
           </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
         </DropdownMenu.Root>
       )}
@@ -75,7 +77,7 @@ export function TurnActions({ turn, turnIndex, settings }: { turn: AgentTurn; tu
           </IconButton>
         } />
         <Popover.Portal><Popover.Positioner side="bottom" align="end" width="lg"><Popover.Popup>
-          <StatsCard turn={turn} model={modelLabel(turn.usage, settings, ctx?.controls ?? { modes: [], options: [] })} />
+          {statsOpen && <StatsCard turn={turn} model={modelLabel(turn.usage, settings, ctx?.controls ?? { modes: [], options: [] })} />}
         </Popover.Popup></Popover.Positioner></Popover.Portal>
       </Popover.Root>}
     </div>

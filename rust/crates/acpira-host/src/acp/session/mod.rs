@@ -223,6 +223,8 @@ pub(crate) struct Core {
   pub workflow_logs: crate::acp::session::workflow_logs::WorkflowLogs,
   /// The project's workspace hooks: the running turn's snapshot, rejected edits and the gate's rounds (`hooks.rs`)
   pub hooks: crate::acp::session::hooks::HookState,
+  /// The last encoded view for `(rev, status, running, model_shapes)`: selecting an unchanged live session reuses it without re-serializing
+  pub cached_view: Option<(i64, SessionStatus, bool, Option<ModelShapes>, acpira_shared::protocol::RawJson, acpira_shared::session_patch::ViewParts)>,
 }
 
 pub struct AcpSession {
@@ -367,6 +369,7 @@ impl AcpSession {
           ultracode,
           workflow_logs: Default::default(),
           hooks: Default::default(),
+          cached_view: None,
         }),
         deps,
         me: me.clone(),
@@ -429,6 +432,7 @@ impl AcpSession {
   pub(crate) fn touch(&self, c: &mut Core) {
     self.refine_controls(c);
     c.rev += 1;
+    c.cached_view = None;
     (self.deps.on_change)(&self.id, c.phase.running);
   }
 

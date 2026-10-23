@@ -34,6 +34,8 @@ pub struct MsgBatch {
   armed: bool,
   /// The running flag of the last session view pushed; None before the first
   running: Option<bool>,
+  /// The id of the last session view pushed: switching to another session flushes at once instead of waiting out the window
+  session_id: Option<String>,
 }
 
 /// What a push asks of the owner
@@ -48,8 +50,15 @@ pub enum Pushed {
 
 impl MsgBatch {
   pub fn push(&mut self, m: HostMsg) -> Pushed {
-    let idle = match &m {
-      HostMsg::Session { running, .. } => self.running.replace(*running) != Some(false) && !*running,
+    let immediate = match &m {
+      HostMsg::Session { running, parts, .. } => {
+        let switched = match parts.as_ref().map(|p| p.0.id.as_str()) {
+          Some(id) => self.session_id.replace(id.to_owned()).as_deref() != Some(id),
+          None => false,
+        };
+        let idle = self.running.replace(*running) != Some(false) && !*running;
+        switched || idle
+      }
       _ => false,
     };
     let key = m.batch_key();
@@ -57,7 +66,7 @@ impl MsgBatch {
       Some(i) => self.pending[i].1 = m,
       None => self.pending.push((key, m)),
     }
-    if idle {
+    if immediate {
       return Pushed::Flush(self.flush());
     }
     if self.armed {

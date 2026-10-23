@@ -48,6 +48,7 @@ impl AcpSession {
     let mut c = self.core.lock();
     apply_config_options(&mut c.state.controls, r.get("configOptions").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]));
     self.refine_controls(&mut c);
+    c.cached_view = None;
   }
 
   fn editing_guard(&self) -> Result<()> {
@@ -313,6 +314,7 @@ impl AcpSession {
   /// queue prompts meanwhile: session/new's defaults never flash, and a first prompt never runs under them
   pub fn hold_settings(&self, settings: &TurnSettings) {
     let mut c = self.core.lock();
+    c.cached_view = None;
     let config = settings.config.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone()));
     let mode = settings.mode_id.clone().filter(|m| !m.is_empty()).map(|m| (MODE_PICK.to_owned(), m));
     let entries: Vec<(String, String)> = config.chain(mode).collect();
@@ -475,6 +477,7 @@ impl AcpSession {
   /// over the options and modes an earlier session of this agent showed
   pub fn preview_controls(&self, known: &SessionControls, settings: Option<&TurnSettings>) {
     let mut c = self.core.lock();
+    c.cached_view = None;
     self.seed_ultracode(&mut c, settings);
     let remembered_mode = settings.and_then(|s| s.mode_id.clone());
     if let Some(syn) = self.synthetic_modes().filter(|s| !s.is_empty()) {
