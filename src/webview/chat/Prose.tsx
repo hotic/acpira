@@ -11,6 +11,7 @@ import { AgentImage } from './AgentImage';
 import { mermaidDiagram } from './mermaidPlugin';
 import { useTheme } from '../look';
 import { QuietEntranceContext } from '../ui/Row';
+import { useLocale } from '../i18n';
 
 // Full Markdown via streamdown: GFM + KaTeX + Mermaid, streaming-aware (remend repairs incomplete syntax mid-stream).
 // All typography lives in styles/prose.css under .acp-prose — Tailwind never scans node_modules, so streamdown's own classes don't resolve here.
@@ -26,11 +27,16 @@ if (!rehypeRaw || !rehypeSanitize || !rehypeHarden) throw new Error('streamdown 
 const REHYPE = [rehypeRaw, rewriteFileHrefs, rehypeSanitize, rehypeHarden];
 const REPLY_CLASS = 'acp-prose flex min-w-0 flex-col gap-gap text-1 text-fg-1';
 const THOUGHT_CLASS = 'acp-prose acp-thought flex min-w-0 flex-col gap-gap text-2 text-fg-2';
+// Static mode renders the whole markdown at once without splitting into blocks; passing a single-element splitter skips
+// streamdown's unconditional marked.lex pass on settled turns.
+const STATIC_BLOCKS = (markdown: string) => [markdown];
 // `motion` is a stable module-level config (streamdown compares props by reference); the LAB passes alternatives.
 // `onBusy` hears whether the text is still being drawn (received, paced out or fading in), for a turn that waits for
 // its reply to finish on screen before folding its process away; pass a stable function.
 // `tone="thought"` renders reasoning text: the secondary type scale and colour, with headings kept at body size (prose.css `.acp-thought`)
 export const Prose = memo(function Prose({ block, motion = STREAM_MOTION, onBusy, tone = 'reply' }: { block: TextBlock; motion?: StreamMotion; onBusy?: (busy: boolean) => void; tone?: 'reply' | 'thought' }) {
+  // memo keeps a row from rendering again; the locale context still reaches it after a language change
+  useLocale();
   // A block still streaming when its thread mounts quietly (the session reopened mid-turn) was already on screen:
   // without this every return to a session whose turn is held open (Claude waiting on background subagents)
   // replayed its last reply from the first character
@@ -64,7 +70,7 @@ export const Prose = memo(function Prose({ block, motion = STREAM_MOTION, onBusy
       plugins={PLUGINS}
       components={COMPONENTS}
       BlockComponent={SettlingBlock}
-      parseMarkdownIntoBlocksFn={blocks.parse}
+      parseMarkdownIntoBlocksFn={busy ? blocks.parse : STATIC_BLOCKS}
       className={tone === 'thought' ? THOUGHT_CLASS : REPLY_CLASS}
     >
       {smooth.text}

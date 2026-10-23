@@ -1,7 +1,7 @@
 import type { ChatGptIntegrationStatus } from '@shared/chatgptIntegration';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountAction, AgentInstallProgress, EditTurnRequest, FileHit, HostMsg, InitState, NativeSessionsState, SessionHit, WebviewMsg } from '@shared/protocol';
-import type { AccountInfo, AgentId, AgentInfo, ConfigControl, FullDiffSource, SessionCategories, SessionSummary, SessionView, Turn } from '@shared/transcript';
+import type { AccountInfo, AgentId, AgentInfo, ConfigControl, FullDiffSource, SessionCategories, SessionControls, SessionSummary, SessionView, Turn } from '@shared/transcript';
 import type { HiddenMap, SettingsView } from '@shared/settings';
 import type { AgentInventory } from '@shared/inventory';
 import type { Locale } from '@shared/i18n';
@@ -99,6 +99,9 @@ const sessionMarkdown = (id: string) => new Promise<string>((resolve, reject) =>
 });
 
 type InitEnv = Pick<InitState, 'host' | 'home' | 'cwd' | 'blobBase'>;
+
+const EMPTY_TURNS: Turn[] = [];
+const EMPTY_CONTROLS: SessionControls = { modes: [], options: [] };
 
 // Root of the real webview: consumes the whole state pushed by the host, posts actions back via postMessage unchanged.
 // The settings page is a local view swap over the chat (Codex-style), not a separate webview
@@ -265,7 +268,13 @@ export function App() {
         }
         case 'chime': playChime(); break;
         case 'probeUrl': { const { id, url } = m; void probeUrl(url).then(r => post({ type: 'probeResult', id, ...r })); break; }
-        case 'showSession': post({ type: 'selectSession', id: m.id }); setView('chat'); break;
+        case 'showSession': {
+          const kept = views.select(m.id);
+          if (kept) setSession(kept);
+          post({ type: 'selectSession', id: m.id });
+          setView('chat');
+          break;
+        }
         case 'addSelection': {
           const draft = selectionDraft(m.selection, cwdRef.current);
           setView('chat');
@@ -324,7 +333,11 @@ export function App() {
     openBlob: (sessionId, name) => post({ type: 'openBlob', sessionId, name }),
     setMode: id => post({ type: 'setMode', sessionId: activeId.current, id }),
     setConfig: (configId, value) => post({ type: 'setConfig', sessionId: activeId.current, configId, value }),
-    selectSession: id => post({ type: 'selectSession', id }),
+    selectSession: id => {
+      const kept = views.select(id);
+      if (kept) setSession(kept);
+      post({ type: 'selectSession', id });
+    },
     newSession: (agent, category) => post({ type: 'newSession', ...(agent ? { agent } : {}), ...(category ? { category } : {}) }),
     renameSession: (id, title) => post({ type: 'renameSession', id, title }),
     deleteSession: id => post({ type: 'deleteSession', id }),
@@ -398,6 +411,11 @@ export function App() {
     providerProbe: (id, probe) => post({ type: 'providerProbe', id, probe }),
   }), []);
 
+  const openSettings = useCallback((target?: SettingsPage) => {
+    if (target) setPage(target);
+    setView('settings');
+  }, []);
+
   cwdRef.current = session?.cwd ?? init?.cwd ?? '';
   if (!init || !settings) return null;
   const agent = agents.find(a => a.id === session?.agent) ?? agents[0];
@@ -451,13 +469,13 @@ export function App() {
       error={session?.error}
       canTakeOver={session?.canTakeOver}
       authMethods={session?.authMethods}
-      turns={session?.turns ?? []}
+      turns={session?.turns ?? EMPTY_TURNS}
       running={session?.running ?? false}
       queued={session?.queued}
       goal={session?.goal}
       goalActions={session?.goalActions}
       forkedFrom={session?.forkedFrom}
-      controls={session?.controls ?? { modes: [], options: [] }}
+      controls={session?.controls ?? EMPTY_CONTROLS}
       modelShapes={session?.modelShapes}
       usage={session?.usage}
       commands={session?.commands}
@@ -477,7 +495,7 @@ export function App() {
       subagentTranscripts={subagentTranscripts}
       on={on}
       replayKey={session?.id}
-      onOpenSettings={target => { if (target) setPage(target); setView('settings'); }}
+      onOpenSettings={openSettings}
     />
     </LocaleContext.Provider>
   );

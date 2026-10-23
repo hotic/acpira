@@ -16,12 +16,27 @@ const RELEASE_SLACK_MS = 80;
 
 const PANEL = 'grid min-w-0 grid-cols-[minmax(0,1fr)] transition-[grid-template-rows,opacity] duration-(--dur-open) ease-out data-[open]:grid-rows-[1fr] data-[open]:opacity-100 data-[closed]:grid-rows-[0fr] data-[closed]:opacity-0 data-[closed]:duration-(--dur-close) data-[closed]:ease-(--ease-close)';
 
-function Panel({ children, className, ...props }: ComponentProps<typeof Base.Panel>) {
-  return <Base.Panel {...props} keepMounted hidden={false}
-    render={(attributes, state) => <PanelFrame {...attributes} open={state.open} />}
-    className={cnState(PANEL, className)}>
-    {children}
-  </Base.Panel>;
+const OpenContext = createContext(false);
+
+// Wrap Base.Root so Panel reads `open` directly through OpenContext instead of mounting Base.Panel, whose layout effect
+// calls getComputedStyle + scrollHeight on every panel and triggers forced synchronous layout thrashing across long threads.
+function Root({ open: controlled, defaultOpen = false, onOpenChange, children, ...props }: ComponentProps<typeof Base.Root>) {
+  const [uncontrolled, setUncontrolled] = useState(defaultOpen);
+  const open = controlled ?? uncontrolled;
+  const handleOpenChange: NonNullable<ComponentProps<typeof Base.Root>['onOpenChange']> = (next, details) => {
+    if (controlled === undefined) setUncontrolled(next);
+    onOpenChange?.(next, details);
+  };
+  return (
+    <OpenContext.Provider value={open}>
+      <Base.Root {...props} open={open} onOpenChange={handleOpenChange}>{children}</Base.Root>
+    </OpenContext.Provider>
+  );
+}
+
+function Panel({ children, className, ...props }: ComponentProps<'div'>) {
+  const open = useContext(OpenContext);
+  return <PanelFrame {...props} open={open} className={cn(PANEL, className)} data-open={open ? '' : undefined} data-closed={open ? undefined : ''}>{children}</PanelFrame>;
 }
 
 // A further part of a root's panel, for a body broken by content that stays visible while it is closed (a steered
@@ -52,4 +67,4 @@ function PanelFrame({ open, children, ...attributes }: ComponentProps<'div'> & {
   </div>;
 }
 
-export const Collapsible = { Root: Base.Root, Trigger: Base.Trigger, Panel, Section };
+export const Collapsible = { Root, Trigger: Base.Trigger, Panel, Section };

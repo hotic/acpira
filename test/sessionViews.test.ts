@@ -67,4 +67,30 @@ describe('page session view cache', () => {
     expect(v.init(undefined)).toBeUndefined();
     expect(v.current).toBeUndefined();
   });
+
+  it('optimistically selects a kept session and absorbs an in-flight patch of the previous session in the background', () => {
+    const v = new SessionViews();
+    const a1 = user('a1');
+    const b1 = user('b1');
+    v.whole(view('a', 3, [a1]));
+    v.whole(view('b', 1, [b1]));
+
+    // Optimistic switch back to 'a' returns its kept view at once.
+    const selected = v.select('a');
+    expect(selected?.id).toBe('a');
+    expect(v.current?.id).toBe('a');
+
+    // A late streaming patch for 'b' (the session just left) updates 'b' in the cache without flipping the screen back.
+    expect(v.patch(patch('b', 1, 2, 1, [user('b2')]))).toBe('stale');
+    expect(v.current?.id).toBe('a');
+
+    // When the host's patch for 'a' lands, kept turns preserve their object references.
+    const confirmed = v.patch(patch('a', 3, 3, 1, [])) as SessionView;
+    expect(confirmed.id).toBe('a');
+    expect(confirmed.turns[0]).toBe(a1);
+
+    // Switching back to 'b' later sees the background patch that was absorbed.
+    const backToB = v.select('b');
+    expect(backToB && ids(backToB)).toEqual(['b1', 'b2']);
+  });
 });

@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react';
+import { useState, type ReactElement } from 'react';
 import { ContextMenu } from '@base-ui/react/context-menu';
 import { ChevronRight, Copy, FileDown, FileJson, FileText, Folder, FolderInput, Inbox, LetterText, Link, Pencil, Pin, PinOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
 import type { ExportFormat } from '@shared/protocol';
@@ -132,11 +132,12 @@ function sessionMenuItems({ session, onOpenInEditor, onRename, onPin, onMove, pr
 
 // The session "…" menu, opened from its trigger button
 export function SessionMenu({ trigger, align = 'start', onOpenChange, ...items }: SessionMenuProps) {
+  const [open, setOpen] = useState(false);
   return (
-    <DropdownMenu.Root onOpenChange={onOpenChange}>
+    <DropdownMenu.Root open={open} onOpenChange={next => { setOpen(next); onOpenChange?.(next); }}>
       <DropdownMenu.Trigger render={trigger} />
       <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align={align} width="md"><DropdownMenu.Popup>
-        {sessionMenuItems(items)}
+        {open && sessionMenuItems(items)}
       </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
     </DropdownMenu.Root>
   );
@@ -153,12 +154,13 @@ export function SessionMenu({ trigger, align = 'start', onOpenChange, ...items }
 // focus-within action cluster showing without a hover fill
 const contextMenuCollision = { side: 'flip', align: 'flip', fallbackAxisSide: 'none' } as const;
 export function SessionContextMenu({ children, onOpenChange, editing, ...items }: SessionMenuItemsProps & { children: ReactElement<Record<string, unknown>>; onOpenChange?: (open: boolean) => void; editing?: boolean }) {
+  const [open, setOpen] = useState(false);
   return (
-    <ContextMenu.Root disabled={editing} onOpenChange={open => onOpenChange?.(open)}>
+    <ContextMenu.Root disabled={editing} onOpenChange={next => { setOpen(next); onOpenChange?.(next); }}>
       <ContextMenu.Trigger render={children} />
       {/* Portaled, but React events still bubble up the component tree: a menu click must not reach the row and select it */}
       <DropdownMenu.Portal><DropdownMenu.Positioner className="w-max min-w-pop-sm" collisionAvoidance={contextMenuCollision}><DropdownMenu.Popup finalFocus={false} onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
-        {sessionMenuItems(items)}
+        {open && sessionMenuItems(items)}
       </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
     </ContextMenu.Root>
   );

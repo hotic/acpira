@@ -1,4 +1,5 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { flushSync } from 'react-dom';
 import { Check, CircleAlert, Network, Paperclip, Settings2, X } from 'lucide-react';
 import type { ExternalSessionInfo, AccountInfo, AgentId, AgentInfo, ForkOrigin, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
@@ -9,6 +10,7 @@ import { AppearanceContext, appearanceDataAttrs, type Appearance } from '../appe
 import { lookAttrs, ThemeContext, type ShellLook, type Theme } from '../look';
 import { t } from '../i18n';
 import { ShellLayerContext } from '../ui/Popover';
+import { useShellLayer } from '../ui/Overlay';
 import { cn } from '../ui/cn';
 import { DockStack } from '../ui/DockStack';
 import { Chip, IconButton } from '../ui/Button';
@@ -213,6 +215,7 @@ export function Shell(p: ShellProps) {
   const { appearance: a, on } = p;
   const wide = p.host === 'editor';
   const root = useRef<HTMLDivElement>(null);
+  useShellLayer(root);
   const sessionPanel = useRef<HTMLElement>(null);
   const position = p.look?.sessionListPosition ?? (a.sessions === 'drawer' ? 'left' : 'hidden');
   const [canDock, setCanDock] = useState(false);
@@ -452,16 +455,19 @@ export function Shell(p: ShellProps) {
   } : undefined, [on.editTurn, p.activeSessionId, editable, editing, p.modelShapes]);
   // A session link in a reply (or the inspector's child transcript) switches this view to that session, like a history row
   const openSession = useCallback((id: string) => { on.selectSession(id); closeDrawer(); }, [on.selectSession, closeDrawer]);
-  // Session tool rows name the session they read by its title: keyed by id and by the agent's own session id
-  const sessionTitle = useMemo(() => {
+  // Session tool rows name the session they read by its title: keyed by id and by the agent's own session id; a ref keeps
+  // the context callback stable when unread/running flags change on the session list.
+  const titlesRef = useRef<Map<string, string>>(new Map());
+  useMemo(() => {
     const titles = new Map<string, string>();
     for (const s of p.sessions) {
       const title = s.title || t('session.fallbackTitle');
       titles.set(s.id, title);
       if (s.acpSessionId && !titles.has(s.acpSessionId)) titles.set(s.acpSessionId, title);
     }
-    return (ref: string) => titles.get(ref);
+    titlesRef.current = titles;
   }, [p.sessions]);
+  const sessionTitle = useCallback((ref: string) => titlesRef.current.get(ref), []);
   const openToolFile = useMemo(() => p.activeSessionId && on.openFile
     ? (path: string, line?: number) => on.openFile!(p.activeSessionId!, path, line) : undefined, [p.activeSessionId, on.openFile]);
   const goalAction = useMemo(() => p.activeSessionId && on.goal
@@ -481,11 +487,15 @@ export function Shell(p: ShellProps) {
   [p.activeSessionId, on.diffSource, inspectId]);
   // An AIR failure notice's actions map onto existing session actions: a real turn retries the prompt,
   // a session-scoped row (no live start) reconnects instead; the other two are the Notice's own verbs
+  const lastTurnStarted = lastTurn?.role === 'agent' && lastTurn.startedAt !== undefined;
   const failureAction = useMemo(() => p.activeSessionId ? (action: FailureAction) => {
     if (action === 'login') on.login();
     else if (action === 'new_session') on.newSession(p.agent.id);
-    else (lastTurn?.role === 'agent' && lastTurn.startedAt !== undefined ? on.retryTurn : on.retry)();
-  } : undefined, [p.activeSessionId, p.agent.id, on.login, on.newSession, on.retryTurn, on.retry, lastTurn]);
+    else (lastTurnStarted ? on.retryTurn : on.retry)();
+  } : undefined, [p.activeSessionId, p.agent.id, on.login, on.newSession, on.retryTurn, on.retry, lastTurnStarted]);
+  const onPermission = useCallback((blockId: string, optionId: string) => {
+    if (p.activeSessionId) on.permission(p.activeSessionId, blockId, optionId);
+  }, [p.activeSessionId, on.permission]);
   // Per-turn actions (copy / fork / stats): memoized like the other contexts so a stream push does not re-render consumers;
   // external conversations have no ACP transcript to fork
   const turnActions = useMemo(() => p.activeSessionId ? {
@@ -588,7 +598,7 @@ export function Shell(p: ShellProps) {
                           <Thread key={p.activeSessionId} turns={held.turns} running={held.running} wide={wide} replayKey={p.replayKey} blobUrl={blobUrl} contentRef={contentRef} commands={p.commands} summons={summons}
                             onSetGoal={setGoal} subagents={p.subagents} onInspect={onInspect} onFailureAction={failureAction}
                             forkedFrom={p.external ? undefined : p.forkedFrom} agents={p.agents} agentId={p.agent.id}
-                            onPermission={(blockId, optionId) => { if (p.activeSessionId) on.permission(p.activeSessionId, blockId, optionId); }} />
+                            onPermission={onPermission} />
                         </TurnActionsContext.Provider>
                       </OpenToolFileContext.Provider>
                     </HistoryComposerContext.Provider>
@@ -737,6 +747,71 @@ function threadClearance(dockHeight: number) {
 // Entrance stagger caps out at the 12th block, so long sessions don't take seconds
 const STAGGER_CAP = 12;
 
+// Long transcripts mount the tail exchanges first so the viewport paints within one frame on session switch,
+// then prepend earlier exchanges in frame slices while keeping the scroll position anchored.
+const EXCHANGE_WINDOW_THRESHOLD = 10;
+const INITIAL_EXCHANGES = 8;
+const EXCHANGE_SLICE = 14;
+
+function canWindowExchanges(count: number): boolean {
+  return count > EXCHANGE_WINDOW_THRESHOLD
+    && typeof requestAnimationFrame === 'function'
+    && !/jsdom/i.test(globalThis.navigator?.userAgent ?? '');
+}
+
+function useExchangeWindow(
+  count: number,
+  scrollerRef: RefObject<HTMLDivElement | null>,
+  follow: { readonly value: boolean },
+  opening: { readonly current: boolean },
+) {
+  const [start, setStart] = useState(() => canWindowExchanges(count) ? count - INITIAL_EXCHANGES : 0);
+  const slicing = useRef(false);
+  const [quiet] = useState(() => ({ get current() { return opening.current || slicing.current; } }));
+  const before = useRef<{ scroller: HTMLElement; top: number; height: number; bottom: boolean } | undefined>(undefined);
+
+  useEffect(() => {
+    if (start <= 0) return;
+    let frame2 = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Wait until the first frame has painted before prepending earlier slices so the switch paint is never delayed by background mounts.
+    const frame1 = requestAnimationFrame(() => {
+      frame2 = requestAnimationFrame(() => {
+        timer = setTimeout(() => {
+          const scroller = scrollerRef.current;
+          const bottom = follow.value;
+          before.current = scroller ? {
+            scroller,
+            top: bottom ? 0 : scroller.scrollTop,
+            height: bottom ? 0 : scroller.scrollHeight,
+            bottom: bottom || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1,
+          } : undefined;
+          slicing.current = true;
+          flushSync(() => setStart(cur => Math.max(0, cur - EXCHANGE_SLICE)));
+        }, 0);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(frame1);
+      if (frame2) cancelAnimationFrame(frame2);
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [start, scrollerRef, follow]);
+
+  useLayoutEffect(() => {
+    slicing.current = false;
+    const kept = before.current;
+    before.current = undefined;
+    if (!kept) return;
+    const { scroller, top, height, bottom } = kept;
+    if (bottom) scroller.scrollTop = scroller.scrollHeight;
+    else scroller.scrollTop = top + (scroller.scrollHeight - height);
+  }, [start]);
+
+  const effectiveStart = start > 0 ? Math.min(start, Math.max(0, count - INITIAL_EXCHANGES)) : 0;
+  return { start: effectiveStart, quiet };
+}
+
 // Conversation flow: stick-to-bottom following happens on transcript changes (new content / streaming growth) and on async growth
 // (images, diagrams) until the user touches the thread; user actions like expand / collapse never touch the scroll position —
 // the toggle under the mouse stays put while the content below it moves. Scrolling away from the bottom releases the follow; scrolling back to the bottom restores it
@@ -771,63 +846,74 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
   // A submitted prompt may already be visible below the active /compact turn.
   let activeAgentIndex = turns.length - 1;
   while (activeAgentIndex >= 0 && turns[activeAgentIndex]?.role !== 'agent') activeAgentIndex--;
-  const exchanges: { key: number; messages: ReactNode[] }[] = [];
-  // The prompt "Set as goal" hangs under: the last one the user typed, unless it was a slash command
-  const goalPrompt = onSetGoal ? lastTypedPrompt(turns) : undefined;
+  const exchangeSlots: { key: number; items: { ti: number; index: number }[] }[] = [];
   turns.forEach((turn, ti) => {
     const previous = turns[ti - 1];
     if (planExecutionId(turn, previous)) return;
-    const compacting = previous?.role === 'user' && /^\/compact(?:\s|$)/.test(previous.text.trim());
     const index = Math.min(i, STAGGER_CAP);
     i += turn.role === 'agent' ? turn.blocks.length + 1 : 1;
-    if (!exchanges.length || (turn.role === 'user' && !turn.auto)) {
-      exchanges.push({ key: ti, messages: [] });
+    if (!exchangeSlots.length || (turn.role === 'user' && !turn.auto)) {
+      exchangeSlots.push({ key: ti, items: [] });
     }
-    // Fold memory key: the session plus the turn's position and start time, so an edited-away turn at the same index does not inherit a choice
-    const memoryKey = replayKey !== undefined ? `${replayKey}:${ti}:${turn.role === 'agent' ? turn.startedAt ?? '' : ''}` : undefined;
-    // Session-wide nodes only reach turns that announce one; handing the list to every
-    // memoized turn would re-render all of them on each child activity tick.
-    const mine = turn.role === 'agent' ? byTurn.get(ti) : undefined;
-    // An automatic account switch or a Retry continues the cut-off turn: the pair reads as one reply, with the switch
-    // notice or the error row as the only seam, so the cut-off half drops its action row and the continuation joins it
-    const next = turns[ti + 1];
-    const switchedAway = next?.role === 'user' && isContinue(next);
-    const switchedIn = previous?.role === 'user' && isContinue(previous);
-    // A user turn carries no time of its own; the reply it started began the moment it went out (absent on old transcripts)
-    const sentAt = turn.role === 'user' && next?.role === 'agent' ? next.startedAt : undefined;
-    // The strip under a prompt: its send time and, on the last typed one, Set as goal (both shown on hover)
-    const goal = ti === goalPrompt && turn.role === 'user' ? () => onSetGoal?.(turn.text.trim()) : undefined;
-    if (turn.role === 'user' && !turn.auto && (sentAt !== undefined || goal)) {
-      exchanges[exchanges.length - 1]!.messages.push(
-        <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} summons={summons} />,
-        <PromptFooter key={`footer${ti}`} sentAt={sentAt} onSetGoal={goal} />,
-      );
-      return;
-    }
-    exchanges[exchanges.length - 1]!.messages.push(turn.role === 'user'
-      ? <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} summons={summons} />
-      : <AgentMessage key={ti} turn={turn} index={index} compacting={compacting} running={running && ti === activeAgentIndex && !turn.stop} onPermission={onPermission} memoryKey={memoryKey}
-          turnIndex={ti} last={ti === turns.length - 1} settings={previous?.role === 'user' ? previous.settings : undefined} actions={!switchedAway} joined={switchedIn}
-          subagents={mine} allSubagents={mine ? subagents : undefined} onInspect={onInspect} onFailureAction={onFailureAction} />);
+    exchangeSlots[exchangeSlots.length - 1]!.items.push({ ti, index });
   });
+  const window = useExchangeWindow(exchangeSlots.length, ref, follow, opening);
+  // The prompt "Set as goal" hangs under: the last one the user typed, unless it was a slash command
+  const goalPrompt = onSetGoal ? lastTypedPrompt(turns) : undefined;
   // The fork boundary follows the exchange that holds the last copied turn, as a row of its own: inside that exchange it
   // would stand after the reply's action row, which the exchange spacing keys off
-  const forkAfter = forkedFrom ? exchanges.filter(e => e.key <= forkedFrom.turnIndex).length - 1 : -1;
+  const forkAfter = forkedFrom ? exchangeSlots.filter(e => e.key <= forkedFrom.turnIndex).length - 1 : -1;
   // The right padding gives the scrollbar gutter back, so the transcript's edges line up with the header and the dock
   return (
     <div ref={ref} data-thread className="thread-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter [container-type:size] [overflow-anchor:none]">
       {/* The tail clearance equals the message gap, so the last message sits as far from the composer as from the message above it */}
-      <div key={replayKey} ref={bodyRef} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-chat-column')}><FollowContext.Provider value={follow}><QuietEntranceContext.Provider value={opening}>
-        {exchanges.map((exchange, k) => <Fragment key={exchange.key}>{
-          // Positioned so the prompt's stuck-state sentinel can sit at the exchange's top edge. Paint containment gives each exchange
-          // its own paint offset, so a fold opening mid-thread no longer re-walks every later exchange each frame (see docs/dev/webview.md,
-          // transcript render budget); the clip it brings is pushed out by --hit on the left and bottom, where row hit areas and
-          // card shadows reach past the column, and on the right only as far as the thread's right padding (--hit-end), and the top edge stays put for the sentinel. An exchange ending in a reply's action
-          // row pulls the next one up to a row gap: the row's own height already separates them (TurnActions).
-          <section data-exchange className="relative -ml-hit -mr-hit-end -mb-hit flex min-w-0 flex-col gap-msg pl-hit pr-hit-end pb-hit contain-paint has-[>:last-child>[data-turn-actions]:last-child]:-mb-[calc(var(--spacing-hit)+var(--spacing-msg-join))]">
-            {exchange.messages}
-          </section>
-        }{k === forkAfter && forkedFrom && <ForkBoundary origin={forkedFrom} agents={agents} agentId={agentId} />}</Fragment>)}
+      <div key={replayKey} ref={bodyRef} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-chat-column')}><FollowContext.Provider value={follow}><QuietEntranceContext.Provider value={window.quiet}>
+        {exchangeSlots.slice(window.start).map((slot, offset) => {
+          const k = window.start + offset;
+          const messages: ReactNode[] = [];
+          for (const { ti, index } of slot.items) {
+            const turn = turns[ti]!;
+            const previous = turns[ti - 1];
+            const compacting = previous?.role === 'user' && /^\/compact(?:\s|$)/.test(previous.text.trim());
+            // Fold memory key: the session plus the turn's position and start time, so an edited-away turn at the same index does not inherit a choice
+            const memoryKey = replayKey !== undefined ? `${replayKey}:${ti}:${turn.role === 'agent' ? turn.startedAt ?? '' : ''}` : undefined;
+            // Session-wide nodes only reach turns that announce one; handing the list to every
+            // memoized turn would re-render all of them on each child activity tick.
+            const mine = turn.role === 'agent' ? byTurn.get(ti) : undefined;
+            // An automatic account switch or a Retry continues the cut-off turn: the pair reads as one reply, with the switch
+            // notice or the error row as the only seam, so the cut-off half drops its action row and the continuation joins it
+            const next = turns[ti + 1];
+            const switchedAway = next?.role === 'user' && isContinue(next);
+            const switchedIn = previous?.role === 'user' && isContinue(previous);
+            // A user turn carries no time of its own; the reply it started began the moment it went out (absent on old transcripts)
+            const sentAt = turn.role === 'user' && next?.role === 'agent' ? next.startedAt : undefined;
+            // The strip under a prompt: its send time and, on the last typed one, Set as goal (both shown on hover)
+            const goal = ti === goalPrompt && turn.role === 'user' ? () => onSetGoal?.(turn.text.trim()) : undefined;
+            if (turn.role === 'user' && !turn.auto && (sentAt !== undefined || goal)) {
+              messages.push(
+                <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} summons={summons} />,
+                <PromptFooter key={`footer${ti}`} sentAt={sentAt} onSetGoal={goal} />,
+              );
+              continue;
+            }
+            const last = ti === turns.length - 1;
+            messages.push(turn.role === 'user'
+              ? <HistoryMessage key={turn.id ?? ti} turn={turn} turnIndex={ti} index={index} blobUrl={blobUrl} commands={commands} summons={summons} />
+              : <AgentMessage key={ti} turn={turn} index={index} compacting={compacting} running={running && ti === activeAgentIndex && !turn.stop} onPermission={onPermission} memoryKey={memoryKey}
+                  turnIndex={ti} last={last} settings={previous?.role === 'user' ? previous.settings : undefined} actions={!switchedAway} joined={switchedIn}
+                  subagents={mine} allSubagents={mine ? subagents : undefined} onInspect={onInspect} onFailureAction={last ? onFailureAction : undefined} />);
+          }
+          return <Fragment key={slot.key}>{
+            // Positioned so the prompt's stuck-state sentinel can sit at the exchange's top edge. Paint containment gives each exchange
+            // its own paint offset, so a fold opening mid-thread no longer re-walks every later exchange each frame (see docs/dev/webview.md,
+            // transcript render budget); the clip it brings is pushed out by --hit on the left and bottom, where row hit areas and
+            // card shadows reach past the column, and on the right only as far as the thread's right padding (--hit-end), and the top edge stays put for the sentinel. An exchange ending in a reply's action
+            // row pulls the next one up to a row gap: the row's own height already separates them (TurnActions).
+            <section data-exchange className="relative -ml-hit -mr-hit-end -mb-hit flex min-w-0 flex-col gap-msg pl-hit pr-hit-end pb-hit contain-paint has-[>:last-child>[data-turn-actions]:last-child]:-mb-[calc(var(--spacing-hit)+var(--spacing-msg-join))]">
+              {messages}
+            </section>
+          }{k === forkAfter && forkedFrom && <ForkBoundary origin={forkedFrom} agents={agents} agentId={agentId} />}</Fragment>;
+        })}
       </QuietEntranceContext.Provider></FollowContext.Provider></div>
     </div>
   );
@@ -838,3 +924,4 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
 function isContinue(turn: UserTurn): boolean {
   return turn.auto === true && (turn.autoReason === 'accountSwitch' || turn.autoReason === 'retry' || turn.autoReason === 'gate' || (turn.autoReason === 'goal' && turn.goalContinue === true));
 }
+
