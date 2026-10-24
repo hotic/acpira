@@ -66,7 +66,8 @@ export type ShellMsg =
     settings: Record<string, unknown>;
   }
   // blobBase: this view's own blob base (VS Code maps the sessions directory per webview); env.blobBase when absent
-  | { type: 'attachView'; viewId: string; host: WebviewHost; initial?: string | { mostRecent: true }; blobBase?: string }
+  // initial { empty: true }: the view never opens or starts a session by itself (a peer engine's list view)
+  | { type: 'attachView'; viewId: string; host: WebviewHost; initial?: string | { mostRecent: true } | { empty: true }; blobBase?: string }
   | { type: 'detachView'; viewId: string }
   | { type: 'webviewMessage'; viewId: string; message: WebviewMsg }
   | { type: 'platformResponse'; requestId: string; result?: unknown; error?: string }

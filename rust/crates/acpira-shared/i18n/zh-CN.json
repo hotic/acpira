@@ -582,6 +582,7 @@
   "host.notFound": "找不到 {command}，请先安装 {agent} CLI",
   "host.remoteBuiltinOnly": "本机运行下，{agent} 不能在 {host} 上的文件夹里工作，只有 Acpira 自带的 agent 可以",
   "host.remoteFile": "{path} 在 {host} 上，项目里的文件可以在工具面板中打开",
+  "host.remoteUnreachable": "{host} 暂时连不上，等它连上后再试",
   "host.exited": "{agent} 进程退出（{code}）",
   "host.emptyResponse": "CLI 已结束请求，但没有返回回复或错误详情（ACP: end_turn）。可重试或查看 CLI 日志。",
   "host.agentMcpSkipped": "{agent} 启动不了 MCP 服务器 {name}（{reason}），这一轮因此中止。本会话之后会跳过它，正在重建连接：点重试即可继续。修好服务器后新建会话可恢复使用。",
