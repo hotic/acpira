@@ -52,8 +52,11 @@ struct Inner {
   platform: Option<Arc<SidecarPlatform>>,
   /// Wires past hello, by id; the platform serves IDE actions through `active`
   wires: BTreeMap<u64, WireOut>,
-  /// The wire the user touched last (hello, window focus, a view message): toasts, terminals and file opens go there
+  /// The wire the user touched last (hello, window focus, a view message): toasts, terminals and file opens go there.
+  /// Never a peer
   active: Option<u64>,
+  /// Wires whose hello said `role: peer` (another engine): see `ClientInfo::role`
+  peers: std::collections::BTreeSet<u64>,
   /// `idle` decided the engine ends: hellos are refused from here on (a wire that connected just before still gets an
   /// answer, and its shell reconnects to the next engine)
   sealed: bool,
@@ -137,7 +140,7 @@ impl Engine {
   /// rejected). For an attached engine that is also the end of the engine
   pub async fn serve(self: &Arc<Self>, out: mpsc::UnboundedSender<String>, mut lines: mpsc::UnboundedReceiver<String>) -> i32 {
     let id = self.next_wire.fetch_add(1, Ordering::Relaxed);
-    let mut wire = Wire { id, engine: self.clone(), me: WireOut { out, closed: Default::default() }, views: HashMap::new() };
+    let mut wire = Wire { id, peer: false, engine: self.clone(), me: WireOut { out, closed: Default::default() }, views: HashMap::new() };
     let code = loop {
       let Some(line) = lines.recv().await else {
         // Lines received before EOF were all honoured above
@@ -175,8 +178,10 @@ impl Engine {
     let (runtime, platform) = {
       let mut inner = self.inner.lock();
       inner.wires.remove(&wire.id);
+      inner.peers.remove(&wire.id);
       if inner.active == Some(wire.id) {
-        inner.active = inner.wires.keys().next_back().copied();
+        let peers = inner.peers.clone();
+        inner.active = inner.wires.keys().rev().find(|id| !peers.contains(id)).copied();
       }
       (inner.runtime.clone(), inner.platform.clone())
     };
@@ -186,6 +191,7 @@ impl Engine {
       }
     }
     if let Some(p) = &platform {
+      p.drop_peer(wire.id);
       p.fail_wire(wire.id, reason);
     }
     self.previews.release_wire(wire.id);
@@ -275,7 +281,8 @@ impl Engine {
     })
   }
 
-  /// The platform's way out: the active wire, or none while no shell is connected
+  /// The platform's way out: the peer whose view caused the request, else the active window, else the newest peer (a
+  /// host only peers use); none while nothing is connected
   fn route(self: &Arc<Self>) -> super::platform::Route {
     let weak = Arc::downgrade(self);
     Arc::new(move |m: SidecarMsg| {
@@ -285,7 +292,8 @@ impl Engine {
       }
       let (id, w) = {
         let inner = engine.inner.lock();
-        let id = inner.active?;
+        let origin = super::platform::origin().filter(|o| inner.peers.contains(o));
+        let id = origin.or(inner.active).or_else(|| inner.peers.iter().next_back().copied())?;
         (id, inner.wires.get(&id)?.clone())
       };
       if w.closed.load(Ordering::Acquire) {
@@ -298,7 +306,7 @@ impl Engine {
 
   fn activate(&self, wire: u64) {
     let mut inner = self.inner.lock();
-    if inner.wires.contains_key(&wire) {
+    if inner.wires.contains_key(&wire) && !inner.peers.contains(&wire) {
       inner.active = Some(wire);
     }
   }
@@ -310,7 +318,8 @@ impl Engine {
   /// Observed 2026-10-10 on acpira 1.9.0 over Remote-SSH: an engine left by an earlier connection stayed locked while
   /// the window's terminal unlocked the keychain, and the unlock notice waited out its 5 minutes
   async fn retires_for(&self, hello: &Hello, rt: &HostRuntime) -> bool {
-    if !self.persistent || !other_login(self.ssh_connection.as_deref(), hello.client.ssh_connection.as_deref()) {
+    // A peer is no window: the keychain of its login is not the one a terminal would unlock
+    if !self.persistent || hello.client.is_peer() || !other_login(self.ssh_connection.as_deref(), hello.client.ssh_connection.as_deref()) {
       return false;
     }
     if !self.inner.lock().wires.is_empty() || self.busy() || !rt.credentials_locked().await {
@@ -341,6 +350,8 @@ impl Engine {
 
 struct Wire {
   id: u64,
+  /// Its hello said `role: peer`
+  peer: bool,
   engine: Arc<Engine>,
   me: WireOut,
   views: HashMap<String, Arc<BridgeCore>>,
@@ -420,6 +431,10 @@ impl Wire {
         }
       }
       ShellMsg::WebviewMessage { view_id, message } => match self.views.get(&view_id) {
+        Some(core) if self.peer => {
+          // A peer's view: the platform requests its handling makes go back to that peer
+          crate::util::run_prefix(super::platform::ORIGIN.scope(self.id, core.clone().handle(message)))
+        }
         Some(core) => {
           // The window the user is typing in serves the IDE actions that follow (file opens, terminals)
           self.engine.activate(self.id);
@@ -449,6 +464,8 @@ impl Wire {
         });
       }
       ShellMsg::PreviewClose { panel_id } => self.engine.previews.close(self.id, &panel_id),
+      // A peer's focus, settings and environment are its own machine's, never this one's
+      ShellMsg::PlatformEvent { .. } if self.peer => {}
       ShellMsg::PlatformEvent { event } => {
         if matches!(event, PlatformEvent::WindowFocus) {
           self.engine.activate(self.id);
@@ -505,15 +522,23 @@ impl Wire {
         }
         Some(rt) => {
           // A later window joins the running engine: its environment and settings snapshot become current. Bound first:
-          // the change handlers it fires may call back into the platform, which takes `inner`
+          // the change handlers it fires may call back into the platform, which takes `inner`. A peer changes nothing
           let platform = engine.platform();
           if let Some(p) = platform {
-            p.rebind(&m);
+            if m.client.is_peer() {
+              p.add_peer(self.id, &m);
+            } else {
+              p.rebind(&m);
+            }
           }
           Ok(rt)
         }
         None => {
+          // A peer first: the platform starts from its hello (the next window's rebinds it), but the peer stays a peer
           let platform = SidecarPlatform::routed(engine.route(), &m, engine.opts.log.clone(), engine.opts.ignore_client_agents);
+          if m.client.is_peer() {
+            platform.add_peer(self.id, &m);
+          }
           engine.inner.lock().platform = Some(platform.clone());
           match HostRuntime::create(platform, engine.opts.home.clone(), engine.opts.bridge_exe.clone()).await {
             Ok(rt) => {
@@ -527,7 +552,12 @@ impl Wire {
       if created.is_ok() {
         let mut inner = engine.inner.lock();
         inner.wires.insert(self.id, self.me.clone());
-        inner.active = Some(self.id);
+        if m.client.is_peer() {
+          inner.peers.insert(self.id);
+          self.peer = true;
+        } else {
+          inner.active = Some(self.id);
+        }
       }
       created
     };
@@ -535,7 +565,8 @@ impl Wire {
       Ok(rt) => {
         engine.changed.notify_waiters();
         if engine.persistent {
-          engine.log(&format!("wire {} joined; {} connected", self.id, engine.wire_count()));
+          let role = if self.peer { " (peer)" } else { "" };
+          engine.log(&format!("wire {}{role} joined; {} connected", self.id, engine.wire_count()));
         }
         self.send(engine.hello_ok(m.request_id, rt.sessions_dir.to_string_lossy().into_owned()));
         Flow::Continue

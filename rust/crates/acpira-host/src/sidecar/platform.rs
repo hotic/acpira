@@ -28,6 +28,17 @@ pub type Send_ = Arc<dyn Fn(SidecarMsg) + Send + Sync>;
 /// Sends to the shell currently serving IDE actions; the wire it went out on, None when no shell is connected
 pub type Route = Arc<dyn Fn(SidecarMsg) -> Option<u64> + Send + Sync>;
 
+tokio::task_local! {
+  /// The peer wire whose view message is being handled (`server.rs`): the platform requests made meanwhile go back to
+  /// it, under its own capabilities
+  pub static ORIGIN: u64;
+}
+
+/// The peer wire behind the current task, when there is one
+pub fn origin() -> Option<u64> {
+  ORIGIN.try_with(|o| *o).ok()
+}
+
 struct Pending {
   method: &'static str,
   /// The wire the request went out on: its answers can only come back there, so its closing fails the request
@@ -41,6 +52,8 @@ pub struct SidecarPlatform {
   ignore_agents: bool,
   /// The serving shell's capabilities; a persistent engine takes the newest hello's
   caps: parking_lot::RwLock<HashSet<String>>,
+  /// Each connected peer wire's own capabilities, used for the requests it causes (`ORIGIN`)
+  peers: parking_lot::RwLock<HashMap<u64, HashSet<String>>>,
   /// The serving shell's snapshot: its own keys (`SHELL_SETTING_KEYS`), the legacy agent list, and until the shared file
   /// exists every other key too
   settings: parking_lot::RwLock<Map<String, Value>>,
@@ -76,6 +89,7 @@ impl SidecarPlatform {
       stderr,
       ignore_agents,
       caps: parking_lot::RwLock::new(hello.client.capabilities.iter().cloned().collect()),
+      peers: Default::default(),
       settings: parking_lot::RwLock::new(hello.settings.clone()),
       shared: Default::default(),
       env: parking_lot::RwLock::new(hello.env.clone()),
@@ -89,7 +103,21 @@ impl SidecarPlatform {
   }
 
   fn has_cap(&self, method: &str) -> bool {
+    if let Some(wire) = origin()
+      && let Some(caps) = self.peers.read().get(&wire)
+    {
+      return caps.contains(method);
+    }
     self.caps.read().contains(method)
+  }
+
+  /// A peer wire joined: its capabilities serve the requests its views cause, and nothing else changes
+  pub fn add_peer(&self, wire: u64, hello: &Hello) {
+    self.peers.write().insert(wire, hello.client.capabilities.iter().cloned().collect());
+  }
+
+  pub fn drop_peer(&self, wire: u64) {
+    self.peers.write().remove(&wire);
   }
 
   /// A later shell joined a persistent engine: its capabilities, environment and settings snapshot replace the old ones,

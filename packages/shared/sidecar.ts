@@ -58,7 +58,9 @@ export type ShellMsg =
     type: 'hello'; protocolVersion: number; requestId: string;
     // sshConnection: the shell process's SSH_CONNECTION (a remote workspace), i.e. which SSH login and macOS security
     // session the window runs in; a persistent engine started under another login retires when its keychain is locked
-    client: { name: string; version: string; capabilities: PlatformMethod[]; sshConnection?: string };
+    // role 'peer': another engine rather than a window (docs/dev/remote.md); it never rebinds the platform or serves the
+    // windows' IDE actions, and the platform requests its own views cause go back to it alone
+    client: { name: string; version: string; capabilities: PlatformMethod[]; sshConnection?: string; role?: 'peer' };
     env: ShellEnv;
     // Flat acpira.* keys (`defaultAgent`, `appearance.motion`, …): the shell owns the settings store, the sidecar reads this snapshot
     settings: Record<string, unknown>;
