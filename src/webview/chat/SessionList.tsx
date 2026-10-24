@@ -817,7 +817,9 @@ const SECTION_ACT = 'inline-flex size-ctl-sm items-center justify-center rounded
 const ROW_ACT = 'inline-flex size-ctl shrink-0 items-center justify-center rounded-md text-fg-2 transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1 data-[popup-open]:bg-active data-[popup-open]:text-fg-1';
 // A header's hover actions: they cross-fade in over its resting count / state, in the same cell, and take clicks only then
 const REVEAL = 'pointer-events-none opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-data-[menu-open]:pointer-events-auto group-data-[menu-open]:opacity-100';
-const CONCEAL = 'transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0 group-data-[menu-open]:opacity-0';
+// The concealed tail also stops taking the pointer: at opacity 0 it paints (and hit-tests) above the fully opaque actions,
+// so once their fade ended the pointer fell through to it, the button lost its hover fill and a click selected the row
+const CONCEAL = 'transition-opacity duration-150 group-hover:pointer-events-none group-hover:opacity-0 group-focus-within:pointer-events-none group-focus-within:opacity-0 group-data-[menu-open]:pointer-events-none group-data-[menu-open]:opacity-0';
 // The resting tail and the hover actions stacked in one grid cell, so the title's room never changes under the pointer
 const STACK = "grid [grid-template-areas:'x'] *:[grid-area:x]";
 
