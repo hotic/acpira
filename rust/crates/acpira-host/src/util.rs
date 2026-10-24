@@ -32,6 +32,12 @@ pub fn random_uuid() -> String {
   uuid::Uuid::new_v4().to_string()
 }
 
+/// sha256 of `bytes`, lowercase hex
+pub fn sha256_hex(bytes: &[u8]) -> String {
+  use sha2::Digest as _;
+  sha2::Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// randomBytes(n).toString('hex')
 pub fn random_hex(n: usize) -> String {
   let mut out = String::with_capacity(n * 2);

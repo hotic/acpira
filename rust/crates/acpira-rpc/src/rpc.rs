@@ -251,8 +251,35 @@ impl Connection {
     Ok((v, h.expect("an ordered reply carries its handoff")))
   }
 
+  /// A request the caller may give up on: dropped before its answer, it sends `$/cancel_request` with the request's
+  /// id, which fires the `Cancel` the peer's handler was given (a long tool call the turn's cancel abandons)
+  pub async fn request_cancellable(&self, method: &str, params: Value) -> Result<Value, RpcError> {
+    struct Abandon<'a> {
+      conn: &'a Connection,
+      id: i64,
+      armed: bool,
+    }
+    impl Drop for Abandon<'_> {
+      fn drop(&mut self) {
+        if self.armed {
+          self.conn.shared.pending.lock().remove(&self.id);
+          self.conn.notify("$/cancel_request", json!({ "requestId": self.id }));
+        }
+      }
+    }
+    let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+    let mut guard = Abandon { conn: self, id, armed: true };
+    let r = self.send_request_with(id, method, params, false).await;
+    guard.armed = false;
+    r.map(|(v, _)| v)
+  }
+
   async fn send_request(&self, method: &str, params: Value, ordered: bool) -> Reply {
     let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+    self.send_request_with(id, method, params, ordered).await
+  }
+
+  async fn send_request_with(&self, id: i64, method: &str, params: Value, ordered: bool) -> Reply {
     let (tx, rx) = oneshot::channel();
     {
       // Checked under the pending lock: close() raises the flag before it drains, so a waiter is either refused here or drained there

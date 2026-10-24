@@ -34,7 +34,8 @@ impl AcpSession {
     let mut servers = match &self.deps.shared_mcp {
       Some(provider) => {
         let caps = runtime_info_of(&proc.init).mcp;
-        let (servers, line) = provider(self.agent.clone(), self.cwd.clone(), caps).await;
+        // A folder on an SSH host has no project MCP file here: the user's own servers only
+        let (servers, line) = provider(self.agent.clone(), self.process_cwd(), caps).await;
         if let Some(line) = line {
           self.log(&line);
         }
@@ -55,7 +56,7 @@ impl AcpSession {
       }
       c.mcp_sent = servers.iter().filter_map(|s| s.get("name").and_then(Value::as_str).map(str::to_owned)).collect();
     }
-    let mut req = json!({ "cwd": self.cwd, "mcpServers": servers });
+    let mut req = self.with_remote(json!({ "cwd": self.cwd, "mcpServers": servers })).await;
     if let Some(id) = acp_id {
       req["sessionId"] = json!(id);
     }
@@ -83,7 +84,7 @@ impl AcpSession {
     let me = self.arc();
     Some(Box::pin(async move {
       let close = crate::json::truthy(proc.caps().get("sessionCapabilities").and_then(|s| s.get("close")));
-      if let (Some(sid), true, true) = (session_id, proc.alive(), close) {
+      if let (Some(sid), true, true) = (session_id.clone(), proc.alive(), close) {
         match tokio::time::timeout(CLOSE_GRACE, proc.request("session/close", json!({ "sessionId": sid }))).await {
           Ok(Ok(_)) => {}
           Ok(Err(e)) => me.log(&format!("session/close before exit failed: {e}")),
@@ -91,6 +92,9 @@ impl AcpSession {
         }
       }
       proc.kill().await;
+      if let Some(sid) = session_id {
+        me.close_host_jobs(vec![sid]).await;
+      }
     }))
   }
 
@@ -164,6 +168,8 @@ impl AcpSession {
 
   async fn connect(self: &Arc<Self>) -> Result<()> {
     let def = self.deps.registry.get(&self.agent)?.clone();
+    self.check_remote_agent(&def.name)?;
+    let dir = self.process_cwd();
     let (gen_id, account) = {
       let mut c = self.core.lock();
       c.usage.reset_for_process();
@@ -172,12 +178,12 @@ impl AcpSession {
       c.compaction.auto_eligible = false;
       (c.proc_gen, c.account_id.clone())
     };
-    let facts = read_model_facts(&def, &self.cwd).await;
+    let facts = read_model_facts(&def, &dir).await;
     self.core.lock().model_facts = facts;
     let handlers: Arc<dyn ClientHandlers> = Arc::new(SessionHandlers { session: self.me.clone(), gen_id });
     let account_note = account.as_ref().map(|a| format!(" account {}", a.chars().take(8).collect::<String>())).unwrap_or_default();
     let borrowed = match &self.deps.pool {
-      Some(pool) => pool.take(&self.agent, &self.cwd, account.as_deref(), handlers.clone()).await,
+      Some(pool) => pool.take(&self.agent, &dir, account.as_deref(), handlers.clone()).await,
       None => None,
     };
     let proc = match borrowed {
@@ -197,7 +203,7 @@ impl AcpSession {
           (Some(a), Some(h)) => h.spawn_env(self.agent.clone(), a.clone()).await,
           _ => None,
         };
-        AgentProcess::spawn(&def, &bin, &self.cwd, handlers, env.as_ref(), None).await?
+        AgentProcess::spawn(&def, &bin, &dir, handlers, env.as_ref(), None).await?
       }
     };
     let info = proc.init.get("agentInfo");
@@ -649,7 +655,7 @@ impl AcpSession {
 
   fn close(self: &Arc<Self>) -> (Vec<Arc<AgentProcess>>, Option<BoxFuture<()>>) {
     let proc = self.core.lock().proc.clone();
-    let (children, closing) = {
+    let (children, closing, peers) = {
       let mut c = self.core.lock();
       c.usage.clear_timer();
       c.perms.epoch += 1;
@@ -663,10 +669,24 @@ impl AcpSession {
       }
       self.cancel_all_permissions(&mut c);
       self.cancel_all_questions(&mut c);
+      let peers: Vec<String> = c.relays.procs.values().map(|rp| rp.peer.clone()).filter(|p| !p.is_empty()).collect();
       let children = self.relay_close(&mut c);
-      (children, self.drop_process(&mut c))
+      (children, self.drop_process(&mut c), peers)
     };
     let (children, mut starting) = children;
+    // Summoned children's jobs on an SSH host stop after the session's own
+    let closing: Option<BoxFuture<()>> = match (peers.is_empty(), self.remote_folder()) {
+      (false, Some(_)) => {
+        let me = self.clone();
+        Some(Box::pin(async move {
+          if let Some(f) = closing {
+            f.await;
+          }
+          me.close_host_jobs(peers).await;
+        }))
+      }
+      _ => closing,
+    };
     let mut procs: Vec<Arc<AgentProcess>> = proc.into_iter().collect();
     procs.extend(children.iter().cloned());
     if children.is_empty() && *starting.borrow() == 0 {

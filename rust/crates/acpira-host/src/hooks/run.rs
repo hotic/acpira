@@ -111,7 +111,7 @@ pub async fn run_prompt(hook: &Hook, root: &Path, payload: &Value, env: &[(&str,
 }
 
 /// The finished hook's exit code, stdout and stderr; Err: it could not start, failed to run or timed out
-async fn output(hook: &Hook, root: &Path, payload: &Value, env: &[(&str, String)]) -> Result<(Option<i32>, String, String), String> {
+pub(crate) async fn output(hook: &Hook, root: &Path, payload: &Value, env: &[(&str, String)]) -> Result<(Option<i32>, String, String), String> {
   let mut cmd = shell(&hook.run);
   cmd
     .current_dir(root)

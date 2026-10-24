@@ -36,7 +36,6 @@ use crate::acp::transport::cancel::Cancel;
 use crate::acp::transport::process::{AgentProcess, ClientHandlers};
 use crate::acp::transport::rpc::{BoxFuture, RpcError};
 use crate::handoff::{self, Level, Pack, PackFile, Recipe, Scope};
-use crate::hooks::snapshot::{Snapshot, in_work_tree};
 use crate::i18n::t;
 use crate::relay::roster::Roster;
 use crate::relay::wire::{AskArgs, AskCallerArgs, HubReply};
@@ -268,6 +267,22 @@ impl RelayHandlers {
 }
 
 impl ClientHandlers for RelayHandlers {
+  fn on_remote_tool(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
+    let s = self.session.upgrade();
+    let thread = self.thread.clone();
+    Box::pin(async move {
+      let Some(s) = s else { return Err(RpcError::new(-32603, "the session is gone")) };
+      let me = Arc::downgrade(&s);
+      let notify: crate::acp::session::remote::Notify = Arc::new(move |method: &str, params: Value| {
+        let proc = me.upgrade().and_then(|s| s.core.lock().relays.procs.get(&thread).map(|r| r.proc.clone()));
+        if let Some(p) = proc {
+          p.notify(method, params);
+        }
+      });
+      s.on_remote_tool(req, cancel, notify).await
+    })
+  }
+
   fn on_update(&self, params: Value) {
     if self.quiet.load(Ordering::Relaxed) {
       return;
@@ -1335,8 +1350,12 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
     self.core.lock().relays.follow_ups.remove(&r.thread);
     // The work tree before the prompt: a round that runs commands is told what changed meanwhile, not only what its
     // edit rows name
-    let watch = [PathBuf::from(&self.cwd)];
-    let before = if in_work_tree(&watch[0]).await { Some(Snapshot::take(&watch).await) } else { None };
+    let watch = [PathBuf::from(self.hook_folder())];
+    let host = self.hook_host().await;
+    let before = match &host {
+      Some(h) if h.in_work_tree(&watch[0]).await => Some(h.snapshot(&watch).await),
+      _ => None,
+    };
     let (blocks, handed) = self.relay_blocks(r, &proc).await;
     if let Some(n) = handed {
       self.core.lock().relays.notes.entry(r.node.clone()).or_default().push(n);
@@ -1348,7 +1367,10 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
     };
     let (edits, anywhere) = round_edits(self.core.lock().tree.relay_turns(&r.node).unwrap_or(&[]));
     let changed = match &before {
-      Some(b) if anywhere => Some(Snapshot::take(&watch).await.changed_since(b)),
+      Some(b) if anywhere => match &host {
+        Some(h) => Some(h.snapshot(&watch).await.changed_since(b)),
+        None => Some(vec![]),
+      },
       Some(_) => Some(vec![]),
       None => None,
     };
@@ -1522,11 +1544,14 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
       return Ok((proc, sid, controls));
     }
     let def = self.deps.registry.get(&r.persona.agent)?.clone();
+    if let Some(f) = self.remote_folder().filter(|_| r.persona.agent != crate::acp::agents::registry::SELF_AGENT_ID) {
+      return Err(anyhow!(crate::i18n::tp("host.remoteBuiltinOnly", &[("agent", &def.name), ("host", &f.alias)])));
+    }
     let bin = self.deps.registry.resolve_binary(&r.persona.agent).await.ok_or_else(|| anyhow!("{} is not installed", def.name))?;
     let quiet = Arc::new(AtomicBool::new(false));
     let handlers: Arc<dyn ClientHandlers> = Arc::new(RelayHandlers { session: self.me.clone(), thread: thread.to_owned(), quiet: quiet.clone() });
     self.log(&format!("relay {}: spawn {bin} {} for {}", short(thread), def.args.join(" "), r.persona.name));
-    let proc = AgentProcess::spawn(&def, &bin, &self.cwd, handlers, None, None).await?;
+    let proc = AgentProcess::spawn(&def, &bin, &self.process_cwd(), handlers, None, None).await?;
     // Registered before anything else can fail, so the close or a failed open always ends it
     let closed = {
       let mut c = self.core.lock();
@@ -1632,13 +1657,13 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
   /// session one level deeper
   async fn relay_session_request(&self, proc: &AgentProcess, agent: &str, thread: &str, depth: u32) -> Value {
     let mut servers = match &self.deps.shared_mcp {
-      Some(provider) => provider(agent.to_owned(), self.cwd.clone(), runtime_info_of(&proc.init).mcp).await.0,
+      Some(provider) => provider(agent.to_owned(), self.process_cwd(), runtime_info_of(&proc.init).mcp).await.0,
       None => vec![],
     };
     // Past the depth limit the entry still leads back here (`ask_caller`, the session tools); the hub lists no personas
     let entry = self.deps.host_mcp.as_ref().and_then(|h| h.entry_for_session(agent, &self.arc(), Some(thread), depth));
     crate::host_mcp::push_entry(&mut servers, entry);
-    json!({ "cwd": self.cwd, "mcpServers": servers })
+    self.with_remote(json!({ "cwd": self.cwd, "mcpServers": servers })).await
   }
 
   /// A root `ask_agent` row (after the normalizer applied it): tie it to its round's node, or remember it until the

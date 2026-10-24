@@ -222,6 +222,8 @@ pub struct ManagerDeps {
   /// Sessions that need the user or have settled (`watch_attention`); the runtime turns them into sound / system
   /// notifications per the settings, the shell decides whether the user is already looking. None: nobody listens
   pub attention: Option<AttentionFn>,
+  /// SSH hosts (`remote/connections.rs`) for sessions whose folder is on one; None: no remote folders
+  pub remote: Option<Arc<crate::remote::connections::Connections>>,
 }
 
 #[derive(Default)]
@@ -616,7 +618,7 @@ impl SessionManager {
     let cwds: Vec<String> = list
       .into_iter()
       .map(|s| s.cwd)
-      .filter(|c| !c.is_empty() && std::path::Path::new(c) != home && std::path::Path::new(c).is_dir())
+      .filter(|c| !c.is_empty() && std::path::Path::new(c) != home && (acpira_shared::remote::is_remote_folder(c) || std::path::Path::new(c).is_dir()))
       .collect();
     if cwds.is_empty() {
       return;
@@ -888,9 +890,37 @@ impl SessionManager {
   }
 
   pub async fn category_op(&self, op: &CategoryOp) -> Result<()> {
+    // A folder on an SSH host is listed in its one canonical spelling, so two spellings never make two projects
+    let normalized;
+    let op = match op {
+      CategoryOp::AddProject { cwd } if acpira_shared::remote::is_remote_folder(cwd) => {
+        let canonical = acpira_shared::remote::parse_remote_folder(cwd).map(|f| f.uri()).ok_or_else(|| anyhow!(tp("host.folderMissing", &[("folder", cwd)])))?;
+        normalized = CategoryOp::AddProject { cwd: canonical };
+        &normalized
+      }
+      other => other,
+    };
     let list = self.deps.store.update_categories(op).await?;
     self.set_categories(list);
     Ok(())
+  }
+
+  /// A folder something is about to start in, as it will be stored: a local folder must exist; a folder on an SSH host
+  /// (`ssh://<alias>/<path>`, docs/dev/remote.md) is put in its canonical spelling and must be a folder on the host,
+  /// which is connected for that. `missing`: the message key for a folder that is not there
+  pub(crate) async fn check_folder(&self, dir: &str, missing: &str) -> Result<String> {
+    let gone = || anyhow!(tp(missing, &[("folder", dir)]));
+    if !acpira_shared::remote::is_remote_folder(dir) {
+      return if tokio::fs::metadata(dir).await.is_ok_and(|m| m.is_dir()) { Ok(dir.to_owned()) } else { Err(gone()) };
+    }
+    let folder = acpira_shared::remote::parse_remote_folder(dir).ok_or_else(gone)?;
+    let connections = self.deps.remote.clone().ok_or_else(gone)?;
+    let client = connections.ensure(&folder.alias, std::time::Duration::from_secs(30)).await?;
+    let stat = client.call("stat", serde_json::json!({ "path": folder.path })).await.map_err(|_| gone())?;
+    if stat.value.get("kind").and_then(Value::as_str) != Some("dir") {
+      return Err(gone());
+    }
+    Ok(folder.uri())
   }
 
   /// A category id the session may be filed under: one that exists and belongs to the session's project
@@ -1733,6 +1763,7 @@ impl SessionManager {
       })),
       shared_mcp: self.deps.shared_mcp.clone(),
       claim: Some(Arc::new(move |id: &str| claim_me.upgrade().map_or(Ok(0), |m| m.claim_turn(id)))),
+      remote: self.deps.remote.clone(),
     }
   }
 
@@ -1772,11 +1803,10 @@ impl SessionManager {
         let id = category.as_ref().filter(|_| (me.deps.projects)())?;
         me.state.lock().categories.categories.iter().find(|c| &c.id == id).map(|c| c.cwd.clone())
       });
-      if let Some(dir) = &explicit
-        && !tokio::fs::metadata(dir).await.is_ok_and(|m| m.is_dir())
-      {
-        return Err(anyhow!(tp("host.folderMissing", &[("folder", dir)])));
-      }
+      let explicit = match explicit {
+        Some(dir) => Some(me.check_folder(&dir, "host.folderMissing").await?),
+        None => None,
+      };
       let Some(cwd) = me.folder_for(Some(&v), explicit) else {
         return Err(anyhow!(t("host.noProject")));
       };
@@ -2191,6 +2221,7 @@ impl SessionManager {
       pool: None,
       // A mirror never runs a turn
       claim: Some(Arc::new(|_: &str| Err(t("host.sessionBusyElsewhere")))),
+      remote: None,
       ..self.session_deps()
     }
   }
@@ -2792,10 +2823,7 @@ impl SessionManager {
     }
     let cwd = match to {
       // The agent is spawned in the folder from the next open on, so a project whose folder is gone cannot take it
-      Some(dir) if !std::path::Path::new(&dir).is_dir() => {
-        return Err(anyhow!(tp("host.moveFolderMissing", &[("folder", &dir)])));
-      }
-      Some(dir) => dir,
+      Some(dir) => self.check_folder(&dir, "host.moveFolderMissing").await?,
       None => self.folder_for(None, None).ok_or_else(|| anyhow!(t("host.noProject")))?,
     };
     // A category belongs to the project the session leaves; only one of the destination's survives the move

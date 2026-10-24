@@ -45,8 +45,10 @@ pub struct Ctx {
   pub history: PathBuf,
 }
 
-/// A validated call, ready to describe and run
-#[derive(Debug, Clone, PartialEq)]
+/// A validated call, ready to describe and run. The variants an SSH host runs (`remote.rs`) cross the wire as JSON; the
+/// others run here only and are never serialized
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Action {
   /// The windows of one call, the first as the call names it in `path`; `images` whether the turn's model takes the
   /// pictures an image file is read as
@@ -61,24 +63,33 @@ pub enum Action {
   Grep { pattern: String, path: PathBuf, include: Option<String>, context: usize },
   Glob { pattern: String, path: PathBuf },
   List { path: PathBuf, ignore: Vec<String> },
+  #[serde(skip)]
   Todo { todos: Vec<todo::Todo> },
-  /// A skill's instructions (`path` is its SKILL.md)
-  Skill { name: String, path: PathBuf },
+  /// A skill's instructions (`path` is its SKILL.md, `body` its text read at prepare)
+  Skill { name: String, path: PathBuf, body: String },
   /// Plan mode's approval request; the turn runs it itself
+  #[serde(skip)]
   ExitPlan { plan: Option<String> },
   /// Questions on the host's question card; the turn runs it itself
+  #[serde(skip)]
   Question { questions: Vec<question::Question> },
   /// `private`: the URL names this machine or a private network, so the call asks (`web.rs`)
+  #[serde(skip)]
   Fetch { url: String, format: web::Format, timeout_s: u64, private: bool },
+  #[serde(skip)]
   Search { query: String, count: usize },
   /// A tool of an MCP server: `server` is its key in the session's hub, `tool` the server's own name for it, `name`
   /// what the model called (`<server>_<tool>`). `read_only` is the server's `readOnlyHint`; `images` whether the
   /// turn's model takes the images a result may hold
+  #[serde(skip)]
   Mcp { server: String, tool: String, name: String, args: Value, read_only: bool, images: bool },
   /// The folded history of chunk compaction (`history.rs`)
+  #[serde(skip)]
   HistoryGrep { pattern: String, chunk: Option<String>, case_sensitive: bool, limit: usize },
+  #[serde(skip)]
   HistoryList { chunk: String, offset: usize, limit: usize },
   /// A goal tool's call (`goal.rs`); the turn runs it itself, without a row or a permission
+  #[serde(skip)]
   Goal(crate::goal::Call),
 }
 
@@ -115,6 +126,8 @@ impl Location {
 }
 
 /// What a finished call gives back
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Output {
   /// The model's copy, already within the budget
   pub model: String,
@@ -205,7 +218,7 @@ pub fn prepare(name: &str, args: &Value, cwd: &Path, images: bool) -> Result<Act
     GLOB => search::prepare_glob(args, cwd),
     LIST => search::prepare_list(args, cwd),
     TODO => todo::prepare(args),
-    SKILL => skill::prepare(args, cwd),
+    SKILL => skill::prepare(args, &crate::prompt::Places::new(cwd, crate::turn::user_home().as_deref())),
     EXIT_PLAN => plan::prepare(args),
     WEBFETCH => web::prepare_fetch(args),
     WEBSEARCH => web::prepare_search(args),
@@ -332,7 +345,7 @@ impl Action {
       Action::List { path, .. } => Presentation { title: format!("List {}", shown(path, cwd)), kind: "read", locations: vec![path.into()], content: vec![] },
       // The host knows a to-do update by this exact title
       Action::Todo { .. } => Presentation { title: TODO.to_owned(), kind: "other", locations: vec![], content: vec![] },
-      Action::Skill { name, path } => Presentation { title: format!("Skill {name}"), kind: "read", locations: vec![path.into()], content: vec![] },
+      Action::Skill { name, path, .. } => Presentation { title: format!("Skill {name}"), kind: "read", locations: vec![path.into()], content: vec![] },
       // The webview localizes this exact heading
       Action::ExitPlan { .. } => Presentation { title: "Exit plan mode".to_owned(), kind: "switch_mode", locations: vec![], content: vec![] },
       Action::Question { questions } => Presentation { title: question::title(questions.len()), kind: "other", locations: vec![], content: vec![] },
@@ -362,7 +375,7 @@ impl Action {
       Action::Glob { pattern, path } => search::glob(&pattern, &path, &ctx),
       Action::List { path, ignore } => search::list(&path, &ignore, &ctx),
       Action::Todo { todos } => todo::run(&todos),
-      Action::Skill { name, path } => skill::run(&name, &path),
+      Action::Skill { path, body, .. } => skill::run(&path, &body),
       Action::Fetch { url, format, timeout_s, private } => web::fetch(&url, format, timeout_s, private, &ctx),
       Action::Search { query, count } => web::search(&query, count, &ctx.search, &ctx),
       Action::HistoryGrep { pattern, chunk, case_sensitive, limit } => history::grep(&pattern, chunk.as_deref(), case_sensitive, limit, &ctx),

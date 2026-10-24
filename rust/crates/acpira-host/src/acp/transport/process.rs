@@ -35,6 +35,10 @@ pub trait ClientHandlers: Send + Sync + 'static {
   fn on_permission(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>>;
   fn on_elicitation(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>>;
   fn on_grok_question(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>>;
+  /// The built-in agent's tool call for a folder on an SSH host (`acp/session/remote.rs`)
+  fn on_remote_tool(&self, _req: Value, _cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
+    Box::pin(async { Err(RpcError::method_not_found(crate::acp::session::remote::TOOL)) })
+  }
   fn on_stderr(&self, _line: &str) {}
   fn on_exit(&self, _code: Option<i32>, _signal: Option<String>) {}
 }
@@ -81,6 +85,7 @@ impl Inbound for Router {
     match method.as_str() {
       "session/request_permission" => h.on_permission(params, cancel),
       "elicitation/create" => h.on_elicitation(params, cancel),
+      crate::acp::session::remote::TOOL => h.on_remote_tool(params, cancel),
       GROK_ASK_QUESTION => match crate::acp::vendors::grok::parse_question(&params) {
         Ok(req) => h.on_grok_question(req, cancel),
         Err(e) => Box::pin(async move { Err(e) }),

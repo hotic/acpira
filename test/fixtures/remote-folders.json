@@ -1,0 +1,23 @@
+[
+  { "input": "ssh://asgard-gen1/home/hotic/Projects/acpira", "alias": "asgard-gen1", "path": "/home/hotic/Projects/acpira", "canonical": "ssh://asgard-gen1/home/hotic/Projects/acpira" },
+  { "input": "ssh://asgard-gen1/home/hotic/Projects/acpira/", "alias": "asgard-gen1", "path": "/home/hotic/Projects/acpira", "canonical": "ssh://asgard-gen1/home/hotic/Projects/acpira" },
+  { "input": "ssh://asgard-gen1//home//hotic///x", "alias": "asgard-gen1", "path": "/home/hotic/x", "canonical": "ssh://asgard-gen1/home/hotic/x" },
+  { "input": "ssh://asgard-gen1/home/./hotic/x/.", "alias": "asgard-gen1", "path": "/home/hotic/x", "canonical": "ssh://asgard-gen1/home/hotic/x" },
+  { "input": "ssh://asgard-gen1/", "alias": "asgard-gen1", "path": "/", "canonical": "ssh://asgard-gen1/" },
+  { "input": "ssh://asgard-gen1", "alias": null, "path": null, "canonical": null },
+  { "input": "ssh://gen1/home/hotic/a b/c d", "alias": "gen1", "path": "/home/hotic/a b/c d", "canonical": "ssh://gen1/home/hotic/a b/c d" },
+  { "input": "ssh://gen1/home/hotic/项目/中文", "alias": "gen1", "path": "/home/hotic/项目/中文", "canonical": "ssh://gen1/home/hotic/项目/中文" },
+  { "input": "ssh://root@10.0.0.5:2222/srv/app", "alias": "root@10.0.0.5:2222", "path": "/srv/app", "canonical": "ssh://root@10.0.0.5:2222/srv/app" },
+  { "input": "ssh://ci@[fd00::3]:22/srv", "alias": "ci@[fd00::3]:22", "path": "/srv", "canonical": "ssh://ci@[fd00::3]:22/srv" },
+  { "input": "ssh://gen1/home/../etc", "alias": null, "path": null, "canonical": null },
+  { "input": "ssh://gen1/home/hotic/..", "alias": null, "path": null, "canonical": null },
+  { "input": "ssh://-oProxyCommand=x/tmp", "alias": null, "path": null, "canonical": null },
+  { "input": "ssh:///tmp", "alias": null, "path": null, "canonical": null },
+  { "input": "ssh://gen 1/tmp", "alias": null, "path": null, "canonical": null },
+  { "input": "ssh://gen1?x/tmp", "alias": null, "path": null, "canonical": null },
+  { "input": "SSH://gen1/tmp", "alias": null, "path": null, "canonical": null },
+  { "input": "ssh://gen1/tmp\u0000x", "alias": null, "path": null, "canonical": null },
+  { "input": "/home/hotic/Projects/acpira", "alias": null, "path": null, "canonical": null },
+  { "input": "C:\\Users\\spark\\x", "alias": null, "path": null, "canonical": null },
+  { "input": "", "alias": null, "path": null, "canonical": null }
+]

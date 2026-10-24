@@ -77,6 +77,36 @@ impl Snapshot {
     Snapshot { files }
   }
 
+  /// The snapshot for the wire (an SSH host's helper takes it there): `files` of `{ path, size, mtimeNs }`, size and
+  /// time left out for a deleted file
+  pub fn to_json(&self) -> serde_json::Value {
+    let files: Vec<serde_json::Value> = self
+      .files
+      .iter()
+      .map(|(p, s)| match s {
+        Some((size, t)) => {
+          let ns = t.duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0);
+          serde_json::json!({ "path": p, "size": size, "mtimeNs": ns })
+        }
+        None => serde_json::json!({ "path": p }),
+      })
+      .collect();
+    serde_json::json!({ "files": files })
+  }
+
+  pub fn from_json(v: &serde_json::Value) -> Snapshot {
+    let mut files = BTreeMap::new();
+    for f in v.get("files").and_then(serde_json::Value::as_array).into_iter().flatten() {
+      let Some(path) = f.get("path").and_then(serde_json::Value::as_str) else { continue };
+      let stamp = match (f.get("size").and_then(serde_json::Value::as_u64), f.get("mtimeNs").and_then(serde_json::Value::as_u64)) {
+        (Some(size), Some(ns)) => Some((size, SystemTime::UNIX_EPOCH + std::time::Duration::from_nanos(ns))),
+        _ => None,
+      };
+      files.insert(PathBuf::from(path), stamp);
+    }
+    Snapshot { files }
+  }
+
   /// Files whose state differs between the two snapshots: newly dirty, touched again, or back to clean
   pub fn changed_since(&self, before: &Snapshot) -> Vec<PathBuf> {
     let keys: BTreeSet<&PathBuf> = self.files.keys().chain(before.files.keys()).collect();

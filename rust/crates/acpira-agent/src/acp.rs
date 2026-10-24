@@ -104,6 +104,8 @@ pub struct Session {
   pub jobs: Arc<crate::tools::jobs::Jobs>,
   /// The MCP servers the client handed this session, started when it opened
   pub mcp: Arc<crate::mcp::Hub>,
+  /// The SSH host the session's folder is on (`remote.rs`); its project tools run there
+  pub remote: Option<Arc<crate::remote::Remote>>,
 }
 
 impl Session {
@@ -174,6 +176,25 @@ impl Server {
   /// The session's history (`store.rs`)
   pub fn session_file(&self, id: &str) -> PathBuf {
     sessions_root(self.config.home()).join(format!("{id}.jsonl"))
+  }
+
+  /// Where the session's instructions, prompt overrides and skills are read. A folder on an SSH host is not this
+  /// machine's: the same path here may hold another project, so nothing of it is read from this disk, only what the
+  /// host sent when the session opened
+  pub fn places(&self, cwd: &std::path::Path, remote: Option<&crate::remote::Remote>) -> crate::prompt::Places {
+    match remote {
+      Some(r) => match &r.files {
+        Some(files) => crate::prompt::Places::on_host(cwd, files.clone()),
+        None => crate::prompt::Places::on_host(cwd, Default::default()),
+      },
+      None => crate::prompt::Places::new(cwd, crate::turn::user_home().as_deref()),
+    }
+  }
+
+  /// The folder processes of the session start in here (MCP servers): the session folder, or for a folder on an SSH
+  /// host the data root
+  pub fn process_dir(&self, cwd: &std::path::Path, remote: bool) -> PathBuf {
+    if remote { self.config.home().to_path_buf() } else { cwd.to_path_buf() }
   }
 
   /// The file Plan mode writes its plan to
@@ -316,7 +337,8 @@ impl Server {
     let id = uuid::Uuid::new_v4().to_string();
     let mut state = SessionState { mode: modes::AGENT.to_owned(), announced: modes::AGENT.to_owned(), ..Default::default() };
     state.model = config.default_pick();
-    let places = crate::prompt::Places::new(std::path::Path::new(cwd), crate::turn::user_home().as_deref());
+    let remote = crate::remote::Remote::of(params);
+    let places = self.places(std::path::Path::new(cwd), remote.as_deref());
     state.prompt = crate::prompt::compose(&places, state.model.as_deref().and_then(|p| config.find(p)));
     state.effort = default_effort(&config, &catalog, state.model.as_deref());
     let response = json!({
@@ -328,19 +350,21 @@ impl Server {
     // The file starts with the first event; the prompt goes first so a reopen keeps the very same text
     store.prelude(json!({ "type": "prompt", "variant": state.prompt.variant, "version": state.prompt.version, "digest": state.prompt.digest,
       "text": state.prompt.text, "sampling": state.prompt.sampling, "thinking": state.prompt.thinking }));
-    let mcp = crate::mcp::Hub::start(params.get("mcpServers").unwrap_or(&Value::Null), std::path::Path::new(cwd));
-    let session = Session { id: id.clone(), cwd: PathBuf::from(cwd), state: parking_lot::Mutex::new(state), store, tool_seq: AtomicU64::new(0), jobs: Default::default(), mcp };
+    let mcp = crate::mcp::Hub::start(params.get("mcpServers").unwrap_or(&Value::Null), &self.process_dir(std::path::Path::new(cwd), remote.is_some()));
+    let session =
+      Session { id: id.clone(), cwd: PathBuf::from(cwd), state: parking_lot::Mutex::new(state), store, tool_seq: AtomicU64::new(0), jobs: Default::default(), mcp, remote };
     // The starting controls too: a reopen must not take a default that changed in the meantime
     session.save_state(&session.state.lock());
+    let remote = session.remote.clone();
     self.sessions.lock().insert(id.clone(), Arc::new(session));
-    self.announce_commands(&id, std::path::Path::new(cwd));
+    self.announce_commands(&id, std::path::Path::new(cwd), remote.as_deref());
     Ok(response)
   }
 
   /// The session's slash commands: `/compact` and the skills found now (`skills.rs`). Sent inside `session/new` /
   /// `load` / `resume` like Devin does, straight to the client: a replay would only repeat a stale list
-  fn announce_commands(&self, id: &str, cwd: &std::path::Path) {
-    let places = crate::prompt::Places::new(cwd, crate::turn::user_home().as_deref());
+  fn announce_commands(&self, id: &str, cwd: &std::path::Path, remote: Option<&crate::remote::Remote>) {
+    let places = self.places(cwd, remote);
     let commands = crate::skills::commands(&crate::skills::scan(&places));
     self.conn().notify("session/update", json!({ "sessionId": id, "update": { "sessionUpdate": "available_commands_update", "availableCommands": commands } }));
   }
@@ -364,7 +388,7 @@ impl Server {
           return Err(gone());
         }
         let cwd = params.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty()).map(PathBuf::from).unwrap_or(loaded.cwd.clone());
-        let session = Arc::new(self.revive(id, cwd, &loaded, path, params.get("mcpServers").unwrap_or(&Value::Null)));
+        let session = Arc::new(self.revive(id, cwd, &loaded, path, params.get("mcpServers").unwrap_or(&Value::Null), crate::remote::Remote::of(params)));
         self.sessions.lock().insert(id.to_owned(), session.clone());
         (session, loaded.updates)
       }
@@ -375,7 +399,7 @@ impl Server {
         self.conn().notify("session/update", json!({ "sessionId": id, "update": u }));
       }
     }
-    self.announce_commands(id, &session.cwd);
+    self.announce_commands(id, &session.cwd, session.remote.as_deref());
     // An unfinished goal, straight to the client like the commands: the replay carries none (`goal::publish`)
     let goal = session.state.lock().goal.clone();
     if let Some(g) = crate::goal::published(goal.as_ref()) {
@@ -391,7 +415,7 @@ impl Server {
   }
 
   /// A session object from its file: the history, the controls and the system prompt as they were
-  fn revive(&self, id: &str, cwd: PathBuf, loaded: &store::Loaded, path: PathBuf, mcp_servers: &Value) -> Session {
+  fn revive(&self, id: &str, cwd: PathBuf, loaded: &store::Loaded, path: PathBuf, mcp_servers: &Value, remote: Option<Arc<crate::remote::Remote>>) -> Session {
     let config = self.config.get();
     let catalog = self.catalog.get();
     let s = |k: &str| loaded.state.get(k).and_then(Value::as_str).map(str::to_owned);
@@ -446,8 +470,8 @@ impl Server {
       .filter_map(|u| u.get("toolCallId").and_then(Value::as_str)?.strip_prefix("call-")?.parse::<u64>().ok())
       .max()
       .unwrap_or(0);
-    let mcp = crate::mcp::Hub::start(mcp_servers, &cwd);
-    Session { id: id.to_owned(), cwd, state: parking_lot::Mutex::new(st), store, tool_seq: AtomicU64::new(seq), jobs: Default::default(), mcp }
+    let mcp = crate::mcp::Hub::start(mcp_servers, &self.process_dir(&cwd, remote.is_some()));
+    Session { id: id.to_owned(), cwd, state: parking_lot::Mutex::new(st), store, tool_seq: AtomicU64::new(seq), jobs: Default::default(), mcp, remote }
   }
 
   /// `session/list`: this data root's sessions with at least one message, newest first, filtered by `cwd` when given
@@ -851,6 +875,11 @@ impl Inbound for Handler {
   fn notification(&self, method: &str, params: Value) {
     if method == "session/cancel" {
       self.0.cancel(&params);
+    } else if method == crate::remote::PROGRESS {
+      let session = params.get("sessionId").and_then(Value::as_str).and_then(|id| self.0.sessions.lock().get(id).cloned());
+      if let Some(remote) = session.and_then(|s| s.remote.clone()) {
+        remote.progress(&params);
+      }
     }
   }
 

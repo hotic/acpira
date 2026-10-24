@@ -587,6 +587,7 @@ export const fr = {
   'mention.noFiles': 'Aucun fichier correspondant',
 
   'host.notFound': '{command} introuvable — installez d’abord la CLI {agent}',
+  'host.remoteBuiltinOnly': '{agent} ne peut pas travailler dans un dossier sur {host} en exécution locale ; seul l\'agent intégré d\'Acpira le peut',
   'host.exited': 'Le processus {agent} s’est terminé ({code})',
   'host.emptyResponse': 'La CLI a terminé la requête sans réponse ni détail d’erreur (ACP: end_turn). Réessayez ou consultez les journaux de la CLI.',
   'host.agentMcpSkipped': '{agent} n’a pas pu démarrer le serveur MCP {name} ({reason}) et a arrêté le tour. Il est désormais exclu de cette session et la connexion est reconstruite sans lui : Réessayer pour continuer. Corrigez le serveur et démarrez une nouvelle session pour l’utiliser à nouveau.',

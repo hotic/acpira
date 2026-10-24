@@ -23,6 +23,8 @@ mod preview;
 mod questions;
 mod registry;
 mod relay;
+mod remote_connections;
+mod remote_helper;
 mod session_library;
 mod session_manager;
 mod store;

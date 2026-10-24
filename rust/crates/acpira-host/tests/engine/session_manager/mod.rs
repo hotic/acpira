@@ -48,6 +48,8 @@ pub struct Opts {
   pub hidden: HiddenMap,
   pub local_accounts: Option<Arc<LocalAccounts>>,
   pub accounts: Option<Arc<acpira_host::accounts::account_manager::AccountManager>>,
+  /// SSH hosts for `ssh://` folders (`remote_connections::Lab`)
+  pub remote: Option<Arc<acpira_host::remote::connections::Connections>>,
 }
 
 impl Opts {
@@ -67,6 +69,7 @@ impl Opts {
       hidden: HiddenMap::default(),
       local_accounts: None,
       accounts: None,
+      remote: None,
     }
   }
 
@@ -141,6 +144,7 @@ impl Mgr {
         lease_root: dir.join("lease-home"),
         bus: opts.bus,
         attention: Some(Arc::new(move |a| at.lock().unwrap().push(a))),
+        remote: opts.remote.clone(),
       },
     );
     let v = m.attach(None);
@@ -248,6 +252,7 @@ async fn foreign_native_session(fake: &FakeAgent, native: &Path, store: &Arc<Tra
     shared_mcp: None,
     host_mcp: None,
     claim: None,
+    remote: None,
   };
   let s = AcpSession::fresh("fake", cwd, deps, None);
   s.start().await;

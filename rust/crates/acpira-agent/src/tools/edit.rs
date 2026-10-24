@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use super::{Action, Ctx, Output, diff_content, resolve, shown, str_arg};
 use crate::llm::ToolSpec;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Edit {
   pub old: String,
   pub new: String,
@@ -21,12 +21,16 @@ pub struct Edit {
 }
 
 /// One file a call changes: `before` None for a new file, `edits` empty for a whole-file write
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Change {
   pub path: PathBuf,
   pub before: Option<String>,
   pub after: String,
   pub edits: Vec<Edit>,
+  /// Set where the change was prepared on an SSH host: the host's own guard (`permission::Guard`) found the file
+  /// protected, which a guard here cannot see through the host's symlinks
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub protected: bool,
 }
 
 impl Change {
@@ -124,7 +128,7 @@ pub fn prepare_write(args: &Value, cwd: &Path) -> Result<Action, String> {
     return Err(format!("{} is a directory", path.display()));
   }
   let before = read_text(&path)?;
-  Ok(Action::Write { files: vec![Change { path, before, after, edits: vec![] }] })
+  Ok(Action::Write { files: vec![Change { path, before, after, edits: vec![], protected: false }] })
 }
 
 fn edit_of(v: &Value) -> Result<Edit, String> {
@@ -168,7 +172,7 @@ pub fn prepare(args: &Value, cwd: &Path) -> Result<Action, String> {
       Some(k) => k,
       None => {
         let before = read_text(&path)?.ok_or_else(|| format!("File not found: {} (use write to create it)", path.display()))?;
-        files.push(Change { path, after: before.clone(), before: Some(before), edits: vec![] });
+        files.push(Change { path, after: before.clone(), before: Some(before), edits: vec![], protected: false });
         ids.push(id);
         files.len() - 1
       }
@@ -268,7 +272,7 @@ pub fn run(files: Vec<Change>, ctx: &Ctx) -> Output {
       None if edited => return Output::error(format!("{} was deleted before the edit ran", c.path.display())),
       now => (now.or(c.before), c.after),
     };
-    ready.push(Change { path: c.path, before, after, edits: c.edits });
+    ready.push(Change { path: c.path, before, after, edits: c.edits, protected: false });
   }
   for (k, c) in ready.iter().enumerate() {
     let failed = match c.path.parent().map(std::fs::create_dir_all) {

@@ -13,6 +13,7 @@
 //! Scripts speak the Claude Code hook protocol (JSON on stdin; `permissionDecision: deny` / `decision: block` on stdout,
 //! or exit code 2 with the reason on stderr), so a repository's existing hook scripts run unchanged
 
+pub mod host;
 pub mod run;
 pub mod snapshot;
 
