@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { HostMsg } from '../src/shared/protocol';
+import type { HostMsg } from '../packages/shared/protocol';
 import { NODE, FAKE, Shell } from './sidecarShell';
 
 // A project shell (`ShellEnv.projects`, the desktop app) against the real sidecar: no workspace in hello, so init, @ search

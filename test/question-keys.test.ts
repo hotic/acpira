@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { questionOptionIndex } from '../src/webview/chat/questionKeys';
+import { questionOptionIndex } from '../packages/ui/chat/questionKeys';
 
 describe('question option shortcuts', () => {
   it.each(['Tab', 'Shift', 'Enter', 'Escape', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'F1', 'Dead', 'Process', '', ' ', '0', '中'])

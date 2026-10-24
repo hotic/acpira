@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { PlanBlock, PlanEntry, ToolCallBlock, Turn } from '../src/shared/transcript';
-import { dockPlan } from '../src/webview/chat/dockPlan';
+import type { PlanBlock, PlanEntry, ToolCallBlock, Turn } from '../packages/shared/transcript';
+import { dockPlan } from '../packages/ui/chat/dockPlan';
 
 const entry = (title: string, status: PlanEntry['status']): PlanEntry => ({ title, status });
 const plan = (...entries: PlanEntry[]): PlanBlock => ({ type: 'plan', entries });
@@ -11,8 +11,8 @@ const open = plan(entry('A', 'completed'), entry('B', 'pending'));
 // A todo tool's row as the engine stores it, the parsed list on `todoEntries`
 const todoRow = (entries: PlanEntry[], status: ToolCallBlock['status'] = 'completed'): ToolCallBlock =>
   ({ type: 'tool_call', id: 'todo', kind: 'other', verb: 'Update todos', verbKey: 'verb.todo', status, todoEntries: entries });
-const shellSource = readFileSync(join(import.meta.dirname, '../src/webview/chat/Shell.tsx'), 'utf8');
-const planBarSource = readFileSync(join(import.meta.dirname, '../src/webview/chat/PlanBar.tsx'), 'utf8');
+const shellSource = readFileSync(join(import.meta.dirname, '../packages/ui/chat/Shell.tsx'), 'utf8');
+const planBarSource = readFileSync(join(import.meta.dirname, '../packages/ui/chat/PlanBar.tsx'), 'utf8');
 
 describe('PlanBar dock visibility', () => {
   it('hides a finished list once its turn has ended', () => {

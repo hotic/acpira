@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { withFileLock, writeAtomic } from '../src/host/store/fileLock';
+import { withFileLock, writeAtomic } from '../apps/vscode/src/store/fileLock';
 
 // One "host" of the fileLock test: read → increment → write a JSON counter N times under the lock. Without the lock, hosts running
 // this side by side lose increments to each other's stale reads

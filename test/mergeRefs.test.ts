@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createRef } from 'react';
-import { mergeRefs } from '../src/webview/ui/mergeRefs';
+import { mergeRefs } from '../packages/ui/ui/mergeRefs';
 
 describe('mergeRefs', () => {
   it('attaches one node to object and callback refs and detaches through the cleanup', () => {

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AgentBlock, AgentTurn, CompactionBlock, GoalBlock, NoticeBlock, PermissionBlock, QuestionBlock, ToolCallBlock } from '../src/shared/transcript';
-import { setLocale } from '../src/webview/i18n';
-import { elapsedDuration, foldActivity, splitCodexBlocks, toolTarget, toolVerb } from '../src/webview/chat/folding';
+import type { AgentBlock, AgentTurn, CompactionBlock, GoalBlock, NoticeBlock, PermissionBlock, QuestionBlock, ToolCallBlock } from '../packages/shared/transcript';
+import { setLocale } from '../packages/ui/i18n';
+import { elapsedDuration, foldActivity, splitCodexBlocks, toolTarget, toolVerb } from '../packages/ui/chat/folding';
 
 const read: ToolCallBlock = { type: 'tool_call', id: 'read', kind: 'read', verb: 'Read', target: 'README.md', status: 'completed' };
 const run: ToolCallBlock = { type: 'tool_call', id: 'run', kind: 'execute', verb: 'Run', target: 'pnpm test', targetMono: true, status: 'in_progress' };

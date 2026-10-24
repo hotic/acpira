@@ -45,7 +45,7 @@ Review date: 2026-10-02; source baseline Acpira 1.8.0. Scope covers the platform
 | `pnpm build` | Passed; the existing CSS `::highlight` and large-bundle warnings remain |
 | `RUST_TEST_THREADS=4 ACPIRA_TEST_POWERSHELL=/tmp/acpira-devin-pwsh/pwsh cargo test --workspace` (`rust/`) | 623 passed; 4 platform / fixture helper entries ignored by design |
 | `cargo clippy --workspace --all-targets --all-features -- -D warnings` (`rust/`) | Passed on macOS; all targets also pass for `x86_64-pc-windows-gnu` |
-| `./gradlew test` (`idea/`) | Passed in the previous review; this round's terminal restructuring did not touch Kotlin, so it was not rerun |
+| `./gradlew test` (`apps/intellij/`) | Passed in the previous review; this round's terminal restructuring did not touch Kotlin, so it was not rerun |
 | Native Windows regressions | 150 Rust tests pass at default concurrency; the PowerShell 5.1 install fixture and the nine EXE / CMD login argument shapes pass |
 | Leftover processes | No orphaned `fake-agent.ts` on macOS; no leftover fixture processes from this round on Windows |
 

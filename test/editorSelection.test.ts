@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { editorSelectionOf } from '../src/host/editorSelection';
-import { MAX_TEXT_BYTES } from '../src/shared/attachments';
+import { editorSelectionOf } from '../apps/vscode/src/editorSelection';
+import { MAX_TEXT_BYTES } from '../packages/shared/attachments';
 
-// Mirrored by idea/frontend EditorRangeTest: both shells must label the same range the same way
+// Mirrored by apps/intellij/frontend EditorRangeTest: both shells must label the same range the same way
 describe('editor selection ranges', () => {
   it('turns 0-based positions into 1-based inclusive lines', () => {
     expect(editorSelectionOf('file:///w/a.ts', { line: 11, character: 2 }, { line: 18, character: 5 }, 'x')).toEqual({ uri: 'file:///w/a.ts', startLine: 12, endLine: 19, text: 'x' });

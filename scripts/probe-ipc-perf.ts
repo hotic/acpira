@@ -3,7 +3,7 @@
 // while a rAF ticker and a longtask observer record what the page's main thread saw, and the receive hook counts pushes and bytes.
 // Setup (once): seed the sandbox settings with the fake agent, then launch the sandbox with CDP exposed:
 //   pnpm exec tsx scripts/probe-ipc-perf.ts --seed [sandboxConfigDir]
-//   cd idea && ./gradlew runIde -PrunIdeProject=$PWD/.. -PautoOpen -PjcefDebug
+//   cd apps/intellij && ./gradlew runIde -PrunIdeProject=$PWD/.. -PautoOpen -PjcefDebug
 // Then, with the tool window open:
 //   pnpm exec tsx scripts/probe-ipc-perf.ts
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -14,7 +14,7 @@ const PORT = Number(process.env.CDP_PORT ?? 9222);
 
 if (process.argv.includes('--seed')) {
   const config = process.argv.find((a, i) => i > 1 && !a.startsWith('--'))
-    ?? join(repo, 'idea/.intellijPlatform/sandbox/acpira/IU-2026.1.4/config');
+    ?? join(repo, 'apps/intellij/.intellijPlatform/sandbox/acpira/IU-2026.1.4/config');
   const settings = {
     defaultAgent: 'fake',
     agents: { fake: { name: 'Fake', command: join(repo, 'node_modules/.bin/tsx'), args: ['--tsconfig', join(repo, 'tsconfig.host.json'), join(repo, 'test/fake-agent.ts')] } },

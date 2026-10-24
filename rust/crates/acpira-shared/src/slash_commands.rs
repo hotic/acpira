@@ -1,4 +1,4 @@
-//! Slash command helpers (mirror of src/shared/slashCommands.ts)
+//! Slash command helpers (mirror of packages/shared/slashCommands.ts)
 
 use std::sync::LazyLock;
 

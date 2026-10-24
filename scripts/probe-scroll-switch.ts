@@ -1,6 +1,6 @@
 // Drives lab/scroll-switch.preview.html in headless Chrome over CDP and checks the transcript's bottom follow
 // when content gains height after mount (slow <img>, mermaid) and across session switches.
-// Needs the LAB server: `pnpm exec vite --config vite.lab.config.ts`
+// Needs the LAB server: `pnpm exec vite --config lab/vite.config.ts`
 // Usage: pnpm exec tsx scripts/probe-scroll-switch.ts
 // Exit code 1 when a check fails.
 import { spawn } from 'node:child_process';

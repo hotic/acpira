@@ -1,4 +1,4 @@
-//! Agent ordering and enablement (mirror of src/shared/agentOrder.ts)
+//! Agent ordering and enablement (mirror of packages/shared/agentOrder.ts)
 
 use std::collections::{HashMap, HashSet};
 

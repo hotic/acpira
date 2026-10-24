@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentBlock, DiffLine, ToolCallBlock } from '../src/shared/transcript';
-import { DWELL_MS, editEntries, editReference, editSpan, foldStates, groupNames, groupProcess, itemSettled, processParts, type FoldInput } from '../src/webview/chat/processGroups';
+import type { AgentBlock, DiffLine, ToolCallBlock } from '../packages/shared/transcript';
+import { DWELL_MS, editEntries, editReference, editSpan, foldStates, groupNames, groupProcess, itemSettled, processParts, type FoldInput } from '../packages/ui/chat/processGroups';
 
 const read = (id: string, path: string, status: ToolCallBlock['status'] = 'completed'): ToolCallBlock => ({
   type: 'tool_call', id, kind: 'read', verb: 'Read', status, target: path.split('/').pop(), locations: [{ path }],

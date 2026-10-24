@@ -1,4 +1,4 @@
-//! Session view patches (mirror of src/shared/sessionPatch.ts). A view is encoded turn by turn once per change; a viewer that
+//! Session view patches (mirror of packages/shared/sessionPatch.ts). A view is encoded turn by turn once per change; a viewer that
 //! already holds the previous encoding gets only the turns from the first one that differs, and for a changed last agent turn
 //! only the blocks from the first one that differs. Streaming into a long conversation then costs the size of the tail, not
 //! the size of the whole transcript, on every hop (sidecar stdout, the extension host, Remote-SSH, the webview)
@@ -157,7 +157,7 @@ pub fn session_patch(prev: &ViewPartsData, next: &ViewPartsData) -> Option<RawJs
   Some(RawJson::new(&patch))
 }
 
-/// Sessions whose last sent view a page keeps (`src/shared/sessionPatch.ts` `VIEW_CACHE_ENTRIES` keeps at least as many):
+/// Sessions whose last sent view a page keeps (`packages/shared/sessionPatch.ts` `VIEW_CACHE_ENTRIES` keeps at least as many):
 /// switching back to one of them is sent as a patch against that view instead of the whole transcript again
 pub const SENT_VIEWS_MAX: usize = 12;
 /// Encoded bytes the kept views may hold per page; the view on screen stays even when it alone is larger

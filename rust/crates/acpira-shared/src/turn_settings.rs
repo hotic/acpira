@@ -1,4 +1,4 @@
-//! Turn settings capture and replay (mirror of src/shared/turnSettings.ts)
+//! Turn settings capture and replay (mirror of packages/shared/turnSettings.ts)
 
 use crate::model_shapes::{ModelShapes, is_model_control, shape_for};
 use crate::transcript::{SessionControls, TurnSettings};

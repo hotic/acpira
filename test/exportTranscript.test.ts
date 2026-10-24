@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Turn } from '../src/shared/transcript';
-import { exportFileName, exportMarkdown } from '../src/shared/exportTranscript';
+import type { Turn } from '../packages/shared/transcript';
+import { exportFileName, exportMarkdown } from '../packages/shared/exportTranscript';
 
 const turns: Turn[] = [
   { role: 'user', text: 'fix the tests', attachments: [

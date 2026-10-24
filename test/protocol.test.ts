@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isSafeExternalUrl, type WebviewMsg } from '../src/shared/protocol';
+import { isSafeExternalUrl, type WebviewMsg } from '../packages/shared/protocol';
 
 // The host hands accepted URLs to vscode.env.openExternal, so the scheme whitelist is the whole security boundary
 describe('isSafeExternalUrl', () => {

@@ -44,7 +44,7 @@ The CLI is the `bridge` subcommand of the sidecar binary every package carries (
 /path/to/acpira bridge finish --session ID --turn TURN_ID
 ```
 
-Use `--text -` or `--command -` to read stdin rather than interpolate text into a shell command. `write` always takes new text on stdin. `show --session ID` prints the normalized view. `emit --session ID` takes one JSON event on stdin, with a unique `id`, `turnId`, and the payload defined in `src/host/external/chatgptEvents.ts`.
+Use `--text -` or `--command -` to read stdin rather than interpolate text into a shell command. `write` always takes new text on stdin. `show --session ID` prints the normalized view. `emit --session ID` takes one JSON event on stdin, with a unique `id`, `turnId`, and the payload defined in `apps/vscode/src/external/chatgptEvents.ts`.
 
 Replaying the exact same event ID and payload is idempotent. Reusing an ID with different content fails. A successful `end_turn` is refused while a tool has no completion receipt. An explicitly reported cancellation/error ends source generation without claiming that a local command was terminated. CLI convenience commands generate fresh event IDs; prompt retransmissions reuse the same turn ID and text, and generic event retries use `emit` with stable event IDs.
 

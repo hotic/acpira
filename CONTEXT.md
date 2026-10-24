@@ -35,7 +35,7 @@ pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe-context-policy.ts grok
 pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe-context-policy.ts devin --after-turn
 pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe-context-policy.ts kimi --after-turn
 pnpm exec vitest run test/usage-breakdown.test.ts test/grok-usage.test.ts test/compaction-queue.test.ts test/hostRuntime.test.ts
-pnpm exec vite --config vite.lab.config.ts --port 5207
+pnpm exec vite --config lab/vite.config.ts --port 5207
 ```
 
 `lab/context.preview.html` reports a 24K / 200K native context over a session that retains approximately 996K tool-history tokens. Running/idle transitions must remain at 12%. The over-threshold scene reports 350K / 1M, displays 35% consistently, and explains that compaction waits for the turn boundary. Both scenes support light/dark and narrow-screen checks.

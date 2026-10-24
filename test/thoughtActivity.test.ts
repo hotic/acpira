@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AgentTurn } from '../src/shared/transcript';
-import { setLocale } from '../src/webview/i18n';
-import { foldActivity } from '../src/webview/chat/folding';
+import type { AgentTurn } from '../packages/shared/transcript';
+import { setLocale } from '../packages/ui/i18n';
+import { foldActivity } from '../packages/ui/chat/folding';
 import { agentTurn } from './fixtures/engine';
 
 afterEach(() => { vi.restoreAllMocks(); setLocale('en'); });

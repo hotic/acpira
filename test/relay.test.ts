@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { DUTIES, dutyDefaults, freshThread, keepsThread, personaSlug, sanitizeGroups, sanitizePersonas } from '../src/shared/subagents';
-import { sanitizeSetting } from '../src/shared/settings';
-import { personaHits, personaOfHit } from '../src/webview/chat/personaHits';
+import { DUTIES, dutyDefaults, freshThread, keepsThread, personaSlug, sanitizeGroups, sanitizePersonas } from '../packages/shared/subagents';
+import { sanitizeSetting } from '../packages/shared/settings';
+import { personaHits, personaOfHit } from '../packages/ui/chat/personaHits';
 import fixture from './fixtures/personas-sanitize.json';
 import groupsFixture from './fixtures/groups-sanitize.json';
 import dutyPresets from './fixtures/duty-presets.json';

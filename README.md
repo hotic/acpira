@@ -226,7 +226,7 @@ pnpm probe devin --import-local "Reply pong"   # via the account layer: import l
 pnpm typecheck && pnpm test
 pnpm package        # build this platform's .vsix with the Rust sidecar
 (cd rust && cargo test --workspace)                  # the engine
-cd idea && ./gradlew test buildPlugin verifyPlugin   # IntelliJ plugin; buildMarketplacePlugin for the universal ZIP; buildPluginVariants for manual platform ZIPs
+cd apps/intellij && ./gradlew test buildPlugin verifyPlugin   # IntelliJ plugin; buildMarketplacePlugin for the universal ZIP; buildPluginVariants for manual platform ZIPs
 ```
 
 Press F5 to launch an Extension Development Host. Logs are in Output → Acpira. See [AGENTS.md](AGENTS.md) for the architecture map and protocol notes.

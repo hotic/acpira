@@ -1,4 +1,4 @@
-//! Per-agent memory of the dependent controls each model came with (mirror of src/shared/modelShapes.ts)
+//! Per-agent memory of the dependent controls each model came with (mirror of packages/shared/modelShapes.ts)
 
 use std::collections::BTreeMap;
 

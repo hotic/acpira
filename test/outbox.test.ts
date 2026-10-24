@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { HostMsg } from '../src/shared/protocol';
-import type { SessionView, Turn } from '../src/shared/transcript';
-import type { SessionPatch } from '../src/shared/sessionPatch';
-import { PostQueue, enqueue } from '../src/host/outbox';
+import type { HostMsg } from '../packages/shared/protocol';
+import type { SessionView, Turn } from '../packages/shared/transcript';
+import type { SessionPatch } from '../packages/shared/sessionPatch';
+import { PostQueue, enqueue } from '../apps/vscode/src/outbox';
 
 const user = (id: string): Turn => ({ role: 'user', id, text: id });
 function view(rev: number, turns: Turn[], id = 's'): SessionView {

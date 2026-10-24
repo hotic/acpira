@@ -1,4 +1,4 @@
-//! Settings view and sanitation (mirror of src/shared/settings.ts)
+//! Settings view and sanitation (mirror of packages/shared/settings.ts)
 
 use std::collections::BTreeMap;
 

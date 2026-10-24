@@ -1,11 +1,11 @@
-//! Dictionaries and translation (mirror of src/shared/i18n): the JSON is exported from the TS dictionaries, the single source
+//! Dictionaries and translation (mirror of packages/shared/i18n): the JSON is exported from the TS dictionaries, the single source
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
 
-/// Shipped locales, in the order of `LOCALES` in src/shared/i18n/index.ts
+/// Shipped locales, in the order of `LOCALES` in packages/shared/i18n/index.ts
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Locale {
   #[serde(rename = "zh-CN")]
@@ -117,7 +117,7 @@ pub fn has_key(key: &str) -> bool {
   dict(Locale::En).contains_key(key)
 }
 
-/// CLDR cardinal category for a count, mirroring `pluralCategory` in src/shared/i18n/index.ts;
+/// CLDR cardinal category for a count, mirroring `pluralCategory` in packages/shared/i18n/index.ts;
 /// None means the plain key ("other")
 pub fn plural_category(locale: Locale, n: u64) -> Option<&'static str> {
   match locale {

@@ -6,7 +6,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { terminalLaunch } from '../src/host/terminalLaunch.ts';
+import { terminalLaunch } from '../apps/vscode/src/terminalLaunch.ts';
 
 test('Windows terminal delivers an encoded launch unchanged to PowerShell 5.1', { skip: process.platform !== 'win32' }, () => {
   const root = mkdtempSync(join(tmpdir(), "acpira-terminal O'Brien 用户 "));

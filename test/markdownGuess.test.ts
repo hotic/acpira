@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { looksLikeMarkdown } from '../src/webview/chat/markdownGuess';
+import { looksLikeMarkdown } from '../packages/ui/chat/markdownGuess';
 
 describe('looksLikeMarkdown', () => {
   it('recognizes typical pasted documents', () => {

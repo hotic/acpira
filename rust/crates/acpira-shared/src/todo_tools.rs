@@ -1,4 +1,4 @@
-//! Todo-tool result parsing (mirror of src/shared/todoTools.ts)
+//! Todo-tool result parsing (mirror of packages/shared/todoTools.ts)
 
 use std::sync::LazyLock;
 

@@ -143,11 +143,11 @@ jobs:
           node --input-type=module <<'NODE'
           import { readFileSync, appendFileSync } from 'node:fs';
           import { execFileSync } from 'node:child_process';
-          const { name, publisher, version } = JSON.parse(readFileSync('package.json', 'utf8'));
+          const { name, publisher, version } = JSON.parse(readFileSync('apps/vscode/package.json', 'utf8'));
           if (name !== 'acpira' || publisher !== 'hotic') throw new Error('Unexpected extension identity');
           if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('A stable version is required');
           if (process.env.PUBLISH === 'true') {
-            if (process.env.RELEASE_REF !== `v${version}`) throw new Error('Release tag must match package.json');
+            if (process.env.RELEASE_REF !== `v${version}`) throw new Error('Release tag must match apps/vscode/package.json');
             const release = JSON.parse(execFileSync('gh', [
               'release', 'view', process.env.RELEASE_REF, '--repo', process.env.GITHUB_REPOSITORY,
               '--json', 'isDraft,isPrerelease',
@@ -214,25 +214,25 @@ jobs:
       - name: Build the webview and sidecar bundles
         run: pnpm build
       - name: Build, verify and package the plugin
-        working-directory: idea
+        working-directory: apps/intellij
         # Release classes and tests must come from the checked-out tag, including inlined Kotlin constants.
         run: ./gradlew test buildPlugin verifyPlugin buildPluginVariants buildMarketplacePlugin checksums --rerun-tasks --no-build-cache --no-daemon
       - name: Check the plugin version against the release
         env:
           version: ${{ needs.build.outputs.version }}
         run: |
-          ls idea/build/distributions
+          ls apps/intellij/build/distributions
           for target in mac-arm64 mac-x86_64 linux-arm64 linux-x86_64 windows-arm64 windows-x86_64; do
-            test -f "idea/build/distributions/acpira-$version-$target.zip"
+            test -f "apps/intellij/build/distributions/acpira-$version-$target.zip"
           done
           python3 scripts/verify-idea-packages.py
-          cat idea/build/distributions/SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
+          cat apps/intellij/build/distributions/SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         with:
           name: intellij-plugin
           path: |
-            idea/build/distributions/acpira-*-*.zip
-            idea/build/distributions/SHA256SUMS
+            apps/intellij/build/distributions/acpira-*-*.zip
+            apps/intellij/build/distributions/SHA256SUMS
           if-no-files-found: error
           retention-days: 30
 

@@ -1,4 +1,4 @@
-//! Shared config shown on the settings page's Shared tab (mirror of src/shared/sharedConfig.ts).
+//! Shared config shown on the settings page's Shared tab (mirror of packages/shared/sharedConfig.ts).
 //! The content lives in open files (`~/.agents`, `<project>/.agents`, `AGENTS.md`); these types only describe it and
 //! how far each agent can see it
 

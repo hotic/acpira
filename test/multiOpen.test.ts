@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { availableChromeCommands, columnPicks, columnsLayout, defaultColumnPick } from '../src/host/multiOpen';
+import { availableChromeCommands, columnPicks, columnsLayout, defaultColumnPick } from '../apps/vscode/src/multiOpen';
 
 describe('open in editor columns', () => {
   it('offers 2 to 6 columns and starts on 4', () => {

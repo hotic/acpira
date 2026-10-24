@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { markParts, matchesTitle, searchTerms } from '../src/webview/chat/sessionSearch';
+import { markParts, matchesTitle, searchTerms } from '../packages/ui/chat/sessionSearch';
 
 describe('history search helpers', () => {
   it('splits a query into distinct lower-cased terms', () => {

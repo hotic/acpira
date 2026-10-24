@@ -1,4 +1,4 @@
-//! ChatGPT bridge transport facts (mirror of src/shared/chatgptIntegration.ts)
+//! ChatGPT bridge transport facts (mirror of packages/shared/chatgptIntegration.ts)
 
 use serde::{Deserialize, Serialize};
 

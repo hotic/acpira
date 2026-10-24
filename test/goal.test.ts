@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { Turn } from '../src/shared/transcript';
-import { setLocale } from '../src/webview/i18n';
-import { goalDuration, goalSpend, lastTypedPrompt } from '../src/webview/chat/goalText';
-import { hasTurnContent } from '../src/webview/chat/turnOutcome';
+import type { Turn } from '../packages/shared/transcript';
+import { setLocale } from '../packages/ui/i18n';
+import { goalDuration, goalSpend, lastTypedPrompt } from '../packages/ui/chat/goalText';
+import { hasTurnContent } from '../packages/ui/chat/turnOutcome';
 
 afterEach(() => setLocale('en'));
 

@@ -1,4 +1,4 @@
-//! Secret vault and account metadata (mirror of src/host/accounts/AccountStore.ts). secrets.json is a mode-600 JSON
+//! Secret vault and account metadata (mirror of apps/vscode/src/accounts/AccountStore.ts). secrets.json is a mode-600 JSON
 //! string table, not an encrypted store; both files are shared by every host and edited read → change → write under
 //! their file lock
 

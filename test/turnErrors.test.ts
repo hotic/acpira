@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentTurn, NoticeBlock } from '../src/shared/transcript';
-import { isContextLengthError } from '../src/shared/turnErrors';
-import { absorbedNotices, hasTurnContent } from '../src/webview/chat/turnOutcome';
+import type { AgentTurn, NoticeBlock } from '../packages/shared/transcript';
+import { isContextLengthError } from '../packages/shared/turnErrors';
+import { absorbedNotices, hasTurnContent } from '../packages/ui/chat/turnOutcome';
 
 // claude-agent-acp, stored transcript 2026-10-04: a session-scoped connection notice offering new_session, then the
 // prompt failed with -32000 and no AIR failure behind it

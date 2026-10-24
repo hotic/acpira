@@ -6,10 +6,10 @@ import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { EditTurnRequest, HostMsg } from '../src/shared/protocol';
-import type { PlatformMethod, PlatformRequest, SidecarMsg } from '../src/shared/sidecar';
-import type { SessionView } from '../src/shared/transcript';
-import { captureTurnSettings } from '../src/shared/turnSettings';
+import type { EditTurnRequest, HostMsg } from '../packages/shared/protocol';
+import type { PlatformMethod, PlatformRequest, SidecarMsg } from '../packages/shared/sidecar';
+import type { SessionView } from '../packages/shared/transcript';
+import { captureTurnSettings } from '../packages/shared/turnSettings';
 import { FAKE, SIDECAR, Shell, NODE } from './sidecarShell';
 
 // The runtime behind the envelope protocol (settings snapshot and events, platform RPCs, view routing) as a shell sees it:

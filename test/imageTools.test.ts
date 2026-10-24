@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { ToolCallBlock } from '../src/shared/transcript';
-import { isImageGenBlock, isImageGenTool, isImageResultBlock, isShowImageTool, toolImages, toolTexts } from '../src/shared/imageTools';
-import { setLocale } from '../src/webview/i18n';
-import { foldActivity, toolVerb } from '../src/webview/chat/folding';
+import type { ToolCallBlock } from '../packages/shared/transcript';
+import { isImageGenBlock, isImageGenTool, isImageResultBlock, isShowImageTool, toolImages, toolTexts } from '../packages/shared/imageTools';
+import { setLocale } from '../packages/ui/i18n';
+import { foldActivity, toolVerb } from '../packages/ui/chat/folding';
 import { agentTurn } from './fixtures/engine';
-import { composite, imageGenColors } from '../src/webview/effects/imageGenPalette';
+import { composite, imageGenColors } from '../packages/ui/effects/imageGenPalette';
 
 afterEach(() => setLocale('en'));
 

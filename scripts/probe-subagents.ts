@@ -41,8 +41,8 @@ const [agentId = 'devin', ...rest] = positional;
 const waitMs = Number(waitOpt?.value ?? 4000);
 const promptText = rest.join(' ') || [
   'Use two subagents in parallel, each with a short task:',
-  '1) list the files directly inside the `src/shared` directory and report how many there are;',
-  '2) list the files directly inside the `src/host/store` directory and report how many there are.',
+  '1) list the files directly inside the `packages/shared` directory and report how many there are;',
+  '2) list the files directly inside the `apps/vscode/src/store` directory and report how many there are.',
   'Do not modify any files. When both return, reply with the two counts on one line.',
 ].join(' ');
 

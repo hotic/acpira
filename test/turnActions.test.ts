@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentInfo, AgentTurn, SessionControls, ToolCallBlock } from '../src/shared/transcript';
-import { forkTargets, modelLabel, replyMarkdown, turnOutputTps, turnTtft } from '../src/webview/chat/turnActionHelpers';
+import type { AgentInfo, AgentTurn, SessionControls, ToolCallBlock } from '../packages/shared/transcript';
+import { forkTargets, modelLabel, replyMarkdown, turnOutputTps, turnTtft } from '../packages/ui/chat/turnActionHelpers';
 
 const text = (markdown: string) => ({ type: 'text' as const, markdown });
 const read: ToolCallBlock = { type: 'tool_call', id: 'r1', kind: 'read', verb: 'Read', target: 'a.ts', status: 'completed' };

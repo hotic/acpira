@@ -1,4 +1,4 @@
-//! Host-side strings: one process-wide locale, set at start and whenever acpira.language changes (mirror of src/host/i18n.ts)
+//! Host-side strings: one process-wide locale, set at start and whenever acpira.language changes (mirror of apps/vscode/src/i18n.ts)
 
 use std::sync::atomic::{AtomicU8, Ordering};
 

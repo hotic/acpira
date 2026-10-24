@@ -1,4 +1,4 @@
-//! Reasoning-control helpers the host needs (mirror of the host-used part of src/shared/composerControls.ts)
+//! Reasoning-control helpers the host needs (mirror of the host-used part of packages/shared/composerControls.ts)
 
 use std::sync::LazyLock;
 

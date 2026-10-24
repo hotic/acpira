@@ -1,7 +1,7 @@
 // Drives lab/performance.preview.html in headless Chrome over CDP and measures how much
 // expanding / collapsing thought rows and process folds blocks the main thread, optionally
 // while a live turn streams (the host pushes a full SessionView every ~30 ms then).
-// Needs the LAB server: `pnpm exec vite --config vite.lab.config.ts`
+// Needs the LAB server: `pnpm exec vite --config lab/vite.config.ts`
 // Usage: pnpm exec tsx scripts/probe-fold-perf.ts [profile=large|screenshot] [chars=N] [--stream] [--live] [--cpu] [--switch]
 //   chars=N   set the live thought length (default 1000)
 //   --stream  keep a turn streaming during the clicks and report the frame budget with no clicks first

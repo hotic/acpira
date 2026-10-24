@@ -11,32 +11,42 @@ import { SIDECAR_TARGETS, exeName, hostPlatform, targetFor } from './sidecar-tar
 //   node scripts/package-vsix.mjs <vsce-target>…  chosen platform packages
 // Each package carries its sidecar at bin/. There is no universal package: a platform without its own package cannot install the
 // extension, since the host only exists as the Rust binary.
-// vsce runs in a staging folder holding only what .vscodeignore lets through: run at the root it walks the whole tree first,
-// rust/target included (49 GB, about a minute of a one-second package, measured 2026-10-21)
+// vsce runs in a staging folder holding only what apps/vscode/.vscodeignore lets through: run at the root it walks the whole
+// tree first, rust/target included (49 GB, about a minute of a one-second package, measured 2026-10-21). The folder has the
+// package's layout: the manifest, its nls files and dist/extension.cjs come from apps/vscode, the shared page, picker, icons,
+// README, CHANGELOG and LICENSE from the repository root
 const root = fileURLToPath(new URL('..', import.meta.url));
-const { name, version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+const app = join(root, 'apps', 'vscode');
+const { name, version } = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8'));
 const args = process.argv.slice(2);
 const allTargets = SIDECAR_TARGETS.flatMap(t => t.vsce);
 const hostTarget = targetFor(hostPlatform()).vsce[0];
 const targets = args.includes('--all') ? allTargets : args.length ? args : [hostTarget];
 const vsce = join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'vsce.cmd' : 'vsce');
 
-// The files .vscodeignore lets through: it ignores everything (`**`) and lists the package's files as `!` exceptions.
-// bin/ is left out, since each target gets its own sidecar
+// The files .vscodeignore lets through, by their path in the package: it ignores everything (`**`) and lists the package's
+// files as `!` exceptions, each looked up in apps/vscode first and then the repository root. bin/ is left out, since each
+// target gets its own sidecar
 function packageFiles() {
-  const patterns = readFileSync(join(root, '.vscodeignore'), 'utf8').split(/\r?\n/).map(l => l.trim()).filter(l => l.startsWith('!')).map(l => l.slice(1));
-  return [...new Set(patterns.filter(p => !p.startsWith('bin/')).flatMap(p => globSync(p, { cwd: root })))].filter(f => statSync(join(root, f)).isFile());
+  const patterns = readFileSync(join(app, '.vscodeignore'), 'utf8').split(/\r?\n/).map(l => l.trim()).filter(l => l.startsWith('!')).map(l => l.slice(1));
+  const files = new Map();
+  for (const base of [app, root]) {
+    for (const f of patterns.filter(p => !p.startsWith('bin/')).flatMap(p => globSync(p, { cwd: base }))) {
+      if (!files.has(f) && statSync(join(base, f)).isFile()) files.set(f, join(base, f));
+    }
+  }
+  return files;
 }
 
-for (const f of ['dist/extension.cjs', 'dist/picker.js', 'dist/webview/main.js']) {
-  if (!existsSync(join(root, f))) throw new Error(`${f} is missing: run \`pnpm build\` first`);
+for (const f of [join(app, 'dist/extension.cjs'), join(root, 'dist/picker.js'), join(root, 'dist/webview/main.js')]) {
+  if (!existsSync(f)) throw new Error(`${f} is missing: run \`pnpm build\` first`);
 }
 
 const stage = mkdtempSync(join(tmpdir(), 'acpira-vsix-'));
 try {
-  for (const f of [...packageFiles(), '.vscodeignore']) {
+  for (const [f, from] of [...packageFiles(), ['.vscodeignore', join(app, '.vscodeignore')]]) {
     mkdirSync(dirname(join(stage, f)), { recursive: true });
-    copyFileSync(join(root, f), join(stage, f));
+    copyFileSync(from, join(stage, f));
   }
   const bin = join(stage, 'bin');
   for (const target of targets) {

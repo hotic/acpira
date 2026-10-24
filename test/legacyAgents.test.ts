@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { legacyAgents } from '../src/host/legacyAgents';
+import { legacyAgents } from '../apps/vscode/src/legacyAgents';
 
 describe('legacy agent migration boundary', () => {
   const windows = { devin: { command: 'C:\\Users\\Spark\\AppData\\Local\\devin\\cli\\bin\\devin.exe', args: ['acp'] } };

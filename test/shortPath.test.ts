@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shortPath } from '../src/webview/settings/paths';
+import { shortPath } from '../packages/ui/settings/paths';
 
 describe('shortPath', () => {
   it('shortens POSIX paths under the workspace and home', () => {

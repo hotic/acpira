@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { ContextSlots, MAX_CONTEXT_ITEMS, pageOwner, parseContextPayload } from '../src/host/contextApi';
-import { MAX_TEXT_BYTES } from '../src/shared/attachments';
+import { ContextSlots, MAX_CONTEXT_ITEMS, pageOwner, parseContextPayload } from '../packages/engine-client/contextApi';
+import { MAX_TEXT_BYTES } from '../packages/shared/attachments';
 
 const source = { id: 'asgard.questCanvas', name: 'Quest canvas' };
 const item = { label: 'a.canvas 3 nodes', text: 'node a\nnode b', uri: 'file:///w/a.canvas' };
@@ -70,11 +70,11 @@ describe('live context slots', () => {
 describe('the extension manifest', () => {
   // A command only activates the extension from another extension's executeCommand when it is contributed
   it('contributes every command activate() registers, and hides the context API from the palette', () => {
-    const pkg = JSON.parse(readFileSync('package.json', 'utf8')) as {
+    const pkg = JSON.parse(readFileSync('apps/vscode/package.json', 'utf8')) as {
       contributes: { commands: { command: string }[]; menus: { commandPalette: { command: string; when: string }[] } };
     };
     const contributed = new Set(pkg.contributes.commands.map(c => c.command));
-    const registered = [...readFileSync('src/host/extension.ts', 'utf8').matchAll(/register(?:TextEditor)?Command\('([^']+)'/g)].map(m => m[1]!);
+    const registered = [...readFileSync('apps/vscode/src/extension.ts', 'utf8').matchAll(/register(?:TextEditor)?Command\('([^']+)'/g)].map(m => m[1]!);
     expect(registered.filter(c => !contributed.has(c))).toEqual([]);
     for (const c of ['acpira.context.set', 'acpira.context.add']) {
       expect(pkg.contributes.menus.commandPalette).toContainEqual({ command: c, when: 'false' });

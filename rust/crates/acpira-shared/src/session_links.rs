@@ -1,4 +1,4 @@
-//! Session links, mirroring src/shared/sessionLinks.ts: `acpira://session/<id>` is the canonical form tool results write; the
+//! Session links, mirroring packages/shared/sessionLinks.ts: `acpira://session/<id>` is the canonical form tool results write; the
 //! VS Code page copies a clickable `vscode://hotic.acpira/session/<id>` instead. Both sides run test/fixtures/session-links.json
 
 pub const SESSION_LINK_PREFIX: &str = "acpira://session/";

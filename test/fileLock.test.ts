@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { withFileLock, writeAtomic } from '../src/host/store/fileLock';
+import { withFileLock, writeAtomic } from '../apps/vscode/src/store/fileLock';
 
 const TSX = fileURLToPath(new URL('../node_modules/.bin/tsx', import.meta.url));
 const WORKER = fileURLToPath(new URL('./lock-worker.ts', import.meta.url));

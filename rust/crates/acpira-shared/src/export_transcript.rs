@@ -1,4 +1,4 @@
-//! Transcript → Markdown for reading (mirror of src/shared/exportTranscript.ts), and plain text holding only what was said
+//! Transcript → Markdown for reading (mirror of packages/shared/exportTranscript.ts), and plain text holding only what was said
 
 use crate::transcript::*;
 

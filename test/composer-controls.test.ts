@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { chipTags, composerControls, effortOptions, familyLabel, fastOn, fastValue, isFastControl, isUltraLevel, levelShort, modelConfigChip, presentReasoning, reasoningChip, reasoningVisible, thoughtCorrection } from '../src/shared/composerControls';
-import { groupModels } from '../src/shared/models';
-import type { ConfigControl } from '../src/shared/transcript';
+import { chipTags, composerControls, effortOptions, familyLabel, fastOn, fastValue, isFastControl, isUltraLevel, levelShort, modelConfigChip, presentReasoning, reasoningChip, reasoningVisible, thoughtCorrection } from '../packages/shared/composerControls';
+import { groupModels } from '../packages/shared/models';
+import type { ConfigControl } from '../packages/shared/transcript';
 
 const kimiThink = (value: string, names: string[]): ConfigControl => ({
   id: 'thinking', name: 'Thinking', category: 'thought_level', value,

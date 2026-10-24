@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { advanceGlyphs, EMPTY_GLYPHS, type GlyphState } from '../src/webview/chat/streamGlyphs';
+import { advanceGlyphs, EMPTY_GLYPHS, type GlyphState } from '../packages/ui/chat/streamGlyphs';
 
 const opts = { animate: true, stagger: 0, backlogMs: 48, durationMs: 100 };
 const contentOf = (state: GlyphState) => state.text.slice(0, state.settled) + state.glyphs.map(glyph => glyph.value).join('');
