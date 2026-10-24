@@ -1151,6 +1151,7 @@ export const de = {
   'subagents.page.agent': "Läuft in",
   'subagents.page.model': "Modell",
   'subagents.page.effort': "Denkaufwand",
+  'subagents.page.effortUnknown': "Stufen erscheinen, sobald dieses Modell einmal in einer Sitzung lief",
   'subagents.page.cliDefault': "CLI-Standard",
   'subagents.page.duty': "Aufgabe",
   'subagents.page.dutyGeneral': "Allgemein",

@@ -1154,6 +1154,7 @@ export const fr = {
   'subagents.page.agent': "S’exécute dans",
   'subagents.page.model': "Modèle",
   'subagents.page.effort': "Effort de raisonnement",
+  'subagents.page.effortUnknown': "Les niveaux s’affichent une fois ce modèle utilisé dans une session",
   'subagents.page.cliDefault': "Défaut de la CLI",
   'subagents.page.duty': "Fonction",
   'subagents.page.dutyGeneral': "Général",

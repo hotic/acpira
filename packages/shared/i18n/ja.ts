@@ -1158,6 +1158,7 @@ export const ja = {
   'subagents.page.agent': "実行先",
   'subagents.page.model': "モデル",
   'subagents.page.effort': "推論の強さ",
+  'subagents.page.effortUnknown': "このモデルをセッションで一度使うと段階が表示されます",
   'subagents.page.cliDefault': "CLI の既定",
   'subagents.page.duty': "職務",
   'subagents.page.dutyGeneral': "汎用",

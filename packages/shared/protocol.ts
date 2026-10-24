@@ -10,6 +10,7 @@ import type { StorageAction, StorageDetail, StorageOutcome, StorageView } from '
 import type { ProbeOutcome, ProviderAction, ProviderProbe, ProvidersView } from './providers';
 import type { SessionPatch } from './sessionPatch';
 import type { PageContextOp } from './picker';
+import type { ModelShapes } from './modelShapes';
 
 // Session export formats: Markdown to read, JSON for tooling, plain text holding only what was said (export_transcript.rs export_text)
 export type ExportFormat = 'markdown' | 'json' | 'text';
@@ -233,7 +234,8 @@ export type HostMsg =
   | { type: 'shared'; view: SharedView; error?: string }
   // The Storage tab; outcome for the action that triggered this reply, error when it failed
   | { type: 'storage'; view: StorageView; outcome?: StorageOutcome; error?: string }
-  | { type: 'controls'; agent: AgentId; controls: ConfigControl[] }
+  // shapes: the agent's remembered per-model parameters (modelShapes.ts), so a model picked in settings shows its own efforts
+  | { type: 'controls'; agent: AgentId; controls: ConfigControl[]; shapes?: ModelShapes }
   // The built-in agent's model sources; error when the action that triggered this reply failed
   | { type: 'providers'; view: ProvidersView; error?: string }
   // The answer to the providerProbe with the same id

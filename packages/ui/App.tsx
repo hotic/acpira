@@ -2,6 +2,7 @@ import type { ChatGptIntegrationStatus } from '@acpira/shared/chatgptIntegration
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountAction, AgentInstallProgress, EditTurnRequest, FileHit, HostMsg, InitState, NativeSessionsState, SessionHit, WebviewMsg } from '@acpira/shared/protocol';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl, FullDiffSource, SessionCategories, SessionControls, SessionSummary, SessionView, Turn } from '@acpira/shared/transcript';
+import type { ModelShapes } from '@acpira/shared/modelShapes';
 import type { HiddenMap, SettingsView } from '@acpira/shared/settings';
 import type { AgentInventory } from '@acpira/shared/inventory';
 import type { Locale } from '@acpira/shared/i18n';
@@ -158,6 +159,8 @@ export function App() {
   const [providers, setProviders] = useState<ProvidersState>();
   const [storage, setStorage] = useState<StorageState>();
   const [controls, setControls] = useState<Partial<Record<AgentId, ConfigControl[]>>>({});
+  // Each agent's remembered per-model parameters, answered with its controls (the persona page's effort list per model)
+  const [modelShapes, setModelShapes] = useState<Partial<Record<AgentId, ModelShapes>>>({});
   const controlsAsked = useRef(new Set<string>());
   // The import popover's listing; `agent` ties it to the request it answers so a stale reply can't overwrite a newer request
   const [nativeSessions, setNativeSessions] = useState<NativeSessionsState>();
@@ -275,6 +278,7 @@ export function App() {
         case 'controls':
           controlsAsked.current.delete(m.agent);
           setControls(c => ({ ...c, [m.agent]: m.controls }));
+          setModelShapes(s => ({ ...s, [m.agent]: m.shapes }));
           setRefreshing(r => { if (!r.has(m.agent)) return r; const next = new Set(r); next.delete(m.agent); return next; });
           break;
         // A reply for an agent the popover has since moved away from is dropped; the effect re-requested the new one already
@@ -498,6 +502,7 @@ export function App() {
         providers={providers}
         storage={storage}
         controls={controls}
+        modelShapes={modelShapes}
         refreshing={refreshing}
         env={{ home: init.home, cwd: session?.cwd ?? init.cwd }}
         page={page}

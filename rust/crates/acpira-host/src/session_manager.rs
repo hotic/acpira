@@ -19,7 +19,7 @@ use acpira_shared::agent_order::{AgentPrefs, arrange_agents};
 use acpira_shared::chatgpt_integration::{ChatGptIntegrationStatus, ProjectMirrors};
 use acpira_shared::export_transcript::{ExportInput, ExportLabels, export_file_name, export_markdown, export_text};
 use acpira_shared::inventory::{AgentHealth, AgentHealthStage, AgentRuntimeInfo, HealthSource};
-use acpira_shared::model_shapes::{is_model_control, learn_shape};
+use acpira_shared::model_shapes::{ModelShapes, is_model_control, learn_shape};
 use acpira_shared::protocol::{
   AccountAction, AccountActionStatus, AccountActionVia, AddAccountVia, EditTurnRequest, ExportFormat, HostMsg, RawJson, SessionHit,
   WebviewMsg,
@@ -1183,6 +1183,11 @@ impl SessionManager {
       }
     }
     vec![]
+  }
+
+  /// The parameters each of this agent's models came with, as remembered from its sessions (`model_shapes.rs`)
+  pub fn model_shapes(&self, agent: &str) -> Option<ModelShapes> {
+    self.state.lock().prefs.model_shapes.as_ref().and_then(|s| s.get(agent).cloned())
   }
 
   /// What a new session of this agent paints before session/new: the probe's or a stored session's options, and the modes

@@ -1134,6 +1134,7 @@
   "subagents.page.agent": "실행 위치",
   "subagents.page.model": "모델",
   "subagents.page.effort": "추론 강도",
+  "subagents.page.effortUnknown": "이 모델을 세션에서 한 번 실행하면 단계가 표시됩니다",
   "subagents.page.cliDefault": "CLI 기본값",
   "subagents.page.duty": "직무",
   "subagents.page.dutyGeneral": "일반",

@@ -1202,6 +1202,7 @@ export const zhCN = {
   'subagents.page.agent': "运行于",
   'subagents.page.model': "模型",
   'subagents.page.effort': "推理强度",
+  'subagents.page.effortUnknown': "这个模型在会话里跑过一次后才会列出档位",
   'subagents.page.cliDefault': "CLI 默认",
   'subagents.page.duty': "职能",
   'subagents.page.dutyGeneral': "通用",

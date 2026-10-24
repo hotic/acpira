@@ -1156,6 +1156,7 @@ export const es = {
   'subagents.page.agent': "Se ejecuta en",
   'subagents.page.model': "Modelo",
   'subagents.page.effort': "Esfuerzo de razonamiento",
+  'subagents.page.effortUnknown': "Los niveles aparecen cuando este modelo se haya usado en una sesión",
   'subagents.page.cliDefault': "Predeterminado del CLI",
   'subagents.page.duty': "Función",
   'subagents.page.dutyGeneral': "General",

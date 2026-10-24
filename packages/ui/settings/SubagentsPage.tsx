@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronLeft, Plus, Trash2, Users } from 'lucide-react';
 import type { AgentId, AgentInfo, ConfigControl } from '@acpira/shared/transcript';
 import type { SettingsView } from '@acpira/shared/settings';
-import { effortLabel } from '@acpira/shared/composerControls';
+import { effortLabel, SIDEKICK_EFFORT_CATEGORY } from '@acpira/shared/composerControls';
+import { shapeFor, type ModelShapes } from '@acpira/shared/modelShapes';
 import {
   DUTIES, DUTY_BRIEFS, dutyDefaults, GROUP_MAX, GROUP_MEMBERS_MAX, PERSONA_MAX, sanitizeGroups, sanitizePersonas,
   type RelayMode, type SubagentDuty, type SubagentGroup, type SubagentPersona,
@@ -37,13 +38,15 @@ interface PageProps {
   agents: AgentInfo[];
   // Per agent, the configOptions of its latest session: the model / effort choices
   controls: Partial<Record<AgentId, ConfigControl[]>>;
+  // Per agent, the parameters each model came with in its sessions: a picked model's own effort levels
+  shapes?: Partial<Record<AgentId, ModelShapes>>;
   on: SettingsHandlers;
 }
 
 // Settings → Orchestration: the cross-harness personas any session can summon (`ask_agent`, or `@name` in the composer),
 // then the groups of them one call summons together. Plain lists first; everything about one entry is one click in.
 // Every edit writes the whole list back
-export function SubagentsPage({ settings, agents, controls, on }: PageProps) {
+export function SubagentsPage({ settings, agents, controls, shapes, on }: PageProps) {
   const list = settings.subagents;
   const groups = settings.subagentGroups ?? [];
   const [open, setOpen] = useState<string>();
@@ -79,7 +82,7 @@ export function SubagentsPage({ settings, agents, controls, on }: PageProps) {
   const group = useGroupList(groups, list, on);
   if (current) {
     const update = (patch: Partial<SubagentPersona>) => save(list.map(p => (p.id === current.id ? { ...p, ...patch } : p)));
-    return <PersonaDetail persona={current} agents={usable} controls={controls[current.agent]} onBack={() => setOpen(undefined)}
+    return <PersonaDetail persona={current} agents={usable} controls={controls[current.agent]} shapes={shapes?.[current.agent]} onBack={() => setOpen(undefined)}
       onChange={update} onDelete={() => { setOpen(undefined); save(list.filter(p => p.id !== current.id)); }} />;
   }
   if (group.current) {
@@ -194,17 +197,18 @@ function GroupDetail({ group: g, personas, agents, onBack, onChange, onDelete }:
   </>;
 }
 
-function PersonaDetail({ persona: p, agents, controls, onBack, onChange, onDelete }: {
+function PersonaDetail({ persona: p, agents, controls, shapes, onBack, onChange, onDelete }: {
   persona: SubagentPersona;
   agents: AgentInfo[];
   controls?: ConfigControl[];
+  shapes?: ModelShapes;
   onBack: () => void;
   onChange: (patch: Partial<SubagentPersona>) => void;
   onDelete: () => void;
 }) {
   const DEFAULT = '';
   const modelControl = modelControlOf(controls);
-  const effortControl = controls?.find(c => c.category === 'thought_level' || /effort|reasoning/.test(c.id));
+  const effortControl = effortFor(controls, shapes, p.model);
   // Effort levels read as the composer chip names them (XHigh, not the CLI's Xhigh)
   const choices = (c: ConfigControl | undefined, value: string | undefined, effort = false): Option<string>[] => {
     const name = (o: { id: string; name: string }) => (effort ? effortLabel(o) : o.name);
@@ -233,13 +237,17 @@ function PersonaDetail({ persona: p, agents, controls, onBack, onChange, onDelet
           onChange={agent => onChange({ agent, model: undefined, effort: undefined })} />
       </Field>
       {/* The model list is the CLI's latest session's; until it is in, only the default (and a stored value) show */}
+      {/* Capped: Devin's Fusion pairs (`Fusion (<lead> + <sidekick>)`) would otherwise size the field past the row and
+          wrap it under its label; a longer name truncates, its list row keeps the full name as a tooltip */}
       <Field label={t('subagents.page.model')} desc={controls === undefined ? t('settings.loading') : undefined}>
-        <Select label={t('subagents.page.model')} value={p.model ?? DEFAULT} options={choices(modelControl, p.model)}
-          onChange={v => onChange({ model: v || undefined })} />
+        <Select label={t('subagents.page.model')} value={p.model ?? DEFAULT} className="max-w-pop-md"
+          options={choices(modelControl, p.model).map(o => ({ ...o, hint: o.label }))}
+          onChange={v => onChange({ model: v || undefined, effort: effortAfter(effortFor(controls, shapes, v || undefined), p.effort) })} />
       </Field>
-      {(effortControl || p.effort) && (
-        <Field label={t('subagents.page.effort')}>
-          <Select label={t('subagents.page.effort')} value={p.effort ?? DEFAULT} options={choices(effortControl, p.effort, true)}
+      {/* The levels are the picked model's own; a model no session has run yet has none to list */}
+      {(effortControl || p.effort || (effortControl === undefined && p.model)) && (
+        <Field label={t('subagents.page.effort')} desc={effortControl === undefined && p.model ? t('subagents.page.effortUnknown') : undefined}>
+          <Select label={t('subagents.page.effort')} value={p.effort ?? DEFAULT} options={choices(effortControl ?? undefined, p.effort, true)}
             onChange={v => onChange({ effort: v || undefined })} />
         </Field>
       )}
@@ -280,6 +288,24 @@ function PersonaDetail({ persona: p, agents, controls, onBack, onChange, onDelet
 
 function modelControlOf(controls: ConfigControl[] | undefined): ConfigControl | undefined {
   return controls?.find(c => c.category === 'model' || c.id === 'model');
+}
+
+const isEffort = (c: ConfigControl) => c.category !== SIDEKICK_EFFORT_CATEGORY && (c.category === 'thought_level' || /effort|reasoning/.test(c.id));
+
+// The effort select a persona's model comes with: the shape remembered from a session on it (an unseen id borrows a
+// family sibling's, as Devin's variants share parameters), else the latest controls when they are that model's own.
+// No model (the CLI's default) reads the latest controls. null: the model has no levels; undefined: not known yet
+function effortFor(controls: ConfigControl[] | undefined, shapes: ModelShapes | undefined, model: string | undefined): ConfigControl | null | undefined {
+  const modelControl = modelControlOf(controls);
+  if (!model || model === modelControl?.value) return controls?.find(isEffort) ?? (controls ? null : undefined);
+  const shape = modelControl ? shapeFor(shapes, modelControl, model) : shapes?.[model];
+  return shape ? shape.find(isEffort) ?? null : undefined;
+}
+
+// A model switch keeps the stored effort only while the new model offers it (or its levels are not known yet)
+function effortAfter(next: ConfigControl | null | undefined, effort: string | undefined): string | undefined {
+  if (next === undefined) return effort;
+  return next?.options.some(o => o.id === effort) ? effort : undefined;
 }
 
 // The row's second line: the CLI, its model one step fainter, then its reasoning effort, duty and mode as tags. Tone tells

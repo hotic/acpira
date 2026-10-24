@@ -7,6 +7,7 @@ use crate::appearance::Appearance;
 use crate::chatgpt_integration::ChatGptIntegrationStatus;
 use crate::i18n::Locale;
 use crate::inventory::AgentInventory;
+use crate::model_shapes::ModelShapes;
 use crate::providers::{ProbeOutcome, ProviderAction, ProviderProbe, ProvidersView};
 use crate::remote::{ConnectionOp, ConnectionView, RemoteDirEntry, SshHost};
 use crate::shared_config::{SharedAction, SharedView};
@@ -324,6 +325,9 @@ pub enum HostMsg {
   Controls {
     agent: AgentId,
     controls: Vec<ConfigControl>,
+    /// The agent's remembered per-model parameters, so a model picked on the settings page shows its own effort levels
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shapes: Option<ModelShapes>,
   },
   Files {
     seq: i64,
