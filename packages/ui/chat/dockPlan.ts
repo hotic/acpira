@@ -6,6 +6,10 @@ import { toolTodoEntries } from '@acpira/shared/todoTools';
 export function dockPlan(turns: Turn[], running: boolean): PlanEntry[] | undefined {
   const found = latestPlan(turns);
   if (!found) return undefined;
+  // A list written while planning is part of the plan, not work under way: the dock waits until that turn's plan is
+  // built (approved / executing), as Cursor's to-dos appear with Build. A drafted, pending or revised plan keeps it hidden
+  const turn = turns[found.index];
+  if (turn?.role === 'agent' && turn.blocks.some(b => b.type === 'plan_document' && b.status !== 'approved' && b.status !== 'executing')) return undefined;
   if (found.entries.some(entry => entry.status !== 'completed')) return found.entries;
   if (running && found.index === turns.length - 1) return found.entries;
   return undefined;

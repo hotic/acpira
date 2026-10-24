@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { PlanBlock, PlanEntry, ToolCallBlock, Turn } from '@acpira/shared/transcript';
+import type { AgentBlock, PlanBlock, PlanEntry, ToolCallBlock, Turn } from '@acpira/shared/transcript';
 import { dockPlan } from '../chat/dockPlan';
 
 const entry = (title: string, status: PlanEntry['status']): PlanEntry => ({ title, status });
@@ -29,6 +29,17 @@ describe('PlanBar dock visibility', () => {
       { role: 'agent', blocks: [done] },
     ];
     expect(dockPlan(turns, true)).toBe(done.entries);
+  });
+
+  it('waits for the plan to be built before docking the list written while planning', () => {
+    const doc = (status: 'ready' | 'rejected' | 'approved'): AgentBlock =>
+      ({ type: 'plan_document', id: 'plan', title: 'Plan', markdown: '# Plan', status }) as AgentBlock;
+    const planning = (status: 'ready' | 'rejected' | 'approved'): Turn[] =>
+      [{ role: 'user', text: 'plan it' }, { role: 'agent', blocks: [open, doc(status)] }];
+    expect(dockPlan(planning('ready'), true)).toBeUndefined();
+    // Revised and waiting for the next message: still the plan's steps, not work under way
+    expect(dockPlan([...planning('rejected'), { role: 'user', text: 'change step 3' }, { role: 'agent', blocks: [] }], true)).toBeUndefined();
+    expect(dockPlan(planning('approved'), true)).toBe(open.entries);
   });
 
   it('does not resurrect a finished list when a later prompt starts running', () => {

@@ -903,6 +903,8 @@ const app = acp.agent({ name: 'fake-agent' })
         '- A clip copied on the Mac shows up on Windows within one sync cycle',
       ].join('\n');
       const input = { plan, planFilePath: '/Users/test/.claude/plans/demo.md' };
+      // Claude writes its TodoWrite checklist while still planning, before ExitPlanMode
+      await send({ sessionUpdate: 'plan', entries: ['Protocol doc', 'SQLite store', 'Shelf window'].map(content => ({ content, priority: 'medium', status: 'pending' })) });
       await send({ sessionUpdate: 'tool_call', toolCallId: 'toolu_exit', title: 'Approve Plan', kind: 'switch_mode', status: 'pending', content: [] });
       await send({ sessionUpdate: 'tool_call_update', toolCallId: 'toolu_exit', rawInput: input,
         content: [{ type: 'content', content: { type: 'text', text: input.plan } }] });
