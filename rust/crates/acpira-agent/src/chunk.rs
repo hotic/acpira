@@ -997,6 +997,29 @@ pub struct Limits {
   /// After an overflow the running turn is folded whatever the estimate says: the provider counted more
   pub force_fold: bool,
   pub fixed: u64,
+  /// The provider's count of the call that crossed the threshold, against which the estimates are scaled
+  pub measured: Option<Measured>,
+}
+
+/// One call's prompt as the provider counted it, and how many of the shown items it carried
+#[derive(Debug, Clone, Copy)]
+pub struct Measured {
+  pub input: u64,
+  pub items: usize,
+}
+
+/// A goal in the estimate's units. The provider's count of the last call over this estimate of the same request
+/// scales it, so a tokenizer that counts source code at about three characters a token still folds down to the goal:
+/// Gemini 4 Argon counted 403k for a request estimated at about 280k, and a fold aimed at 200k kept 286k (2026-10-23).
+/// The ratio stays within half to three times, and a count of a view that has changed since is ignored
+fn in_estimate_units(goal: u64, limits: &Limits, items: &[Item]) -> u64 {
+  let Some(m) = limits.measured.filter(|m| m.input > 0 && m.items <= items.len()) else { return goal };
+  let estimated = limits.fixed + items[..m.items].iter().map(item_tokens).sum::<u64>();
+  if estimated == 0 {
+    return goal;
+  }
+  let ratio = (m.input as f64 / estimated as f64).clamp(0.5, 3.0);
+  (goal as f64 / ratio) as u64
 }
 
 /// A step starts at an assistant item whose earlier calls all have their results
@@ -1065,7 +1088,7 @@ pub fn run(server: &Server, session: &Session, reason: Reason, limits: &Limits) 
   }
   let mut tail_from = closed_end;
   // The running turn, when the history still takes too much: its earlier steps are folded, the latest stays verbatim
-  if let (Some(r), Some(goal)) = (running, limits.goal) {
+  if let (Some(r), Some(goal)) = (running, limits.goal.map(|g| in_estimate_units(g, limits, &st.items))) {
     let continuing = partial.as_ref().is_some_and(|p| p.from == r);
     let projection: u64 = render(&chunks, budget).iter().map(item_tokens).sum();
     let tail: u64 = st.items[body + (closed_end - base)..].iter().map(item_tokens).sum();
@@ -1198,6 +1221,18 @@ mod tests {
   }
   fn cwd() -> &'static Path {
     Path::new("/w")
+  }
+
+  #[test]
+  fn the_goal_is_scaled_by_the_providers_count() {
+    // Two items of 100 estimated tokens each (384 characters + 4), 300 fixed: 500 estimated
+    let items = vec![user(&"x".repeat(384)), user(&"x".repeat(384)), user("later")];
+    let limits = |input, items| Limits { usable: 0, goal: None, force_fold: false, fixed: 300, measured: Some(Measured { input, items }) };
+    assert_eq!(in_estimate_units(1000, &limits(750, 2), &items), 666, "counted 1.5 times the estimate");
+    assert_eq!(in_estimate_units(1000, &limits(50_000, 2), &items), 333, "held at three times");
+    assert_eq!(in_estimate_units(1000, &limits(100, 2), &items), 2000, "held at half");
+    assert_eq!(in_estimate_units(1000, &limits(750, 9), &items), 1000, "a count of another view is ignored");
+    assert_eq!(in_estimate_units(1000, &Limits { measured: None, ..limits(0, 0) }, &items), 1000);
   }
 
   #[test]
