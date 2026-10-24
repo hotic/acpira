@@ -1,5 +1,5 @@
 import { createContext, useContext, useLayoutEffect, useRef, useState, type MouseEvent } from 'react';
-import { ArrowLeft, ArrowUpRight, ListTodo } from 'lucide-react';
+import { ArrowLeft, ExternalLink } from 'lucide-react';
 import type { ConfigControl, PermissionBlock, PlanDocumentBlock, SessionControls } from '@acpira/shared/transcript';
 import { groupModels, variantLabel } from '@acpira/shared/models';
 import { composerControls, reasoningChip } from '@acpira/shared/composerControls';
@@ -9,15 +9,12 @@ import { getLocale, t } from '../i18n';
 import { Popover } from '../ui/Popover';
 import { PanelFooter, PanelHeader, OptionContent } from '../ui/Panel';
 import { RadioGroup } from '../ui/RadioGroup';
-import { Row } from '../ui/Row';
-import { cn } from '../ui/cn';
 import { useScrollFade } from '../ui/useScrollFade';
 import { ModelOptions } from './ModelPicker';
 import { ModelMark } from './ModelMark';
 import { Prose } from './Prose';
 import { permissionOption } from './permissionOptions';
 import { reviseOption } from './planReview';
-import { focusMainComposer } from './useComposerDraft';
 
 type ExecutionModel = { configId: string; value: string };
 export const PlanDocumentContext = createContext<{
@@ -57,8 +54,9 @@ export function PlanDocument({ block, permission: suppliedPermission, onChoose }
     : model?.options.find(o => o.id === choice?.value)?.name;
   const busy = !ctx.ready || (ctx.running && !permission) || block.status === 'draft' || block.status === 'executing';
   const primary = permission?.options.find(o => o.kind === 'allow_once');
-  // Kimi's reject-and-exit is distinct from revising in Plan mode; keep it in the
-  // additional approvals menu instead of relabeling it as a revision.
+  // Revising is a message, as in Cursor: the card has no Revise button, and a send in the composer answers this option
+  // and queues the words as the next prompt (Shell). It stays out of the extra approvals; Kimi's reject-and-exit is not
+  // a revision and remains there
   const revise = permission && reviseOption(permission);
   const extra = permission?.options.filter(o => o.id !== primary?.id && o.id !== revise?.id) ?? [];
   const started = block.status === 'approved' || block.status === 'executing';
@@ -68,32 +66,25 @@ export function PlanDocument({ block, permission: suppliedPermission, onChoose }
     else if (permission) onChoose(permission.id, optionId);
   };
   const canBuild = !busy && !!ctx.build && !!block.markdown;
-  // The header carries the title, so a body that opens with the same `# Title` drops that line
+  // No header, title or status word: the card is the plan itself, and the actions bar below shows it can still be
+  // built. The leading `# Title` is dropped too; the card's accessible name and the plan file keep it
   const { title, body } = planHeading(block);
-  const status = permission && !started ? t('plan.pendingApproval') : t(`plan.status.${block.status}`);
   const fade = useScrollFade<HTMLDivElement>();
   return (
-    <Card className="plan-document flex min-w-0 flex-col overflow-hidden" data-plan-document={block.id} data-plan-status={block.status}>
-      {/* Header: what this is, where it stands, and the file behind it */}
-      <div className="flex min-w-0 items-center gap-gap py-gap-half pr-gap-half pl-pad">
-        <Row dense className="min-w-0 flex-1" lead={<ListTodo className="size-icon" strokeWidth={1.5} />}>
-          <h3 className="m-0 min-w-0 truncate text-2 font-medium text-fg-strong" title={title}>{title}</h3>
-        </Row>
-        <span className={cn('shrink-0 text-3', permission && !started ? 'text-fg-1' : 'text-fg-3')}>{status}</span>
-        <IconButton size="sm" className="shrink-0" title={t('plan.openFile')} aria-label={t('plan.openFile')}
+    <Card className="plan-document group/plan relative flex min-w-0 flex-col overflow-hidden" aria-label={title}
+      data-plan-document={block.id} data-plan-status={block.status}>
+      {/* Open-in-editor: the file viewer's glyph, placed and revealed like a code block's copy button */}
+      <div className="absolute z-3 top-gap-half right-gap-half opacity-0 transition-opacity duration-(--code-copy-duration) ease-out group-hover/plan:opacity-100 group-focus-within/plan:opacity-100 [@media(hover:none)]:opacity-100 motion-reduce:transition-none">
+        <IconButton size="sm" className="bg-bg-2 ring ring-conversation-line" title={t('plan.openFile')} aria-label={t('plan.openFile')}
           onClick={() => ctx.open?.(block.id)} disabled={!ctx.open}>
-          <ArrowUpRight strokeWidth={1.5} />
+          <ExternalLink strokeWidth={1.5} />
         </IconButton>
       </div>
-      {/* Body: indented to the header's label column; a long plan scrolls inside the card so the actions stay in reach */}
-      {body && <div ref={fade} className="scroll-fade scroll-thin max-h-plan-body overflow-y-auto pt-gap-half pr-pad pb-pad pl-pad">
-        <div className="pl-indent"><Prose block={{ type: 'text', markdown: body }} /></div>
+      {/* Body at the card's own inset; a long plan scrolls inside so the actions stay in reach */}
+      {body && <div ref={fade} className="scroll-fade scroll-thin max-h-plan-body overflow-y-auto p-pad">
+        <Prose block={{ type: 'text', markdown: body }} />
       </div>}
-      {!started && <div className="@container flex min-w-0 items-center justify-between gap-gap border-t border-line py-gap-half pr-gap-half pl-pad">
-        {/* Revising is a message, as in Cursor: the button only hands the composer the focus, and sending there answers
-            Revise and queues the words as the next prompt (Shell). Rejecting at once ended Claude's turn with nothing to go on */}
-        {revise ? <Button variant="secondary" disabled={!ctx.ready} title={t('composer.placeholder.revisePlan')} onClick={focusMainComposer}
-          className="h-ctl-sm shrink-0">{t('plan.revise')}</Button> : <span />}
+      {!started && <div className="@container flex min-w-0 items-center justify-end gap-gap border-t border-line py-gap-half pr-gap-half pl-pad">
         <div className="ml-auto flex min-w-0 items-center gap-gap">
           {(model || extra.length > 0) && <Popover.Root open={menuOpen} onOpenChange={setMenuOpen}>
             <Popover.Trigger render={<Chip aria-label={t('plan.approvalsAria')} title={executor ?? t('plan.moreApprovals')}

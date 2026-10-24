@@ -932,8 +932,7 @@ export function Shell(p: ShellProps) {
                     data-plan-dock
                     className={cn('pointer-events-none absolute inset-x-0 bottom-0 z-10', wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--content-w)+2*var(--page))]')}
                   >
-                    {/* Until the plan is built its steps are the card's; the dock comes back with the execution's progress */}
-                    {!review && <PlanBar key={`plan:${p.activeSessionId}`} turns={p.turns} running={p.running} />}
+                    <PlanBar key={`plan:${p.activeSessionId}`} turns={p.turns} running={p.running} />
                   </div>
                   {(toasts.length > 0 || (desktop && shellToasts.length > 0)) && (
                     <div ref={toastRef} className="pointer-events-none absolute inset-x-0 bottom-[calc(var(--gap)+var(--thread-dock-height,0px))] z-10 flex flex-col items-center gap-1 px-page">
