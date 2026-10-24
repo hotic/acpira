@@ -26,6 +26,13 @@ export const STREAM_MOTION: StreamMotion = {
   animation: { animation: 'acpGlyph', sep: 'char', duration: STREAM_DURATION_MS, stagger: STREAM_STAGGER_MS, maxBacklogMs: STREAM_BACKLOG_MS },
 };
 
+// Renderer bench switch (lab/tauri-shell), set on the page before the bundle loads: `nopace` drops the reveal pacing and
+// `noglyph` the per-glyph entrance, so each is measured apart from the other and from `motion: none`, which also stops
+// every transition. Production pages never set it
+const BENCH = (globalThis as { __acpiraStreamBench?: unknown }).__acpiraStreamBench;
+const BENCH_NO_PACE = BENCH === 'nopace';
+const BENCH_NO_GLYPH = BENCH === 'noglyph';
+
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
 // First grapheme boundary at or after `n`, so a cut never splits a surrogate pair, a ZWJ emoji or a combining mark.
@@ -74,7 +81,7 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 // it shows at once and only what arrives afterwards is paced; the next chunk measures the rate from scratch
 export function useSmoothText(text: string, streaming: boolean, pace: StreamPace | false = STREAM_PACE, resume = false) {
   const { motion } = useAppearance();
-  const off = !pace || motion === 'none';
+  const off = !pace || motion === 'none' || BENCH_NO_PACE;
   const [count, setCount] = useState(() => (streaming && !off && !resume ? 0 : text.length));
   // throughput: chars / ms of the incoming stream; speed: chars / ms actually revealed
   const state = useRef({ target: resume ? text : '', pos: count, at: 0, throughput: 0, speed: 0, streaming });
@@ -131,5 +138,5 @@ export function useStreamMotion(streaming: boolean, config: StreamMotion = STREA
     const timer = setTimeout(() => setSettling(false), maxBacklogMs + duration);
     return () => clearTimeout(timer);
   }, [streaming, motion, maxBacklogMs, duration]);
-  return { animated: motion === 'none' ? false as const : config.animation, animating: streaming || settling };
+  return { animated: motion === 'none' || BENCH_NO_GLYPH ? false as const : config.animation, animating: streaming || settling };
 }
