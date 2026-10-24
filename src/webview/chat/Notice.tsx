@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import type { AccountInfo, AgentInfo, AuthMethodInfo, SessionStatus } from '@shared/transcript';
 import type { AccountAction, AddAccountVia } from '@shared/protocol';
 import { Card } from '../ui/Card';
@@ -27,14 +28,32 @@ export interface NoticeProps {
   onTakeOver?: () => void;
 }
 
+// How long a session may be starting before the connecting row shows
+const CONNECTING_DELAY_MS = 400;
+
+// True once `on` has held for CONNECTING_DELAY_MS; false again as soon as it drops
+function useLate(on: boolean): boolean {
+  const [late, setLate] = useState(false);
+  useEffect(() => {
+    if (!on) { setLate(false); return; }
+    const timer = setTimeout(() => setLate(true), CONNECTING_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [on]);
+  return on && late;
+}
+
 // A bar pinned above the composer while the session isn't ready: connecting / login required / error / read-only. Renders nothing when ready.
 // For agents on the account layer, the main login paths are "import the local CLI login / sign in a new account in the terminal" — credentials from these two are saved;
 // the agent's own browser login only authenticates this one process and isn't saved, so it's labeled as this-session-only
 // A locked credential store (the macOS keychain in an SSH session) keeps the saved logins unreadable, so importing or signing in again
 // would only duplicate them: unlocking is the one action then
 export function Notice({ status, error, agent, authMethods, accounts, accountId, accountAction, onLogin, onRetry, onNewSession, onSelectAccount, onAddAccount, onUnlock, onTakeOver }: NoticeProps) {
+  const late = useLate(status === 'starting');
   if (status === 'ready') return null;
   if (status === 'starting') {
+    // A warm agent answers within a few frames: the row only comes up once starting has taken a moment, so switching agents
+    // on the start page does not flash it (reported 2026-10-23)
+    if (!late) return null;
     const label = t('notice.connecting', { agent: agent.name });
     // Match the composer's text inset. Only the connection glyph loops;
     // the complete status fades in together and its label stays still.
