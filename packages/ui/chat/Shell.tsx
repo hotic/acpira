@@ -1192,9 +1192,12 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
   // The fork boundary follows the exchange that holds the last copied turn, as a row of its own: inside that exchange it
   // would stand after the reply's action row, which the exchange spacing keys off
   const forkAfter = forkedFrom ? exchangeSlots.filter(e => e.key <= forkedFrom.turnIndex).length - 1 : -1;
-  // The right padding gives the scrollbar gutter back, so the transcript's edges line up with the header and the dock
+  // The right padding gives the scrollbar gutter back, so the transcript's edges line up with the header and the dock.
+  // Focusable (tabIndex -1) so a press in the transcript takes focus off the composer: VS Code's webview runs ⌘C as
+  // execCommand('copy') after refocusing the last focused element whenever the body holds focus (pre/index.html, 1.143),
+  // which moved the selection into the composer and copied nothing
   return (
-    <div ref={ref} data-thread className="thread-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter [container-type:size] [overflow-anchor:none]">
+    <div ref={ref} data-thread tabIndex={-1} className="thread-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter outline-none [container-type:size] [overflow-anchor:none]">
       {/* The tail clearance equals the message gap, so the last message sits as far from the composer as from the message above it */}
       <div key={replayKey} ref={bodyRef} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-chat-column')}><FollowContext.Provider value={follow}><QuietEntranceContext.Provider value={window.quiet}>
         {exchangeSlots.slice(window.start).map((slot, offset) => {
