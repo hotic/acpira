@@ -91,9 +91,9 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
   const lastAgent = transcript ? transcript.turns.reduce((at, turn, i) => (turn.role === 'agent' ? i : at), -1) : -1;
   return (
     <>
-      {/* The main thread's column: page margin on the scroller, turns and the task card carry their own --pad */}
-      <div ref={scroll} className="scroll-thin min-h-0 min-w-0 flex-1 overflow-y-auto px-page">
-        <div ref={body} className={cn('mx-auto flex min-w-0 flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-(--content-w)')}>
+      {/* The main thread's column: share its dock margins and scrollbar gutter, with turns carrying their own --pad */}
+      <div ref={scroll} className="scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter">
+        <div ref={body} className={cn('mx-auto flex min-w-0 flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-chat-column')}>
           {node.task !== undefined && <TaskCard task={node.task} />}
           {receiptOnly(node) ? (
             <>
