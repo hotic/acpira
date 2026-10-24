@@ -1,9 +1,9 @@
 # One install and one lockfile for every JavaScript package in the repository. packages/ holds the code the shells share,
-# apps/ the shells that are Node packages (the IntelliJ plugin and the iOS app build with Gradle and Xcode)
+# apps/ the shells that are Node packages (the desktop app, the IntelliJ plugin and the iOS app build with Cargo, Gradle and
+# Xcode)
 packages:
   - packages/*
   - apps/vscode
-  - apps/desktop
 
 # Every external version lives here; a package.json names its dependencies with `catalog:`
 catalog:
@@ -32,8 +32,6 @@ catalog:
   border-beam: 1.3.0
   class-variance-authority: ^0.7.1
   clsx: 2.1.1
-  electron: 45.0.0
-  electron-builder: 26.15.3
   esbuild: ^0.28.2
   img-fx: 0.5.1
   katex: 0.16.47
@@ -56,7 +54,3 @@ onlyBuiltDependencies:
   - '@vscode/vsce-sign'
   - esbuild
   - keytar
-# Squirrel.Windows tooling under electron-builder; the desktop app does not build Squirrel installers. Electron itself has no
-# install script: it downloads its binary the first time it is required
-ignoredBuiltDependencies:
-  - electron-winstaller

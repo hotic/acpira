@@ -1,0 +1,40 @@
+[package]
+name = "acpira-desktop-tauri"
+description = "The Acpira desktop app: the chat webview and the Rust engine outside any IDE, in a Tauri shell"
+version = "1.10.8"
+edition = "2024"
+license = "MIT"
+publish = false
+default-run = "acpira-desktop-tauri"
+
+# A workspace of its own: Tauri needs webkit2gtk on Linux, which the rust/ workspace's gates must not depend on
+[workspace]
+
+[features]
+# The in-app hook the smoke run drives (scripts/smoke.mjs); never in a release build
+smoke = []
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+acpira-desktop = { path = "../../rust/crates/acpira-desktop" }
+acpira-shared = { path = "../../rust/crates/acpira-shared" }
+# devtools: View › Developer Tools in a release build too (a private WebKit API on macOS; the app is not on the App Store)
+tauri = { version = "2.12", features = ["devtools"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.149", features = ["preserve_order", "raw_value"] }
+tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "io-util", "net", "process", "sync", "time", "fs"] }
+uuid = { version = "1.24", features = ["v4"] }
+rfd = { version = "0.15", default-features = false, features = ["tokio"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSUserDefaults", "NSDictionary", "NSArray", "NSError"] }
+objc2-user-notifications = { version = "0.3", features = ["UNUserNotificationCenter", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSound", "UNNotificationTrigger", "UNNotificationSettings", "block2"] }
+block2 = "0.6"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
+codegen-units = 1

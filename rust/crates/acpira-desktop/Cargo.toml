@@ -1,0 +1,22 @@
+[package]
+name = "acpira-desktop"
+description = "The desktop shell's logic without any UI toolkit: the engine client, its launch and the system side (apps/desktop)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+acpira-shared.workspace = true
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+# The real engine in-process for the client's end-to-end test (tests/engine.rs)
+acpira-host = { path = "../acpira-host" }
+tempfile.workspace = true

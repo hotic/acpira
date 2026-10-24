@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The chat and browser pages on acpira-app://localhost call the app's own commands only",
+  "windows": ["*"],
+  "permissions": ["core:default"]
+}

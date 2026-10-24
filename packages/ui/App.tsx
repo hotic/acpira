@@ -35,15 +35,15 @@ declare global {
   // `font`: the configured UI face, for fontPreload.ts (VS Code only says so; other hosts get the default).
   // `sessionLinkBase`: the clickable session-link base the VS Code shell injects (chat/sessionLinkBase.ts).
   // `host: 'browser'`: the browser panel's webview (main.tsx renders browser/BrowserPanel there).
-  // `shell: 'desktop'`: the standalone desktop app (apps/desktop/src/page.ts), which turns on the desktop layout
-  // `tab`: a browser page shown as a tab of the desktop tool panel (apps/desktop/src/page.ts), whose transport comes from the chat
+  // `shell: 'desktop'`: the standalone desktop app (rust/crates/acpira-desktop/src/page.rs), which turns on the desktop layout
+  // `tab`: a browser page shown as a tab of the desktop tool panel (rust/crates/acpira-desktop/src/page.rs), whose transport comes from the chat
   interface Window { __acpira?: { host: 'sidebar' | 'editor' | 'browser'; font?: Appearance['font']; sessionLinkBase?: string; shell?: 'desktop'; tab?: string } }
 }
 
 // Always through the memo: acquireVsCodeApi() throws when called twice, and other components (Link) reach the api via vscodeApi()
 const vscode = vscodeApi();
 const post = (m: WebviewMsg) => vscode.postMessage(m);
-// The desktop app's page (apps/desktop/src/page.ts): its frame, start page and project registry (Shell's `desktop`)
+// The desktop app's page (rust/crates/acpira-desktop/src/page.rs): its frame, start page and project registry (Shell's `desktop`)
 const desktop = desktopShell();
 
 // Replies return to the originating webview. Drafts survive a rejected edit.

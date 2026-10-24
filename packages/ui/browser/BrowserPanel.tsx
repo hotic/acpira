@@ -56,7 +56,7 @@ const TOOL = 'disabled:pointer-events-none disabled:opacity-40';
 // picker's window), but they are served from the proxy's http origin, so anything from another origin is dropped, and a
 // message is used only in the shape it has
 const str = (v: unknown): v is string => typeof v === 'string';
-// A browser tab of the desktop tool panel (apps/desktop/src/page.ts names the tab), not a window of its own. A tab on the files
+// A browser tab of the desktop tool panel (rust/crates/acpira-desktop/src/page.rs names the tab), not a window of its own. A tab on the files
 // layout's stage (`stage` in its address, panel/ToolPanel.tsx BrowserFrame) is the stage's own sheet, so it keeps the plain
 // surface of a window instead of lying on the canvas
 const IN_PANEL = typeof window !== 'undefined' && !!window.__acpira?.tab && !new URLSearchParams(location.search).has('stage');

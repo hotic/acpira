@@ -18,7 +18,7 @@ pub enum PlanTarget {
   Markdown { markdown: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "method", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum PlatformRequest {
   OpenResolvedFile {
@@ -85,16 +85,16 @@ pub enum PlatformRequest {
 }
 
 /// openBrowser's answer: the address the user's side shows, and how an earlier open_browser tab was reused
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserOpened {
   #[serde(default)]
   pub url: String,
-  #[serde(default)]
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   pub reused: Option<BrowserReuse>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum BrowserReuse {
   /// The tab already showed that URL: brought to the front, not reloaded
@@ -104,7 +104,7 @@ pub enum BrowserReuse {
 }
 
 /// The open-file action a toast carries: the button label (already localized) and the absolute path behind it
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToastOpen {
   pub label: String,
   pub path: String,

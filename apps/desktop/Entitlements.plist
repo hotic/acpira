@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- Hardened runtime with no exceptions: WKWebView's content process carries WebKit's own entitlements, and the engine and
+     the agents run as executables of their own -->
+<dict/>
+</plist>

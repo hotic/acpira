@@ -5,7 +5,7 @@ import { panel } from './store';
 
 // The tool panel's browser tabs run the browser page (host 'browser', webview/browser/BrowserPanel.tsx) in a frame of this
 // page's own origin, one per tab. A frame gets no preload of its own: its page takes its transport from here
-// (apps/desktop/src/page.ts sets `window.__acpiraApi = parent.__acpiraBrowserTab(tab)` before the bundle runs). Its messages go
+// (rust/crates/acpira-desktop/src/page.rs sets `window.__acpiraApi = parent.__acpiraBrowserTab(tab)` before the bundle runs). Its messages go
 // up tagged with the tab (`panelBrowser`), the shell's answers come back the same way and are posted into that frame. The
 // pages the browser shows live in frames inside those, on loopback origins, which cannot reach this window
 
@@ -28,7 +28,7 @@ export function installBrowserTabs() {
     getState: () => undefined,
     setState: () => {},
   });
-  // The frames follow this page's theme class (the system appearance, apps/desktop/src/preload.ts): no preload runs in them
+  // The frames follow this page's theme class (the system appearance, apps/desktop/src/init.js): no preload runs in them
   new MutationObserver(() => { for (const frame of frames.values()) syncTheme(frame); })
     .observe(document.body, { attributes: true, attributeFilter: ['class'] });
 }
