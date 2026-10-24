@@ -8,6 +8,7 @@ use crate::chatgpt_integration::ChatGptIntegrationStatus;
 use crate::i18n::Locale;
 use crate::inventory::AgentInventory;
 use crate::providers::{ProbeOutcome, ProviderAction, ProviderProbe, ProvidersView};
+use crate::remote::{ConnectionOp, ConnectionView, RemoteDirEntry, SshHost};
 use crate::shared_config::{SharedAction, SharedView};
 use crate::storage::{StorageAction, StorageDetail, StorageOutcome, StorageView};
 use crate::settings::{HiddenMap, SettingsView};
@@ -385,6 +386,25 @@ pub enum HostMsg {
     seq: i64,
     files: Vec<ProjectChange>,
   },
+  /// SSH hosts (helloOk.features has `remote`): the list on every change
+  Connections {
+    connections: Vec<ConnectionView>,
+  },
+  /// The add dialog's hosts from ~/.ssh/config
+  SshHosts {
+    hosts: Vec<SshHost>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+  },
+  /// A folder of a host for the remote folder picker, echoing its request's seq
+  RemoteDir {
+    seq: i64,
+    alias: String,
+    path: String,
+    entries: Vec<RemoteDirEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+  },
   /// A terminal's output (terminal.rs), to every page viewing it. Posted at once, never batched: every chunk counts
   TerminalOutput {
     id: String,
@@ -461,6 +481,10 @@ impl HostMsg {
       HostMsg::ProjectStatus { .. } => "projectStatus",
       HostMsg::ProjectFile { .. } => "projectFile",
       HostMsg::SessionChanges { .. } => "sessionChanges",
+      HostMsg::Connections { .. } => "connections",
+      HostMsg::SshHosts { .. } => "sshHosts",
+      // Each listing answers its own request
+      HostMsg::RemoteDir { .. } => "remoteDir",
       HostMsg::TerminalOutput { .. } => "terminalOutput",
       HostMsg::TerminalState { .. } => "terminalState",
     }
@@ -536,6 +560,20 @@ pub enum WebviewMsg {
     nth: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     subagent_id: Option<String>,
+    #[serde(deserialize_with = "crate::num::lenient_i64")]
+    seq: i64,
+  },
+  /// SSH hosts: the current list (pushed on every change after), an edit of one host, the ~/.ssh/config hosts, a
+  /// folder of a host (`path` absent: its home)
+  Connections,
+  ConnectionOp {
+    op: ConnectionOp,
+  },
+  SshHosts,
+  RemoteDir {
+    alias: String,
+    #[serde(default)]
+    path: Option<String>,
     #[serde(deserialize_with = "crate::num::lenient_i64")]
     seq: i64,
   },

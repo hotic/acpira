@@ -94,6 +94,24 @@ impl ClientHandlers for SessionHandlers {
     })
   }
 
+  fn on_remote_tool(&self, req: Value, cancel: Cancel) -> BoxFuture<Result<Value, RpcError>> {
+    let s = self.live();
+    Box::pin(async move {
+      match s {
+        Some(s) => {
+          let me = Arc::downgrade(&s);
+          let notify: crate::acp::session::remote::Notify = Arc::new(move |method: &str, params: Value| {
+            if let Some(p) = me.upgrade().and_then(|s| s.core.lock().proc.clone()) {
+              p.notify(method, params);
+            }
+          });
+          s.on_remote_tool(req, cancel, notify).await
+        }
+        None => Err(RpcError::new(-32603, "the session has moved on to another process")),
+      }
+    })
+  }
+
   fn on_stderr(&self, line: &str) {
     let Some(s) = self.live() else { return };
     s.log(&format!("stderr: {line}"));

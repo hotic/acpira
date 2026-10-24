@@ -254,6 +254,7 @@ impl Harness {
       shared_mcp: None,
       host_mcp: None,
       claim: None,
+      remote: None,
     };
     Harness { deps, logs, changes, dir, agent: id.to_owned(), listeners }
   }

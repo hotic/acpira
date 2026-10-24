@@ -148,3 +148,40 @@ async fn a_workspace_shell_starts_new_sessions_in_its_workspace_whatever_session
   assert_eq!(m.m.folder_for(Some(&m.v), None).as_deref(), Some(w.as_str()));
   m.dispose().await;
 }
+
+/// `ssh://` folders (docs/dev/remote.md): listed in one spelling, checked on the host, and under local run only the
+/// built-in agent starts there
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_folder_on_an_ssh_host_is_a_project_in_one_spelling() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let home = folder(dir.path(), "home");
+  let lab = crate::remote_connections::Lab::new();
+  let real = lab.path().join("hostfs");
+  std::fs::create_dir_all(real.join("work")).unwrap();
+  lab.map_root("/acpira-virtual-host", &real);
+  let connections = lab.engine("engine");
+  connections.op(acpira_shared::remote::ConnectionOp::Add { alias: "gen1".into(), mode: acpira_shared::remote::RunMode::Local }).await.unwrap();
+  let mut opts = Opts::fake(&fake).cwd(&home).projects();
+  opts.remote = Some(connections.clone());
+  let m = Mgr::new(&dir.path().join("sessions"), opts);
+  m.init().await;
+
+  m.handle(json!({ "type": "categoryOp", "op": "addProject", "cwd": "ssh://gen1//acpira-virtual-host/./work/" })).await;
+  let canonical = "ssh://gen1/acpira-virtual-host/work";
+  assert_eq!(projects_of(&m), json!([canonical]));
+  m.handle(json!({ "type": "categoryOp", "op": "addProject", "cwd": canonical })).await;
+  assert_eq!(projects_of(&m), json!([canonical]), "the same folder once");
+
+  // Missing on the host: refused like a missing local folder
+  m.handle(json!({ "type": "newSession", "cwd": "ssh://gen1/acpira-virtual-host/nope" })).await;
+  assert!(m.toasts().iter().any(|t| t.contains("nope")), "{:?}", m.toasts());
+  assert_eq!(m.active_id(), None);
+
+  // There: the session takes the canonical folder, and an agent whose tools stay here refuses to start in it
+  m.handle(json!({ "type": "newSession", "cwd": "ssh://gen1/acpira-virtual-host/work/" })).await;
+  assert_eq!(cwd_of(&m), json!(canonical));
+  until(|| m.active().is_some_and(|v| v["error"].as_str().is_some_and(|e| e.contains("local run"))), 5000).await;
+  connections.dispose();
+}

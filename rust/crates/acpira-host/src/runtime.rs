@@ -45,6 +45,8 @@ pub struct HostRuntime {
   bridges: parking_lot::Mutex<Vec<Arc<BridgeCore>>>,
   /// The pages' terminals (the desktop tool panel's terminal tabs), shared so one survives its page's reload
   terminals: Arc<crate::terminal::TerminalHub>,
+  /// SSH hosts and their helper channels (docs/dev/remote.md)
+  pub connections: Arc<crate::remote::connections::Connections>,
 }
 
 impl HostRuntime {
@@ -92,6 +94,18 @@ impl HostRuntime {
       let p = platform.clone();
       Arc::new(move |level: &str, text: &str| p.toast(level, text))
     };
+    // `ssh <alias>` for a host key or a locked key runs in a plain terminal: no proxy variables, ssh has its own config
+    let ssh_terminal: crate::accounts::account_manager::RunInTerminal = {
+      let p = platform.clone();
+      Arc::new(move |title, command, args, env| p.run_in_terminal(title, command, args, env))
+    };
+    let connections = crate::remote::connections::Connections::new(
+      &root,
+      std::path::Path::new(&platform.home()),
+      log.clone(),
+      Some(ssh_terminal),
+      Default::default(),
+    );
     let accounts = AccountManager::new(
       account_store,
       vec![Arc::new(devin), Arc::new(codex), Arc::new(claude)],
@@ -190,6 +204,7 @@ impl HostRuntime {
         }),
         lease_root: root.clone(),
         bus: true,
+        remote: Some(connections.clone()),
         shared_mcp: Some(crate::shared_config::mcp_provider(Arc::new(move || mcp_home.home()))),
         host_mcp,
         // Both switches are off by default (`notifySound` / `notifySystem`); read at each edge, so a change applies to the next one
@@ -245,7 +260,11 @@ impl HostRuntime {
       config_watch: Default::default(),
       bridges: Default::default(),
       terminals: crate::terminal::TerminalHub::new(),
+      connections,
     });
+    // A host's folders are the `ssh://` entries of the project list
+    let weak = Arc::downgrade(&runtime.manager);
+    runtime.connections.set_projects(Arc::new(move || weak.upgrade().and_then(|m| m.categories().projects).unwrap_or_default()));
     let weak = Arc::downgrade(&runtime);
     platform.on_settings_changed(Arc::new(move |affects| {
       if let Some(rt) = weak.upgrade() {
@@ -255,6 +274,8 @@ impl HostRuntime {
     let weak = Arc::downgrade(&runtime);
     platform.on_window_focus(Arc::new(move || {
       let Some(rt) = weak.upgrade() else { return };
+      // Back from a terminal where a host key was confirmed, or from sleep: hosts waiting out a backoff retry now
+      rt.connections.kick();
       // Back from a terminal where a CLI was installed, or from another window sharing ~/.acpira
       tokio::spawn(async move {
         let _ = rt.reload_agent_config().await;
@@ -365,6 +386,7 @@ impl HostRuntime {
       blob_base,
       initial,
       self.terminals.clone(),
+      self.connections.clone(),
     );
     self.bridges.lock().push(core.clone());
     core
@@ -421,6 +443,7 @@ impl HostRuntime {
       b.dispose();
     }
     self.terminals.dispose();
+    self.connections.dispose();
     self.manager.dispose().await;
   }
 }

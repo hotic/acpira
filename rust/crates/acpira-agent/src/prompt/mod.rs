@@ -10,7 +10,9 @@
 pub mod doc;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use acpira_shared::providers::{Provider, ProviderModel, Sampling, Thinking};
@@ -30,6 +32,8 @@ pub const BASE: &str = "base";
 pub const RAW: &str = "raw";
 /// An AGENTS.md longer than this is cut, with a note
 const MAX_INSTRUCTIONS: usize = 32 * 1024;
+/// A prompt file on an SSH host larger than this is left out of its snapshot
+const MAX_HOST_FILE: u64 = 256 * 1024;
 
 /// A composed system prompt and what it was made from
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -52,11 +56,95 @@ pub struct Places {
   pub home: Option<PathBuf>,
   /// The nearest ancestor of cwd holding `.git`, home excluded
   pub root: Option<PathBuf>,
+  /// A folder on an SSH host: its files as the host read them, never this disk
+  host: Option<Arc<HostFiles>>,
+}
+
+/// A session folder's prompt files as its SSH host read them (`gather`, run there by the engine's helper at session
+/// start, docs/dev/remote.md): AGENTS.md, prompt overrides and skills, with the host's home, project root and shell
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostFiles {
+  pub home: Option<PathBuf>,
+  pub root: Option<PathBuf>,
+  pub os: String,
+  pub arch: String,
+  pub shell: String,
+  pub files: Vec<HostFile>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct HostFile {
+  pub path: PathBuf,
+  pub text: String,
+}
+
+impl HostFiles {
+  /// Read on the host: every file `Places` would read for `cwd` there
+  pub fn gather(cwd: &Path, home: Option<&Path>) -> HostFiles {
+    let places = Places::new(cwd, home);
+    let mut paths = places.instructions();
+    for dir in places.prompt_dirs() {
+      paths.extend(places.entries(&dir, false).into_iter().filter(|p| p.extension().is_some_and(|x| x == "md")));
+    }
+    for root in crate::skills::roots(&places) {
+      paths.extend(places.entries(&root, true).into_iter().map(|d| d.join("SKILL.md")));
+    }
+    let files = paths
+      .into_iter()
+      .filter(|p| std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.len() <= MAX_HOST_FILE))
+      .filter_map(|path| Some(HostFile { text: std::fs::read_to_string(&path).ok()?, path }))
+      .collect();
+    HostFiles {
+      home: places.home,
+      root: places.root,
+      os: std::env::consts::OS.to_owned(),
+      arch: std::env::consts::ARCH.to_owned(),
+      shell: crate::tools::bash::shell().0,
+      files,
+    }
+  }
 }
 
 impl Places {
   pub fn new(cwd: &Path, home: Option<&Path>) -> Places {
-    Places { cwd: cwd.to_path_buf(), home: home.map(Path::to_path_buf), root: project_root(cwd, home) }
+    Places { cwd: cwd.to_path_buf(), home: home.map(Path::to_path_buf), root: project_root(cwd, home), host: None }
+  }
+
+  /// A folder on an SSH host, read from what the host sent
+  pub fn on_host(cwd: &Path, files: Arc<HostFiles>) -> Places {
+    Places { cwd: cwd.to_path_buf(), home: files.home.clone(), root: files.root.clone(), host: Some(files) }
+  }
+
+  /// A file's text
+  pub(crate) fn read(&self, path: &Path) -> Option<String> {
+    match &self.host {
+      Some(h) => h.files.iter().find(|f| f.path == path).map(|f| f.text.clone()),
+      None => std::fs::read_to_string(path).ok(),
+    }
+  }
+
+  /// The folders (`dirs`) or files directly inside `dir`, sorted
+  pub(crate) fn entries(&self, dir: &Path, dirs: bool) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = match &self.host {
+      Some(h) => h
+        .files
+        .iter()
+        .filter_map(|f| {
+          let rest = f.path.strip_prefix(dir).ok()?;
+          let first = rest.components().next()?;
+          let nested = rest.components().nth(1).is_some();
+          (nested == dirs).then(|| dir.join(first))
+        })
+        .collect(),
+      None => match std::fs::read_dir(dir) {
+        Ok(rd) => rd.flatten().map(|e| e.path()).filter(|p| p.is_dir() == dirs).collect(),
+        Err(_) => vec![],
+      },
+    };
+    out.sort();
+    out.dedup();
+    out
   }
 
   /// Override directories, the later winning
@@ -105,12 +193,10 @@ fn variants(places: &Places) -> (Doc, Vec<Variant>) {
   let mut list: Vec<Variant> = BUILTIN[1..].iter().map(|(name, text)| Variant { name: (*name).to_owned(), doc: Doc::parse(text) }).collect();
   let mut user_names: Vec<String> = vec![];
   for dir in places.prompt_dirs() {
-    let Ok(rd) = std::fs::read_dir(&dir) else { continue };
-    let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "md")).collect();
-    files.sort();
+    let files: Vec<PathBuf> = places.entries(&dir, false).into_iter().filter(|p| p.extension().is_some_and(|x| x == "md")).collect();
     for path in files {
       let Some(stem) = path.file_stem().map(|s| s.to_string_lossy().into_owned()) else { continue };
-      let Ok(text) = std::fs::read_to_string(&path) else { continue };
+      let Some(text) = places.read(&path) else { continue };
       let doc = Doc::parse(&text);
       if stem == BASE {
         base.overlay(&doc);
@@ -199,7 +285,7 @@ fn digest(text: &str) -> String {
 fn instructions(places: &Places) -> String {
   let mut out = String::new();
   for path in places.instructions() {
-    let Ok(text) = std::fs::read_to_string(&path) else { continue };
+    let Some(text) = places.read(&path) else { continue };
     let text = text.trim();
     if text.is_empty() {
       continue;
@@ -215,13 +301,15 @@ fn instructions(places: &Places) -> String {
 }
 
 fn environment(places: &Places) -> String {
-  let (shell, _) = crate::tools::bash::shell();
+  // A folder on an SSH host: the host's platform and shell, where the tools run
+  let (os, arch, shell) = match &places.host {
+    Some(h) => (h.os.clone(), h.arch.clone(), h.shell.clone()),
+    None => (std::env::consts::OS.to_owned(), std::env::consts::ARCH.to_owned(), crate::tools::bash::shell().0),
+  };
   let shell = Path::new(&shell).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or(shell);
   format!(
-    "\n\n## Environment\n- Session folder: {}\n- Platform: {} ({})\n- Shell for the bash tool: {shell}\n- Git repository: {}\n",
+    "\n\n## Environment\n- Session folder: {}\n- Platform: {os} ({arch})\n- Shell for the bash tool: {shell}\n- Git repository: {}\n",
     places.cwd.display(),
-    std::env::consts::OS,
-    std::env::consts::ARCH,
     match &places.root {
       Some(r) if r != &places.cwd => format!("yes, rooted at {}", r.display()),
       Some(_) => "yes".to_owned(),
@@ -289,5 +377,10 @@ mod tests {
     let c = compose(&pl, Some((&p, &m)));
     assert_eq!((c.variant.as_str(), c.thinking), ("mine", Some(Thinking::Off)));
     assert!(c.text.starts_with("You are Mine.") && c.text.contains("## Working"));
+
+    // A folder on an SSH host composes the same prompt from what the host read (`HostFiles::gather` there)
+    let sent = Arc::new(HostFiles::gather(&work, Some(&home)));
+    std::fs::remove_dir_all(dir.path()).unwrap();
+    assert_eq!(compose(&Places::on_host(&work, sent), Some((&p, &m))), c);
   }
 }

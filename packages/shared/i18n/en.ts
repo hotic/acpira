@@ -593,6 +593,7 @@ export const en = {
   'mention.noFiles': 'No matching files',
 
   'host.notFound': '{command} not found — install the {agent} CLI first',
+  'host.remoteBuiltinOnly': '{agent} cannot work in a folder on {host} under local run; only Acpira\'s own agent can',
   'host.exited': '{agent} process exited ({code})',
   'host.emptyResponse': 'The CLI ended the request with no reply or error details (ACP: end_turn). Retry or check the CLI logs.',
   'host.agentMcpSkipped': '{agent} could not start the MCP server {name} ({reason}) and stopped the turn. It is left out of this session from now on and the connection is being rebuilt without it: Retry to continue. Fix the server and start a new session to use it again.',

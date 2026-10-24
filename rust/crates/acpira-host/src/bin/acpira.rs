@@ -16,6 +16,8 @@
 //!   acpira quota [--json] [codex|claude|devin…]  the quota windows of each CLI's own login, read without storing anything
 //!   acpira install-agent <id> [--force] [--archive FILE]
 //!                                                download (or take FILE), verify and unpack an agent shipped as a native archive
+//!   acpira remote --stdio                       the helper an SSH host runs for another machine's engine (frames over stdio,
+//!                                                docs/dev/remote.md); ends on stdin EOF or a missed heartbeat
 //!   acpira --version
 
 use std::path::PathBuf;
@@ -51,6 +53,9 @@ fn main() {
   }
   if args.first().map(String::as_str) == Some("mcp") {
     std::process::exit(acpira_host::host_mcp::run(VERSION));
+  }
+  if args.first().map(String::as_str) == Some("remote") {
+    std::process::exit(acpira_host::remote::helper::main(&args[1..], VERSION));
   }
   if args.first().map(String::as_str) == Some("install-agent") {
     std::process::exit(install_agent(&args[1..]));

@@ -24,6 +24,7 @@ pub mod plan_build;
 pub mod prompt;
 pub mod queue;
 pub mod relay;
+pub mod remote;
 pub mod restore_turns;
 pub mod tasks;
 pub mod turn_usage;
@@ -111,6 +112,9 @@ pub struct SessionDeps {
   /// the notice to show, another engine is running one or the lease could not be taken, and this turn must not start.
   /// None: no leases (tests)
   pub claim: Option<Arc<dyn Fn(&str) -> Result<u64, String> + Send + Sync>>,
+  /// SSH hosts: a session whose folder is on one runs the built-in agent's project tools there (`remote.rs`). None:
+  /// no remote folders (tests, shells without the feature)
+  pub remote: Option<Arc<crate::remote::connections::Connections>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

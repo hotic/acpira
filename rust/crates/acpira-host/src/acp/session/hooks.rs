@@ -27,8 +27,9 @@ use crate::acp::session::prompt::Origin;
 use crate::acp::session::{AcpSession, Core};
 use crate::acp::transcript::normalize::{READ_SESSION_VERB, SEARCH_SESSIONS_VERB, SHOW_IMAGE_VERB, async_task_live};
 use crate::acp::transport::rpc::BoxFuture;
-use crate::hooks::run::{PromptVerdict, Verdict, run, run_prompt};
+use crate::hooks::host::HookHost;
 use crate::hooks::snapshot::Snapshot;
+use crate::hooks::run::{PromptVerdict, Verdict};
 use crate::hooks::{CONTEXT_MAX_BYTES, Hook, HooksConfig};
 use crate::i18n::{t, tp};
 use crate::platform::file_url::path_to_file_url;
@@ -273,9 +274,28 @@ impl AcpSession {
     vec![("ACPIRA_SESSION_ID", self.id.clone()), ("ACPIRA_AGENT", self.agent.clone())]
   }
 
+  /// Where the project's hooks are read and run: here, or on the SSH host the session's folder is on. None: the host
+  /// cannot be reached now, so no hook can run there (nor can the agent's writes)
+  pub(crate) async fn hook_host(&self) -> Option<HookHost> {
+    let Some(f) = self.remote_folder() else { return Some(HookHost::Local) };
+    let connections = self.deps.remote.clone()?;
+    match connections.ensure(&f.alias, std::time::Duration::from_secs(30)).await {
+      Ok(client) => Some(HookHost::Remote(client)),
+      Err(e) => {
+        self.log(&format!("hooks: {} unreachable: {e:#}", f.alias));
+        None
+      }
+    }
+  }
+
+  /// The session's folder as the hooks see it: the host's own path for a folder on an SSH host
+  pub(crate) fn hook_folder(&self) -> String {
+    self.remote_folder().map(|f| f.path).unwrap_or_else(|| self.cwd.clone())
+  }
+
   /// The project's hooks, read again (an edited file applies from the next turn); a broken file is reported once
-  fn load_hooks(&self) -> Option<Arc<HooksConfig>> {
-    match crate::hooks::load(&self.cwd) {
+  async fn load_hooks(&self, host: &HookHost) -> Option<Arc<HooksConfig>> {
+    match host.load(&self.hook_folder()).await {
       None => None,
       Some(Ok(cfg)) => {
         // Unknown keys are skipped, not fatal: said once per distinct list, like a broken file
@@ -317,7 +337,11 @@ impl AcpSession {
     if origin == Origin::Compact {
       return Ok(TurnContext::default());
     }
-    let cfg = self.load_hooks();
+    let host = self.hook_host().await;
+    let cfg = match &host {
+      Some(h) => self.load_hooks(h).await,
+      None => None,
+    };
     // The first prompt this peer sees: a fork's history still owed, or a native session no prompt reached yet (a new
     // session, an edit's rebuilt one), whatever the transcript already holds
     let first_of = |c: &Core| origin == Origin::User && (c.lineage.history_pending || c.unprompted);
@@ -338,7 +362,7 @@ impl AcpSession {
         "attachments": attachments,
         "first": first,
       });
-      match run_prompt(hook, &cfg.root, &payload, &self.hook_env()).await {
+      match host.as_ref().expect("hooks were loaded from a host").run_prompt(hook, &cfg.root, &payload, &self.hook_env()).await {
         PromptVerdict::Block(reason) => return Err(reason),
         // A slash command must stay the prompt's only text, or the agent no longer reads it as one
         PromptVerdict::Pass(Some(_)) if command_name(text).is_some() => self.log("hooks: beforePrompt context left out of a slash command"),
@@ -379,10 +403,13 @@ impl AcpSession {
     };
     let Some(cfg) = cfg else { return Ok(TurnContext { lead: vec![], tail }) };
     if fresh && cfg.tracks_changes() {
-      let snap = Snapshot::take(&cfg.watch).await;
+      let snap = host.as_ref().expect("hooks were loaded from a host").snapshot(&cfg.watch).await;
       self.core.lock().hooks.before = Some(snap);
     }
-    let lead = if first { self.context_blocks(&cfg).await } else { vec![] };
+    let lead = match (&host, first) {
+      (Some(h), true) => self.context_blocks(h, &cfg).await,
+      _ => vec![],
+    };
     Ok(TurnContext { lead, tail })
   }
 
@@ -409,11 +436,11 @@ impl AcpSession {
     self.flush_queue();
   }
 
-  async fn context_blocks(&self, cfg: &HooksConfig) -> Vec<Value> {
+  async fn context_blocks(&self, host: &HookHost, cfg: &HooksConfig) -> Vec<Value> {
     let embedded = self.caps(&self.core.lock()).embedded_context;
     let mut blocks = vec![];
     for path in &cfg.context {
-      let Ok(mut text) = tokio::fs::read_to_string(path).await else {
+      let Some(mut text) = host.read_text(path).await else {
         self.log(&format!("hooks: context file {} unreadable", path.display()));
         self.notify(&tp("host.hookContextMissing", &[("path", &path_text(path))]));
         continue;
@@ -442,10 +469,15 @@ impl AcpSession {
     if !is_edit(kind) || paths.is_empty() {
       return None;
     }
-    let cfg = self.core.lock().hooks.config.clone().or_else(|| self.load_hooks())?;
+    let host = self.hook_host().await?;
+    let known = self.core.lock().hooks.config.clone();
+    let cfg = match known {
+      Some(c) => c,
+      None => self.load_hooks(&host).await?,
+    };
     let hook = cfg.before_edit.as_ref()?;
     let files: Vec<String> = paths.iter().map(|p| path_text(&self.absolute(p))).collect();
-    let verdict = self.run_before_edit(&cfg, hook, kind, &files, raw_input, "permission", json!({})).await;
+    let verdict = self.run_before_edit(&host, &cfg, hook, kind, &files, raw_input, "permission", json!({})).await;
     let reason = match verdict {
       Verdict::Block(r) => r,
       Verdict::Pass => {
@@ -468,12 +500,12 @@ impl AcpSession {
 
   fn absolute(&self, p: &str) -> PathBuf {
     let path = Path::new(p);
-    if path.is_absolute() { path.to_path_buf() } else { Path::new(&self.cwd).join(path) }
+    if path.is_absolute() { path.to_path_buf() } else { Path::new(&self.hook_folder()).join(path) }
   }
 
   /// `extra`: keys added to the payload (the audit's attribution)
   #[allow(clippy::too_many_arguments)]
-  async fn run_before_edit(&self, cfg: &HooksConfig, hook: &Hook, kind: ToolKind, files: &[String], raw_input: Option<Value>, phase: &str, extra: Value) -> Verdict {
+  async fn run_before_edit(&self, host: &HookHost, cfg: &HooksConfig, hook: &Hook, kind: ToolKind, files: &[String], raw_input: Option<Value>, phase: &str, extra: Value) -> Verdict {
     let read = read_inputs(&self.core.lock().state.turns);
     // The tool's own input, with the first file under the key Claude Code's Edit uses, so scripts that read one path work
     let mut input = raw_input.filter(Value::is_object).unwrap_or_else(|| json!({}));
@@ -494,7 +526,7 @@ impl AcpSession {
     if let (Some(p), Value::Object(extra)) = (payload.as_object_mut(), extra) {
       p.extend(extra);
     }
-    run(hook, &cfg.root, &payload, &self.hook_env()).await
+    host.run(hook, &cfg.root, &payload, &self.hook_env()).await
   }
 
   fn hook_broken(&self, hook: &Hook, error: &str) {
@@ -571,7 +603,16 @@ impl AcpSession {
 
   async fn gate(self: Arc<Self>, job: GateJob) {
     let GateJob { cfg, before, tools } = job;
-    let after = if cfg.tracks_changes() { Some(Snapshot::take(&cfg.watch).await) } else { None };
+    let Some(host) = self.hook_host().await else {
+      // The host went away since the turn started: no hook can run there now; say so instead of passing in silence
+      if let Some(hook) = cfg.before_edit.as_ref().or(cfg.after_turn.as_ref()) {
+        self.hook_broken(hook, "the SSH host could not be reached, so the gate did not run");
+      }
+      let reasons = std::mem::take(&mut self.core.lock().hooks.denied);
+      self.gate_decided(&cfg, reasons).await;
+      return;
+    };
+    let after = if cfg.tracks_changes() { Some(host.snapshot(&cfg.watch).await) } else { None };
     // What the span changed: the work trees' own account when one of its tools could have changed any file (a span of
     // reads or of edits naming their files leaves whatever else changed to whoever else shares the trees), plus the edit
     // tool calls (files outside the watched trees too)
@@ -615,7 +656,7 @@ impl AcpSession {
     // Edits made without a permission request get the beforeEdit check now
     if let Some(hook) = cfg.before_edit.as_ref().filter(|_| !audit.is_empty()) {
       let extra = json!({ "turn_tools": turn_tools, "file_sources": audit_sources });
-      match self.run_before_edit(&cfg, hook, ToolKind::Edit, &audit, None, "audit", extra).await {
+      match self.run_before_edit(&host, &cfg, hook, ToolKind::Edit, &audit, None, "audit", extra).await {
         Verdict::Block(r) => reasons.push(r),
         Verdict::Pass => {}
         Verdict::Broken(e) => self.hook_broken(hook, &e),
@@ -635,7 +676,7 @@ impl AcpSession {
         "file_sources": session_sources,
         "read_files": read_inputs(&self.core.lock().state.turns),
       });
-      match run(hook, &cfg.root, &payload, &self.hook_env()).await {
+      match host.run(hook, &cfg.root, &payload, &self.hook_env()).await {
         Verdict::Block(r) => reasons.push(r),
         Verdict::Pass => {}
         Verdict::Broken(e) => self.hook_broken(hook, &e),

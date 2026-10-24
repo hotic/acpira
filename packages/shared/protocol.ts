@@ -1,4 +1,5 @@
 import type { ChatGptIntegrationStatus } from './chatgptIntegration';
+import type { ConnectionOp, ConnectionView, RemoteDirEntry, SshHost } from './remote';
 import type { AccountInfo, AgentId, AgentInfo, CategoryOp, ConfigControl, Draft, FullDiffSource, GoalAction, NativeSessionInfo, QuestionAnswers, SessionCategories, SessionSummary, SessionView, Turn, TurnSettings } from './transcript';
 import type { Appearance, AxisKey } from './appearance';
 import type { HiddenMap, SettingKey, SettingsView } from './settings';
@@ -252,6 +253,11 @@ export type HostMsg =
   | { type: 'projectStatus'; seq: number; root?: string; marks: Record<string, GitMark> }
   | { type: 'projectFile'; seq: number; text?: string; hunks?: ProjectHunk[]; error?: ProjectError | string }
   | { type: 'sessionChanges'; seq: number; files: ProjectChange[] }
+  // SSH hosts (helloOk.features has 'remote'): the list on every change, the add dialog's ~/.ssh/config hosts, and a folder
+  // listing of a host for the remote folder picker, echoing its request's seq
+  | { type: 'connections'; connections: ConnectionView[] }
+  | { type: 'sshHosts'; hosts: SshHost[]; error?: string }
+  | { type: 'remoteDir'; seq: number; alias: string; path: string; entries: RemoteDirEntry[]; error?: string }
   // The tool panel's terminal tabs (rust/crates/acpira-host/src/terminal.rs): output as it comes, and the state. Answering
   // terminalOpen the state carries the size, the title, the output so far (`replay`, shown instead of what the page had)
   // and the exit if the shell ended; later only what changed. `error`: the shell could not start
@@ -336,6 +342,12 @@ export type WebviewMsg =
   | { type: 'searchFiles'; query: string; seq: number }
   // Full-text search over saved session conversations (user prompts and agent replies) for the history list
   | { type: 'searchSessions'; query: string; seq: number }
+  // SSH hosts (helloOk.features has 'remote'): the current list (then pushed on every change), an edit of one host,
+  // the ~/.ssh/config hosts, a folder of a host (`path` absent: its home)
+  | { type: 'connections' }
+  | { type: 'connectionOp'; op: ConnectionOp }
+  | { type: 'sshHosts' }
+  | { type: 'remoteDir'; alias: string; path?: string; seq: number }
   // The desktop tool panel: a folder of the session's project (`dir` relative, '' for the project itself), its git marks,
   // a file with its hunks against `base` (none: no hunks), the files the session's edits left changed
   | { type: 'projectDir'; sessionId: string; dir: string; seq: number }

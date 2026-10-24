@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 
 use super::{Action, Output, str_arg, text_content};
 use crate::llm::ToolSpec;
+use crate::prompt::Places;
 use crate::skills::{self, Skill};
 
 pub fn spec(skills: &[Skill]) -> ToolSpec {
@@ -29,23 +30,19 @@ pub fn spec(skills: &[Skill]) -> ToolSpec {
   }
 }
 
-pub fn prepare(args: &Value, cwd: &Path) -> Result<Action, String> {
+/// `places`: where the session's skills are (a folder on an SSH host: what the host sent)
+pub fn prepare(args: &Value, places: &Places) -> Result<Action, String> {
   let name = str_arg(args, "name")?.trim();
-  let places = crate::prompt::Places::new(cwd, crate::turn::user_home().as_deref());
-  let skills = skills::scan(&places);
+  let skills = skills::scan(places);
   match skills.iter().find(|s| s.name == name) {
-    Some(s) => Ok(Action::Skill { name: s.name.clone(), path: s.path.clone() }),
+    Some(s) => Ok(Action::Skill { name: s.name.clone(), path: s.path.clone(), body: s.body.clone() }),
     None => Err(format!("Unknown skill \"{name}\". Available skills: {}.", skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", "))),
   }
 }
 
-pub fn run(name: &str, path: &Path) -> Output {
-  let skill = Skill { name: name.to_owned(), description: String::new(), hint: None, path: path.to_path_buf() };
-  match skill.body() {
-    Ok(body) => {
-      let model = format!("{body}\n\n(Files the skill refers to are relative to {})", skill.dir().display());
-      Output { content: vec![text_content(&body)], model, is_error: false, raw_output: None }
-    }
-    Err(e) => Output::error(format!("Cannot read {}: {e}", path.display())),
-  }
+/// The instructions were read when the call was prepared
+pub fn run(path: &Path, body: &str) -> Output {
+  let dir = path.parent().unwrap_or(path);
+  let model = format!("{body}\n\n(Files the skill refers to are relative to {})", dir.display());
+  Output { content: vec![text_content(body)], model, is_error: false, raw_output: None }
 }

@@ -315,7 +315,7 @@ fn setup(server: &Server, session: &Session, params: &Value, mcp: &[crate::mcp::
   let raw = mode.id == modes::RAW;
   // The prompt changes only when the model now matches another variant (a view change at a turn boundary). Raw mode
   // sends the settings page's text alone and leaves the session's composed prompt for the turn that switches back
-  let places = prompt::Places::new(&session.cwd, user_home().as_deref());
+  let places = server.places(&session.cwd, session.remote.as_deref());
   let composed = if raw {
     prompt::raw(config.raw_system_prompt())
   } else {
@@ -1144,7 +1144,9 @@ impl Rules {
         Decision::Deny => 2,
       })
       .unwrap_or(Decision::Ask);
-    if d == Decision::Allow && action.written().iter().any(|p| self.guard.protects(p)) {
+    // A file the host's own guard protects (the change was prepared on an SSH host) asks like one the guard here does
+    let protected_there = matches!(action, Action::Write { files } if files.iter().any(|f| f.protected));
+    if d == Decision::Allow && (protected_there || action.written().iter().any(|p| self.guard.protects(p))) {
       return Decision::Ask;
     }
     d
@@ -1245,13 +1247,16 @@ struct Riders {
 
 impl Riders {
   /// The riders of a call of this built-in tool (an MCP tool's arguments are its server's; the todo tool's list is its
-  /// own argument)
-  fn of(name: &str, args: &Value, cwd: &std::path::Path) -> Riders {
+  /// own argument). A then_run command is prepared where the session's commands run (`prepare_call`)
+  async fn of(server: &Arc<Server>, session: &Arc<Session>, name: &str, args: &Value) -> Riders {
     let todos = if name == tools::TODO { None } else { tools::todo::rider(args) };
-    let then_run = tools::edit::then_run(args).map(|command| match name {
-      tools::EDIT | tools::WRITE => tools::bash::prepare(&json!({ "command": command }), cwd),
-      _ => Err(format!("then_run is taken only by edit and write, so `{command}` was not run.")),
-    });
+    let then_run = match tools::edit::then_run(args) {
+      Some(command) => Some(match name {
+        tools::EDIT | tools::WRITE => prepare_call(server, session, tools::BASH, &json!({ "command": command }), false).await,
+        _ => Err(format!("then_run is taken only by edit and write, so `{command}` was not run.")),
+      }),
+      None => None,
+    };
     Riders { todos, then_run }
   }
 
@@ -1321,7 +1326,7 @@ async fn run_tools(
     // A goal tool's call has no row (`hidden`), unless the stream opened one for a name it took for another tool
     let rowless = streamed.is_none() && matches!(&name, Ok(n) if goal::is_tool(n));
     let riders = match (name.as_ref().ok().copied(), &args) {
-      (Some(n), Ok(a)) if !rowless && !setup.mcp.iter().any(|t| t.name == n) => Riders::of(n, a, &cwd),
+      (Some(n), Ok(a)) if !rowless && !setup.mcp.iter().any(|t| t.name == n) => Riders::of(server, session, n, a).await,
       _ => Riders::default(),
     };
     // The list a call carries is set now, on a row above the call's own, so the transcript reads in the order things
@@ -1341,14 +1346,14 @@ async fn run_tools(
       }
     };
     // A bad argument goes back with what was received, so the model can see its own mistake
-    let action = name.and_then(|n| {
-      let a = args.clone()?;
+    let action = match (name, args.clone()) {
+      (Err(e), _) | (Ok(_), Err(e)) => Err(e),
       // An MCP tool's arguments are the server's to check against its schema
-      if let Some(t) = setup.mcp.iter().find(|t| t.name == n) {
-        return Ok(tools::mcp::prepare(t, &a, setup.images));
-      }
-      tools::prepare(n, &a, &cwd, setup.images).map_err(|e| format!("{e}. Received arguments: {}", crate::budget::cut(&a.to_string(), 2000)))
-    });
+      (Ok(n), Ok(a)) => match setup.mcp.iter().find(|t| t.name == n) {
+        Some(t) => Ok(tools::mcp::prepare(t, &a, setup.images)),
+        None => prepare_call(server, session, n, &a, setup.images).await.map_err(|e| format!("{e}. Received arguments: {}", crate::budget::cut(&a.to_string(), 2000))),
+      },
+    };
     let raw_input = args.unwrap_or_else(|_| Value::String(call.arguments.clone()));
     match &action {
       _ if rowless => {}
@@ -1386,6 +1391,10 @@ async fn run_tools(
         // An MCP call waits on its server; the rest read files or the network on a blocking thread
         handles.push(match action {
           mcp @ Action::Mcp { .. } => tokio::spawn(mcp.run(ctx)),
+          there if runs_remotely(server, session, &there) => {
+            let (srv, s) = (server.clone(), session.clone());
+            tokio::spawn(async move { run_action(&srv, &s, there, ctx).await })
+          }
           other => tokio::task::spawn_blocking(move || other.run_sync(ctx)),
         });
       }
@@ -1458,7 +1467,7 @@ async fn run_tools(
     server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": p.acp, "status": "in_progress" }));
     // A write of what the file already holds is no change to check
     let unchanged = matches!(&action, Action::Write { files } if files.iter().all(tools::edit::Change::unchanged));
-    let out = action.run(ctx_for(server, session, &p.acp)).await;
+    let out = run_action(server, session, action, ctx_for(server, session, &p.acp)).await;
     let command = match &p.riders.then_run {
       Some(Ok(command)) => command,
       _ => {
@@ -1565,6 +1574,34 @@ async fn question(server: &Arc<Server>, session: &Arc<Session>, p: &Prepared, qu
 /// The answers are the model's copy only: the question card below the row already shows them
 fn answered(text: String) -> Output {
   Output { content: vec![], model: text, is_error: false, raw_output: None }
+}
+
+/// Validate a call of a built-in tool: on the session's SSH host when the call reads or changes the project there or runs
+/// a command (`remote.rs`), else here
+async fn prepare_call(server: &Arc<Server>, session: &Arc<Session>, name: &str, args: &Value, images: bool) -> Result<Action, String> {
+  // Skills come from where the session's prompt files are, the host's included
+  if name == tools::SKILL {
+    return tools::skill::prepare(args, &server.places(&session.cwd, session.remote.as_deref()));
+  }
+  if let Some(r) = &session.remote
+    && crate::remote::Remote::prepares_there(name, args, &session.cwd, &server.session_dir(&session.id))
+  {
+    return r.prepare(server.conn(), &session.id, &session.cwd, name, args, images).await;
+  }
+  tools::prepare(name, args, &session.cwd, images)
+}
+
+/// Whether a prepared call runs on the session's SSH host
+fn runs_remotely(server: &Arc<Server>, session: &Arc<Session>, action: &Action) -> bool {
+  session.remote.is_some() && crate::remote::Remote::runs_there(action, &server.session_dir(&session.id))
+}
+
+/// Run a prepared call, on the session's SSH host when it belongs there
+async fn run_action(server: &Arc<Server>, session: &Arc<Session>, action: Action, ctx: Ctx) -> Output {
+  if let Some(r) = session.remote.as_ref().filter(|_| runs_remotely(server, session, &action)) {
+    return r.run(server.conn(), &session.id, action, ctx).await;
+  }
+  action.run(ctx).await
 }
 
 fn ctx_for(server: &Arc<Server>, session: &Arc<Session>, acp: &str) -> Ctx {
@@ -1697,7 +1734,7 @@ async fn ride_command(server: &Arc<Server>, session: &Arc<Session>, rules: &Rule
     }
   }
   server.update(&session.id, json!({ "sessionUpdate": "tool_call_update", "toolCallId": acp, "status": "in_progress" }));
-  let out = action.clone().run(ctx_for(server, session, &acp)).await;
+  let out = run_action(server, session, action.clone(), ctx_for(server, session, &acp)).await;
   let section = format!("{header}\n{}", out.model);
   report(server, session, &acp, out);
   (section, false)

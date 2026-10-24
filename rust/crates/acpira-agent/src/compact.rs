@@ -389,16 +389,10 @@ fn touched_paths(item: &Item, cwd: &Path, counts: &dyn Fn(&str) -> bool) -> Vec<
   out
 }
 
-/// The files `head` touched last, newest first, then the ones restored before (`earlier`, as shown), re-read from
-/// disk, leaving out the ones `tail` touches (the model still sees those) and any that is gone or not text: Claude
-/// Code's post-compaction file restore. Only a call that succeeded counts: a read the user refused on its permission
-/// card (an error result) must not bring the file in now. Each gets up to `RESTORE_FILE_TOKENS`, cut at a line with a
-/// note on how to read the rest, within `budget` tokens in all
-fn restore_files(head: &[Item], tail: &[Item], earlier: &[String], cwd: &Path, budget: u64) -> Vec<RestoredFile> {
-  let per_file = RESTORE_FILE_TOKENS.min(budget);
-  if per_file < RESTORE_MIN_TOKENS {
-    return vec![];
-  }
+/// The files `head` touched last, newest first, then the ones restored before (`earlier`, as shown), leaving out the
+/// ones `tail` touches (the model still sees those). Only a call that succeeded counts: a read the user refused on its
+/// permission card (an error result) must not bring the file in now
+fn restore_paths(head: &[Item], tail: &[Item], earlier: &[String], cwd: &Path) -> Vec<PathBuf> {
   let succeeded: Vec<&str> = head
     .iter()
     .filter_map(|i| match i {
@@ -414,13 +408,25 @@ fn restore_files(head: &[Item], tail: &[Item], earlier: &[String], cwd: &Path, b
       seen.push(p);
     }
   }
+  seen
+}
+
+/// Claude Code's post-compaction file restore: the files of `restore_paths`, re-read through `read` (this disk, or the
+/// session's SSH host), leaving out any that is gone or not text. Each gets up to `RESTORE_FILE_TOKENS`, cut at a line
+/// with a note on how to read the rest, within `budget` tokens in all
+fn restore_files(head: &[Item], tail: &[Item], earlier: &[String], cwd: &Path, budget: u64, read: &dyn Fn(&Path) -> Option<Vec<u8>>) -> Vec<RestoredFile> {
+  let per_file = RESTORE_FILE_TOKENS.min(budget);
+  if per_file < RESTORE_MIN_TOKENS {
+    return vec![];
+  }
+  let seen = restore_paths(head, tail, earlier, cwd);
   let mut out = vec![];
   let mut left = budget;
   for path in seen {
     if out.len() == RESTORE_FILES || left < RESTORE_MIN_TOKENS {
       break;
     }
-    let Ok(bytes) = std::fs::read(&path) else { continue };
+    let Some(bytes) = read(&path) else { continue };
     // Binary content (a NUL near the start, or bytes that are not UTF-8) is not restored
     if bytes[..bytes.len().min(8192)].contains(&0) {
       continue;
@@ -793,11 +799,23 @@ pub async fn run(server: &Server, session: &Session, call: &Call<'_>, reason: Re
   let real = &items[first.min(tail)..tail];
   let (messages, omitted) = carried_messages(&before.messages, before.omitted, real, CARRIED_TOKENS.min(call.limit / 16));
   let earlier: Vec<String> = before.files.iter().map(|f| f.path.clone()).collect();
+  // A folder on an SSH host: its files come from there, read in one call (the session's own folder stays here)
+  let own = server.session_dir(&session.id);
+  let host = match &session.remote {
+    Some(r) => {
+      let paths: Vec<PathBuf> = restore_paths(real, &items[tail..], &earlier, &session.cwd).into_iter().filter(|p| !p.starts_with(&own)).take(RESTORE_FILES * 2).collect();
+      Some(r.read_files(server.conn(), &session.id, &session.cwd, &paths).await)
+    }
+    None => None,
+  };
   let carry = Carry {
     messages,
     omitted,
     todo: last_todo(head, &items[tail..], before.todo.as_deref()),
-    files: restore_files(real, &items[tail..], &earlier, &session.cwd, RESTORE_TOTAL_TOKENS.min(call.limit / 10)),
+    files: restore_files(real, &items[tail..], &earlier, &session.cwd, RESTORE_TOTAL_TOKENS.min(call.limit / 10), &|p| match &host {
+      Some(files) if !p.starts_with(&own) => files.get(p).map(|t| t.as_bytes().to_vec()),
+      _ => std::fs::read(p).ok(),
+    }),
     // When the summary took the running turn's prompt in, its words come back verbatim
     request: current.filter(|&i| i < tail).and_then(|i| request_text(&items[i..tail])),
   };
@@ -1130,19 +1148,19 @@ mod tests {
       done("7", true),
     ];
     // Newest first; binary and missing files are skipped; a file the tail touches is not restored
-    let files = restore_files(&head, &[touch("6", "write", json!({ "path": "a.rs", "content": "" }))], &[], cwd, 25_000);
+    let files = restore_files(&head, &[touch("6", "write", json!({ "path": "a.rs", "content": "" }))], &[], cwd, 25_000, &|p| std::fs::read(p).ok());
     assert_eq!(files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["b.rs", "big.txt"]);
     // The files restored before follow the ones touched since, once each
-    let again = restore_files(&head[..5], &[], &["b.rs".to_owned(), "c.rs".to_owned(), "gone.rs".to_owned()], cwd, 25_000);
+    let again = restore_files(&head[..5], &[], &["b.rs".to_owned(), "c.rs".to_owned(), "gone.rs".to_owned()], cwd, 25_000, &|p| std::fs::read(p).ok());
     std::fs::write(cwd.join("c.rs"), "fn c() {}\n").unwrap();
     assert_eq!(again.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["b.rs", "big.txt", "a.rs"]);
-    let again = restore_files(&head[..5], &[], &["c.rs".to_owned()], cwd, 25_000);
+    let again = restore_files(&head[..5], &[], &["c.rs".to_owned()], cwd, 25_000, &|p| std::fs::read(p).ok());
     assert_eq!(again.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["b.rs", "big.txt", "a.rs", "c.rs"]);
     assert_eq!(files[0].text, "fn b() {}\n");
     // A long file is cut at a line, within its 5k tokens, and says where to read on
     assert!(files[1].text.len() <= 20_000 + 100 && files[1].text.ends_with("[6000 more lines not shown; read the file from line 4001 for the rest]"), "{}", &files[1].text[19_900..]);
     // Too small a budget restores nothing
-    assert!(restore_files(&head, &[], &[], cwd, 400).is_empty());
+    assert!(restore_files(&head, &[], &[], cwd, 400, &|p| std::fs::read(p).ok()).is_empty());
   }
 
   #[test]

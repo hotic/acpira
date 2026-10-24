@@ -17,17 +17,13 @@ pub struct Skill {
   pub hint: Option<String>,
   /// The `SKILL.md`
   pub path: PathBuf,
+  /// The instructions without the frontmatter, read with the rest (a skill on an SSH host is not on this disk)
+  pub body: String,
 }
 
 impl Skill {
   pub fn dir(&self) -> &Path {
     self.path.parent().unwrap_or(&self.path)
-  }
-
-  /// The instructions without the frontmatter
-  pub fn body(&self) -> std::io::Result<String> {
-    let text = std::fs::read_to_string(&self.path)?;
-    Ok(doc::split_frontmatter(&text).1.trim().to_owned())
   }
 }
 
@@ -38,29 +34,18 @@ const COMPACT_DESCRIPTION: &str = "Summarize the conversation so far to free con
 /// Every skill, by name, the project's over the user's. Dot-names and folders without a SKILL.md are skipped
 pub fn scan(places: &Places) -> Vec<Skill> {
   let mut out: Vec<Skill> = vec![];
-  let mut roots = vec![];
-  if let Some(h) = &places.home {
-    roots.push(h.join(".agents").join("skills"));
-  }
-  if let Some(r) = places.root.as_ref().or(Some(&places.cwd)) {
-    roots.push(r.join(".agents").join("skills"));
-  }
-  roots.dedup();
-  for root in roots {
-    let Ok(rd) = std::fs::read_dir(&root) else { continue };
-    let mut dirs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
-    dirs.sort();
-    for dir in dirs {
+  for root in roots(places) {
+    for dir in places.entries(&root, true) {
       let Some(folder) = dir.file_name().map(|n| n.to_string_lossy().into_owned()).filter(|n| !n.starts_with('.')) else { continue };
       let path = dir.join("SKILL.md");
-      let Ok(text) = std::fs::read_to_string(&path) else { continue };
-      let (meta, _) = doc::split_frontmatter(&text);
+      let Some(text) = places.read(&path) else { continue };
+      let (meta, body) = doc::split_frontmatter(&text);
       let text_of = |k: &str| meta.iter().rev().find(|(key, _)| key == k).and_then(|(_, v)| match v {
         doc::Meta::Text(t) => Some(t.trim().to_owned()).filter(|t| !t.is_empty()),
         doc::Meta::List(_) => None,
       });
       let name = text_of("name").filter(|n| !n.chars().any(char::is_whitespace)).unwrap_or(folder);
-      let skill = Skill { name, description: text_of("description").unwrap_or_default(), hint: text_of("argument-hint"), path };
+      let skill = Skill { name, description: text_of("description").unwrap_or_default(), hint: text_of("argument-hint"), path, body: body.trim().to_owned() };
       match out.iter_mut().find(|s| s.name == skill.name) {
         Some(s) => *s = skill,
         None => out.push(skill),
@@ -69,6 +54,19 @@ pub fn scan(places: &Places) -> Vec<Skill> {
   }
   out.sort_by(|a, b| a.name.cmp(&b.name));
   out
+}
+
+/// The skill folders, the later winning: the user's, then the project's
+pub(crate) fn roots(places: &Places) -> Vec<PathBuf> {
+  let mut roots = vec![];
+  if let Some(h) = &places.home {
+    roots.push(h.join(".agents").join("skills"));
+  }
+  if let Some(r) = places.root.as_ref().or(Some(&places.cwd)) {
+    roots.push(r.join(".agents").join("skills"));
+  }
+  roots.dedup();
+  roots
 }
 
 /// The `availableCommands` of a session: `/compact` and `/goal` (`goal.rs`), then the skills
@@ -127,13 +125,8 @@ pub fn mentioned<'a>(text: &str, skills: &'a [Skill]) -> Vec<(&'a Skill, String)
 pub fn expansion(mentions: &[(&Skill, String)]) -> String {
   let mut out = String::new();
   for (skill, args) in mentions {
-    match skill.body() {
-      Ok(body) => {
-        let body = body.replace("$ARGUMENTS", args);
-        out.push_str(&format!("\n\n<skill name=\"{}\" path=\"{}\">\n{body}\n</skill>", skill.name, skill.path.display()));
-      }
-      Err(e) => eprintln!("[acpira agent] skill {} cannot be read: {e}", skill.path.display()),
-    }
+    let body = skill.body.replace("$ARGUMENTS", args);
+    out.push_str(&format!("\n\n<skill name=\"{}\" path=\"{}\">\n{body}\n</skill>", skill.name, skill.path.display()));
   }
   out
 }
@@ -162,6 +155,11 @@ mod tests {
       }
     }
     let skills = scan(&Places::new(&work, Some(&home)));
+    // The same folders as an SSH host sends them (`HostFiles::gather` there): nothing is read from this disk afterwards
+    let sent = std::sync::Arc::new(crate::prompt::HostFiles::gather(&work, Some(&home)));
+    std::fs::remove_dir_all(&work).unwrap();
+    std::fs::remove_dir_all(&home).unwrap();
+    assert_eq!(scan(&Places::on_host(&work, sent)), skills);
     // A dot-name and a folder without a SKILL.md are skipped; the project's dig wins over the user's
     assert_eq!(skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["dig", "dig-deep", "release"]);
     assert_eq!(skills[0].description, "project copy");
@@ -178,7 +176,7 @@ mod tests {
     assert!(mentioned("a/release", &skills).is_empty());
     let text = expansion(&mentioned("/release 1.2", &skills));
     assert!(text.contains("<skill name=\"release\" path=") && text.contains("\nTag 1.2 and push.\n</skill>"), "{text}");
-    assert_eq!(skills[1].body().unwrap(), "no frontmatter");
+    assert_eq!(skills[1].body, "no frontmatter");
     assert!(is_compact(" /compact ") && is_compact("/compact now") && !is_compact("/compaction") && !is_compact("x /compact"));
   }
 }

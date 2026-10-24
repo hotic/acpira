@@ -27,6 +27,7 @@ pub mod preview;
 pub mod project_files;
 pub mod providers;
 pub mod relay;
+pub mod remote;
 pub mod runtime;
 pub mod session_library;
 pub mod session_manager;

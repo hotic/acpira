@@ -87,7 +87,7 @@ pub fn close(server: &Server, session: &Session) -> Option<(Item, Vec<Value>)> {
     return None;
   }
   let images = pick.and_then(|p| crate::turn::limits(&server.config.get(), &server.catalog.get(), &p)).is_some_and(|m| m.takes_images());
-  let places = crate::prompt::Places::new(&session.cwd, crate::turn::user_home().as_deref());
+  let places = server.places(&session.cwd, session.remote.as_deref());
   Some((item(&prompts, images, &skills::scan(&places)), prompts))
 }
 
@@ -137,10 +137,8 @@ mod tests {
 
   #[test]
   fn a_mentioned_skill_is_expanded_behind_the_message() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("SKILL.md");
-    std::fs::write(&path, "---\nname: greet\n---\nSay hello to $ARGUMENTS.").unwrap();
-    let skill = Skill { name: "greet".into(), description: String::new(), hint: None, path };
+    let (path, body) = (std::path::PathBuf::from("/skills/greet/SKILL.md"), "Say hello to $ARGUMENTS.".to_owned());
+    let skill = Skill { name: "greet".into(), description: String::new(), hint: None, path, body };
     let item = item(&[text("then /greet Bob")], true, &[skill]);
     let Item::User(parts) = &item else { panic!() };
     let [Part::Text(t)] = &parts[..] else { panic!("{parts:?}") };

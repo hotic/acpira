@@ -17,6 +17,7 @@ pub mod mock;
 pub mod modes;
 pub mod permission;
 pub mod prompt;
+pub mod remote;
 pub mod skills;
 pub mod steer;
 pub mod store;

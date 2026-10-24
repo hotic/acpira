@@ -575,6 +575,7 @@
   "attach.viewSource": "소스 보기",
   "mention.noFiles": "일치하는 파일 없음",
   "host.notFound": "{command}을(를) 찾을 수 없습니다 — 먼저 {agent} CLI를 설치하세요",
+  "host.remoteBuiltinOnly": "로컬 실행에서는 {agent}이(가) {host}의 폴더에서 작업할 수 없습니다. Acpira 내장 에이전트만 가능합니다",
   "host.exited": "{agent} 프로세스가 종료되었습니다 ({code})",
   "host.emptyResponse": "CLI가 응답이나 오류 정보 없이 요청을 끝냈습니다 (ACP: end_turn). 다시 시도하거나 CLI 로그를 확인하세요.",
   "host.agentMcpSkipped": "{agent}이(가) MCP 서버 {name}을(를) 시작하지 못해({reason}) 턴을 중지했습니다. 이제부터 이 세션에서는 제외되며, 그 서버 없이 연결을 다시 만드는 중입니다. 다시 시도하면 계속됩니다. 다시 사용하려면 서버를 고친 뒤 새 세션을 시작하세요.",

@@ -20,6 +20,7 @@ use crate::session_manager::{SessionManager, Viewer};
 use crate::settings::SettingsCenter;
 use crate::sidecar::platform::SidecarPlatform;
 use crate::store::data_dir::{home_dir, normalize};
+use crate::remote::connections::Connections;
 use crate::terminal::TerminalHub;
 
 /// Manager events within this window collapse to one post per message type
@@ -114,6 +115,9 @@ pub struct BridgeCore {
   /// The engine's terminals and this page's id among their viewers
   terminals: Arc<TerminalHub>,
   terminal_view: u64,
+  /// SSH hosts; the page is subscribed from its first `connections` request on
+  connections: Arc<Connections>,
+  connections_sub: parking_lot::Mutex<Option<u64>>,
   me: Weak<BridgeCore>,
 }
 
@@ -129,6 +133,7 @@ impl BridgeCore {
     blob_base: Option<String>,
     initial: Option<InitialView>,
     terminals: Arc<TerminalHub>,
+    connections: Arc<Connections>,
   ) -> Arc<BridgeCore> {
     let viewer = manager.attach(initial);
     // The page loads its bundle between attach and `ready`: a stored session it opens on is read and brought live meanwhile,
@@ -157,6 +162,8 @@ impl BridgeCore {
       disposed: Default::default(),
       terminal_view: terminals.next_view(),
       terminals,
+      connections,
+      connections_sub: Default::default(),
       me: me.clone(),
     });
     let weak = core.me.clone();
@@ -425,6 +432,47 @@ impl BridgeCore {
       W::TerminalAck { id, chars } => self.terminals.ack(self.terminal_view, &id, chars),
       W::TerminalClose { id } => self.terminals.close(self.terminal_view, &id),
       W::TerminalKill { id } => self.terminals.kill(&id),
+      // SSH hosts (remote/connections.rs)
+      W::Connections => {
+        let mut sub = self.connections_sub.lock();
+        if sub.is_none() {
+          let weak = self.me.clone();
+          *sub = Some(self.connections.subscribe(Arc::new(move |views| {
+            if let Some(c) = weak.upgrade() {
+              c.post_now(HostMsg::Connections { connections: views.to_vec() });
+            }
+          })));
+        }
+        drop(sub);
+        self.post_now(HostMsg::Connections { connections: self.connections.views() });
+      }
+      W::ConnectionOp { op } => {
+        let (core, connections) = (self.clone(), self.connections.clone());
+        tokio::spawn(async move {
+          if let Err(e) = connections.op(op).await {
+            core.platform.toast("error", &format!("{e:#}"));
+            // The page may have shown the edit already: the list as it is puts it right
+            core.post_now(HostMsg::Connections { connections: connections.views() });
+          }
+        });
+      }
+      W::SshHosts => {
+        let (core, connections) = (self.clone(), self.connections.clone());
+        tokio::spawn(async move {
+          let hosts = connections.ssh_hosts().await;
+          core.post_now(HostMsg::SshHosts { hosts, error: None });
+        });
+      }
+      W::RemoteDir { alias, path, seq } => {
+        let (core, connections) = (self.clone(), self.connections.clone());
+        tokio::spawn(async move {
+          let msg = match connections.browse(&alias, path.as_deref()).await {
+            Ok((path, entries)) => HostMsg::RemoteDir { seq, alias, path, entries, error: None },
+            Err(e) => HostMsg::RemoteDir { seq, alias, path: path.unwrap_or_default(), entries: vec![], error: Some(format!("{e:#}")) },
+          };
+          core.post_now(msg);
+        });
+      }
       W::SessionChanges { session_id, seq } => {
         let (core, root, bases) = (self.clone(), manager.session_cwd(&session_id), manager.edit_bases(&session_id));
         tokio::spawn(async move {
@@ -639,6 +687,9 @@ impl BridgeCore {
     self.batch.lock().clear();
     if let Some(id) = self.settings_sub.lock().take() {
       self.settings.unsubscribe(id);
+    }
+    if let Some(id) = self.connections_sub.lock().take() {
+      self.connections.unsubscribe(id);
     }
     // Its terminals run on a while without it, for a reload to come back to
     self.terminals.detach_view(self.terminal_view);

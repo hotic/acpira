@@ -30,7 +30,7 @@ const MAX_CALL_IMAGE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_IMAGE_SIDE: u32 = 8000;
 
 /// One window of a file
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Slice {
   pub path: PathBuf,
   /// First line, 1-based
