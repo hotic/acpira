@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { FileText, FolderOpen, GitBranch, Globe, Layers, Link2, Plus, Server, ShieldCheck, Sparkles, Trash2, X } from 'lucide-react';
-import type { AgentId, AgentInfo } from '@shared/transcript';
-import type { McpTransport } from '@shared/inventory';
-import type { Choice, PlanItem, PrivateSkill, Reach, ReachState, SharedAction, SharedMcp, SharedPrompt, SharedScope, SharedSkill, SharedView } from '@shared/sharedConfig';
-import type { MsgKey } from '@shared/i18n';
+import type { AgentId, AgentInfo } from '@acpira/shared/transcript';
+import type { McpTransport } from '@acpira/shared/inventory';
+import type { Choice, PlanItem, PrivateSkill, Reach, ReachState, SharedAction, SharedMcp, SharedPrompt, SharedScope, SharedSkill, SharedView } from '@acpira/shared/sharedConfig';
+import type { MsgKey } from '@acpira/shared/i18n';
 import { Button, IconButton } from '../ui/Button';
 import { RadioPills } from '../ui/Field';
 import { cn } from '../ui/cn';

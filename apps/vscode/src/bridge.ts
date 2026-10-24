@@ -1,10 +1,10 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
-import { appearanceFromSettings } from '@shared/appearance';
-import type { BrowserHostMsg, BrowserLook, BrowserMsg, BrowserPage, ContextItem, HostMsg, WebviewHost, WebviewMsg } from '@shared/protocol';
-import type { SessionView } from '@shared/transcript';
-import { normalizePreviewUrl, type PageContextOp } from '@shared/picker';
-import type { SidecarClient, SidecarState, ShellView } from '@engine-client/SidecarClient';
+import { appearanceFromSettings } from '@acpira/shared/appearance';
+import type { BrowserHostMsg, BrowserLook, BrowserMsg, BrowserPage, ContextItem, HostMsg, WebviewHost, WebviewMsg } from '@acpira/shared/protocol';
+import type { SessionView } from '@acpira/shared/transcript';
+import { normalizePreviewUrl, type PageContextOp } from '@acpira/shared/picker';
+import type { SidecarClient, SidecarState, ShellView } from '@acpira/engine-client/SidecarClient';
 import { PostQueue } from './outbox';
 import { t } from './i18n';
 

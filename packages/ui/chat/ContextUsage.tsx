@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { Shrink } from 'lucide-react';
-import type { Turn, Usage } from '@shared/transcript';
+import type { Turn, Usage } from '@acpira/shared/transcript';
 import { t, useLocale } from '../i18n';
 import { cn } from '../ui/cn';
 import { IconButton } from '../ui/Button';

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ExternalSessionInfo } from '@shared/transcript';
+import type { ExternalSessionInfo } from '@acpira/shared/transcript';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { t } from '../i18n';

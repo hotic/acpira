@@ -1,5 +1,5 @@
 import { createContext, useContext, type CSSProperties } from 'react';
-import type { DesktopLayout, DiffMarkers, SettingsView } from '@shared/settings';
+import type { DesktopLayout, DiffMarkers, SettingsView } from '@acpira/shared/settings';
 
 export type Theme = 'dark' | 'light';
 

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ArrowUp, ListEnd, Merge, Pencil, Trash2 } from 'lucide-react';
-import type { Draft, QueuedPrompt, SessionControls } from '@shared/transcript';
+import type { Draft, QueuedPrompt, SessionControls } from '@acpira/shared/transcript';
 import { t } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { Row, RowTarget } from '../ui/Row';

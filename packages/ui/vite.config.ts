@@ -15,12 +15,6 @@ export default defineConfig({
   root,
   base: './',
   plugins: [react(), tailwindcss()],
-  resolve: {
-    alias: {
-      '@shared': fileURLToPath(new URL('../shared', import.meta.url)),
-      '@webview': root,
-    },
-  },
   build: {
     outDir: fileURLToPath(new URL('../../dist/webview', import.meta.url)),
     emptyOutDir: true,

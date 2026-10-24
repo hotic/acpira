@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { CircleFadingPlus, Plus } from 'lucide-react';
-import { isUltraLevel, levelShort } from '@shared/composerControls';
+import { isUltraLevel, levelShort } from '@acpira/shared/composerControls';
 import { t } from '../i18n';
 import { ChipTag } from '../ui/Button';
 import { cn } from '../ui/cn';

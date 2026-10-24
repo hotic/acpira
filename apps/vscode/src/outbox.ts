@@ -1,5 +1,5 @@
-import type { HostMsg } from '@shared/protocol';
-import { applySessionPatch, mergeSessionPatches } from '@shared/sessionPatch';
+import type { HostMsg } from '@acpira/shared/protocol';
+import { applySessionPatch, mergeSessionPatches } from '@acpira/shared/sessionPatch';
 
 // Messages that only ever describe current state: a later one makes an earlier one of its kind redundant
 const STATE: ReadonlySet<HostMsg['type']> = new Set(['session', 'sessionPatch', 'sessions']);

@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { DUTY_BRIEFS, type SubagentSummary } from '@shared/subagents';
-import type { AgentTurn, PermissionBlock, SessionView, ToolCallBlock, Turn } from '@shared/transcript';
+import { DUTY_BRIEFS, type SubagentSummary } from '@acpira/shared/subagents';
+import type { AgentTurn, PermissionBlock, SessionView, ToolCallBlock, Turn } from '@acpira/shared/transcript';
 import { FAKE, bundleFakeAgent } from '../../../test/fakeAgentBundle';
 import { Host, type View } from '../../lib/host';
 import { HARNESSES, MODELS } from '../harnesses';
@@ -17,7 +17,7 @@ import { JUDGE_MODEL, type Verdict, judge } from './judge';
 // summons the reviewer(s) through ask_agent exactly as a model would, the reviews judged against the target's known
 // bugs. Spends real model calls unless --dry.
 //
-//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/review/run.ts --reviewers astra [--variant A,B,C]
+//   pnpm exec tsx scripts/eval/review/run.ts --reviewers astra [--variant A,B,C]
 //     [--set dev|holdout] [--target id,…] [--reps 1] [--parallel 1] [--judge deepseek-v4-pro|stub] [--policy FILE]
 //     [--out DIR] [--timeout-min 45] [--dry]
 //

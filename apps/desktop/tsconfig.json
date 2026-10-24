@@ -1,18 +1,8 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "noFallthroughCasesInSwitch": true,
-    "skipLibCheck": true,
-    "isolatedModules": true,
-    "resolveJsonModule": true,
-    "noEmit": true,
     "lib": ["ES2022", "DOM"],
-    "types": ["node"],
-    "paths": { "@shared/*": ["../../packages/shared/*"], "@engine-client/*": ["../../packages/engine-client/*"] }
+    "types": ["node"]
   },
   "include": ["src", "test", "build.mjs", "vitest.config.ts"]
 }

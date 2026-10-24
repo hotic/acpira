@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AgentBlock, AgentTurn, CompactionBlock, GoalBlock, NoticeBlock, PermissionBlock, QuestionBlock, ToolCallBlock } from '../packages/shared/transcript';
+import type { AgentBlock, AgentTurn, CompactionBlock, GoalBlock, NoticeBlock, PermissionBlock, QuestionBlock, ToolCallBlock } from '@acpira/shared/transcript';
 import { setLocale } from '../packages/ui/i18n';
 import { elapsedDuration, foldActivity, splitCodexBlocks, toolTarget, toolVerb } from '../packages/ui/chat/folding';
 

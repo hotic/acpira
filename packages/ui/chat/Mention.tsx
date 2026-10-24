@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { FileText, Image as ImageIcon, Users } from 'lucide-react';
-import type { FileHit } from '@shared/protocol';
-import { imageMimeOf } from '@shared/attachments';
+import type { FileHit } from '@acpira/shared/protocol';
+import { imageMimeOf } from '@acpira/shared/attachments';
 import { t } from '../i18n';
 import { AgentMark } from './AgentMark';
 import { CompletionList } from './Completion';

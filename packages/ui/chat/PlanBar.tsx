@@ -1,4 +1,4 @@
-import type { Turn } from '@shared/transcript';
+import type { Turn } from '@acpira/shared/transcript';
 import { PlanCard } from './Plan';
 import { dockPlan } from './dockPlan';
 

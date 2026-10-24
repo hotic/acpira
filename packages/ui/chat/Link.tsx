@@ -2,7 +2,7 @@ import { isValidElement, useContext, type ComponentProps, type KeyboardEvent, ty
 import type { ExtraProps } from 'streamdown';
 import { vscodeApi } from '../vscodeApi';
 import { cn } from '../ui/cn';
-import { sessionIdOfLink } from '@shared/sessionLinks';
+import { sessionIdOfLink } from '@acpira/shared/sessionLinks';
 import { OpenSessionContext, OpenToolFileContext, decodeFileHref, decodeSessionHref, parseCodeSessionLink, parseFileLink, parseWrappedLink } from './fileLinks';
 
 // Links in agent output: the webview cannot navigate, so clicks are forwarded to the host.

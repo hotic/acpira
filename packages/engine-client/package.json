@@ -1,0 +1,15 @@
+{
+  "name": "@acpira/engine-client",
+  "private": true,
+  "description": "The Node client of the Rust engine: locating and launching the sidecar, the envelope connection, shared settings and the context API",
+  "type": "module",
+  "exports": {
+    "./*": "./*.ts"
+  },
+  "dependencies": {
+    "@acpira/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}

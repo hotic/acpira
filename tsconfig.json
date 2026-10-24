@@ -1,7 +1,13 @@
 {
   "files": [],
   "references": [
-    { "path": "./tsconfig.webview.json" },
-    { "path": "./tsconfig.host.json" }
+    { "path": "./packages/shared" },
+    { "path": "./packages/engine-client" },
+    { "path": "./packages/picker" },
+    { "path": "./packages/ui" },
+    { "path": "./apps/vscode" },
+    { "path": "./apps/desktop" },
+    { "path": "./test" },
+    { "path": "./scripts" }
   ]
 }

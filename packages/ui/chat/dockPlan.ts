@@ -1,5 +1,5 @@
-import type { PlanEntry, Turn } from '@shared/transcript';
-import { toolTodoEntries } from '@shared/todoTools';
+import type { PlanEntry, Turn } from '@acpira/shared/transcript';
+import { toolTodoEntries } from '@acpira/shared/todoTools';
 
 // Open entries stay in the dock across turns. A finished list stays only while
 // its own turn is still running, so a later prompt does not resurrect it.

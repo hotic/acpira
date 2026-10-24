@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { SessionView } from '../packages/shared/transcript';
-import { applySession, reuse } from '../packages/shared/reuse';
+import type { SessionView } from '@acpira/shared/transcript';
+import { applySession, reuse } from '@acpira/shared/reuse';
 
 const clone = <T>(value: T): T => structuredClone(value);
 

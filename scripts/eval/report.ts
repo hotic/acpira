@@ -8,7 +8,7 @@ import { cost } from './prices';
 // With --dump bodies, "est. k" is the prompt size estimated from the request bodies (JSON bytes / 3.4, calibrated on a
 // prose prompt), a ruler independent of what the provider reports (this gateway's Qwen counts miss most of the history)
 //
-//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/report.ts DIR [DIR…] [--by-task]
+//   pnpm exec tsx scripts/eval/report.ts DIR [DIR…] [--by-task]
 
 interface Result {
   runId: string; dir: string; task: string; harness: string; model: string; pass: boolean; testsPassed: number; testsTotal: number; wallS: number;

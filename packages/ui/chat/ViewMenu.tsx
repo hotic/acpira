@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { ArrowDownWideNarrow, Calendar, ChevronRight, Circle, CircleDot, Clock, Eye, Folder, Layers, List, ListFilter, LoaderCircle, MailCheck } from 'lucide-react';
-import type { AgentInfo } from '@shared/transcript';
+import type { AgentInfo } from '@acpira/shared/transcript';
 import { cn } from '../ui/cn';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';

@@ -1,4 +1,4 @@
-import type { ToolCallBlock, ToolContent } from '@shared/transcript';
+import type { ToolCallBlock, ToolContent } from '@acpira/shared/transcript';
 
 const EDIT_SUCCESS_RECEIPTS = new Set(['Edit applied successfully.', 'Wrote file successfully.']);
 

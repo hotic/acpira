@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type RefObject } from 'react';
 import { SquareSlash } from 'lucide-react';
-import type { SlashCommand } from '@shared/transcript';
-import { presentCommand } from '@shared/commandPresentation';
+import type { SlashCommand } from '@acpira/shared/transcript';
+import { presentCommand } from '@acpira/shared/commandPresentation';
 import { getLocale } from '../i18n';
 import { CompletionList } from './Completion';
 import { matchCommands } from './slashCommands';

@@ -1,6 +1,6 @@
-import { isSessionTool, sessionRead, splitSessionTarget, type SessionRead } from '@shared/sessionLinks';
-import type { AgentBlock, AgentTurn, CompactionBlock, GoalBlock, NoticeBlock, TextBlock, ToolCallBlock, ToolKind } from '@shared/transcript';
-import type { MsgKey } from '@shared/i18n';
+import { isSessionTool, sessionRead, splitSessionTarget, type SessionRead } from '@acpira/shared/sessionLinks';
+import type { AgentBlock, AgentTurn, CompactionBlock, GoalBlock, NoticeBlock, TextBlock, ToolCallBlock, ToolKind } from '@acpira/shared/transcript';
+import type { MsgKey } from '@acpira/shared/i18n';
 import { getLocale, t } from '../i18n';
 import { planApprovalTitle } from './permissionOptions';
 

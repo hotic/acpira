@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import type { FileHit, ProjectBase, ProjectChange } from '@shared/protocol';
+import type { FileHit, ProjectBase, ProjectChange } from '@acpira/shared/protocol';
 import { Folder, Globe, LayoutGrid, PanelRight, Plus, SquareTerminal, X, type LucideIcon } from 'lucide-react';
 import { t } from '../i18n';
 import { IconButton } from '../ui/Button';

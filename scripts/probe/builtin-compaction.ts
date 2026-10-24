@@ -1,11 +1,11 @@
 import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { PermissionBlock, SessionView } from '@shared/transcript';
+import type { PermissionBlock, SessionView } from '@acpira/shared/transcript';
 import { Host } from '../lib/host';
 
 // The built-in agent's compaction and skills through the sidecar (real model, real calls):
-//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe/builtin-compaction.ts [--scenario basic|prune|overflow] [--model <source>/<model>] [--at TOKENS] [--home DIR]
+//   pnpm exec tsx scripts/probe/builtin-compaction.ts [--scenario basic|prune|overflow] [--model <source>/<model>] [--at TOKENS] [--home DIR]
 // A temp data root gets a copy of ~/.acpira/providers.json and secrets.json (nothing is written back) and the host's
 // compactAtTokens is set to --at. The agent's session log is summarized at the end. Scenarios:
 //   basic (--at 8000 by default): pong → a read of a 40 KB file that pushes the next call over the threshold (a

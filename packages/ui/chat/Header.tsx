@@ -1,9 +1,9 @@
 import { useState, type ReactElement, type ReactNode } from 'react';
 import { Ellipsis, History, LockKeyhole, PanelLeft, PanelRight, Plus, Settings2, UserRound } from 'lucide-react';
-import type { AccountInfo, AgentInfo, SessionCategories, SessionSummary } from '@shared/transcript';
-import type { NativeSessionsState } from '@shared/protocol';
-import type { SessionScope } from '@shared/settings';
-import { launchable } from '@shared/agentOrder';
+import type { AccountInfo, AgentInfo, SessionCategories, SessionSummary } from '@acpira/shared/transcript';
+import type { NativeSessionsState } from '@acpira/shared/protocol';
+import type { SessionScope } from '@acpira/shared/settings';
+import { launchable } from '@acpira/shared/agentOrder';
 import { t } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { Popover } from '../ui/Popover';

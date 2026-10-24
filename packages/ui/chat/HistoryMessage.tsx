@@ -1,8 +1,8 @@
 import { createContext, memo, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { EditTurnRequest } from '@shared/protocol';
-import type { Draft, SlashCommand, UserTurn } from '@shared/transcript';
-import { captureTurnSettings, editTurnConfig, openTurnControls } from '@shared/turnSettings';
-import type { ModelShapes } from '@shared/modelShapes';
+import type { EditTurnRequest } from '@acpira/shared/protocol';
+import type { Draft, SlashCommand, UserTurn } from '@acpira/shared/transcript';
+import { captureTurnSettings, editTurnConfig, openTurnControls } from '@acpira/shared/turnSettings';
+import type { ModelShapes } from '@acpira/shared/modelShapes';
 import { useAppearance } from '../appearance';
 import { Composer, type ComposerProps } from './Composer';
 import { EditAttachments } from './Attachments';

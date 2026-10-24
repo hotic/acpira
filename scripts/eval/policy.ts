@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { DUTY_BRIEFS } from '@shared/subagents';
+import { DUTY_BRIEFS } from '@acpira/shared/subagents';
 
 // The strategy file the evolve loop tunes (evolve.ts) and the review bench reads (`review/run.ts --policy`): the handoff
 // pack's recipe and the reviewer's standing brief. Pure data; a key left out keeps the shipped default. Only what the

@@ -1,7 +1,7 @@
 import { memo, useContext, useState, type ReactNode } from 'react';
 import { MessagesSquare } from 'lucide-react';
-import { splitSessionTarget } from '@shared/sessionLinks';
-import type { ToolCallBlock } from '@shared/transcript';
+import { splitSessionTarget } from '@acpira/shared/sessionLinks';
+import type { ToolCallBlock } from '@acpira/shared/transcript';
 import { Collapsible } from '../ui/Collapsible';
 import { Disclosure, DisclosureRow } from '../ui/Disclosure';
 import { EntranceOnce, Row, RowLabel, RowTarget } from '../ui/Row';

@@ -9,11 +9,6 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "resolveJsonModule": true,
-    "noEmit": true,
-    "paths": {
-      "@shared/*": ["./packages/shared/*"],
-      "@webview/*": ["./packages/ui/*"],
-      "@engine-client/*": ["./packages/engine-client/*"]
-    }
+    "noEmit": true
   }
 }

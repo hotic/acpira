@@ -2,10 +2,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { HostMsg } from '../packages/shared/protocol';
-import type { AgentBlock, AgentTurn, SessionView, Turn } from '../packages/shared/transcript';
-import { applySessionPatch, mergeSessionPatches, type SessionPatch } from '../packages/shared/sessionPatch';
-import { applySession } from '../packages/shared/reuse';
+import type { HostMsg } from '@acpira/shared/protocol';
+import type { AgentBlock, AgentTurn, SessionView, Turn } from '@acpira/shared/transcript';
+import { applySessionPatch, mergeSessionPatches, type SessionPatch } from '@acpira/shared/sessionPatch';
+import { applySession } from '@acpira/shared/reuse';
 import { Shell } from './sidecarShell';
 
 const text = (markdown: string): AgentBlock => ({ type: 'text', markdown });

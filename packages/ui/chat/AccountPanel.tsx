@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { Check, Plus, X } from 'lucide-react';
-import type { AccountInfo, AgentInfo } from '@shared/transcript';
-import type { AddAccountVia } from '@shared/protocol';
+import type { AccountInfo, AgentInfo } from '@acpira/shared/transcript';
+import type { AddAccountVia } from '@acpira/shared/protocol';
 import { PanelHeader } from '../ui/Panel';
 import { RadioGroup } from '../ui/RadioGroup';
 import { AccountIdentity, AccountLabel } from '../ui/AccountLabel';

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import pkg from '../apps/vscode/package.json';
-import { isSharedSetting, SHELL_SETTING_KEYS } from '../packages/shared/settings';
+import { isSharedSetting, SHELL_SETTING_KEYS } from '@acpira/shared/settings';
 
 // Shared settings (the appearance axes among them) live in <ACPIRA_HOME>/settings.json for every shell, so no host
 // reads package.json defaults for them any more: every host falls back to the engine's defaults and the baseline combo

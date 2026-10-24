@@ -1,6 +1,6 @@
 import { memo, useContext } from 'react';
 import { ArrowRight, GitBranch } from 'lucide-react';
-import type { AgentId, AgentInfo, ForkOrigin } from '@shared/transcript';
+import type { AgentId, AgentInfo, ForkOrigin } from '@acpira/shared/transcript';
 import { t, useLocale } from '../i18n';
 import { Row, RowLabel, RowTarget } from '../ui/Row';
 import { AgentMark } from './AgentMark';

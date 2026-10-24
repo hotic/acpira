@@ -17,7 +17,7 @@ if (process.argv.includes('--seed')) {
     ?? join(repo, 'apps/intellij/.intellijPlatform/sandbox/acpira/IU-2026.1.4/config');
   const settings = {
     defaultAgent: 'fake',
-    agents: { fake: { name: 'Fake', command: join(repo, 'node_modules/.bin/tsx'), args: ['--tsconfig', join(repo, 'tsconfig.host.json'), join(repo, 'test/fake-agent.ts')] } },
+    agents: { fake: { name: 'Fake', command: join(repo, 'node_modules/.bin/tsx'), args: [join(repo, 'test/fake-agent.ts')] } },
   };
   const xml = `<application>\n  <component name="Acpira">\n    <option name="json" value="${JSON.stringify(settings).replace(/&/g, '&amp;').replace(/"/g, '&quot;')}" />\n  </component>\n</application>\n`;
   mkdirSync(join(config, 'options'), { recursive: true });

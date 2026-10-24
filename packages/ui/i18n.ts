@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import { translate, en, type Locale, type MsgKey, type Params } from '@shared/i18n';
+import { translate, en, type Locale, type MsgKey, type Params } from '@acpira/shared/i18n';
 
 // Webview strings. Components read `t` from module state (no prop threading through twenty components). A new locale
 // from the host re-renders the tree in place, without a remount: a component that memo keeps from rendering (the

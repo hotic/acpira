@@ -1,6 +1,6 @@
 import { useContext, useState } from 'react';
 import { Image as ImageIcon } from 'lucide-react';
-import type { ImageRef } from '@shared/transcript';
+import type { ImageRef } from '@acpira/shared/transcript';
 import { t } from '../i18n';
 import { ImageMenu } from './ImageMenu';
 import { Lightbox } from './Lightbox';

@@ -1,5 +1,5 @@
-import type { AgentId, AgentInfo, AgentTurn, SessionControls, TurnSettings, TurnUsage } from '@shared/transcript';
-import { launchable } from '@shared/agentOrder';
+import type { AgentId, AgentInfo, AgentTurn, SessionControls, TurnSettings, TurnUsage } from '@acpira/shared/transcript';
+import { launchable } from '@acpira/shared/agentOrder';
 import { commandDuration } from './commandDuration';
 import { splitCodexBlocks } from './folding';
 

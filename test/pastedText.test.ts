@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { collectPastedText, PASTE_TEXT_CHARS, PASTE_TEXT_LINES } from '../packages/shared/pastedText';
-import { MAX_TEXT_BYTES } from '../packages/shared/attachments';
+import { collectPastedText, PASTE_TEXT_CHARS, PASTE_TEXT_LINES } from '@acpira/shared/pastedText';
+import { MAX_TEXT_BYTES } from '@acpira/shared/attachments';
 
 const name = '粘贴的文本.txt';
 

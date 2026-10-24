@@ -1,7 +1,7 @@
 import { createContext, useContext } from 'react';
-import { BASE_APPEARANCE, type Appearance } from '@shared/appearance';
+import { BASE_APPEARANCE, type Appearance } from '@acpira/shared/appearance';
 
-export * from '@shared/appearance';
+export * from '@acpira/shared/appearance';
 
 // Structural axes are read from context by components; token-type axes go to CSS via data-* attributes
 export function appearanceDataAttrs(a: Appearance) {

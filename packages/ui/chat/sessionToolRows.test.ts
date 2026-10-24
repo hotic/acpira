@@ -1,8 +1,8 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ToolCallBlock } from '@shared/transcript';
-import { sessionRead, splitSessionTarget } from '@shared/sessionLinks';
+import type { ToolCallBlock } from '@acpira/shared/transcript';
+import { sessionRead, splitSessionTarget } from '@acpira/shared/sessionLinks';
 import { setLocale } from '../i18n';
 import { ToolCall } from './ToolCall';
 import { SessionTitleContext } from './fileLinks';

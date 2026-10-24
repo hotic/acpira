@@ -2,9 +2,9 @@ name: Windows compatibility
 
 on:
   push:
-    paths: ['rust/**', 'packages/**', 'apps/**', 'test/**', 'scripts/**', 'package.json', 'pnpm-lock.yaml', '.github/workflows/windows-compat.yml']
+    paths: ['rust/**', 'packages/**', 'apps/**', 'test/**', 'scripts/**', 'package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml', '.github/workflows/windows-compat.yml']
   pull_request:
-    paths: ['rust/**', 'packages/**', 'apps/**', 'test/**', 'scripts/**', 'package.json', 'pnpm-lock.yaml', '.github/workflows/windows-compat.yml']
+    paths: ['rust/**', 'packages/**', 'apps/**', 'test/**', 'scripts/**', 'package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml', '.github/workflows/windows-compat.yml']
   workflow_dispatch:
 
 permissions:

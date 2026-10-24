@@ -1,4 +1,4 @@
-import type { FileHit } from '@shared/protocol';
+import type { FileHit } from '@acpira/shared/protocol';
 
 // Ranking behind the @ file search, kept free of vscode so it can be unit-tested: subsequence match of the query against each path, best first.
 // An empty query returns the list as given (callers pre-sort it shallow-first)

@@ -1,4 +1,4 @@
-import { modelBrand } from '@shared/models';
+import { modelBrand } from '@acpira/shared/models';
 import { MarkSvg } from './marks';
 
 // Vendor logo for a model family ("GLM-5.2" → Zhipu mark). brand is the pre-resolved mark key — from the option's

@@ -1,7 +1,7 @@
 import { memo, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { FileCode } from 'lucide-react';
-import type { ToolCallBlock } from '@shared/transcript';
-import { toolWidget } from '@shared/imageTools';
+import type { ToolCallBlock } from '@acpira/shared/transcript';
+import { toolWidget } from '@acpira/shared/imageTools';
 import { useAppearance } from '../appearance';
 import { useTheme } from '../look';
 import { t, useLocale } from '../i18n';

@@ -1,11 +1,11 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { SessionView } from '@shared/transcript';
+import type { SessionView } from '@acpira/shared/transcript';
 import { Host, type View } from '../lib/host';
 
 // Host-path restore/import round trip for any registered agent (real CLI, real model — a couple of tiny prompts):
-//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe/restore-host.ts <agent> [--keep]
+//   pnpm exec tsx scripts/probe/restore-host.ts <agent> [--keep]
 // Each "host" is a Rust sidecar (scripts/lib/host.ts) over its own data dir; the CLI's own store is shared.
 // (a) host1 on store S: new session, "pong" prompt, dispose.
 // (b) host2 on the same store S: open the record — same acpSessionId, no replayed/duplicated turns, no re-sent prompt —

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, globSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, globSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +22,7 @@ const args = process.argv.slice(2);
 const allTargets = SIDECAR_TARGETS.flatMap(t => t.vsce);
 const hostTarget = targetFor(hostPlatform()).vsce[0];
 const targets = args.includes('--all') ? allTargets : args.length ? args : [hostTarget];
-const vsce = join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'vsce.cmd' : 'vsce');
+const vsce = join(app, 'node_modules', '.bin', process.platform === 'win32' ? 'vsce.cmd' : 'vsce');
 
 // The files .vscodeignore lets through, by their path in the package: it ignores everything (`**`) and lists the package's
 // files as `!` exceptions, each looked up in apps/vscode first and then the repository root. bin/ is left out, since each
@@ -48,6 +48,11 @@ try {
     mkdirSync(dirname(join(stage, f)), { recursive: true });
     copyFileSync(from, join(stage, f));
   }
+  // The shipped manifest leaves out the workspace's build scripts and `workspace:` / `catalog:` dependencies, which only
+  // mean something inside this repository
+  const manifest = JSON.parse(readFileSync(join(stage, 'package.json'), 'utf8'));
+  for (const key of ['scripts', 'dependencies', 'devDependencies']) delete manifest[key];
+  writeFileSync(join(stage, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   const bin = join(stage, 'bin');
   for (const target of targets) {
     rmSync(bin, { recursive: true, force: true });

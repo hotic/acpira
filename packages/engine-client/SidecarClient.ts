@@ -1,8 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Socket } from 'node:net';
 import { createInterface } from 'node:readline';
-import type { HostMsg, WebviewHost, WebviewMsg } from '@shared/protocol';
-import { SIDECAR_PROTOCOL_VERSION, type PlatformEvent, type PlatformRequest, type ShellMsg, type SidecarMsg } from '@shared/sidecar';
+import type { HostMsg, WebviewHost, WebviewMsg } from '@acpira/shared/protocol';
+import { SIDECAR_PROTOCOL_VERSION, type PlatformEvent, type PlatformRequest, type ShellMsg, type SidecarMsg } from '@acpira/shared/sidecar';
 import { reachEngine, type EngineEndpoint } from './engine';
 import { onNdjsonLines } from './ndjson';
 

@@ -1,11 +1,11 @@
 import { useCallback, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { Plus, SquareDashedMousePointer, TextSelect, X } from 'lucide-react';
-import type { Draft, SessionControls, SessionOption, SlashCommand, Turn, Usage } from '@shared/transcript';
-import type { EditorSelection, FileHit } from '@shared/protocol';
-import type { HiddenMap } from '@shared/settings';
-import { composerControls } from '@shared/composerControls';
-import { MAX_TEXT_BYTES, lineRangeLabel } from '@shared/attachments';
-import { collectPastedText } from '@shared/pastedText';
+import type { Draft, SessionControls, SessionOption, SlashCommand, Turn, Usage } from '@acpira/shared/transcript';
+import type { EditorSelection, FileHit } from '@acpira/shared/protocol';
+import type { HiddenMap } from '@acpira/shared/settings';
+import { composerControls } from '@acpira/shared/composerControls';
+import { MAX_TEXT_BYTES, lineRangeLabel } from '@acpira/shared/attachments';
+import { collectPastedText } from '@acpira/shared/pastedText';
 import { useAppearance } from '../appearance';
 import { getLocale, t } from '../i18n';
 import { cn } from '../ui/cn';

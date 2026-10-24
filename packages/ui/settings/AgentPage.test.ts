@@ -1,11 +1,11 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AgentInfo } from '@shared/transcript';
-import type { AgentInventory } from '@shared/inventory';
-import type { AgentInstallProgress } from '@shared/protocol';
-import { DEFAULT_SETTINGS } from '@shared/settings';
-import { newModel, type ProviderModel, type ProviderView } from '@shared/providers';
+import type { AgentInfo } from '@acpira/shared/transcript';
+import type { AgentInventory } from '@acpira/shared/inventory';
+import type { AgentInstallProgress } from '@acpira/shared/protocol';
+import { DEFAULT_SETTINGS } from '@acpira/shared/settings';
+import { newModel, type ProviderModel, type ProviderView } from '@acpira/shared/providers';
 import { setLocale, t } from '../i18n';
 import { AgentPage } from './AgentPage';
 import { editTokens, fmtTokens, ModelEditor, parseTokens } from './ProviderModel';

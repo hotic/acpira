@@ -15,7 +15,6 @@ const ctx = await context({
   sourcemap: watch,
   minify: !watch,
   logLevel: 'info',
-  alias: { '@shared': here('../../packages/shared'), '@engine-client': here('../../packages/engine-client') },
   entryPoints: [here('./src/extension.ts')],
   outfile: here('./dist/extension.cjs'),
   external: ['vscode'],

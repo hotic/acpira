@@ -1,4 +1,4 @@
-import type { SessionCategory, SessionSummary } from '@shared/transcript';
+import type { SessionCategory, SessionSummary } from '@acpira/shared/transcript';
 
 // The session list as a tree: pinned sessions on top, then one node per project (the session's cwd), each holding its
 // user categories and the sessions filed nowhere ("loose"). Under the workspace scope there is a single node (the

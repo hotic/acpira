@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import { ArrowLeft, HardDrive, Layers, Network, Palette, Settings2 } from 'lucide-react';
-import type { AgentId, AgentInfo } from '@shared/transcript';
-import { moveAgent } from '@shared/agentOrder';
+import type { AgentId, AgentInfo } from '@acpira/shared/transcript';
+import { moveAgent } from '@acpira/shared/agentOrder';
 import { cn } from '../ui/cn';
 import { Switch } from '../ui/Switch';
 import { AgentMark } from '../chat/AgentMark';

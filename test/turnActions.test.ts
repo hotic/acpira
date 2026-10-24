@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentInfo, AgentTurn, SessionControls, ToolCallBlock } from '../packages/shared/transcript';
+import type { AgentInfo, AgentTurn, SessionControls, ToolCallBlock } from '@acpira/shared/transcript';
 import { forkTargets, modelLabel, replyMarkdown, turnOutputTps, turnTtft } from '../packages/ui/chat/turnActionHelpers';
 
 const text = (markdown: string) => ({ type: 'text' as const, markdown });

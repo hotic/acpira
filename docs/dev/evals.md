@@ -23,10 +23,10 @@ Scripts under `scripts/eval/` that measure orchestration choices against real CL
 - Dry run: `--dry` makes each reviewer the fake agent answering with a canned review that names the target's bugs (the fake agent's `review=<path>`, which also names the prompt's block types), judged by the keyword stub. Checked 2026-10-21: all 24 targets materialize, run and score; variant A's reviewer gets the request as one text block and B's and C's a text block plus the pack as an embedded resource (C's listing the uses of changed definitions); `astra+argon+opus` is one group summon whose three rounds each get the same pack.
 
 ```
-pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/review/run.ts --reviewers astra[,astra+argon+opus] [--variant A,B,C]
+pnpm exec tsx scripts/eval/review/run.ts --reviewers astra[,astra+argon+opus] [--variant A,B,C]
   [--set dev|holdout] [--target id,…] [--reps N] [--parallel N] [--judge stub|MODEL] [--policy FILE] [--out DIR] [--dry]
-pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/review/report.ts DIR [--by-target]
-pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/review/rescore.ts DIR --target id,… [--reviewers cell,…]
+pnpm exec tsx scripts/eval/review/report.ts DIR [--by-target]
+pnpm exec tsx scripts/eval/review/rescore.ts DIR --target id,… [--reviewers cell,…]
 pnpm exec tsx scripts/eval/review/mine.ts          # candidates, spends nothing
 pnpm exec tsx scripts/eval/review/bench.ts materialize <target> <dir>
 ```
@@ -61,8 +61,8 @@ Engine pinned at ebf8ebb3 (Acpira 1.10.7). Reviewers: Codex 0.162.1 with codex-a
 - Dry run: `--dry` makes the lead and every helper's CLI the fake agent under its own id; a configuration with helpers summons its first group (else its first helper) once. Checked 2026-10-21 for all seven configurations on `conf-bugs` (the roster and per-helper providers written, the picks skipped); `acpira-orch` summons its review group, both members' rounds complete and come back in one automatic message. `acpira-astra-rev`, checked the same day on `conf-bugs`: its lead summons the reviewer once, the round completes and its reply comes back as the automatic message.
 
 ```
-pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/run.ts --config claude-opus,devin-opus-luna,acpira-orch [--task …] [--reps N] [--out DIR] [--dry]
-pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/report.ts DIR [--by-task]
+pnpm exec tsx scripts/eval/run.ts --config claude-opus,devin-opus-luna,acpira-orch [--task …] [--reps N] [--out DIR] [--dry]
+pnpm exec tsx scripts/eval/report.ts DIR [--by-task]
 ```
 
 ### Results, 2026-10-21
@@ -139,7 +139,7 @@ Dollars are at list price:
 - Dry run, checked 2026-10-21: two stub rounds with fake reviewers on the dev set (16 runs a side, both rejected within the noise), then `--final-only` with a forced incumbent (8 held-out runs a side, the report, and a patch that `git apply --check` accepts). A separate check applied such a patch to copies of the four files and read the brief back from the TypeScript module, the JSON fixture and the Rust literal. The confirmation of a win on time ran in a dry round with the bar loosened to equal medians for the check: both sides evaluated twice and decided on 32 pooled runs.
 
 ```
-pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/evolve.ts --out DIR [--rounds 2] [--hours 10] [--max-rejects 3]
+pnpm exec tsx scripts/eval/evolve.ts --out DIR [--rounds 2] [--hours 10] [--max-rejects 3]
   [--reviewers astra] [--variant B] [--reps 1] [--parallel 4] [--proposer claude|stub] [--noise-from DIR]
   [--quota-floor 0.25] [--no-final | --final-only] [--dry]
 ```

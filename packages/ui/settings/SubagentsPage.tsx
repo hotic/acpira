@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronLeft, Plus, Trash2, Users } from 'lucide-react';
-import type { AgentId, AgentInfo, ConfigControl } from '@shared/transcript';
-import type { SettingsView } from '@shared/settings';
-import { effortLabel } from '@shared/composerControls';
+import type { AgentId, AgentInfo, ConfigControl } from '@acpira/shared/transcript';
+import type { SettingsView } from '@acpira/shared/settings';
+import { effortLabel } from '@acpira/shared/composerControls';
 import {
   DUTIES, DUTY_BRIEFS, dutyDefaults, GROUP_MAX, GROUP_MEMBERS_MAX, PERSONA_MAX, sanitizeGroups, sanitizePersonas,
   type RelayMode, type SubagentDuty, type SubagentGroup, type SubagentPersona,
-} from '@shared/subagents';
+} from '@acpira/shared/subagents';
 import { AgentMark } from '../chat/AgentMark';
 import { Button, ChipTag, IconButton } from '../ui/Button';
 import { StableText } from '../ui/StableText';

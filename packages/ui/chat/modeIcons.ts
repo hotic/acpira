@@ -1,6 +1,6 @@
 import { Bug, CircleDashed, Code, Eye, Infinity as InfinityIcon, ListTodo, MessageCircleQuestionMark, ShieldOff, Sparkles, Unplug, type LucideIcon } from 'lucide-react';
-import type { MsgKey } from '@shared/i18n';
-import type { SessionOption } from '@shared/transcript';
+import type { MsgKey } from '@acpira/shared/i18n';
+import type { SessionOption } from '@acpira/shared/transcript';
 import { t } from '../i18n';
 
 // ACP modes carry only id / name / description, so the glyph is inferred from keywords in id + name (Devin: code / smart / ask / plan / bypass;

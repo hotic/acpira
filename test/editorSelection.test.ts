@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { editorSelectionOf } from '../apps/vscode/src/editorSelection';
-import { MAX_TEXT_BYTES } from '../packages/shared/attachments';
+import { MAX_TEXT_BYTES } from '@acpira/shared/attachments';
 
 // Mirrored by apps/intellij/frontend EditorRangeTest: both shells must label the same range the same way
 describe('editor selection ranges', () => {

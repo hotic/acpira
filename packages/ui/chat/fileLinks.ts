@@ -1,6 +1,6 @@
 import { createContext } from 'react';
-import type { FullDiffSource } from '@shared/transcript';
-import { isSessionId, sessionIdOfLink } from '@shared/sessionLinks';
+import type { FullDiffSource } from '@acpira/shared/transcript';
+import { isSessionId, sessionIdOfLink } from '@acpira/shared/sessionLinks';
 import type { WorkflowProgress } from './subagents/subagentState';
 
 export type FileLink = { path: string; line?: number };

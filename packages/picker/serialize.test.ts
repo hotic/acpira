@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { envelopeOf, normalizePreviewUrl, pickedContext, redactAttr, redactUrl, type PickedElement } from '@shared/picker';
+import { envelopeOf, normalizePreviewUrl, pickedContext, redactAttr, redactUrl, type PickedElement } from '@acpira/shared/picker';
 import { serialize, type MiniNode } from './serialize';
 
 const text = (v: string): MiniNode => ({ nodeType: 3, nodeValue: v, childNodes: [] });

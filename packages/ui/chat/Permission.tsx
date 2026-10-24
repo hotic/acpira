@@ -1,5 +1,5 @@
 import { ChevronDown, Terminal } from 'lucide-react';
-import type { PermissionBlock } from '@shared/transcript';
+import type { PermissionBlock } from '@acpira/shared/transcript';
 import { Button } from '../ui/Button';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { Row } from '../ui/Row';

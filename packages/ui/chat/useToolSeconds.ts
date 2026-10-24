@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ToolCallBlock } from '@shared/transcript';
+import type { ToolCallBlock } from '@acpira/shared/transcript';
 
 // Host timestamps survive remounts; only unfinished commands need a local tick.
 export function useToolSeconds(block: ToolCallBlock): number | undefined {

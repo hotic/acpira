@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentTurn } from '../packages/shared/transcript';
+import type { AgentTurn } from '@acpira/shared/transcript';
 import { compactionForDisplay } from '../packages/ui/chat/compactionDisplay';
 
 const reply = (markdown: string, stop: AgentTurn['stop'] = 'end_turn'): AgentTurn => ({ role: 'agent', stop, blocks: [{ type: 'text', markdown }] });

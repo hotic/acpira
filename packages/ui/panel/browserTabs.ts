@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { BrowserHostMsg, BrowserMsg, BrowserPage } from '@shared/protocol';
+import type { BrowserHostMsg, BrowserMsg, BrowserPage } from '@acpira/shared/protocol';
 import { vscodeApi, type VsCodeApi } from '../vscodeApi';
 import { panel } from './store';
 

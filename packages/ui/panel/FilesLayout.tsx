@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { FileHit } from '@shared/protocol';
+import type { FileHit } from '@acpira/shared/protocol';
 import { Layers, PanelRight, Plus } from 'lucide-react';
 import { t } from '../i18n';
 import { IconButton } from '../ui/Button';

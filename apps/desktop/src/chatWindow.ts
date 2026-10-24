@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { delimiter, join } from 'node:path';
 import { BrowserWindow, dialog, shell, type WebContents } from 'electron';
-import type { HostMsg, WebviewMsg } from '@shared/protocol';
-import type { SessionView } from '@shared/transcript';
-import type { SidecarClient, SidecarState, ShellView } from '@engine-client/SidecarClient';
-import { normalizePreviewUrl } from '@shared/picker';
+import type { HostMsg, WebviewMsg } from '@acpira/shared/protocol';
+import type { SessionView } from '@acpira/shared/transcript';
+import type { SidecarClient, SidecarState, ShellView } from '@acpira/engine-client/SidecarClient';
+import { normalizePreviewUrl } from '@acpira/shared/picker';
 import { answering, BrowserRelay, type BrowserRelayOpts } from './browserWindow';
 import { APP_ORIGIN } from './page';
 import type { Bounds } from './windowState';

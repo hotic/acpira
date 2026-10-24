@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AccountQuota, QuotaWindow } from '@shared/transcript';
+import type { AccountQuota, QuotaWindow } from '@acpira/shared/transcript';
 import { cn } from './cn';
 import { getLocale, t, tOr } from '../i18n';
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { planExecutionId, planExecutionPrompt } from '../packages/shared/planExecution';
-import type { AgentTurn, PlanDocumentBlock } from '../packages/shared/transcript';
+import { planExecutionId, planExecutionPrompt } from '@acpira/shared/planExecution';
+import type { AgentTurn, PlanDocumentBlock } from '@acpira/shared/transcript';
 
 const plan: PlanDocumentBlock = { type: 'plan_document', id: 'plan', toolCallId: 'write',
   title: 'Demo', markdown: '# Demo\n\n**Full** plan.', status: 'executing' };

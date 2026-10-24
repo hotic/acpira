@@ -1,7 +1,7 @@
-import type { AgentBlock, SteerBlock, ToolCallBlock } from '@shared/transcript';
+import type { AgentBlock, SteerBlock, ToolCallBlock } from '@acpira/shared/transcript';
 import { toolFiles, visibleToolContents } from './toolDetails';
 import { parseFileLink, type FileLink } from './fileLinks';
-import { sessionRead, splitSessionTarget, type SessionRead } from '@shared/sessionLinks';
+import { sessionRead, splitSessionTarget, type SessionRead } from '@acpira/shared/sessionLinks';
 
 // One item of a turn's process list: a block on its own, or a run of consecutive reads / edits / session reads under one head.
 // `id` names the item for its fold and entrance: a group goes by its first call, so a single call that gains a

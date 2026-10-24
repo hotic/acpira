@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { BrowserWindow, type WebContents } from 'electron';
-import { normalizePreviewUrl, type PageContextOp } from '@shared/picker';
-import type { BrowserHostMsg, BrowserLook, BrowserMsg, BrowserPage, ContextItem } from '@shared/protocol';
-import type { SidecarClient } from '@engine-client/SidecarClient';
+import { normalizePreviewUrl, type PageContextOp } from '@acpira/shared/picker';
+import type { BrowserHostMsg, BrowserLook, BrowserMsg, BrowserPage, ContextItem } from '@acpira/shared/protocol';
+import type { SidecarClient } from '@acpira/engine-client/SidecarClient';
 import { guard } from './chatWindow';
 import { APP_ORIGIN } from './page';
 

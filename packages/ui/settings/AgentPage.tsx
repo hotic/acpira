@@ -1,13 +1,13 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { BookOpen, Ban, Check, ChevronDown, ChevronUp, CircleAlert, Copy, Download, Eye, EyeOff, FileText, Globe, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, SlidersHorizontal, Sparkles, SquareTerminal, X } from 'lucide-react';
-import type { AccountInfo, AgentInfo, ConfigControl } from '@shared/transcript';
-import type { AgentInstallProgress } from '@shared/protocol';
-import type { AgentHealthStage, AgentInventory, InventoryFile, InventoryMcp, InventorySkill, McpTransport } from '@shared/inventory';
-import type { MsgKey } from '@shared/i18n';
-import { PLAN_AUTO_APPROVE_AGENTS, type SettingsView } from '@shared/settings';
-import { familyLabel, isReasoningControl } from '@shared/composerControls';
-import { familyHidden, groupModels, setFamilyVisible, variantLabel, type ModelFamily } from '@shared/models';
-import { filterModels, MODEL_PREVIEW_LIMIT, prioritizeModels, setModelsVisible } from '@shared/modelCatalog';
+import type { AccountInfo, AgentInfo, ConfigControl } from '@acpira/shared/transcript';
+import type { AgentInstallProgress } from '@acpira/shared/protocol';
+import type { AgentHealthStage, AgentInventory, InventoryFile, InventoryMcp, InventorySkill, McpTransport } from '@acpira/shared/inventory';
+import type { MsgKey } from '@acpira/shared/i18n';
+import { PLAN_AUTO_APPROVE_AGENTS, type SettingsView } from '@acpira/shared/settings';
+import { familyLabel, isReasoningControl } from '@acpira/shared/composerControls';
+import { familyHidden, groupModels, setFamilyVisible, variantLabel, type ModelFamily } from '@acpira/shared/models';
+import { filterModels, MODEL_PREVIEW_LIMIT, prioritizeModels, setModelsVisible } from '@acpira/shared/modelCatalog';
 import { Button, Chip, IconButton } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { AccountLabel } from '../ui/AccountLabel';
@@ -22,7 +22,7 @@ import { ModelMark } from '../chat/ModelMark';
 import { Count, Dot, FactRow, Field, Group, ItemRow, ListHead, ModelLine, Note, PathText, SearchRow, Section, SectionAction, SectionDescription, SectionHead, Select, SourceLink, Switch, TextBox, shortPath, topRule, type ModelTags } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 import { ProvidersSection, type ProvidersState } from './ProvidersSection';
-import { APPROVAL_LEVELS, approvalOf, BUILTIN_AGENT_ID, COMPACTION_STRATEGIES, compactionOf, usableModels, WEB_SEARCH_BACKENDS, webSearchOf, type ApprovalLevel, type CompactionStrategy, type WebSearchBackend } from '@shared/providers';
+import { APPROVAL_LEVELS, approvalOf, BUILTIN_AGENT_ID, COMPACTION_STRATEGIES, compactionOf, usableModels, WEB_SEARCH_BACKENDS, webSearchOf, type ApprovalLevel, type CompactionStrategy, type WebSearchBackend } from '@acpira/shared/providers';
 
 type AgentSection = 'models' | 'mcp' | 'skills' | 'rules' | 'config';
 // What the CLI's own files declare; shared resources live on the Shared page, so these fold away by default

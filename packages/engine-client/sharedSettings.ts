@@ -1,6 +1,6 @@
 import { readFileSync, statSync, unwatchFile, watchFile, type Stats } from 'node:fs';
 import { join } from 'node:path';
-import { isSharedSetting } from '@shared/settings';
+import { isSharedSetting } from '@acpira/shared/settings';
 
 // The settings every shell shares (<ACPIRA_HOME>/settings.json, rust store/shared_settings.rs), read by a shell for what
 // it needs before or beside the engine: its own UI language, the browser panel's look, the page's font, how the desktop

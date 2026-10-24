@@ -1,6 +1,6 @@
-import { applySession } from '@shared/reuse';
-import { applySessionPatch, type SessionPatch } from '@shared/sessionPatch';
-import type { SessionView } from '@shared/transcript';
+import { applySession } from '@acpira/shared/reuse';
+import { applySessionPatch, type SessionPatch } from '@acpira/shared/sessionPatch';
+import type { SessionView } from '@acpira/shared/transcript';
 
 // Sessions whose last view the page keeps after switching away. At least the host's SENT_VIEWS_MAX
 // (rust/crates/acpira-shared/src/session_patch.rs): the host only patches against views it sent within its own bound, so

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Locale } from '@shared/i18n';
+import type { Locale } from '@acpira/shared/i18n';
 import { dateFormat, useLocale } from '../i18n';
 import { durationText } from './folding';
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { HostMsg } from '../packages/shared/protocol';
-import type { SessionView, Turn } from '../packages/shared/transcript';
-import type { SessionPatch } from '../packages/shared/sessionPatch';
+import type { HostMsg } from '@acpira/shared/protocol';
+import type { SessionView, Turn } from '@acpira/shared/transcript';
+import type { SessionPatch } from '@acpira/shared/sessionPatch';
 import { PostQueue, enqueue } from '../apps/vscode/src/outbox';
 
 const user = (id: string): Turn => ({ role: 'user', id, text: id });

@@ -1,0 +1,51 @@
+{
+  "name": "@acpira/ui",
+  "private": true,
+  "description": "The chat webview every shell serves, built into the repository's dist/webview",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "watch": "vite build --watch"
+  },
+  "dependencies": {
+    "@acpira/shared": "workspace:*",
+    "@base-ui/react": "catalog:",
+    "@fontsource-variable/geist": "catalog:",
+    "@fontsource-variable/inter": "catalog:",
+    "@streamdown/cjk": "catalog:",
+    "@streamdown/math": "catalog:",
+    "@streamdown/mermaid": "catalog:",
+    "@tailwindcss/browser": "catalog:",
+    "@xterm/addon-clipboard": "catalog:",
+    "@xterm/addon-fit": "catalog:",
+    "@xterm/addon-search": "catalog:",
+    "@xterm/addon-unicode11": "catalog:",
+    "@xterm/addon-web-links": "catalog:",
+    "@xterm/addon-webgl": "catalog:",
+    "@xterm/xterm": "catalog:",
+    "border-beam": "catalog:",
+    "class-variance-authority": "catalog:",
+    "clsx": "catalog:",
+    "img-fx": "catalog:",
+    "katex": "catalog:",
+    "lucide-react": "catalog:",
+    "metal-fx": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "shiki": "catalog:",
+    "streamdown": "catalog:",
+    "tailwind-merge": "catalog:",
+    "thinking-orbs": "catalog:",
+    "three": "catalog:"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "tailwindcss": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}

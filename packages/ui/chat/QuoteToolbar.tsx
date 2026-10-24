@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { MessageSquarePlus } from 'lucide-react';
-import type { Draft } from '@shared/transcript';
+import type { Draft } from '@acpira/shared/transcript';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
 import { Popover, ShellLayerContext } from '../ui/Popover';

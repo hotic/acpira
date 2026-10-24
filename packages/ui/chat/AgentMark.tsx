@@ -1,4 +1,4 @@
-import type { AgentId } from '@shared/transcript';
+import type { AgentId } from '@acpira/shared/transcript';
 import { MarkSvg } from './marks';
 
 // Vendor logo for an agent; used in the session list / agent Chip to tell agents apart

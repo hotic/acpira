@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
-import type { SubagentSummary } from '@shared/subagents';
-import { effortLabel } from '@shared/composerControls';
+import type { SubagentSummary } from '@acpira/shared/subagents';
+import { effortLabel } from '@acpira/shared/composerControls';
 import { t } from '../../i18n';
 import { ChipTag } from '../../ui/Button';
 import { Row } from '../../ui/Row';

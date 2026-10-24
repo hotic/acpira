@@ -1,4 +1,4 @@
-import type { GitMark, HostMsg, ProjectBase, ProjectChange, ProjectEntry, ProjectHunk, WebviewMsg } from '@shared/protocol';
+import type { GitMark, HostMsg, ProjectBase, ProjectChange, ProjectEntry, ProjectHunk, WebviewMsg } from '@acpira/shared/protocol';
 import { vscodeApi } from '../vscodeApi';
 
 // The desktop tool panel's reads of a session's project, answered by the engine (rust/.../project_files.rs) with the

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { accessSync, constants, statSync } from 'node:fs';
 import { join } from 'node:path';
-import type { FileOpener } from '@shared/settings';
+import type { FileOpener } from '@acpira/shared/settings';
 
 // "Open files with" an editor (acpira.openFilesWith): its command line opens a file link or a plan at the line. The
 // command comes from PATH as the login shell sets it (an app started from the Dock has almost none of its own), then

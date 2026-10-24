@@ -1,8 +1,8 @@
 import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type RefObject } from 'react';
 import { ChevronLeft, ChevronRight, ChevronDown, Sparkle, TriangleAlert, X } from 'lucide-react';
-import type { AgentId, AgentTurn, Turn, UserTurn } from '@shared/transcript';
-import type { SubagentSummary } from '@shared/subagents';
-import { buildTrace, domain, segments, spanEnd, tickStep, walk, type Trace, type TraceSpan } from '@shared/trace';
+import type { AgentId, AgentTurn, Turn, UserTurn } from '@acpira/shared/transcript';
+import type { SubagentSummary } from '@acpira/shared/subagents';
+import { buildTrace, domain, segments, spanEnd, tickStep, walk, type Trace, type TraceSpan } from '@acpira/shared/trace';
 import { t, useLocale } from '../i18n';
 import { cn } from '../ui/cn';
 import { Row } from '../ui/Row';

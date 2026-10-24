@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowLeft, ArrowRight, ChevronRight, CircleAlert, Columns3, FolderOpen, FolderPlus, Info, Languages, LifeBuoy, Palette, PanelLeft, Settings, Settings2, SunMoon } from 'lucide-react';
-import { DESKTOP_LAYOUTS, THEMES, type DesktopLayout, type ThemeSetting } from '@shared/settings';
-import { LANGUAGES, type Language } from '@shared/i18n';
+import { DESKTOP_LAYOUTS, THEMES, type DesktopLayout, type ThemeSetting } from '@acpira/shared/settings';
+import { LANGUAGES, type Language } from '@acpira/shared/i18n';
 import { t } from '../i18n';
 import { Button, IconButton } from '../ui/Button';
 import { DropdownMenu } from '../ui/DropdownMenu';

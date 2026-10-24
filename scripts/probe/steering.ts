@@ -6,7 +6,7 @@ import { builtinAgent } from '../lib/sidecarBin';
 
 // Raw-wire `_session/steering` probe: what an adapter really does with a steer, mid-turn and idle. Spends real model calls.
 //
-//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe/steering.ts <claude|codex|…> [--model TEXT] [--idle-wait MS] [--out FILE]
+//   pnpm exec tsx scripts/probe/steering.ts <claude|codex|…> [--model TEXT] [--idle-wait MS] [--out FILE]
 //
 // --model: switch the session's model configOption to the first value whose id or name contains TEXT (case-insensitive)
 //

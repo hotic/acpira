@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
-import type { ToolCallBlock } from '@shared/transcript';
+import type { ToolCallBlock } from '@acpira/shared/transcript';
 import { useScrollFade } from '../ui/useScrollFade';
 import { cn } from '../ui/cn';
 import { OutputCopy } from './OutputCopy';

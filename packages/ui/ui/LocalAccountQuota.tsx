@@ -1,4 +1,4 @@
-import type { AccountInfo, LocalAccountInfo } from '@shared/transcript';
+import type { AccountInfo, LocalAccountInfo } from '@acpira/shared/transcript';
 import { t } from '../i18n';
 import { QuotaBars } from './QuotaBars';
 

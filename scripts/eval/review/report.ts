@@ -5,7 +5,7 @@ import { join } from 'node:path';
 // findings that match none, tools, time and cost; the noise between repeated runs of one cell; and every pair of cells
 // compared target by target, the comparison the adoption rule reads (a cell wins on hits beyond the noise, then on time)
 //
-//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/review/report.ts DIR [DIR…] [--by-target]
+//   pnpm exec tsx scripts/eval/review/report.ts DIR [DIR…] [--by-target]
 
 interface PerReviewer { name: string; state: string; tools: number; wallS: number; costUsd?: number; unmetered?: boolean; requests: number }
 interface Row {

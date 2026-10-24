@@ -1,4 +1,4 @@
-import type { DiffLine, DiffSource } from '@shared/transcript';
+import type { DiffLine, DiffSource } from '@acpira/shared/transcript';
 import { plainDiffRows, type CodeDiffRow } from './codeDiff';
 import { codeLanguage } from './codeLanguage';
 import { tokenizeCode } from './codeSyntax';

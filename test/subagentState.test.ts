@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { translate, type MsgKey, type Params } from '../packages/shared/i18n';
-import type { SubagentSummary } from '../packages/shared/subagents';
-import type { PermissionBlock, QuestionBlock } from '../packages/shared/transcript';
+import { translate, type MsgKey, type Params } from '@acpira/shared/i18n';
+import type { SubagentSummary } from '@acpira/shared/subagents';
+import type { PermissionBlock, QuestionBlock } from '@acpira/shared/transcript';
 import { breadcrumb, countsLabel, delegatedIds, placeNodes, descendantCount, elapsedMs, elapsedText, flattenTree, nodesByTurn, receiptOnly, resultText, rootRows, secondLine, stateLabel, subagentTitle, workflowProgress } from '../packages/ui/chat/subagents/subagentState';
 
 const zh = (key: MsgKey, params?: Params) => translate('zh-CN', key, params);

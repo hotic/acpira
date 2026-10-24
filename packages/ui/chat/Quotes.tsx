@@ -1,6 +1,6 @@
 import { useState, type ClipboardEvent, type KeyboardEvent } from 'react';
 import { Check, MessageSquareText, Pencil, Trash2 } from 'lucide-react';
-import type { Draft } from '@shared/transcript';
+import type { Draft } from '@acpira/shared/transcript';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
 import { IconButton } from '../ui/Button';

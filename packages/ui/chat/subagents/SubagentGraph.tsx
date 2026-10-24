@@ -1,6 +1,6 @@
 import { useMemo, useRef } from 'react';
 import { GitBranch, X } from 'lucide-react';
-import type { SubagentSummary } from '@shared/subagents';
+import type { SubagentSummary } from '@acpira/shared/subagents';
 import { t } from '../../i18n';
 import { IconButton } from '../../ui/Button';
 import { Dialog } from '../../ui/Dialog';

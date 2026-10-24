@@ -1,8 +1,8 @@
 import { createContext, useContext, useLayoutEffect, useRef, useState, type MouseEvent } from 'react';
 import { ArrowLeft, ArrowUpRight, ListTodo } from 'lucide-react';
-import type { ConfigControl, PermissionBlock, PlanDocumentBlock, SessionControls } from '@shared/transcript';
-import { groupModels, variantLabel } from '@shared/models';
-import { composerControls, reasoningChip } from '@shared/composerControls';
+import type { ConfigControl, PermissionBlock, PlanDocumentBlock, SessionControls } from '@acpira/shared/transcript';
+import { groupModels, variantLabel } from '@acpira/shared/models';
+import { composerControls, reasoningChip } from '@acpira/shared/composerControls';
 import { Button, Chip, IconButton } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { getLocale, t } from '../i18n';

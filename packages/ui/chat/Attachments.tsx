@@ -1,7 +1,7 @@
 import { useContext, useState, type ReactNode } from 'react';
 import { FileText, Image as ImageIcon, SquareDashedMousePointer, TextSelect, X } from 'lucide-react';
-import type { Attachment, Draft } from '@shared/transcript';
-import { attachmentLabel, imageMimeOf } from '@shared/attachments';
+import type { Attachment, Draft } from '@acpira/shared/transcript';
+import { attachmentLabel, imageMimeOf } from '@acpira/shared/attachments';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';
 import { Lightbox } from './Lightbox';

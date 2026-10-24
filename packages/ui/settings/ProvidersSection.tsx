@@ -3,7 +3,7 @@ import { Eye, EyeOff, Globe, LoaderCircle, Pencil, Plus, Server } from 'lucide-r
 import {
   BUILTIN_AGENT_ID, newModel,
   type LocalSource, type ProbeOutcome, type Provider, type ProviderAction, type ProviderModel, type ProviderProbe, type ProvidersView, type ProviderView,
-} from '@shared/providers';
+} from '@acpira/shared/providers';
 import { Button, Chip, IconButton } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { Command } from '../ui/Command';

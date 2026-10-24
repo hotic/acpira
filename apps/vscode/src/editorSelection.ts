@@ -1,5 +1,5 @@
-import type { EditorSelection } from '@shared/protocol';
-import { MAX_TEXT_BYTES } from '@shared/attachments';
+import type { EditorSelection } from '@acpira/shared/protocol';
+import { MAX_TEXT_BYTES } from '@acpira/shared/attachments';
 
 export interface Position {
   line: number;
