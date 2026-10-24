@@ -7,7 +7,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 from zipfile import ZipFile
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 VERSION = json.loads((ROOT / "package.json").read_text())["version"]
 DIST = ROOT / "apps/intellij/build/distributions"
 TARGETS = [f"{os}-{arch}" for os in ("mac", "linux", "windows") for arch in ("arm64", "x86_64")]

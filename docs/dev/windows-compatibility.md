@@ -24,7 +24,7 @@ Review date: 2026-10-02; source baseline Acpira 1.8.0. Scope covers the platform
 | ChatGPT bridge commands | Reproduced failures with quoted paths and a helper holding the output pipe so the command never finished; the shell source uses raw CMD arguments, reuses the Job Object, and drains output fully after exit | Windows-native cases in `external::chatgpt_cli::tests` |
 | Pi project trust / external cwd | Reproduced a mismatch between Rust's `\\?\` prefix and Pi's Node path keys; conversion to a plain drive / UNC path happens only for external CLI config and the canonical cwd retry, actual file access keeps its original semantics | `platform::paths`; `shared_config::pi_trust`; comparison against Node's native realpath |
 | Remote / WSL | The execution platform is the backend OS. The machine-level `agents.json` keeps local Windows and remote Linux config apart; the Windows client does not decide remote command syntax | `store/agent_config.rs`; `test/legacyAgents.test.ts` |
-| Install archives and packaging | native-release checks digest / ZIP paths / CRC / install lock; the platform list includes Windows x64 / arm64; the official MSVC package uses a static CRT | `native_release` tests; `scripts/sidecar-targets.mjs`; release workflow |
+| Install archives and packaging | native-release checks digest / ZIP paths / CRC / install lock; the platform list includes Windows x64 / arm64; the official MSVC package uses a static CRT | `native_release` tests; `scripts/release/sidecar-targets.mjs`; release workflow |
 
 ## Native runs and automated regressions
 
@@ -34,7 +34,7 @@ Review date: 2026-10-02; source baseline Acpira 1.8.0. Scope covers the platform
 - Native Windows x64 Rust regressions: host 121, shared 22, ACP launch 3, lifecycle 4, 150 passed in total; 1 helper-process entry ignored by design. Built by cross-compiling the GNU target on macOS and running the Windows EXEs over SSH; this does not replace CI for the MSVC release build.
 - The built-in agent (2026-10-10, same host, code page 936): `acpira-agent` unit and integration tests cross-built for the GNU target pass over SSH, including Chinese output from PowerShell and from native commands and killing a cancelled command's tree; details in `builtin-agent.md`.
 - Registry PATH and the Roaming Known Folder use read-only native APIs and match what Windows' own APIs return; Pi paths match Node 24.13.0's real `realpathSync`.
-- `scripts/test-windows.ps1` is the single entry point, covering native tests and Clippy for every Windows target; a dedicated Windows CI runs on push / PR and the release calls the same entry. Compiling only, or registering in CI, does not count as proof of native execution.
+- `scripts/ci/test-windows.ps1` is the single entry point, covering native tests and Clippy for every Windows target; a dedicated Windows CI runs on push / PR and the release calls the same entry. Compiling only, or registering in CI, does not count as proof of native execution.
 
 ## Repository checks for this round
 

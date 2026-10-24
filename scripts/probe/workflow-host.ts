@@ -2,10 +2,10 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PermissionBlock, SessionView, ToolCallBlock } from '@shared/transcript';
-import { Host } from './lib/host';
+import { Host } from '../lib/host';
 
 // A Claude dynamic workflow (ultracode) end-to-end through the production host path (the Rust sidecar → claude-agent-acp):
-//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe-workflow-host.ts [--model ID] [--effort LEVEL] [--out DIR]
+//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe/workflow-host.ts [--model ID] [--effort LEVEL] [--out DIR]
 // --agent codex sets Codex's `ultra` effort instead and asks for two tiny delegated children. One deliberately tiny ultracode prompt (two agents, one word each) on a cheap model / low effort; permission cards are
 // allowed like a click. The script waits for the workflow agents to appear as subagent nodes, for the run to end after the
 // prompt returned, and writes the SessionView seen while the agents ran and the final one (`running.json` / `final.json`,

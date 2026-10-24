@@ -2,10 +2,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PermissionBlock, SessionView, ToolCallBlock } from '@shared/transcript';
-import { Host } from './lib/host';
+import { Host } from '../lib/host';
 
 // Host-path acceptance for the OpenCode integration, against the real `opencode acp` (needs a configured provider):
-//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe-opencode-host.ts [--keep] [--model provider/model]
+//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe/opencode-host.ts [--keep] [--model provider/model]
 // Drives the Rust sidecar the way the webview does (scripts/lib/host.ts): new session → controls (mode / model / effort) → set effort +
 // mode → one prompt → a two-file write (permission cards answered like a click; both diffs must land on the tool block) → a second host
 // on a fresh store lists the native sessions and imports the first one, replaying its history through session/load.

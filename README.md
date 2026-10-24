@@ -93,7 +93,7 @@ The following evaluations examine model–harness combinations across different 
 | [PawBench v1.0](https://github.com/agentscope-ai/PawBench) | AgentScope/OpenJudge evaluation; 9 models × 3 harnesses × 150 tasks | With Qwen3.6-35B-A3B fixed, overall scores ranged from **56.7 to 68.3**. Grading combines automated checks and model judging; the suite includes its authors' QwenPaw harness. |
 | [Harness-Bench](https://arxiv.org/html/2605.27922v1) | Research preprint; 106 offline tasks; 8 model backends × 6 configurable harnesses | Aggregate scores ranged from **52.4 to 76.2**, averaged across the same model pool. Scores include completion and process quality; this is a configuration comparison, not a single-model pass-rate gap. |
 
-See [evaluation notes](HARNESS-EVALUATIONS.md) for sources, metrics, and additional comparisons.
+See [evaluation notes](docs/harness-evaluations.md) for sources, metrics, and additional comparisons.
 
 </details>
 
@@ -214,7 +214,7 @@ General settings also hold notifications, the network proxy, and a CPU cap. Noti
 - Per-agent instructions on top of the shared prompt.
 - Longer term: a standalone desktop app.
 
-See [ROADMAP.md](ROADMAP.md) for the planned directions.
+See the [roadmap](docs/roadmap.md) for the planned directions.
 
 ## Development
 
@@ -231,7 +231,7 @@ cd apps/intellij && ./gradlew test buildPlugin verifyPlugin   # IntelliJ plugin;
 
 Press F5 to launch an Extension Development Host. Logs are in Output → Acpira. See [AGENTS.md](AGENTS.md) for the architecture map and protocol notes.
 
-Stable GitHub Releases can publish the platform VSIXes to Visual Studio Marketplace and Open VSX, and the IntelliJ plugin to the JetBrains Marketplace, automatically. See [Publishing Acpira](RELEASING.md) for the one-time credentials and release steps.
+Stable GitHub Releases can publish the platform VSIXes to Visual Studio Marketplace and Open VSX, and the IntelliJ plugin to the JetBrains Marketplace, automatically. See [Publishing Acpira](docs/releasing.md) for the one-time credentials and release steps.
 
 ## License
 

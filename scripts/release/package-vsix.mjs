@@ -6,16 +6,16 @@ import { fileURLToPath } from 'node:url';
 import { SIDECAR_TARGETS, exeName, hostPlatform, targetFor } from './sidecar-targets.mjs';
 
 // Packages VSIXes from an existing build (`pnpm build` + dist/sidecar/<platform>/ from build-sidecar.mjs):
-//   node scripts/package-vsix.mjs                 this machine's platform package
-//   node scripts/package-vsix.mjs --all           every platform package
-//   node scripts/package-vsix.mjs <vsce-target>…  chosen platform packages
+//   node scripts/release/package-vsix.mjs                 this machine's platform package
+//   node scripts/release/package-vsix.mjs --all           every platform package
+//   node scripts/release/package-vsix.mjs <vsce-target>…  chosen platform packages
 // Each package carries its sidecar at bin/. There is no universal package: a platform without its own package cannot install the
 // extension, since the host only exists as the Rust binary.
 // vsce runs in a staging folder holding only what apps/vscode/.vscodeignore lets through: run at the root it walks the whole
 // tree first, rust/target included (49 GB, about a minute of a one-second package, measured 2026-10-21). The folder has the
 // package's layout: the manifest, its nls files and dist/extension.cjs come from apps/vscode, the shared page, picker, icons,
 // README, CHANGELOG and LICENSE from the repository root
-const root = fileURLToPath(new URL('..', import.meta.url));
+const root = fileURLToPath(new URL('../..', import.meta.url));
 const app = join(root, 'apps', 'vscode');
 const { name, version } = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8'));
 const args = process.argv.slice(2);
@@ -55,7 +55,7 @@ try {
     if (!t) throw new Error(`unknown VS Code target ${target}; one of ${allTargets.join(', ')}`);
     const exe = exeName(t.platform);
     const from = join(root, 'dist', 'sidecar', t.platform, exe);
-    if (!existsSync(from)) throw new Error(`${from} is missing: run \`node scripts/build-sidecar.mjs ${t.platform}\` first`);
+    if (!existsSync(from)) throw new Error(`${from} is missing: run \`node scripts/release/build-sidecar.mjs ${t.platform}\` first`);
     mkdirSync(bin);
     copyFileSync(from, join(bin, exe));
     if (!exe.endsWith('.exe')) chmodSync(join(bin, exe), 0o755);

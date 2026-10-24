@@ -1,5 +1,5 @@
 // Cold start and idle memory of the sidecar over the real envelope protocol.
-// Usage: node scripts/bench-sidecar.mjs [runs]   (needs `cargo build --release` in rust/; ACPIRA_SIDECAR_BIN measures another binary)
+// Usage: node scripts/probe/bench-sidecar.mjs [runs]   (needs `cargo build --release` in rust/; ACPIRA_SIDECAR_BIN measures another binary)
 // No agent process is involved: the configured agent command does not exist, so only the host itself is measured
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';

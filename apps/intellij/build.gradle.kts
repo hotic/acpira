@@ -57,7 +57,7 @@ fun requireBuilt(file: File, what: String, command: String = "pnpm build"): Acti
     return Action { check(f.isFile) { "$what is missing ($f): run `$command` in the repository root first" } }
 }
 
-// The Rust sidecar, one binary per platform, built into ../../dist/sidecar/<os>-<arch>/ by `pnpm build:sidecar` (scripts/build-sidecar.mjs;
+// The Rust sidecar, one binary per platform, built into ../../dist/sidecar/<os>-<arch>/ by `pnpm build:sidecar` (scripts/release/build-sidecar.mjs;
 // CI builds all six). Packaged as <plugin>/sidecar/bin/<os>-<arch>/acpira[.exe], where SidecarLocator looks for it
 val sidecarPlatforms = listOf("mac_arm64", "mac_x86_64", "linux_arm64", "linux_x86_64", "windows_arm64", "windows_x86_64")
 fun sidecarDir(variant: String): File = file("../../dist/sidecar/${variant.replaceFirst('_', '-')}")

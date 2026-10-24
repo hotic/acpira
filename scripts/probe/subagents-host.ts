@@ -4,10 +4,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AgentBlock, PermissionBlock, SessionView, ToolCallBlock, Turn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
-import { Host } from './lib/host';
+import { Host } from '../lib/host';
 
 // Subagent end-to-end through the production host path (the Rust sidecar over the envelope protocol → real CLI):
-//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe-subagents-host.ts <claude|codex|devin>
+//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe/subagents-host.ts <claude|codex|devin>
 // claude and codex run through the built-in registry (the official adapters resolve from PATH — point it at the
 // local install, e.g. PATH=/tmp/acp-adapters/node_modules/.bin:$PATH); devin runs through the account layer,
 // binding the local CLI login.
@@ -17,7 +17,7 @@ import { Host } from './lib/host';
 const [agentId = 'claude'] = process.argv.slice(2);
 if (agentId !== 'claude' && agentId !== 'codex' && agentId !== 'devin') { console.error('usage: probe-subagents-host.ts <claude|codex|devin>'); process.exit(1); }
 // The temp project keeps the old src/ layout the prompts name: two real directories of known size
-const repo = fileURLToPath(new URL('..', import.meta.url));
+const repo = fileURLToPath(new URL('../..', import.meta.url));
 const project = mkdtempSync(join(tmpdir(), `acpira-sub-${agentId}-project-`));
 cpSync(join(repo, 'packages/shared'), join(project, 'src/shared'), { recursive: true });
 cpSync(join(repo, 'apps/vscode/src/store'), join(project, 'src/host/store'), { recursive: true });

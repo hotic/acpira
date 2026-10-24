@@ -4,7 +4,7 @@ import { QuietEntranceContext } from '../ui/Row';
 
 // A live turn opened with a long history renders its tail first and mounts the earlier items in idle slices after
 // the first paint. Mounting every row of a 700-block live turn in one commit took ~140 ms in a production build
-// (LAB `performance.preview.html`, `scripts/probe-fold-perf.ts --switch`); the last 60 items alone paint like a
+// (LAB `performance.preview.html`, `scripts/probe/fold-perf.ts --switch`); the last 60 items alone paint like a
 // settled turn (~30 ms). Settled turns need no window: their process folds away and closed bodies mount lazily.
 export const TAIL_THRESHOLD = 150;
 export const TAIL_SIZE = 60;

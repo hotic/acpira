@@ -18,13 +18,13 @@ The JetBrains Marketplace API requires an existing plugin listing. Subsequent re
 
 OS/CPU dependencies inside optional content modules do not restrict compatibility of the whole plugin. Uploading six such versions would make them compete for installation. The six smaller platform archives are retained as GitHub downloads for manual installation; choose the host's archive for the backend and the client's archive for the frontend. The runtime-free base ZIP is a development artifact. See [Plugin Management in Split Mode](https://plugins.jetbrains.com/docs/intellij/plugin-management-in-split-mode.html).
 
-A version still in review may not appear in the public listing and a repeated upload is refused as a duplicate. Read the job log before retrying. `scripts/verify-idea-packages.py` checks versions, module descriptors, binary consistency and permissions for every distribution before upload.
+A version still in review may not appear in the public listing and a repeated upload is refused as a duplicate. Read the job log before retrying. `scripts/release/verify-idea-packages.py` checks versions, module descriptors, binary consistency and permissions for every distribution before upload.
 
 Creating the Open VSX namespace does not verify ownership. Follow [Namespace Access](https://github.com/eclipse-openvsx/openvsx/wiki/Namespace-Access) to claim exclusive publishing rights.
 
 ## Release an update
 
-1. Update the version in `package.json`, the extension manifest `apps/vscode/package.json` and `rust/Cargo.toml` (`[workspace.package]`), run `cargo update --workspace` in `rust/` so `Cargo.lock` follows (CI builds with `--locked`; `test/rustWorkspace.test.ts` checks all four), update `CHANGELOG.md`, then commit and push the release changes.
+1. Run `pnpm version:set X.Y.Z`, which writes the version into `package.json`, the extension manifest `apps/vscode/package.json`, `apps/desktop/package.json` and `rust/Cargo.toml` (`[workspace.package]`) and runs `cargo update --workspace` so `Cargo.lock` follows (CI builds with `--locked`; `test/rustWorkspace.test.ts` checks them all), update `CHANGELOG.md`, then commit and push the release changes.
 2. Create a GitHub Release whose tag exactly matches the manifest version, for example `v1.0.1` for version `1.0.1`. Select the commit containing the release changes. Publish it as a stable release.
 3. Check the six jobs in [Publish extension](https://github.com/hotic/acpira/actions/workflows/release.yml). Green build status alone does not confirm marketplace publication.
 4. Confirm the version on [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=hotic.acpira), [Open VSX](https://open-vsx.org/extension/hotic/acpira) and the [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/com.github.hotic.acpira) (the unsuffixed `<version>` update). Cursor discovery can lag Open VSX publication because its marketplace proxy performs additional checks. Installed copies update according to each editor's automatic-update settings.

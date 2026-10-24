@@ -2,9 +2,9 @@ import { appendFile, mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, extname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { devinAuthenticate, readDevinLogin } from './lib/devin';
-import { RawAgent, RpcError } from './lib/rawAcp';
-import { builtinAgent, builtinAgents, type BuiltinAgent } from './lib/sidecarBin';
+import { devinAuthenticate, readDevinLogin } from '../lib/devin';
+import { RawAgent, RpcError } from '../lib/rawAcp';
+import { builtinAgent, builtinAgents, type BuiltinAgent } from '../lib/sidecarBin';
 
 // Usage: pnpm probe grok [--cmd "<command line>"] [--cwd DIR] [--log FILE] [--auth] [--api-key-env VAR] [--import-local] [--image PATH] [--wait MS] [prompt]
 // Runs initialize + session/new against any agent, printing capabilities / authMethods / modes / configOptions; if a prompt is given, sends one turn and prints every update.
@@ -134,7 +134,7 @@ const mcpServers = withMcp
   ? [{
       name: 'acpira-probe',
       command: process.execPath,
-      args: [fileURLToPath(new URL('./lib/mcp-marker.mjs', import.meta.url))],
+      args: [fileURLToPath(new URL('../lib/mcp-marker.mjs', import.meta.url))],
       env: [{ name: 'MCP_MARKER', value: mcpMarker }],
     }]
   : [];

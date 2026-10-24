@@ -2,14 +2,14 @@
 // Drives the real JCEF page of a running sandbox over CDP: a fake agent (test/fake-agent.ts, prompt "flood") streams a 700-block turn
 // while a rAF ticker and a longtask observer record what the page's main thread saw, and the receive hook counts pushes and bytes.
 // Setup (once): seed the sandbox settings with the fake agent, then launch the sandbox with CDP exposed:
-//   pnpm exec tsx scripts/probe-ipc-perf.ts --seed [sandboxConfigDir]
+//   pnpm exec tsx scripts/probe/ipc-perf.ts --seed [sandboxConfigDir]
 //   cd apps/intellij && ./gradlew runIde -PrunIdeProject=$PWD/.. -PautoOpen -PjcefDebug
 // Then, with the tool window open:
-//   pnpm exec tsx scripts/probe-ipc-perf.ts
+//   pnpm exec tsx scripts/probe/ipc-perf.ts
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-const repo = resolve(import.meta.dirname, '..');
+const repo = resolve(import.meta.dirname, '..', '..');
 const PORT = Number(process.env.CDP_PORT ?? 9222);
 
 if (process.argv.includes('--seed')) {

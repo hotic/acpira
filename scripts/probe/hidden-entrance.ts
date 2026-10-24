@@ -2,7 +2,7 @@
 // (another tab in front, the same state as an occluded editor window: visibilityState "hidden", no frames) must not
 // fade in when the page shows again, while rows mounted on a visible page keep their entrance.
 // Needs the LAB server: `pnpm exec vite --config lab/vite.config.ts`
-// Usage: pnpm exec tsx scripts/probe-hidden-entrance.ts [--headless] [--away tab|minimize|window] [--frames DIR]   (DIR receives JPEG frames + frames.json)
+// Usage: pnpm exec tsx scripts/probe/hidden-entrance.ts [--headless] [--away tab|minimize|window] [--frames DIR]   (DIR receives JPEG frames + frames.json)
 // Exit code 1 when a check fails.
 import { spawn } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';

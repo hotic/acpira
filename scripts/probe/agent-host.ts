@@ -3,11 +3,11 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PermissionBlock, PlanDocumentBlock, SessionView, ToolCallBlock } from '@shared/transcript';
-import { Host } from './lib/host';
-import { builtinAgent } from './lib/sidecarBin';
+import { Host } from '../lib/host';
+import { builtinAgent } from '../lib/sidecarBin';
 
 // Generic host-path smoke for any registered agent (real CLI, real model):
-//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe-agent-host.ts <agent> [--attach] [--shell] [--write] [--plan] [--image] [--background] [--failure] [--env KEY=VALUE]... [--raw]
+//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe/agent-host.ts <agent> [--attach] [--shell] [--write] [--plan] [--image] [--background] [--failure] [--env KEY=VALUE]... [--raw]
 // new session → controls / commands / no ghost turn → "pong" prompt → optionally a dropped text attachment (--attach: goes as an
 // embedded resource or a marked-up text block depending on promptCapabilities.embeddedContext) → optionally a shell command
 // (--shell: the tool row must carry the command and its output, permission cards are answered like a click).
