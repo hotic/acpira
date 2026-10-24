@@ -19,6 +19,9 @@ libc = "0.2"
 parking_lot = "0.12"
 # The built-in agent's `read` on a PDF: the text of each page (CID fonts through their ToUnicode maps)
 pdf-extract = "0.12"
+# The terminals the pages open (terminal.rs) and the built-in agent's interactive commands: wezterm's pseudo terminal
+# layer, ConPTY on Windows
+portable-pty = "0.9"
 regex = "1.12"
 same-file = "1.0"
 serde = { version = "1.0.228", features = ["derive"] }

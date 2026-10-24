@@ -339,6 +339,27 @@ fn tool_result(server: &MockModel, request: usize, nth_from_end: usize) -> Strin
 
 #[cfg(unix)]
 #[tokio::test]
+async fn an_interactive_command_asks_once_and_takes_the_models_answers() {
+  let (h, server, sid) = setup(json!([{ "id": "m1" }])).await;
+  let script = r#"read -p "Project name? " n; echo "created $n""#;
+  server.push(mock::tools(&[("c1", "bash", json!({ "command": script, "interactive": true }))]));
+  server.push(mock::tools(&[("c2", "job", json!({ "id": "1", "input": "demo\n" }))]));
+  server.push(mock::text("Created."));
+  assert_eq!(prompt(&h, &sid, "scaffold it").await["stopReason"], "end_turn");
+  // The command asks like any command; typing into it asks nothing more
+  let perms = h.client.permissions.lock().clone();
+  assert_eq!(perms.len(), 1, "{perms:?}");
+  assert_eq!(perms[0]["toolCall"]["kind"], "execute");
+  let started = tool_result(&server, 1, 0);
+  assert!(started.contains("Started interactive job 1") && started.contains("Project name?"), "{started}");
+  let answered = tool_result(&server, 2, 0);
+  assert!(answered.contains("created demo") && answered.contains("[job 1 exited with code 0]"), "{answered}");
+  let ups = h.updates();
+  assert!(ups.iter().any(|u| u["title"] == "Type into job 1: demo\\n"), "the row shows what was typed");
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn always_allow_covers_the_command_pattern_for_the_rest_of_the_session() {
   let (h, server, sid) = setup(json!([{ "id": "m1" }])).await;
   *h.client.answer.lock() = Answer::Always;
