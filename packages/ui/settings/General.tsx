@@ -33,7 +33,7 @@ export function General({ settings, agents, on }: { settings: SettingsView; agen
         <Field label={t('settings.defaultAgent')} desc={t('settings.defaultAgent.desc')}>
           <Select options={agentOptions} value={pickDefaultAgent(agents, settings.defaultAgent)} onChange={v => on.setSetting('defaultAgent', v)} label={t('settings.defaultAgent')} />
         </Field>
-        {/* The desktop app always lists every project, grouped (apps/desktop/src/settings.ts seeds `all`) */}
+        {/* The desktop app always lists every project, grouped (rust/crates/acpira-desktop/src/settings.rs seeds `all`) */}
         {!desktop && <Field label={t('settings.sessionScope')} desc={t('settings.sessionScope.desc')}>
           <Select<SessionScope> options={scopes} value={settings.sessionScope} onChange={v => on.setSetting('sessionScope', v)} label={t('settings.sessionScope')} />
         </Field>}

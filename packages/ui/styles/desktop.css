@@ -1,7 +1,7 @@
 /* The desktop app's frame (Shell with `desktop`, packages/ui/desktop.ts). The session column sits on a darker window canvas
    and the chat on a sheet inset from the window's top, right and bottom edges. The column's title row and the sheet's header
    share one line, the header without its rule. macOS draws its traffic lights at the start of that line
-   (apps/desktop/src/chatWindow.ts places them there), so whatever starts the line leaves them room (--lights-w).
+   (apps/desktop/src/app.rs places them there), so whatever starts the line leaves them room (--lights-w).
    The tokens stay unlayered so they beat the density's own (--hdr); every rule sits in the components layer, and what the
    frame changes on an element that carries utilities (the column's fill and rule, the header's padding, the composer's
    transition) is switched at that call site instead */
@@ -124,9 +124,6 @@
     [data-session-panel] > :not([role="separator"], [data-title-space]),
     [data-settings-rail] > :not([data-title-space])
   ) { animation: acp-fade-in 220ms var(--start-ease) both; }
-  /* Electron's title bar: the column's title row and the sheet's header move the window, their controls do not */
-  .acp-shell[data-desktop] [data-drag-region] { -webkit-app-region: drag; }
-  .acp-shell[data-desktop] :is([data-drag-region], [data-panel-toggle]) :is(button, input, a, [role="button"]) { -webkit-app-region: no-drag; }
 
   /* The start page (an empty session, chat/StartPage.tsx): the agent picker above the composer folds in as it opens and
      out as the first message goes. The composer's field eases between the

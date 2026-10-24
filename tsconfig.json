@@ -6,7 +6,6 @@
     { "path": "./packages/picker" },
     { "path": "./packages/ui" },
     { "path": "./apps/vscode" },
-    { "path": "./apps/desktop" },
     { "path": "./test" },
     { "path": "./scripts" }
   ]

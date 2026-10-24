@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- macOS hands an app the user's language only among the localizations its bundle declares -->
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>zh_CN</string>
+    <string>zh_TW</string>
+    <string>ja</string>
+    <string>ko</string>
+    <string>es</string>
+    <string>de</string>
+    <string>fr</string>
+    <string>ru</string>
+  </array>
+  <!-- Session links (acpira://session/<id>, the page's sessionLinkBase): the system opens them here (RunEvent::Opened) -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>com.hotic.acpira.desktop.session-link</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>acpira</string>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>

@@ -1,0 +1,48 @@
+//! acpira-app://localhost/…: the page, the bundle, the theme sheet and attachment blobs, files only from their own roots
+//! (acpira_desktop::page::route). `/blank` is the empty document a new webview starts on, so WebKit's frame-rate switch is
+//! set before the real page loads
+
+use acpira_desktop::page::{PageConfig, Route, THEME_CSS, mime, page_html, route};
+use tauri::http::{Request, Response, StatusCode};
+
+fn respond(status: StatusCode, mime: &str, body: Vec<u8>) -> Response<Vec<u8>> {
+  Response::builder().status(status).header("content-type", mime).header("cache-control", "no-store").body(body).expect("a response")
+}
+
+pub fn handle(request: Request<Vec<u8>>, responder: tauri::UriSchemeResponder) {
+  let uri = request.uri();
+  if uri.host() != Some("localhost") {
+    responder.respond(respond(StatusCode::NOT_FOUND, "text/plain", b"not found".to_vec()));
+    return;
+  }
+  let path = uri.path().to_owned();
+  if path == "/blank" {
+    responder.respond(respond(
+      StatusCode::OK,
+      "text/html; charset=utf-8",
+      b"<!doctype html><meta charset=\"utf-8\"><title>Acpira</title>".to_vec(),
+    ));
+    return;
+  }
+  let Some(app) = crate::app::try_app() else {
+    responder.respond(respond(StatusCode::SERVICE_UNAVAILABLE, "text/plain", Vec::new()));
+    return;
+  };
+  let blobs = app.client().sessions_dir().map(std::path::PathBuf::from);
+  match route(&path, uri.query(), &app.paths.webview, blobs.as_deref()) {
+    Route::Page { host, tab } => {
+      let html =
+        page_html(&PageConfig { host, locale: app.host_language(), dark: crate::mac::dark_mode(), font: crate::app::page_font(), tab });
+      responder.respond(respond(StatusCode::OK, "text/html; charset=utf-8", html.into_bytes()));
+    }
+    Route::Theme => responder.respond(respond(StatusCode::OK, "text/css; charset=utf-8", THEME_CSS.as_bytes().to_vec())),
+    Route::File(file) => {
+      // Off the main thread: the bundle is megabytes, a blob can be more
+      std::thread::spawn(move || match std::fs::read(&file) {
+        Ok(body) => responder.respond(respond(StatusCode::OK, mime(&file), body)),
+        Err(_) => responder.respond(respond(StatusCode::NOT_FOUND, "text/plain", b"not found".to_vec())),
+      });
+    }
+    Route::NotFound => responder.respond(respond(StatusCode::NOT_FOUND, "text/plain", b"not found".to_vec())),
+  }
+}

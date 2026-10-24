@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useSyncExternalStore } from 'react';
 import type { HostMsg, ShellCommand } from '@acpira/shared/protocol';
 
-// The standalone desktop app (window.__acpira.shell === 'desktop', apps/desktop/src/page.ts): its own window frame, the project
+// The standalone desktop app (window.__acpira.shell === 'desktop', rust/crates/acpira-desktop/src/page.rs): its own window frame, the project
 // registry's order in the session column and the start page of an empty session. Shell provides it; pages in an IDE never
 // see it on
 export const DesktopContext = createContext(false);

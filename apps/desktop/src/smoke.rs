@@ -1,0 +1,178 @@
+//! The smoke run's hook (scripts/smoke.mjs), only in a build with the `smoke` feature: a Unix socket at
+//! ACPIRA_DESKTOP_HOOK takes one JSON command per line and answers each with `{ id, ok, value }`. Commands: `eval` (a
+//! page expression, awaited, its JSON back), `windows`, `resize`, `close`, `menuBar`, `menu`, `link`, `screenshot`, `quit`. WKWebView has no
+//! DevTools protocol, so this is how a script drives the real app
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+#[cfg(feature = "smoke")]
+use serde_json::{Value, json};
+use tokio::sync::oneshot;
+
+/// The page's answer to one `eval`: whether it ran, and its JSON (or the error)
+type Answer = oneshot::Sender<(bool, String)>;
+
+static PENDING: Mutex<Option<HashMap<u64, Answer>>> = Mutex::new(None);
+
+/// The page's answer to an `eval`
+#[tauri::command]
+pub fn acpira_smoke_result(id: u64, ok: bool, value: String) {
+  if let Some(tx) = PENDING.lock().unwrap().as_mut().and_then(|p| p.remove(&id)) {
+    let _ = tx.send((ok, value));
+  }
+}
+
+#[cfg(feature = "smoke")]
+pub fn start() {
+  use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+  let Some(path) = std::env::var_os("ACPIRA_DESKTOP_HOOK") else { return };
+  let path = std::path::PathBuf::from(path);
+  let _ = std::fs::remove_file(&path);
+  tauri::async_runtime::spawn(async move {
+    let listener = match tokio::net::UnixListener::bind(&path) {
+      Ok(l) => l,
+      Err(e) => {
+        crate::app::log(&format!("smoke hook: {e}"));
+        return;
+      }
+    };
+    crate::app::log(&format!("smoke hook listening on {}", path.display()));
+    while let Ok((stream, _)) = listener.accept().await {
+      tauri::async_runtime::spawn(async move {
+        let (read, mut write) = stream.into_split();
+        let mut lines = BufReader::new(read).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+          let cmd: Value = serde_json::from_str(&line).unwrap_or(Value::Null);
+          let id = cmd["id"].clone();
+          let (ok, value) = run(cmd).await;
+          let mut out = json!({ "id": id, "ok": ok, "value": value }).to_string();
+          out.push('\n');
+          if write.write_all(out.as_bytes()).await.is_err() {
+            break;
+          }
+        }
+      });
+    }
+  });
+}
+
+#[cfg(not(feature = "smoke"))]
+pub fn start() {}
+
+#[cfg(feature = "smoke")]
+fn window(cmd: &Value) -> Option<std::sync::Arc<crate::chat_window::ChatWindow>> {
+  let a = crate::app::app();
+  match cmd["window"].as_str() {
+    Some(label) => a.window_by_label(label),
+    None => a.focused_window(),
+  }
+}
+
+#[cfg(feature = "smoke")]
+async fn on_main<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+  let (tx, rx) = oneshot::channel();
+  crate::app::app()
+    .handle
+    .run_on_main_thread(move || {
+      let _ = tx.send(f());
+    })
+    .ok()?;
+  rx.await.ok()
+}
+
+#[cfg(feature = "smoke")]
+async fn run(cmd: Value) -> (bool, Value) {
+  use std::sync::atomic::{AtomicU64, Ordering};
+  static SEQ: AtomicU64 = AtomicU64::new(0);
+  let a = crate::app::app();
+  match cmd["op"].as_str().unwrap_or_default() {
+    "eval" => {
+      let Some(w) = window(&cmd) else { return (false, json!("no such window")) };
+      let id = SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+      let (tx, rx) = oneshot::channel();
+      PENDING.lock().unwrap().get_or_insert_with(HashMap::new).insert(id, tx);
+      let js = cmd["js"].as_str().unwrap_or("undefined");
+      let script = format!(
+        "(async () => {{ let ok = true, value; try {{ value = JSON.stringify(await ({js}) ?? null); }} catch (e) {{ ok = false; value = String(e && e.stack || e); }} window.__TAURI_INTERNALS__.invoke('acpira_smoke_result', {{ id: {id}, ok, value }}); }})()"
+      );
+      if w.window.eval(script).is_err() {
+        return (false, json!("eval failed"));
+      }
+      match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+        Ok(Ok((ok, value))) => (ok, if ok { serde_json::from_str(&value).unwrap_or(Value::Null) } else { json!(value) }),
+        _ => (false, json!("the page did not answer")),
+      }
+    }
+    "windows" => {
+      let list = on_main(|| {
+        crate::app::app()
+          .windows()
+          .iter()
+          .map(|w| {
+            let scale = w.window.scale_factor().unwrap_or(1.0);
+            let size = w.window.inner_size().map(|s| s.to_logical::<f64>(scale)).ok();
+            json!({ "label": w.label, "session": w.session_id(), "ready": w.ready(), "visible": w.window.is_visible().unwrap_or(false),
+              "width": size.map(|s| s.width), "height": size.map(|s| s.height) })
+          })
+          .collect::<Vec<_>>()
+      })
+      .await;
+      (true, json!(list.unwrap_or_default()))
+    }
+    "resize" => {
+      let Some(w) = window(&cmd) else { return (false, json!("no such window")) };
+      let (wd, ht) = (cmd["width"].as_f64().unwrap_or(1180.0), cmd["height"].as_f64().unwrap_or(820.0));
+      let ok = w.window.set_size(tauri::LogicalSize::new(wd, ht)).is_ok();
+      (ok, Value::Null)
+    }
+    "close" => {
+      // The window's close button: the same CloseRequested path a click takes
+      let Some(w) = window(&cmd) else { return (false, json!("no such window")) };
+      let ok = on_main(move || w.window.close().is_ok()).await.unwrap_or(false);
+      (ok, Value::Null)
+    }
+    "menuBar" => {
+      // The installed menu bar's top-level titles, as macOS shows them
+      let titles = on_main(|| {
+        let menu = crate::app::app().handle.menu()?;
+        Some(menu.items().ok()?.iter().filter_map(|i| i.as_submenu().and_then(|s| s.text().ok())).collect::<Vec<_>>())
+      })
+      .await
+      .flatten();
+      (titles.is_some(), json!(titles.unwrap_or_default()))
+    }
+    "menu" => {
+      let id = cmd["item"].as_str().unwrap_or_default().to_owned();
+      on_main(move || crate::menu::on_event(&crate::app::app().handle, &id)).await;
+      (true, Value::Null)
+    }
+    "link" => {
+      let url = cmd["url"].as_str().unwrap_or_default().to_owned();
+      on_main(move || crate::app::app().take_link(&url)).await;
+      (true, Value::Null)
+    }
+    "screenshot" => {
+      let Some(w) = window(&cmd) else { return (false, json!("no such window")) };
+      let path = cmd["path"].as_str().unwrap_or("/tmp/acpira-shot.png").to_owned();
+      let number = on_main(move || crate::mac::window_number(&w.window)).await.flatten();
+      let Some(n) = number else { return (false, json!("no window number")) };
+      let ok =
+        std::process::Command::new("screencapture").args(["-x", "-o", "-l", &n.to_string(), &path]).status().is_ok_and(|s| s.success());
+      (ok, json!(path))
+    }
+    "quit" => {
+      on_main(|| {
+        let a = crate::app::app();
+        a.before_quit();
+        a.handle.exit(0);
+      })
+      .await;
+      (true, Value::Null)
+    }
+    other => {
+      let _ = a;
+      (false, json!(format!("unknown op {other}")))
+    }
+  }
+}

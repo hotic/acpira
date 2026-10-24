@@ -7,6 +7,7 @@ import { SearchAddon, type ISearchOptions } from '@xterm/addon-search';
 import { Base64, ClipboardAddon } from '@xterm/addon-clipboard';
 import { t } from '../i18n';
 import { macOS } from '../desktop';
+import { readClipboardText } from '../vscodeApi';
 
 // The terminal tabs' front end: xterm.js, the terminal VS Code runs, with its addons for fitting the frame, the GPU
 // renderer, wide characters (Unicode 11), web and file links, search and OSC 52 clipboard writes. Loaded with the first
@@ -335,7 +336,7 @@ export class XtermView {
   hasSelection() { return this.term.hasSelection(); }
   async copy() { if (this.term.hasSelection()) await navigator.clipboard.writeText(this.term.getSelection()); }
   async paste() {
-    const text = await navigator.clipboard.readText().catch(() => '');
+    const text = await readClipboardText();
     if (text) this.term.paste(text);
   }
   selectAll() { this.term.selectAll(); }

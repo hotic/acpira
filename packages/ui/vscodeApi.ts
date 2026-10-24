@@ -1,7 +1,14 @@
 // acquireVsCodeApi() may be called only once per webview; both roots (chat App, settings) go through this memo so a single bundle can host either.
 // getState / setState are the webview's own persisted state (survives a reload of the same webview); LAB stubs may omit them
-// pathForFile: the desktop app's preload only (apps/desktop/src/preload.ts), the real path of a file or folder dropped from the OS
-export interface VsCodeApi { postMessage(msg: unknown): void; getState?(): unknown; setState?(state: unknown): void; pathForFile?(file: File): string | undefined }
+// pathForFile and readClipboard: the desktop app only (apps/desktop/src/init.js), the real path of a file or folder dropped
+// from the OS and the clipboard's text without WebKit's paste bubble
+export interface VsCodeApi {
+  postMessage(msg: unknown): void;
+  getState?(): unknown;
+  setState?(state: unknown): void;
+  pathForFile?(file: File): string | undefined;
+  readClipboard?(): Promise<string>;
+}
 
 declare global {
   interface Window { __acpiraApi?: VsCodeApi }
@@ -32,11 +39,17 @@ export function setWebviewState(key: string, value: unknown): void {
   api.setState(next);
 }
 
-// The OS path of a file or folder dropped on the page, where the host can tell (the desktop app's preload); undefined
+// The OS path of a file or folder dropped on the page, where the host can tell (the desktop app's init script); undefined
 // without such a host, and without any host at all (LAB, tests)
 export function droppedPathResolver(): ((file: File) => string | undefined) | undefined {
   const api = host();
   return api?.pathForFile && (file => api.pathForFile!(file));
+}
+
+// The clipboard's text: through the host where it reads it without asking (the desktop app), else the browser's API
+export function readClipboardText(): Promise<string> {
+  const read = host()?.readClipboard;
+  return (read ? read() : navigator.clipboard.readText()).catch(() => '');
 }
 
 function host(): VsCodeApi | undefined {
