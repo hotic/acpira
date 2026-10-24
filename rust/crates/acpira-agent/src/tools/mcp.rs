@@ -10,7 +10,7 @@ use crate::budget::Keep;
 /// Images per result that reach the model; more are named only
 const MAX_IMAGES: usize = 8;
 /// An image larger than this (base64) is named, not sent: Anthropic refuses images over 5 MB
-const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+pub(crate) const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
 
 /// `images`: the turn's model takes images
 pub fn prepare(tool: &crate::mcp::Tool, args: &Value, images: bool) -> Action {

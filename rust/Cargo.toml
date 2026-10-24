@@ -17,6 +17,8 @@ base64 = "0.22"
 flate2 = "1.1"
 libc = "0.2"
 parking_lot = "0.12"
+# The built-in agent's `read` on a PDF: the text of each page (CID fonts through their ToUnicode maps)
+pdf-extract = "0.12"
 regex = "1.12"
 same-file = "1.0"
 serde = { version = "1.0.228", features = ["derive"] }
