@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { setLocale } from '../src/webview/i18n';
-import { commandDuration } from '../src/webview/chat/commandDuration';
+import { setLocale } from '../packages/ui/i18n';
+import { commandDuration } from '../packages/ui/chat/commandDuration';
 
 afterEach(() => setLocale('en'));
 

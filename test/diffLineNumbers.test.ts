@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { diffLineNumbers } from '../src/webview/chat/diffLineNumbers';
+import { diffLineNumbers } from '../packages/ui/chat/diffLineNumbers';
 import { diffCase } from './fixtures/engine';
 
 describe('diff source positions', () => {

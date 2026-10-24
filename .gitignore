@@ -27,22 +27,20 @@ docs/*
 # Local agent skills
 .agents/skills/
 
-# Lab playground (local only)
+# Lab playground (local only): pages, the shared kit (lab/kit) and its Vite config
 lab/
-src/lab/
-vite.lab.config.ts
 
 # Playwright scratch output
 .playwright-cli/
 output/
 
-# JetBrains project files (the plugin source lives in idea/, its own .idea is ignored there)
+# JetBrains project files (the plugin source lives in apps/intellij/, its own .idea is ignored there)
 .idea/
 
-# iOS app (ios/): per-user Xcode state, build output, SwiftPM state, fixtures exported from private sessions
+# iOS app (apps/ios/): per-user Xcode state, build output, SwiftPM state, fixtures exported from private sessions
 xcuserdata/
 *.xcuserstate
-ios/build/
-ios/Packages/*/.build/
-ios/Packages/*/.swiftpm/
-ios/Fixtures/local/
+apps/ios/build/
+apps/ios/Packages/*/.build/
+apps/ios/Packages/*/.swiftpm/
+apps/ios/Fixtures/local/

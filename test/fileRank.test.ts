@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { rankFiles } from '../src/host/fileRank';
+import { rankFiles } from '../apps/vscode/src/fileRank';
 
 const hit = (path: string) => ({ uri: `file:///repo/${path}`, path });
 const paths = (hits: { path: string }[]) => hits.map(h => h.path);

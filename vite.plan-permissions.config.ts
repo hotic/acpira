@@ -1,6 +1,6 @@
 import { defineConfig, mergeConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
-import base from './vite.lab.config.ts';
+import base from './lab/vite.config.ts';
 
 const here = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 
@@ -12,7 +12,7 @@ export default mergeConfig(base, defineConfig({
     transform(source, id) {
       const file = id.split('?')[0];
       const bridge = `/@fs${here('./lab/plan-permissions.bridge.tsx')}`;
-      if (file === here('./src/webview/chat/Composer.tsx')) {
+      if (file === here('./packages/ui/chat/Composer.tsx')) {
         const target = 'function ModeMenu(';
         if (!source.includes(target)) this.error('Plan preview requires the current Composer ModeMenu slot');
         return {
@@ -20,7 +20,7 @@ export default mergeConfig(base, defineConfig({
           map: null,
         };
       }
-      if (file === here('./src/webview/settings/SettingsShell.tsx')) {
+      if (file === here('./packages/ui/settings/SettingsShell.tsx')) {
         const target = "from './AgentPage'";
         if (!source.includes(target)) this.error('Plan preview requires the current SettingsShell AgentPage slot');
         return { code: source.replace(target, `from '${bridge}'`), map: null };

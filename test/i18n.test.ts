@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DICTS, en, LANGUAGES, LOCALES, pluralCategory, resolveLocale, translate, zhCN } from '../src/shared/i18n';
+import { DICTS, en, LANGUAGES, LOCALES, pluralCategory, resolveLocale, translate, zhCN } from '../packages/shared/i18n';
 
 const holes = (s: string) => [...new Set([...s.matchAll(/\{(\w+)\}/g)].map(m => m[1]))].sort();
 const PLURAL_SUFFIX = /#(one|few|many)$/;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { SessionSummary } from '../src/shared/transcript';
-import { clearFilters, DEFAULT_VIEW, filterCount, groupSessions, passes, readView, sortSessions, type ListView } from '../src/webview/chat/sessionView';
+import type { SessionSummary } from '../packages/shared/transcript';
+import { clearFilters, DEFAULT_VIEW, filterCount, groupSessions, passes, readView, sortSessions, type ListView } from '../packages/ui/chat/sessionView';
 
 const now = new Date(2026, 9, 23, 15, 0);
 const ago = (days: number, hours = 0) => new Date(now.getTime() - (days * 24 + hours) * 3_600_000).toISOString();

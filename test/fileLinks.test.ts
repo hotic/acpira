@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeFileHref, decodeLocalImageSrc, decodeSessionHref, encodeFileHref, parseCodeSessionLink, parseFileLink, parseWrappedLink, rewriteFileHrefs, sameImageSource, toFileHref } from '../src/webview/chat/fileLinks';
+import { decodeFileHref, decodeLocalImageSrc, decodeSessionHref, encodeFileHref, parseCodeSessionLink, parseFileLink, parseWrappedLink, rewriteFileHrefs, sameImageSource, toFileHref } from '../packages/ui/chat/fileLinks';
 
 describe('parseFileLink', () => {
   it('keeps an encoded line-like filename literal and accepts UNC directories', () => {

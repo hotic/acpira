@@ -4,10 +4,10 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { HostMsg } from '../src/shared/protocol';
-import type { PlatformRequest } from '../src/shared/sidecar';
-import { SidecarClient, type PreviewLease, type SidecarCommand, type SidecarState, type ShellView } from '../src/host/shell/SidecarClient';
-import { sidecarCommands } from '../src/host/shell/sidecarLocator';
+import type { HostMsg } from '../packages/shared/protocol';
+import type { PlatformRequest } from '../packages/shared/sidecar';
+import { SidecarClient, type PreviewLease, type SidecarCommand, type SidecarState, type ShellView } from '../packages/engine-client/SidecarClient';
+import { sidecarCommands } from '../packages/engine-client/sidecarLocator';
 import { FAKE, SIDECAR, NODE } from './sidecarShell';
 
 // The VS Code shell's sidecar client against the real Rust sidecar: handshake, outbox, platform RPCs, restart with re-attach,

@@ -11,8 +11,9 @@
     "resolveJsonModule": true,
     "noEmit": true,
     "paths": {
-      "@shared/*": ["./src/shared/*"],
-      "@webview/*": ["./src/webview/*"]
+      "@shared/*": ["./packages/shared/*"],
+      "@webview/*": ["./packages/ui/*"],
+      "@engine-client/*": ["./packages/engine-client/*"]
     }
   }
 }

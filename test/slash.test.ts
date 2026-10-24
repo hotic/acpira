@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { SlashCommand, Turn } from '@shared/transcript';
-import { commandAt, commandHint, commandMarks, completeCommand, markRoom, matchCommands, promptMarks, summonMarks } from '../src/webview/chat/slashCommands';
+import { commandAt, commandHint, commandMarks, completeCommand, markRoom, matchCommands, promptMarks, summonMarks } from '../packages/ui/chat/slashCommands';
 
-import { presentCommand } from '../src/shared/commandPresentation';
-import { commandName, namedCommand, restoreCommandReceipts } from '../src/shared/slashCommands';
-import { turnOutcome } from '../src/webview/chat/turnOutcome';
+import { presentCommand } from '../packages/shared/commandPresentation';
+import { commandName, namedCommand, restoreCommandReceipts } from '../packages/shared/slashCommands';
+import { turnOutcome } from '../packages/ui/chat/turnOutcome';
 
 const COMMANDS: SlashCommand[] = [
   { name: 'compact', description: 'Compact the conversation' },

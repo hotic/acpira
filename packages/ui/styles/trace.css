@@ -1,0 +1,194 @@
+/* The trace waterfall (packages/ui/trace/TraceView.tsx): one turn's spans on a shared time axis. Tokens unlayered, rules in the
+   components layer. Bar tones: a tool call green, a subagent amber, time outside any child (the model) lavender, a failure
+   red; the live "now" line blue.
+   Geometry follows the clock without a React render: the waterfall carries --trace-now (the clock) and --trace-max (the axis
+   length), both in ms, written every frame by useAxisClock; a bar carries its start --s and end --e in ms, a running end being
+   var(--trace-now). Moment t sits at t / --trace-max of the bar column short of --trace-tail, so the newest moment always leaves
+   the last label its room and the axis zooms out continuously as the clock runs */
+.acp-shell, :root {
+  /* The span column; the bars take the rest */
+  --trace-label: clamp(150px, 42%, 300px);
+  --trace-indent: 12px;
+  /* The room one axis label needs; the axis shows as many ticks as fit */
+  --trace-tick-w: 72px;
+  /* Bar column past the axis' end: the room of the label after the newest bar */
+  --trace-tail: 64px;
+  /* Where ticks entering from the right fade in */
+  --trace-edge: 24px;
+  --trace-bar: 12px;
+  --trace-seg-inset: 2px;
+  --trace-dot: 5px;
+  --trace-surface: var(--panel-bg, var(--canvas, var(--bg-0)));
+  --trace-tool: var(--ok);
+  --trace-agent: var(--brand);
+  --trace-model: var(--ultra);
+  --trace-fail: var(--danger);
+  --trace-live: var(--command);
+  --trace-card-text-lines: 4;
+}
+
+@layer components {
+  /* Until the first frame writes them (the layout effect runs before paint, this only guards a detached render) */
+  .trace-sheet { --trace-now: 0; --trace-max: 1; }
+
+  /* Every line of the waterfall (axis, grid, rows) shares the two columns, so a bar's x is the axis' x */
+  .trace-line {
+    display: grid;
+    grid-template-columns: var(--trace-label) minmax(0, 1fr);
+    column-gap: var(--gap);
+    align-items: center;
+  }
+  /* The rows' scroller reserves a thin scrollbar gutter (scroll-thin + scroll-stable); the axis leaves the same room */
+  .trace-axis {
+    height: var(--row);
+    margin-top: var(--gap);
+    padding-inline: var(--pad) calc(var(--pad) + var(--scrollbar-thin));
+    border-bottom: 1px solid var(--line);
+  }
+  .trace-scale { position: relative; align-self: stretch; }
+  .trace-ticks {
+    position: absolute; inset: 0; overflow-x: clip;
+    mask-image: linear-gradient(to right, #000 calc(100% - var(--trace-edge)), transparent);
+  }
+
+  /* Moment t on the bar column: tick --t, the clock, a bar's start --s and end --e */
+  .trace-tick, .trace-gridline { left: calc(var(--t) / var(--trace-max) * (100% - var(--trace-tail))); }
+  .trace-now, .trace-now-dot { left: calc(var(--trace-now) / var(--trace-max) * (100% - var(--trace-tail))); }
+  .trace-bar, .trace-seg {
+    left: calc(var(--s) / var(--trace-max) * (100% - var(--trace-tail)));
+    width: max(2px, calc((var(--e) - var(--s)) / var(--trace-max) * (100% - var(--trace-tail))));
+  }
+
+  /* A tick the axis drops fades out where the clock carries it; a new one fades in. The fades run on colour, not opacity:
+     an opacity transition gives the element a compositor layer, and a grid line runs under every row, so each row painted
+     over it was lifted onto a layer of its own for the length of the fade (a dropped frame at every change of step) */
+  .trace-tick { position: absolute; top: 50%; translate: 0 -50%; padding-left: 4px; white-space: nowrap; color: inherit; transition: color var(--dur-open) ease-out; }
+  .trace-tick[data-zero] { padding-left: 0; }
+  .trace-tick[data-leaving] { color: transparent; }
+  .trace-gridline[data-leaving] { background-color: transparent; }
+  .trace-tick[data-leaving], .trace-gridline[data-leaving] { transition-duration: var(--dur-close); transition-timing-function: var(--ease-close); }
+  @starting-style {
+    .trace-tick { color: transparent; }
+    .trace-gridline { background-color: transparent; }
+  }
+  .trace-now-dot {
+    position: absolute; bottom: calc(var(--trace-dot) / -2 - 0.5px); width: var(--trace-dot); height: var(--trace-dot);
+    margin-left: calc(var(--trace-dot) / -2); border-radius: 9999px;
+  }
+
+  /* The grid lines and the now line run under every row */
+  .trace-grid { position: absolute; inset: 0; padding-inline: var(--pad); align-items: stretch; }
+  .trace-grid-col { position: relative; overflow-x: clip; }
+  .trace-gridline { position: absolute; inset-block: 0; width: 1px; background-color: var(--line); transition: background-color var(--dur-open) ease-out; }
+  .trace-now { position: absolute; inset-block: 0; width: 1px; }
+  /* The clock fades out where the turn ended (on colour, like the ticks) */
+  .trace-now, .trace-now-dot { background-color: transparent; transition: background-color var(--dur-close) var(--ease-close); }
+  [data-trace-live] .trace-now { background-color: color-mix(in srgb, var(--trace-live) 70%, transparent); }
+  [data-trace-live] .trace-now-dot { background-color: var(--trace-live); }
+
+  /* The duration leads and gets the room a minutes-and-seconds figure needs */
+  .trace-stats { grid-template-columns: minmax(0, 1.6fr) repeat(calc(var(--trace-cells) - 1), minmax(0, 1fr)); }
+  .trace-stat { padding-inline: var(--pad); }
+  .trace-stat + .trace-stat { border-left: 1px solid var(--line); }
+  /* A narrow panel gives the figures the room their padding took (the padding lives here, not in a utility, which would
+     outrank this layer) */
+  @container (max-width: 560px) { .trace-stat { padding-inline: var(--gap); } }
+  /* Narrower still (a sidebar's dialog), half the padding and the smaller label size keep "工具调用" whole beside a
+     minutes-long duration */
+  .trace-stat-label { font-size: var(--text-3); }
+  @container (max-width: 440px) {
+    .trace-stat { padding-inline: calc(var(--gap) / 2); }
+    .trace-stat-label { font-size: var(--text-4); }
+  }
+
+  /* A row has a fixed height, so one that arrives mid-run can grow in from nothing and ease the rows below it down
+     instead of pushing them in one step; the first rows of a trace are simply there */
+  .trace-row {
+    position: relative; height: var(--row); overflow: hidden; cursor: pointer;
+    transition: background-color var(--dur) ease, height var(--dur-open) ease-out, opacity var(--dur-open) ease-out;
+  }
+  @starting-style { .trace-row[data-enter] { height: 0; opacity: 0; } }
+  .trace-row:hover, .trace-row:focus-visible { background: var(--hover); }
+  .trace-row-selected, .trace-row-selected:hover { background: var(--active); }
+  .trace-row .trace-label { padding-left: calc(var(--depth) * var(--trace-indent)); }
+  .trace-cells { align-items: stretch; }
+  .trace-cells > * { align-self: center; }
+  .trace-cells > :last-child { align-self: stretch; }
+  .trace-count { background: var(--chip); transition: opacity var(--dur-open) ease-out; }
+  @starting-style { .trace-count { opacity: 0; } }
+  .trace-chevron { transition: rotate var(--dur) ease, opacity var(--dur-open) ease-out; }
+  @starting-style { .trace-chevron { opacity: 0; } }
+  /* Beside an agent's name the model gives way first */
+  .trace-detail { flex-shrink: 4; }
+  .trace-fold:empty { visibility: hidden; }
+
+  /* A bar changes tone in place: a call that fails turns red, a subagent whose first call arrives turns from a filled bar
+     into the outline around its children */
+  .trace-bar {
+    position: absolute; top: 50%; translate: 0 -50%; height: var(--trace-bar);
+    border: 1px solid transparent; border-radius: var(--r-xs);
+    transition: background-color var(--dur-open) ease, border-color var(--dur-open) ease;
+  }
+  /* A turn without a single call was all model time */
+  .trace-bar-leaf {
+    background-color: color-mix(in srgb, var(--trace-c, var(--trace-model)) 24%, transparent);
+    border-color: color-mix(in srgb, var(--trace-c, var(--trace-model)) 60%, transparent);
+  }
+  /* An open parent is an outline around its children's bars; the turn's own is neutral */
+  .trace-bar-parent, .trace-bar-folded {
+    background-color: color-mix(in srgb, var(--trace-c, var(--fg-1)) 7%, transparent);
+    border-color: color-mix(in srgb, var(--trace-c, var(--fg-3)) 45%, transparent);
+  }
+  /* Folded, the outline holds what its children did, which fades in over it */
+  .trace-bar-folded { background-color: transparent; }
+  .trace-tone-tool { --trace-c: var(--trace-tool); }
+  .trace-tone-agent { --trace-c: var(--trace-agent); }
+  .trace-tone-model { --trace-c: var(--trace-model); }
+  .trace-tone-fail { --trace-c: var(--trace-fail); }
+  .trace-segs { position: absolute; inset: 0; opacity: 0; pointer-events: none; transition: opacity var(--dur-open) ease-out; }
+  .trace-segs[data-shown] { opacity: 1; }
+  .trace-seg {
+    position: absolute; top: 50%; translate: 0 -50%; height: calc(var(--trace-bar) - 2 * var(--trace-seg-inset)); border-radius: 2px;
+    background: color-mix(in srgb, var(--trace-c) 75%, transparent); box-shadow: inset 1px 0 0 var(--trace-surface);
+  }
+  /* A running bar carries a light that sweeps along it (a transform, so it costs the compositor only) */
+  .trace-bar-running { overflow: hidden; }
+  .trace-bar-running::after {
+    content: ""; position: absolute; inset-block: 0; left: 0; width: 50%;
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--fg-1) 22%, transparent), transparent);
+    animation: trace-sweep var(--shimmer-cycle) linear infinite;
+  }
+  @keyframes trace-sweep { from { translate: -100% 0; } to { translate: 200% 0; } }
+
+  /* A bar's label rides just past the bar's end: the gap before it is as wide as the bar's end is far. Where the column
+     runs out the gap gives way and the label slides along the edge over the bar's tail, a halo keeping it legible there */
+  .trace-label-lane { position: absolute; inset: 0; display: flex; align-items: center; pointer-events: none; }
+  .trace-label-gap { flex: 0 1 calc(var(--e) / var(--trace-max) * (100% - var(--trace-tail))); min-width: 0; }
+  .trace-bar-label {
+    display: flex; flex-shrink: 0; align-items: center; padding-left: var(--gap); white-space: nowrap;
+    text-shadow: 0 0 1px var(--trace-surface), 0 0 3px var(--trace-surface);
+  }
+  .trace-slowest { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); text-transform: uppercase; letter-spacing: 0.04em; text-shadow: none; transition: opacity var(--dur-open) ease-out; }
+  @starting-style { .trace-slowest { opacity: 0; } }
+
+  .trace-chip-live { color: var(--trace-live); background: color-mix(in srgb, var(--trace-live) 14%, transparent); }
+  .trace-chip-live .trace-chip-dot { background: currentColor; animation: trace-pulse 1.6s ease-in-out infinite; }
+  .trace-chip-done { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+  .trace-chip-failed { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+  .trace-chip-stopped { color: var(--fg-2); background: var(--chip); }
+  .trace-chip { transition: color var(--dur-open) ease, background-color var(--dur-open) ease; }
+  @keyframes trace-pulse { 50% { opacity: 0.35; } }
+
+  .trace-failure { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+  .trace-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--trace-card-text-lines); overflow: hidden; }
+
+  /* Rolling digits: each digit a 0–9 column slid to its value */
+  .trace-roll { display: inline-flex; white-space: pre; }
+  .trace-digit { display: inline-block; height: 1lh; overflow: hidden; }
+  .trace-digit-strip { display: flex; flex-direction: column; translate: 0 calc(var(--digit) * -1lh); transition: translate var(--dur-open) cubic-bezier(.3, .7, .2, 1); }
+  .trace-digit-strip > span { height: 1lh; }
+  @media (prefers-reduced-motion: reduce) {
+    .trace-digit-strip, .trace-row, .trace-bar, .trace-segs, .trace-tick, .trace-gridline, .trace-now, .trace-now-dot, .trace-count, .trace-chevron, .trace-chip, .trace-slowest { transition: none; }
+    .trace-bar-running::after, .trace-chip-live .trace-chip-dot { animation: none; }
+  }
+}

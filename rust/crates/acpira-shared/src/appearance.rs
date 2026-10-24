@@ -1,4 +1,4 @@
-//! Appearance axes (mirror of src/shared/appearance.ts): one-to-one with acpira.appearance.* settings
+//! Appearance axes (mirror of packages/shared/appearance.ts): one-to-one with acpira.appearance.* settings
 
 use serde_json::{Map, Value};
 

@@ -1,4 +1,4 @@
-//! Context-length error recognition (mirror of src/shared/turnErrors.ts)
+//! Context-length error recognition (mirror of packages/shared/turnErrors.ts)
 
 use std::sync::LazyLock;
 

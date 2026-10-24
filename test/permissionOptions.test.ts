@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ambiguousChoices, permissionOption, permissionTitle, planApprovalTitle, quickChoices } from '../src/webview/chat/permissionOptions';
-import type { PermissionBlock } from '../src/shared/transcript';
+import { ambiguousChoices, permissionOption, permissionTitle, planApprovalTitle, quickChoices } from '../packages/ui/chat/permissionOptions';
+import type { PermissionBlock } from '../packages/shared/transcript';
 
 type Option = PermissionBlock['options'][number];
 const display = (label: string, kind: Option['kind'] = 'allow_always') => permissionOption({ id: 'wire-id', label, kind }, 'zh-CN');

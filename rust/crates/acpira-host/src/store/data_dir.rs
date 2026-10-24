@@ -1,4 +1,4 @@
-//! Data root (mirror of the Rust-relevant part of src/host/store/dataDir.ts). Legacy globalStorage migration stays in
+//! Data root (mirror of the Rust-relevant part of apps/vscode/src/store/dataDir.ts). Legacy globalStorage migration stays in
 //! the VS Code shell, which alone can read the IDE's SecretStorage
 
 use std::path::{Path, PathBuf};

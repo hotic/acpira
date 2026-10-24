@@ -1,4 +1,4 @@
-//! First-class subagent nodes shared by host and webview (mirror of src/shared/subagents.ts)
+//! First-class subagent nodes shared by host and webview (mirror of packages/shared/subagents.ts)
 
 use serde::{Deserialize, Serialize};
 
@@ -213,7 +213,7 @@ impl SubagentDuty {
   }
 }
 
-/// The standing instructions each duty starts with (mirror of `DUTY_BRIEFS` in src/shared/subagents.ts; both are checked
+/// The standing instructions each duty starts with (mirror of `DUTY_BRIEFS` in packages/shared/subagents.ts; both are checked
 /// against test/fixtures/duty-presets.json). Written for the model, so in English whatever the UI language
 pub const SCOUT_BRIEF: &str = "You are a scout: find things out and report them; do not change anything. Back every claim with \
 where it comes from as path:line (or path:start-end), quoting the line when it matters, so the caller can act on your \

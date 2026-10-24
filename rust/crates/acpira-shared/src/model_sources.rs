@@ -1,4 +1,4 @@
-//! Agent-specific model provenance (mirror of src/shared/modelSources.ts)
+//! Agent-specific model provenance (mirror of packages/shared/modelSources.ts)
 
 use std::collections::BTreeMap;
 

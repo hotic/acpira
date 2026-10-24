@@ -1,0 +1,262 @@
+{
+  "name": "acpira",
+  "displayName": "Acpira",
+  "description": "Native harnesses, one considered interface: Grok Build, Kimi Code, Devin, Codex, Claude and any ACP agent CLI with execution history, inline approvals and shared sessions",
+  "version": "1.10.8",
+  "publisher": "hotic",
+  "icon": "media/icon.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hotic/acpira.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hotic/acpira/issues"
+  },
+  "homepage": "https://github.com/hotic/acpira",
+  "keywords": [
+    "acp",
+    "agent",
+    "chat",
+    "grok",
+    "devin",
+    "kimi",
+    "codex",
+    "claude",
+    "cursor",
+    "intellij"
+  ],
+  "private": true,
+  "type": "module",
+  "engines": {
+    "vscode": "^1.106.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "main": "./dist/extension.cjs",
+  "activationEvents": [
+    "onWebviewPanel:acpira.editor",
+    "onWebviewPanel:acpira.browser",
+    "onUri"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "acpira",
+          "title": "Acpira",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "acpira": [
+        {
+          "type": "webview",
+          "id": "acpira.chat",
+          "name": "Acpira",
+          "icon": "media/icon.svg",
+          "contextualTitle": "Acpira",
+          "retainContextWhenHidden": true
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "acpira.openView",
+        "title": "%acpira.cmd.openView%",
+        "category": "Acpira"
+      },
+      {
+        "command": "acpira.newSession",
+        "title": "%acpira.cmd.newSession%",
+        "category": "Acpira",
+        "icon": "$(add)"
+      },
+      {
+        "command": "acpira.openInEditor",
+        "title": "%acpira.cmd.openInEditor%",
+        "category": "Acpira",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "acpira.openInEditorColumns",
+        "title": "%acpira.cmd.openInEditorColumns%",
+        "category": "Acpira",
+        "icon": "$(split-horizontal)"
+      },
+      {
+        "command": "acpira.openInNewWindow",
+        "title": "%acpira.cmd.openInNewWindow%",
+        "category": "Acpira",
+        "icon": "$(multiple-windows)"
+      },
+      {
+        "command": "acpira.openPreview",
+        "title": "%acpira.cmd.openPreview%",
+        "category": "Acpira",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "acpira.showLog",
+        "title": "%acpira.cmd.showLog%",
+        "category": "Acpira"
+      },
+      {
+        "command": "acpira.connectChatgpt",
+        "title": "%acpira.cmd.connectChatgpt%",
+        "category": "Acpira"
+      },
+      {
+        "command": "acpira.addSelection",
+        "title": "%acpira.cmd.addSelection%",
+        "category": "Acpira",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "acpira.context.set",
+        "title": "%acpira.cmd.contextSet%",
+        "category": "Acpira"
+      },
+      {
+        "command": "acpira.context.add",
+        "title": "%acpira.cmd.contextAdd%",
+        "category": "Acpira"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "acpira.addSelection",
+          "when": "resourceScheme == file",
+          "group": "0_acpira@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "acpira.addSelection",
+          "when": "editorTextFocus && resourceScheme == file"
+        },
+        {
+          "command": "acpira.context.set",
+          "when": "false"
+        },
+        {
+          "command": "acpira.context.add",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "acpira.newSession",
+          "when": "view == acpira.chat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "acpira.openInEditor",
+          "when": "view == acpira.chat",
+          "group": "navigation@2"
+        },
+        {
+          "command": "acpira.openInNewWindow",
+          "when": "view == acpira.chat",
+          "group": "navigation@3"
+        },
+        {
+          "command": "acpira.showLog",
+          "when": "view == acpira.chat"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Acpira",
+      "properties": {
+        "acpira.sessionScope": {
+          "type": "string",
+          "enum": [
+            "workspace",
+            "all"
+          ],
+          "enumDescriptions": [
+            "%acpira.conf.sessionScope.workspace%",
+            "%acpira.conf.sessionScope.all%"
+          ],
+          "default": "workspace",
+          "description": "%acpira.conf.sessionScope%"
+        },
+        "acpira.agents": {
+          "type": "object",
+          "default": {},
+          "scope": "machine",
+          "deprecationMessage": "%acpira.conf.agents.deprecated%",
+          "markdownDescription": "%acpira.conf.agents%",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "command": {
+                "type": "string"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "login": {
+                "type": "string"
+              },
+              "install": {
+                "type": "object",
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  },
+                  "docs": {
+                    "type": "string"
+                  }
+                }
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "subagents": {
+                "type": "boolean",
+                "markdownDescription": "%acpira.conf.agents.subagents%"
+              },
+              "terminalAuth": {
+                "type": "boolean",
+                "markdownDescription": "%acpira.conf.agents.terminalAuth%"
+              }
+            },
+            "required": [
+              "command"
+            ]
+          }
+        },
+        "acpira.sessionListPosition": {
+          "type": "string",
+          "enum": [
+            "hidden",
+            "left",
+            "right"
+          ],
+          "default": "hidden",
+          "description": "%acpira.conf.sessionListPosition%"
+        },
+        "acpira.shareEditorSelection": {
+          "type": "boolean",
+          "default": true,
+          "description": "%acpira.conf.shareEditorSelection%"
+        }
+      }
+    }
+  }
+}

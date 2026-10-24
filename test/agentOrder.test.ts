@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { arrangeAgents, launchable, moveAgent, pickDefaultAgent } from '../src/shared/agentOrder';
-import { sanitizeSetting } from '../src/shared/settings';
-import type { AgentInfo } from '../src/shared/transcript';
+import { arrangeAgents, launchable, moveAgent, pickDefaultAgent } from '../packages/shared/agentOrder';
+import { sanitizeSetting } from '../packages/shared/settings';
+import type { AgentInfo } from '../packages/shared/transcript';
 
 const list: AgentInfo[] = [
   { id: 'grok', name: 'Grok' },

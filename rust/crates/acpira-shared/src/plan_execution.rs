@@ -1,4 +1,4 @@
-//! Plan execution instruction (mirror of src/shared/planExecution.ts)
+//! Plan execution instruction (mirror of packages/shared/planExecution.ts)
 
 use crate::transcript::{AgentBlock, PlanDocStatus, Turn};
 

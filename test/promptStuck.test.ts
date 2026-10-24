@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { followsBottom, scrollerUsable } from '../src/webview/chat/promptStuck';
+import { followsBottom, scrollerUsable } from '../packages/ui/chat/promptStuck';
 
 describe('followsBottom', () => {
   it('keeps following when a late scroll event reads a gap left by a second viewport shrink', () => {

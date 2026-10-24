@@ -1,4 +1,4 @@
-// The browser stand-in for an IDE shell: speaks the envelope protocol (src/shared/sidecar.ts) to the sidecar over /ws, presents
+// The browser stand-in for an IDE shell: speaks the envelope protocol (packages/shared/sidecar.ts) to the sidecar over /ws, presents
 // exactly the transport the webview bundle expects (window.__acpiraApi.postMessage up, window `message` events down), and answers
 // the platform requests a shell must (writeSetting, toast, notify, openExternal); the rest is logged. Plain JS on purpose: nothing to build.
 //

@@ -1,4 +1,4 @@
-//! Host ↔ webview message contract (mirror of src/shared/protocol.ts); both sides trust only this
+//! Host ↔ webview message contract (mirror of packages/shared/protocol.ts); both sides trust only this
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

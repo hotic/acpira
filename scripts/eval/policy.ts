@@ -123,7 +123,7 @@ export function defaultsPatch(p: Policy, repo: string): string {
       const body = lines.map((l, i) => (i === 0 ? `"${l}` : l) + (i === lines.length - 1 ? '";' : '\\')).join('\n');
       return replaceOnce(t, /pub const REVIEWER_BRIEF: &str = "(?:[^"\\]|\\.)*";/s, () => `pub const REVIEWER_BRIEF: &str = ${body}`, 'REVIEWER_BRIEF');
     };
-    files['src/shared/subagents.ts'] = t => {
+    files['packages/shared/subagents.ts'] = t => {
       const lines = pieces(tsString(brief), 110);
       const body = lines.map((l, i) => (i === 0 ? `'${l}'` : `    + '${l}'`)).join('\n');
       return replaceOnce(t, /  reviewer: '(?:[^'\\]|\\.)*'(?:\n    \+ '(?:[^'\\]|\\.)*')*,/, () => `  reviewer: ${body},`, 'DUTY_BRIEFS.reviewer');

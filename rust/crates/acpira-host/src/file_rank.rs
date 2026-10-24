@@ -1,4 +1,4 @@
-//! Ranking behind the @ file search (mirror of src/host/fileRank.ts): subsequence match, best first
+//! Ranking behind the @ file search (mirror of apps/vscode/src/fileRank.ts): subsequence match, best first
 
 use acpira_shared::protocol::FileHit;
 

@@ -1,4 +1,4 @@
-//! The settings page's Storage tab (mirror of src/shared/storage.ts): what the data directory holds, by owner, and the
+//! The settings page's Storage tab (mirror of packages/shared/storage.ts): what the data directory holds, by owner, and the
 //! cleanups that are reviewed before they run. Sizes are file lengths in bytes, added up
 
 use serde::{Deserialize, Serialize};

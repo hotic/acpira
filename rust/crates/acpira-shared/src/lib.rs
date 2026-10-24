@@ -1,4 +1,4 @@
-//! Contracts and pure logic shared by the Acpira host and webview. Each module mirrors the src/shared file of the
+//! Contracts and pure logic shared by the Acpira host and webview. Each module mirrors the packages/shared file of the
 //! same name; the TypeScript side stays the source for the webview, this crate is what the Rust host speaks
 
 // Wire enums mirror TS unions variant for variant; boxing large variants would only reshape the serde layer

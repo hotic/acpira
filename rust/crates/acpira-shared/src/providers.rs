@@ -1,4 +1,4 @@
-//! Model sources of the built-in agent (`acpira agent`): `<ACPIRA_HOME>/providers.json`, mirrored by `src/shared/providers.ts`.
+//! Model sources of the built-in agent (`acpira agent`): `<ACPIRA_HOME>/providers.json`, mirrored by `packages/shared/providers.ts`.
 //! The host writes the file (tmp + rename under its file lock) and keeps each source's API key in `secrets.json` under
 //! `provider_secret_key(id)`; the agent re-reads both at the start of every turn. Unknown fields survive a rewrite, so an
 //! older build editing the file keeps what a newer one added

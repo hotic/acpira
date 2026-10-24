@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Brain, ListTodo } from 'lucide-react';
-import { todoEntries, toolTodoEntries } from '../src/shared/todoTools';
-import type { ToolCallBlock } from '../src/shared/transcript';
-import { toolIcon } from '../src/webview/chat/icons';
+import { todoEntries, toolTodoEntries } from '../packages/shared/todoTools';
+import type { ToolCallBlock } from '../packages/shared/transcript';
+import { toolIcon } from '../packages/ui/chat/icons';
 import { agentTurn } from './fixtures/engine';
 
 const todos = [

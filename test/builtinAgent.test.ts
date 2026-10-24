@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AgentTurn, ToolCallBlock, Turn } from '../src/shared/transcript';
-import { exportMarkdown } from '../src/shared/exportTranscript';
-import { setLocale } from '../src/webview/i18n';
-import { foldActivity, toolTarget, toolVerb } from '../src/webview/chat/folding';
-import { splitPlanSections } from '../src/webview/chat/planSections';
-import { toolFiles, visibleToolContents } from '../src/webview/chat/toolDetails';
+import type { AgentTurn, ToolCallBlock, Turn } from '../packages/shared/transcript';
+import { exportMarkdown } from '../packages/shared/exportTranscript';
+import { setLocale } from '../packages/ui/i18n';
+import { foldActivity, toolTarget, toolVerb } from '../packages/ui/chat/folding';
+import { splitPlanSections } from '../packages/ui/chat/planSections';
+import { toolFiles, visibleToolContents } from '../packages/ui/chat/toolDetails';
 import { builtinTurns } from './fixtures/engine';
 
 // What the engine made of the built-in agent's real output (golden, from the Rust end-to-end suite), rendered by the

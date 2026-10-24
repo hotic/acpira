@@ -1,4 +1,4 @@
-//! Agent inventory shown on the settings page (mirror of src/shared/inventory.ts)
+//! Agent inventory shown on the settings page (mirror of packages/shared/inventory.ts)
 
 use serde::{Deserialize, Serialize};
 

@@ -226,7 +226,7 @@ pnpm probe devin --import-local "Reply pong"   # 走账号层：导入本机登�
 pnpm typecheck && pnpm test
 pnpm package        # 打本机平台的 .vsix（含 Rust sidecar）
 (cd rust && cargo test --workspace)                  # 引擎
-cd idea && ./gradlew test buildPlugin verifyPlugin   # IntelliJ 插件；buildMarketplacePlugin 打通用 ZIP；buildPluginVariants 打单平台 ZIP
+cd apps/intellij && ./gradlew test buildPlugin verifyPlugin   # IntelliJ 插件；buildMarketplacePlugin 打通用 ZIP；buildPluginVariants 打单平台 ZIP
 ```
 
 按 F5 启动 Extension Development Host。日志在 Output → Acpira。架构与协议说明见 [AGENTS.md](AGENTS.md)。

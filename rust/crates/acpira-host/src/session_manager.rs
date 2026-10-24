@@ -661,7 +661,7 @@ impl SessionManager {
     let _ = self.first_probe.subscribe().wait_for(|done| *done).await;
   }
 
-  /// Same rule as `pickDefaultAgent` (src/shared/agentOrder.ts): the configured agent unless it is switched off or its
+  /// Same rule as `pickDefaultAgent` (packages/shared/agentOrder.ts): the configured agent unless it is switched off or its
   /// CLI is missing, then the first enabled installed agent (the built-in one leads the registry). A missing default
   /// with nothing installed to take over stays, so the error names it; an unknown id stays (a custom agent not probed yet)
   fn default_agent(&self) -> String {

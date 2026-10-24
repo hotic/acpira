@@ -1,4 +1,4 @@
-//! The Acpira host runtime. Each module mirrors the src/host file of the same name
+//! The Acpira host runtime. Each module mirrors the apps/vscode/src file of the same name
 
 // Dependency seams are closures (`Arc<dyn Fn(..) -> BoxFuture<..>>`) like the TS deps objects they mirror
 #![allow(clippy::type_complexity)]

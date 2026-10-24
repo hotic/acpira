@@ -16,10 +16,11 @@ import { Host } from './lib/host';
 // are auto-allowed like a click.
 const [agentId = 'claude'] = process.argv.slice(2);
 if (agentId !== 'claude' && agentId !== 'codex' && agentId !== 'devin') { console.error('usage: probe-subagents-host.ts <claude|codex|devin>'); process.exit(1); }
-const src = fileURLToPath(new URL('../src', import.meta.url));
+// The temp project keeps the old src/ layout the prompts name: two real directories of known size
+const repo = fileURLToPath(new URL('..', import.meta.url));
 const project = mkdtempSync(join(tmpdir(), `acpira-sub-${agentId}-project-`));
-cpSync(join(src, 'shared'), join(project, 'src/shared'), { recursive: true });
-cpSync(join(src, 'host/store'), join(project, 'src/host/store'), { recursive: true });
+cpSync(join(repo, 'packages/shared'), join(project, 'src/shared'), { recursive: true });
+cpSync(join(repo, 'apps/vscode/src/store'), join(project, 'src/host/store'), { recursive: true });
 const store = mkdtempSync(join(tmpdir(), `acpira-sub-${agentId}-store-`));
 const checks: [string, boolean, string?][] = [];
 const check = (name: string, ok: boolean, detail?: string) => { checks.push([name, ok, detail]); console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` · ${detail}` : ''}`); };

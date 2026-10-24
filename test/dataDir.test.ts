@@ -2,8 +2,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileS
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { FileVault, MemoryVault, accountSecretKey } from '../src/host/accounts/AccountStore';
-import { acpiraHome, migrateOnce } from '../src/host/store/dataDir';
+import { FileVault, MemoryVault, accountSecretKey } from '../apps/vscode/src/accounts/AccountStore';
+import { acpiraHome, migrateOnce } from '../apps/vscode/src/store/dataDir';
 
 function tmp() { return mkdtempSync(join(tmpdir(), 'acpira-home-')); }
 

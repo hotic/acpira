@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { terminalLaunch } from '../src/host/terminalLaunch';
+import { terminalLaunch } from '../apps/vscode/src/terminalLaunch';
 
 const powershell = process.env.ACPIRA_TEST_POWERSHELL ?? (process.platform === 'win32' ? 'powershell.exe' : 'pwsh');
 const hasPowerShell = spawnSync(powershell, ['-NoProfile', '-Command', 'exit 0']).status === 0;

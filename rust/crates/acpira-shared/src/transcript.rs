@@ -1,4 +1,4 @@
-//! Normalized transcript shape (mirror of src/shared/transcript.ts): the host reduces ACP session/update into these
+//! Normalized transcript shape (mirror of packages/shared/transcript.ts): the host reduces ACP session/update into these
 //! blocks and the webview only understands these. Optional TS fields are `Option` + `skip_serializing_if`, so the JSON
 //! this side writes is the JSON the TS side wrote (absent, never `null`)
 

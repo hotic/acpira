@@ -1,6 +1,6 @@
 [package]
 name = "acpira-shared"
-description = "Contracts and pure logic shared by the Acpira host and webview (mirror of src/shared)"
+description = "Contracts and pure logic shared by the Acpira host and webview (mirror of packages/shared)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

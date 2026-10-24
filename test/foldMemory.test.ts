@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { rememberFold, rememberedFold, resetFoldMemory } from '../src/webview/chat/foldMemory';
+import { rememberFold, rememberedFold, resetFoldMemory } from '../packages/ui/chat/foldMemory';
 
 // The webview's persisted state stands in for acquireVsCodeApi(); vitest runs in node, so the memoized api is a stub on globalThis
 let persisted: unknown;

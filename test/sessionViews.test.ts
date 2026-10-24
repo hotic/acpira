@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { SessionView, Turn } from '../src/shared/transcript';
-import type { SessionPatch } from '../src/shared/sessionPatch';
-import { SessionViews, VIEW_CACHE_ENTRIES } from '../src/webview/sessionViews';
+import type { SessionView, Turn } from '../packages/shared/transcript';
+import type { SessionPatch } from '../packages/shared/sessionPatch';
+import { SessionViews, VIEW_CACHE_ENTRIES } from '../packages/ui/sessionViews';
 
 const user = (id: string): Turn => ({ role: 'user', id, text: id });
 function view(id: string, rev: number, turns: Turn[]): SessionView {

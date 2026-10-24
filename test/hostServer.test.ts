@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { SIDECAR_PROTOCOL_VERSION, type SidecarMsg } from '../src/shared/sidecar';
+import { SIDECAR_PROTOCOL_VERSION, type SidecarMsg } from '../packages/shared/sidecar';
 import { Shell } from './sidecarShell';
 
 describe('sidecar (stdio envelopes)', () => {

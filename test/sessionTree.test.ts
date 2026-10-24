@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { SessionCategory, SessionSummary } from '../src/shared/transcript';
-import { buildSessionTree, categoryOf, draggable, dropAction } from '../src/webview/chat/sessionTree';
+import type { SessionCategory, SessionSummary } from '../packages/shared/transcript';
+import { buildSessionTree, categoryOf, draggable, dropAction } from '../packages/ui/chat/sessionTree';
 
 const WS = '/work/acpira';
 const OTHER = '/work/bot';

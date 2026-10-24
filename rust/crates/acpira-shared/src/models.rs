@@ -1,4 +1,4 @@
-//! Model-name parsing (mirror of the host-used part of src/shared/models.ts): Devin flattens model × effort × Fast × 1M
+//! Model-name parsing (mirror of the host-used part of packages/shared/models.ts): Devin flattens model × effort × Fast × 1M
 //! into flat options, so the structure is recovered from the names
 
 use std::collections::{HashMap, HashSet};

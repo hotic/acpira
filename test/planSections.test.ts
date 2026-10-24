@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentBlock, PlanDocumentBlock } from '../src/shared/transcript';
-import { splitPlanSections } from '../src/webview/chat/planSections';
-import { splitCodexBlocks } from '../src/webview/chat/folding';
+import type { AgentBlock, PlanDocumentBlock } from '../packages/shared/transcript';
+import { splitPlanSections } from '../packages/ui/chat/planSections';
+import { splitCodexBlocks } from '../packages/ui/chat/folding';
 
 const plan: PlanDocumentBlock = { type: 'plan_document', id: 'plan', toolCallId: 'write',
   approvalToolCallId: 'exit', title: 'Demo', markdown: '# Demo', status: 'ready' };

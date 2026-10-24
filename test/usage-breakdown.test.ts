@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { STALE_FILL, compactBudget, compactingNow, liveUsage, overCompactBudget, usageFill, usageWindow } from '../src/webview/chat/usageBreakdown';
-import type { Turn, Usage } from '../src/shared/transcript';
+import { STALE_FILL, compactBudget, compactingNow, liveUsage, overCompactBudget, usageFill, usageWindow } from '../packages/ui/chat/usageBreakdown';
+import type { Turn, Usage } from '../packages/shared/transcript';
 
 const latin = (n: number) => 'a'.repeat(n);
 

@@ -1,4 +1,4 @@
-//! Envelope protocol between a shell and the sidecar (mirror of src/shared/sidecar.ts): ndjson, one envelope per line,
+//! Envelope protocol between a shell and the sidecar (mirror of packages/shared/sidecar.ts): ndjson, one envelope per line,
 //! stdout carries only these. Both sides must speak the same protocolVersion; a mismatch is rejected at hello
 
 use serde::{Deserialize, Serialize};

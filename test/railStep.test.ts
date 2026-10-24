@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { railStep } from '../src/webview/ui/railStep';
+import { railStep } from '../packages/ui/ui/railStep';
 
 describe('railStep', () => {
   it('eases toward the target without overshooting', () => {

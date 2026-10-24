@@ -9,7 +9,7 @@ from zipfile import ZipFile
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = json.loads((ROOT / "package.json").read_text())["version"]
-DIST = ROOT / "idea/build/distributions"
+DIST = ROOT / "apps/intellij/build/distributions"
 TARGETS = [f"{os}-{arch}" for os in ("mac", "linux", "windows") for arch in ("arm64", "x86_64")]
 MODULES = ("shared", "frontend", "backend", "backend.terminal", "browser.legacy", "browser.modular")
 

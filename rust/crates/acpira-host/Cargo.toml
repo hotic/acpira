@@ -1,6 +1,6 @@
 [package]
 name = "acpira-host"
-description = "The Acpira host runtime: ACP client, sessions, stores, accounts and the sidecar server (mirror of src/host)"
+description = "The Acpira host runtime: ACP client, sessions, stores, accounts and the sidecar server (mirror of apps/vscode/src)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

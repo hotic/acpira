@@ -1,10 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { cn } from '../src/webview/ui/cn';
+import { cn } from '../packages/ui/ui/cn';
 
 // Spacing keys the @theme block maps to utilities; cn.ts must know each one or a later token class cannot replace an earlier one
-const themeSpacing = [...readFileSync(join(import.meta.dirname, '../src/webview/styles/tokens.css'), 'utf8')
+const themeSpacing = [...readFileSync(join(import.meta.dirname, '../packages/ui/styles/tokens.css'), 'utf8')
   .matchAll(/--spacing-([a-z0-9-]+):/g)].map(m => m[1]);
 
 describe('token-aware class merging', () => {

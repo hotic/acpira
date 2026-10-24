@@ -2,10 +2,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { HostMsg } from '../src/shared/protocol';
-import type { AgentBlock, AgentTurn, SessionView, Turn } from '../src/shared/transcript';
-import { applySessionPatch, mergeSessionPatches, type SessionPatch } from '../src/shared/sessionPatch';
-import { applySession } from '../src/shared/reuse';
+import type { HostMsg } from '../packages/shared/protocol';
+import type { AgentBlock, AgentTurn, SessionView, Turn } from '../packages/shared/transcript';
+import { applySessionPatch, mergeSessionPatches, type SessionPatch } from '../packages/shared/sessionPatch';
+import { applySession } from '../packages/shared/reuse';
 import { Shell } from './sidecarShell';
 
 const text = (markdown: string): AgentBlock => ({ type: 'text', markdown });

@@ -1,6 +1,6 @@
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import { onNdjsonLines } from '../src/host/shell/ndjson';
+import { onNdjsonLines } from '../packages/engine-client/ndjson';
 
 describe('onNdjsonLines', () => {
   // A read can end anywhere: inside a line, between '\r' and '\n', or inside a multi-byte character

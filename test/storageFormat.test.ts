@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatBytes } from '../src/shared/storage';
+import { formatBytes } from '../packages/shared/storage';
 
 describe('formatBytes', () => {
   it('uses decimal units with one decimal below 10 and none from 10 up', () => {

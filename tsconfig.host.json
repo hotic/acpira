@@ -5,5 +5,5 @@
     "types": ["node", "vscode"],
     "jsx": "preserve"
   },
-  "include": ["src/host", "src/shared", "scripts", "test", "vitest.config.ts", "esbuild.host.mjs"]
+  "include": ["apps/vscode/src", "packages/engine-client", "packages/shared", "scripts", "test", "vitest.config.ts", "apps/vscode/build.mjs", "packages/picker/build.mjs"]
 }
