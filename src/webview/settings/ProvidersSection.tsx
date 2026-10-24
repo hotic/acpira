@@ -12,7 +12,7 @@ import { Shimmer } from '../ui/Shimmer';
 import { cn } from '../ui/cn';
 import { t } from '../i18n';
 import { ModelMark } from '../chat/ModelMark';
-import { Dot, Group, inputBox, ItemRow, Note, ListHead, SearchBox, Section, SectionAction, SectionDescription, SectionHead, Select, SettingsDialog, FormField } from './controls';
+import { Dot, Group, inputBox, ItemRow, Note, ListHead, rowHover, SearchBox, Section, SectionAction, SectionDescription, SectionHead, Select, SettingsDialog, FormField } from './controls';
 import { modelDesc, ModelRow } from './ProviderModel';
 import type { SettingsHandlers } from './SettingsShell';
 
@@ -214,7 +214,7 @@ function ProviderGroup({ provider: p, query, busy, autoOpen, onEdit, onSave }: {
       {!p.models.length && <Note>{t('settings.providers.noModels')}</Note>}
       {/* The list's last row: a muted add entry in the rows' own layout (mark column, text column) */}
       <button type="button" disabled={busy} onClick={() => setAdding(true)}
-        className="flex min-h-(--setting-row) w-full items-center gap-gap py-(--setting-row-pad) text-left text-2 text-fg-2 transition-colors hover:text-fg-1 focus-visible:text-fg-1 disabled:opacity-60">
+        className={cn(rowHover, 'flex min-h-(--setting-row) w-full items-center gap-gap py-(--setting-row-pad) text-left text-2 text-fg-2 transition-colors hover:text-fg-1 focus-visible:text-fg-1 disabled:opacity-60')}>
         <span className="flex size-lead shrink-0 items-center justify-center [&_svg]:size-icon"><Plus strokeWidth={1.5} /></span>
         <span className="min-w-0 flex-1 truncate">{t('settings.providers.addModel')}</span>
       </button>

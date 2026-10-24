@@ -1,7 +1,7 @@
 import { memo, useState, type ReactNode } from 'react';
 import { Check, ChevronDown, ChevronsDown, ChevronsUp, ListTodo } from 'lucide-react';
 import type { PlanBlock, PlanEntry, PlanStatus } from '@shared/transcript';
-import { t } from '../i18n';
+import { t, useLocale } from '../i18n';
 import { Card } from '../ui/Card';
 import { Collapsible } from '../ui/Collapsible';
 import { Disclosure } from '../ui/Disclosure';
@@ -47,6 +47,8 @@ export function PlanCard({ entries, live }: { entries: PlanEntry[]; live?: boole
 // Historical plans are a single disclosure row. Expanded entries keep their
 // natural height and participate in the conversation's normal scroll flow.
 export const Plan = memo(function Plan({ block }: { block: PlanBlock }) {
+  // memo keeps a row from rendering again; the locale context still reaches it after a language change
+  useLocale();
   return <PlanDetails entries={block.entries} label={<RowLabel>{t('plan.title')}</RowLabel>} />;
 });
 

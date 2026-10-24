@@ -43,6 +43,8 @@ pub struct HostRuntime {
   self_agent: Option<(String, PathBuf)>,
   config_watch: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>,
   bridges: parking_lot::Mutex<Vec<Arc<BridgeCore>>>,
+  /// The pages' terminals (the desktop tool panel's terminal tabs), shared so one survives its page's reload
+  terminals: Arc<crate::terminal::TerminalHub>,
 }
 
 impl HostRuntime {
@@ -242,6 +244,7 @@ impl HostRuntime {
       self_agent,
       config_watch: Default::default(),
       bridges: Default::default(),
+      terminals: crate::terminal::TerminalHub::new(),
     });
     let weak = Arc::downgrade(&runtime);
     platform.on_settings_changed(Arc::new(move |affects| {
@@ -352,8 +355,17 @@ impl HostRuntime {
   ) -> Arc<BridgeCore> {
     let rt = Arc::downgrade(self);
     let appearance = Arc::new(move || rt.upgrade().map(|r| r.appearance()).unwrap_or_default());
-    let core =
-      BridgeCore::new(self.manager.clone(), self.settings.clone(), self.platform.clone(), appearance, post, host, blob_base, initial);
+    let core = BridgeCore::new(
+      self.manager.clone(),
+      self.settings.clone(),
+      self.platform.clone(),
+      appearance,
+      post,
+      host,
+      blob_base,
+      initial,
+      self.terminals.clone(),
+    );
     self.bridges.lock().push(core.clone());
     core
   }
@@ -408,6 +420,7 @@ impl HostRuntime {
     for b in bridges {
       b.dispose();
     }
+    self.terminals.dispose();
     self.manager.dispose().await;
   }
 }

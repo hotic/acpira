@@ -7,7 +7,7 @@ import type { MsgKey } from '@shared/i18n';
 import { Button, IconButton } from '../ui/Button';
 import { RadioPills } from '../ui/Field';
 import { cn } from '../ui/cn';
-import { t } from '../i18n';
+import { t, useLocale } from '../i18n';
 import { AgentMark } from '../chat/AgentMark';
 import { inputBox, ItemRow, Note, PathText, Section, SectionAction, SectionDescription, Switch, pathSep, shortPath } from './controls';
 import type { SettingsHandlers } from './SettingsShell';
@@ -205,6 +205,8 @@ const groupOf = (p: PlanItem) => (p.kind === 'prompt' ? 'prompt' : `skill:${p.na
 // The user-level link panel: a switch per missing link point, a choice per conflict, and the auto switch
 function LinkPanel({ ctx, onClose }: { ctx: Ctx; onClose: () => void }) {
   const { view, act, busy, names, env } = ctx;
+  // The group titles below are cached with the language they were built in
+  const locale = useLocale();
   const [choices, setChoices] = useState<Record<string, Choice>>(() =>
     Object.fromEntries(view.plan.map(p => [p.at, p.state === 'missing' && !p.skipped ? 'link' : 'skip'])));
   const [auto, setAuto] = useState(view.auto || !view.userLinked);
@@ -225,7 +227,7 @@ function LinkPanel({ ctx, onClose }: { ctx: Ctx; onClose: () => void }) {
   const groups = useMemo(() => [
     { title: t('settings.shared.plan.skills'), items: view.plan.filter(p => p.kind === 'skill') },
     { title: t('settings.shared.plan.prompts'), items: view.plan.filter(p => p.kind === 'prompt') },
-  ].filter(g => g.items.length), [view.plan]);
+  ].filter(g => g.items.length), [view.plan, locale]);
 
   const row = (p: PlanItem) => {
     const blocked = p.kind === 'prompt' && !promptSource;

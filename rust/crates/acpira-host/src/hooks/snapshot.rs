@@ -20,7 +20,7 @@ fn stamp(path: &Path) -> Stamp {
   Some((meta.len(), meta.modified().ok()?))
 }
 
-async fn git(dir: &Path, args: &[&str]) -> Option<Vec<u8>> {
+pub(crate) async fn git(dir: &Path, args: &[&str]) -> Option<Vec<u8>> {
   let mut cmd = tokio::process::Command::new("git");
   cmd.arg("-C").arg(dir).args(args).stdin(std::process::Stdio::null()).kill_on_drop(true);
   #[cfg(windows)]

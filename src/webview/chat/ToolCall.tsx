@@ -10,7 +10,7 @@ import { EntranceOnce, Row, RowLabel, RowTarget } from '../ui/Row';
 import { cn } from '../ui/cn';
 import { ConnectedRail } from '../ui/ConnectedRail';
 import { IconButton } from '../ui/Button';
-import { t } from '../i18n';
+import { t, useLocale } from '../i18n';
 import { toolIcon } from './icons';
 import { PlanDetails } from './Plan';
 import { CodeSurface, DiffBlock } from './CodeBlock';
@@ -37,6 +37,8 @@ export { OpenToolFileContext } from './fileLinks';
 // Memoized on the block reference: a live turn re-renders on every chunk, and only the tool that changed should pay for it.
 // The rows enter once per tool id: the branch below changes shape as the call progresses, and a remount must not replay it
 export const ToolCall = memo(function ToolCall({ block, grouped = false }: { block: ToolCallBlock; grouped?: boolean }) {
+  // memo keeps a row from rendering again; the locale context still reaches it after a language change
+  useLocale();
   return <EntranceOnce id={`${block.id}:tool`}><ToolCallRows block={block} grouped={grouped} /></EntranceOnce>;
 });
 

@@ -1,6 +1,6 @@
 import type { ChatGptIntegrationStatus } from '@shared/chatgptIntegration';
 import { ChatGptPage } from './ChatGptPage';
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl } from '@shared/transcript';
 import type { AgentInventory } from '@shared/inventory';
@@ -15,6 +15,10 @@ import { cn } from '../ui/cn';
 import { ShellLayerContext } from '../ui/Popover';
 import { useScrollReveal } from '../ui/useScrollReveal';
 import { LocaleContext, t } from '../i18n';
+import { COLUMN_HIDDEN_KEY, DesktopContext, macOS } from '../desktop';
+import { webviewState } from '../vscodeApi';
+import { ShellToasts, TitleRow } from '../chat/DesktopFrame';
+import { usePreferredPaneWidth } from '../chat/subagents/InspectorSplitter';
 import { PageRail, type SettingsPage } from './Nav';
 import { General } from './General';
 import { AppearancePage } from './Appearance';
@@ -108,6 +112,8 @@ export interface SettingsShellProps {
   // Back from the settings to the chat
   onBack: () => void;
   on: SettingsHandlers;
+  // The standalone desktop app: the chat's window frame (desktop.css), the rail on the canvas and the page on a sheet
+  desktop?: boolean;
 }
 
 // Navigation and content are separate columns. The page heading shares the cards' content measure.
@@ -130,7 +136,28 @@ export function SettingsShell(p: SettingsShellProps) {
       <RefreshCw strokeWidth={1.5} className={cn(busy && 'animate-spin live-spin')} />
     </IconButton>
   );
+  const desktop = !!p.desktop;
+  // Desktop: the rail takes the chat column's width (the same stored value, clamped as Shell clamps it), so the sheet does not
+  // jump sideways when the page switches
+  const [columnWidth] = usePreferredPaneWidth('sessionPaneW');
+  const railWidth = columnWidth === undefined ? undefined : `clamp(var(--session-pane-min), ${columnWidth}px, calc(100% - var(--session-main-min)))`;
+  // Opened while the chat's column was folded: the rail opens from nothing at that place (desktop.css data-opening)
+  const [opening] = useState(() => desktop && webviewState(COLUMN_HIDDEN_KEY) === true);
+  // Desktop: ⌘[ (Ctrl elsewhere) goes back to the chat, as the title row's back button does and as it steps back there
+  const back = useRef(p.onBack);
+  back.current = p.onBack;
+  useEffect(() => {
+    if (!desktop) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(macOS ? e.metaKey : e.ctrlKey) || e.altKey || e.shiftKey || e.isComposing || e.key !== '[') return;
+      e.preventDefault();
+      back.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [desktop]);
   return (
+    <DesktopContext.Provider value={desktop}>
     <AppearanceContext.Provider value={p.appearance}>
       <ThemeContext.Provider value={p.theme}>
       <LocaleContext.Provider value={p.locale}>
@@ -143,12 +170,17 @@ export function SettingsShell(p: SettingsShellProps) {
             data-agent={agent?.id ?? p.settings.defaultAgent}
             {...appearanceDataAttrs(p.appearance)}
             {...lookAttrs(p.look)}
+            // The chat's desktop frame: the lights' room, and the rail always beside the sheet
+            data-desktop={desktop || undefined}
+            data-os={desktop && macOS ? 'mac' : undefined}
+            data-column={desktop || undefined}
           >
             <div className="flex min-h-0 flex-1">
-              <PageRail agents={p.agents} page={p.page} onPage={p.onPage} onBack={p.onBack}
+              <PageRail agents={p.agents} page={p.page} onPage={p.onPage} onBack={p.onBack} desktop={desktop} width={desktop ? railWidth : undefined} opening={opening}
                 onReorder={ids => p.on.setSetting('agentOrder', [...ids, ...p.settings.agentOrder.filter(unlisted)])}
                 onDisabled={ids => p.on.setSetting('disabledAgents', [...ids, ...p.settings.disabledAgents.filter(unlisted)])} />
-              <main key={page.kind === 'agent' ? page.id : page.kind} className="min-w-0 flex-1 overflow-y-auto scroll-stable">
+              <div data-sheet={desktop || undefined} className="relative flex min-w-0 flex-1 flex-col">
+              <main key={page.kind === 'agent' ? page.id : page.kind} className="min-h-0 min-w-0 flex-1 overflow-y-auto scroll-stable">
                 <Page>
                   <PageHeader title={title} action={action} />
                   {page.kind === 'chatgpt' && <ChatGptPage status={p.chatgptStatus} on={p.on} />}
@@ -173,11 +205,17 @@ export function SettingsShell(p: SettingsShellProps) {
                   )}
                 </Page>
               </main>
+              {/* The desktop shell's toasts while this page is up */}
+              {desktop && <ShellToasts open={p.on.openPath} />}
+              </div>
             </div>
+            {/* The chat's pinned title row in the same place, without the column's toggle: back returns to the chat */}
+            {desktop && <TitleRow onBack={p.onBack} />}
           </div>
         </ShellLayerContext.Provider>
       </LocaleContext.Provider>
       </ThemeContext.Provider>
     </AppearanceContext.Provider>
+    </DesktopContext.Provider>
   );
 }

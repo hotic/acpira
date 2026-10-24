@@ -1,7 +1,7 @@
 import { memo, useContext } from 'react';
 import { ArrowRight, GitBranch } from 'lucide-react';
 import type { AgentId, AgentInfo, ForkOrigin } from '@shared/transcript';
-import { t } from '../i18n';
+import { t, useLocale } from '../i18n';
 import { Row, RowLabel, RowTarget } from '../ui/Row';
 import { AgentMark } from './AgentMark';
 import { OpenSessionContext, SessionTitleContext } from './fileLinks';
@@ -9,6 +9,8 @@ import { OpenSessionContext, SessionTitleContext } from './fileLinks';
 // The row under a fork's copied turns, between two exchanges: the session they were copied from (a click opens it) and,
 // for a fork onto another agent, the agent that wrote them and the one that continues
 export const ForkBoundary = memo(function ForkBoundary({ origin, agents, agentId }: { origin: ForkOrigin; agents: AgentInfo[]; agentId: AgentId }) {
+  // memo keeps a row from rendering again; the locale context still reaches it after a language change
+  useLocale();
   const openSession = useContext(OpenSessionContext);
   const titleOf = useContext(SessionTitleContext);
   const name = (id: AgentId) => agents.find(a => a.id === id)?.name ?? id;

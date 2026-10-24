@@ -14,7 +14,7 @@ import { Shimmer } from '../ui/Shimmer';
 import { Toast } from '../ui/Toast';
 import { cn } from '../ui/cn';
 import { getLocale, t } from '../i18n';
-import { Count, Group, ItemRow, Note, rowHover, Section, SourceLink, shortPath } from './controls';
+import { Count, Group, ItemRow, Note, rowHover, rowRules, Section, SourceLink, shortPath, topRule } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 
 // Settings → Storage: what the data directory holds by owner, drawn as one bar, and the cleanups that are reviewed
@@ -138,8 +138,7 @@ function PickRow({ on, disabled, title, meta, size, onToggle, nested }: {
 }
 
 // The review's fixed-height list: an async list never changes the page's height when it fills, empties or filters.
-// The scrollport reaches the card edges so row hovers run full width and the scrollbar sits on the border, while the
-// outer wrapper keeps the section's `divide-y` rule inset
+// The scrollport reaches the card edges so row hovers and rules run full width and the scrollbar sits on the border
 function ReviewList({ children, empty, loading }: { children: ReactNode; empty: string; loading: boolean }) {
   const hasRows = Array.isArray(children) ? children.length > 0 : !!children;
   return (
@@ -162,7 +161,7 @@ function ReviewFooter({ n, size, all, onAll, action, disabled, onAction }: {
   onAction: () => void;
 }) {
   return (
-    <div className="flex min-h-(--setting-row) items-center gap-gap border-t border-line py-(--setting-row-pad) text-2">
+    <div className={cn('flex min-h-(--setting-row) items-center gap-gap py-(--setting-row-pad) text-2', topRule)}>
       <button type="button" role="checkbox" aria-checked={all} onClick={onAll} title={t('storage.selectAll')} aria-label={t('storage.selectAll')}
         className="flex shrink-0 items-center self-stretch">
         <Tick on={all} />
@@ -361,7 +360,7 @@ function ResidueReview({ state, env, on, onBack }: { state?: StorageState; env: 
     <Section desc={t('storage.residue.desc')}>
       <ReviewList loading={!list} empty={t('storage.residue.none')}>
         {groups.map(([k, rs]) => (
-          <div key={k} className="flex flex-col divide-y divide-line">
+          <div key={k} className={cn('flex flex-col', rowRules)}>
             <PickRow on={kindAll(rs)} title={<>{t(KIND_LABEL[k])} <Count n={rs.length} /></>} meta={<span title={t(KIND_DESC[k])}>{t(KIND_DESC[k])}</span>}
               size={bytes(rs.reduce((a, r) => a + r.bytes, 0))}
               onToggle={() => set(kindAll(rs) ? [...sel].filter(id => !rs.some(r => r.id === id)) : [...sel, ...rs.map(r => r.id)])} />
@@ -421,10 +420,9 @@ function Overview({ view, env, onReveal }: { view?: StorageView; env: SettingsEn
       {STORAGE_SEGMENTS.map(k => {
         const s = seg(k);
         return (
+          // The legend is information: it answers no hover (only the bar does, dimming the other segments)
           <ItemRow key={k}
-            onMouseEnter={() => setHover(k)} onMouseLeave={() => setHover(undefined)}
-            className={cn('storage-legend-row', active === k && 'storage-legend-active', active && active !== k && 'storage-legend-dim')}
-            lead={<span aria-hidden className={cn('storage-legend-dot size-(--dot) rounded-full', FILL[k])} />}
+            lead={<span aria-hidden className={cn('size-(--dot) rounded-full', FILL[k])} />}
             title={<>{t(LABEL[k])}{s && s.count > 0 && k !== 'other' && <> <Count n={s.count} /></>}</>}
             trailing={<span className={cn('text-2 tabular-nums', s ? 'text-fg-1' : 'text-fg-3')}>{s ? bytes(s.bytes) : t('storage.pending')}</span>} />
         );
@@ -447,7 +445,7 @@ function OtherFiles({ view, onReveal }: { view: StorageView; onReveal: (path: st
       ))}
       {rest > 0 && (
         <button type="button" onClick={() => setAll(v => !v)}
-          className="min-h-(--setting-row) py-(--setting-row-pad) text-left text-2 text-fg-2 transition-colors hover:text-fg-1 focus-visible:text-fg-1">
+          className={cn(rowHover, 'min-h-(--setting-row) w-full py-(--setting-row-pad) text-left text-2 text-fg-2 transition-colors hover:text-fg-1 focus-visible:text-fg-1')}>
           {all ? t('storage.otherLess') : t('storage.otherMore', { n: rest })}
         </button>
       )}

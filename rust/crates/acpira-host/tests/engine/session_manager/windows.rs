@@ -173,12 +173,23 @@ async fn a_session_another_engine_owns_streams_here_and_takes_actions_without_a_
   a.m.refresh_index().await;
   b.m.refresh_index().await;
 
-  // B shows A's own view: not read-only, nothing to take over
+  // B shows A's own view: not read-only, nothing to take over. Nor for a moment on the way: the record copy with its
+  // "take over" card used to go out first and flash before the pushed view replaced it
+  let seen = record_events(&b.v);
+  let flashed = |seen: &Arc<Mutex<Vec<Value>>>| -> Vec<Value> {
+    seen.lock().unwrap().iter().filter(|e| e["type"] == "session" && e["session"]["id"] == id.as_str() && e["session"]["status"] == "readonly").cloned().collect()
+  };
   b.m.select_session_for(&b.v, &id).await;
   until(|| b.active().is_some_and(|s| s["id"] == id.as_str() && s["status"] != "readonly"), 3000).await;
   let shown = b.active().unwrap();
   assert_ne!(shown["canTakeOver"], true, "{shown}");
   assert_eq!(turns_in(&shown), 2);
+  assert!(flashed(&seen).is_empty(), "read-only copy shown first: {:?}", flashed(&seen));
+  // Away and straight back (the copy is still there): the pushed view again, not the record copy
+  b.new_session(None).await;
+  b.m.select_session_for(&b.v, &id).await;
+  until(|| b.active().is_some_and(|s| s["id"] == id.as_str()), 3000).await;
+  assert!(flashed(&seen).is_empty(), "read-only copy shown on return: {:?}", flashed(&seen));
 
   // A's slow turn streams into B while it runs, and ends there too
   let running = a.spawn_handle(json!({ "type": "send", "text": "slow" }));
@@ -192,7 +203,7 @@ async fn a_session_another_engine_owns_streams_here_and_takes_actions_without_a_
   until(|| b.active().is_some_and(|s| turns_in(&s) == 6 && s["running"] == false), 5000).await;
   assert!(b.toasts().is_empty(), "{:?}", b.toasts());
   assert_eq!(a.m.leased(), vec![id.clone()]);
-  assert!(b.m.leased().is_empty());
+  assert!(!b.m.leased().contains(&id));
 
   // A ends: B hears the session is gone and opens it here
   a.dispose().await;

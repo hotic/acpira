@@ -12,7 +12,13 @@ import { LocaleContext, setLocale, t } from './i18n';
 import { Shell, type ShellHandlers } from './chat/Shell';
 import { lookFromSettings, resolveTheme } from './look';
 import { useVsCodeTheme } from './useVsCodeTheme';
+import { settleProject } from './panel/api';
+import { deliverToBrowserTab, installBrowserTabs, setRecentPages } from './panel/browserTabs';
+import { panel } from './panel/store';
+import { deliverTerminal, startTerminals, terminalsConnected } from './panel/terminals';
 import { vscodeApi } from './vscodeApi';
+import { desktopShell, pushShellToast, runShellCommand } from './desktop';
+import type { QuickSettings } from './chat/DesktopFrame';
 import { SettingsShell, type SettingsHandlers } from './settings/SettingsShell';
 import { contextDrafts, sameContext, sameRange, selectionDraft, setContextSelection, setEditorCopy, setEditorSelection } from './chat/editorContext';
 import { updateMainComposer } from './chat/useComposerDraft';
@@ -27,13 +33,17 @@ import type { ProvidersState } from './settings/ProvidersSection';
 declare global {
   // `font`: the configured UI face, for fontPreload.ts (VS Code only says so; other hosts get the default).
   // `sessionLinkBase`: the clickable session-link base the VS Code shell injects (chat/sessionLinkBase.ts).
-  // `host: 'browser'`: the browser panel's webview (main.tsx renders browser/BrowserPanel there)
-  interface Window { __acpira?: { host: 'sidebar' | 'editor' | 'browser'; font?: Appearance['font']; sessionLinkBase?: string } }
+  // `host: 'browser'`: the browser panel's webview (main.tsx renders browser/BrowserPanel there).
+  // `shell: 'desktop'`: the standalone desktop app (desktop/src/page.ts), which turns on the desktop layout
+  // `tab`: a browser page shown as a tab of the desktop tool panel (desktop/src/page.ts), whose transport comes from the chat
+  interface Window { __acpira?: { host: 'sidebar' | 'editor' | 'browser'; font?: Appearance['font']; sessionLinkBase?: string; shell?: 'desktop'; tab?: string } }
 }
 
 // Always through the memo: acquireVsCodeApi() throws when called twice, and other components (Link) reach the api via vscodeApi()
 const vscode = vscodeApi();
 const post = (m: WebviewMsg) => vscode.postMessage(m);
+// The desktop app's page (desktop/src/page.ts): its frame, start page and project registry (Shell's `desktop`)
+const desktop = desktopShell();
 
 // Replies return to the originating webview. Drafts survive a rejected edit.
 const editWaits = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
@@ -119,6 +129,10 @@ export function App() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [hidden, setHidden] = useState<HiddenMap>({});
   const [session, setSession] = useState<SessionView>();
+  // A project shell (the desktop app) with no project to show a session of: init came without one, or noSession
+  const [noProject, setNoProject] = useState(false);
+  // The desktop shell's folder dialog under way, settled by pickedFolder (a newer request settles the older one empty)
+  const folderPick = useRef<(path?: string) => void>(undefined);
   // Observed subagent transcripts keyed `${sessionId}:${subagentId}`; the inspector subscribes to one at a time
   const [subagentTranscripts, setSubagentTranscripts] = useState<Record<string, { rev: number; running: boolean; turns: Turn[] }>>({});
   // The session the view is showing right now, readable inside the stable handler object: every session action
@@ -132,6 +146,10 @@ export function App() {
   // Where an editor range pinned by "Add to chat" is labeled relative to
   const cwdRef = useRef<string>('');
   const [view, setView] = useState<'chat' | 'settings'>('chat');
+  // The view the last render showed: Shell, mounted fresh on the way back from settings, eases the desktop frame from there
+  const lastView = useRef(view);
+  const fromSettings = view === 'chat' && lastView.current === 'settings';
+  useEffect(() => { lastView.current = view; }, [view]);
   const [settings, setSettings] = useState<SettingsView>();
   const [locale, setLoc] = useState<Locale>('en');
   const [chatgptStatus, setChatgptStatus] = useState<ChatGptIntegrationStatus>();
@@ -155,7 +173,8 @@ export function App() {
   const { theme } = resolveTheme(settings?.theme ?? 'auto', hostTheme);
   const look = useMemo(() => settings && lookFromSettings(settings), [settings]);
   // Settings → Orchestration, the enabled subagents as the composer offers them (name, CLI logo, CLI name and model), then
-  // the enabled groups with an enabled member, their members' names in place of a CLI
+  // the enabled groups with an enabled member, their members' names in place of a CLI, joined with the language's list
+  // separator (hence the locale among the deps)
   const subagents = settings?.subagents;
   const subagentGroups = settings?.subagentGroups;
   const personas = useMemo(() => {
@@ -169,7 +188,7 @@ export function App() {
       id: p.id, name: p.name, agent: p.agent,
       cli: agents.find(a => a.id === p.agent)?.name ?? p.agent, model: p.model || undefined,
     })), ...groups];
-  }, [subagents, subagentGroups, agents]);
+  }, [subagents, subagentGroups, agents, locale]);
 
   useEffect(() => { document.documentElement.lang = locale; }, [locale]);
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
@@ -184,6 +203,8 @@ export function App() {
   }, [session?.id]);
 
   useEffect(() => {
+    // The tool panel's browser tabs and terminals live in the desktop app only
+    if (window.__acpira?.shell === 'desktop') { installBrowserTabs(); startTerminals(); }
     const onMsg = (e: MessageEvent<HostMsg>) => {
       // A widget frame (show_widget) runs an agent's page: whatever it posts is never a host message
       if (isWidgetFrame(e.source)) return;
@@ -196,7 +217,7 @@ export function App() {
           break;
         }
         // A sidecar that came back answers nothing it was asked before: pending controls requests go out again
-        case 'init': controlsAsked.current.clear(); setInit({ host: m.state.host, home: m.state.home, cwd: m.state.cwd, blobBase: m.state.blobBase }); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setCategories(m.state.categories); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setAgentInstalls(m.state.agentInstalls ?? []); setHidden(m.state.hidden); setSession(views.init(m.state.active)); setSettings(m.state.settings); setLocale(m.state.locale); setLoc(m.state.locale); break;
+        case 'init': controlsAsked.current.clear(); setInit({ host: m.state.host, home: m.state.home, cwd: m.state.cwd, blobBase: m.state.blobBase }); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setCategories(m.state.categories); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setAgentInstalls(m.state.agentInstalls ?? []); setHidden(m.state.hidden); setSession(views.init(m.state.active)); setNoProject(!m.state.active); setSettings(m.state.settings); setLocale(m.state.locale); setLoc(m.state.locale); terminalsConnected(m.state.home); break;
         case 'appearance': setAppearance(m.appearance); break;
         // An agent whose executable appeared or vanished has a stale inventory (binary path, version); drop it so the page rescans
         case 'agents': {
@@ -213,7 +234,18 @@ export function App() {
         case 'agentInstalls': setAgentInstalls(m.installs); break;
         case 'hidden': setHidden(m.hidden); break;
         // Keep unchanged turns / blocks by reference so memoized history skips re-rendering during streaming
-        case 'session': resyncAsked.current = false; setSession(views.whole(m.session)); break;
+        case 'session': resyncAsked.current = false; setNoProject(false); setSession(views.whole(m.session)); break;
+        case 'noSession': setNoProject(true); setSession(undefined); break;
+        case 'pickedFolder': { const settle = folderPick.current; folderPick.current = undefined; settle?.(m.path); break; }
+        case 'toast': pushShellToast(m); break;
+        // The menu bar: settings is this page's switch, the rest are the chat's shortcuts (queued while settings is up)
+        case 'shellCommand':
+          if (m.command === 'settings') { setView('settings'); break; }
+          // The View menu's layout picks: written like the gear's, the page they reach stays up
+          if (m.command === 'layoutChat' || m.command === 'layoutFiles') { post({ type: 'setSetting', key: 'desktopLayout', value: m.command === 'layoutFiles' ? 'files' : 'chat' }); break; }
+          setView('chat');
+          runShellCommand(m.command);
+          break;
         // Only the changed tail of the transcript comes over; kept turns stay the same objects, so reuse skips them at once.
         // Switching back to a recently shown session is a patch against the view kept from then (sessionViews.ts).
         // A patch that does not fit the held view asks for the whole view (once, until it lands); a stale one is dropped
@@ -251,6 +283,15 @@ export function App() {
         case 'files': settleFiles(m.seq, m.files); break;
         case 'sessionHits': settleSessions(m.seq, m.hits); break;
         case 'diffSource': settleDiff(m.seq, m.source); break;
+        case 'projectDir': case 'projectStatus': case 'projectFile': case 'sessionChanges': settleProject(m); break;
+        case 'terminalOutput': case 'terminalState': deliverTerminal(m); break;
+        // The desktop tool panel (src/webview/panel): its browser tabs' messages, the new-tab page's history, open_browser
+        case 'panelBrowser': deliverToBrowserTab(m.tab, m.msg); break;
+        case 'panelHistory': setRecentPages({ pages: m.pages, running: m.running }); break;
+        case 'panelOpenBrowser':
+          setView('chat');
+          if (!(m.tab && panel.showBrowser(m.tab, m.url))) panel.openBrowser(m.url);
+          break;
         case 'sessionMarkdown': settleMarkdown(m.seq, m.markdown, m.error); break;
         case 'editorSelection': setEditorSelection(m.selection); break;
         case 'editorCopy': setEditorCopy(m.selection); break;
@@ -270,7 +311,7 @@ export function App() {
         case 'probeUrl': { const { id, url } = m; void probeUrl(url).then(r => post({ type: 'probeResult', id, ...r })); break; }
         case 'showSession': {
           const kept = views.select(m.id);
-          if (kept) setSession(kept);
+          if (kept) { setNoProject(false); setSession(kept); }
           post({ type: 'selectSession', id: m.id });
           setView('chat');
           break;
@@ -335,10 +376,10 @@ export function App() {
     setConfig: (configId, value) => post({ type: 'setConfig', sessionId: activeId.current, configId, value }),
     selectSession: id => {
       const kept = views.select(id);
-      if (kept) setSession(kept);
+      if (kept) { setNoProject(false); setSession(kept); }
       post({ type: 'selectSession', id });
     },
-    newSession: (agent, category) => post({ type: 'newSession', ...(agent ? { agent } : {}), ...(category ? { category } : {}) }),
+    newSession: (agent, category, cwd) => post({ type: 'newSession', ...(agent ? { agent } : {}), ...(category ? { category } : {}), ...(cwd ? { cwd } : {}) }),
     renameSession: (id, title) => post({ type: 'renameSession', id, title }),
     deleteSession: id => post({ type: 'deleteSession', id }),
     restoreSession: id => post({ type: 'restoreSession', id }),
@@ -346,6 +387,7 @@ export function App() {
     moveSession: (id, to) => post({ type: 'moveSession', id, ...to }),
     setSessionCategory: (id, category) => post({ type: 'setSessionCategory', id, category }),
     categoryOp: (op, file) => post({ type: 'categoryOp', ...op, ...(file ? { file } : {}) }),
+    markAllRead: () => post({ type: 'markAllRead' }),
     selectAccount: id => post({ type: 'selectAccount', sessionId: activeId.current, id }),
     addAccount: (agent, via) => post({ type: 'addAccount', agent, via }),
     removeAccount: id => post({ type: 'removeAccount', id }),
@@ -371,6 +413,14 @@ export function App() {
     cancelSubagent: (sessionId, subagentId) => post({ type: 'cancelSubagent', sessionId, subagentId }),
     stopAsyncTask: (sessionId, taskId) => post({ type: 'stopAsyncTask', sessionId, taskId }),
     goal: (sessionId, action, objective) => post({ type: 'goal', sessionId, action, ...(objective !== undefined ? { objective } : {}) }),
+    // A directory's openPath reveals it in the OS file manager (every shell has revealInOS)
+    revealPath: path => post({ type: 'openPath', path }),
+    openExternal: url => post({ type: 'openExternal', url }),
+    pickFolder: desktop ? () => new Promise<string | undefined>(resolve => {
+      folderPick.current?.(undefined);
+      folderPick.current = resolve;
+      post({ type: 'pickFolder' });
+    }) : undefined,
   }), []);
 
   const settingsOn = useMemo<SettingsHandlers>(() => ({
@@ -416,15 +466,23 @@ export function App() {
     setView('settings');
   }, []);
 
+  // Desktop: the gear menu's theme, language and layout switches write the same settings the settings page does
+  const quickTheme = settings?.theme, quickLanguage = settings?.language, quickLayout = settings?.desktopLayout;
+  const quickSettings = useMemo<QuickSettings | undefined>(() => desktop && quickTheme && quickLanguage
+    ? { theme: quickTheme, language: quickLanguage, layout: quickLayout ?? 'chat', set: (key, value) => post({ type: 'setSetting', key, value }) }
+    : undefined, [quickTheme, quickLanguage, quickLayout]);
+
   cwdRef.current = session?.cwd ?? init?.cwd ?? '';
   if (!init || !settings) return null;
   const agent = agents.find(a => a.id === session?.agent) ?? agents[0];
   if (!agent) return null;
-  // A locale change re-renders through a fresh dictionary: t() reads module state, so the tree remounts on key
+  // A locale change re-renders in place: t() reads module state, and what memo or a cache would keep (rows, joined
+  // names) reads the locale from LocaleContext. Remounting on key={locale} replayed every mount animation, closed open
+  // menus and reset scroll positions, which read as the window blinking
   if (view === 'settings') {
     return (
+      <LocaleContext.Provider value={locale}>
       <SettingsShell
-        key={locale}
         appearance={appearance}
         theme={theme}
         look={look}
@@ -445,14 +503,17 @@ export function App() {
         page={page}
         onPage={setPage}
         onBack={() => setView('chat')}
+        desktop={desktop}
         on={settingsOn}
       />
+      </LocaleContext.Provider>
     );
   }
   return (
     <LocaleContext.Provider value={locale}>
     <Shell
-      key={locale}
+      fromSettings={fromSettings}
+      quickSettings={quickSettings}
       appearance={appearance}
       theme={theme}
       look={look}
@@ -496,6 +557,9 @@ export function App() {
       on={on}
       replayKey={session?.id}
       onOpenSettings={openSettings}
+      desktop={desktop}
+      noProject={desktop && noProject}
+      home={init.home}
     />
     </LocaleContext.Provider>
   );

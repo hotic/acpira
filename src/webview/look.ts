@@ -1,5 +1,5 @@
 import { createContext, useContext, type CSSProperties } from 'react';
-import type { DiffMarkers, SettingsView } from '@shared/settings';
+import type { DesktopLayout, DiffMarkers, SettingsView } from '@shared/settings';
 
 export type Theme = 'dark' | 'light';
 
@@ -21,10 +21,12 @@ export interface ShellLook {
   diffMarkers: DiffMarkers;
   fontSmoothing: boolean;
   sessionListPosition: SettingsView['sessionListPosition'];
+  // The desktop app's layout (Shell `desktop` only); absent, the conversation is the subject
+  desktopLayout?: DesktopLayout;
 }
 
 export function lookFromSettings(s: SettingsView): ShellLook {
-  return { fixedTheme: s.theme !== 'auto', uiFontSize: s.uiFontSize, codeFontSize: s.codeFontSize, diffMarkers: s.diffMarkers, fontSmoothing: s.fontSmoothing, sessionListPosition: s.sessionListPosition };
+  return { fixedTheme: s.theme !== 'auto', uiFontSize: s.uiFontSize, codeFontSize: s.codeFontSize, diffMarkers: s.diffMarkers, fontSmoothing: s.fontSmoothing, sessionListPosition: s.sessionListPosition, desktopLayout: s.desktopLayout };
 }
 
 export function lookAttrs(look?: ShellLook) {

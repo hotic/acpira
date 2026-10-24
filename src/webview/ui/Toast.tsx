@@ -9,13 +9,16 @@ export interface ToastProps {
   icon?: ReactNode;
   // An undoable action (session deletion and the like)
   onUndo?: () => void;
+  // Any other one-click follow-up (the shell's "Open" for a file it wrote); its label comes localized
+  action?: { label: string; onClick: () => void };
   onClose: () => void;
   // Milliseconds before it dismisses itself
   ttl?: number;
 }
 
-// A capsule floating above the bottom of the conversation flow: icon · text · undo · close. Dismisses itself when time's up
-export function Toast({ text, icon, onUndo, onClose, ttl = 8000 }: ToastProps) {
+// A capsule floating above the bottom of the conversation flow: icon, text, undo or another action, close. Dismisses itself
+// when time's up
+export function Toast({ text, icon, onUndo, action, onClose, ttl = 8000 }: ToastProps) {
   // The timer runs once per mount; a parent re-rendering with a fresh onClose must not restart it
   const close = useRef(onClose);
   close.current = onClose;
@@ -28,6 +31,7 @@ export function Toast({ text, icon, onUndo, onClose, ttl = 8000 }: ToastProps) {
       {icon ?? <Trash2 className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} />}
       <span className="truncate">{text}</span>
       {onUndo && <Button variant="secondary" onClick={onUndo} className="ml-1">{t('common.undo')}</Button>}
+      {action && <Button variant="secondary" onClick={action.onClick} className="ml-1">{action.label}</Button>}
       <IconButton aria-label={t('common.close')} onClick={onClose}><X strokeWidth={1.5} /></IconButton>
     </div>
   );

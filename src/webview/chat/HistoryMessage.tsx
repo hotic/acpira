@@ -11,7 +11,7 @@ import { cn } from '../ui/cn';
 import { cssTimeVar } from '../ui/cssTime';
 import { Row, RowLabel, RowTarget } from '../ui/Row';
 import { AtSign } from 'lucide-react';
-import { t } from '../i18n';
+import { t, useLocale } from '../i18n';
 
 // Every prompt card reads this, so it must stay stable across stream pushes: editability is a flag,
 // and the composer props (which change with each chunk) travel in HistoryComposerContext for the mounted editor alone
@@ -37,6 +37,8 @@ export const HistoryComposerContext = createContext<ComposerProps | undefined>(u
 export const HistoryMessage = memo(function HistoryMessage(p: {
   turn: UserTurn; index: number; turnIndex: number; blobUrl?: (blob: string) => string; commands?: readonly SlashCommand[]; summons?: readonly string[];
 }) {
+  // memo keeps a row from rendering again; the locale context still reaches it after a language change
+  useLocale();
   const context = useContext(HistoryContext);
   const { motion } = useAppearance();
   const base = useRef<HTMLDivElement>(null);

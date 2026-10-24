@@ -3,7 +3,7 @@ import type { ImageRef, ToolCallBlock } from '@shared/transcript';
 import { isShowImageTool, toolImages } from '@shared/imageTools';
 import { useAppearance } from '../appearance';
 import { useTheme } from '../look';
-import { t } from '../i18n';
+import { t, useLocale } from '../i18n';
 import { IMAGE_GEN } from '../effects/presets';
 import { dissolveIn, readImageGenColors } from '../effects/imageGen';
 import { hasWebGL } from '../effects/webgl';
@@ -35,6 +35,8 @@ const idle = (fn: () => void) => {
 // Shown images (show_image) take the same place without the generation placeholder: the files already exist.
 // Their row names the files, so the images carry no path caption.
 export const GeneratedImages = memo(function GeneratedImages({ block }: { block: ToolCallBlock }) {
+  // memo keeps a row from rendering again; the locale context still reaches it after a language change
+  useLocale();
   // A show_image row already names its files, so the images drop their path captions
   const shown = isShowImageTool(block);
   const open = !shown && (block.status === 'pending' || block.status === 'in_progress');

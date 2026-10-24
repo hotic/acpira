@@ -1,5 +1,5 @@
 import { memo, useCallback, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import { t } from '../../i18n';
+import { t, useLocale } from '../../i18n';
 import { setWebviewState, webviewState } from '../../vscodeApi';
 
 // Width of a docked pane: the subagent inspector (`subagentPaneW`) or the session column (`sessionPaneW`). The user drags
@@ -41,6 +41,8 @@ interface SplitterProps {
 // Arrow keys nudge, double-click restores the default width. Memoized: the session column's edge is mounted for good
 // beside a shell that renders on every stream chunk, and its bounds read computed styles
 export const InspectorSplitter = memo(function InspectorSplitter({ width: chosen, bounds, onDrag, onCommit, onReset, side = 'right' }: SplitterProps) {
+  // memo keeps a row from rendering again; the locale context still reaches it after a language change
+  useLocale();
   const dir = side === 'right' ? 1 : -1;
   const [dragging, setDragging] = useState(false);
   const { min, max, initial } = bounds();

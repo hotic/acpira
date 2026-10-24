@@ -256,3 +256,16 @@ export function modelBrand(family: string): string | undefined {
 export function optionBrand(o: Pick<SessionOption, 'id' | 'name'>): string | undefined {
   return modelBrand(o.id) ?? modelBrand(o.name);
 }
+
+// The vendors whose models an agent runs natively: its own mark already names the model's maker. Agents that route to
+// many vendors (the built-in agent, OpenCode, Pi, custom commands) have none
+const OWN_BRANDS: Record<string, string[]> = {
+  claude: ['claude'], codex: ['openai'], grok: ['grok'], kimi: ['kimi'], dsh: ['deepseek'], antigravity: ['gemini', 'google'], devin: ['devin', 'windsurf'],
+};
+
+// The model's mark key when its vendor is not the agent's own (Devin on Claude, OpenCode on GPT): the session list turns
+// such a row's agent mark over to it on hover
+export function foreignBrand(agent: string, model: Pick<SessionOption, 'id' | 'name'> | undefined): string | undefined {
+  const brand = model && optionBrand(model);
+  return brand && !(OWN_BRANDS[agent] ?? []).includes(brand) ? brand : undefined;
+}

@@ -67,6 +67,13 @@ export function SectionDescription({ children }: { children: ReactNode }) {
 // Titled subgroups own one surface. Their lists inherit it and use separators instead of nested cards.
 const InsetGroupContext = createContext(false);
 
+// The rules inside a card run from card edge to card edge, like a clickable row's hover fill (`rowHover`): a hovered row is
+// a closed cell between two rules. Inset rules left the fill spilling past their ends and running into the rule above.
+// `rowRules` draws one above every row but the first, `topRule` one above a block (a card's list under its head, a
+// footer, a group after another); the card clips both at its border
+export const rowRules = '[&>*+*]:relative [&>*+*]:after:pointer-events-none [&>*+*]:after:absolute [&>*+*]:after:top-0 [&>*+*]:after:-inset-x-pad [&>*+*]:after:h-px [&>*+*]:after:bg-line';
+export const topRule = 'relative before:pointer-events-none before:absolute before:top-0 before:-inset-x-pad before:h-px before:bg-line';
+
 // A text field on a settings card (inline forms)
 export const inputBox = 'min-w-0 rounded-md border border-line bg-chip px-3 text-2 text-fg-1 outline-none placeholder:text-fg-3 focus:border-line-strong';
 
@@ -92,7 +99,7 @@ export function Section({ title, desc, count, lead, status, action, cards, child
     <Card className="acp-section-panel flex flex-col overflow-hidden px-pad shadow-none">
       <ListHead title={title} desc={desc} count={count} lead={lead} status={status} action={action} />
       {hasContent && <InsetGroupContext.Provider value={true}>
-        <div className="border-t border-line">{content}</div>
+        <div className={topRule}>{content}</div>
       </InsetGroupContext.Provider>}
     </Card>
   );
@@ -193,7 +200,7 @@ export function Group({ className, children, embedded = false }: { className?: s
   const inset = embedded || inheritedInset;
   const Container = inset ? 'div' : Card;
   return <GroupContext.Provider value={true}>
-    <Container className={cn('flex flex-col divide-y divide-line', !inset && 'overflow-hidden px-pad shadow-none', className)}>{children}</Container>
+    <Container className={cn('flex flex-col', rowRules, !inset && 'overflow-hidden px-pad shadow-none', className)}>{children}</Container>
   </GroupContext.Provider>;
 }
 
@@ -373,7 +380,8 @@ export interface ItemRowProps {
   // A line under title / desc spanning the text column (quota bars); not truncated
   extra?: ReactNode;
   trailing?: ReactNode;
-  // Hover-revealed open button at the right edge (opens a file)
+  // The row opens something (a file, a folder, a page): a click anywhere on it but its own controls opens, and a ↗ glyph
+  // stays at the right edge as the cue and the keyboard stop
   onOpen?: () => void;
   // Keep metadata aligned in lists containing both openable and missing files.
   reserveOpen?: boolean;
@@ -383,26 +391,34 @@ export interface ItemRowProps {
   dim?: boolean;
   // A lead mark that fills the whole lead slot instead of the one-line icon size, for rows whose desc makes them two lines tall
   bigLead?: boolean;
-  onMouseEnter?: () => void;
-  onMouseLeave?: () => void;
   className?: string;
 }
 
-// Full-width hover fill for a clickable row inside an inset Group: the row keeps the group's width so `divide-y` rules
-// stay inset, while `::before` paints (and takes pointer hits) from card edge to card edge
+// Full-width hover fill for a clickable row inside an inset Group: the row keeps the group's width (its text stays on the
+// inset), while `::before` paints (and takes pointer hits) from card edge to card edge, between the rules above and below.
+// One rule for every card: a row lights up only when a click anywhere on it does something (navigation, open, a row-shaped
+// text button); rows that merely hold controls or information stay still
 export const rowHover = 'relative isolate before:absolute before:inset-y-0 before:-inset-x-pad before:-z-10 before:transition-colors enabled:hover:before:bg-hover focus-visible:before:bg-hover';
+// The same fill for an open row, which is a div (it may hold buttons of its own)
+const openHover = 'relative isolate cursor-pointer before:absolute before:inset-y-0 before:-inset-x-pad before:-z-10 before:transition-colors hover:before:bg-hover';
+const OWN_CONTROL = 'button, a, input, textarea, select, label, [role="switch"], [role="checkbox"]';
 
-export function ItemRow({ lead, title, desc, extra, trailing, onOpen, reserveOpen, onClick, dim, bigLead, onMouseEnter, onMouseLeave, className }: ItemRowProps) {
+export function ItemRow({ lead, title, desc, extra, trailing, onOpen, reserveOpen, onClick, dim, bigLead, className }: ItemRowProps) {
   const Tag = onClick ? 'button' : 'div';
+  const opens = !onClick && onOpen;
+  // A click on one of the row's own controls (remove, adopt, …) stays theirs; anywhere else on the row opens
+  const openFrom = opens ? (e: MouseEvent<HTMLElement>) => {
+    const hit = (e.target as Element).closest(OWN_CONTROL);
+    if (!hit || !e.currentTarget.contains(hit)) onOpen();
+  } : undefined;
   return (
     <Tag
-      {...(onClick ? { type: 'button' as const, onClick } : {})}
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onMouseLeave}
+      {...(onClick ? { type: 'button' as const, onClick } : { onClick: openFrom })}
       data-detail={!!desc || undefined}
       className={cn(
         useSettingRow(), 'group/row flex w-full items-center gap-gap text-left',
         onClick && rowHover,
+        opens && openHover,
         className,
       )}
     >
@@ -416,7 +432,9 @@ export function ItemRow({ lead, title, desc, extra, trailing, onOpen, reserveOpe
       {(onOpen || reserveOpen) && (
         // Zero height: the button overflows the slot evenly, so reserving it never makes the row taller than its neighbours
         <span className="-mr-1.5 flex h-0 w-ctl shrink-0 items-center justify-center" aria-hidden={!onOpen || undefined}>
-          {onOpen && <IconButton title={t('common.open')} aria-label={t('common.open')} onClick={onOpen} className="text-fg-2 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100">
+          {/* Always shown as the row's cue; the pointer goes through to the row, the keyboard still stops here */}
+          {onOpen && <IconButton title={t('common.open')} aria-label={t('common.open')} onClick={onOpen}
+            className={opens ? 'pointer-events-none text-fg-3 group-hover/row:text-fg-2' : 'text-fg-2 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100'}>
             <ExternalLink strokeWidth={1.5} />
           </IconButton>}
         </span>

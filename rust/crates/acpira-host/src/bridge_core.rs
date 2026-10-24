@@ -8,17 +8,19 @@ use std::time::Duration;
 use serde_json::Value;
 
 use acpira_shared::appearance::Appearance;
-use acpira_shared::protocol::{FileHit, HostMsg, InitState, WebviewHost, WebviewMsg, is_safe_external_url};
+use acpira_shared::protocol::{FileHit, HostMsg, InitState, ProjectBase, WebviewHost, WebviewMsg, is_safe_external_url};
 use acpira_shared::session_patch::{Delivery, SentViews};
 use acpira_shared::settings::is_setting_key;
 use acpira_shared::sidecar::{InitialView, PlanTarget, ToastOpen};
 
 use crate::acp::transcript::normalize::file_url_to_path;
 use crate::i18n::{t, tp};
+use crate::project_files;
 use crate::session_manager::{SessionManager, Viewer};
 use crate::settings::SettingsCenter;
 use crate::sidecar::platform::SidecarPlatform;
 use crate::store::data_dir::{home_dir, normalize};
+use crate::terminal::TerminalHub;
 
 /// Manager events within this window collapse to one post per message type
 pub const BATCH_WINDOW: Duration = Duration::from_millis(30);
@@ -109,6 +111,9 @@ pub struct BridgeCore {
   preload: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>,
   /// Set by `dispose`; posts after it are dropped (`emit`)
   disposed: parking_lot::RwLock<bool>,
+  /// The engine's terminals and this page's id among their viewers
+  terminals: Arc<TerminalHub>,
+  terminal_view: u64,
   me: Weak<BridgeCore>,
 }
 
@@ -123,6 +128,7 @@ impl BridgeCore {
     host: WebviewHost,
     blob_base: Option<String>,
     initial: Option<InitialView>,
+    terminals: Arc<TerminalHub>,
   ) -> Arc<BridgeCore> {
     let viewer = manager.attach(initial);
     // The page loads its bundle between attach and `ready`: a stored session it opens on is read and brought live meanwhile,
@@ -149,6 +155,8 @@ impl BridgeCore {
       settings_sub: Default::default(),
       preload: parking_lot::Mutex::new(preload),
       disposed: Default::default(),
+      terminal_view: terminals.next_view(),
+      terminals,
       me: me.clone(),
     });
     let weak = core.me.clone();
@@ -332,6 +340,100 @@ impl BridgeCore {
       W::DiffSource { session_id, tool_call_id, nth, subagent_id, seq } => {
         let source = manager.diff_source(&session_id, &tool_call_id, nth, subagent_id.as_deref());
         self.post_now(HostMsg::DiffSource { seq, source });
+      }
+      // The desktop tool panel's reads (project_files.rs). Each is always answered, and runs on its own task: a git
+      // status or a large file must not hold up the messages behind it
+      W::ProjectDir { session_id, dir, seq } => {
+        let (core, root) = (self.clone(), manager.session_cwd(&session_id));
+        tokio::spawn(async move {
+          let (entries, error) = match root {
+            None => (vec![], Some("noProject".to_owned())),
+            Some(root) => match project_files::list_dir(Path::new(&root), &dir).await {
+              Ok(entries) => (entries, None),
+              Err(e) => (vec![], Some(e.code())),
+            },
+          };
+          core.post_now(HostMsg::ProjectDir { seq, entries, error });
+        });
+      }
+      W::ProjectStatus { session_id, seq } => {
+        let (core, root) = (self.clone(), manager.session_cwd(&session_id));
+        tokio::spawn(async move {
+          let marks = match &root {
+            Some(root) => project_files::git_marks(Path::new(root)).await,
+            None => Default::default(),
+          };
+          core.post_now(HostMsg::ProjectStatus { seq, root, marks });
+        });
+      }
+      W::ProjectFile { session_id, path, base, seq } => {
+        let (core, root) = (self.clone(), manager.session_cwd(&session_id));
+        // The session's base is looked up now, while its view is at hand
+        let session_base = match (&root, base) {
+          (Some(root), Some(ProjectBase::Session)) => {
+            let abs = Path::new(root).join(&path);
+            manager.edit_bases(&session_id).into_iter().find(|(p, _)| Path::new(p) == abs).and_then(|(_, b)| b)
+          }
+          _ => None,
+        };
+        tokio::spawn(async move {
+          let Some(root) = root else {
+            core.post_now(HostMsg::ProjectFile { seq, text: None, hunks: vec![], error: Some("noProject".into()) });
+            return;
+          };
+          let root = Path::new(&root);
+          let read = match project_files::resolve(root, &path) {
+            Ok(file) => project_files::read_text(&file).await,
+            Err(e) => Err(e),
+          };
+          let text = match read {
+            Ok(text) => text,
+            Err(e) => {
+              core.post_now(HostMsg::ProjectFile { seq, text: None, hunks: vec![], error: Some(e.code()) });
+              return;
+            }
+          };
+          let base_text = match base {
+            Some(ProjectBase::Session) => session_base,
+            Some(ProjectBase::Head) => project_files::head_text(root, &path).await,
+            None => None,
+          };
+          let (text, hunks) = match base_text {
+            Some(b) => tokio::task::spawn_blocking(move || {
+              let h = project_files::hunks(&b, &text);
+              (text, h)
+            })
+            .await
+            .unwrap_or_default(),
+            None => (text, vec![]),
+          };
+          core.post_now(HostMsg::ProjectFile { seq, text: Some(text), hunks, error: None });
+        });
+      }
+      // The tool panel's terminal tabs (terminal.rs). Handled inline, so keys reach the shell in the order typed
+      W::TerminalOpen { id, cwd, cols, rows } => {
+        let weak = self.me.clone();
+        let sink = Arc::new(move |m: HostMsg| {
+          if let Some(c) = weak.upgrade() {
+            c.post_now(m);
+          }
+        });
+        self.terminals.open(self.terminal_view, sink, &id, cwd.as_deref(), cols.zip(rows));
+      }
+      W::TerminalInput { id, data, binary } => self.terminals.input(&id, data, binary),
+      W::TerminalResize { id, cols, rows } => self.terminals.resize(&id, cols, rows),
+      W::TerminalAck { id, chars } => self.terminals.ack(self.terminal_view, &id, chars),
+      W::TerminalClose { id } => self.terminals.close(self.terminal_view, &id),
+      W::TerminalKill { id } => self.terminals.kill(&id),
+      W::SessionChanges { session_id, seq } => {
+        let (core, root, bases) = (self.clone(), manager.session_cwd(&session_id), manager.edit_bases(&session_id));
+        tokio::spawn(async move {
+          let files = match root {
+            Some(root) => project_files::session_changes(Path::new(&root), bases).await,
+            None => vec![],
+          };
+          core.post_now(HostMsg::SessionChanges { seq, files });
+        });
       }
       // Always answered, like diffSource: the page's clipboard write waits on it
       W::SessionMarkdown { id, seq } => {
@@ -538,6 +640,8 @@ impl BridgeCore {
     if let Some(id) = self.settings_sub.lock().take() {
       self.settings.unsubscribe(id);
     }
+    // Its terminals run on a while without it, for a reload to come back to
+    self.terminals.detach_view(self.terminal_view);
     self.manager.detach(&self.viewer);
   }
 }

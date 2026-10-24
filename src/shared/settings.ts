@@ -19,6 +19,21 @@ export const THEMES: ThemeSetting[] = ['auto', 'light', 'dark'];
 export type DiffMarkers = 'color' | 'signs';
 export const DIFF_MARKERS: DiffMarkers[] = ['color', 'signs'];
 
+// How the desktop app opens file links and plan documents (acpira.openFilesWith): the system's default application, or an
+// editor's command line at the line. IDE shells open files in themselves and never read it
+export type FileOpener = 'system' | 'code' | 'cursor' | 'windsurf' | 'zed' | 'subl' | 'idea';
+export const FILE_OPENERS: FileOpener[] = ['system', 'code', 'cursor', 'windsurf', 'zed', 'subl', 'idea'];
+// Product names, the same in every language
+export const FILE_OPENER_NAMES: Record<Exclude<FileOpener, 'system'>, string> = {
+  code: 'VS Code', cursor: 'Cursor', windsurf: 'Windsurf', zed: 'Zed', subl: 'Sublime Text', idea: 'IntelliJ IDEA',
+};
+
+// What the desktop app's window centres on (acpira.desktopLayout): the conversation (sessions | chat | tool panel), or the
+// files and pages of the session's project (explorer | files | chat | sessions), as an editor lays out. IDE shells never
+// read it
+export type DesktopLayout = 'chat' | 'files';
+export const DESKTOP_LAYOUTS: DesktopLayout[] = ['chat', 'files'];
+
 // Font size bounds (px); the type scale in tokens.css derives every size and line height from these two
 export const UI_FONT_SIZE = { min: 10, max: 20, default: 13 } as const;
 export const CODE_FONT_SIZE = { min: 9, max: 20, default: 12 } as const;
@@ -96,11 +111,15 @@ export interface SettingsView {
   agentCpuCap: number;
   // `auto`, `off` or a proxy URL (DEFAULT_PROXY)
   proxy: string;
+  // Desktop app: the system's default application or an editor for file links and plans (FILE_OPENERS)
+  openFilesWith: FileOpener;
+  // Desktop app: the window's layout (DESKTOP_LAYOUTS)
+  desktopLayout: DesktopLayout;
 }
 
 // Keys the webview may write back; the host maps them onto acpira.<key> at user scope
-export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued' | 'notifySound' | 'notifySystem' | 'planAutoApprove' | 'subagents' | 'agentCpuCap' | 'proxy';
-export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued', 'notifySound', 'notifySystem', 'planAutoApprove', 'subagents', 'agentCpuCap', 'proxy'];
+export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued' | 'notifySound' | 'notifySystem' | 'planAutoApprove' | 'subagents' | 'agentCpuCap' | 'proxy' | 'openFilesWith' | 'desktopLayout';
+export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued', 'notifySound', 'notifySystem', 'planAutoApprove', 'subagents', 'agentCpuCap', 'proxy', 'openFilesWith', 'desktopLayout'];
 
 // The settings each shell keeps in its own store, since they follow the window's shape: the session list's side and scope
 // (the desktop app always lists every project on the left) and sharing the editor selection (IDE shells only). Every
@@ -147,6 +166,8 @@ export const DEFAULT_SETTINGS: SettingsView = {
   subagentGroups: [],
   agentCpuCap: AGENT_CPU_CAP.default,
   proxy: DEFAULT_PROXY,
+  openFilesWith: 'system',
+  desktopLayout: 'chat',
 };
 
 // A hand-edited settings.json or a forged webview message can send anything; fall back per key so the page never sees an illegal value
@@ -186,6 +207,10 @@ export function sanitizeSetting<K extends SettingKey>(key: K, value: unknown): S
       return (isHiddenMap(value) ? value : fallback) as SettingsView[K];
     case 'accountSwitch':
       return (oneOf(value, ACCOUNT_SWITCH_STRATEGIES) ?? fallback) as SettingsView[K];
+    case 'openFilesWith':
+      return (oneOf(value, FILE_OPENERS) ?? fallback) as SettingsView[K];
+    case 'desktopLayout':
+      return (oneOf(value, DESKTOP_LAYOUTS) ?? fallback) as SettingsView[K];
     case 'agentOrder':
     case 'disabledAgents':
     case 'planAutoApprove':

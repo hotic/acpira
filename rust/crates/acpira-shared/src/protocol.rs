@@ -84,6 +84,43 @@ pub struct FileHit {
   pub path: String,
 }
 
+/// One entry of a folder in a session's project, for the desktop tool panel's tree (`projectDir`)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectEntry {
+  pub name: String,
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub dir: bool,
+}
+
+/// A changed stretch of a file as it is now: `add` lines from line `at` (1-based) are new, the `del` lines stood just
+/// before line `at` (one past the last line for lines removed at the end)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectHunk {
+  pub at: u32,
+  pub add: u32,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub del: Vec<String>,
+}
+
+/// A file a session changed, compared with what it held before the session's first edit: `path` relative to the
+/// project folder (`/`-separated), absolute for a file outside it; `gone` when it no longer exists
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectChange {
+  pub path: String,
+  pub add: u32,
+  pub del: u32,
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub gone: bool,
+}
+
+/// What a file's hunks are measured against: the text before the session's first edit of it, or the last commit
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProjectBase {
+  Session,
+  Head,
+}
+
 /// A session whose conversation contains every term of a history search, with the text around the first match
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionHit {
@@ -316,6 +353,70 @@ pub enum HostMsg {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
   },
+  /// Reply to projectDir: a folder of the session's project, folders first; `error` (`noProject`, `outside`, `missing`,
+  /// or the system's message) when it could not be listed
+  ProjectDir {
+    seq: i64,
+    entries: Vec<ProjectEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+  },
+  /// Reply to projectStatus: the project folder and its git marks by relative path (`M` modified, `A` added, `D` deleted,
+  /// `U` untracked, `I` ignored; a folder as a whole ends in `/`), empty outside a work tree
+  ProjectStatus {
+    seq: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    root: Option<String>,
+    marks: std::collections::BTreeMap<String, String>,
+  },
+  /// Reply to projectFile: the file's text with its hunks against the asked base, or `error` (`noProject`, `outside`,
+  /// `missing`, `binary`, `tooLarge`, or the system's message)
+  ProjectFile {
+    seq: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    hunks: Vec<ProjectHunk>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+  },
+  /// Reply to sessionChanges: the files the session's edits left changed, in the order it first edited them
+  SessionChanges {
+    seq: i64,
+    files: Vec<ProjectChange>,
+  },
+  /// A terminal's output (terminal.rs), to every page viewing it. Posted at once, never batched: every chunk counts
+  TerminalOutput {
+    id: String,
+    data: String,
+  },
+  /// A terminal's state. Answering terminalOpen it carries the size, the title, the output so far (`replay`, which the
+  /// page shows instead of what it had) and the exit if the shell ended; later only what changed. `error`: the shell
+  /// could not start
+  TerminalState {
+    id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cols: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rows: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    replay: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit: Option<TerminalExit>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+  },
+}
+
+/// How a terminal's shell ended: its exit code, or the signal that ended it
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalExit {
+  pub code: i64,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub signal: Option<String>,
 }
 
 impl HostMsg {
@@ -356,6 +457,12 @@ impl HostMsg {
       HostMsg::SessionHits { .. } => "sessionHits",
       HostMsg::DiffSource { .. } => "diffSource",
       HostMsg::SessionMarkdown { .. } => "sessionMarkdown",
+      HostMsg::ProjectDir { .. } => "projectDir",
+      HostMsg::ProjectStatus { .. } => "projectStatus",
+      HostMsg::ProjectFile { .. } => "projectFile",
+      HostMsg::SessionChanges { .. } => "sessionChanges",
+      HostMsg::TerminalOutput { .. } => "terminalOutput",
+      HostMsg::TerminalState { .. } => "terminalState",
     }
   }
 }
@@ -431,6 +538,74 @@ pub enum WebviewMsg {
     subagent_id: Option<String>,
     #[serde(deserialize_with = "crate::num::lenient_i64")]
     seq: i64,
+  },
+  /// The desktop tool panel: one folder of the session's project (`dir` relative to it, empty for the folder itself),
+  /// answered with a `projectDir` message echoing `seq`
+  ProjectDir {
+    session_id: String,
+    #[serde(default)]
+    dir: String,
+    #[serde(deserialize_with = "crate::num::lenient_i64")]
+    seq: i64,
+  },
+  /// The project's git marks, answered with `projectStatus`
+  ProjectStatus {
+    session_id: String,
+    #[serde(deserialize_with = "crate::num::lenient_i64")]
+    seq: i64,
+  },
+  /// A file of the project (`path` relative to it) with its hunks against `base` (none: no hunks), answered with `projectFile`
+  ProjectFile {
+    session_id: String,
+    path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    base: Option<ProjectBase>,
+    #[serde(deserialize_with = "crate::num::lenient_i64")]
+    seq: i64,
+  },
+  /// The files the session's edits left changed, answered with `sessionChanges`
+  SessionChanges {
+    session_id: String,
+    #[serde(deserialize_with = "crate::num::lenient_i64")]
+    seq: i64,
+  },
+  /// The desktop tool panel's terminal tabs (terminal.rs). Open terminal `id`, a login shell in `cwd` sized `cols` x
+  /// `rows`, or view it again if it still runs (a reload, the page's engine coming back); answered with `terminalState`
+  /// carrying the output so far. Opening one already viewed starts that view over
+  TerminalOpen {
+    id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cols: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rows: Option<u16>,
+  },
+  /// Keys typed or text pasted, as the terminal sends them; `binary`: each character is one byte (xterm's legacy mouse
+  /// reports), not UTF-8
+  TerminalInput {
+    id: String,
+    data: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    binary: bool,
+  },
+  TerminalResize {
+    id: String,
+    cols: u16,
+    rows: u16,
+  },
+  /// How much of `terminalOutput` (UTF-16 units) the page has rendered: output pauses while too much is unrendered
+  TerminalAck {
+    id: String,
+    chars: u64,
+  },
+  /// The page stops viewing the terminal; it runs on a while, for a reload to come back to
+  TerminalClose {
+    id: String,
+  },
+  /// The tab was closed, or the terminal restarts: end its shell
+  TerminalKill {
+    id: String,
   },
   /// Full-text search over saved session conversations for the history list
   SearchSessions {
@@ -510,6 +685,8 @@ pub enum WebviewMsg {
     #[serde(default)]
     file: Option<String>,
   },
+  /// The list's "mark all as read": the engine forgets every unread dot it holds
+  MarkAllRead,
   /// Re-home a session into `cwd` (absent: the window's workspace folder), filed under `category` when it is one of
   /// that project's
   MoveSession {

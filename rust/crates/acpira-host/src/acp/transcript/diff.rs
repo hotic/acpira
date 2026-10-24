@@ -9,7 +9,7 @@ use similar::{Algorithm, DiffTag, capture_diff_slices_deadline};
 use crate::i18n::tp;
 
 /// Wall-clock budget for one diff; beyond it `similar` returns an approximate (never wrong) script
-const DIFF_BUDGET: Duration = Duration::from_millis(200);
+pub(crate) const DIFF_BUDGET: Duration = Duration::from_millis(200);
 
 fn line(kind: DiffKind, text: String, old_line: Option<u64>, new_line: Option<u64>) -> DiffLine {
   DiffLine { kind, text, old_line, new_line }
@@ -45,7 +45,7 @@ fn push_changed(out: &mut Vec<DiffLine>, src: &[&str], range: std::ops::Range<us
   }
 }
 
-fn source_lines(text: &str) -> Vec<&str> {
+pub(crate) fn source_lines(text: &str) -> Vec<&str> {
   if text.is_empty() {
     return vec![];
   }

@@ -6,6 +6,10 @@ fn projects_of(m: &Mgr) -> Value {
   serde_json::to_value(m.m.categories()).unwrap()["projects"].clone()
 }
 
+fn removed_of(m: &Mgr) -> Value {
+  serde_json::to_value(m.m.categories()).unwrap()["removedProjects"].clone()
+}
+
 fn cwd_of(m: &Mgr) -> Value {
   m.active().map(|s| s["cwd"].clone()).unwrap_or(Value::Null)
 }
@@ -69,12 +73,19 @@ async fn a_project_shell_starts_nothing_without_a_project_and_new_sessions_follo
   assert_eq!(cwd_of(&m), p1.as_str());
   assert!(m.toasts().iter().any(|t| t.contains(&gone)), "{:?}", m.toasts());
 
-  // Reordering and removal edit the list only; sessions stay
+  // Reordering and removal edit the list only; sessions stay, and the removal is remembered so the page stops listing
+  // the folder for them
   m.handle(json!({ "type": "categoryOp", "op": "reorderProject", "cwd": p2, "before": p1 })).await;
   assert_eq!(projects_of(&m), json!([p2, p1]));
   m.handle(json!({ "type": "categoryOp", "op": "removeProject", "cwd": p2 })).await;
   assert_eq!(projects_of(&m), json!([p1]));
+  assert_eq!(removed_of(&m), json!([p2]));
   assert!(m.session_ids().contains(&in_p2));
+  // A session started there brings the folder back
+  m.handle(json!({ "type": "newSession", "cwd": p2 })).await;
+  assert_eq!(cwd_of(&m), p2.as_str());
+  assert_eq!(projects_of(&m), json!([p1, p2]));
+  assert!(removed_of(&m).is_null(), "{:?}", removed_of(&m));
   m.dispose().await;
 }
 

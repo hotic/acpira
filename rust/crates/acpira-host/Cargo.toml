@@ -19,6 +19,7 @@ base64.workspace = true
 flate2.workspace = true
 libc.workspace = true
 parking_lot.workspace = true
+portable-pty.workspace = true
 regex.workspace = true
 same-file.workspace = true
 serde.workspace = true

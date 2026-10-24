@@ -38,6 +38,7 @@ dependencies = [
  "junction",
  "libc",
  "parking_lot",
+ "portable-pty",
  "regex",
  "same-file",
  "serde",

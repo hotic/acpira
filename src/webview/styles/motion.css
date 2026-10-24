@@ -89,18 +89,15 @@
 .context-ring[data-compacting] .context-ring-arc { animation: acp-pulse 1.4s ease-in-out infinite; }
 .context-bar-fill { transition: width .6s cubic-bezier(.4, 0, .2, 1), opacity .3s ease; }
 /* Storage tab usage bar (settings/StoragePage.tsx): segments grow from zero on first paint and ease to new shares on refresh;
-   hovering a segment or its legend row dims the others so even a 2 px sliver is easy to spot */
+   hovering a segment dims the others so even a 2 px sliver is easy to spot (the legend rows below answer no hover) */
 .storage-bar-seg {
   flex-grow: var(--seg-grow, 0);
   min-width: var(--storage-gap);
   transition: flex-grow var(--quota-fill-duration) cubic-bezier(.2, .7, .2, 1), min-width var(--quota-fill-duration) cubic-bezier(.2, .7, .2, 1), opacity var(--dur) ease;
   @starting-style { flex-grow: 0; min-width: 0; }
 }
-.storage-legend-row { transition: opacity var(--dur) ease; }
-.storage-legend-dot { transition: transform var(--dur) ease; }
 @media (hover: hover) and (pointer: fine) {
-  .storage-bar-seg[data-dim], .storage-legend-dim { opacity: .3; }
-  .storage-legend-active .storage-legend-dot { transform: scale(1.35); }
+  .storage-bar-seg[data-dim] { opacity: .3; }
 }
 @keyframes acp-ring-flash { 0% { color: var(--fg-strong); filter: drop-shadow(0 0 1.5px currentColor); } 100% { filter: none; } }
 
@@ -171,6 +168,18 @@
 @keyframes acp-mark-flash { 0%, 64%, 76%, 88%, 100% { opacity: 1; } 70%, 82% { opacity: 0.2; } }
 .bg-orbit { animation: acp-orbit 3.6s linear infinite; }
 @keyframes acp-orbit { to { transform: rotate(1turn); } }
+
+/* A session row's agent mark whose session runs another vendor's model (SessionList Item): hovered, it turns over to that
+   vendor's mark after a short hold, so a pointer sweeping down the list flips nothing, and turns back at once */
+.mark-flip { perspective: 80px; }
+.mark-flip-card { position: relative; transform-style: preserve-3d; transition: transform 380ms cubic-bezier(.3, .7, .2, 1); }
+.mark-flip-card > * { position: absolute; inset: 0; backface-visibility: hidden; }
+.mark-flip-card > :last-child { transform: rotateY(180deg); }
+[data-session]:is(:hover, :focus-visible) .mark-flip-card { transform: rotateY(180deg); transition-delay: 150ms; }
+[data-session][data-menu-open] .mark-flip-card { transform: rotateY(180deg); }
+/* A project just added flashes once where it lands in the list */
+.row-flash { animation: acp-row-flash 1400ms ease-out 260ms both; }
+@keyframes acp-row-flash { from { background-color: var(--active); } }
 @keyframes acp-fade-in { from { opacity: 0; } }
 
 /* acpira.appearance.motion = none: the same kill switch as the OS preference. Two live-status signals

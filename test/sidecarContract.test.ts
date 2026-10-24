@@ -112,6 +112,80 @@ describe('sidecar session contract', () => {
     expect(missing.error).toBeTruthy();
   });
 
+  // The desktop tool panel's reads: a folder listing, git marks, a file with its hunks against the last commit, refusals
+  // for paths outside the project, and the session's changed files (the fake agent's edit names a path outside it)
+  it.skipIf(process.platform === 'win32')('project reads list, mark, diff against HEAD, refuse escapes, and list the session changes', async () => {
+    const at = dirsFor('panel');
+    const git = (...args: string[]) => execFileSync('git', ['-C', at.cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { stdio: 'ignore' });
+    mkdirSync(join(at.cwd, 'src'));
+    writeFileSync(join(at.cwd, 'src', 'a.ts'), 'one\ntwo\nthree\n');
+    writeFileSync(join(at.cwd, '.gitignore'), 'dist/\n');
+    mkdirSync(join(at.cwd, 'dist'));
+    git('init', '-q');
+    git('add', '.');
+    git('commit', '-qm', 'base');
+    writeFileSync(join(at.cwd, 'src', 'a.ts'), 'one\nTWO\nthree\nfour\n');
+    writeFileSync(join(at.cwd, 'new.md'), 'x\n');
+    const s = shell(at);
+    const id = await started(s);
+    let seq = 0;
+    const ask = async <T extends 'projectDir' | 'projectStatus' | 'projectFile' | 'sessionChanges'>(type: T, extra: Record<string, unknown> = {}) => {
+      const mine = ++seq;
+      s.view('V', { type, sessionId: id, seq: mine, ...extra } as never);
+      return s.hostMsg('V', type, m => (m as { seq?: number }).seq === mine);
+    };
+    expect((await ask('projectDir', { dir: '' })).entries).toEqual([
+      { name: 'dist', dir: true }, { name: 'src', dir: true }, { name: '.gitignore' }, { name: 'new.md' },
+    ]);
+    expect((await ask('projectDir', { dir: '../' })).error).toBe('outside');
+    const status = await ask('projectStatus');
+    expect(status.marks).toMatchObject({ 'src/a.ts': 'M', 'new.md': 'U', 'dist/': 'I' });
+    const file = await ask('projectFile', { path: 'src/a.ts', base: 'head' });
+    expect(file.text).toBe('one\nTWO\nthree\nfour\n');
+    expect(file.hunks).toEqual([{ at: 2, add: 1, del: ['two'] }, { at: 4, add: 1 }]);
+    expect((await ask('projectFile', { path: '../outside.txt' })).error).toBe('outside');
+    expect((await ask('projectFile', { path: 'gone.ts' })).error).toBe('missing');
+    s.view('V', { type: 'send', sessionId: id, text: 'tool' });
+    const asked = await s.hostMsg('V', 'session', m => blocks(m.session).some(b => b.type === 'permission'));
+    const card = blocks(asked.session).find(b => b.type === 'permission');
+    s.view('V', { type: 'permission', sessionId: id, blockId: card!.id, optionId: 'allow' });
+    await s.hostMsg('V', 'session', idle(2));
+    expect((await ask('sessionChanges')).files).toEqual([{ path: '/repo/a.ts', add: 0, del: 3, gone: true }]);
+  });
+
+  // The tool panel's terminal tabs: the engine runs a login shell on a pty (SHELL picks it; a temp HOME keeps the real rc
+  // files out), the page's keys reach it, a page coming back gets the output so far, and the exit follows the output
+  it.skipIf(process.platform === 'win32')('a terminal runs a login shell, takes keys, replays to a page that comes back, and reports its exit', async () => {
+    const at = dirsFor('term');
+    const s = new Shell(at.home, at.cwd, undefined, { SHELL: '/bin/sh', HOME: at.home, ENV: '' });
+    shells.push(s);
+    await s.hello();
+    await s.open('V');
+    const text = (view: string) => s.hostMsgs(view).map(m => (m.type === 'terminalOutput' && m.id === 'T' ? m.data : '')).join('');
+    s.view('V', { type: 'terminalOpen', id: 'T', cwd: at.cwd, cols: 100, rows: 30 });
+    expect(await s.hostMsg('V', 'terminalState', m => m.id === 'T' && m.replay !== undefined)).toMatchObject({ cols: 100, rows: 30, title: 'sh', replay: '' });
+    s.view('V', { type: 'terminalInput', id: 'T', data: 'echo "term-$((40+2))"; stty size; pwd\r' });
+    await expect.poll(() => text('V'), { timeout: 10_000 }).toContain('30 100');
+    expect(text('V')).toContain('term-42');
+    expect(text('V')).toContain(at.cwd.split('/').pop());
+    // A reload: the old page goes, the new one opens the same terminal and gets everything so far, at the size it asks
+    s.send({ type: 'detachView', viewId: 'V' });
+    await s.open('W');
+    s.view('W', { type: 'terminalOpen', id: 'T', cols: 120, rows: 40 });
+    const back = await s.hostMsg('W', 'terminalState', m => m.id === 'T' && m.replay !== undefined);
+    expect(back.replay).toContain('term-42');
+    s.view('W', { type: 'terminalInput', id: 'T', data: 'stty size; exit 5\r' });
+    const ended = await s.hostMsg('W', 'terminalState', m => m.id === 'T' && !!m.exit);
+    expect(ended.exit).toEqual({ code: 5 });
+    expect(text('W')).toContain('40 120');
+    s.view('W', { type: 'terminalKill', id: 'T' });
+    // The same id opens a new shell
+    s.view('W', { type: 'terminalOpen', id: 'T', cwd: at.cwd });
+    const fresh = await s.hostMsg('W', 'terminalState', m => m.id === 'T' && m.replay === '');
+    expect(fresh.exit).toBeUndefined();
+    s.view('W', { type: 'terminalKill', id: 'T' });
+  });
+
   it('a permission card answered by the webview lets the tool run; usage and the diff land in the turn', async () => {
     const s = shell();
     const id = await started(s);

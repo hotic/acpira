@@ -1,14 +1,14 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type RefObject } from 'react';
 import { flushSync } from 'react-dom';
 import { Check, CircleAlert, Network, Paperclip, Settings2, X } from 'lucide-react';
 import type { ExternalSessionInfo, AccountInfo, AgentId, AgentInfo, ForkOrigin, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@shared/transcript';
 import type { SubagentSummary } from '@shared/subagents';
 import type { ModelShapes } from '@shared/modelShapes';
 import type { HiddenMap, SessionScope } from '@shared/settings';
-import type { AccountAction, AddAccountVia, EditTurnRequest, ExportFormat, FileHit, NativeSessionsState, SessionHit } from '@shared/protocol';
+import type { AccountAction, AddAccountVia, EditTurnRequest, ExportFormat, FileHit, NativeSessionsState, SessionHit, ShellCommand } from '@shared/protocol';
 import { AppearanceContext, appearanceDataAttrs, type Appearance } from '../appearance';
 import { lookAttrs, ThemeContext, type ShellLook, type Theme } from '../look';
-import { t } from '../i18n';
+import { t, useLocale } from '../i18n';
 import { ShellLayerContext } from '../ui/Popover';
 import { useShellLayer } from '../ui/Overlay';
 import { cn } from '../ui/cn';
@@ -44,12 +44,21 @@ import { GoalStrip, PromptFooter } from './Goal';
 import { lastTypedPrompt } from './goalText';
 import { heldPrompt } from './heldPrompt';
 import { BUILTIN_AGENT_ID } from '@shared/providers';
+import { launchable } from '@shared/agentOrder';
+import { COLUMN_HIDDEN_KEY, DesktopContext, macOS, useShellCommands, useShellToasts } from '../desktop';
+import { droppedPathResolver, setWebviewState, webviewState } from '../vscodeApi';
+import { moveDraft } from './useComposerDraft';
+import { ProjectPick, StartPicker, usePresence } from './StartPage';
+import { AppMenu, NoProject, ShellToastItems, ShellToasts, TitleRow, TitleSpace, useSessionHistory, type QuickSettings } from './DesktopFrame';
 import type { SettingsPage } from '../settings/Nav';
 import { OpenToolFileContext, AsyncTaskStopContext, BlobUrlContext, DiffSourceContext, OpenBlobContext, OpenSessionContext, SessionTitleContext } from './fileLinks';
 import { TurnActionsContext } from './TurnActions';
 import { ForkBoundary } from './ForkBoundary';
 import { SubagentInspector } from './subagents/SubagentInspector';
 import { InspectorSplitter, clamp, usePreferredPaneWidth, type PaneBounds } from './subagents/InspectorSplitter';
+import { ToolPanelDock, projectPath } from '../panel/ToolPanel';
+import { FilesLayout } from '../panel/FilesLayout';
+import { panel, usePanelValue } from '../panel/store';
 import { SubagentGraph } from './subagents/SubagentGraph';
 import { breadcrumb, nodesByTurn, subagentTitle } from './subagents/subagentState';
 
@@ -77,8 +86,9 @@ export interface ShellHandlers {
   setMode: (id: string) => void;
   setConfig: (configId: string, value: string) => void;
   selectSession: (id: string) => void;
-  // Without an agent the host falls back to the configured defaultAgent; with a category the new session is filed there
-  newSession: (agent?: AgentInfo['id'], category?: string) => void;
+  // Without an agent the host falls back to the configured defaultAgent; with a category the new session is filed there;
+  // `cwd` (a project shell, the desktop app) starts it in that folder
+  newSession: (agent?: AgentInfo['id'], category?: string, cwd?: string) => void;
   renameSession: (id: string, title: string) => void;
   deleteSession: (id: string) => void;
   restoreSession: (id: string) => void;
@@ -89,6 +99,8 @@ export interface ShellHandlers {
   // User categories of the session list: file a session (null takes it out) / edit the shared category list
   setSessionCategory?: (id: string, category: string | null) => void;
   categoryOp?: (op: CategoryOp, file?: string) => void;
+  // The list's view menu: forget every unread dot
+  markAllRead?: () => void;
   // Account layer: selecting an account rebinds the current session; adding an account goes through import / terminal login; removing only deletes the locally saved credential
   selectAccount: (id: string) => void;
   addAccount: (agent: AgentInfo['id'], via: AddAccountVia) => void;
@@ -133,6 +145,11 @@ export interface ShellHandlers {
   stopAsyncTask?: (sessionId: string, taskId: string) => void;
   // Goal extension controls (SessionView.goalActions); `set` carries the objective
   goal?: (sessionId: string, action: GoalAction, objective?: string) => void;
+  // The desktop app: the system folder dialog (the folder picked, undefined when dismissed), a folder shown in the OS file
+  // manager, a web page opened in the browser
+  pickFolder?: () => Promise<string | undefined>;
+  revealPath?: (path: string) => void;
+  openExternal?: (url: string) => void;
 }
 
 export interface ShellProps {
@@ -199,6 +216,17 @@ export interface ShellProps {
   onOpenSettings?: (page?: SettingsPage) => void;
   // For replaying the entrance animation: remounts the conversation when it changes
   replayKey?: number | string;
+  // The desktop app (src/webview/desktop.ts): its own window frame, the start page of an empty session, the project registry
+  desktop?: boolean;
+  // Mounted on the way back from the settings page, whose rail stood where the column does: a column the window keeps
+  // folded comes up open and folds away, instead of the sheet jumping to the window's edge
+  fromSettings?: boolean;
+  // Desktop: the theme and language the gear menu switches in place (chat/DesktopFrame.tsx AppMenu)
+  quickSettings?: QuickSettings;
+  // Desktop: the engine has no project to show a session of (noSession), so the sheet asks for a folder
+  noProject?: boolean;
+  // The user's home folder: the start page's project paths shorten it to ~
+  home?: string;
 }
 
 // A toast: text plus an optional undo; each dismisses itself, several can stack (an attachment notice must not take the undo of a deletion with it)
@@ -217,14 +245,33 @@ export function Shell(p: ShellProps) {
   const root = useRef<HTMLDivElement>(null);
   useShellLayer(root);
   const sessionPanel = useRef<HTMLElement>(null);
-  const position = p.look?.sessionListPosition ?? (a.sessions === 'drawer' ? 'left' : 'hidden');
+  const desktop = !!p.desktop;
+  // The desktop app has no position setting (its column folds from the title row), so a value written earlier cannot strand it
+  const position = desktop ? 'left' : p.look?.sessionListPosition ?? (a.sessions === 'drawer' ? 'left' : 'hidden');
   const [canDock, setCanDock] = useState(false);
+  // Desktop: what the window centres on (acpira.desktopLayout). The files layout (panel/FilesLayout.tsx) needs a project to
+  // show and room for its four columns (--files-layout-min); short of either the window keeps the conversation layout
+  const [canFiles, setCanFiles] = useState(false);
+  const filesLayout = desktop && p.look?.desktopLayout === 'files';
+  const files = filesLayout && canDock && canFiles && !p.noProject && !p.external && !!p.cwd && !!p.activeSessionId;
+  // Desktop: the column folded away by its title row's button (kept across reloads); `columnMoving` lets its width ease
+  // only while it folds, never under the drag that resizes it. The files layout docks it at the right edge, where the
+  // settings rail never stands, so coming back from settings it starts folded
+  const [columnHidden, setColumnHidden] = useState(() => desktop && !(p.fromSettings && !filesLayout) && webviewState(COLUMN_HIDDEN_KEY) === true);
+  const [columnMoving, setColumnMoving] = useState(false);
+  useEffect(() => {
+    if (!columnMoving) return;
+    const timer = setTimeout(() => setColumnMoving(false), COLUMN_MOVE_MS);
+    return () => clearTimeout(timer);
+  }, [columnMoving]);
   // Observe the actual panel, not the browser window: IDE sidebars and split editor tabs resize independently.
   useLayoutEffect(() => {
     const element = root.current;
     if (!element) return;
-    const minWidth = Number.parseFloat(getComputedStyle(element).getPropertyValue('--session-dock-min'));
-    const update = () => setCanDock(element.clientWidth >= minWidth);
+    const styles = getComputedStyle(element);
+    const minWidth = Number.parseFloat(styles.getPropertyValue('--session-dock-min'));
+    const filesMin = Number.parseFloat(styles.getPropertyValue('--files-layout-min'));
+    const update = () => { setCanDock(element.clientWidth >= minWidth); setCanFiles(element.clientWidth >= filesMin); };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(element);
@@ -274,14 +321,66 @@ export function Shell(p: ShellProps) {
   const sideWidth = draggedSide ?? preferredSide;
   const commitSide = useCallback((w: number) => { setDraggedSide(undefined); setPreferredSide(w); }, [setPreferredSide]);
   const resetSide = useCallback(() => { setDraggedSide(undefined); setPreferredSide(undefined); }, [setPreferredSide]);
+  const hideColumn = useCallback((hidden: boolean) => {
+    // While its width eases, the column's content keeps the width it has open (desktop.css), clipped instead of re-wrapped
+    const b = sideBounds();
+    const open = hidden ? sessionPanel.current?.offsetWidth : clamp(preferredSide ?? b.initial, b.min, b.max);
+    if (open) sessionPanel.current?.style.setProperty('--column-w', `${open}px`);
+    setColumnMoving(true);
+    setColumnHidden(hidden);
+    setWebviewState(COLUMN_HIDDEN_KEY, hidden || undefined);
+  }, [sideBounds, preferredSide]);
+  // Back from settings with the column kept folded: it mounted open at the rail's place, and folds once it has painted
+  useEffect(() => {
+    if (!desktop || !p.fromSettings || filesLayout || webviewState(COLUMN_HIDDEN_KEY) !== true) return;
+    let frame = requestAnimationFrame(() => { frame = requestAnimationFrame(() => hideColumn(true)); });
+    return () => cancelAnimationFrame(frame);
+    // Mount only: later renders keep whatever the title row's toggle chose
+  }, []);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const closeDrawer = useCallback(() => {
+  const drawerOpenNow = useRef(drawerOpen);
+  drawerOpenNow.current = drawerOpen;
+  // Desktop: a narrow window's list page slides only while the user opens or closes it (desktop.css data-drawer-moving),
+  // never as the window crosses the width tier. A counter, so a second move restarts the clock instead of cutting it short
+  const [drawerMoving, setDrawerMoving] = useState(0);
+  useEffect(() => {
+    if (!drawerMoving) return;
+    const timer = setTimeout(() => setDrawerMoving(0), DRAWER_MOVE_MS);
+    return () => clearTimeout(timer);
+  }, [drawerMoving]);
+  const openDrawer = useCallback(() => {
+    if (drawerOpenNow.current) return;
+    setDrawerMoving(m => m + 1);
+    setDrawerOpen(true);
+  }, []);
+  // `slide`: the user closed it; the width tier closes it in place
+  const closeDrawer = useCallback((slide = true) => {
+    if (!drawerOpenNow.current) return;
     if (sessionPanel.current?.contains(document.activeElement)) {
       root.current?.querySelector<HTMLButtonElement>('[data-session-toggle]')?.focus();
     }
+    if (slide) setDrawerMoving(m => m + 1);
     setDrawerOpen(false);
   }, []);
-  useEffect(closeDrawer, [position, canDock, closeDrawer]);
+  // A tier crossing (or a moved list) closes it in place and ends the motion window: a crossing back within it would slide
+  // the page out again
+  useEffect(() => {
+    closeDrawer(false);
+    setDrawerMoving(0);
+  }, [position, canDock, closeDrawer]);
+  // Desktop: Esc closes a narrow window's list page wherever the focus is (inside it, the list's own handler takes the key
+  // first; an open menu stops it before it gets here). The key is consumed: Electron hands a key the page leaves alone to
+  // the macOS menu bar, where a synthetic Esc crashed the app in the input method code (the smoke, 2026-10-23)
+  useEffect(() => {
+    if (!desktop || canDock || !drawerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return;
+      e.preventDefault();
+      closeDrawer();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [desktop, canDock, drawerOpen, closeDrawer]);
   useEffect(() => {
     if (drawerOpen && !canDock) sessionPanel.current?.querySelector<HTMLInputElement>('input')?.focus();
   }, [drawerOpen, canDock]);
@@ -323,6 +422,24 @@ export function Shell(p: ShellProps) {
     const b = paneBounds();
     return clamp(draggedPane ?? preferredPane ?? b.initial, b.min, b.max);
   }, [inspectorRoom, draggedPane, preferredPane, paneBounds]);
+  // Desktop, files layout: the chat's width is the user's (drag its left edge, over the stage's rim), kept with the tool
+  // panel's state; the stage keeps --stage-min of the room the two share
+  const chatW = usePanelValue(s => s.chatW);
+  const [draggedChat, setDraggedChat] = useState<number>();
+  const chatBounds = useCallback((): PaneBounds => {
+    const element = mainColumn.current ?? document.documentElement;
+    const px = (name: string) => Number.parseFloat(getComputedStyle(element).getPropertyValue(name));
+    const stage = root.current?.querySelector<HTMLElement>('[data-stage]');
+    return { min: px('--files-chat-min'), max: element.offsetWidth + (stage?.offsetWidth ?? 0) - px('--stage-min'), initial: px('--files-chat-w') };
+  }, []);
+  const chatWidth = draggedChat ?? chatW;
+  const commitChat = useCallback((w: number) => { setDraggedChat(undefined); panel.setChatW(w); }, []);
+  const resetChat = useCallback(() => { setDraggedChat(undefined); panel.setChatW(undefined); }, []);
+  // Files layout: the title row's toggle folds the explorer, the pinned one at the top-right corner (⌥⌘B) the session column
+  const explorerHidden = usePanelValue(s => s.explorerHidden);
+  // Conversation layout: the tool panel docked open beside the chat (ToolPanelDock's own condition, wide window)
+  const panelDocked = usePanelValue(s => s.open) && desktop && canDock && !files && !p.noProject && !p.external && !!p.cwd && !!p.activeSessionId;
+  const toggleSessions = useCallback(() => hideColumn(!columnHidden), [hideColumn, columnHidden]);
   const [inspect, setInspect] = useState<{ id: string }>();
   const [graphOpen, setGraphOpen] = useState(false);
   useEffect(() => setGraphOpen(false), [p.activeSessionId]);
@@ -342,9 +459,20 @@ export function Shell(p: ShellProps) {
   const onInspect = useCallback((id: string) => setInspect({ id }), []);
   // Deletion applies immediately, with an undoable toast floating at the bottom (modeled on Codex's archive), no confirmation dialog; refused attachments show up the same way
   const [toasts, setToasts] = useState<ToastState[]>([]);
+  // The desktop shell's own toasts share the stack (src/webview/desktop.ts)
+  const shellToasts = useShellToasts();
   const dropToast = useCallback((key: string) => setToasts(ts => ts.filter(t => t.key !== key)), []);
   const pushToast = useCallback((t: ToastState) => setToasts(ts => [...ts.filter(x => x.key !== t.key), t]), []);
   const notice = useCallback((text: string) => pushToast({ key: `n${Date.now()}`, text, icon: <Paperclip className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} /> }), [pushToast]);
+  // A copy's confirmation, or why it failed. One toast slot: a fresh key per copy restarts the toast's timer and the
+  // previous confirmation goes
+  const copied = useCallback((write: Promise<unknown>, text: string) => {
+    const show = (toast: Omit<ToastState, 'key'>) => setToasts(ts => [...ts.filter(x => !x.key.startsWith('copy:')), { key: `copy:${Date.now()}`, ...toast }]);
+    void write.then(
+      () => show({ text, icon: <Check className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} />, ttl: 2000 }),
+      (e: unknown) => show({ text: t('session.copyFailed', { detail: e instanceof Error ? e.message : String(e) }), icon: <CircleAlert className="size-icon shrink-0 text-danger" strokeWidth={1.5} /> }),
+    );
+  }, []);
   const handlers = useMemo<ShellHandlers>(() => ({
     ...on,
     deleteSession: id => {
@@ -352,19 +480,13 @@ export function Shell(p: ShellProps) {
       on.deleteSession(id);
       pushToast({ key: id, text: t('session.deleted', { title }), undo: () => { on.restoreSession(id); dropToast(id); } });
     },
-    // The link and the folder are written inside the click; the Markdown is handed over as pending text (writeClipboardLater).
-    // One toast slot, so copying again replaces the last confirmation
+    // The link and the folder are written inside the click; the Markdown is handed over as pending text (writeClipboardLater)
     copySession: (id, what) => {
       const cwd = p.sessions.find(s => s.id === id)?.cwd || (id === p.activeSessionId ? p.cwd : undefined);
       const write = what === 'link' ? navigator.clipboard.writeText(sessionLink(id, sessionLinkBase()))
         : what === 'cwd' ? (cwd ? navigator.clipboard.writeText(cwd) : Promise.reject(new Error('no working directory')))
         : on.sessionMarkdown ? writeClipboardLater(() => on.sessionMarkdown!(id)) : Promise.reject(new Error('unavailable'));
-      // A fresh key per copy restarts the toast's timer; the previous confirmation goes
-      const show = (toast: Omit<ToastState, 'key'>) => setToasts(ts => [...ts.filter(x => !x.key.startsWith('copy:')), { key: `copy:${Date.now()}`, ...toast }]);
-      void write.then(
-        () => show({ text: t(`session.copied.${what}`), icon: <Check className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} />, ttl: 2000 }),
-        (e: unknown) => show({ text: t('session.copyFailed', { detail: e instanceof Error ? e.message : String(e) }), icon: <CircleAlert className="size-icon shrink-0 text-danger" strokeWidth={1.5} /> }),
-      );
+      copied(write, t(`session.copied.${what}`));
     },
     // A moved session leaves a "this project" list at once (or changes group under "all"); the toast says where it went
     moveSession: on.moveSession && ((id, to) => {
@@ -372,7 +494,7 @@ export function Shell(p: ShellProps) {
       on.moveSession!(id, to);
       pushToast({ key: `m${id}`, text: to && to.cwd !== p.workspace ? t('session.movedTo', { title, project: projectName(to.cwd) }) : t('session.moved', { title }) });
     }),
-  }), [on, p.sessions, p.activeSessionId, p.cwd, pushToast, dropToast]);
+  }), [on, p.sessions, p.activeSessionId, p.cwd, pushToast, dropToast, copied]);
   const blobUrl = useMemo(() => (p.blobBase && p.activeSessionId ? (blob: string) => `${p.blobBase}/${p.activeSessionId}/${blob}` : undefined), [p.blobBase, p.activeSessionId]);
   // Child transcripts share the root session's blob store, so both contexts live above Thread and the inspector
   const openBlob = useMemo(() => p.activeSessionId && on.openBlob ? (name: string) => on.openBlob!(p.activeSessionId!, name) : undefined, [p.activeSessionId, on.openBlob]);
@@ -390,9 +512,129 @@ export function Shell(p: ShellProps) {
   const questionSubtitle = !rootQuestion && childQuestion
     ? t('subagents.provenance', { path: breadcrumb(childQuestion.id, p.subagents ?? []).map(n => subagentTitle(n, t)).join(' › ') })
     : undefined;
+  // The desktop app's project shell. "New session" opens the start page in a project (the one on screen by default)
+  // with the agent last used; a folder picked in the dialog or dropped on the column joins the projects and opens there.
+  // The start page shows while the session on screen has not said a word
+  const startPage = desktop && !p.noProject && !p.external && !!p.activeSessionId && !p.turns.length && !p.queued?.length;
+  const currentAgent = launchable(p.agents).some(x => x.id === p.agent.id && x.available !== false) ? p.agent.id : undefined;
+  const [fresh, setFresh] = useState<string>();
+  useEffect(() => {
+    if (!fresh) return;
+    const timer = setTimeout(() => setFresh(undefined), FRESH_MS);
+    return () => clearTimeout(timer);
+  }, [fresh]);
+  // A folded project opens, so the session starting there stays in sight
+  const unfold = (cwd: string) => { if (p.categories?.collapsedProjects.includes(cwd)) on.categoryOp?.({ op: 'collapseProject', cwd, collapsed: false }); };
+  const openProject = (cwd: string) => {
+    on.categoryOp?.({ op: 'addProject', cwd });
+    unfold(cwd);
+    on.newSession(currentAgent, undefined, cwd);
+    setFresh(cwd);
+    closeDrawer();
+  };
+  const addProject = () => { void on.pickFolder?.().then(dir => { if (dir) openProject(dir); }); };
+  const newIn = (cwd?: string) => {
+    const dir = cwd ?? p.cwd;
+    closeDrawer();
+    if (!dir) { addProject(); return; }
+    // Already on that project's start page: the composer takes the focus instead
+    if (startPage && dir === p.cwd) { root.current?.querySelector<HTMLTextAreaElement>('[data-start-dock] textarea')?.focus(); return; }
+    unfold(dir);
+    on.newSession(currentAgent, undefined, dir);
+  };
+  // The start page starts its empty session over with another agent or in another project (the engine drops the empty one
+  // it leaves); what was typed there moves to the new one before its composer mounts
+  const carry = useRef<string | undefined>(undefined);
+  const startOver = (agent: AgentId, cwd = p.cwd) => {
+    carry.current = p.activeSessionId;
+    if (cwd) unfold(cwd);
+    on.newSession(agent, undefined, cwd);
+  };
+  if (carry.current && p.activeSessionId && carry.current !== p.activeSessionId) {
+    if (!p.turns.length) moveDraft(carry.current, p.activeSessionId);
+    carry.current = undefined;
+  }
+  const start = usePresence(startPage);
+  // The start page's projects: the column's registered ones, and the folder on screen if it is not among them
+  const startProjects = useMemo(() => {
+    const list = p.categories?.projects ?? [];
+    return p.cwd && !list.includes(p.cwd) ? [...list, p.cwd] : list;
+  }, [p.categories, p.cwd]);
+  const copyPath = (path: string) => copied(navigator.clipboard.writeText(path), t('session.project.copied'));
+  const trail = useSessionHistory(desktop ? p.activeSessionId : undefined, id => p.sessions.some(s => s.id === id), id => on.selectSession(id));
+  const focusSearch = () => {
+    const focus = () => sessionPanel.current?.querySelector<HTMLInputElement>('input')?.focus();
+    // A narrow window has a drawer, not the docked column: the column's folded flag does not apply there
+    if (!canDock) { if (drawerOpen) focus(); else openDrawer(); }
+    else if (columnHidden) { hideColumn(false); requestAnimationFrame(focus); }
+    else focus();
+  };
+  // ⌘N new session, ⌘K search, ⌘O open a folder, ⌘, settings, ⌘[ / ⌘] back and forward (Ctrl elsewhere); the latest
+  // closures through a ref. A narrow window's title row has no back and forward buttons, so the keys are their way there
+  // ⌥⌘B: the tool panel, or the session column at the right edge in the files layout
+  const rightSide = files ? toggleSessions : () => panel.toggle();
+  const keys = useRef({ newIn, addProject, focusSearch, rightSide, back: trail.back, forward: trail.forward });
+  keys.current = { newIn, addProject, focusSearch, rightSide, back: trail.back, forward: trail.forward };
+  const openSettings = p.onOpenSettings;
+  useEffect(() => {
+    if (!desktop) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(macOS ? e.metaKey : e.ctrlKey) || e.altKey || e.shiftKey || e.isComposing) return;
+      const key = e.key.toLowerCase();
+      const step = key === '[' ? keys.current.back : key === ']' ? keys.current.forward : undefined;
+      if (key === 'n') keys.current.newIn();
+      else if (key === 'k') keys.current.focusSearch();
+      else if (key === 'o' && on.pickFolder) keys.current.addProject();
+      else if (key === ',' && openSettings) openSettings();
+      else if (step) step();
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [desktop, on.pickFolder, openSettings]);
+  // The menu bar's commands do what the shortcuts do (settings is App's: it switches the page)
+  const runCommand = useCallback((command: ShellCommand) => {
+    if (command === 'newSession') keys.current.newIn();
+    else if (command === 'search') keys.current.focusSearch();
+    else if (command === 'openFolder') keys.current.addProject();
+    else if (command === 'toolPanel') keys.current.rightSide();
+    else if (command === 'browser') panel.openBrowser();
+  }, []);
+  useShellCommands(desktop ? runCommand : undefined);
+  // A folder dragged in from the OS onto the column joins the projects (the first one opens); only a drop carries the
+  // entries, so the frame shows for any file dragged over
+  const [folderOver, setFolderOver] = useState(false);
+  const pathForFile = desktop ? droppedPathResolver() : undefined;
+  const folderDrop = pathForFile && {
+    onDragOver: (e: DragEvent) => {
+      if (!e.dataTransfer.types.includes('Files')) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      if (!folderOver) setFolderOver(true);
+    },
+    onDragLeave: (e: DragEvent) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFolderOver(false); },
+    onDrop: (e: DragEvent) => {
+      if (!e.dataTransfer.types.includes('Files')) return;
+      e.preventDefault();
+      setFolderOver(false);
+      const dirs = [...e.dataTransfer.items].flatMap(item => {
+        const file = item.kind === 'file' && item.webkitGetAsEntry()?.isDirectory ? item.getAsFile() : null;
+        const path = file && pathForFile(file);
+        return path ? [path] : [];
+      });
+      for (const dir of dirs) on.categoryOp?.({ op: 'addProject', cwd: dir });
+      if (dirs[0]) openProject(dirs[0]);
+    },
+  };
+
   // On the left the column is the app's navigation (Codex / Claude desktop): new session, search and import lead it,
-  // settings sit at its foot, and the chat header drops its own plus and settings while the column is docked
+  // settings sit at its foot, and the chat header drops its own plus and settings while the column is docked. The files
+  // layout docks it at the right edge with the same rows and keeps the gear at the bottom-left, under the explorer
   const nav = position === 'left';
+  const gear = useMemo(() => (desktop && p.onOpenSettings
+    ? <AppMenu onOpenSettings={p.onOpenSettings} onOpenExternal={on.openExternal} quick={p.quickSettings} />
+    : undefined), [desktop, p.onOpenSettings, on.openExternal, p.quickSettings]);
   const sessionsPanel = (
     <SessionList
       fill
@@ -402,7 +644,8 @@ export function Shell(p: ShellProps) {
       agents={p.agents}
       activeId={p.activeSessionId}
       workspace={p.workspace}
-      scope={p.sessionScope}
+      // A project shell lists every project (the engine reads its scope as `all` too)
+      scope={desktop ? 'all' : p.sessionScope}
       onSelect={id => { on.selectSession(id); closeDrawer(); }}
       onRename={on.renameSession}
       onDelete={handlers.deleteSession}
@@ -419,6 +662,12 @@ export function Shell(p: ShellProps) {
       onFile={on.setSessionCategory}
       onCategoryOp={on.categoryOp}
       onNewInCategory={category => { on.newSession(p.agent.id, category); closeDrawer(); }}
+      onNewIn={desktop ? newIn : undefined}
+      onAddProject={desktop && on.pickFolder ? addProject : undefined}
+      onRevealPath={on.revealPath}
+      onCopyPath={copyPath}
+      fresh={fresh}
+      onMarkAllRead={on.markAllRead}
     />
   );
 
@@ -455,20 +704,33 @@ export function Shell(p: ShellProps) {
   } : undefined, [on.editTurn, p.activeSessionId, editable, editing, p.modelShapes]);
   // A session link in a reply (or the inspector's child transcript) switches this view to that session, like a history row
   const openSession = useCallback((id: string) => { on.selectSession(id); closeDrawer(); }, [on.selectSession, closeDrawer]);
-  // Session tool rows name the session they read by its title: keyed by id and by the agent's own session id; a ref keeps
-  // the context callback stable when unread/running flags change on the session list.
+  // Session tool rows name the session they read by its title: keyed by id and by the agent's own session id. An untitled
+  // one reads in the current language, so the map is rebuilt when it changes; a ref keeps the context callback stable
+  // when unread/running flags change on the session list.
+  const locale = useLocale();
   const titlesRef = useRef<Map<string, string>>(new Map());
-  useMemo(() => {
+  titlesRef.current = useMemo(() => {
     const titles = new Map<string, string>();
     for (const s of p.sessions) {
       const title = s.title || t('session.fallbackTitle');
       titles.set(s.id, title);
       if (s.acpSessionId && !titles.has(s.acpSessionId)) titles.set(s.acpSessionId, title);
     }
-    titlesRef.current = titles;
-  }, [p.sessions]);
+    return titles;
+  }, [p.sessions, locale]);
   const sessionTitle = useCallback((ref: string) => titlesRef.current.get(ref), []);
-  const openToolFile = useMemo(() => p.activeSessionId && on.openFile
+  // Desktop: a file of the session's project opens in the tool panel (panel/ToolPanel.tsx), anything else in the editor
+  const panelRoot = desktop && !p.noProject && !p.external ? p.cwd : undefined;
+  const openToolFile = useMemo(() => {
+    const sid = p.activeSessionId;
+    if (!sid || (!on.openFile && !panelRoot)) return undefined;
+    return (path: string, line?: number) => {
+      const rel = panelRoot ? projectPath(panelRoot, path) : undefined;
+      if (panelRoot && rel !== undefined) panel.openFile(panelRoot, rel, line);
+      else on.openFile?.(sid, path, line);
+    };
+  }, [p.activeSessionId, on.openFile, panelRoot]);
+  const openInEditor = useMemo(() => p.activeSessionId && on.openFile
     ? (path: string, line?: number) => on.openFile!(p.activeSessionId!, path, line) : undefined, [p.activeSessionId, on.openFile]);
   const goalAction = useMemo(() => p.activeSessionId && on.goal
     ? (action: GoalAction) => on.goal!(p.activeSessionId!, action) : undefined, [p.activeSessionId, on.goal]);
@@ -505,6 +767,7 @@ export function Shell(p: ShellProps) {
   } : undefined, [p.activeSessionId, p.controls, p.agents, p.agent.id, on.forkSession, p.external]);
 
   return (
+    <DesktopContext.Provider value={desktop}>
     <AppearanceContext.Provider value={a}>
       <ThemeContext.Provider value={p.theme}>
       <OpenSessionContext.Provider value={openSession}>
@@ -522,34 +785,67 @@ export function Shell(p: ShellProps) {
           data-agent={p.agent.id}
           {...appearanceDataAttrs(a)}
           {...lookAttrs(p.look)}
+          // The desktop frame (desktop.css): the OS for the traffic lights' room, whether a docked column sits beside the sheet
+          data-desktop={desktop || undefined}
+          // The files layout (desktop.css, panel.css): explorer | stage | chat | session column
+          data-layout={files ? 'files' : undefined}
+          data-os={desktop && macOS ? 'mac' : undefined}
+          // A docked column beside the chat, open: on its left, or at the window's right edge in the files layout
+          data-column={(desktop && position === 'left' && canDock && !columnHidden) || undefined}
+          data-column-moving={columnMoving || undefined}
+          // A narrow window (below --session-dock-min): its list is a page over the whole window, the title row keeps only
+          // the column's toggle and the header centres its title
+          data-narrow={(desktop && !canDock) || undefined}
+          data-drawer-open={(desktop && !canDock && drawerOpen) || undefined}
+          // Narrow only, so the render that widens the window past the tier drops the transition with the transform: the docked
+          // column lands in place, where a close moments before used to slide it in from the left (the smoke, 2026-10-23)
+          data-drawer-moving={(desktop && !canDock && drawerMoving > 0) || undefined}
         >
           {position !== 'hidden' && (
             <>
-              {!canDock && drawerOpen && <div aria-hidden="true" className="absolute inset-0 z-10 bg-black/20" onClick={closeDrawer} />}
-              <aside ref={sessionPanel} aria-label={t('session.listAria')} inert={!canDock && !drawerOpen}
-                data-session-panel={position} data-docked={canDock}
-                onKeyDown={e => { if (e.key === 'Escape' && !e.defaultPrevented && !canDock) { e.stopPropagation(); closeDrawer(); } }}
+              {/* The theme clears Tailwind's own palette, so the scrim takes the dialogs' token, lighter (bg-black/20 drew nothing).
+                  Desktop: the list page covers the window, and the sheet under it dims itself (data-sheet-dim) */}
+              {!canDock && drawerOpen && !desktop && <div aria-hidden="true" className="absolute inset-0 z-10 bg-scrim/45" onClick={() => closeDrawer()} />}
+              {/* The folded flag belongs to the docked column: a narrow window's drawer opens whatever it says */}
+              <aside ref={sessionPanel} aria-label={t('session.listAria')} inert={canDock ? desktop && columnHidden : !drawerOpen}
+                data-session-panel={position} data-docked={canDock} data-column-hidden={(desktop && canDock && columnHidden) || undefined}
+                // On the column itself too: React writes a child's attributes before its parent's, so a flag only on the root
+                // could land after the width changed and the width would jump
+                data-moving={columnMoving || undefined}
+                {...folderDrop}
+                // Consumed, so no host takes the key as well (the macOS menu bar in Electron, VS Code's own Esc bindings)
+                onKeyDown={e => { if (e.key === 'Escape' && !e.defaultPrevented && !canDock) { e.preventDefault(); e.stopPropagation(); closeDrawer(); } }}
                 style={canDock && sideWidth !== undefined ? { width: `clamp(var(--session-pane-min), ${sideWidth}px, calc(100% - var(--session-main-min)))` } : undefined}
                 className={cn(
-                  'flex min-h-0 shrink-0 flex-col bg-bg-0',
-                  position === 'right' ? 'order-last border-l border-line' : 'border-r border-line',
-                  canDock ? 'relative w-pop-md' : 'absolute inset-y-0 z-20 w-pop-lg max-w-[calc(100%-var(--ctl))] shadow-pop',
-                  !canDock && (position === 'right' ? 'right-0' : 'left-0'),
-                  !canDock && !drawerOpen && 'hidden',
+                  'flex min-h-0 flex-col',
+                  // Files layout: last, at the window's right edge, a hairline from the chat beside it; it gives way to the
+                  // stage's room down to its narrowest (desktop.css)
+                  files ? 'order-5 shrink border-l border-line' : 'shrink-0',
+                  position === 'right' && 'order-last',
+                  // Desktop: the column has no fill or rule of its own, it lies on the window's canvas (desktop.css)
+                  !desktop && cn('bg-bg-0 border-line', position === 'right' ? 'border-l' : 'border-r'),
+                  // Desktop, narrow: a page over the whole window, laid out while closed so it can slide (desktop.css)
+                  canDock ? 'relative w-pop-md' : desktop ? 'absolute inset-0 z-20' : 'absolute inset-y-0 z-20 w-pop-lg max-w-[calc(100%-var(--ctl))] shadow-pop',
+                  !canDock && !desktop && (position === 'right' ? 'right-0' : 'left-0'),
+                  !canDock && !drawerOpen && !desktop && 'hidden',
+                  // A folder from the OS over the column: the list's drop frame, drawn inset
+                  folderOver && 'ring-1 ring-inset ring-fg-1/70',
                 )}>
                 {canDock && (
-                  <InspectorSplitter side={position === 'right' ? 'right' : 'left'} bounds={sideBounds} width={sideWidth}
+                  <InspectorSplitter side={position === 'right' || files ? 'right' : 'left'} bounds={sideBounds} width={sideWidth}
                     onDrag={setDraggedSide} onCommit={commitSide} onReset={resetSide} />
                 )}
-                {(!nav || !canDock) && (
+                {desktop && <TitleSpace />}
+                {!desktop && (!nav || !canDock) && (
                   <div className="flex h-hdr shrink-0 items-center justify-between gap-gap-half border-b border-line px-pad">
                     <span className="text-2 font-medium text-fg-strong">{t('session.history')}</span>
-                    {!canDock && <IconButton onClick={closeDrawer} aria-label={t('common.close')} title={t('common.close')}><X strokeWidth={1.5} /></IconButton>}
+                    {!canDock && <IconButton onClick={() => closeDrawer()} aria-label={t('common.close')} title={t('common.close')}><X strokeWidth={1.5} /></IconButton>}
                   </div>
                 )}
-                {/* Docked nav: the first action row is centred on the chat header's line */}
-                <div className={cn('flex min-h-0 flex-1 flex-col p-gap-half', nav && canDock && 'pt-[calc((var(--hdr)-var(--row))/2)]')}>{sessionsPanel}</div>
-                {nav && p.onOpenSettings && (
+                {/* Docked nav: the first action row is centred on the chat header's line (desktop: the title row holds that line) */}
+                <div className={cn('flex min-h-0 flex-1 flex-col p-gap-half', nav && canDock && !desktop && 'pt-[calc((var(--hdr)-var(--row))/2)]', desktop && 'pb-0')}>{sessionsPanel}</div>
+                {!files && gear}
+                {!desktop && nav && p.onOpenSettings && (
                   <div className="shrink-0 border-t border-line p-gap-half">
                     <button type="button" onClick={() => p.onOpenSettings!()}
                       className="flex min-h-row w-full items-center gap-gap rounded-md px-2 text-left text-2 text-fg-1 transition-colors hover:bg-hover focus-visible:bg-hover">
@@ -561,11 +857,19 @@ export function Shell(p: ShellProps) {
               </aside>
             </>
           )}
-          <div ref={mainColumn} className="relative flex min-w-0 flex-1 flex-col">
+          {/* Desktop, narrow: out of reach while the list page covers it */}
+          <div ref={mainColumn} data-sheet={desktop || undefined} inert={(desktop && !canDock && drawerOpen) || undefined}
+            // Files layout: the chat lies on the canvas right of the stage (desktop.css), as wide as the user made it. Beside
+            // the docked tool panel its basis is what it keeps there: the panel shrinks first, to its narrowest (panel.css)
+            className={cn('relative flex flex-col', files ? 'order-3 min-w-(--files-chat-min) shrink' : cn('min-w-0 flex-1', panelDocked && 'basis-(--tool-main-min)'))}
+            style={files ? { width: chatWidth !== undefined ? `clamp(var(--files-chat-min), ${chatWidth}px, var(--files-chat-max))` : 'var(--files-chat-w)' } : undefined}>
+            {files && <InspectorSplitter side="right" width={chatWidth} bounds={chatBounds} onDrag={setDraggedChat} onCommit={commitChat} onReset={resetChat} />}
             {/* Covered by the overlay inspector: out of the tab order and the accessibility tree meanwhile */}
             <div inert={overlayInspect || undefined} aria-hidden={overlayInspect || undefined} className="contents">
             <Header
-              title={p.title}
+              title={desktop && p.noProject ? '' : p.title}
+              // Desktop start page: the project after the title is a dropdown that starts the empty session over there
+              projectPick={start.shown && p.cwd ? <ProjectPick cwd={p.cwd} projects={startProjects} home={p.home} onPick={cwd => startOver(p.agent.id, cwd)} onOpenOther={on.pickFolder ? addProject : undefined} /> : undefined}
               sessions={p.sessions}
               categories={p.categories}
               agent={p.agent}
@@ -574,20 +878,28 @@ export function Shell(p: ShellProps) {
               accountId={p.accountId}
               activeSessionId={p.activeSessionId}
               workspace={p.workspace}
-              sessionScope={p.sessionScope}
+              sessionScope={desktop ? 'all' : p.sessionScope}
               nativeSessions={p.nativeSessions}
               on={handlers}
-              onToggleDrawer={() => setDrawerOpen(o => !o)}
+              onToggleDrawer={() => (drawerOpen ? closeDrawer() : openDrawer())}
               drawerOpen={drawerOpen}
+              narrow={desktop && !canDock}
               sessionPanel={position}
-              sessionPanelDocked={canDock}
-              sessionNav={nav && canDock}
+              sessionPanelDocked={canDock && !(desktop && columnHidden)}
+              sessionNav={nav && canDock && !(desktop && columnHidden)}
+              // Files layout: the gear stands under the explorer, so settings come to the header while that is folded
+              gearDocked={files ? !explorerHidden : undefined}
               onOpenSettings={p.onOpenSettings}
+              cwd={p.noProject ? undefined : p.cwd}
+              onNewIn={desktop ? () => newIn() : undefined}
             />
             </div>
             <div className="relative flex min-h-0 flex-1 flex-col">
+              {desktop && p.noProject && <NoProject onOpen={on.pickFolder ? addProject : undefined} />}
+              {/* The thread's toast stack is hidden with the thread: the start page shows the shell's own (an unknown session link) */}
+              {desktop && p.noProject && <ShellToasts open={on.revealPath} />}
               {/* The overlay inspector replaces this block visually; it stays mounted (scroll + draft survive) but inert */}
-              <div inert={overlayInspect || undefined} aria-hidden={overlayInspect || undefined} className="flex min-h-0 flex-1 flex-col">
+              <div inert={overlayInspect || undefined} aria-hidden={overlayInspect || undefined} className={cn('flex min-h-0 flex-1 flex-col', desktop && p.noProject && 'hidden')}>
                 <div className="relative flex min-h-0 flex-1 flex-col">
                   {!p.external && <QuoteToolbar root={threadContent} />}
                   <PlanDocumentContext.Provider value={planDoc}>
@@ -611,14 +923,15 @@ export function Shell(p: ShellProps) {
                   >
                     <PlanBar key={`plan:${p.activeSessionId}`} turns={p.turns} running={p.running} />
                   </div>
-                  {toasts.length > 0 && (
+                  {(toasts.length > 0 || (desktop && shellToasts.length > 0)) && (
                     <div ref={toastRef} className="pointer-events-none absolute inset-x-0 bottom-[calc(var(--gap)+var(--thread-dock-height,0px))] z-10 flex flex-col items-center gap-1 px-page">
                       {toasts.map(t => <Toast key={t.key} text={t.text} icon={t.icon} ttl={t.ttl} onUndo={t.undo} onClose={() => dropToast(t.key)} />)}
+                      {desktop && <ShellToastItems open={on.revealPath} />}
                     </div>
                   )}
                 </div>
                 {/* Every surface under the thread (question, alert, notice, queue, composer) shares the DockStack rhythm; none carries its own outer margin */}
-                <DockStack className={cn(wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--content-w)+2*var(--page))]')}>
+                <DockStack className={cn(wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--content-w)+2*var(--page))]')} data-start-dock={desktop || undefined}>
                   {question && on.answer && p.activeSessionId && <Questions key={question.id} block={question} subtitle={questionSubtitle} onAnswer={(blockId, answers, skip) => on.answer!(p.activeSessionId!, blockId, answers, skip)} />}
                   {alertTurn && (
                     <Alert
@@ -650,6 +963,9 @@ export function Shell(p: ShellProps) {
                     : null}
                   {/* The goal strip always hugs the composer: every other dock surface stacks above it */}
                   {!p.external && p.goal && <GoalStrip key={`goal:${p.activeSessionId}`} goal={p.goal} actions={p.goalActions} running={p.running} onAction={goalAction} />}
+                  {/* Desktop start page: who answers, right above the composer; it stays mounted while the empty session is
+                      started over with another agent, so the segments slide instead of the page replaying its entrance */}
+                  {start.mounted && <StartPicker open={start.shown} agents={p.agents} current={p.agent.id} onPick={agent => startOver(agent)} />}
                   {/* Sibling keys include the component role; duplicate session-only keys leave stale queue rows after reconciliation. */}
                   {!p.external && <Composer key={`composer:${p.activeSessionId}`} {...composerProps} draftKey={p.activeSessionId} main shareSelection={p.shareEditorSelection}
                     toolbarStart={!!p.subagents?.length && <Chip narrow="icon" caret={false} className="shrink-0" icon={<Network strokeWidth={1.5} />}
@@ -679,9 +995,11 @@ export function Shell(p: ShellProps) {
                 />
               </div>
             )}
+            {/* Desktop, narrow: the sheet dims as the list page slides over it, the dim moving with the sheet (its corners) */}
+            {desktop && !canDock && <div data-sheet-dim aria-hidden="true" className="pointer-events-none absolute inset-0 z-40 bg-scrim/45" />}
           </div>
           {inspectNode !== undefined && canDockInspector && inspect !== undefined && p.activeSessionId !== undefined && (
-            <aside ref={inspectorPane} data-subagent-panel="docked" className="relative order-last flex w-subagent-pane shrink-0 flex-col border-l border-line bg-bg-0"
+            <aside ref={inspectorPane} data-subagent-panel="docked" className={cn('relative flex w-subagent-pane shrink-0 flex-col border-l border-line bg-bg-0', files ? 'order-4' : 'order-last')}
               style={paneWidth !== undefined ? { width: paneWidth } : undefined}>
               <InspectorSplitter width={paneWidth ?? paneBounds().initial} bounds={paneBounds}
                 onDrag={setDraggedPane}
@@ -700,6 +1018,16 @@ export function Shell(p: ShellProps) {
               />
             </aside>
           )}
+          {panelRoot && (files
+            ? <FilesLayout sessionId={p.activeSessionId!} root={panelRoot} running={p.running} searchFiles={on.searchFiles} openEditor={openInEditor}
+                shareSelection={p.shareEditorSelection} foot={gear} sessionsShown={!columnHidden} onToggleSessions={toggleSessions} />
+            : <ToolPanelDock sessionId={p.activeSessionId} cwd={panelRoot} running={p.running} narrow={!canDock} sheet={mainColumn}
+                searchFiles={on.searchFiles} openEditor={openInEditor} shareSelection={p.shareEditorSelection} />)}
+          {/* Last, so it stays over the drawer of a narrow window. The files layout's left column is the explorer */}
+          {desktop && <TitleRow onBack={trail.back} onForward={trail.forward}
+            column={files
+              ? { open: !explorerHidden, drawer: false, onToggle: () => panel.toggleExplorer() }
+              : { open: canDock ? !columnHidden : drawerOpen, drawer: !canDock, onToggle: () => canDock ? hideColumn(!columnHidden) : drawerOpen ? closeDrawer() : openDrawer() }} />}
         </div>
         <SubagentGraph nodes={p.subagents ?? []} sessionTitle={p.title} open={graphOpen && !!p.subagents?.length} onOpenChange={setGraphOpen} onInspect={onInspect} selectedId={inspect?.id} />
       </DiffSourceContext.Provider>
@@ -711,6 +1039,7 @@ export function Shell(p: ShellProps) {
       </OpenSessionContext.Provider>
       </ThemeContext.Provider>
     </AppearanceContext.Provider>
+    </DesktopContext.Provider>
   );
 }
 
@@ -925,3 +1254,8 @@ function isContinue(turn: UserTurn): boolean {
   return turn.auto === true && (turn.autoReason === 'accountSwitch' || turn.autoReason === 'retry' || turn.autoReason === 'gate' || (turn.autoReason === 'goal' && turn.goalContinue === true));
 }
 
+// Desktop: how long the column's width eases; how long a new project stays lit
+const COLUMN_MOVE_MS = 400;
+// Outlasts the list page's 320 ms opening (desktop.css): a transition is cut short once its property leaves `transition`
+const DRAWER_MOVE_MS = 450;
+const FRESH_MS = 2400;

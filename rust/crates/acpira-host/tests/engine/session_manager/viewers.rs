@@ -102,7 +102,8 @@ async fn permission_answers_address_the_named_session_not_the_viewers_current_on
   m.dispose().await;
 }
 
-// A turn that ends while no viewer shows its session leaves an unread dot until a viewer lands on it; one watched to the end leaves none
+// A turn that ends while no viewer shows its session leaves an unread dot until a viewer lands on it or the list marks
+// everything read; one watched to the end leaves none
 #[tokio::test(flavor = "multi_thread")]
 async fn a_turn_ending_unwatched_marks_the_session_unread_until_it_is_opened() {
   let fake = fake_or_skip!();
@@ -125,6 +126,10 @@ async fn a_turn_ending_unwatched_marks_the_session_unread_until_it_is_opened() {
   m.handle(json!({ "type": "permission", "sessionId": away, "blockId": perm["id"], "optionId": "allow" })).await;
   send.await.unwrap();
   until(|| state_of(&away) == "unread", 5000).await;
+  // "Mark all as read" from the list's view menu clears it without opening the session
+  m.handle(json!({ "type": "markAllRead" })).await;
+  assert_eq!(state_of(&away), Value::Null);
+  assert_eq!(m.active_id().as_deref(), Some(watched.as_str()));
 
   m.handle(json!({ "type": "selectSession", "id": away })).await;
   assert_eq!(state_of(&away), Value::Null);

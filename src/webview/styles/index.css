@@ -8,3 +8,7 @@
 @import "./chat.css";
 @import "./subagents.css";
 @import "./subagentGraph.css";
+@import "./desktop.css";
+@import "./panel.css";
+@import "./terminal.css";
+@import "./trace.css";

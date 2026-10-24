@@ -1,0 +1,81 @@
+/* The tool panel's terminal tabs (panel/TerminalFrame.tsx, xterm.js). xterm's own stylesheet sits in the components
+   layer; the colours are --term-* tokens that panel/xterm.ts reads resolved off the frame, since xterm takes colours, not
+   variables. They are declared on the frame itself so --panel-bg is the surface the terminal lies on: the canvas in the
+   tool panel, the sheet on the files layout's stage. The sixteen ANSI colours take GitHub's hues (the palette the app's
+   own --warn / --danger come from), muted into the text colour, a set each for dark and light. Tokens unlayered (custom
+   properties only), rules layered */
+@import "@xterm/xterm/css/xterm.css" layer(components);
+
+.acp-shell {
+  /* The find bar's field */
+  --term-find-w: 160px;
+}
+@theme inline {
+  --spacing-term-find: var(--term-find-w);
+}
+
+[data-terminal] {
+  --term-fg: var(--fg-1);
+  --term-bg: var(--panel-bg, var(--bg-0));
+  --term-cursor: var(--fg-1);
+  --term-selection: color-mix(in srgb, var(--focus) 40%, transparent);
+  --term-selection-inactive: color-mix(in srgb, var(--fg-1) 16%, transparent);
+  --term-scrollbar: color-mix(in srgb, var(--fg-1) 16%, transparent);
+  --term-scrollbar-hover: color-mix(in srgb, var(--fg-1) 26%, transparent);
+  --term-scrollbar-active: color-mix(in srgb, var(--fg-1) 34%, transparent);
+  /* Find matches, opaque: the search addon takes #rrggbb only */
+  --term-match: color-mix(in srgb, var(--warn) 30%, var(--term-bg));
+  --term-match-active: color-mix(in srgb, var(--warn) 62%, var(--term-bg));
+  /* xterm's scroll shadow follows VS Code's variable; the app draws none */
+  --vscode-scrollbar-shadow: transparent;
+  /* The sixteen colours, muted: each hue (GitHub's) mixed into the text colour, so output reads as tinted text rather than
+     a rainbow. The grey end comes from the text tokens themselves */
+  --term-tint: 34%;
+  --term-tint-bright: 42%;
+  --term-black: var(--fg-3);
+  --term-red: color-mix(in oklab, #ff7b72 var(--term-tint), var(--fg-2));
+  --term-green: color-mix(in oklab, #3fb950 var(--term-tint), var(--fg-2));
+  --term-yellow: color-mix(in oklab, #d29922 var(--term-tint), var(--fg-2));
+  --term-blue: color-mix(in oklab, #58a6ff var(--term-tint), var(--fg-2));
+  --term-magenta: color-mix(in oklab, #bc8cff var(--term-tint), var(--fg-2));
+  --term-cyan: color-mix(in oklab, #39c5cf var(--term-tint), var(--fg-2));
+  --term-white: var(--fg-2);
+  --term-bright-black: color-mix(in oklab, var(--fg-3) 70%, var(--fg-2));
+  --term-bright-red: color-mix(in oklab, #ffa198 var(--term-tint-bright), var(--fg-1));
+  --term-bright-green: color-mix(in oklab, #56d364 var(--term-tint-bright), var(--fg-1));
+  --term-bright-yellow: color-mix(in oklab, #e3b341 var(--term-tint-bright), var(--fg-1));
+  --term-bright-blue: color-mix(in oklab, #79c0ff var(--term-tint-bright), var(--fg-1));
+  --term-bright-magenta: color-mix(in oklab, #d2a8ff var(--term-tint-bright), var(--fg-1));
+  --term-bright-cyan: color-mix(in oklab, #56d4dd var(--term-tint-bright), var(--fg-1));
+  --term-bright-white: var(--fg-1);
+}
+[data-theme="light"] [data-terminal] {
+  --term-selection: color-mix(in srgb, var(--focus) 26%, transparent);
+  --term-selection-inactive: color-mix(in srgb, var(--fg-1) 10%, transparent);
+  --term-match: color-mix(in srgb, var(--warn) 34%, var(--term-bg));
+  --term-match-active: color-mix(in srgb, var(--warn) 70%, var(--term-bg));
+  --term-tint: 46%;
+  /* On a light ground black is the strongest ink and white the faintest */
+  --term-black: var(--fg-1);
+  --term-white: var(--fg-3);
+  --term-bright-black: var(--fg-2);
+  --term-bright-white: var(--fg-3);
+  --term-tint-bright: 52%;
+  --term-red: color-mix(in oklab, #cf222e var(--term-tint), var(--fg-2));
+  --term-green: color-mix(in oklab, #116329 var(--term-tint), var(--fg-2));
+  --term-yellow: color-mix(in oklab, #7d4e00 var(--term-tint), var(--fg-2));
+  --term-blue: color-mix(in oklab, #0969da var(--term-tint), var(--fg-2));
+  --term-magenta: color-mix(in oklab, #8250df var(--term-tint), var(--fg-2));
+  --term-cyan: color-mix(in oklab, #1b7c83 var(--term-tint), var(--fg-2));
+  --term-bright-red: color-mix(in oklab, #a40e26 var(--term-tint-bright), var(--fg-1));
+  --term-bright-green: color-mix(in oklab, #1a7f37 var(--term-tint-bright), var(--fg-1));
+  --term-bright-yellow: color-mix(in oklab, #633c01 var(--term-tint-bright), var(--fg-1));
+  --term-bright-blue: color-mix(in oklab, #218bff var(--term-tint-bright), var(--fg-1));
+  --term-bright-magenta: color-mix(in oklab, #a475f9 var(--term-tint-bright), var(--fg-1));
+  --term-bright-cyan: color-mix(in oklab, #3192aa var(--term-tint-bright), var(--fg-1));
+}
+
+@layer components {
+  /* The input method's composition (pinyin and the like) in the app's colours, not xterm's black on white */
+  [data-terminal] .xterm .composition-view { background: var(--bg-2); color: var(--fg-1); border-radius: var(--r-xs); }
+}

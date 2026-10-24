@@ -1,0 +1,144 @@
+/* The desktop app's tool panel (src/webview/panel/): Files (a file viewer beside the project's tree) and browser tabs, on
+   the window canvas right of the chat sheet. Picked in the LAB (lab/desk-panel.preview.html, 2026-10-23): the panel lies on
+   the canvas like the session column, the chat sheet is the one raised layer between them. Tokens unlayered (they beat the
+   density's own), rules in the components layer */
+.acp-shell {
+  /* The panel's default and narrowest width, and what the chat keeps beside it */
+  --tool-panel-w: 560px;
+  --tool-panel-min: 380px;
+  --tool-main-min: 420px;
+  /* The tree beside a file: its default follows the panel, between the narrowest and the widest default */
+  --tree-min: 180px;
+  --tree-max: 264px;
+  --tree-share: 38%;
+  /* What the viewer keeps for code when the tree is dragged wider */
+  --viewer-min: 280px;
+  /* One tree level; the disclosure chevron's slot */
+  --tree-indent: 12px;
+  --tree-chevron: 16px;
+  /* The viewer: a changed line's bar, the line numbers' column, the overview ruler at the right edge */
+  --code-bar: 3px;
+  --code-gutter: 6ch;
+  --code-ruler: 5px;
+  --code-ruler-mark: 2px;
+  /* The new-tab page's column, its file list (fixed, so results arriving never move it); a tab's widest title */
+  --new-tab-w: 480px;
+  --new-tab-list: calc(var(--row) * 10);
+  --panel-tab-max: 224px;
+  /* The files layout (FilesLayout.tsx): the explorer's default, narrowest and widest width, the chat's beside the stage,
+     what the stage keeps, and the narrowest window that takes the layout: its four columns at their narrowest. A narrower
+     one keeps the conversation layout */
+  --explorer-w: var(--pop-w-md);
+  --explorer-min: 180px;
+  --explorer-max: 480px;
+  --files-chat-w: 460px;
+  --files-chat-min: 360px;
+  --files-chat-max: 960px;
+  --stage-min: 320px;
+  --files-layout-min: 1080px;
+}
+/* While the panel is closed its toggle (ToolPanel.tsx, pinned at the window's top-right corner) sits at the end of the
+   chat header's line, which leaves it the room. Unlayered like desktop.css's --sheet-lead rules so it beats the default.
+   The files layout's toggle folds the session column instead (desktop.css) */
+.acp-shell[data-desktop]:not([data-layout="files"]):has(> [data-panel-toggle]):not(:has(> [data-tool-panel-wrap][data-shown])) {
+  --sheet-trail: calc(var(--start-x) + var(--ctl) + var(--gap));
+}
+@theme inline {
+  --spacing-tool-panel: var(--tool-panel-w);
+  --spacing-tree-chevron: var(--tree-chevron);
+  --spacing-code-bar: var(--code-bar);
+  --spacing-code-gutter: var(--code-gutter);
+  --spacing-code-ruler: var(--code-ruler);
+  --spacing-code-ruler-mark: var(--code-ruler-mark);
+  --spacing-new-tab: var(--new-tab-w);
+  --spacing-new-tab-list: var(--new-tab-list);
+  --spacing-panel-tab: var(--panel-tab-max);
+  /* Widths at which the viewer's bar sheds parts: the folder, open-in-editor, the change count */
+  --container-bar-path: 420px;
+  --container-bar-open: 280px;
+  --container-bar-count: 240px;
+  /* The review's bar: the file count, then the line counts */
+  --container-bar-files: 380px;
+  --container-bar-stat: 300px;
+}
+
+/* The tree rows' hover / selection tint, eased as a colour (registered at the top level, outside any layer) */
+@property --tint { syntax: '<color>'; inherits: false; initial-value: transparent; }
+
+@layer components {
+  /* The panel lies on the canvas: sticky rows and the line numbers paint that, not the sheet's colour */
+  [data-tool-panel-wrap] { --panel-bg: var(--canvas, var(--bg-0)); background: var(--panel-bg); flex-shrink: 0; }
+  /* Docked open it shrinks before the chat, whose basis beside it is --tool-main-min (Shell.tsx): without that the panel
+     kept its default width and a window just under the files layout's tier left the chat a sliver. A ratio, since a
+     factor under one on the chat would leave the overflow unshared once the panel stops at its narrowest (flex scales the
+     free space by the factors' sum). Opening, it stops where the room ends; its narrowest holds once it is in place */
+  .acp-shell[data-desktop]:not([data-narrow]) > [data-tool-panel-wrap][data-shown] { flex-shrink: 1000; }
+  .acp-shell[data-desktop]:not([data-narrow]) > [data-tool-panel-wrap][data-shown]:not([data-moving]) { min-width: var(--tool-panel-min); }
+  /* Open, the chat sheet runs to the panel's edge, and its rim and shadow fall on the panel as on the column */
+  .acp-shell[data-desktop]:not([data-narrow]):has(> [data-tool-panel-wrap]:is([data-shown], [data-moving])) [data-sheet] { z-index: 1; }
+  .acp-shell[data-desktop]:not([data-narrow]):has(> [data-tool-panel-wrap][data-shown]) [data-sheet] { margin-right: 0; }
+  /* Opening and closing ease the panel's width and the sheet's margin; meanwhile the panel's content keeps its open width
+     (--tool-panel-open, written by ToolPanelDock), clipped instead of re-wrapped */
+  [data-tool-panel-wrap][data-moving] { overflow: hidden; transition: width 320ms var(--start-ease); }
+  [data-tool-panel-wrap][data-moving] > [data-tool-panel] { min-width: var(--tool-panel-open, auto); }
+  .acp-shell[data-desktop]:has(> [data-tool-panel-wrap][data-moving]) [data-sheet] { transition: margin 320ms var(--start-ease); }
+  .acp-shell[data-desktop]:has(> [data-tool-panel-wrap][data-moving]) [data-sheet-header] { transition: padding 320ms var(--start-ease); }
+  /* A narrow window: the panel is a page over the window, its tabs after the traffic lights */
+  .acp-shell[data-desktop][data-narrow] [data-panel-tabs] { padding-left: calc(max(var(--gap), var(--lights-w)) + var(--gap) / 2); }
+
+  /* The files layout: the explorer lies on the canvas like the session column, folding the same way (its content keeps its
+     open width, --explorer-open, clipped while the width eases); it and the session column give the stage room down to
+     their narrowest. Its resize edge stays over the stage's rim */
+  [data-explorer] { --panel-bg: var(--canvas, var(--bg-0)); }
+  [data-explorer]:not([data-hidden], [data-moving]) { min-width: var(--explorer-min); }
+  [data-explorer][data-hidden] { opacity: 0; overflow: hidden; }
+  [data-explorer][data-moving] { overflow: hidden; transition: width 320ms var(--start-ease), opacity 260ms var(--start-ease); }
+  [data-explorer][data-moving] > :not([role="separator"]) { min-width: var(--explorer-open, auto); }
+  [data-explorer] > .subagent-splitter { z-index: 2; }
+  /* The stage: the one raised sheet, as the chat is in the conversation layout, between the explorer (the window's edge
+     once that folds) and the chat on the canvas */
+  [data-stage] {
+    --panel-bg: var(--bg-0);
+    margin: var(--sheet-inset) 0;
+    border-radius: var(--r-lg);
+    background: var(--bg-0);
+    box-shadow: 0 0 0 1px var(--line-strong), 0 2px 10px rgb(0 0 0 / 0.18);
+    overflow: hidden;
+    z-index: 1;
+  }
+  [data-stage][data-edge] { margin-left: var(--sheet-inset); }
+  [data-stage][data-moving] { transition: margin 320ms var(--start-ease); }
+  [data-stage][data-moving] [data-stage-tabs] { transition: padding 320ms var(--start-ease); }
+
+  /* Every tree row: a tint (hover, selected) over a base. The base is the canvas where an open folder sticks, so rows
+     scrolling under it stay hidden; switching it is invisible over the same canvas. Only the tint eases, as a registered
+     colour: a sticky row used an opaque base plus a tint while the others eased a plain colour, and opening or closing a
+     folder under the pointer blinked its hover (the LAB, 2026-10-23) */
+  [data-tree] .tree-row { background: linear-gradient(var(--tint), var(--tint)), var(--row-base, transparent); transition: --tint 120ms ease-out, color 120ms ease-out; }
+  [data-tree] .tree-row:hover { --tint: var(--hover); }
+  [data-tree] .tree-row[aria-selected="true"] { --tint: var(--active); }
+  /* Open folders stick under their ancestors while their own rows scroll by; the rule under one shows once it is stuck */
+  /* (position: sticky is the row's class in FileTree.tsx; set here it lost to the row's `relative` utility) */
+  [data-tree] [data-sticky] { --row-base: var(--panel-bg); container-type: scroll-state; }
+  @container scroll-state(stuck: top) { [data-stuck-edge] { opacity: 1; } }
+
+  /* The viewer's lines: added lines tinted, removed ones put back and dimmed, a picked range in the focus colour */
+  [data-viewer] .code-row { --row-bg: transparent; background: var(--row-bg); }
+  [data-viewer] .code-row[data-kind="add"] { --row-bg: color-mix(in srgb, var(--ok) 10%, transparent); }
+  [data-viewer] .code-row[data-kind="del"] { --row-bg: color-mix(in srgb, var(--danger) 11%, transparent); }
+  [data-viewer] .code-row[data-kind="del"] .code-text { opacity: .72; }
+  [data-viewer] .code-row[data-kind="add"] .code-bar { background: var(--ok); }
+  [data-viewer] .code-row[data-kind="del"] .code-bar { background: var(--danger); }
+  [data-viewer] .code-row.is-selected { --row-bg: color-mix(in srgb, var(--focus) 17%, transparent); }
+  [data-viewer] .code-row.is-selected .code-bar { background: var(--focus); }
+  /* The numbers stay put while the code scrolls sideways, painted over it */
+  [data-viewer] .code-num { color: color-mix(in srgb, var(--fg-3) 70%, transparent); background: linear-gradient(var(--row-bg), var(--row-bg)), var(--panel-bg); }
+  [data-viewer] .code-row[data-kind="add"] .code-num { color: color-mix(in srgb, var(--ok) 80%, var(--fg-3)); }
+  [data-viewer] .code-row.is-selected .code-num, [data-viewer] .code-row:hover .code-num { color: var(--fg-1); }
+  /* A long file is laid out a block at a time: blocks out of sight keep their last size and skip layout and paint */
+  [data-viewer] .code-block { content-visibility: auto; contain-intrinsic-size: auto calc(var(--code-block-rows) * var(--code-output-line-height)); }
+  /* The review's diffs show whole, the panel scrolls them */
+  [data-review] .diff-scroll { max-height: none; }
+  /* A card not yet near the visible part holds about the height its diff will take (diff-scroll's padding included) */
+  [data-review] .review-pending { height: calc(var(--review-rows) * var(--code-output-line-height) + var(--spacing-gap)); }
+}

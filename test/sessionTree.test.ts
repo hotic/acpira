@@ -45,6 +45,25 @@ describe('session tree', () => {
     ]);
   });
 
+  it('a project shell lists its registered folders first, in their order and empty ones included, then the rest', () => {
+    const shown = [s('a', { cwd: '/work/old', updatedAt: at(9) }), s('b', { cwd: '/work/new', updatedAt: at(2) }), s('c', { updatedAt: at(5) })];
+    const tree = buildSessionTree({ ...base, categories: [], workspace: undefined, shown, grouped: true, registered: ['/work/old', '/work/empty', WS] });
+    expect(tree.projects.map(p => [p.cwd, p.count])).toEqual([['/work/old', 1], ['/work/empty', 0], [WS, 1], ['/work/new', 1]]);
+    // A search shows only the folders it matched, registered or not
+    const found = buildSessionTree({ ...base, categories: [], workspace: undefined, shown: [shown[1]!], grouped: true, filtering: true, registered: ['/work/old', '/work/empty'] });
+    expect(found.projects.map(p => p.cwd)).toEqual(['/work/new']);
+  });
+
+  it('a folder taken off the project list leaves it with its sessions, which a search still finds', () => {
+    const shown = [s('a', { cwd: '/work/gone', updatedAt: at(9) }), s('b', { cwd: '/work/gone', pinned: true }), s('c', { updatedAt: at(5) })];
+    const input = { ...base, categories: [], workspace: undefined, shown, grouped: true, registered: [WS], removed: ['/work/gone'] };
+    const tree = buildSessionTree(input);
+    expect(tree.projects.map(p => p.cwd)).toEqual([WS]);
+    // A pinned session stays pinned
+    expect(tree.pinned.map(x => x.id)).toEqual(['b']);
+    expect(buildSessionTree({ ...input, filtering: true }).projects.map(p => p.cwd)).toEqual([WS, '/work/gone']);
+  });
+
   it('filtering hides empty categories and empty projects and opens everything else', () => {
     const shown = [s('a', { category: 'ssh' })];
     const tree = buildSessionTree({ ...base, shown, grouped: true, filtering: true, collapsedProjects: [WS] });

@@ -26,6 +26,9 @@ export interface EndpointOpts {
   home: string;
   // The window's workspace folder: one engine per workspace, since an engine has a single working directory
   cwd?: string;
+  // A shell family with an engine of its own ('desktop': project folders instead of a workspace, launched with the login
+  // shell's environment); IDE windows leave it out, which keeps their keys as they were
+  shell?: string;
   // For tests: the fallback directory when the socket path under home would be too long, and the uid in its name
   tmp?: string;
   uid?: number;
@@ -39,7 +42,8 @@ const LAUNCH_WAIT_MS = 15_000;
 const LOG_ROTATE_BYTES = 4 * 1024 * 1024;
 
 export function engineEndpoint(o: EndpointOpts): EngineEndpoint {
-  const key = createHash('sha256').update([binaryIdentity(o.binary), resolve(o.home), o.cwd ? resolve(o.cwd) : ''].join('\0')).digest('hex').slice(0, 16);
+  const parts = [binaryIdentity(o.binary), resolve(o.home), o.cwd ? resolve(o.cwd) : '', ...(o.shell ? [o.shell] : [])];
+  const key = createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, 16);
   const run = join(o.home, 'run');
   const log = join(run, `engine-${key}.log`);
   const socket = join(run, `engine-${key}.sock`);
