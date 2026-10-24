@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type DependencyList, type RefObject } from 'react';
-import { followsBottom, scrollerUsable } from './promptStuck';
+import { followsBottom, SCROLL_INTENT_MS, scrollerUsable } from './promptStuck';
 
 // Whether the transcript is following its bottom, for rows that must not move under a reader who scrolled up
 // (the live turn's automatic fold closes wait for them). Subscribed per reader, so a scroll re-renders nothing else
@@ -48,17 +48,32 @@ export function useBottomFollow(scroller: RefObject<HTMLElement | null>, content
     pin();
     // A hidden sidebar collapses the scroller to no box and fires a scroll that looks like "left the bottom".
     let lastTop = el.scrollTop;
+    // The reader's own scrolling: a pointer held on the scroller (its scrollbar, a selection drag), or a wheel, touch or
+    // key within SCROLL_INTENT_MS; any other upward scroll is a clamp and is pinned back (see followsBottom)
+    let pointerDown = false;
+    let intentAt = -Infinity;
+    const intent = () => pointerDown || performance.now() - intentAt < SCROLL_INTENT_MS;
     const onScroll = () => {
       if (!scrollerUsable(el)) return;
-      pinned.current = followsBottom(el, pinned.current, lastTop);
+      const was = pinned.current;
+      pinned.current = followsBottom(el, was, lastTop, intent());
       follow.set(pinned.current);
+      if (was && pinned.current && el.scrollHeight - el.scrollTop - el.clientHeight > 1) el.scrollTop = el.scrollHeight;
       lastTop = el.scrollTop;
     };
-    const touched = () => { untouched.current = false; };
+    const touched = () => { untouched.current = false; intentAt = performance.now(); };
+    const pressed = () => { pointerDown = true; touched(); };
+    const released = () => { if (pointerDown) { pointerDown = false; intentAt = performance.now(); } };
+    const moved = () => { intentAt = performance.now(); };
     const grew = () => { if (untouched.current) pin(); };
     el.addEventListener('scroll', onScroll, { passive: true });
-    el.addEventListener('pointerdown', touched, { passive: true });
+    el.addEventListener('pointerdown', pressed, { passive: true });
     el.addEventListener('keydown', touched);
+    el.addEventListener('wheel', moved, { passive: true });
+    el.addEventListener('touchmove', moved, { passive: true });
+    // The release can land outside the scroller (a scrollbar drag that left it)
+    window.addEventListener('pointerup', released, { passive: true });
+    window.addEventListener('pointercancel', released, { passive: true });
     const box = new ResizeObserver(pin);
     box.observe(el);
     const body = new ResizeObserver(grew);
@@ -67,8 +82,12 @@ export function useBottomFollow(scroller: RefObject<HTMLElement | null>, content
       box.disconnect();
       body.disconnect();
       el.removeEventListener('scroll', onScroll);
-      el.removeEventListener('pointerdown', touched);
+      el.removeEventListener('pointerdown', pressed);
       el.removeEventListener('keydown', touched);
+      el.removeEventListener('wheel', moved);
+      el.removeEventListener('touchmove', moved);
+      window.removeEventListener('pointerup', released);
+      window.removeEventListener('pointercancel', released);
     };
   // The refs are stable; `resetKey` names the transcript whose content element is mounted
   }, [resetKey]);

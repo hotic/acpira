@@ -24,6 +24,14 @@ describe('followsBottom', () => {
     expect(followsBottom({ ...el, scrollTop: 1090 }, false, 1080)).toBe(false);
   });
 
+  it('keeps following through an upward clamp the reader did not make', () => {
+    // Content shrank for a layout and the browser clamped the offset: no wheel, touch, key or pointer behind it
+    expect(followsBottom({ scrollHeight: 1254, scrollTop: 488, clientHeight: 666 }, true, 524, false)).toBe(true);
+    expect(followsBottom({ scrollHeight: 1254, scrollTop: 488, clientHeight: 666 }, true, 524, true)).toBe(false);
+    // A released follow stays released until the bottom, intent or not
+    expect(followsBottom({ scrollHeight: 1254, scrollTop: 488, clientHeight: 666 }, false, 524, false)).toBe(false);
+  });
+
   it('tolerates fractional bottom offsets and a layout shrink that clamps to the bottom', () => {
     expect(followsBottom({ scrollHeight: 2000, scrollTop: 1099.5, clientHeight: 900 }, false, 1090)).toBe(true);
     expect(followsBottom({ scrollHeight: 1800, scrollTop: 900, clientHeight: 900 }, true, 1100)).toBe(true);
