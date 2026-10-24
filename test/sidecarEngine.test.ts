@@ -204,6 +204,60 @@ describe('persistent engine', { timeout: 60_000 }, () => {
   });
 });
 
+// A client that records the platform requests it is asked to serve, as a window or as a peer (another engine)
+function recorder(ep: EngineEndpoint, cwd: string, home: string, role: 'peer' | undefined, requests: unknown[], settings: Record<string, unknown> = {}) {
+  const c = new SidecarClient({
+    commands: () => [command(home)],
+    engine: () => ep,
+    cwd: () => cwd,
+    hello: () => ({
+      client: { name: role ?? 'window', version: '0', capabilities: ['toast', 'openExternal'], ...(role ? { role } : {}) },
+      env: { hostLanguage: 'en', cwd },
+      settings: { defaultAgent: 'fake', agents: { fake: { name: 'Fake', command: NODE, args: [FAKE] } }, ...settings },
+    }),
+    onRequest: r => { requests.push(r); return undefined; },
+    log: line => {
+      const pid = /sidecar ready: pid (\d+)/.exec(line)?.[1];
+      if (pid) engines.add(Number(pid));
+    },
+    backoff: () => 50,
+  });
+  clients.push(c);
+  return c;
+}
+
+describe('peer wire', { timeout: 60_000 }, () => {
+  it('serves its own views without taking the window\'s place', async () => {
+    const home = tmp('acpira-engine-home-');
+    const cwd = tmp('acpira-engine-ws-');
+    const ep = engineEndpoint({ binary: SIDECAR, home, cwd });
+    const fromWindow: unknown[] = [];
+    const fromPeer: unknown[] = [];
+    const win = recorder(ep, cwd, home, undefined, fromWindow);
+    const wv = new View('W', { mostRecent: true });
+    win.attach(wv);
+    win.send('W', { type: 'ready' });
+    win.start();
+    await wv.session(s => s.status === 'ready');
+    // The peer says hello later, with settings of its own machine
+    const peer = recorder(ep, cwd, home, 'peer', fromPeer, { defaultAgent: 'elsewhere' });
+    const pv = new View('P', { mostRecent: true });
+    peer.attach(pv);
+    peer.send('P', { type: 'ready' });
+    peer.start();
+    await pv.session(s => s.status === 'ready');
+
+    // What the peer's view causes goes back to the peer alone
+    peer.send('P', { type: 'openExternal', url: 'https://example.com/peer' });
+    await expect.poll(() => fromPeer).toContainEqual({ method: 'openExternal', url: 'https://example.com/peer' });
+    // The window still serves its own: the peer's hello neither took its place nor rebound the platform
+    win.send('W', { type: 'openExternal', url: 'https://example.com/window' });
+    await expect.poll(() => fromWindow).toContainEqual({ method: 'openExternal', url: 'https://example.com/window' });
+    expect(fromWindow).not.toContainEqual(expect.objectContaining({ url: 'https://example.com/peer' }));
+    expect(fromPeer).not.toContainEqual(expect.objectContaining({ url: 'https://example.com/window' }));
+  });
+});
+
 describe('engineEndpoint', () => {
   it('keys the socket by binary, data dir and workspace, and moves a too-long path under the temp dir', () => {
     const home = tmp('acpira-engine-key-');

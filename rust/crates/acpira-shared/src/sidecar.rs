@@ -165,6 +165,17 @@ pub struct ClientInfo {
   /// the window runs in
   #[serde(default)]
   pub ssh_connection: Option<String>,
+  /// `peer`: another engine (an SSH host's client, the phone) rather than a window. Its hello never rebinds the platform,
+  /// it never serves IDE actions for the windows, its settings and focus events are ignored, and the platform requests
+  /// its own views cause go back to it alone (`sidecar/server.rs`)
+  #[serde(default)]
+  pub role: Option<String>,
+}
+
+impl ClientInfo {
+  pub fn is_peer(&self) -> bool {
+    self.role.as_deref() == Some("peer")
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
