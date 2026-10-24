@@ -683,6 +683,83 @@ mod remote {
     let blobs = r.env.root.path().join("sessions");
     let found = walkdir(&blobs).into_iter().any(|p| std::fs::read(&p).is_ok_and(|b| b == png));
     assert!(found, "the host's bytes are in the blob store");
+
+  }
+
+  /// open_browser: the listen check runs on the host, and the shell is told the page is that folder's
+  #[tokio::test(flavor = "multi_thread")]
+  async fn open_browser_checks_the_port_on_the_host() {
+    let mut r = Remote::new().await;
+    r.full_access();
+    let roster = Arc::new(acpira_host::relay::roster::Roster::new(r.env.root.path()));
+    let hub = acpira_host::relay::hub::RelayHub::start(roster, Arc::new(|_: &str| {})).await.unwrap();
+    let shell = Arc::new(Shell::default());
+    hub.set_browser(shell.clone());
+    r.env.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub));
+    // A dev server on the host (this machine, for the fake one) and a port nothing serves there
+    let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let up = server.local_addr().unwrap().port();
+    let closed = { let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap(); l.local_addr().unwrap().port() };
+    let s = r.session().await;
+    r.env.server.push(mock::tools(&[
+      ("c1", "acpira_open_browser", json!({ "url": format!("http://localhost:{up}/") })),
+      ("c2", "acpira_open_browser", json!({ "url": format!("http://localhost:{closed}/") })),
+    ]));
+    r.env.server.push(mock::text("Opened."));
+    run(&s, "open the app").await;
+    let sent = r.env.server.requests().last().unwrap().body["messages"].to_string();
+    assert!(sent.contains(&format!("Nothing is listening on localhost:{closed}")), "{sent}");
+    assert_eq!(*shell.opened.lock(), [format!("http://localhost:{up}/ in ssh://gen1{VIRT}/work")]);
+    drop(server);
+  }
+
+  /// A project MCP server the host's `.mcp.json` declares runs on the host, in the project there, through the
+  /// `acpira mcp-host` shim the agent starts here
+  #[tokio::test(flavor = "multi_thread")]
+  async fn a_project_mcp_server_runs_on_the_host() {
+    let mut r = Remote::new().await;
+    r.full_access();
+    let roster = Arc::new(acpira_host::relay::roster::Roster::new(r.env.root.path()));
+    let hub = acpira_host::relay::hub::RelayHub::start(roster, Arc::new(|_: &str| {})).await.unwrap();
+    r.env.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub));
+    let work = r.real.join("work");
+    let server = r#"
+const rl = require('readline').createInterface({ input: process.stdin });
+const send = m => process.stdout.write(JSON.stringify(m) + '\n');
+rl.on('line', l => {
+  const m = JSON.parse(l);
+  if (m.id === undefined) return;
+  if (m.method === 'initialize') send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: m.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'probe', version: '1' } } });
+  else if (m.method === 'tools/list') send({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'where', description: 'Where the server runs', inputSchema: { type: 'object', properties: {} } }] } });
+  else if (m.method === 'tools/call') send({ jsonrpc: '2.0', id: m.id, result: { content: [{ type: 'text', text: `cwd=${process.cwd()} mark=${process.env.MARK}` }] } });
+  else send({ jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'no' } });
+});
+"#;
+    std::fs::write(work.join("probe.js"), server).unwrap();
+    std::fs::write(work.join(".mcp.json"), r#"{ "mcpServers": { "probe": { "command": "node", "args": ["probe.js"], "env": { "MARK": "from the host's file" } } } }"#).unwrap();
+    let s = r.session().await;
+    r.env.server.push(mock::tools(&[("c1", "probe_where", json!({}))]));
+    r.env.server.push(mock::text("It runs there."));
+    run(&s, "where does it run").await;
+    let sent = r.env.server.requests().last().unwrap().body["messages"].to_string();
+    let real = std::fs::canonicalize(&work).unwrap();
+    assert!(sent.contains(&format!("cwd={}", real.display())) && sent.contains("mark=from the host's file"), "{sent}");
+  }
+
+  /// A shell that shows pages, noting the folder each one was for
+  #[derive(Default)]
+  struct Shell {
+    opened: parking_lot::Mutex<Vec<String>>,
+  }
+
+  impl acpira_host::relay::hub::HostBrowser for Shell {
+    fn available(&self) -> bool {
+      true
+    }
+    fn open<'a>(&'a self, url: &'a str, folder: Option<&'a str>) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<acpira_shared::sidecar::BrowserOpened>> + Send + 'a>> {
+      self.opened.lock().push(format!("{url} in {}", folder.unwrap_or("this machine")));
+      Box::pin(async move { Ok(acpira_shared::sidecar::BrowserOpened { url: url.to_owned(), reused: None }) })
+    }
   }
 
   fn walkdir(dir: &Path) -> Vec<PathBuf> {

@@ -41,16 +41,16 @@ pub trait HostBrowser: Send + Sync {
   /// Whether the serving shell can show a page inside the editor
   fn available(&self) -> bool;
   /// Show the page; where the user's side shows it (a forwarded port has its own address) and whether an earlier tab
-  /// was reused, or why it did not open
-  fn open<'a>(&'a self, url: &'a str) -> Pin<Box<dyn Future<Output = Result<BrowserOpened>> + Send + 'a>>;
+  /// was reused, or why it did not open. `folder`: the session folder on an SSH host whose loopback the page is on
+  fn open<'a>(&'a self, url: &'a str, folder: Option<&'a str>) -> Pin<Box<dyn Future<Output = Result<BrowserOpened>> + Send + 'a>>;
 }
 
 impl HostBrowser for crate::sidecar::platform::SidecarPlatform {
   fn available(&self) -> bool {
     self.can_open_browser()
   }
-  fn open<'a>(&'a self, url: &'a str) -> Pin<Box<dyn Future<Output = Result<BrowserOpened>> + Send + 'a>> {
-    Box::pin(self.open_browser(url))
+  fn open<'a>(&'a self, url: &'a str, folder: Option<&'a str>) -> Pin<Box<dyn Future<Output = Result<BrowserOpened>> + Send + 'a>> {
+    Box::pin(self.open_browser(url, folder))
   }
 }
 
@@ -192,10 +192,30 @@ impl RelayHub {
         };
         let _ = write.write_all(reply(r).as_bytes()).await;
       }
+      HubOp::HostStdio { name } => {
+        let opened = match session.upgrade() {
+          Some(s) => s.open_host_stdio(&name).await,
+          None => Err("The Acpira session that started this agent is gone.".into()),
+        };
+        let call = match opened {
+          Ok(call) => call,
+          Err(e) => {
+            let _ = write.write_all(reply(HubReply::Error(e)).as_bytes()).await;
+            return;
+          }
+        };
+        if write.write_all(reply(HubReply::Done(String::new())).as_bytes()).await.is_err() {
+          return;
+        }
+        // The rest of the connection is the server's: what the shim sends is its stdin, as long as it likes
+        reader.set_limit(u64::MAX);
+        pump_host_stdio(call, reader, write).await;
+        return;
+      }
       HubOp::OpenBrowser { url } => {
         let browser = self.browser.read().clone();
         let r = match browser {
-          Some(b) if b.available() => self.open_browser(b.as_ref(), &url).await,
+          Some(b) if b.available() => self.open_browser(b.as_ref(), &url, session.upgrade()).await,
           _ => HubReply::Error("This editor cannot show web pages inside it; give the user the URL instead.".into()),
         };
         let _ = write.write_all(reply(r).as_bytes()).await;
@@ -259,16 +279,23 @@ impl RelayHub {
 
   /// A loopback page must be served on this machine first (the one the agent and its servers run on): nothing
   /// listening there is reported as such, before the shell forwards a port and checks from the user's side
-  async fn open_browser(&self, browser: &dyn HostBrowser, url: &str) -> HubReply {
+  /// The listen check runs where the agent's commands do: this machine, or the SSH host of the session's folder (whose
+  /// loopback the page is on, so the shell is told the folder)
+  async fn open_browser(&self, browser: &dyn HostBrowser, url: &str, session: Option<Arc<AcpSession>>) -> HubReply {
+    let remote = session.as_ref().filter(|s| s.remote_folder().is_some());
     if let Some((host, port)) = loopback_target(url) {
-      let connect = tokio::time::timeout(LISTEN_CHECK, TcpStream::connect((host.as_str(), port))).await;
-      if !matches!(connect, Ok(Ok(_))) {
+      let listening = match remote {
+        Some(s) => s.host_listening(&host, port, LISTEN_CHECK).await,
+        None => matches!(tokio::time::timeout(LISTEN_CHECK, TcpStream::connect((host.as_str(), port))).await, Ok(Ok(_))),
+      };
+      if !listening {
         return HubReply::Error(format!(
           "Nothing is listening on {host}:{port} on the machine you run on, so the page was not opened. Start the server first, then call open_browser again."
         ));
       }
     }
-    match browser.open(url).await {
+    let folder = remote.map(|s| s.cwd.clone());
+    match browser.open(url, folder.as_deref()).await {
       Ok(opened) => {
         let what = match opened.reused {
           Some(BrowserReuse::Revealed) => format!("{url} was already open in a browser tab in the user's editor; brought that tab to the front without reloading it."),
@@ -284,6 +311,60 @@ impl RelayHub {
       }
     }
   }
+}
+
+/// What the hub sends an `acpira mcp-host` shim after its `Done` line: a tag byte, a big-endian u32 length and that
+/// many bytes. `End` carries the exit code as text, or why the server stopped
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Frame {
+  Out = 1,
+  Err = 2,
+  End = 3,
+}
+
+pub fn frame(tag: Frame, bytes: &[u8]) -> Vec<u8> {
+  let mut out = Vec::with_capacity(bytes.len() + 5);
+  out.push(tag as u8);
+  out.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+  out.extend_from_slice(bytes);
+  out
+}
+
+/// A project MCP server on the host, joined to its shim: the shim's bytes to the server's stdin (their end closes it),
+/// the server's output back as frames. A shim that goes away drops the call, which stops the server there
+async fn pump_host_stdio(
+  mut call: crate::remote::client::Call,
+  mut reader: tokio::io::Take<BufReader<tokio::net::tcp::OwnedReadHalf>>,
+  mut write: tokio::net::tcp::OwnedWriteHalf,
+) {
+  use crate::remote::client::Event;
+  let mut buf = vec![0u8; 16 * 1024];
+  let mut reading = true;
+  let end = loop {
+    tokio::select! {
+      n = reader.read(&mut buf), if reading => match n {
+        Ok(0) | Err(_) => {
+          call.stdin_eof();
+          reading = false;
+        }
+        Ok(n) => call.stdin(&buf[..n]),
+      },
+      ev = call.next() => match ev {
+        Some(Event::Chunk { stream, bytes }) => {
+          let tag = if stream == "err" { Frame::Err } else { Frame::Out };
+          if write.write_all(&frame(tag, &bytes)).await.is_err() {
+            return;
+          }
+        }
+        Some(Event::Done(Ok(r))) => break r.get("code").and_then(Value::as_i64).unwrap_or(1).to_string(),
+        Some(Event::Done(Err(e))) => break e.to_string(),
+        None => break "the connection to the host ended".to_owned(),
+      },
+    }
+  };
+  let _ = write.write_all(&frame(Frame::End, end.as_bytes())).await;
+  let _ = write.shutdown().await;
 }
 
 /// Host and port of an http(s) URL whose host is this machine's loopback (or the any-address a dev server prints);

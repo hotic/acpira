@@ -147,7 +147,7 @@ export class VscodePlatform {
     // Asks a chat webview on the user's machine; undefined when no chat page is up to ask
     private probe: UrlProbe,
     // Acpira's own browser panel (extension.ts showPreview), where loopback http pages go
-    private preview?: (url: string) => BrowserOpened['reused'],
+    private preview?: (url: string, folder?: string) => BrowserOpened['reused'],
   ) {
     // Each IDE's globalStorage / SecretStorage tree is merged into ~/.acpira once (dataDir.migrateOnce), before the sidecar starts
     this.legacy = {
@@ -204,14 +204,15 @@ export class VscodePlatform {
     return this.openBrowser(url, false);
   }
 
-  private async openBrowser(url: string, viaPreview = true): Promise<BrowserOpened> {
+  // `folder`: the session folder on an SSH host; its loopback page is that host's, so only the preview proxy reaches it
+  private async openBrowser(url: string, viaPreview = true, folder?: string): Promise<BrowserOpened> {
     // A loopback http page opens in Acpira's browser panel, where its elements can be picked into the chat. The engine has
     // already found it listening on its machine (relay hub), and its preview proxy reaches it from there, so a remote dev
     // server needs no forward and no probe from the user's side. https and other hosts are beyond that proxy and stay with
     // VS Code's browser
     const page = viaPreview && this.preview && normalizePreviewUrl(url);
     if (page && this.preview) {
-      const reused = this.preview(page);
+      const reused = this.preview(page, folder);
       return { url: page, ...(reused ? { reused } : {}) };
     }
     const target = browsable(vscode.Uri.parse(url, true));
@@ -256,7 +257,7 @@ export class VscodePlatform {
       }
       case 'revealInOS': await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(r.path)); return null;
       case 'openExternal': void vscode.env.openExternal(vscode.Uri.parse(r.url)); return null;
-      case 'openBrowser': return this.openBrowser(r.url);
+      case 'openBrowser': return this.openBrowser(r.url, true, r.folder);
       case 'openInEditor': this.openInEditor(r.sessionId); return null;
       case 'toast': showToast(r); return null;
       case 'notify': this.announce(r); return null;

@@ -62,18 +62,31 @@ fn string_list(v: Option<&Value>) -> Vec<String> {
 /// The servers of one shared file, in file order; a missing or broken file has none
 pub fn read_servers(path: &Path) -> Vec<SharedServer> {
   let Ok(text) = std::fs::read_to_string(path) else { return vec![] };
-  let Some(Value::Object(data)) = parse_json_loose(&text) else { return vec![] };
+  servers_in(&text)
+}
+
+/// The servers of one shared file's text (a file read on an SSH host)
+pub fn servers_in(text: &str) -> Vec<SharedServer> {
+  let Some(Value::Object(data)) = parse_json_loose(text) else { return vec![] };
   let Some(servers) = data.get("mcpServers").and_then(Value::as_object) else { return vec![] };
   servers.iter().filter_map(|(name, v)| v.as_object().map(|spec| SharedServer::from_spec(name, spec))).collect()
+}
+
+/// A project's servers from its `.mcp.json` and the legacy `.agents/mcp.json` (only the names the first lacks)
+pub fn project_servers(current: Vec<SharedServer>, legacy: Vec<SharedServer>) -> Vec<SharedServer> {
+  let names: HashSet<String> = current.iter().map(|s| s.name.clone()).collect();
+  let mut out = current;
+  out.extend(legacy.into_iter().filter(|s| !names.contains(&s.name)));
+  out
 }
 
 /// Both scopes: (scope, server, shadowed by a project server of the same name). A disabled project entry shadows too,
 /// which is how a global server is turned off for one project
 pub fn all_servers(places: &Places) -> Vec<(SharedScope, SharedServer, bool)> {
-  let mut project = places.mcp_file(SharedScope::Project).map(|p| read_servers(&p)).unwrap_or_default();
-  let legacy = places.legacy_mcp_file().map(|p| read_servers(&p)).unwrap_or_default();
-  let current: HashSet<String> = project.iter().map(|s| s.name.clone()).collect();
-  project.extend(legacy.into_iter().filter(|s| !current.contains(&s.name)));
+  let project = project_servers(
+    places.mcp_file(SharedScope::Project).map(|p| read_servers(&p)).unwrap_or_default(),
+    places.legacy_mcp_file().map(|p| read_servers(&p)).unwrap_or_default(),
+  );
   let global = places.mcp_file(SharedScope::Global).map(|p| read_servers(&p)).unwrap_or_default();
   let local: HashSet<String> = project.iter().map(|s| s.name.clone()).collect();
   let mut out: Vec<_> = project.into_iter().map(|s| (SharedScope::Project, s, false)).collect();

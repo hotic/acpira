@@ -322,7 +322,8 @@ export type WebviewMsg =
   | { type: 'pickFolder' }
   // Desktop shell only: the tool panel's browser tabs. A tab opens (on `url`, or empty), its page's messages go up, it
   // closes; the new-tab page asks for the address bar's history (answered with panelHistory)
-  | { type: 'panelBrowserOpen'; tab: string; url?: string }
+  // folder: the session folder when it is on an SSH host, whose dev servers the tab shows
+  | { type: 'panelBrowserOpen'; tab: string; url?: string; folder?: string }
   | { type: 'panelBrowser'; tab: string; msg: BrowserMsg }
   | { type: 'panelBrowserClose'; tab: string }
   | { type: 'panelHistory' }

@@ -40,7 +40,7 @@ function resourceRoot(context: vscode.ExtensionContext): vscode.Uri {
 export async function activate(context: vscode.ExtensionContext) {
   const log = vscode.window.createOutputChannel('Acpira', { log: true });
   const resources = resourceRoot(context);
-  const platform = new VscodePlatform(context, id => { openEditor(id); }, r => announce(r), url => probeUrl(url), url => showPreview(url, true));
+  const platform = new VscodePlatform(context, id => { openEditor(id); }, r => announce(r), url => probeUrl(url), (url, folder) => showPreview(url, true, folder));
   setHostLocale(platform.locale());
 
   // The legacy globalStorage / SecretStorage tree only VS Code can read is merged before the sidecar takes over ~/.acpira
@@ -255,9 +255,10 @@ export async function activate(context: vscode.ExtensionContext) {
   // Show a loopback page in a browser panel (undefined: an empty one, on its address bar): the one already showing its site
   // (brought up, navigated when the page differs), else a new panel next to the chat. `preserveFocus` for an agent's
   // open_browser, so the composer keeps the caret
-  const showPreview = (url: string | undefined, preserveFocus = false): BrowserOpened['reused'] => {
+  // `folder`: a session folder on an SSH host, whose dev server the page is (a site is matched on its host too)
+  const showPreview = (url: string | undefined, preserveFocus = false, folder?: string): BrowserOpened['reused'] => {
     const origin = url && new URL(url).origin;
-    const shown = [...browsers].find(b => (origin ? b.target !== undefined && new URL(b.target).origin === origin : b.target === undefined));
+    const shown = [...browsers].find(b => (origin ? b.target !== undefined && new URL(b.target).origin === origin && b.folder === folder : b.target === undefined));
     if (shown && !url) { shown.panel.reveal(undefined, preserveFocus); return 'revealed'; }
     if (shown && url) {
       shown.panel.reveal(undefined, preserveFocus);
@@ -266,17 +267,17 @@ export async function activate(context: vscode.ExtensionContext) {
       return 'navigated';
     }
     const panel = vscode.window.createWebviewPanel(BROWSER_VIEW_TYPE, url ? new URL(url).host : t('browser.source'), { viewColumn: fileColumn(), preserveFocus }, { retainContextWhenHidden: true });
-    bindBrowser(panel, url);
+    bindBrowser(panel, url, folder);
     return undefined;
   };
   // A browser panel's shell side, for a new panel and for one VS Code restores after a window reload (the page keeps its
   // address in the webview state, BROWSER_STATE_URL)
-  const bindBrowser = (panel: vscode.WebviewPanel, url: string | undefined) => {
+  const bindBrowser = (panel: vscode.WebviewPanel, url: string | undefined, folder?: string) => {
     panel.iconPath = {
       light: vscode.Uri.joinPath(resources, 'media', 'icon-light.svg'),
       dark: vscode.Uri.joinPath(resources, 'media', 'icon.svg'),
     };
-    const browser: BrowserPanel = new BrowserPanel(panel, url, {
+    const browser: BrowserPanel = new BrowserPanel(panel, url, folder, {
       client: sidecar,
       extensionUri: resources,
       look: browserLook,

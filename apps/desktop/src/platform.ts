@@ -29,7 +29,7 @@ export interface PlatformDeps {
   // "Open in new window" (the engine's openInEditor): a chat window of its own on that session
   openWindow: (sessionId?: string) => void;
   // An agent's open_browser: a loopback page in the browser panel window, any other http(s) page in the system browser
-  openBrowser: (url: string) => BrowserOpened;
+  openBrowser: (url: string, folder?: string) => BrowserOpened;
   // Logins, installs, keychain unlocks in the system terminal
   terminal: (r: TerminalRequest) => void;
   // "Open files with" an editor: false when its command line is not there, and the system's default app opens the file
@@ -55,7 +55,7 @@ export async function handleRequest(r: PlatformRequest, d: PlatformDeps): Promis
     }
     case 'toast': d.toast(r.level, r.text, r.open); return;
     case 'openInEditor': d.openWindow(r.sessionId); return;
-    case 'openBrowser': return d.openBrowser(r.url);
+    case 'openBrowser': return d.openBrowser(r.url, r.folder);
     case 'runInTerminal': d.terminal({ title: r.title, command: r.command, args: r.args, ...(r.env ? { env: r.env } : {}) }); return;
     case 'notify': {
       if (d.watching(r.sessionId)) return;

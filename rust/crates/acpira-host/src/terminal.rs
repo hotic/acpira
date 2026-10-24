@@ -49,6 +49,8 @@ const KILL_GRACE: Duration = Duration::from_secs(2);
 
 pub struct TerminalHub {
   terms: Mutex<Hub>,
+  /// SSH hosts: a terminal in an `ssh://` folder runs its shell there (the helper's `pty`)
+  remote: std::sync::OnceLock<Arc<crate::remote::connections::Connections>>,
   views: AtomicU64,
   /// What runs instead of the user's login shell (tests)
   program: Option<Vec<String>>,
@@ -71,7 +73,12 @@ impl TerminalHub {
   }
 
   fn with(program: Option<Vec<String>>, grace: Duration, tick: Duration) -> Arc<TerminalHub> {
-    Arc::new_cyclic(|me| TerminalHub { terms: Default::default(), views: AtomicU64::new(0), program, grace, tick, me: me.clone() })
+    Arc::new_cyclic(|me| TerminalHub { terms: Default::default(), remote: Default::default(), views: AtomicU64::new(0), program, grace, tick, me: me.clone() })
+  }
+
+  /// Where terminals in folders on SSH hosts connect
+  pub fn set_remote(&self, connections: Arc<crate::remote::connections::Connections>) {
+    let _ = self.remote.set(connections);
   }
 
   /// An id for a page's bridge: what it opens, acknowledges and lets go of is kept per page
@@ -166,6 +173,9 @@ impl TerminalHub {
 
   fn spawn(&self, id: &str, cwd: Option<&str>, (cols, rows): (u16, u16)) -> anyhow::Result<Arc<Term>> {
     let (cols, rows) = clamp_size(cols, rows);
+    if let Some(folder) = cwd.and_then(acpira_shared::remote::parse_remote_folder) {
+      return self.spawn_remote(id, folder, (cols, rows));
+    }
     let pair = native_pty_system().openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })?;
     let cmd = command(self.program.as_deref(), cwd);
     let shell = shell_name(&cmd);
@@ -231,8 +241,110 @@ impl TerminalHub {
       input: in_tx,
       master: Mutex::new(Some(pair.master)),
       killer: Mutex::new(killer),
+      remote: None,
       pid,
       reaped,
+      resume: Notify::new(),
+      shell,
+    });
+    tokio::spawn(pump(term.clone(), out_rx, exit_rx));
+    Ok(term)
+  }
+
+  /// A shell on the folder's SSH host (`remote::helper` `pty`), driven by one task: the helper's output into the same
+  /// pump as a local shell's (a lagging page holds the helper's credit, so the shell waits on its writes there), input
+  /// and resizes out to it, the end when the call ends. A host that cannot be reached shows why and ends the terminal
+  fn spawn_remote(&self, id: &str, folder: acpira_shared::remote::RemoteFolder, (cols, rows): (u16, u16)) -> anyhow::Result<Arc<Term>> {
+    let connections = self.remote.get().cloned().ok_or_else(|| anyhow::anyhow!("this engine has no SSH connections"))?;
+    let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>(16);
+    let (exit_tx, exit_rx) = oneshot::channel::<TerminalExit>();
+    let (ctl, mut ctl_rx) = mpsc::unbounded_channel::<RemoteCtl>();
+    let title: Arc<Mutex<Option<String>>> = Arc::default();
+    // Input arrives on the same channel type as a local shell's
+    let (in_tx, in_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    let forward = ctl.clone();
+    std::thread::Builder::new().name("acpira-term-remote-in".into()).spawn(move || {
+      while let Ok(bytes) = in_rx.recv() {
+        if forward.send(RemoteCtl::Input(bytes)).is_err() {
+          break;
+        }
+      }
+    })?;
+    let (alias, seen, program) = (folder.alias.clone(), title.clone(), self.program.clone());
+    tokio::spawn(async move {
+      let failed = |why: String| format!("\r\n\x1b[31m{why}\x1b[0m\r\n").into_bytes();
+      let client = match connections.ensure(&alias, REMOTE_CONNECT).await {
+        Ok(c) => c,
+        Err(e) => {
+          let _ = out_tx.send(failed(format!("{alias}: {e:#}"))).await;
+          let _ = exit_tx.send(TerminalExit { code: -1, signal: None });
+          return;
+        }
+      };
+      let mut a = serde_json::json!({ "cwd": folder.path, "cols": cols, "rows": rows });
+      if let Some(p) = &program {
+        a["program"] = serde_json::json!(p);
+      }
+      let mut call = client.request("pty", a);
+      let pty = call.id();
+      let exit = loop {
+        tokio::select! {
+          ev = call.next() => match ev {
+            Some(crate::remote::client::Event::Chunk { stream, bytes }) if stream == "title" => {
+              *seen.lock() = Some(format!("{} ({alias})", String::from_utf8_lossy(&bytes)));
+            }
+            Some(crate::remote::client::Event::Chunk { bytes, .. }) => {
+              if out_tx.send(bytes).await.is_err() {
+                break None;
+              }
+            }
+            Some(crate::remote::client::Event::Done(Ok(v))) => {
+              break Some(TerminalExit { code: v.get("code").and_then(serde_json::Value::as_i64).unwrap_or(-1), signal: v.get("signal").and_then(serde_json::Value::as_str).map(str::to_owned) });
+            }
+            Some(crate::remote::client::Event::Done(Err(e))) => {
+              let _ = out_tx.send(failed(format!("{alias}: {e}"))).await;
+              break Some(TerminalExit { code: -1, signal: None });
+            }
+            None => break Some(TerminalExit { code: -1, signal: None }),
+          },
+          c = ctl_rx.recv() => match c {
+            Some(RemoteCtl::Input(bytes)) => call.stdin(&bytes),
+            Some(RemoteCtl::Resize(cols, rows)) => {
+              let client = client.clone();
+              tokio::spawn(async move {
+                let _ = client.call("ptyResize", serde_json::json!({ "pty": pty, "cols": cols, "rows": rows })).await;
+              });
+            }
+            // Killed here: dropping the call ends the shell on the host
+            Some(RemoteCtl::Stop) | None => break None,
+          },
+        }
+      };
+      drop(call);
+      if let Some(exit) = exit {
+        let _ = exit_tx.send(exit);
+      }
+    });
+    let shell = folder.alias.clone();
+    let term = Arc::new(Term {
+      id: id.to_owned(),
+      state: Mutex::new(TermState {
+        viewers: HashMap::new(),
+        scrollback: String::new(),
+        title: shell.clone(),
+        cols,
+        rows,
+        exit: None,
+        orphaned: Some(Instant::now()),
+        paused: None,
+        ended: false,
+      }),
+      input: in_tx,
+      master: Mutex::new(None),
+      killer: Mutex::new(Box::new(RemoteKiller(ctl.clone()))),
+      remote: Some(RemoteTerm { ctl, title }),
+      pid: None,
+      reaped: Arc::new(AtomicBool::new(false)),
       resume: Notify::new(),
       shell,
     });
@@ -284,6 +396,8 @@ struct Term {
   /// Taken (and dropped) when the terminal is killed
   master: Mutex<Option<Box<dyn MasterPty + Send>>>,
   killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+  /// A shell on an SSH host: its task, and the foreground name the helper last sent
+  remote: Option<RemoteTerm>,
   #[cfg_attr(not(unix), allow(dead_code))]
   pid: Option<u32>,
   reaped: Arc<AtomicBool>,
@@ -430,6 +544,9 @@ impl Term {
     if let Some(m) = self.master.lock().as_ref() {
       let _ = m.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
     }
+    if let Some(r) = &self.remote {
+      let _ = r.ctl.send(RemoteCtl::Resize(cols, rows));
+    }
   }
 
   /// The foreground process as the title, posted when it changed and a page views the terminal
@@ -450,13 +567,16 @@ impl Term {
 
   #[cfg(unix)]
   fn foreground(&self) -> Option<String> {
+    if let Some(r) = &self.remote {
+      return r.title.lock().clone();
+    }
     let pid = self.master.lock().as_ref()?.process_group_leader()?;
     process_name(pid)
   }
 
   #[cfg(not(unix))]
   fn foreground(&self) -> Option<String> {
-    None
+    self.remote.as_ref().and_then(|r| r.title.lock().clone())
   }
 
   fn orphaned_for(&self) -> Option<Duration> {
@@ -491,6 +611,40 @@ impl Term {
       }
     }
     drop(self.master.lock().take());
+  }
+}
+
+/// How long a terminal in a folder on an SSH host waits for the host's connection
+const REMOTE_CONNECT: Duration = Duration::from_secs(30);
+
+struct RemoteTerm {
+  ctl: mpsc::UnboundedSender<RemoteCtl>,
+  title: Arc<Mutex<Option<String>>>,
+}
+
+enum RemoteCtl {
+  Input(Vec<u8>),
+  Resize(u16, u16),
+  Stop,
+}
+
+/// A remote shell's kill: its task drops the helper call, which ends the shell on the host
+struct RemoteKiller(mpsc::UnboundedSender<RemoteCtl>);
+
+impl std::fmt::Debug for RemoteKiller {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.write_str("RemoteKiller")
+  }
+}
+
+impl ChildKiller for RemoteKiller {
+  fn kill(&mut self) -> std::io::Result<()> {
+    let _ = self.0.send(RemoteCtl::Stop);
+    Ok(())
+  }
+
+  fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+    Box::new(RemoteKiller(self.0.clone()))
   }
 }
 
@@ -562,7 +716,7 @@ async fn pump(term: Arc<Term>, mut rx: mpsc::Receiver<Vec<u8>>, mut exit_rx: one
 
 /// The shell as a terminal emulator starts it: the user's login shell (PowerShell on Windows) in `cwd` (home when that is
 /// not a folder), the variables a terminal sets, none of the engine's own host's
-fn command(program: Option<&[String]>, cwd: Option<&str>) -> CommandBuilder {
+pub(crate) fn command(program: Option<&[String]>, cwd: Option<&str>) -> CommandBuilder {
   let mut cmd = match program {
     Some([bin, args @ ..]) => {
       let mut c = CommandBuilder::new(bin);
@@ -628,7 +782,7 @@ fn default_shell() -> CommandBuilder {
   if ps.is_file() { CommandBuilder::new(ps) } else { CommandBuilder::new_default_prog() }
 }
 
-fn shell_name(cmd: &CommandBuilder) -> String {
+pub(crate) fn shell_name(cmd: &CommandBuilder) -> String {
   let path = if cmd.is_default_prog() { cmd.get_shell() } else { cmd.get_argv().first().map(|a| a.to_string_lossy().into_owned()).unwrap_or_default() };
   program_name(&path)
 }
@@ -641,7 +795,7 @@ fn program_name(path: &str) -> String {
 }
 
 #[cfg(target_os = "macos")]
-fn process_name(pid: i32) -> Option<String> {
+pub(crate) fn process_name(pid: i32) -> Option<String> {
   let mut buf = [0u8; 256];
   // SAFETY: proc_name writes at most `buffersize` bytes into the buffer and returns how many it wrote
   let n = unsafe { libc::proc_name(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
@@ -649,18 +803,18 @@ fn process_name(pid: i32) -> Option<String> {
 }
 
 #[cfg(target_os = "linux")]
-fn process_name(pid: i32) -> Option<String> {
+pub(crate) fn process_name(pid: i32) -> Option<String> {
   let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
   Some(program_name(comm.trim_end()))
 }
 
 #[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
-fn process_name(_pid: i32) -> Option<String> {
+pub(crate) fn process_name(_pid: i32) -> Option<String> {
   None
 }
 
 /// A page asks for its laid-out size; a hidden or collapsed one can measure nothing, which a pty must not take
-fn clamp_size(cols: u16, rows: u16) -> (u16, u16) {
+pub(crate) fn clamp_size(cols: u16, rows: u16) -> (u16, u16) {
   (cols.clamp(2, 1000), rows.clamp(1, 1000))
 }
 

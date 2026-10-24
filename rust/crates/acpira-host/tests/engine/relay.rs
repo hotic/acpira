@@ -335,11 +335,12 @@ impl HostBrowser for FakeBrowser {
   fn available(&self) -> bool {
     self.can
   }
-  fn open<'a>(&'a self, url: &'a str) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<BrowserOpened>> + Send + 'a>> {
+  fn open<'a>(&'a self, url: &'a str, folder: Option<&'a str>) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<BrowserOpened>> + Send + 'a>> {
     Box::pin(async move {
-      // The second request for one URL finds the tab the first one opened
-      let reused = self.opened.lock().iter().any(|u| u == url).then_some(BrowserReuse::Revealed);
-      self.opened.lock().push(url.to_owned());
+      // The second request for one URL finds the tab the first one opened; a folder on an SSH host is noted after it
+      let shown = folder.map_or_else(|| url.to_owned(), |f| format!("{url} in {f}"));
+      let reused = self.opened.lock().contains(&shown).then_some(BrowserReuse::Revealed);
+      self.opened.lock().push(shown);
       if url.contains("unreachable") { anyhow::bail!("it did not answer from the user's machine") }
       Ok(BrowserOpened { url: url.replace(":1/", ":2/"), reused })
     })

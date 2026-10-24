@@ -22,8 +22,68 @@ use super::Target;
 
 pub(super) struct Ctx {
   pub target: Target,
+  /// Where the target is: this machine, or an SSH host (through its helper's `tcp`)
+  pub dial: Dial,
   pub token: String,
   pub picker: Arc<Mutex<Arc<Vec<u8>>>>,
+}
+
+#[derive(Clone)]
+pub(crate) enum Dial {
+  Local,
+  Remote { connections: Arc<crate::remote::connections::Connections>, alias: String },
+}
+
+trait Upstream: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> Upstream for T {}
+
+/// How long a request waits for the host's connection
+const REMOTE_CONNECT: std::time::Duration = std::time::Duration::from_secs(15);
+
+impl Dial {
+  async fn connect(&self, host: &str, port: u16) -> io::Result<Box<dyn Upstream>> {
+    match self {
+      Dial::Local => Ok(Box::new(TcpStream::connect((host, port)).await?)),
+      Dial::Remote { connections, alias } => {
+        use crate::remote::client::Event;
+        let client = connections.ensure(alias, REMOTE_CONNECT).await.map_err(|e| io::Error::other(format!("{alias}: {e:#}")))?;
+        let mut call = client.request("tcp", serde_json::json!({ "host": host, "port": port }));
+        match call.next().await {
+          Some(Event::Chunk { stream, .. }) if stream == "open" => {}
+          Some(Event::Done(Err(e))) => return Err(io::Error::other(format!("on {alias}: {e}"))),
+          _ => return Err(io::Error::other(format!("{alias} closed the connection"))),
+        }
+        // The proxy reads and writes one end; this task carries the other over the helper call
+        let (near, far) = tokio::io::duplex(64 * 1024);
+        tokio::spawn(async move {
+          let (mut fr, mut fw) = tokio::io::split(far);
+          let mut buf = vec![0u8; 16 * 1024];
+          let mut reading = true;
+          loop {
+            tokio::select! {
+              n = fr.read(&mut buf), if reading => match n {
+                Ok(0) | Err(_) => {
+                  call.stdin_eof();
+                  reading = false;
+                }
+                Ok(n) => call.stdin(&buf[..n]),
+              },
+              ev = call.next() => match ev {
+                Some(Event::Chunk { bytes, .. }) => {
+                  if fw.write_all(&bytes).await.is_err() {
+                    break;
+                  }
+                }
+                _ => break,
+              },
+            }
+          }
+          let _ = fw.shutdown().await;
+        });
+        Ok(Box::new(near))
+      }
+    }
+  }
 }
 
 /// Where the picker is served; the proxy answers it itself
@@ -162,7 +222,7 @@ async fn serve(mut client: TcpStream, ctx: &Ctx) -> io::Result<()> {
   if let Some(rest) = req.get("referer").and_then(|r| r.strip_prefix(proxy_origin.as_str())).map(str::to_owned) {
     req.set("Referer", format!("{}{rest}", ctx.target.origin));
   }
-  let mut upstream = match TcpStream::connect((ctx.target.host.as_str(), ctx.target.port)).await {
+  let mut upstream = match ctx.dial.connect(ctx.target.host.as_str(), ctx.target.port).await {
     Ok(s) => s,
     Err(e) => {
       let body = format!("{} is not answering: {e}", ctx.target.origin);
@@ -191,7 +251,7 @@ async fn serve(mut client: TcpStream, ctx: &Ctx) -> io::Result<()> {
   upstream.write_all(&req.encode()).await?;
   upstream.write_all(&leftover).await?;
   let (mut client_r, mut client_w) = client.into_split();
-  let (up_r, mut up_w) = upstream.into_split();
+  let (up_r, mut up_w) = tokio::io::split(upstream);
   // The request body (if any) streams on while the response is read; this connection carries nothing after it
   let body = tokio::spawn(async move {
     let _ = tokio::io::copy(&mut client_r, &mut up_w).await;

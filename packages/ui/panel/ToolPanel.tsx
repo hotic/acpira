@@ -268,7 +268,7 @@ function ToolPanel(p: ToolPanelProps) {
       <div className="relative min-h-0 flex-1">
         {s.tabs.map(tab => {
           if (tab.kind === 'files') return <FilesTab key={tab.id} {...p} tab={tab.id} shown={s.tab === tab.id} />;
-          if (tab.kind === 'browser') return <BrowserFrame key={tab.id} tab={tab} shown={s.tab === tab.id} />;
+          if (tab.kind === 'browser') return <BrowserFrame key={tab.id} tab={tab} shown={s.tab === tab.id} root={p.root} />;
           if (tab.kind === 'terminal') return <TerminalFrame key={tab.id} tab={tab} shown={s.tab === tab.id} openPath={terminalPathOpener(p.root, p.openEditor)} />;
           if (tab.kind === 'new' && tab.id === s.tab) {
             return <NewTab key={tab.id} onPick={choice => pickNewTab(tab.id, choice, p.root)} />;
@@ -283,13 +283,15 @@ function ToolPanel(p: ToolPanelProps) {
 // One browser tab: the browser page in a frame of this page's origin (panel/browserTabs.ts). The shell opens the tab's relay
 // as it mounts and navigates it each time the tab is asked to show a page (`nav`); it closes the relay when the tab goes.
 // `stage`: the tab sits on the files layout's stage, so the page keeps a window's plain surface (browser/BrowserPanel.tsx)
-export function BrowserFrame({ tab, shown, stage }: { tab: Extract<PanelTab, { kind: 'browser' }>; shown: boolean; stage?: boolean }) {
+// `root`: the session folder; one on an SSH host makes the tab show that host's dev servers
+export function BrowserFrame({ tab, shown, stage, root }: { tab: Extract<PanelTab, { kind: 'browser' }>; shown: boolean; stage?: boolean; root: string }) {
   const ref = useCallback((el: HTMLIFrameElement | null) => registerBrowserFrame(tab.id, el), [tab.id]);
+  const folder = parseRemoteFolder(root) ? root : undefined;
   useEffect(() => () => vscodeApi().postMessage({ type: 'panelBrowserClose', tab: tab.id }), [tab.id]);
   useEffect(() => {
-    vscodeApi().postMessage({ type: 'panelBrowserOpen', tab: tab.id, ...(tab.url ? { url: tab.url } : {}) });
-    // Only a new ask navigates: the page naming its own address (titled) must not reload it
-  }, [tab.id, tab.nav]);
+    vscodeApi().postMessage({ type: 'panelBrowserOpen', tab: tab.id, ...(tab.url ? { url: tab.url } : {}), ...(folder ? { folder } : {}) });
+    // Only a new ask (or another host) navigates: the page naming its own address (titled) must not reload it
+  }, [tab.id, tab.nav, folder]);
   const src = `${location.origin}/index.html?host=browser&tab=${encodeURIComponent(tab.id)}${stage ? '&stage' : ''}`;
   return <iframe ref={ref} title={tab.title || t('panel.browser')} src={src} className={cn('absolute inset-0 size-full border-0 bg-transparent', !shown && 'invisible')} />;
 }

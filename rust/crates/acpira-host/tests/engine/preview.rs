@@ -81,7 +81,7 @@ async fn html_gets_the_picker_and_loses_what_would_keep_it_out_of_the_panel() {
   })
   .await;
   let (_d, picker, p) = previews();
-  let o = p.open(1, "panel", &format!("http://127.0.0.1:{up}/blog?x=1"), &picker).await.unwrap();
+  let o = p.open(1, "panel", &format!("http://127.0.0.1:{up}/blog?x=1"), &picker, None).await.unwrap();
   assert!(o.url.ends_with("/blog?x=1"), "{}", o.url);
   let port = port_of(&o.url);
   let res = fetch(port, &get("/", port)).await;
@@ -110,7 +110,7 @@ async fn chunked_html_is_decoded_even_when_head_spans_two_chunks() {
   })
   .await;
   let (_d, picker, p) = previews();
-  let o = p.open(1, "panel", &format!("http://localhost:{up}/"), &picker).await.unwrap();
+  let o = p.open(1, "panel", &format!("http://localhost:{up}/"), &picker, None).await.unwrap();
   let port = port_of(&o.url);
   let res = fetch(port, &get("/", port)).await;
   assert!(!res.to_ascii_lowercase().contains("transfer-encoding"), "{res}");
@@ -127,7 +127,7 @@ async fn chunked_html_is_decoded_even_when_head_spans_two_chunks() {
 async fn a_request_under_a_foreign_host_name_is_refused() {
   let (up, mut heads) = upstream(|_| vec![b"HTTP/1.1 204 No Content\r\n\r\n".to_vec()]).await;
   let (_d, picker, p) = previews();
-  let o = p.open(1, "panel", &format!("http://localhost:{up}/"), &picker).await.unwrap();
+  let o = p.open(1, "panel", &format!("http://localhost:{up}/"), &picker, None).await.unwrap();
   let port = port_of(&o.url);
   let res = fetch(port, &format!("GET / HTTP/1.1\r\nHost: rebind.evil.test:{port}\r\nOrigin: http://rebind.evil.test:{port}\r\n\r\n")).await;
   assert!(res.starts_with("HTTP/1.1 403"), "{res}");
@@ -145,7 +145,7 @@ async fn upstream_sees_its_own_origin_and_redirects_and_cookies_come_back_for_th
   })
   .await;
   let (_d, picker, p) = previews();
-  let o = p.open(1, "panel", &format!("http://127.0.0.1:{up}/"), &picker).await.unwrap();
+  let o = p.open(1, "panel", &format!("http://127.0.0.1:{up}/"), &picker, None).await.unwrap();
   let port = port_of(&o.url);
   let me = format!("http://127.0.0.1:{port}");
   let res = fetch(port, &format!("POST /login HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: {me}\r\nReferer: {me}/form?a=1\r\nAccept-Encoding: gzip\r\nConnection: keep-alive\r\nContent-Length: 3\r\n\r\nx=1")).await;
@@ -171,7 +171,7 @@ async fn other_bodies_pass_byte_for_byte() {
   })
   .await;
   let (_d, picker, p) = previews();
-  let o = p.open(1, "panel", &format!("http://127.0.0.1:{up}/"), &picker).await.unwrap();
+  let o = p.open(1, "panel", &format!("http://127.0.0.1:{up}/"), &picker, None).await.unwrap();
   let port = port_of(&o.url);
   let mut s = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
   s.write_all(get("/bin", port).as_bytes()).await.unwrap();
@@ -197,7 +197,7 @@ async fn event_streams_are_not_held_back() {
     }
   });
   let (_d, picker, p) = previews();
-  let o = p.open(1, "panel", &format!("http://127.0.0.1:{up}/"), &picker).await.unwrap();
+  let o = p.open(1, "panel", &format!("http://127.0.0.1:{up}/"), &picker, None).await.unwrap();
   let port = port_of(&o.url);
   let mut s = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
   s.write_all(get("/events", port).as_bytes()).await.unwrap();
@@ -236,7 +236,7 @@ async fn websocket_upgrades_are_piped_both_ways() {
     }
   });
   let (_d, picker, p) = previews();
-  let o = p.open(1, "panel", &format!("http://127.0.0.1:{up}/"), &picker).await.unwrap();
+  let o = p.open(1, "panel", &format!("http://127.0.0.1:{up}/"), &picker, None).await.unwrap();
   let port = port_of(&o.url);
   let mut s = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
   s.write_all(format!("GET /hmr HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nOrigin: http://127.0.0.1:{port}\r\n\r\n").as_bytes()).await.unwrap();
@@ -254,11 +254,11 @@ async fn websocket_upgrades_are_piped_both_ways() {
 async fn a_dev_server_that_is_down_answers_502_and_other_hosts_are_refused() {
   let (_d, picker, p) = previews();
   let free = TcpListener::bind(("127.0.0.1", 0)).await.unwrap().local_addr().unwrap().port();
-  let o = p.open(1, "panel", &format!("http://127.0.0.1:{free}/"), &picker).await.unwrap();
+  let o = p.open(1, "panel", &format!("http://127.0.0.1:{free}/"), &picker, None).await.unwrap();
   let port = port_of(&o.url);
   assert!(fetch(port, &get("/", port)).await.starts_with("HTTP/1.1 502"));
   for bad in ["https://localhost:3000/", "http://example.com/", "http://192.168.1.2:80/"] {
-    assert!(p.open(1, "panel", bad, &picker).await.is_err(), "{bad}");
+    assert!(p.open(1, "panel", bad, &picker, None).await.is_err(), "{bad}");
   }
 }
 
@@ -278,15 +278,15 @@ async fn proxies_are_shared_by_target_and_close_with_their_last_lease() {
   let (a, _) = upstream(|_| vec![b"HTTP/1.1 204 No Content\r\n\r\n".to_vec()]).await;
   let (b, _) = upstream(|_| vec![b"HTTP/1.1 204 No Content\r\n\r\n".to_vec()]).await;
   let (_d, picker, p) = previews();
-  let one = p.open(1, "p1", &format!("http://127.0.0.1:{a}/x"), &picker).await.unwrap();
-  let two = p.open(2, "p9", &format!("http://127.0.0.1:{a}/y"), &picker).await.unwrap();
+  let one = p.open(1, "p1", &format!("http://127.0.0.1:{a}/x"), &picker, None).await.unwrap();
+  let two = p.open(2, "p9", &format!("http://127.0.0.1:{a}/y"), &picker, None).await.unwrap();
   assert_eq!((port_of(&one.url), &one.token), (port_of(&two.url), &two.token));
   let port = port_of(&one.url);
   // Window 1 reloads: window 2 still shows the page
   p.release_wire(1);
   assert!(listening(port).await);
   // Window 2's panel moves to another site: the first proxy has no one left
-  let other = p.open(2, "p9", &format!("http://127.0.0.1:{b}/"), &picker).await.unwrap();
+  let other = p.open(2, "p9", &format!("http://127.0.0.1:{b}/"), &picker, None).await.unwrap();
   assert!(!listening(port).await);
   assert_eq!(p.ports(), vec![port_of(&other.url)]);
   p.close(2, "p9");
@@ -300,17 +300,17 @@ async fn an_open_overtaken_by_a_close_or_a_later_open_takes_no_lease() {
   let (a, _) = upstream(|_| vec![b"HTTP/1.1 204 No Content\r\n\r\n".to_vec()]).await;
   let (b, _) = upstream(|_| vec![b"HTTP/1.1 204 No Content\r\n\r\n".to_vec()]).await;
   let (_d, picker, p) = previews();
-  let closed = p.open(1, "panel", &format!("http://127.0.0.1:{a}/"), &picker);
+  let closed = p.open(1, "panel", &format!("http://127.0.0.1:{a}/"), &picker, None);
   p.close(1, "panel");
   assert!(closed.await.is_err());
   assert!(p.ports().is_empty(), "no proxy left without a lease");
-  let gone = p.open(1, "panel", &format!("http://127.0.0.1:{a}/"), &picker);
+  let gone = p.open(1, "panel", &format!("http://127.0.0.1:{a}/"), &picker, None);
   p.release_wire(1);
   assert!(gone.await.is_err());
   assert!(p.ports().is_empty());
   // A to B, with A binding last: B keeps its lease and A's proxy never stays up
-  let first = p.open(1, "panel", &format!("http://127.0.0.1:{a}/"), &picker);
-  let second = p.open(1, "panel", &format!("http://127.0.0.1:{b}/#/settings"), &picker);
+  let first = p.open(1, "panel", &format!("http://127.0.0.1:{a}/"), &picker, None);
+  let second = p.open(1, "panel", &format!("http://127.0.0.1:{b}/#/settings"), &picker, None);
   let shown = second.await.unwrap();
   assert!(shown.url.ends_with("/#/settings"), "{}", shown.url);
   assert!(first.await.is_err());

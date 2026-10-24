@@ -54,6 +54,9 @@ fn main() {
   if args.first().map(String::as_str) == Some("mcp") {
     std::process::exit(acpira_host::host_mcp::run(VERSION));
   }
+  if args.first().map(String::as_str) == Some("mcp-host") {
+    std::process::exit(acpira_host::host_mcp::run_host_stdio());
+  }
   if args.first().map(String::as_str) == Some("remote") {
     std::process::exit(acpira_host::remote::helper::main(&args[1..], VERSION));
   }

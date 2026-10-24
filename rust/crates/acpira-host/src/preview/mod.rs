@@ -80,7 +80,7 @@ struct Proxy {
   stop: watch::Sender<bool>,
 }
 
-/// Every proxy this engine runs, by target origin
+/// Every proxy this engine runs, by target origin (after its SSH host for a dev server there)
 pub struct Previews {
   proxies: Mutex<HashMap<String, Proxy>>,
   /// The newest open asked for per lease. An open runs on its own task, so a close, a dropped wire or a later open of the
@@ -98,7 +98,16 @@ impl Previews {
   /// Lease the proxy for `url` to this wire's panel, starting it when no one holds it. A panel that moves to another site
   /// gives up its lease on the old one. `picker` is the script the proxy serves to the page (the shell's bundled file).
   /// The open is ordered when this is called, before the returned future runs: call it in wire order
-  pub fn open(self: &Arc<Self>, wire: u64, panel: &str, url: &str, picker: impl Into<PathBuf>) -> impl Future<Output = Result<Opened, String>> + Send + 'static {
+  /// `remote`: the page is a dev server on this SSH host (the session folder's), reached through its helper; a proxy is
+  /// kept per host and origin, so two hosts' `localhost:3000` never meet
+  pub fn open(
+    self: &Arc<Self>,
+    wire: u64,
+    panel: &str,
+    url: &str,
+    picker: impl Into<PathBuf>,
+    remote: Option<(String, Arc<crate::remote::connections::Connections>)>,
+  ) -> impl Future<Output = Result<Opened, String>> + Send + 'static {
     let lease = Lease { wire, panel: panel.to_owned() };
     let asked = {
       let mut asked = self.asked.lock();
@@ -108,16 +117,32 @@ impl Previews {
       n
     };
     let (this, url, picker) = (self.clone(), url.to_owned(), picker.into());
-    async move { this.open_asked(lease, asked, &url, &picker).await }
+    async move { this.open_asked(lease, asked, &url, &picker, remote).await }
   }
 
   fn still_asked(&self, lease: &Lease, asked: u64) -> bool {
     self.asked.lock().1.get(lease) == Some(&asked)
   }
 
-  async fn open_asked(&self, lease: Lease, asked: u64, url: &str, picker: &std::path::Path) -> Result<Opened, String> {
+  async fn open_asked(
+    &self,
+    lease: Lease,
+    asked: u64,
+    url: &str,
+    picker: &std::path::Path,
+    remote: Option<(String, Arc<crate::remote::connections::Connections>)>,
+  ) -> Result<Opened, String> {
     const SUPERSEDED: &str = "the panel closed or moved on before the page opened";
     let target = parse_target(url)?;
+    // The proxies' key: the origin, after the host it is on
+    let key = match &remote {
+      Some((alias, _)) => format!("ssh://{alias} {}", target.origin),
+      None => target.origin.clone(),
+    };
+    let dial = match remote {
+      Some((alias, connections)) => proxy::Dial::Remote { connections, alias },
+      None => proxy::Dial::Local,
+    };
     let script = tokio::fs::read(picker).await.map_err(|e| format!("picker script {}: {e}", picker.display()))?;
     // Released before the new one is taken, so moving within a site never closes it
     {
@@ -125,11 +150,11 @@ impl Previews {
       if !self.still_asked(&lease, asked) {
         return Err(SUPERSEDED.into());
       }
-      if let Some(p) = proxies.get_mut(&target.origin) {
+      if let Some(p) = proxies.get_mut(&key) {
         *p.picker.lock() = Arc::new(script);
         p.leases.insert(lease.clone());
         let opened = Opened { url: format!("http://127.0.0.1:{}{}{}", p.port, target.path, target.fragment), token: p.token.clone() };
-        let others: Vec<String> = proxies.keys().filter(|o| **o != target.origin).cloned().collect();
+        let others: Vec<String> = proxies.keys().filter(|o| **o != key).cloned().collect();
         for origin in others {
           self.drop_lease(&mut proxies, &origin, &lease);
         }
@@ -141,7 +166,7 @@ impl Previews {
     let token = uuid::Uuid::new_v4().to_string();
     let picker = Arc::new(Mutex::new(Arc::new(script)));
     let (stop, stopped) = watch::channel(false);
-    let ctx = Arc::new(proxy::Ctx { target: target.clone(), token: token.clone(), picker: picker.clone() });
+    let ctx = Arc::new(proxy::Ctx { target: target.clone(), dial, token: token.clone(), picker: picker.clone() });
     tokio::spawn(proxy::accept(listener, ctx, stopped));
     let mut proxies = self.proxies.lock();
     // Closed or moved on while binding: the new listener goes and nothing is leased
@@ -154,13 +179,13 @@ impl Previews {
       self.drop_lease(&mut proxies, &origin, &lease);
     }
     // Another open for the same site may have won the race while this one was binding: keep that one
-    if let Some(p) = proxies.get_mut(&target.origin) {
+    if let Some(p) = proxies.get_mut(&key) {
       let _ = stop.send(true);
       p.leases.insert(lease);
       return Ok(Opened { url: format!("http://127.0.0.1:{}{}{}", p.port, target.path, target.fragment), token: p.token.clone() });
     }
-    (self.log)(&format!("preview proxy for {} on 127.0.0.1:{port}", target.origin));
-    proxies.insert(target.origin.clone(), Proxy { port, token: token.clone(), picker, leases: HashSet::from([lease]), stop });
+    (self.log)(&format!("preview proxy for {key} on 127.0.0.1:{port}"));
+    proxies.insert(key, Proxy { port, token: token.clone(), picker, leases: HashSet::from([lease]), stop });
     Ok(Opened { url: format!("http://127.0.0.1:{port}{}{}", target.path, target.fragment), token })
   }
 
