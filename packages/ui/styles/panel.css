@@ -43,6 +43,9 @@
 .acp-shell[data-desktop]:not([data-layout="files"]):has(> [data-panel-toggle]):not(:has(> [data-tool-panel-wrap][data-shown])) {
   --sheet-trail: calc(var(--start-x) + var(--ctl) + var(--gap));
 }
+/* The Files tab's tree sits at the panel's (and the window's) right edge, under the pinned toggle: its filter box ends where
+   the toggle's button does (reported 2026-10-24). The files layout's explorer has no toggle above it and keeps the gap */
+.acp-shell[data-desktop] [data-files-tab] { --tree-filter-end: calc(var(--start-x) + var(--sheet-inset)); }
 @theme inline {
   --spacing-tool-panel: var(--tool-panel-w);
   --spacing-tree-chevron: var(--tree-chevron);

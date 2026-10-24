@@ -241,7 +241,8 @@ export function FileTree(p: FileTreeProps) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-tree>
-      <div className="flex min-h-row shrink-0 items-center border-b border-line px-gap py-gap-half">
+      {/* The trailing inset is the tool panel's when the tree sits under its pinned toggle (panel.css --tree-filter-end) */}
+      <div className="flex min-h-row shrink-0 items-center border-b border-line py-gap-half pl-gap pr-[var(--tree-filter-end,var(--spacing-gap))]">
         <label className="flex h-ctl-sm min-w-0 flex-1 items-center gap-1.5 rounded-md border border-line bg-chip px-2 text-3 focus-within:border-line-strong">
           <Search strokeWidth={1.5} className="size-3 shrink-0 text-fg-3" />
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder={t('panel.filter')} spellCheck={false}
