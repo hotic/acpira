@@ -3,7 +3,8 @@ import { Block, Streamdown, defaultRehypePlugins, parseMarkdownIntoBlocks, type 
 import { cjk } from '@streamdown/cjk';
 import { createMathPlugin } from '@streamdown/math';
 import type { ImageRef, TextBlock } from '@acpira/shared/transcript';
-import { STREAM_MOTION, useSmoothText, useStreamMotion, type StreamMotion } from './streamMotion';
+import { STREAM_DURATION_MS, STREAM_MOTION, useSmoothText, useStreamMotion, type StreamMotion } from './streamMotion';
+import { applyGlyphRuns, createGlyphRuns, seedGlyphRuns, type GlyphRunState } from './glyphRuns';
 import { CodeBlock } from './CodeBlock';
 import { InlineFileCode, Link } from './Link';
 import { decodeLocalImageSrc, rewriteFileHrefs, sameImageSource } from './fileLinks';
@@ -48,6 +49,7 @@ export const Prose = memo(function Prose({ block, motion = STREAM_MOTION, onBusy
   const { animated, animating } = useStreamMotion(streaming, motion);
   const busy = streaming || animating;
   const [blocks] = useState(() => createLiveBlocks(resume));
+  blocks.runs = runsFit(motion);
   // Only the first render seeds the block plugins; later text animates past what it rendered
   useLayoutEffect(() => { blocks.resume = false; }, [blocks]);
   useEffect(() => { onBusy?.(busy); }, [busy, onBusy]);
@@ -90,7 +92,11 @@ const ANIMATED_TAIL_BLOCKS = 2;
 
 // `resume` holds for the first render of a resumed block (see Prose): its text is already on screen, so the tail
 // blocks' animate plugins start past it instead of fading every glyph in again
-interface LiveBlocksState { count: number; resume: boolean; parse: (markdown: string) => string[] }
+// `runs`: the entrance is drawn by glyphRuns.ts instead of streamdown's per-character spans (the production motion; the
+// LAB's alternative entrances with a stagger or another animation keep streamdown's plugin)
+interface LiveBlocksState { count: number; resume: boolean; runs: boolean; parse: (markdown: string) => string[] }
+
+const runsFit = (motion: StreamMotion) => motion.animation.animation === 'acpGlyph' && !motion.animation.stagger;
 
 // Per Prose instance: streamdown memoizes its block split on this function's identity, and the blocks render
 // right after the split in the same pass, so they read the current count from it
@@ -98,6 +104,7 @@ function createLiveBlocks(resume: boolean): LiveBlocksState {
   const state: LiveBlocksState = {
     count: 0,
     resume,
+    runs: true,
     parse: markdown => {
       const blocks = parseMarkdownIntoBlocks(markdown);
       state.count = blocks.length;
@@ -112,11 +119,33 @@ const LiveBlocks = createContext<LiveBlocksState | undefined>(undefined);
 // One stripped plugin list per animated list, so a settled block keeps a stable `rehypePlugins` and Block's memo holds
 const settledPlugins = new WeakMap<object, BlockProps['rehypePlugins']>();
 
+// A live block's glyph runs and the plugin list that draws them, one per streamdown animate plugin (it keeps one per
+// block), so the list stays stable across passes and Block's memo holds while the content does
+const runPlugins = new WeakMap<object, { state: GlyphRunState; list: BlockProps['rehypePlugins'] }>();
+// A run is drawn as a fading span until its fade has surely ended (the CSS duration, --stream-char-duration, plus a frame or two)
+const RUN_FADE_MS = STREAM_DURATION_MS + 40;
+
+function glyphRunPlugins(animatePlugin: NonNullable<BlockProps['animatePlugin']>, rehypePlugins: NonNullable<BlockProps['rehypePlugins']>) {
+  let entry = runPlugins.get(animatePlugin);
+  if (!entry) {
+    const state = createGlyphRuns();
+    const plugin = () => (tree: Parameters<typeof applyGlyphRuns>[1]) => applyGlyphRuns(state, tree, performance.now(), RUN_FADE_MS);
+    entry = { state, list: rehypePlugins.map(p => (p === animatePlugin.rehypePlugin ? plugin : p)) };
+    runPlugins.set(animatePlugin, entry);
+  }
+  return entry;
+}
+
 function SettlingBlock(props: BlockProps) {
   const live = useContext(LiveBlocks);
   const { animatePlugin, rehypePlugins } = props;
   if (!live || !animatePlugin || !rehypePlugins) return <Block {...props} />;
   if (props.index >= live.count - ANIMATED_TAIL_BLOCKS) {
+    if (live.runs) {
+      const runs = glyphRunPlugins(animatePlugin, rehypePlugins);
+      if (live.resume) seedGlyphRuns(runs.state);
+      return <Block {...props} animatePlugin={null} rehypePlugins={runs.list} />;
+    }
     // The plugin counts rendered characters, which never exceed the markdown source, so every glyph of this
     // render counts as already shown; Block's commit then records the real count for the next chunk
     if (live.resume) animatePlugin.setPrevContentLength(props.content.length);

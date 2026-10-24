@@ -10,6 +10,14 @@ export function scrollerUsable(el: { clientHeight: number; clientWidth: number }
 // gap the user never made — treating that as "left the bottom" skipped every later pin and left the tail under the composer.
 // Only re-arm at the actual bottom (allowing subpixel rounding). A near-bottom zone swallows small wheel/trackpad steps:
 // every streamed update pins again before those steps can accumulate enough distance to release the follow.
-export function followsBottom(el: { scrollHeight: number; scrollTop: number; clientHeight: number }, pinned: boolean, lastTop: number): boolean {
-  return el.scrollHeight - el.scrollTop - el.clientHeight <= 1 || (pinned && el.scrollTop >= lastTop);
+// `intent`: the reader moved the view (wheel, touch, keys or the pointer on the scroller just now). An upward scroll without
+// it is the browser clamping the offset to content that shrank for a layout (a block remounting, a fold measuring): WebKit
+// lays out and clamps between React's commits where Chromium did not, and treating that as "left the bottom" stopped the
+// follow two seconds into a streamed reply in WKWebView (2026-10-25). Only the reader lets go of the bottom.
+export function followsBottom(el: { scrollHeight: number; scrollTop: number; clientHeight: number }, pinned: boolean, lastTop: number, intent = true): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= 1 || (pinned && (!intent || el.scrollTop >= lastTop));
 }
+
+// How long after the reader's last wheel, touch, key or pointer release a scroll still counts as theirs (trackpad
+// momentum keeps sending wheel events, so this only has to bridge the gap to the scroll event)
+export const SCROLL_INTENT_MS = 800;
