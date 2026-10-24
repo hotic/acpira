@@ -1207,6 +1207,9 @@ pub struct SessionSummary {
   pub cwd: String,
   #[serde(default)]
   pub updated_at: String,
+  /// When the session was started, for the list's "created" order; absent on index entries written before the field
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub created_at: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub pinned: Option<bool>,
   /// The user category (`SessionCategory.id`) the session is filed under; pinned and filed are exclusive. An id no
@@ -1218,6 +1221,18 @@ pub struct SessionSummary {
   /// Only beside `Background`: a turn ended there that nobody has looked at yet (`Unread` itself would read as finished)
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub unread: Option<bool>,
+  /// The model the session last ran (`model_shapes::session_model`); absent while no model control is known and on index
+  /// entries written before the field existed
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub model: Option<SessionModel>,
+}
+
+/// A session's current model for the list: the wire id is its real identity (the vendor is read from it, "kimi-code/k3"),
+/// the name only its label ("K3")
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionModel {
+  pub id: String,
+  pub name: String,
 }
 
 /// A user-made group of sessions inside one project (`cwd`), shown between the project and its sessions

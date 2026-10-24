@@ -3,12 +3,20 @@
 use std::collections::BTreeMap;
 
 use crate::models::group_models;
-use crate::transcript::{ConfigControl, SessionControls};
+use crate::transcript::{ConfigControl, SessionControls, SessionModel};
 
 pub type ModelShapes = BTreeMap<String, Vec<ConfigControl>>;
 
 pub fn is_model_control(c: &ConfigControl) -> bool {
   c.category.as_deref() == Some("model") || (c.category.is_none() && c.id == "model")
+}
+
+/// The current model for the session list: its value and its option's name (the value itself when no option matches)
+pub fn session_model(controls: &SessionControls) -> Option<SessionModel> {
+  let model = controls.options.iter().find(|c| is_model_control(c))?;
+  let value = model.value.as_deref()?;
+  let name = model.options.iter().find(|o| o.id == value).map_or(value, |o| o.name.as_str());
+  Some(SessionModel { id: value.to_owned(), name: name.to_owned() })
 }
 
 // Structure only: a value change is not a new shape

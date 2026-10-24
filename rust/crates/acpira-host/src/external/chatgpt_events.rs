@@ -420,6 +420,7 @@ pub fn chatgpt_summary(r: &ChatGptRecord, now: i64) -> SessionSummary {
     acp_session_id: None,
     cwd: r.cwd.clone(),
     updated_at: r.updated_at.clone(),
+    created_at: Some(r.created_at.clone()).filter(|c| !c.is_empty()),
     pinned: r.pinned,
     category: None,
     state: if v.running {
@@ -430,5 +431,6 @@ pub fn chatgpt_summary(r: &ChatGptRecord, now: i64) -> SessionSummary {
       None
     },
     unread: None,
+    model: None,
   }
 }
