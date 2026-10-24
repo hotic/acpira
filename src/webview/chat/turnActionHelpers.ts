@@ -62,9 +62,35 @@ function foregroundToolMs(turn: AgentTurn, from: number, to: number): number {
   return total + (curE - curS);
 }
 
+// End of the last foreground tool run inside `[from, to]`, or undefined when none ran there.
+function lastForegroundToolEnd(turn: AgentTurn, from: number, to: number): number | undefined {
+  let last: number | undefined;
+  for (const b of turn.blocks) {
+    if (b.type !== 'tool_call' || b.background || b.startedAt === undefined || b.endedAt === undefined) continue;
+    const e = Math.min(to, b.endedAt);
+    if (e > from && (last === undefined || e > last)) last = e;
+  }
+  return last;
+}
+
+// Whether the tally covers only the turn's last model call rather than the whole turn. Devin's prompt usage is the last
+// request's own (its input matches the end-of-turn context exactly, output is just the final reply), while a per-turn
+// tally over several calls re-counts the context once per call and lands far above it. A peer's explicit
+// `modelCalls === 1` settles it either way.
+const SINGLE_CALL_TOLERANCE = 0.02;
+
+function tallyIsLastCall(u: TurnUsage): boolean {
+  if (u.modelCalls !== undefined) return u.modelCalls === 1;
+  if (!u.context || u.context.used <= 0 || u.input === undefined || u.output === undefined) return false;
+  const total = u.total ?? u.input + u.output;
+  return Math.abs(total - u.context.used) <= u.context.used * SINGLE_CALL_TOLERANCE;
+}
+
 // Per-request decode throughput (`(tokens - 1) / decodeSeconds`, NVIDIA AIPerf's Output Token Throughput Per User),
-// measured from the first streamed block (`respondedAt`) to `endedAt` minus foreground tool execution. Omitted when
-// fewer than 5 tokens were generated or the active decode window is under 200 ms (single-chunk / buffered dumps).
+// measured from the first streamed block (`respondedAt`) to `endedAt` minus foreground tool execution. When the tally
+// covers only the last model call, the window shrinks to that call: from the last foreground tool's end to `endedAt`
+// (it then includes that call's prefill, so the figure reads slightly low). Omitted when fewer than 5 tokens were
+// generated or the active decode window is under 200 ms (single-chunk / buffered dumps).
 const MIN_TPS_TOKENS = 5;
 const MIN_DECODE_MS = 200;
 
@@ -72,7 +98,10 @@ export function turnOutputTps(turn: AgentTurn): number | undefined {
   if (turn.respondedAt === undefined || turn.endedAt === undefined) return undefined;
   const tokens = generatedTokens(turn.usage);
   if (tokens === undefined || tokens < MIN_TPS_TOKENS) return undefined;
-  const activeMs = turn.endedAt - turn.respondedAt - foregroundToolMs(turn, turn.respondedAt, turn.endedAt);
+  const lastToolEnd = tallyIsLastCall(turn.usage!) ? lastForegroundToolEnd(turn, turn.respondedAt, turn.endedAt) : undefined;
+  const activeMs = lastToolEnd !== undefined
+    ? turn.endedAt - lastToolEnd
+    : turn.endedAt - turn.respondedAt - foregroundToolMs(turn, turn.respondedAt, turn.endedAt);
   if (activeMs < MIN_DECODE_MS) return undefined;
   const tps = Math.round(((tokens - 1) * 1000) / activeMs);
   return tps > 0 ? tps : undefined;
