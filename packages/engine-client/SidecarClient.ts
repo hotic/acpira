@@ -52,6 +52,8 @@ export interface PreviewLease {
   panelId: string;
   url: string;
   picker: string;
+  // A session folder on an SSH host: the page is that host's dev server
+  folder?: string;
   // Each answer: the proxied page and its picker token, or why it cannot be shown
   onOpened(r: { url: string; token: string } | { error: string }): void;
 }
@@ -199,7 +201,7 @@ export class SidecarClient {
     const requestId = `p${++this.previewSeq}`;
     this.previewAsks.set(requestId, { panelId: lease.panelId, url: lease.url });
     this.previewLatest.set(lease.panelId, requestId);
-    this.write({ type: 'previewOpen', requestId, panelId: lease.panelId, url: lease.url, picker: lease.picker });
+    this.write({ type: 'previewOpen', requestId, panelId: lease.panelId, url: lease.url, picker: lease.picker, ...(lease.folder ? { folder: lease.folder } : {}) });
   }
 
   send(viewId: string, message: WebviewMsg) {

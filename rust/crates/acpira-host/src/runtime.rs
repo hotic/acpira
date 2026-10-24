@@ -262,6 +262,7 @@ impl HostRuntime {
       terminals: crate::terminal::TerminalHub::new(),
       connections,
     });
+    runtime.terminals.set_remote(runtime.connections.clone());
     // A host's folders are the `ssh://` entries of the project list
     let weak = Arc::downgrade(&runtime.manager);
     runtime.connections.set_projects(Arc::new(move || weak.upgrade().and_then(|m| m.categories().projects).unwrap_or_default()));

@@ -48,6 +48,10 @@ pub enum PlatformRequest {
   /// `{ url }`, the address the user's side loaded
   OpenBrowser {
     url: String,
+    /// The session folder when it is on an SSH host (`ssh://alias/path`): a loopback page is that host's, shown through
+    /// the engine's preview proxy for it, and the engine has already found it listening there
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    folder: Option<String>,
   },
   OpenInEditor {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -241,6 +245,9 @@ pub enum ShellMsg {
     panel_id: String,
     url: String,
     picker: String,
+    /// The session folder the panel belongs to, when it is on an SSH host: the page is that host's dev server
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    folder: Option<String>,
   },
   /// The panel closed; its proxy goes when no other panel holds it
   PreviewClose {

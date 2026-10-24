@@ -35,6 +35,10 @@ pub enum HubOp {
   /// `workspace_hooks` in a session whose folder is on an SSH host: the project's hooks file there, checked there;
   /// answered `Done` (the check's text) / `Error`
   HostHooks { cwd: String },
+  /// A project stdio MCP server on the SSH host of the session's folder, by the name the session registered it under
+  /// (`AcpSession::host_mcp_servers`): answered `Done` once it runs there (or `Error`), then the socket carries its stdin
+  /// one way and `hub::Frame`s the other
+  HostStdio { name: String },
 }
 
 /// `search_sessions`' arguments (`session_library.rs`)

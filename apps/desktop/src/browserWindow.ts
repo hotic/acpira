@@ -32,6 +32,8 @@ export class BrowserRelay {
   readonly panelId = randomUUID();
   // The page as asked for: what the address bar shows and what a reconnect asks for again; undefined while empty
   target?: string;
+  // The session folder on an SSH host the tab belongs to: its pages are that host's dev servers
+  folder?: string;
   private release?: () => void;
   private ready = false;
   // The frame (or error) waits for the page to listen
@@ -42,7 +44,7 @@ export class BrowserRelay {
   // Another page through the same lease: the engine keeps the proxy while the site stays the same
   navigate(url: string) {
     this.target = url;
-    this.release = this.opts.client.preview({ panelId: this.panelId, url, picker: this.opts.picker, onOpened: r => this.opened(url, r) });
+    this.release = this.opts.client.preview({ panelId: this.panelId, url, picker: this.opts.picker, folder: this.folder, onOpened: r => this.opened(url, r) });
   }
 
   postLook() {
@@ -122,7 +124,8 @@ export class BrowserPanelWindow {
   readonly relay: BrowserRelay;
 
   // `focus` false: shown without taking the keyboard (an agent's open_browser leaves the caret in the chat)
-  constructor(private opts: BrowserWindowOpts, url?: string, focus = true) {
+  // `folder`: the session folder on an SSH host whose dev server the window shows
+  constructor(private opts: BrowserWindowOpts, url?: string, focus = true, folder?: string) {
     this.win = new BrowserWindow({
       width: 1200,
       height: 860,
@@ -140,11 +143,13 @@ export class BrowserPanelWindow {
     this.win.once('ready-to-show', () => (focus ? this.win.show() : this.win.showInactive()));
     this.win.on('closed', () => { this.relay.dispose(); this.opts.onClosed(this); });
     void this.win.loadURL(`${APP_ORIGIN}/index.html?host=browser`).catch(e => opts.log(`browser window load failed: ${String(e)}`));
+    this.relay.folder = folder;
     if (url) this.relay.navigate(url);
   }
 
   get webContents(): WebContents { return this.win.webContents; }
   get target(): string | undefined { return this.relay.target; }
+  get folder(): string | undefined { return this.relay.folder; }
 
   reveal() {
     if (this.win.isMinimized()) this.win.restore();

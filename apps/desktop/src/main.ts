@@ -324,9 +324,10 @@ async function main() {
   // A loopback page in a browser panel (undefined: an empty one on its address bar), the window already showing its site
   // brought up (navigated when the page differs) or a new one; `focus` false for an agent's open_browser, so the chat
   // keeps the keyboard
-  function showPreview(url: string | undefined, focus = true): BrowserOpened['reused'] {
+  // `folder`: a session folder on an SSH host, whose dev server the page is (a site is matched on its host too)
+  function showPreview(url: string | undefined, focus = true, folder?: string): BrowserOpened['reused'] {
     const origin = url && new URL(url).origin;
-    const shown = [...browsers].find(b => (origin ? b.target !== undefined && new URL(b.target).origin === origin : b.target === undefined));
+    const shown = [...browsers].find(b => (origin ? b.target !== undefined && new URL(b.target).origin === origin && b.folder === folder : b.target === undefined));
     const bring = (b: BrowserPanelWindow) => (focus ? b.reveal() : b.win.showInactive());
     if (shown && !url) { bring(shown); return 'revealed'; }
     if (shown && url) {
@@ -335,22 +336,23 @@ async function main() {
       shown.relay.navigate(url);
       return 'navigated';
     }
-    const b = new BrowserPanelWindow({ ...browserOpts, preload: preloadPath(__dirname), dark: dark(), onClosed: closed => browsers.delete(closed) }, url, focus);
+    const b = new BrowserPanelWindow({ ...browserOpts, preload: preloadPath(__dirname), dark: dark(), onClosed: closed => browsers.delete(closed) }, url, focus, folder);
     browsers.add(b);
     return undefined;
   }
   // open_browser: a loopback http page in a browser tab of the chat used last (its tool panel opens on it), or a window of
   // its own with no chat open, where elements can be picked into the chat; any other http(s) page in the system browser,
   // which the proxy cannot reach
-  function openBrowser(url: string): BrowserOpened {
+  // `folder`: the session's folder on an SSH host, whose loopback the page is on
+  function openBrowser(url: string, folder?: string): BrowserOpened {
     const page = normalizePreviewUrl(url);
     const w = focusedWindow();
     if (page && w?.ready) {
-      const reused = w.showInPanel(page);
+      const reused = w.showInPanel(page, folder);
       return { url: page, ...(reused ? { reused } : {}) };
     }
     if (page) {
-      const reused = showPreview(page, false);
+      const reused = showPreview(page, false, folder);
       return { url: page, ...(reused ? { reused } : {}) };
     }
     if (!/^https?:\/\//i.test(url)) throw new Error(`only http(s) pages open in a browser: ${url}`);

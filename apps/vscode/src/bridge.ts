@@ -211,7 +211,8 @@ export class BrowserPanel implements vscode.Disposable {
   private onDisposed = new vscode.EventEmitter<void>();
   readonly onDidDispose = this.onDisposed.event;
 
-  constructor(readonly panel: vscode.WebviewPanel, url: string | undefined, private opts: BrowserPanelOpts) {
+  // `folder`: the session folder on an SSH host whose dev server the panel shows (not kept across a window reload)
+  constructor(readonly panel: vscode.WebviewPanel, url: string | undefined, readonly folder: string | undefined, private opts: BrowserPanelOpts) {
     panel.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(opts.extensionUri, 'dist', 'webview')] };
     panel.webview.html = this.html();
     panel.title = url ? titleOf(url) : t('browser.source');
@@ -226,7 +227,7 @@ export class BrowserPanel implements vscode.Disposable {
   navigate(url: string) {
     this.target = url;
     const picker = vscode.Uri.joinPath(this.opts.extensionUri, 'dist', 'picker.js').fsPath;
-    this.release = this.opts.client.preview({ panelId: this.panelId, url, picker, onOpened: r => { void this.opened(url, r); } });
+    this.release = this.opts.client.preview({ panelId: this.panelId, url, picker, folder: this.folder, onOpened: r => { void this.opened(url, r); } });
   }
 
   postLook() {

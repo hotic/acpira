@@ -32,10 +32,34 @@ const PLACES_WAIT: Duration = Duration::from_secs(30);
 /// A notification to the agent process a request came from
 pub type Notify = Arc<dyn Fn(&str, Value) + Send + Sync>;
 
+/// A project stdio MCP server on the folder's host, as its file declares it (variables already expanded here)
+#[derive(Clone, Debug)]
+pub struct HostStdio {
+  pub command: String,
+  pub args: Vec<String>,
+  pub env: serde_json::Map<String, Value>,
+  /// Where it starts: the project root on the host
+  pub cwd: String,
+}
+
 impl AcpSession {
   /// The session's folder on an SSH host, when it is one
   pub fn remote_folder(&self) -> Option<RemoteFolder> {
     parse_remote_folder(&self.cwd)
+  }
+
+  /// Whether something listens on a loopback port of the session's SSH host (`open_browser`'s check before a page opens)
+  pub(crate) async fn host_listening(&self, host: &str, port: u16, wait: Duration) -> bool {
+    let (Some(f), Some(connections)) = (self.remote_folder(), self.deps.remote.clone()) else { return false };
+    // 0.0.0.0, which a dev server prints, is reached on the host's loopback
+    let host = if host == "0.0.0.0" { "127.0.0.1" } else { host };
+    let check = async {
+      let client = connections.ensure(&f.alias, CONNECT_WAIT).await.ok()?;
+      let mut call = client.request("tcp", json!({ "host": host, "port": port }));
+      // Connected: the call is dropped, which closes the connection there
+      Some(matches!(call.next().await, Some(Event::Chunk { stream, .. }) if stream == "open"))
+    };
+    tokio::time::timeout(wait, check).await.ok().flatten().unwrap_or(false)
   }
 
   /// Where the agent process starts and reads files of its own (model facts, a warm process): the session folder, or
@@ -85,6 +109,71 @@ impl AcpSession {
     }
     req["_meta"][META] = meta;
     req
+  }
+
+  /// The project's MCP servers for a folder on an SSH host: its `.mcp.json` (and legacy `.agents/mcp.json`) as the host
+  /// has them. A stdio server runs there, through an `acpira mcp-host` shim the agent starts here; an http one is sent
+  /// as declared unless it names a loopback address, which would be this machine's. Returns the entries, the names the
+  /// project declares (they shadow the user's servers, a disabled one too) and what was left out
+  pub(crate) async fn host_mcp_servers(self: &Arc<Self>, root: &str, caps: Option<acpira_shared::inventory::McpCaps>) -> (Vec<Value>, Vec<String>, Vec<String>) {
+    use crate::shared_config::mcp;
+    use acpira_shared::inventory::McpTransport;
+    let (Some(f), Some(connections)) = (self.remote_folder(), self.deps.remote.clone()) else { return (vec![], vec![], vec![]) };
+    let Some(client) = connections.client(&f.alias) else { return (vec![], vec![], vec![]) };
+    let read = |rel: &'static str| {
+      let (client, path) = (client.clone(), format!("{}/{rel}", root.trim_end_matches('/')));
+      async move { client.call("read", json!({ "path": path })).await.ok().map(|r| String::from_utf8_lossy(&r.data).into_owned()) }
+    };
+    let (current, legacy) = tokio::join!(read(".mcp.json"), read(".agents/mcp.json"));
+    let servers = mcp::project_servers(
+      current.map(|t| mcp::servers_in(&t)).unwrap_or_default(),
+      legacy.map(|t| mcp::servers_in(&t)).unwrap_or_default(),
+    );
+    let names: Vec<String> = servers.iter().map(|s| s.name.clone()).collect();
+    let (mut out, mut skipped) = (vec![], vec![]);
+    let mut registered = std::collections::HashMap::new();
+    for s in servers.into_iter().filter(|s| s.enabled) {
+      if !mcp::supports(&self.agent, s.transport, caps) {
+        skipped.push(format!("{} (transport not advertised)", s.name));
+        continue;
+      }
+      let str_of = |k: &str| s.spec.get(k).and_then(Value::as_str).filter(|x| !x.is_empty()).map(mcp::expand_vars);
+      if s.transport != McpTransport::Stdio {
+        let url = str_of("url").or_else(|| str_of("serverUrl")).or_else(|| str_of("httpUrl")).unwrap_or_default();
+        if crate::relay::hub::loopback_target(&url).is_some() {
+          skipped.push(format!("{} (on the host's loopback)", s.name));
+        } else if let Ok(v) = mcp::to_acp(&s, None).await {
+          out.push(v);
+        }
+        continue;
+      }
+      let Some(command) = str_of("command") else {
+        skipped.push(format!("{} (no command)", s.name));
+        continue;
+      };
+      let Some(entry) = self.deps.host_mcp.as_ref().and_then(|h| h.host_stdio_entry(self, &s.name)) else {
+        skipped.push(format!("{} (no relay to reach the host through)", s.name));
+        continue;
+      };
+      let args = s.spec.get("args").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(mcp::expand_vars).collect()).unwrap_or_default();
+      let env = s.spec.get("env").and_then(Value::as_object).map(|m| {
+        m.iter().map(|(k, v)| (k.clone(), json!(mcp::expand_vars(v.as_str().unwrap_or(&v.to_string()))))).collect()
+      });
+      registered.insert(s.name.clone(), HostStdio { command, args, env: env.unwrap_or_default(), cwd: root.to_owned() });
+      out.push(entry);
+    }
+    *self.host_stdio.lock() = registered;
+    (out, names, skipped)
+  }
+
+  /// Start a registered project MCP server on the host (`HubOp::HostStdio`): the call carries its stdin and output
+  pub(crate) async fn open_host_stdio(&self, name: &str) -> Result<crate::remote::client::Call, String> {
+    let spec = self.host_stdio.lock().get(name).cloned().ok_or_else(|| format!("no MCP server named {name} on the host for this session"))?;
+    let f = self.remote_folder().ok_or("the session's folder is not on an SSH host")?;
+    let connections = self.deps.remote.clone().ok_or("this engine has no SSH connections")?;
+    let client = connections.ensure(&f.alias, CONNECT_WAIT).await.map_err(|e| format!("{} cannot be reached: {e:#}", f.alias))?;
+    let argv: Vec<String> = std::iter::once(spec.command).chain(spec.args).collect();
+    Ok(client.request("exec", json!({ "argv": argv, "cwd": spec.cwd, "env": spec.env, "stdin": true })))
   }
 
   async fn host_places(&self, f: &RemoteFolder) -> anyhow::Result<Value> {

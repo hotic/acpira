@@ -120,7 +120,11 @@ export class ChatWindow implements ShellView {
       case 'panelBrowserOpen': {
         const relay = this.tabs.get(m.tab) ?? this.openTab(m.tab);
         const url = m.url && normalizePreviewUrl(m.url);
-        if (relay && url && url !== relay.target) relay.navigate(url);
+        // A tab moved to a session on another host shows the page there
+        const moved = !!relay && relay.folder !== m.folder;
+        if (relay) relay.folder = m.folder;
+        const page = url || (moved ? relay?.target : undefined);
+        if (relay && page && (page !== relay.target || moved)) relay.navigate(page);
         return true;
       }
       case 'panelBrowser': this.tabs.get(m.tab)?.fromPage(m.msg); return true;
@@ -148,9 +152,10 @@ export class ChatWindow implements ShellView {
 
   // open_browser in this window's tool panel: the tab already on that site navigates (the page brings it forward), else the
   // page opens a tab on it. What happened, as the engine reports it
-  showInPanel(url: string): 'revealed' | 'navigated' | undefined {
+  // `folder`: the session folder on an SSH host the page is on; a new tab takes the shown session's (its panel's root)
+  showInPanel(url: string, folder?: string): 'revealed' | 'navigated' | undefined {
     const origin = new URL(url).origin;
-    const at = [...this.tabs].find(([, r]) => r.target !== undefined && new URL(r.target).origin === origin);
+    const at = [...this.tabs].find(([, r]) => r.target !== undefined && new URL(r.target).origin === origin && r.folder === folder);
     if (!at) { this.post({ type: 'panelOpenBrowser', url }); return undefined; }
     const [tab, relay] = at;
     const same = relay.target === url;

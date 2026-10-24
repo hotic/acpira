@@ -252,6 +252,9 @@ pub struct AcpSession {
   /// Files a `show_image` / `show_widget` call named on the session's SSH host, read there before the call answered
   /// (`fetch_shown`); the image saver takes them from here, by their path on the host (`images.rs`)
   pub(crate) shown: parking_lot::Mutex<std::collections::HashMap<String, Vec<u8>>>,
+  /// The project stdio MCP servers on the folder's SSH host this session's agent was given, by name: the only commands
+  /// an `acpira mcp-host` shim holding its grant can start there (`HubOp::HostStdio`)
+  pub(crate) host_stdio: parking_lot::Mutex<std::collections::HashMap<String, remote::HostStdio>>,
 }
 
 /// A fresh view epoch: every opened session gets one, a chain of read-only copies shares one (their revs keep growing)
@@ -384,6 +387,7 @@ impl AcpSession {
         usage_lock: tokio::sync::Mutex::new(()),
         epoch,
         shown: Default::default(),
+        host_stdio: Default::default(),
       }
     })
   }

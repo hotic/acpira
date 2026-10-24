@@ -148,6 +148,15 @@ impl HostMcp {
     Some(entry)
   }
 
+  /// The entry for a project stdio MCP server on the SSH host of the session's folder: a local `acpira mcp-host` shim
+  /// whose grant names the session and whose bytes go to the server there (`run_host_stdio`); None without a hub
+  pub fn host_stdio_entry(&self, session: &std::sync::Arc<crate::acp::session::AcpSession>, name: &str) -> Option<Value> {
+    let hub = self.hub.as_ref()?;
+    let mut env = hub.env(session, None, 0);
+    env.as_array_mut()?.push(json!({ "name": crate::relay::ENV_HOST_SERVER, "value": name }));
+    Some(json!({ "name": name, "command": self.entry["command"], "args": ["mcp-host"], "env": env }))
+  }
+
   pub fn refuse(&self, agent: &str) {
     self.refused.lock().insert(agent.to_owned());
   }
@@ -190,6 +199,96 @@ pub fn without_server(mut req: Value) -> Value {
 
 fn is_host_entry(s: &Value) -> bool {
   s.get("name").and_then(Value::as_str) == Some(SERVER_NAME) && s.get("args").and_then(Value::as_array).is_some_and(|a| a.first().and_then(Value::as_str) == Some("mcp"))
+}
+
+/// `acpira mcp-host`: stand in for a project MCP server on the SSH host of the session's folder. The agent starts this
+/// like any stdio server; the hub starts the real one there (`HubOp::HostStdio`), and this process copies stdin to it
+/// and its output back. Its exit code is the server's
+pub fn run_host_stdio() -> i32 {
+  use crate::relay::hub::Frame;
+  use crate::relay::wire::{HubOp, HubReply, HubRequest};
+  use std::io::{BufRead, Read, Write};
+  let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+  let (Some(addr), Some(token), Some(name)) = (var(crate::relay::ENV_ADDR), var(crate::relay::ENV_TOKEN), var(crate::relay::ENV_HOST_SERVER)) else {
+    eprintln!("acpira mcp-host: started without the relay's environment");
+    return 2;
+  };
+  let sock = match std::net::TcpStream::connect(&addr) {
+    Ok(s) => s,
+    Err(e) => {
+      eprintln!("acpira mcp-host: the relay cannot be reached: {e}");
+      return 1;
+    }
+  };
+  let mut line = serde_json::to_string(&HubRequest { token, op: HubOp::HostStdio { name: name.clone() } }).unwrap_or_default();
+  line.push('\n');
+  let Ok(mut up) = sock.try_clone() else { return 1 };
+  if up.write_all(line.as_bytes()).is_err() {
+    return 1;
+  }
+  let mut down = std::io::BufReader::new(sock);
+  let mut first = String::new();
+  if down.read_line(&mut first).is_err() {
+    return 1;
+  }
+  match serde_json::from_str::<HubReply>(first.trim()) {
+    Ok(HubReply::Done(_)) => {}
+    Ok(HubReply::Error(e)) => {
+      eprintln!("acpira mcp-host: {name} did not start on the host: {e}");
+      return 1;
+    }
+    _ => {
+      eprintln!("acpira mcp-host: the relay answered something else");
+      return 1;
+    }
+  }
+  std::thread::spawn(move || {
+    let mut stdin = std::io::stdin().lock();
+    let mut buf = vec![0u8; 16 * 1024];
+    loop {
+      match stdin.read(&mut buf) {
+        Ok(0) | Err(_) => break,
+        Ok(n) => {
+          if up.write_all(&buf[..n]).is_err() {
+            return;
+          }
+        }
+      }
+    }
+    let _ = up.shutdown(std::net::Shutdown::Write);
+  });
+  let (mut stdout, mut stderr) = (std::io::stdout(), std::io::stderr());
+  let mut head = [0u8; 5];
+  loop {
+    if down.read_exact(&mut head).is_err() {
+      return 1;
+    }
+    let len = u32::from_be_bytes([head[1], head[2], head[3], head[4]]) as usize;
+    let mut body = vec![0u8; len];
+    if down.read_exact(&mut body).is_err() {
+      return 1;
+    }
+    match head[0] {
+      t if t == Frame::Out as u8 => {
+        if stdout.write_all(&body).and_then(|_| stdout.flush()).is_err() {
+          return 1;
+        }
+      }
+      t if t == Frame::Err as u8 => {
+        let _ = stderr.write_all(&body);
+      }
+      _ => {
+        let end = String::from_utf8_lossy(&body);
+        return match end.parse::<i32>() {
+          Ok(code) => code,
+          Err(_) => {
+            eprintln!("acpira mcp-host: {name} on the host: {end}");
+            1
+          }
+        };
+      }
+    }
+  }
 }
 
 /// Serve MCP on stdin / stdout until stdin closes. `ask_agent` calls run on threads of their own (an agent may summon

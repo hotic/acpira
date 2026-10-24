@@ -31,10 +31,12 @@ impl AcpSession {
   /// Claude sessions also ask for summarized thinking (see `claude_thinking`), the raw workflow progress frames
   /// (`claude_workflow`) and, while Ultra is the effort, ultracode (`claude_ultracode`)
   pub(crate) async fn session_request(&self, proc: &AgentProcess, acp_id: Option<&str>) -> Value {
+    let caps = runtime_info_of(&proc.init).mcp;
+    // A folder on an SSH host: the host's path and prompt files first, since its project MCP file is read there too
+    let mut req = self.with_remote(json!({ "cwd": self.cwd })).await;
     let mut servers = match &self.deps.shared_mcp {
       Some(provider) => {
-        let caps = runtime_info_of(&proc.init).mcp;
-        // A folder on an SSH host has no project MCP file here: the user's own servers only
+        // A folder on an SSH host has no project MCP file here: the user's own servers, then the host's project ones
         let (servers, line) = provider(self.agent.clone(), self.process_cwd(), caps).await;
         if let Some(line) = line {
           self.log(&line);
@@ -43,6 +45,22 @@ impl AcpSession {
       }
       None => vec![],
     };
+    // The project root on the host, or the folder itself outside a repository; nothing when the host could not be asked
+    let places = req.pointer(&format!("/_meta/{}/places", crate::acp::session::remote::META.replace('/', "~1")));
+    let host_root = places.map(|p| p.get("root").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| crate::workspace::folder_path(&self.cwd).to_string_lossy().into_owned()));
+    if let Some(root) = host_root {
+      let (host, names, skipped) = self.arc().host_mcp_servers(&root, caps).await;
+      servers.retain(|s| !s.get("name").and_then(Value::as_str).is_some_and(|n| names.iter().any(|x| x == n)));
+      let sent: Vec<&str> = host.iter().filter_map(|s| s.get("name").and_then(Value::as_str)).collect();
+      if !names.is_empty() {
+        let mut line = format!("host MCP: {}", if sent.is_empty() { "none sent".into() } else { sent.join(", ") });
+        if !skipped.is_empty() {
+          line.push_str(&format!("; skipped {}", skipped.join(", ")));
+        }
+        self.log(&line);
+      }
+      servers.extend(host);
+    }
     // The entry's env carries a grant for this session: the hub finds it when the agent calls ask_agent
     let entry = self.deps.host_mcp.as_ref().and_then(|h| h.entry_for_session(&self.agent, &self.arc(), None, 0));
     if crate::host_mcp::push_entry(&mut servers, entry) {
@@ -56,7 +74,7 @@ impl AcpSession {
       }
       c.mcp_sent = servers.iter().filter_map(|s| s.get("name").and_then(Value::as_str).map(str::to_owned)).collect();
     }
-    let mut req = self.with_remote(json!({ "cwd": self.cwd, "mcpServers": servers })).await;
+    req["mcpServers"] = json!(servers);
     if let Some(id) = acp_id {
       req["sessionId"] = json!(id);
     }

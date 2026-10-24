@@ -18,7 +18,9 @@ export type PlatformRequest =
   // An http(s) page in a browser tab inside the editor, next to the chat (the agent's `open_browser` tool). The shell
   // forwards the port when the workspace is remote, checks from the user's machine that the page answers, and only then
   // opens it; it answers with the URL the user's side loaded, or fails with the reason
-  | { method: 'openBrowser'; url: string }
+  // `folder`: the session folder on an SSH host (ssh://alias/path); a loopback page is that host's dev server, which the
+  // engine has found listening there and reaches through its preview proxy for the host
+  | { method: 'openBrowser'; url: string; folder?: string }
   | { method: 'openInEditor'; sessionId?: string }
   | { method: 'runInTerminal'; title: string; command: string; args: string[]; env?: Record<string, string | null> }
   // `open` adds an Open button for a file (label already localized); the shell opens it only when clicked
@@ -69,7 +71,8 @@ export type ShellMsg =
   | { type: 'platformEvent'; event: PlatformEvent }
   // A browser panel wants a loopback dev page through a preview proxy (helloOk.features has 'preview'); answered by
   // previewOpened. `picker` is the script file the proxy adds to the page. Sent again when the panel navigates elsewhere
-  | { type: 'previewOpen'; requestId: string; panelId: string; url: string; picker: string }
+  // `folder`: the session folder on an SSH host (ssh://alias/path) the panel belongs to; the page is that host's dev server
+  | { type: 'previewOpen'; requestId: string; panelId: string; url: string; picker: string; folder?: string }
   | { type: 'previewClose'; panelId: string }
   | { type: 'shutdown' };
 

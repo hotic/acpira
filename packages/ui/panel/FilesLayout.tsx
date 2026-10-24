@@ -143,7 +143,7 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
             // Nothing open: what to open, this session's changed files first; the chat never moves back to the middle
             : <NewTab focus={false} changes={{ files: f.changes, onOpen: f.open }} onPick={choice => pick(choice)} />)}
           {pages.map(tab => {
-            if (tab.kind === 'browser') return <BrowserFrame key={tab.id} tab={tab} shown={s.tab === tab.id} stage />;
+            if (tab.kind === 'browser') return <BrowserFrame key={tab.id} tab={tab} shown={s.tab === tab.id} stage root={root} />;
             if (tab.kind === 'terminal') return <TerminalFrame key={tab.id} tab={tab} shown={s.tab === tab.id} openPath={terminalPathOpener(root, p.openEditor, f.reveal)} />;
             if (tab.kind === 'new' && tab.id === s.tab) return <NewTab key={tab.id} onPick={choice => pick(choice, tab.id)} />;
             return null;

@@ -20,3 +20,5 @@ pub const MAX_RUNNING: usize = 6;
 /// travel in a request where a caller could forge them
 pub const ENV_ADDR: &str = "ACPIRA_RELAY";
 pub const ENV_TOKEN: &str = "ACPIRA_RELAY_TOKEN";
+/// The project MCP server on an SSH host an `acpira mcp-host` shim stands for (`host_mcp::run_host_stdio`)
+pub const ENV_HOST_SERVER: &str = "ACPIRA_HOST_MCP";
