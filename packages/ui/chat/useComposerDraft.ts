@@ -19,6 +19,11 @@ export function updateMainComposer(update: Update, focus = false) {
   if (focus) sink.focus();
 }
 
+// Hands the main composer the focus (the plan card's Revise); nothing happens while none is mounted
+export function focusMainComposer() {
+  sink?.focus();
+}
+
 export function useComposerDraft(draftKey?: string, editText?: string, main?: { focus: () => void }) {
   const parked = draftKey ? DRAFTS.get(draftKey) : undefined;
   const [text, setText] = useState(editText ?? parked?.text ?? '');

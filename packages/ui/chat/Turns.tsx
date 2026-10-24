@@ -1,5 +1,5 @@
 import { Fragment, createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Bot, Check, ChevronRight, Compass, FileText, Hand, Info, MessageCircleQuestion, ShieldAlert, ShieldX, Shrink, TriangleAlert, X } from 'lucide-react';
+import { Bot, Check, ChevronRight, Compass, FileText, Hand, Info, ListTodo, MessageCircleQuestion, ShieldAlert, ShieldX, Shrink, TriangleAlert, X } from 'lucide-react';
 import type { AgentBlock, AgentTurn, CompactionBlock, FailureAction, NoticeBlock, PermissionBlock, SlashCommand, SteerBlock, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@acpira/shared/transcript';
 import type { SubagentSummary } from '@acpira/shared/subagents';
 import { isImageResultBlock, isShowWidgetTool } from '@acpira/shared/imageTools';
@@ -8,7 +8,7 @@ import { useAppearance, type Appearance } from '../appearance';
 import { getLocale, t, useLocale } from '../i18n';
 import { commandSegments } from './PromptInput';
 import { promptMarks } from './slashCommands';
-import { absorbedNotices, hasTurnContent, turnOutcome } from './turnOutcome';
+import { absorbedNotices, hasTurnContent, revisedPlanEnd, turnOutcome } from './turnOutcome';
 import { EntranceOnce, Row, RowLabel, RowTarget, RowEntranceContext, EntranceScopeContext, QuietEntranceContext } from '../ui/Row';
 import { Button } from '../ui/Button';
 import { Disclosure } from '../ui/Disclosure';
@@ -211,7 +211,9 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   // memo keeps a row from rendering again; the locale context still reaches it after a language change
   useLocale();
   const absorbed = useMemo(() => absorbedNotices(turn), [turn]);
-  const base = compacting ? compactionForDisplay(turn, running) : turn;
+  // A turn the plan card's Revise ended shows as settled rather than stopped (`revisedPlanEnd`)
+  const settled = useMemo(() => revisedPlanEnd(turn) ? { ...turn, stop: undefined } : turn, [turn]);
+  const base = compacting ? compactionForDisplay(settled, running) : settled;
   // Absorbed notices leave the block list, so an empty line group cannot leave a stray gap behind
   const raw = useMemo(() => absorbed.length ? { ...base, blocks: base.blocks.filter(b => b.type !== 'notice' || !absorbed.includes(b)) } : base, [base, absorbed]);
   // Everything but the section split reads the turn without its delegation rows
@@ -248,8 +250,12 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
         ...(!lastSection ? { stop: undefined, error: undefined, command: undefined } : {}),
         ...(sections.length > 1 ? { startedAt: undefined, respondedAt: undefined, endedAt: undefined } : {}),
       };
+      // A plan approval renders on its card. A section holding nothing else while the card waits has no working row to
+      // show: the Codex fold head there used to say "awaiting approval" under the card that already asks for it
+      const visible = section.blocks.some(b => b.type !== 'permission' || !b.planId);
+      const planWait = section.blocks.some(b => b.type === 'permission' && !!b.planId);
       return <Fragment key={section.key}>
-        {(section.blocks.length > 0 || (lastSection && (running || outcomeOf(shown)))) && <AgentContent turn={content} index={index}
+        {(visible || (lastSection && ((running && !planWait) || outcomeOf(shown)))) && <AgentContent turn={content} index={index}
           running={lastSection && running} compactionOnly={compactionOnly} onPermission={onPermission}
           memoryKey={memoryKey && (i === 0 ? memoryKey : `${memoryKey}:after-plan:${section.key}`)}
           subagents={lastSection ? restNodes : undefined} allSubagents={lastSection ? allSubagents : undefined} onInspect={onInspect} lead={lead} />}
@@ -404,9 +410,14 @@ function Outcome({ turn }: { turn: AgentTurn }) {
 // A pending user decision suspends the animation until the turn can continue.
 // Live compaction is a row at its transcript position, like a running tool; the activity stays generic
 // (a heading label read as belonging to an earlier, finished compaction row further up).
-function liveActivity(turn: AgentTurn, leadKind: 'orb' | 'static' = 'orb') {
-  if (turn.blocks.some(b => b.type === 'permission')) {
+function liveActivity(turn: AgentTurn, leadKind: 'orb' | 'static' = 'orb'): { label: string; title?: string; active: boolean; quiet?: boolean; lead: ReactNode } {
+  if (turn.blocks.some(b => b.type === 'permission' && !b.planId)) {
     return { label: t('host.awaitingApproval'), active: false, lead: <Hand className="size-icon" strokeWidth={1.5} /> };
+  }
+  // A plan approval waits on its own card (Build / Revise there, revising through the composer), so the turn reads as
+  // done: the flat Working row steps aside (`quiet`) and the Codex head names the plan instead of a pending approval
+  if (turn.blocks.some(b => b.type === 'permission')) {
+    return { label: t('plan.awaitingBuild'), active: false, quiet: true, lead: <ListTodo className="size-icon" strokeWidth={1.5} /> };
   }
   if (turn.blocks.some(b => b.type === 'question' && !b.outcome)) {
     return { label: t('host.awaitingAnswers'), active: false, lead: <MessageCircleQuestion className="size-icon" strokeWidth={1.5} /> };
@@ -423,7 +434,10 @@ function liveActivity(turn: AgentTurn, leadKind: 'orb' | 'static' = 'orb') {
   return { label: t('host.working'), active: true, lead };
 }
 
-function Activity({ turn, running, leadKind = 'orb' }: { turn: AgentTurn; running: boolean; leadKind?: 'orb' | 'static' }) {
+function Activity({ turn, running: working, leadKind = 'orb' }: { turn: AgentTurn; running: boolean; leadKind?: 'orb' | 'static' }) {
+  const activity = liveActivity(turn, leadKind);
+  // A quiet activity retires the row like a finished turn, with the same exit transition
+  const running = working && !activity.quiet;
   const [present, setPresent] = useState(running);
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -439,7 +453,6 @@ function Activity({ turn, running, leadKind = 'orb' }: { turn: AgentTurn; runnin
     });
     return () => { disposed = true; };
   }, [running, present]);
-  const activity = liveActivity(turn, leadKind);
   const since = clockStart(turn);
   if (!running && !present) return null;
   return (
@@ -647,7 +660,8 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
     <Collapsible.Trigger render={<Row as="button" interactive lead={leadIcon} title={(running && activity.title) || label} className={running ? surfaceVariants({ tone: 'status' }) : undefined} />}>
       <RowLabel shimmer={running && activity.active}>{retired ? t('host.working') : label}</RowLabel>
       {elapsed && !retired && <span className="min-w-0 truncate text-fg-3" title={elapsed}>{elapsed}</span>}
-      {running && since !== undefined && <LiveElapsed since={since} />}
+      {/* The clock stops while the plan card waits on the user */}
+      {running && !activity.quiet && since !== undefined && <LiveElapsed since={since} />}
       {foldable && <ChevronRight className={cn('size-3 shrink-0 self-center transition-transform', open && 'rotate-90')} strokeWidth={1.75} />}
     </Collapsible.Trigger>
   );

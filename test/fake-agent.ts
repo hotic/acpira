@@ -918,7 +918,9 @@ const app = acp.agent({ name: 'fake-agent' })
       });
       const approved = r.outcome.outcome === 'selected' && r.outcome.optionId !== 'reject';
       await send({ sessionUpdate: 'tool_call_update', toolCallId: 'toolu_exit', status: approved ? 'completed' : 'failed' });
-      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: approved ? 'APPROVED' : 'REJECTED' } });
+      // claude-agent-acp 0.93.0: "No, keep planning" ends the turn cancelled with nothing more said
+      if (!approved) return { stopReason: 'cancelled' };
+      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'APPROVED' } });
       return { stopReason: cancelled.has(sid) ? 'cancelled' : 'end_turn' };
     }
     if (text.startsWith('plan-')) {
