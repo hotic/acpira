@@ -33,6 +33,30 @@ describe('page session view cache', () => {
     expect(ids(next)).toEqual(['new']);
   });
 
+  // The session moved to another engine (followed here with revs from -2^40) or was reopened while the page switched away:
+  // the kept copy the click put on screen must not outrank the host's view, or every later patch is dropped as stale
+  it('a whole view replaces the kept copy an optimistic select put on screen, whatever its rev', () => {
+    const v = new SessionViews();
+    const a1 = user('a1');
+    v.whole(view('a', 50, [a1]));
+    v.whole(view('b', 1, []));
+    v.select('a');
+    const follower = -(2 ** 40);
+    const next = v.whole(view('a', follower, [user('a1'), user('a2')]));
+    expect(next.rev).toBe(follower);
+    expect(ids(next)).toEqual(['a1', 'a2']);
+    // unchanged turns keep their references
+    expect(next.turns[0]).toBe(a1);
+    const streamed = v.patch(patch('a', follower, follower + 1, 2, [user('a3')]));
+    expect(streamed !== 'stale' && streamed && ids(streamed)).toEqual(['a1', 'a2', 'a3']);
+  });
+
+  it('a whole view of the session on screen is taken at a lower rev', () => {
+    const v = new SessionViews();
+    v.whole(view('a', 50, [user('old')]));
+    expect(ids(v.whole(view('a', -(2 ** 40), [user('new')])))).toEqual(['new']);
+  });
+
   it('a patch against a view the page does not hold drops the kept copy and asks for the whole view', () => {
     const v = new SessionViews();
     v.whole(view('a', 3, [user('a1')]));
@@ -66,6 +90,16 @@ describe('page session view cache', () => {
     expect(v.kept()).toEqual(['c']);
     expect(v.init(undefined)).toBeUndefined();
     expect(v.current).toBeUndefined();
+  });
+
+  // A restarted engine reopens the session on screen, whose revs count from 0 again
+  it('init takes the active view even at a lower rev than the one on screen', () => {
+    const v = new SessionViews();
+    v.whole(view('a', 50, [user('a1')]));
+    const next = v.init(view('a', 2, [user('a1'), user('a2')]));
+    expect(next?.rev).toBe(2);
+    expect(next && ids(next)).toEqual(['a1', 'a2']);
+    expect(v.patch(patch('a', 2, 3, 2, [user('a3')]))).not.toBe('stale');
   });
 
   it('optimistically selects a kept session and absorbs an in-flight patch of the previous session in the background', () => {
