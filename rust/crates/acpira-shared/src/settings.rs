@@ -127,6 +127,17 @@ pub fn is_setting_key(k: &str) -> bool {
   SETTING_KEYS.contains(&k)
 }
 
+/// The settings each shell keeps in its own store, since they follow the window's shape: the session list's side and
+/// scope (the desktop app always lists every project on the left) and sharing the editor selection (IDE shells only).
+/// Every other setting is one value for all shells, in `<ACPIRA_HOME>/settings.json` (2026-10-23), like the transcripts;
+/// `subagents` has a file of its own and `agents` is the legacy per-shell agent list agents.json is seeded from
+pub const SHELL_SETTING_KEYS: [&str; 3] = ["sessionScope", "sessionListPosition", "shareEditorSelection"];
+
+/// Whether `k` lives in the shared settings file: a setting key outside the shell's own, or an appearance axis
+pub fn is_shared_setting(k: &str) -> bool {
+  (is_setting_key(k) && !SHELL_SETTING_KEYS.contains(&k) && k != "subagents") || k.starts_with("appearance.")
+}
+
 fn one_of(v: &Value, list: &[&str], fallback: &str) -> String {
   v.as_str().filter(|s| list.contains(s)).unwrap_or(fallback).to_owned()
 }

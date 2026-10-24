@@ -5,5 +5,6 @@ pub mod record;
 pub mod session_digest;
 pub mod session_lease;
 pub mod session_search;
+pub mod shared_settings;
 pub mod storage;
 pub mod transcript_store;

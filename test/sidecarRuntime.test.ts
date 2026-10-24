@@ -38,8 +38,12 @@ describe('sidecar runtime', () => {
     };
     const s = new Shell(home, cwd);
     cleanups.push(async () => { await s.kill(); rmSync(home, { recursive: true, force: true }); rmSync(cwd, { recursive: true, force: true }); });
-    // The shell owns the settings store: a write lands there and comes back as a settingsChanged event, like the IDE shells do
+    // The shell keeps its own keys: a write lands there and comes back as a settingsChanged event, like the IDE shells do
     const change = (keys: string[]) => s.send({ type: 'platformEvent', event: { type: 'settingsChanged', keys, settings: { ...settings } } });
+    // The shared keys live in <home>/settings.json (seeded from the hello snapshot): another engine's write, merged in
+    const sharedFile = join(home, 'settings.json');
+    const readShared = (): Record<string, unknown> => { try { return JSON.parse(readFileSync(sharedFile, 'utf8')) as Record<string, unknown>; } catch { return {}; } };
+    const shared = (values: Record<string, unknown>) => writeFileSync(sharedFile, JSON.stringify({ ...readShared(), ...values }));
     s.answers = {
       writeSetting: r => { if (r.method === 'writeSetting') { settings[r.key] = r.value; setTimeout(() => change([r.key]), 0); } return null; },
       searchFiles: r => r.method === 'searchFiles' ? [{ uri: `file://${cwd}/${r.query}.ts`, path: `${r.query}.ts` }] : [],
@@ -53,7 +57,7 @@ describe('sidecar runtime', () => {
     const posted = () => s.hostMsgs('V');
     const requests = (method: PlatformRequest['method']) => s.requests.filter(r => r.request.method === method).map(r => r.request);
     const logs = () => s.stderr;
-    return { s, home, cwd, settings, change, init, posted, requests, logs, sessionsDir: ok.sessionsDir };
+    return { s, home, cwd, settings, change, shared, readShared, init, posted, requests, logs, sessionsDir: ok.sessionsDir };
   }
 
   const toasts = (s: Shell) => s.requests.map(r => r.request).filter((r): r is Extract<PlatformRequest, { method: 'toast' }> => r.method === 'toast');
@@ -226,30 +230,34 @@ describe('sidecar runtime', () => {
     await until(() => toasts(s).some(t => t.level === 'info'));
   });
 
-  it('setSetting writes through the shell and re-pushes the settings view to every attached view', async () => {
-    const { s, requests } = await setup();
+  it('setSetting writes a shared key to the shared file, a shell key through the shell, and re-pushes every attached view', async () => {
+    const { s, requests, readShared } = await setup();
     await s.open('E', 'editor');
     const settingsSeen = (viewId: string) => s.hostMsgs(viewId).filter(m => m.type === 'settings').length;
     const [before, beforeE] = [settingsSeen('V'), settingsSeen('E')];
-    s.view('V', { type: 'setSetting', key: 'defaultAgent', value: 'fake' });
-    await until(() => requests('writeSetting').length === 1);
-    expect(requests('writeSetting')[0]).toMatchObject({ key: 'defaultAgent', value: 'fake' });
+    s.view('V', { type: 'setSetting', key: 'steerQueued', value: true });
+    await until(() => readShared().steerQueued === true);
     await until(() => settingsSeen('V') > before && settingsSeen('E') > beforeE);
+    expect(requests('writeSetting')).toHaveLength(0);
+    s.view('V', { type: 'setSetting', key: 'sessionListPosition', value: 'left' });
+    await until(() => requests('writeSetting').length === 1);
+    expect(requests('writeSetting')[0]).toMatchObject({ key: 'sessionListPosition', value: 'left' });
+    expect(readShared().sessionListPosition).toBeUndefined();
   });
 
   it('uses live compaction settings and publishes identical usage to sidebar and editor', async () => {
-    const { s, init } = await setup();
+    const { s, init, readShared } = await setup();
     const sessionId = init.state.active!.id;
     await s.open('E', 'editor', sessionId);
     const latest = (viewId: string) => s.hostMsgs(viewId).filter((m): m is Extract<HostMsg, { type: 'session' }> => m.type === 'session' && m.session.id === sessionId).at(-1)?.session;
     s.view('V', { type: 'setSetting', key: 'compactAtTokens', value: 500_000 });
-    await s.next((m): m is SidecarMsg => m.type === 'platformRequest' && m.request.method === 'writeSetting');
+    await until(() => readShared().compactAtTokens === 500_000);
     await new Promise(r => setTimeout(r, 50));
     s.view('V', { type: 'send', sessionId, text: 'big' });
     await until(() => latest('V')?.usage?.used === 401234 && latest('E')?.usage?.used === 401234);
     expect(latest('V')?.turns.some(t => t.role === 'user' && t.auto)).toBe(false);
     s.view('E', { type: 'setSetting', key: 'compactAtTokens', value: 300_000 });
-    await until(() => s.requests.filter(r => r.request.method === 'writeSetting').length === 2);
+    await until(() => readShared().compactAtTokens === 300_000);
     await new Promise(r => setTimeout(r, 50));
     s.view('E', { type: 'send', sessionId, text: 'hi' });
     await until(() => latest('V')?.usage?.used === 80247 && latest('E')?.usage?.used === 80247, 10_000);
@@ -257,18 +265,15 @@ describe('sidecar runtime', () => {
     expect(latest('E')?.usage).toEqual(latest('V')?.usage);
   });
 
-  it('uses the machine agent file while appearance and other preferences still follow shell events', async () => {
-    const { s, home, settings, change, posted } = await setup();
-    settings['appearance.motion'] = 'none';
-    change(['appearance.motion']);
+  it('uses the machine agent file while appearance and other preferences follow the shared settings file', async () => {
+    const { s, home, settings, change, shared, posted } = await setup();
+    shared({ 'appearance.motion': 'none' });
     await until(() => posted().some(m => m.type === 'appearance' && m.appearance.motion === 'none'));
-    settings.hiddenOptions = { fake: { model: ['x'] } };
-    change(['hiddenOptions']);
+    shared({ hiddenOptions: { fake: { model: ['x'] } } });
     await until(() => posted().some(m => m.type === 'hidden'));
     settings.agents = { fake: { name: 'Renamed', command: NODE, args: [FAKE] } };
     change(['agents']);
-    settings.language = 'zh-CN';
-    change(['language']);
+    shared({ language: 'zh-CN' });
     await until(() => posted().some(m => m.type === 'settings' && m.locale === 'zh-CN'));
     expect(posted().some(m => m.type === 'agents' && m.agents.find(a => a.id === 'fake')?.name === 'Renamed')).toBe(false);
     const path = join(home, 'agents.json');

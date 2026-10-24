@@ -48,6 +48,8 @@ pub struct HostRuntime {
 impl HostRuntime {
   /// `root`: ACPIRA_HOME / ~/.acpira; `bridge_exe`: the executable the ChatGPT connection prompt names
   pub async fn create(platform: Arc<SidecarPlatform>, root: PathBuf, bridge_exe: Option<String>) -> Result<Arc<HostRuntime>> {
+    // Shared settings first: everything below reads settings through the platform
+    platform.use_shared(Arc::new(crate::store::shared_settings::SharedSettings::open(&root))).await;
     let p = platform.clone();
     let log: LogFn = Arc::new(move |line: &str| p.log(line));
     let vault = Arc::new(FileVault::new(root.join("secrets.json"), log.clone()));
@@ -280,6 +282,8 @@ impl HostRuntime {
       loop {
         tick.tick().await;
         let Some(rt) = weak.upgrade() else { break };
+        // Another engine (another window, the desktop app) or a hand edit changed the shared settings
+        rt.platform.reload_shared();
         match rt.reload_agent_config().await {
           Ok(()) => last_error = None,
           Err(e) => {

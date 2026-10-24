@@ -16,6 +16,8 @@ export interface WebviewBridgeOpts {
   extensionUri: vscode.Uri;
   sessionsDir: string;
   locale: () => string;
+  // An acpira.* setting as the shell sees it (shared keys from <ACPIRA_HOME>/settings.json)
+  setting: (key: string) => unknown;
   // The clickable session-link base the page copies (`vscode://hotic.acpira/session/`); pages without one copy `acpira://session/`
   sessionLinkBase?: string;
   // Every session the view shows (init, then each push), for tab titles and one-shot watchers
@@ -131,8 +133,7 @@ export class WebviewBridge implements vscode.Disposable, ShellView {
     const nonce = randomBytes(16).toString('base64url');
     // The page requests its UI face before init arrives (webview/fontPreload.ts); validated like the engine's appearance,
     // so only one of the axis' values reaches the inline script
-    const config = vscode.workspace.getConfiguration('acpira');
-    const font = appearanceFromSettings(key => config.get(`appearance.${key}`)).font;
+    const font = appearanceFromSettings(key => this.opts.setting(`appearance.${key}`)).font;
     const csp = [
       "default-src 'none'",
       `img-src ${this.webview.cspSource} https: data:`,

@@ -75,7 +75,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const attach = (webview: vscode.Webview, host: 'sidebar' | 'editor', visible: () => boolean, initial?: string | { mostRecent: true }, onSession?: (s: SessionView) => void) => {
     const b = new WebviewBridge(webview, host, {
       client: sidecar, extensionUri: context.extensionUri, sessionsDir, onSession, visible, log: line => log.info(line),
-      locale: () => platform.locale(), sessionLinkBase,
+      locale: () => platform.locale(), setting: key => platform.setting(key), sessionLinkBase,
       onPageReady: ready => {
         ready.postShell({ type: 'editorSelection', selection: liveSelection });
         if (lastCopy) ready.postShell({ type: 'editorCopy', selection: lastCopy });
@@ -219,17 +219,14 @@ export async function activate(context: vscode.ExtensionContext) {
     void context.globalState.update(HISTORY_KEY, pages);
     for (const b of browsers) b.postHistory();
   };
-  const browserLook = (): BrowserLook => {
-    const cfg = vscode.workspace.getConfiguration('acpira');
-    return {
-      appearance: appearanceFromSettings(key => cfg.get(`appearance.${key}`)),
-      theme: sanitizeSetting('theme', cfg.get('theme')),
-      uiFontSize: sanitizeSetting('uiFontSize', cfg.get('uiFontSize')),
-      codeFontSize: sanitizeSetting('codeFontSize', cfg.get('codeFontSize')),
-      fontSmoothing: sanitizeSetting('fontSmoothing', cfg.get('fontSmoothing')),
-      locale: platform.locale(),
-    };
-  };
+  const browserLook = (): BrowserLook => ({
+    appearance: appearanceFromSettings(key => platform.setting(`appearance.${key}`)),
+    theme: sanitizeSetting('theme', platform.setting('theme')),
+    uiFontSize: sanitizeSetting('uiFontSize', platform.setting('uiFontSize')),
+    codeFontSize: sanitizeSetting('codeFontSize', platform.setting('codeFontSize')),
+    fontSmoothing: sanitizeSetting('fontSmoothing', platform.setting('fontSmoothing')),
+    locale: platform.locale(),
+  });
   // Elements picked on a page, capped like any other tool's context before a chat sees them
   const addPicked = (browser: BrowserPanel, item: ContextItem) => {
     try {
@@ -381,9 +378,11 @@ export async function activate(context: vscode.ExtensionContext) {
       trackSelection(vscode.window.activeTextEditor);
       for (const m of shareSelection() ? contextSlots.replay() : contextSlots.hidden()) broadcast(m);
     }),
-    vscode.workspace.onDidChangeConfiguration(e => {
-      if (e.affectsConfiguration('acpira')) for (const b of browsers) b.postLook();
-    }),
+    // The look and language live in the shared settings file, which any engine (another window, the desktop app) writes
+    (platform.shared.watch(keys => {
+      if (keys.includes('language')) setHostLocale(platform.locale());
+      for (const b of browsers) b.postLook();
+    }), { dispose: () => platform.shared.unwatch() }),
     { dispose: () => { for (const b of [...browsers]) b.panel.dispose(); } },
     vscode.window.tabGroups.onDidChangeTabs(e => { if (e.closed.length) releaseClosedOwners(e.closed); }),
     { dispose: () => clearTimeout(selectionTimer) },

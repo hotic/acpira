@@ -11,12 +11,14 @@ use serde_json::{Map, Value};
 use tokio::sync::oneshot;
 
 use acpira_shared::protocol::FileHit;
+use acpira_shared::settings::is_shared_setting;
 use acpira_shared::sidecar::{
   BrowserOpened, Hello, PLATFORM_RPC_METHODS, PlanTarget, PlatformEvent, PlatformRequest, ShellEnv, ShellEnvPatch, SidecarMsg, ToastOpen,
 };
 
 use crate::node_files::NodeFiles;
 use crate::store::data_dir::home_dir;
+use crate::store::shared_settings::SharedSettings;
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -39,7 +41,11 @@ pub struct SidecarPlatform {
   ignore_agents: bool,
   /// The serving shell's capabilities; a persistent engine takes the newest hello's
   caps: parking_lot::RwLock<HashSet<String>>,
+  /// The serving shell's snapshot: its own keys (`SHELL_SETTING_KEYS`), the legacy agent list, and until the shared file
+  /// exists every other key too
   settings: parking_lot::RwLock<Map<String, Value>>,
+  /// `<ACPIRA_HOME>/settings.json`, where the shared keys live once the runtime has opened it (`use_shared`)
+  shared: parking_lot::RwLock<Option<Arc<SharedSettings>>>,
   env: parking_lot::RwLock<ShellEnv>,
   pending: parking_lot::Mutex<HashMap<String, Pending>>,
   settings_listeners: parking_lot::Mutex<Vec<Arc<dyn Fn(Affects) + Send + Sync>>>,
@@ -71,6 +77,7 @@ impl SidecarPlatform {
       ignore_agents,
       caps: parking_lot::RwLock::new(hello.client.capabilities.iter().cloned().collect()),
       settings: parking_lot::RwLock::new(hello.settings.clone()),
+      shared: Default::default(),
       env: parking_lot::RwLock::new(hello.env.clone()),
       pending: Default::default(),
       settings_listeners: Default::default(),
@@ -94,6 +101,7 @@ impl SidecarPlatform {
       let mut keys: Vec<String> =
         hello.settings.iter().filter(|(k, v)| cur.get(*k) != Some(*v)).map(|(k, _)| k.clone()).collect();
       keys.extend(cur.keys().filter(|k| !hello.settings.contains_key(*k)).cloned());
+      keys.retain(|k| !self.shared_key(k));
       keys
     };
     if !keys.is_empty() {
@@ -147,15 +155,59 @@ impl SidecarPlatform {
     self.env.read().projects == Some(true)
   }
 
+  /// Shared keys come from the shared file and stop following the shell's snapshot (a value Settings Sync brings into
+  /// VS Code's settings.json, or an older engine's write there, changes nothing); the rest from the shell
   pub fn read_setting(&self, key: &str) -> Option<Value> {
     if self.ignore_agents && key == "agents" {
       return None;
     }
+    if let Some(store) = self.shared_store(key) {
+      return store.get(key);
+    }
     self.settings.read().get(key).cloned()
   }
 
-  /// The snapshot changes at once so the push right after the write already shows it; the shell persists and echoes
+  /// The shared file once it exists, for a key it holds
+  fn shared_store(&self, key: &str) -> Option<Arc<SharedSettings>> {
+    if !is_shared_setting(key) {
+      return None;
+    }
+    self.shared.read().clone().filter(|s| s.exists())
+  }
+
+  fn shared_key(&self, key: &str) -> bool {
+    self.shared_store(key).is_some()
+  }
+
+  /// Opens the shared settings: the first engine on the machine creates the file from this shell's snapshot (whatever it
+  /// had until now). A failed seed leaves the shell's snapshot in charge
+  pub async fn use_shared(&self, store: Arc<SharedSettings>) {
+    let snapshot = self.settings.read().clone();
+    match store.seed(&snapshot).await {
+      Ok(true) => self.log(&format!("shared settings created from the shell's: {}", store.path().display())),
+      Ok(false) => {}
+      Err(e) => self.log(&format!("shared settings could not be created at {}: {e}", store.path().display())),
+    }
+    *self.shared.write() = Some(store);
+  }
+
+  /// Another engine (or a hand edit) changed the shared file: listeners hear about the keys whose value moved
+  pub fn reload_shared(&self) {
+    let Some(store) = self.shared.read().clone() else { return };
+    let keys = store.reload();
+    if !keys.is_empty() {
+      self.settings_moved(keys);
+    }
+  }
+
+  /// A shared key goes to the shared file and the engine's listeners hear it at once (no shell echoes it); the rest: the
+  /// snapshot changes at once so the push right after the write already shows it, then the shell persists and echoes
   pub async fn write_setting(&self, key: &str, value: Value) -> Result<()> {
+    if let Some(store) = self.shared_store(key) {
+      store.write(key, value).await?;
+      self.settings_moved(vec![key.to_owned()]);
+      return Ok(());
+    }
     self.settings.write().insert(key.to_owned(), value.clone());
     if self.has_cap("writeSetting") {
       self.rpc(PlatformRequest::WriteSetting { key: key.to_owned(), value }).await?;
@@ -351,15 +403,12 @@ impl SidecarPlatform {
           f();
         }
       }
-      PlatformEvent::SettingsChanged { keys, settings } => {
+      PlatformEvent::SettingsChanged { mut keys, settings } => {
         *self.settings.write() = settings;
-        let affects: Affects = Arc::new(move |section: Option<&str>| match section {
-          None => !keys.is_empty(),
-          Some(s) => keys.iter().any(|k| k == s || k.starts_with(&format!("{s}."))),
-        });
-        let ls: Vec<_> = self.settings_listeners.lock().clone();
-        for f in ls {
-          f(affects.clone());
+        // The shell's copies of shared keys no longer count
+        keys.retain(|k| !self.shared_key(k));
+        if !keys.is_empty() {
+          self.settings_moved(keys);
         }
       }
       PlatformEvent::EnvChanged { env } => {
@@ -388,6 +437,17 @@ impl SidecarPlatform {
           }
         }
       }
+    }
+  }
+
+  fn settings_moved(&self, keys: Vec<String>) {
+    let affects: Affects = Arc::new(move |section: Option<&str>| match section {
+      None => !keys.is_empty(),
+      Some(s) => keys.iter().any(|k| k == s || k.starts_with(&format!("{s}."))),
+    });
+    let ls: Vec<_> = self.settings_listeners.lock().clone();
+    for f in ls {
+      f(affects.clone());
     }
   }
 

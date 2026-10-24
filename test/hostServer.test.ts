@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -149,7 +149,9 @@ describe('sidecar (stdio envelopes)', () => {
     expect(install.request).toMatchObject({ command: 'bash', args: ['-c', 'curl -fsSL https://example.com/i.sh | sh'] });
   });
 
-  it('settings: writes go to the shell and the snapshot updates at once; a settingsChanged event re-pushes appearance and settings', async () => {
+  // Settings each shell keeps (session list side and scope, editor selection) go to it; the rest live in the shared
+  // <home>/settings.json every engine reads, so another engine's write there re-pushes them and the shell's copies do not
+  it('settings: shell keys go to the shell, shared keys to the shared file, whose changes re-push appearance and settings', async () => {
     const s = shell();
     s.answers.writeSetting = () => null;
     await s.hello({ client: { name: 'test-shell', version: '0', capabilities: ['writeSetting'] } });
@@ -159,9 +161,18 @@ describe('sidecar (stdio envelopes)', () => {
     expect(write.request).toEqual({ method: 'writeSetting', key: 'sessionScope', value: 'all' });
     await s.hostMsg('V', 'settings', m => m.settings.sessionScope === 'all');
 
-    s.send({ type: 'platformEvent', event: { type: 'settingsChanged', keys: ['appearance.motion', 'language'], settings: { defaultAgent: 'fake', 'appearance.motion': 'none', language: 'zh-CN' } } });
+    s.view('V', { type: 'setSetting', key: 'theme', value: 'dark' });
+    await s.hostMsg('V', 'settings', m => m.settings.theme === 'dark');
+    const file = join(s.home, 'settings.json');
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ defaultAgent: 'fake', theme: 'dark' });
+    expect(s.requests.filter(r => r.request.method === 'writeSetting')).toHaveLength(1);
+
+    // A shell's own copy of a shared key changes nothing; another engine's write to the file does
+    s.send({ type: 'platformEvent', event: { type: 'settingsChanged', keys: ['theme'], settings: { theme: 'light' } } });
+    writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), 'appearance.motion': 'none', language: 'zh-CN' }));
     await s.hostMsg('V', 'appearance', m => m.appearance.motion === 'none');
-    await s.hostMsg('V', 'settings', m => m.locale === 'zh-CN');
+    const pushed = await s.hostMsg('V', 'settings', m => m.locale === 'zh-CN');
+    expect(pushed.settings.theme).toBe('dark');
   });
 
   it('stdout carries only envelopes; garbage on stdin is skipped; the shell closing its end shuts the sidecar down cleanly', async () => {

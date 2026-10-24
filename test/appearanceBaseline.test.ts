@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import pkg from '../package.json';
-import { AXES, BASE_APPEARANCE } from '../src/shared/appearance';
+import { isSharedSetting, SHELL_SETTING_KEYS } from '../src/shared/settings';
 
-// VS Code reads the package.json defaults; every other host (LAB, harness, desktop, IDEA) falls back to the baseline
-// combo code. Both must agree, or those hosts render a different transcript than the extension does
-describe('appearance baseline', () => {
-  it('matches the acpira.appearance.* defaults in package.json', () => {
-    const sections = ([] as { properties?: Record<string, { default?: unknown }> }[]).concat(pkg.contributes.configuration as never);
-    const props = Object.assign({}, ...sections.map(s => s.properties ?? {})) as Record<string, { default?: unknown }>;
-    for (const ax of AXES) expect([ax.key, props[`acpira.appearance.${ax.key}`]?.default]).toEqual([ax.key, BASE_APPEARANCE[ax.key]]);
+// Shared settings (the appearance axes among them) live in <ACPIRA_HOME>/settings.json for every shell, so no host
+// reads package.json defaults for them any more: every host falls back to the engine's defaults and the baseline combo
+// code. A shared key declared in the manifest again would bring back a second, VS Code-only copy with its own default
+describe('VS Code settings manifest', () => {
+  it('declares only the shell\'s own settings and the legacy agent list', () => {
+    const sections = ([] as { properties?: Record<string, unknown> }[]).concat(pkg.contributes.configuration as never);
+    const keys = sections.flatMap(s => Object.keys(s.properties ?? {})).map(k => k.replace(/^acpira\./, ''));
+    expect(keys.filter(isSharedSetting)).toEqual([]);
+    expect(keys.sort()).toEqual([...SHELL_SETTING_KEYS, 'agents'].sort());
   });
 });
