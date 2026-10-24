@@ -426,7 +426,7 @@ fn summary_call<'a>(server: &Server, s: &'a Setup) -> compact::Call<'a> {
 /// Compact the history the way the settings page picked, read at the moment: chunks first when picked (no model
 /// call, `chunk.rs`), the summary when chunking found nothing to fold (except on `/compact`, which then has nothing to
 /// do) or could not read the log. Ok(Some(chunked)) when the history changed
-async fn compact_history(server: &Server, session: &Session, s: &Setup, reason: Reason) -> Result<Option<bool>, String> {
+async fn compact_history(server: &Server, session: &Session, s: &Setup, reason: Reason, measured: Option<crate::chunk::Measured>) -> Result<Option<bool>, String> {
   // Chunks point the model at history tools Raw mode does not offer, so a /compact there always summarizes
   if server.config.get().chunked() && !s.raw {
     let context = s.model.context.unwrap_or(DEFAULT_CONTEXT);
@@ -440,6 +440,7 @@ async fn compact_history(server: &Server, session: &Session, s: &Setup, reason: 
       },
       force_fold: reason == Reason::Overflow,
       fixed: approx(&s.system, &[], &s.specs),
+      measured,
     };
     match crate::chunk::run(server, session, reason, &limits) {
       Ok(true) => return Ok(Some(true)),
@@ -533,7 +534,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
   let text = prompt_text(prompt);
   // /compact summarizes the history and ends the turn; nothing of it enters the history
   if skills::is_compact(&text) {
-    match compact_history(server, session, &s, Reason::Manual).await {
+    match compact_history(server, session, &s, Reason::Manual, None).await {
       Ok(Some(_)) => report_usage(server, session, &s),
       Ok(None) => server.update(&session.id, json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "Nothing to compact yet." } })),
       Err(_) => {}
@@ -734,7 +735,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
         // Compacted, the same step goes out again with the compacted history; nothing to compact (or a failed
         // summary) leaves the provider's refusal as the turn's error
         let compacted = if overflows == 1 {
-          compact_history(server, session, &s, Reason::Overflow).await
+          compact_history(server, session, &s, Reason::Overflow, None).await
         } else {
           compact::run(server, session, &summary_call(server, &s), Reason::Overflow).await.map(|done| done.then_some(false))
         };
@@ -770,6 +771,8 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
     // The call's own size against the threshold: at or over it the history is compacted once this step's tool
     // results are in, so the next call is the small one (Claude Code and Codex compact mid-turn the same way)
     let mut over = false;
+    // The provider's own count of this call, for chunk compaction to scale its estimates by (a stand-in is no count)
+    let mut measured = None;
     if let Some(u) = usage {
       let mut st = stats.lock();
       st.usage.input += u.input;
@@ -781,6 +784,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       let used = u.input + u.output;
       send_usage(server, session, used, context);
       over = s.policy.auto && used >= s.policy.threshold(context, s.model.output);
+      measured = (!estimated).then_some(crate::chunk::Measured { input: u.input, items: request.items.len() });
     } else {
       stats.lock().calls += 1;
     }
@@ -810,7 +814,7 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
       StopReason::Refusal => return Ok(Stop::Refusal),
       _ => (Flow::Stop, false),
     };
-    if over && let Ok(Some(_)) = compact_history(server, session, &s, Reason::Threshold).await {
+    if over && let Ok(Some(_)) = compact_history(server, session, &s, Reason::Threshold, measured).await {
       report_usage(server, session, &s);
     }
     match flow {
