@@ -2,7 +2,8 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['test/**/*.test.ts', 'packages/ui/**/*.test.ts', 'packages/picker/**/*.test.ts'],
+    // Every package's and shell's own suites plus the cross-package contracts in test/
+    include: ['test/**/*.test.ts', 'packages/*/**/*.test.ts', 'apps/*/test/**/*.test.ts'],
     globalSetup: ['test/globalSetup.ts'],
     testTimeout: 15_000,
     hookTimeout: 15_000,

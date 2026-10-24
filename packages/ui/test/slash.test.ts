@@ -1,0 +1,247 @@
+import { describe, expect, it } from 'vitest';
+import type { SlashCommand, Turn } from '@acpira/shared/transcript';
+import { commandAt, commandHint, commandMarks, completeCommand, markRoom, matchCommands, promptMarks, summonMarks } from '../chat/slashCommands';
+
+import { presentCommand } from '@acpira/shared/commandPresentation';
+import { commandName, namedCommand, restoreCommandReceipts } from '@acpira/shared/slashCommands';
+import { turnOutcome } from '../chat/turnOutcome';
+
+const COMMANDS: SlashCommand[] = [
+  { name: 'compact', description: 'Compact the conversation' },
+  { name: 'review', description: 'Review the current changes', input: { hint: 'files or scope' } },
+  { name: 'research_codebase', description: 'Explore before planning' },
+  { name: 'init', description: 'Write an AGENTS.md; runs a full scan' },
+];
+
+describe('commandAt', () => {
+  it('opens on a leading slash while the caret is inside the first token', () => {
+    expect(commandAt('/', 1)).toEqual({ start: 0, query: '' });
+    expect(commandAt('/rev', 4)).toEqual({ start: 0, query: 'rev' });
+    expect(commandAt('/review files', 3)).toEqual({ start: 0, query: 're' });
+  });
+
+  it('opens mid-text on a slash after whitespace, like the @ mention', () => {
+    expect(commandAt('拆分一下提交 /', 8)).toEqual({ start: 7, query: '' });
+    expect(commandAt('foo /rev bar', 8)).toEqual({ start: 4, query: 'rev' });
+    expect(commandAt(' /review', 8)).toEqual({ start: 1, query: 'review' });
+    expect(commandAt('line\n/rev', 9)).toEqual({ start: 5, query: 'rev' });
+  });
+
+  it('is plain text once the caret leaves the token and for slashes inside words', () => {
+    expect(commandAt('/review ', 8)).toBeUndefined();
+    expect(commandAt('/review files', 13)).toBeUndefined();
+    expect(commandAt('foo /rev bar', 12)).toBeUndefined();
+    expect(commandAt('a/b', 3)).toBeUndefined();
+    expect(commandAt('https://x', 9)).toBeUndefined();
+    expect(commandAt('', 0)).toBeUndefined();
+    // A mid-text path still yields a span; the list simply has no hit for it and stays closed
+    expect(commandAt('look at /tmp/file.ts', 20)).toEqual({ start: 8, query: 'tmp/file.ts' });
+    expect(matchCommands(COMMANDS, 'tmp/file.ts')).toEqual([]);
+  });
+});
+
+describe('completeCommand', () => {
+  it('turns the token under the caret into `/name ` and keeps the arguments after it', () => {
+    expect(completeCommand('/rev', { start: 0, query: 'rev' }, 4, 'review')).toEqual({ text: '/review ', caret: 8 });
+    expect(completeCommand('/rev files', { start: 0, query: 'rev' }, 4, 'review')).toEqual({ text: '/review files', caret: 8 });
+    // Whatever follows the caret inside the token goes too
+    expect(completeCommand('/reviewer files', { start: 0, query: 're' }, 3, 'review')).toEqual({ text: '/review files', caret: 8 });
+  });
+
+  it('completes a mid-text token in place', () => {
+    expect(completeCommand('拆分一下提交 /rel 按规范', { start: 7, query: 'rel' }, 11, 'agents:release'))
+      .toEqual({ text: '拆分一下提交 /agents:release 按规范', caret: 23 });
+  });
+});
+
+describe('matchCommands', () => {
+  it('lists everything for an empty query in the agent order', () => {
+    expect(matchCommands(COMMANDS, '').map(c => c.name)).toEqual(['compact', 'review', 'research_codebase', 'init']);
+  });
+
+  it('ranks name prefixes before name substrings and description word starts, case-insensitively', () => {
+    expect(matchCommands(COMMANDS, 're').map(c => c.name)).toEqual(['review', 'research_codebase']);
+    expect(matchCommands(COMMANDS, 'Re').map(c => c.name)).toEqual(['review', 'research_codebase']);
+    expect(matchCommands(COMMANDS, 'code').map(c => c.name)).toEqual(['research_codebase']);
+    expect(matchCommands(COMMANDS, 'scan').map(c => c.name)).toEqual(['init']);
+    expect(matchCommands(COMMANDS, 'plann').map(c => c.name)).toEqual(['research_codebase']);
+    // A description only matches at a word start: `he` does not hit "the", `ion` does not hit "conversation"
+    expect(matchCommands(COMMANDS, 'he')).toEqual([]);
+    expect(matchCommands(COMMANDS, 'ion')).toEqual([]);
+    expect(matchCommands(COMMANDS, 'zzz')).toEqual([]);
+  });
+
+  it('merges the agents: / claude: copies of one skill into the first-ranked row', () => {
+    const skills: SlashCommand[] = [
+      { name: 'agents:dig', description: 'Dig sessions' },
+      { name: 'agents:ui-pick', description: 'Pick UI' },
+      { name: 'claude:dig', description: 'Dig sessions (claude copy)' },
+      { name: 'dig', description: 'Project-level dig' },
+      { name: 'release', description: 'Ship it' },
+    ];
+    expect(matchCommands(skills, '').map(c => c.name)).toEqual(['agents:dig', 'agents:ui-pick', 'dig', 'release']);
+    expect(matchCommands(skills, 'dig').map(c => c.name)).toEqual(['dig', 'agents:dig']);
+    // Typing the claude scope ranks its copy first, so that copy is the one kept and sent
+    expect(matchCommands(skills, 'claude:').map(c => c.name)).toEqual(['claude:dig']);
+    // Both names still paint as commands in the composer
+    expect(commandMarks(skills, '/claude:dig /agents:dig').map(m => m.name)).toEqual(['claude:dig', 'agents:dig']);
+  });
+});
+
+describe('commandMarks', () => {
+  it('marks every advertised token wherever it sits, not just leading', () => {
+    expect(commandMarks(COMMANDS, '/review files')).toEqual([{ start: 0, name: 'review' }]);
+    expect(commandMarks(COMMANDS, '拆分一下提交 /review 按规范')).toEqual([{ start: 7, name: 'review' }]);
+    expect(commandMarks(COMMANDS, '/compact 然后 /review')).toEqual([{ start: 0, name: 'compact' }, { start: 12, name: 'review' }]);
+    expect(commandMarks(COMMANDS, 'line\n/review')).toEqual([{ start: 5, name: 'review' }]);
+  });
+
+  it('marks every agent\'s skill naming: Kimi / Pi `skill:`, Devin scopes, Codex `$`', () => {
+    const skills = [{ name: 'skill:git-commit', description: '' }, { name: 'agents:dig', description: '' }, { name: '$git-commit', description: '' }];
+    expect(commandMarks(skills, '/skill:git-commit')).toEqual([{ start: 0, name: 'skill:git-commit' }]);
+    expect(commandMarks(skills, '拆分 /skill:git-commit 提交')).toEqual([{ start: 3, name: 'skill:git-commit' }]);
+    expect(commandMarks(skills, '/agents:dig x')).toEqual([{ start: 0, name: 'agents:dig' }]);
+    expect(commandMarks(skills, '/$git-commit 分批')).toEqual([{ start: 0, name: '$git-commit' }]);
+    expect(commandMarks(skills, 'a /$ b /$$x')).toEqual([]);
+  });
+
+  it('leaves partial names, paths, in-word slashes and punctuated tails plain', () => {
+    expect(commandMarks(COMMANDS, 'foo /rev bar')).toEqual([]);
+    expect(commandMarks(COMMANDS, 'a/review')).toEqual([]);
+    expect(commandMarks(COMMANDS, 'look at /tmp/review.ts')).toEqual([]);
+    expect(commandMarks(COMMANDS, 'foo /review.')).toEqual([]);
+    expect(commandMarks(COMMANDS, '/unknown /review')).toEqual([{ start: 9, name: 'review' }]);
+    expect(commandMarks([], '/review')).toEqual([]);
+    expect(commandMarks(COMMANDS, 'no slash here')).toEqual([]);
+  });
+});
+
+describe('commandHint', () => {
+  it('shows the hint only while the text ends with the command and empty arguments', () => {
+    expect(commandHint(COMMANDS, '/review')).toBe('files or scope');
+    expect(commandHint(COMMANDS, '/review ')).toBe('files or scope');
+    expect(commandHint(COMMANDS, 'foo /review')).toBe('files or scope');
+    expect(commandHint(COMMANDS, 'foo /review ')).toBe('files or scope');
+    expect(commandHint(COMMANDS, 'foo /review src')).toBeUndefined();
+    expect(commandHint(COMMANDS, 'a/review')).toBeUndefined();
+    expect(commandHint(COMMANDS, '/review src')).toBeUndefined();
+    expect(commandHint(COMMANDS, '/compact')).toBeUndefined();
+    expect(commandHint(COMMANDS, '/rev')).toBeUndefined();
+    expect(commandHint(COMMANDS, 'review')).toBeUndefined();
+  });
+});
+
+describe('command presentation and feedback', () => {
+  it('repairs historical empty slash receipts without changing the saved record or inventing mode changes', () => {
+    const turns: Turn[] = [
+      { role: 'user', text: '/always-approve on' }, { role: 'agent', blocks: [], stop: 'end_turn' },
+      { role: 'user', text: '/tmp/file.ts' }, { role: 'agent', blocks: [], stop: 'end_turn' },
+      { role: 'user', text: '/plan' }, { role: 'agent', blocks: [], stop: 'error' },
+    ];
+    const restored = restoreCommandReceipts(turns);
+    expect(restored[1]).toMatchObject({ command: { name: 'always-approve' } });
+    expect(turns[1]).not.toHaveProperty('command');
+    expect(restored[1]).not.toHaveProperty('command.mode');
+    expect(restored[3]).toBe(turns[3]);
+    expect(restored[5]).toBe(turns[5]);
+  });
+
+  it('localizes known source wording, searches Chinese, and preserves custom descriptions and wire names', () => {
+    const source = { name: 'status', description: 'Check authentication status', input: { hint: '[question]' } };
+    expect(presentCommand(source, 'zh-CN')).toEqual({ name: 'status', description: '查看登录状态', input: { hint: '[问题]' } });
+    expect(presentCommand(source, 'en')).toBe(source);
+    expect(source.description).toBe('Check authentication status');
+    expect(matchCommands([source], '查看', 'zh-CN')).toEqual([source]);
+    expect(matchCommands([source], 'auth', 'zh-CN')).toEqual([source]);
+    expect(commandHint([source], '/status ', 'zh-CN')).toBe('[问题]');
+    const custom = { name: 'status', description: 'Show the status of a custom deployment' };
+    expect(presentCommand(custom, 'zh-CN').description).toBe(custom.description);
+    expect(presentCommand({ ...source, input: { hint: 'on|off' } }, 'zh-CN').input?.hint).toBe('on|off');
+  });
+
+  it('recognizes complete advertised tokens without highlighting partial names, paths or ordinary prose', () => {
+    const commands = [{ name: 'agents:ui-pick', description: '选型' }];
+    expect(namedCommand(commands, '/agents:ui-pick 做一个页面')?.name).toBe('agents:ui-pick');
+    for (const text of ['/agents:ui', '/agents:ui-pick-more', ' /agents:ui-pick', '使用 /agents:ui-pick']) {
+      expect(namedCommand(commands, text)).toBeUndefined();
+    }
+    expect(commandName('/unknown argument')).toBe('unknown');
+    expect(commandName('/$git-commit x')).toBe('$git-commit');
+    for (const text of ['/tmp/file.ts', '//server/share', '/tmp/', '/', 'hello']) expect(commandName(text)).toBeUndefined();
+  });
+
+  it('distinguishes an empty receipt, observed settings, content, and failed requests', () => {
+    const base = { role: 'agent' as const, blocks: [], stop: 'end_turn' as const };
+    expect(turnOutcome(base, 'zh-CN')).toBe('没有回复');
+    const receipt = { ...base, command: { name: 'context' } };
+    expect(turnOutcome(receipt, 'zh-CN')).toBe('请求已结束，CLI 未返回文字反馈');
+    expect(turnOutcome({ ...receipt, command: { name: 'plan', mode: 'Plan' } }, 'zh-CN')).toBe('已切换至 Plan 模式');
+    expect(turnOutcome({ ...receipt, blocks: [{ type: 'text', markdown: '   ' }] }, 'en')).toContain('no text feedback');
+    expect(turnOutcome({ ...receipt, blocks: [{ type: 'text', markdown: 'Native reply' }] }, 'zh-CN')).toBeUndefined();
+    expect(turnOutcome({ ...receipt, stop: 'error' }, 'zh-CN')).toBe('请求失败');
+    expect(turnOutcome({ ...receipt, stop: 'cancelled' }, 'en')).toBe('Stopped');
+    expect(turnOutcome({ ...receipt, stop: undefined }, 'zh-CN')).toBeUndefined();
+  });
+});
+
+describe('summonMarks', () => {
+  it('marks a persona named after @ at the start, mid-sentence or before punctuation', () => {
+    expect(summonMarks(['审查'], '@审查 你召唤一下他')).toEqual([{ start: 0, name: '审查', sigil: '@' }]);
+    expect(summonMarks(['审查'], '让 @审查 看看')).toEqual([{ start: 2, name: '审查', sigil: '@' }]);
+    expect(summonMarks(['审查'], '叫 @审查，看看')).toEqual([{ start: 2, name: '审查', sigil: '@' }]);
+    expect(summonMarks(['审查'], '@审查')).toEqual([{ start: 0, name: '审查', sigil: '@' }]);
+  });
+  it('leaves other names, glued @ and unknown personas plain', () => {
+    expect(summonMarks(['审查'], '@审查员 看看')).toEqual([]);
+    expect(summonMarks(['审查'], 'a@审查 b')).toEqual([]);
+    expect(summonMarks(['code'], '@code-review x')).toEqual([]);
+    expect(summonMarks(['审查'], '@别人 看看')).toEqual([]);
+    expect(summonMarks([], '@审查')).toEqual([]);
+  });
+  it('prefers the longest persona name and accepts names with spaces', () => {
+    expect(summonMarks(['code', 'code review'], '@code review now')).toEqual([{ start: 0, name: 'code review', sigil: '@' }]);
+    expect(summonMarks(['a', 'b'], '@a and @b')).toEqual([{ start: 0, name: 'a', sigil: '@' }, { start: 7, name: 'b', sigil: '@' }]);
+  });
+});
+
+describe('promptMarks', () => {
+  it('merges summons and commands in text order', () => {
+    expect(promptMarks(COMMANDS, ['审查'], '/review 然后 @审查 看')).toEqual([
+      { start: 0, name: 'review' }, { start: 11, name: '审查', sigil: '@' },
+    ]);
+    expect(promptMarks(COMMANDS, [], '/review x')).toEqual([{ start: 0, name: 'review' }]);
+  });
+});
+
+describe('markRoom', () => {
+  const room = (names: string[], text: string) => {
+    const marks = summonMarks(names, text);
+    return marks.map((_, i) => markRoom(text, marks, i));
+  };
+  const one = 'calc(1 * var(--mark-space) - var(--mark-clear))';
+  const shared = 'calc((1 * var(--mark-space) - var(--mark-clear)) / 2)';
+
+  it('leaves a lone mark at the text edges its full overhang', () => {
+    expect(room(['审查'], '@审查')).toEqual([undefined]);
+    expect(room(['审查'], '@审查 ')).toEqual([undefined]);
+  });
+
+  it('fits the overhang into the space beside plain text', () => {
+    expect(room(['审查'], '@审查 测试')).toEqual([`min(var(--mark-overhang), ${one})`]);
+    expect(room(['审查'], '让 @审查 看看')).toEqual([`min(var(--mark-overhang), ${one}, ${one})`]);
+    // Punctuation right against the mark leaves no whitespace at all
+    expect(room(['审查'], '@审查，看看')).toEqual(['min(var(--mark-overhang), calc(0 * var(--mark-space) - var(--mark-clear)))']);
+  });
+
+  it('splits a shared space between neighbouring marks so the pills never touch', () => {
+    expect(room(['审查', '儿子一号', '儿子二号'], '@审查 @儿子一号 @儿子二号')).toEqual([
+      `min(var(--mark-overhang), ${shared})`,
+      `min(var(--mark-overhang), ${shared}, ${shared})`,
+      `min(var(--mark-overhang), ${shared})`,
+    ]);
+  });
+
+  it('ignores neighbours on another line', () => {
+    expect(room(['a', 'b'], '@a\n@b')).toEqual([undefined, undefined]);
+  });
+});

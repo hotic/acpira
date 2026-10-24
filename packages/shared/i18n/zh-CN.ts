@@ -1,6 +1,6 @@
 import type { MsgKey } from './keys';
 
-// Simplified Chinese — must cover exactly the keys of en (enforced by `satisfies`, and by test/i18n.test.ts against extra keys).
+// Simplified Chinese — must cover exactly the keys of en (enforced by `satisfies`, and by packages/shared/test/i18n.test.ts against extra keys).
 // Placeholders are {name}; punctuation inside Chinese copy is full-width
 
 export const zhCN = {

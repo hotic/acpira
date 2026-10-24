@@ -4,5 +4,5 @@
     "lib": ["ES2022"],
     "types": ["node", "vscode"]
   },
-  "include": ["src"]
+  "include": ["src", "test"]
 }

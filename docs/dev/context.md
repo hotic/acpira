@@ -34,7 +34,7 @@ These are observed sessions, not universal model limits. All three windows were 
 pnpm exec tsx scripts/probe/context-policy.ts grok --exercise
 pnpm exec tsx scripts/probe/context-policy.ts devin --after-turn
 pnpm exec tsx scripts/probe/context-policy.ts kimi --after-turn
-pnpm exec vitest run test/usage-breakdown.test.ts test/grok-usage.test.ts test/compaction-queue.test.ts test/hostRuntime.test.ts
+pnpm exec vitest run packages/ui/test/usage-breakdown.test.ts test/grok-usage.test.ts test/compaction-queue.test.ts test/hostRuntime.test.ts
 pnpm exec vite --config lab/vite.config.ts --port 5207
 ```
 

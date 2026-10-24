@@ -38,5 +38,5 @@ jobs:
       - uses: pnpm/action-setup@v6
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
-      - run: pnpm exec vitest run test/fileLinks.test.ts test/terminalLaunch.test.ts
+      - run: pnpm exec vitest run packages/ui/test/fileLinks.test.ts apps/vscode/test/terminalLaunch.test.ts
       - run: pnpm build
