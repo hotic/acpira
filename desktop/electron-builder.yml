@@ -1,0 +1,46 @@
+# The desktop app's package (docs/dev/desktop.md "Packaging"): `pnpm package` once the root `pnpm build` (webview, picker)
+# and the engine (`pnpm build:sidecar mac-arm64`) are built; scripts/package.mjs checks those inputs first
+appId: com.hotic.acpira.desktop
+productName: Acpira
+directories:
+  output: release
+  buildResources: build
+# The two bundles carry everything they import; electron itself is the runtime
+files:
+  - dist/main.cjs
+  - dist/preload.cjs
+  - package.json
+# The Electron the development install already downloaded, instead of fetching another copy
+electronDist: node_modules/electron/dist
+npmRebuild: false
+# Chromium's locales kept: the app's nine languages (the rest of Electron's would only weigh)
+electronLanguages: [en, zh_CN, zh_TW, ja, ko, es, de, fr, ru]
+# acpira://session/<id> links open in the app (CFBundleURLTypes)
+protocols:
+  - name: Acpira session link
+    schemes: [acpira]
+mac:
+  target:
+    - target: dmg
+      arch: [arm64]
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  # Ad hoc: enough to install and run on this Mac; a Developer ID and notarization come with a public release. Hardened
+  # runtime with an ad hoc signature would reject Electron's own frameworks (another team ID)
+  identity: '-'
+  hardenedRuntime: false
+  # macOS hands an app the user's language only among the localizations its bundle declares; without them the packaged
+  # app read English from app.getLocale() on a Chinese system (2026-10-23)
+  extendInfo:
+    CFBundleDevelopmentRegion: en
+    CFBundleLocalizations: [en, zh_CN, zh_TW, ja, ko, es, de, fr, ru]
+  # The layout src/main.ts and sidecarLocator read: resources/webview, resources/picker.js, resources/bin/acpira
+  extraResources:
+    - from: ../dist/webview
+      to: webview
+    - from: ../dist/picker.js
+      to: picker.js
+    - from: ../dist/sidecar/mac-arm64/acpira
+      to: bin/acpira
+dmg:
+  title: Acpira
