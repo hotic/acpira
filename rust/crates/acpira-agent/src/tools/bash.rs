@@ -39,7 +39,8 @@ pub fn spec() -> ToolSpec {
     name: super::BASH.into(),
     description: format!(
       "Run a shell command ({name}) in the session folder and return its output (stdout and stderr together) and exit code. \
-       Non-interactive: commands that wait for input fail. Default timeout {}s, at most {}s.",
+       Commands get no input, so one that asks a question fails; for one that must be answered (a prompt, a REPL, an \
+       installer that asks), pass interactive: true and type the answers with job and input. Default timeout {}s, at most {}s.",
       DEFAULT_TIMEOUT_MS / 1000,
       MAX_TIMEOUT_MS / 1000
     ),
@@ -50,6 +51,7 @@ pub fn spec() -> ToolSpec {
         "workdir": { "type": "string", "description": "Directory to run in (default: the session folder)" },
         "timeout": { "type": "integer", "description": "Timeout in milliseconds" },
         "background": { "type": "boolean", "description": "Start it in the background and return at once with a job id (dev servers, watchers, long builds); check it with job" },
+        "interactive": { "type": "boolean", "description": "Run it in a terminal in the background, to answer what it asks: returns a job id; read and type with job (input)" },
       },
       "required": ["command"],
     }),
@@ -66,8 +68,10 @@ pub fn prepare(args: &Value, cwd: &Path) -> Result<Action, String> {
     return Err(format!("workdir {} is not a directory", workdir.display()));
   }
   let timeout_ms = num_arg(args, "timeout").filter(|t| *t > 0).unwrap_or(DEFAULT_TIMEOUT_MS).min(MAX_TIMEOUT_MS);
-  let background = args.get("background").or_else(|| args.get("run_in_background")).and_then(Value::as_bool).unwrap_or(false);
-  Ok(Action::Bash { command, workdir, timeout_ms, background })
+  let interactive = args.get("interactive").or_else(|| args.get("tty")).and_then(Value::as_bool).unwrap_or(false);
+  // A command to talk to runs as a job: the model answers it between calls
+  let background = interactive || args.get("background").or_else(|| args.get("run_in_background")).and_then(Value::as_bool).unwrap_or(false);
+  Ok(Action::Bash { command, workdir, timeout_ms, background, interactive })
 }
 
 /// Kills the command's process group when dropped while armed
@@ -140,7 +144,7 @@ impl Utf8Tail {
 /// below turns into mojibake. Switching the console's output code page first makes PowerShell and the native commands
 /// it starts (they share its hidden console) write UTF-8; `$OutputEncoding` covers text piped into native commands
 #[cfg(windows)]
-const UTF8_PRELUDE: &str = "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding; ";
+pub(crate) const UTF8_PRELUDE: &str = "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding; ";
 
 /// The command line under the shell, in a process group of its own, output piped, no stdin, pagers off
 pub(crate) fn command(command: &str, workdir: &Path) -> tokio::process::Command {

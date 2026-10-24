@@ -53,10 +53,10 @@ pub enum Action {
   Read { files: Vec<read::Slice>, images: bool },
   /// The whole file replaced (`write`) or computed edits (`edit`, one change per file)
   Write { files: Vec<edit::Change> },
-  /// `background`: start it as a job and return at once
-  Bash { command: String, workdir: PathBuf, timeout_ms: u64, background: bool },
-  /// Check (or stop) a background job
-  Job { id: String, wait_s: u64, kill: bool },
+  /// `background`: start it as a job and return at once; `interactive`: that job runs in a terminal and takes input
+  Bash { command: String, workdir: PathBuf, timeout_ms: u64, background: bool, interactive: bool },
+  /// Check (or stop) a background job, typing `input` into an interactive one first
+  Job { id: String, wait_s: u64, kill: bool, input: Option<String> },
   /// `context`: lines shown around each match
   Grep { pattern: String, path: PathBuf, include: Option<String>, context: usize },
   Glob { pattern: String, path: PathBuf },
@@ -313,8 +313,14 @@ impl Action {
         }
       }
       Action::Bash { command, .. } => Presentation { title: command.clone(), kind: "execute", locations: vec![], content: vec![] },
-      Action::Job { id, wait_s, kill } => {
-        let title = if *kill { format!("Stop job {id}") } else if *wait_s > 0 { format!("Check job {id} (wait {wait_s}s)") } else { format!("Check job {id}") };
+      Action::Job { id, wait_s, kill, input } => {
+        let title = match input {
+          // What is typed, escapes visible (`\n` is Enter), cut to a title's length
+          Some(text) if !*kill => format!("Type into job {id}: {}", crate::budget::cut(text.escape_debug().to_string().as_str(), 80)),
+          _ if *kill => format!("Stop job {id}"),
+          _ if *wait_s > 0 => format!("Check job {id} (wait {wait_s}s)"),
+          _ => format!("Check job {id}"),
+        };
         Presentation { title, kind: "execute", locations: vec![], content: vec![] }
       }
       Action::Grep { pattern, path, include, .. } => {
@@ -370,9 +376,9 @@ impl Action {
       // Off the runtime's workers: a PDF can take seconds to parse
       Action::Read { files, images } => tokio::task::spawn_blocking(move || read::run(&files, images, &ctx)).await.unwrap_or_else(|e| Output::error(format!("The tool crashed: {e}"))),
       Action::Write { files } => edit::run(files, &ctx),
-      Action::Bash { command, workdir, background: true, .. } => ctx.jobs.clone().start(&command, &workdir, &ctx).await,
+      Action::Bash { command, workdir, background: true, interactive, .. } => ctx.jobs.clone().start(&command, &workdir, interactive, &ctx).await,
       Action::Bash { command, workdir, timeout_ms, .. } => bash::run(&command, &workdir, timeout_ms, &ctx).await,
-      Action::Job { id, wait_s, kill } => ctx.jobs.clone().check(&id, wait_s, kill, &ctx).await,
+      Action::Job { id, wait_s, kill, input } => ctx.jobs.clone().check(&id, wait_s, kill, input.as_deref(), &ctx).await,
       // Network calls block for up to two minutes: off the runtime's workers (an approved local fetch comes this way)
       Action::Mcp { server, tool, args, images, .. } => mcp::run(&server, &tool, args, images, &ctx).await,
       web @ (Action::Fetch { .. } | Action::Search { .. }) => {
