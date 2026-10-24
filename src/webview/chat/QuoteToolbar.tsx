@@ -110,6 +110,52 @@ export function QuoteToolbar({ root }: { root: RefObject<HTMLElement | null> }) 
     };
   }, [range, root, added]);
 
+  // A quote taken inside a nested scrollport (a thought body, command output, a long prompt) belongs to that layer: the bare
+  // button rides on the selection's first line and leaves once that line scrolls out of the scrollport, instead of floating over
+  // the rows around it (or flipping below the range) until the whole range is gone, which is all the positioner's own
+  // anchor-hidden check sees. The thread itself is still handled by the clip layer and data-anchor-hidden
+  useLayoutEffect(() => {
+    const el = layer.current;
+    const thread = root.current?.closest<HTMLElement>('[data-thread]');
+    if (!el || !thread || !range || added) return;
+    const ports: Element[] = [];
+    const common = range.commonAncestorContainer;
+    for (let node: Element | null = common instanceof Element ? common : common.parentElement; node && node !== thread; node = node.parentElement) {
+      if (getComputedStyle(node).overflowY !== 'visible') ports.push(node);
+    }
+    if (!ports.length) return;
+    const place = () => {
+      let top = -Infinity;
+      let bottom = Infinity;
+      for (const port of ports) {
+        const r = port.getBoundingClientRect();
+        top = Math.max(top, r.top);
+        bottom = Math.min(bottom, r.bottom);
+      }
+      // Half a line in still counts, so a line cut by the scrollport's edge (or its fade) keeps its button
+      const inside = (line?: DOMRect) => !!line && (line.top + line.bottom) / 2 >= top && (line.top + line.bottom) / 2 <= bottom;
+      const lines = [...range.getClientRects()].filter(r => r.width > 0 && r.height > 0);
+      // Flipped below the range (no room above it in the shell), the button also stands on the last line
+      const below = el.querySelector('[data-side]')?.getAttribute('data-side') === 'bottom';
+      el.toggleAttribute('data-scrolled-out', !inside(lines[0]) || (below && !inside(lines.at(-1))));
+    };
+    place();
+    const resize = new ResizeObserver(place);
+    // The positioner settles its side after the scroll that moved the range, so a flip re-runs the check
+    const flip = new MutationObserver(place);
+    flip.observe(el, { subtree: true, attributes: true, attributeFilter: ['data-side'] });
+    for (const port of ports) {
+      port.addEventListener('scroll', place, { passive: true });
+      resize.observe(port);
+    }
+    return () => {
+      for (const port of ports) port.removeEventListener('scroll', place);
+      resize.disconnect();
+      flip.disconnect();
+      el.removeAttribute('data-scrolled-out');
+    };
+  }, [range, root, added]);
+
   const close = () => {
     paint();
     setAdded(undefined);
@@ -135,7 +181,7 @@ export function QuoteToolbar({ root }: { root: RefObject<HTMLElement | null> }) 
   return (
     <>
       {/* Sits under the plan dock and toasts (later siblings at the same z) and under every shell-layer overlay */}
-      <div ref={layer} data-quote-layer className="pointer-events-none absolute inset-0 z-10 overflow-hidden data-[covered]:invisible" />
+      <div ref={layer} data-quote-layer className="pointer-events-none absolute inset-0 z-10 overflow-hidden data-[covered]:invisible data-[scrolled-out]:invisible" />
       <ShellLayerContext.Provider value={layer}>
         <Popover.Root open={!!picked} onOpenChange={next => { if (!next) close(); }}>
           <Popover.Portal>
