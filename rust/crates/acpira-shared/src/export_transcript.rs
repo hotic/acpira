@@ -310,7 +310,7 @@ pub fn export_file_name(title: &str, ext: &str, stamp: &str) -> String {
 mod tests {
   use super::*;
 
-  // Same expectations as the selection / quote lines in test/exportTranscript.test.ts
+  // Same expectations as the selection / quote lines in packages/shared/test/exportTranscript.test.ts
   #[test]
   fn user_turns_list_selections_by_range_and_render_quotes_as_blockquotes() {
     let turn: UserTurn = serde_json::from_value(serde_json::json!({
@@ -366,7 +366,7 @@ mod tests {
     assert_eq!(export_file_name("a/b c", "txt", "20261016-101010"), "ab-c-20261016-101010.txt");
   }
 
-  // Same expectation as the steered-prompt case in test/exportTranscript.test.ts
+  // Same expectation as the steered-prompt case in packages/shared/test/exportTranscript.test.ts
   #[test]
   fn steered_prompts_export_as_a_user_section_inside_the_reply() {
     let turn: AgentTurn = serde_json::from_value(serde_json::json!({

@@ -269,6 +269,8 @@
     "@types/node": "catalog:",
     "@types/vscode": "catalog:",
     "@vscode/vsce": "catalog:",
-    "esbuild": "catalog:"
+    "esbuild": "catalog:",
+    "tsx": "catalog:",
+    "vitest": "catalog:"
   }
 }

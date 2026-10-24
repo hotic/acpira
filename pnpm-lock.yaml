@@ -266,6 +266,12 @@ importers:
       esbuild:
         specifier: 'catalog:'
         version: 0.28.2
+      tsx:
+        specifier: 'catalog:'
+        version: 4.23.13
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.11(@types/node@22.15.3)(vite@8.2.2(@types/node@22.15.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13))
 
   packages/engine-client:
     dependencies:
@@ -276,6 +282,9 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 22.15.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.11(@types/node@22.15.3)(vite@8.2.2(@types/node@22.15.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13))
 
   packages/picker:
     dependencies:
@@ -298,6 +307,9 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 22.15.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.11(@types/node@22.15.3)(vite@8.2.2(@types/node@22.15.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13))
 
   packages/ui:
     dependencies:
