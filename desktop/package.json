@@ -1,0 +1,33 @@
+{
+  "name": "acpira-desktop",
+  "productName": "Acpira",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The Acpira desktop app: the chat webview and the Rust engine outside any IDE",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node build.mjs && electron .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "smoke": "node scripts/smoke.mjs",
+    "package": "node scripts/package.mjs",
+    "icon": "node scripts/icon.mjs"
+  },
+  "packageManager": "pnpm@10.28.2",
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "electron": "45.0.0",
+    "electron-builder": "26.15.3",
+    "esbuild": "^0.28.2",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
+  },
+  "author": "hotic"
+}
