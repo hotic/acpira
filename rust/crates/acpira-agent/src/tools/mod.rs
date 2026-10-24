@@ -10,6 +10,7 @@ pub mod html;
 pub mod jobs;
 pub mod mcp;
 pub mod names;
+pub mod pdf;
 pub mod plan;
 pub mod question;
 pub mod read;
@@ -47,8 +48,9 @@ pub struct Ctx {
 /// A validated call, ready to describe and run
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
-  /// The windows of one call, the first as the call names it in `path`
-  Read { files: Vec<read::Slice> },
+  /// The windows of one call, the first as the call names it in `path`; `images` whether the turn's model takes the
+  /// pictures an image file is read as
+  Read { files: Vec<read::Slice>, images: bool },
   /// The whole file replaced (`write`) or computed edits (`edit`, one change per file)
   Write { files: Vec<edit::Change> },
   /// `background`: start it as a job and return at once
@@ -190,10 +192,11 @@ fn spec(name: &str) -> Option<ToolSpec> {
   }
 }
 
-/// Validate a call of a tool by its real name (`names::resolve` first); the error goes back to the model as the result
-pub fn prepare(name: &str, args: &Value, cwd: &Path) -> Result<Action, String> {
+/// Validate a call of a tool by its real name (`names::resolve` first); the error goes back to the model as the result.
+/// `images`: the turn's model takes images
+pub fn prepare(name: &str, args: &Value, cwd: &Path, images: bool) -> Result<Action, String> {
   match name {
-    READ => read::prepare(args, cwd),
+    READ => read::prepare(args, cwd, images),
     WRITE => edit::prepare_write(args, cwd),
     EDIT => edit::prepare(args, cwd),
     BASH => bash::prepare(args, cwd),
@@ -233,7 +236,7 @@ impl Action {
   pub fn permission(&self, cwd: &Path) -> (&'static str, String) {
     use crate::permission::{self as perm, path_target};
     match self {
-      Action::Read { files } => (perm::READ, files.first().map_or_else(String::new, |f| path_target(&f.path, cwd))),
+      Action::Read { files, .. } => (perm::READ, files.first().map_or_else(String::new, |f| path_target(&f.path, cwd))),
       Action::Grep { path, .. } | Action::Glob { path, .. } | Action::List { path, .. } | Action::Skill { path, .. } => (perm::READ, path_target(path, cwd)),
       Action::Write { files } => (perm::EDIT, files.first().map_or_else(String::new, |f| path_target(&f.path, cwd))),
       Action::Bash { command, .. } => (perm::BASH, command.clone()),
@@ -260,7 +263,7 @@ impl Action {
   pub fn permissions(&self, cwd: &Path) -> Vec<(&'static str, String)> {
     use crate::permission::{self as perm, path_target};
     match self {
-      Action::Read { files } => files.iter().map(|f| (perm::READ, path_target(&f.path, cwd))).collect(),
+      Action::Read { files, .. } => files.iter().map(|f| (perm::READ, path_target(&f.path, cwd))).collect(),
       Action::Write { files } => files.iter().map(|f| (perm::EDIT, path_target(&f.path, cwd))).collect(),
       _ => vec![self.permission(cwd)],
     }
@@ -292,7 +295,7 @@ impl Action {
 
   pub fn describe(&self, cwd: &Path) -> Presentation {
     match self {
-      Action::Read { files } => {
+      Action::Read { files, .. } => {
         let paths = distinct(files.iter().map(|f| &f.path));
         // One location per window, so two ranges of one file each show where they start; line 1 is left out, as the
         // host takes it for a whole-file read
@@ -348,7 +351,7 @@ impl Action {
   /// A read-only call, on a blocking thread so several run side by side
   pub fn run_sync(self, ctx: Ctx) -> Output {
     match self {
-      Action::Read { files } => read::run(&files, &ctx),
+      Action::Read { files, images } => read::run(&files, images, &ctx),
       Action::Grep { pattern, path, include, context } => search::grep(&pattern, &path, include.as_deref(), context, &ctx),
       Action::Glob { pattern, path } => search::glob(&pattern, &path, &ctx),
       Action::List { path, ignore } => search::list(&path, &ignore, &ctx),
@@ -364,7 +367,8 @@ impl Action {
 
   pub async fn run(self, ctx: Ctx) -> Output {
     match self {
-      Action::Read { files } => read::run(&files, &ctx),
+      // Off the runtime's workers: a PDF can take seconds to parse
+      Action::Read { files, images } => tokio::task::spawn_blocking(move || read::run(&files, images, &ctx)).await.unwrap_or_else(|e| Output::error(format!("The tool crashed: {e}"))),
       Action::Write { files } => edit::run(files, &ctx),
       Action::Bash { command, workdir, background: true, .. } => ctx.jobs.clone().start(&command, &workdir, &ctx).await,
       Action::Bash { command, workdir, timeout_ms, .. } => bash::run(&command, &workdir, timeout_ms, &ctx).await,

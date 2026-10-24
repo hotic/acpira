@@ -104,6 +104,37 @@ async fn an_allowed_edit_changes_the_file_and_the_model_sees_the_result() {
 }
 
 #[tokio::test]
+async fn reading_an_image_file_shows_the_model_the_picture_when_it_takes_images() {
+  use base64::Engine as _;
+  // A PNG header of 2x2 pixels: the IHDR chunk is all the size is read from
+  let png = [b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".as_slice(), &2u32.to_be_bytes(), &2u32.to_be_bytes(), &[8, 6, 0, 0, 0]].concat();
+  let data = base64::engine::general_purpose::STANDARD.encode(&png);
+  for (input, sees) in [(json!(["text", "image"]), true), (json!(["text"]), false)] {
+    let (h, server, sid) = setup(json!([{ "id": "m1", "input": input }])).await;
+    std::fs::write(h.cwd().join("frame.png"), &png).unwrap();
+    server.push(mock::tools(&[("c1", "read", json!({ "path": "frame.png" }))]));
+    server.push(mock::text("A tiny frame."));
+    assert_eq!(prompt(&h, &sid, "what is in the frame?").await["stopReason"], "end_turn");
+    assert!(h.client.permissions.lock().is_empty(), "a read in the session folder asks nothing");
+
+    let msgs = server.requests()[1].body["messages"].as_array().unwrap().clone();
+    let tool = msgs.iter().position(|m| m["role"] == "tool").unwrap();
+    let text = msgs[tool]["content"].as_str().unwrap();
+    assert!(text.contains("PNG image, 2x2 pixels"), "{text}");
+    if sees {
+      // Chat takes text only in a tool message: the picture follows it as a user message
+      assert_eq!(msgs[tool + 1]["content"][1]["image_url"]["url"], format!("data:image/png;base64,{data}"));
+    } else {
+      assert!(text.contains("does not accept images"), "{text}");
+      assert_eq!(msgs.len(), tool + 1, "no picture for a text-only model");
+    }
+    // The card shows the picture either way, without the agent's own marks
+    let done = h.updates().into_iter().find(|u| u["toolCallId"] == "call-1" && u["status"] == "completed").unwrap();
+    assert_eq!(done["content"], json!([{ "type": "content", "content": { "type": "image", "data": data, "mimeType": "image/png" } }]));
+  }
+}
+
+#[tokio::test]
 async fn a_rejected_command_ends_the_turn_and_never_runs() {
   let (h, server, sid) = setup(json!([{ "id": "m1" }])).await;
   *h.client.answer.lock() = Answer::Reject;

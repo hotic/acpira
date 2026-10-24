@@ -281,7 +281,7 @@ struct Setup {
   skills: Vec<Skill>,
   /// The MCP servers' tools, offered after the built-in ones (`mcp.rs`)
   mcp: Vec<crate::mcp::Tool>,
-  /// The model takes images, so images an MCP tool returns go to it
+  /// The model takes images, so images an MCP tool returns, and image files `read` opens, go to it
   images: bool,
   /// Raw mode (`modes::RAW`): no tools, no composed prompt, and no compaction but an explicit /compact
   raw: bool,
@@ -1347,7 +1347,7 @@ async fn run_tools(
       if let Some(t) = setup.mcp.iter().find(|t| t.name == n) {
         return Ok(tools::mcp::prepare(t, &a, setup.images));
       }
-      tools::prepare(n, &a, &cwd).map_err(|e| format!("{e}. Received arguments: {}", crate::budget::cut(&a.to_string(), 2000)))
+      tools::prepare(n, &a, &cwd, setup.images).map_err(|e| format!("{e}. Received arguments: {}", crate::budget::cut(&a.to_string(), 2000)))
     });
     let raw_input = args.unwrap_or_else(|_| Value::String(call.arguments.clone()));
     match &action {
@@ -1719,10 +1719,11 @@ fn joined(front: Option<&str>, model: &str, back: Option<&str>) -> String {
   text
 }
 
-/// An MCP result's images go to the model when it takes them; the card shows them either way
+/// An MCP result's images, and the pictures `read` makes of image files, go to the model when it takes them (those it
+/// may not get are marked on the card's content); the card shows them either way
 fn images_of(p: &Prepared, out: &Output) -> Vec<crate::llm::Image> {
   match &p.action {
-    Ok(Action::Mcp { images: true, .. }) => tools::mcp::model_images(&out.content),
+    Ok(Action::Mcp { images: true, .. } | Action::Read { images: true, .. }) => tools::mcp::model_images(&out.content),
     _ => vec![],
   }
 }

@@ -425,7 +425,9 @@ fn render(url: &str, content_type: &str, bytes: &[u8], format: Format, ctx: &Ctx
     let saved = std::fs::create_dir_all(&ctx.outputs).and_then(|_| std::fs::write(&file, bytes));
     return match saved {
       Ok(()) => {
-        let message = format!("{url} is not text ({}, {} bytes). Saved to {}; inspect it with a command (file, pdftotext, unzip -l …).", if mime.is_empty() { "no content type" } else { &mime }, bytes.len(), file.display());
+        // read shows images and a PDF's text (`read.rs`); anything else is left to a command
+        let how = if mime.starts_with("image/") || mime == "application/pdf" { "read it with the read tool" } else { "inspect it with a command (file, unzip -l …)" };
+        let message = format!("{url} is not text ({}, {} bytes). Saved to {}; {how}.", if mime.is_empty() { "no content type" } else { &mime }, bytes.len(), file.display());
         Output { content: vec![text_content(&message)], model: message, is_error: false, raw_output: Some(json!({ "url": url, "contentType": mime, "saved": file })) }
       }
       Err(e) => Output::error(format!("{url} is not text ({mime}) and could not be saved: {e}")),
@@ -913,7 +915,7 @@ mod tests {
     let out = fetch(&format!("{base}/json"), Format::Markdown, 10, true, &ctx);
     assert_eq!(out.model, r#"{"a":1}"#);
     let out = fetch(&format!("{base}/img"), Format::Markdown, 10, true, &ctx);
-    assert!(!out.is_error && out.model.contains("not text (image/png, 7 bytes)"), "{}", out.model);
+    assert!(!out.is_error && out.model.contains("not text (image/png, 7 bytes)") && out.model.ends_with("read it with the read tool."), "{}", out.model);
     assert_eq!(std::fs::read(dir.path().join("outputs/f_1.png")).unwrap().len(), 7);
     let out = fetch(&format!("{base}/nope"), Format::Markdown, 10, true, &ctx);
     assert!(out.is_error && out.model.contains("HTTP 404") && out.model.contains("No such page"), "{}", out.model);
