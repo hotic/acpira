@@ -111,6 +111,30 @@ describe('turnOutputTps', () => {
     })).toBe(100);
   });
 
+  it('measures only after the last foreground tool when the tally covers just the last model call (Devin)', () => {
+    const blocks = [
+      { ...read, startedAt: 2_000, endedAt: 5_000 },
+      { ...run, startedAt: 3_000, endedAt: 6_000 },
+      { ...run, id: 'bg', background: true, startedAt: 1_000, endedAt: 7_000 },
+      text('done'),
+    ];
+    // input + output equals the end-of-turn context: one call's tally, window [6000, 8000] = 2000 ms
+    expect(turnOutputTps({
+      role: 'agent', startedAt: 500, respondedAt: 1_000, endedAt: 8_000, blocks,
+      usage: { input: 99_799, output: 201, total: 100_000, context: { used: 100_000, size: 200_000 } },
+    })).toBe(100);
+    // An explicit single model call does the same without a context snapshot
+    expect(turnOutputTps({
+      role: 'agent', startedAt: 500, respondedAt: 1_000, endedAt: 8_000, blocks,
+      usage: { output: 201, modelCalls: 1 },
+    })).toBe(100);
+    // A per-turn tally far above the context keeps the whole window minus tools: 7000 - 4000 = 3000 ms
+    expect(turnOutputTps({
+      role: 'agent', startedAt: 500, respondedAt: 1_000, endedAt: 8_000, blocks,
+      usage: { input: 400_000, output: 301, total: 400_301, context: { used: 100_000, size: 200_000 } },
+    })).toBe(100);
+  });
+
   it('is undefined for tiny token counts, sub-200ms single-chunk dumps, or missing respondedAt', () => {
     expect(turnOutputTps({ ...turn([text('ok')]), startedAt: 0, respondedAt: 500, endedAt: 1_500, usage: { output: 3 } })).toBeUndefined();
     expect(turnOutputTps({ ...turn([text('buffered')]), startedAt: 0, respondedAt: 1_450, endedAt: 1_500, usage: { output: 100 } })).toBeUndefined();
