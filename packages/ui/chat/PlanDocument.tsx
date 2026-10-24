@@ -16,6 +16,8 @@ import { ModelOptions } from './ModelPicker';
 import { ModelMark } from './ModelMark';
 import { Prose } from './Prose';
 import { permissionOption } from './permissionOptions';
+import { reviseOption } from './planReview';
+import { focusMainComposer } from './useComposerDraft';
 
 type ExecutionModel = { configId: string; value: string };
 export const PlanDocumentContext = createContext<{
@@ -57,7 +59,7 @@ export function PlanDocument({ block, permission: suppliedPermission, onChoose }
   const primary = permission?.options.find(o => o.kind === 'allow_once');
   // Kimi's reject-and-exit is distinct from revising in Plan mode; keep it in the
   // additional approvals menu instead of relabeling it as a revision.
-  const revise = permission?.options.find(o => o.kind === 'reject_once' && !/exit/i.test(o.id) && !/退出/.test(o.label));
+  const revise = permission && reviseOption(permission);
   const extra = permission?.options.filter(o => o.id !== primary?.id && o.id !== revise?.id) ?? [];
   const started = block.status === 'approved' || block.status === 'executing';
   const choose = (optionId: string) => {
@@ -88,7 +90,9 @@ export function PlanDocument({ block, permission: suppliedPermission, onChoose }
         <div className="pl-indent"><Prose block={{ type: 'text', markdown: body }} /></div>
       </div>}
       {!started && <div className="@container flex min-w-0 items-center justify-between gap-gap border-t border-line py-gap-half pr-gap-half pl-pad">
-        {revise ? <Button variant="secondary" disabled={!ctx.ready} title={permissionOption(revise, getLocale(), true).label} onClick={() => choose(revise.id)}
+        {/* Revising is a message, as in Cursor: the button only hands the composer the focus, and sending there answers
+            Revise and queues the words as the next prompt (Shell). Rejecting at once ended Claude's turn with nothing to go on */}
+        {revise ? <Button variant="secondary" disabled={!ctx.ready} title={t('composer.placeholder.revisePlan')} onClick={focusMainComposer}
           className="h-ctl-sm shrink-0">{t('plan.revise')}</Button> : <span />}
         <div className="ml-auto flex min-w-0 items-center gap-gap">
           {(model || extra.length > 0) && <Popover.Root open={menuOpen} onOpenChange={setMenuOpen}>

@@ -18,6 +18,13 @@ export function hasTurnContent(turn: AgentTurn): boolean {
   return turn.blocks.some(b => b.type !== 'notice' && b.type !== 'goal');
 }
 
+// Choosing a plan card's Revise ends the turn as cancelled on claude-agent-acp 0.93.0 ("No, keep planning"), with
+// nothing else to show. The card already says the plan awaits changes, so that end reads as a normal one: no
+// "stopped" row and no stop glyph on the fold head. A stop pressed by hand leaves the plan as it was, never rejected
+export function revisedPlanEnd(turn: AgentTurn): boolean {
+  return turn.stop === 'cancelled' && turn.blocks.some(b => b.type === 'plan_document' && b.status === 'rejected');
+}
+
 // An empty ACP completion is a receipt, not proof that a command took effect.
 // Errors/cancellation always win; actual prose and tool results stand on their own.
 export function turnOutcome(turn: AgentTurn, locale: Locale): string | undefined {

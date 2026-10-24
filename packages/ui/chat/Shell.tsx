@@ -38,6 +38,7 @@ import { Alert, isShortStop } from './Alert';
 import { Questions, type OnAnswer } from './Questions';
 import { PlanBar } from './PlanBar';
 import { PlanDocumentContext } from './PlanDocument';
+import { pendingPlanReview, reviseOption } from './planReview';
 import { planExecutionId } from '@acpira/shared/planExecution';
 import { Queue } from './Queue';
 import { GoalStrip, PromptFooter } from './Goal';
@@ -675,17 +676,27 @@ export function Shell(p: ShellProps) {
   const held = useMemo(() => heldPrompt(p.turns, p.running, p.status, p.queued), [p.turns, p.running, p.status, p.queued]);
   // With steering on, a message sent mid-turn joins that turn right away; a queued row's button steers the rest
   const steering = !!p.steerQueued && p.running;
+  // A plan card waiting on the user turns the composer into its revision box, as Cursor's "Steer the plan": a send answers
+  // the card's Revise (Claude, Codex and the built-in agent then end the turn) and queues the words as the next prompt,
+  // so they reach the agent after the rejection instead of being steered into a turn that is blocked on the card
+  const review = useMemo(() => pendingPlanReview(p.turns), [p.turns]);
+  // Plain ids keep the composer props memo stable between stream pushes
+  const reviseBlock = review?.id;
+  const reviseChoice = review && reviseOption(review)?.id;
   // Enabled persona names for the sent messages' summon pills; memoized so the HistoryMessage memo chain holds
   const summons = useMemo(() => p.personas?.map(x => x.name), [p.personas]);
   const composerProps: ComposerProps = useMemo(() => ({
-    running: p.running, steer: steering, disabled: p.status !== 'ready' && p.status !== 'starting',
+    running: p.running, steer: steering, revisePlan: !!reviseChoice, disabled: p.status !== 'ready' && p.status !== 'starting',
     controlsLocked: p.status !== 'ready',
     theme: p.theme, turns: p.turns, controls: p.controls, hidden: p.hidden?.[p.agent.id],
     usage: p.usage, commands: p.commands, compactAt: p.compactAt, cwd: p.cwd ?? '',
-    onSend: steering ? (text: string, attachments: Draft[]) => on.send(text, attachments, true) : on.send, onSearchFiles: on.searchFiles, onNotice: notice, onStop: on.stop,
+    onSend: reviseBlock && reviseChoice && p.activeSessionId ? (text: string, attachments: Draft[]) => {
+      on.permission(p.activeSessionId!, reviseBlock, reviseChoice);
+      on.send(text, attachments);
+    } : steering ? (text: string, attachments: Draft[]) => on.send(text, attachments, true) : on.send, onSearchFiles: on.searchFiles, onNotice: notice, onStop: on.stop,
     onSetMode: on.setMode, onSetConfig: on.setConfig, onCompact: on.compact, personas: p.personas,
     onAddModel: p.agent.id === BUILTIN_AGENT_ID && p.onOpenSettings ? () => p.onOpenSettings!({ kind: 'agent', id: BUILTIN_AGENT_ID }) : undefined,
-  }), [p.running, steering, p.status, p.theme, p.turns, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact, p.personas, p.onOpenSettings]);
+  }), [p.running, steering, reviseBlock, reviseChoice, p.activeSessionId, on.permission, p.status, p.theme, p.turns, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact, p.personas, p.onOpenSettings]);
   // Context values above the transcript must not change on every stream push: React walks the whole memoized tree for consumers each time
   const permissions = useStableList(useMemo(() => p.turns.flatMap(t => t.role === 'agent' ? t.blocks.filter((b): b is PermissionBlock => b.type === 'permission') : []), [p.turns]));
   const planDoc = useMemo(() => ({
@@ -921,7 +932,8 @@ export function Shell(p: ShellProps) {
                     data-plan-dock
                     className={cn('pointer-events-none absolute inset-x-0 bottom-0 z-10', wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--content-w)+2*var(--page))]')}
                   >
-                    <PlanBar key={`plan:${p.activeSessionId}`} turns={p.turns} running={p.running} />
+                    {/* Until the plan is built its steps are the card's; the dock comes back with the execution's progress */}
+                    {!review && <PlanBar key={`plan:${p.activeSessionId}`} turns={p.turns} running={p.running} />}
                   </div>
                   {(toasts.length > 0 || (desktop && shellToasts.length > 0)) && (
                     <div ref={toastRef} className="pointer-events-none absolute inset-x-0 bottom-[calc(var(--gap)+var(--thread-dock-height,0px))] z-10 flex flex-col items-center gap-1 px-page">
