@@ -133,10 +133,13 @@ function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
 // is for the agent, the user reads one line naming who reported, from its `## Persona (cli)` headings
 function SubagentsReported({ text }: { text: string }) {
   const names = [...text.matchAll(/^## (.+?)(?: \([^()]*\))?$/gm)].map(m => m[1]!);
+  // Same inset and row height as an agent turn's rows (AgentMessage), so the line stays inside the transcript column
   return (
-    <Row lead={<AtSign className="size-icon" strokeWidth={1.5} />}>
-      <RowLabel>{t('chat.subagentsReported')}</RowLabel>
-      {names.length > 0 && <RowTarget>{names.join(', ')}</RowTarget>}
-    </Row>
+    <div className="flex min-w-0 flex-col px-pad [--row:var(--chat-row)]">
+      <Row lead={<AtSign className="size-icon" strokeWidth={1.5} />}>
+        <RowLabel>{t('chat.subagentsReported')}</RowLabel>
+        {names.length > 0 && <RowTarget>{names.join(', ')}</RowTarget>}
+      </Row>
+    </div>
   );
 }
