@@ -1,4 +1,4 @@
-import { applySession } from '@acpira/shared/reuse';
+import { applySession, reuse } from '@acpira/shared/reuse';
 import { applySessionPatch, type SessionPatch } from '@acpira/shared/sessionPatch';
 import type { SessionView } from '@acpira/shared/transcript';
 
@@ -9,7 +9,12 @@ export const VIEW_CACHE_ENTRIES = 12;
 
 // What the page shows plus the last view of each recent session. Switching back to a kept session arrives as a patch
 // against the kept view (only what changed since), not as the whole transcript again: over Remote-SSH a long session's
-// view took seconds to cross, and every switch paid it
+// view took seconds to cross, and every switch paid it.
+// A whole view (init, `session`) is always taken: the host sends one only when the page holds nothing it can patch, in
+// order, and already drops a view older than the one on screen within the same epoch (session_patch.rs `SentViews`). The
+// page sees no epoch, so it must not compare revs across them: a session that moved to another engine is followed here
+// with revs from -2^40, a reopened instance or a restarted engine counts from 0 again, and gating those on rev froze the
+// page on its old copy while every later patch was dropped as stale
 export class SessionViews {
   // Least recently shown first; the view on screen is in here too
   private views = new Map<string, SessionView>();
@@ -23,11 +28,11 @@ export class SessionViews {
     this.views.clear();
     this.leaving = undefined;
     this.current = undefined;
-    return active ? this.show(cur?.id === active.id ? applySession(cur, active) : active) : undefined;
+    return active ? this.show(adopt(cur, active)) : undefined;
   }
 
   // Optimistically switch to a kept session on click so the UI updates at once without waiting on the IPC round trip;
-  // the host's patch (or whole view) that follows updates it in place via `applySession`.
+  // the host's patch (or whole view) that follows updates it in place, keeping unchanged references.
   select(id: string): SessionView | undefined {
     if (this.current?.id === id) return this.current;
     const kept = this.views.get(id);
@@ -37,12 +42,10 @@ export class SessionViews {
     return kept;
   }
 
-  // A whole view. Another session's view is taken as it is: the host sends one whole only when the page holds nothing it
-  // can patch (or a reopened instance whose revs count from 0 again), so the kept copy must not win on rev
+  // A whole view, taken whatever its rev: the kept copy (on screen after an optimistic `select`, too) must not win on rev
   whole(next: SessionView): SessionView {
     this.leaving = undefined;
-    const cur = this.current;
-    return this.show(cur?.id === next.id ? applySession(cur, next) : next);
+    return this.show(adopt(this.current, next));
   }
 
   // The view to show, 'stale' for a patch older than the view on screen, or undefined when the page does not hold the view
@@ -80,4 +83,10 @@ export class SessionViews {
     this.current = view;
     return view;
   }
+}
+
+// The host's whole view in place of what the page holds: unchanged subtrees of the same session keep their references
+// (memoized turns skip re-rendering), with no rev check (see the class comment)
+function adopt(current: SessionView | undefined, next: SessionView): SessionView {
+  return current?.id === next.id ? reuse(current, next) : next;
 }

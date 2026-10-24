@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { HostMsg } from '@acpira/shared/protocol';
 import type { AgentTurn, SessionView } from '@acpira/shared/transcript';
+import { applySessionPatch } from '@acpira/shared/sessionPatch';
 import { SidecarClient, type SidecarCommand, type SidecarState, type ShellView } from '@acpira/engine-client/SidecarClient';
 import { engineEndpoint, type EngineEndpoint } from '@acpira/engine-client/engine';
 import { FAKE, SIDECAR, NODE } from './sidecarShell';
@@ -65,6 +66,24 @@ class View implements ShellView {
       this.waiters.push({ pred: m => { const s = pick(m); return !!s && pred(s); }, resolve: m => { clearTimeout(t); resolve(pick(m)!); } });
     });
   }
+}
+
+// A page that says `patches` in ready, holding one session the way the webview does: a whole view is taken as it is, a patch
+// is applied to the held view, and one that does not fit asks for the whole view again
+class PatchingView implements ShellView {
+  readonly host = 'sidebar' as const;
+  held: SessionView | undefined;
+  constructor(readonly viewId: string, readonly initial: string | { mostRecent: true }, private send: (m: { type: 'resync' }) => void) {}
+  onHostMessage(m: HostMsg) {
+    if (m.type === 'init') this.held = m.state.active;
+    else if (m.type === 'session') this.held = m.session;
+    else if (m.type === 'sessionPatch') {
+      const next = applySessionPatch(this.held, m.patch);
+      if (next) this.held = next;
+      else this.send({ type: 'resync' });
+    }
+  }
+  onState() {}
 }
 
 function client(ep: EngineEndpoint, cwd: string, home: string, logs: string[] = [], agentEnv: Record<string, string> = {}) {
@@ -165,6 +184,42 @@ describe('persistent engine', { timeout: 60_000 }, () => {
     const stopped = await va.session(s => s.id === id && !s.running && lastAgent(s)?.stop !== undefined);
     expect(lastAgent(stopped)?.stop).toBe('cancelled');
     await vb.session(s => s.id === id && !s.running && lastAgent(s)?.stop === 'cancelled');
+  });
+
+  // The page showed the session live in its own engine (revs from 0 up); once another engine owns it, this engine follows it
+  // with revs from -2^40 in a new epoch. Up to 1.10.8 the page's engine took that view for an older one of the session on
+  // screen and sent nothing: the page froze, and a prompt or a pick made there ran in the other engine unseen
+  it('keeps a patching page following a session it showed live after another engine takes it over', async () => {
+    const home = tmp('acpira-engine-home-');
+    const [cwdA, cwdB] = [tmp('acpira-engine-a-'), tmp('acpira-engine-b-')];
+    const agentEnv = { FAKE_SESSION_DIR: tmp('acpira-engine-native-') };
+    const a = client(engineEndpoint({ binary: SIDECAR, home, cwd: cwdA }), cwdA, home, [], agentEnv);
+    const pa = new PatchingView('A', { mostRecent: true }, m => a.send('A', m));
+    a.attach(pa);
+    a.send('A', { type: 'ready', patches: true });
+    a.start();
+    await expect.poll(() => pa.held?.status, { timeout: 20_000 }).toBe('ready');
+    const id = pa.held!.id;
+    a.send('A', { type: 'send', sessionId: id, text: 'hi' });
+    await expect.poll(() => pa.held && !pa.held.running && lastAgent(pa.held)?.stop, { timeout: 20_000 }).toBe('end_turn');
+    expect(pa.held!.rev).toBeGreaterThan(0);
+    await expect.poll(() => existsSync(join(home, 'sessions', `${id}.json`)), { timeout: 5000 }).toBe(true);
+
+    // A shows the session, so B gets it read-only and takes it over
+    const b = client(engineEndpoint({ binary: SIDECAR, home, cwd: cwdB }), cwdB, home, [], agentEnv);
+    const vb = new View('B', id);
+    b.attach(vb);
+    b.send('B', { type: 'ready' });
+    b.start();
+    await vb.session(s => s.id === id && s.canTakeOver === true);
+    b.send('B', { type: 'takeOverSession', sessionId: id });
+    await vb.session(s => s.id === id && s.status === 'ready' && (s.rev ?? 0) >= 0);
+
+    // A turn in B reaches the page A still shows
+    b.send('B', { type: 'send', sessionId: id, text: 'again' });
+    await vb.session(s => s.id === id && s.turns.length === 4 && !s.running && lastAgent(s)?.stop === 'end_turn');
+    await expect.poll(() => pa.held?.turns.length, { timeout: 20_000 }).toBe(4);
+    expect((pa.held!.rev ?? 0) < 0).toBe(true);
   });
 
   // Blue-green: an engine whose windows are all gone (the extension was upgraded, the next window talks to a new engine) keeps

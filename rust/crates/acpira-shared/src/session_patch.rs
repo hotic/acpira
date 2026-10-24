@@ -165,7 +165,9 @@ pub const SENT_VIEWS_BUDGET: usize = 64 << 20;
 
 /// How one view goes to a page
 pub enum Delivery {
-  /// Older than the view on screen (two flushes racing, a batch after a resync): nothing to send
+  /// Older than the view on screen in the same epoch (two flushes racing, a batch after a resync): nothing to send. A view
+  /// of another epoch (the session reopened, or moved to another engine and followed from here) is never stale: its revs
+  /// count on their own line, often below the old one (a follower's start at -2^40)
   Stale,
   Whole,
   Patch(RawJson),
@@ -208,6 +210,7 @@ impl SentViews {
     };
     if let Some(cur) = &self.current
       && cur.0.id == next.0.id
+      && cur.0.epoch == next.0.epoch
       && next.0.rev < cur.0.rev
     {
       return Delivery::Stale;
@@ -337,6 +340,19 @@ mod tests {
     assert_eq!(kind(&v.deliver(Some(&sent("b", 3, 0, vec![user("x")])))), "whole");
     // the view on screen never goes back to an older rev
     assert_eq!(kind(&v.deliver(Some(&sent("b", 3, -1, vec![user("x")])))), "stale");
+  }
+
+  #[test]
+  fn the_view_on_screen_moving_to_another_epoch_is_sent_whole_even_at_a_lower_rev() {
+    let mut v = SentViews::default();
+    let turns = vec![user("u1"), agent(&["a"])];
+    assert_eq!(kind(&v.deliver(Some(&sent("s", 1, 50, turns.clone())))), "whole");
+    // another engine took the session over: this engine now shows a follower view whose revs start far below 0
+    let follower = -(1_i64 << 40);
+    assert_eq!(kind(&v.deliver(Some(&sent("s", 2, follower, turns.clone())))), "whole");
+    // and patches from there on, within its own epoch
+    assert_eq!(kind(&v.deliver(Some(&sent("s", 2, follower + 1, turns.clone())))), "patch");
+    assert_eq!(kind(&v.deliver(Some(&sent("s", 2, follower, turns)))), "stale");
   }
 
   #[test]
