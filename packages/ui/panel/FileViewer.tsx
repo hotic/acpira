@@ -354,9 +354,13 @@ function ReviewFile({ sessionId, change, refresh, onOpen, scroller }: { sessionI
   const lines = all && all.length > REVIEW_LINES ? all.slice(0, REVIEW_LINES) : all;
   const rest = all ? all.length - (lines?.length ?? 0) : 0;
   // Until the diff is there: its changed lines plus a hunk header, capped like a shown diff (at least one line)
-  const expected = readable && !read ? Math.min(change.add + change.del + 1, REVIEW_LINES) : 0;
+  const estimate = Math.min(change.add + change.del + 1, REVIEW_LINES);
+  const expected = readable && !read ? estimate : 0;
+  // review-card: out of sight the card skips layout and paint (panel.css), sized by the same estimate until it has been
+  // laid out once; 40 laid-out cards made every scroll frame cost a quarter of a second in WebKit
   return (
-    <section ref={card} className="shrink-0 overflow-hidden rounded-lg border border-conversation-line">
+    <section ref={card} className="review-card shrink-0 overflow-hidden rounded-lg border border-conversation-line"
+      style={{ '--review-rows': readable ? estimate : 0 } as CSSProperties}>
       <button type="button" onClick={() => onOpen(change.path)} disabled={!readable}
         className="flex h-row w-full items-center gap-1.5 bg-bg-1 px-gap text-left transition-colors enabled:hover:bg-hover">
         <FileGlyph name={change.path} className="text-fg-3" />
@@ -364,8 +368,8 @@ function ReviewFile({ sessionId, change, refresh, onOpen, scroller }: { sessionI
         <span className="min-w-0 flex-1 truncate text-3 text-fg-3">{dirOf(change.path)}</span>
         <span className="shrink-0 text-3"><DiffStat add={change.add} del={change.del} /></span>
       </button>
-      {expected > 0 && <div aria-hidden className="review-pending" style={{ '--review-rows': expected } as CSSProperties} />}
-      {lines && <DiffBlock lines={lines} path={change.path} />}
+      {expected > 0 && <div aria-hidden className="review-pending" />}
+      {lines && <DiffBlock lines={lines} path={change.path} whole />}
       {rest > 0 && (
         <button type="button" onClick={() => onOpen(change.path)}
           className="flex h-row w-full items-center border-t border-conversation-line px-gap text-left text-3 text-fg-3 transition-colors hover:bg-hover hover:text-fg-1">

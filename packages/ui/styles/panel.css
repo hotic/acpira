@@ -140,8 +140,12 @@
   [data-viewer] .code-row.is-selected .code-num, [data-viewer] .code-row:hover .code-num { color: var(--fg-1); }
   /* A long file is laid out a block at a time: blocks out of sight keep their last size and skip layout and paint */
   [data-viewer] .code-block { content-visibility: auto; contain-intrinsic-size: auto calc(var(--code-block-rows) * var(--code-output-line-height)); }
-  /* The review's diffs show whole, the panel scrolls them */
-  [data-review] .diff-scroll { max-height: none; }
-  /* A card not yet near the visible part holds about the height its diff will take (diff-scroll's padding included) */
+  /* The review's diffs show whole (DiffBlock `whole`), the panel scrolls them. A card not yet near the visible part holds
+     about the height its diff will take (diff-scroll's padding included); out of sight a card skips layout and paint,
+     keeping its last laid-out size (`auto`), else that estimate plus its header */
   [data-review] .review-pending { height: calc(var(--review-rows) * var(--code-output-line-height) + var(--spacing-gap)); }
+  [data-review] .review-card {
+    content-visibility: auto;
+    contain-intrinsic-size: auto calc(var(--review-rows) * var(--code-output-line-height) + var(--spacing-gap) + var(--spacing-row));
+  }
 }

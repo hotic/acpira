@@ -78,7 +78,8 @@ export interface DiffLocation { toolCallId: string; nth: number }
 
 // Shared production version of the selected code-detail LAB design. A page view's diff carries its source without the
 // file texts (`omitted`): rows highlight from the visible segments, and copying asks the host for the new file
-export function DiffBlock({ lines, source, path = '', locate }: { lines: DiffLine[]; source?: DiffSource; path?: string; locate?: DiffLocation }) {
+// `whole`: the diff at its full height, its container scrolling it (the review), instead of a capped box of its own
+export function DiffBlock({ lines, source, path = '', locate, whole }: { lines: DiffLine[]; source?: DiffSource; path?: string; locate?: DiffLocation; whole?: boolean }) {
   const root = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
   const plain = useMemo(() => plainDiffRows(lines), [lines]);
@@ -116,7 +117,7 @@ export function DiffBlock({ lines, source, path = '', locate }: { lines: DiffLin
   return <div ref={root} className="group/code-output code-output diff-surface" data-language={language ?? 'plain'}>
     <OutputCopy text={copyText} label={source !== undefined && (!source.omitted || fetchable) ? t('code.copySource') : t('code.copyVisible')}
       read={fetchable ? readSource : undefined} />
-    <div className="diff-scroll scroll-thin max-h-code-output overflow-auto py-gap-half" tabIndex={0} role="region" aria-label={t('code.diff')}>
+    <div className={cn('diff-scroll scroll-thin overflow-auto py-gap-half', !whole && 'max-h-code-output')} tabIndex={0} role="region" aria-label={t('code.diff')}>
       <div className="diff-table min-w-full w-max font-mono text-mono leading-code-output">
         {rows.map((row, index) => row.kind === 'hunk' && (index === 0 || index === rows.length - 1) ? null : row.kind === 'hunk'
           ? <div className="diff-hunk relative h-diff-hunk border-y border-line my-gap-half text-fg-3 select-none" key={index} title={row.text} aria-label={row.text}>
