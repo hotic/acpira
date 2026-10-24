@@ -518,7 +518,7 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
         </div>
       )}
       {p.categories.map(n => renderCategory(n, p.categories))}
-      {desktop && !p.count && <div className="flex min-h-row items-center gap-gap pr-2 pl-6 text-3 text-fg-3"><span className="-mr-gap-half w-lead shrink-0" />{t('session.none')}</div>}
+      {desktop && !p.count && <EmptyProjectRow onNew={onNewIn ? () => onNewIn(p.cwd) : undefined} />}
     </>;
   };
 
@@ -882,6 +882,22 @@ function Hint({ children }: { children: ReactNode }) {
 // Where a reordered category will land: a short accent line on the block's edge, positioned absolutely so nothing shifts
 function InsertLine({ edge }: { edge: 'top' | 'bottom' }) {
   return <div role="presentation" className={cn('pointer-events-none absolute inset-x-2 z-10 h-0.5 rounded-full bg-accent', edge === 'top' ? '-top-px' : '-bottom-px')} />;
+}
+
+// Desktop: an empty project's only row. With a way to start a session it is that action, a muted plus and "new session in
+// this project" that brighten under the pointer; without one it only says the project has none
+function EmptyProjectRow({ onNew }: { onNew?: () => void }) {
+  const box = 'group flex min-h-row w-full shrink-0 items-center gap-gap rounded-md pr-2 pl-6 text-left text-3 text-fg-3';
+  if (!onNew) return <div className={box}><span className="-mr-gap-half w-lead shrink-0" />{t('session.none')}</div>;
+  return (
+    <button type="button" onClick={onNew}
+      className={cn(box, 'transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1')}>
+      <span className="-mr-gap-half flex size-lead shrink-0 items-center justify-center opacity-60 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
+        <Plus strokeWidth={1.5} className="size-icon" />
+      </span>
+      <span className="min-w-0 truncate">{t('session.project.newSession')}</span>
+    </button>
+  );
 }
 
 const pages = <T,>(list: T[]) => Array.from({ length: Math.ceil(list.length / MORE_PAGE) }, (_, i) => list.slice(i * MORE_PAGE, (i + 1) * MORE_PAGE));
