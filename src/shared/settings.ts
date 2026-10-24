@@ -102,6 +102,18 @@ export interface SettingsView {
 export type SettingKey = 'language' | 'defaultAgent' | 'agentOrder' | 'disabledAgents' | 'sessionScope' | 'sessionListPosition' | 'autoCompact' | 'compactAtTokens' | 'hiddenOptions' | 'accountSwitch' | 'theme' | 'uiFontSize' | 'codeFontSize' | 'diffMarkers' | 'fontSmoothing' | 'shareEditorSelection' | 'steerQueued' | 'notifySound' | 'notifySystem' | 'planAutoApprove' | 'subagents' | 'agentCpuCap' | 'proxy';
 export const SETTING_KEYS: SettingKey[] = ['language', 'defaultAgent', 'agentOrder', 'disabledAgents', 'sessionScope', 'sessionListPosition', 'autoCompact', 'compactAtTokens', 'hiddenOptions', 'accountSwitch', 'theme', 'uiFontSize', 'codeFontSize', 'diffMarkers', 'fontSmoothing', 'shareEditorSelection', 'steerQueued', 'notifySound', 'notifySystem', 'planAutoApprove', 'subagents', 'agentCpuCap', 'proxy'];
 
+// The settings each shell keeps in its own store, since they follow the window's shape: the session list's side and scope
+// (the desktop app always lists every project on the left) and sharing the editor selection (IDE shells only). Every
+// other setting is one value for all shells, in <ACPIRA_HOME>/settings.json (2026-10-23), like the transcripts; `subagents`
+// has a file of its own. Mirrors acpira_shared::settings::SHELL_SETTING_KEYS
+export const SHELL_SETTING_KEYS: readonly SettingKey[] = ['sessionScope', 'sessionListPosition', 'shareEditorSelection'];
+
+// Whether `key` (an acpira.* key without the prefix) lives in the shared settings file: a setting outside the shell's own,
+// or an appearance axis
+export function isSharedSetting(key: string): boolean {
+  return ((SETTING_KEYS as string[]).includes(key) && !(SHELL_SETTING_KEYS as string[]).includes(key) && key !== 'subagents') || key.startsWith('appearance.');
+}
+
 export const MIN_COMPACT_AT_TOKENS = 10_000;
 
 // Agents whose settings page offers the Plan mode auto-approval switch: Claude Code 2.1.284 asks for every tool call in

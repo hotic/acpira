@@ -1,11 +1,15 @@
 import { homedir } from 'node:os';
 import * as vscode from 'vscode';
+import { AXES } from '@shared/appearance';
 import { resolveLocale, type Language, type Locale } from '@shared/i18n';
+import { isSharedSetting, SETTING_KEYS } from '@shared/settings';
 import { normalizePreviewUrl } from '@shared/picker';
 import type { BrowserOpened, PlatformEvent, PlatformMethod, PlatformRequest } from '@shared/sidecar';
 import type { SecretVault } from './accounts/AccountStore';
 import { WorkspaceFiles } from './files';
 import type { HelloPayload } from './shell/SidecarClient';
+import { SharedSettingsFile } from './shell/sharedSettings';
+import { acpiraHome } from './store/dataDir';
 import { terminalLaunch } from './terminalLaunch';
 import { legacyAgents } from './legacyAgents';
 
@@ -133,6 +137,7 @@ export class VscodePlatform {
   private readonly files = new WorkspaceFiles();
   private readonly pages = new BrowserPages();
   private readonly keys: string[];
+  readonly shared = new SharedSettingsFile(acpiraHome());
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -153,16 +158,23 @@ export class VscodePlatform {
         delete: async k => context.secrets.delete(k),
       },
     };
-    // The settings snapshot covers every acpira.* key the manifest declares, so readers see VS Code's defaults like before
+    // The snapshot covers the keys the manifest declares (the shell's own, with VS Code's defaults) plus whatever shared
+    // keys settings.json still holds: the first engine on the machine seeds <ACPIRA_HOME>/settings.json from them
     const props = (context.extension.packageJSON as { contributes?: { configuration?: { properties?: Record<string, unknown> } } }).contributes?.configuration?.properties ?? {};
-    this.keys = Object.keys(props).filter(k => k.startsWith('acpira.')).map(k => k.slice('acpira.'.length));
+    const declared = Object.keys(props).filter(k => k.startsWith('acpira.')).map(k => k.slice('acpira.'.length));
+    this.keys = [...new Set([...declared, ...SETTING_KEYS.filter(isSharedSetting), ...AXES.map(a => `appearance.${a.key}`)])];
+  }
+
+  // A setting as this shell sees it: shared keys from the shared file once it exists, the shell's own from VS Code
+  setting(key: string): unknown {
+    return this.shared.get(key, k => this.cfg().get(k));
   }
 
   private cfg() { return vscode.workspace.getConfiguration('acpira'); }
 
   cwd() { return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? homedir(); }
 
-  locale(): Locale { return resolveLocale(this.cfg().get<Language>('language'), vscode.env.language); }
+  locale(): Locale { return resolveLocale(this.setting('language') as Language | undefined, vscode.env.language); }
 
   hello(): HelloPayload {
     return {
