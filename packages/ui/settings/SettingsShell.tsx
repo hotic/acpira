@@ -3,6 +3,7 @@ import { ChatGptPage } from './ChatGptPage';
 import { useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { AccountInfo, AgentId, AgentInfo, ConfigControl } from '@acpira/shared/transcript';
+import type { ModelShapes } from '@acpira/shared/modelShapes';
 import type { AgentInventory } from '@acpira/shared/inventory';
 import type { AgentInstallProgress } from '@acpira/shared/protocol';
 import type { SettingKey, SettingsView } from '@acpira/shared/settings';
@@ -104,6 +105,7 @@ export interface SettingsShellProps {
   storage?: StorageState;
   // Per agent, the configOptions of its latest session (the hide lists are built from these)
   controls: Partial<Record<AgentId, ConfigControl[]>>;
+  modelShapes?: Partial<Record<AgentId, ModelShapes>>;
   // Agents whose refresh is in flight: the button spins and ignores clicks while the cached page stays in place
   refreshing?: ReadonlySet<AgentId>;
   env: SettingsEnv;
@@ -188,7 +190,7 @@ export function SettingsShell(p: SettingsShellProps) {
                   {page.kind === 'appearance' && <AppearancePage settings={p.settings} appearance={p.appearance} on={p.on} />}
                   {page.kind === 'shared' && <SharedPage state={p.shared} agents={p.agents} on={p.on} />}
                   {page.kind === 'storage' && <StoragePage state={p.storage} agents={p.agents} env={p.env} on={p.on} />}
-                  {page.kind === 'subagents' && <SubagentsPage settings={p.settings} agents={p.agents} controls={p.controls} on={p.on} />}
+                  {page.kind === 'subagents' && <SubagentsPage settings={p.settings} agents={p.agents} controls={p.controls} shapes={p.modelShapes} on={p.on} />}
                   {agent && (
                     <AgentPage
                       key={agent.id}

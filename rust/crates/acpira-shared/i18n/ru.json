@@ -1163,6 +1163,7 @@
   "subagents.page.agent": "Работает в",
   "subagents.page.model": "Модель",
   "subagents.page.effort": "Усилие рассуждения",
+  "subagents.page.effortUnknown": "Уровни появятся, когда эта модель хотя бы раз отработает в сессии",
   "subagents.page.cliDefault": "По умолчанию в CLI",
   "subagents.page.duty": "Функция",
   "subagents.page.dutyGeneral": "Общая",

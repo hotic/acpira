@@ -1186,6 +1186,7 @@ export const zhTW = {
   'subagents.page.agent': "執行於",
   'subagents.page.model': "模型",
   'subagents.page.effort': "推理強度",
+  'subagents.page.effortUnknown': "這個模型在工作階段裡跑過一次後才會列出檔位",
   'subagents.page.cliDefault': "CLI 預設",
   'subagents.page.duty': "職能",
   'subagents.page.dutyGeneral': "通用",

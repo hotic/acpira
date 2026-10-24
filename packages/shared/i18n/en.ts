@@ -1188,6 +1188,7 @@ export const en = {
   'subagents.page.agent': 'Runs in',
   'subagents.page.model': 'Model',
   'subagents.page.effort': 'Reasoning effort',
+  'subagents.page.effortUnknown': 'Levels show once this model has run in a session',
   'subagents.page.cliDefault': 'CLI default',
   'subagents.page.duty': 'Duty',
   'subagents.page.dutyGeneral': 'General',
