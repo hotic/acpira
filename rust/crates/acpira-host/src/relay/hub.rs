@@ -169,7 +169,28 @@ impl RelayHub {
       }
       HubOp::Features => {
         let browser = self.browser.read().as_ref().is_some_and(|b| b.available());
-        let _ = write.write_all(reply(HubReply::Features(HostFeatures { browser, summoned: caller.is_some() })).as_bytes()).await;
+        let remote = session.upgrade().is_some_and(|s| s.remote_folder().is_some());
+        let _ = write.write_all(reply(HubReply::Features(HostFeatures { browser, summoned: caller.is_some(), remote })).as_bytes()).await;
+      }
+      HubOp::HostHooks { cwd } => {
+        let r = match session.upgrade() {
+          Some(s) => match s.describe_host_hooks(&cwd).await {
+            Ok(text) => HubReply::Done(text),
+            Err(e) => HubReply::Error(e),
+          },
+          None => HubReply::Error("The Acpira session that started this agent is gone.".into()),
+        };
+        let _ = write.write_all(reply(r).as_bytes()).await;
+      }
+      HubOp::HostFiles { paths, widget } => {
+        let r = match session.upgrade() {
+          Some(s) => match s.fetch_shown(&paths, widget).await {
+            Ok(()) => HubReply::Done(String::new()),
+            Err(e) => HubReply::Error(e),
+          },
+          None => HubReply::Error("The Acpira session that started this agent is gone.".into()),
+        };
+        let _ = write.write_all(reply(r).as_bytes()).await;
       }
       HubOp::OpenBrowser { url } => {
         let browser = self.browser.read().clone();

@@ -37,3 +37,4 @@ pub mod sidecar;
 pub mod store;
 pub mod terminal;
 pub mod util;
+pub mod workspace;

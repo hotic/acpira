@@ -736,6 +736,8 @@ impl SessionManager {
       return;
     }
     let Some(cwd) = self.folder_for(None, None) else { return };
+    // A session in a folder on an SSH host starts its agent in this machine's home (`AcpSession::process_cwd`)
+    let cwd = crate::workspace::process_folder(cwd);
     let acc = account.or_else(|| self.default_account(agent));
     self.pool.ensure(agent, &cwd, acc.as_deref());
   }
@@ -1224,7 +1226,7 @@ impl SessionManager {
       _ => None,
     };
     // A project shell without any project probes in the home directory, like a shell without a workspace always did
-    let cwd = self.folder_for(None, None).unwrap_or_else(|| (self.deps.cwd)());
+    let cwd = crate::workspace::process_folder(self.folder_for(None, None).unwrap_or_else(|| (self.deps.cwd)()));
     match probe_agent_controls(&def, &bin, &cwd, env.as_ref(), self.deps.log.clone(), None).await {
       Ok(r) => {
         let options = r.options.clone();
@@ -1294,7 +1296,8 @@ impl SessionManager {
 
   /// `cwd`: the folder to list for (`folder_for`); nothing to list without one
   pub async fn list_native_sessions(&self, agent: &str, cwd: Option<String>) -> Result<Vec<NativeSessionInfo>> {
-    let Some(cwd) = cwd else { return Ok(vec![]) };
+    // A folder on an SSH host has no native sessions here
+    let Some(cwd) = cwd.filter(|c| !crate::workspace::is_remote(c)) else { return Ok(vec![]) };
     let registry = self.registry();
     let def = registry.get(agent)?.clone();
     let bin = registry

@@ -478,6 +478,8 @@ async fn dispatch(op: &str, a: Value, id: u64, out: &Out, stdin: Option<mpsc::Un
     }
     "exec" => exec(&a, id, out, stdin).await,
     "tool" => tool(&a, id, out).await,
+    // A project folder as the pages read it (`workspace.rs`): the same `project_files` / `node_files` code as for a local one
+    "project" => project(&a).await,
     // The prompt files of a session folder here (`acpira_agent::prompt::HostFiles`), read once as the session opens
     "places" => {
       let cwd = path_arg(&a, "cwd")?;
@@ -499,6 +501,27 @@ async fn dispatch(op: &str, a: Value, id: u64, out: &Out, stdin: Option<mpsc::Un
       })
       .await
       .map(unmapped)?)
+    }
+    // The handoff pack of a work tree here, or its files' stats (`handoff::build` / `file_stats`, as for a local one)
+    "handoff" => {
+      let cwd = path_arg(&a, "cwd")?;
+      let a = mapped(a);
+      let base = a.get("base").and_then(Value::as_str).map(str::to_owned);
+      let scope: Option<crate::handoff::Scope> = a.get("scope").and_then(|s| serde_json::from_value(s.clone()).ok());
+      let failed = |e: anyhow::Error| WireError::new("io", format!("{e:#}"));
+      if a.get("stats").and_then(Value::as_bool) == Some(true) {
+        let files = crate::handoff::file_stats(&cwd, base.as_deref(), scope.as_ref()).await.map_err(failed)?;
+        return Ok(unmapped(json!({ "files": files })));
+      }
+      let recipe: crate::handoff::Recipe = a.get("recipe").and_then(|r| serde_json::from_value(r.clone()).ok()).unwrap_or_default();
+      let pack = crate::handoff::build(&cwd, base.as_deref(), scope.as_ref(), &recipe).await.map_err(failed)?;
+      Ok(unmapped(json!({ "pack": pack })))
+    }
+    // `workspace_hooks`' check of a project here (`hooks::describe`)
+    "hooksDescribe" => {
+      let cwd = path_arg(&a, "cwd")?;
+      let text = blocking(move || Ok(crate::hooks::describe(&cwd.to_string_lossy()))).await?;
+      Ok(unmapped(json!({ "text": text })))
     }
     "hook" => {
       let root = path_arg(&a, "root")?;
@@ -756,6 +779,37 @@ async fn tool(a: &Value, id: u64, out: &Out) -> Result<Value, WireError> {
     }
     other => Err(WireError::new("invalid", format!("unknown tool phase \"{other}\""))),
   }
+}
+
+/// The @ search index of the folders searched here, as an engine keeps one for its own folders
+static FILES: std::sync::LazyLock<crate::node_files::NodeFiles> = std::sync::LazyLock::new(crate::node_files::NodeFiles::new);
+
+/// The `project` op: `op` names the read, `cwd` the project folder, `rel` a path inside it. A refused read answers with
+/// the error's code (`ProjectError::code`)
+async fn project(a: &Value) -> Result<Value, WireError> {
+  use crate::project_files as pf;
+  let root = path_arg(a, "cwd")?;
+  let rel = a.get("rel").and_then(Value::as_str).unwrap_or("").to_owned();
+  let failed = |e: pf::ProjectError| json!({ "error": e.code() });
+  let out = match a.get("op").and_then(Value::as_str).unwrap_or("") {
+    "listDir" => pf::list_dir(&root, &rel).await.map_or_else(failed, |entries| json!({ "entries": entries })),
+    "gitMarks" => json!({ "marks": pf::git_marks(&root).await }),
+    "readText" => match pf::resolve(&root, &rel) {
+      Ok(file) => pf::read_text(&file).await.map_or_else(failed, |text| json!({ "text": text })),
+      Err(e) => failed(e),
+    },
+    "headText" => json!({ "text": pf::head_text(&root, &rel).await }),
+    "sessionChanges" => {
+      let bases: Vec<(String, Option<String>)> = serde_json::from_value(mapped(a.get("bases").cloned().unwrap_or(Value::Null))).unwrap_or_default();
+      json!({ "files": pf::session_changes(&root, bases).await })
+    }
+    "searchFiles" => {
+      let query = a.get("query").and_then(Value::as_str).unwrap_or("");
+      json!({ "files": FILES.search(&root.to_string_lossy(), query).await })
+    }
+    other => return Err(WireError::new("invalid", format!("unknown project read \"{other}\""))),
+  };
+  Ok(unmapped(out))
 }
 
 /// Process groups this helper started and has not seen end; all of them die with the helper

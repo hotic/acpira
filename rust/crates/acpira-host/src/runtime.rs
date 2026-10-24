@@ -351,7 +351,8 @@ impl HostRuntime {
 
   /// Claude's project skill links, and user-level links once the link panel turned `auto` on (see `shared_config`)
   async fn maintain_shared(&self) {
-    let cwd = self.manager.folder_for(None, None).unwrap_or_else(|| self.platform.home());
+    // A folder on an SSH host gets no links written here: only the user's own
+    let cwd = self.manager.folder_for(None, None).filter(|f| !crate::workspace::is_remote(f)).unwrap_or_else(|| self.platform.home());
     if let Err(e) = self.settings.shared_maintain(&cwd).await {
       self.platform.log(&format!("shared config: {e:#}"));
     }

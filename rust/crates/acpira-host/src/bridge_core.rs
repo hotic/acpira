@@ -284,6 +284,11 @@ impl BridgeCore {
         // Tool references are relative to the session they came from; a view showing another session ignores them
         let Some(active) = self.viewer.active_id().filter(|a| *a == session_id) else { return Ok(()) };
         let Some(cwd) = manager.session_cwd(&active) else { return Ok(()) };
+        // A file on an SSH host has no editor here (the desktop's tool panel shows the project's own files)
+        if let Some(f) = acpira_shared::remote::parse_remote_folder(&cwd) {
+          platform.toast("info", &tp("host.remoteFile", &[("path", &path), ("host", &f.alias)]));
+          return Ok(());
+        }
         let resolved = if crate::platform::file_url::is_file_url(&path) {
           file_url_to_path(&path).ok_or_else(|| anyhow::anyhow!("File URL must be absolute"))
         } else {
@@ -329,6 +334,18 @@ impl BridgeCore {
       W::SearchFiles { query, seq } => {
         // Always answer, even on failure: the webview holds a promise per seq
         let root = manager.folder_for(Some(&self.viewer), None);
+        // A folder on an SSH host is searched there; the shell's own search only knows this machine
+        if let Some(root) = root.clone().filter(|r| crate::workspace::is_remote(r)) {
+          let core = self.clone();
+          tokio::spawn(async move {
+            let files = match core.workspace(Some(root)).await {
+              Ok(ws) => ws.search_files(&query).await,
+              Err(_) => vec![],
+            };
+            core.post_now(HostMsg::Files { seq, files });
+          });
+          return Ok(());
+        }
         let files: Vec<FileHit> = match platform.search_files(root.as_deref(), &query).await {
           Ok(f) => f,
           Err(e) => {
@@ -353,9 +370,9 @@ impl BridgeCore {
       W::ProjectDir { session_id, dir, seq } => {
         let (core, root) = (self.clone(), manager.session_cwd(&session_id));
         tokio::spawn(async move {
-          let (entries, error) = match root {
-            None => (vec![], Some("noProject".to_owned())),
-            Some(root) => match project_files::list_dir(Path::new(&root), &dir).await {
+          let (entries, error) = match core.workspace(root).await {
+            Err(e) => (vec![], Some(e.code())),
+            Ok(ws) => match ws.list_dir(&dir).await {
               Ok(entries) => (entries, None),
               Err(e) => (vec![], Some(e.code())),
             },
@@ -366,9 +383,9 @@ impl BridgeCore {
       W::ProjectStatus { session_id, seq } => {
         let (core, root) = (self.clone(), manager.session_cwd(&session_id));
         tokio::spawn(async move {
-          let marks = match &root {
-            Some(root) => project_files::git_marks(Path::new(root)).await,
-            None => Default::default(),
+          let marks = match core.workspace(root.clone()).await {
+            Ok(ws) => ws.git_marks().await,
+            Err(_) => Default::default(),
           };
           core.post_now(HostMsg::ProjectStatus { seq, root, marks });
         });
@@ -378,22 +395,20 @@ impl BridgeCore {
         // The session's base is looked up now, while its view is at hand
         let session_base = match (&root, base) {
           (Some(root), Some(ProjectBase::Session)) => {
-            let abs = Path::new(root).join(&path);
+            let abs = crate::workspace::folder_path(root).join(&path);
             manager.edit_bases(&session_id).into_iter().find(|(p, _)| Path::new(p) == abs).and_then(|(_, b)| b)
           }
           _ => None,
         };
         tokio::spawn(async move {
-          let Some(root) = root else {
-            core.post_now(HostMsg::ProjectFile { seq, text: None, hunks: vec![], error: Some("noProject".into()) });
-            return;
+          let ws = match core.workspace(root).await {
+            Ok(ws) => ws,
+            Err(e) => {
+              core.post_now(HostMsg::ProjectFile { seq, text: None, hunks: vec![], error: Some(e.code()) });
+              return;
+            }
           };
-          let root = Path::new(&root);
-          let read = match project_files::resolve(root, &path) {
-            Ok(file) => project_files::read_text(&file).await,
-            Err(e) => Err(e),
-          };
-          let text = match read {
+          let text = match ws.read_text(&path).await {
             Ok(text) => text,
             Err(e) => {
               core.post_now(HostMsg::ProjectFile { seq, text: None, hunks: vec![], error: Some(e.code()) });
@@ -402,7 +417,7 @@ impl BridgeCore {
           };
           let base_text = match base {
             Some(ProjectBase::Session) => session_base,
-            Some(ProjectBase::Head) => project_files::head_text(root, &path).await,
+            Some(ProjectBase::Head) => ws.head_text(&path).await,
             None => None,
           };
           let (text, hunks) = match base_text {
@@ -476,9 +491,9 @@ impl BridgeCore {
       W::SessionChanges { session_id, seq } => {
         let (core, root, bases) = (self.clone(), manager.session_cwd(&session_id), manager.edit_bases(&session_id));
         tokio::spawn(async move {
-          let files = match root {
-            Some(root) => project_files::session_changes(Path::new(&root), bases).await,
-            None => vec![],
+          let files = match core.workspace(root).await {
+            Ok(ws) => ws.session_changes(bases).await,
+            Err(_) => vec![],
           };
           core.post_now(HostMsg::SessionChanges { seq, files });
         });
@@ -614,7 +629,14 @@ impl BridgeCore {
   /// The project the settings page's project files belong to: the view's (`SessionManager::folder_for`); the home
   /// directory, which the scans read as "no project", when there is none
   fn folder(&self) -> String {
-    self.manager.folder_for(Some(&self.viewer), None).unwrap_or_else(|| self.platform.home())
+    // A folder on an SSH host has no project files here: the scans read only the user's own
+    self.manager.folder_for(Some(&self.viewer), None).filter(|f| !crate::workspace::is_remote(f)).unwrap_or_else(|| self.platform.home())
+  }
+
+  /// A session folder's files (`workspace.rs`); "noProject" without one
+  async fn workspace(&self, root: Option<String>) -> Result<crate::workspace::Workspace, project_files::ProjectError> {
+    let root = root.ok_or_else(|| project_files::ProjectError::Other("noProject".into()))?;
+    crate::workspace::Workspace::open(&root, Some(&self.connections)).await
   }
 
   fn queue(&self, m: HostMsg) {

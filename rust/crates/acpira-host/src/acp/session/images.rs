@@ -35,6 +35,12 @@ pub(crate) fn image_saver(me: Weak<AcpSession>) -> ImageSaver {
 pub(crate) fn file_image_saver(me: Weak<AcpSession>) -> FileImageSaver {
   Arc::new(move |path: &str| {
     let s = me.upgrade()?;
+    // A session folder on an SSH host: only what `fetch_shown` read there, never a file of the same name here
+    if s.remote_folder().is_some() {
+      let bytes = s.shown.lock().remove(path)?;
+      let ext = std::path::Path::new(path).extension().map(|e| format!(".{}", e.to_string_lossy().to_lowercase())).unwrap_or_default();
+      return Some(save_bytes(&s, &ext, bytes));
+    }
     let meta = std::fs::metadata(path).ok()?;
     // Images, and the HTML of a `show_widget` call (kept as a `text/html` image content, which older engines still read)
     let limit = if acpira_shared::attachments::image_mime_of(path).is_some() {
@@ -55,14 +61,18 @@ pub(crate) fn file_image_saver(me: Weak<AcpSession>) -> FileImageSaver {
         return None;
       }
     };
-    let name = blob_name(&ext, &bytes);
-    let blobs = s.deps.blobs.clone();
-    let (id, n2) = (s.id.clone(), name.clone());
-    tokio::spawn(async move {
-      if let Err(e) = blobs.save_blob(&id, &ext, &bytes).await {
-        s.log(&format!("image blob {n2}: {e}"));
-      }
-    });
-    Some(name)
+    Some(save_bytes(&s, &ext, bytes))
   })
+}
+
+/// Into the blob store in the background; the content-hash name is known at once
+fn save_bytes(s: &Arc<AcpSession>, ext: &str, bytes: Vec<u8>) -> String {
+  let name = blob_name(ext, &bytes);
+  let (blobs, id, n2, ext, me) = (s.deps.blobs.clone(), s.id.clone(), name.clone(), ext.to_owned(), s.clone());
+  tokio::spawn(async move {
+    if let Err(e) = blobs.save_blob(&id, &ext, &bytes).await {
+      me.log(&format!("image blob {n2}: {e}"));
+    }
+  });
+  name
 }

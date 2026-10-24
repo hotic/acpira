@@ -72,7 +72,8 @@ pub(crate) struct PeerTurn {
 impl AcpSession {
   async fn stage(&self, text: &str, drafts: &[Draft]) -> PreparedPrompt {
     let caps = self.caps(&self.core.lock());
-    let prepared = prepare_prompt(&self.id, text, drafts, &self.deps.blobs, Some(caps)).await;
+    let files = self.file_reader(Some(drafts)).await;
+    let prepared = prepare_prompt(&self.id, text, drafts, &self.deps.blobs, &files, Some(caps)).await;
     for p in &prepared.problems {
       self.log(p);
       self.notify(p);

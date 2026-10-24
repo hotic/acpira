@@ -35,11 +35,38 @@ pub fn prompt_caps_of(init: Option<&Value>, def: &AgentDef) -> PromptCaps {
   PromptCaps { embedded_context: flag("embeddedContext"), image: flag("image"), images_regardless: def.images_regardless }
 }
 
+/// Where files the user attached by their path are read: this disk, or the SSH host of the session's folder. `Host(None)`:
+/// the host cannot be reached now, so nothing is read, and never a file of the same name here
+pub enum FileReader {
+  Local,
+  Host(Option<crate::workspace::Workspace>),
+}
+
+impl FileReader {
+  async fn read(&self, path: &std::path::Path, max: u64) -> Option<Vec<u8>> {
+    match self {
+      FileReader::Local => {
+        if tokio::fs::metadata(path).await.ok()?.len() > max {
+          return None;
+        }
+        tokio::fs::read(path).await.ok()
+      }
+      FileReader::Host(ws) => ws.as_ref()?.read_file(path, max).await,
+    }
+  }
+}
+
+/// Whether staging these drafts reads a file by its path (`FileReader`)
+pub fn reads_files(drafts: &[Draft]) -> bool {
+  drafts.iter().any(|d| matches!(d, Draft::File { data: None, .. }))
+}
+
 pub async fn prepare_prompt(
   session_id: &str,
   text: &str,
   drafts: &[Draft],
   blobs: &TranscriptStore,
+  files: &FileReader,
   caps: Option<PromptCaps>,
 ) -> PreparedPrompt {
   let mut out =
@@ -141,7 +168,7 @@ pub async fn prepare_prompt(
         out.attachments.push(Attachment::File { uri, name: name.clone() });
       }
       Draft::File { uri, name, .. } => {
-        if let Some((mime, bytes)) = read_image_file(uri).await {
+        if let Some((mime, bytes)) = read_image_file(uri, files).await {
           if no_images {
             out.problems.push(tp("host.imageUnsupported", &[("name", name)]));
             continue;
@@ -208,17 +235,13 @@ pub async fn restore_drafts(session_id: &str, attachments: &[Attachment], blobs:
   Ok(out)
 }
 
-async fn read_image_file(uri: &str) -> Option<(&'static str, Vec<u8>)> {
+async fn read_image_file(uri: &str, files: &FileReader) -> Option<(&'static str, Vec<u8>)> {
   let mime = image_mime_of(uri)?;
   if !uri.starts_with("file:") {
     return None;
   }
   let path = file_url_to_path(uri)?;
-  let meta = tokio::fs::metadata(&path).await.ok()?;
-  if meta.len() as usize > MAX_IMAGE_BYTES {
-    return None;
-  }
-  Some((mime, tokio::fs::read(&path).await.ok()?))
+  Some((mime, files.read(std::path::Path::new(&path), MAX_IMAGE_BYTES as u64).await?))
 }
 
 /// One-line description of what a prompt carried

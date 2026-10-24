@@ -341,7 +341,7 @@ impl AcpSession {
       Some(s) => s.prepared,
       None => {
         let caps = self.caps(&self.core.lock());
-        prepare_prompt(&self.id, text, drafts, &self.deps.blobs, Some(caps)).await
+        prepare_prompt(&self.id, text, drafts, &self.deps.blobs, &self.file_reader(Some(drafts)).await, Some(caps)).await
       }
     };
     // A fork's copied transcript has never reached the peer: its first prompt carries it as retained context
@@ -354,7 +354,7 @@ impl AcpSession {
     let mut fork_error = None;
     if let (Some(turns), Some(proc)) = (turns_copy, proc.as_ref()) {
       let spec = Handoff { lead: FORK_HISTORY_LEAD, fork: fork.as_ref(), cwd: &cwd, trim: true, readable: fork.is_some() && self.reads_itself() };
-      match history_context(&self.id, &turns, proc, &self.deps.blobs, caps, spec).await {
+      match history_context(&self.id, &turns, proc, &self.deps.blobs, &self.file_reader(None).await, caps, spec).await {
         Ok(h) => fork_history = h,
         Err(e) => {
           self.log(&format!("fork context skipped: {e}"));

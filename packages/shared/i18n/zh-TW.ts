@@ -607,6 +607,7 @@ export const zhTW = {
   // Host-side, user-visible (toasts / error texts / titles); log lines are not translated
   'host.notFound': '找不到 {command}，請先安裝 {agent} CLI',
   'host.remoteBuiltinOnly': '本機執行時，{agent} 無法在 {host} 上的資料夾裡工作，只有 Acpira 內建的 agent 可以',
+  'host.remoteFile': '{path} 在 {host} 上，專案裡的檔案可以在工具面板中開啟',
   'host.exited': '{agent} 程序退出（{code}）',
   'host.emptyResponse': 'CLI 已結束請求，但沒有返回回覆或錯誤詳情（ACP: end_turn）。可重試或檢視 CLI 日誌。',
   'host.agentMcpSkipped': '{agent} 啟動不了 MCP 伺服器 {name}（{reason}），這一輪因此中止。本工作階段之後會跳過它，正在重建連線：點重試即可繼續。修好伺服器後新建工作階段可恢復使用。',

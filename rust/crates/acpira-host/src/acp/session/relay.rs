@@ -849,7 +849,7 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
     let pack = if members.iter().any(|p| args.changes.unwrap_or(p.changes)) {
       let scope = caller_scope(&self.core.lock(), caller.as_deref());
       let recipe = handoff::recipe_in(&roster.dir());
-      let built = handoff::build(std::path::Path::new(&self.cwd), None, scope.as_ref(), &recipe).await.unwrap_or_else(|e| {
+      let built = self.handoff_build(scope.as_ref(), &recipe).await.unwrap_or_else(|e| {
         self.log(&format!("relay group {}: handoff pack: {e:#}", group.id));
         None
       });
@@ -1403,10 +1403,9 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
   async fn relay_blocks(&self, r: &Round, proc: &AgentProcess) -> (Vec<Value>, Option<String>) {
     let plain = |handover: Option<&str>| vec![json!({ "type": "text", "text": compose_brief(&r.prompt, &r.persona, r.mode, handover) })];
     let Some(h) = &r.handoff else { return (plain(None), None) };
-    let cwd = PathBuf::from(&self.cwd);
     let told = self.core.lock().relays.packs.get(&r.thread).cloned();
     if let Some((base, before)) = told {
-      let now = match handoff::file_stats(&cwd, Some(&base), h.scope.as_ref()).await {
+      let now = match self.handoff_stats(&base, h.scope.as_ref()).await {
         Ok(Some(now)) => now,
         _ => return (plain(None), None),
       };
@@ -1424,7 +1423,7 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
     }
     let pack = match &h.shared {
       Some(p) => (**p).clone(),
-      None => handoff::build(&cwd, None, h.scope.as_ref(), &h.recipe).await.unwrap_or_else(|e| {
+      None => self.handoff_build(h.scope.as_ref(), &h.recipe).await.unwrap_or_else(|e| {
         self.log(&format!("relay {}: handoff pack: {e:#}", short(&r.thread)));
         None
       }),
@@ -1436,7 +1435,8 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
     let caps = prompt_caps_of(Some(&proc.init), &def);
     let draft = Draft::Text { name: PACK_NAME.into(), text: pack.text.clone(), context: None };
     let brief = compose_brief(&r.prompt, &r.persona, r.mode, Some(PACK_LINE));
-    let prepared = prepare_prompt(&self.id, &brief, &[draft], &self.deps.blobs, Some(caps)).await;
+    let files = self.file_reader(Some(std::slice::from_ref(&draft))).await;
+    let prepared = prepare_prompt(&self.id, &brief, &[draft], &self.deps.blobs, &files, Some(caps)).await;
     let cut = match pack.level {
       Level::Full => None,
       Level::Trimmed => Some("some full texts left out"),

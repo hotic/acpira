@@ -33,6 +33,17 @@ pub enum ProjectError {
 }
 
 impl ProjectError {
+  /// The error a code names (`code`'s inverse; an unknown code is a message)
+  pub fn from_code(code: &str) -> ProjectError {
+    match code {
+      "outside" => ProjectError::Outside,
+      "missing" => ProjectError::Missing,
+      "binary" => ProjectError::Binary,
+      "tooLarge" => ProjectError::TooLarge,
+      other => ProjectError::Other(other.to_owned()),
+    }
+  }
+
   pub fn code(&self) -> String {
     match self {
       ProjectError::Outside => "outside".into(),

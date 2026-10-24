@@ -99,6 +99,19 @@ Only the built-in agent works in an `ssh://` folder for now; another agent is re
 - Compaction's file restore re-reads the files through the helper's `files` phase (one call, text files only).
 - New sessions and moves into an `ssh://` folder connect and check that the folder is a directory there (`check_folder`); projects keep the canonical `ssh://alias/path` spelling.
 
+- The data root stays local as a whole: a path under it (the session's outputs and plan, the engine's staged attachments) is read and written here, never sent to the host.
+
 The tests run the real helper behind the fake ssh with a root map (`ACPIRA_REMOTE_ROOT_MAP`, the helper maps a virtual path to a temp folder both ways), so a path that leaks from the host side shows in the assertions. Not yet run against a real host or model.
 
-Tests: `tests/engine/remote_helper.rs` (the channel against the real helper, no ssh) and `tests/engine/remote_connections.rs` (deploy, reuse, a new build, a corrupted upload, a broken installed copy, two engines at once, another machine, a dropped channel, final and transient ssh failures, all through a fake ssh). `test/remoteContract.test.ts` runs the page messages through the real sidecar the same way. `tests/engine/builtin_agent.rs` (`mod remote`) covers the built-in agent: writes and commands on the host, hooks gating every write, prompt files and skills from the host, compaction's restore, a dropped channel, a cancel, and jobs stopped with the session.
+## The workspace seam (`workspace.rs`)
+
+Everything outside the agent that reads a session folder goes through `Workspace::{Local, Remote}`; on a host the helper runs the same code there.
+
+- The tool panel (`projectDir`, `projectStatus`, `projectFile`, `sessionChanges`) and @ search: the helper's `project` op runs `project_files` and `node_files` on the host. @ hits carry `file://` URLs of the host paths, which the built-in agent's tools read there. The desktop page matches a file link against the folder's host path (`projectPath`), so links inside the project open in the tool panel; `openFile` for any other file of a remote session is a toast (`host.remoteFile`), since no editor here has it.
+- Attached image files (`Draft::File` without data) are read through `attachments::FileReader`: the host's file, or nothing when the host cannot be reached, never a file of the same name here.
+- `show_image` / `show_widget` / `workspace_hooks` (the `acpira mcp` server): the hub's features say `remote`, so the server asks the hub (`HubOp::HostFiles`, `HostHooks`). The session checks and reads the files on the host (`fetch_shown`) into memory, and the image saver takes them from there by path when the call completes; `workspace_hooks` runs `hooks::describe` there (`hooksDescribe`).
+- `ask_agent`'s handoff pack and its later stats: the helper's `handoff` op runs `handoff::build` / `file_stats` on the host.
+- Agent processes for a remote folder (the warm pool, the control probe) start in this machine's home (`workspace::process_folder`); native session lists are empty there; the settings page's inventory and shared-link maintenance read only the user's own folders, not the host's project.
+- `workspace::tests::no_direct_folder_io` lists the files allowed to take a session folder (`session_cwd`, `folder_for`); a new caller has to be reviewed against this seam first.
+
+Tests: `tests/engine/remote_helper.rs` (the channel against the real helper, no ssh) and `tests/engine/remote_connections.rs` (deploy, reuse, a new build, a corrupted upload, a broken installed copy, two engines at once, another machine, a dropped channel, final and transient ssh failures, all through a fake ssh). `test/remoteContract.test.ts` runs the page messages through the real sidecar the same way. `tests/engine/builtin_agent.rs` (`mod remote`) covers the built-in agent: writes and commands on the host, hooks gating every write, prompt files and skills from the host, compaction's restore, a dropped channel, a cancel, and jobs stopped with the session; `tests/engine/remote_workspace.rs` the tool panel's reads, @ search and the handoff pack on the host.

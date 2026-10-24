@@ -656,6 +656,44 @@ mod remote {
     assert!(sent.contains("Run ./ship.sh from the host."), "the skill loaded from the host: {sent}");
   }
 
+  /// `show_image` and `workspace_hooks` check the host's files there, through the hub; the image shown is the host's
+  #[tokio::test(flavor = "multi_thread")]
+  async fn shown_images_and_the_hooks_check_come_from_the_host() {
+    let mut r = Remote::new().await;
+    r.full_access();
+    let roster = Arc::new(acpira_host::relay::roster::Roster::new(r.env.root.path()));
+    let hub = acpira_host::relay::hub::RelayHub::start(roster, Arc::new(|_: &str| {})).await.unwrap();
+    r.env.deps.host_mcp = Some(acpira_host::host_mcp::HostMcp::new(env!("CARGO_BIN_EXE_acpira")).with_hub(hub));
+    let work = r.real.join("work");
+    assert!(std::process::Command::new("git").arg("init").arg("-q").arg(&work).status().unwrap().success());
+    std::fs::create_dir_all(work.join(".agents")).unwrap();
+    std::fs::write(work.join(".agents/hooks.json"), r#"{ "afterTurn": "true" }"#).unwrap();
+    let png = b"\x89PNG\r\n\x1a\nhost pixels";
+    std::fs::write(work.join("shot.png"), png).unwrap();
+    let s = r.session().await;
+    let shot = format!("{VIRT}/work/shot.png");
+    r.env.server.push(mock::tools(&[("c1", "acpira_show_image", json!({ "path": shot })), ("c2", "acpira_workspace_hooks", json!({ "cwd": format!("{VIRT}/work") }))]));
+    r.env.server.push(mock::text("Shown."));
+    run(&s, "show it").await;
+    let sent = r.env.server.requests().last().unwrap().body["messages"].to_string();
+    assert!(sent.contains("Shown to the user: shot.png"), "{sent}");
+    assert!(sent.contains("is valid") && sent.contains("afterTurn: `true`"), "the hooks check ran on the host: {sent}");
+    let vw = view(&s).to_string();
+    assert!(vw.contains("image/png") && vw.contains("\"blob\""), "the image is shown: {vw}");
+    let blobs = r.env.root.path().join("sessions");
+    let found = walkdir(&blobs).into_iter().any(|p| std::fs::read(&p).is_ok_and(|b| b == png));
+    assert!(found, "the host's bytes are in the blob store");
+  }
+
+  fn walkdir(dir: &Path) -> Vec<PathBuf> {
+    let mut out = vec![];
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+      let p = e.path();
+      if p.is_dir() { out.extend(walkdir(&p)) } else { out.push(p) }
+    }
+    out
+  }
+
   /// `/compact` brings back the files the turns read, as they are on the host now
   #[tokio::test(flavor = "multi_thread")]
   async fn compaction_restores_files_from_the_host() {

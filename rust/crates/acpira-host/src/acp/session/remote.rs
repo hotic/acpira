@@ -41,10 +41,20 @@ impl AcpSession {
   /// Where the agent process starts and reads files of its own (model facts, a warm process): the session folder, or
   /// for a folder on an SSH host this machine's home
   pub(crate) fn process_cwd(&self) -> String {
-    match self.remote_folder() {
-      Some(_) => crate::store::data_dir::home_dir().to_string_lossy().into_owned(),
-      None => self.cwd.clone(),
+    crate::workspace::process_folder(self.cwd.clone())
+  }
+
+  /// Where the files a prompt attaches by their path are read (`attachments::FileReader`); `drafts` that read none need
+  /// no connection
+  pub(crate) async fn file_reader(&self, drafts: Option<&[acpira_shared::transcript::Draft]>) -> crate::acp::session::attachments::FileReader {
+    use crate::acp::session::attachments::{FileReader, reads_files};
+    if self.remote_folder().is_none() {
+      return FileReader::Local;
     }
+    if drafts.is_some_and(|d| !reads_files(d)) {
+      return FileReader::Host(None);
+    }
+    FileReader::Host(crate::workspace::Workspace::open(&self.cwd, self.deps.remote.as_deref()).await.ok())
   }
 
   /// Refuse an agent that cannot work in the session's folder: under local run only the built-in agent's tools go to
@@ -97,6 +107,70 @@ impl AcpSession {
       };
       self.log(&format!("remote: the jobs of {sid} on {} could not be stopped: {failed}", f.alias));
     }
+  }
+
+  /// The handoff pack of the session folder's changes (`handoff::build`), on its SSH host for a folder there
+  pub(crate) async fn handoff_build(&self, scope: Option<&crate::handoff::Scope>, recipe: &crate::handoff::Recipe) -> anyhow::Result<Option<crate::handoff::Pack>> {
+    let Some(f) = self.remote_folder() else { return crate::handoff::build(std::path::Path::new(&self.cwd), None, scope, recipe).await };
+    let v = self.host_handoff(&f, json!({ "scope": scope, "recipe": recipe })).await?;
+    Ok(serde_json::from_value(v.get("pack").cloned().unwrap_or(Value::Null))?)
+  }
+
+  /// The stats of the files a pack covers now (`handoff::file_stats`), on the folder's SSH host for one there
+  pub(crate) async fn handoff_stats(&self, base: &str, scope: Option<&crate::handoff::Scope>) -> anyhow::Result<Option<Vec<crate::handoff::PackFile>>> {
+    let Some(f) = self.remote_folder() else { return crate::handoff::file_stats(std::path::Path::new(&self.cwd), Some(base), scope).await };
+    let v = self.host_handoff(&f, json!({ "stats": true, "base": base, "scope": scope })).await?;
+    Ok(serde_json::from_value(v.get("files").cloned().unwrap_or(Value::Null))?)
+  }
+
+  async fn host_handoff(&self, f: &RemoteFolder, mut a: Value) -> anyhow::Result<Value> {
+    let connections = self.deps.remote.clone().ok_or_else(|| anyhow::anyhow!("this engine has no SSH connections"))?;
+    let client = connections.ensure(&f.alias, CONNECT_WAIT).await?;
+    a["cwd"] = json!(f.path);
+    Ok(client.call("handoff", a).await?.value)
+  }
+
+  /// `workspace_hooks`' check of a project on the session's host (`hooks::describe`, run there)
+  pub(crate) async fn describe_host_hooks(&self, cwd: &str) -> Result<String, String> {
+    let f = self.remote_folder().ok_or("this session's folder is not on an SSH host")?;
+    let connections = self.deps.remote.clone().ok_or("this engine has no SSH connections")?;
+    let client = connections.ensure(&f.alias, CONNECT_WAIT).await.map_err(|e| format!("{} cannot be reached: {e:#}", f.alias))?;
+    let r = client.call("hooksDescribe", json!({ "cwd": cwd })).await.map_err(|e| format!("{} could not check it: {e}", f.alias))?;
+    Ok(r.value.get("text").and_then(Value::as_str).unwrap_or("").to_owned())
+  }
+
+  /// `show_image` / `show_widget` on the session's host: each file checked there as `host_mcp` checks a local one, and
+  /// read into `shown` for the call's completion to show. Err: what is wrong, for the model
+  pub(crate) async fn fetch_shown(&self, paths: &[String], widget: bool) -> Result<(), String> {
+    use acpira_shared::attachments::image_mime_of;
+    let f = self.remote_folder().ok_or("this session's folder is not on an SSH host")?;
+    let connections = self.deps.remote.clone().ok_or("this engine has no SSH connections")?;
+    let client = connections.ensure(&f.alias, CONNECT_WAIT).await.map_err(|e| format!("{} cannot be reached: {e:#}", f.alias))?;
+    let limit = if widget { crate::limits::MAX_WIDGET_BYTES } else { crate::limits::MAX_OUT_IMAGE_BYTES };
+    let mut problems = vec![];
+    for path in paths {
+      let kind_ok = if widget { crate::host_mcp::widget_mime_of(path).is_some() } else { image_mime_of(path).is_some() };
+      let problem = if !path.starts_with('/') {
+        Some(format!("{path}: not an absolute path"))
+      } else if !kind_ok {
+        Some(format!("{path}: {}", if widget { "not an .html file" } else { "not a PNG, JPEG, GIF or WebP file" }))
+      } else {
+        match client.call("stat", json!({ "path": path })).await {
+          Err(e) => Some(format!("{path}: {e}")),
+          Ok(st) if st.value.get("kind").and_then(Value::as_str) != Some("file") => Some(format!("{path}: not a file")),
+          Ok(st) if st.value.get("size").and_then(Value::as_u64).unwrap_or(0) > limit => Some(format!("{path}: larger than {} KB", limit / 1024)),
+          Ok(_) => match client.call("read", json!({ "path": path })).await {
+            Ok(r) => {
+              self.shown.lock().insert(path.clone(), r.data);
+              None
+            }
+            Err(e) => Some(format!("{path}: {e}")),
+          },
+        }
+      };
+      problems.extend(problem);
+    }
+    if problems.is_empty() { Ok(()) } else { Err(problems.join("\n")) }
   }
 
   /// `beforeEdit` for a write about to run on the host that no permission request showed the gate (full access, an

@@ -799,8 +799,8 @@ pub async fn run(server: &Server, session: &Session, call: &Call<'_>, reason: Re
   let real = &items[first.min(tail)..tail];
   let (messages, omitted) = carried_messages(&before.messages, before.omitted, real, CARRIED_TOKENS.min(call.limit / 16));
   let earlier: Vec<String> = before.files.iter().map(|f| f.path.clone()).collect();
-  // A folder on an SSH host: its files come from there, read in one call (the session's own folder stays here)
-  let own = server.session_dir(&session.id);
+  // A folder on an SSH host: its files come from there, read in one call (the data root stays here)
+  let own = server.config.home().to_path_buf();
   let host = match &session.remote {
     Some(r) => {
       let paths: Vec<PathBuf> = restore_paths(real, &items[tail..], &earlier, &session.cwd).into_iter().filter(|p| !p.starts_with(&own)).take(RESTORE_FILES * 2).collect();

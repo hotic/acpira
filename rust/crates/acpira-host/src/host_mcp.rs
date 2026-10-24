@@ -265,6 +265,19 @@ pub fn run(version: &str) -> i32 {
         });
         continue;
       }
+      // A session folder on an SSH host: the files are checked and read there, through the hub
+      if method == "tools/call"
+        && matches!(name, Some(TOOL_NAME | WIDGET_TOOL | HOOKS_TOOL))
+        && let Some(id) = msg.get("id").cloned()
+        && relay.features().remote
+      {
+        let (relay, out, params) = (relay.clone(), out.clone(), msg.get("params").cloned().unwrap_or(Value::Null));
+        std::thread::spawn(move || {
+          let result = relay.show_on_host(&params);
+          write(&out, &json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+        });
+        continue;
+      }
       if method == "tools/call"
         && msg.get("params").and_then(|p| p.get("name")).and_then(Value::as_str) == Some(BROWSER_TOOL)
         && let Some(id) = msg.get("id").cloned()
@@ -409,6 +422,32 @@ impl Relay {
       return tool_error("Pass `url`: an absolute http:// or https:// address.".into());
     }
     self.answer(HubOp::OpenBrowser { url: url.to_owned() })
+  }
+
+  /// `show_image` / `show_widget` / `workspace_hooks` for a session folder on an SSH host: the hub checks (and reads)
+  /// the files there (`AcpSession::fetch_shown`, `describe_host_hooks`), then the answer is the local one
+  fn show_on_host(&self, params: &Value) -> Value {
+    use crate::relay::wire::HubOp;
+    let empty = Map::new();
+    let args = params.get("arguments").and_then(Value::as_object).unwrap_or(&empty);
+    if params.get("name").and_then(Value::as_str) == Some(HOOKS_TOOL) {
+      return workspace_hooks_with(args, &|cwd| {
+        let checked = self.answer(HubOp::HostHooks { cwd: cwd.to_owned() });
+        checked.pointer("/content/0/text").and_then(Value::as_str).unwrap_or("").to_owned()
+      });
+    }
+    let widget = params.get("name").and_then(Value::as_str) == Some(WIDGET_TOOL);
+    let one = args.get("path").and_then(Value::as_str).into_iter();
+    let many = args.get("paths").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).filter(|_| !widget);
+    let paths: Vec<String> = one.chain(many).map(str::trim).filter(|p| !p.is_empty()).map(str::to_owned).collect();
+    if !paths.is_empty() {
+      let checked = self.answer(HubOp::HostFiles { paths, widget });
+      if checked.get("isError").and_then(Value::as_bool) == Some(true) {
+        return checked;
+      }
+    }
+    let fine = |_: &str| Ok(());
+    if widget { show_widget_with(args, &fine) } else { show_image_with(args, &fine) }
   }
 
   /// `search_sessions` / `read_session`: the arguments go to the hub as they are, the sidecar reads and bounds the answer
@@ -829,11 +868,16 @@ fn hooks_tool_def() -> Value {
 
 /// The format guide plus the state of the project's own file
 fn call_workspace_hooks(args: &Map<String, Value>) -> Value {
+  workspace_hooks_with(args, &|cwd| crate::hooks::describe(cwd))
+}
+
+/// `describe`: the check of the project at a path (on the session's SSH host, through the hub, for a folder there)
+fn workspace_hooks_with(args: &Map<String, Value>, describe: &dyn Fn(&str) -> String) -> Value {
   let cwd = args.get("cwd").and_then(Value::as_str).map(str::trim).unwrap_or("");
   let status = if cwd.is_empty() {
     "Pass `cwd` (the project's absolute path) to have its current file checked.".to_owned()
   } else {
-    crate::hooks::describe(cwd)
+    describe(cwd)
   };
   json!({ "content": [{ "type": "text", "text": format!("{}
 
@@ -844,13 +888,18 @@ fn call_workspace_hooks(args: &Map<String, Value>) -> Value {
 
 /// Validate the named files; the host shows them once the call completes. Failures go back to the model as a tool error
 fn call_show_image(args: &Map<String, Value>) -> Value {
+  show_image_with(args, &check_image)
+}
+
+/// `check`: one file's problem, if any (a session on an SSH host had the hub check them there first)
+fn show_image_with(args: &Map<String, Value>, check: &dyn Fn(&str) -> Result<(), String>) -> Value {
   let one = args.get("path").and_then(Value::as_str).into_iter();
   let many = args.get("paths").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str);
   let paths: Vec<&str> = one.chain(many).map(str::trim).filter(|p| !p.is_empty()).collect();
   if paths.is_empty() {
     return tool_error("Pass `path` (or `paths`) with the absolute path of an image file.".into());
   }
-  let problems: Vec<String> = paths.iter().filter_map(|p| check_image(p).err()).collect();
+  let problems: Vec<String> = paths.iter().filter_map(|p| check(p).err()).collect();
   if !problems.is_empty() {
     return tool_error(problems.join("\n"));
   }
@@ -888,11 +937,15 @@ pub fn widget_mime_of(path: &str) -> Option<&'static str> {
 
 /// Validate the widget file; the host reads it into the session once the call completes
 fn call_show_widget(args: &Map<String, Value>) -> Value {
+  show_widget_with(args, &check_widget)
+}
+
+fn show_widget_with(args: &Map<String, Value>, check: &dyn Fn(&str) -> Result<(), String>) -> Value {
   let path = args.get("path").and_then(Value::as_str).map(str::trim).unwrap_or("");
   if path.is_empty() {
     return tool_error("Pass `path` with the absolute path of an .html file.".into());
   }
-  if let Err(problem) = check_widget(path) {
+  if let Err(problem) = check(path) {
     return tool_error(problem);
   }
   let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
