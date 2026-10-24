@@ -575,6 +575,7 @@
   "mention.noFiles": "Keine passenden Dateien",
   "host.notFound": "{command} nicht gefunden – zuerst das {agent}-CLI installieren",
   "host.remoteBuiltinOnly": "{agent} kann bei lokaler Ausführung nicht in einem Ordner auf {host} arbeiten; das kann nur Acpiras eigener Agent",
+  "host.remoteFile": "{path} liegt auf {host}. Dateien des Projekts öffnen sich im Werkzeugbereich",
   "host.exited": "Der {agent}-Prozess wurde beendet ({code})",
   "host.emptyResponse": "Das CLI hat die Anfrage ohne Antwort und ohne Fehlerdetails beendet (ACP: end_turn). Erneut versuchen oder die CLI-Logs prüfen.",
   "host.agentMcpSkipped": "{agent} konnte den MCP-Server {name} nicht starten ({reason}) und hat den Durchlauf gestoppt. Er bleibt ab jetzt aus dieser Sitzung heraus, und die Verbindung wird ohne ihn neu aufgebaut: Wiederholen, um fortzufahren. Server reparieren und eine neue Sitzung starten, um ihn wieder zu nutzen.",

@@ -1584,7 +1584,7 @@ async fn prepare_call(server: &Arc<Server>, session: &Arc<Session>, name: &str, 
     return tools::skill::prepare(args, &server.places(&session.cwd, session.remote.as_deref()));
   }
   if let Some(r) = &session.remote
-    && crate::remote::Remote::prepares_there(name, args, &session.cwd, &server.session_dir(&session.id))
+    && crate::remote::Remote::prepares_there(name, args, &session.cwd, server.config.home())
   {
     return r.prepare(server.conn(), &session.id, &session.cwd, name, args, images).await;
   }
@@ -1593,7 +1593,7 @@ async fn prepare_call(server: &Arc<Server>, session: &Arc<Session>, name: &str, 
 
 /// Whether a prepared call runs on the session's SSH host
 fn runs_remotely(server: &Arc<Server>, session: &Arc<Session>, action: &Action) -> bool {
-  session.remote.is_some() && crate::remote::Remote::runs_there(action, &server.session_dir(&session.id))
+  session.remote.is_some() && crate::remote::Remote::runs_there(action, server.config.home())
 }
 
 /// Run a prepared call, on the session's SSH host when it belongs there

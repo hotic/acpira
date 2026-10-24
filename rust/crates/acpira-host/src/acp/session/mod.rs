@@ -249,6 +249,9 @@ pub struct AcpSession {
   /// be sent a patch, any other one gets the whole view. A reopened session counts its revs from 0 again, so rev alone
   /// cannot tell two instances apart
   pub(crate) epoch: u64,
+  /// Files a `show_image` / `show_widget` call named on the session's SSH host, read there before the call answered
+  /// (`fetch_shown`); the image saver takes them from here, by their path on the host (`images.rs`)
+  pub(crate) shown: parking_lot::Mutex<std::collections::HashMap<String, Vec<u8>>>,
 }
 
 /// A fresh view epoch: every opened session gets one, a chain of read-only copies shares one (their revs keep growing)
@@ -380,6 +383,7 @@ impl AcpSession {
         pick_lock: tokio::sync::Mutex::new(()),
         usage_lock: tokio::sync::Mutex::new(()),
         epoch,
+        shown: Default::default(),
       }
     })
   }

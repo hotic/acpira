@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import type { FileHit, ProjectBase, ProjectChange } from '@acpira/shared/protocol';
 import { Folder, Globe, LayoutGrid, PanelRight, Plus, SquareTerminal, X, type LucideIcon } from 'lucide-react';
+import { parseRemoteFolder } from '@acpira/shared/remote';
 import { t } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { cn } from '../ui/cn';
@@ -28,9 +29,10 @@ export const TOGGLE_KEY = macOS ? '⌥⌘B' : 'Ctrl+Alt+B';
 // The open and close ease, as long as the session column's fold (desktop.css)
 export const MOVE_MS = 340;
 
-// A path a tool call names, relative to the project when inside it (undefined outside)
+// A path a tool call names, relative to the project when inside it (undefined outside). A folder on an SSH host is named
+// by its path there, as the agent's tools name its files
 export function projectPath(root: string, path: string): string | undefined {
-  if (/^([a-z]:)?[\\/]/i.test(path)) return relPath(root, path);
+  if (/^([a-z]:)?[\\/]/i.test(path)) return relPath(parseRemoteFolder(root)?.path ?? root, path);
   const rel = path.replace(/\\/g, '/').replace(/^\.\//, '');
   return rel.startsWith('../') ? undefined : rel;
 }
@@ -359,7 +361,9 @@ export function useProjectFiles({ sessionId, root, running, shareSelection, show
   const open = (path: string) => { reveal(path); panel.showView(key, { path }, tab); };
   // The base a file's changes are measured against: this session's when it edited the file, else the last commit
   const base: ProjectBase = file && changed.has(file.path) ? 'session' : 'head';
-  const uriOf = (path: string) => fileUriOf(absPath(root, path)) ?? absPath(root, path);
+  // A folder on an SSH host: its files by their path there, as the agent's tools name them
+  const hostRoot = parseRemoteFolder(root)?.path ?? root;
+  const uriOf = (path: string) => fileUriOf(absPath(hostRoot, path)) ?? absPath(hostRoot, path);
   const select = (r: LineRange | undefined) => file && panel.setView(key, { path: file.path, ...(file.line !== undefined ? { line: file.line } : {}), ...(r ? { selection: r } : {}) });
   // A picked range is the live editor selection the composer offers, like an IDE editor's
   const liveSelection = useCallback((r: LineRange | undefined, text: string) => {
@@ -391,7 +395,7 @@ export function ViewPane({ f, openEditor, onClose }: { f: ProjectFiles; openEdit
     <FileViewer key={file.path} sessionId={f.sessionId} path={file.path} base={f.base}
       refresh={f.refresh} line={file.line} selection={file.selection}
       onSelect={f.select} onSelectionText={f.liveSelection} onAdd={f.addRange} onReveal={() => f.reveal(file.path)}
-      onOpenEditor={openEditor && (line => openEditor(absPath(root, file.path), line))}
+      onOpenEditor={openEditor && (line => openEditor(absPath(parseRemoteFolder(root)?.path ?? root, file.path), line))}
       onOpenLink={(target, line) => void openMarkdownLink(f, file.path, target, line, openEditor)} onClose={onClose} />
   );
 }

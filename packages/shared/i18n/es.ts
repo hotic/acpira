@@ -589,6 +589,7 @@ export const es = {
 
   'host.notFound': 'No se encontró {command}: instala primero el CLI de {agent}',
   'host.remoteBuiltinOnly': '{agent} no puede trabajar en una carpeta de {host} con ejecución local; solo puede hacerlo el agente propio de Acpira',
+  'host.remoteFile': '{path} está en {host}. Los archivos del proyecto se abren en el panel de herramientas',
   'host.exited': 'El proceso de {agent} terminó ({code})',
   'host.emptyResponse': 'El CLI terminó la solicitud sin respuesta ni detalles del error (ACP: end_turn). Reintenta o revisa los registros del CLI.',
   'host.agentMcpSkipped': '{agent} no pudo iniciar el servidor MCP {name} ({reason}) y detuvo el turno. A partir de ahora queda fuera de esta sesión y la conexión se está rehaciendo sin él: pulsa Reintentar para continuar. Corrige el servidor y empieza una sesión nueva para volver a usarlo.',

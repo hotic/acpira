@@ -128,7 +128,8 @@ impl Recipe {
 }
 
 /// Which files a pack covers. `None` (the CLI, the evaluation) is every change since the base, untracked files included
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct Scope {
   /// Files the session's edit rows named (absolute, or relative to the session's folder)
   pub files: Vec<String>,

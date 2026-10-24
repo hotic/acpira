@@ -1,8 +1,8 @@
 //! Sessions whose folder is on an SSH host (docs/dev/remote.md, "Built-in agent"). The engine opens them with the
-//! host's path as `cwd` and `_meta["acpira/remote"] = { alias }`. The loop, the model calls, the session log and the
-//! session's own folder (spilled outputs, the plan) stay on this machine; the calls that read or change the project or
-//! run a command are prepared and run on the host by the same tool code, through `_acpira/remoteTool` requests the
-//! engine forwards to its helper there. A call whose connection drops comes back as an error saying its outcome is
+//! host's path as `cwd` and `_meta["acpira/remote"] = { alias, places }`. The loop, the model calls, the session log and
+//! the data root (the session's spilled outputs and plan, the engine's staged attachments) stay on this machine; the
+//! calls that read or change the project or run a command are prepared and run on the host by the same tool code,
+//! through `_acpira/remoteTool` requests the engine forwards to its helper there. A call whose connection drops comes back as an error saying its outcome is
 //! unknown: nothing is replayed
 
 use std::collections::HashMap;
@@ -42,7 +42,8 @@ impl Remote {
   }
 
   /// Whether a call of this tool goes to the host: everything that reads or changes the project or runs a command,
-  /// unless every file it names is in the session's own folder (`own`: a spilled output, the plan)
+  /// unless every file it names is under this machine's data root (`own`: the session's spilled outputs and plan, the
+  /// engine's staged attachments)
   pub fn prepares_there(name: &str, args: &Value, cwd: &Path, own: &Path) -> bool {
     match name {
       tools::READ | tools::WRITE | tools::EDIT => {

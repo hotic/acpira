@@ -29,6 +29,12 @@ pub enum HubOp {
   SearchSessions(SessionSearchArgs),
   /// `read_session`: one session's outline or a page of its turns; answered `Done` / `Error`
   ReadSession(SessionReadArgs),
+  /// `show_image` / `show_widget` in a session whose folder is on an SSH host: the files are checked and read there,
+  /// for the call's completion to show; answered `Done` / `Error` (what is wrong with them)
+  HostFiles { paths: Vec<String>, widget: bool },
+  /// `workspace_hooks` in a session whose folder is on an SSH host: the project's hooks file there, checked there;
+  /// answered `Done` (the check's text) / `Error`
+  HostHooks { cwd: String },
 }
 
 /// `search_sessions`' arguments (`session_library.rs`)
@@ -151,4 +157,7 @@ pub struct HostFeatures {
   /// The grant is a summoned child's: it has a caller to ask (`ask_caller`)
   #[serde(default)]
   pub summoned: bool,
+  /// The session's folder is on an SSH host: the files a tool names are read there (`HubOp::HostFiles`)
+  #[serde(default)]
+  pub remote: bool,
 }

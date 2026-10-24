@@ -261,6 +261,7 @@ pub async fn history_context(
   all: &[Turn],
   proc: &AgentProcess,
   blobs: &TranscriptStore,
+  files: &crate::acp::session::attachments::FileReader,
   caps: PromptCaps,
   spec: Handoff<'_>,
 ) -> Result<Option<HistoryContext>> {
@@ -305,7 +306,7 @@ pub async fn history_context(
   for (text, att) in source[start..].iter().flat_map(|t| attached_messages(t)) {
     let drafts = restore_drafts(session_id, att, blobs).await.ok().filter(|d| d.len() == att.len());
     let old = match drafts {
-      Some(d) => Some(prepare_prompt(session_id, "", &d, blobs, Some(caps)).await).filter(|p| p.problems.is_empty()),
+      Some(d) => Some(prepare_prompt(session_id, "", &d, blobs, files, Some(caps)).await).filter(|p| p.problems.is_empty()),
       None => None,
     };
     match old {
@@ -561,7 +562,8 @@ impl AcpSession {
       let mut drafts = restored;
       drafts.extend(edit.attachments.iter().cloned());
       let caps = self.caps(&self.core.lock());
-      let mut prepared = prepare_prompt(&self.id, &edit.text, &drafts, &self.deps.blobs, Some(caps)).await;
+      let files = self.file_reader(Some(&drafts)).await;
+      let mut prepared = prepare_prompt(&self.id, &edit.text, &drafts, &self.deps.blobs, &files, Some(caps)).await;
       if !prepared.problems.is_empty() {
         return Err(anyhow!(prepared.problems.join("\n")));
       }
@@ -599,7 +601,8 @@ impl AcpSession {
         };
         let readable = self.reads_itself();
         let spec = Handoff { lead: EDIT_HISTORY_LEAD, fork: fork.as_ref(), cwd: &cwd, trim: false, readable: readable && fork.is_some() };
-        let history = history_context(&self.id, &prefix, &proc, &self.deps.blobs, caps, spec).await?;
+        let files = self.file_reader(None).await;
+        let history = history_context(&self.id, &prefix, &proc, &self.deps.blobs, &files, caps, spec).await?;
         let blocks = history.map(|h| {
           let mut b = h.blocks;
           b.extend(prepared.blocks.iter().cloned());
