@@ -1,0 +1,13 @@
+{
+  "name": "@acpira/shared",
+  "private": true,
+  "description": "Contracts and pure logic every shell shares: the session view, the host and webview protocol, the sidecar wire, settings, i18n",
+  "type": "module",
+  "exports": {
+    "./i18n": "./i18n/index.ts",
+    "./*": "./*.ts"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}

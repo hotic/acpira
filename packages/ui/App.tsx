@@ -1,11 +1,11 @@
-import type { ChatGptIntegrationStatus } from '@shared/chatgptIntegration';
+import type { ChatGptIntegrationStatus } from '@acpira/shared/chatgptIntegration';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AccountAction, AgentInstallProgress, EditTurnRequest, FileHit, HostMsg, InitState, NativeSessionsState, SessionHit, WebviewMsg } from '@shared/protocol';
-import type { AccountInfo, AgentId, AgentInfo, ConfigControl, FullDiffSource, SessionCategories, SessionControls, SessionSummary, SessionView, Turn } from '@shared/transcript';
-import type { HiddenMap, SettingsView } from '@shared/settings';
-import type { AgentInventory } from '@shared/inventory';
-import type { Locale } from '@shared/i18n';
-import { reuse } from '@shared/reuse';
+import type { AccountAction, AgentInstallProgress, EditTurnRequest, FileHit, HostMsg, InitState, NativeSessionsState, SessionHit, WebviewMsg } from '@acpira/shared/protocol';
+import type { AccountInfo, AgentId, AgentInfo, ConfigControl, FullDiffSource, SessionCategories, SessionControls, SessionSummary, SessionView, Turn } from '@acpira/shared/transcript';
+import type { HiddenMap, SettingsView } from '@acpira/shared/settings';
+import type { AgentInventory } from '@acpira/shared/inventory';
+import type { Locale } from '@acpira/shared/i18n';
+import { reuse } from '@acpira/shared/reuse';
 import { SessionViews } from './sessionViews';
 import { BASE_APPEARANCE, type Appearance } from './appearance';
 import { LocaleContext, setLocale, t } from './i18n';

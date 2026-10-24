@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentBlock, DiffLine, ToolCallBlock } from '../packages/shared/transcript';
+import type { AgentBlock, DiffLine, ToolCallBlock } from '@acpira/shared/transcript';
 import { DWELL_MS, editEntries, editReference, editSpan, foldStates, groupNames, groupProcess, itemSettled, processParts, type FoldInput } from '../packages/ui/chat/processGroups';
 
 const read = (id: string, path: string, status: ToolCallBlock['status'] = 'completed'): ToolCallBlock => ({

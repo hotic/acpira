@@ -1,9 +1,9 @@
 import { Fragment, createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Bot, Check, ChevronRight, Compass, FileText, Hand, Info, MessageCircleQuestion, ShieldAlert, ShieldX, Shrink, TriangleAlert, X } from 'lucide-react';
-import type { AgentBlock, AgentTurn, CompactionBlock, FailureAction, NoticeBlock, PermissionBlock, SlashCommand, SteerBlock, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@shared/transcript';
-import type { SubagentSummary } from '@shared/subagents';
-import { isImageResultBlock, isShowWidgetTool } from '@shared/imageTools';
-import { isSessionTool } from '@shared/sessionLinks';
+import type { AgentBlock, AgentTurn, CompactionBlock, FailureAction, NoticeBlock, PermissionBlock, SlashCommand, SteerBlock, ToolCallBlock, ToolKind, TurnSettings, UserTurn } from '@acpira/shared/transcript';
+import type { SubagentSummary } from '@acpira/shared/subagents';
+import { isImageResultBlock, isShowWidgetTool } from '@acpira/shared/imageTools';
+import { isSessionTool } from '@acpira/shared/sessionLinks';
 import { useAppearance, type Appearance } from '../appearance';
 import { getLocale, t, useLocale } from '../i18n';
 import { commandSegments } from './PromptInput';

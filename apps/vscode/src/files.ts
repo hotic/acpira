@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { FileHit } from '@shared/protocol';
+import type { FileHit } from '@acpira/shared/protocol';
 import { rankFiles } from './fileRank';
 
 // How long one findFiles listing is reused before the next search lists again

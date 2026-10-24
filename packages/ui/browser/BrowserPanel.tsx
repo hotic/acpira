@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, ExternalLink, Globe, MessageSquarePlus, MessageSquareText, RotateCw, SquareDashedMousePointer, TriangleAlert } from 'lucide-react';
-import { envelopeOf, MAX_CONTEXT_CALL_ID, normalizePreviewUrl, pickedContext, redactUrl, type PanelMsg, type PickedElement, type PickedRect, type PickerMsg } from '@shared/picker';
-import type { BrowserHostMsg, BrowserLook, BrowserMsg, BrowserPage } from '@shared/protocol';
+import { envelopeOf, MAX_CONTEXT_CALL_ID, normalizePreviewUrl, pickedContext, redactUrl, type PanelMsg, type PickedElement, type PickedRect, type PickerMsg } from '@acpira/shared/picker';
+import type { BrowserHostMsg, BrowserLook, BrowserMsg, BrowserPage } from '@acpira/shared/protocol';
 import { optionClass } from '../ui/DropdownMenu';
 import { popupClass } from '../ui/Overlay';
 import { AppearanceContext, appearanceDataAttrs, BASE_APPEARANCE } from '../appearance';

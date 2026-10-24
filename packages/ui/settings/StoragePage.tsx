@@ -4,9 +4,9 @@ import { ArrowDownWideNarrow, CalendarClock, Check, ChevronLeft, Trash2 } from '
 import {
   STORAGE_RESIDUE_KINDS, STORAGE_SEGMENTS, formatBytes,
   type StorageAction, type StorageBlock, type StorageDetail, type StorageOutcome, type StorageResidue, type StorageResidueKind, type StorageSegmentKind, type StorageSession, type StorageView,
-} from '@shared/storage';
-import type { MsgKey } from '@shared/i18n';
-import type { AgentInfo } from '@shared/transcript';
+} from '@acpira/shared/storage';
+import type { MsgKey } from '@acpira/shared/i18n';
+import type { AgentInfo } from '@acpira/shared/transcript';
 import { Button, IconButton } from '../ui/Button';
 import { RadioPills } from '../ui/Field';
 import { ShellLayerContext } from '../ui/Overlay';

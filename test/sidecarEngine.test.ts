@@ -2,10 +2,10 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { HostMsg } from '../packages/shared/protocol';
-import type { AgentTurn, SessionView } from '../packages/shared/transcript';
-import { SidecarClient, type SidecarCommand, type SidecarState, type ShellView } from '../packages/engine-client/SidecarClient';
-import { engineEndpoint, type EngineEndpoint } from '../packages/engine-client/engine';
+import type { HostMsg } from '@acpira/shared/protocol';
+import type { AgentTurn, SessionView } from '@acpira/shared/transcript';
+import { SidecarClient, type SidecarCommand, type SidecarState, type ShellView } from '@acpira/engine-client/SidecarClient';
+import { engineEndpoint, type EngineEndpoint } from '@acpira/engine-client/engine';
 import { FAKE, SIDECAR, NODE } from './sidecarShell';
 
 // The persistent engine (`acpira serve --socket`) through the VS Code shell's client: a turn outlives the window that started

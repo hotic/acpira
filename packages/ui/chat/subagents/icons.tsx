@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { Hand, MessageCircleQuestion, TriangleAlert, Unplug, X } from 'lucide-react';
-import type { SubagentSummary } from '@shared/subagents';
+import type { SubagentSummary } from '@acpira/shared/subagents';
 import { cn } from '../../ui/cn';
 
 // A pending card outranks the state icon — that is what the child is blocked on.

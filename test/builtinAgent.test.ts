@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AgentTurn, ToolCallBlock, Turn } from '../packages/shared/transcript';
-import { exportMarkdown } from '../packages/shared/exportTranscript';
+import type { AgentTurn, ToolCallBlock, Turn } from '@acpira/shared/transcript';
+import { exportMarkdown } from '@acpira/shared/exportTranscript';
 import { setLocale } from '../packages/ui/i18n';
 import { foldActivity, toolTarget, toolVerb } from '../packages/ui/chat/folding';
 import { splitPlanSections } from '../packages/ui/chat/planSections';

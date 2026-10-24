@@ -1,4 +1,4 @@
-import type { AgentTurn, QueuedPrompt, SessionStatus, Turn, UserTurn } from '@shared/transcript';
+import type { AgentTurn, QueuedPrompt, SessionStatus, Turn, UserTurn } from '@acpira/shared/transcript';
 
 export interface HeldView {
   turns: Turn[];

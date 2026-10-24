@@ -1,4 +1,4 @@
-import type { AgentTurn, CompactionBlock, CompactionStatus } from '@shared/transcript';
+import type { AgentTurn, CompactionBlock, CompactionStatus } from '@acpira/shared/transcript';
 
 // Presentation only: ACP completion and queue release remain owned by the host.
 // Apply this exclusively to replies to /compact. The host already turns adapter prose into compaction blocks

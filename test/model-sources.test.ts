@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { ALL, applyModelSources } from '../packages/shared/modelSources';
-import { findVariant, groupModels, setFamilyVisible, visibleOptions } from '../packages/shared/models';
-import type { ConfigControl } from '../packages/shared/transcript';
+import { ALL, applyModelSources } from '@acpira/shared/modelSources';
+import { findVariant, groupModels, setFamilyVisible, visibleOptions } from '@acpira/shared/models';
+import type { ConfigControl } from '@acpira/shared/transcript';
 
 describe('ACP model source adapters', () => {
   it('groups a Grok custom endpoint apart from the official models', () => {

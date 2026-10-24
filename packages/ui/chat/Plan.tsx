@@ -1,6 +1,6 @@
 import { memo, useState, type ReactNode } from 'react';
 import { Check, ChevronDown, ChevronsDown, ChevronsUp, ListTodo } from 'lucide-react';
-import type { PlanBlock, PlanEntry, PlanStatus } from '@shared/transcript';
+import type { PlanBlock, PlanEntry, PlanStatus } from '@acpira/shared/transcript';
 import { t, useLocale } from '../i18n';
 import { Card } from '../ui/Card';
 import { Collapsible } from '../ui/Collapsible';

@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { DiffLine, DiffSource } from '@shared/transcript';
+import type { DiffLine, DiffSource } from '@acpira/shared/transcript';
 import { cn } from '../ui/cn';
 import { diffCopyText, plainDiffRows, type CodeDiffRow } from './codeDiff';
 import { requestCodeHighlight, requestDiffHighlight } from './diffHighlight';

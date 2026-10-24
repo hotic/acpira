@@ -1,8 +1,8 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import type { SubagentSummary } from '@shared/subagents';
-import type { AgentTurn } from '@shared/transcript';
+import type { SubagentSummary } from '@acpira/shared/subagents';
+import type { AgentTurn } from '@acpira/shared/transcript';
 import { setLocale } from '../i18n';
 import { AgentMessage } from './Turns';
 

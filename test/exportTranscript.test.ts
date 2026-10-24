@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Turn } from '../packages/shared/transcript';
-import { exportFileName, exportMarkdown } from '../packages/shared/exportTranscript';
+import type { Turn } from '@acpira/shared/transcript';
+import { exportFileName, exportMarkdown } from '@acpira/shared/exportTranscript';
 
 const turns: Turn[] = [
   { role: 'user', text: 'fix the tests', attachments: [

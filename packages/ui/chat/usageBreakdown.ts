@@ -1,4 +1,4 @@
-import type { Turn, Usage } from '@shared/transcript';
+import type { Turn, Usage } from '@acpira/shared/transcript';
 import { compactionForDisplay } from './compactionDisplay';
 
 // The compaction policy does not change the model's context window.

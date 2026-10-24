@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Check, MessageCircleQuestion } from 'lucide-react';
-import type { Question, QuestionAnswer, QuestionAnswers, QuestionBlock } from '@shared/transcript';
+import type { Question, QuestionAnswer, QuestionAnswers, QuestionBlock } from '@acpira/shared/transcript';
 import { t } from '../i18n';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';

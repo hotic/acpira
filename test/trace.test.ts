@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { LIVE_MIN, buildTrace, domain, segments, tickStep } from '../packages/shared/trace';
-import type { AgentTurn, ToolCallBlock } from '../packages/shared/transcript';
-import type { SubagentSummary } from '../packages/shared/subagents';
+import { LIVE_MIN, buildTrace, domain, segments, tickStep } from '@acpira/shared/trace';
+import type { AgentTurn, ToolCallBlock } from '@acpira/shared/transcript';
+import type { SubagentSummary } from '@acpira/shared/subagents';
 
 const O = 1_000_000;
 const tool = (id: string, from: number, to?: number, extra: Partial<ToolCallBlock> = {}): ToolCallBlock => ({

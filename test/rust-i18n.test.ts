@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { DICTS, LOCALES } from '../packages/shared/i18n';
+import { DICTS, LOCALES } from '@acpira/shared/i18n';
 import { RUST_I18N_DIR, rustI18nJson } from '../scripts/export/rust-i18n';
 
 // The Rust host embeds these files; regenerate with `pnpm exec tsx scripts/export/rust-i18n.ts`

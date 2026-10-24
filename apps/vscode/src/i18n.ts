@@ -1,4 +1,4 @@
-import { translate, en, type Locale, type MsgKey, type Params } from '@shared/i18n';
+import { translate, en, type Locale, type MsgKey, type Params } from '@acpira/shared/i18n';
 
 // Host-side strings: one process-wide locale, set on activation and whenever acpira.language changes.
 // Only user-visible text (toasts, error texts, default titles) goes through here; log lines stay as they are

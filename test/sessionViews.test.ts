@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { SessionView, Turn } from '../packages/shared/transcript';
-import type { SessionPatch } from '../packages/shared/sessionPatch';
+import type { SessionView, Turn } from '@acpira/shared/transcript';
+import type { SessionPatch } from '@acpira/shared/sessionPatch';
 import { SessionViews, VIEW_CACHE_ENTRIES } from '../packages/ui/sessionViews';
 
 const user = (id: string): Turn => ({ role: 'user', id, text: id });

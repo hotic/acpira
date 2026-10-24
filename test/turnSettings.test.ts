@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { captureTurnSettings, controlsForTurn, editTurnConfig, openTurnControls } from '../packages/shared/turnSettings';
-import { learnShape } from '../packages/shared/modelShapes';
-import type { SessionControls } from '../packages/shared/transcript';
+import { captureTurnSettings, controlsForTurn, editTurnConfig, openTurnControls } from '@acpira/shared/turnSettings';
+import { learnShape } from '@acpira/shared/modelShapes';
+import type { SessionControls } from '@acpira/shared/transcript';
 
 const controls: SessionControls = {
   modes: [{ id: 'default', name: 'Agent' }, { id: 'plan', name: 'Plan' }], modeId: 'default',

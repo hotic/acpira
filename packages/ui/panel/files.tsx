@@ -1,4 +1,4 @@
-import type { GitMark } from '@shared/protocol';
+import type { GitMark } from '@acpira/shared/protocol';
 import { File, FileCode2, FileJson, FileText, Image as ImageIcon } from 'lucide-react';
 import { cn } from '../ui/cn';
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { filterModels, prioritizeModels, setModelsVisible } from '../packages/shared/modelCatalog';
-import { familyHidden, groupModels, visibleOptions } from '../packages/shared/models';
-import type { SessionOption } from '../packages/shared/transcript';
+import { filterModels, prioritizeModels, setModelsVisible } from '@acpira/shared/modelCatalog';
+import { familyHidden, groupModels, visibleOptions } from '@acpira/shared/models';
+import type { SessionOption } from '@acpira/shared/transcript';
 
 const options = (names: string[]): SessionOption[] => names.map(name => ({ id: name, name }));
 const catalog = (names: string[]) => groupModels(options(names));

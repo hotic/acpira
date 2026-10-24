@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { HostMsg, TerminalExit, WebviewMsg } from '@shared/protocol';
+import type { HostMsg, TerminalExit, WebviewMsg } from '@acpira/shared/protocol';
 import { t } from '../i18n';
 import { vscodeApi } from '../vscodeApi';
 import { onPanelChange, panel, panelState, type PanelTab } from './store';

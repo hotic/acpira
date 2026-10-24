@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { ContextSlots, MAX_CONTEXT_ITEMS, pageOwner, parseContextPayload } from '../packages/engine-client/contextApi';
-import { MAX_TEXT_BYTES } from '../packages/shared/attachments';
+import { ContextSlots, MAX_CONTEXT_ITEMS, pageOwner, parseContextPayload } from '@acpira/engine-client/contextApi';
+import { MAX_TEXT_BYTES } from '@acpira/shared/attachments';
 
 const source = { id: 'asgard.questCanvas', name: 'Quest canvas' };
 const item = { label: 'a.canvas 3 nodes', text: 'node a\nnode b', uri: 'file:///w/a.canvas' };

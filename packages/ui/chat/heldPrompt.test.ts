@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { QueuedPrompt, Turn } from '@shared/transcript';
+import type { QueuedPrompt, Turn } from '@acpira/shared/transcript';
 import { heldPrompt } from './heldPrompt';
 
 const entry = (id: string, text = id): QueuedPrompt => ({ id, text, attachments: [] });

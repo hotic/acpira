@@ -1,10 +1,10 @@
 import { Component, createRef, Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Circle, Copy, Ellipsis, Folder, FolderInput, FolderOpen, FolderPlus, Import, Layers, ListFilter, LoaderCircle, Pencil, Pin, PinOff, Plus, Search, SquarePen, Trash2, Undo2, X } from 'lucide-react';
-import type { AgentId, AgentInfo, CategoryOp, NativeSessionInfo, SessionCategories, SessionCategory, SessionSection, SessionSummary } from '@shared/transcript';
-import type { ExportFormat, NativeSessionsState, SessionHit } from '@shared/protocol';
-import { inWorkspace, type SessionScope } from '@shared/settings';
-import { launchable } from '@shared/agentOrder';
-import { foreignBrand } from '@shared/models';
+import type { AgentId, AgentInfo, CategoryOp, NativeSessionInfo, SessionCategories, SessionCategory, SessionSection, SessionSummary } from '@acpira/shared/transcript';
+import type { ExportFormat, NativeSessionsState, SessionHit } from '@acpira/shared/protocol';
+import { inWorkspace, type SessionScope } from '@acpira/shared/settings';
+import { launchable } from '@acpira/shared/agentOrder';
+import { foreignBrand } from '@acpira/shared/models';
 import { cn } from '../ui/cn';
 import { Collapsible, LazyPanelContext } from '../ui/Collapsible';
 import { Command } from '../ui/Command';

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { Host } from '../scripts/lib/host';
-import { newModel, type Provider } from '../packages/shared/providers';
+import { newModel, type Provider } from '@acpira/shared/providers';
 
 const hosts: Host[] = [];
 const dirs: string[] = [];

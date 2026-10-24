@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useState } from 'react';
 import { Check, ChevronDown, Folder, FolderPlus, Search } from 'lucide-react';
-import type { AgentId, AgentInfo } from '@shared/transcript';
-import { launchable } from '@shared/agentOrder';
+import type { AgentId, AgentInfo } from '@acpira/shared/transcript';
+import { launchable } from '@acpira/shared/agentOrder';
 import { cn } from '../ui/cn';
 import { Popover } from '../ui/Popover';
 import { t } from '../i18n';

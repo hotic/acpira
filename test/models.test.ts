@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { applyModelSources } from '../packages/shared/modelSources';
-import type { SessionOption } from '../packages/shared/transcript';
-import { familyHidden, findFusionVariant, findVariant, fusionLabel, groupModels, modelBrand, optionBrand, parseFusionName, parseModelName, setFamilyVisible, variantLabel, visibleOptions } from '../packages/shared/models';
+import { applyModelSources } from '@acpira/shared/modelSources';
+import type { SessionOption } from '@acpira/shared/transcript';
+import { familyHidden, findFusionVariant, findVariant, fusionLabel, groupModels, modelBrand, optionBrand, parseFusionName, parseModelName, setFamilyVisible, variantLabel, visibleOptions } from '@acpira/shared/models';
 
 // Real name samples issued by Devin (measured via pnpm probe devin), covering all suffix combinations
 const DEVIN = [

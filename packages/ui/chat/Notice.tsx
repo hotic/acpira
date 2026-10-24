@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { AccountInfo, AgentInfo, AuthMethodInfo, SessionStatus } from '@shared/transcript';
-import type { AccountAction, AddAccountVia } from '@shared/protocol';
+import type { AccountInfo, AgentInfo, AuthMethodInfo, SessionStatus } from '@acpira/shared/transcript';
+import type { AccountAction, AddAccountVia } from '@acpira/shared/protocol';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Row, RowEntranceContext } from '../ui/Row';

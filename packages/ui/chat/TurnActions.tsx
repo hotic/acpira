@@ -1,6 +1,6 @@
 import { createContext, Fragment, useContext, useState, type ReactNode } from 'react';
 import { ChartNoAxesColumn, Check, Copy, GitBranch } from 'lucide-react';
-import type { AgentId, AgentInfo, AgentTurn, SessionControls, TurnSettings } from '@shared/transcript';
+import type { AgentId, AgentInfo, AgentTurn, SessionControls, TurnSettings } from '@acpira/shared/transcript';
 import { t, useLocale } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { DropdownMenu } from '../ui/DropdownMenu';

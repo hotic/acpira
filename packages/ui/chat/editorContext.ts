@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
-import type { ContextItem, ContextSource, EditorSelection } from '@shared/protocol';
-import type { Draft } from '@shared/transcript';
+import type { ContextItem, ContextSource, EditorSelection } from '@acpira/shared/protocol';
+import type { Draft } from '@acpira/shared/transcript';
 import { nameOf } from './drafts';
 
 // IDE editor state the shell pushes straight into the webview (not through the sidecar): the live selection and the last copy.

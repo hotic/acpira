@@ -1,4 +1,4 @@
-import type { AgentBlock, PlanDocumentBlock } from '@shared/transcript';
+import type { AgentBlock, PlanDocumentBlock } from '@acpira/shared/transcript';
 
 export interface PlanSection {
   key: string;

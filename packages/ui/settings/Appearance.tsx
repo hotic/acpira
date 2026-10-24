@@ -1,4 +1,4 @@
-import { CODE_FONT_SIZE, DESKTOP_LAYOUTS, DIFF_MARKERS, SESSION_LIST_POSITIONS, THEMES, UI_FONT_SIZE, type SettingsView } from '@shared/settings';
+import { CODE_FONT_SIZE, DESKTOP_LAYOUTS, DIFF_MARKERS, SESSION_LIST_POSITIONS, THEMES, UI_FONT_SIZE, type SettingsView } from '@acpira/shared/settings';
 import type { Appearance } from '../appearance';
 import { t } from '../i18n';
 import { useDesktop } from '../desktop';

@@ -1,4 +1,4 @@
-import { PICKER_LIMITS, redactAttr, scrubText } from '@shared/picker';
+import { PICKER_LIMITS, redactAttr, scrubText } from '@acpira/shared/picker';
 
 // The few DOM members the serializer reads, so it runs (and is tested) without a DOM: a real Element fits this shape
 export interface MiniNode {

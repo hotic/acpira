@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLocale } from '../packages/ui/i18n';
 import { foldActivity, toolVerb } from '../packages/ui/chat/folding';
-import type { AgentTurn, ToolCallBlock } from '../packages/shared/transcript';
+import type { AgentTurn, ToolCallBlock } from '@acpira/shared/transcript';
 import { fileReference, isLineCount, toolFiles, visibleToolContents } from '../packages/ui/chat/toolDetails';
 import { agentTurn } from './fixtures/engine';
 

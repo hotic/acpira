@@ -1,9 +1,0 @@
-{
-  "extends": "./tsconfig.base.json",
-  "compilerOptions": {
-    "lib": ["ES2022"],
-    "types": ["node", "vscode"],
-    "jsx": "preserve"
-  },
-  "include": ["apps/vscode/src", "packages/engine-client", "packages/shared", "scripts", "test", "vitest.config.ts", "apps/vscode/build.mjs", "packages/picker/build.mjs"]
-}

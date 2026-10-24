@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { SubagentSummary } from '@shared/subagents';
+import type { SubagentSummary } from '@acpira/shared/subagents';
 import { t } from '../../i18n';
 import { elapsedText } from './subagentState';
 

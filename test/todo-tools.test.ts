@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Brain, ListTodo } from 'lucide-react';
-import { todoEntries, toolTodoEntries } from '../packages/shared/todoTools';
-import type { ToolCallBlock } from '../packages/shared/transcript';
+import { todoEntries, toolTodoEntries } from '@acpira/shared/todoTools';
+import type { ToolCallBlock } from '@acpira/shared/transcript';
 import { toolIcon } from '../packages/ui/chat/icons';
 import { agentTurn } from './fixtures/engine';
 

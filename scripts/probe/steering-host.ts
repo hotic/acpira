@@ -1,12 +1,12 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { AgentTurn, PermissionBlock, SessionView } from '@shared/transcript';
+import type { AgentTurn, PermissionBlock, SessionView } from '@acpira/shared/transcript';
 import { Host } from '../lib/host';
 
 // Host-path steering smoke (real CLI, real model): the queue's Steer button through the Rust sidecar, the way the webview drives it.
 //
-//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe/steering-host.ts <claude|codex|…> [--model TEXT]
+//   pnpm exec tsx scripts/probe/steering-host.ts <claude|codex|…> [--model TEXT]
 //
 // --model: switch the session's model control to the first value whose id or name contains TEXT (case-insensitive)
 //

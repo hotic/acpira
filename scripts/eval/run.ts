@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { AgentTurn, PermissionBlock, QuestionBlock, SessionView } from '@shared/transcript';
+import type { AgentTurn, PermissionBlock, QuestionBlock, SessionView } from '@acpira/shared/transcript';
 import { FAKE, bundleFakeAgent } from '../../test/fakeAgentBundle';
 import { Host, type View } from '../lib/host';
 import { CONFIGS, type Config, nativeHelpers, setupHelpers } from './configs';
@@ -15,9 +15,9 @@ import { cost } from './prices';
 // Harness comparison on long tasks (docs/dev/builtin-agent.md, "Harness comparison") and the Fusion comparison
 // (docs/dev/evals.md, Fusion bench). Spends real model calls, and subscription quota for native-login configurations.
 //
-//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/run.ts --model glm-5.3 --harness acpira,opencode,pi
+//   pnpm exec tsx scripts/eval/run.ts --model glm-5.3 --harness acpira,opencode,pi
 //     [--task calc-lang,conf-bugs] [--reps 1] [--out DIR] [--timeout-min N] [--dump]
-//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/run.ts --config claude-opus,devin-opus-luna,acpira-orch
+//   pnpm exec tsx scripts/eval/run.ts --config claude-opus,devin-opus-luna,acpira-orch
 //     [--task …] [--reps 1] [--out DIR] [--timeout-min N] [--quota-floor claude.weekly=0.25,…] [--dry]
 //
 // Each run: a fresh copy of the task's repo (git initialised), a fresh HOME and sidecar home, the harness pointed at the

@@ -14,20 +14,15 @@
     "package": "node scripts/package.mjs",
     "icon": "node scripts/icon.mjs"
   },
-  "packageManager": "pnpm@10.28.2",
   "devDependencies": {
-    "@types/node": "^22.19.0",
-    "electron": "45.0.0",
-    "electron-builder": "26.15.3",
-    "esbuild": "^0.28.2",
-    "typescript": "7.0.2",
-    "vitest": "4.1.11"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron",
-      "esbuild"
-    ]
+    "@acpira/engine-client": "workspace:*",
+    "@acpira/shared": "workspace:*",
+    "@types/node": "catalog:",
+    "electron": "catalog:",
+    "electron-builder": "catalog:",
+    "esbuild": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   },
   "author": "hotic"
 }

@@ -1,4 +1,4 @@
-import { BASE_APPEARANCE, type Appearance } from '@shared/appearance';
+import { BASE_APPEARANCE, type Appearance } from '@acpira/shared/appearance';
 
 // The UI face is known from init (appearance), and the browser requests a web font only once text first needs it: an
 // opened transcript's first frame drew in the fallback face, then laid every line out again when Inter arrived (~70 ms

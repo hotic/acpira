@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { ProjectChange } from '@shared/protocol';
+import type { ProjectChange } from '@acpira/shared/protocol';
 import { Files, Globe, SquareTerminal, type LucideIcon } from 'lucide-react';
 import { t } from '../i18n';
 import { cn } from '../ui/cn';

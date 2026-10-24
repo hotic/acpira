@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { DUTIES, dutyDefaults, freshThread, keepsThread, personaSlug, sanitizeGroups, sanitizePersonas } from '../packages/shared/subagents';
-import { sanitizeSetting } from '../packages/shared/settings';
+import { DUTIES, dutyDefaults, freshThread, keepsThread, personaSlug, sanitizeGroups, sanitizePersonas } from '@acpira/shared/subagents';
+import { sanitizeSetting } from '@acpira/shared/settings';
 import { personaHits, personaOfHit } from '../packages/ui/chat/personaHits';
 import fixture from './fixtures/personas-sanitize.json';
 import groupsFixture from './fixtures/groups-sanitize.json';

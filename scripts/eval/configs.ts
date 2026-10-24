@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { DUTY_BRIEFS } from '@shared/subagents';
+import { DUTY_BRIEFS } from '@acpira/shared/subagents';
 import { HARNESSES, MODELS, addBuiltinProviders, type BuiltinProvider } from './harnesses';
 
 // Named configurations for the Fusion comparison (docs/dev/evals.md, Fusion bench): a lead harness on a model, the

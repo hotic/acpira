@@ -1,9 +1,9 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import { useDesktop } from '../desktop';
-import type { AgentInfo } from '@shared/transcript';
-import { ACCOUNT_SWITCH_STRATEGIES, AGENT_CPU_CAP, AUTO_PROXY_URL, FILE_OPENER_NAMES, FILE_OPENERS, MIN_COMPACT_AT_TOKENS, proxyUrl, SESSION_SCOPES, type AccountSwitchStrategy, type FileOpener, type SessionScope, type SettingsView } from '@shared/settings';
-import { LANGUAGES, type Language } from '@shared/i18n';
-import { launchable, pickDefaultAgent } from '@shared/agentOrder';
+import type { AgentInfo } from '@acpira/shared/transcript';
+import { ACCOUNT_SWITCH_STRATEGIES, AGENT_CPU_CAP, AUTO_PROXY_URL, FILE_OPENER_NAMES, FILE_OPENERS, MIN_COMPACT_AT_TOKENS, proxyUrl, SESSION_SCOPES, type AccountSwitchStrategy, type FileOpener, type SessionScope, type SettingsView } from '@acpira/shared/settings';
+import { LANGUAGES, type Language } from '@acpira/shared/i18n';
+import { launchable, pickDefaultAgent } from '@acpira/shared/agentOrder';
 import { AgentMark } from '../chat/AgentMark';
 import { playChime } from '../effects/chime';
 import { t } from '../i18n';

@@ -7,7 +7,7 @@ import { JUDGE_MODEL, judge, type Verdict } from './judge';
 // given targets has its reviews judged again with the current targets.json and the same judge, and its verdict files
 // and results.ndjson line are rewritten. The first rescore of a folder keeps the original as results.before-rescore.ndjson
 //
-//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/review/rescore.ts DIR --target id,… [--reviewers cell,…]
+//   pnpm exec tsx scripts/eval/review/rescore.ts DIR --target id,… [--reviewers cell,…]
 
 interface ReviewerRow { name: string; hits: number[]; others: number; findings: number; judgeError?: string }
 interface Row { runId: string; set: 'dev' | 'holdout'; target: string; reviewers: string; bugs: number; hits: number[]; found: number; others: number; judge: string; dry?: boolean; perReviewer: ReviewerRow[] }

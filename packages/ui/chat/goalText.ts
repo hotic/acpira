@@ -1,4 +1,4 @@
-import type { Turn } from '@shared/transcript';
+import type { Turn } from '@acpira/shared/transcript';
 import { getLocale, t } from '../i18n';
 
 // Goal strip / milestone texts and the "Set as goal" prompt pick. DOM-free so the host tsconfig can type-check its test.

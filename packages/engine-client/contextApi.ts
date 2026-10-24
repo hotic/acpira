@@ -1,5 +1,5 @@
-import type { ContextItem, ContextSource, HostMsg } from '@shared/protocol';
-import { MAX_TEXT_BYTES } from '@shared/attachments';
+import type { ContextItem, ContextSource, HostMsg } from '@acpira/shared/protocol';
+import { MAX_TEXT_BYTES } from '@acpira/shared/attachments';
 
 // The payload other extensions hand `acpira.context.set` / `acpira.context.add` (docs/context-api.md). Validated here, outside
 // `vscode`, so the rules are unit-tested: anything another extension sends is untrusted input bound for a prompt

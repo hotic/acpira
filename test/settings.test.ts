@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AGENT_CPU_CAP, CODE_FONT_SIZE, DEFAULT_SETTINGS, inWorkspace, isSharedSetting, sanitizeSetting, UI_FONT_SIZE } from '../packages/shared/settings';
+import { AGENT_CPU_CAP, CODE_FONT_SIZE, DEFAULT_SETTINGS, inWorkspace, isSharedSetting, sanitizeSetting, UI_FONT_SIZE } from '@acpira/shared/settings';
 
 // settings.json is hand-editable and the setSetting message can come from any webview script: every appearance value is checked before it is used
 describe('sanitizeSetting (appearance)', () => {

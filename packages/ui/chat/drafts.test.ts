@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { MAX_FILE_BYTES, MAX_TEXT_BYTES } from '@shared/attachments';
+import { MAX_FILE_BYTES, MAX_TEXT_BYTES } from '@acpira/shared/attachments';
 import { collectDrafts, collectImageSources, hasPayload, hiddenText, imageSources, pastedText, pathlessWorkbenchDrag, workbenchUris } from './drafts';
 
 // Minimal DataTransfer: lowercased types like the DOM one, no files

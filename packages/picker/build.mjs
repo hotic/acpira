@@ -14,7 +14,6 @@ const ctx = await context({
   sourcemap: watch,
   minify: !watch,
   logLevel: 'info',
-  alias: { '@shared': here('../shared') },
   entryPoints: [here('./picker.ts')],
   outfile: here('../../dist/picker.js'),
 });

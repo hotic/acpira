@@ -1,5 +1,5 @@
-import type { PermissionBlock, PermissionKind } from '@shared/transcript';
-import { DICTS, en, LOCALES, translate, type Locale, type MsgKey } from '@shared/i18n';
+import type { PermissionBlock, PermissionKind } from '@acpira/shared/transcript';
+import { DICTS, en, LOCALES, translate, type Locale, type MsgKey } from '@acpira/shared/i18n';
 
 type Option = PermissionBlock['options'][number];
 

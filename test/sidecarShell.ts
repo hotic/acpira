@@ -1,10 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { FAKE } from './fakeAgentBundle';
-import { onNdjsonLines } from '../packages/engine-client/ndjson';
-import type { HostMsg, WebviewMsg } from '../packages/shared/protocol';
+import { onNdjsonLines } from '@acpira/engine-client/ndjson';
+import type { HostMsg, WebviewMsg } from '@acpira/shared/protocol';
 import { sidecarBin } from '../scripts/lib/sidecarBin';
-import { SIDECAR_PROTOCOL_VERSION, type PlatformMethod, type PlatformRequest, type ShellMsg, type SidecarMsg } from '../packages/shared/sidecar';
+import { SIDECAR_PROTOCOL_VERSION, type PlatformMethod, type PlatformRequest, type ShellMsg, type SidecarMsg } from '@acpira/shared/sidecar';
 
 export { FAKE };
 // The fake agent's command: node runs the bundle test/globalSetup.ts builds

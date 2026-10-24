@@ -1,7 +1,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { UserTurn } from '@shared/transcript';
+import type { UserTurn } from '@acpira/shared/transcript';
 import { setLocale } from '../i18n';
 import { HistoryMessage } from './HistoryMessage';
 

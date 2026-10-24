@@ -1,6 +1,6 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
-import type { ImageRef, ToolCallBlock } from '@shared/transcript';
-import { isShowImageTool, toolImages } from '@shared/imageTools';
+import type { ImageRef, ToolCallBlock } from '@acpira/shared/transcript';
+import { isShowImageTool, toolImages } from '@acpira/shared/imageTools';
 import { useAppearance } from '../appearance';
 import { useTheme } from '../look';
 import { t, useLocale } from '../i18n';

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import type { AgentTurn, PermissionBlock, QuestionBlock, SessionView } from '@shared/transcript';
+import type { AgentTurn, PermissionBlock, QuestionBlock, SessionView } from '@acpira/shared/transcript';
 import { Host, type View } from '../lib/host';
 import { HARNESSES, MODELS } from './harnesses';
 import { readQuota } from './native';
@@ -23,7 +23,7 @@ import { type Target, targetsOf } from './review/bench';
 // already finished. --final-only reruns just the wrap-up on DIR's incumbent. --dry: stub proposer, fake reviewers,
 // stub judge.
 //
-//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/eval/evolve.ts --out DIR [--rounds 2] [--hours 10]
+//   pnpm exec tsx scripts/eval/evolve.ts --out DIR [--rounds 2] [--hours 10]
 //     [--max-rejects 3] [--reviewers astra] [--variant B] [--reps 1] [--parallel 4] [--proposer claude|stub]
 //     [--noise-from DIR] [--quota-floor 0.25] [--no-final | --final-only] [--dry]
 
@@ -130,7 +130,7 @@ function bench(o: { policy: Policy; out: string; set: 'dev' | 'holdout'; log: st
   const file = join(o.out, 'policy.json');
   writeFileSync(file, JSON.stringify(o.policy, null, 2) + '\n');
   const args = [
-    'exec', 'tsx', '--tsconfig', 'tsconfig.host.json', 'scripts/eval/review/run.ts', '--reviewers', REVIEWERS, '--variant', VARIANT,
+    'exec', 'tsx', 'scripts/eval/review/run.ts', '--reviewers', REVIEWERS, '--variant', VARIANT,
     '--set', o.set, '--reps', String(REPS), '--parallel', String(PARALLEL), '--policy', file, '--out', o.out, ...(DRY ? ['--dry'] : []),
   ];
   const log = openSync(o.log, 'a');

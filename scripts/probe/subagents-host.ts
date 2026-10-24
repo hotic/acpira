@@ -2,12 +2,12 @@ import { cpSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { AgentBlock, PermissionBlock, SessionView, ToolCallBlock, Turn } from '@shared/transcript';
-import type { SubagentSummary } from '@shared/subagents';
+import type { AgentBlock, PermissionBlock, SessionView, ToolCallBlock, Turn } from '@acpira/shared/transcript';
+import type { SubagentSummary } from '@acpira/shared/subagents';
 import { Host } from '../lib/host';
 
 // Subagent end-to-end through the production host path (the Rust sidecar over the envelope protocol → real CLI):
-//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe/subagents-host.ts <claude|codex|devin>
+//   pnpm exec tsx scripts/probe/subagents-host.ts <claude|codex|devin>
 // claude and codex run through the built-in registry (the official adapters resolve from PATH — point it at the
 // local install, e.g. PATH=/tmp/acp-adapters/node_modules/.bin:$PATH); devin runs through the account layer,
 // binding the local CLI login.

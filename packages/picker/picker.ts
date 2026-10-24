@@ -3,7 +3,7 @@
 // listens in the capture phase only while picking, and it answers only its parent frame (the browser panel) when the
 // message carries the token this script was served with. It also hands the page window.acpira.context, the web side of the
 // context API (docs/context-api.md). Built to dist/picker.js (apps/vscode/build.mjs)
-import { envelopeOf, PICKER_LIMITS, type PageContextOp, type PanelMsg, type PickedElement, type PickedRect, type PickerMsg } from '@shared/picker';
+import { envelopeOf, PICKER_LIMITS, type PageContextOp, type PanelMsg, type PickedElement, type PickedRect, type PickerMsg } from '@acpira/shared/picker';
 import { serialize } from './serialize';
 
 // How long a page's context call waits for the shell before its promise gives up

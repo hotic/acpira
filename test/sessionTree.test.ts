@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SessionCategory, SessionSummary } from '../packages/shared/transcript';
+import type { SessionCategory, SessionSummary } from '@acpira/shared/transcript';
 import { buildSessionTree, categoryOf, draggable, dropAction } from '../packages/ui/chat/sessionTree';
 
 const WS = '/work/acpira';

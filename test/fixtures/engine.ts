@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import type { AgentTurn, DiffLine, Turn } from '../../packages/shared/transcript';
+import type { AgentTurn, DiffLine, Turn } from '@acpira/shared/transcript';
 
 // Golden engine output (the Rust suite in rust/crates/acpira-host/tests/engine/golden.rs keeps these in step with the engine):
 // the webview suites render exactly what the sidecar sends

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Draft } from '@shared/transcript';
+import type { Draft } from '@acpira/shared/transcript';
 
 // Unsent drafts by session id. Each session has its own composer state: switching away parks what was typed / pasted here, switching back
 // restores it, and a draft never leaks into another session's field. Webview memory only — a window reload starts clean

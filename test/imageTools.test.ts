@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { ToolCallBlock } from '../packages/shared/transcript';
-import { isImageGenBlock, isImageGenTool, isImageResultBlock, isShowImageTool, toolImages, toolTexts } from '../packages/shared/imageTools';
+import type { ToolCallBlock } from '@acpira/shared/transcript';
+import { isImageGenBlock, isImageGenTool, isImageResultBlock, isShowImageTool, toolImages, toolTexts } from '@acpira/shared/imageTools';
 import { setLocale } from '../packages/ui/i18n';
 import { foldActivity, toolVerb } from '../packages/ui/chat/folding';
 import { agentTurn } from './fixtures/engine';

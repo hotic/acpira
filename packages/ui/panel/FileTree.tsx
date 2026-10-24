@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { FileHit, ProjectChange } from '@shared/protocol';
+import type { FileHit, ProjectChange } from '@acpira/shared/protocol';
 import { AtSign, ChevronRight, ChevronsDownUp, Crosshair, Folder, FolderOpen, Layers, Search, X } from 'lucide-react';
-import type { MsgKey } from '@shared/i18n';
+import type { MsgKey } from '@acpira/shared/i18n';
 import { t } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { Row } from '../ui/Row';

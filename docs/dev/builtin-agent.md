@@ -234,7 +234,7 @@ Verified 2026-10-11 (acpira 1.9.1) through an OpenAI-compatible gateway, one `op
 
 - The Kimi variant against a Kimi model (the gateway had no usable route on 2026-10-11). The DeepSeek variant ran on `deepseek-v4-pro` in the harness comparison above.
 - The riders on Claude models, and read ranges and grep context on an exploration-heavy task set (Fewer steps above).
-- Steering against a real model: whether models act on the `<steer>` note in the middle of a task, and the merged Anthropic shape against Anthropic's own API and the gateway's Claude routes (only the scripted server has seen it). `pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe/steering-host.ts acpira` would check it and spends real calls.
+- Steering against a real model: whether models act on the `<steer>` note in the middle of a task, and the merged Anthropic shape against Anthropic's own API and the gateway's Claude routes (only the scripted server has seen it). `pnpm exec tsx scripts/probe/steering-host.ts acpira` would check it and spends real calls.
 - Goals against a real model: whether models follow the `<goal>` note across continuations, call `update_goal` only after the completion audit, leave `create_goal` alone without an explicit request, and wrap up on the budget note; only the scripted server has run them.
 - Release binary size and the agent's RSS during a turn have not been measured.
 - Background jobs (`bash` with `background`, `job`) are covered by the unit test in `tools/jobs.rs` and the sidecar shutdown case in `test/review-regressions.test.ts` only: no model on the eval started one, since none of the five tasks needs a server or watcher.

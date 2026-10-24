@@ -1,5 +1,5 @@
-import type { AgentTurn, NoticeBlock } from '@shared/transcript';
-import { translate, type Locale } from '@shared/i18n';
+import type { AgentTurn, NoticeBlock } from '@acpira/shared/transcript';
+import { translate, type Locale } from '@acpira/shared/i18n';
 
 const NO_NOTICES: NoticeBlock[] = [];
 

@@ -1,6 +1,6 @@
 import { app, Menu, type MenuItemConstructorOptions } from 'electron';
-import type { MsgKey, Params } from '@shared/i18n';
-import { DESKTOP_LAYOUTS, type DesktopLayout } from '@shared/settings';
+import type { MsgKey, Params } from '@acpira/shared/i18n';
+import { DESKTOP_LAYOUTS, type DesktopLayout } from '@acpira/shared/settings';
 
 // The menu bar: the extension's editor-free commands plus the page's own shortcuts. On macOS a menu item's key equivalent
 // takes the key before the page sees it, so ⌘N / ⌘K / ⌘O / ⌘, arrive here and go to the page as shellCommand, which runs

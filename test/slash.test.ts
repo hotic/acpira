@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { SlashCommand, Turn } from '@shared/transcript';
+import type { SlashCommand, Turn } from '@acpira/shared/transcript';
 import { commandAt, commandHint, commandMarks, completeCommand, markRoom, matchCommands, promptMarks, summonMarks } from '../packages/ui/chat/slashCommands';
 
-import { presentCommand } from '../packages/shared/commandPresentation';
-import { commandName, namedCommand, restoreCommandReceipts } from '../packages/shared/slashCommands';
+import { presentCommand } from '@acpira/shared/commandPresentation';
+import { commandName, namedCommand, restoreCommandReceipts } from '@acpira/shared/slashCommands';
 import { turnOutcome } from '../packages/ui/chat/turnOutcome';
 
 const COMMANDS: SlashCommand[] = [

@@ -1,0 +1,62 @@
+# One install and one lockfile for every JavaScript package in the repository. packages/ holds the code the shells share,
+# apps/ the shells that are Node packages (the IntelliJ plugin and the iOS app build with Gradle and Xcode)
+packages:
+  - packages/*
+  - apps/vscode
+  - apps/desktop
+
+# Every external version lives here; a package.json names its dependencies with `catalog:`
+catalog:
+  '@agentclientprotocol/sdk': 1.4.0
+  '@base-ui/react': ^1.8.0
+  '@fontsource-variable/geist': 5.3.0
+  '@fontsource-variable/inter': 5.3.0
+  '@streamdown/cjk': ^1.0.4
+  '@streamdown/math': 1.0.2
+  '@streamdown/mermaid': 1.0.2
+  '@tailwindcss/browser': 4.3.3
+  '@tailwindcss/vite': 4.3.3
+  '@types/node': 22.15.3
+  '@types/react': 19.2.18
+  '@types/react-dom': 19.2.5
+  '@types/vscode': 1.106.0
+  '@vitejs/plugin-react': 6.1.1
+  '@vscode/vsce': ^3.9.2
+  '@xterm/addon-clipboard': 0.2.0
+  '@xterm/addon-fit': 0.11.0
+  '@xterm/addon-search': 0.16.0
+  '@xterm/addon-unicode11': 0.9.0
+  '@xterm/addon-web-links': 0.12.0
+  '@xterm/addon-webgl': 0.19.0
+  '@xterm/xterm': 6.0.0
+  border-beam: 1.3.0
+  class-variance-authority: ^0.7.1
+  clsx: 2.1.1
+  electron: 45.0.0
+  electron-builder: 26.15.3
+  esbuild: ^0.28.2
+  img-fx: 0.5.1
+  katex: 0.16.47
+  lucide-react: 1.35.0
+  metal-fx: 1.0.4
+  react: 19.2.8
+  react-dom: 19.2.8
+  shiki: ^4.4.3
+  streamdown: 2.6.0
+  tailwind-merge: ^3.6.0
+  tailwindcss: 4.3.3
+  thinking-orbs: 0.3.1
+  three: 0.186.0
+  tsx: ^4.23.13
+  typescript: 7.0.2
+  vite: 8.2.2
+  vitest: 4.1.11
+
+onlyBuiltDependencies:
+  - '@vscode/vsce-sign'
+  - esbuild
+  - keytar
+# Squirrel.Windows tooling under electron-builder; the desktop app does not build Squirrel installers. Electron itself has no
+# install script: it downloads its binary the first time it is required
+ignoredBuiltDependencies:
+  - electron-winstaller

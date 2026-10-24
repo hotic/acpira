@@ -1,7 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { AgentId } from '@shared/transcript';
+import type { AgentId } from '@acpira/shared/transcript';
 
 // How each harness under comparison is pointed at the metering proxy. Every run gets a fresh HOME, so the configs written
 // here are the only ones a harness sees: the user's own ~/.config/opencode, ~/.pi, ~/.codex, ~/.claude and ~/.agents stay

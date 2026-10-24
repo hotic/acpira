@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { newModel, type Provider } from '../packages/shared/providers';
+import { newModel, type Provider } from '@acpira/shared/providers';
 import { Shell } from './sidecarShell';
 
 // The built-in agent's model sources against the Rust sidecar: the page edits providers.json through actions, the key

@@ -1,4 +1,4 @@
-import type { SessionSummary } from '@shared/transcript';
+import type { SessionSummary } from '@acpira/shared/transcript';
 
 // How the session list is looked at, from its view menu (SessionList's ViewMenu): grouping, ordering and what rows show,
 // then the filters. Kept per window in the webview's state, like the section folds; the engine never sees it

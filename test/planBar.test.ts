@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { PlanBlock, PlanEntry, ToolCallBlock, Turn } from '../packages/shared/transcript';
+import type { PlanBlock, PlanEntry, ToolCallBlock, Turn } from '@acpira/shared/transcript';
 import { dockPlan } from '../packages/ui/chat/dockPlan';
 
 const entry = (title: string, status: PlanEntry['status']): PlanEntry => ({ title, status });

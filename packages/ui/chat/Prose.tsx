@@ -2,7 +2,7 @@ import { cloneElement, createContext, isValidElement, memo, useContext, useEffec
 import { Block, Streamdown, defaultRehypePlugins, parseMarkdownIntoBlocks, type BlockProps, type Components, type ExtraProps } from 'streamdown';
 import { cjk } from '@streamdown/cjk';
 import { createMathPlugin } from '@streamdown/math';
-import type { ImageRef, TextBlock } from '@shared/transcript';
+import type { ImageRef, TextBlock } from '@acpira/shared/transcript';
 import { STREAM_MOTION, useSmoothText, useStreamMotion, type StreamMotion } from './streamMotion';
 import { CodeBlock } from './CodeBlock';
 import { InlineFileCode, Link } from './Link';

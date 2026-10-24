@@ -1,4 +1,4 @@
-import type { ChatGptIntegrationStatus } from '@shared/chatgptIntegration';
+import type { ChatGptIntegrationStatus } from '@acpira/shared/chatgptIntegration';
 import { Button } from '../ui/Button';
 import { t } from '../i18n';
 import { FactRow, Field, Section, SectionDescription } from './controls';

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { ArrowLeft, Square, Unplug, X } from 'lucide-react';
-import type { SubagentSummary } from '@shared/subagents';
-import type { FullDiffSource, QuestionBlock, TextBlock, Turn, UserTurn } from '@shared/transcript';
+import type { SubagentSummary } from '@acpira/shared/subagents';
+import type { FullDiffSource, QuestionBlock, TextBlock, Turn, UserTurn } from '@acpira/shared/transcript';
 import { t } from '../../i18n';
 import { cn } from '../../ui/cn';
 import { IconButton } from '../../ui/Button';

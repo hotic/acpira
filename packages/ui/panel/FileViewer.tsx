@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
-import type { DiffLine } from '@shared/transcript';
-import type { ProjectBase, ProjectChange, ProjectHunk } from '@shared/protocol';
+import type { DiffLine } from '@acpira/shared/transcript';
+import type { ProjectBase, ProjectChange, ProjectHunk } from '@acpira/shared/protocol';
 import { BookOpen, ChevronDown, ChevronUp, ExternalLink, Layers, MessageSquarePlus, WrapText, X } from 'lucide-react';
-import type { TextBlock } from '@shared/transcript';
+import type { TextBlock } from '@acpira/shared/transcript';
 import { t } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { popupClass } from '../ui/Overlay';

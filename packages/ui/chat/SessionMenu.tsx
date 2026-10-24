@@ -1,8 +1,8 @@
 import { useState, type ReactElement, type ReactNode } from 'react';
 import { ContextMenu } from '@base-ui/react/context-menu';
 import { AppWindow, ChevronRight, Copy, FileDown, FileJson, FileText, Folder, FolderInput, Inbox, LetterText, Link, Pencil, Pin, PinOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
-import type { ExportFormat } from '@shared/protocol';
-import type { SessionCategory, SessionSummary } from '@shared/transcript';
+import type { ExportFormat } from '@acpira/shared/protocol';
+import type { SessionCategory, SessionSummary } from '@acpira/shared/transcript';
 import { t } from '../i18n';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';

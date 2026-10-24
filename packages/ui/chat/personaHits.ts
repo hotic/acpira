@@ -1,4 +1,4 @@
-import type { FileHit } from '@shared/protocol';
+import type { FileHit } from '@acpira/shared/protocol';
 
 // A cross-harness subagent (settings → Subagents) offered in the @ list; picking it writes `@name ` into the text, which
 // the agent reads as "summon this one" (the ask_agent tool description says so). Its hit travels as a FileHit with this scheme

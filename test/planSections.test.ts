@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentBlock, PlanDocumentBlock } from '../packages/shared/transcript';
+import type { AgentBlock, PlanDocumentBlock } from '@acpira/shared/transcript';
 import { splitPlanSections } from '../packages/ui/chat/planSections';
 import { splitCodexBlocks } from '../packages/ui/chat/folding';
 

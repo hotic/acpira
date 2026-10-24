@@ -1,7 +1,7 @@
 import { useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { ChevronDown, LoaderCircle } from 'lucide-react';
-import { effortLabel } from '@shared/composerControls';
-import type { ProbeOutcome, ProviderModel, Thinking } from '@shared/providers';
+import { effortLabel } from '@acpira/shared/composerControls';
+import type { ProbeOutcome, ProviderModel, Thinking } from '@acpira/shared/providers';
 import { Button, IconButton } from '../ui/Button';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';

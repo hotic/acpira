@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AgentTurn } from '../packages/shared/transcript';
+import type { AgentTurn } from '@acpira/shared/transcript';
 import { setLocale } from '../packages/ui/i18n';
 import { foldActivity } from '../packages/ui/chat/folding';
 import { agentTurn } from './fixtures/engine';

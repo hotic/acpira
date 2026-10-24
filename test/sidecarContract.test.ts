@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AgentBlock, AgentTurn, SessionView, Turn } from '../packages/shared/transcript';
+import type { AgentBlock, AgentTurn, SessionView, Turn } from '@acpira/shared/transcript';
 import { FAKE, Shell } from './sidecarShell';
 
 // Session-loop contract at the envelope level against the Rust sidecar: only what a shell / webview can observe is asserted

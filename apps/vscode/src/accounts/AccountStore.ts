@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { AccountInfo, AgentId } from '@shared/transcript';
+import type { AccountInfo, AgentId } from '@acpira/shared/transcript';
 import { msg } from '../errors';
 import { withFileLock, writeAtomic } from '../store/fileLock';
 

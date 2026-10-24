@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentTurn, NoticeBlock } from '../packages/shared/transcript';
-import { isContextLengthError } from '../packages/shared/turnErrors';
+import type { AgentTurn, NoticeBlock } from '@acpira/shared/transcript';
+import { isContextLengthError } from '@acpira/shared/turnErrors';
 import { absorbedNotices, hasTurnContent } from '../packages/ui/chat/turnOutcome';
 
 // claude-agent-acp, stored transcript 2026-10-04: a session-scoped connection notice offering new_session, then the

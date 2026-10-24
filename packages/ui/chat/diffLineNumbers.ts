@@ -1,4 +1,4 @@
-import type { DiffLine } from '@shared/transcript';
+import type { DiffLine } from '@acpira/shared/transcript';
 
 // Older transcripts store only prefixed text. Recover positions from the two
 // historical hunk formats; unknown omissions must not manufacture line numbers.

@@ -8,7 +8,7 @@ import { builtinAgent, type SpawnSpec } from '../lib/sidecarBin';
 // Raw-wire subagent probe. Speaks JSON-RPC over stdio itself (no SDK), so nothing an agent sends is validated away:
 // the released SDK's session/update parser is a closed union and drops unknown `sessionUpdate` kinds.
 //
-//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe/subagents.ts <agent> [--cmd "<command line>"] [--no-caps] [--air] [--devin-meta] [--wait MS] [--out FILE] [prompt]
+//   pnpm exec tsx scripts/probe/subagents.ts <agent> [--cmd "<command line>"] [--no-caps] [--air] [--devin-meta] [--wait MS] [--out FILE] [prompt]
 //
 // <agent>: a built-in id (devin / grok / kimi / opencode / …, launched as the sidecar would: `acpira agents --json`) or a label for --cmd
 // --cmd: run this command line instead of the built-in one (e.g. "npx -y @agentclientprotocol/claude-agent-acp@0.78.0")

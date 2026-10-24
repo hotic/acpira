@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Brain } from 'lucide-react';
-import type { TextBlock, ThoughtBlock } from '@shared/transcript';
+import type { TextBlock, ThoughtBlock } from '@acpira/shared/transcript';
 import { t, useLocale } from '../i18n';
 import { cn } from '../ui/cn';
 import { Disclosure } from '../ui/Disclosure';

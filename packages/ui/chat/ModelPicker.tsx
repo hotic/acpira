@@ -1,8 +1,8 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { Zap } from 'lucide-react';
-import type { ConfigControl } from '@shared/transcript';
-import { findFusionVariant, findVariant, fusionLabel, groupModels, optionBrand, visibleOptions, type ModelFamily, type ModelVariant } from '@shared/models';
-import { chipTags, fastOn, fastValue, isFastControl, isUltraLevel, NO_SIDEKICK, presentReasoning, reasoningChip, reasoningVisible } from '@shared/composerControls';
+import type { ConfigControl } from '@acpira/shared/transcript';
+import { findFusionVariant, findVariant, fusionLabel, groupModels, optionBrand, visibleOptions, type ModelFamily, type ModelVariant } from '@acpira/shared/models';
+import { chipTags, fastOn, fastValue, isFastControl, isUltraLevel, NO_SIDEKICK, presentReasoning, reasoningChip, reasoningVisible } from '@acpira/shared/composerControls';
 import { t } from '../i18n';
 import { Chip, ChipTag } from '../ui/Button';
 import { HeaderToggle, SegmentScale, SelectRow, SwitchRow } from '../ui/Field';

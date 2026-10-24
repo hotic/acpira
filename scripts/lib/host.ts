@@ -2,9 +2,9 @@ import { mkdtempSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { AccountAction, AddAccountVia, HostMsg, InitState, WebviewMsg } from '@shared/protocol';
-import type { SidecarMsg } from '@shared/sidecar';
-import type { AgentId, NativeSessionInfo, SessionSummary, SessionView, Turn } from '@shared/transcript';
+import type { AccountAction, AddAccountVia, HostMsg, InitState, WebviewMsg } from '@acpira/shared/protocol';
+import type { SidecarMsg } from '@acpira/shared/sidecar';
+import type { AgentId, NativeSessionInfo, SessionSummary, SessionView, Turn } from '@acpira/shared/transcript';
 import { Shell } from '../../test/sidecarShell';
 import { sidecarBin } from './sidecarBin';
 

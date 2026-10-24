@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SessionSummary } from '../packages/shared/transcript';
+import type { SessionSummary } from '@acpira/shared/transcript';
 import { clearFilters, DEFAULT_VIEW, filterCount, groupSessions, passes, readView, sortSessions, type ListView } from '../packages/ui/chat/sessionView';
 
 const now = new Date(2026, 9, 23, 15, 0);

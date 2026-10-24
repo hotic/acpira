@@ -1,5 +1,5 @@
-import type { Draft } from '@shared/transcript';
-import { MAX_FILE_BYTES, MAX_IMAGE_BYTES, MAX_TEXT_BYTES, imageMimeOf } from '@shared/attachments';
+import type { Draft } from '@acpira/shared/transcript';
+import { MAX_FILE_BYTES, MAX_IMAGE_BYTES, MAX_TEXT_BYTES, imageMimeOf } from '@acpira/shared/attachments';
 import { t } from '../i18n';
 
 export interface Collected {
