@@ -39,6 +39,11 @@ export interface TreeInput {
   grouped: boolean;
   // A search or channel filter is on: categories / projects without a match hide, the rest open
   filtering: boolean;
+  // A project shell's registered folders (SessionCategories.projects, the desktop app): grouped, they lead in this order,
+  // a folder without a session included, and any other folder a session ran in follows by latest activity
+  registered?: string[];
+  // Folders the project shell took off its list (SessionCategories.removedProjects): their sessions show only in a search
+  removed?: string[];
 }
 
 // The category a session is filed under, if that category still exists and belongs to the session's project
@@ -47,7 +52,7 @@ export function categoryOf(s: SessionSummary, categories: SessionCategory[]): Se
   return categories.find(c => c.id === s.category && c.cwd === s.cwd);
 }
 
-export function buildSessionTree({ shown, categories, collapsedProjects, workspace, grouped, filtering }: TreeInput): SessionTree {
+export function buildSessionTree({ shown, categories, collapsedProjects, workspace, grouped, filtering, registered, removed }: TreeInput): SessionTree {
   const pinned = shown.filter(s => s.pinned);
   const rest = shown.filter(s => !s.pinned);
   const node = (cwd: string, sessions: SessionSummary[]): ProjectNode => {
@@ -79,11 +84,14 @@ export function buildSessionTree({ shown, categories, collapsedProjects, workspa
   }
 
   const byProject = new Map<string, SessionSummary[]>();
-  for (const s of rest) byProject.set(s.cwd, [...byProject.get(s.cwd) ?? [], s]);
+  for (const s of rest) if (filtering || !removed?.includes(s.cwd)) byProject.set(s.cwd, [...byProject.get(s.cwd) ?? [], s]);
   // A project with categories but no session in view still shows (so its categories can be reached), unless filtering
   if (!filtering) for (const c of categories) if (!byProject.has(c.cwd)) byProject.set(c.cwd, []);
+  if (!filtering) for (const cwd of registered ?? []) if (!byProject.has(cwd)) byProject.set(cwd, []);
   const latest = (cwd: string) => byProject.get(cwd)!.reduce((m, s) => (s.updatedAt > m ? s.updatedAt : m), '');
-  const order = [...byProject.keys()].sort((a, b) => Number(b === workspace) - Number(a === workspace) || latest(b).localeCompare(latest(a)));
+  // Unregistered folders rank after every registered one (Infinity - Infinity is NaN, which falls through to the next key)
+  const rank = (cwd: string) => { const i = registered?.indexOf(cwd) ?? -1; return i < 0 ? Infinity : i; };
+  const order = [...byProject.keys()].sort((a, b) => rank(a) - rank(b) || Number(b === workspace) - Number(a === workspace) || latest(b).localeCompare(latest(a)));
   return { pinned, grouped, projects: order.map(cwd => node(cwd, byProject.get(cwd)!)) };
 }
 

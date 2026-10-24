@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { CircleCheck, Goal as GoalIcon, Pause, Play, Trash2, TriangleAlert } from 'lucide-react';
 import type { GoalAction, GoalBlock, GoalEvent, GoalStatus, SessionGoal } from '@shared/transcript';
 import type { MsgKey } from '@shared/i18n';
-import { t } from '../i18n';
+import { t, useLocale } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { Row, RowLabel, RowTarget } from '../ui/Row';
 import { Shimmer } from '../ui/Shimmer';
@@ -64,6 +64,8 @@ function stripMeta(goal: SessionGoal): string | undefined {
 export const GoalStrip = memo(function GoalStrip({ goal, actions, running, onAction }: {
   goal: SessionGoal; actions?: GoalAction[]; running: boolean; onAction?: (action: GoalAction) => void;
 }) {
+  // memo keeps a row from rendering again; the locale context still reaches it after a language change
+  useLocale();
   const can = (a: GoalAction) => !!onAction && !!actions?.includes(a);
   const meta = stripMeta(goal);
   const muted = goal.status === 'paused' || goal.status === 'complete';

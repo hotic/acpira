@@ -17,6 +17,10 @@ export type ExportFormat = 'markdown' | 'json' | 'text';
 
 export type WebviewHost = 'sidebar' | 'editor';
 
+// The desktop app's menu bar commands the page carries out (HostMsg shellCommand), each what its shortcut does there; the
+// layout picks write acpira.desktopLayout as the gear menu does
+export type ShellCommand = 'newSession' | 'search' | 'openFolder' | 'settings' | 'toolPanel' | 'browser' | 'layoutChat' | 'layoutFiles';
+
 export interface EditTurnRequest {
   sessionId: string;
   turnIndex: number;
@@ -57,6 +61,33 @@ export interface FileHit {
   uri: string;
   path: string;
 }
+
+// The desktop tool panel's reads of a session's project (rust/crates/acpira-host/src/project_files.rs). Paths are relative
+// to the project folder with `/` separators
+export interface ProjectEntry {
+  name: string;
+  dir?: boolean;
+}
+// A changed stretch of a file as it is now: `add` lines from line `at` (1-based) are new, the `del` lines stood just before
+// line `at` (one past the last line for lines removed at the end)
+export interface ProjectHunk {
+  at: number;
+  add: number;
+  del?: string[];
+}
+// A file the session changed against what it held before the session's first edit; absolute when outside the project
+export interface ProjectChange {
+  path: string;
+  add: number;
+  del: number;
+  gone?: boolean;
+}
+// What a file's hunks are measured against: before the session's first edit of it, or the last commit
+export type ProjectBase = 'session' | 'head';
+// M modified, A added, D deleted, U untracked, I ignored; a folder as a whole ends in `/`
+export type GitMark = 'M' | 'A' | 'D' | 'U' | 'I';
+// Why a listing or a read failed; anything else is the system's own message
+export type ProjectError = 'noProject' | 'outside' | 'missing' | 'binary' | 'tooLarge';
 
 // A session whose saved conversation contains every term of a history search, with the text around the first match
 export interface SessionHit {
@@ -144,6 +175,20 @@ export type HostMsg =
   // The VS Code shell asks the page whether a URL answers from the user's machine (the page renders there even when the
   // extension host is remote); answered with probeResult. Never sent by the sidecar
   | { type: 'probeUrl'; id: string; url: string }
+  // The desktop shell's folder dialog answered pickFolder: the folder picked, absent when the dialog was dismissed. Never sent
+  // by the sidecar
+  | { type: 'pickedFolder'; path?: string }
+  // The desktop shell's toast (the engine's `toast` platform request), shown in the page's own toast stack; `open` adds a
+  // button that opens that file (label already localized). Never sent by the sidecar
+  | { type: 'toast'; level: 'info' | 'error'; text: string; open?: { label: string; path: string } }
+  // The desktop shell's menu bar: the page runs the command as its own shortcut would. Never sent by the sidecar
+  | { type: 'shellCommand'; command: ShellCommand }
+  // The desktop tool panel's browser tabs, never sent by the sidecar: a message for the page in tab `tab`, the address bar's
+  // history for the new-tab page (`running`: the ones whose server answered just now), and open_browser (`tab` names a tab
+  // of this window the shell navigated; absent, the page opens a tab on `url`)
+  | { type: 'panelBrowser'; tab: string; msg: BrowserHostMsg }
+  | { type: 'panelHistory'; pages: BrowserPage[]; running: string[] }
+  | { type: 'panelOpenBrowser'; url: string; tab?: string }
   // The next five come from the IDE shell itself, not the sidecar: editor state is UI, and the engine never sees it until a prompt carries it.
   // The editor's current selection, on every change; absent when nothing (or no file: document) is selected
   | { type: 'editorSelection'; selection?: EditorSelection }
@@ -201,7 +246,20 @@ export type HostMsg =
   // Reply to diffSource: the whole files behind one diff, absent when the session or the diff is gone
   | { type: 'diffSource'; seq: number; source?: FullDiffSource }
   // Reply to sessionMarkdown: the session as Markdown, or why it could not be read
-  | { type: 'sessionMarkdown'; seq: number; markdown?: string; error?: string };
+  | { type: 'sessionMarkdown'; seq: number; markdown?: string; error?: string }
+  // Replies to the desktop tool panel's reads, each echoing its request's seq
+  | { type: 'projectDir'; seq: number; entries: ProjectEntry[]; error?: ProjectError | string }
+  | { type: 'projectStatus'; seq: number; root?: string; marks: Record<string, GitMark> }
+  | { type: 'projectFile'; seq: number; text?: string; hunks?: ProjectHunk[]; error?: ProjectError | string }
+  | { type: 'sessionChanges'; seq: number; files: ProjectChange[] }
+  // The tool panel's terminal tabs (rust/crates/acpira-host/src/terminal.rs): output as it comes, and the state. Answering
+  // terminalOpen the state carries the size, the title, the output so far (`replay`, shown instead of what the page had)
+  // and the exit if the shell ended; later only what changed. `error`: the shell could not start
+  | { type: 'terminalOutput'; id: string; data: string }
+  | { type: 'terminalState'; id: string; title?: string; cols?: number; rows?: number; replay?: string; exit?: TerminalExit; error?: string };
+
+// How a terminal's shell ended: its exit code, or the signal that ended it
+export interface TerminalExit { code: number; signal?: string }
 
 // What the import popover currently holds for the agent it asked about
 export interface NativeSessionsState {
@@ -254,6 +312,23 @@ export type WebviewMsg =
   | { type: 'viewFocus' }
   // probeUrl's answer, kept in the VS Code shell like viewFocus: ok when anything answered over HTTP
   | { type: 'probeResult'; id: string; ok: boolean; error?: string }
+  // Desktop shell only, kept there like viewFocus: show the system folder dialog; answered with pickedFolder
+  | { type: 'pickFolder' }
+  // Desktop shell only: the tool panel's browser tabs. A tab opens (on `url`, or empty), its page's messages go up, it
+  // closes; the new-tab page asks for the address bar's history (answered with panelHistory)
+  | { type: 'panelBrowserOpen'; tab: string; url?: string }
+  | { type: 'panelBrowser'; tab: string; msg: BrowserMsg }
+  | { type: 'panelBrowserClose'; tab: string }
+  | { type: 'panelHistory' }
+  // The tool panel's terminal tabs, run by the engine. Open terminal `id` (a login shell in `cwd`), or view it again
+  // after a reload; keys and pastes (`binary`: each character one byte, xterm's legacy mouse reports); the laid-out size; how much output (UTF-16 units) the page has rendered, since output
+  // pauses while too much is not; the page stops viewing it (it runs on a minute for a reload); the tab closed or restarts
+  | { type: 'terminalOpen'; id: string; cwd?: string; cols?: number; rows?: number }
+  | { type: 'terminalInput'; id: string; data: string; binary?: boolean }
+  | { type: 'terminalResize'; id: string; cols: number; rows: number }
+  | { type: 'terminalAck'; id: string; chars: number }
+  | { type: 'terminalClose'; id: string }
+  | { type: 'terminalKill'; id: string }
   // steer: sent while a turn runs with steering on (SessionView.canSteer); it joins that turn instead of queueing behind it
   | { type: 'send'; sessionId?: string; text: string; attachments?: Draft[]; steer?: boolean }
   | { type: 'stop'; sessionId?: string }
@@ -261,6 +336,12 @@ export type WebviewMsg =
   | { type: 'searchFiles'; query: string; seq: number }
   // Full-text search over saved session conversations (user prompts and agent replies) for the history list
   | { type: 'searchSessions'; query: string; seq: number }
+  // The desktop tool panel: a folder of the session's project (`dir` relative, '' for the project itself), its git marks,
+  // a file with its hunks against `base` (none: no hunks), the files the session's edits left changed
+  | { type: 'projectDir'; sessionId: string; dir: string; seq: number }
+  | { type: 'projectStatus'; sessionId: string; seq: number }
+  | { type: 'projectFile'; sessionId: string; path: string; base?: ProjectBase; seq: number }
+  | { type: 'sessionChanges'; sessionId: string; seq: number }
   // The whole files behind the `nth` diff of a tool call (counted in `contents`, or `content` alone): page views carry
   // diff sources without their texts. Answered with a `diffSource` message echoing seq. subagentId names the subagent
   // transcript the diff was shown in (the inspector); absent, the session's own turns
@@ -284,6 +365,8 @@ export type WebviewMsg =
   | { type: 'setSessionCategory'; id: string; category: string | null }
   // `file` with a create: file that session under the new category in the same step
   | ({ type: 'categoryOp'; file?: string } & CategoryOp)
+  // The list's "mark all as read": every unread dot this engine holds goes out
+  | { type: 'markAllRead' }
   // Re-home a session into another project folder: `cwd` (absent: this window's workspace folder) becomes its cwd and the agent
   // works there from the next open on; `category`, one of that project's, files it there in the same step
   | { type: 'moveSession'; id: string; cwd?: string; category?: string }

@@ -338,7 +338,7 @@ export function Composer(p: ComposerProps) {
         placeholder={p.disabled ? t('composer.notReady') : p.running ? t(p.steer ? 'composer.placeholder.steer' : 'composer.placeholder.queue') : t('composer.placeholder')}
         className={cn(
           // Match message text and attachment insets in every composer, including inline editors.
-          'min-w-0 resize-none bg-transparent px-pad pt-2.5 pb-1 text-1 outline-none transition-colors',
+          'min-w-0 resize-none bg-transparent px-pad pt-2.5 pb-1 text-1 outline-none transition-[color,min-height]',
           'max-h-[calc(8*var(--text-1-lh))] placeholder:text-fg-3',
           // Queued / follow-up text while a turn runs stays at full strength; only an unready session dims the field
           p.disabled ? 'text-fg-3/60 placeholder:text-fg-3/60' : 'text-fg-strong',

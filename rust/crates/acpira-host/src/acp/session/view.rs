@@ -208,6 +208,32 @@ impl AcpSession {
     }
   }
 
+  /// Every file the session's own edits touched, in the order it first edited them, with the text it held before that
+  /// first edit (None when the record no longer keeps it). Subagents' edits are not counted: they live in their own
+  /// transcripts
+  pub fn edit_bases(&self) -> Vec<(String, Option<String>)> {
+    let c = self.core.lock();
+    let mut out: Vec<(String, Option<String>)> = vec![];
+    for tool in visible_turns(&c).filter_map(Turn::as_agent).flat_map(|t| t.blocks.iter()).filter_map(|b| match b {
+      AgentBlock::ToolCall(tool) => Some(tool),
+      _ => None,
+    }) {
+      let items = match (tool.contents.as_deref(), tool.content.as_ref()) {
+        (Some(all), _) => all,
+        (None, Some(one)) => std::slice::from_ref(one),
+        (None, None) => continue,
+      };
+      for item in items {
+        let ToolContent::Diff { source: Some(source), .. } = item else { continue };
+        if source.path.is_empty() || out.iter().any(|(p, _)| *p == source.path) {
+          continue;
+        }
+        out.push((source.path.clone(), (!source.omitted).then(|| source.old_text.clone())));
+      }
+    }
+    out
+  }
+
   pub fn plan_document(&self, plan_id: &str) -> Option<PlanDocumentBlock> {
     let c = self.core.lock();
     visible_turns(&c).filter_map(Turn::as_agent).flat_map(|t| t.blocks.iter()).find_map(|b| match b {

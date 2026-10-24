@@ -86,6 +86,8 @@ impl SettingsCenter {
       subagent_groups: self.deps.roster.groups(),
       agent_cpu_cap: self.read("agentCpuCap").as_i64().unwrap_or(acpira_shared::settings::AGENT_CPU_CAP.2),
       proxy: str_of("proxy"),
+      open_files_with: str_of("openFilesWith"),
+      desktop_layout: str_of("desktopLayout"),
     }
   }
 

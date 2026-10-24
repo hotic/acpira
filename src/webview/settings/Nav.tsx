@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import { ArrowLeft, HardDrive, Layers, Network, Palette, Settings2 } from 'lucide-react';
 import type { AgentId, AgentInfo } from '@shared/transcript';
 import { moveAgent } from '@shared/agentOrder';
 import { cn } from '../ui/cn';
 import { Switch } from '../ui/Switch';
 import { AgentMark } from '../chat/AgentMark';
+import { TitleSpace } from '../chat/DesktopFrame';
 import { t } from '../i18n';
 
 export type SettingsPage = { kind: 'chatgpt' } | { kind: 'general' } | { kind: 'appearance' } | { kind: 'shared' } | { kind: 'subagents' } | { kind: 'storage' } | { kind: 'agent'; id: AgentInfo['id'] };
@@ -26,6 +27,12 @@ export interface PageRailProps {
   onReorder: (ids: AgentId[]) => void;
   // The row switches: every visible agent that is now off; an off agent leaves the new-session entry points (acpira.disabledAgents)
   onDisabled: (ids: AgentId[]) => void;
+  // Desktop: the rail lies on the window canvas under the window's pinned title row, whose back button returns to the chat
+  desktop?: boolean;
+  // Desktop: the rail's width as a CSS length (desktop.css reads it as --rail-w)
+  width?: string;
+  // Desktop: the chat's column was folded, so the rail opens from nothing as the page appears
+  opening?: boolean;
 }
 
 // Full-width navigation on wide surfaces collapses to an icon rail in narrow webviews (the shell is the container).
@@ -37,7 +44,7 @@ function RailIcon({ children }: { children: ReactNode }) {
   return <span className="flex size-icon-ctl shrink-0 items-center justify-center [&_svg]:size-icon-ctl">{children}</span>;
 }
 
-export function PageRail({ agents, page, onPage, onBack, onReorder, onDisabled }: PageRailProps) {
+export function PageRail({ agents, page, onPage, onBack, onReorder, onDisabled, desktop, width, opening }: PageRailProps) {
   const cur = pageId(page);
   const item = (id: PageId, name: string, icon: ReactNode) => (
     <button
@@ -53,14 +60,21 @@ export function PageRail({ agents, page, onPage, onBack, onReorder, onDisabled }
       <span className="min-w-0 truncate @max-[600px]/settings-shell:hidden">{name}</span>
     </button>
   );
+  const back = (
+    <button type="button" onClick={onBack} title={t('settings.back')} aria-label={t('settings.back')}
+      className={cn(navItem, 'text-fg-2 hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1 active:text-fg-1')}>
+      <ArrowLeft className="size-icon-ctl shrink-0" strokeWidth={1.5} aria-hidden />
+      <span className="truncate @max-[600px]/settings-shell:hidden">{t('settings.back')}</span>
+    </button>
+  );
+  // The pad lives on the nav in the desktop frame, under the title row's strip. Its widths come from desktop.css there, where
+  // the folded rail must still sit under the lights
+  const inset = 'px-pad @max-[600px]/settings-shell:px-2';
   return (
-    <aside className="flex w-(--settings-nav-w) shrink-0 flex-col gap-(--section-gap) px-pad py-pad-y @max-[600px]/settings-shell:w-(--settings-rail-w) @max-[600px]/settings-shell:px-2">
-      <button type="button" onClick={onBack} title={t('settings.back')} aria-label={t('settings.back')}
-        className={cn(navItem, 'text-fg-2 hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1 active:text-fg-1')}>
-        <ArrowLeft className="size-icon-ctl shrink-0" strokeWidth={1.5} aria-hidden />
-        <span className="truncate @max-[600px]/settings-shell:hidden">{t('settings.back')}</span>
-      </button>
-      <nav aria-label={t('settings.title')} className="flex min-h-0 flex-col gap-1 overflow-y-auto">
+    <aside data-settings-rail data-opening={opening || undefined} style={width ? { '--rail-w': width } as CSSProperties : undefined} className={cn('flex shrink-0 flex-col gap-(--section-gap)', desktop ? 'pb-pad-y' : cn(inset, 'w-(--settings-nav-w) py-pad-y @max-[600px]/settings-shell:w-(--settings-rail-w)'))}>
+      {/* Desktop: the window's pinned title row is the way back (its back button, SettingsShell) */}
+      {desktop ? <TitleSpace /> : back}
+      <nav aria-label={t('settings.title')} className={cn('flex min-h-0 flex-col gap-1 overflow-y-auto', desktop && inset)}>
         {item('general', t('settings.nav.general'), <Settings2 strokeWidth={1.5} />)}
         {item('appearance', t('settings.nav.appearance'), <Palette strokeWidth={1.5} />)}
         {item('shared', t('settings.nav.shared'), <Layers strokeWidth={1.5} />)}

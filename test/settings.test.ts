@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AGENT_CPU_CAP, CODE_FONT_SIZE, DEFAULT_SETTINGS, inWorkspace, sanitizeSetting, UI_FONT_SIZE } from '../src/shared/settings';
+import { AGENT_CPU_CAP, CODE_FONT_SIZE, DEFAULT_SETTINGS, inWorkspace, isSharedSetting, sanitizeSetting, UI_FONT_SIZE } from '../src/shared/settings';
 
 // settings.json is hand-editable and the setSetting message can come from any webview script: every appearance value is checked before it is used
 describe('sanitizeSetting (appearance)', () => {
@@ -46,6 +46,17 @@ describe('sanitizeSetting (appearance)', () => {
   it('fontSmoothing is a boolean', () => {
     expect(sanitizeSetting('fontSmoothing', true)).toBe(true);
     expect(sanitizeSetting('fontSmoothing', 'yes')).toBe(DEFAULT_SETTINGS.fontSmoothing);
+  });
+
+  it('files open with a listed editor or the system default', () => {
+    expect(sanitizeSetting('openFilesWith', 'zed')).toBe('zed');
+    for (const bad of ['vim', 'Code', null, 1]) expect(sanitizeSetting('openFilesWith', bad)).toBe('system');
+  });
+
+  it('the desktop layout is chat or files, chat by default, and shared', () => {
+    expect(sanitizeSetting('desktopLayout', 'files')).toBe('files');
+    for (const bad of ['editor', 'Files', null, true]) expect(sanitizeSetting('desktopLayout', bad)).toBe('chat');
+    expect(isSharedSetting('desktopLayout')).toBe(true);
   });
 
   it('sessionScope accepts workspace / all and defaults to workspace; a session is in a workspace when its cwd is that folder', () => {

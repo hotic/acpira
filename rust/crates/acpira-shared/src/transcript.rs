@@ -1246,6 +1246,19 @@ pub struct SessionCategory {
   pub collapsed: Option<bool>,
 }
 
+/// A user-made top-level section of a project shell's list ("Work", "Personal") at the level of Pinned / Projects: whole
+/// projects, each in at most one section; projects in none stay under Projects
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSection {
+  pub id: String,
+  pub name: String,
+  #[serde(default)]
+  pub projects: Vec<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub collapsed: Option<bool>,
+}
+
 /// Every category in list order, plus the projects folded in the "all projects" list. Shared by every window
 /// (`sessions/categories.json`)
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1259,6 +1272,13 @@ pub struct SessionCategories {
   /// yet; absent until a project shell first connects. IDE session trees do not read it
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub projects: Option<Vec<String>>,
+  /// Folders a project shell took off its list. Their sessions stay and a search still finds them, but the list no longer
+  /// shows the folder for them until it is added again (a session started there adds it)
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub removed_projects: Vec<String>,
+  /// Project shells' sections in list order
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub sections: Vec<SessionSection>,
 }
 
 /// One edit of the category list, applied under the file lock to what is on disk so concurrent windows compose
@@ -1277,9 +1297,9 @@ pub enum CategoryOp {
     before: Option<String>,
   },
   CollapseProject { cwd: String, collapsed: bool },
-  /// Register a project folder at the end of `projects` (a no-op when listed)
+  /// Register a project folder at the end of `projects` (a no-op when listed), undoing an earlier removal
   AddProject { cwd: String },
-  /// Take a folder off `projects`; its sessions stay and still list it
+  /// Take a folder off the list: off `projects`, onto `removed_projects`. Its sessions stay
   RemoveProject { cwd: String },
   /// Move a registered folder before `before`, or to the end
   ReorderProject {
@@ -1289,6 +1309,30 @@ pub enum CategoryOp {
   },
   /// The first order a project shell sees: the folders given, unless `projects` already exists
   SeedProjects { cwds: Vec<String> },
+  /// Sections (project shells). The page picks the id, so it can rename the new section at once; `project` files that
+  /// folder into it in the same edit (a separate `SetProjectSection` could land first and find no section)
+  CreateSection {
+    id: String,
+    name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    project: Option<String>,
+  },
+  RenameSection { id: String, name: String },
+  /// Its projects go back under Projects
+  DeleteSection { id: String },
+  CollapseSection { id: String, collapsed: bool },
+  /// Move a section before `before`, or to the end
+  ReorderSection {
+    id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    before: Option<String>,
+  },
+  /// File a project folder at the end of `section`, out of any other; no section takes it out
+  SetProjectSection {
+    cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    section: Option<String>,
+  },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

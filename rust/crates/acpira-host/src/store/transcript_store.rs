@@ -15,8 +15,8 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use tokio::fs;
 
-use acpira_shared::model_shapes::ModelShapes;
-use acpira_shared::transcript::{AgentId, CategoryOp, SessionCategories, SessionCategory, SessionControls, SessionSummary, TurnSettings};
+use acpira_shared::model_shapes::{ModelShapes, session_model};
+use acpira_shared::transcript::{AgentId, CategoryOp, SessionCategories, SessionCategory, SessionControls, SessionSection, SessionModel, SessionSummary, TurnSettings};
 
 use super::file_lock::{with_file_lock, write_atomic};
 use super::record::{RecordSource, SessionRecord};
@@ -113,6 +113,9 @@ struct State {
   /// Records whose content did not parse, by the file stamp they had then: the index sync (every webview ready / window
   /// focus) passes over them until the file changes, instead of reading and failing on them again
   unreadable: HashMap<String, FileStamp>,
+  /// Models read from records whose index entry has none (written before the field existed, or by an older engine that
+  /// drops it), by the file stamp they were read at: the index sync fills them in while the record is unchanged
+  models: HashMap<String, (FileStamp, Option<SessionModel>)>,
 }
 
 type FileStamp = (u64, Option<SystemTime>);
@@ -168,7 +171,7 @@ impl TranscriptStore {
       on_save_error,
       debounce,
       max_wait,
-      state: parking_lot::Mutex::new(State { pending: HashMap::new(), known: HashSet::new(), unreadable: HashMap::new() }),
+      state: parking_lot::Mutex::new(State { pending: HashMap::new(), known: HashSet::new(), unreadable: HashMap::new(), models: HashMap::new() }),
       inflight: Default::default(),
       write_guard: Default::default(),
       agent_home: Default::default(),
@@ -298,14 +301,42 @@ impl TranscriptStore {
           base.updated_at = fresh.updated_at;
           base.pinned = fresh.pinned;
           base.category = fresh.category;
+          base.model = fresh.model;
           base
         }
       };
+      let mut s = s;
+      if s.model.is_none() {
+        s.model = self.cached_model(&id).await;
+      }
       out.push(s);
     }
     sort_index(&mut out);
     write_atomic(&self.dir.join("index.json"), serde_json::to_string_pretty(&out)?.as_bytes(), None).await?;
     Ok(out)
+  }
+
+  /// A model `read_models` found for this record, while the file is still the one it read
+  async fn cached_model(&self, id: &str) -> Option<SessionModel> {
+    // A record with no model control costs no stat
+    let (stamp, model) = self.state.lock().models.get(id).and_then(|(stamp, m)| Some((*stamp, m.clone()?)))?;
+    (file_stamp(&self.dir.join(format!("{id}.json"))).await == Some(stamp)).then_some(model)
+  }
+
+  /// Read the current model of each record not read yet (its controls only, the transcript skipped by the parser), for
+  /// index entries that have none. True when one was found, so a sync then writes them into the index
+  pub async fn read_models(&self, ids: &[String]) -> bool {
+    let mut found = false;
+    for id in ids {
+      if self.state.lock().models.contains_key(id) {
+        continue;
+      }
+      let Some(stamp) = file_stamp(&self.dir.join(format!("{id}.json"))).await else { continue };
+      let model = self.load_controls(id).await.and_then(|c| session_model(&c));
+      found |= model.is_some();
+      self.state.lock().models.insert(id.clone(), (stamp, model));
+    }
+    found
   }
 
   async fn read_index(&self) -> Vec<SessionSummary> {
@@ -713,14 +744,23 @@ pub fn apply_category_op(list: &mut SessionCategories, op: &CategoryOp) {
       }
     }
     CategoryOp::AddProject { cwd } => {
+      list.removed_projects.retain(|p| p != cwd);
       let projects = list.projects.get_or_insert_with(Vec::new);
       if !cwd.is_empty() && !projects.contains(cwd) {
         projects.push(cwd.clone());
       }
     }
+    // Remembered, so a folder its sessions would still list (one an IDE window ran in, or a registered one) stays gone
     CategoryOp::RemoveProject { cwd } => {
       if let Some(projects) = &mut list.projects {
         projects.retain(|p| p != cwd);
+      }
+      if !cwd.is_empty() && !list.removed_projects.contains(cwd) {
+        list.removed_projects.push(cwd.clone());
+      }
+      // Off the list is out of its section too
+      for s in &mut list.sections {
+        s.projects.retain(|p| p != cwd);
       }
     }
     CategoryOp::ReorderProject { cwd, before } => {
@@ -740,6 +780,44 @@ pub fn apply_category_op(list: &mut SessionCategories, op: &CategoryOp) {
           }
         }
         list.projects = Some(seeded);
+      }
+    }
+    CategoryOp::CreateSection { id, name, project } => {
+      if list.sections.iter().all(|s| &s.id != id) {
+        let name = name_of(name).unwrap_or_else(|| crate::i18n::t("session.section.untitled"));
+        list.sections.push(SessionSection { id: id.clone(), name, projects: vec![], collapsed: None });
+      }
+      if let Some(cwd) = project {
+        apply_category_op(list, &CategoryOp::SetProjectSection { cwd: cwd.clone(), section: Some(id.clone()) });
+      }
+    }
+    CategoryOp::RenameSection { id, name } => {
+      if let (Some(s), Some(name)) = (list.sections.iter_mut().find(|s| &s.id == id), name_of(name)) {
+        s.name = name;
+      }
+    }
+    CategoryOp::DeleteSection { id } => list.sections.retain(|s| &s.id != id),
+    CategoryOp::CollapseSection { id, collapsed } => {
+      if let Some(s) = list.sections.iter_mut().find(|s| &s.id == id) {
+        s.collapsed = collapsed.then_some(true);
+      }
+    }
+    CategoryOp::ReorderSection { id, before } => {
+      let Some(from) = list.sections.iter().position(|s| &s.id == id) else { return };
+      let moving = list.sections.remove(from);
+      let at = before.as_ref().and_then(|b| list.sections.iter().position(|s| &s.id == b)).unwrap_or(list.sections.len());
+      list.sections.insert(at, moving);
+    }
+    // One section per project: filing it anywhere takes it out of the others. A section that is gone files it nowhere
+    CategoryOp::SetProjectSection { cwd, section } => {
+      if cwd.is_empty() {
+        return;
+      }
+      for s in &mut list.sections {
+        s.projects.retain(|p| p != cwd);
+      }
+      if let Some(s) = section.as_ref().and_then(|id| list.sections.iter_mut().find(|s| &s.id == id)) {
+        s.projects.push(cwd.clone());
       }
     }
   }
@@ -825,12 +903,53 @@ mod tests {
     apply_category_op(&mut list, &CategoryOp::ReorderProject { cwd: "/gone".into(), before: None });
     apply_category_op(&mut list, &CategoryOp::RemoveProject { cwd: "/a".into() });
     assert_eq!(order(&list), ["/b", "/c"]);
+    assert_eq!(list.removed_projects, ["/a"]);
     // Removing every folder keeps an empty list, so nothing seeds it again
-    for c in ["/b", "/c"] {
+    for c in ["/b", "/c", "/b"] {
       apply_category_op(&mut list, &CategoryOp::RemoveProject { cwd: c.into() });
     }
     apply_category_op(&mut list, &seed(&["/a"]));
     assert_eq!(list.projects, Some(vec![]));
+    assert_eq!(list.removed_projects, ["/a", "/b", "/c"]);
+    // Adding a removed folder again forgets the removal
+    apply_category_op(&mut list, &add("/b"));
+    assert_eq!(order(&list), ["/b"]);
+    assert_eq!(list.removed_projects, ["/a", "/c"]);
+  }
+
+  #[test]
+  fn sections_hold_each_project_once_and_give_them_back_when_deleted() {
+    let mut list = SessionCategories::default();
+    let op = |o: CategoryOp, l: &mut SessionCategories| apply_category_op(l, &o);
+    let file = |cwd: &str, section: Option<&str>| CategoryOp::SetProjectSection { cwd: cwd.into(), section: section.map(Into::into) };
+    let create = |id: &str, name: &str, project: Option<&str>| CategoryOp::CreateSection { id: id.into(), name: name.into(), project: project.map(Into::into) };
+    op(create("w", " Work ", None), &mut list);
+    // Made from a project's menu: the project goes in with it
+    op(create("p", "", Some("/z")), &mut list);
+    // A second create with a taken id (two windows) keeps the first
+    op(create("w", "Other", None), &mut list);
+    assert_eq!(list.sections.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["Work", crate::i18n::t("session.section.untitled").as_str()]);
+    for o in [file("/a", Some("w")), file("/b", Some("w")), file("/a", Some("p")), file("/c", Some("gone")), file("", Some("w"))] {
+      op(o, &mut list);
+    }
+    let held = |l: &SessionCategories, id: &str| l.sections.iter().find(|s| s.id == id).map(|s| s.projects.clone()).unwrap_or_default();
+    // One section per project: filing /a under p took it out of w; a section that is gone files nothing
+    assert_eq!(held(&list, "w"), ["/b"]);
+    assert_eq!(held(&list, "p"), ["/z", "/a"]);
+    op(CategoryOp::ReorderSection { id: "p".into(), before: Some("w".into()) }, &mut list);
+    op(CategoryOp::CollapseSection { id: "w".into(), collapsed: true }, &mut list);
+    op(CategoryOp::RenameSection { id: "p".into(), name: "Personal".into() }, &mut list);
+    assert_eq!(list.sections.iter().map(|s| (s.name.as_str(), s.collapsed)).collect::<Vec<_>>(), [("Personal", None), ("Work", Some(true))]);
+    op(file("/b", None), &mut list);
+    assert!(held(&list, "w").is_empty());
+    // Off the list is out of its section; deleting a section leaves its projects under Projects
+    op(CategoryOp::RemoveProject { cwd: "/a".into() }, &mut list);
+    assert_eq!(held(&list, "p"), ["/z"]);
+    op(CategoryOp::DeleteSection { id: "w".into() }, &mut list);
+    assert_eq!(list.sections.len(), 1);
+    // The file keeps no empty sections key for lists that never had one
+    let fresh = serde_json::to_value(SessionCategories::default()).unwrap();
+    assert!(fresh.get("sections").is_none(), "{fresh}");
   }
 
   fn record(id: &str, updated: &str) -> SessionRecord {
@@ -860,6 +979,22 @@ mod tests {
     std::fs::remove_file(dir.path().join("b.json")).unwrap();
     s.flush(Arc::new(record("b", "2026-01-03T00:00:00.000Z"))).await.unwrap();
     assert!(!dir.path().join("b.json").exists());
+  }
+
+  #[tokio::test]
+  async fn index_entries_without_a_model_learn_it_from_their_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = store(dir.path());
+    let mut r = serde_json::to_value(record("a", "2026-01-01T00:00:00.000Z")).unwrap();
+    r["controls"]["options"] = serde_json::json!([{ "id": "model", "name": "Model", "value": "opus", "options": [{ "id": "opus", "name": "Opus 5.5" }] }]);
+    std::fs::write(dir.path().join("a.json"), r.to_string()).unwrap();
+    // An index an older engine wrote: the entry is there, its model is not
+    let mut entry = serde_json::to_value(serde_json::from_value::<SessionRecord>(r).unwrap().summary()).unwrap();
+    entry.as_object_mut().unwrap().remove("model");
+    std::fs::write(dir.path().join("index.json"), serde_json::json!([entry]).to_string()).unwrap();
+    assert_eq!(s.load_index().await.unwrap()[0].model, None, "the entry is taken as it is");
+    assert!(s.read_models(&["a".into()]).await);
+    assert_eq!(s.load_index().await.unwrap()[0].model.as_ref().map(|m| m.name.as_str()), Some("Opus 5.5"));
   }
 
   fn builtin(id: &str, acp: &str) -> SessionRecord {

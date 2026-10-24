@@ -38,3 +38,12 @@ export function useComposerDraft(draftKey?: string, editText?: string, main?: { 
   }, [isMain, focus]);
   return { text, setText, drafts, setDrafts };
 }
+
+// The desktop start page starts its empty session over when the agent or project changes: what was typed there moves to the
+// new session, before that session's composer mounts and reads it
+export function moveDraft(from: string, to: string) {
+  const parked = DRAFTS.get(from);
+  if (!parked || DRAFTS.has(to)) return;
+  DRAFTS.set(to, parked);
+  DRAFTS.delete(from);
+}

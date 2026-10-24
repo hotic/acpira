@@ -19,7 +19,7 @@ import { Collapsible } from '../ui/Collapsible';
 import { useScrollFade } from '../ui/useScrollFade';
 import { t } from '../i18n';
 import { ModelMark } from '../chat/ModelMark';
-import { Count, Dot, FactRow, Field, Group, ItemRow, ListHead, ModelLine, Note, PathText, SearchRow, Section, SectionAction, SectionDescription, SectionHead, Select, SourceLink, Switch, TextBox, shortPath, type ModelTags } from './controls';
+import { Count, Dot, FactRow, Field, Group, ItemRow, ListHead, ModelLine, Note, PathText, SearchRow, Section, SectionAction, SectionDescription, SectionHead, Select, SourceLink, Switch, TextBox, shortPath, topRule, type ModelTags } from './controls';
 import type { SettingsEnv, SettingsHandlers } from './SettingsShell';
 import { ProvidersSection, type ProvidersState } from './ProvidersSection';
 import { APPROVAL_LEVELS, approvalOf, BUILTIN_AGENT_ID, COMPACTION_STRATEGIES, compactionOf, usableModels, WEB_SEARCH_BACKENDS, webSearchOf, type ApprovalLevel, type CompactionStrategy, type WebSearchBackend } from '@shared/providers';
@@ -714,7 +714,7 @@ function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; co
         {groups.map(g => {
           const off = hidden[g.control.id] ?? [];
           return (
-            <div key={g.key} className="border-t border-line">
+            <div key={g.key} className={topRule}>
               <ListHead lead={g.mark} title={g.title} count={g.count}
                 desc={g.sources.length > 0 && <span className="block truncate">{g.sources.join(t('common.metaSep'))}</span>} />
               <Group embedded>
@@ -737,8 +737,8 @@ function ModelsSection({ agent, controls, settings, on }: { agent: AgentInfo; co
             </div>
           );
         })}
-        {searching && matched === 0 && <Group embedded className="border-t border-line"><Note>{t('settings.models.noResults')}</Note></Group>}
-        {!searching && total > MODEL_PREVIEW_LIMIT && <div className="border-t border-line py-(--setting-row-pad)">
+        {searching && matched === 0 && <Group embedded className={topRule}><Note>{t('settings.models.noResults')}</Note></Group>}
+        {!searching && total > MODEL_PREVIEW_LIMIT && <div className={cn('py-(--setting-row-pad)', topRule)}>
           <Chip caret={false} aria-expanded={expanded} onClick={() => setExpanded(value => !value)}
             icon={expanded ? <ChevronUp /> : <ChevronDown />}>
             {expanded ? t('settings.models.showLess') : t('settings.models.showMore')}
@@ -779,7 +779,7 @@ function Grouped<T>({ items, sourceOf, row, env, on, empty, loading }: { items: 
   if (loading) return <Note shimmer>{t('settings.loading')}</Note>;
   if (bySource.length === 0) return <Note>{empty}</Note>;
   // Stacked groups separate with a line, like the rows inside them.
-  return <>{bySource.map(([source, list], i) => <Group key={source} className={i > 0 ? 'border-t border-t-line' : undefined}>{list.map(row)}<SourceLink path={source} env={env} onOpen={on.openPath} /></Group>)}</>;
+  return <>{bySource.map(([source, list], i) => <Group key={source} className={i > 0 ? topRule : undefined}>{list.map(row)}<SourceLink path={source} env={env} onOpen={on.openPath} /></Group>)}</>;
 }
 
 // Does the list come as several cards (so the Section must not wrap them in one)?

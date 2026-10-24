@@ -223,7 +223,7 @@ export function workbenchUris(dt: DataTransfer): string[] {
 }
 
 // An absolute fs path (POSIX or Windows) as a file: URI
-function fileUriOf(path: string): string | undefined {
+export function fileUriOf(path: string): string | undefined {
   if (!path) return undefined;
   const posix = path.replace(/\\/g, '/');
   // A UNC path (`\\server\share\a.ts`) carries its server as the URI authority, the form VS Code itself uses

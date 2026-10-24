@@ -1,9 +1,10 @@
 import { createContext, useContext } from 'react';
 import { translate, en, type Locale, type MsgKey, type Params } from '@shared/i18n';
 
-// Webview strings. Components read `t` from module state (no prop threading through twenty components);
-// the root remounts the tree with key={locale} when the host pushes a new locale, so every render sees the new dictionary.
-// LocaleContext exists for the rare component that needs to know the locale itself (date formatting)
+// Webview strings. Components read `t` from module state (no prop threading through twenty components). A new locale
+// from the host re-renders the tree in place, without a remount: a component that memo keeps from rendering (the
+// transcript rows) or a cache of translated text (useMemo) reads LocaleContext through useLocale, which reaches it anyway.
+// The context also serves the components that need the locale itself (date formatting)
 let current: Locale = 'en';
 
 export function setLocale(locale: Locale) { current = locale; }

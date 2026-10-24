@@ -6,7 +6,7 @@ import { Collapsible } from '../ui/Collapsible';
 import { Disclosure, DisclosureRow } from '../ui/Disclosure';
 import { EntranceOnce, Row, RowLabel, RowTarget } from '../ui/Row';
 import { Shimmer } from '../ui/Shimmer';
-import { t } from '../i18n';
+import { t, useLocale } from '../i18n';
 import { TOOL_ICON } from './icons';
 import { DiffBlock } from './CodeBlock';
 import { ToolOutput } from './Terminal';
@@ -31,6 +31,8 @@ function namesLabel(names: string[]): string {
 // Entries hang on the head's rail; each takes its first call's entrance identity, so the row that was a single call
 // before the group formed keeps still. The grouping array is rebuilt on every render, so compare its members
 export const ToolGroup = memo(function ToolGroup({ kind, blocks }: { kind: GroupKind; blocks: ToolCallBlock[] }) {
+  // memo keeps a row from rendering again; the locale context still reaches it after a language change
+  useLocale();
   const fold = useAutoFold();
   const current = [...blocks].reverse().find(live) ?? blocks.at(-1)!;
   const lead = useLead(kind);

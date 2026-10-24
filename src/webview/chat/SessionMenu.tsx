@@ -1,12 +1,13 @@
-import { useState, type ReactElement } from 'react';
+import { useState, type ReactElement, type ReactNode } from 'react';
 import { ContextMenu } from '@base-ui/react/context-menu';
-import { ChevronRight, Copy, FileDown, FileJson, FileText, Folder, FolderInput, Inbox, LetterText, Link, Pencil, Pin, PinOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
+import { AppWindow, ChevronRight, Copy, FileDown, FileJson, FileText, Folder, FolderInput, Inbox, LetterText, Link, Pencil, Pin, PinOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
 import type { ExportFormat } from '@shared/protocol';
 import type { SessionCategory, SessionSummary } from '@shared/transcript';
 import { t } from '../i18n';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { CategoryAddIcon } from './CategoryIcon';
+import { useDesktop } from '../desktop';
 
 // A project a session can be moved into: its folder, the folder's display name, and whether it is the window's own
 export interface MoveProject {
@@ -47,19 +48,25 @@ export interface SessionMenuProps extends SessionMenuItemsProps {
   trigger: ReactElement;
   align?: 'start' | 'end';
   onOpenChange?: (open: boolean) => void;
+  // Rows above the session's own, set apart by a rule (a narrow desktop window's header puts the account and settings here)
+  lead?: ReactElement[];
 }
 
 const separator = (key: string) => <DropdownMenu.Separator key={key} className="my-1 h-px bg-line" />;
 
-// A nested menu row: the trigger with its chevron, the popup opening beside the parent menu
-function Submenu({ icon, label, children }: { icon: ReactElement; label: string; children: ReactElement[] }) {
+// A nested menu row: the trigger with its chevron (and the current value, when it names one), the popup opening beside
+// the parent menu
+// `side`: where the nested menu opens (the desktop column's menus open to its right, over the chat)
+export function Submenu({ icon, label, value, side = 'inline-start', children }: { icon: ReactElement; label: string; value?: string; side?: 'inline-start' | 'inline-end'; children: ReactElement[] }) {
   return (
     <DropdownMenu.SubmenuRoot>
       <DropdownMenu.SubmenuTrigger>
         <OptionContent icon={icon}>{label}</OptionContent>
+        {/* At most half the row: the label's own box has no width of its own to keep (flex-1), so a long value would take it all */}
+        {value && <span className="min-w-0 max-w-1/2 shrink truncate text-3 text-fg-3">{value}</span>}
         <ChevronRight className="size-3 shrink-0 text-fg-3" strokeWidth={1.5} />
       </DropdownMenu.SubmenuTrigger>
-      <DropdownMenu.Portal><DropdownMenu.Positioner side="inline-start" align="start" width="md"><DropdownMenu.Popup>
+      <DropdownMenu.Portal><DropdownMenu.Positioner side={side} align="start" width="md"><DropdownMenu.Popup>
         {children}
       </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
     </DropdownMenu.SubmenuRoot>
@@ -69,9 +76,12 @@ function Submenu({ icon, label, children }: { icon: ReactElement; label: string;
 // The session menu's rows (Cursor's shape): session actions, copy and export, delete. Shared by the "…" dropdown of the list row and the
 // header and by the row's right-click menu; Base UI's context menu is built from the same Menu parts, so the rows are one set.
 // An item only renders when its handler exists; a separator only between two non-empty groups
-function sessionMenuItems({ session, onOpenInEditor, onRename, onPin, onMove, projects = [], onMoveTo, onExport, onCopy, onDelete, categories = [], onFile, onNewCategory }: SessionMenuItemsProps): ReactElement[] {
+// `inWindow`: the desktop app, where "open in editor" opens the session in a window of its own
+function sessionMenuItems({ session, onOpenInEditor, onRename, onPin, onMove, projects = [], onMoveTo, onExport, onCopy, onDelete, categories = [], onFile, onNewCategory }: SessionMenuItemsProps, inWindow = false): ReactElement[] {
   const top: ReactElement[] = [];
-  if (onOpenInEditor) top.push(<DropdownMenu.Item key="editor" onClick={onOpenInEditor}><OptionContent icon={<SquareArrowOutUpRight strokeWidth={1.5} />}>{t('session.openInEditor')}</OptionContent></DropdownMenu.Item>);
+  if (onOpenInEditor) {
+    top.push(<DropdownMenu.Item key="editor" onClick={onOpenInEditor}><OptionContent icon={inWindow ? <AppWindow strokeWidth={1.5} /> : <SquareArrowOutUpRight strokeWidth={1.5} />}>{t(inWindow ? 'session.openInWindow' : 'session.openInEditor')}</OptionContent></DropdownMenu.Item>);
+  }
   if (onRename) top.push(<DropdownMenu.Item key="rename" onClick={onRename}><OptionContent icon={<Pencil strokeWidth={1.5} />}>{t('common.rename')}</OptionContent></DropdownMenu.Item>);
   top.push(<DropdownMenu.Item key="pin" onClick={onPin}><OptionContent icon={session.pinned ? <PinOff strokeWidth={1.5} /> : <Pin strokeWidth={1.5} />}>{session.pinned ? t('common.unpin') : t('common.pin')}</OptionContent></DropdownMenu.Item>);
   if (onFile && !session.pinned) {
@@ -131,13 +141,19 @@ function sessionMenuItems({ session, onOpenInEditor, onRename, onPin, onMove, pr
 }
 
 // The session "…" menu, opened from its trigger button
-export function SessionMenu({ trigger, align = 'start', onOpenChange, ...items }: SessionMenuProps) {
+export function SessionMenu({ trigger, align = 'start', onOpenChange, lead, ...items }: SessionMenuProps) {
+  const desktop = useDesktop();
   const [open, setOpen] = useState(false);
   return (
     <DropdownMenu.Root open={open} onOpenChange={next => { setOpen(next); onOpenChange?.(next); }}>
       <DropdownMenu.Trigger render={trigger} />
       <DropdownMenu.Portal><DropdownMenu.Positioner side="bottom" align={align} width="md"><DropdownMenu.Popup>
-        {open && sessionMenuItems(items)}
+        {open && (
+          <>
+            {lead?.length ? [...lead, separator('sep-lead')] : null}
+            {sessionMenuItems(items, desktop)}
+          </>
+        )}
       </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
     </DropdownMenu.Root>
   );
@@ -154,13 +170,20 @@ export function SessionMenu({ trigger, align = 'start', onOpenChange, ...items }
 // focus-within action cluster showing without a hover fill
 const contextMenuCollision = { side: 'flip', align: 'flip', fallbackAxisSide: 'none' } as const;
 export function SessionContextMenu({ children, onOpenChange, editing, ...items }: SessionMenuItemsProps & { children: ReactElement<Record<string, unknown>>; onOpenChange?: (open: boolean) => void; editing?: boolean }) {
+  const desktop = useDesktop();
+  return <RowContextMenu items={() => sessionMenuItems(items, desktop)} disabled={editing} onOpenChange={onOpenChange}>{children}</RowContextMenu>;
+}
+
+// Any list row's right-click menu, built like the session row's above: project and category headers open the rows of their
+// "…" menu here. `disabled` while the row is being renamed
+export function RowContextMenu({ children, items, disabled, onOpenChange }: { children: ReactElement<Record<string, unknown>>; items: ReactNode | (() => ReactNode); disabled?: boolean; onOpenChange?: (open: boolean) => void }) {
   const [open, setOpen] = useState(false);
   return (
-    <ContextMenu.Root disabled={editing} onOpenChange={next => { setOpen(next); onOpenChange?.(next); }}>
+    <ContextMenu.Root disabled={disabled} onOpenChange={next => { setOpen(next); onOpenChange?.(next); }}>
       <ContextMenu.Trigger render={children} />
       {/* Portaled, but React events still bubble up the component tree: a menu click must not reach the row and select it */}
       <DropdownMenu.Portal><DropdownMenu.Positioner className="w-max min-w-pop-sm" collisionAvoidance={contextMenuCollision}><DropdownMenu.Popup finalFocus={false} onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
-        {open && sessionMenuItems(items)}
+        {open && (typeof items === 'function' ? items() : items)}
       </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
     </ContextMenu.Root>
   );

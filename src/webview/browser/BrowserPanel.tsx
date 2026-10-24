@@ -14,9 +14,12 @@ import { cn } from '../ui/cn';
 import { Popover, ShellLayerContext } from '../ui/Popover';
 import { useMorph } from '../ui/useMorph';
 import { CommentEditor } from '../chat/Quotes';
+import { desktopShell } from '../desktop';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 
 const post = (m: BrowserMsg) => vscodeApi().postMessage(m);
+// The page's "open elsewhere" button: VS Code's own browser in the extension, the system browser in the desktop app
+const externalLabel = desktopShell() ? 'browser.openSystem' : 'browser.openExternal';
 
 interface Frame {
   target: string;
@@ -53,6 +56,11 @@ const TOOL = 'disabled:pointer-events-none disabled:opacity-40';
 // picker's window), but they are served from the proxy's http origin, so anything from another origin is dropped, and a
 // message is used only in the shape it has
 const str = (v: unknown): v is string => typeof v === 'string';
+// A browser tab of the desktop tool panel (desktop/src/page.ts names the tab), not a window of its own. A tab on the files
+// layout's stage (`stage` in its address, panel/ToolPanel.tsx BrowserFrame) is the stage's own sheet, so it keeps the plain
+// surface of a window instead of lying on the canvas
+const IN_PANEL = typeof window !== 'undefined' && !!window.__acpira?.tab && !new URLSearchParams(location.search).has('stage');
+
 function hostMsgOf(e: MessageEvent): BrowserHostMsg | undefined {
   if (e.origin !== window.origin) return undefined;
   const m = e.data as Partial<Record<string, unknown>> | null;
@@ -303,9 +311,11 @@ export function BrowserPanel() {
       <ThemeContext.Provider value={theme}>
       <LocaleContext.Provider value={look?.locale ?? 'en'}>
         <ShellLayerContext.Provider value={root}>
-          <div ref={root} className="acp-shell relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-bg-0" data-theme={theme} data-surface-host="editor"
-            {...appearanceDataAttrs(appearance)} {...lookAttrs(shellLook)}>
-            <div className="flex shrink-0 items-center gap-1 border-b border-line px-pad py-gap-half">
+          {/* A tab of the desktop tool panel lies on the window canvas like the Files tab, and a page shown is a sheet on it
+              (desktop.css [data-sheet]); a window or an editor tab of its own keeps the plain surface */}
+          <div ref={root} className={cn('acp-shell relative flex h-full min-h-0 w-full flex-col overflow-hidden', !IN_PANEL && 'bg-bg-0')} data-theme={theme} data-surface-host="editor"
+            data-desktop={IN_PANEL || undefined} {...appearanceDataAttrs(appearance)} {...lookAttrs(shellLook)}>
+            <div className={cn('flex shrink-0 items-center gap-1 px-pad py-gap-half', !IN_PANEL && 'border-b border-line')}>
               <IconButton size="sm" className={TOOL} title={t('browser.back')} aria-label={t('browser.back')} disabled={!pickable} onClick={() => toPicker({ type: 'history', go: -1 })}><ArrowLeft strokeWidth={1.5} /></IconButton>
               <IconButton size="sm" className={TOOL} title={t('browser.forward')} aria-label={t('browser.forward')} disabled={!pickable} onClick={() => toPicker({ type: 'history', go: 1 })}><ArrowRight strokeWidth={1.5} /></IconButton>
               <IconButton size="sm" className={TOOL} title={t('browser.reload')} aria-label={t('browser.reload')} disabled={!frame} onClick={reload}><RotateCw strokeWidth={1.5} /></IconButton>
@@ -336,7 +346,7 @@ export function BrowserPanel() {
                 disabled={!pickable} onClick={() => togglePicking(!picking)} className={cn(TOOL, picking && 'bg-active text-fg-1')}>
                 <SquareDashedMousePointer strokeWidth={1.5} />
               </IconButton>
-              <IconButton size="sm" className={TOOL} title={t('browser.openExternal')} aria-label={t('browser.openExternal')} disabled={!shown} onClick={() => post({ type: 'browserOpenExternal', url: shown })}><ExternalLink strokeWidth={1.5} /></IconButton>
+              <IconButton size="sm" className={TOOL} title={t(externalLabel)} aria-label={t(externalLabel)} disabled={!shown} onClick={() => post({ type: 'browserOpenExternal', url: shown })}><ExternalLink strokeWidth={1.5} /></IconButton>
             </div>
             {pickable === false && frame && (
               <div className="flex h-row shrink-0 items-center gap-1 border-b border-line px-pad text-3 text-fg-3">
@@ -344,7 +354,7 @@ export function BrowserPanel() {
                 <span className="truncate">{t('browser.notPickable')}</span>
               </div>
             )}
-            <div className="relative min-h-0 flex-1">
+            <div data-sheet={(IN_PANEL && frame && !error) || undefined} className="relative min-h-0 flex-1">
               {error ? (
                 <div className="flex h-full flex-col items-center justify-center gap-gap px-page text-center">
                   <p className="text-2 text-fg-2 break-words">{error.error === 'engine-too-old' ? t('browser.engineTooOld') : t('browser.failed', { url: error.target, error: error.error })}</p>

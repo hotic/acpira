@@ -4,7 +4,7 @@ import type { ToolCallBlock } from '@shared/transcript';
 import { toolWidget } from '@shared/imageTools';
 import { useAppearance } from '../appearance';
 import { useTheme } from '../look';
-import { t } from '../i18n';
+import { t, useLocale } from '../i18n';
 import { cn } from '../ui/cn';
 import { BlobUrlContext, OpenToolFileContext, parseFileLink } from './fileLinks';
 import { WIDGET_MESSAGE, buildWidgetDoc, pageNonce, readWidgetTheme, type WidgetPageMsg } from './widgetDoc';
@@ -37,6 +37,8 @@ async function fetchText(url: string): Promise<string> {
 
 // The widget of a completed show_widget row; nothing while it runs or when it failed (the row says so)
 export const ShownWidget = memo(function ShownWidget({ block }: { block: ToolCallBlock }) {
+  // memo keeps a row from rendering again; the locale context still reaches it after a language change
+  useLocale();
   const widget = toolWidget(block);
   if (!widget?.blob) return null;
   return <AgentWidget blob={widget.blob} uri={widget.uri} title={block.target} />;

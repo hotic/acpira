@@ -17,8 +17,14 @@ pub const MIN_COMPACT_AT_TOKENS: i64 = 10_000;
 pub const AGENT_CPU_CAP: (i64, i64, i64) = (10, 100, 80);
 /// The `proxy` setting's default: the local 127.0.0.1:7890 proxy while it listens, the inherited environment otherwise
 pub const DEFAULT_PROXY: &str = "auto";
+/// How the desktop app opens file links and plan documents: the system's default application or an editor's command line
+pub const FILE_OPENERS: [&str; 7] = ["system", "code", "cursor", "windsurf", "zed", "subl", "idea"];
+pub const DEFAULT_FILE_OPENER: &str = "system";
+/// What the desktop app's window centres on: the conversation, or the files and pages of the session's project
+pub const DESKTOP_LAYOUTS: [&str; 2] = ["chat", "files"];
+pub const DEFAULT_DESKTOP_LAYOUT: &str = "chat";
 
-pub const SETTING_KEYS: [&str; 23] = [
+pub const SETTING_KEYS: [&str; 25] = [
   "language",
   "defaultAgent",
   "agentOrder",
@@ -42,6 +48,8 @@ pub const SETTING_KEYS: [&str; 23] = [
   "subagents",
   "agentCpuCap",
   "proxy",
+  "openFilesWith",
+  "desktopLayout",
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -88,6 +96,12 @@ pub struct SettingsView {
   /// Network route of agents, installers and downloads: `auto`, `off` or a proxy URL (`proxy_setting`)
   #[serde(default = "default_proxy")]
   pub proxy: String,
+  /// Desktop app: the system's default application or an editor for file links and plans (`FILE_OPENERS`)
+  #[serde(default = "default_file_opener")]
+  pub open_files_with: String,
+  /// Desktop app: the window's layout (`DESKTOP_LAYOUTS`)
+  #[serde(default = "default_desktop_layout")]
+  pub desktop_layout: String,
 }
 
 fn default_agent_cpu_cap() -> i64 {
@@ -96,6 +110,14 @@ fn default_agent_cpu_cap() -> i64 {
 
 fn default_proxy() -> String {
   DEFAULT_PROXY.into()
+}
+
+fn default_file_opener() -> String {
+  DEFAULT_FILE_OPENER.into()
+}
+
+fn default_desktop_layout() -> String {
+  DEFAULT_DESKTOP_LAYOUT.into()
 }
 
 /// A proxy URL with a supported scheme and a host, trailing slash dropped; a bare `host:port` reads as `http://host:port`
@@ -203,6 +225,8 @@ pub fn sanitize_setting(key: &str, value: &Value) -> Value {
       }
     }
     "accountSwitch" => Value::from(one_of(value, &ACCOUNT_SWITCH_STRATEGIES, DEFAULT_ACCOUNT_SWITCH)),
+    "openFilesWith" => Value::from(one_of(value, &FILE_OPENERS, DEFAULT_FILE_OPENER)),
+    "desktopLayout" => Value::from(one_of(value, &DESKTOP_LAYOUTS, DEFAULT_DESKTOP_LAYOUT)),
     "agentOrder" | "disabledAgents" | "planAutoApprove" => Value::from(id_list(value)),
     "subagents" => serde_json::to_value(crate::subagents::sanitize_personas(value)).unwrap_or(Value::Array(vec![])),
     _ => Value::Null,
@@ -242,5 +266,23 @@ mod tests {
     }
     assert_eq!(p(Value::from(7890)), Value::from("auto"));
     assert!(is_setting_key("proxy"));
+  }
+
+  #[test]
+  fn files_open_with_a_listed_editor_or_the_system_default() {
+    assert_eq!(sanitize_setting("openFilesWith", &Value::from("zed")), Value::from("zed"));
+    for bad in [Value::from("vim"), Value::from("Code"), Value::Null, Value::from(1)] {
+      assert_eq!(sanitize_setting("openFilesWith", &bad), Value::from("system"), "{bad}");
+    }
+    assert!(is_setting_key("openFilesWith"));
+  }
+
+  #[test]
+  fn the_desktop_layout_is_chat_or_files_and_shared() {
+    assert_eq!(sanitize_setting("desktopLayout", &Value::from("files")), Value::from("files"));
+    for bad in [Value::from("editor"), Value::from("Files"), Value::Null, Value::from(true)] {
+      assert_eq!(sanitize_setting("desktopLayout", &bad), Value::from("chat"), "{bad}");
+    }
+    assert!(is_shared_setting("desktopLayout"));
   }
 }

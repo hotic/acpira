@@ -69,6 +69,10 @@ const INDEX_MAX_WAIT: Duration = Duration::from_millis(2000);
 const PUSH_QUANTUM: Duration = Duration::from_millis(16);
 // How often a mirrored session (driven by another engine) re-reads its record and checks whether the lease came free
 const MIRROR_POLL: Duration = Duration::from_secs(1);
+// How long a session another engine holds waits for that engine's pushed view before its record copy is shown. An owner on
+// the bus answers a subscription with its whole view within a frame or two; without this wait the record copy (behind
+// the live turn, with its "take over" card) flashed first on every switch to a session running elsewhere
+const FIRST_PUSH_GRACE: Duration = Duration::from_millis(300);
 // How often an engine looks for takeover requests on the sessions it has open
 const TAKEOVER_POLL: Duration = Duration::from_millis(500);
 // How long a takeover waits for the other engine to let go (it polls every TAKEOVER_POLL, then stops its turn)
@@ -546,6 +550,7 @@ impl SessionManager {
       st.categories = categories;
     }
     self.seed_projects().await;
+    self.backfill_models();
     // The login shell's PATH decides where CLIs are found, and running the user's rc files takes a while (~0.6 s for an
     // oh-my-zsh setup, up to `FIRST_WAIT`). Nothing the first window shows needs it: a stored session is shown from its
     // record and a fresh one before its agent starts, so init (and with it the engine's handshake) does not wait for the
@@ -824,6 +829,27 @@ impl SessionManager {
         m.state.lock().sync_due = None;
         m.sync_index().await;
         return;
+      }
+    });
+  }
+
+  /// Index entries without a model (written before the field existed, or rewritten by an older engine that drops it)
+  /// learn it from their records in the background, so the list's mark flips to the model's vendor without each session
+  /// being opened first. Reading every record's controls takes a while on a large store; the list shows meanwhile
+  fn backfill_models(&self) {
+    let ids: Vec<String> = self.state.lock().index.iter().filter(|s| s.model.is_none() && s.external.is_none()).map(|s| s.id.clone()).collect();
+    if ids.is_empty() {
+      return;
+    }
+    let me = self.me.clone();
+    tokio::spawn(async move {
+      let Some(store) = me.upgrade().map(|m| m.deps.store.clone()) else { return };
+      let started = std::time::Instant::now();
+      let found = store.read_models(&ids).await;
+      let Some(m) = me.upgrade() else { return };
+      m.log(&format!("model backfill: read {} records in {} ms", ids.len(), started.elapsed().as_millis()));
+      if found {
+        m.sync_index().await;
       }
     });
   }
@@ -1874,9 +1900,10 @@ impl SessionManager {
         me.emit_sessions();
         return;
       }
-      // Already mirrored for another viewer: its poll keeps this one current too
+      // Already mirrored for another viewer (or this one a moment ago): its poll keeps this one current too. The owner's
+      // pushed view when there is one, as `emit_session` sends it
       if let Some(mirror) = me.mirror_of(&id) {
-        v.emit(mirror.view_msg());
+        v.emit(me.remote_msg(&id).unwrap_or_else(|| mirror.view_msg()));
         me.emit_sessions();
         return;
       }
@@ -2180,7 +2207,11 @@ impl SessionManager {
     let mirror = AcpSession::mirror(record, self.mirror_deps(), note.clone(), self.next_mirror_rev(), elsewhere, epoch);
     let fresh = self.state.lock().mirrors.insert(id.to_owned(), mirror.clone()).is_none();
     self.log(&format!("session {id}: lease not taken, mirroring its record ({note})"));
-    self.emit_session(&mirror);
+    // Held by an engine that may push its view: the record copy waits for that view a moment (`FIRST_PUSH_GRACE`)
+    let await_push = fresh && elsewhere && self.bus.connected();
+    if !await_push {
+      self.emit_session(&mirror);
+    }
     if !fresh {
       return;
     }
@@ -2193,6 +2224,23 @@ impl SessionManager {
     let me = self.me.clone();
     let id = id.to_owned();
     tokio::spawn(async move {
+      if await_push {
+        let until = tokio::time::Instant::now() + FIRST_PUSH_GRACE;
+        while tokio::time::Instant::now() < until {
+          tokio::time::sleep(PUSH_QUANTUM).await;
+          let Some(m) = me.upgrade() else { return };
+          if m.remote_msg(&id).is_some() || m.mirror_of(&id).is_none() {
+            break;
+          }
+        }
+        // No pushed view in time (an owner from before the bus, or one not running the session): the record copy
+        if let Some(m) = me.upgrade()
+          && m.remote_msg(&id).is_none()
+          && let Some(copy) = m.mirror_of(&id)
+        {
+          m.emit_session(&copy);
+        }
+      }
       let mut seen = None;
       loop {
         tokio::time::sleep(MIRROR_POLL).await;
@@ -2292,6 +2340,12 @@ impl SessionManager {
   /// what it shows
   pub fn diff_source(&self, session_id: &str, tool_call_id: &str, nth: usize, subagent: Option<&str>) -> Option<DiffSource> {
     self.live(session_id).or_else(|| self.mirror_of(session_id))?.diff_source(tool_call_id, nth, subagent).filter(|s| !s.omitted)
+  }
+
+  /// The files the session's own edits touched with their text before its first edit of each (`AcpSession::edit_bases`);
+  /// empty for a session that is neither open here nor shown as another engine's copy
+  pub fn edit_bases(&self, session_id: &str) -> Vec<(String, Option<String>)> {
+    self.live(session_id).or_else(|| self.mirror_of(session_id)).map(|s| s.edit_bases()).unwrap_or_default()
   }
 
   pub fn plan_document(&self, session_id: &str, plan_id: &str) -> Option<PlanDocumentBlock> {
@@ -2396,6 +2450,11 @@ impl SessionManager {
         if let (CategoryOp::Create { id, .. }, Some(session)) = (&op, file) {
           self.set_session_category(&session, Some(id.clone())).await?;
         }
+      }
+      // Unread dots live in this engine's memory only (a restart forgets them too), so forgetting them is the whole job
+      W::MarkAllRead => {
+        self.state.lock().unread.clear();
+        self.emit_sessions();
       }
       W::MoveSession { id, cwd, category } => self.move_session(&id, cwd, category).await?,
       W::ForkSession { session_id, turn_index, agent } => self.fork_session(v, &session_id, turn_index, agent).await?,
