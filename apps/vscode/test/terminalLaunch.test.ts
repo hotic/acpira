@@ -22,7 +22,7 @@ describe('terminal launch', () => {
   });
 
   it.skipIf(!hasPowerShell)('runs the Devin offline installer regressions', () => {
-    const run = spawnSync(powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', resolve('test/devin-install.test.ps1')], {
+    const run = spawnSync(powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', resolve(import.meta.dirname, '../../../test/devin-install.test.ps1')], {
       encoding: 'utf8', timeout: 15_000,
     });
     expect(run.stderr, run.stdout).toBe('');

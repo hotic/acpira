@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { withFileLock, writeAtomic } from '../src/store/fileLock';
 
-const TSX = fileURLToPath(new URL('../node_modules/.bin/tsx', import.meta.url));
+// The worker runs under node with tsx's loader, resolved from this package (cwd); execFile cannot start the .bin shim on Windows
+const APP = fileURLToPath(new URL('..', import.meta.url));
 const WORKER = fileURLToPath(new URL('./lock-worker.ts', import.meta.url));
 
 function tmp() { return mkdtempSync(join(tmpdir(), 'acpira-lock-')); }
@@ -48,7 +49,7 @@ describe('withFileLock', () => {
 
   it('read-increment-write from four processes at once loses nothing', async () => {
     const file = join(tmp(), 'counter');
-    const run = () => new Promise<void>((resolve, reject) => execFile(TSX, [WORKER, file, '25'], (err, _out, stderr) => (err ? reject(new Error(`${err.message}\n${stderr}`)) : resolve())));
+    const run = () => new Promise<void>((resolve, reject) => execFile(process.execPath, ['--import', 'tsx', WORKER, file, '25'], { cwd: APP }, (err, _out, stderr) => (err ? reject(new Error(`${err.message}\n${stderr}`)) : resolve())));
     await Promise.all([run(), run(), run(), run()]);
     expect(Number(readFileSync(file, 'utf8'))).toBe(100);
     expect(() => readFileSync(`${file}.lock`)).toThrow();
@@ -63,7 +64,7 @@ describe('withFileLock', () => {
     const old = (Date.now() - 60_000) / 1000;
     utimesSync(lock, old, old);
     utimesSync(`${lock}.${token}`, old, old);
-    const run = () => new Promise<void>((resolve, reject) => execFile(TSX, [WORKER, file, '1'], (err, _out, stderr) => (err ? reject(new Error(`${err.message}\n${stderr}`)) : resolve())));
+    const run = () => new Promise<void>((resolve, reject) => execFile(process.execPath, ['--import', 'tsx', WORKER, file, '1'], { cwd: APP }, (err, _out, stderr) => (err ? reject(new Error(`${err.message}\n${stderr}`)) : resolve())));
     await Promise.all([run(), run()]);
     expect(Number(readFileSync(file, 'utf8'))).toBe(2);
     expect(() => readFileSync(lock)).toThrow();

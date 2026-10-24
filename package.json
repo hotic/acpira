@@ -27,7 +27,6 @@
   "devDependencies": {
     "@acpira/engine-client": "workspace:*",
     "@acpira/shared": "workspace:*",
-    "@acpira/ui": "workspace:*",
     "@agentclientprotocol/sdk": "catalog:",
     "@base-ui/react": "catalog:",
     "@fontsource-variable/geist": "catalog:",
