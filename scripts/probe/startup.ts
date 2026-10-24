@@ -6,7 +6,7 @@
 // page and goes back, `--scroll` wheels the transcript from the bottom to the top and back.
 // Variants run interleaved (A B A B …) so machine drift hits both alike; the medians are printed at the end.
 //
-// Usage: pnpm exec tsx scripts/probe-startup.ts --variant base=<acpira>,<root> [--variant new=<acpira>,<root>] --home <template>
+// Usage: pnpm exec tsx scripts/probe/startup.ts --variant base=<acpira>,<root> [--variant new=<acpira>,<root>] --home <template>
 //          [--runs N] [--session ID | --sidebar] [--cwd DIR] [--cpu RATE] [--dpr N] [--switch ID] [--settings] [--scroll] [--json FILE]
 //          [--profile DIR] [--trace FILE [--trace-phase startup|scroll]] [--expand PASSES]
 //   --expand   before the scroll run, open every closed fold in the transcript, PASSES times (1: each turn's process fold,

@@ -28,7 +28,7 @@ function binary(path: string): SidecarCommand {
   return { command: path, args: [], label: `binary ${path}` };
 }
 
-// scripts/sidecar-targets.mjs naming
+// scripts/release/sidecar-targets.mjs naming
 function platformDir(platform: NodeJS.Platform, arch: string): string | undefined {
   const os = ({ darwin: 'mac', linux: 'linux', win32: 'windows' } as Partial<Record<NodeJS.Platform, string>>)[platform];
   const cpu = ({ arm64: 'arm64', x64: 'x86_64' } as Record<string, string>)[arch];

@@ -31,9 +31,9 @@ VS Code and Cursor read their own `acpira.*` settings. IntelliJ persists an appl
 These are observed sessions, not universal model limits. All three windows were below 300,000. Small synthetic conversations exercised automatic dispatch at an explicitly lowered threshold and verified completion plus `FOLLOWUP_OK`; they do not constitute a real 300,000-token load test. Fake ACP regression tests separately exercise the configured 300,000 threshold, including a 500,000 → 300,000 settings change shared by sidebar and editor views.
 
 ```sh
-pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe-context-policy.ts grok --exercise
-pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe-context-policy.ts devin --after-turn
-pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe-context-policy.ts kimi --after-turn
+pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe/context-policy.ts grok --exercise
+pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe/context-policy.ts devin --after-turn
+pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe/context-policy.ts kimi --after-turn
 pnpm exec vitest run test/usage-breakdown.test.ts test/grok-usage.test.ts test/compaction-queue.test.ts test/hostRuntime.test.ts
 pnpm exec vite --config lab/vite.config.ts --port 5207
 ```

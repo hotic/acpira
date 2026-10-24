@@ -7,7 +7,7 @@
 //! `task_progress` and turns each frame into a synthetic `workflow_progress` session update (`wire.rs`), which
 //! `SubagentTree::workflow_progress` keeps as one receipt node per agent.
 //!
-//! Observed 2026-10-02 with claude-agent-acp 0.83.0 / Claude Code 2.1.284 (`probe-subagents.ts claude --claude-raw`):
+//! Observed 2026-10-02 with claude-agent-acp 0.83.0 / Claude Code 2.1.284 (`scripts/probe/subagents.ts claude --claude-raw`):
 //! `workflow_agent { index, label, phaseIndex, phaseTitle, agentId, model, state: start | progress | done | error,
 //! queuedAt, startedAt, attempt, promptPreview, tokens, toolCalls, durationMs, resultPreview }`, every frame the full list.
 //!

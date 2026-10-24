@@ -1,6 +1,6 @@
 # Offline compatibility checks; no real agents, credentials, logins or model calls.
 $ErrorActionPreference = 'Stop'
-Push-Location (Split-Path $PSScriptRoot -Parent)
+Push-Location (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent)
 try {
     & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File test/devin-install.test.ps1
     if ($LASTEXITCODE -ne 0) { throw 'Windows installer regressions failed' }

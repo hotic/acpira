@@ -93,7 +93,7 @@ Acpira 负责这套执行流程周围的界面：代码差异、可展开的执�
 | [PawBench v1.0](https://github.com/agentscope-ai/PawBench) | AgentScope/OpenJudge 团队评测；9 个模型 × 3 个 Harness × 150 道任务 | 固定 Qwen3.6-35B-A3B，综合分数介于 **56.7–68.3**。采用自动检查与模型裁判，参评对象包含该团队的 QwenPaw。 |
 | [Harness-Bench](https://arxiv.org/html/2605.27922v1) | 研究预印本；106 道离线任务；8 个模型后端 × 6 个可配置 Harness | 在相同模型池上取平均，综合分数介于 **52.4–76.2**。分数含完成情况与过程质量，衡量完整配置差异。 |
 
-来源、指标与更多对比见[评测说明](HARNESS-EVALUATIONS.md)。
+来源、指标与更多对比见[评测说明](docs/harness-evaluations.md)。
 
 </details>
 
@@ -214,7 +214,7 @@ Acpira 可为 Devin、Codex、Claude 保存多份登录，并在创建会话时�
 - 在共享提示词之上为单个 Agent 追加专属指令。
 - 长期方向：独立桌面端。
 
-具体方向见 [ROADMAP.md](ROADMAP.md#简体中文)。
+具体方向见[路线图](docs/roadmap.md#简体中文)。
 
 ## 开发
 
@@ -231,7 +231,7 @@ cd apps/intellij && ./gradlew test buildPlugin verifyPlugin   # IntelliJ 插件�
 
 按 F5 启动 Extension Development Host。日志在 Output → Acpira。架构与协议说明见 [AGENTS.md](AGENTS.md)。
 
-发布正式版 GitHub Release 后，可自动将各平台 VSIX 发布到 VS Code Marketplace 和 Open VSX，并把 IntelliJ 插件发布到 JetBrains Marketplace。首次凭据配置、版本发布和失败重试见 [发布说明](RELEASING.md)。
+发布正式版 GitHub Release 后，可自动将各平台 VSIX 发布到 VS Code Marketplace 和 Open VSX，并把 IntelliJ 插件发布到 JetBrains Marketplace。首次凭据配置、版本发布和失败重试见 [发布说明](docs/releasing.md)。
 
 ## 许可证
 

@@ -34,7 +34,7 @@ jobs:
           workspaces: rust
       - name: Native process, storage and PowerShell 5.1 regressions
         shell: powershell
-        run: ./scripts/test-windows.ps1
+        run: ./scripts/ci/test-windows.ps1
       - uses: pnpm/action-setup@v6
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck

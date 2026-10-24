@@ -1,6 +1,6 @@
 //! `_session/steering`: the ACP steering extension both JetBrains-maintained adapters implement. The request injects a prompt
 //! into the running turn; its output streams as part of that turn and the pending `session/prompt` settles once, after it
-//! (verified 2026-09-29 with `scripts/probe-steering.ts`: claude-agent-acp 0.83.0 on Sonnet, codex-acp 1.13.0 on GPT-6 Astra).
+//! (verified 2026-09-29 with `scripts/probe/steering.ts`: claude-agent-acp 0.83.0 on Sonnet, codex-acp 1.13.0 on GPT-6 Astra).
 //! Idle, claude-agent-acp honours `idleBehavior: promptRequired`; codex-acp ignores it and starts a turn of its own
 //! (`startedNewTurn`) that no `session/prompt` owns. Codex brackets every turn, that one included, with
 //! `session_info_update` `_meta.codex.threadStatus` `active` … `idle`, the idle one ahead of the prompt response.

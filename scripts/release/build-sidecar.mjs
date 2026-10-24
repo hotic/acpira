@@ -4,11 +4,11 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SIDECAR_TARGETS, exeName, hostPlatform, targetFor } from './sidecar-targets.mjs';
 
-// Builds the release Rust sidecar into dist/sidecar/<platform>/: `node scripts/build-sidecar.mjs [--all | <platform>...]`, this machine's
+// Builds the release Rust sidecar into dist/sidecar/<platform>/: `node scripts/release/build-sidecar.mjs [--all | <platform>...]`, this machine's
 // platform by default. Windows targets build on Windows. macOS targets build on macOS, or anywhere else through cargo-zigbuild with
 // SDKROOT pointing at a macOS SDK (a copy of the Mac's /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk). Linux targets are static
 // musl builds: natively on a Linux machine of that architecture (musl-gcc from musl-tools), through cargo-zigbuild anywhere else
-const root = fileURLToPath(new URL('..', import.meta.url));
+const root = fileURLToPath(new URL('../..', import.meta.url));
 const args = process.argv.slice(2);
 const platforms = args.includes('--all') ? SIDECAR_TARGETS.map(t => t.platform) : args.length ? args : [hostPlatform()];
 

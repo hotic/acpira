@@ -2,11 +2,11 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSyn
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentTurn, GoalBlock, PermissionBlock, SessionView } from '@shared/transcript';
-import { Host } from './lib/host';
+import { Host } from '../lib/host';
 
 // Host-path goal smoke (real CLI, real model): the dock's goal controls through the Rust sidecar, the way the webview drives them.
 //
-//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe-goal-host.ts [codex] [--bin PATH] [--keep]
+//   pnpm exec tsx --tsconfig tsconfig.host.json scripts/probe/goal-host.ts [codex] [--bin PATH] [--keep]
 //
 // --bin: the codex-acp to launch (default: codex-acp on PATH); --keep: leave the temp project / CODEX_HOME / wire log in place
 //

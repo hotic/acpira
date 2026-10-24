@@ -1611,7 +1611,7 @@ const app = acp.agent({ name: 'fake-agent' })
     }
 
     // A 700-block turn streamed as fast as the wire takes it (350 tool calls, each with a completion, interleaved with prose):
-    // the load profile of scripts/probe-ipc-perf.ts, where every push carries the whole growing SessionView across the sidecar IPC
+    // the load profile of scripts/probe/ipc-perf.ts, where every push carries the whole growing SessionView across the sidecar IPC
     if (text.includes('flood')) {
       for (let i = 0; i < 350; i++) {
         if (cancelled.has(sid)) return { stopReason: 'cancelled' };
