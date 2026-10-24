@@ -6,6 +6,7 @@
 //! view once for every viewer showing it
 
 pub mod storage;
+mod hosts;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Weak};
@@ -229,6 +230,8 @@ pub struct ManagerDeps {
 #[derive(Default)]
 struct ViewerState {
   active_id: Option<String>,
+  /// Opened with `InitialView::Empty`: shows nothing until a session is selected on it
+  empty: bool,
   observing: Option<(String, String)>,
   last_subagent_rev: Option<i64>,
 }
@@ -343,6 +346,8 @@ pub struct SessionManager {
   installs: Arc<crate::acp::agents::installer::Installs>,
   // Set once the first probe pass has run, which may be after `init` returned (it follows the login shell)
   first_probe: tokio::sync::watch::Sender<bool>,
+  // SSH hosts in remote run: their engines' sessions in this list (`hosts.rs`)
+  hosts: hosts::Hosts,
   me: Weak<SessionManager>,
 }
 
@@ -420,6 +425,7 @@ impl SessionManager {
         mirror_rev: std::sync::atomic::AtomicI64::new(MIRROR_REV_BASE),
         installs,
         first_probe: tokio::sync::watch::Sender::new(false),
+        hosts: Default::default(),
         me: me.clone(),
       }
     });
@@ -603,6 +609,7 @@ impl SessionManager {
     // process while it is still warming (`AgentPool::take`)
     let agent = self.default_agent();
     self.warm(&agent, None);
+    self.start_hosts();
   }
 
   /// A project shell's first connect: the folders sessions already ran in, newest first, become the list's first order
@@ -1400,6 +1407,8 @@ impl SessionManager {
     if let Some(c) = &self.deps.chatgpt {
       merged.extend(c.summaries());
     }
+    let hosted = self.host_summaries(&merged);
+    merged.extend(hosted);
     sort_index(&mut merged);
     merged
   }
@@ -1407,6 +1416,9 @@ impl SessionManager {
   /// The serialized view of a session (live, or a ChatGPT mirror)
   pub fn view_of(&self, id: Option<&str>) -> Option<(RawJson, bool)> {
     let id = id?;
+    if let Some(HostMsg::Session { session, running, .. }) = self.host_msg(id) {
+      return Some((session, running));
+    }
     if self.live(id).is_none()
       && let Some(HostMsg::Session { session, running, .. }) = self.remote_msg(id)
     {
@@ -1422,6 +1434,9 @@ impl SessionManager {
   /// The session push for one viewer, as `emit_session` would send it
   pub fn session_msg(&self, id: Option<&str>) -> Option<HostMsg> {
     let id = id?;
+    if let Some(m) = self.host_msg(id) {
+      return Some(m);
+    }
     if self.live(id).is_none()
       && let Some(m) = self.remote_msg(id)
     {
@@ -1435,7 +1450,7 @@ impl SessionManager {
   }
 
   fn has_view(&self, id: &str) -> bool {
-    self.live(id).is_some() || self.mirror_of(id).is_some() || self.deps.chatgpt.as_ref().is_some_and(|c| c.view(id).is_some())
+    self.host_msg(id).is_some() || self.live(id).is_some() || self.mirror_of(id).is_some() || self.deps.chatgpt.as_ref().is_some_and(|c| c.view(id).is_some())
   }
 
   fn most_recent(&self) -> Option<String> {
@@ -1447,6 +1462,7 @@ impl SessionManager {
   /// Attach a viewer: `initial` is the session it opens on, or the newest listed one
   pub fn attach(&self, initial: Option<acpira_shared::sidecar::InitialView>) -> Arc<Viewer> {
     use acpira_shared::sidecar::InitialView;
+    let empty = matches!(initial, Some(InitialView::Empty { empty: true }));
     let id = match initial {
       Some(InitialView::Id(id)) => Some(id),
       Some(InitialView::MostRecent { most_recent: true }) => self.most_recent(),
@@ -1458,7 +1474,7 @@ impl SessionManager {
     }
     let v = Arc::new(Viewer {
       id: self.viewer_seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-      state: parking_lot::Mutex::new(ViewerState { active_id: id, ..Default::default() }),
+      state: parking_lot::Mutex::new(ViewerState { active_id: id, empty, ..Default::default() }),
       sink: Default::default(),
     });
     st.viewers.push(v.clone());
@@ -1468,6 +1484,7 @@ impl SessionManager {
   pub fn detach(&self, v: &Viewer) {
     *v.sink.lock() = None;
     self.state.lock().viewers.retain(|x| x.id != v.id);
+    self.prune_host_views();
   }
 
   fn viewers(&self) -> Vec<Arc<Viewer>> {
@@ -1780,6 +1797,7 @@ impl SessionManager {
     }
     match active {
       Some(id) => self.select_session_for(v, &id).await,
+      None if v.state.lock().empty => {}
       // A project shell with no project yet shows its empty state instead (`folder_for`)
       None if self.folder_for(Some(v), None).is_none() => {}
       None => {
@@ -2395,7 +2413,16 @@ impl SessionManager {
 
   pub async fn handle_for(self: &Arc<Self>, v: &Arc<Viewer>, m: WebviewMsg) {
     let kind = format!("{m:?}").split([' ', '{', '(']).next().unwrap_or("").to_owned();
-    if let Err(e) = self.dispatch(v, m).await {
+    let moves = matches!(m, WebviewMsg::SelectSession { .. } | WebviewMsg::NewSession { .. } | WebviewMsg::DeleteSession { .. });
+    let done = match self.host_action(v, &m).await {
+      Some(r) => r,
+      None => self.dispatch(v, m).await,
+    };
+    // A viewer that moved off a host session lets its view there go
+    if moves {
+      self.prune_host_views();
+    }
+    if let Err(e) = done {
       let text = error_text(&e);
       self.log(&format!("handle {} failed: {text}", lower_first(&kind)));
       (self.deps.toast)("error", &text);
@@ -3432,6 +3459,7 @@ impl SessionManager {
   pub async fn dispose(self: &Arc<Self>) {
     self.installs.cancel_all();
     self.bus.stop();
+    self.stop_hosts();
     {
       let mut st = self.state.lock();
       st.disposed = true;

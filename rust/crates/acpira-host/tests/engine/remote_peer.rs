@@ -12,6 +12,32 @@ use serde_json::{Value, json};
 
 use crate::remote_connections::Lab;
 
+/// Stops every engine started for a test's fake host when the test ends, a failing one too: they run detached from
+/// the helper and would outlive the test. Found by their `--home`, the fake host's data root, so an engine a retry
+/// started after the test last looked goes too
+struct StopEngines(String);
+
+impl StopEngines {
+  fn for_lab(lab: &Lab) -> StopEngines {
+    StopEngines(format!("--home {}", lab.path().join("host").join(".acpira").display()))
+  }
+}
+
+impl Drop for StopEngines {
+  fn drop(&mut self) {
+    let _ = std::process::Command::new("pkill").args(["-TERM", "-f", &self.0]).status();
+  }
+}
+
+/// `until` that names what it waited for and shows the manager's log when it gives up
+async fn wait(m: &crate::session_manager::Mgr, what: &str, ms: u64, mut pred: impl FnMut() -> bool) {
+  let t0 = std::time::Instant::now();
+  while !pred() {
+    assert!(t0.elapsed() < Duration::from_millis(ms), "timed out waiting for {what}; active: {:?}\nlog: {:#?}", m.active(), m.logs());
+    tokio::time::sleep(Duration::from_millis(20)).await;
+  }
+}
+
 const ME: PeerHello<'static> = PeerHello { version: "test", capabilities: &["toast"], host_language: "en" };
 
 async fn next_of(link: &mut PeerLink, pred: impl Fn(&Value) -> bool) -> Value {
@@ -30,6 +56,7 @@ async fn next_of(link: &mut PeerLink, pred: impl Fn(&Value) -> bool) -> Value {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_peer_reaches_the_hosts_engine_which_outlives_the_connection() {
   let lab = Lab::new();
+  let _stop = StopEngines::for_lab(&lab);
   let connections = lab.engine("engine");
   connections.op(ConnectionOp::Add { alias: "gen1".into(), mode: RunMode::Remote }).await.unwrap();
   let client = connections.ensure("gen1", Duration::from_secs(30)).await.unwrap();
@@ -60,5 +87,67 @@ async fn a_peer_reaches_the_hosts_engine_which_outlives_the_connection() {
     }
   };
   tokio::time::timeout(Duration::from_secs(10), gone).await.expect("the host's engine ended on SIGTERM");
+  connections.dispose();
+}
+
+/// Remote run end to end on this engine's side: a host in remote run has its engine's sessions in the local list as
+/// `ssh://` folders, a new session in a folder there starts on the host and is shown here, and a rename goes there
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_in_remote_run_has_its_sessions_in_the_local_list() {
+  let fake = crate::fake_or_skip!();
+  let lab = Lab::new();
+  let _stop = StopEngines::for_lab(&lab);
+  let connections = lab.engine("engine");
+  connections.op(ConnectionOp::Add { alias: "gen1".into(), mode: RunMode::Remote }).await.unwrap();
+  let work = lab.path().join("hostfs").join("work");
+  std::fs::create_dir_all(&work).unwrap();
+  let folder = format!("ssh://gen1{}", work.display());
+  let dir = tempfile::tempdir().unwrap();
+  let mut opts = crate::session_manager::Opts::fake(&fake).projects();
+  opts.remote = Some(connections.clone());
+  let m = crate::session_manager::Mgr::new(dir.path(), opts);
+  m.init().await;
+
+  m.handle(json!({ "type": "newSession", "cwd": folder })).await;
+  wait(&m, "the new session on the host", 30_000, || m.active().is_some_and(|v| v["cwd"] == folder.as_str())).await;
+  let id = m.active_id().unwrap();
+  wait(&m, "the host's list", 15_000, || m.sessions().iter().any(|s| s["id"] == id.as_str())).await;
+  let listed = m.sessions().into_iter().find(|s| s["id"] == id.as_str()).unwrap();
+  assert_eq!(listed["cwd"], folder.as_str());
+  // Started there, by the host's own engine: no record of it here
+  assert!(!dir.path().join(format!("{id}.json")).exists());
+
+  m.handle(json!({ "type": "renameSession", "id": id, "title": "On the host" })).await;
+  wait(&m, "the rename", 15_000, || m.sessions().iter().any(|s| s["id"] == id.as_str() && s["title"] == "On the host")).await;
+
+  // A prompt from here runs there; its turns come back through the host's patches, rebuilt into this engine's views
+  m.handle(json!({ "type": "send", "sessionId": id, "text": "hello from here" })).await;
+  wait(&m, "the prompt's turns", 30_000, || m.active().is_some_and(|v| v["turns"].as_array().is_some_and(|t| t.len() >= 2) && v["running"] == false)).await;
+  let view = m.active().unwrap();
+  assert!(view["turns"][0].to_string().contains("hello from here"), "{view}");
+  assert_eq!(view["cwd"], folder.as_str());
+  assert!(!m.logs().iter().any(|l| l.contains("out of step")), "every patch from the host applied: {:?}", m.logs());
+
+  // The host's engine goes away: the list keeps what it last said
+  let engines = m.m.host_engines();
+  assert_eq!(engines.len(), 1, "{engines:?}");
+  for (_, pid) in &engines {
+    // SAFETY: SIGTERM to the host engine this test started
+    unsafe { libc::kill(*pid as i32, libc::SIGTERM) };
+  }
+  wait(&m, "the host's engine to go", 15_000, || m.m.host_engines().is_empty()).await;
+  assert!(m.sessions().iter().any(|s| s["id"] == id.as_str() && s["title"] == "On the host"), "the cached list stays");
+  m.dispose().await;
+  for (_, pid) in engines {
+    // SAFETY: SIGTERM to the host engine this test started
+    unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+    let gone = async {
+      // SAFETY: existence only
+      while unsafe { libc::kill(pid as i32, 0) } == 0 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+      }
+    };
+    tokio::time::timeout(Duration::from_secs(10), gone).await.expect("the host's engine ended on SIGTERM");
+  }
   connections.dispose();
 }

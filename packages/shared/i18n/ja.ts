@@ -596,6 +596,7 @@ export const ja = {
   'host.notFound': '{command} が見つかりません。先に {agent} CLI をインストールしてください',
   'host.remoteBuiltinOnly': 'ローカル実行では {agent} は {host} 上のフォルダーで作業できません。使えるのは Acpira 内蔵のエージェントだけです',
   'host.remoteFile': '{path} は {host} 上にあります。プロジェクトのファイルはツールパネルで開けます',
+  'host.remoteUnreachable': '{host} に今は接続できません。接続されてからもう一度お試しください',
   'host.exited': '{agent} のプロセスが終了しました（{code}）',
   'host.emptyResponse': 'CLI は返信もエラーの詳細もないままリクエストを終了しました（ACP: end_turn）。再試行するか、CLI のログを確認してください。',
   'host.agentMcpSkipped': '{agent} が MCP サーバー {name} を起動できず（{reason}）、ターンを停止しました。今後このセッションでは除外し、接続をそれなしで作り直しています。再試行で続行できます。再び使うにはサーバーを修正して新しいセッションを始めてください。',

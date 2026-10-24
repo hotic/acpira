@@ -186,6 +186,8 @@ pub enum InitialView {
     #[serde(rename = "mostRecent")]
     most_recent: bool,
   },
+  /// A view that never opens or starts a session by itself (a peer's list view, `session_manager/hosts.rs`)
+  Empty { empty: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
