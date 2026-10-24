@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use acpira_shared::model_shapes::session_model;
 use acpira_shared::subagents::SubagentRecord;
 use acpira_shared::transcript::{AgentId, SessionControls, SessionGoal, SessionSummary, SlashCommand, Turn, Usage};
 
@@ -81,10 +82,12 @@ impl SessionRecord {
       acp_session_id: self.acp_session_id.clone(),
       cwd: self.cwd.clone(),
       updated_at: self.updated_at.clone(),
+      created_at: Some(self.created_at.clone()).filter(|c| !c.is_empty()),
       pinned: self.pinned,
       category: self.category.clone(),
       state: None,
       unread: None,
+      model: session_model(&self.controls),
     }
   }
 }

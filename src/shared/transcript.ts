@@ -566,6 +566,9 @@ export interface SessionSummary {
   cwd: string;
   // ISO timestamp; the webview formats it itself
   updatedAt: string;
+  // When the session was started (ISO), for the list's "created" order; absent on index entries written before the field
+  // existed, which order by updatedAt instead
+  createdAt?: string;
   pinned?: boolean;
   // The user category (SessionCategory.id) the session is filed under; pinned and filed are exclusive. An id no category
   // carries any more (deleted in some window) reads as unfiled
@@ -574,6 +577,9 @@ export interface SessionSummary {
   state?: 'working' | 'waiting' | 'unread' | 'error' | 'background';
   // Only beside `background`: a turn ended there that nobody has looked at yet ('unread' itself would read as finished)
   unread?: boolean;
+  // The model the session last ran: the wire id is its identity (the vendor is read from it), the name its label. Absent
+  // while no model control is known and on index entries written before the field existed
+  model?: { id: string; name: string };
 }
 
 // A user-made group of sessions inside one project (cwd), shown between the project and its sessions
