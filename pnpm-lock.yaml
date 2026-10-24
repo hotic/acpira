@@ -149,9 +149,6 @@ importers:
       '@acpira/shared':
         specifier: workspace:*
         version: link:packages/shared
-      '@acpira/ui':
-        specifier: workspace:*
-        version: link:packages/ui
       '@agentclientprotocol/sdk':
         specifier: 'catalog:'
         version: 1.4.0(zod@4.5.4)
