@@ -69,6 +69,7 @@ export function MentionList({ anchor, hits, personas, active, empty, onHover, on
         <span className="shrink-0 truncate">{persona.name}</span>
         {persona.cli && <span className="shrink-0 text-3 text-fg-2">{persona.cli}</span>}
         {persona.model && <span className="min-w-0 truncate text-3 text-fg-3/70">{persona.model}</span>}
+        {persona.effort && <span className="shrink-0 text-3 text-fg-3/70">{persona.effort}</span>}
       </>;
       const cut = h.path.lastIndexOf('/');
       const Icon = imageMimeOf(h.path) ? ImageIcon : FileText;

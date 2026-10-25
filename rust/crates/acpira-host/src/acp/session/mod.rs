@@ -80,6 +80,10 @@ pub trait SessionAccountHooks: Send + Sync {
   fn label(&self, _account: String) -> Option<String> {
     None
   }
+  /// The saved account a new session of `agent` binds (the last one chosen); None = the CLI's own credentials
+  fn default_account(&self, _agent: String) -> Option<String> {
+    None
+  }
 }
 
 #[derive(Debug, Clone, Copy)]
