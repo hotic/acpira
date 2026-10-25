@@ -2,6 +2,7 @@
 //! hands its arguments to the first over a Unix socket and exits. The lock file decides who is first, so two launches at
 //! once cannot both become the primary
 
+#[cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};

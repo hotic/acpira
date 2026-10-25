@@ -615,6 +615,9 @@ fn write_file(p: &Path, data: &[u8], mode: Option<u32>, mkdirs: bool, if_mtime: 
   }
   let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
   let tmp = dir.join(format!(".{name}.acpira-{}", crate::util::random_hex(4)));
+  // Permission bits only exist on Unix
+  #[cfg(not(unix))]
+  let _ = mode;
   let result = (|| -> std::io::Result<()> {
     let mut f = std::fs::File::create(&tmp)?;
     f.write_all(data)?;

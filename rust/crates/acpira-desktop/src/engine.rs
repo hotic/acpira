@@ -4,10 +4,12 @@
 //! packages/engine-client/engine.ts
 
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 
+#[cfg(unix)]
 use crate::locator::SidecarCommand;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,7 +40,9 @@ pub struct EndpointOpts<'a> {
 const MAX_SOCKET_PATH: usize = 100;
 /// A launched engine binds its socket within milliseconds; an older one ending on the same socket holds the lock for up
 /// to its dispose grace (2.5 s) before the new one can take over
+#[cfg(unix)]
 const LAUNCH_WAIT: Duration = Duration::from_secs(15);
+#[cfg(unix)]
 const LOG_ROTATE_BYTES: u64 = 4 * 1024 * 1024;
 
 /// `path.resolve` without touching the disk: absolute, `.` and `..` folded
@@ -121,6 +125,7 @@ pub fn private_dir(dir: &Path) -> std::io::Result<()> {
   Ok(())
 }
 
+#[cfg(unix)]
 fn rotate(log: &Path) {
   if std::fs::metadata(log).is_ok_and(|m| m.len() > LOG_ROTATE_BYTES) {
     let mut old = log.as_os_str().to_owned();

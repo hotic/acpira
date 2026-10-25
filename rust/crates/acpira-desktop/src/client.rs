@@ -125,6 +125,8 @@ enum ConnKind {
   /// A child over stdio, ended by pid
   Child { pid: u32, exited: watch::Receiver<bool> },
   /// The persistent engine's socket: the sender stops its reader, which reports the connection closed
+  // Only Unix builds reach the persistent engine
+  #[cfg_attr(not(unix), allow(dead_code))]
   Socket { close: Option<oneshot::Sender<()>>, done: watch::Receiver<bool> },
 }
 
@@ -333,12 +335,12 @@ impl SidecarClient {
     }
   }
 
-  #[cfg(test)]
+  #[cfg(all(test, unix))]
   fn on_line_for_test(&self, generation: u64, line: &str) {
     Inner::on_line(&self.inner, generation, line);
   }
 
-  #[cfg(test)]
+  #[cfg(all(test, unix))]
   fn current_generation(&self) -> u64 {
     self.inner.st.lock().unwrap().generation
   }
@@ -857,5 +859,6 @@ async fn stop_child(tx: mpsc::UnboundedSender<String>, pid: u32, mut exited: wat
   let _ = pid;
 }
 
-#[cfg(test)]
+// The scripted engine listens on a Unix socket
+#[cfg(all(test, unix))]
 mod tests;
