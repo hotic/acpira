@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ChevronLeft, Plus, Trash2, Users } from 'lucide-react';
+import { Plus, Trash2, Users } from 'lucide-react';
 import type { AgentId, AgentInfo, ConfigControl } from '@acpira/shared/transcript';
 import type { SettingsView } from '@acpira/shared/settings';
 import { effortLabel, SIDEKICK_EFFORT_CATEGORY } from '@acpira/shared/composerControls';
@@ -9,10 +9,11 @@ import {
   type RelayMode, type SubagentDuty, type SubagentGroup, type SubagentPersona,
 } from '@acpira/shared/subagents';
 import { AgentMark } from '../chat/AgentMark';
-import { Button, ChipTag, IconButton } from '../ui/Button';
+import { Button, ChipTag } from '../ui/Button';
 import { StableText } from '../ui/StableText';
 import { t } from '../i18n';
-import { FactRow, Field, Group, ItemRow, Section, SectionAction, Select, Switch, TextBox, type Option } from './controls';
+import { FactRow, Field, Group, ItemRow, PageCrumb, PageHeader, Section, SectionAction, Select, Switch, TextBox, type Option } from './controls';
+import type { SettingsPage } from './Nav';
 import type { SettingsHandlers } from './SettingsShell';
 
 // The read-only mode the relay finds on the CLIs whose modes are recorded (docs/acp-agents-compat.md; null = none);
@@ -34,6 +35,12 @@ function pickDuty(p: SubagentPersona, duty: SubagentDuty): Partial<SubagentPerso
 }
 
 interface PageProps {
+  // The page shown: the lists, or the persona / group opened from them
+  page: Extract<SettingsPage, { kind: 'subagents' }>;
+  // A drill-in: one step on the settings' back / forward trail
+  onPage: (page: SettingsPage) => void;
+  // The page shown gives way without a step (its persona was deleted, or never came back from the host)
+  onReplace: (page: SettingsPage) => void;
   settings: SettingsView;
   agents: AgentInfo[];
   // Per agent, the configOptions of its latest session: the model / effort choices
@@ -46,17 +53,18 @@ interface PageProps {
 // Settings → Orchestration: the cross-harness personas any session can summon (`ask_agent`, or `@name` in the composer),
 // then the groups of them one call summons together. Plain lists first; everything about one entry is one click in.
 // Every edit writes the whole list back
-export function SubagentsPage({ settings, agents, controls, shapes, on }: PageProps) {
+export function SubagentsPage({ page, onPage, onReplace, settings, agents, controls, shapes, on }: PageProps) {
   const list = settings.subagents;
   const groups = settings.subagentGroups ?? [];
-  const [open, setOpen] = useState<string>();
+  const open = page.persona;
+  const toList = () => onReplace({ kind: 'subagents' });
   // A persona just added: its page opens once the stored list brings it back, and is not closed while it is on its way
   const [adding, setAdding] = useState<string>();
   const usable = agents.filter(a => !a.external);
   const save = (next: SubagentPersona[]) => (on.saveSubagents ? on.saveSubagents(list, next) : on.setSetting('subagents', next));
   const current = list.find(p => p.id === open);
   // A persona deleted (or renamed into another id) elsewhere closes its page
-  useEffect(() => { if (open && !current && adding !== open) setOpen(undefined); }, [open, current, adding]);
+  useEffect(() => { if (open && !current && adding !== open) toList(); }, [open, current, adding]);
   // The stored list is back after an add: the wait is over either way; without the new persona (the host gave it
   // another id) its page has nothing to show
   const shownList = useRef(list);
@@ -64,7 +72,7 @@ export function SubagentsPage({ settings, agents, controls, shapes, on }: PagePr
     if (shownList.current === list) return;
     shownList.current = list;
     if (!adding) return;
-    if (open === adding && !list.some(p => p.id === adding)) setOpen(undefined);
+    if (open === adding && !list.some(p => p.id === adding)) toList();
     setAdding(undefined);
   }, [list, adding, open]);
   const full = list.length >= PERSONA_MAX;
@@ -77,28 +85,29 @@ export function SubagentsPage({ settings, agents, controls, shapes, on }: PagePr
     const id = next[next.length - 1]!.id;
     save(next);
     setAdding(id);
-    setOpen(id);
+    onPage({ kind: 'subagents', persona: id });
   };
-  const group = useGroupList(groups, list, on);
+  const group = useGroupList(groups, list, on, page.group, onPage, toList);
   if (current) {
     const update = (patch: Partial<SubagentPersona>) => save(list.map(p => (p.id === current.id ? { ...p, ...patch } : p)));
-    return <PersonaDetail persona={current} agents={usable} controls={controls[current.agent]} shapes={shapes?.[current.agent]} onBack={() => setOpen(undefined)}
-      onChange={update} onDelete={() => { setOpen(undefined); save(list.filter(p => p.id !== current.id)); }} />;
+    return <PersonaDetail persona={current} agents={usable} controls={controls[current.agent]} shapes={shapes?.[current.agent]} onList={() => onPage({ kind: 'subagents' })}
+      onChange={update} onDelete={() => { toList(); save(list.filter(p => p.id !== current.id)); }} />;
   }
   if (group.current) {
     const g = group.current;
-    return <GroupDetail group={g} personas={list} agents={agents} onBack={() => group.setOpen(undefined)}
+    return <GroupDetail group={g} personas={list} agents={agents} onList={() => onPage({ kind: 'subagents' })}
       onChange={patch => group.save(groups.map(x => (x.id === g.id ? { ...x, ...patch } : x)))}
-      onDelete={() => { group.setOpen(undefined); group.save(groups.filter(x => x.id !== g.id)); }} />;
+      onDelete={() => { toList(); group.save(groups.filter(x => x.id !== g.id)); }} />;
   }
   return <>
+    <PageHeader title={t('settings.nav.subagents')} />
     <Section cards title={t('subagents.page.list')} count={list.length} desc={t('subagents.page.listDesc')}
       action={<SectionAction icon={<Plus strokeWidth={1.5} />} disabled={full || adding !== undefined} onClick={add}>{t('subagents.page.add')}</SectionAction>}>
       {list.length === 0
         ? <p className="m-0 py-pad text-2 text-fg-2">{t('subagents.page.empty')}</p>
         : <Group>
           {list.map(p => (
-            <ItemRow key={p.id} dim={!p.enabled} bigLead onClick={() => setOpen(p.id)}
+            <ItemRow key={p.id} dim={!p.enabled} bigLead onClick={() => onPage({ kind: 'subagents', persona: p.id })}
               lead={<AgentMark id={p.agent} name={p.name} />} title={p.name} desc={metaOf(p, agents, controls[p.agent])} />
           ))}
         </Group>}
@@ -111,7 +120,7 @@ export function SubagentsPage({ settings, agents, controls, shapes, on }: PagePr
         ? <p className="m-0 py-pad text-2 text-fg-2">{t('subagents.groups.empty')}</p>
         : <Group>
           {groups.map(g => (
-            <ItemRow key={g.id} dim={!g.enabled} bigLead onClick={on.saveSubagentGroups ? () => group.setOpen(g.id) : undefined}
+            <ItemRow key={g.id} dim={!g.enabled} bigLead onClick={on.saveSubagentGroups ? () => onPage({ kind: 'subagents', group: g.id }) : undefined}
               lead={<Users strokeWidth={1.5} />} title={g.name} desc={membersOf(g, list)} />
           ))}
         </Group>}
@@ -121,18 +130,18 @@ export function SubagentsPage({ settings, agents, controls, shapes, on }: PagePr
 
 // The group list's state, as the persona list keeps its own: the open group, and a group just added whose page opens
 // once the stored list brings it back
-function useGroupList(groups: SubagentGroup[], personas: SubagentPersona[], on: SettingsHandlers) {
-  const [open, setOpen] = useState<string>();
+function useGroupList(groups: SubagentGroup[], personas: SubagentPersona[], on: SettingsHandlers, open: string | undefined,
+  onPage: (page: SettingsPage) => void, toList: () => void) {
   const [adding, setAdding] = useState<string>();
   const save = (next: SubagentGroup[]) => on.saveSubagentGroups?.(groups, next);
   const current = groups.find(g => g.id === open);
-  useEffect(() => { if (open && !current && adding !== open) setOpen(undefined); }, [open, current, adding]);
+  useEffect(() => { if (open && !current && adding !== open) toList(); }, [open, current, adding]);
   const shown = useRef(groups);
   useEffect(() => {
     if (shown.current === groups) return;
     shown.current = groups;
     if (!adding) return;
-    if (open === adding && !groups.some(g => g.id === adding)) setOpen(undefined);
+    if (open === adding && !groups.some(g => g.id === adding)) toList();
     setAdding(undefined);
   }, [groups, adding, open]);
   const canAdd = personas.length > 0 && groups.length < GROUP_MAX && adding === undefined;
@@ -142,9 +151,9 @@ function useGroupList(groups: SubagentGroup[], personas: SubagentPersona[], on: 
     const id = next[next.length - 1]!.id;
     save(next);
     setAdding(id);
-    setOpen(id);
+    onPage({ kind: 'subagents', group: id });
   };
-  return { current, setOpen, save, add, canAdd };
+  return { current, save, add, canAdd };
 }
 
 // A group row's second line: its members by name, in the order their rounds start
@@ -155,23 +164,20 @@ function membersOf(g: SubagentGroup, personas: SubagentPersona[]): string {
 
 // One group: its name and when to summon it, then every subagent with a switch for membership (members join at the
 // end, and once the group is full the others' switches wait until one leaves)
-function GroupDetail({ group: g, personas, agents, onBack, onChange, onDelete }: {
+function GroupDetail({ group: g, personas, agents, onList, onChange, onDelete }: {
   group: SubagentGroup;
   personas: SubagentPersona[];
   agents: AgentInfo[];
-  onBack: () => void;
+  // The heading's way up to the lists, a step on the trail like any link
+  onList: () => void;
   onChange: (patch: Partial<SubagentGroup>) => void;
   onDelete: () => void;
 }) {
   const full = g.members.length >= GROUP_MEMBERS_MAX;
   const toggle = (id: string, member: boolean) => onChange({ members: member ? [...g.members, id] : g.members.filter(m => m !== id) });
   return <>
-    <div className="flex min-h-ctl items-center gap-gap">
-      <IconButton title={t('settings.back')} aria-label={t('settings.back')} onClick={onBack}><ChevronLeft strokeWidth={1.5} /></IconButton>
-      <Users className="size-icon shrink-0 text-fg-2" strokeWidth={1.5} aria-hidden />
-      <span className="min-w-0 flex-1 truncate text-2 font-medium text-fg-1">{g.name}</span>
-      <Switch checked={g.enabled} label={t('subagents.page.enabled')} onChange={enabled => onChange({ enabled })} />
-    </div>
+    <PageHeader title={<PageCrumb parent={t('settings.nav.subagents')} onParent={onList}>{g.name}</PageCrumb>}
+      action={<Switch checked={g.enabled} label={t('subagents.page.enabled')} onChange={enabled => onChange({ enabled })} />} />
     <Section>
       <Field label={t('subagents.page.name')} desc={t('subagents.groups.nameDesc')}>
         <TextBox value={g.name} label={t('subagents.page.name')} onCommit={name => name.trim() && onChange({ name })} />
@@ -197,12 +203,13 @@ function GroupDetail({ group: g, personas, agents, onBack, onChange, onDelete }:
   </>;
 }
 
-function PersonaDetail({ persona: p, agents, controls, shapes, onBack, onChange, onDelete }: {
+function PersonaDetail({ persona: p, agents, controls, shapes, onList, onChange, onDelete }: {
   persona: SubagentPersona;
   agents: AgentInfo[];
   controls?: ConfigControl[];
   shapes?: ModelShapes;
-  onBack: () => void;
+  // The heading's way up to the lists, a step on the trail like any link
+  onList: () => void;
   onChange: (patch: Partial<SubagentPersona>) => void;
   onDelete: () => void;
 }) {
@@ -221,12 +228,8 @@ function PersonaDetail({ persona: p, agents, controls, shapes, onBack, onChange,
   const readOnlyText = readOnly ? t('subagents.page.readOnlyMode', { mode: readOnly })
     : readOnly === null ? t('subagents.page.readOnlyNone') : t('subagents.page.readOnlyUnknown');
   return <>
-    <div className="flex min-h-ctl items-center gap-gap">
-      <IconButton title={t('settings.back')} aria-label={t('settings.back')} onClick={onBack}><ChevronLeft strokeWidth={1.5} /></IconButton>
-      <AgentMark id={p.agent} name={p.name} />
-      <span className="min-w-0 flex-1 truncate text-2 font-medium text-fg-1">{p.name}</span>
-      <Switch checked={p.enabled} label={t('subagents.page.enabled')} onChange={enabled => onChange({ enabled })} />
-    </div>
+    <PageHeader title={<PageCrumb parent={t('settings.nav.subagents')} onParent={onList}>{p.name}</PageCrumb>}
+      action={<Switch checked={p.enabled} label={t('subagents.page.enabled')} onChange={enabled => onChange({ enabled })} />} />
     <Section>
       <Field label={t('subagents.page.name')} desc={t('subagents.page.nameDesc')}>
         <TextBox value={p.name} label={t('subagents.page.name')} onCommit={name => name.trim() && onChange({ name })} />

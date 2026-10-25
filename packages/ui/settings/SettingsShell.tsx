@@ -21,7 +21,7 @@ import { AboutPage } from './AboutPage';
 import { webviewState } from '../vscodeApi';
 import { ShellToasts, TitleRow } from '../chat/DesktopFrame';
 import { usePreferredPaneWidth } from '../chat/subagents/InspectorSplitter';
-import { PageRail, type SettingsPage } from './Nav';
+import { PageRail, samePage, type SettingsPage } from './Nav';
 import { General } from './General';
 import { AppearancePage } from './Appearance';
 import { AgentPage } from './AgentPage';
@@ -158,15 +158,17 @@ export function SettingsShell(p: SettingsShellProps) {
   const railWidth = columnWidth === undefined ? undefined : `clamp(var(--session-pane-min), ${columnWidth}px, calc(100% - var(--session-main-min)))`;
   // Opened while the chat's column was folded: the rail opens from nothing at that place (desktop.css data-opening)
   const [opening] = useState(() => desktop && webviewState(COLUMN_HIDDEN_KEY) === true);
-  // Desktop: ⌘[ (Ctrl elsewhere) goes back to the chat, as the title row's back button does and as it steps back there
-  const back = useRef(p.onBack);
-  back.current = p.onBack;
+  const trail = usePageTrail(page, p.onPage, p.onBack);
+  // Desktop: ⌘[ / ⌘] (Ctrl elsewhere) step through the trail as the title row's buttons do; back past the first page is the chat
+  const keys = useRef(trail);
+  keys.current = trail;
   useEffect(() => {
     if (!desktop) return;
     const onKey = (e: KeyboardEvent) => {
-      if (!(macOS ? e.metaKey : e.ctrlKey) || e.altKey || e.shiftKey || e.isComposing || e.key !== '[') return;
+      if (!(macOS ? e.metaKey : e.ctrlKey) || e.altKey || e.shiftKey || e.isComposing || (e.key !== '[' && e.key !== ']')) return;
       e.preventDefault();
-      back.current();
+      if (e.key === '[') keys.current.back();
+      else keys.current.forward?.();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -191,13 +193,14 @@ export function SettingsShell(p: SettingsShellProps) {
             data-column={desktop || undefined}
           >
             <div className="flex min-h-0 flex-1">
-              <PageRail agents={p.agents} page={p.page} onPage={p.onPage} onBack={p.onBack} desktop={desktop} width={desktop ? railWidth : undefined} opening={opening} remote={remote}
+              <PageRail agents={p.agents} page={p.page} onPage={trail.go} onBack={p.onBack} desktop={desktop} width={desktop ? railWidth : undefined} opening={opening} remote={remote}
                 onReorder={ids => p.on.setSetting('agentOrder', [...ids, ...p.settings.agentOrder.filter(unlisted)])}
                 onDisabled={ids => p.on.setSetting('disabledAgents', [...ids, ...p.settings.disabledAgents.filter(unlisted)])} />
               <div data-sheet={desktop || undefined} className="relative flex min-w-0 flex-1 flex-col">
               <main key={page.kind === 'agent' ? page.id : page.kind} className="min-h-0 min-w-0 flex-1 overflow-y-auto scroll-stable">
                 <Page>
-                  <PageHeader title={title} action={action} />
+                  {/* Orchestration heads its own page: a drill-in's heading is the way back to the list */}
+                  {page.kind !== 'subagents' && <PageHeader title={title} action={action} />}
                   {page.kind === 'chatgpt' && <ChatGptPage status={p.chatgptStatus} on={p.on} />}
                   {page.kind === 'general' && <General settings={p.settings} agents={p.agents} on={p.on} />}
                   {page.kind === 'appearance' && <AppearancePage settings={p.settings} appearance={p.appearance} on={p.on} />}
@@ -210,7 +213,7 @@ export function SettingsShell(p: SettingsShellProps) {
                   }} />}
                   {page.kind === 'storage' && <StoragePage state={p.storage} agents={p.agents} env={p.env} on={p.on} refresh={storageRefresh} />}
                   {page.kind === 'connections' && <ConnectionsPage env={p.env} projects={p.projects} on={p.on} />}
-                  {page.kind === 'subagents' && <SubagentsPage settings={p.settings} agents={p.agents} controls={p.controls} shapes={p.modelShapes} on={p.on} />}
+                  {page.kind === 'subagents' && <SubagentsPage page={page} onPage={trail.go} onReplace={trail.replace} settings={p.settings} agents={p.agents} controls={p.controls} shapes={p.modelShapes} on={p.on} />}
                   {agent && (
                     <AgentPage
                       key={agent.id}
@@ -231,8 +234,9 @@ export function SettingsShell(p: SettingsShellProps) {
               {desktop && <ShellToasts open={p.on.openPath} />}
               </div>
             </div>
-            {/* The chat's pinned title row in the same place, without the column's toggle: back returns to the chat */}
-            {desktop && <TitleRow onBack={p.onBack} />}
+            {/* The chat's pinned title row in the same place, without the column's toggle: back and forward walk the pages
+                visited here, back past the first one returns to the chat */}
+            {desktop && <TitleRow onBack={trail.back} onForward={trail.forward} />}
           </div>
         </ShellLayerContext.Provider>
       </LocaleContext.Provider>
@@ -240,4 +244,35 @@ export function SettingsShell(p: SettingsShellProps) {
     </AppearanceContext.Provider>
     </DesktopContext.Provider>
   );
+}
+
+// The pages visited since the settings opened, Codex-style: a rail click or a drill-in adds a step, back walks it and past the
+// first page leaves the settings, forward redoes what back undid. The trail lives as long as this shell does, so every
+// visit to the settings starts a fresh one at the page it opens on
+function usePageTrail(page: SettingsPage, onPage: (p: SettingsPage) => void, leave: () => void) {
+  const [trail, setTrail] = useState<{ past: SettingsPage[]; future: SettingsPage[] }>({ past: [], future: [] });
+  const go = (next: SettingsPage) => {
+    if (samePage(next, page)) return;
+    setTrail(t => ({ past: [...t.past, page], future: [] }));
+    onPage(next);
+  };
+  // The page shown gives way without a step of its own (a deleted persona's page becomes the list); landing on the page
+  // the last step came from takes that step back instead, so back does not show the same page twice
+  const replace = (next: SettingsPage) => {
+    const prev = trail.past[trail.past.length - 1];
+    if (prev && samePage(prev, next)) setTrail(t => ({ past: t.past.slice(0, -1), future: t.future }));
+    onPage(next);
+  };
+  const back = () => {
+    const prev = trail.past[trail.past.length - 1];
+    if (!prev) return leave();
+    setTrail(t => ({ past: t.past.slice(0, -1), future: [page, ...t.future] }));
+    onPage(prev);
+  };
+  const next = trail.future[0];
+  const forward = next && (() => {
+    setTrail(t => ({ past: [...t.past, page], future: t.future.slice(1) }));
+    onPage(next);
+  });
+  return { go, replace, back, forward };
 }
