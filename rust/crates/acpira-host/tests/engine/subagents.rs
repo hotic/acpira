@@ -318,7 +318,28 @@ async fn claude_legacy_updates_and_an_async_launched_receipt_link_the_root_call(
     // The launch receipt is the delegation call returning; it never gets a terminal status from the wire
     assert_eq!(receipt["status"], "completed", "{script}");
     assert_eq!(k1["state"], "completed");
+    // The real launch row is the delegation point: no stand-in is left beside it
+    assert!(!has(&root_blocks(&s), |b| b["id"].as_str().is_some_and(|i| i.starts_with("subagent:"))), "{script}");
   }
+}
+
+// claude-agent-acp 0.93.0 drops native Agent calls from the parent stream: each announced root child gets a stand-in
+// delegation row where it was announced, so it renders there instead of after the whole turn
+#[tokio::test(flavor = "multi_thread")]
+async fn a_claude_child_without_a_launch_row_gets_a_delegation_row_where_it_was_announced() {
+  let fake = fake_or_skip!();
+  let h = Harness::new(&fake, json!({}));
+  let s = session(&h).await;
+  prompt(&s, "subagents-claude-hidden").await;
+  let k1 = sub(&s, "sessionId", "k1").unwrap()["id"].as_str().unwrap().to_owned();
+  let k2 = sub(&s, "sessionId", "k2").unwrap()["id"].as_str().unwrap().to_owned();
+  let blocks = root_blocks(&s);
+  let order: Vec<String> = blocks
+    .iter()
+    .map(|b| if b["type"] == "tool_call" { b["subagentId"].as_str().map_or_else(|| b["id"].as_str().unwrap().to_owned(), str::to_owned) } else { b["type"].as_str().unwrap().to_owned() })
+    .collect();
+  assert_eq!(order, ["text", k1.as_str(), k2.as_str(), "root-t1", "text"]);
+  expect_match(&blocks[1], json!({ "id": format!("subagent:{k1}"), "verbKey": "verb.delegate", "target": "Explore shared", "status": "completed" }));
 }
 
 #[tokio::test(flavor = "multi_thread")]

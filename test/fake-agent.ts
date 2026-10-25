@@ -1387,6 +1387,20 @@ const app = acp.agent({ name: 'fake-agent' })
         return { stopReason: 'end_turn' };
       }
 
+      if (text === 'subagents-claude-hidden') {
+        // claude-agent-acp 0.93.0 keeps native Agent calls off the parent stream: a parallel launch is two bare announces
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'delegating' } });
+        await sendExt({ sessionUpdate: 'subagent_spawned', subagentSessionId: 'k1', name: 'Explore shared', task: 'map src/shared', capabilities: {} });
+        await sendExt({ sessionUpdate: 'subagent_spawned', subagentSessionId: 'k2', name: 'Explore host', task: 'map src/host', capabilities: {} });
+        await sendTo('k1', { sessionUpdate: 'tool_call', toolCallId: 'k1-t1', title: 'Glob', kind: 'search', status: 'completed',
+          _meta: { claudeCode: { parentToolUseId: 'call_k1' } } });
+        await send({ sessionUpdate: 'tool_call', toolCallId: 'root-t1', title: 'ls', kind: 'execute', status: 'completed' });
+        await sendExt({ sessionUpdate: 'subagent_state_update', subagentSessionId: 'k1', state: 'completed' });
+        await sendExt({ sessionUpdate: 'subagent_state_update', subagentSessionId: 'k2', state: 'completed' });
+        await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'root done' } });
+        return { stopReason: 'end_turn' };
+      }
+
       if (text === 'subagents-devin') {
         await sendTo(sid, { sessionUpdate: 'tool_call', toolCallId: 'run_subagent:0#a1', title: 'Ran explore subagent Count files in src/shared', kind: 'other', status: 'in_progress',
           rawInput: { title: 'Count files in src/shared', task: 'Count the files under src/shared', profile: 'subagent_explore', is_background: true },
