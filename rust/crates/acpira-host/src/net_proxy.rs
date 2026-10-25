@@ -9,42 +9,19 @@
 //!   engine's own HTTP client alike
 //!
 //! `ACPIRA_PROXY` overrides the setting: CLI subcommands (`acpira install-agent`) and the harness have no settings, and
-//! the in-app installer hands the route it chose to them through it.
+//! the in-app installer hands the route it chose to them through it. The mode and its resolution are
+//! `acpira_shared::proxy`, which the desktop shell's own downloads use too.
 
 use std::collections::BTreeMap;
-use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 
+pub use acpira_shared::proxy::{AUTO_PORT, OVERRIDE_ENV, ProxyMode, port_listening, resolve};
 use parking_lot::Mutex;
 
-/// The port `auto` looks at on the loopback interface
-pub const AUTO_PORT: u16 = 7890;
-/// The variable that overrides the setting
-pub const OVERRIDE_ENV: &str = "ACPIRA_PROXY";
 /// How long one loopback probe answers `auto` before the port is looked at again (a proxy app started or quit)
 const PROBE_TTL: Duration = Duration::from_secs(10);
-/// A loopback connect either succeeds or is refused at once; this only bounds a firewall that drops the SYN
-const PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 /// Never sent through the proxy: the engine's own sockets and local model gateways
 const LOOPBACK: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProxyMode {
-  Auto,
-  Off,
-  Url(String),
-}
-
-impl ProxyMode {
-  /// A setting value; an empty, unknown or malformed value reads as `auto` (`acpira_shared::settings::proxy_setting`)
-  pub fn parse(raw: &str) -> ProxyMode {
-    match acpira_shared::settings::proxy_setting(&serde_json::Value::from(raw)).as_str() {
-      "auto" => ProxyMode::Auto,
-      "off" => ProxyMode::Off,
-      url => ProxyMode::Url(url.to_owned()),
-    }
-  }
-}
 
 static MODE: Mutex<Option<ProxyMode>> = Mutex::new(None);
 static PROBE: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
@@ -58,8 +35,8 @@ pub fn set_setting(raw: &str) {
 
 /// The mode in effect: `ACPIRA_PROXY` first, then the setting, `auto` before any setting arrived
 pub fn mode() -> ProxyMode {
-  if let Ok(v) = std::env::var(OVERRIDE_ENV) {
-    return ProxyMode::parse(&v);
+  if std::env::var_os(OVERRIDE_ENV).is_some() {
+    return ProxyMode::effective(None);
   }
   MODE.lock().clone().unwrap_or(ProxyMode::Auto)
 }
@@ -67,15 +44,6 @@ pub fn mode() -> ProxyMode {
 /// The proxy URL everything started now should use; None leaves the inherited environment alone
 pub fn current() -> Option<String> {
   resolve(&mode(), auto_listening)
-}
-
-/// `current` with the loopback probe injected (tests)
-pub fn resolve(mode: &ProxyMode, listening: impl Fn() -> bool) -> Option<String> {
-  match mode {
-    ProxyMode::Off => None,
-    ProxyMode::Url(u) => Some(u.clone()),
-    ProxyMode::Auto => listening().then(|| format!("http://127.0.0.1:{AUTO_PORT}")),
-  }
 }
 
 /// Whether something accepts connections on 127.0.0.1:AUTO_PORT, cached for PROBE_TTL
@@ -89,11 +57,6 @@ fn auto_listening() -> bool {
   let up = port_listening(AUTO_PORT);
   *probe = Some((Instant::now(), up));
   up
-}
-
-/// One loopback connect to `port`
-pub fn port_listening(port: u16) -> bool {
-  TcpStream::connect_timeout(&SocketAddr::from((Ipv4Addr::LOCALHOST, port)), PROBE_TIMEOUT).is_ok()
 }
 
 /// The variables that route a child through `url`: both spellings of the proxy variables (curl only reads lower-case
@@ -170,41 +133,6 @@ fn ureq_proxy(url: &str) -> Option<ureq::Proxy> {
 #[cfg(test)]
 mod tests {
   use super::*;
-
-  #[test]
-  fn setting_values_parse_into_auto_off_or_a_url() {
-    assert_eq!(ProxyMode::parse(""), ProxyMode::Auto);
-    assert_eq!(ProxyMode::parse(" Auto "), ProxyMode::Auto);
-    assert_eq!(ProxyMode::parse("off"), ProxyMode::Off);
-    assert_eq!(ProxyMode::parse("DIRECT"), ProxyMode::Off);
-    assert_eq!(ProxyMode::parse("http://127.0.0.1:7897/"), ProxyMode::Url("http://127.0.0.1:7897".into()));
-    assert_eq!(ProxyMode::parse("10.0.0.2:3128"), ProxyMode::Url("http://10.0.0.2:3128".into()));
-    assert_eq!(ProxyMode::parse("socks5h://u:p@proxy:1080"), ProxyMode::Url("socks5h://u:p@proxy:1080".into()));
-    // Malformed values never break the network: they fall back to auto
-    assert_eq!(ProxyMode::parse("ftp://x:21"), ProxyMode::Auto);
-    assert_eq!(ProxyMode::parse("http://:8080"), ProxyMode::Auto);
-    assert_eq!(ProxyMode::parse("http://host:1/path"), ProxyMode::Auto);
-    assert_eq!(ProxyMode::parse("not a proxy"), ProxyMode::Auto);
-  }
-
-  #[test]
-  fn auto_uses_the_local_port_only_while_it_listens() {
-    let on = || true;
-    let down = || false;
-    assert_eq!(resolve(&ProxyMode::Auto, on).as_deref(), Some("http://127.0.0.1:7890"));
-    assert_eq!(resolve(&ProxyMode::Auto, down), None);
-    assert_eq!(resolve(&ProxyMode::Off, on), None);
-    assert_eq!(resolve(&ProxyMode::Url("http://p:1".into()), down).as_deref(), Some("http://p:1"));
-  }
-
-  #[test]
-  fn the_loopback_probe_sees_a_listener_and_a_closed_port() {
-    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = l.local_addr().unwrap().port();
-    assert!(port_listening(port));
-    drop(l);
-    assert!(!port_listening(port));
-  }
 
   #[test]
   fn the_engine_proxy_keeps_loopback_direct_for_http_and_socks() {

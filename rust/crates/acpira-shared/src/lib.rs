@@ -17,6 +17,7 @@ pub mod model_shapes;
 pub mod model_sources;
 pub mod models;
 pub mod num;
+pub mod proxy;
 pub mod plan_execution;
 pub mod protocol;
 pub mod providers;
