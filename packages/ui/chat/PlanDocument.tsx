@@ -25,7 +25,7 @@ export const PlanDocumentContext = createContext<{
   theme?: 'dark' | 'light';
   permissions?: PermissionBlock[];
   build?: (planId: string, model?: ExecutionModel, optionId?: string) => void;
-  open?: (planId: string) => void;
+  open?: (plan: PlanDocumentBlock) => void;
 }>({ controls: { modes: [], options: [] }, running: false, ready: false });
 
 // Saved plans stay outside the process fold. Model selection is local until Build,
@@ -76,7 +76,7 @@ export function PlanDocument({ block, permission: suppliedPermission, onChoose }
       {/* Open-in-editor: the file viewer's glyph, placed and revealed like a code block's copy button */}
       <div className="absolute z-3 top-gap-half right-gap-half opacity-0 transition-opacity duration-(--code-copy-duration) ease-out group-hover/plan:opacity-100 group-focus-within/plan:opacity-100 [@media(hover:none)]:opacity-100 motion-reduce:transition-none">
         <IconButton size="sm" className="bg-bg-2 ring ring-conversation-line" title={t('plan.openFile')} aria-label={t('plan.openFile')}
-          onClick={() => ctx.open?.(block.id)} disabled={!ctx.open}>
+          onClick={() => ctx.open?.(block)} disabled={!ctx.open}>
           <ExternalLink strokeWidth={1.5} />
         </IconButton>
       </div>

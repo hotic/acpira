@@ -147,6 +147,13 @@ const isMarkdown = (path: string) => /\.(md|markdown|mdx)$/i.test(path);
 
 // The last preview choice, carried to the next Markdown file this page opens
 let previewMarkdown = false;
+let previewAsk = 0;
+
+// Opening a plan document switches the viewer into Markdown preview
+export function preferMarkdownPreview() {
+  previewMarkdown = true;
+  previewAsk++;
+}
 
 // YAML front matter (a skill's `name` / `description`) would render as a rule and a setext heading; it shows as a YAML block
 function previewText(text: string): string {
@@ -173,6 +180,8 @@ const BLOCK = 40;
 export interface FileViewerProps {
   sessionId: string;
   path: string;
+  // Inline text for a plan document whose file is not inside the project folder
+  text?: string;
   // What the changes are measured against: before this session first edited the file when it did, else the last commit.
   // Not offered as a pick since 2026-10-24 (a dropdown on the bar was judged unnecessary)
   base: ProjectBase;
@@ -184,7 +193,7 @@ export interface FileViewerProps {
   // The picked range's text, for the chat
   onSelectionText: (r: LineRange | undefined, text: string) => void;
   onAdd: (r: LineRange, text: string) => void;
-  onReveal: () => void;
+  onReveal?: () => void;
   onOpenEditor?: (line?: number) => void;
   // A link in the Markdown preview: a path as written in the file (relative to its folder, or absolute)
   onOpenLink?: (path: string, line?: number) => void;
@@ -201,7 +210,9 @@ export function FileViewer(p: FileViewerProps) {
   const light = useTheme() === 'light';
   const [read, setRead] = useState<FileRead & { key: string }>();
   const key = `${p.path}\n${p.base}`;
+  const inline = useMemo<FileRead | undefined>(() => (p.text !== undefined ? { text: p.text, hunks: [] } : undefined), [p.text]);
   useEffect(() => {
+    if (p.text !== undefined) return;
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     void project.file(p.sessionId, p.path, p.base).then(r => {
@@ -214,8 +225,8 @@ export function FileViewer(p: FileViewerProps) {
       apply();
     });
     return () => { live = false; if (timer !== undefined) clearTimeout(timer); };
-  }, [p.sessionId, key, p.refresh]);
-  const current = read?.key === key ? read : undefined;
+  }, [p.sessionId, key, p.refresh, p.text !== undefined]);
+  const current = inline ?? (read?.key === key ? read : undefined);
   const colored = useHighlight(p.path, current);
   const hunks = current?.hunks ?? [];
   const rows = useMemo(() => (current?.text !== undefined ? viewRows(current.text, current.hunks, colored?.after, colored?.removed) : []), [current, colored]);
@@ -228,8 +239,13 @@ export function FileViewer(p: FileViewerProps) {
   });
   // Soft wrap is the default in a side panel; a continuation line hangs two columns past the line's own indentation
   const [wrap, setWrap] = useState(true);
-  const markdown = isMarkdown(p.path);
+  const markdown = isMarkdown(p.path) || p.text !== undefined;
   const [preview, setPreview] = useState(previewMarkdown);
+  const lastAsk = useRef(previewAsk);
+  if (lastAsk.current !== previewAsk) {
+    lastAsk.current = previewAsk;
+    if (markdown && !preview) setPreview(true);
+  }
   const previewing = markdown && preview && current?.text !== undefined;
   const togglePreview = () => setPreview(v => (previewMarkdown = !v));
   const scroller = useRef<HTMLDivElement>(null);
@@ -288,7 +304,7 @@ export function FileViewer(p: FileViewerProps) {
       {/* A narrow viewer sheds the folder, then open-in-editor and the count; the name truncates last */}
       <div className={cn(VIEW_BAR, '@container/viewer')}>
         <FileGlyph name={p.path} className="text-fg-3" />
-        <button type="button" onClick={p.onReveal} title={t('panel.reveal', { path: p.path })} className="flex min-w-0 shrink items-baseline gap-1.5 text-left">
+        <button type="button" onClick={p.onReveal} disabled={!p.onReveal} title={p.onReveal ? t('panel.reveal', { path: p.path }) : p.path} className="flex min-w-0 shrink items-baseline gap-1.5 text-left">
           <span className="min-w-0 truncate text-2 font-medium text-fg-1">{nameOf(p.path)}</span>
           {dir && <span className="min-w-0 truncate text-3 text-fg-3 @max-bar-path/viewer:hidden" dir="rtl"><bdi>{dir}</bdi></span>}
         </button>

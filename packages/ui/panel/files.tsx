@@ -9,6 +9,7 @@ export const dirOf = (path: string) => (path.includes('/') ? path.slice(0, path.
 
 // The absolute path of `rel` under the project folder, in the folder's own separators
 export function absPath(root: string, rel: string): string {
+  if (/^([a-z]:)?[\\/]/i.test(rel)) return rel;
   const sep = root.includes('\\') && !root.includes('/') ? '\\' : '/';
   return `${root.replace(/[\\/]+$/, '')}${sep}${sep === '\\' ? rel.replace(/\//g, '\\') : rel}`;
 }

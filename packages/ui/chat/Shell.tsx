@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type RefObject } from 'react';
 import { flushSync } from 'react-dom';
 import { Check, CircleAlert, Network, Paperclip, Settings2, X } from 'lucide-react';
-import type { ExternalSessionInfo, AccountInfo, AgentId, AgentInfo, ForkOrigin, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@acpira/shared/transcript';
+import type { ExternalSessionInfo, AccountInfo, AgentId, AgentInfo, ForkOrigin, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, NativeSessionInfo, PermissionBlock, PlanDocumentBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@acpira/shared/transcript';
 import type { SubagentSummary } from '@acpira/shared/subagents';
 import type { ModelShapes } from '@acpira/shared/modelShapes';
 import type { HiddenMap, SessionScope } from '@acpira/shared/settings';
@@ -58,7 +58,7 @@ import { TurnActionsContext } from './TurnActions';
 import { ForkBoundary } from './ForkBoundary';
 import { SubagentInspector } from './subagents/SubagentInspector';
 import { InspectorSplitter, clamp, usePreferredPaneWidth, type PaneBounds } from './subagents/InspectorSplitter';
-import { ToolPanelDock, projectPath } from '../panel/ToolPanel';
+import { ToolPanelDock, openPlanInPanel, projectPath } from '../panel/ToolPanel';
 import { markShellResize } from '../panel/api';
 import { FilesLayout } from '../panel/FilesLayout';
 import { panel, usePanelValue } from '../panel/store';
@@ -708,11 +708,26 @@ export function Shell(p: ShellProps) {
   }), [p.running, steering, reviseBlock, reviseChoice, p.activeSessionId, on.permission, p.status, p.theme, turnCount, isCompacting, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact, p.personas, p.onOpenSettings]);
   // Context values above the transcript must not change on every stream push: React walks the whole memoized tree for consumers each time
   const permissions = useStableList(useMemo(() => p.turns.flatMap(t => t.role === 'agent' ? t.blocks.filter((b): b is PermissionBlock => b.type === 'permission') : []), [p.turns]));
+  const plans = useStableList(useMemo(() => p.turns.flatMap(t => t.role === 'agent' ? t.blocks.filter((b): b is PlanDocumentBlock => b.type === 'plan_document') : []), [p.turns]));
+  const plansRef = useRef(plans);
+  plansRef.current = plans;
+  // Desktop: a file of the session's project (or a plan document) opens in the tool panel (panel/ToolPanel.tsx), anything else in the editor
+  const panelRoot = desktop && !p.noProject && !p.external ? p.cwd : undefined;
+  useEffect(() => {
+    if (panelRoot && plans.length) panel.syncPlans(panelRoot, plans);
+  }, [panelRoot, plans]);
+  const openPlanInEditor = useMemo(() => p.activeSessionId && on.openPlan
+    ? (id: string) => on.openPlan!(p.activeSessionId!, id) : undefined, [p.activeSessionId, on.openPlan]);
   const planDoc = useMemo(() => ({
     controls: p.controls, hidden: p.hidden?.[p.agent.id], running: p.running, ready: p.status === 'ready', theme: p.theme, permissions,
     build: p.activeSessionId && on.buildPlan ? (id: string, model?: { configId: string; value: string }, optionId?: string) => on.buildPlan!(p.activeSessionId!, id, model, optionId) : undefined,
-    open: p.activeSessionId && on.openPlan ? (id: string) => on.openPlan!(p.activeSessionId!, id) : undefined,
-  }), [p.controls, p.hidden, p.agent.id, p.running, p.status, p.theme, permissions, p.activeSessionId, on.buildPlan, on.openPlan]);
+    open: p.activeSessionId && (panelRoot || on.openPlan)
+      ? (plan: PlanDocumentBlock) => {
+          if (panelRoot) openPlanInPanel(panelRoot, plan);
+          else on.openPlan?.(p.activeSessionId!, plan.id);
+        }
+      : undefined,
+  }), [p.controls, p.hidden, p.agent.id, p.running, p.status, p.theme, permissions, p.activeSessionId, on.buildPlan, on.openPlan, panelRoot]);
   // Stable across stream pushes (every prompt card subscribes); the composer props go through their own context to the open editor
   const editable = !composerProps.disabled && !composerProps.running && !held.running;
   const history = useMemo(() => on.editTurn && p.activeSessionId ? {
@@ -737,15 +752,15 @@ export function Shell(p: ShellProps) {
     return titles;
   }, [p.sessions, locale]);
   const sessionTitle = useCallback((ref: string) => titlesRef.current.get(ref), []);
-  // Desktop: a file of the session's project opens in the tool panel (panel/ToolPanel.tsx), anything else in the editor
-  const panelRoot = desktop && !p.noProject && !p.external ? p.cwd : undefined;
   const openToolFile = useMemo(() => {
     const sid = p.activeSessionId;
     if (!sid || (!on.openFile && !panelRoot)) return undefined;
     return (path: string, line?: number) => {
       const rel = panelRoot ? projectPath(panelRoot, path) : undefined;
-      if (panelRoot && rel !== undefined) panel.openFile(panelRoot, rel, line);
-      else on.openFile?.(sid, path, line);
+      if (panelRoot && rel !== undefined) { panel.openFile(panelRoot, rel, line); return; }
+      const plan = panelRoot ? plansRef.current.find(b => b.path === path) : undefined;
+      if (panelRoot && plan) { openPlanInPanel(panelRoot, plan, line); return; }
+      on.openFile?.(sid, path, line);
     };
   }, [p.activeSessionId, on.openFile, panelRoot]);
   const openInEditor = useMemo(() => p.activeSessionId && on.openFile
@@ -1038,9 +1053,9 @@ export function Shell(p: ShellProps) {
           )}
           {panelRoot && (files
             ? <FilesLayout sessionId={p.activeSessionId!} root={panelRoot} running={p.running} searchFiles={on.searchFiles} openEditor={openInEditor}
-                shareSelection={p.shareEditorSelection} foot={gear} sessionsShown={!columnHidden} onToggleSessions={toggleSessions} />
+                openPlan={openPlanInEditor} shareSelection={p.shareEditorSelection} foot={gear} sessionsShown={!columnHidden} onToggleSessions={toggleSessions} />
             : <ToolPanelDock sessionId={p.activeSessionId} cwd={panelRoot} running={p.running} narrow={!canDock} sheet={mainColumn}
-                searchFiles={on.searchFiles} openEditor={openInEditor} shareSelection={p.shareEditorSelection} />)}
+                searchFiles={on.searchFiles} openEditor={openInEditor} openPlan={openPlanInEditor} shareSelection={p.shareEditorSelection} />)}
           {/* Last, so it stays over the drawer of a narrow window. The files layout's left column is the explorer */}
           {desktop && <TitleRow onBack={trail.back} onForward={trail.forward}
             column={files

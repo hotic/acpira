@@ -15,7 +15,7 @@ import { lastRead, project, sameRead, shellResizeIdleIn, type GitStatus } from '
 import { registerBrowserFrame } from './browserTabs';
 import { FileGlyph, absPath, dirOf, markIndex, nameOf, relPath } from './files';
 import { FileTree, ancestors } from './FileTree';
-import { FileViewer, ReviewView } from './FileViewer';
+import { FileViewer, ReviewView, preferMarkdownPreview } from './FileViewer';
 import { NewTab, type TabPick } from './NewTab';
 import { FILES_TAB, panel, usePanel, viewKey, type LineRange, type PanelTab, type PanelView } from './store';
 import { TerminalFrame } from './TerminalFrame';
@@ -76,6 +76,7 @@ export interface ToolPanelDockProps {
   sheet: RefObject<HTMLDivElement | null>;
   searchFiles: (query: string) => Promise<FileHit[]>;
   openEditor?: (path: string, line?: number) => void;
+  openPlan?: (planId: string) => void;
   // The composer offers a picked range as the live selection (the shell's "share editor selection" setting)
   shareSelection?: boolean;
 }
@@ -135,7 +136,7 @@ export const ToolPanelDock = memo(function ToolPanelDock(p: ToolPanelDockProps) 
             onCommit={w => { setDragW(undefined); panel.setWidth(w); }} onReset={() => { setDragW(undefined); panel.setWidth(undefined); }} />
         )}
         {p.cwd && p.sessionId && opened && (
-          <ToolPanel key={p.sessionId} sessionId={p.sessionId} root={p.cwd} running={p.running} searchFiles={p.searchFiles} openEditor={p.openEditor} shareSelection={p.shareSelection} />
+          <ToolPanel key={p.sessionId} sessionId={p.sessionId} root={p.cwd} running={p.running} searchFiles={p.searchFiles} openEditor={p.openEditor} openPlan={p.openPlan} shareSelection={p.shareSelection} />
         )}
       </aside>
       {p.cwd && p.sessionId && (
@@ -236,12 +237,26 @@ export function terminalPathOpener(root: string, openEditor?: (path: string, lin
   };
 }
 
+// A plan document opened on the desktop: in the tool panel's Markdown viewer, as a project file when its path lies inside
+// `root`, else with the plan's own Markdown
+export function openPlanInPanel(root: string, plan: { id: string; path?: string; markdown: string }, line?: number) {
+  preferMarkdownPreview();
+  const rel = plan.path ? projectPath(root, plan.path) : undefined;
+  if (rel !== undefined) {
+    panel.openFile(root, rel, line);
+    return;
+  }
+  const path = plan.path ? plan.path.replace(/\\/g, '/') : 'plan.md';
+  panel.openPlan(root, { path, text: plan.markdown, planId: plan.id, ...(line !== undefined ? { line } : {}) });
+}
+
 interface ToolPanelProps {
   sessionId: string;
   root: string;
   running: boolean;
   searchFiles: (query: string) => Promise<FileHit[]>;
   openEditor?: (path: string, line?: number) => void;
+  openPlan?: (planId: string) => void;
   shareSelection?: boolean;
 }
 
@@ -373,7 +388,13 @@ export function useProjectFiles({ sessionId, root, running, shareSelection, show
   // A folder on an SSH host: its files by their path there, as the agent's tools name them
   const hostRoot = parseRemoteFolder(root)?.path ?? root;
   const uriOf = (path: string) => fileUriOf(absPath(hostRoot, path)) ?? absPath(hostRoot, path);
-  const select = (r: LineRange | undefined) => file && panel.setView(key, { path: file.path, ...(file.line !== undefined ? { line: file.line } : {}), ...(r ? { selection: r } : {}) });
+  const select = (r: LineRange | undefined) => file && panel.setView(key, {
+    path: file.path,
+    ...(file.text !== undefined ? { text: file.text } : {}),
+    ...(file.planId !== undefined ? { planId: file.planId } : {}),
+    ...(file.line !== undefined ? { line: file.line } : {}),
+    ...(r ? { selection: r } : {}),
+  });
   // A picked range is the live editor selection the composer offers, like an IDE editor's
   const liveSelection = useCallback((r: LineRange | undefined, text: string) => {
     if (!shareSelection) return;
@@ -394,23 +415,30 @@ export function useProjectFiles({ sessionId, root, running, shareSelection, show
 
 // What the viewer side shows: the session's review, or a file of the project with its changes against a base. `onClose`
 // (the tool panel's Files tab, which has no file tabs to close): a × on the viewer's bar gives the tab back to the tree
-export function ViewPane({ f, openEditor, onClose }: { f: ProjectFiles; openEditor?: (path: string, line?: number) => void; onClose?: () => void }) {
+export function ViewPane({ f, openEditor, openPlan, onClose }: { f: ProjectFiles; openEditor?: (path: string, line?: number) => void; openPlan?: (planId: string) => void; onClose?: () => void }) {
   const { file, root } = f;
   if (f.view === 'review') {
     return <ReviewView sessionId={f.sessionId} changes={f.changes} refresh={f.refresh} onOpen={path => { const rel = projectPath(root, path); if (rel !== undefined) f.open(rel); }} onClose={onClose} />;
   }
   if (!file) return null;
+  const openInEditor = file.planId && (openPlan || openEditor)
+    ? (line?: number) => {
+        if (line !== undefined && openEditor && /^([a-z]:)?[\\/]/i.test(file.path)) openEditor(file.path, line);
+        else if (openPlan) openPlan(file.planId!);
+        else if (openEditor && /^([a-z]:)?[\\/]/i.test(file.path)) openEditor(file.path, line);
+      }
+    : openEditor && ((line?: number) => openEditor(absPath(parseRemoteFolder(root)?.path ?? root, file.path), line));
   return (
-    <FileViewer key={file.path} sessionId={f.sessionId} path={file.path} base={f.base}
+    <FileViewer key={file.path} sessionId={f.sessionId} path={file.path} text={file.text} base={f.base}
       refresh={f.refresh} line={file.line} selection={file.selection}
-      onSelect={f.select} onSelectionText={f.liveSelection} onAdd={f.addRange} onReveal={() => f.reveal(file.path)}
-      onOpenEditor={openEditor && (line => openEditor(absPath(parseRemoteFolder(root)?.path ?? root, file.path), line))}
-      onOpenLink={(target, line) => void openMarkdownLink(f, file.path, target, line, openEditor)} onClose={onClose} />
+      onSelect={f.select} onSelectionText={f.liveSelection} onAdd={f.addRange} onReveal={file.text === undefined ? () => f.reveal(file.path) : undefined}
+      onOpenEditor={openInEditor}
+      onOpenLink={(target, line) => void openMarkdownLink(f, file.text === undefined ? file.path : '', target, line, openEditor)} onClose={onClose} />
   );
 }
 
 // A Files tab: the viewer (a file or the session's review) beside the project's tree, or the tree alone
-function FilesTab({ sessionId, root, running, searchFiles, openEditor, shareSelection, shown, tab: id }: ToolPanelProps & { shown: boolean; tab: string }) {
+function FilesTab({ sessionId, root, running, searchFiles, openEditor, openPlan, shareSelection, shown, tab: id }: ToolPanelProps & { shown: boolean; tab: string }) {
   const s = usePanel();
   const tab = useRef<HTMLDivElement>(null);
   const f = useProjectFiles({ sessionId, root, running, shareSelection, shown: s.open, reviewByDefault: id === FILES_TAB, tab: id });
@@ -426,14 +454,14 @@ function FilesTab({ sessionId, root, running, searchFiles, openEditor, shareSele
   const split = !!f.view;
   return (
     <div ref={tab} className={cn('absolute inset-0 flex', !shown && 'invisible')} data-files-tab>
-      {split && <div className="flex min-w-0 flex-1 flex-col"><ViewPane f={f} openEditor={openEditor} onClose={() => panel.setView(f.key, null)} /></div>}
+      {split && <div className="flex min-w-0 flex-1 flex-col"><ViewPane f={f} openEditor={openEditor} openPlan={openPlan} onClose={() => panel.setView(f.key, null)} /></div>}
       <div className={cn('relative flex min-h-0 shrink-0 flex-col', dragW === undefined && 'transition-[width] duration-300 ease-[cubic-bezier(.3,.7,.2,1)]', split && 'border-l border-line')}
         style={{ width: split ? (treeW !== undefined ? `clamp(var(--tree-min), ${treeW}px, calc(100% - var(--viewer-min)))` : 'clamp(var(--tree-min), var(--tree-share), var(--tree-max))') : '100%' }}>
         {split && (
           <InspectorSplitter width={treeW} bounds={treeBounds} onDrag={setDragW}
             onCommit={w => { setDragW(undefined); panel.setTreeW(w); }} onReset={() => { setDragW(undefined); panel.setTreeW(undefined); }} />
         )}
-        <FileTree sessionId={sessionId} root={root} refresh={f.refresh} mark={f.mark} changes={f.changes} active={f.file?.path} review={f.view === 'review'}
+        <FileTree sessionId={sessionId} root={root} refresh={f.refresh} mark={f.mark} changes={f.changes} active={f.file?.text === undefined ? f.file?.path : undefined} review={f.view === 'review'}
           expanded={f.expanded} setExpanded={f.setExpanded} onOpen={f.open} onReview={() => panel.setView(f.key, 'review')} onMention={f.mention} search={searchFiles} />
       </div>
     </div>

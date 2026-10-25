@@ -27,6 +27,7 @@ export interface FilesLayoutProps {
   running: boolean;
   searchFiles: (query: string) => Promise<FileHit[]>;
   openEditor?: (path: string, line?: number) => void;
+  openPlan?: (planId: string) => void;
   shareSelection?: boolean;
   // The gear menu, at the explorer's foot: bottom-left in both layouts
   foot?: ReactNode;
@@ -111,7 +112,7 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
           <TitleSpace />
           {/* One tree per project: its listings and filter belong to that root (the tree caches folders it was asked for, so
               a session in another project kept the last project's tree). A switch paints the project's cached tree */}
-          <FileTree key={root} sessionId={p.sessionId} root={root} refresh={f.refresh} mark={f.mark} changes={f.changes} active={shown && shown !== 'review' ? shown.path : undefined}
+          <FileTree key={root} sessionId={p.sessionId} root={root} refresh={f.refresh} mark={f.mark} changes={f.changes} active={shown && shown !== 'review' && shown.text === undefined ? shown.path : undefined}
             review={shown === 'review'} expanded={f.expanded} setExpanded={f.setExpanded} onOpen={f.open} onReview={() => panel.showView(root, 'review')}
             onMention={f.mention} search={p.searchFiles} />
           {p.foot}
@@ -139,7 +140,7 @@ export const FilesLayout = memo(function FilesLayout(p: FilesLayoutProps) {
         </div>
         <div className="relative min-h-0 flex-1 border-t border-line">
           {onFiles && (shown
-            ? <div className="absolute inset-0 flex"><div className="flex min-w-0 flex-1 flex-col"><ViewPane f={f} openEditor={p.openEditor} /></div></div>
+            ? <div className="absolute inset-0 flex"><div className="flex min-w-0 flex-1 flex-col"><ViewPane f={f} openEditor={p.openEditor} openPlan={p.openPlan} /></div></div>
             // Nothing open: what to open, this session's changed files first; the chat never moves back to the middle
             : <NewTab focus={false} changes={{ files: f.changes, onOpen: f.open }} onPick={choice => pick(choice)} />)}
           {pages.map(tab => {
