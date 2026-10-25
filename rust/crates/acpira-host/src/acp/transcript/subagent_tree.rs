@@ -17,8 +17,8 @@ use acpira_shared::transcript::{
 };
 
 use crate::acp::transcript::normalize::{
-  Log, NormalizeState, ToolCtx, activity_of, apply_session_failure, apply_update, async_task_live, end_turn, find_tool_mut, latest_step,
-  live_activity,
+  Log, NormalizeState, ToolCtx, activity_of, apply_session_failure, apply_update, async_task_live, empty_tool, end_turn, find_tool_mut,
+  latest_step, live_activity,
 };
 use crate::acp::session::restore_turns::restore_interrupted_turns;
 use crate::acp::session::failure::failure_of;
@@ -45,6 +45,46 @@ impl RouteCtx<'_> {
   fn root_tool(&mut self, id: &str) -> Option<&mut ToolCallBlock> {
     find_tool_mut(self.root_turns, id)
   }
+
+  /// A stand-in delegation row at the live root turn's tail, for a root child whose launch call never reached the
+  /// stream: claude-agent-acp 0.93.0 keeps native `Agent` / `Task` calls out of the parent transcript, so without it the
+  /// child has no delegation point and renders after the whole turn. Skipped when a root row already names the node
+  fn place_anchor(&mut self, node: &str, title: Option<String>) {
+    let linked = self
+      .root_turns
+      .iter()
+      .filter_map(Turn::as_agent)
+      .flat_map(|t| &t.blocks)
+      .any(|b| matches!(b, AgentBlock::ToolCall(tc) if tc.subagent_id.as_deref() == Some(node)));
+    if linked {
+      return;
+    }
+    let Some(Turn::Agent(turn)) = self.root_turns.get_mut(self.turn_index) else { return };
+    let now = now_ms();
+    turn.blocks.push(AgentBlock::ToolCall(ToolCallBlock {
+      id: anchor_id(node),
+      verb_key: Some("verb.delegate".into()),
+      verb: t("verb.delegate"),
+      target: title,
+      status: ToolStatus::Completed,
+      started_at: Some(now),
+      ended_at: Some(now),
+      subagent_id: Some(node.to_owned()),
+      ..empty_tool(String::new())
+    }));
+  }
+
+  /// The node's real launch row linked: its stand-in goes, so the delegation sits where the call was
+  fn drop_anchor(&mut self, node: &str) {
+    let id = anchor_id(node);
+    for turn in self.root_turns.iter_mut().filter_map(Turn::as_agent_mut) {
+      turn.blocks.retain(|b| !matches!(b, AgentBlock::ToolCall(tc) if tc.id == id));
+    }
+  }
+}
+
+fn anchor_id(node: &str) -> String {
+  format!("subagent:{node}")
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -448,6 +488,7 @@ impl SubagentTree {
     }
     let launch = self.pending_launches.remove(&l.peer_session_id);
     let mut n = self.by(&self.by_session, &l.peer_session_id);
+    let is_new = n.is_none();
     if n.is_none()
       && let Some(launch) = &launch
       && let Some(prior) = self.by(&self.by_tool, &launch.tool_call_id)
@@ -499,8 +540,9 @@ impl SubagentTree {
       }
       let id = node.id.clone();
       if let Some(block) = ctx.root_tool(&launch.tool_call_id) {
-        block.subagent_id = Some(id);
+        block.subagent_id = Some(id.clone());
         seal_launch_receipt(block);
+        ctx.drop_anchor(&id);
       }
     }
     let node = &mut self.nodes[i];
@@ -518,6 +560,11 @@ impl SubagentTree {
     }
     node.meta = Some(l.meta);
     let id = node.id.clone();
+    // A root child announced with no launch row to sit on keeps its place in the stream
+    if is_new && node.parent_id.is_none() {
+      let title = node.title.clone();
+      ctx.place_anchor(&id, title);
+    }
     // Content buffered before the announce is still the child's, even when this update carries a terminal state
     self.replay_orphans(&l.peer_session_id.clone(), &id, ctx);
     if let Some(st) = l.state {
@@ -620,6 +667,7 @@ impl SubagentTree {
       if let Some(block) = ctx.root_tool(&link) {
         block.subagent_id = Some(nid.clone());
         seal_launch_receipt(block);
+        ctx.drop_anchor(&nid);
       }
       self.replay_orphans(&format!("tool:{link}"), &nid, ctx);
       i = match self.idx(&nid) {
@@ -951,6 +999,7 @@ impl SubagentTree {
     block.subagent_id = Some(id.clone());
     if self.nodes[i].visibility == SubagentVisibility::Session {
       seal_launch_receipt(block);
+      ctx.drop_anchor(&id);
       self.bump(&id);
       return;
     }
@@ -1164,6 +1213,7 @@ impl SubagentTree {
     }
     block.subagent_id = Some(id.clone());
     seal_launch_receipt(block);
+    ctx.drop_anchor(&id);
     self.nodes[i].peer.tool_call_id = Some(call.to_owned());
     self.by_tool.insert(call.to_owned(), id.clone());
     self.bump(&id);
