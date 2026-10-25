@@ -392,6 +392,8 @@
   --color-*: initial;
   --color-fg-1: var(--fg-1);
   --color-fg-2: var(--fg-2);
+  /* Below this width the session notice (chat/Notice.tsx) moves its actions under its text, keeping the title on one line */
+  --container-notice: 30rem;
   --color-fg-3: var(--fg-3);
   --color-fg-strong: var(--fg-strong);
   --color-bg-0: var(--bg-0);

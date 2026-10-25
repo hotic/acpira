@@ -67,8 +67,9 @@ const TEXT: Record<ShortStop, MsgKey | undefined> = {
   max_turn_requests: 'alert.maxTurns.text',
 };
 
-// Cursor's "Copy Request (id)": a faint text button that copies the whole detail and confirms for a moment; the visible label is the code · kind line when there is one
-function CopyDetail({ text, label }: { text: string; label: string }) {
+// Cursor's "Copy Request (id)": a faint text button that copies the whole detail and confirms for a moment; the visible label is the code · kind line when there is one,
+// the detail itself its tooltip
+export function CopyDetail({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -78,6 +79,7 @@ function CopyDetail({ text, label }: { text: string; label: string }) {
   return (
     <button
       type="button"
+      title={text}
       className="min-w-0 truncate rounded-md px-1.5 py-0.5 text-3 text-fg-3 transition-colors hover:bg-hover hover:text-fg-1 focus-visible:bg-hover focus-visible:text-fg-1"
       onClick={() => { void navigator.clipboard.writeText(text).then(() => setCopied(true)); }}
     >
