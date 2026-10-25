@@ -224,7 +224,8 @@ pnpm build          # VS Code shell (esbuild) + webview (Vite)
 pnpm probe grok     # run initialize + session/new against a CLI directly
 pnpm probe devin --import-local "Reply pong"   # via the account layer: import local login → authenticate → one turn
 pnpm typecheck && pnpm test
-pnpm package        # build this platform's .vsix with the Rust sidecar
+pnpm package        # one build, then this platform's .vsix and (arm64 Mac) the desktop app; package:vsix / package:desktop for one
+pnpm install:local  # install them: the .vsix into VS Code / Cursor, Acpira.app into /Applications
 (cd rust && cargo test --workspace)                  # the engine
 cd apps/intellij && ./gradlew test buildPlugin verifyPlugin   # IntelliJ plugin; buildMarketplacePlugin for the universal ZIP; buildPluginVariants for manual platform ZIPs
 ```
