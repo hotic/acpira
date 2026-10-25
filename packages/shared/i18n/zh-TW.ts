@@ -358,6 +358,7 @@ export const zhTW = {
   'composer.modeShort.ask': '問答模式',
   'composer.modeShort.code': '編碼模式',
   'composer.modeShort.build': '執行模式',
+  'composer.modeShort.workspace': '僅工作區',
   'composer.effort': '推理強度',
   'composer.standard': '標準',
   'composer.lead': '主模型',

@@ -356,6 +356,7 @@ export const ja = {
   'composer.modeShort.ask': '質問',
   'composer.modeShort.code': 'コード',
   'composer.modeShort.build': 'ビルド',
+  'composer.modeShort.workspace': 'ワークスペース',
   'composer.effort': '推論の強さ',
   'composer.standard': '標準',
   'composer.lead': 'メイン',

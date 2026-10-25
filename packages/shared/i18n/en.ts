@@ -354,6 +354,7 @@ export const en = {
   'composer.modeShort.ask': 'Ask',
   'composer.modeShort.code': 'Code',
   'composer.modeShort.build': 'Build',
+  'composer.modeShort.workspace': 'Workspace',
   'composer.effort': 'Reasoning effort',
   'composer.standard': 'Standard',
   'composer.lead': 'Lead',

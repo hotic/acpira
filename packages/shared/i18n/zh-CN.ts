@@ -360,6 +360,7 @@ export const zhCN = {
   'composer.modeShort.ask': '问答模式',
   'composer.modeShort.code': '编码模式',
   'composer.modeShort.build': '执行模式',
+  'composer.modeShort.workspace': '仅工作区',
   'composer.effort': '推理强度',
   'composer.standard': '标准',
   'composer.lead': '主模型',

@@ -348,6 +348,7 @@
   "composer.modeShort.ask": "Вопросы",
   "composer.modeShort.code": "Код",
   "composer.modeShort.build": "Сборка",
+  "composer.modeShort.workspace": "Рабочая папка",
   "composer.effort": "Глубина рассуждений",
   "composer.standard": "Стандартный",
   "composer.lead": "Ведущая",

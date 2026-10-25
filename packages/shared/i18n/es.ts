@@ -352,6 +352,7 @@ export const es = {
   'composer.modeShort.ask': 'Preguntar',
   'composer.modeShort.code': 'Código',
   'composer.modeShort.build': 'Build',
+  'composer.modeShort.workspace': 'Espacio de trabajo',
   'composer.effort': 'Esfuerzo de razonamiento',
   'composer.standard': 'Estándar',
   'composer.lead': 'Principal',
