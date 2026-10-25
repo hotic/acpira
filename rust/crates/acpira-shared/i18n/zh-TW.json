@@ -550,6 +550,8 @@
   "alert.retryHint": "從中斷處繼續；再次失敗時會先重啟 agent 程序並恢復這個工作階段",
   "alert.copy": "複製詳情",
   "alert.copyWith": "複製詳情（{detail}）",
+  "prose.taskNote": "模型寫的任務通知",
+  "prose.taskNote.hint": "這則通知是模型回覆裡的文字，不是 CLI 發來的事件，可能與任務的實際狀態不符；以對應指令列的狀態為準。",
   "alert.copied": "已複製",
   "question.title": "提問",
   "question.of": "{n} / {total}",

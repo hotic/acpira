@@ -11,8 +11,10 @@ import { decodeLocalImageSrc, rewriteFileHrefs, sameImageSource } from './fileLi
 import { AgentImage } from './AgentImage';
 import { mermaidDiagram } from './mermaidPlugin';
 import { useTheme } from '../look';
-import { QuietEntranceContext } from '../ui/Row';
-import { useLocale } from '../i18n';
+import { t, useLocale } from '../i18n';
+import { Bell } from 'lucide-react';
+import { QuietEntranceContext, Row, RowLabel, RowTarget } from '../ui/Row';
+import { TASK_NOTE_TAG, isolateTaskNotes, rewriteTaskNotes, withTaskNotes } from './taskNotes';
 
 // Full Markdown via streamdown: GFM + KaTeX + Mermaid, streaming-aware (remend repairs incomplete syntax mid-stream).
 // All typography lives in styles/prose.css under .acp-prose — Tailwind never scans node_modules, so streamdown's own classes don't resolve here.
@@ -25,7 +27,7 @@ const LINK_SAFETY = { enabled: false };
 const { raw: rehypeRaw, sanitize: rehypeSanitize, harden: rehypeHarden } = defaultRehypePlugins;
 if (!rehypeRaw || !rehypeSanitize || !rehypeHarden) throw new Error('streamdown default rehype plugins missing');
 // Rewrite file:// before sanitize/harden; urlTransform runs too late and harden would paint ` [blocked]`.
-const REHYPE = [rehypeRaw, rewriteFileHrefs, rehypeSanitize, rehypeHarden];
+const REHYPE = [rehypeRaw, rewriteFileHrefs, rewriteTaskNotes, withTaskNotes(rehypeSanitize), rehypeHarden];
 const REPLY_CLASS = 'acp-prose flex min-w-0 flex-col gap-gap text-1 text-fg-1';
 const THOUGHT_CLASS = 'acp-prose acp-thought flex min-w-0 flex-col gap-gap text-2 text-fg-2';
 // Static mode renders the whole markdown at once without splitting into blocks; passing a single-element splitter skips
@@ -75,7 +77,7 @@ export const Prose = memo(function Prose({ block, motion = STREAM_MOTION, onBusy
       parseMarkdownIntoBlocksFn={busy ? blocks.parse : STATIC_BLOCKS}
       className={tone === 'thought' ? THOUGHT_CLASS : REPLY_CLASS}
     >
-      {smooth.text}
+      {isolateTaskNotes(smooth.text)}
     </Streamdown>
     </LiveBlocks.Provider>
     </MarkdownImages.Provider>
@@ -177,7 +179,23 @@ const COMPONENTS: Components = {
       <table>{children}</table>
     </div>
   ),
-};
+  // A task notification the model wrote into its reply (`taskNotes.ts`)
+  [TASK_NOTE_TAG]: TaskNote,
+} as Components;
+
+// One quiet row: who wrote it, the summary it claims, and the task id; the tooltip says the command row holds the real state
+function TaskNote(props: Record<string, unknown>) {
+  const field = (name: string) => (typeof props[name] === 'string' ? props[name] as string : '');
+  const claim = field('data-summary') || field('data-status');
+  const task = field('data-task');
+  return (
+    <Row data-task-note lead={<Bell className="size-icon" strokeWidth={1.5} />} title={t('prose.taskNote.hint')}
+      trailing={task ? <span className="font-mono text-mono">{task}</span> : undefined}>
+      <RowLabel>{t('prose.taskNote')}</RowLabel>
+      {claim && <RowTarget>{claim}</RowTarget>}
+    </Row>
+  );
+}
 
 // The block's host-read local images; COMPONENTS is module-level, so the per-block list travels by context
 const MarkdownImages = createContext<ImageRef[] | undefined>(undefined);

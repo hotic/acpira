@@ -552,6 +552,8 @@
   "alert.retryHint": "Continue where the turn stopped; a second failure restarts the agent process and resumes this session first",
   "alert.copy": "Copy details",
   "alert.copyWith": "Copy details ({detail})",
+  "prose.taskNote": "Task notice written by the model",
+  "prose.taskNote.hint": "This notice is text in the model's reply, not an event from the CLI. It may not match the task's real state; the command row shows that.",
   "alert.copied": "Copied",
   "question.title": "Questions",
   "question.of": "{n} of {total}",

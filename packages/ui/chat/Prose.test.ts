@@ -45,6 +45,19 @@ describe('markdown prose', () => {
     expect(html.match(/\[blocked\]/g)?.length ?? 0).toBe(1);
   });
 
+  // Claude imitates a background task's notification at the end of a reply (stored transcript 2026-10-25)
+  it('renders a task notification the model wrote as one row, not loose text and a dead disclosure', () => {
+    const tag = '<task-notification>\n<task-id>bohum1hs5</task-id>\n<status>completed</status>\n<summary>Background command completed (exit code 0)</summary>\n</task-notification>';
+    for (const md of [`跑完会自动通知我。\n\n${tag}`, `跑完会自动通知我。\n${tag}`, `跑完会自动通知我。${tag.replace(/\n/g, '')}`, `跑完会自动通知我。\n\n${tag.replace(/\n/g, '\n\n')}\n然后继续。`]) {
+      const html = prose(md);
+      expect(html).toContain('跑完会自动通知我。');
+      expect(html).toMatch(/data-task-note[\s\S]*Background command completed \(exit code 0\)[\s\S]*bohum1hs5/);
+      expect(html).not.toMatch(/<summary|<p[^>]*>\s*<div/);
+      expect(html.match(/bohum1hs5/g)).toHaveLength(1);
+      if (md.endsWith('然后继续。')) expect(html).toMatch(/bohum1hs5[\s\S]*然后继续。/);
+    }
+  });
+
   it('leaves an unlabelled fence uncoloured', () => {
     const commit = "fix(webview): keep a steered message inside the running turn's stream\n\n- the fold's clip no longer shaves it";
     const html = renderToStaticMarkup(createElement(CodeBlock, { code: commit }));

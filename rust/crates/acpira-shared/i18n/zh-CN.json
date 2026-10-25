@@ -552,6 +552,8 @@
   "alert.retryHint": "从中断处继续；再次失败时会先重启 agent 进程并恢复这个会话",
   "alert.copy": "复制详情",
   "alert.copyWith": "复制详情（{detail}）",
+  "prose.taskNote": "模型写的任务通知",
+  "prose.taskNote.hint": "这条通知是模型回复里的文字，不是 CLI 发来的事件，可能和任务的真实状态不符；以对应命令行的状态为准。",
   "alert.copied": "已复制",
   "question.title": "提问",
   "question.of": "{n} / {total}",

@@ -545,6 +545,8 @@
   "alert.retryHint": "Dort weitermachen, wo der Durchlauf aufgehört hat; bei einem erneuten Fehler wird zuerst der Agent-Prozess neu gestartet und diese Sitzung fortgesetzt",
   "alert.copy": "Details kopieren",
   "alert.copyWith": "Details kopieren ({detail})",
+  "prose.taskNote": "Vom Modell geschriebene Aufgabenmeldung",
+  "prose.taskNote.hint": "Diese Meldung ist Text in der Antwort des Modells, kein Ereignis des CLI. Sie kann vom tatsächlichen Zustand der Aufgabe abweichen; maßgeblich ist die Zeile des Befehls.",
   "alert.copied": "Kopiert",
   "question.title": "Fragen",
   "question.of": "{n} von {total}",
