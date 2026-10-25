@@ -137,6 +137,9 @@
   --ctl-sm: 22px;
   --lead: 20px;
   --icon: 14px;
+  /* A folder on an SSH host (remote/RemoteFolderIcon): the globe badge's disc, hanging 4px past the icon's lower right
+     corner (-right-1 / -bottom-1); the folder is cut away under the whole disc */
+  --remote-badge: 10px;
   --icon-ctl: 16px;
   --pad: 14px;
   --pad-y: 18px;

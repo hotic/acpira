@@ -7,7 +7,8 @@
   const params = new URLSearchParams(location.search);
   const host = params.get('host') === 'editor' ? 'editor' : 'sidebar';
   if (params.get('theme') === 'light') document.body.className = 'vscode-light';
-  window.__acpira = { host };
+  // remote: the page offers SSH hosts (Settings → Connections), as the desktop app does
+  window.__acpira = { host, remote: true };
 
   // Settings live in the shell (an IDE would persist them); a snapshot of flat acpira.* keys goes with hello
   const SETTINGS_KEY = 'acpira-host-preview.settings';

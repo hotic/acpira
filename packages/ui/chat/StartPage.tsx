@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useState } from 'react';
 import { Check, ChevronDown, Folder, FolderPlus, Search } from 'lucide-react';
 import type { AgentId, AgentInfo } from '@acpira/shared/transcript';
 import { launchable } from '@acpira/shared/agentOrder';
+import { parseRemoteFolder } from '@acpira/shared/remote';
+import { RemoteFolderIcon } from '../remote/RemoteFolderIcon';
 import { cn } from '../ui/cn';
 import { Popover } from '../ui/Popover';
 import { t } from '../i18n';
@@ -36,8 +38,9 @@ export function usePresence(open: boolean): { mounted: boolean; shown: boolean }
 // The fold above the composer: a segmented picker of the agents, in the app's shape language (a rounded-lg frame,
 // rounded-md segments). The picked segment's name opens on its own grid track while the last one's closes, both on one
 // curve, and the fill cross-fades with them, so the segments slide aside instead of jumping. A pick shows at once; the
-// session it starts follows
-export function StartPicker({ open, agents, current, onPick }: { open: boolean; agents: AgentInfo[]; current: AgentId; onPick: (agent: AgentId) => void }) {
+// session it starts follows. `only`: the agents that can work in this project (a folder on an SSH host under local run
+// takes the built-in agent alone); the rest stay in place, greyed out, saying why
+export function StartPicker({ open, agents, current, only, onPick }: { open: boolean; agents: AgentInfo[]; current: AgentId; only?: AgentId[]; onPick: (agent: AgentId) => void }) {
   const [want, setWant] = useState<AgentId>();
   // A pick slides the segments under a still pointer: whichever lands beneath it stays unlit until the pointer moves
   const [settling, setSettling] = useState(false);
@@ -52,9 +55,11 @@ export function StartPicker({ open, agents, current, onPick }: { open: boolean; 
             onPointerMove={() => { if (settling) setSettling(false); }}>
             {offered.map(a => {
               const sel = a.id === pick;
-              const off = a.available === false;
+              const outside = !!only && !only.includes(a.id);
+              const off = a.available === false || outside;
+              const why = outside ? t('start.localRunOnly') : t('agent.notInstalled');
               return (
-                <button key={a.id} type="button" role="radio" aria-checked={sel} disabled={off} title={off ? `${a.name}${t('common.metaSep')}${t('agent.notInstalled')}` : a.name}
+                <button key={a.id} type="button" role="radio" aria-checked={sel} disabled={off} title={off ? `${a.name}${t('common.metaSep')}${why}` : a.name}
                   onClick={() => { if (!sel) { setSettling(true); setWant(a.id); onPick(a.id); } }}
                   className={cn('inline-flex h-ctl-sm shrink-0 items-center rounded-md px-2 transition-[background-color,color] duration-300 ease-(--start-ease) disabled:opacity-40',
                     sel ? 'bg-active text-fg-strong' : cn('text-fg-3', !settling && 'enabled:hover:bg-hover enabled:hover:text-fg-1'))}>
@@ -82,7 +87,12 @@ export function ProjectPick({ cwd, projects, home, onPick, onOpenOther }: { cwd:
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
   const shown = projects.filter(p => !q || p.toLowerCase().includes(q));
-  const short = (p: string) => (home && (p === home || p.startsWith(`${home}/`) || p.startsWith(`${home}\\`)) ? `~${p.slice(home.length)}` : p);
+  // A folder on an SSH host reads as the host, then its path there
+  const short = (p: string) => {
+    const remote = parseRemoteFolder(p);
+    if (remote) return `${remote.alias}  ${remote.path}`;
+    return home && (p === home || p.startsWith(`${home}/`) || p.startsWith(`${home}\\`)) ? `~${p.slice(home.length)}` : p;
+  };
   const close = () => { setOpen(false); setQuery(''); };
   return (
     <Popover.Root open={open} onOpenChange={o => { setOpen(o); if (!o) setQuery(''); }}>
@@ -102,7 +112,7 @@ export function ProjectPick({ cwd, projects, home, onPick, onOpenOther }: { cwd:
           {shown.map(p => (
             <button key={p} type="button" role="option" aria-selected={p === cwd} title={p} onClick={() => { close(); if (p !== cwd) onPick(p); }}
               className="flex shrink-0 items-center gap-gap rounded-md px-2 py-1 text-left transition-colors hover:bg-hover focus-visible:bg-hover">
-              <Folder className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} />
+              {parseRemoteFolder(p) ? <RemoteFolderIcon className="text-fg-3" /> : <Folder className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} />}
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate text-2 text-fg-1">{projectName(p)}</span>
                 <span className="truncate text-3 text-fg-3">{short(p)}</span>

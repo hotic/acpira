@@ -87,6 +87,15 @@ The binary for the host's platform comes from `ACPIRA_REMOTE_BIN` (any platform;
 - The round trip is looked at every 10 s and pushed when it moved by over a fifth (and at least 3 ms).
 - The pages: `helloOk.features` has `remote`. A page's first `connections` message subscribes it to the pushes. `connectionOp` answers with a push (and a toast on failure), `sshHosts` lists `~/.ssh/config` (Include, `Host` aliases without patterns, Match blocks skipped), and `remoteDir` lists a folder of the host (its home when `path` is absent), connecting first when needed.
 
+## The pages (`packages/ui/remote/`, `settings/ConnectionsPage.tsx`)
+
+- `remote/api.ts` is the only place that posts or reads these messages. Only the desktop app (`__acpira.shell === 'desktop'`) and the browser harness (`__acpira.remote`, `test/host-preview/shim.js`) send `connections` at `init`; the list stays `undefined` until the engine answers, and everything below keys off that, so VS Code and IntelliJ (which have Remote-SSH of their own) never show it.
+- Settings → Connections lists the hosts (state dot with words, run mode); a host opens a drill-in page: connect / disconnect / cancel, the step running or the failure with its fix (a host key or a locked key: connect in a terminal, `openTerminal`; another machine: "connect anyway", `acceptNewMachine`), the run mode, the host's projects, the address / key / round trip / helper version and removal. Adding a host is a dialog: the run mode on top, then the `~/.ssh/config` hosts with a typed `user@host:port` first.
+- The remote folder picker (`remote/RemoteFolderDialog.tsx`) browses `remoteDir` from the host's home and adds the folder as a project (`categoryOp addProject` with the `ssh://` form). The session column's Projects ＋ menu offers it per host, plus "Add host…" (Settings → Connections).
+- A remote project's glyph is the folder with a globe badge (`RemoteFolderIcon`), the host's name follows the project name; the state shows only off the norm (connecting breathes, an error is amber with the message on hover).
+- Under local run a new session in a remote folder starts on the built-in agent (`Shell.agentIn`), and the start page greys the other agents out (`StartPicker only`), matching the engine's `host.remoteBuiltinOnly`.
+- Checked in the harness against the real engine (2026-10-25): the nav item, the empty page and the add dialog listing `~/.ssh/config`. Connecting a real host from the pages has not been tried yet.
+
 ## Built-in agent under local run (`acp/session/remote.rs`, `acpira_agent::remote`)
 
 Only the built-in agent works in an `ssh://` folder for now; another agent is refused with `host.remoteBuiltinOnly`. The agent process, the model calls, the session log and the session's own folder (spilled outputs, the plan) stay on this machine; the project is only ever touched on the host.

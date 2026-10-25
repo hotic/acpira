@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
-import { ArrowLeft, HardDrive, Layers, Network, Palette, Settings2 } from 'lucide-react';
+import { ArrowLeft, HardDrive, Layers, Network, Palette, Server, Settings2 } from 'lucide-react';
 import type { AgentId, AgentInfo } from '@acpira/shared/transcript';
 import { moveAgent } from '@acpira/shared/agentOrder';
 import { cn } from '../ui/cn';
@@ -8,10 +8,10 @@ import { AgentMark } from '../chat/AgentMark';
 import { TitleSpace } from '../chat/DesktopFrame';
 import { t } from '../i18n';
 
-export type SettingsPage = { kind: 'chatgpt' } | { kind: 'general' } | { kind: 'appearance' } | { kind: 'shared' } | { kind: 'subagents' } | { kind: 'storage' } | { kind: 'agent'; id: AgentInfo['id'] };
+export type SettingsPage = { kind: 'chatgpt' } | { kind: 'general' } | { kind: 'appearance' } | { kind: 'shared' } | { kind: 'connections' } | { kind: 'subagents' } | { kind: 'storage' } | { kind: 'agent'; id: AgentInfo['id'] };
 
 // Fixed pages first, then one page per agent; agent ids never collide with the fixed names
-const FIXED = ['general', 'appearance', 'shared', 'subagents', 'storage', 'chatgpt'] as const;
+const FIXED = ['general', 'appearance', 'shared', 'connections', 'subagents', 'storage', 'chatgpt'] as const;
 type FixedId = (typeof FIXED)[number];
 type PageId = FixedId | AgentInfo['id'];
 const isFixed = (id: PageId): id is FixedId => (FIXED as readonly string[]).includes(id);
@@ -33,6 +33,8 @@ export interface PageRailProps {
   width?: string;
   // Desktop: the chat's column was folded, so the rail opens from nothing as the page appears
   opening?: boolean;
+  // The page offers SSH hosts and the engine answered for them (remote/api.ts): the Connections entry shows
+  remote?: boolean;
 }
 
 // Full-width navigation on wide surfaces collapses to an icon rail in narrow webviews (the shell is the container).
@@ -44,7 +46,7 @@ function RailIcon({ children }: { children: ReactNode }) {
   return <span className="flex size-icon-ctl shrink-0 items-center justify-center [&_svg]:size-icon-ctl">{children}</span>;
 }
 
-export function PageRail({ agents, page, onPage, onBack, onReorder, onDisabled, desktop, width, opening }: PageRailProps) {
+export function PageRail({ agents, page, onPage, onBack, onReorder, onDisabled, desktop, width, opening, remote }: PageRailProps) {
   const cur = pageId(page);
   const item = (id: PageId, name: string, icon: ReactNode) => (
     <button
@@ -78,6 +80,7 @@ export function PageRail({ agents, page, onPage, onBack, onReorder, onDisabled, 
         {item('general', t('settings.nav.general'), <Settings2 strokeWidth={1.5} />)}
         {item('appearance', t('settings.nav.appearance'), <Palette strokeWidth={1.5} />)}
         {item('shared', t('settings.nav.shared'), <Layers strokeWidth={1.5} />)}
+        {remote && item('connections', t('settings.nav.connections'), <Server strokeWidth={1.5} />)}
         {item('subagents', t('settings.nav.subagents'), <Network strokeWidth={1.5} />)}
         {item('storage', t('settings.nav.storage'), <HardDrive strokeWidth={1.5} />)}
         <AgentRows agents={agents} cur={cur} onOpen={id => onPage(toPage(id))} onReorder={onReorder} onDisabled={onDisabled} />
