@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useSyncExternalStore } from 'react';
-import type { HostMsg, ShellCommand } from '@acpira/shared/protocol';
+import type { HostMsg, ShellCommand, UpdateState, WebviewMsg } from '@acpira/shared/protocol';
+import { vscodeApi } from './vscodeApi';
 
 // The standalone desktop app (window.__acpira.shell === 'desktop', rust/crates/acpira-desktop/src/page.rs): its own window frame, the project
 // registry's order in the session column and the start page of an empty session. Shell provides it; pages in an IDE never
@@ -40,6 +41,24 @@ export function dropShellToast(key: string) {
 
 const subscribeToasts = (l: () => void) => { toastListeners.add(l); return () => { toastListeners.delete(l); }; };
 export const useShellToasts = () => useSyncExternalStore(subscribeToasts, () => shellToasts);
+
+// The shell's updater (HostMsg updateState), kept here like the toasts: the settings page reads it whenever it mounts, and
+// the state sent with init is not lost while the chat is up. Undefined outside the desktop app
+let updateState: UpdateState | undefined;
+const updateListeners = new Set<() => void>();
+
+export function setUpdateState(state: UpdateState) {
+  updateState = state;
+  for (const l of updateListeners) l();
+}
+
+const subscribeUpdate = (l: () => void) => { updateListeners.add(l); return () => { updateListeners.delete(l); }; };
+export const useUpdateState = () => useSyncExternalStore(subscribeUpdate, () => updateState);
+
+// The updater's actions go to the shell, which keeps them (like pickFolder); the engine never sees them
+export function postUpdate(m: Extract<WebviewMsg, { type: 'updateCheck' | 'updateInstall' | 'updateAuto' }>) {
+  vscodeApi().postMessage(m);
+}
 
 // The menu bar's commands (HostMsg shellCommand) run the chat's own shortcuts (Shell); one that arrives while the chat is
 // not mounted (App leaves the settings page for it) waits for it

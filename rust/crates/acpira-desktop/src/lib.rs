@@ -19,6 +19,7 @@ pub mod settings;
 pub mod shared_settings;
 pub mod single_instance;
 pub mod terminal;
+pub mod update;
 pub mod vscode_settings;
 pub mod window_state;
 pub mod wire;

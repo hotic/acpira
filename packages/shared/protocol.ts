@@ -20,8 +20,33 @@ export type ExportFormat = 'markdown' | 'json' | 'text';
 export type WebviewHost = 'sidebar' | 'editor';
 
 // The desktop app's menu bar commands the page carries out (HostMsg shellCommand), each what its shortcut does there; the
-// layout picks write acpira.desktopLayout as the gear menu does
-export type ShellCommand = 'newSession' | 'search' | 'openFolder' | 'settings' | 'toolPanel' | 'browser' | 'layoutChat' | 'layoutFiles';
+// layout picks write acpira.desktopLayout as the gear menu does; `about` opens settings on About (the updater's check)
+export type ShellCommand = 'newSession' | 'search' | 'openFolder' | 'settings' | 'about' | 'toolPanel' | 'browser' | 'layoutChat' | 'layoutFiles';
+
+// The desktop app updating itself (rust/crates/acpira-desktop/src/update/state.rs UpdateState, docs/dev/desktop.md
+// "Updates"): made by the shell, never by the sidecar. `manual` says why this install only links to the release page
+export type UpdatePhase = 'idle' | 'checking' | 'upToDate' | 'available' | 'downloading' | 'staging' | 'ready' | 'applying' | 'failed';
+export type UpdateManualReason = 'notBundled' | 'translocated' | 'readOnly' | 'notWritable' | 'unsigned' | 'unconfigured' | 'system';
+export interface UpdateState {
+  phase: UpdatePhase;
+  // This build's version, and the newer one found (available and after)
+  current: string;
+  version?: string;
+  notes?: string;
+  // Download progress in bytes
+  done?: number;
+  total?: number;
+  error?: string;
+  manual?: UpdateManualReason;
+  // When the last check finished (ms since the epoch)
+  checkedAt?: number;
+  // New versions download and stage on their own
+  auto: boolean;
+  releaseUrl: string;
+}
+
+// What a shell toast's button posts back (HostMsg toast `action`)
+export type ToastCommand = 'updateInstall';
 
 export interface EditTurnRequest {
   sessionId: string;
@@ -181,8 +206,11 @@ export type HostMsg =
   // by the sidecar
   | { type: 'pickedFolder'; path?: string }
   // The desktop shell's toast (the engine's `toast` platform request), shown in the page's own toast stack; `open` adds a
-  // button that opens that file (label already localized). Never sent by the sidecar
-  | { type: 'toast'; level: 'info' | 'error'; text: string; open?: { label: string; path: string } }
+  // button that opens that file (label already localized), `action` one that posts that shell command back. Never sent by
+  // the sidecar
+  | { type: 'toast'; level: 'info' | 'error'; text: string; open?: { label: string; path: string }; action?: { label: string; command: ToastCommand } }
+  // The desktop shell's updater: its state, sent to each page on init and on every change. Never sent by the sidecar
+  | { type: 'updateState'; state: UpdateState }
   // The desktop shell's menu bar: the page runs the command as its own shortcut would. Never sent by the sidecar
   | { type: 'shellCommand'; command: ShellCommand }
   // The desktop tool panel's browser tabs, never sent by the sidecar: a message for the page in tab `tab`, the address bar's
@@ -322,6 +350,11 @@ export type WebviewMsg =
   | { type: 'probeResult'; id: string; ok: boolean; error?: string }
   // Desktop shell only, kept there like viewFocus: show the system folder dialog; answered with pickedFolder
   | { type: 'pickFolder' }
+  // Desktop shell only: the updater. Check now (`download`: fetch a newer version even with automatic downloads off),
+  // restart into the staged version, switch automatic downloads
+  | { type: 'updateCheck'; download?: boolean }
+  | { type: 'updateInstall' }
+  | { type: 'updateAuto'; on: boolean }
   // Desktop shell only: the tool panel's browser tabs. A tab opens (on `url`, or empty), its page's messages go up, it
   // closes; the new-tab page asks for the address bar's history (answered with panelHistory)
   // folder: the session folder when it is on an SSH host, whose dev servers the tab shows

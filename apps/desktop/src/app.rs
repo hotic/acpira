@@ -18,6 +18,7 @@ use acpira_desktop::platform::{CAPABILITIES, Platform, handle_request, hello_set
 use acpira_desktop::settings::SettingsStore;
 use acpira_desktop::shared_settings::SharedSettingsFile;
 use acpira_desktop::terminal::TerminalRequest;
+use acpira_desktop::update::{self, Phase, UpdateState, Updater};
 use acpira_desktop::window_state::{Bounds, Placement, WindowEntry, WindowStateStore, WindowsState, placeable};
 use acpira_desktop::wire::Initial;
 use acpira_shared::i18n::{Language, Locale, resolve_locale, translate};
@@ -31,6 +32,10 @@ use crate::chat_window::{ChatWindow, Watch, page_url};
 pub const HELP_URL: &str = "https://github.com/hotic/acpira/issues";
 
 static APP: OnceLock<Arc<App>> = OnceLock::new();
+
+// The scheduled update checks: clear of the launch, then a few times a day
+const UPDATE_FIRST_CHECK: Duration = Duration::from_secs(60);
+const UPDATE_EVERY: Duration = Duration::from_secs(6 * 3600);
 
 pub fn app() -> &'static Arc<App> {
   APP.get().expect("the app is set up")
@@ -50,6 +55,8 @@ pub struct Paths {
   pub data_home: PathBuf,
   pub user_data: PathBuf,
   pub logs: PathBuf,
+  /// The app's cache (the updater's downloads and staged bundles under `updates/`)
+  pub cache: PathBuf,
 }
 
 impl Paths {
@@ -85,14 +92,19 @@ impl Paths {
       .map(PathBuf::from)
       .unwrap_or_else(|| home.join(".acpira"));
     // Smoke runs and screenshots keep the app's own settings, window state and log out of the real profile
-    let (user_data, logs) = match std::env::var("ACPIRA_DESKTOP_USER_DATA").ok().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()) {
-      Some(dir) => {
-        let dir = PathBuf::from(dir);
-        (dir.clone(), dir.join("logs"))
-      }
-      None => (home.join("Library/Application Support").join(identifier), home.join("Library/Logs").join(identifier)),
-    };
-    Paths { webview, picker, engines, data_home, user_data, logs }
+    let (user_data, logs, cache) =
+      match std::env::var("ACPIRA_DESKTOP_USER_DATA").ok().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()) {
+        Some(dir) => {
+          let dir = PathBuf::from(dir);
+          (dir.clone(), dir.join("logs"), dir.join("cache"))
+        }
+        None => (
+          home.join("Library/Application Support").join(identifier),
+          home.join("Library/Logs").join(identifier),
+          home.join("Library/Caches").join(identifier),
+        ),
+      };
+    Paths { webview, picker, engines, data_home, user_data, logs, cache }
   }
 }
 
@@ -146,6 +158,9 @@ pub struct App {
   window_seq: AtomicU64,
   pub background: bool,
   notifier: OnceLock<Option<crate::mac::Notifier>>,
+  updater: OnceLock<Arc<Updater>>,
+  /// The updater's phase as the menu and the toast last saw it
+  update_phase: Mutex<Phase>,
 }
 
 pub fn log(line: &str) {
@@ -198,6 +213,8 @@ impl App {
       window_seq: AtomicU64::new(0),
       background,
       notifier: OnceLock::new(),
+      updater: OnceLock::new(),
+      update_phase: Mutex::new(Phase::Idle),
     });
     let _ = APP.set(app.clone());
     log(&format!(
@@ -207,6 +224,13 @@ impl App {
       app.paths.user_data.display()
     ));
     let _ = app.client.set(app.make_client());
+    let updater = app.make_updater();
+    // A check a minute after launch, then every six hours; the smoke run drives its checks itself so no toast lands
+    // in the middle of its other steps
+    if !cfg!(feature = "smoke") {
+      updater.schedule(UPDATE_FIRST_CHECK, UPDATE_EVERY);
+    }
+    let _ = app.updater.set(updater);
     let client = app.client().clone();
     app.settings.on_change(move |keys, snapshot| {
       client.event(json!({ "type": "settingsChanged", "keys": keys, "settings": snapshot }));
@@ -227,6 +251,90 @@ impl App {
       }
     });
     app
+  }
+
+  /// The app's own updater (docs/dev/desktop.md "Updates"): a release build's configuration, or the smoke run's local
+  /// release server; what keeps this install from replacing itself is known before any check
+  fn make_updater(&self) -> Arc<Updater> {
+    let exe = std::env::current_exe().ok().and_then(|e| e.canonicalize().ok());
+    let installed = exe.as_deref().and_then(update::swap::bundle_of);
+    let (config, manual) = crate::smoke::update_config(installed.as_deref())
+      .unwrap_or_else(|| (update::Config::release(), update::install_blocker(installed.as_deref(), update::stage::signing_team)));
+    let env = update::Env {
+      config,
+      installed,
+      cache: self.paths.cache.join("updates"),
+      current: env!("CARGO_PKG_VERSION").into(),
+      os_version: update::os_version(),
+      manual,
+      // The engine's route: ACPIRA_PROXY, else the shared `proxy` setting
+      proxy: Box::new(|| {
+        use acpira_shared::proxy::{AUTO_PORT, ProxyMode, port_listening, resolve};
+        let setting = app().setting("proxy");
+        resolve(&ProxyMode::effective(setting.as_ref().and_then(Value::as_str)), || port_listening(AUTO_PORT))
+      }),
+      log: log_arc(),
+    };
+    let auto = self.settings.get("updateAuto") != Some(Value::Bool(false));
+    Updater::new(env, auto, |s| {
+      let s = s.clone();
+      let h = app().handle.clone();
+      let _ = h.run_on_main_thread(move || app().update_changed(s));
+    })
+  }
+
+  pub fn updater(&self) -> Option<&Arc<Updater>> {
+    self.updater.get()
+  }
+
+  /// Every page gets the new state; reaching Ready (or leaving it) rebuilds the menu's item, and Ready says so in the
+  /// page used last with a restart button. Main thread
+  fn update_changed(&self, s: UpdateState) {
+    self.broadcast(json!({ "type": "updateState", "state": s }));
+    let before = std::mem::replace(&mut *self.update_phase.lock().unwrap(), s.phase);
+    if (before == Phase::Ready) != (s.phase == Phase::Ready) {
+      self.refresh_menu();
+    }
+    if s.phase == Phase::Ready && before != Phase::Ready {
+      let version = s.version.clone().unwrap_or_default();
+      let text = self.t("desktop.update.ready", &[("version", &version)]);
+      log(&format!("toast info: {text}"));
+      match self.focused_window() {
+        Some(w) => w.post(json!({ "type": "toast", "level": "info", "text": text,
+          "action": { "label": self.t("desktop.update.restart", &[]), "command": "updateInstall" } })),
+        None => self.system_notification("Acpira", &text, None),
+      }
+    }
+  }
+
+  /// A check from the page or the menu; it downloads when the switch is on or the page asked for it
+  pub fn check_updates(&self, download: bool) {
+    if let Some(u) = self.updater() {
+      u.check(download || u.state().auto);
+    }
+  }
+
+  pub fn set_update_auto(&self, on: bool) {
+    self.settings.set("updateAuto", Some(Value::Bool(on)));
+    if let Some(u) = self.updater() {
+      u.set_auto(on);
+    }
+  }
+
+  /// Restart to update: the staged bundle takes the installed one's place, the app quits as usual (window places
+  /// saved, the engine left running its turns), and a helper starts the new bundle once this process is gone
+  pub fn restart_to_update(&self) {
+    let Some(u) = self.updater() else { return };
+    let Some(installed) = u.installed().map(Path::to_path_buf) else { return };
+    if let Err(e) = u.apply() {
+      self.toast("error", &e, None);
+      return;
+    }
+    self.before_quit();
+    if let Err(e) = update::swap::relaunch_after_exit(std::process::id(), &installed, crate::smoke::RELAUNCH_DIRECT) {
+      log(&format!("update: the relaunch helper did not start: {e}"));
+    }
+    self.handle.exit(0);
   }
 
   pub fn client(&self) -> &SidecarClient {
@@ -391,6 +499,9 @@ impl App {
 
   /// The page has its init state: the live context slots go after
   pub fn on_page_ready(&self, w: &ChatWindow) {
+    if let Some(u) = self.updater() {
+      w.post(json!({ "type": "updateState", "state": u.state() }));
+    }
     if self.share_context() {
       for m in self.context.lock().unwrap().replay() {
         w.post(m);
@@ -930,6 +1041,15 @@ impl App {
     self.quitting.store(true, Ordering::SeqCst);
     let client = self.client().clone();
     let _ = tauri::async_runtime::block_on(async move { tokio::time::timeout(Duration::from_secs(2), client.dispose()).await });
+    // A staged update goes in as the app quits (it starts the next time the app does); a download stops and resumes then
+    if let Some(u) = self.updater() {
+      u.stop();
+      if u.staged().is_some()
+        && let Err(e) = u.apply()
+      {
+        log(&format!("update: not installed at quit: {e}"));
+      }
+    }
   }
 }
 

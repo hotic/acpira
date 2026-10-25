@@ -80,14 +80,23 @@ impl ChatWindow {
     let _ = self.window.navigate(page_url("editor"));
   }
 
-  /// From the page. viewFocus stays in the shell, like the VS Code bridge, and so do the folder dialog and the tool
-  /// panel's browser tabs
+  /// From the page. viewFocus stays in the shell, like the VS Code bridge, and so do the folder dialog, the updater and
+  /// the tool panel's browser tabs
   pub fn on_page_message(self: &Arc<Self>, message: Box<RawValue>) {
     let kind = acpira_desktop::wire::peek(message.get()).0;
     let app = crate::app::app();
     match kind.as_str() {
       "viewFocus" => app.on_focus(self),
       "pickFolder" => crate::app::pick_folder(self.clone()),
+      // The updater stays in the shell too (About, the restart toast)
+      "updateCheck" | "updateInstall" | "updateAuto" => {
+        let v: Value = serde_json::from_str(message.get()).unwrap_or_default();
+        match kind.as_str() {
+          "updateCheck" => app.check_updates(v["download"].as_bool() == Some(true)),
+          "updateAuto" => app.set_update_auto(v["on"].as_bool() != Some(false)),
+          _ => app.restart_to_update(),
+        }
+      }
       "panelBrowserOpen" | "panelBrowser" | "panelBrowserClose" | "panelHistory" => {
         if let Ok(v) = serde_json::from_str::<Value>(message.get()) {
           self.panel_message(&kind, v);

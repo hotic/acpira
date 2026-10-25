@@ -7,7 +7,7 @@ import { Button, IconButton } from '../ui/Button';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { Toast } from '../ui/Toast';
-import { dropShellToast, shortcutLabel, useShellToasts } from '../desktop';
+import { dropShellToast, postUpdate, shortcutLabel, useShellToasts } from '../desktop';
 import type { SettingsPage } from '../settings/Nav';
 
 // The desktop app's own frame around the shared Shell (desktop.css): the column's title row, its gear menu, and the
@@ -17,15 +17,20 @@ const HELP_URL = 'https://github.com/hotic/acpira/issues';
 // An error stays up longer than a notice: it is often the only word that a login or an install did not start
 const ERROR_TOAST_TTL = 15_000;
 
-// The shell's toasts (packages/ui/desktop.ts) in the stack of whichever page is up; `open` opens the file a toast names
+// The shell's toasts (packages/ui/desktop.ts) in the stack of whichever page is up; `open` opens the file a toast names, a
+// toast's own `action` posts its command back to the shell (restart to update)
 export function ShellToastItems({ open }: { open?: (path: string) => void }) {
   const toasts = useShellToasts();
   return <>{toasts.map(s => {
     const file = s.open;
+    const command = s.action;
+    const action = command
+      ? { label: command.label, onClick: () => { postUpdate({ type: command.command }); dropShellToast(s.key); } }
+      : file && open ? { label: file.label, onClick: () => { open(file.path); dropShellToast(s.key); } } : undefined;
     return (
-      <Toast key={s.key} text={s.text} ttl={s.level === 'error' ? ERROR_TOAST_TTL : undefined}
+      <Toast key={s.key} text={s.text} ttl={s.level === 'error' || command ? ERROR_TOAST_TTL : undefined}
         icon={s.level === 'error' ? <CircleAlert className="size-icon shrink-0 text-danger" strokeWidth={1.5} /> : <Info className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} />}
-        action={file && open ? { label: file.label, onClick: () => { open(file.path); dropShellToast(s.key); } } : undefined}
+        action={action}
         onClose={() => dropShellToast(s.key)} />
     );
   })}</>;

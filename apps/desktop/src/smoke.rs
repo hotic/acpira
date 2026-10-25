@@ -1,6 +1,6 @@
 //! The smoke run's hook (scripts/smoke.mjs), only in a build with the `smoke` feature: a Unix socket at
 //! ACPIRA_DESKTOP_HOOK takes one JSON command per line and answers each with `{ id, ok, value }`. Commands: `eval` (a
-//! page expression, awaited, its JSON back), `windows`, `resize`, `close`, `menuBar`, `menu`, `link`, `screenshot`, `quit`. WKWebView has no
+//! page expression, awaited, its JSON back), `windows`, `resize`, `close`, `menuBar`, `menu`, `link`, `screenshot`, `update`, `quit`. WKWebView has no
 //! DevTools protocol, so this is how a script drives the real app
 
 use std::collections::HashMap;
@@ -9,6 +9,42 @@ use std::sync::Mutex;
 #[cfg(feature = "smoke")]
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
+
+/// A smoke build starts the updated bundle's executable itself, so the new process keeps the run's temp home; a
+/// release build goes through `open` (LaunchServices)
+pub const RELAUNCH_DIRECT: bool = cfg!(feature = "smoke");
+
+/// The smoke run's updater: its local release server (`ACPIRA_DESKTOP_UPDATE_URL`, plain http on the loopback) signed with
+/// a throwaway key (`ACPIRA_DESKTOP_UPDATE_KEY`, hex), and the ad hoc package's signature checked by identifier only.
+/// None in a release build, or when the run does not test updates (so a smoke never asks GitHub)
+#[cfg(feature = "smoke")]
+pub fn update_config(
+  installed: Option<&std::path::Path>,
+) -> Option<(acpira_desktop::update::Config, Option<acpira_desktop::update::ManualReason>)> {
+  use acpira_desktop::update::{self, ManualReason};
+  let url = std::env::var("ACPIRA_DESKTOP_UPDATE_URL").ok().filter(|u| !u.is_empty());
+  let keys = url.as_ref().and_then(|_| std::env::var("ACPIRA_DESKTOP_UPDATE_KEY").ok()).and_then(|k| update::manifest::key_of_hex(&k));
+  let config = update::Config {
+    manifest_url: url.unwrap_or_default(),
+    keys: keys.into_iter().collect(),
+    policy: update::fetch::Policy { hosts: vec![], loopback_http: true },
+    requirement: Some(format!("identifier \"{}\"", update::stage::IDENTIFIER)),
+    notarized: false,
+    release_url: update::RELEASE_URL.into(),
+  };
+  let manual = match installed {
+    None => Some(ManualReason::NotBundled),
+    Some(app) => update::swap::location_blocker(app),
+  };
+  Some((config, manual))
+}
+
+#[cfg(not(feature = "smoke"))]
+pub fn update_config(
+  _installed: Option<&std::path::Path>,
+) -> Option<(acpira_desktop::update::Config, Option<acpira_desktop::update::ManualReason>)> {
+  None
+}
 
 /// The page's answer to one `eval`: whether it ran, and its JSON (or the error)
 type Answer = oneshot::Sender<(bool, String)>;
@@ -160,6 +196,11 @@ async fn run(cmd: Value) -> (bool, Value) {
       let ok =
         std::process::Command::new("screencapture").args(["-x", "-o", "-l", &n.to_string(), &path]).status().is_ok_and(|s| s.success());
       (ok, json!(path))
+    }
+    "update" => {
+      // The updater's state as the page sees it
+      let state = a.updater().map(|u| u.state());
+      (state.is_some(), serde_json::to_value(state).unwrap_or(Value::Null))
     }
     "quit" => {
       on_main(|| {
