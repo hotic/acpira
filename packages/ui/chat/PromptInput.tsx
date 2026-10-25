@@ -38,13 +38,15 @@ export function PromptInput({ ref, marks, className, value, onScroll, ...props }
     mirror.current.scrollTop = input.current.scrollTop;
     mirror.current.scrollLeft = input.current.scrollLeft;
   };
+  const hasMarks = !!marks?.length;
   const markKey = marks?.map(m => `${m.start}:${m.sigil ?? '/'}${m.name}`).join();
   useLayoutEffect(() => {
+    if (!hasMarks) return;
     sync();
     const observer = new ResizeObserver(sync);
     if (input.current) observer.observe(input.current);
     return () => observer.disconnect();
-  }, [value, markKey]);
+  }, [hasMarks, value, markKey]);
   return <div className="relative min-w-0">
     {marks?.length ? <div ref={mirror} aria-hidden="true" className={cn(className,
       'pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap [overflow-wrap:break-word]',

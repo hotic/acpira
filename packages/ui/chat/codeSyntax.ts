@@ -38,6 +38,31 @@ function sourceLines(text: string): string[] {
   return lines;
 }
 
+// Default foreground colours in dark-plus and light-plus match the shell's own --fg-1, so tokens carrying both
+// can render as plain text nodes without wrapping spans or inline styles.
+const isDefaultColor = (light?: string, dark?: string) =>
+  light?.toUpperCase() === '#000000' && dark?.toUpperCase() === '#D4D4D4';
+
+// Merge adjacent tokens on a line that share the same light and dark colours (absorbing pure-whitespace tokens into their
+// neighbour, since whitespace has no ink) so each line mounts far fewer DOM nodes and text runs.
+function mergeTokens(line: CodeToken[]): CodeToken[] {
+  const out: CodeToken[] = [];
+  for (const tok of line) {
+    if (!tok.text) continue;
+    const prev = out[out.length - 1];
+    if (prev && !/\S/.test(tok.text)) {
+      prev.text += tok.text;
+      continue;
+    }
+    const def = isDefaultColor(tok.light, tok.dark);
+    const light = def ? undefined : tok.light;
+    const dark = def ? undefined : tok.dark;
+    if (prev && prev.light === light && prev.dark === dark) prev.text += tok.text;
+    else out.push(light || dark ? { text: tok.text, light, dark } : { text: tok.text });
+  }
+  return out;
+}
+
 // Tokenize each complete side before diffing so multiline strings and comments
 // keep their grammar state across line boundaries and omitted context.
 export async function tokenizeCode(text: string, language: Language | null): Promise<CodeToken[][]> {
@@ -47,6 +72,6 @@ export async function tokenizeCode(text: string, language: Language | null): Pro
   if (!task) { task = h.loadLanguage(grammars[language]()); loading.set(language, task); }
   await task;
   return h.codeToTokensWithThemes(text.replace(/\r\n/g, '\n'), { lang: language, themes: { light: 'light-plus', dark: 'dark-plus' } })
-    .map(line => line.map(token => ({ text: token.content, light: token.variants.light?.color, dark: token.variants.dark?.color })));
+    .map(line => mergeTokens(line.map(token => ({ text: token.content, light: token.variants.light?.color, dark: token.variants.dark?.color }))));
 }
 

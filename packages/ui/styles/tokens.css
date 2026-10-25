@@ -163,8 +163,8 @@
   --widget-max: 900px;
   /* Sticky prompts keep one cap and scroll internally, leaving room for the reply on a small laptop screen.
      The cap is the card's scrollport (attachments + text): five text lines, the last one under the scroll fade.
-     30cqh shrinks it in a very short sidebar; the floor keeps a hidden webview (cqh → 0) from collapsing the card to nothing. */
-  --user-message-max: min(calc(5 * var(--text-1-lh)), max(30cqh, calc(2 * var(--text-1-lh))));
+     0.3 * --thread-h shrinks it in a very short sidebar without `[container-type:size]` invalidating the thread on every horizontal resize. */
+  --user-message-max: min(calc(5 * var(--text-1-lh)), max(calc(0.3 * var(--thread-h, 100vh)), calc(2 * var(--text-1-lh))));
 
   /* Three radius levels: inline (inline code / progress bar) / control (button / Chip / menu item / row hover) / container (composer / card / overlay / code block / bubble).
      --r-xs is for tiny swatches only (legend squares) and does not follow the radius axis */

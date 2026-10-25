@@ -6,7 +6,9 @@ import type { HighlightRequest, HighlightResponse, HighlightResult } from './cod
 let worker: Promise<Worker> | undefined;
 let unavailable: Error | undefined;
 let sequence = 0;
+const MAX_IN_FLIGHT = 2;
 const pending = new Map<number, { resolve: (result: HighlightResult) => void; reject: (error: Error) => void }>();
+const waiting: { id: number; payload: Payload; resolve: (result: HighlightResult) => void; reject: (error: Error) => void }[] = [];
 
 type Payload = HighlightRequest extends infer R ? R extends HighlightRequest ? Omit<R, 'id'> : never : never;
 
@@ -15,7 +17,16 @@ function fail(error: unknown): Error {
   unavailable = error instanceof Error ? error : new Error(String(error));
   for (const entry of pending.values()) entry.reject(unavailable);
   pending.clear();
+  for (const item of waiting.splice(0)) item.reject(unavailable);
   return unavailable;
+}
+
+function pump(w: Worker) {
+  while (pending.size < MAX_IN_FLIGHT && waiting.length > 0) {
+    const next = waiting.shift()!;
+    pending.set(next.id, { resolve: next.resolve, reject: next.reject });
+    w.postMessage({ ...next.payload, id: next.id } satisfies HighlightRequest);
+  }
 }
 
 // The inline worker runs from a blob, so both IDE hosts can start it without fetching worker modules through a separate
@@ -26,10 +37,12 @@ function start(): Promise<Worker> {
     const w = new DiffWorker({ name: 'acpira-syntax-highlight' });
     w.onmessage = ({ data }: MessageEvent<HighlightResponse>) => {
       const entry = pending.get(data.id);
-      if (!entry) return;
-      pending.delete(data.id);
-      if (data.error !== undefined) entry.reject(new Error(data.error));
-      else entry.resolve(data.result);
+      if (entry) {
+        pending.delete(data.id);
+        if (data.error !== undefined) entry.reject(new Error(data.error));
+        else entry.resolve(data.result);
+      }
+      pump(w);
     };
     w.onerror = event => {
       event.preventDefault();
@@ -40,20 +53,32 @@ function start(): Promise<Worker> {
   }).catch(error => { throw fail(error); });
 }
 
-function request(payload: Payload): Promise<HighlightResult> {
+function request(payload: Payload, signal?: AbortSignal): Promise<HighlightResult> {
   if (unavailable) return Promise.reject(unavailable);
+  if (signal?.aborted) return Promise.reject(new Error('Aborted'));
   const id = ++sequence;
   return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject });
-    start().then(w => w.postMessage({ ...payload, id } satisfies HighlightRequest)).catch(error => {
-      // A worker that could not start has rejected every waiting request already (`fail`)
-      if (pending.delete(id)) reject(error instanceof Error ? error : new Error(String(error)));
+    const item = { id, payload, resolve, reject };
+    waiting.push(item);
+    signal?.addEventListener('abort', () => {
+      const idx = waiting.indexOf(item);
+      if (idx >= 0) {
+        waiting.splice(idx, 1);
+        reject(new Error('Aborted'));
+      } else if (pending.delete(id)) {
+        reject(new Error('Aborted'));
+      }
+    }, { once: true });
+    start().then(w => pump(w)).catch(error => {
+      const idx = waiting.indexOf(item);
+      if (idx >= 0) waiting.splice(idx, 1);
+      if (pending.delete(id) || idx >= 0) reject(error instanceof Error ? error : new Error(String(error)));
     });
   });
 }
 
-export function requestDiffHighlight(lines: DiffLine[], source: DiffSource | undefined, path: string): Promise<CodeDiffRow[]> {
-  return request({ kind: 'diff', lines, source, path }) as Promise<CodeDiffRow[]>;
+export function requestDiffHighlight(lines: DiffLine[], source: DiffSource | undefined, path: string, signal?: AbortSignal): Promise<CodeDiffRow[]> {
+  return request({ kind: 'diff', lines, source, path }, signal) as Promise<CodeDiffRow[]>;
 }
 
 // One token array per source line, in both theme colours

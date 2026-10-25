@@ -13,6 +13,7 @@ import { EntranceOnce, Row, RowLabel, RowTarget, RowEntranceContext, EntranceSco
 import { Button } from '../ui/Button';
 import { Disclosure } from '../ui/Disclosure';
 import { Collapsible, LazyPanelContext } from '../ui/Collapsible';
+import { useStableList } from '../ui/useStableList';
 import { Orb } from '../effects/Orb';
 import { cn } from '../ui/cn';
 import { useScrollFade } from '../ui/useScrollFade';
@@ -581,13 +582,14 @@ function CursorFold({ blocks }: { blocks: ToolCallBlock[] }) {
 // `working` is false while a /compact reply shows only its compaction row, which retires the head the same way a settled turn does
 function CodexMessage({ turn, running, working = running, onPermission, memoryKey, subagents, allSubagents, onInspect, lead }: { turn: AgentTurn; running: boolean; working?: boolean; onPermission: OnPermission; memoryKey?: string } & SubagentSlots) {
   const { process, reply, permissions, notices, goalsLead, goals, compactions } = useMemo(() => splitCodexBlocks(turn.blocks, running), [turn.blocks, running]);
+  const stableProcess = useStableList(process);
   const hasTools = useMemo(() => turn.blocks.some(block => block.type === 'tool_call'), [turn.blocks]);
   // The process folds away only once the reply has finished drawing, not when its last chunk arrived
   const [replyBusy, setReplyBusy] = useState(false);
   return (
     <div className="flex flex-col gap-gap">
       {goalsLead.map((b, i) => <GoalRow key={`goal${i}`} block={b} />)}
-      <CodexFold turn={turn} blocks={process} running={working} replyBusy={replyBusy && reply.length > 0} hasTools={hasTools} memoryKey={memoryKey} lead={lead} />
+      <CodexFold turn={turn} blocks={stableProcess} running={working} replyBusy={replyBusy && reply.length > 0} hasTools={hasTools} memoryKey={memoryKey} lead={lead} />
       {notices.map(b => <NoticeRow key={b.id} block={b} />)}
       {subagents !== undefined && subagents.length > 0 && onInspect !== undefined && (
         <>
@@ -609,11 +611,21 @@ function CodexMessage({ turn, running, working = running, onPermission, memoryKe
 const EMPTY_ITEMS: ProcessItem[] = [];
 const EMPTY_PARTS: FoldPart[] = [];
 
+function waitState(turn: AgentTurn): number {
+  let mask = 0;
+  for (const b of turn.blocks) {
+    if (b.type === 'permission') mask |= b.planId ? 2 : 1;
+    else if (b.type === 'question' && !b.outcome) mask |= 4;
+  }
+  return mask;
+}
+
 // The process fold follows the run: open while the turn works and while its reply is still drawing, closed once
 // both are done, however the turn was mounted (a live session opened mid-turn shows what it is doing). A reader
 // scrolled away from the bottom holds every automatic close until they return. A manual toggle always wins; it is
 // written to fold memory under `memoryKey`, so a rebuilt message (or a reloaded webview) keeps what the reader chose.
-function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead }: { turn: AgentTurn; blocks: AgentBlock[]; running: boolean; replyBusy: boolean; hasTools: boolean; memoryKey?: string; lead?: 'orb' | 'static' }) {
+const CodexFold = memo(function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead }: { turn: AgentTurn; blocks: AgentBlock[]; running: boolean; replyBusy: boolean; hasTools: boolean; memoryKey?: string; lead?: 'orb' | 'static' }) {
+  useLocale();
   const recall = (key: string | undefined) => ({ key, manual: key ? rememberedFold(key) : undefined });
   const [choice, setChoice] = useState(() => recall(memoryKey));
   // A key that changes under a mounted fold (a turn that gains its start time) re-reads memory instead of keeping a stranger's choice
@@ -716,7 +728,19 @@ function CodexFold({ turn, blocks, running, replyBusy, hasTools, memoryKey, lead
       )}
     </Collapsible.Root>
   );
-}
+}, (prev, next) =>
+  prev.blocks === next.blocks
+  && prev.running === next.running
+  && prev.replyBusy === next.replyBusy
+  && prev.hasTools === next.hasTools
+  && prev.memoryKey === next.memoryKey
+  && prev.lead === next.lead
+  && clockStart(prev.turn) === clockStart(next.turn)
+  && prev.turn.stop === next.turn.stop
+  && prev.turn.endedAt === next.turn.endedAt
+  && prev.turn.retry === next.turn.retry
+  && prev.turn.error === next.turn.error
+  && waitState(prev.turn) === waitState(next.turn));
 
 // Per part, what the tail window leaves out of it: the leading items of an items part, all of a hidden steered prompt or
 // delegation point. Parts stay in place (an emptied first part still holds the root's panel), so nothing remounts as

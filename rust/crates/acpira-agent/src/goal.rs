@@ -7,9 +7,9 @@
 //!   requests and as `/goal <objective | pause | resume | clear>` prompts (`/goal` alone describes the goal).
 //! - The model's side follows Codex (`codex-rs/ext/goal`, Apache-2.0, read 2026-10-22 together with the 0.162.1 binary's
 //!   `goals/continuation.md` and `goals/budget_limit.md`): the `get_goal` / `create_goal` / `update_goal` tools, the
-//!   note every goal turn opens with, the note a turn gets once the budget is spent, and the accounting: tokens are the
-//!   input the provider did not read from cache plus the output, time is the wall clock of the turns that ran while the
-//!   goal was active.
+//!   note every goal turn opens with, the note a turn gets once the budget is spent, and the time accounting (the wall
+//!   clock of the turns that ran while the goal was active). Tokens differ from Codex on purpose: every prompt token,
+//!   cache reads included, plus the output, so the count matches the session's total usage.
 //! - Unlike Codex this agent never starts a turn of its own. The capability names the prompt that continues an active
 //!   goal (`acpira/continue`, [`CONTINUE`]); the engine sends it as a hidden prompt once a turn ended with the goal still
 //!   active and nothing of the user's waits, so the queue, a stop, Retry and the workspace gate work on every goal turn.
@@ -664,7 +664,8 @@ pub fn account(server: &Server, session: &Session, usage: Option<&Usage>) {
     tick(st);
     let Some(g) = st.goal.as_mut() else { return };
     if let Some(u) = usage {
-      g.tokens_used += u.input.saturating_sub(u.cache_read) + u.output;
+      // `input` already includes cache reads and writes (`llm::Usage`)
+      g.tokens_used += u.input + u.output;
     }
     if g.status == Status::Active && g.token_budget.is_some_and(|b| g.tokens_used >= b) {
       g.status = Status::BudgetLimited;

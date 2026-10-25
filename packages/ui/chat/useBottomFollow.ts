@@ -44,8 +44,21 @@ export function useBottomFollow(scroller: RefObject<HTMLElement | null>, content
     pinned.current = true;
     follow.set(true);
     untouched.current = true;
-    const pin = () => { if (scrollerUsable(el) && pinned.current) el.scrollTop = el.scrollHeight; };
-    pin();
+    const pin = () => {
+      if (!scrollerUsable(el) || !pinned.current) return;
+      const maxTop = el.scrollHeight - el.clientHeight;
+      if (maxTop > 0 && Math.abs(el.scrollTop - maxTop) > 0.5) el.scrollTop = el.scrollHeight;
+    };
+    let lastH = -1;
+    const syncBox = () => {
+      const h = el.clientHeight;
+      if (h > 0 && h !== lastH) {
+        lastH = h;
+        el.style.setProperty('--thread-h', `${h}px`);
+      }
+      pin();
+    };
+    syncBox();
     // A hidden sidebar collapses the scroller to no box and fires a scroll that looks like "left the bottom".
     let lastTop = el.scrollTop;
     // The reader's own scrolling: a pointer held on the scroller (its scrollbar, a selection drag), or a wheel, touch or
@@ -74,7 +87,7 @@ export function useBottomFollow(scroller: RefObject<HTMLElement | null>, content
     // The release can land outside the scroller (a scrollbar drag that left it)
     window.addEventListener('pointerup', released, { passive: true });
     window.addEventListener('pointercancel', released, { passive: true });
-    const box = new ResizeObserver(pin);
+    const box = new ResizeObserver(syncBox);
     box.observe(el);
     const body = new ResizeObserver(grew);
     if (content.current) body.observe(content.current);

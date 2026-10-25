@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type RefObject } from 'react';
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type RefObject } from 'react';
 import { flushSync } from 'react-dom';
 import { Check, CircleAlert, Network, Paperclip, Settings2, X } from 'lucide-react';
 import type { ExternalSessionInfo, AccountInfo, AgentId, AgentInfo, ForkOrigin, AuthMethodInfo, CategoryOp, Draft, FailureAction, FullDiffSource, GoalAction, NativeSessionInfo, PermissionBlock, QuestionAnswers, QuestionBlock, QueuedPrompt, SessionCategories, SessionControls, SessionGoal, SessionStatus, SessionSummary, SlashCommand, Turn, Usage, UserTurn } from '@acpira/shared/transcript';
@@ -44,6 +44,7 @@ import { Queue } from './Queue';
 import { GoalStrip, PromptFooter } from './Goal';
 import { lastTypedPrompt } from './goalText';
 import { heldPrompt } from './heldPrompt';
+import { compactingNow } from './usageBreakdown';
 import { BUILTIN_AGENT_ID } from '@acpira/shared/providers';
 import { launchable } from '@acpira/shared/agentOrder';
 import { COLUMN_HIDDEN_KEY, DesktopContext, macOS, useShellCommands, useShellToasts } from '../desktop';
@@ -58,6 +59,7 @@ import { ForkBoundary } from './ForkBoundary';
 import { SubagentInspector } from './subagents/SubagentInspector';
 import { InspectorSplitter, clamp, usePreferredPaneWidth, type PaneBounds } from './subagents/InspectorSplitter';
 import { ToolPanelDock, projectPath } from '../panel/ToolPanel';
+import { markShellResize } from '../panel/api';
 import { FilesLayout } from '../panel/FilesLayout';
 import { panel, usePanelValue } from '../panel/store';
 import { SubagentGraph } from './subagents/SubagentGraph';
@@ -272,7 +274,14 @@ export function Shell(p: ShellProps) {
     const styles = getComputedStyle(element);
     const minWidth = Number.parseFloat(styles.getPropertyValue('--session-dock-min'));
     const filesMin = Number.parseFloat(styles.getPropertyValue('--files-layout-min'));
-    const update = () => { setCanDock(element.clientWidth >= minWidth); setCanFiles(element.clientWidth >= filesMin); };
+    let lastW = -1;
+    const update = (entries?: ResizeObserverEntry[]) => {
+      const w = entries?.[0]?.contentRect.width ?? element.clientWidth;
+      if (lastW >= 0 && Math.abs(w - lastW) > 1.5) markShellResize();
+      lastW = w;
+      setCanDock(w >= minWidth);
+      setCanFiles(w >= filesMin);
+    };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(element);
@@ -297,8 +306,8 @@ export function Shell(p: ShellProps) {
   useLayoutEffect(() => {
     const dock = planDock.current;
     if (!dock) return;
-    const sync = () => {
-      const height = dock.offsetHeight;
+    const sync = (entries?: ResizeObserverEntry[]) => {
+      const height = Math.round(entries?.[0]?.borderBoxSize?.[0]?.blockSize ?? dock.offsetHeight);
       if (height === dockHeight.current) return;
       dockHeight.current = height;
       const content = threadContent.current;
@@ -388,12 +397,10 @@ export function Shell(p: ShellProps) {
   const [editing, setEditing] = useState<{ sessionId: string; index: number }>();
   useEffect(() => setEditing(undefined), [p.activeSessionId]);
   // The subagent inspector: one open child at a time, docked beside the column when it is wide enough.
-  // The docked pane's width is the user's (drag its left edge), clamped so the conversation keeps --subagent-main-min.
+  // The docked pane's width is the user's (drag its left edge), clamped by CSS so the conversation keeps --subagent-main-min.
   const mainColumn = useRef<HTMLDivElement>(null);
   const inspectorPane = useRef<HTMLElement>(null);
   const [canDockInspector, setCanDockInspector] = useState(false);
-  // Main column + docked pane: the room the pane's width is carved from
-  const [inspectorRoom, setInspectorRoom] = useState(0);
   const [preferredPane, setPreferredPane] = usePreferredPaneWidth();
   const [draggedPane, setDraggedPane] = useState<number>();
   useLayoutEffect(() => {
@@ -401,9 +408,9 @@ export function Shell(p: ShellProps) {
     if (!element) return;
     const minWidth = Number.parseFloat(getComputedStyle(element).getPropertyValue('--subagent-dock-min'));
     // Hysteresis: once docked, the column lost the pane's width — count it back so the panel does not flap open/closed
-    const update = () => {
-      const room = element.clientWidth + (inspectorPane.current?.offsetWidth ?? 0);
-      setInspectorRoom(room);
+    const update = (entries?: ResizeObserverEntry[]) => {
+      const w = entries?.[0]?.contentRect.width ?? element.clientWidth;
+      const room = w + (inspectorPane.current?.offsetWidth ?? 0);
       setCanDockInspector(room >= minWidth);
     };
     update();
@@ -417,12 +424,7 @@ export function Shell(p: ShellProps) {
     const room = (mainColumn.current?.clientWidth ?? 0) + (inspectorPane.current?.offsetWidth ?? 0);
     return { min: px('--subagent-pane-min'), max: room - px('--subagent-main-min'), initial: px('--subagent-pane-w') };
   }, []);
-  // inspectorRoom is read so a resized shell re-clamps the pane
-  const paneWidth = useMemo(() => {
-    if (!inspectorRoom) return undefined;
-    const b = paneBounds();
-    return clamp(draggedPane ?? preferredPane ?? b.initial, b.min, b.max);
-  }, [inspectorRoom, draggedPane, preferredPane, paneBounds]);
+  const paneWidth = draggedPane ?? preferredPane;
   // Desktop, files layout: the chat's width is the user's (drag its left edge, over the stage's rim), kept with the tool
   // panel's state; the stage keeps --stage-min of the room the two share
   const chatW = usePanelValue(s => s.chatW);
@@ -525,16 +527,16 @@ export function Shell(p: ShellProps) {
     return () => clearTimeout(timer);
   }, [fresh]);
   // A folded project opens, so the session starting there stays in sight
-  const unfold = (cwd: string) => { if (p.categories?.collapsedProjects.includes(cwd)) on.categoryOp?.({ op: 'collapseProject', cwd, collapsed: false }); };
-  const openProject = (cwd: string) => {
+  const unfold = useCallback((cwd: string) => { if (p.categories?.collapsedProjects.includes(cwd)) on.categoryOp?.({ op: 'collapseProject', cwd, collapsed: false }); }, [p.categories, on.categoryOp]);
+  const openProject = useCallback((cwd: string) => {
     on.categoryOp?.({ op: 'addProject', cwd });
     unfold(cwd);
     on.newSession(currentAgent, undefined, cwd);
     setFresh(cwd);
     closeDrawer();
-  };
-  const addProject = () => { void on.pickFolder?.().then(dir => { if (dir) openProject(dir); }); };
-  const newIn = (cwd?: string) => {
+  }, [on.categoryOp, on.newSession, unfold, currentAgent, closeDrawer]);
+  const addProject = useCallback(() => { void on.pickFolder?.().then(dir => { if (dir) openProject(dir); }); }, [on.pickFolder, openProject]);
+  const newIn = useCallback((cwd?: string) => {
     const dir = cwd ?? p.cwd;
     closeDrawer();
     if (!dir) { addProject(); return; }
@@ -542,7 +544,8 @@ export function Shell(p: ShellProps) {
     if (startPage && dir === p.cwd) { root.current?.querySelector<HTMLTextAreaElement>('[data-start-dock] textarea')?.focus(); return; }
     unfold(dir);
     on.newSession(currentAgent, undefined, dir);
-  };
+  }, [p.cwd, closeDrawer, addProject, startPage, unfold, on.newSession, currentAgent]);
+  const newHere = useCallback(() => newIn(), [newIn]);
   // The start page starts its empty session over with another agent or in another project (the engine drops the empty one
   // it leaves); what was typed there moves to the new one before its composer mounts
   const carry = useRef<string | undefined>(undefined);
@@ -561,7 +564,10 @@ export function Shell(p: ShellProps) {
     const list = p.categories?.projects ?? [];
     return p.cwd && !list.includes(p.cwd) ? [...list, p.cwd] : list;
   }, [p.categories, p.cwd]);
-  const copyPath = (path: string) => copied(navigator.clipboard.writeText(path), t('session.project.copied'));
+  const copyPath = useCallback((path: string) => copied(navigator.clipboard.writeText(path), t('session.project.copied')), [copied]);
+  const newFromPanel = useCallback((agent?: AgentId) => { on.newSession(agent); closeDrawer(); }, [on.newSession, closeDrawer]);
+  const newInCat = useCallback((category: string) => { on.newSession(p.agent.id, category); closeDrawer(); }, [on.newSession, p.agent.id, closeDrawer]);
+  const toggleDrawer = useCallback(() => (drawerOpenNow.current ? closeDrawer() : openDrawer()), [closeDrawer, openDrawer]);
   const trail = useSessionHistory(desktop ? p.activeSessionId : undefined, id => p.sessions.some(s => s.id === id), id => on.selectSession(id));
   const focusSearch = () => {
     const focus = () => sessionPanel.current?.querySelector<HTMLInputElement>('input')?.focus();
@@ -636,18 +642,19 @@ export function Shell(p: ShellProps) {
   const gear = useMemo(() => (desktop && p.onOpenSettings
     ? <AppMenu onOpenSettings={p.onOpenSettings} onOpenExternal={on.openExternal} quick={p.quickSettings} />
     : undefined), [desktop, p.onOpenSettings, on.openExternal, p.quickSettings]);
+  const openSession = useCallback((id: string) => { on.selectSession(id); closeDrawer(); }, [on.selectSession, closeDrawer]);
   const sessionsPanel = (
     <SessionList
       fill
       nav={nav}
-      onNew={agent => { on.newSession(agent); closeDrawer(); }}
+      onNew={newFromPanel}
       sessions={p.sessions}
       agents={p.agents}
       activeId={p.activeSessionId}
       workspace={p.workspace}
       // A project shell lists every project (the engine reads its scope as `all` too)
       scope={desktop ? 'all' : p.sessionScope}
-      onSelect={id => { on.selectSession(id); closeDrawer(); }}
+      onSelect={openSession}
       onRename={on.renameSession}
       onDelete={handlers.deleteSession}
       onPin={on.pinSession}
@@ -662,7 +669,7 @@ export function Shell(p: ShellProps) {
       categories={p.categories}
       onFile={on.setSessionCategory}
       onCategoryOp={on.categoryOp}
-      onNewInCategory={category => { on.newSession(p.agent.id, category); closeDrawer(); }}
+      onNewInCategory={newInCat}
       onNewIn={desktop ? newIn : undefined}
       onAddProject={desktop && on.pickFolder ? addProject : undefined}
       onRevealPath={on.revealPath}
@@ -683,12 +690,14 @@ export function Shell(p: ShellProps) {
   // Plain ids keep the composer props memo stable between stream pushes
   const reviseBlock = review?.id;
   const reviseChoice = review && reviseOption(review)?.id;
+  const turnCount = p.turns.length;
+  const isCompacting = useMemo(() => compactingNow(p.turns, p.running), [p.turns, p.running]);
   // Enabled persona names for the sent messages' summon pills; memoized so the HistoryMessage memo chain holds
   const summons = useMemo(() => p.personas?.map(x => x.name), [p.personas]);
   const composerProps: ComposerProps = useMemo(() => ({
     running: p.running, steer: steering, revisePlan: !!reviseChoice, disabled: p.status !== 'ready' && p.status !== 'starting',
     controlsLocked: p.status !== 'ready',
-    theme: p.theme, turns: p.turns, controls: p.controls, hidden: p.hidden?.[p.agent.id],
+    theme: p.theme, turnCount, compacting: isCompacting, controls: p.controls, hidden: p.hidden?.[p.agent.id],
     usage: p.usage, commands: p.commands, compactAt: p.compactAt, cwd: p.cwd ?? '',
     onSend: reviseBlock && reviseChoice && p.activeSessionId ? (text: string, attachments: Draft[]) => {
       on.permission(p.activeSessionId!, reviseBlock, reviseChoice);
@@ -696,7 +705,7 @@ export function Shell(p: ShellProps) {
     } : steering ? (text: string, attachments: Draft[]) => on.send(text, attachments, true) : on.send, onSearchFiles: on.searchFiles, onNotice: notice, onStop: on.stop,
     onSetMode: on.setMode, onSetConfig: on.setConfig, onCompact: on.compact, personas: p.personas,
     onAddModel: p.agent.id === BUILTIN_AGENT_ID && p.onOpenSettings ? () => p.onOpenSettings!({ kind: 'agent', id: BUILTIN_AGENT_ID }) : undefined,
-  }), [p.running, steering, reviseBlock, reviseChoice, p.activeSessionId, on.permission, p.status, p.theme, p.turns, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact, p.personas, p.onOpenSettings]);
+  }), [p.running, steering, reviseBlock, reviseChoice, p.activeSessionId, on.permission, p.status, p.theme, turnCount, isCompacting, p.controls, p.hidden, p.agent.id, p.usage, p.commands, p.compactAt, p.cwd, on.send, on.searchFiles, notice, on.stop, on.setMode, on.setConfig, on.compact, p.personas, p.onOpenSettings]);
   // Context values above the transcript must not change on every stream push: React walks the whole memoized tree for consumers each time
   const permissions = useStableList(useMemo(() => p.turns.flatMap(t => t.role === 'agent' ? t.blocks.filter((b): b is PermissionBlock => b.type === 'permission') : []), [p.turns]));
   const planDoc = useMemo(() => ({
@@ -713,8 +722,6 @@ export function Shell(p: ShellProps) {
       ? current?.sessionId === p.activeSessionId ? undefined : current
       : { sessionId: p.activeSessionId!, index }),
   } : undefined, [on.editTurn, p.activeSessionId, editable, editing, p.modelShapes]);
-  // A session link in a reply (or the inspector's child transcript) switches this view to that session, like a history row
-  const openSession = useCallback((id: string) => { on.selectSession(id); closeDrawer(); }, [on.selectSession, closeDrawer]);
   // Session tool rows name the session they read by its title: keyed by id and by the agent's own session id. An untitled
   // one reads in the current language, so the map is rebuilt when it changes; a ref keeps the context callback stable
   // when unread/running flags change on the session list.
@@ -892,7 +899,7 @@ export function Shell(p: ShellProps) {
               sessionScope={desktop ? 'all' : p.sessionScope}
               nativeSessions={p.nativeSessions}
               on={handlers}
-              onToggleDrawer={() => (drawerOpen ? closeDrawer() : openDrawer())}
+              onToggleDrawer={toggleDrawer}
               drawerOpen={drawerOpen}
               narrow={desktop && !canDock}
               sessionPanel={position}
@@ -902,7 +909,7 @@ export function Shell(p: ShellProps) {
               gearDocked={files ? !explorerHidden : undefined}
               onOpenSettings={p.onOpenSettings}
               cwd={p.noProject ? undefined : p.cwd}
-              onNewIn={desktop ? () => newIn() : undefined}
+              onNewIn={desktop ? newHere : undefined}
             />
             </div>
             <div className="relative flex min-h-0 flex-1 flex-col">
@@ -1011,7 +1018,7 @@ export function Shell(p: ShellProps) {
           </div>
           {inspectNode !== undefined && canDockInspector && inspect !== undefined && p.activeSessionId !== undefined && (
             <aside ref={inspectorPane} data-subagent-panel="docked" className={cn('relative flex w-subagent-pane shrink-0 flex-col border-l border-line bg-bg-0', files ? 'order-4' : 'order-last')}
-              style={paneWidth !== undefined ? { width: paneWidth } : undefined}>
+              style={paneWidth !== undefined ? { width: `clamp(var(--subagent-pane-min), ${paneWidth}px, calc(100% - var(--subagent-main-min)))` } : undefined}>
               <InspectorSplitter width={paneWidth ?? paneBounds().initial} bounds={paneBounds}
                 onDrag={setDraggedPane}
                 onCommit={w => { setDraggedPane(undefined); setPreferredPane(w); }}
@@ -1155,7 +1162,8 @@ function useExchangeWindow(
 // Conversation flow: stick-to-bottom following happens on transcript changes (new content / streaming growth) and on async growth
 // (images, diagrams) until the user touches the thread; user actions like expand / collapse never touch the scroll position —
 // the toggle under the mouse stays put while the content below it moves. Scrolling away from the bottom releases the follow; scrolling back to the bottom restores it
-function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands, summons, subagents, forkedFrom, agents, agentId, onInspect, onPermission, onFailureAction, onSetGoal }: ThreadProps) {
+const Thread = memo(function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands, summons, subagents, forkedFrom, agents, agentId, onInspect, onPermission, onFailureAction, onSetGoal }: ThreadProps) {
+  useLocale();
   const ref = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const bodyRef = useMergedRefs(contentRef, body);
@@ -1208,7 +1216,7 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
   // execCommand('copy') after refocusing the last focused element whenever the body holds focus (pre/index.html, 1.143),
   // which moved the selection into the composer and copied nothing
   return (
-    <div ref={ref} data-thread tabIndex={-1} className="thread-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter outline-none [container-type:size] [overflow-anchor:none]">
+    <div ref={ref} data-thread tabIndex={-1} className="thread-fade scroll-stable min-h-0 min-w-0 flex-1 overflow-y-auto pl-dock pr-dock-gutter outline-none [overflow-anchor:none]">
       {/* The tail clearance equals the message gap, so the last message sits as far from the composer as from the message above it */}
       <div key={replayKey} ref={bodyRef} className={cn('mx-auto flex flex-col gap-msg pt-pad-y pb-msg', wide && 'max-w-chat-column')}><FollowContext.Provider value={follow}><QuietEntranceContext.Provider value={window.quiet}>
         {exchangeSlots.slice(window.start).map((slot, offset) => {
@@ -1260,7 +1268,7 @@ function Thread({ turns, running, wide, replayKey, blobUrl, contentRef, commands
       </QuietEntranceContext.Provider></FollowContext.Provider></div>
     </div>
   );
-}
+});
 
 // A hidden turn that carries the turn before it on (after an account switch, Retry after a failure with output, the
 // workspace gate sending its findings back, or an active goal's next turn)

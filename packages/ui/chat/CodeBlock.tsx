@@ -1,6 +1,7 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { DiffLine, DiffSource } from '@acpira/shared/transcript';
 import { cn } from '../ui/cn';
+import { useTheme } from '../look';
 import { diffCopyText, plainDiffRows, type CodeDiffRow } from './codeDiff';
 import { requestCodeHighlight, requestDiffHighlight } from './diffHighlight';
 import { codeLanguage, fenceLanguage, type CodeToken, type Language } from './codeLanguage';
@@ -30,6 +31,7 @@ interface Colored { code: string; language: Language; lines: CodeToken[][] }
 
 export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   const language = fenceLanguage(lang);
+  const light = useTheme() === 'light';
   const [colored, setColored] = useState<Colored>();
   const tokenized = useRef(false);
 
@@ -52,13 +54,13 @@ export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   // so the button stays pinned to the top-right corner while long lines scroll sideways
   return <div className="group/code-output relative min-w-0">
     <OutputCopy text={code} label={t('code.copyCode')} />
-    <CodeSurface><code className={usable ? 'code-syntax' : undefined}>{usable ? syntaxChildren(code, usable) : code}</code></CodeSurface>
+    <CodeSurface><code className={usable ? 'code-syntax' : undefined}>{usable ? syntaxChildren(code, usable, light) : code}</code></CodeSurface>
   </div>;
 }
 
 // Coloured lines for the part of `code` that the last tokenized text covers. While a fence streams, the new text
 // extends the old one: its complete lines keep their colours and only the growing tail renders plain until the next pass
-function syntaxChildren(code: string, colored: Colored): ReactNode[] {
+function syntaxChildren(code: string, colored: Colored, light: boolean): ReactNode[] {
   const exact = colored.code === code;
   if (!exact && !code.startsWith(colored.code)) return [code];
   const tail = exact ? code.length : colored.code.lastIndexOf('\n') + 1;
@@ -66,10 +68,31 @@ function syntaxChildren(code: string, colored: Colored): ReactNode[] {
   const out: ReactNode[] = [];
   colored.lines.slice(0, keep).forEach((tokens, row) => {
     if (row > 0) out.push('\n');
-    tokens.forEach((token, index) => out.push(
-      <span key={`${row}:${index}`} style={{ '--syntax-light': token.light, '--syntax-dark': token.dark } as CSSProperties}>{token.text}</span>));
+    tokens.forEach((token, index) => {
+      const color = light ? token.light : token.dark;
+      out.push(color ? <span key={`${row}:${index}`} style={{ color }}>{token.text}</span> : token.text);
+    });
   });
   if (!exact) out.push((keep > 0 ? '\n' : '') + code.slice(tail));
+  return out;
+}
+
+// Defer syntax-highlight worker jobs and React state commits while any scroll container is actively moving,
+// so cards flying through the viewport never contend with scroll frames
+const SCROLL_IDLE_MS = 150;
+let lastScrollTime = -SCROLL_IDLE_MS;
+let scrollListenerAttached = false;
+
+function ensureScrollTracker() {
+  if (scrollListenerAttached || typeof window === 'undefined') return;
+  scrollListenerAttached = true;
+  window.addEventListener('scroll', () => { lastScrollTime = performance.now(); }, { capture: true, passive: true });
+}
+
+const DIFF_BLOCK = 40;
+function chunkDiffRows(rows: CodeDiffRow[]): CodeDiffRow[][] {
+  const out: CodeDiffRow[][] = [];
+  for (let i = 0; i < rows.length; i += DIFF_BLOCK) out.push(rows.slice(i, i + DIFF_BLOCK));
   return out;
 }
 
@@ -79,12 +102,14 @@ export interface DiffLocation { toolCallId: string; nth: number }
 // Shared production version of the selected code-detail LAB design. A page view's diff carries its source without the
 // file texts (`omitted`): rows highlight from the visible segments, and copying asks the host for the new file
 // `whole`: the diff at its full height, its container scrolling it (the review), instead of a capped box of its own
-export function DiffBlock({ lines, source, path = '', locate, whole }: { lines: DiffLine[]; source?: DiffSource; path?: string; locate?: DiffLocation; whole?: boolean }) {
+export const DiffBlock = memo(function DiffBlock({ lines, source, path = '', locate, whole }: { lines: DiffLine[]; source?: DiffSource; path?: string; locate?: DiffLocation; whole?: boolean }) {
   const root = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(false);
+  const light = useTheme() === 'light';
   const plain = useMemo(() => plainDiffRows(lines), [lines]);
   const [colored, setColored] = useState<{ lines: DiffLine[]; source?: DiffSource; path: string; rows: CodeDiffRow[] }>();
-  const rows = colored?.lines === lines && colored.source === source && colored.path === path ? colored.rows : plain;
+  const isColored = colored?.lines === lines && colored.source === source && colored.path === path;
+  const rows = isColored ? colored.rows : plain;
+  const blocks = useMemo(() => (whole ? chunkDiffRows(rows) : undefined), [whole, rows]);
   const copyText = useMemo(() => diffCopyText(lines, source), [lines, source]);
   const fetchSource = useContext(DiffSourceContext);
   // Falls back to the visible lines when the host no longer has the call (the session closed, the turn was replaced)
@@ -95,42 +120,81 @@ export function DiffBlock({ lines, source, path = '', locate, whole }: { lines: 
 
   useEffect(() => {
     const element = root.current;
-    if (!element) return;
-    // Kept-mounted, collapsed outputs should not initialize grammars or tokenize.
-    const observer = new IntersectionObserver(entries => {
-      if (entries.some(entry => entry.isIntersecting) && !element.closest('[inert]')) {
-        setVisible(true);
-        observer.disconnect();
+    if (!element || !language || isColored) return;
+    ensureScrollTracker();
+    let current = true;
+    let visible = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let ctrl: AbortController | undefined;
+    const stop = () => {
+      if (timer !== undefined) { clearTimeout(timer); timer = undefined; }
+      if (ctrl) { ctrl.abort(); ctrl = undefined; }
+    };
+    const schedule = () => {
+      if (!current || !visible || ctrl || timer !== undefined) return;
+      const sinceScroll = performance.now() - lastScrollTime;
+      if (sinceScroll < SCROLL_IDLE_MS) {
+        timer = setTimeout(() => { timer = undefined; schedule(); }, SCROLL_IDLE_MS - sinceScroll + 16);
+        return;
       }
+      const myCtrl = new AbortController();
+      ctrl = myCtrl;
+      requestDiffHighlight(lines, source, path, myCtrl.signal).then(nextRows => {
+        if (!current || myCtrl.signal.aborted) return;
+        const applyWhenIdle = () => {
+          if (!current || !visible || myCtrl.signal.aborted) return;
+          const idleFor = performance.now() - lastScrollTime;
+          if (idleFor < SCROLL_IDLE_MS) {
+            timer = setTimeout(() => { timer = undefined; applyWhenIdle(); }, SCROLL_IDLE_MS - idleFor + 16);
+            return;
+          }
+          setColored({ lines, source, path, rows: nextRows });
+        };
+        applyWhenIdle();
+      }).catch(() => { /* Plain source remains available if aborted or a grammar cannot load. */ });
+    };
+    const observer = new IntersectionObserver(entries => {
+      visible = entries.some(entry => entry.isIntersecting) && !element.closest('[inert]');
+      if (visible) schedule();
+      else stop();
     });
     observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-  useEffect(() => {
-    if (!visible || !language) return;
-    let current = true;
-    requestDiffHighlight(lines, source, path).then(rows => { if (current) setColored({ lines, source, path, rows }); })
-      .catch(() => { /* Plain source remains available if a grammar cannot load. */ });
-    return () => { current = false; };
-  }, [visible, lines, source, path, language]);
+    return () => {
+      current = false;
+      stop();
+      observer.disconnect();
+    };
+  }, [lines, source, path, language, isColored]);
+
+  const renderRow = (row: CodeDiffRow, index: number) => row.kind === 'hunk' && (index === 0 || index === rows.length - 1) ? null : row.kind === 'hunk'
+    ? <div className="diff-hunk relative h-diff-hunk border-y border-line my-gap-half text-fg-3 select-none" key={index} title={row.text} aria-label={row.text}>
+        <span className="block w-diff-gutter text-center text-3 leading-gap" aria-hidden="true">···</span></div>
+    : <div className="diff-row relative flex min-h-code-line bg-(--diff-row-bg)" data-kind={row.kind} key={index}>
+      <span className={cn('diff-gutter w-diff-gutter shrink-0 text-right text-fg-3 select-none tabular-nums', row.kind === 'ctx' && 'pr-diff-sign')} aria-hidden="true">
+        {row.kind === 'ctx' ? row.newLine : <>
+          {row.kind === 'del' ? row.oldLine : row.newLine}
+          <span className={cn('diff-sign inline-block w-diff-sign text-center', row.kind === 'add' ? 'text-ok' : 'text-danger')}>{row.kind === 'add' ? '+' : '−'}</span>
+        </>}
+      </span>
+      <span className="diff-source block flex-1 pr-pad whitespace-pre">{row.tokens.length ? row.tokens.map((token, tokenIndex) => {
+        const color = light ? token.light : token.dark;
+        return color ? <span key={tokenIndex} style={{ color }}>{token.text}</span> : token.text;
+      }) : '\u200b'}</span>
+    </div>;
 
   return <div ref={root} className="group/code-output code-output diff-surface" data-language={language ?? 'plain'}>
     <OutputCopy text={copyText} label={source !== undefined && (!source.omitted || fetchable) ? t('code.copySource') : t('code.copyVisible')}
       read={fetchable ? readSource : undefined} />
-    <div className={cn('diff-scroll scroll-thin overflow-auto py-gap-half', !whole && 'max-h-code-output')} tabIndex={0} role="region" aria-label={t('code.diff')}>
+    <div data-whole={whole || undefined} className={cn('diff-scroll scroll-thin py-gap-half', whole ? 'overflow-clip hover:overflow-x-auto focus-within:overflow-x-auto data-scrolled-x:overflow-x-auto' : 'max-h-code-output overflow-auto')} tabIndex={0} role="region" aria-label={t('code.diff')}
+      onWheel={e => { if (e.deltaX > 0) e.currentTarget.setAttribute('data-scrolled-x', ''); }}
+      onScroll={e => e.currentTarget.toggleAttribute('data-scrolled-x', e.currentTarget.scrollLeft > 0)}>
       <div className="diff-table min-w-full w-max font-mono text-mono leading-code-output">
-        {rows.map((row, index) => row.kind === 'hunk' && (index === 0 || index === rows.length - 1) ? null : row.kind === 'hunk'
-          ? <div className="diff-hunk relative h-diff-hunk border-y border-line my-gap-half text-fg-3 select-none" key={index} title={row.text} aria-label={row.text}>
-              <span className="block sticky left-0 w-diff-gutter text-center text-3 leading-gap" aria-hidden="true">···</span></div>
-          : <div className="diff-row relative flex min-h-code-line bg-(--diff-row-bg)" data-kind={row.kind} key={index}>
-            <span className="diff-gutter sticky left-0 z-1 flex shrink-0 self-stretch text-fg-3 bg-(--diff-row-bg) select-none tabular-nums" aria-hidden="true">
-              <span className="diff-number min-w-diff-number text-right">{row.kind === 'del' ? row.oldLine : row.newLine}</span>
-              <span className={cn('diff-sign w-diff-sign text-center', row.kind === 'add' && 'text-ok', row.kind === 'del' && 'text-danger')}>{row.kind === 'add' ? '+' : row.kind === 'del' ? '−' : ''}</span>
-            </span>
-            <code className="diff-source block flex-1 whitespace-pre">{row.tokens.length ? row.tokens.map((token, tokenIndex) =>
-              <span key={tokenIndex} style={{ '--syntax-light': token.light, '--syntax-dark': token.dark } as CSSProperties}>{token.text}</span>) : '\u200b'}</code>
-          </div>)}
+        {blocks ? blocks.map((block, b) => (
+          <div key={b} className="diff-block" style={{ '--diff-block-rows': block.length } as CSSProperties}>
+            {block.map((row, k) => renderRow(row, b * DIFF_BLOCK + k))}
+          </div>
+        )) : rows.map(renderRow)}
       </div>
     </div>
   </div>;
-}
+});

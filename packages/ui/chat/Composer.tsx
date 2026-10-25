@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { memo, useCallback, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { Plus, SquareDashedMousePointer, TextSelect, X } from 'lucide-react';
 import type { Draft, SessionControls, SessionOption, SlashCommand, Turn, Usage } from '@acpira/shared/transcript';
 import type { EditorSelection, FileHit } from '@acpira/shared/protocol';
@@ -7,7 +7,7 @@ import { composerControls } from '@acpira/shared/composerControls';
 import { MAX_TEXT_BYTES, lineRangeLabel } from '@acpira/shared/attachments';
 import { collectPastedText } from '@acpira/shared/pastedText';
 import { useAppearance } from '../appearance';
-import { getLocale, t } from '../i18n';
+import { getLocale, t, useLocale } from '../i18n';
 import { cn } from '../ui/cn';
 import { Chip, IconButton } from '../ui/Button';
 import { DropdownMenu, optionClass } from '../ui/DropdownMenu';
@@ -34,7 +34,9 @@ export interface ComposerProps {
   controlsLocked?: boolean;
   theme: 'dark' | 'light';
   controls: SessionControls;
-  turns: Turn[];
+  turns?: Turn[];
+  turnCount?: number;
+  compacting?: boolean;
   // Option families hidden for the current agent (settings page): configOption id → family names
   hidden?: HiddenMap[string];
   usage?: Usage;
@@ -78,7 +80,8 @@ export interface ComposerProps {
 // Composer has three layers: attachment chips (when any), the input area, and a toolbar row below.
 // One layout for all ACP agents: mode on the left; context, model with reasoning, and send on the right.
 // Attachments come from pasting / dropping (images, OS files, Explorer items) or from an @ mention that searches the workspace
-export function Composer(p: ComposerProps) {
+export const Composer = memo(function Composer(p: ComposerProps) {
+  useLocale();
   const { composer } = useAppearance();
   const textarea = useRef<HTMLTextAreaElement>(null);
   const focusInput = useCallback(() => textarea.current?.focus(), []);
@@ -389,7 +392,7 @@ export function Composer(p: ComposerProps) {
           {[...other, ...(!models.length ? [...modelConfig, ...sidekick, ...sidekickEffort] : [])].map(c => (
             <OptionControl key={c.id} end control={c} hidden={p.hidden?.[c.id]} onSelect={v => p.onSetConfig(c.id, v)} onOpenChange={onOpenChange} />
           ))}
-          {p.usage && <ContextRing usage={p.usage} turns={p.turns} canCompact={canCompact} disabled={p.disabled} compactAt={p.compactAt} running={p.running} onCompact={p.onCompact} onOpenChange={onOpenChange} />}
+          {p.usage && <ContextRing usage={p.usage} turns={p.turns} compacting={p.compacting} canCompact={canCompact} disabled={p.disabled} compactAt={p.compactAt} running={p.running} onCompact={p.onCompact} onOpenChange={onOpenChange} />}
           {models.map((c, i) => (
             <ModelControl key={c.id} control={c} hidden={p.hidden?.[c.id]} reasoning={i === 0 ? reasoning : undefined}
               modelConfig={i === 0 ? modelConfig : undefined} sidekick={i === 0 ? sidekick[0] : undefined} sidekickEffort={i === 0 ? sidekickEffort[0] : undefined}
@@ -414,7 +417,7 @@ export function Composer(p: ComposerProps) {
       <WorkingBeam active={beamActive} theme={p.theme}>{field}</WorkingBeam>
     </div>
   );
-}
+});
 
 // One mode chip and its menu: single-line rows with a glyph each, the agent's own name and description ride along as a tooltip.
 // Chip and rows use the same short label (`modeLabel`); the full_access glyph carries the warning color

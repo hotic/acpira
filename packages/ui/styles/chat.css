@@ -32,11 +32,14 @@
   & > .row-lead { margin-top: calc((var(--text-2-lh) - var(--lead)) / 2); }
 }
 
-/* Scroll containers fade the edge that still hides content; useScrollFade sets the data flags. */
+/* Scroll containers fade the edge that still hides content; useScrollFade sets the data flags.
+   Only apply mask-image when an edge actually overflows, so short prompt cards never allocate GPU mask layers. */
 @utility scroll-fade {
   --fade-top: 0px;
   --fade-bottom: 0px;
-  mask-image: linear-gradient(to bottom, transparent, #000 var(--fade-top), #000 calc(100% - var(--fade-bottom)), transparent);
+  &[data-more-above], &[data-more-below] {
+    mask-image: linear-gradient(to bottom, transparent, #000 var(--fade-top), #000 calc(100% - var(--fade-bottom)), transparent);
+  }
   &[data-more-above] { --fade-top: var(--scroll-fade-size); }
   &[data-more-below] { --fade-bottom: var(--scroll-fade-size); }
 }
@@ -103,6 +106,9 @@
   .diff-row[data-kind="add"] { --diff-row-bg: var(--diff-add); }
   .diff-row[data-kind="del"] { --diff-row-bg: var(--diff-del); }
   [data-diff="signs"] .diff-row { --diff-row-bg: var(--bg-code); }
+  /* Only stick the gutter when the diff is horizontally scrolled: 16k always-sticky gutters in a review stalled WebKit scrolling */
+  .diff-scroll[data-scrolled-x] .diff-gutter { position: sticky; left: 0; z-index: 1; background: var(--diff-row-bg); }
+  .diff-scroll[data-scrolled-x] .diff-hunk > span { position: sticky; left: 0; }
   /* Shiki tokens carry both theme colours; diffs and fenced code blocks pick by the active theme */
   :is(.diff-source, .code-syntax) > span { color: var(--syntax-dark, var(--fg-1)); }
   [data-theme="light"] :is(.diff-source, .code-syntax) > span { color: var(--syntax-light, var(--fg-1)); }

@@ -41,6 +41,14 @@ export const lastRead = {
   status: new Map<string, GitStatus>(),
   changes: new Map<string, ProjectChange[]>(),
 };
+
+const RESIZE_IDLE_MS = 120;
+let lastShellResizeAt = -RESIZE_IDLE_MS;
+export function markShellResize() { lastShellResizeAt = performance.now(); }
+export function shellResizeIdleIn(): number {
+  const elapsed = performance.now() - lastShellResizeAt;
+  return elapsed >= RESIZE_IDLE_MS ? 0 : RESIZE_IDLE_MS - elapsed + 16;
+}
 // A fresh answer equal to the one shown keeps the shown object, so nothing re-renders for it
 export const sameRead = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.stringify(b);
 

@@ -1,8 +1,9 @@
+import { memo } from 'react';
 import type { Turn } from '@acpira/shared/transcript';
 import { PlanCard } from './Plan';
 import { dockPlan } from './dockPlan';
 
-export function PlanBar({ turns, running }: { turns: Turn[]; running: boolean }) {
+export const PlanBar = memo(function PlanBar({ turns, running }: { turns: Turn[]; running: boolean }) {
   const entries = dockPlan(turns, running);
   if (!entries) return null;
   return (
@@ -12,4 +13,4 @@ export function PlanBar({ turns, running }: { turns: Turn[]; running: boolean })
       </div>
     </div>
   );
-}
+});

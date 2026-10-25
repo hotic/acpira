@@ -91,7 +91,7 @@ function HistoryEditor({ turn, turnIndex, blobUrl, context: c, onClose }: {
   const composer = useContext(HistoryComposerContext)!;
   const [controls, setControls] = useState(() => openTurnControls(composer.controls, turn.settings, c.shapes));
   const [retained, setRetained] = useState(() => (turn.attachments ?? []).map((_, i) => i));
-  const [turnCount] = useState(composer.turns.length);
+  const [turnCount] = useState(composer.turnCount ?? composer.turns?.length ?? 0);
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
   const insidePointer = useRef(false);
