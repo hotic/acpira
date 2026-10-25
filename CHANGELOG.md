@@ -11,6 +11,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An interrupt follow-up mode remains planned. Mid-turn messages on agents without steering stay in the host-side queue.
 
+## [1.11.0] - 2026-10-25
+
+### Added
+
+- **Sessions stay live across windows.** Acpira engines on the same machine now share a local bus. A session that another window or engine runs shows its turns live, and sends, stops, permission answers, questions and queue actions go to the engine that runs it, instead of a read-only copy with Take over. Renames, pins and category edits are forwarded the same way. The session list shows other engines' sessions with their state, title and pin as they change, unread marks clear everywhere once any window looks and survive restarts, and observed subagent transcripts follow too. Windows and engines older than 1.11.0 keep the read-only copy with Take over.
+- **Interactive HTML widgets.** Agents can call `show_widget` with an `.html` file, and the chat shows it inline in a sandboxed frame without network access. Widgets get the editor theme's colours, follow theme switches and size themselves to their content.
+- **Live context from local pages.** A page open in the Acpira browser panel can call `window.acpira.context.set` / `add` to set or pin context, as other extensions do through `acpira.context.set` / `add`. A page clears only what its own panel's pages set, and its context goes away when the page is replaced or the panel closes. See "Web pages" in `docs/context-api.md`.
+- **Animated GIFs reach models as motion.** Models read only a GIF's first frame, so an attached GIF now also goes out as a sheet of 6 to 16 frames sampled evenly in time, with a note of its duration and frame times. The transcript still plays the original, and retry and edit rebuild the same sheet.
+- **Goal mode for the built-in agent**, modelled on Codex's. The goal strip, milestone rows and Set as goal work as they do with Codex. The engine sends each next goal turn once a turn ends with the goal active and nothing queued, so Stop, the queue, Retry and workspace hooks apply to every goal turn. The goal pauses on a stop or a rejected action, stops after three continuations without a tool call, wraps up once its budget is spent, and comes back paused after a restart.
+- **Editing a message rewinds the built-in agent.** The edited message and everything after it leave the model's context, along with compactions made since, and a goal returns to where it stood. Before, long sessions continued with a note that the earlier message was superseded.
+- **The built-in agent reads images and PDFs.** `read` returns a PNG, JPEG, GIF or WebP file as a picture when the model takes images, and a PDF as text page by page with a `pages` argument.
+- **Interactive commands for the built-in agent.** `bash` with `interactive: true` runs a command in a pseudo terminal, ConPTY on Windows, so prompts, REPLs and installers that ask behave as they do for a person. The agent types into it with `job`, and approving the command covers typing into it.
+- **A reworked session list.** A view menu sets grouping, ordering and the status, channel and date filters, can show each row's model at its end, and marks everything read. In the docked column, categories become quiet sub-labels and nothing indents, Pinned and Projects / Sessions fold from their labels, and the column's inner edge drags to resize it.
+- Subagent personas and groups added, edited or removed in Settings reach `ask_agent` in running sessions without starting a new one.
+
+### Changed
+
+- **Settings live in one shared file.** Every Acpira setting except the session list's position and scope and editor selection sharing now lives in `~/.acpira/settings.json`, so VS Code, Cursor and JetBrains IDEs no longer disagree on agents, look or language. The first engine started after the upgrade copies the current values into the file, and changes made in any window reach the others within a second. The VS Code Settings editor no longer lists those keys, and `acpira.*` entries left in VS Code's `settings.json` stop applying once the file exists, so these settings no longer follow VS Code Settings Sync or per-workspace overrides. Change them on Acpira's settings page.
+- Session notices share one compact layout: one primary action, other ways behind an "Other ways" menu, retry as an icon and one line of text. Sign-in and take-over errors read in the interface language, and the agent's raw error sits behind a copy-details button.
+- The session goal is the floating to-do card's head row instead of a strip on the composer's top edge. Its controls unfold on hover or focus, the head folds the list below it, and a goal without to-dos is a one-line card.
+- The plan card shows only the plan: no header or Revise button, with an open-file button on hover. A message sent from the composer while the card waits answers Revise and goes out as the next prompt. The to-do dock stays hidden until the plan is approved, and a plan rejected by cancelling the turn reads as settled rather than stopped.
+- Switching sessions is faster: a click shows a kept session at once, and long transcripts mount their last exchanges first. A session list with hundreds of sessions no longer freezes for about a second when one is added or removed.
+- Streamed text fades in by batches instead of per character, and the view keeps following the bottom while you read there.
+
+### Removed
+
+- The text-only tool line style. Process rows always lead with their icon, rail and plan dots, and a stored `text` value falls back to the icon style.
+
+### Fixed
+
+- JetBrains IDEs drew process rows without their icons, rails and plan dots, because the default tool line style decoded to text outside VS Code.
+- ⌘C copies a transcript selection in VS Code again, instead of the composer's empty selection.
+- A page keeps following a session that moved to another engine, instead of freezing while its turns ran there unseen.
+- File links in a session another window holds open the file instead of doing nothing.
+- After an edit or retry, the built-in agent's new tool calls open their own rows instead of rewriting finished rows of earlier turns that had the same call ids.
+- The built-in agent retries a reply that holds only reasoning, and fails the turn once retries run out, instead of ending the turn as if it had answered.
+- Devin's output speed is timed over the last model call, instead of reading about 3 tok/s on turns with many tool calls.
+- A subagent persona's effort select offers the levels of the persona's own model, not those of the latest session's model, and drops an effort the newly picked model does not offer.
+- The connecting row appears only after a session has been starting for 400 ms, so quick starts no longer flash it.
+- The quote button hides once its line scrolls out of a nested scroll area, row hover actions stay under the pointer after their fade, and the subagent inspector and the subagents-reported row line up with the chat column.
+- The Storage bar on the settings page fills from zero only on Refresh, not again when a scan from an earlier visit lands.
+
 ## [1.10.8] - 2026-10-22
 
 ### Added
