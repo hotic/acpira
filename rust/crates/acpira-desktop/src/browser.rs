@@ -184,6 +184,8 @@ mod tests {
     assert!(affects_look("appearance.radius") && !affects_look("defaultAgent"));
   }
 
+  // Windows retries a refused loopback connect for about two seconds, longer than the probe's wait; the app ships on macOS
+  #[cfg(unix)]
   #[tokio::test]
   async fn a_page_answers_when_something_speaks_http_there() {
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

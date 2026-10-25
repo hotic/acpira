@@ -614,6 +614,8 @@ mod tests {
     verify_tree(&out, &scan(&new).unwrap()).unwrap();
   }
 
+  // Checks permission bits, which Windows does not keep
+  #[cfg(unix)]
   #[test]
   fn the_full_package_round_trips_and_verify_tree_names_any_difference() {
     let d = tempfile::tempdir().unwrap();
