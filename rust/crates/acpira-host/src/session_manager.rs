@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use serde_json::Value;
+use serde_json::value::RawValue;
 
 use acpira_shared::agent_order::{AgentPrefs, arrange_agents};
 use acpira_shared::chatgpt_integration::{ChatGptIntegrationStatus, ProjectMirrors};
@@ -55,7 +56,7 @@ use crate::session_library::{
 };
 use crate::store::session_digest::{self, DigestMeta};
 use crate::store::session_search::SessionSearch;
-use crate::store::transcript_store::{LogFn, RecordLoadError, SessionPrefs, TranscriptStore, is_session_id, sort_index};
+use crate::store::transcript_store::{LogFn, RecordLoadError, SessionPrefs, TranscriptStore, UnreadOp, is_session_id, sort_index};
 use crate::util::{clip, local_stamp, ms_of_iso, now_iso, random_uuid};
 
 const TRASH_TTL: Duration = Duration::from_secs(30);
@@ -310,6 +311,14 @@ struct State {
   remote: HashMap<String, Remote>,
   // Mirrored sessions to re-read on the next poll whatever the record's stamp (their pushed view just ended)
   refresh: HashSet<String>,
+  // The list entries of sessions other engines run, per engine (its connection on the bus router): this list shows them
+  // as their owner does (working / waiting / failed, title, pin, model …), not only their transcripts
+  elsewhere: HashMap<u64, Vec<SessionSummary>>,
+  // Owner: subagents another engine's pages observe, with the transcript rev last sent there
+  node_watch: HashMap<(String, String), Option<i64>>,
+  // Follower: the subagent subscriptions sent for sessions shown read-only, and the transcripts their owners pushed
+  node_subs: HashSet<(String, String)>,
+  remote_nodes: HashMap<(String, String), (i64, bool, RawJson)>,
   // Since when each live session has been unseen with nothing in flight (`release_idle`)
   idle_since: HashMap<String, tokio::time::Instant>,
   // Released sessions whose old agent process is still closing: reopening one waits for it (`release`)
@@ -348,7 +357,15 @@ pub struct SessionManager {
   first_probe: tokio::sync::watch::Sender<bool>,
   // SSH hosts in remote run: their engines' sessions in this list (`hosts.rs`)
   hosts: hosts::Hosts,
+  // Unread marks waiting to reach the shared store, written one batch at a time (`persist_unread`)
+  unread_ops: parking_lot::Mutex<UnreadQueue>,
   me: Weak<SessionManager>,
+}
+
+#[derive(Default)]
+struct UnreadQueue {
+  ops: Vec<UnreadOp>,
+  running: bool,
 }
 
 impl SessionManager {
@@ -406,6 +423,10 @@ impl SessionManager {
           mirrors: HashMap::new(),
           remote: HashMap::new(),
           refresh: HashSet::new(),
+          elsewhere: HashMap::new(),
+          node_watch: HashMap::new(),
+          node_subs: HashSet::new(),
+          remote_nodes: HashMap::new(),
           idle_since: HashMap::new(),
           closing: HashMap::new(),
         }),
@@ -426,6 +447,7 @@ impl SessionManager {
         installs,
         first_probe: tokio::sync::watch::Sender::new(false),
         hosts: Default::default(),
+        unread_ops: Default::default(),
         me: me.clone(),
       }
     });
@@ -554,6 +576,8 @@ impl SessionManager {
     {
       let mut st = self.state.lock();
       st.index = index;
+      // Unread marks are shared and outlive engines: a reply that came in before a restart still shows its dot
+      st.unread = prefs.unread.iter().cloned().collect();
       st.prefs = prefs;
       st.categories = categories;
     }
@@ -871,6 +895,8 @@ impl SessionManager {
     self.sync_index().await;
     self.sync_shapes().await;
     self.sync_categories().await;
+    // Engines off the bus (Windows, older ones) change them too: picked up here as the rest of the list is
+    self.reload_unread().await;
     if let Some(c) = &self.deps.chatgpt {
       c.refresh().await;
     }
@@ -911,6 +937,7 @@ impl SessionManager {
     };
     let list = self.deps.store.update_categories(op).await?;
     self.set_categories(list);
+    self.bus.touch("categories");
     Ok(())
   }
 
@@ -1394,21 +1421,35 @@ impl SessionManager {
   }
 
   pub fn sessions(&self) -> Vec<SessionSummary> {
-    let (index, live, unread) = {
+    let (index, live, unread, elsewhere) = {
       let st = self.state.lock();
-      (st.index.clone(), st.live.clone(), st.unread.clone())
+      // Run by another engine: its entry as that engine announced it (one owner per session, so ids never collide)
+      let elsewhere: HashMap<String, SessionSummary> = st.elsewhere.values().flatten().map(|s| (s.id.clone(), s.clone())).collect();
+      (st.index.clone(), st.live.clone(), st.unread.clone(), elsewhere)
+    };
+    let mark = |mut s: SessionSummary, live_state: Option<SummaryState>| {
+      let seen = !unread.contains(&s.id);
+      s.state = live_state.or_else(|| (!seen).then_some(SummaryState::Unread));
+      // A reply that came in while background work runs: the ring brightens instead of the finished dot showing
+      s.unread = (live_state == Some(SummaryState::Background) && !seen).then_some(true);
+      s
     };
     let mut merged: Vec<SessionSummary> = index
       .into_iter()
-      .map(|mut s| {
-        let live_state = live.get(&s.id).and_then(|l| l.list_state());
-        let seen = !unread.contains(&s.id);
-        s.state = live_state.or_else(|| (!seen).then_some(SummaryState::Unread));
-        // A reply that came in while background work runs: the ring brightens instead of the finished dot showing
-        s.unread = (live_state == Some(SummaryState::Background) && !seen).then_some(true);
-        s
+      .map(|s| match (live.get(&s.id), elsewhere.get(&s.id)) {
+        (Some(l), _) => {
+          let state = l.list_state();
+          mark(s, state)
+        }
+        (None, Some(e)) => mark(e.clone(), e.state),
+        (None, None) => mark(s, None),
       })
       .collect();
+    // Sessions another engine started since this list last read the directory
+    let known: HashSet<String> = merged.iter().map(|s| s.id.clone()).collect();
+    for e in elsewhere.values().filter(|e| !known.contains(&e.id) && !live.contains_key(&e.id)) {
+      merged.push(mark(e.clone(), e.state));
+    }
     if let Some(c) = &self.deps.chatgpt {
       merged.extend(c.summaries());
     }
@@ -1473,10 +1514,10 @@ impl SessionManager {
       Some(InitialView::MostRecent { most_recent: true }) => self.most_recent(),
       _ => None,
     };
-    let mut st = self.state.lock();
     if let Some(id) = &id {
-      st.unread.remove(id);
+      self.mark_read(id);
     }
+    let mut st = self.state.lock();
     let v = Arc::new(Viewer {
       id: self.viewer_seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
       state: parking_lot::Mutex::new(ViewerState { active_id: id, empty, ..Default::default() }),
@@ -1490,6 +1531,7 @@ impl SessionManager {
     *v.sink.lock() = None;
     self.state.lock().viewers.retain(|x| x.id != v.id);
     self.prune_host_views();
+    self.sync_node_subs();
   }
 
   fn viewers(&self) -> Vec<Arc<Viewer>> {
@@ -1534,12 +1576,161 @@ impl SessionManager {
         }
       }
     }
+    let owned = self.live(&s.id).is_some_and(|l| std::ptr::eq(&*l, s));
     // Shown by another engine too: the same view goes out over the bus
-    if self.bus.watching(&s.id)
-      && self.live(&s.id).is_some_and(|l| std::ptr::eq(&*l, s))
+    if owned
+      && self.bus.watching(&s.id)
       && let HostMsg::Session { parts: Some(p), .. } = view.unwrap_or_else(|| s.view_msg())
     {
       self.bus.publish(&s.id, &p);
+    }
+    // And the subagents its pages observe
+    if owned {
+      let nodes: Vec<String> = self.state.lock().node_watch.keys().filter(|(sid, _)| *sid == s.id).map(|(_, n)| n.clone()).collect();
+      for node in nodes {
+        self.publish_node(s, &node);
+      }
+    }
+  }
+
+  /// Owner: a watched subagent's transcript goes to the engines observing it when its rev moved since the last send
+  fn publish_node(&self, s: &AcpSession, node: &str) {
+    let Some((turns, rev, running)) = s.subagent_transcript(node) else { return };
+    {
+      let mut st = self.state.lock();
+      match st.node_watch.get_mut(&(s.id.clone(), node.to_owned())) {
+        Some(last) if *last != Some(rev) => *last = Some(rev),
+        _ => return,
+      }
+    }
+    self.bus.node_publish(&s.id, node, rev, running, turns.0.as_ref().to_owned());
+  }
+
+  /// The subagents this engine's pages observe on sessions another engine owns and pushes
+  fn wanted_nodes(&self) -> HashSet<(String, String)> {
+    let observed: Vec<(String, String)> = self.viewers().iter().filter_map(|v| v.state.lock().observing.clone()).collect();
+    let st = self.state.lock();
+    observed.into_iter().filter(|(sid, _)| !st.live.contains_key(sid) && st.mirrors.contains_key(sid)).collect()
+  }
+
+  /// Bring the bus's subagent subscriptions in line with what the pages here observe (cheap: called on every move)
+  fn sync_node_subs(&self) {
+    if !self.deps.bus {
+      return;
+    }
+    let wanted = self.wanted_nodes();
+    let (add, gone) = {
+      let mut st = self.state.lock();
+      if st.node_subs == wanted {
+        return;
+      }
+      let add: Vec<(String, String)> = wanted.difference(&st.node_subs).cloned().collect();
+      let gone: Vec<(String, String)> = st.node_subs.difference(&wanted).cloned().collect();
+      for k in &gone {
+        st.remote_nodes.remove(k);
+      }
+      st.node_subs = wanted;
+      (add, gone)
+    };
+    for (s, n) in add {
+      self.bus.node_subscribe(&s, &n);
+    }
+    for (s, n) in gone {
+      self.bus.node_unsubscribe(&s, &n);
+    }
+  }
+
+  /// A reply nobody saw: marked here at once, then in the shared store where every other engine reads it
+  fn mark_unread(&self, id: &str) {
+    if self.state.lock().unread.insert(id.to_owned()) {
+      self.persist_unread(UnreadOp::Add(id.to_owned()));
+    }
+  }
+
+  /// A page landed on the session, in any window of any engine: read everywhere
+  fn mark_read(&self, id: &str) {
+    if self.state.lock().unread.remove(id) {
+      self.persist_unread(UnreadOp::Remove(id.to_owned()));
+    }
+  }
+
+  /// Unread marks reach the shared store in order, one batch at a time. Once the queue is drained the store's marks (other
+  /// engines' included) become this engine's, and the other engines hear about the change
+  fn persist_unread(&self, op: UnreadOp) {
+    let spawn = {
+      let mut q = self.unread_ops.lock();
+      q.ops.push(op);
+      !std::mem::replace(&mut q.running, true)
+    };
+    if !spawn {
+      return;
+    }
+    let weak = self.me.clone();
+    tokio::spawn(async move {
+      loop {
+        let Some(m) = weak.upgrade() else { return };
+        let ops: Vec<UnreadOp> = std::mem::take(&mut m.unread_ops.lock().ops);
+        let written = m.deps.store.update_unread(&ops).await;
+        let changed = {
+          let mut q = m.unread_ops.lock();
+          if !q.ops.is_empty() {
+            continue;
+          }
+          q.running = false;
+          // Taken over while the queue is locked, so a mark made meanwhile is not overwritten by the older store copy
+          match &written {
+            Ok(disk) => m.adopt_unread(disk),
+            Err(e) => {
+              m.log(&format!("unread marks not saved: {e}"));
+              false
+            }
+          }
+        };
+        if written.is_ok() {
+          m.bus.touch("unread");
+        }
+        m.read_shown();
+        if changed {
+          m.emit_sessions();
+        }
+        return;
+      }
+    });
+  }
+
+  /// The store's unread marks as this engine's; whether that changed anything
+  fn adopt_unread(&self, disk: &std::collections::BTreeSet<String>) -> bool {
+    let next: HashSet<String> = disk.iter().cloned().collect();
+    let mut st = self.state.lock();
+    if st.unread == next {
+      return false;
+    }
+    st.unread = next;
+    true
+  }
+
+  /// A mark another engine set on a session a page here shows (it could not see that page) is cleared again
+  fn read_shown(&self) {
+    let shown: Vec<String> = self.viewers().iter().filter_map(|v| v.active_id()).collect();
+    for id in shown {
+      self.mark_read(&id);
+    }
+  }
+
+  /// Another engine changed the shared unread marks (or this one looks again): take them over. Skipped while this engine's
+  /// own writes are queued, which end by taking the store's marks over anyway
+  async fn reload_unread(&self) {
+    if self.unread_ops.lock().running {
+      return;
+    }
+    let disk = self.deps.store.load_prefs().await.unread;
+    let changed = {
+      let q = self.unread_ops.lock();
+      !q.running && self.adopt_unread(&disk)
+    };
+    self.read_shown();
+    if changed {
+      self.emit_sessions();
     }
   }
 
@@ -1561,6 +1752,7 @@ impl SessionManager {
   fn end_remote(&self, id: &str) {
     self.state.lock().remote.remove(id);
     self.bus.unsubscribe(id);
+    self.sync_node_subs();
   }
 
   /// A page's action on a session another engine owns and pushes: run there
@@ -1572,7 +1764,8 @@ impl SessionManager {
   /// Run an action a page of another engine took on a session this one owns, as if from a page showing it here
   async fn run_forwarded(self: Arc<Self>, session: String, msg: Value) -> Result<(), String> {
     let m: WebviewMsg = serde_json::from_value(msg).map_err(|e| e.to_string())?;
-    if !is_forwarded(&m) || session_id_of(&m).is_some_and(|id| id != session) {
+    let target = session_id_of(&m).or_else(|| list_edit_target(&m).map(str::to_owned));
+    if !(is_forwarded(&m) || list_edit_target(&m).is_some()) || target.is_some_and(|id| id != session) {
       return Err(format!("not an action on {session}"));
     }
     if self.live(&session).is_none() {
@@ -1590,6 +1783,8 @@ impl SessionManager {
   /// Pages that join later get the list in their init state, so skipping an unchanged list leaves none behind. Built and
   /// posted under one lock: two racing callers can never post an older list after a newer one
   fn emit_sessions(&self) {
+    // Every change that can move a list entry comes through here: the other engines hear about it too (unchanged: not sent)
+    self.bus.announce_live(self.own_live());
     let mut last = self.last_sessions.lock();
     let sessions = self.sessions();
     if last.as_ref() == Some(&sessions) {
@@ -1609,14 +1804,17 @@ impl SessionManager {
   /// Landing on a session also reads it; callers push the session list afterwards
   fn set_active(&self, v: &Viewer, id: Option<String>) {
     if let Some(id) = &id {
-      self.state.lock().unread.remove(id);
+      self.mark_read(id);
     }
-    let mut st = v.state.lock();
-    if st.active_id != id {
-      st.observing = None;
-      st.last_subagent_rev = None;
+    {
+      let mut st = v.state.lock();
+      if st.active_id != id {
+        st.observing = None;
+        st.last_subagent_rev = None;
+      }
+      st.active_id = id;
     }
-    st.active_id = id;
+    self.sync_node_subs();
   }
 
   fn viewers_on(&self, id: &str, except: Option<&Viewer>) -> Vec<Arc<Viewer>> {
@@ -1670,9 +1868,10 @@ impl SessionManager {
     }
     // A turn starting or ending moves this session's lease (another engine must not open it mid-turn)
     self.sync_leases();
-    // Decided before the list goes out, so the push that shows the turn ending already carries the unread dot
-    if idle_edge && self.viewers_on(id, None).is_empty() {
-      self.state.lock().unread.insert(id.to_owned());
+    // Decided before the list goes out, so the push that shows the turn ending already carries the unread dot. Nobody looked
+    // means nobody anywhere: a page of another engine showing it subscribes, which the bus counts as watching
+    if idle_edge && self.viewers_on(id, None).is_empty() && !self.bus.watching(id) {
+      self.mark_unread(id);
     }
     self.emit_session(&s);
     self.emit_sessions();
@@ -2451,6 +2650,16 @@ impl SessionManager {
     {
       return self.forward(tid, &m).await;
     }
+    // A list edit (rename, pin, file) of a session another engine runs: that engine writes the record and announces the new
+    // entry. An owner that cannot take it (off the bus, older) leaves the edit to the refusal below
+    if let Some(id) = list_edit_target(&m)
+      && self.live(id).is_none()
+      && self.bus.connected()
+      && (self.mirror_of(id).is_some() || self.leases.held_elsewhere(id))
+      && self.forward(id, &m).await.is_ok()
+    {
+      return Ok(());
+    }
     let valid = |id: &str| is_session_id(id);
     match m {
       W::ConnectChatgpt => self.new_session_for(v, Some(CHATGPT_ID.into()), None, None, None).await?,
@@ -2517,9 +2726,11 @@ impl SessionManager {
           self.set_session_category(&session, Some(id.clone())).await?;
         }
       }
-      // Unread dots live in this engine's memory only (a restart forgets them too), so forgetting them is the whole job
+      // Unread marks are shared: cleared for every engine and window on the machine, and on the SSH hosts in remote run
       W::MarkAllRead => {
         self.state.lock().unread.clear();
+        self.persist_unread(UnreadOp::Clear);
+        self.mark_hosts_read();
         self.emit_sessions();
       }
       W::MoveSession { id, cwd, category } => self.move_session(&id, cwd, category).await?,
@@ -2534,17 +2745,30 @@ impl SessionManager {
           // A restored Claude workflow agent without a process reads its sidechain log once (`workflow_logs.rs`)
           s.observe_subagent(&subagent_id);
         }
-        if let Some((turns, rev, running)) = self.live(&session_id).and_then(|s| s.subagent_transcript(&subagent_id)) {
+        // Run by another engine: its owner pushes the transcript (`bus_node_view`)
+        self.sync_node_subs();
+        let current = match self.live(&session_id) {
+          Some(s) => s.subagent_transcript(&subagent_id),
+          // What the owner pushed already. The read-only copy's only when the owner does not push (off the bus): restored
+          // from the record, it shows running work as cancelled under the live transcript's rev, which the page would
+          // then keep over the owner's
+          None if self.state.lock().remote.get(&session_id).is_some_and(|r| r.parts.is_some()) => self.pushed_node(&session_id, &subagent_id),
+          None => self.mirror_of(&session_id).and_then(|m| m.subagent_transcript(&subagent_id)),
+        };
+        if let Some((turns, rev, running)) = current {
           v.state.lock().last_subagent_rev = Some(rev);
           v.emit(HostMsg::Subagent { session_id, subagent_id, rev, running, turns });
         }
       }
       W::UnobserveSubagent { session_id, subagent_id } => {
-        let mut vs = v.state.lock();
-        if vs.observing.as_ref() == Some(&(session_id, subagent_id)) {
-          vs.observing = None;
-          vs.last_subagent_rev = None;
+        {
+          let mut vs = v.state.lock();
+          if vs.observing.as_ref() == Some(&(session_id, subagent_id)) {
+            vs.observing = None;
+            vs.last_subagent_rev = None;
+          }
         }
+        self.sync_node_subs();
       }
       W::CancelSubagent { session_id, subagent_id } => {
         if valid(&session_id)
@@ -2686,6 +2910,11 @@ impl SessionManager {
     self.patch_record(id, |r| r.title = t).await
   }
 
+  /// The transcript a session's owner pushed for one of its subagents (a session shown here read-only)
+  fn pushed_node(&self, session: &str, node: &str) -> Option<(RawJson, i64, bool)> {
+    self.state.lock().remote_nodes.get(&(session.to_owned(), node.to_owned())).map(|(rev, running, turns)| (turns.clone(), *rev, *running))
+  }
+
   pub async fn pin_session(&self, id: &str, pinned: bool) -> Result<()> {
     if !is_session_id(id) {
       return Ok(());
@@ -2755,6 +2984,8 @@ impl SessionManager {
       return Err(anyhow!(tp("host.saveFailed", &[("error", &e.to_string())])));
     }
     self.replace_summary(&r);
+    // Open nowhere, so no engine announces it: the others read the list again
+    self.bus.touch("index");
     Ok(())
   }
 
@@ -2791,6 +3022,9 @@ impl SessionManager {
       self.state.lock().trash.insert(id.to_owned(), Trash { summary, timer: timer.abort_handle() });
     }
     self.deps.store.trash(id).await?;
+    // Read by nobody any more; the other engines drop it from their lists now rather than on their next refresh
+    self.mark_read(id);
+    self.bus.touch("index");
     self.save_index();
     self.rehome(id).await;
     self.emit_sessions();
@@ -2800,10 +3034,12 @@ impl SessionManager {
   /// Close a live session and drop every trace of it in memory; out of the live map first, so its dispose callback
   /// cannot write the record back
   fn forget(&self, id: &str) {
+    // The unread mark stays: it is the user's, shared by every engine, and outlives this engine's copy (a session handed to
+    // another engine is just as unread there)
     let live = {
       let mut st = self.state.lock();
       st.was_running.remove(id);
-      st.unread.remove(id);
+      st.node_watch.retain(|(sid, _), _| sid != id);
       st.was_busy.remove(id);
       st.was_waiting.remove(id);
       st.settle_seq.remove(id);
@@ -2885,6 +3121,7 @@ impl SessionManager {
       record.category = category;
       self.deps.store.flush(Arc::new(record.clone())).await.ok();
       self.replace_summary(&record);
+      self.bus.touch("index");
       for v in self.viewers_on(id, None) {
         self.set_active(&v, None);
         self.select_session_for(&v, id).await;
@@ -3180,6 +3417,7 @@ impl SessionManager {
     let Some(entry) = self.state.lock().trash.remove(id) else { return Ok(()) };
     entry.timer.abort();
     self.deps.store.restore(id).await;
+    self.bus.touch("index");
     {
       let mut st = self.state.lock();
       st.index.push(entry.summary);
@@ -3752,6 +3990,129 @@ impl BusPeer for SessionManager {
   fn bus_wanted(&self) -> Vec<String> {
     self.state.lock().mirrors.keys().cloned().collect()
   }
+
+  fn bus_wanted_nodes(&self) -> Vec<(String, String)> {
+    let wanted = self.wanted_nodes();
+    self.state.lock().node_subs = wanted.clone();
+    wanted.into_iter().collect()
+  }
+
+  fn bus_own_live(&self) -> Vec<Value> {
+    self.own_live()
+  }
+
+  fn bus_live(&self, peer: u64, summaries: Vec<Value>) {
+    let parsed: Vec<SessionSummary> = summaries.into_iter().filter_map(parse_live_summary).collect();
+    let dropped = {
+      let mut st = self.state.lock();
+      let before = st.elsewhere.get(&peer);
+      if before.map_or(parsed.is_empty(), |b| *b == parsed) {
+        return;
+      }
+      let dropped = before.is_some_and(|b| b.iter().any(|s| !parsed.iter().any(|p| p.id == s.id)));
+      if parsed.is_empty() {
+        st.elsewhere.remove(&peer);
+      } else {
+        st.elsewhere.insert(peer, parsed);
+      }
+      dropped
+    };
+    // A session the other engine let go: this list falls back to its own entry, read again from the directory (the owner
+    // wrote the record before letting go)
+    if dropped {
+      self.save_index();
+    }
+    self.emit_sessions();
+  }
+
+  fn bus_touch(&self, what: &str) {
+    let Some(me) = self.me.upgrade() else { return };
+    let what = what.to_owned();
+    tokio::spawn(async move {
+      match what.as_str() {
+        "unread" => me.reload_unread().await,
+        "categories" => me.sync_categories().await,
+        "index" => me.sync_index().await,
+        _ => {}
+      }
+    });
+  }
+
+  fn bus_node_watch(&self, session: &str, node: &str, on: bool) {
+    let key = (session.to_owned(), node.to_owned());
+    if !on {
+      self.state.lock().node_watch.remove(&key);
+      return;
+    }
+    // A new observer: the transcript goes out whole now, whatever was sent before
+    self.state.lock().node_watch.insert(key, None);
+    if let Some(s) = self.live(session) {
+      // A restored Claude workflow agent without a process reads its sidechain log once (`workflow_logs.rs`)
+      s.observe_subagent(node);
+      self.publish_node(&s, node);
+    }
+  }
+
+  fn bus_node_view(&self, session: &str, node: &str, rev: i64, running: bool, turns: Box<RawValue>) {
+    let key = (session.to_owned(), node.to_owned());
+    let turns = RawJson(Arc::from(turns));
+    {
+      let mut st = self.state.lock();
+      if st.live.contains_key(session) || !st.node_subs.contains(&key) {
+        return;
+      }
+      st.remote_nodes.insert(key.clone(), (rev, running, turns.clone()));
+    }
+    for v in self.viewers_on(session, None) {
+      let fresh = {
+        let mut vs = v.state.lock();
+        let fresh = vs.observing.as_ref() == Some(&key) && vs.last_subagent_rev != Some(rev);
+        if fresh {
+          vs.last_subagent_rev = Some(rev);
+        }
+        fresh
+      };
+      if fresh {
+        v.emit(HostMsg::Subagent { session_id: session.to_owned(), subagent_id: node.to_owned(), rev, running, turns: turns.clone() });
+      }
+    }
+  }
+
+  fn bus_reset(&self) {
+    let had = {
+      let mut st = self.state.lock();
+      st.node_watch.clear();
+      // Sent again to the next router (`bus_wanted_nodes`)
+      st.node_subs.clear();
+      !std::mem::take(&mut st.elsewhere).is_empty()
+    };
+    if had {
+      self.save_index();
+      self.emit_sessions();
+    }
+  }
+}
+
+impl SessionManager {
+  /// The list entries of the sessions open here as the bus carries them, each with its state, in a stable order
+  fn own_live(&self) -> Vec<Value> {
+    let mut live: Vec<(String, Value)> = self
+      .live_sessions()
+      .into_iter()
+      .filter_map(|s| {
+        let mut sum = s.summary();
+        sum.state = s.list_state();
+        serde_json::to_value(&sum).ok().map(|v| (s.id.clone(), v))
+      })
+      .collect();
+    live.sort_by(|a, b| a.0.cmp(&b.0));
+    live.into_iter().map(|(_, v)| v).collect()
+  }
+
+  /// "Mark all as read" reaches the SSH hosts in remote run too: their sessions' marks live on the host
+  fn mark_hosts_read(&self) {
+    self.hosts_send_list(serde_json::json!({ "type": "markAllRead" }));
+  }
 }
 
 /// A pushed view as this engine posts it: the owner's head with this engine's rev, the whole view spliced from the turns
@@ -3771,6 +4132,25 @@ fn remote_view(
   let parts = ViewParts(Arc::new(acpira_shared::session_patch::ViewPartsData { id: id.to_owned(), epoch, rev, head, turns, last }));
   let msg = HostMsg::Session { session: RawJson(Arc::from(whole)), running, parts: Some(parts.clone()) };
   Some((parts, msg))
+}
+
+/// List edits of one session: written by whichever engine owns it, so forwarded there like its actions
+fn list_edit_target(m: &WebviewMsg) -> Option<&str> {
+  use WebviewMsg as W;
+  match m {
+    W::RenameSession { id, .. } | W::PinSession { id, .. } | W::SetSessionCategory { id, .. } => Some(id),
+    _ => None,
+  }
+}
+
+/// A list entry another engine announced: a state this engine does not know (a newer engine's) is dropped rather than the
+/// whole entry, and the unread flag is this engine's own call
+fn parse_live_summary(mut v: Value) -> Option<SessionSummary> {
+  let state = v.as_object_mut().and_then(|o| o.remove("state"));
+  let mut s: SessionSummary = serde_json::from_value(v).ok()?;
+  s.state = state.and_then(|x| serde_json::from_value(x).ok());
+  s.unread = None;
+  is_session_id(&s.id).then_some(s)
 }
 
 /// What a page may do on a session another engine owns: everything that acts on the session itself, but not what moves

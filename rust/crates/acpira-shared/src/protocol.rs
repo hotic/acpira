@@ -727,7 +727,7 @@ pub enum WebviewMsg {
     #[serde(default)]
     file: Option<String>,
   },
-  /// The list's "mark all as read": the engine forgets every unread dot it holds
+  /// The list's "mark all as read": every unread mark goes, for every engine and window on the machine (they share them)
   MarkAllRead,
   /// Re-home a session into `cwd` (absent: the window's workspace folder), filed under `category` when it is one of
   /// that project's

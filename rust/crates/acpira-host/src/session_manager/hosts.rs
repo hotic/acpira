@@ -15,7 +15,7 @@ use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use acpira_shared::protocol::{HostMsg, WebviewMsg};
+use acpira_shared::protocol::{HostMsg, RawJson, WebviewMsg};
 use acpira_shared::remote::{ConnectionView, RunMode, format_remote_folder, parse_remote_folder};
 use acpira_shared::session_patch::{LastTurnParts, ViewParts};
 use acpira_shared::transcript::SessionSummary;
@@ -250,6 +250,14 @@ impl SessionManager {
     out
   }
 
+  /// A message to every connected host's list view (a list action that is not about one session, such as "mark all as read")
+  pub(super) fn hosts_send_list(&self, message: Value) {
+    let runs: Vec<Arc<HostRun>> = self.hosts.runs.lock().values().cloned().collect();
+    for run in runs {
+      run.send_to_view(LIST_VIEW, message.clone());
+    }
+  }
+
   /// A shown host session's current push
   pub(super) fn host_msg(&self, id: &str) -> Option<HostMsg> {
     let run = self.host_of(id)?;
@@ -402,7 +410,26 @@ impl SessionManager {
     self.emit_sessions();
   }
 
+  /// A subagent transcript the host pushed through a session's view (a page here observes it: `observeSubagent` went to that
+  /// view like the session's other actions). The host's rev is the session's own counter, so it passes through
+  fn on_host_subagent(&self, run: &Arc<HostRun>, view_id: &str, msg: &Value) {
+    let Some(id) = run.shown.lock().iter().find(|(_, s)| s.view_id == view_id).map(|(id, _)| id.clone()) else { return };
+    let (Some(sub), Some(rev), Some(turns)) = (msg.get("subagentId").and_then(Value::as_str), msg.get("rev").and_then(Value::as_i64), msg.get("turns")) else {
+      return;
+    };
+    let Ok(turns) = serde_json::value::to_raw_value(turns) else { return };
+    let running = msg.get("running").and_then(Value::as_bool).unwrap_or(false);
+    let m = HostMsg::Subagent { session_id: id.clone(), subagent_id: sub.to_owned(), rev, running, turns: RawJson(Arc::from(turns)) };
+    for v in self.viewers_on(&id, None) {
+      v.emit(m.clone());
+    }
+  }
+
   fn on_host_view(self: &Arc<Self>, run: &Arc<HostRun>, view_id: &str, msg: &Value) {
+    if msg.get("type").and_then(Value::as_str) == Some("subagent") {
+      self.on_host_subagent(run, view_id, msg);
+      return;
+    }
     let (whole, patch) = match msg.get("type").and_then(Value::as_str) {
       Some("init") => (msg.pointer("/state/active").filter(|a| !a.is_null()), None),
       Some("session") => (msg.get("session"), None),

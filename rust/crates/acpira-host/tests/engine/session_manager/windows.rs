@@ -191,11 +191,15 @@ async fn a_session_another_engine_owns_streams_here_and_takes_actions_without_a_
   until(|| b.active().is_some_and(|s| s["id"] == id.as_str()), 3000).await;
   assert!(flashed(&seen).is_empty(), "read-only copy shown on return: {:?}", flashed(&seen));
 
-  // A's slow turn streams into B while it runs, and ends there too
+  // A's slow turn streams into B while it runs, and ends there too. B's session list shows it running as well (the
+  // state goes over the bus with the views): it used to show the transcript moving next to an idle list entry
+  let state_in_b = |b: &Mgr| b.sessions().into_iter().find(|s| s["id"] == id.as_str()).map(|s| s["state"].clone());
   let running = a.spawn_handle(json!({ "type": "send", "text": "slow" }));
   until(|| b.active().is_some_and(|s| s["running"] == true), 5000).await;
+  until(|| state_in_b(&b) == Some(json!("working")), 5000).await;
   running.await.unwrap();
   until(|| b.active().is_some_and(|s| s["running"] == false && turns_in(&s) == 4), 5000).await;
+  until(|| state_in_b(&b).is_some_and(|s| s.is_null()), 5000).await;
 
   // B sends: the turn runs in A, both show it, A keeps the session
   b.handle(json!({ "type": "send", "sessionId": id, "text": "from B" })).await;
@@ -209,6 +213,117 @@ async fn a_session_another_engine_owns_streams_here_and_takes_actions_without_a_
   a.dispose().await;
   until(|| b.m.leased().contains(&id), 8000).await;
   until(|| b.active().is_some_and(|s| s["status"] == "ready" && turns_in(&s) == 6), 5000).await;
+  b.dispose().await;
+}
+
+// The sync model's session facts in the list: a session another engine runs shows there as its owner lists it (a new one
+// at once, a rename) without waiting for a refresh, and a rename or pin made in the other engine is written by the owner
+// instead of being refused as "busy elsewhere"
+#[tokio::test(flavor = "multi_thread")]
+async fn the_list_entry_of_a_session_another_engine_runs_follows_its_owner() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let a = Mgr::new(dir.path(), Opts::fake(&fake));
+  let b = Mgr::new(dir.path(), Opts::fake(&fake));
+  a.init().await;
+  b.init().await;
+  until(|| a.m.bus_connected() && b.m.bus_connected(), 3000).await;
+  a.new_session(None).await;
+  a.handle(json!({ "type": "send", "text": "first" })).await;
+  let id = a.active_id().unwrap();
+  let entry = |m: &Mgr| m.sessions().into_iter().find(|s| s["id"] == id.as_str());
+  // B never refreshes in this test: A announces its sessions
+  until(|| entry(&b).is_some(), 3000).await;
+  a.handle(json!({ "type": "renameSession", "id": id, "title": "A 改的名" })).await;
+  until(|| entry(&b).is_some_and(|s| s["title"] == "A 改的名"), 3000).await;
+  // B renames and pins it: A, the owner, writes both, and both lists show them
+  b.handle(json!({ "type": "renameSession", "id": id, "title": "B 改的名" })).await;
+  b.handle(json!({ "type": "pinSession", "id": id, "pinned": true })).await;
+  assert!(b.toasts().is_empty(), "{:?}", b.toasts());
+  until(|| entry(&a).is_some_and(|s| s["title"] == "B 改的名" && s["pinned"] == true), 3000).await;
+  until(|| entry(&b).is_some_and(|s| s["title"] == "B 改的名" && s["pinned"] == true), 3000).await;
+  let record = a.store.load(&id).await.unwrap();
+  assert_eq!((record.title.as_str(), record.pinned), ("B 改的名", Some(true)));
+  // A ends: B keeps the entry, now read from the directory, with nothing running
+  a.dispose().await;
+  until(|| entry(&b).is_some_and(|s| s["title"] == "B 改的名" && s["state"].is_null()), 5000).await;
+  b.dispose().await;
+}
+
+// Unread is the user's, not an engine's: a reply that came in while nobody anywhere looked shows its dot in every
+// engine's list and in an engine started later, and looking at it in any one of them clears it in all
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unread_mark_is_shared_by_every_engine_and_outlives_them() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let a = Mgr::new(dir.path(), Opts::fake(&fake));
+  let b = Mgr::new(dir.path(), Opts::fake(&fake));
+  a.init().await;
+  b.init().await;
+  until(|| a.m.bus_connected() && b.m.bus_connected(), 3000).await;
+  a.new_session(None).await;
+  let id = a.active_id().unwrap();
+  let state = |m: &Mgr| m.sessions().into_iter().find(|s| s["id"] == id.as_str()).map(|s| s["state"].clone()).unwrap_or(Value::Null);
+  // The turn ends after A's page moved on, and B shows nothing of it
+  let running = a.spawn_handle(json!({ "type": "send", "text": "slow" }));
+  until(|| a.active().is_some_and(|s| s["running"] == true), 5000).await;
+  a.new_session(None).await;
+  running.await.unwrap();
+  until(|| state(&a) == "unread", 5000).await;
+  until(|| state(&b) == "unread", 5000).await;
+  // An engine started now (a window opened later, or after a restart) reads it from the shared store
+  b.dispose().await;
+  let b2 = Mgr::new(dir.path(), Opts::fake(&fake));
+  b2.init().await;
+  until(|| state(&b2) == "unread", 5000).await;
+  // Looked at in that engine: read in A as well, and in the store
+  until(|| b2.m.bus_connected(), 3000).await;
+  until(|| dir.path().join(format!("{id}.json")).exists(), 3000).await;
+  b2.m.select_session_for(&b2.v, &id).await;
+  assert_eq!(state(&b2), Value::Null);
+  until(|| state(&a) == Value::Null, 5000).await;
+  let prefs: Value = serde_json::from_str(&std::fs::read_to_string(dir.path().join("prefs.json")).unwrap()).unwrap();
+  assert!(!prefs["unread"].as_array().is_some_and(|u| u.iter().any(|x| x == id.as_str())), "{prefs}");
+  a.dispose().await;
+  b2.dispose().await;
+}
+
+// A subagent of a session another engine runs: observing it there gets the owner's transcript, and the owner pushes each
+// change while it is observed (here the permission the other engine answered)
+#[tokio::test(flavor = "multi_thread")]
+async fn a_subagent_of_a_session_another_engine_runs_streams_to_its_observer() {
+  let fake = fake_or_skip!();
+  let dir = tempfile::tempdir().unwrap();
+  let a = Mgr::new(dir.path(), Opts::fake(&fake));
+  let b = Mgr::new(dir.path(), Opts::fake(&fake));
+  a.init().await;
+  b.init().await;
+  until(|| a.m.bus_connected() && b.m.bus_connected(), 3000).await;
+  a.new_session(None).await;
+  let sid = a.active_id().unwrap();
+  let p = a.spawn_handle(json!({ "type": "send", "text": "subagents-native" }));
+  let c1 = |m: &Mgr| m.view_of(&sid).and_then(|x| x["subagents"].as_array().and_then(|n| n.iter().find(|n| n["peer"]["sessionId"] == "c1").cloned()));
+  until(|| c1(&a).is_some_and(|n| n["permissions"].as_array().is_some_and(|p| !p.is_empty())), 8000).await;
+  let c1id = c1(&a).unwrap()["id"].as_str().unwrap().to_owned();
+  until(|| dir.path().join(format!("{sid}.json")).exists(), 3000).await;
+  b.m.select_session_for(&b.v, &sid).await;
+  until(|| b.active().is_some_and(|s| s["id"] == sid.as_str() && s["status"] != "readonly"), 3000).await;
+  let subs = |m: &Mgr| m.events.lock().unwrap().iter().filter(|x| x["type"] == "subagent" && x["subagentId"] == c1id.as_str()).cloned().collect::<Vec<_>>();
+  let perm_in = |x: &Value| {
+    x["turns"].as_array().into_iter().flatten().filter(|t| t["role"] == "agent").flat_map(|t| t["blocks"].as_array().cloned().unwrap_or_default()).find(|b| b["type"] == "permission")
+  };
+  b.handle(json!({ "type": "observeSubagent", "sessionId": sid, "subagentId": c1id })).await;
+  until(|| subs(&b).iter().any(|x| perm_in(x).is_some()), 5000).await;
+  // Never the read-only copy's version, which shows the running subagent as cancelled
+  assert!(subs(&b).iter().all(|x| !x["turns"].to_string().contains("cancelled")), "{:?}", subs(&b));
+  let first = subs(&b).into_iter().rev().find(|x| perm_in(x).is_some()).unwrap();
+  // Answered in B (the action runs in A): the newer transcript comes back
+  b.handle(json!({ "type": "permission", "sessionId": sid, "blockId": perm_in(&first).unwrap()["id"], "optionId": "allow" })).await;
+  until(|| subs(&b).iter().any(|x| x["rev"].as_i64() > first["rev"].as_i64()), 5000).await;
+  assert!(b.toasts().is_empty(), "{:?}", b.toasts());
+  b.handle(json!({ "type": "unobserveSubagent", "sessionId": sid, "subagentId": c1id })).await;
+  p.await.unwrap();
+  a.dispose().await;
   b.dispose().await;
 }
 

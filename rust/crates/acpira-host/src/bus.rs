@@ -7,6 +7,10 @@
 //! socket (the router) and every engine, the router's own included, connects to it as a client. When the router's engine
 //! ends, the others race for the lock again and reconnect; each client then announces its state afresh (the sessions it
 //! owns, the ones it subscribes to), and owners answer every new subscription with a whole view
+//!
+//! What travels follows the sync model (docs/dev/host-architecture.md, "Sync model"): session facts from their owner
+//! (views, subagent transcripts, the list entries of the sessions it runs), and a `touch` whenever a user fact in the
+//! shared store changed (unread marks, categories, the list), so every other engine re-reads it at once
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -122,6 +126,22 @@ pub trait BusPeer: Send + Sync {
   fn bus_owned(&self) -> Vec<String>;
   /// The sessions this engine shows read-only, subscribed again after every (re)connect
   fn bus_wanted(&self) -> Vec<String>;
+  /// The subagents this engine's pages observe on sessions shown read-only, subscribed again after every (re)connect
+  fn bus_wanted_nodes(&self) -> Vec<(String, String)>;
+  /// The list entries (`SessionSummary` with its state) of the sessions this engine runs, announced again after every
+  /// (re)connect
+  fn bus_own_live(&self) -> Vec<Value>;
+  /// Another engine's list entries, keyed by its connection on the router (empty: it left or runs nothing)
+  fn bus_live(&self, peer: u64, summaries: Vec<Value>);
+  /// Another engine changed a user fact in the shared store (`unread`, `categories`, `index`): read it again
+  fn bus_touch(&self, what: &str);
+  /// Owner: another engine started observing a subagent of `session` (send its transcript now) or the last one stopped
+  fn bus_node_watch(&self, session: &str, node: &str, on: bool);
+  /// Follower: a subagent transcript of a session another engine owns, whole
+  fn bus_node_view(&self, session: &str, node: &str, rev: i64, running: bool, turns: Box<RawValue>);
+  /// The router went away: what came from other engines (list entries, watches of subagents) is void until the next
+  /// router replays it
+  fn bus_reset(&self);
 }
 
 /// One line on the bus. A flat object rather than a tagged enum: tagged enums buffer their content, which raw JSON
@@ -147,11 +167,31 @@ struct Frame {
   msg: Option<Value>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   error: Option<String>,
+  // `live`: an engine's list entries, as plain JSON (an entry a newer engine shapes differently is skipped on its own
+  // instead of making the whole frame unreadable)
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  summaries: Vec<Value>,
+  // `touch`: which user fact changed
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  what: Option<String>,
+  // `nsub` / `nunsub` / `nwatch` / `nview`: the subagent (`SubagentNode.id`) of `session`
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  node: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  rev: Option<i64>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  running: Option<bool>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  turns: Option<Box<RawValue>>,
 }
 
 impl Frame {
   fn new(t: &str, session: &str) -> Frame {
     Frame { t: t.into(), session: Some(session.into()), ..Default::default() }
+  }
+
+  fn node(t: &str, session: &str, node: &str) -> Frame {
+    Frame { node: Some(node.into()), ..Frame::new(t, session) }
   }
 
   fn line(&self) -> Arc<str> {
@@ -180,6 +220,8 @@ struct Inner {
   streams: parking_lot::Mutex<HashMap<String, Stream>>,
   // The owned list last announced on this connection: an unchanged list is not sent again
   announced: parking_lot::Mutex<Option<Vec<String>>>,
+  // The list entries last announced on this connection, likewise
+  announced_live: parking_lot::Mutex<Option<Vec<Value>>>,
   tasks: parking_lot::Mutex<Vec<tokio::task::AbortHandle>>,
 }
 
@@ -211,6 +253,7 @@ impl Bus {
         next: AtomicU64::new(1),
         streams: Default::default(),
         announced: Default::default(),
+        announced_live: Default::default(),
         tasks: Default::default(),
       }),
     }
@@ -250,6 +293,38 @@ impl Bus {
       *last = Some(owned.clone());
     }
     self.inner.send(&Frame { t: "own".into(), sessions: owned, ..Default::default() });
+  }
+
+  /// The list entries of the sessions this engine runs now (sent only when they changed), so every other engine's list
+  /// shows them as this one does: running, waiting or failed, renamed, pinned, filed, on another model
+  pub fn announce_live(&self, summaries: Vec<Value>) {
+    {
+      let mut last = self.inner.announced_live.lock();
+      if !self.connected() || last.as_ref() == Some(&summaries) {
+        return;
+      }
+      *last = Some(summaries.clone());
+    }
+    self.inner.send(&Frame { t: "live".into(), summaries, ..Default::default() });
+  }
+
+  /// A user fact in the shared store changed here (`unread`, `categories`, `index`): every other engine reads it again
+  pub fn touch(&self, what: &str) {
+    self.inner.send(&Frame { t: "touch".into(), what: Some(what.into()), ..Default::default() });
+  }
+
+  /// A page here observes a subagent of a session another engine owns: its owner pushes the transcript
+  pub fn node_subscribe(&self, session: &str, node: &str) {
+    self.inner.send(&Frame::node("nsub", session, node));
+  }
+
+  pub fn node_unsubscribe(&self, session: &str, node: &str) {
+    self.inner.send(&Frame::node("nunsub", session, node));
+  }
+
+  /// Owner: a watched subagent's transcript, whole (as a page here gets it)
+  pub fn node_publish(&self, session: &str, node: &str, rev: i64, running: bool, turns: Box<RawValue>) {
+    self.inner.send(&Frame { rev: Some(rev), running: Some(running), turns: Some(turns), ..Frame::node("nview", session, node) });
   }
 
   pub fn subscribe(&self, session: &str) {
@@ -332,6 +407,30 @@ impl Inner {
       }
     };
     let Some(peer) = self.peer() else { return };
+    match f.t.as_str() {
+      "live" => {
+        if let Some(from) = f.peer {
+          peer.bus_live(from, f.summaries);
+        }
+        return;
+      }
+      "touch" => {
+        if let Some(what) = &f.what {
+          peer.bus_touch(what);
+        }
+        return;
+      }
+      "nwatch" | "nview" => {
+        let (Some(session), Some(node)) = (f.session.as_deref(), f.node.as_deref()) else { return };
+        if f.t == "nwatch" {
+          peer.bus_node_watch(session, node, f.on == Some(true));
+        } else if let (Some(rev), Some(turns)) = (f.rev, f.turns) {
+          peer.bus_node_view(session, node, rev, f.running == Some(true), turns);
+        }
+        return;
+      }
+      _ => {}
+    }
     let Some(session) = f.session.clone() else {
       if f.t == "done" {
         self.done(f);
@@ -380,6 +479,7 @@ impl Inner {
   fn connected(&self, tx: mpsc::UnboundedSender<Arc<str>>) {
     *self.out.lock() = Some(tx);
     *self.announced.lock() = None;
+    *self.announced_live.lock() = None;
     if let Some(peer) = self.peer() {
       let mut owned = peer.bus_owned();
       owned.sort();
@@ -387,6 +487,14 @@ impl Inner {
       self.send(&Frame { t: "own".into(), sessions: owned, ..Default::default() });
       for s in peer.bus_wanted() {
         self.send(&Frame::new("sub", &s));
+      }
+      for (s, n) in peer.bus_wanted_nodes() {
+        self.send(&Frame::node("nsub", &s, &n));
+      }
+      let live = peer.bus_own_live();
+      *self.announced_live.lock() = Some(live.clone());
+      if !live.is_empty() {
+        self.send(&Frame { t: "live".into(), summaries: live, ..Default::default() });
       }
     }
   }
@@ -397,6 +505,9 @@ impl Inner {
     self.streams.lock().clear();
     for (_, tx) in self.pending.lock().drain() {
       let _ = tx.send(Err("bus disconnected".into()));
+    }
+    if let Some(peer) = self.peer() {
+      peer.bus_reset();
     }
   }
 }
@@ -494,7 +605,7 @@ async fn route(_lock: std::fs::File, listener: tokio::net::UnixListener) {
     let id = next;
     let (rd, mut wr) = stream.into_split();
     let (tx, mut rx) = mpsc::unbounded_channel::<Arc<str>>();
-    router.lock().clients.insert(id, Client { tx, owned: HashSet::new(), subs: HashSet::new() });
+    router.lock().join(id, tx);
     let r = router.clone();
     conns.spawn(async move {
       let writer = tokio::spawn(async move {
@@ -521,6 +632,10 @@ struct Client {
   tx: mpsc::UnboundedSender<Arc<str>>,
   owned: HashSet<String>,
   subs: HashSet<String>,
+  // The subagents (session, node) it observes on sessions it shows read-only
+  nodes: HashSet<(String, String)>,
+  // Its last `live` frame as relayed (stamped with its id), replayed to every engine that joins later
+  live: Option<Arc<str>>,
 }
 
 #[derive(Default)]
@@ -537,9 +652,35 @@ impl Router {
     self.clients.iter().filter(|(id, c)| **id != except && c.subs.contains(session)).map(|(id, _)| *id).collect()
   }
 
+  fn node_subscribers(&self, key: &(String, String), except: u64) -> Vec<u64> {
+    self.clients.iter().filter(|(id, c)| **id != except && c.nodes.contains(key)).map(|(id, _)| *id).collect()
+  }
+
+  fn node_watch(&self, owner: u64, key: &(String, String), on: bool) {
+    self.send(owner, Frame { on: Some(on), ..Frame::node("nwatch", &key.0, &key.1) }.line());
+  }
+
   fn send(&self, to: u64, line: Arc<str>) {
     if let Some(c) = self.clients.get(&to) {
       let _ = c.tx.send(line);
+    }
+  }
+
+  /// A new connection: it hears every other engine's list entries at once
+  fn join(&mut self, id: u64, tx: mpsc::UnboundedSender<Arc<str>>) {
+    for c in self.clients.values() {
+      if let Some(line) = &c.live {
+        let _ = tx.send(line.clone());
+      }
+    }
+    self.clients.insert(id, Client { tx, owned: HashSet::new(), subs: HashSet::new(), nodes: HashSet::new(), live: None });
+  }
+
+  fn broadcast(&self, from: u64, line: Arc<str>) {
+    for (id, c) in &self.clients {
+      if *id != from {
+        let _ = c.tx.send(line.clone());
+      }
     }
   }
 
@@ -558,6 +699,12 @@ impl Router {
           if !self.subscribers(s, from).is_empty() {
             self.watch(from, s, true);
           }
+        }
+        // Subagents observed on a session that just found its owner: that owner pushes them
+        let watched: HashSet<(String, String)> =
+          self.clients.iter().filter(|(id, _)| **id != from).flat_map(|(_, c)| c.nodes.iter().filter(|k| now.contains(&k.0) && !before.contains(&k.0)).cloned()).collect();
+        for key in &watched {
+          self.node_watch(from, key, true);
         }
         for s in before.difference(&now) {
           for sub in self.subscribers(s, from) {
@@ -601,12 +748,60 @@ impl Router {
           self.send(to, Frame { peer: None, ..f }.line());
         }
       }
+      "live" => {
+        let line = Frame { t: "live".into(), peer: Some(from), summaries: f.summaries, ..Default::default() }.line();
+        let Some(c) = self.clients.get_mut(&from) else { return };
+        c.live = Some(line.clone());
+        self.broadcast(from, line);
+      }
+      "touch" => self.broadcast(from, line),
+      "nsub" | "nunsub" | "nview" => {
+        let Some(node) = f.node.clone() else { return };
+        let key = (session.clone(), node);
+        match f.t.as_str() {
+          "nsub" => {
+            if let Some(c) = self.clients.get_mut(&from) {
+              c.nodes.insert(key.clone());
+            }
+            // Every new observer gets the transcript whole: the owner sends it again
+            if let Some(o) = self.owner(&session).filter(|o| *o != from) {
+              self.node_watch(o, &key, true);
+            }
+          }
+          "nunsub" => {
+            if let Some(c) = self.clients.get_mut(&from) {
+              c.nodes.remove(&key);
+            }
+            if let Some(o) = self.owner(&session).filter(|o| *o != from)
+              && self.node_subscribers(&key, o).is_empty()
+            {
+              self.node_watch(o, &key, false);
+            }
+          }
+          _ => {
+            for sub in self.node_subscribers(&key, from) {
+              self.send(sub, line.clone());
+            }
+          }
+        }
+      }
       _ => {}
     }
   }
 
   fn leave(&mut self, id: u64) {
     let Some(c) = self.clients.remove(&id) else { return };
+    // Its sessions stop showing as running anywhere else
+    if c.live.is_some() {
+      self.broadcast(id, Frame { t: "live".into(), peer: Some(id), ..Default::default() }.line());
+    }
+    for key in &c.nodes {
+      if let Some(o) = self.owner(&key.0)
+        && self.node_subscribers(key, o).is_empty()
+      {
+        self.node_watch(o, key, false);
+      }
+    }
     for s in &c.owned {
       for sub in self.subscribers(s, id) {
         self.send(sub, Frame::new("gone", s).line());
@@ -732,7 +927,7 @@ mod tests {
     let mut rx = HashMap::new();
     for id in [1u64, 2, 3] {
       let (tx, rx1) = mpsc::unbounded_channel();
-      r.clients.insert(id, Client { tx, owned: HashSet::new(), subs: HashSet::new() });
+      r.join(id, tx);
       rx.insert(id, rx1);
     }
     let mut take = |id: u64| -> Vec<Value> {
@@ -786,5 +981,81 @@ mod tests {
     take(1);
     r.leave(1);
     assert_eq!(take(2), vec![json!({ "t": "gone", "session": "s" })]);
+  }
+
+  fn take(rx: &mut mpsc::UnboundedReceiver<Arc<str>>) -> Vec<Value> {
+    let mut out = vec![];
+    while let Ok(l) = rx.try_recv() {
+      out.push(serde_json::from_str(&l).unwrap());
+    }
+    out
+  }
+
+  fn send(r: &mut Router, from: u64, v: Value) {
+    let line = v.to_string();
+    r.handle(from, serde_json::from_str(&line).unwrap(), Arc::from(line));
+  }
+
+  // List entries (title, state …) reach every other engine stamped with their sender, a late joiner hears them at once,
+  // and an engine leaving clears its entries everywhere. A `touch` goes to everyone else, once
+  #[test]
+  fn list_entries_are_relayed_replayed_and_cleared_and_touches_broadcast() {
+    let mut r = Router::default();
+    let (tx1, mut rx1) = mpsc::unbounded_channel();
+    let (tx2, mut rx2) = mpsc::unbounded_channel();
+    r.join(1, tx1);
+    r.join(2, tx2);
+    let entry = json!({ "id": "s", "title": "t", "state": "working" });
+    send(&mut r, 1, json!({ "t": "live", "summaries": [entry] }));
+    assert!(take(&mut rx1).is_empty(), "not echoed to its sender");
+    assert_eq!(take(&mut rx2), vec![json!({ "t": "live", "peer": 1, "summaries": [entry] })]);
+    // A third engine joining later gets the entries already announced
+    let (tx3, mut rx3) = mpsc::unbounded_channel();
+    r.join(3, tx3);
+    assert_eq!(take(&mut rx3), vec![json!({ "t": "live", "peer": 1, "summaries": [entry] })]);
+    send(&mut r, 2, json!({ "t": "touch", "what": "unread" }));
+    assert!(take(&mut rx2).is_empty());
+    assert_eq!(take(&mut rx1), vec![json!({ "t": "touch", "what": "unread" })]);
+    assert_eq!(take(&mut rx3), vec![json!({ "t": "touch", "what": "unread" })]);
+    // The sender leaves: everyone hears its entries are gone
+    r.leave(1);
+    assert_eq!(take(&mut rx2), vec![json!({ "t": "live", "peer": 1 })]);
+    assert_eq!(take(&mut rx3), vec![json!({ "t": "live", "peer": 1 })]);
+  }
+
+  // Observing a subagent of a session another engine owns: the owner is asked for it by every new observer, its
+  // transcripts reach the observers of that subagent only, it is told when the last observer goes (unsubscribed or gone),
+  // and a session that changes hands is asked of its new owner
+  #[test]
+  fn subagent_observers_are_routed_to_the_owner_and_back() {
+    let mut r = Router::default();
+    let (tx1, mut rx1) = mpsc::unbounded_channel();
+    let (tx2, mut rx2) = mpsc::unbounded_channel();
+    let (tx3, mut rx3) = mpsc::unbounded_channel();
+    r.join(1, tx1);
+    r.join(2, tx2);
+    r.join(3, tx3);
+    send(&mut r, 1, json!({ "t": "own", "sessions": ["s"] }));
+    send(&mut r, 2, json!({ "t": "nsub", "session": "s", "node": "c1" }));
+    assert_eq!(take(&mut rx1), vec![json!({ "t": "nwatch", "session": "s", "node": "c1", "on": true })]);
+    send(&mut r, 3, json!({ "t": "nsub", "session": "s", "node": "c2" }));
+    take(&mut rx1);
+    let view = json!({ "t": "nview", "session": "s", "node": "c1", "rev": 3, "running": true, "turns": [] });
+    send(&mut r, 1, view.clone());
+    assert_eq!(take(&mut rx2), vec![view]);
+    assert!(take(&mut rx3).is_empty(), "another subagent's observer");
+    // The last observer of c1 goes: the owner stops; 3 leaving ends c2 the same way
+    send(&mut r, 2, json!({ "t": "nunsub", "session": "s", "node": "c1" }));
+    assert_eq!(take(&mut rx1), vec![json!({ "t": "nwatch", "session": "s", "node": "c1", "on": false })]);
+    send(&mut r, 2, json!({ "t": "nsub", "session": "s", "node": "c1" }));
+    take(&mut rx1);
+    r.leave(3);
+    assert_eq!(take(&mut rx1), vec![json!({ "t": "nwatch", "session": "s", "node": "c2", "on": false })]);
+    // The owner leaves and another engine opens the session: it is asked for what 2 still observes
+    r.leave(1);
+    let (tx4, mut rx4) = mpsc::unbounded_channel();
+    r.join(4, tx4);
+    send(&mut r, 4, json!({ "t": "own", "sessions": ["s"] }));
+    assert!(take(&mut rx4).contains(&json!({ "t": "nwatch", "session": "s", "node": "c1", "on": true })));
   }
 }

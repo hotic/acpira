@@ -4,7 +4,7 @@
 //! with the record files before every write, and every file is written tmp + rename. Record writes are debounced per
 //! session and serialized from the live session at write time
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant, SystemTime};
@@ -54,8 +54,20 @@ pub struct SessionPrefs {
   pub last_settings: BTreeMap<AgentId, TurnSettings>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub model_shapes: Option<BTreeMap<AgentId, ModelShapes>>,
+  /// Sessions with a reply nobody has looked at yet: a user fact, the same in every engine and window on the machine and
+  /// kept across restarts (edited only through `update_unread`; engines up to 1.10.8 keep it as an unknown key)
+  #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+  pub unread: BTreeSet<String>,
   #[serde(flatten)]
   pub extra: Map<String, Value>,
+}
+
+/// One change to the shared unread marks
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnreadOp {
+  Add(String),
+  Remove(String),
+  Clear,
 }
 
 pub type SaveErrorHook = Arc<dyn Fn(&str, &str) + Send + Sync>;
@@ -231,6 +243,34 @@ impl TranscriptStore {
       }
       write_atomic(&file, serde_json::to_string_pretty(&disk)?.as_bytes(), None).await?;
       Ok(disk)
+    })
+    .await
+  }
+
+  /// The unread marks are shared by every engine: the ops are applied under prefs.json's lock to what is on disk, in order,
+  /// so two engines' marks compose. Returns the marks as written
+  pub async fn update_unread(&self, ops: &[UnreadOp]) -> Result<BTreeSet<String>> {
+    self.ensure().await?;
+    let file = self.dir.join("prefs.json");
+    with_file_lock(&file, || async {
+      let mut disk = self.load_prefs().await;
+      let before = disk.unread.clone();
+      for op in ops {
+        match op {
+          UnreadOp::Add(id) if is_session_id(id) => {
+            disk.unread.insert(id.clone());
+          }
+          UnreadOp::Remove(id) => {
+            disk.unread.remove(id);
+          }
+          UnreadOp::Clear => disk.unread.clear(),
+          UnreadOp::Add(_) => {}
+        }
+      }
+      if disk.unread != before {
+        write_atomic(&file, serde_json::to_string_pretty(&disk)?.as_bytes(), None).await?;
+      }
+      Ok(disk.unread)
     })
     .await
   }
