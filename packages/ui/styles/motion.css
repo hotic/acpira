@@ -192,40 +192,6 @@
 @keyframes acp-row-flash { from { background-color: var(--active); } }
 @keyframes acp-fade-in { from { opacity: 0; } }
 
-/* Full-border composer beam (effects/WorkingBeam.tsx): a static 1px border-ring mask on the outer box and a static
-   conic-gradient on a child rotated by transform on the compositor (`acp-orbit`). Animating `--beam-angle` inside a
-   conic-gradient forced WebKit to rasterize the gradient and composite masks on the main thread every frame (~3 ms). */
-.working-beam-ring {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  overflow: hidden;
-  border-radius: var(--beam-radius, 12px);
-  padding: 1px;
-  contain: strict;
-  opacity: 0;
-  transition: opacity 0.5s ease;
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  mask-composite: exclude;
-}
-.working-beam-ring[data-active] {
-  opacity: var(--beam-strength, 0.8);
-  transition-duration: 0.6s;
-}
-.working-beam-disc {
-  position: absolute;
-  inset: -300% 0;
-  background: var(--beam-gradient);
-  animation: acp-orbit 1.96s linear infinite;
-  animation-play-state: paused;
-  will-change: transform;
-}
-.working-beam-ring[data-active] > .working-beam-disc {
-  animation-play-state: running;
-}
-
 /* acpira.appearance.motion = none: the same kill switch as the OS preference. Two live-status signals
    survive it: the Orb (a canvas, simply unaffected) and the session list's working ring below. */
 [data-motion="none"] * { transition: none !important; animation: none !important; }
