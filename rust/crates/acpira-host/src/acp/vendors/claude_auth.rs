@@ -1,5 +1,6 @@
-//! Claude can create an ACP session with no credentials. Ask the same bundled CLI for its read-only auth status
-//! before declaring the session ready; the saved-account list cannot decide this (API keys and cloud providers work too).
+//! Claude can create an ACP session with no credentials. Ask the same bundled CLI for its auth status before declaring
+//! the session ready; the saved-account list cannot decide this (API keys and cloud providers work too). This command
+//! is not read-only: native initialization can refresh OAuth and clear credentials rejected with invalid_grant.
 
 use std::process::Stdio;
 use std::time::Duration;
