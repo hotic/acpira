@@ -131,9 +131,12 @@ export function SettingsShell(p: SettingsShellProps) {
     : page.kind === 'shared' ? t('settings.shared.title') : page.kind === 'subagents' ? t('settings.nav.subagents')
     : page.kind === 'storage' ? t('storage.title') : t('settings.general.title');
   const busy = !!agent && !!p.refreshing?.has(agent.id);
+  // Header refresh clicks on the Storage tab: the only thing that replays its bar's fill
+  const [storageRefresh, setStorageRefresh] = useState(0);
   const action = (agent || page.kind === 'chatgpt' || page.kind === 'shared' || page.kind === 'storage') && (
     <IconButton title={t('common.refresh')} aria-label={t('common.refresh')} aria-busy={busy || undefined} disabled={busy}
-      onClick={() => page.kind === 'chatgpt' ? p.on.refreshChatgpt?.() : page.kind === 'shared' ? p.on.shared?.() : page.kind === 'storage' ? p.on.storage?.()
+      onClick={() => page.kind === 'chatgpt' ? p.on.refreshChatgpt?.() : page.kind === 'shared' ? p.on.shared?.()
+        : page.kind === 'storage' ? (setStorageRefresh(n => n + 1), p.on.storage?.())
         : agent && p.on.refreshAgent(agent.id)}>
       <RefreshCw strokeWidth={1.5} className={cn(busy && 'animate-spin live-spin')} />
     </IconButton>
@@ -189,7 +192,7 @@ export function SettingsShell(p: SettingsShellProps) {
                   {page.kind === 'general' && <General settings={p.settings} agents={p.agents} on={p.on} />}
                   {page.kind === 'appearance' && <AppearancePage settings={p.settings} appearance={p.appearance} on={p.on} />}
                   {page.kind === 'shared' && <SharedPage state={p.shared} agents={p.agents} on={p.on} />}
-                  {page.kind === 'storage' && <StoragePage state={p.storage} agents={p.agents} env={p.env} on={p.on} />}
+                  {page.kind === 'storage' && <StoragePage state={p.storage} agents={p.agents} env={p.env} on={p.on} refresh={storageRefresh} />}
                   {page.kind === 'subagents' && <SubagentsPage settings={p.settings} agents={p.agents} controls={p.controls} shapes={p.modelShapes} on={p.on} />}
                   {agent && (
                     <AgentPage

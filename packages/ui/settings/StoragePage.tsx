@@ -54,11 +54,13 @@ export interface StoragePageProps {
   agents: AgentInfo[];
   env: SettingsEnv;
   on: SettingsHandlers;
+  // Counts the header Refresh clicks; a change arms the next scan to replay the bar's fill
+  refresh?: number;
 }
 
 type Review = 'old' | 'slim' | 'residue';
 
-export function StoragePage({ state, agents, env, on }: StoragePageProps) {
+export function StoragePage({ state, agents, env, on, refresh = 0 }: StoragePageProps) {
   const [open, setOpen] = useState<Review>();
   const view = state?.view;
   const reveal = (path?: string) => on.storageAction?.({ kind: 'reveal', path });
@@ -68,7 +70,7 @@ export function StoragePage({ state, agents, env, on }: StoragePageProps) {
   if (open === 'residue') return <>{error}<ResidueReview state={state} env={env} on={on} onBack={back} /></>;
   return <Measured on={on}>
     {error}
-    <Overview view={view} env={env} onReveal={() => reveal()} />
+    <Overview view={view} env={env} refresh={refresh} onReveal={() => reveal()} />
     <Cleanup view={view} onOpen={setOpen} />
     {view && view.other.length > 0 && <OtherFiles view={view} onReveal={reveal} />}
   </Measured>;
@@ -383,18 +385,18 @@ function ResidueReview({ state, env, on, onBack }: { state?: StorageState; env: 
 }
 
 // The total, the bar and its legend; before the first scan the same rows hold their place with a faint dash
-function Overview({ view, env, onReveal }: { view?: StorageView; env: SettingsEnv; onReveal: () => void }) {
-  // When mounted with a cached view, Measured's automatic rescan lands a moment later and transitions in place;
-  // any scan after that (the header Refresh button) remounts the segments so the fill plays again
-  const autoScan = useRef(!!view);
+function Overview({ view, env, refresh, onReveal }: { view?: StorageView; env: SettingsEnv; refresh: number; onReveal: () => void }) {
+  // The segments grow from zero when they mount; a new scan transitions them in place. Only a header Refresh click
+  // arms the next scan to remount them so the fill plays again. Counting replies instead replayed the fill at random:
+  // a reply still in flight from an earlier visit or a review subpage landed before this mount's own rescan
+  const armed = useRef(refresh);
   const lastScan = useRef(view?.scannedAt);
   const barKey = useRef(0);
   if (view?.scannedAt !== lastScan.current) {
-    const first = lastScan.current === undefined;
     lastScan.current = view?.scannedAt;
-    if (!first) {
-      if (autoScan.current) autoScan.current = false;
-      else barKey.current++;
+    if (armed.current !== refresh) {
+      armed.current = refresh;
+      barKey.current++;
     }
   }
   const seg = (k: StorageSegmentKind) => view?.segments.find(s => s.kind === k);
