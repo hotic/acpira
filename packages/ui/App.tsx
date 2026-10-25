@@ -18,7 +18,7 @@ import { deliverToBrowserTab, installBrowserTabs, setRecentPages } from './panel
 import { panel } from './panel/store';
 import { deliverTerminal, startTerminals, terminalsConnected } from './panel/terminals';
 import { vscodeApi } from './vscodeApi';
-import { desktopShell, pushShellToast, runShellCommand } from './desktop';
+import { desktopShell, pushShellToast, runShellCommand, setUpdateState } from './desktop';
 import { deliverRemote, watchConnections } from './remote/api';
 import type { QuickSettings } from './chat/DesktopFrame';
 import { SettingsShell, type SettingsHandlers } from './settings/SettingsShell';
@@ -244,9 +244,11 @@ export function App() {
         case 'noSession': setNoProject(true); setSession(undefined); break;
         case 'pickedFolder': { const settle = folderPick.current; folderPick.current = undefined; settle?.(m.path); break; }
         case 'toast': pushShellToast(m); break;
+        case 'updateState': setUpdateState(m.state); break;
         // The menu bar: settings is this page's switch, the rest are the chat's shortcuts (queued while settings is up)
         case 'shellCommand':
           if (m.command === 'settings') { setView('settings'); break; }
+          if (m.command === 'about') { setPage({ kind: 'about' }); setView('settings'); break; }
           // The View menu's layout picks: written like the gear's, the page they reach stays up
           if (m.command === 'layoutChat' || m.command === 'layoutFiles') { post({ type: 'setSetting', key: 'desktopLayout', value: m.command === 'layoutFiles' ? 'files' : 'chat' }); break; }
           setView('chat');

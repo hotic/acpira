@@ -16,7 +16,8 @@ import { cn } from '../ui/cn';
 import { ShellLayerContext } from '../ui/Popover';
 import { useScrollReveal } from '../ui/useScrollReveal';
 import { LocaleContext, t } from '../i18n';
-import { COLUMN_HIDDEN_KEY, DesktopContext, macOS } from '../desktop';
+import { COLUMN_HIDDEN_KEY, DesktopContext, macOS, postUpdate, useUpdateState } from '../desktop';
+import { AboutPage } from './AboutPage';
 import { webviewState } from '../vscodeApi';
 import { ShellToasts, TitleRow } from '../chat/DesktopFrame';
 import { usePreferredPaneWidth } from '../chat/subagents/InspectorSplitter';
@@ -134,7 +135,7 @@ export function SettingsShell(p: SettingsShellProps) {
   const title = page.kind === 'chatgpt' ? 'ChatGPT' : agent ? t('settings.agent.title', { agent: agent.name }) : page.kind === 'appearance' ? t('settings.appearance.title')
     : page.kind === 'shared' ? t('settings.shared.title') : page.kind === 'subagents' ? t('settings.nav.subagents')
     : page.kind === 'storage' ? t('storage.title') : page.kind === 'connections' ? t('settings.nav.connections')
-    : t('settings.general.title');
+    : page.kind === 'about' ? t('settings.about.title') : t('settings.general.title');
   const busy = !!agent && !!p.refreshing?.has(agent.id);
   // Header refresh clicks on the Storage tab: the only thing that replays its bar's fill
   const [storageRefresh, setStorageRefresh] = useState(0);
@@ -147,6 +148,8 @@ export function SettingsShell(p: SettingsShellProps) {
     </IconButton>
   );
   const desktop = !!p.desktop;
+  // The desktop updater's state for About (HostMsg updateState, kept in packages/ui/desktop.ts)
+  const update = useUpdateState();
   // SSH hosts are offered once the engine answered for them (remote/api.ts)
   const remote = useConnections() !== undefined;
   // Desktop: the rail takes the chat column's width (the same stored value, clamped as Shell clamps it), so the sheet does not
@@ -199,6 +202,12 @@ export function SettingsShell(p: SettingsShellProps) {
                   {page.kind === 'general' && <General settings={p.settings} agents={p.agents} on={p.on} />}
                   {page.kind === 'appearance' && <AppearancePage settings={p.settings} appearance={p.appearance} on={p.on} />}
                   {page.kind === 'shared' && <SharedPage state={p.shared} agents={p.agents} on={p.on} />}
+                  {page.kind === 'about' && <AboutPage state={update} on={{
+                    check: download => postUpdate({ type: 'updateCheck', download }),
+                    install: () => postUpdate({ type: 'updateInstall' }),
+                    setAuto: on => postUpdate({ type: 'updateAuto', on }),
+                    openExternal: p.on.openExternal,
+                  }} />}
                   {page.kind === 'storage' && <StoragePage state={p.storage} agents={p.agents} env={p.env} on={p.on} refresh={storageRefresh} />}
                   {page.kind === 'connections' && <ConnectionsPage env={p.env} projects={p.projects} on={p.on} />}
                   {page.kind === 'subagents' && <SubagentsPage settings={p.settings} agents={p.agents} controls={p.controls} shapes={p.modelShapes} on={p.on} />}

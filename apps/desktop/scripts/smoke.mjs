@@ -9,11 +9,14 @@
 //
 //   node scripts/smoke.mjs [--app <Acpira.app or its executable, built with --features smoke>] [--engine <acpira>] [--keep] [--shots DIR]
 //
+// With --app <Acpira.app> the run also updates the app: it runs a copy of the bundle, packs a re-signed copy with a marker
+// file as the next version (full package, a delta from this one, a manifest signed with a throwaway key), serves them
+// on the loopback, and checks Ready → the restart toast → a new process from the replaced bundle on the same session.
 // Without --app it builds and runs the debug binary (`cargo build --features smoke`) on the workspace's debug engine.
 // Needs the repository's bundles (`pnpm build`). After the app quits the run waits out the engine's idle grace and checks
 // that no agent process is left. --keep leaves the temp folder (logs, records); a failure always does
-import { execFileSync, spawn } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { connect } from 'node:net';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
@@ -45,6 +48,7 @@ const beta = join(root, 'smoke-beta');
 const fakeAgent = join(root, 'fake-agent.mjs');
 const hookPath = join(root, 'hook.sock');
 const logFile = join(root, 'app.log');
+const desktopLog = join(root, 'user', 'logs', 'desktop.log');
 let appLog = '';
 
 let app;
@@ -56,9 +60,14 @@ async function main() {
     for (const f of ['dist/webview/main.js', 'dist/picker.js']) if (!existsSync(join(REPO, f))) fail(`${f} is missing: run pnpm build in the repository root`);
 
     let bin;
+    let release;
     if (appArg) {
       bin = appArg.endsWith('.app') ? join(appArg, 'Contents', 'MacOS', 'Acpira') : appArg;
       if (!existsSync(bin)) fail(`no executable at ${bin}`);
+      if (appArg.endsWith('.app')) {
+        release = await prepareUpdate(resolve(appArg));
+        bin = join(release.installed, 'Contents', 'MacOS', 'Acpira');
+      }
     } else {
       execFileSync('cargo', ['build', '--quiet', '--features', 'smoke'], { cwd: SHELL, stdio: 'inherit' });
       bin = join(SHELL, 'target', 'debug', 'acpira-desktop-tauri');
@@ -84,6 +93,7 @@ async function main() {
     };
     for (const k of ['ACPIRA_ENGINE', 'ACPIRA_SIDECAR_BIN', 'SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY']) delete env[k];
     if (engine) env.ACPIRA_SIDECAR_BIN = engine;
+    if (release) Object.assign(env, { ACPIRA_DESKTOP_UPDATE_URL: release.manifest, ACPIRA_DESKTOP_UPDATE_KEY: release.publicKey });
 
     const probeEnv = { ...env, ACPIRA_HOME: join(root, 'agents-probe') };
     const builtins = JSON.parse(execFileSync(agentsBin, ['agents', '--json'], { encoding: 'utf8', env: probeEnv })).agents.map(a => a.id);
@@ -321,16 +331,56 @@ async function main() {
     await page.waitFor('its conversation', `document.body.innerText.includes('hello world')`);
     const again = Number(/sidecar ready: pid (\d+)/.exec(appLog.slice(before))?.[1]);
     if (again !== enginePid) fail(`the relaunch reached engine ${again}, not the running ${enginePid}`);
-    await page.call({ op: 'quit' }).catch(() => {});
-    page.close();
-    page = undefined;
-    await within('the relaunched app to quit', relaunchExit, 15_000);
-    app = undefined;
     say('a relaunch restores the window on its session and reuses the running engine');
-    await waitUntil('the engine to end after its idle grace', () => !alive(enginePid), 90_000);
+    const engines = [enginePid];
+    if (release) {
+      // The app updates itself: checked, the delta downloaded and applied, the staged bundle verified, then the restart
+      // toast's button swaps it in and a new process starts from the replaced bundle on the same session
+      const session = saved.windows[0].session;
+      await page.eval(`window.__acpiraApi.postMessage({ type: 'updateCheck', download: true })`);
+      let state;
+      await waitUntil('the update to be staged', async () => {
+        state = await page.call({ op: 'update' }).catch(() => undefined);
+        if (state?.phase === 'failed') fail(`the update failed: ${state.error}`);
+        return state?.phase === 'ready';
+      }, 120_000).catch(e => fail(`${e.message}: ${JSON.stringify(state)}`));
+      if (state.version !== release.version) fail(`staged ${state.version}, expected ${release.version}`);
+      if (/did not apply/.test(appLog)) fail('the delta did not apply; the full package was taken');
+      const restart = `[...document.querySelectorAll('[role="status"] button')].find(b => b.textContent.trim() === 'Restart')`;
+      await page.waitFor('the restart toast', `document.body.innerText.includes('Acpira ${release.version} is ready to install') && !!(${restart})`);
+      if (shotDir) await page.shot(join(shotDir, 'update-ready.png'));
+      const logBefore = existsSync(desktopLog) ? readFileSync(desktopLog, 'utf8').length : 0;
+      const oldPid = app.pid;
+      await page.press('the restart button', restart);
+      await within('the old process to quit for the restart', relaunchExit, 15_000);
+      app = undefined;
+      page.close();
+      rmSync(hookPath, { force: true });
+      if (!existsSync(join(release.installed, 'Contents', 'Resources', 'smoke-update.txt'))) fail('the installed bundle was not replaced');
+      page = await Hook.connect(hookPath);
+      await waitUntil('the updated app on the same session', async () => (await page.call({ op: 'windows' }).catch(() => []))[0]?.session === session, 30_000);
+      await page.waitFor('its conversation after the update', `document.body.innerText.includes('hello world')`);
+      const updatedPid = processes().find(p => p.command.startsWith(bin))?.pid;
+      if (!updatedPid || updatedPid === oldPid) fail(`no new process runs ${bin}`);
+      const fresh = readFileSync(desktopLog, 'utf8').slice(logBefore);
+      const newEngine = Number(/sidecar ready: pid (\d+)/.exec(fresh)?.[1]);
+      if (newEngine) engines.push(newEngine);
+      say(`updated to ${release.version} through the delta (${release.deltaKb} KB of ${release.fullKb} KB): process ${oldPid} → ${updatedPid} on session ${session}, engine ${newEngine || '?'}`);
+      await page.call({ op: 'quit' }).catch(() => {});
+      page.close();
+      page = undefined;
+      await waitUntil('the updated app to quit', () => !alive(updatedPid), 15_000);
+    } else {
+      await page.call({ op: 'quit' }).catch(() => {});
+      page.close();
+      page = undefined;
+      await within('the relaunched app to quit', relaunchExit, 15_000);
+      app = undefined;
+    }
+    for (const pid of engines) await waitUntil(`engine ${pid} to end after its idle grace`, () => !alive(pid), 90_000);
     const left = processes().filter(p => p.command.includes(fakeAgent));
     if (left.length) fail(`agent processes left after the engine ended:\n${left.map(p => `${p.pid} ${p.ppid} ${p.command}`).join('\n')}`);
-    say(`engine ${enginePid} ended, no agent process left`);
+    say(`engine${engines.length > 1 ? "s" : ""} ${engines.join(" and ")} ended, no agent process left`);
     passed = true;
     say('passed');
   } catch (e) {
@@ -347,6 +397,47 @@ async function main() {
     if (passed && !keep) rmSync(root, { recursive: true, force: true });
     else say(`kept ${root}${passed ? '' : ' (its engine ends by itself within its 30 s idle grace)'}`);
   }
+}
+
+// The next version of the bundle at `appPath`, served from the loopback: the run's copy of the bundle (the updater
+// replaces it), a re-signed copy carrying a marker file as the new version, and the release packed from them with the
+// pack tool the release workflow uses (a throwaway key; zstd level 3 to keep the run short)
+async function prepareUpdate(appPath) {
+  const installed = join(root, 'Applications', 'Acpira.app');
+  const next = join(root, 'next', 'Acpira.app');
+  for (const d of [dirname(installed), dirname(next)]) mkdirSync(d, { recursive: true });
+  execFileSync('ditto', [appPath, installed]);
+  execFileSync('ditto', [appPath, next]);
+  const current = execFileSync('plutil', ['-extract', 'CFBundleShortVersionString', 'raw', join(appPath, 'Contents', 'Info.plist')], { encoding: 'utf8' }).trim();
+  const parts = current.split('.').map(Number);
+  parts[parts.length - 1] += 1;
+  const version = parts.join('.');
+  writeFileSync(join(next, 'Contents', 'Resources', 'smoke-update.txt'), `${version}\n`);
+  execFileSync('codesign', ['--force', '--deep', '--sign', '-', next], { stdio: 'ignore' });
+  execFileSync('cargo', ['build', '--quiet', '-p', 'acpira-desktop', '--bin', 'acpira-update-pack'], { cwd: join(REPO, 'rust'), stdio: 'inherit' });
+  const pack = join(REPO, 'rust', 'target', 'debug', 'acpira-update-pack');
+  const keys = spawnSync(pack, ['keygen'], { encoding: 'utf8' });
+  const seed = keys.stdout.trim();
+  const publicKey = /([0-9a-f]{64})/.exec(keys.stderr)?.[1];
+  if (!seed || !publicKey) fail(`keygen printed no key: ${keys.stderr}`);
+  const files = join(root, 'release');
+  const server = createServer((q, r) => {
+    const file = join(files, 'out', basename(decodeURIComponent(q.url.split('?')[0])));
+    if (!existsSync(file)) { r.writeHead(404); r.end(); return; }
+    r.writeHead(200, { 'content-length': statSync(file).size });
+    r.end(readFileSync(file));
+  });
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  server.unref();
+  const base = `http://127.0.0.1:${server.address().port}`;
+  execFileSync(pack, ['pack', '--app', installed, '--version', current, '--base-url', base, '--out', join(files, 'base'), '--level', '3', '--unsigned'], { stdio: 'ignore' });
+  const packed = execFileSync(pack, ['pack', '--app', next, '--version', version, '--base-url', base, '--out', join(files, 'out'), '--level', '3',
+    '--prev', `${current}=${join(files, 'base', `Acpira-${current}-darwin-aarch64.app.tar.zst`)}`], { env: { ...process.env, DESKTOP_UPDATE_KEY: seed }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const manifest = JSON.parse(readFileSync(join(files, 'out', 'desktop-update.json'), 'utf8')).platforms['darwin-aarch64'];
+  const delta = manifest.deltas[current];
+  if (!delta) fail(`the pack tool listed no delta from ${current}: ${packed}`);
+  say(`release ${version} packed: full ${Math.round(manifest.full.size / 1024)} KB, delta ${Math.round(delta.size / 1024)} KB, served on ${base}`);
+  return { installed, version, publicKey, manifest: `${base}/desktop-update.json`, deltaKb: Math.round(delta.size / 1024), fullKb: Math.round(manifest.full.size / 1024) };
 }
 
 function records() {

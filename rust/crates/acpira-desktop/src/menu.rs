@@ -31,6 +31,17 @@ pub enum Command {
   Delete,
   StartSpeaking,
   StopSpeaking,
+  /// The app menu's update item: check now, or restart into the staged version
+  CheckUpdates,
+  RestartToUpdate,
+}
+
+/// What the update item offers (None: the build has no updater, the item is left out)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateItem<'a> {
+  Check,
+  /// A version is staged: the item restarts into it
+  Restart(&'a str),
 }
 
 impl Command {
@@ -50,7 +61,7 @@ impl Command {
   }
 }
 
-const ALL: [Command; 19] = [
+const ALL: [Command; 21] = [
   Command::NewSession,
   Command::NewWindow,
   Command::OpenFolder,
@@ -70,6 +81,8 @@ const ALL: [Command; 19] = [
   Command::Delete,
   Command::StartSpeaking,
   Command::StopSpeaking,
+  Command::CheckUpdates,
+  Command::RestartToUpdate,
 ];
 
 /// Items the toolkit provides with the system's behaviour
@@ -113,23 +126,28 @@ pub enum SubmenuRole {
 pub type Translate<'a> = &'a dyn Fn(&str, &[(&str, &str)]) -> String;
 
 /// `layout`: the window layout the page shows (acpira.desktopLayout), ticked in View › Layout; the menu is built again
-/// when it changes, since ⌥⌘B folds the session column instead of the tool panel in the files layout
-pub fn build_menu(t: Translate, app: &str, layout: &str, mac: bool) -> Vec<Entry> {
+/// when it changes, since ⌥⌘B folds the session column instead of the tool panel in the files layout. `update`: the
+/// updater's item under About (in Help elsewhere), rebuilt when a version is staged
+pub fn build_menu(t: Translate, app: &str, layout: &str, mac: bool, update: Option<UpdateItem>) -> Vec<Entry> {
   let named = [("app", app)];
   let item = |command, key: &str, accelerator| Entry::Item { command, label: t(key, &[]), accelerator };
   let stock = |stock, key: &str| Entry::Stock { stock, label: t(key, &named) };
   let sep = || Entry::Separator;
   let settings = || item(Command::Settings, "session.settings", Some("CmdOrCtrl+,"));
   let quit = || stock(Stock::Quit, "desktop.menu.quit");
+  let update_item = update.map(|u| match u {
+    UpdateItem::Check => item(Command::CheckUpdates, "desktop.menu.checkUpdates", None),
+    UpdateItem::Restart(v) => Entry::Item { command: Command::RestartToUpdate, label: t("desktop.menu.restartToUpdate", &[("version", v)]), accelerator: None },
+  });
   let mut bar = vec![];
   if mac {
+    let mut items = vec![stock(Stock::About, "desktop.menu.about")];
+    items.extend(update_item.clone());
+    items.extend([sep(), settings()]);
     bar.push(Entry::Submenu {
       label: app.to_owned(),
       role: None,
-      items: vec![
-        stock(Stock::About, "desktop.menu.about"),
-        sep(),
-        settings(),
+      items: [items, vec![
         sep(),
         stock(Stock::Services, "desktop.menu.services"),
         sep(),
@@ -138,7 +156,8 @@ pub fn build_menu(t: Translate, app: &str, layout: &str, mac: bool) -> Vec<Entry
         stock(Stock::ShowAll, "desktop.menu.showAll"),
         sep(),
         quit(),
-      ],
+      ]]
+      .concat(),
     });
   }
   let mut file = vec![
@@ -216,11 +235,11 @@ pub fn build_menu(t: Translate, app: &str, layout: &str, mac: bool) -> Vec<Entry
     vec![stock(Stock::Minimize, "desktop.menu.minimize"), stock(Stock::CloseWindow, "desktop.menu.closeWindow")]
   };
   bar.push(Entry::Submenu { label: t("desktop.menu.window", &[]), role: Some(SubmenuRole::Window), items: window });
-  bar.push(Entry::Submenu {
-    label: t("desktop.menu.help", &[]),
-    role: Some(SubmenuRole::Help),
-    items: vec![item(Command::Help, "desktop.help", None), item(Command::ShowLog, "desktop.menu.showLog", None)],
-  });
+  let mut help = vec![item(Command::Help, "desktop.help", None), item(Command::ShowLog, "desktop.menu.showLog", None)];
+  if !mac && let Some(u) = update_item {
+    help.extend([sep(), u]);
+  }
+  bar.push(Entry::Submenu { label: t("desktop.menu.help", &[]), role: Some(SubmenuRole::Help), items: help });
   bar
 }
 
@@ -262,10 +281,12 @@ mod tests {
     for locale in [Locale::ZhCn, Locale::ZhTw, Locale::En, Locale::Ja, Locale::Ko, Locale::Es, Locale::De, Locale::Fr, Locale::Ru] {
       let t = |k: &str, p: &[(&str, &str)]| translate(locale, k, p);
       let mut all = vec![];
-      labels(&build_menu(&t, "Acpira", "chat", true), &mut all);
+      labels(&build_menu(&t, "Acpira", "chat", true, Some(UpdateItem::Check)), &mut all);
+      labels(&build_menu(&t, "Acpira", "chat", true, Some(UpdateItem::Restart("1.11.0"))), &mut all);
       for l in &all {
         assert!(
-          !l.is_empty() && !l.starts_with("desktop.") && !l.starts_with("settings.") && !l.starts_with("session.") && !l.contains("{app}"),
+          !l.is_empty() && !l.starts_with("desktop.") && !l.starts_with("settings.") && !l.starts_with("session.") && !l.contains("{app}")
+            && !l.contains("{version}"),
           "{locale:?}: {l}"
         );
       }
@@ -276,7 +297,7 @@ mod tests {
   fn the_layout_is_ticked_and_the_panel_item_follows_it() {
     let t = |k: &str, _: &[(&str, &str)]| k.to_owned();
     let view = |layout| {
-      let bar = build_menu(&t, "Acpira", layout, true);
+      let bar = build_menu(&t, "Acpira", layout, true, None);
       let Some(Entry::Submenu { items, .. }) =
         bar.into_iter().find(|e| matches!(e, Entry::Submenu { label, .. } if label == "desktop.menu.view"))
       else {
@@ -308,9 +329,23 @@ mod tests {
   }
 
   #[test]
+  fn the_update_item_sits_under_about_and_names_a_staged_version() {
+    let t = |k: &str, p: &[(&str, &str)]| p.iter().fold(k.to_owned(), |acc, (n, v)| format!("{acc}:{n}={v}"));
+    let app_menu = |u| {
+      let Some(Entry::Submenu { items, .. }) = build_menu(&t, "Acpira", "chat", true, u).into_iter().next() else { panic!() };
+      items
+    };
+    assert!(matches!(&app_menu(Some(UpdateItem::Check))[1], Entry::Item { command: Command::CheckUpdates, .. }));
+    assert!(
+      matches!(&app_menu(Some(UpdateItem::Restart("1.11.0")))[1], Entry::Item { command: Command::RestartToUpdate, label, .. } if label.ends_with("version=1.11.0"))
+    );
+    assert!(matches!(&app_menu(None)[1], Entry::Separator));
+  }
+
+  #[test]
   fn other_platforms_keep_settings_and_quit_in_the_file_menu() {
     let t = |k: &str, _: &[(&str, &str)]| k.to_owned();
-    let bar = build_menu(&t, "Acpira", "chat", false);
+    let bar = build_menu(&t, "Acpira", "chat", false, None);
     let Entry::Submenu { label, items, .. } = &bar[0] else { panic!() };
     assert_eq!(label, "desktop.menu.file");
     assert!(items.iter().any(|e| matches!(e, Entry::Stock { stock: Stock::Quit, .. })));

@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use acpira_desktop::menu::{Command, Entry, Stock, SubmenuRole, build_menu, shell_command};
+use acpira_desktop::menu::{Command, Entry, Stock, SubmenuRole, UpdateItem, build_menu, shell_command};
 use acpira_desktop::wire::Initial;
 use tauri::menu::{AboutMetadata, CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Manager, Wry};
@@ -19,7 +19,10 @@ pub fn install(handle: &AppHandle) {
   let a = app();
   let layout = acpira_shared::settings::sanitize_setting("desktopLayout", &a.setting("desktopLayout").unwrap_or_default());
   let t = |k: &str, p: &[(&str, &str)]| a.t(k, p);
-  let tree = build_menu(&t, "Acpira", layout.as_str().unwrap_or("chat"), cfg!(target_os = "macos"));
+  // Restart into a staged version, else check (which also opens About)
+  let staged = a.updater().and_then(|u| u.staged()).map(|s| s.version);
+  let update = a.updater().map(|_| staged.as_deref().map_or(UpdateItem::Check, UpdateItem::Restart));
+  let tree = build_menu(&t, "Acpira", layout.as_str().unwrap_or("chat"), cfg!(target_os = "macos"), update);
   log(&format!("menu language {}", a.locale().tag()));
   match build(handle, &tree) {
     Ok(menu) => {
@@ -137,6 +140,11 @@ pub fn on_event(h: &AppHandle, id: &str) {
       a.open(Some(Initial::MostRecent), ChatWindowOpen::default());
     }
     Command::ConnectChatgpt => a.connect_chatgpt(),
+    Command::CheckUpdates => {
+      a.check_updates(false);
+      a.command("about");
+    }
+    Command::RestartToUpdate => a.restart_to_update(),
     Command::ShowLog => a.show_log(),
     Command::Help => {
       let _ = acpira_desktop::platform::system::open_external(crate::app::HELP_URL);

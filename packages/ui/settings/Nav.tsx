@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
-import { ArrowLeft, HardDrive, Layers, Network, Palette, Server, Settings2 } from 'lucide-react';
+import { ArrowLeft, HardDrive, Info, Layers, Network, Palette, Server, Settings2 } from 'lucide-react';
 import type { AgentId, AgentInfo } from '@acpira/shared/transcript';
 import { moveAgent } from '@acpira/shared/agentOrder';
 import { cn } from '../ui/cn';
@@ -8,10 +8,10 @@ import { AgentMark } from '../chat/AgentMark';
 import { TitleSpace } from '../chat/DesktopFrame';
 import { t } from '../i18n';
 
-export type SettingsPage = { kind: 'chatgpt' } | { kind: 'general' } | { kind: 'appearance' } | { kind: 'shared' } | { kind: 'connections' } | { kind: 'subagents' } | { kind: 'storage' } | { kind: 'agent'; id: AgentInfo['id'] };
+export type SettingsPage = { kind: 'chatgpt' } | { kind: 'general' } | { kind: 'appearance' } | { kind: 'shared' } | { kind: 'connections' } | { kind: 'subagents' } | { kind: 'storage' } | { kind: 'about' } | { kind: 'agent'; id: AgentInfo['id'] };
 
 // Fixed pages first, then one page per agent; agent ids never collide with the fixed names
-const FIXED = ['general', 'appearance', 'shared', 'connections', 'subagents', 'storage', 'chatgpt'] as const;
+const FIXED = ['general', 'appearance', 'shared', 'connections', 'subagents', 'storage', 'chatgpt', 'about'] as const;
 type FixedId = (typeof FIXED)[number];
 type PageId = FixedId | AgentInfo['id'];
 const isFixed = (id: PageId): id is FixedId => (FIXED as readonly string[]).includes(id);
@@ -86,6 +86,9 @@ export function PageRail({ agents, page, onPage, onBack, onReorder, onDisabled, 
         <AgentRows agents={agents} cur={cur} onOpen={id => onPage(toPage(id))} onReorder={onReorder} onDisabled={onDisabled} />
         {agents.some(a => a.id === 'chatgpt' && a.external) && item('chatgpt', 'ChatGPT', <AgentMark id="chatgpt" name="ChatGPT" />)}
       </nav>
+      {/* Desktop: About (the version and its updates) at the rail's foot, where apps keep it; the IDE shells' extension is
+          updated by their marketplace */}
+      {desktop && <div className={cn('mt-auto flex flex-col', inset)}>{item('about', t('settings.nav.about'), <Info strokeWidth={1.5} />)}</div>}
     </aside>
   );
 }
