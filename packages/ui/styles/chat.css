@@ -177,6 +177,30 @@
   }
   .pair-side[data-on] .pair-name { grid-template-columns: 1fr; flex-grow: 1; margin-inline-start: 0; opacity: 1; transition-delay: 0s, 0s, 0s, calc(var(--dur) / 2); }
   .pair-name > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+  /* The goal head's controls (chat/Goal.tsx GoalHead): folded to nothing beside the elapsed time, they unfold through
+     their grid track (0fr → 1fr) and fade in after the room opens while the line is hovered or holds focus, so the time
+     sits at the row's end at rest and slides aside instead of jumping. Folded buttons stay in the tab order; focusing one
+     opens them like a hover. Without hover (touch) they are always open */
+  .goal-actions {
+    display: grid; grid-template-columns: 0fr; min-width: 0; margin-inline-start: 0; opacity: 0;
+    transition: grid-template-columns var(--dur-close) var(--ease-close), margin var(--dur-close) var(--ease-close), opacity var(--dur);
+  }
+  .goal-actions > span { min-width: 0; overflow: hidden; }
+  .goal-head:is(:hover, :focus-within) .goal-actions {
+    grid-template-columns: 1fr; margin-inline-start: calc(var(--spacing) * 2); opacity: 1;
+    transition: grid-template-columns var(--dur-open) ease-out, margin var(--dur-open) ease-out, opacity var(--dur) ease-out calc(var(--dur) / 2);
+  }
+  @media (hover: none) {
+    .goal-actions { grid-template-columns: 1fr; margin-inline-start: calc(var(--spacing) * 2); opacity: 1; }
+  }
+  /* Over a to-do list the whole head folds the list: a button stretched over the row, lit like an interactive row,
+     with the goal's own controls lifted above it. The button takes its own layer: the running objective's shimmer is
+     positioned and would otherwise paint over it and swallow the click */
+  .goal-toggle { position: absolute; inset: 0; z-index: 1; border-radius: inherit; cursor: pointer; outline: none; }
+  .goal-head-toggle:has(> .row-content > .goal-toggle:is(:hover, :focus-visible)) { background: var(--hover); color: var(--fg-1); }
+  .goal-head-toggle > .row-trailing { position: relative; z-index: 2; pointer-events: none; }
+  .goal-head-toggle > .row-trailing button { pointer-events: auto; }
   /* The sidekick's mark with a + badge, a notch cut out of the mark around it so it reads on either side's surface */
   .pair-plus { position: relative; display: flex; flex-shrink: 0; }
   .pair-plus > :first-child {

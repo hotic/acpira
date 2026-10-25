@@ -1,7 +1,7 @@
 import type { Turn } from '@acpira/shared/transcript';
 import { getLocale, t } from '../i18n';
 
-// Goal strip / milestone texts and the "Set as goal" prompt pick. DOM-free so the host tsconfig can type-check its test.
+// Goal head / milestone texts and the "Set as goal" prompt pick. DOM-free so the host tsconfig can type-check its test.
 
 /** Elapsed goal time: "45s", "6m 12s", "2h 05m" */
 export function goalDuration(seconds: number): string {

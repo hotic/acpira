@@ -41,7 +41,7 @@ import { PlanDocumentContext } from './PlanDocument';
 import { pendingPlanReview, reviseOption } from './planReview';
 import { planExecutionId } from '@acpira/shared/planExecution';
 import { Queue } from './Queue';
-import { GoalStrip, PromptFooter } from './Goal';
+import { PromptFooter } from './Goal';
 import { lastTypedPrompt } from './goalText';
 import { heldPrompt } from './heldPrompt';
 import { compactingNow } from './usageBreakdown';
@@ -939,7 +939,9 @@ export function Shell(p: ShellProps) {
                     data-plan-dock
                     className={cn('pointer-events-none absolute inset-x-0 bottom-0 z-10', wide && a.composer === 'island' && 'mx-auto w-full max-w-[calc(var(--content-w)+2*var(--page))]')}
                   >
-                    <PlanBar key={`plan:${p.activeSessionId}`} turns={p.turns} running={p.running} />
+                    {/* The session goal heads the floating to-do card, so the dock keeps one silhouette */}
+                    <PlanBar key={`plan:${p.activeSessionId}`} turns={p.turns} running={p.running}
+                      goal={p.external ? undefined : p.goal} goalActions={p.goalActions} onGoalAction={goalAction} />
                   </div>
                   {(toasts.length > 0 || (desktop && shellToasts.length > 0)) && (
                     <div ref={toastRef} className="pointer-events-none absolute inset-x-0 bottom-[calc(var(--gap)+var(--thread-dock-height,0px))] z-10 flex flex-col items-center gap-1 px-page">
@@ -979,8 +981,6 @@ export function Shell(p: ShellProps) {
                           edit: (id, text, kept, drafts) => on.editQueued!(p.activeSessionId!, id, text, kept, drafts),
                         } : undefined} />
                     : null}
-                  {/* The goal strip always hugs the composer: every other dock surface stacks above it */}
-                  {!p.external && p.goal && <GoalStrip key={`goal:${p.activeSessionId}`} goal={p.goal} actions={p.goalActions} running={p.running} onAction={goalAction} />}
                   {/* Desktop start page: who answers, right above the composer; it stays mounted while the empty session is
                       started over with another agent, so the segments slide instead of the page replaying its entrance */}
                   {start.mounted && <StartPicker open={start.shown} agents={p.agents} current={p.agent.id} onPick={agent => startOver(agent)} />}
