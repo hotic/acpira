@@ -200,13 +200,13 @@ export const AgentMessage = memo(function AgentMessage({ turn, index, running, o
   turn: AgentTurn; index: number; running: boolean; onPermission: OnPermission; compacting?: boolean; memoryKey?: string; turnIndex: number; last: boolean; settings?: TurnSettings;
   // Nodes anchored to this turn plus the session-wide list (breadcrumbs/descendant counts may cross turns)
   subagents?: SubagentSummary[]; allSubagents?: SubagentSummary[]; onInspect?: (id: string) => void;
-  // The subagent inspector renders turns without the copy/fork/stats row
+  // Off for a turn a hidden continue carries on (`isContinue` in Shell.tsx); fork also needs `TurnActionsContext.fork`
   actions?: boolean;
   // Working-row lead: the Orb belongs to the root conversation; the inspector uses a static icon
   lead?: 'orb' | 'static';
   // AIR sessionFailure notice actions (retry / sign in / new session), available on the last settled turn
   onFailureAction?: (action: FailureAction) => void;
-  // Continues the turn above (the hidden continue after an account switch): one row gap instead of a message gap
+  // Continues the turn above (a hidden continue, or the subagent report row): one row gap instead of a message gap
   joined?: boolean;
 }) {
   // memo keeps a row from rendering again; the locale context still reaches it after a language change
