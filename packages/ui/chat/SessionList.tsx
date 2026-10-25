@@ -1,10 +1,11 @@
-import { Component, createRef, Fragment, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { Component, createRef, Fragment, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Circle, Copy, Ellipsis, Folder, FolderInput, FolderOpen, FolderPlus, Import, Layers, ListFilter, LoaderCircle, Pencil, Pin, PinOff, Plus, Search, SquarePen, Trash2, Undo2, X } from 'lucide-react';
 import type { AgentId, AgentInfo, CategoryOp, NativeSessionInfo, SessionCategories, SessionCategory, SessionSection, SessionSummary } from '@acpira/shared/transcript';
 import type { ExportFormat, NativeSessionsState, SessionHit } from '@acpira/shared/protocol';
 import { inWorkspace, type SessionScope } from '@acpira/shared/settings';
 import { launchable } from '@acpira/shared/agentOrder';
 import { foreignBrand } from '@acpira/shared/models';
+import { reuse } from '@acpira/shared/reuse';
 import { cn } from '../ui/cn';
 import { Collapsible, LazyPanelContext } from '../ui/Collapsible';
 import { Command } from '../ui/Command';
@@ -97,37 +98,52 @@ function Fold({ open, children }: { open: boolean; children: ReactNode }) {
 }
 
 // Rows that change place in a commit (a new session at the top of its project, one moved, pinned or unpinned, a project
-// added) slide from where they were instead of jumping, and a row new to a fold that was already open steps in. Positions
+// added) slide from where they were instead of jumping. Only a genuinely new row fades in: an existing row that changes
+// group stays opaque, since fading what was already visible reads as the whole list blinking on an update. Positions
 // are read right before React writes the DOM, so a slide still in flight restarts from where the row is on screen. Only a
 // commit that changed `layout` measures: the shell re-renders the list on every stream chunk. Off while filtering, where
-// rows come and go with every key
-type FlipFirst = { tops: Map<string, { top: number; group: Element | null }>; open: Set<Element> };
+// rows come and go with every key.
+// After the commit the rows go through three passes that never interleave: end the slides in flight, read every row, start
+// the new animations. Reading a row after an animation started (or a slide was cancelled) makes the browser restyle the
+// document first, so cancelling, measuring and animating row by row cost a restyle per row: with ~500 rows listed that
+// froze the column for most of a second on every new or deleted session (lab/session-list-perf). Only rows on screen
+// before or after the commit animate; the others land where they belong out of sight
+type FlipFirst = { tops: Map<string, number>; open: Set<Element> };
 const flipKey = (el: HTMLElement) => el.dataset.session ?? (el.hasAttribute('data-project-row') ? `p:${el.title}` : `m:${el.closest('[role="group"]')?.getAttribute('aria-label')}`);
 class FlipRows extends Component<{ on: boolean; layout: string; children: ReactNode }> {
   box = createRef<HTMLDivElement>();
   getSnapshotBeforeUpdate(prev: Readonly<{ on: boolean; layout: string }>): FlipFirst | null {
     const box = this.box.current;
     if (!prev.on || !this.props.on || prev.layout === this.props.layout || !box || still(box)) return null;
-    const tops = new Map<string, { top: number; group: Element | null }>();
-    for (const el of box.querySelectorAll<HTMLElement>(MOVING_ROWS)) tops.set(flipKey(el), { top: el.getBoundingClientRect().top, group: el.closest('[role="group"]') });
+    const tops: FlipFirst['tops'] = new Map();
+    for (const el of box.querySelectorAll<HTMLElement>(MOVING_ROWS)) tops.set(flipKey(el), el.getBoundingClientRect().top);
     return { tops, open: new Set(box.querySelectorAll('[data-fold][data-open]')) };
   }
   componentDidUpdate(_prev: unknown, _state: unknown, first: FlipFirst | null) {
     const box = this.box.current;
     if (!first || !box) return;
+    // One lookup for the whole list: el.getAnimations() per row restyles again after every cancel
+    for (const a of box.getAnimations({ subtree: true })) if (a.id === 'flip') a.cancel();
+    // The visible band: the list's scroller (the listbox around this box) within the window
+    const clip = box.closest('[role="listbox"]')?.getBoundingClientRect();
+    const [above, below] = [Math.max(0, clip?.top ?? 0), Math.min(innerHeight, clip?.bottom ?? innerHeight)];
+    const seen = (top: number, height: number) => top + height > above && top < below;
+    const slides: [HTMLElement, number][] = [];
+    const entries: HTMLElement[] = [];
     for (const el of box.querySelectorAll<HTMLElement>(MOVING_ROWS)) {
+      const { top, height } = el.getBoundingClientRect();
       const was = first.tops.get(flipKey(el));
-      if (was && was.group === el.closest('[role="group"]')) {
-        for (const a of el.getAnimations()) if (a.id === 'flip') a.cancel();
-        const dy = was.top - el.getBoundingClientRect().top;
-        if (Math.abs(dy) > 0.5) el.animate([{ translate: `0 ${dy}px` }, { translate: '0 0' }], { id: 'flip', duration: 260, easing: MOVE_EASE });
+      if (was !== undefined) {
+        if (Math.abs(was - top) > 0.5 && (seen(top, height) || seen(was, height))) slides.push([el, was - top]);
         continue;
       }
-      // A row that changed group enters like a new one; the rows of a fold opening in this commit are FoldRows'
+      // The rows of a fold opening in this commit are FoldRows'
       const fold = el.closest('[data-fold]');
       if (fold && !first.open.has(fold)) continue;
-      el.animate([{ opacity: 0, translate: '0 -4px' }, { opacity: 1, translate: '0 0' }], { id: 'flip', duration: 220, easing: MOVE_EASE });
+      if (seen(top, height)) entries.push(el);
     }
+    for (const [el, dy] of slides) el.animate([{ translate: `0 ${dy}px` }, { translate: '0 0' }], { id: 'flip', duration: 260, easing: MOVE_EASE });
+    for (const el of entries) el.animate([{ opacity: 0, translate: '0 -4px' }, { opacity: 1, translate: '0 0' }], { id: 'flip', duration: 220, easing: MOVE_EASE });
   }
   render() { return <div ref={this.box} className="contents">{this.props.children}</div>; }
 }
@@ -227,6 +243,26 @@ function aggregate(sessions: SessionSummary[]): Mark | undefined {
 
 const separator = <DropdownMenu.Separator className="my-1 h-px bg-line" />;
 
+// One empty list for every render without categories, so what is derived from it keeps its identity
+const NO_CATEGORIES: SessionCategory[] = [];
+
+// The previous value while the new one is deep-equal to it (shared/reuse): something derived from the session list, which
+// every push replaces, keeps its identity until it really changes
+function useReused<T>(value: T): T {
+  const kept = useRef(value);
+  kept.current = reuse(kept.current, value);
+  return kept.current;
+}
+
+// A function of a string, computed once per argument: callers asking for the same key get the same object back
+function perKey<T>(compute: (key: string) => T): (key: string) => T {
+  const cache = new Map<string, T>();
+  return key => {
+    if (!cache.has(key)) cache.set(key, compute(key));
+    return cache.get(key)!;
+  };
+}
+
 // Session list: search and agent filters stay visible even without history; pinned sessions get their own section on top.
 // Below them the sessions are a tree (sessionTree.ts): under the workspace scope the window's project, its user categories
 // then its loose sessions; under "all" one collapsible group per project (folder glyph), each holding its categories (inbox
@@ -274,7 +310,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   const here = (s: SessionSummary) => !workspace || inWorkspace(s, workspace);
   const filing = !!onFile && !!onCategoryOp;
   // The desktop app has no categories: a session filed in an IDE window reads as loose there
-  const categories = filing && !desktop ? categoryState?.categories ?? [] : [];
+  const categories = filing && !desktop ? categoryState?.categories ?? NO_CATEGORIES : NO_CATEGORIES;
 
   const terms = useMemo(() => searchTerms(query), [query]);
   const q = terms.join(' ');
@@ -317,8 +353,8 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
   });
   // Every project the list knows (the sessions' folders, the categories' own and the registered ones, not the removed
   // ones), the window's first, then the most recently used: the "move to project" destinations. Taken from all sessions,
-  // not the filtered view, so a search does not hide one
-  const projects = useMemo<MoveProject[]>(() => {
+  // not the filtered view, so a search does not hide one. Kept while equal: every push brings a new session list
+  const projects = useReused(useMemo<MoveProject[]>(() => {
     const latest = new Map<string, string>();
     for (const s of sessions) if (s.cwd && (latest.get(s.cwd) ?? '') < s.updatedAt) latest.set(s.cwd, s.updatedAt);
     for (const c of categoryState?.categories ?? []) if (c.cwd && !latest.has(c.cwd)) latest.set(c.cwd, '');
@@ -330,7 +366,10 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
       const shared = names.indexOf(name) !== names.lastIndexOf(name);
       return { cwd, name, current: cwd === workspace, ...(shared ? { hint: cwd.slice(0, cwd.lastIndexOf(name)).replace(/[\\/]+$/, '') || cwd } : {}) };
     });
-  }, [sessions, categoryState, registered, removed, workspace]);
+  }, [sessions, categoryState, registered, removed, workspace]));
+  // A row's slices of the menus' lists, one array per project, so a row gets the same one on every render
+  const projectsBesides = useMemo(() => perKey(cwd => projects.filter(p => p.cwd !== cwd)), [projects]);
+  const categoriesIn = useMemo(() => perKey(cwd => categories.filter(c => c.cwd === cwd)), [categories]);
   // Under the workspace scope only the window's own categories show (a foreign active session stays loose)
   const visibleCategories = tree.projects.some(p => p.categories.length > 0);
   // Desktop, grouped by project: the user's sections, each holding its projects in its own order; the projects in none stay
@@ -412,6 +451,23 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
     end();
   };
 
+  // What a row's controls do, read through the ref when they are used: rows hold the same object on every render, so a
+  // row whose own props a push left alone skips its render (Item is memoized), where every listed row used to re-render
+  const rowActions = useRef<RowActions>(null!);
+  rowActions.current = {
+    select: s => onSelect(s.id),
+    edit: s => setEditing(s.id),
+    rename: (s, title) => { setEditing(undefined); if (title.trim() && title.trim() !== s.title) onRename(s.id, title); },
+    delete: s => { setEditing(undefined); onDelete(s.id); },
+    pin: s => onPin(s.id, !s.pinned),
+    move: (s, to) => onMove?.(s.id, to),
+    export: (s, format) => onExport?.(s.id, format),
+    copy: (s, what) => onCopy?.(s.id, what),
+    file: (s, category) => onFile?.(s.id, category),
+    newCategory: s => createCategory(s.cwd, s.id),
+    dragStart: (s, e) => begin({ kind: 'session', id: s.id })(e),
+    dragEnd: end,
+  };
   const renderItem = (s: SessionSummary) => (
     <Item
       key={s.id}
@@ -430,21 +486,15 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
       nudge={desktop && !s.pinned && !flat}
       editing={editing === s.id}
       dragging={held?.kind === 'session' && held.id === s.id}
-      onDragStart={filing && draggable(s) && (grouped || here(s)) && editing !== s.id ? begin({ kind: 'session', id: s.id }) : undefined}
-      onDragEnd={end}
-      onSelect={() => onSelect(s.id)}
-      onEdit={() => setEditing(s.id)}
-      onRename={t => { setEditing(undefined); if (t.trim() && t.trim() !== s.title) onRename(s.id, t); }}
-      onDelete={() => { setEditing(undefined); onDelete(s.id); }}
-      onPin={() => onPin(s.id, !s.pinned)}
-      onMove={onMove && workspace && !desktop && !s.external && !here(s) ? () => onMove(s.id) : undefined}
-      projects={projects.filter(p => p.cwd !== s.cwd)}
-      onMoveTo={onMove && !s.external ? cwd => onMove(s.id, { cwd }) : undefined}
-      onExport={onExport ? format => onExport(s.id, format) : undefined}
-      onCopy={onCopy ? what => onCopy(s.id, what) : undefined}
-      categories={categories.filter(c => c.cwd === s.cwd)}
-      onFile={filing && !desktop && !s.external ? category => onFile!(s.id, category) : undefined}
-      onNewCategory={filing && !desktop && !s.external ? () => createCategory(s.cwd, s.id) : undefined}
+      actions={rowActions}
+      drag={filing && draggable(s) && (grouped || here(s)) && editing !== s.id}
+      moveHere={!!onMove && !!workspace && !desktop && !s.external && !here(s)}
+      moveTo={!!onMove && !s.external}
+      exportable={!!onExport}
+      copyable={!!onCopy}
+      fileable={filing && !desktop && !s.external}
+      projects={projectsBesides(s.cwd)}
+      categories={categoriesIn(s.cwd)}
     />
   );
 
@@ -1194,26 +1244,39 @@ interface ItemProps {
   // Desktop: the row sits a step in from its project's folder glyph
   nudge?: boolean;
   editing: boolean;
-  onSelect: () => void;
-  onEdit: () => void;
-  onRename: (title: string) => void;
-  onDelete: () => void;
-  onPin: () => void;
-  // Present only for a session from another project: re-home it into this window's workspace
-  onMove?: () => void;
-  // The menus' "move to project" submenu: the other projects and the pick
+  // What the row's controls do; the flags below say which of them it offers. A ref and plain flags, so the memo holds
+  // across pushes
+  actions: RefObject<RowActions>;
+  // Only for a session from another project: re-home it into this window's workspace
+  moveHere?: boolean;
+  // The menus' "move to project" submenu over `projects`, the other projects
+  moveTo?: boolean;
   projects?: MoveProject[];
-  onMoveTo?: (cwd: string) => void;
-  onExport?: (format: ExportFormat) => void;
-  onCopy?: (what: SessionCopyKind) => void;
-  // Native drag: present when the row may be filed by dragging (not pinned, not a ChatGPT mirror)
+  exportable?: boolean;
+  copyable?: boolean;
+  // Native drag: the row may be filed by dragging (not pinned, not a ChatGPT mirror)
+  drag?: boolean;
   dragging?: boolean;
-  onDragStart?: (e: DragEvent) => void;
-  onDragEnd?: () => void;
-  // The "move to category" submenu: the session's own project's categories
+  // The "move to category" submenu over `categories` (the session's own project's) and "new category…"
+  fileable?: boolean;
   categories?: SessionCategory[];
-  onFile?: (category: string | null) => void;
-  onNewCategory?: () => void;
+}
+
+// What a row's controls do: SessionList's handlers of the moment, read through a ref when a control is used
+interface RowActions {
+  select: (s: SessionSummary) => void;
+  edit: (s: SessionSummary) => void;
+  rename: (s: SessionSummary, title: string) => void;
+  delete: (s: SessionSummary) => void;
+  pin: (s: SessionSummary) => void;
+  // No target: into this window's workspace ("move here")
+  move: (s: SessionSummary, to?: MoveTarget) => void;
+  export: (s: SessionSummary, format: ExportFormat) => void;
+  copy: (s: SessionSummary, what: SessionCopyKind) => void;
+  file: (s: SessionSummary, category: string | null) => void;
+  newCategory: (s: SessionSummary) => void;
+  dragStart: (s: SessionSummary, e: DragEvent) => void;
+  dragEnd: () => void;
 }
 
 // One item: the whole row is clickable to select; the tail shows a status dot + time by default, cross-fading to the actions on hover / keyboard focus. Action buttons can't nest inside a button, so the whole row is a div[role=option].
@@ -1222,15 +1285,31 @@ interface ItemProps {
 // open — the row tracks menuOpen because a pointer inside the portaled popup is no longer a hover.
 // The agent mark rests a notch back from the title and comes forward with the row; when the session's model comes from
 // another vendor than its agent (Devin on Claude, OpenCode on GPT), it turns over to that vendor's mark after a short hold
-// (`mark-flip`, motion.css), so a pointer sweeping down the list flips nothing
-function Item({ session: s, agentName, terms, snippet, active, time, project, model, nudge, editing, onSelect, onEdit, onRename, onDelete, onPin, onMove, projects, onMoveTo, onExport, onCopy, dragging, onDragStart, onDragEnd, categories, onFile, onNewCategory }: ItemProps) {
+// (`mark-flip`, motion.css), so a pointer sweeping down the list flips nothing.
+// Memoized: a push re-renders only the rows whose summary (kept by reference while unchanged, App's reuseById) or
+// place-dependent props changed
+const Item = memo(function Item({ session: s, agentName, terms, snippet, active, time, project, model, nudge, editing, actions, moveHere, moveTo, projects, exportable, copyable, drag, dragging, fileable, categories }: ItemProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const select = () => actions.current.select(s);
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget) return;
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(); }
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(); }
   };
   const act = 'inline-flex size-lead items-center justify-center rounded-sm text-fg-3 transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1';
-  const menu: SessionMenuItemsProps = { session: s, onRename: onEdit, onPin, onMove, projects, onMoveTo, onExport, onCopy, onDelete, categories, onFile, onNewCategory };
+  const menu: SessionMenuItemsProps = {
+    session: s,
+    onRename: () => actions.current.edit(s),
+    onPin: () => actions.current.pin(s),
+    onMove: moveHere ? () => actions.current.move(s) : undefined,
+    projects,
+    onMoveTo: moveTo ? cwd => actions.current.move(s, { cwd }) : undefined,
+    onExport: exportable ? format => actions.current.export(s, format) : undefined,
+    onCopy: copyable ? what => actions.current.copy(s, what) : undefined,
+    onDelete: () => actions.current.delete(s),
+    categories,
+    onFile: fileable ? category => actions.current.file(s, category) : undefined,
+    onNewCategory: fileable ? () => actions.current.newCategory(s) : undefined,
+  };
   const foreign = foreignBrand(s.agent, s.model);
   const row = (
     <div
@@ -1239,10 +1318,10 @@ function Item({ session: s, agentName, terms, snippet, active, time, project, mo
       tabIndex={0}
       data-session={s.id}
       data-menu-open={menuOpen || undefined}
-      draggable={!!onDragStart}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onClick={() => { if (!editing) onSelect(); }}
+      draggable={!!drag}
+      onDragStart={drag ? e => actions.current.dragStart(s, e) : undefined}
+      onDragEnd={() => actions.current.dragEnd()}
+      onClick={() => { if (!editing) select(); }}
       onKeyDown={onKey}
       className={cn(
         // The row whose context menu is open keeps the hover fill: the popup under the pointer ends the row's :hover
@@ -1267,7 +1346,7 @@ function Item({ session: s, agentName, terms, snippet, active, time, project, mo
           : <AgentMark id={s.agent} name={agentName} />}
       </span>
       {editing
-        ? <RenameInput initial={s.title} onDone={onRename} />
+        ? <RenameInput initial={s.title} onDone={title => actions.current.rename(s, title)} />
         : (
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="truncate"><Marked text={s.title} terms={terms} /></span>
@@ -1283,12 +1362,12 @@ function Item({ session: s, agentName, terms, snippet, active, time, project, mo
             <span className="min-w-session-time text-right">{time}</span>
           </span>
           <span className={cn('flex items-center justify-end gap-0.5', REVEAL)}>
-            {onMove && (
-              <button type="button" title={t('session.move')} aria-label={t('session.move')} onClick={e => { e.stopPropagation(); onMove(); }} className={act}>
+            {moveHere && (
+              <button type="button" title={t('session.move')} aria-label={t('session.move')} onClick={e => { e.stopPropagation(); actions.current.move(s); }} className={act}>
                 <FolderInput className="size-3" strokeWidth={1.5} />
               </button>
             )}
-            <button type="button" title={s.pinned ? t('common.unpin') : t('common.pin')} aria-label={s.pinned ? t('common.unpin') : t('common.pin')} onClick={e => { e.stopPropagation(); onPin(); }} className={act}>
+            <button type="button" title={s.pinned ? t('common.unpin') : t('common.pin')} aria-label={s.pinned ? t('common.unpin') : t('common.pin')} onClick={e => { e.stopPropagation(); actions.current.pin(s); }} className={act}>
               {s.pinned ? <PinOff className="size-3" strokeWidth={1.5} /> : <Pin className="size-3" strokeWidth={1.5} />}
             </button>
           </span>
@@ -1297,7 +1376,7 @@ function Item({ session: s, agentName, terms, snippet, active, time, project, mo
     </div>
   );
   return <SessionContextMenu {...menu} editing={editing} onOpenChange={setMenuOpen}>{row}</SessionContextMenu>;
-}
+});
 
 // Marks every occurrence of the search terms in brighter, heavier text
 function Marked({ text, terms }: { text: string; terms: string[] }) {

@@ -6,7 +6,7 @@ import type { ModelShapes } from '@acpira/shared/modelShapes';
 import type { HiddenMap, SettingsView } from '@acpira/shared/settings';
 import type { AgentInventory } from '@acpira/shared/inventory';
 import type { Locale } from '@acpira/shared/i18n';
-import { reuse } from '@acpira/shared/reuse';
+import { reuse, reuseById } from '@acpira/shared/reuse';
 import { SessionViews } from './sessionViews';
 import { BASE_APPEARANCE, type Appearance } from './appearance';
 import { LocaleContext, setLocale, t } from './i18n';
@@ -230,7 +230,8 @@ export function App() {
           if (flipped.length) setInventories(inv => { const next = { ...inv }; for (const id of flipped) delete next[id]; return next; });
           break;
         }
-        case 'sessions': setSessions(m.sessions); break;
+        // Unchanged entries keep their references, so the list's memoized rows skip the ones a push did not touch
+        case 'sessions': setSessions(prev => reuseById(prev, m.sessions)); break;
         case 'categories': setCategories(m.categories); break;
         case 'accounts': setAccounts(m.accounts); break;
         case 'accountActions': setAccountActions(m.actions); break;
