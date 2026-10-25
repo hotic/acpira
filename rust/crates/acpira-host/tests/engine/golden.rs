@@ -192,6 +192,41 @@ async fn a_large_paste_stages_as_a_full_resource_and_restores_for_editing() {
 }
 
 #[tokio::test]
+async fn an_animated_gif_goes_as_a_note_and_a_frame_sheet_while_the_turn_keeps_the_gif() {
+  use base64::Engine;
+  let b64 = base64::engine::general_purpose::STANDARD;
+  let (dir, blobs) = store();
+  let gif = acpira_agent::frames::solid_gif(40, 20, &[[255, 0, 0], [0, 255, 0], [0, 0, 255]], 50);
+  let path = dir.path().join("clip.gif");
+  std::fs::write(&path, &gif).unwrap();
+  let pasted = draft(json!({ "kind": "image", "mimeType": "image/gif", "data": b64.encode(&gif), "name": "paste.gif" }));
+  let linked = draft(json!({ "kind": "file", "uri": format!("file://{}", path.display()), "name": "clip.gif" }));
+  let result = prepare_prompt("session", "what happens here?", &[pasted, linked], &blobs, &FileReader::Local, None).await;
+  assert!(result.problems.is_empty(), "{:?}", result.problems);
+  let blocks = v(&result.blocks);
+  let kinds: Vec<_> = blocks.as_array().unwrap().iter().map(|b| (b["type"].clone(), b["mimeType"].clone())).collect();
+  assert_eq!(kinds, [(json!("text"), Value::Null), (json!("text"), Value::Null), (json!("image"), json!("image/png")), (json!("text"), Value::Null), (json!("image"), json!("image/png"))]);
+  // The note names the frames and where the staged GIF is, for an agent that wants more of them
+  let a = v(&result.attachments);
+  let staged = dir.path().join("session").join(a[0]["blob"].as_str().unwrap()).canonicalize().unwrap();
+  let note = blocks[1]["text"].as_str().unwrap();
+  assert!(note.starts_with("[Animated GIF paste.gif: 3 frames over 1.5 s, 40x20 pixels.") && note.ends_with("if you need them.]"), "{note}");
+  assert!(note.contains(&format!("The original GIF is at {}", staged.display())), "{note}");
+  assert!(blocks[3]["text"].as_str().unwrap().starts_with("[Animated GIF clip.gif: 3 frames"));
+  assert!(b64.decode(blocks[2]["data"].as_str().unwrap()).unwrap().starts_with(b"\x89PNG"));
+  // The turn keeps both GIFs, so the transcript plays them, and sending it again builds the same blocks
+  assert_eq!((a[0]["mimeType"].clone(), a[1]["mimeType"].clone()), (json!("image/gif"), json!("image/gif")));
+  assert_eq!(std::fs::read(&staged).unwrap(), gif);
+  let again = restore_drafts("session", &result.attachments, &blobs).await.unwrap();
+  let resent = prepare_prompt("session", "what happens here?", &again, &blobs, &FileReader::Local, None).await;
+  assert_eq!(v(&resent.blocks), blocks);
+  // A still GIF has nothing to lay out and goes as it is
+  let still = b64.encode(acpira_agent::frames::solid_gif(8, 8, &[[1, 2, 3]], 10));
+  let result = prepare_prompt("session", "", &[draft(json!({ "kind": "image", "mimeType": "image/gif", "data": still }))], &blobs, &FileReader::Local, None).await;
+  expect_eq(&result.blocks, json!([{ "type": "image", "mimeType": "image/gif", "data": still }]));
+}
+
+#[tokio::test]
 async fn without_embedded_context_dropped_text_goes_as_marked_up_plain_text_and_still_stages() {
   let (_dir, blobs) = store();
   let result = prepare_prompt("session", "hi", &[draft(json!({ "kind": "text", "name": "notes.txt", "text": "contents" }))], &blobs, &FileReader::Local, caps(false, true, false)).await;

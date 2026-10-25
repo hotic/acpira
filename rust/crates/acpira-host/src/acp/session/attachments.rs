@@ -95,7 +95,7 @@ pub async fn prepare_prompt(
         }
         let bytes = B64.decode(data.as_bytes()).unwrap_or_default();
         let saved = stage(&mut out, blobs, session_id, ext_of_mime(mime_type), &bytes, &label).await;
-        out.blocks.push(json!({ "type": "image", "mimeType": mime_type, "data": data }));
+        push_image(&mut out, mime_type, bytes, Some(data), &label, saved.as_ref().map(|s| s.1.as_str())).await;
         out.attachments.push(Attachment::Image { blob: saved.map(|s| s.0), mime_type: mime_type.clone(), name: name.clone() });
       }
       Draft::Text { name, text, context } => {
@@ -174,7 +174,7 @@ pub async fn prepare_prompt(
             continue;
           }
           let saved = stage(&mut out, blobs, session_id, ext_of_mime(mime), &bytes, name).await;
-          out.blocks.push(json!({ "type": "image", "mimeType": mime, "data": B64.encode(&bytes) }));
+          push_image(&mut out, mime, bytes, None, name, saved.as_ref().map(|s| s.1.as_str())).await;
           out.attachments.push(Attachment::Image { blob: saved.map(|s| s.0), mime_type: mime.to_owned(), name: Some(name.clone()) });
         } else {
           let link_name = if name.is_empty() { basename(uri) } else { name.clone() };
@@ -185,6 +185,31 @@ pub async fn prepare_prompt(
     }
   }
   out
+}
+
+/// An image's wire blocks: the image itself, or for an animated GIF a note and a sheet of its frames, since a model
+/// would see only the first frame (`acpira_agent::frames`). The attachment keeps the GIF, so the transcript still
+/// plays it, and a retry or an edit builds the same sheet again from it. `data`: the bytes' base64 when the caller has
+/// it; `saved`: the staged copy's path, named in the note so an agent with a shell can take more frames from it
+async fn push_image(out: &mut PreparedPrompt, mime: &str, bytes: Vec<u8>, data: Option<&str>, label: &str, saved: Option<&str>) {
+  let bytes = std::sync::Arc::new(bytes);
+  let sheet = if mime == "image/gif" {
+    // Decoding a long recording takes a while: off the async workers. A decoder that panics leaves the GIF as it is
+    let gif = bytes.clone();
+    tokio::task::spawn_blocking(move || acpira_agent::frames::sheet(&gif)).await.ok().flatten()
+  } else {
+    None
+  };
+  match sheet {
+    Some(sheet) => {
+      out.blocks.push(json!({ "type": "text", "text": format!("[{}]", sheet.note(label, saved)) }));
+      out.blocks.push(json!({ "type": "image", "mimeType": "image/png", "data": B64.encode(&sheet.png) }));
+    }
+    None => {
+      let data = data.map_or_else(|| B64.encode(&*bytes), str::to_owned);
+      out.blocks.push(json!({ "type": "image", "mimeType": mime, "data": data }));
+    }
+  }
 }
 
 async fn stage(
