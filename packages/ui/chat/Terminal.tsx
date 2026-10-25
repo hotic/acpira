@@ -35,7 +35,7 @@ export function TerminalOutput({ block, command }: { block: ToolCallBlock; comma
 // Unlike terminal output it wraps: these are `key: value` reports and prose, not column-aligned logs, and a horizontal
 // scrollbar under a short report cost more than it saved. A wrapped line hangs under its own start
 export function ToolOutput({ block, text }: { block: ToolCallBlock; text: string }) {
-  const body = text.trimEnd();
+  const body = unfence(text.trimEnd());
   if (!body.trim()) return null;
   // Fetched pages and web search summaries are usually markdown: render them like a message, inside the same capped card.
   // The engine already cuts each text item to TOOL_OUTPUT_MAX, so the rendered document stays bounded
@@ -47,6 +47,17 @@ export function ToolOutput({ block, text }: { block: ToolCallBlock; text: string
       </OutputPane>
     </div>
   );
+}
+
+// A body that is one fenced block and nothing else (Claude wraps tool errors as "```\nRequest was aborted.\n```") shows
+// its inner text: rendered as markdown it became a code block with its own copy button inside the card's
+const WHOLE_FENCE = /^(`{3,}|~{3,})[^\n`]*\n([\s\S]*?)\n?\1[ \t]*$/;
+export function unfence(text: string): string {
+  const match = WHOLE_FENCE.exec(text.trim());
+  if (!match) return text;
+  const [, marker = '', inner = ''] = match;
+  // A second fence of the same marker inside means several blocks, not one
+  return inner.includes(marker) ? text : inner.trimEnd();
 }
 
 // Markdown body of a fetch tool. The TextBlock is memoized on the text so Prose's memo holds across unrelated re-renders
