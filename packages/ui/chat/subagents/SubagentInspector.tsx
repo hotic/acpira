@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { ArrowLeft, Square, Unplug, X } from 'lucide-react';
 import type { SubagentSummary } from '@acpira/shared/subagents';
-import type { FullDiffSource, QuestionBlock, TextBlock, Turn, UserTurn } from '@acpira/shared/transcript';
+import type { FullDiffSource, QuestionBlock, TextBlock, Turn, TurnSettings, UserTurn } from '@acpira/shared/transcript';
 import { t } from '../../i18n';
 import { cn } from '../../ui/cn';
 import { IconButton } from '../../ui/Button';
@@ -108,6 +108,7 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
           ) : transcript === undefined ? (
             <Row className="px-pad text-fg-3"><Shimmer active>{t('subagents.loading')}</Shimmer></Row>
           ) : (
+            // No action context: the reply row under a settled child turn offers copy and stats, never fork
             <TurnActionsContext.Provider value={undefined}>
               <HistoryContext.Provider value={undefined}>
                 <FollowContext.Provider value={follow}>
@@ -123,7 +124,7 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
                         memoryKey={`sub:${node.id}:${ti}`}
                         turnIndex={ti}
                         last={ti === transcript.turns.length - 1}
-                        actions={false}
+                        settings={previousSettings(transcript.turns, ti)}
                         lead="static"
                       />
                     )
@@ -150,6 +151,12 @@ function SessionTab({ node, transcript, onPermission, question, onAnswer, wide, 
       {question !== undefined && onAnswer !== undefined && <div className="pb-gap-half"><Questions block={question} onAnswer={onAnswer} /></div>}
     </>
   );
+}
+
+// The prompt settings of the user turn right before an agent turn, which the stats card reads the model from
+function previousSettings(turns: Turn[], index: number): TurnSettings | undefined {
+  const previous = turns[index - 1];
+  return previous?.role === 'user' ? previous.settings : undefined;
 }
 
 function textOf(markdown: string): TextBlock {

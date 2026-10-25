@@ -1275,7 +1275,8 @@ const Thread = memo(function Thread({ turns, running, wide, replayKey, blobUrl, 
             // notice or the error row as the only seam, so the cut-off half drops its action row and the continuation joins it
             const next = turns[ti + 1];
             const switchedAway = next?.role === 'user' && isContinue(next);
-            const switchedIn = previous?.role === 'user' && isContinue(previous);
+            // The reply woken by summoned agents' reports hugs the one-line report row above it, like a continuation
+            const switchedIn = previous?.role === 'user' && (isContinue(previous) || previous.autoReason === 'subagents');
             // A user turn carries no time of its own; the reply it started began the moment it went out (absent on old transcripts)
             const sentAt = turn.role === 'user' && next?.role === 'agent' ? next.startedAt : undefined;
             // The strip under a prompt: its send time and, on the last typed one, Set as goal (both shown on hover)
