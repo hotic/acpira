@@ -380,7 +380,7 @@ export type WebviewMsg =
   | { type: 'setSessionCategory'; id: string; category: string | null }
   // `file` with a create: file that session under the new category in the same step
   | ({ type: 'categoryOp'; file?: string } & CategoryOp)
-  // The list's "mark all as read": every unread dot this engine holds goes out
+  // The list's "mark all as read": every unread mark goes, for every engine and window on the machine (they share them)
   | { type: 'markAllRead' }
   // Re-home a session into another project folder: `cwd` (absent: this window's workspace folder) becomes its cwd and the agent
   // works there from the next open on; `category`, one of that project's, files it there in the same step
