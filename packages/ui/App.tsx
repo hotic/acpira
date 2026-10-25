@@ -7,6 +7,7 @@ import type { HiddenMap, SettingsView } from '@acpira/shared/settings';
 import type { AgentInventory } from '@acpira/shared/inventory';
 import type { Locale } from '@acpira/shared/i18n';
 import { reuse, reuseById } from '@acpira/shared/reuse';
+import { effortLabel } from '@acpira/shared/composerControls';
 import { SessionViews } from './sessionViews';
 import { BASE_APPEARANCE, type Appearance } from './appearance';
 import { LocaleContext, setLocale, t } from './i18n';
@@ -189,11 +190,15 @@ export function App() {
       const names = g.members.flatMap(m => on.find(p => p.id === m)?.name ?? []);
       return g.enabled && names.length ? [{ id: g.id, name: g.name, agent: '', cli: names.join(t('common.listSep')), group: true }] : [];
     });
+    // The model reads as its CLI names it once that CLI's cached controls arrive (as on the subagents page), the id until then
+    const modelName = (agent: AgentId, id: string) =>
+      controls[agent]?.find(c => c.category === 'model' || c.id === 'model')?.options.find(o => o.id === id)?.name ?? id;
     return [...on.map(p => ({
       id: p.id, name: p.name, agent: p.agent,
-      cli: agents.find(a => a.id === p.agent)?.name ?? p.agent, model: p.model || undefined,
+      cli: agents.find(a => a.id === p.agent)?.name ?? p.agent, model: p.model ? modelName(p.agent, p.model) : undefined,
+      effort: p.effort ? effortLabel({ id: p.effort, name: p.effort }) : undefined,
     })), ...groups];
-  }, [subagents, subagentGroups, agents, locale]);
+  }, [subagents, subagentGroups, agents, controls, locale]);
 
   useEffect(() => { document.documentElement.lang = locale; }, [locale]);
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
@@ -348,12 +353,13 @@ export function App() {
   useEffect(() => setSubagentTranscripts({}), [sessionId]);
 
   // The model lists of an agent page come from the configOptions of its latest session; ask for them on first visit.
-  // The subagents page picks models of the CLIs its personas run in, so it asks for each of those
+  // The personas' CLIs are asked for wherever the view is: the subagents page picks their models, and the composer's
+  // summon menu names them (a cached read in the engine, no CLI is started)
   // Requests in flight are not sent twice while another agent's reply re-runs the effect
   const personaAgents = useMemo(() => [...new Set(settings?.subagents.map(p => p.agent))].sort().join('\n'), [settings?.subagents]);
   useEffect(() => {
-    if (view !== 'settings') return;
-    const wanted = page.kind === 'agent' ? [page.id] : page.kind === 'subagents' && personaAgents ? personaAgents.split('\n') : [];
+    const wanted = personaAgents ? personaAgents.split('\n') : [];
+    if (view === 'settings' && page.kind === 'agent') wanted.push(page.id);
     for (const agent of wanted) {
       if (controls[agent] !== undefined || controlsAsked.current.has(agent)) continue;
       controlsAsked.current.add(agent);

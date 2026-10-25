@@ -1,5 +1,5 @@
 import { AtSign } from 'lucide-react';
-import { Chip } from '../ui/Button';
+import { Chip, ChipTag } from '../ui/Button';
 import { DropdownMenu } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { t } from '../i18n';
@@ -27,10 +27,12 @@ export function SummonMenu({ personas, onPick, onOpenChange }: {
             <DropdownMenu.Item key={p.id} className="py-1.5" onClick={() => onPick(p)}>
               {/* The CLI's mark spans both lines (lead size, not the one-line icon); the CLI's name outranks the model */}
               <SummonMark persona={p} className="size-lead shrink-0" />
-              <OptionContent extra={(p.cli || p.model) && (
+              <OptionContent extra={(p.cli || p.model || p.effort) && (
                 <span className="flex min-w-0 items-center gap-gap text-3">
                   {p.cli && <span className="shrink-0 text-fg-1">{p.cli}</span>}
                   {p.model && <span className="min-w-0 truncate text-fg-3/70">{p.model}</span>}
+                  {/* The effort as the subagents page tags it: the model's own name may carry another level */}
+                  {p.effort && <ChipTag small>{p.effort}</ChipTag>}
                 </span>
               )}>{p.name}</OptionContent>
             </DropdownMenu.Item>

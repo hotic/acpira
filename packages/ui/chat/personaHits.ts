@@ -11,6 +11,9 @@ export interface MentionPersona {
   // (for a group, its members' names)
   cli?: string;
   model?: string;
+  // The persona's reasoning effort as the composer chip names it; shown apart from the model, whose id may carry an
+  // unrelated level (Devin's `gemini-4-argon-medium` runs at whatever its effort select says)
+  effort?: string;
   // A group of personas (settings → Orchestration): one @name summons every member
   group?: boolean;
 }

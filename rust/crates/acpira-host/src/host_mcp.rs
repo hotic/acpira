@@ -766,6 +766,8 @@ fn ask_tool_def(personas: &[acpira_shared::subagents::SubagentPersona], groups: 
         SubagentDuty::Reviewer => "reviewer · ",
       };
       let model = p.model.as_deref().map(|m| format!(" · {m}")).unwrap_or_default();
+      // The effort is its own field: a model id may carry an unrelated level (Devin's `gemini-4-argon-medium` runs at `high`)
+      let effort = p.effort.as_deref().map(|e| format!(" · {e} effort")).unwrap_or_default();
       let mode = match p.mode {
         RelayMode::Consult => " · read-only",
         RelayMode::Work => "",
@@ -773,7 +775,7 @@ fn ask_tool_def(personas: &[acpira_shared::subagents::SubagentPersona], groups: 
         RelayMode::Inherit => " · follows your mode",
       };
       let when = if p.when.trim().is_empty() { String::new() } else { format!(": {}", p.when.trim()) };
-      format!("- {} (@{}){when} [{duty}{}{model}{mode}]", p.id, p.name, p.agent)
+      format!("- {} (@{}){when} [{duty}{}{model}{effort}{mode}]", p.id, p.name, p.agent)
     })
     .collect();
   let description = format!(
@@ -1193,6 +1195,13 @@ mod tests {
       serde_json::from_value(json!({ "id": "look", "name": "Look", "agent": "kimi", "mode": "consult", "duty": "scout" })).unwrap();
     let def = ask_tool_def(std::slice::from_ref(&scout), &[]);
     assert!(def["description"].as_str().unwrap().contains("- look (@Look) [scout · kimi · read-only]"), "{}", def["description"]);
+    // The effort is named apart from the model id, which may carry a level of its own
+    let devin: acpira_shared::subagents::SubagentPersona = serde_json::from_value(
+      json!({ "id": "gem", "name": "Gem", "agent": "devin", "model": "gemini-4-argon-medium", "effort": "high", "mode": "work" }),
+    )
+    .unwrap();
+    let def = ask_tool_def(std::slice::from_ref(&devin), &[]);
+    assert!(def["description"].as_str().unwrap().contains("[devin · gemini-4-argon-medium · high effort]"), "{}", def["description"]);
     assert_eq!(def["inputSchema"]["properties"]["new_thread"]["type"], "boolean");
     assert!(!def["description"].as_str().unwrap().contains("Groups:"));
     // A group is one more value of `agent`, listed with its members under the agents

@@ -615,6 +615,10 @@ impl SessionAccountHooks for AccountHooks {
   fn label(&self, account: String) -> Option<String> {
     self.0.get(&account).map(|a| a.label)
   }
+
+  fn default_account(&self, agent: String) -> Option<String> {
+    self.0.supports(&agent).then(|| self.0.default_for(&agent)).flatten().map(|a| a.id)
+  }
 }
 
 #[cfg(test)]

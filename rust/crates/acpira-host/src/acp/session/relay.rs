@@ -1550,8 +1550,19 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
     let bin = self.deps.registry.resolve_binary(&r.persona.agent).await.ok_or_else(|| anyhow!("{} is not installed", def.name))?;
     let quiet = Arc::new(AtomicBool::new(false));
     let handlers: Arc<dyn ClientHandlers> = Arc::new(RelayHandlers { session: self.me.clone(), thread: thread.to_owned(), quiet: quiet.clone() });
+    // The CLI signs in the way a new session of it would: with the parent's own account when the persona runs in the
+    // same CLI, else that CLI's default saved account (Devin refuses its local credentials over ACP); with none saved,
+    // the CLI's own credentials
+    let account = self.deps.accounts.as_ref().and_then(|h| {
+      let same = (r.persona.agent == self.agent).then(|| self.core.lock().account_id.clone()).flatten();
+      same.or_else(|| h.default_account(r.persona.agent.clone()))
+    });
+    let env = match (&account, &self.deps.accounts) {
+      (Some(a), Some(h)) => h.spawn_env(r.persona.agent.clone(), a.clone()).await,
+      _ => None,
+    };
     self.log(&format!("relay {}: spawn {bin} {} for {}", short(thread), def.args.join(" "), r.persona.name));
-    let proc = AgentProcess::spawn(&def, &bin, &self.process_cwd(), handlers, None, None).await?;
+    let proc = AgentProcess::spawn(&def, &bin, &self.process_cwd(), handlers, env.as_ref(), None).await?;
     // Registered before anything else can fail, so the close or a failed open always ends it
     let closed = {
       let mut c = self.core.lock();
@@ -1565,7 +1576,16 @@ Wait for some of them first: call ask_agent with their thread and an empty promp
       proc.kill().await;
       return Err(anyhow!("the session closed"));
     }
-    let opened = self.relay_open_session(&proc, r, &quiet, notes).await;
+    let signed_in = match (&account, &self.deps.accounts) {
+      (Some(a), Some(h)) => {
+        h.authenticate(r.persona.agent.clone(), a.clone(), proc.clone()).await.map_err(|e| anyhow!("{} could not sign in with its saved account: {e}", def.name))
+      }
+      _ => Ok(()),
+    };
+    let opened = match signed_in {
+      Ok(()) => self.relay_open_session(&proc, r, &quiet, notes).await,
+      Err(e) => Err(e),
+    };
     let kept = {
       let mut c = self.core.lock();
       let closed = c.relays.closed;
