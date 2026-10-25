@@ -10,8 +10,10 @@ import { compactingNow, liveUsage, overCompactBudget, usageFill } from './usageB
 // Context usage: a --icon-sized ring inside a --ctl-square button; hovering shows the usage card (Cursor-style), and agents with /compact can be compacted from its title row.
 // Focus opens the card only when it arrives from another element (Tab / Shift+Tab). Focus the popup hands back after closing — outside click, Escape, the compact
 // button — has no relatedTarget (the card is already gone), and opening on it would reopen the card the user just dismissed
-export function ContextRing({ usage, turns, canCompact, compactAt, running, disabled, onCompact, onOpenChange }: {
-  usage: Usage; turns: Turn[]; canCompact: boolean; compactAt?: number; running?: boolean; disabled?: boolean;
+const EMPTY_TURNS: Turn[] = [];
+
+export function ContextRing({ usage, turns = EMPTY_TURNS, compacting: compactingProp, canCompact, compactAt, running, disabled, onCompact, onOpenChange }: {
+  usage: Usage; turns?: Turn[]; compacting?: boolean; canCompact: boolean; compactAt?: number; running?: boolean; disabled?: boolean;
   onCompact: () => void; onOpenChange: (open: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -19,7 +21,7 @@ export function ContextRing({ usage, turns, canCompact, compactAt, running, disa
   const stale = shown.compactedFrom !== undefined;
   const fill = usageFill(shown);
   const pct = Math.min(1, shown.used / shown.size);
-  const compacting = useMemo(() => compactingNow(turns, running), [turns, running]);
+  const compacting = useMemo(() => compactingProp ?? compactingNow(turns, running), [compactingProp, turns, running]);
   const shift = useRingShift(fill, stale);
   // A stale snapshot still holds the pre-compaction figure: it must not read as over the threshold
   const over = !stale && overCompactBudget(shown.used, compactAt);

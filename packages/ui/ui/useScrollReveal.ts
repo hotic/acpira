@@ -37,7 +37,7 @@ export function useScrollReveal(root: RefObject<HTMLElement | null>) {
       const s = state(target);
       clearTimeout(s.release);
       s.release = undefined;
-      target.setAttribute('data-scrollbar-anim', '');
+      if (!target.hasAttribute('data-scrollbar-anim')) target.setAttribute('data-scrollbar-anim', '');
     };
     // Once neither scrolling nor hovered, let the fade-out run, then drop the transition carrier
     const release = (target: Element) => {
@@ -54,7 +54,7 @@ export function useScrollReveal(root: RefObject<HTMLElement | null>) {
       const target = event.target;
       if (!(target instanceof Element)) return;
       light(target);
-      target.setAttribute('data-scrolling', '');
+      if (!target.hasAttribute('data-scrolling')) target.setAttribute('data-scrolling', '');
       const s = state(target);
       clearTimeout(s.settle);
       s.settle = setTimeout(() => {

@@ -45,18 +45,22 @@ function ensureShellStore(shell: HTMLElement): ShellStore {
   let store = shellStores.get(shell);
   if (!store) {
     const listeners = new Set<(m: ShellMetrics) => void>();
-    const measure = () => {
+    const notify = (next: ShellMetrics) => {
       if (!store) return;
-      const next = readShellMetrics(shell);
       const prev = store.metrics;
       if (prev.gap === next.gap && prev.pad === next.pad && prev.width === next.width) return;
       store.metrics = next;
       for (const fn of listeners) fn(next);
     };
-    const resize = new ResizeObserver(measure);
+    const onResize = () => {
+      if (!store) return;
+      notify({ ...store.metrics, width: shell.clientWidth });
+    };
+    const onAttrs = () => notify(readShellMetrics(shell));
+    const resize = new ResizeObserver(onResize);
     resize.observe(shell);
-    const attributes = new MutationObserver(measure);
-    attributes.observe(shell, { attributes: true });
+    const attributes = new MutationObserver(onAttrs);
+    attributes.observe(shell, { attributes: true, attributeFilter: ['data-density', 'style', 'class'] });
     store = {
       metrics: readShellMetrics(shell),
       listeners,

@@ -4,6 +4,7 @@ import type { ProjectBase, ProjectChange, ProjectHunk } from '@acpira/shared/pro
 import { BookOpen, ChevronDown, ChevronUp, ExternalLink, Layers, MessageSquarePlus, WrapText, X } from 'lucide-react';
 import type { TextBlock } from '@acpira/shared/transcript';
 import { t } from '../i18n';
+import { useTheme } from '../look';
 import { IconButton } from '../ui/Button';
 import { popupClass } from '../ui/Overlay';
 import { cn } from '../ui/cn';
@@ -13,7 +14,7 @@ import { Prose } from '../chat/Prose';
 import { OpenToolFileContext } from '../chat/fileLinks';
 import { requestCodeHighlight } from '../chat/diffHighlight';
 import { codeLanguage, type CodeToken } from '../chat/codeLanguage';
-import { project, type FileRead } from './api';
+import { project, shellResizeIdleIn, type FileRead } from './api';
 import type { LineRange } from './store';
 import { FileGlyph, dirOf, nameOf } from './files';
 
@@ -56,7 +57,12 @@ export function diffLinesOf(text: string, hunks: ProjectHunk[]): DiffLine[] {
     else if (r.kind === 'add') rows.push({ kind: 'add', text: r.text, now: r.line });
     else rows.push({ kind: 'ctx', text: r.text, old: old++, now: r.line });
   }
-  const near = rows.map((_, i) => rows.slice(Math.max(0, i - 3), i + 4).some(x => x.kind !== 'ctx'));
+  const near = new Uint8Array(rows.length);
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i]!.kind === 'ctx') continue;
+    const end = Math.min(rows.length, i + 4);
+    for (let k = Math.max(0, i - 3); k < end; k++) near[k] = 1;
+  }
   const out: DiffLine[] = [];
   for (let i = 0; i < rows.length; i++) {
     if (!near[i]) continue;
@@ -71,7 +77,25 @@ export function diffLinesOf(text: string, hunks: ProjectHunk[]): DiffLine[] {
   return out;
 }
 
-// Highlighting a file past this size would hold the worker for a while; it is shown plain
+// Capped diff slice for ReviewFile: avoids allocating thousands of DiffLine objects past REVIEW_LINES when a new/large file has thousands of lines
+function reviewDiffSlice(text: string, hunks: ProjectHunk[], cap: number): { lines: DiffLine[]; rest: number } | undefined {
+  if (!hunks.length) return undefined;
+  // Fast path for a whole-file addition (e.g. a newly created file of thousands of lines)
+  if (hunks.length === 1 && hunks[0]!.at === 1 && !hunks[0]!.del?.length) {
+    const raw = text ? linesOf(text) : [];
+    const total = hunks[0]!.add;
+    if (total === raw.length) {
+      const take = Math.min(total, Math.max(0, cap - 1));
+      const lines: DiffLine[] = [{ kind: 'hunk', text: `@@ -1,0 +1,${total} @@` }];
+      for (let i = 0; i < take; i++) lines.push({ kind: 'add', text: `+${raw[i]!}`, newLine: i + 1 });
+      return { lines, rest: total + 1 - lines.length };
+    }
+  }
+  const all = diffLinesOf(text, hunks);
+  if (!all.length) return undefined;
+  const lines = all.length > cap ? all.slice(0, cap) : all;
+  return { lines, rest: all.length - lines.length };
+}
 const HIGHLIGHT_MAX = 256 * 1024;
 
 // Syntax colours for the file and each hunk's removed lines, from the transcript's highlight worker
@@ -82,18 +106,30 @@ function useHighlight(path: string, read: FileRead | undefined) {
     const language = codeLanguage(path);
     if (text === undefined || !language || text.length > HIGHLIGHT_MAX) return;
     let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     void Promise.all([
       requestCodeHighlight(text.replace(/\r?\n$/, ''), language),
       Promise.all(read!.hunks.map(h => (h.del?.length ? requestCodeHighlight(h.del.join('\n'), language) : Promise.resolve([])))),
-    ]).then(([after, removed]) => { if (live) setColored({ read: read!, after, removed }); }).catch(() => { /* plain text stays */ });
-    return () => { live = false; };
+    ]).then(([after, removed]) => {
+      const apply = () => {
+        if (!live) return;
+        const wait = shellResizeIdleIn();
+        if (wait > 0) { timer = setTimeout(apply, wait); return; }
+        setColored({ read: read!, after, removed });
+      };
+      apply();
+    }).catch(() => { /* plain text stays */ });
+    return () => { live = false; if (timer !== undefined) clearTimeout(timer); };
   }, [read]);
   return colored?.read === read ? colored : undefined;
 }
 
-function Code({ tokens, text }: { tokens?: CodeToken[]; text: string }) {
+function Code({ tokens, text, light }: { tokens?: CodeToken[]; text: string; light: boolean }) {
   if (!tokens) return <>{text || '​'}</>;
-  return <>{tokens.length ? tokens.map((tok, i) => <span key={i} style={{ '--syntax-light': tok.light, '--syntax-dark': tok.dark } as CSSProperties}>{tok.text}</span>) : '​'}</>;
+  return <>{tokens.length ? tokens.map((tok, i) => {
+    const color = light ? tok.light : tok.dark;
+    return color ? <span key={i} style={{ color }}>{tok.text}</span> : tok.text;
+  }) : '​'}</>;
 }
 
 // A read error as the viewer says it
@@ -130,8 +166,9 @@ function MarkdownPreview({ text, onOpenLink }: { text: string; onOpenLink?: (pat
   );
 }
 
-// Rows laid out a block at a time (panel.css .code-block): a long file skips layout and paint for what is out of sight
-const BLOCK = 200;
+// Rows laid out a block at a time (panel.css .code-block): a long file skips layout and paint for what is out of sight.
+// Kept small (40 rows) so each block entering the viewport lays out within the 6.25 ms 160 Hz frame budget in WebKit.
+const BLOCK = 40;
 
 export interface FileViewerProps {
   sessionId: string;
@@ -161,19 +198,34 @@ function CloseView({ onClose }: { onClose: () => void }) {
 }
 
 export function FileViewer(p: FileViewerProps) {
+  const light = useTheme() === 'light';
   const [read, setRead] = useState<FileRead & { key: string }>();
   const key = `${p.path}\n${p.base}`;
   useEffect(() => {
     let live = true;
-    void project.file(p.sessionId, p.path, p.base).then(r => { if (live) setRead({ ...r, key }); });
-    return () => { live = false; };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    void project.file(p.sessionId, p.path, p.base).then(r => {
+      const apply = () => {
+        if (!live) return;
+        const wait = shellResizeIdleIn();
+        if (wait > 0) { timer = setTimeout(apply, wait); return; }
+        setRead({ ...r, key });
+      };
+      apply();
+    });
+    return () => { live = false; if (timer !== undefined) clearTimeout(timer); };
   }, [p.sessionId, key, p.refresh]);
   const current = read?.key === key ? read : undefined;
   const colored = useHighlight(p.path, current);
   const hunks = current?.hunks ?? [];
   const rows = useMemo(() => (current?.text !== undefined ? viewRows(current.text, current.hunks, colored?.after, colored?.removed) : []), [current, colored]);
   const total = current?.text !== undefined ? linesOf(current.text).length : 0;
-  const [hunk, setHunk] = useState(0);
+  const initialTarget = p.selection?.start ?? p.line;
+  const [hunk, setHunk] = useState(() => {
+    if (initialTarget === undefined || !hunks.length) return 0;
+    const near = hunks.findIndex(h => h.at + Math.max(h.add, 1) > initialTarget);
+    return near < 0 ? 0 : near;
+  });
   // Soft wrap is the default in a side panel; a continuation line hangs two columns past the line's own indentation
   const [wrap, setWrap] = useState(true);
   const markdown = isMarkdown(p.path);
@@ -184,9 +236,17 @@ export function FileViewer(p: FileViewerProps) {
   const anchor = useRef<number | undefined>(undefined);
   const barRow = useRef<HTMLDivElement>(null);
   const [barTop, setBarTop] = useState<number>();
+  const centerRow = (sel: string, smooth = false) => {
+    const sc = scroller.current;
+    const row = sc?.querySelector<HTMLElement>(sel);
+    if (!sc || !row) return;
+    const block = row.parentElement;
+    const top = (block?.classList.contains('code-block') ? block.offsetTop : 0) + row.offsetTop;
+    sc.scrollTo({ top: top - sc.clientHeight / 2 + row.offsetHeight / 2, behavior: smooth ? 'smooth' : 'auto' });
+  };
   const go = (i: number, smooth = true) => {
     setHunk(i);
-    scroller.current?.querySelector(`[data-hunk-start="${i}"]`)?.scrollIntoView({ block: 'center', behavior: smooth ? 'smooth' : 'auto' });
+    centerRow(`[data-hunk-start="${i}"]`, smooth);
   };
   // A file opened at a line goes there, else to the change nearest its top
   const placed = useRef<string | undefined>(undefined);
@@ -195,13 +255,18 @@ export function FileViewer(p: FileViewerProps) {
     placed.current = `${key}\n${p.line ?? ''}`;
     const target = p.selection?.start ?? p.line;
     if (target !== undefined) {
-      scroller.current?.querySelector(`[data-line="${target}"]`)?.scrollIntoView({ block: 'center' });
+      centerRow(`[data-line="${target}"]`, false);
       const near = hunks.findIndex(h => h.at + Math.max(h.add, 1) > target);
-      setHunk(near < 0 ? 0 : near);
+      const nextHunk = near < 0 ? 0 : near;
+      setHunk(cur => (cur === nextHunk ? cur : nextHunk));
     } else if (hunks.length) go(0, false);
     else scroller.current?.scrollTo({ top: 0 });
   }, [current, p.line]);
-  useLayoutEffect(() => { setBarTop(barRow.current ? barRow.current.offsetTop + barRow.current.offsetHeight : undefined); }, [p.selection, rows]);
+  useLayoutEffect(() => {
+    const r = barRow.current;
+    const block = r?.parentElement;
+    setBarTop(r ? (block?.classList.contains('code-block') ? block.offsetTop : 0) + r.offsetTop + r.offsetHeight : undefined);
+  }, [p.selection, rows]);
   const textOf = (r: LineRange) => (current?.text !== undefined ? linesOf(current.text).slice(r.start - 1, r.end).join('\n') : '');
   // The picked range goes out as the live selection while it stays picked
   useEffect(() => { p.onSelectionText(p.selection, p.selection ? textOf(p.selection) : ''); }, [p.selection?.start, p.selection?.end, current]);
@@ -219,9 +284,9 @@ export function FileViewer(p: FileViewerProps) {
   }, [rows]);
   const seen = new Set<number>();
   return (
-    <div className="@container/viewer flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" data-viewer>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" data-viewer>
       {/* A narrow viewer sheds the folder, then open-in-editor and the count; the name truncates last */}
-      <div className={VIEW_BAR}>
+      <div className={cn(VIEW_BAR, '@container/viewer')}>
         <FileGlyph name={p.path} className="text-fg-3" />
         <button type="button" onClick={p.onReveal} title={t('panel.reveal', { path: p.path })} className="flex min-w-0 shrink items-baseline gap-1.5 text-left">
           <span className="min-w-0 truncate text-2 font-medium text-fg-1">{nameOf(p.path)}</span>
@@ -245,7 +310,9 @@ export function FileViewer(p: FileViewerProps) {
           ? <div className="flex h-full items-center justify-center px-page text-center text-2 text-fg-3">{readError(current.error)}</div>
           : previewing ? <MarkdownPreview text={current.text!} onOpenLink={p.onOpenLink} />
           : (
-            <div ref={scroller} className="scroll-thin absolute inset-0 overflow-auto py-gap font-mono text-mono" data-code>
+            <div ref={scroller} className="scroll-thin absolute inset-0 overflow-auto py-gap font-mono text-mono" data-code
+              onWheel={e => { if (!wrap && e.deltaX > 0) e.currentTarget.setAttribute('data-scrolled-x', ''); }}
+              onScroll={e => e.currentTarget.toggleAttribute('data-scrolled-x', !wrap && e.currentTarget.scrollLeft > 0)}>
               <div className={cn('relative', wrap ? 'w-full' : 'w-max min-w-full')}>
                 {blocks.map((block, b) => (
                   <div key={b} className="code-block" style={{ '--code-block-rows': block.length } as CSSProperties}>
@@ -253,19 +320,19 @@ export function FileViewer(p: FileViewerProps) {
                       const i = b * BLOCK + k;
                       const selected = !!p.selection && r.line !== undefined && r.line >= p.selection.start && r.line <= p.selection.end;
                       const first = r.hunk !== undefined && !seen.has(r.hunk) && r.kind !== 'ctx';
-                      const hang = (r.text.match(/^[ \t]*/)?.[0].replace(/\t/g, '  ').length ?? 0) + 2;
+                      const hang = wrap ? (r.text.match(/^[ \t]*/)?.[0].replace(/\t/g, '  ').length ?? 0) + 2 : 0;
                       if (first) seen.add(r.hunk!);
                       return (
                         <div key={i} ref={selected && r.line === p.selection!.end ? barRow : undefined}
                           data-kind={r.kind} data-line={r.line} data-hunk-start={first ? r.hunk : undefined}
                           className={cn('code-row group/line relative flex min-h-code-line leading-code-output', selected && 'is-selected')}>
-                          <span className="code-bar absolute inset-y-0 left-0 w-code-bar" aria-hidden />
+                          {(r.kind !== 'ctx' || selected) && <span className="code-bar absolute inset-y-0 left-0 w-code-bar" aria-hidden />}
                           {/* A span, not a button: a button centres its text, which put the number in the middle of a wrapped line */}
                           <span aria-hidden onClick={e => r.line && pick(r.line, e.shiftKey)}
-                            className="code-num sticky left-0 z-1 w-code-gutter shrink-0 cursor-pointer self-stretch pr-[1ch] text-right tabular-nums select-none">{r.line ?? ''}</span>
+                            className="code-num w-code-gutter shrink-0 cursor-pointer self-stretch pr-[1ch] text-right tabular-nums select-none">{r.line ?? ''}</span>
                           {/* Not a <code>: the shell's inline-code chip (base.css) would fill and round every line */}
                           <span className={cn('code-text code-syntax block min-w-0 flex-1 pr-pad', wrap ? 'whitespace-pre-wrap [overflow-wrap:anywhere]' : 'whitespace-pre pl-[1ch]')}
-                            style={wrap ? { paddingLeft: `${hang + 1}ch`, textIndent: `-${hang}ch` } : undefined}><Code tokens={r.tokens} text={r.text} /></span>
+                            style={wrap ? { paddingLeft: `${hang + 1}ch`, textIndent: `-${hang}ch` } : undefined}><Code tokens={r.tokens} text={r.text} light={light} /></span>
                         </div>
                       );
                     })}
@@ -303,8 +370,8 @@ export function ReviewView({ sessionId, changes, refresh, onOpen, onClose }: { s
   const add = changes.reduce((n, c) => n + c.add, 0), del = changes.reduce((n, c) => n + c.del, 0);
   const scroller = useRef<HTMLDivElement>(null);
   return (
-    <div className="@container/viewer flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" data-viewer data-review>
-      <div className={VIEW_BAR}>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" data-viewer data-review>
+      <div className={cn(VIEW_BAR, '@container/viewer')}>
         <Layers strokeWidth={1.5} className="size-icon shrink-0 text-fg-3" />
         <span className="min-w-0 truncate text-2 font-medium text-fg-1">{t('panel.changes')}</span>
         <span className="shrink-0 text-3 text-fg-3 @max-bar-files/viewer:hidden">{t('panel.fileCount', { n: changes.length })}</span>
@@ -331,28 +398,35 @@ const REVIEW_AHEAD = '600px 0px';
 // them to their headers
 function ReviewFile({ sessionId, change, refresh, onOpen, scroller }: { sessionId: string; change: ProjectChange; refresh: number; onOpen: (path: string) => void; scroller: RefObject<HTMLDivElement | null> }) {
   const [read, setRead] = useState<FileRead>();
-  const [near, setNear] = useState(false);
+  const near = useRef(false);
   const card = useRef<HTMLElement>(null);
   // A file outside the project or gone has nothing to read; its card names it only
   const readable = !change.gone && !/^([a-z]:)?[\\/]/i.test(change.path);
   useEffect(() => {
+    if (!readable) return;
+    let live = true;
+    const fetchFile = () => {
+      void project.file(sessionId, change.path, 'session').then(r => { if (live) setRead(r); });
+    };
+    if (near.current) {
+      fetchFile();
+      return () => { live = false; };
+    }
     const el = card.current;
-    if (!el || near) return;
+    if (!el) return;
     const observer = new IntersectionObserver(entries => {
-      if (entries.some(e => e.isIntersecting)) { setNear(true); observer.disconnect(); }
+      if (entries.some(e => e.isIntersecting)) {
+        near.current = true;
+        observer.disconnect();
+        fetchFile();
+      }
     }, { root: scroller.current, rootMargin: REVIEW_AHEAD });
     observer.observe(el);
-    return () => observer.disconnect();
-  }, [near]);
-  useEffect(() => {
-    if (!readable || !near) return;
-    let live = true;
-    void project.file(sessionId, change.path, 'session').then(r => { if (live) setRead(r); });
-    return () => { live = false; };
-  }, [sessionId, change.path, change.add, change.del, refresh, near]);
-  const all = useMemo(() => (read?.text !== undefined && read.hunks.length ? diffLinesOf(read.text, read.hunks) : undefined), [read]);
-  const lines = all && all.length > REVIEW_LINES ? all.slice(0, REVIEW_LINES) : all;
-  const rest = all ? all.length - (lines?.length ?? 0) : 0;
+    return () => { live = false; observer.disconnect(); };
+  }, [readable, sessionId, change.path, change.add, change.del, refresh]);
+  const sliced = useMemo(() => (read?.text !== undefined && read.hunks.length ? reviewDiffSlice(read.text, read.hunks, REVIEW_LINES) : undefined), [read]);
+  const lines = sliced?.lines;
+  const rest = sliced?.rest ?? 0;
   // Until the diff is there: its changed lines plus a hunk header, capped like a shown diff (at least one line)
   const estimate = Math.min(change.add + change.del + 1, REVIEW_LINES);
   const expected = readable && !read ? estimate : 0;

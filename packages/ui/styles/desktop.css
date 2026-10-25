@@ -27,19 +27,19 @@
 }
 .acp-shell[data-desktop][data-theme="light"] { --canvas: color-mix(in srgb, var(--bg-0) 92%, #000); --page-edge: 0 0 32px rgb(0 0 0 / 0.14); }
 /* A narrow window (data-narrow): the title row keeps the lights and the column's toggle only, so the header gains two
-   buttons' width */
-.acp-shell[data-desktop][data-narrow] { --title-w: calc(max(var(--gap), var(--lights-w)) + var(--ctl) + var(--gap)); }
+   buttons' width. Scoped to the header/tabs/rail consumers so crossing the tier never invalidates inherited vars on the whole shell. */
+.acp-shell[data-desktop][data-narrow] :is([data-sheet-header], [data-stage-tabs], [data-settings-rail]) { --title-w: calc(max(var(--gap), var(--lights-w)) + var(--ctl) + var(--gap)); }
 /* The lights span x 17-77 (14 pt each, 9 pt apart on macOS 27); the first button after them leaves a breath of about 15 px
    to its icon */
 .acp-shell[data-desktop][data-os="mac"] { --lights-w: 84px; }
 /* No column beside the sheet (hidden, or a drawer over a narrow window): its header starts after the pinned title row */
-.acp-shell[data-desktop]:not([data-column]) { --sheet-lead: calc(var(--title-w) - var(--sheet-inset)); }
+.acp-shell[data-desktop]:not([data-column]) [data-sheet-header] { --sheet-lead: calc(var(--title-w) - var(--sheet-inset)); }
 /* The files layout (acpira.desktopLayout = files, panel/FilesLayout.tsx): the chat lies on the canvas between the stage and
    the session column. Its header starts at the dock's margin whatever folds, and leaves the pinned toggle room once the
    session column folds. Its palette counts from the canvas (palette.css), so cards and the composer keep their contrast
    and what paints the page's colour (sticky prompts, fades) paints the canvas */
-.acp-shell[data-desktop][data-layout="files"] { --sheet-lead: var(--start-x); }
-.acp-shell[data-desktop][data-layout="files"]:not([data-column]) { --sheet-trail: calc(var(--start-x) + var(--ctl) + var(--gap)); }
+.acp-shell[data-desktop][data-layout="files"] [data-sheet-header] { --sheet-lead: var(--start-x); }
+.acp-shell[data-desktop][data-layout="files"]:not([data-column]) [data-sheet-header] { --sheet-trail: calc(var(--start-x) + var(--ctl) + var(--gap)); }
 .acp-shell[data-desktop][data-layout="files"] > [data-sheet] { --bg-0: var(--canvas); }
 
 @layer components {

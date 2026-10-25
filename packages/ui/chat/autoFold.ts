@@ -12,10 +12,24 @@ export interface AutoFold {
 
 export class AutoFoldStore {
   private folds = new Map<string, boolean>();
+  private dirty = false;
   private listeners = new Set<() => void>();
   constructor(public toggle: (id: string, open: boolean) => void) {}
-  write(next: Map<string, boolean>) { this.folds = next; }
-  notify() { for (const listener of this.listeners) listener(); }
+  write(next: Map<string, boolean>) {
+    if (next.size !== this.folds.size) {
+      this.dirty = true;
+    } else {
+      for (const [k, v] of next) {
+        if (this.folds.get(k) !== v) { this.dirty = true; break; }
+      }
+    }
+    this.folds = next;
+  }
+  notify() {
+    if (!this.dirty) return;
+    this.dirty = false;
+    for (const listener of this.listeners) listener();
+  }
   get = (id: string | undefined) => (id === undefined ? undefined : this.folds.get(id));
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);

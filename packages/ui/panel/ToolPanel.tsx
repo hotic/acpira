@@ -11,7 +11,7 @@ import { fileUriOf } from '../chat/drafts';
 import { sameRange, selectionDraft, setEditorSelection } from '../chat/editorContext';
 import { updateMainComposer } from '../chat/useComposerDraft';
 import { InspectorSplitter, clamp, type PaneBounds } from '../chat/subagents/InspectorSplitter';
-import { lastRead, project, sameRead, type GitStatus } from './api';
+import { lastRead, project, sameRead, shellResizeIdleIn, type GitStatus } from './api';
 import { registerBrowserFrame } from './browserTabs';
 import { FileGlyph, absPath, dirOf, markIndex, nameOf, relPath } from './files';
 import { FileTree, ancestors } from './FileTree';
@@ -340,16 +340,23 @@ export function useProjectFiles({ sessionId, root, running, shareSelection, show
   const changes = own.sessionId === sessionId ? own.files : lastRead.changes.get(sessionId) ?? NO_CHANGES;
   useEffect(() => {
     let live = true;
-    // An answer equal to the shown one keeps the shown object, so a refresh that found nothing new re-renders nothing
-    void project.status(sessionId).then(x => {
-      lastRead.status.set(root, x);
-      if (live) setGit(g => (g.root === root && sameRead(g.status, x) ? g : { root, status: x }));
-    });
-    void project.changes(sessionId).then(x => {
-      lastRead.changes.set(sessionId, x);
-      if (live) setOwn(o => (o.sessionId === sessionId && sameRead(o.files, x) ? o : { sessionId, files: x }));
-    });
-    return () => { live = false; };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const run = () => {
+      if (!live) return;
+      // An answer equal to the shown one keeps the shown object, so a refresh that found nothing new re-renders nothing
+      void project.status(sessionId).then(x => {
+        lastRead.status.set(root, x);
+        if (live) setGit(g => (g.root === root && sameRead(g.status, x) ? g : { root, status: x }));
+      });
+      void project.changes(sessionId).then(x => {
+        lastRead.changes.set(sessionId, x);
+        if (live) setOwn(o => (o.sessionId === sessionId && sameRead(o.files, x) ? o : { sessionId, files: x }));
+      });
+    };
+    const wait = lastRead.status.has(root) ? shellResizeIdleIn() : 0;
+    if (wait > 0) timer = setTimeout(run, wait);
+    else run();
+    return () => { live = false; if (timer !== undefined) clearTimeout(timer); };
   }, [sessionId, root, refresh]);
   const mark = useMemo(() => markIndex(status.marks), [status]);
   const changed = useMemo(() => new Set(changes.map(c => c.path)), [changes]);

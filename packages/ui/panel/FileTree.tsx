@@ -8,7 +8,7 @@ import { Row } from '../ui/Row';
 import { cn } from '../ui/cn';
 import { DiffStat } from '../chat/ToolCall';
 import { nameOf as uriName } from '../chat/drafts';
-import { lastRead, project, sameRead, type DirListing } from './api';
+import { lastRead, project, sameRead, shellResizeIdleIn, type DirListing } from './api';
 import { FileGlyph, MARK_DOT, MARK_TEXT, buildTree, dirOf, nameOf, type MarkLookup, type TreeNode } from './files';
 
 // The Files tab's tree, Codex-like (picked in the LAB, 2026-10-23): a filter, the session's changed files pinned over the
@@ -55,6 +55,10 @@ interface BranchCtx {
 // slot and has to slide under its ancestors (an equal z-index painted it over them, later in the DOM, in reverse order)
 const STUCK_Z = 50;
 
+const AT_ICON = <AtSign strokeWidth={1.5} className="size-3.5" />;
+const FOLDER_CLOSED = <Folder strokeWidth={1.5} className="size-icon" />;
+const FOLDER_OPEN = <FolderOpen strokeWidth={1.5} className="size-icon" />;
+
 function TreeRow({ node, depth, open, ctx }: { node: { name: string; path: string; dir: boolean }; depth: number; open: boolean; ctx: BranchCtx }) {
   const mark = ctx.mark(node.path, node.dir);
   const ignored = mark === 'I';
@@ -67,26 +71,23 @@ function TreeRow({ node, depth, open, ctx }: { node: { name: string; path: strin
       // left open folders relative and pushed each one down by its own sticky offset over its first child. An ignored row
       // dims its content, not itself: a stuck one has to stay opaque over the rows scrolling under it
       className={cn(TREE_ROW, node.dir && open && 'sticky', selected ? 'text-fg-1' : 'hover:text-fg-1', ignored && '*:opacity-50')}
-      lead={node.dir
-        ? <span className="relative flex size-icon items-center justify-center *:transition-opacity *:duration-(--dur-open)">
-            <Folder strokeWidth={1.5} className={cn('absolute size-icon', open ? 'opacity-0' : 'opacity-100')} />
-            <FolderOpen strokeWidth={1.5} className={cn('absolute size-icon', open ? 'opacity-100' : 'opacity-0')} />
-          </span>
-        : <FileGlyph name={node.name} />}
+      lead={node.dir ? (open ? FOLDER_OPEN : FOLDER_CLOSED) : <FileGlyph name={node.name} />}
       trailing={
         // At rest the git mark; on hover the row's one action, @ into the composer
-        <span className="relative flex w-ctl-sm items-center justify-center">
-          {mark && !ignored && (node.dir
-            ? <span title={t(`panel.mark.${mark}` as MsgKey)} className={cn('size-1.5 rounded-full opacity-80 transition-opacity group-hover/row:opacity-0', MARK_DOT[mark])} />
-            : <span title={t(`panel.mark.${mark}` as MsgKey)} className={cn('transition-opacity group-hover/row:opacity-0', MARK_TEXT[mark])}>{mark}</span>)}
-          {!node.dir && (
-            <span role="button" tabIndex={-1} title={t('panel.mention')} aria-label={t('panel.mention')}
-              onClick={e => { e.stopPropagation(); ctx.mention(node.path); }}
-              className="absolute inset-0 flex items-center justify-center rounded-sm opacity-0 transition-opacity group-hover/row:opacity-100 hover:bg-active hover:text-fg-1">
-              <AtSign strokeWidth={1.5} className="size-3.5" />
-            </span>
-          )}
-        </span>
+        (mark && !ignored) || !node.dir ? (
+          <span className="relative flex w-ctl-sm items-center justify-center">
+            {mark && !ignored && (node.dir
+              ? <span title={t(`panel.mark.${mark}` as MsgKey)} className={cn('size-1.5 rounded-full opacity-80', MARK_DOT[mark])} />
+              : <span title={t(`panel.mark.${mark}` as MsgKey)} className={cn('group-hover/row:hidden', MARK_TEXT[mark])}>{mark}</span>)}
+            {!node.dir && (
+              <span role="button" tabIndex={-1} title={t('panel.mention')} aria-label={t('panel.mention')}
+                onClick={e => { e.stopPropagation(); ctx.mention(node.path); }}
+                className="absolute inset-0 hidden items-center justify-center rounded-sm group-hover/row:flex hover:bg-active hover:text-fg-1">
+                {AT_ICON}
+              </span>
+            )}
+          </span>
+        ) : undefined
       }>
       {node.dir && (
         <span aria-hidden className="absolute inset-y-0 flex w-tree-chevron items-center justify-center text-fg-3" style={chevronAt(depth)}>
@@ -99,6 +100,9 @@ function TreeRow({ node, depth, open, ctx }: { node: { name: string; path: strin
   );
 }
 
+// File rows in a large directory are chunked so off-screen files skip layout and paint while keeping exact height
+const TREE_BLOCK = 20;
+
 // The project as listed so far: a folder's rows once it was opened, loaded on demand
 function Branch({ dir, depth, ctx }: { dir: string; depth: number; ctx: BranchCtx }) {
   const listing = ctx.dirs[dir];
@@ -106,18 +110,31 @@ function Branch({ dir, depth, ctx }: { dir: string; depth: number; ctx: BranchCt
   if (listing.error || !listing.entries.length) {
     return <div className="flex min-h-row items-center text-3 text-fg-3" style={indent(depth)}>{listing.error ? t('panel.error.other', { error: listing.error }) : t('panel.emptyFolder')}</div>;
   }
-  return <>{listing.entries.map(e => {
-    const path = dir ? `${dir}/${e.name}` : e.name;
-    const open = !!e.dir && ctx.expanded.has(path);
-    const listed = !!e.dir && !!ctx.dirs[path];
-    const Group = e.dir ? 'div' : Fragment;
-    return (
-      <Group key={path}>
-        <TreeRow node={{ name: e.name, path, dir: !!e.dir }} depth={depth} open={open} ctx={ctx} />
-        {e.dir && <Fold open={open && listed}>{(open || ctx.seen.has(path)) && <Branch dir={path} depth={depth + 1} ctx={ctx} />}</Fold>}
-      </Group>
-    );
-  })}</>;
+  const folders = listing.entries.filter(e => e.dir);
+  const files = listing.entries.filter(e => !e.dir);
+  const fileBlocks: (typeof files)[] = [];
+  for (let i = 0; i < files.length; i += TREE_BLOCK) fileBlocks.push(files.slice(i, i + TREE_BLOCK));
+  return <>
+    {folders.map(e => {
+      const path = dir ? `${dir}/${e.name}` : e.name;
+      const open = ctx.expanded.has(path);
+      const listed = !!ctx.dirs[path];
+      return (
+        <div key={path}>
+          <TreeRow node={{ name: e.name, path, dir: true }} depth={depth} open={open} ctx={ctx} />
+          <Fold open={open && listed}>{(open || ctx.seen.has(path)) && <Branch dir={path} depth={depth + 1} ctx={ctx} />}</Fold>
+        </div>
+      );
+    })}
+    {fileBlocks.map((block, bi) => (
+      <div key={`b:${bi}`} className="tree-block" style={{ '--tree-block-rows': block.length } as CSSProperties}>
+        {block.map(e => {
+          const path = dir ? `${dir}/${e.name}` : e.name;
+          return <TreeRow key={path} node={{ name: e.name, path, dir: false }} depth={depth} open={false} ctx={ctx} />;
+        })}
+      </div>
+    ))}
+  </>;
 }
 
 // The filter's matches with the folders above them, all open
@@ -177,7 +194,14 @@ export function FileTree(p: FileTreeProps) {
     });
   };
   useEffect(() => {
-    for (const dir of ['', ...p.expanded]) if (!asked.current.has(dir)) load(dir);
+    const missing = ['', ...p.expanded].filter(dir => !asked.current.has(dir));
+    if (!missing.length) return;
+    const wait = missing.every(dir => dirs[dir] !== undefined) ? shellResizeIdleIn() : 0;
+    if (wait > 0) {
+      const timer = setTimeout(() => { for (const dir of missing) if (!asked.current.has(dir)) load(dir); }, wait);
+      return () => clearTimeout(timer);
+    }
+    for (const dir of missing) load(dir);
   }, [p.expanded]);
   // A turn ended: what is listed is read again (a listing stays shown until its fresh one arrives)
   useEffect(() => {
@@ -196,37 +220,47 @@ export function FileTree(p: FileTreeProps) {
     return () => { live = false; clearTimeout(timer); };
   }, [q]);
 
-  // The row to bring to the middle of the list: the open file when it changes, or again on the locate button (`n` asks
-  // anew for the same file). Cleared once it got there, so a later relisting (a turn ended) leaves the scroll alone
-  const [target, setTarget] = useState<{ path: string; n: number }>();
-  useEffect(() => { if (p.active) setTarget(x => ({ path: p.active!, n: (x?.n ?? 0) + 1 })); }, [p.active]);
+  // The row to bring to the middle of the list: the open file when it changes, or again on the locate button (`locateSeq`
+  // asks anew for the same file). Cleared in a ref once it got there, so neither starting nor finishing the reveal re-renders
+  // the tree, and a later relisting (a turn ended) leaves the scroll alone
+  const targetRef = useRef<string | undefined>(p.active);
+  const [locateSeq, setLocateSeq] = useState(0);
+  const prevActive = useRef(p.active);
+  if (prevActive.current !== p.active) {
+    prevActive.current = p.active;
+    if (p.active) targetRef.current = p.active;
+  }
   useEffect(() => {
     const el = list.current;
-    if (!target || !el) return;
+    const targetPath = targetRef.current;
+    if (!targetPath || !el) return;
     // The folders above it are still unfolding (Fold eases their height), so at first the list is too short to scroll the
     // row to the middle and the scroll is cut short: it is put there frame after frame until the height holds still
     let frame = 0, calm = 0, lastH = -1;
     const end = performance.now() + REVEAL_MAX_MS;
     const step = () => {
-      const row = el.querySelector<HTMLElement>(`[data-path="${CSS.escape(target.path)}"]`);
+      if (targetRef.current !== targetPath) return;
+      const row = el.querySelector<HTMLElement>(`[data-path="${CSS.escape(targetPath)}"]`);
       // Not listed yet: the folders above it are still being read, `dirs` runs this again as they arrive
       if (!row) return;
-      el.scrollTop = row.offsetTop - el.clientHeight / 2 + row.offsetHeight / 2;
+      const top = el.scrollTop + row.getBoundingClientRect().top - el.getBoundingClientRect().top;
+      el.scrollTop = top - el.clientHeight / 2 + row.offsetHeight / 2;
       calm = el.scrollHeight === lastH ? calm + 1 : 0;
       lastH = el.scrollHeight;
       if (calm < REVEAL_CALM_FRAMES && performance.now() < end) frame = requestAnimationFrame(step);
-      else setTarget(x => (x === target ? undefined : x));
+      else if (targetRef.current === targetPath) targetRef.current = undefined;
     };
     step();
     return () => cancelAnimationFrame(frame);
-  }, [target, dirs]);
+  }, [p.active, locateSeq, dirs]);
   // VS Code's "reveal active file": the folders above the open file open, the filter clears, its row comes to the middle
   const locate = () => {
     const at = p.active;
     if (!at) return;
     setQuery('');
     p.setExpanded(open => [...new Set([...open, ...ancestors(at)])]);
-    setTarget(x => ({ path: at, n: (x?.n ?? 0) + 1 }));
+    targetRef.current = at;
+    setLocateSeq(n => n + 1);
   };
 
   const toggle = (path: string) => {

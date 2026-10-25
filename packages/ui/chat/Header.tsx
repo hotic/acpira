@@ -1,10 +1,10 @@
-import { useState, type ReactElement, type ReactNode } from 'react';
+import { memo, useState, type ReactElement, type ReactNode } from 'react';
 import { Ellipsis, History, LockKeyhole, PanelLeft, PanelRight, Plus, Settings2, UserRound } from 'lucide-react';
 import type { AccountInfo, AgentInfo, SessionCategories, SessionSummary } from '@acpira/shared/transcript';
 import type { NativeSessionsState } from '@acpira/shared/protocol';
 import type { SessionScope } from '@acpira/shared/settings';
 import { launchable } from '@acpira/shared/agentOrder';
-import { t } from '../i18n';
+import { t, useLocale } from '../i18n';
 import { IconButton } from '../ui/Button';
 import { Popover } from '../ui/Popover';
 import { DropdownMenu } from '../ui/DropdownMenu';
@@ -60,7 +60,8 @@ export interface HeaderProps {
 // A narrow session panel gets a drawer toggle; collapsed navigation uses the history popover.
 // The person icon is the account layer's home (login state, switching, adding) for the current agent only; agents without accounts have no person icon.
 // The plus menu lists the enabled agents in the configured order (acpira.agentOrder / acpira.disabledAgents)
-export function Header({ title, sessions, categories, agent, agents, accounts, accountId, activeSessionId, workspace, sessionScope, nativeSessions, on, onToggleDrawer, onOpenSettings, drawerOpen, sessionPanel = 'hidden', sessionPanelDocked = false, sessionNav = false, gearDocked = sessionNav, cwd, projectPick, onNewIn, narrow }: HeaderProps) {
+export const Header = memo(function Header({ title, sessions, categories, agent, agents, accounts, accountId, activeSessionId, workspace, sessionScope, nativeSessions, on, onToggleDrawer, onOpenSettings, drawerOpen, sessionPanel = 'hidden', sessionPanelDocked = false, sessionNav = false, gearDocked = sessionNav, cwd, projectPick, onNewIn, narrow }: HeaderProps) {
+  useLocale();
   const desktop = useDesktop();
   const narrowDesk = desktop && !!narrow;
   const [accountOpen, setAccountOpen] = useState(false);
@@ -206,5 +207,4 @@ export function Header({ title, sessions, categories, agent, agents, accounts, a
       </div>
     </div>
   );
-
-}
+});

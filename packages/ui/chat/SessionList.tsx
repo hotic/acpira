@@ -1,4 +1,4 @@
-import { Component, createRef, Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { Component, createRef, Fragment, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Circle, Copy, Ellipsis, Folder, FolderInput, FolderOpen, FolderPlus, Import, Layers, ListFilter, LoaderCircle, Pencil, Pin, PinOff, Plus, Search, SquarePen, Trash2, Undo2, X } from 'lucide-react';
 import type { AgentId, AgentInfo, CategoryOp, NativeSessionInfo, SessionCategories, SessionCategory, SessionSection, SessionSummary } from '@acpira/shared/transcript';
 import type { ExportFormat, NativeSessionsState, SessionHit } from '@acpira/shared/protocol';
@@ -240,7 +240,7 @@ const separator = <DropdownMenu.Separator className="my-1 h-px bg-line" />;
 // (FlipRows). The desktop app (DesktopContext) lists its registered projects in their own order without categories, each
 // open project its latest sessions with the rest behind one row.
 // Deletion applies immediately, undo lives on the Toast at the shell's bottom
-export function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onMove, onExport, onCopy, onSearch, categories: categoryState, onFile, onCategoryOp, onNewInCategory, nav, onNew, onNewIn, onAddProject, onRevealPath, onCopyPath, fresh, onMarkAllRead }: SessionListProps) {
+export const SessionList = memo(function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onMove, onExport, onCopy, onSearch, categories: categoryState, onFile, onCategoryOp, onNewInCategory, nav, onNew, onNewIn, onAddProject, onRevealPath, onCopyPath, fresh, onMarkAllRead }: SessionListProps) {
   const locale = useLocale();
   const desktop = useDesktop();
   const [query, setQuery] = useState('');
@@ -807,7 +807,7 @@ export function SessionList({ sessions, agents, activeId, workspace, scope = 'al
       </div>
     </div>
   );
-}
+});
 
 // The nav layout's action rows share the session rows' box (height, inset, radius, lead slot), so the column reads as one list
 const NAV_ROW = 'flex min-h-row w-full items-center gap-gap rounded-md px-2 text-left text-2 text-fg-1 transition-colors hover:bg-hover focus-visible:bg-hover data-[popup-open]:bg-hover';
