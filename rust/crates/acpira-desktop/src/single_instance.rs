@@ -118,8 +118,10 @@ mod tests {
     assert!(matches!(claim(d.path(), &args).unwrap(), Instance::Forwarded));
     let got = rx.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(links_in(&got), ["acpira://session/abc"]);
-    // Once the first is gone, the next launch is the primary again
+    // Once the first is gone, the next launch is the primary again. A child another test forks in this process holds the
+    // lock file's descriptor until it execs, so the released flock can still read as held for a moment: try again then
     drop(first);
-    assert!(matches!(claim(d.path(), &[]).unwrap(), Instance::Primary(_)));
+    let primary = (0..3).any(|_| matches!(claim(d.path(), &[]), Ok(Instance::Primary(_))));
+    assert!(primary, "the next launch becomes the primary");
   }
 }
