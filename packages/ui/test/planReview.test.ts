@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentBlock, AgentTurn, PermissionBlock, Turn } from '@acpira/shared/transcript';
 import { pendingPlanReview, reviseOption } from '../chat/planReview';
 import { revisedPlanEnd, turnOutcome } from '../chat/turnOutcome';
+import { panel, panelState } from '../panel/store';
 
 const approval = (options: PermissionBlock['options'], planId?: string): PermissionBlock =>
   ({ type: 'permission', id: 'approval', planId, title: 'Approve Plan', options });
@@ -42,5 +43,19 @@ describe('revised plan end', () => {
   it('keeps a stop pressed by hand', () => {
     expect(revisedPlanEnd({ role: 'agent', blocks: [doc('ready')], stop: 'cancelled' })).toBe(false);
     expect(turnOutcome({ role: 'agent', blocks: [doc('ready')], stop: 'cancelled' }, 'en')).toBe('Stopped');
+  });
+});
+
+describe('desktop plan view', () => {
+  it('opens an external plan in the tool panel and updates its text when revised', () => {
+    const root = '/Users/dev/project';
+    panel.openPlan(root, { path: '/Users/dev/.claude/plans/fox.md', text: '# v1', planId: 'plan-1' });
+    expect(panelState().open).toBe(true);
+    expect(panelState().views[root]).toEqual({ path: '/Users/dev/.claude/plans/fox.md', text: '# v1', planId: 'plan-1' });
+    expect(panelState().opened[root]).toEqual([{ path: '/Users/dev/.claude/plans/fox.md', text: '# v1', planId: 'plan-1' }]);
+
+    panel.syncPlans(root, [{ id: 'plan-1', markdown: '# v2' }]);
+    expect(panelState().views[root]).toEqual({ path: '/Users/dev/.claude/plans/fox.md', text: '# v2', planId: 'plan-1' });
+    expect(panelState().opened[root]).toEqual([{ path: '/Users/dev/.claude/plans/fox.md', text: '# v2', planId: 'plan-1' }]);
   });
 });

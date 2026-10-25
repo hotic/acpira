@@ -21,9 +21,9 @@ export type PanelTab =
   // itself; `nav` counts the openings asked of the shell, so a title naming the page's own address never reloads it
   | { id: string; kind: 'browser'; url?: string; title?: string; nav?: number };
 
-// What a Files tab shows: a file (scrolled to `line`, with `selection` picked), the session's whole review, or nothing
-// (the tree takes the tab)
-export type PanelView = { path: string; line?: number; selection?: LineRange } | 'review';
+// What a Files tab shows: a file (scrolled to `line`, with `selection` picked; `text` / `planId` for a plan outside the
+// project folder), the session's whole review, or nothing (the tree takes the tab)
+export type PanelView = { path: string; line?: number; selection?: LineRange; text?: string; planId?: string } | 'review';
 
 // The same file (or the review), wherever it is scrolled to
 export const sameView = (a: PanelView, b: PanelView) => (a === 'review' ? b === 'review' : b !== 'review' && a.path === b.path);
@@ -107,11 +107,25 @@ export function usePanelValue<T extends string | number | boolean | undefined>(p
   return useSyncExternalStore(subscribe, () => pick(current()));
 }
 
+function tabEntry(view: Exclude<PanelView, 'review'>): Exclude<PanelView, 'review'> {
+  return {
+    path: view.path,
+    ...(view.text !== undefined ? { text: view.text } : {}),
+    ...(view.planId !== undefined ? { planId: view.planId } : {}),
+  };
+}
+
 // `view` among the project's open tabs: a file opened again keeps its tab, a new one goes last
 function withOpened(s: PanelState, root: string, view: PanelView | null | undefined): Record<string, PanelView[] | undefined> {
+  if (!view) return s.opened;
   const list = s.opened[root] ?? [];
-  if (!view || list.some(v => sameView(v, view))) return s.opened;
-  return { ...s.opened, [root]: [...list, view === 'review' ? view : { path: view.path }] };
+  const entry = view === 'review' ? view : tabEntry(view);
+  if (list.some(v => sameView(v, view))) {
+    return view !== 'review' && view.text !== undefined
+      ? { ...s.opened, [root]: list.map(v => (sameView(v, view) ? entry : v)) }
+      : s.opened;
+  }
+  return { ...s.opened, [root]: [...list, entry] };
 }
 
 let ids = 0;
@@ -132,6 +146,36 @@ export const panel = {
     const view: PanelView = { path, ...(line !== undefined ? { line } : {}) };
     update({ open: true, tab, views: { ...s.views, [key]: view }, opened: withOpened(s, key, view) });
   },
+  // A plan whose file is outside `root` (or only in memory): shown in the viewer with its markdown text
+  openPlan(root: string, view: { path: string; text?: string; planId?: string; line?: number }) {
+    const s = current();
+    const tab = s.tabs.find(t => t.id === s.tab)?.kind === 'files' ? s.tab : FILES_TAB;
+    const key = viewKey(tab, root);
+    update({ open: true, tab, views: { ...s.views, [key]: view }, opened: withOpened(s, key, view) });
+  },
+  // Keeps an open plan view's text in step when the agent revises the plan
+  syncPlans(root: string, plans: { id: string; markdown: string }[]) {
+    const s = current();
+    let changed = false;
+    const views = { ...s.views };
+    for (const [k, v] of Object.entries(views)) {
+      if (!v || v === 'review' || !v.planId || !(k === root || k.endsWith(`\n${root}`))) continue;
+      const plan = plans.find(p => p.id === v.planId);
+      if (plan && v.text !== plan.markdown) {
+        views[k] = { ...v, text: plan.markdown };
+        changed = true;
+      }
+    }
+    const list = s.opened[root];
+    const opened = list?.some(v => v !== 'review' && v.planId && plans.some(p => p.id === v.planId && p.markdown !== v.text))
+      ? { ...s.opened, [root]: list.map(v => {
+          if (v === 'review' || !v.planId) return v;
+          const plan = plans.find(p => p.id === v.planId);
+          return plan && plan.markdown !== v.text ? { ...v, text: plan.markdown } : v;
+        }) }
+      : s.opened;
+    if (changed || opened !== s.opened) update({ views, opened });
+  },
   // `key`: a Files tab's view of a project (`viewKey`)
   setView(key: string, view: PanelView | null | undefined) {
     const s = current();
@@ -141,7 +185,10 @@ export const panel = {
   showView(key: string, view: PanelView, tab = FILES_TAB) {
     const s = current();
     const now = s.views[key];
-    update({ tab, views: { ...s.views, [key]: now && sameView(now, view) ? now : view }, opened: withOpened(s, key, view) });
+    const next = now && sameView(now, view)
+      ? (now !== 'review' && view !== 'review' && view.text !== undefined ? { ...now, text: view.text, ...(view.planId !== undefined ? { planId: view.planId } : {}) } : now)
+      : view;
+    update({ tab, views: { ...s.views, [key]: next }, opened: withOpened(s, key, view) });
   },
   // The new-tab page `replace` becomes a Files tab of its own, the project's tree until a file is picked there
   openFiles(replace: string): string {
