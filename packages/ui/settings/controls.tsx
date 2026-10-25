@@ -22,6 +22,18 @@ export function PageHeader({ title, action }: { title: ReactNode; action?: React
   );
 }
 
+// A drilled-in page's title: the page it came from, a chevron, then its own name. The parent is the way back up (a step
+// on the settings' back / forward trail like any link), so the page needs no back button of its own
+export function PageCrumb({ parent, onParent, children }: { parent: string; onParent: () => void; children: ReactNode }) {
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      <button type="button" onClick={onParent} className="shrink-0 rounded-sm text-fg-2 transition-colors hover:text-fg-1 focus-visible:text-fg-1">{parent}</button>
+      <ChevronRight className="size-icon shrink-0 text-fg-3" strokeWidth={1.5} aria-hidden />
+      <span className="min-w-0 truncate">{children}</span>
+    </span>
+  );
+}
+
 // Page body: one column of blocks; the editor host centres it at the content measure, the sidebar just fills
 export function Page({ children, className }: { children: ReactNode; className?: string }) {
   return <div className={cn('mx-auto flex w-full max-w-(--content-w) flex-col gap-(--section-gap) px-page py-pad-y', className)}>{children}</div>;

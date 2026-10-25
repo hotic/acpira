@@ -8,7 +8,12 @@ import { AgentMark } from '../chat/AgentMark';
 import { TitleSpace } from '../chat/DesktopFrame';
 import { t } from '../i18n';
 
-export type SettingsPage = { kind: 'chatgpt' } | { kind: 'general' } | { kind: 'appearance' } | { kind: 'shared' } | { kind: 'connections' } | { kind: 'subagents' } | { kind: 'storage' } | { kind: 'about' } | { kind: 'agent'; id: AgentInfo['id'] };
+// Orchestration carries the persona or group opened from its lists, so a drill-in is a page of its own in the back / forward trail
+export type SettingsPage = { kind: 'chatgpt' } | { kind: 'general' } | { kind: 'appearance' } | { kind: 'shared' } | { kind: 'connections' }
+  | { kind: 'subagents'; persona?: string; group?: string } | { kind: 'storage' } | { kind: 'about' } | { kind: 'agent'; id: AgentInfo['id'] };
+
+// Two pages are the same place (a click on the page already shown adds nothing to the trail)
+export const samePage = (a: SettingsPage, b: SettingsPage) => JSON.stringify(a) === JSON.stringify(b);
 
 // Fixed pages first, then one page per agent; agent ids never collide with the fixed names
 const FIXED = ['general', 'appearance', 'shared', 'connections', 'subagents', 'storage', 'chatgpt', 'about'] as const;
