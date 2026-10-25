@@ -135,4 +135,3 @@ export function ProjectPick({ cwd, projects, home, onPick, onOpenOther }: { cwd:
     </Popover.Root>
   );
 }
-
