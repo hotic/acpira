@@ -301,6 +301,8 @@ mod tests {
     assert_eq!(build_dir("1.10.8", "0123456789abcdef0123"), ".acpira/remote/bin/1.10.8-0123456789abcdef");
   }
 
+  // The scripts run on the SSH host; Windows has no /bin/sh to parse them with
+  #[cfg(unix)]
   #[test]
   fn the_scripts_run_under_sh() {
     // Syntax only: `sh -n` parses without running
