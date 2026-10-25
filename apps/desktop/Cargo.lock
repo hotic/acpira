@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "acpira-desktop"
-version = "1.10.8"
+version = "1.11.0"
 dependencies = [
  "acpira-shared",
  "libc",
@@ -22,7 +22,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-desktop-tauri"
-version = "1.10.8"
+version = "1.11.0"
 dependencies = [
  "acpira-desktop",
  "acpira-shared",
@@ -41,7 +41,7 @@ dependencies = [
 
 [[package]]
 name = "acpira-shared"
-version = "1.10.8"
+version = "1.11.0"
 dependencies = [
  "regex",
  "serde",
