@@ -639,6 +639,7 @@ mod tests {
 
   #[test]
   fn packages_cannot_write_outside_their_folder() {
+    #[cfg(unix)]
     let d = tempfile::tempdir().unwrap();
     for bad in ["../evil", "/etc/evil", "a/../../evil", "a\\b", "", "./a"] {
       assert!(safe_rel(bad).is_err(), "{bad:?}");

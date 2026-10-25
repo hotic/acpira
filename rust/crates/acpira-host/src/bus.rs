@@ -30,6 +30,7 @@ use crate::store::transcript_store::LogFn;
 // Views of one session pushed within this window go out as one frame (a streamed reply changes many times a second)
 const BATCH: Duration = Duration::from_millis(16);
 // Between attempts to reach or become the router
+#[cfg_attr(not(unix), allow(dead_code))]
 const RETRY: Duration = Duration::from_millis(200);
 // A Unix socket path longer than this does not bind on macOS (104 bytes with the terminator)
 const SOCKET_PATH_MAX: usize = 100;
@@ -209,6 +210,8 @@ struct Stream {
   whole: bool,
 }
 
+// The socket, lock and log only serve the Unix socket transport; other platforms build the bus without one
+#[cfg_attr(not(unix), allow(dead_code))]
 struct Inner {
   socket: PathBuf,
   lock: PathBuf,
@@ -398,6 +401,7 @@ impl Inner {
     self.send(&Frame { view: Some(frame), ..Frame::new("view", session) });
   }
 
+  #[cfg_attr(not(unix), allow(dead_code))]
   fn receive(self: &Arc<Self>, line: &str) {
     let f: Frame = match serde_json::from_str(line) {
       Ok(f) => f,
@@ -469,6 +473,7 @@ impl Inner {
     }
   }
 
+  #[cfg_attr(not(unix), allow(dead_code))]
   fn done(&self, f: Frame) {
     if let Some(tx) = f.id.and_then(|id| self.pending.lock().remove(&id)) {
       let _ = tx.send(f.error.map_or(Ok(()), Err));
@@ -476,6 +481,7 @@ impl Inner {
   }
 
   // Joined a router: announce everything afresh
+  #[cfg_attr(not(unix), allow(dead_code))]
   fn connected(&self, tx: mpsc::UnboundedSender<Arc<str>>) {
     *self.out.lock() = Some(tx);
     *self.announced.lock() = None;
@@ -628,6 +634,8 @@ async fn route(_lock: std::fs::File, listener: tokio::net::UnixListener) {
   }
 }
 
+// The router runs on the Unix socket only (its tests run everywhere)
+#[cfg_attr(not(unix), allow(dead_code))]
 struct Client {
   tx: mpsc::UnboundedSender<Arc<str>>,
   owned: HashSet<String>,
@@ -639,10 +647,12 @@ struct Client {
 }
 
 #[derive(Default)]
+#[cfg_attr(not(unix), allow(dead_code))]
 struct Router {
   clients: HashMap<u64, Client>,
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 impl Router {
   fn owner(&self, session: &str) -> Option<u64> {
     self.clients.iter().find(|(_, c)| c.owned.contains(session)).map(|(id, _)| *id)
