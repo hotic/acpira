@@ -468,8 +468,8 @@ impl AccountManager {
   }
 
   pub async fn import(self: &Arc<Self>, agent: &str) -> Result<Option<AccountInfo>> {
+    // No toast for a missing login: the only caller is the session notice, which reports it in its own text (AccountActionStatus::Missing)
     let Some(draft) = self.provider(agent)?.import_local().await else {
-      (self.toast)("info", &tp("host.noLocalLogin", &[("agent", agent)]));
       return Ok(None);
     };
     Ok(Some(self.store_draft(agent, draft, "imported", "host.imported").await?))
