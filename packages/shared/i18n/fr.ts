@@ -555,6 +555,8 @@ export const fr = {
   'alert.retryHint': 'Reprendre là où le tour s’est arrêté ; en cas de nouvel échec, redémarre d’abord le processus de l’agent et reprend cette session',
   'alert.copy': 'Copier les détails',
   'alert.copyWith': 'Copier les détails ({detail})',
+  'prose.taskNote': 'Avis de tâche écrit par le modèle',
+  'prose.taskNote.hint': 'Cet avis est du texte de la réponse du modèle, pas un événement de la CLI. Il peut ne pas correspondre à l’état réel de la tâche ; la ligne de la commande fait foi.',
   'alert.copied': 'Copié',
 
   'question.title': 'Questions',

@@ -545,6 +545,8 @@
   "alert.retryHint": "Continúa donde se detuvo el turno; si vuelve a fallar, primero reinicia el proceso del agente y reanuda esta sesión",
   "alert.copy": "Copiar detalles",
   "alert.copyWith": "Copiar detalles ({detail})",
+  "prose.taskNote": "Aviso de tarea escrito por el modelo",
+  "prose.taskNote.hint": "Este aviso es texto de la respuesta del modelo, no un evento del CLI. Puede no coincidir con el estado real de la tarea; la fila del comando muestra ese estado.",
   "alert.copied": "Copiado",
   "question.title": "Preguntas",
   "question.of": "{n} de {total}",

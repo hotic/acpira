@@ -558,6 +558,8 @@ export const ko = {
   'alert.retryHint': '멈춘 지점부터 이어서 합니다. 다시 실패하면 먼저 에이전트 프로세스를 다시 시작하고 이 세션을 재개합니다',
   'alert.copy': '세부 정보 복사',
   'alert.copyWith': '세부 정보 복사 ({detail})',
+  'prose.taskNote': '모델이 작성한 작업 알림',
+  'prose.taskNote.hint': '이 알림은 모델 응답 속 텍스트이며 CLI가 보낸 이벤트가 아닙니다. 작업의 실제 상태와 다를 수 있으니 해당 명령 행의 상태를 확인하세요.',
   'alert.copied': '복사됨',
 
   'question.title': '질문',

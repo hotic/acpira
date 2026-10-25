@@ -552,6 +552,8 @@
   "alert.retryHint": "中断したところから続けます。もう一度失敗した場合は、先にエージェントのプロセスを再起動してこのセッションを再開します",
   "alert.copy": "詳細をコピー",
   "alert.copyWith": "詳細をコピー（{detail}）",
+  "prose.taskNote": "モデルが書いたタスク通知",
+  "prose.taskNote.hint": "この通知はモデルの返信内の文章で、CLI からのイベントではありません。タスクの実際の状態と異なる場合があります。対応するコマンド行の状態を確認してください。",
   "alert.copied": "コピーしました",
   "question.title": "質問",
   "question.of": "{n} / {total}",
