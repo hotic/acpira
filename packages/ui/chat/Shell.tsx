@@ -47,6 +47,9 @@ import { heldPrompt } from './heldPrompt';
 import { compactingNow } from './usageBreakdown';
 import { BUILTIN_AGENT_ID } from '@acpira/shared/providers';
 import { launchable } from '@acpira/shared/agentOrder';
+import { parseRemoteFolder } from '@acpira/shared/remote';
+import { connectionOf, useFolderHost } from '../remote/api';
+import { RemoteFolderDialog } from '../remote/RemoteFolderDialog';
 import { COLUMN_HIDDEN_KEY, DesktopContext, macOS, useShellCommands, useShellToasts } from '../desktop';
 import { droppedPathResolver, setWebviewState, webviewState } from '../vscodeApi';
 import { moveDraft } from './useComposerDraft';
@@ -520,6 +523,16 @@ export function Shell(p: ShellProps) {
   // The start page shows while the session on screen has not said a word
   const startPage = desktop && !p.noProject && !p.external && !!p.activeSessionId && !p.turns.length && !p.queued?.length;
   const currentAgent = launchable(p.agents).some(x => x.id === p.agent.id && x.available !== false) ? p.agent.id : undefined;
+  // Under local run only the built-in agent works in a folder on an SSH host (the engine refuses others with
+  // host.remoteBuiltinOnly), so a session started there takes it whatever was used last; under remote run the host's
+  // own engine runs them all, and a host the list does not know yet counts as local run, the default
+  const builtinReady = p.agents.some(a => a.id === BUILTIN_AGENT_ID && a.available !== false);
+  const agentIn = useCallback((cwd: string | undefined, agent: AgentId | undefined) => {
+    const remote = cwd ? parseRemoteFolder(cwd) : undefined;
+    return remote && connectionOf(remote.alias)?.mode !== 'remote' && builtinReady ? BUILTIN_AGENT_ID : agent;
+  }, [builtinReady]);
+  const startHost = useFolderHost(startPage ? p.cwd : undefined);
+  const startOnly = startHost && startHost.view?.mode !== 'remote' && builtinReady ? [BUILTIN_AGENT_ID] : undefined;
   const [fresh, setFresh] = useState<string>();
   useEffect(() => {
     if (!fresh) return;
@@ -531,11 +544,20 @@ export function Shell(p: ShellProps) {
   const openProject = useCallback((cwd: string) => {
     on.categoryOp?.({ op: 'addProject', cwd });
     unfold(cwd);
-    on.newSession(currentAgent, undefined, cwd);
+    on.newSession(agentIn(cwd, currentAgent), undefined, cwd);
     setFresh(cwd);
     closeDrawer();
-  }, [on.categoryOp, on.newSession, unfold, currentAgent, closeDrawer]);
+  }, [on.categoryOp, on.newSession, unfold, currentAgent, agentIn, closeDrawer]);
   const addProject = useCallback(() => { void on.pickFolder?.().then(dir => { if (dir) openProject(dir); }); }, [on.pickFolder, openProject]);
+  // The column's "remote folder" entries: a folder on that host through the remote folder picker, or a new host on the
+  // settings page
+  const [remotePick, setRemotePick] = useState<string>();
+  const openSettingsPage = p.onOpenSettings;
+  const addRemote = useCallback((alias?: string) => {
+    closeDrawer();
+    if (alias) setRemotePick(alias);
+    else openSettingsPage?.({ kind: 'connections' });
+  }, [closeDrawer, openSettingsPage]);
   const newIn = useCallback((cwd?: string) => {
     const dir = cwd ?? p.cwd;
     closeDrawer();
@@ -543,8 +565,8 @@ export function Shell(p: ShellProps) {
     // Already on that project's start page: the composer takes the focus instead
     if (startPage && dir === p.cwd) { root.current?.querySelector<HTMLTextAreaElement>('[data-start-dock] textarea')?.focus(); return; }
     unfold(dir);
-    on.newSession(currentAgent, undefined, dir);
-  }, [p.cwd, closeDrawer, addProject, startPage, unfold, on.newSession, currentAgent]);
+    on.newSession(agentIn(dir, currentAgent), undefined, dir);
+  }, [p.cwd, closeDrawer, addProject, startPage, unfold, on.newSession, currentAgent, agentIn]);
   const newHere = useCallback(() => newIn(), [newIn]);
   // The start page starts its empty session over with another agent or in another project (the engine drops the empty one
   // it leaves); what was typed there moves to the new one before its composer mounts
@@ -672,6 +694,7 @@ export function Shell(p: ShellProps) {
       onNewInCategory={newInCat}
       onNewIn={desktop ? newIn : undefined}
       onAddProject={desktop && on.pickFolder ? addProject : undefined}
+      onAddRemote={desktop ? addRemote : undefined}
       onRevealPath={on.revealPath}
       onCopyPath={copyPath}
       fresh={fresh}
@@ -902,7 +925,7 @@ export function Shell(p: ShellProps) {
             <Header
               title={desktop && p.noProject ? '' : p.title}
               // Desktop start page: the project after the title is a dropdown that starts the empty session over there
-              projectPick={start.shown && p.cwd ? <ProjectPick cwd={p.cwd} projects={startProjects} home={p.home} onPick={cwd => startOver(p.agent.id, cwd)} onOpenOther={on.pickFolder ? addProject : undefined} /> : undefined}
+              projectPick={start.shown && p.cwd ? <ProjectPick cwd={p.cwd} projects={startProjects} home={p.home} onPick={cwd => startOver(agentIn(cwd, p.agent.id) ?? p.agent.id, cwd)} onOpenOther={on.pickFolder ? addProject : undefined} /> : undefined}
               sessions={p.sessions}
               categories={p.categories}
               agent={p.agent}
@@ -998,7 +1021,7 @@ export function Shell(p: ShellProps) {
                     : null}
                   {/* Desktop start page: who answers, right above the composer; it stays mounted while the empty session is
                       started over with another agent, so the segments slide instead of the page replaying its entrance */}
-                  {start.mounted && <StartPicker open={start.shown} agents={p.agents} current={p.agent.id} onPick={agent => startOver(agent)} />}
+                  {start.mounted && <StartPicker open={start.shown} agents={p.agents} current={p.agent.id} only={startOnly} onPick={agent => startOver(agent)} />}
                   {/* Sibling keys include the component role; duplicate session-only keys leave stale queue rows after reconciliation. */}
                   {!p.external && <Composer key={`composer:${p.activeSessionId}`} {...composerProps} draftKey={p.activeSessionId} main shareSelection={p.shareEditorSelection}
                     toolbarStart={!!p.subagents?.length && <Chip narrow="icon" caret={false} className="shrink-0" icon={<Network strokeWidth={1.5} />}
@@ -1063,6 +1086,8 @@ export function Shell(p: ShellProps) {
               : { open: canDock ? !columnHidden : drawerOpen, drawer: !canDock, onToggle: () => canDock ? hideColumn(!columnHidden) : drawerOpen ? closeDrawer() : openDrawer() }} />}
         </div>
         <SubagentGraph nodes={p.subagents ?? []} sessionTitle={p.title} open={graphOpen && !!p.subagents?.length} onOpenChange={setGraphOpen} onInspect={onInspect} selectedId={inspect?.id} />
+        {remotePick && <RemoteFolderDialog alias={remotePick} onClose={() => setRemotePick(undefined)}
+          onAdd={folder => { setRemotePick(undefined); openProject(folder); }} />}
       </DiffSourceContext.Provider>
       </AsyncTaskStopContext.Provider>
       </OpenBlobContext.Provider>

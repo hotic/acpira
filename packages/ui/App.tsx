@@ -19,6 +19,7 @@ import { panel } from './panel/store';
 import { deliverTerminal, startTerminals, terminalsConnected } from './panel/terminals';
 import { vscodeApi } from './vscodeApi';
 import { desktopShell, pushShellToast, runShellCommand } from './desktop';
+import { deliverRemote, watchConnections } from './remote/api';
 import type { QuickSettings } from './chat/DesktopFrame';
 import { SettingsShell, type SettingsHandlers } from './settings/SettingsShell';
 import { contextDrafts, sameContext, sameRange, selectionDraft, setContextSelection, setEditorCopy, setEditorSelection } from './chat/editorContext';
@@ -37,7 +38,8 @@ declare global {
   // `host: 'browser'`: the browser panel's webview (main.tsx renders browser/BrowserPanel there).
   // `shell: 'desktop'`: the standalone desktop app (rust/crates/acpira-desktop/src/page.rs), which turns on the desktop layout
   // `tab`: a browser page shown as a tab of the desktop tool panel (rust/crates/acpira-desktop/src/page.rs), whose transport comes from the chat
-  interface Window { __acpira?: { host: 'sidebar' | 'editor' | 'browser'; font?: Appearance['font']; sessionLinkBase?: string; shell?: 'desktop'; tab?: string } }
+  // `remote`: the page offers SSH hosts without being the desktop app (the browser harness, test/host-preview/shim.js)
+  interface Window { __acpira?: { host: 'sidebar' | 'editor' | 'browser'; font?: Appearance['font']; sessionLinkBase?: string; shell?: 'desktop'; tab?: string; remote?: boolean } }
 }
 
 // Always through the memo: acquireVsCodeApi() throws when called twice, and other components (Link) reach the api via vscodeApi()
@@ -220,7 +222,7 @@ export function App() {
           break;
         }
         // A sidecar that came back answers nothing it was asked before: pending controls requests go out again
-        case 'init': controlsAsked.current.clear(); setInit({ host: m.state.host, home: m.state.home, cwd: m.state.cwd, blobBase: m.state.blobBase }); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setCategories(m.state.categories); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setAgentInstalls(m.state.agentInstalls ?? []); setHidden(m.state.hidden); setSession(views.init(m.state.active)); setNoProject(!m.state.active); setSettings(m.state.settings); setLocale(m.state.locale); setLoc(m.state.locale); terminalsConnected(m.state.home); break;
+        case 'init': controlsAsked.current.clear(); setInit({ host: m.state.host, home: m.state.home, cwd: m.state.cwd, blobBase: m.state.blobBase }); setAppearance(m.state.appearance); lastAgents.current = m.state.agents; setAgents(m.state.agents); setSessions(m.state.sessions); setCategories(m.state.categories); setAccounts(m.state.accounts); setAccountActions(m.state.accountActions ?? []); setAgentInstalls(m.state.agentInstalls ?? []); setHidden(m.state.hidden); setSession(views.init(m.state.active)); setNoProject(!m.state.active); setSettings(m.state.settings); setLocale(m.state.locale); setLoc(m.state.locale); terminalsConnected(m.state.home); watchConnections(); break;
         case 'appearance': setAppearance(m.appearance); break;
         // An agent whose executable appeared or vanished has a stale inventory (binary path, version); drop it so the page rescans
         case 'agents': {
@@ -290,6 +292,8 @@ export function App() {
         case 'diffSource': settleDiff(m.seq, m.source); break;
         case 'projectDir': case 'projectStatus': case 'projectFile': case 'sessionChanges': settleProject(m); break;
         case 'terminalOutput': case 'terminalState': deliverTerminal(m); break;
+        // SSH hosts: the pushed list, the ~/.ssh/config hosts and the remote folder picker's listings (remote/api.ts)
+        case 'connections': case 'sshHosts': case 'remoteDir': deliverRemote(m); break;
         // The desktop tool panel (packages/ui/panel): its browser tabs' messages, the new-tab page's history, open_browser
         case 'panelBrowser': deliverToBrowserTab(m.tab, m.msg); break;
         case 'panelHistory': setRecentPages({ pages: m.pages, running: m.running }); break;
@@ -502,6 +506,7 @@ export function App() {
         shared={shared}
         providers={providers}
         storage={storage}
+        projects={categories?.projects}
         controls={controls}
         modelShapes={modelShapes}
         refreshing={refreshing}

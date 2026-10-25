@@ -1,5 +1,5 @@
 import { Component, createRef, Fragment, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
-import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Circle, Copy, Ellipsis, Folder, FolderInput, FolderOpen, FolderPlus, Import, Layers, ListFilter, LoaderCircle, Pencil, Pin, PinOff, Plus, Search, SquarePen, Trash2, Undo2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Circle, Copy, Ellipsis, Folder, FolderInput, FolderOpen, FolderPlus, Import, Layers, ListFilter, LoaderCircle, Pencil, Pin, PinOff, Plus, Search, Server, SquarePen, Trash2, Undo2, X } from 'lucide-react';
 import type { AgentId, AgentInfo, CategoryOp, NativeSessionInfo, SessionCategories, SessionCategory, SessionSection, SessionSummary } from '@acpira/shared/transcript';
 import type { ExportFormat, NativeSessionsState, SessionHit } from '@acpira/shared/protocol';
 import { inWorkspace, type SessionScope } from '@acpira/shared/settings';
@@ -26,6 +26,8 @@ import { markParts, matchesTitle, searchTerms } from './sessionSearch';
 import { buildSessionTree, categoryOf, draggable, dropAction, type CategoryNode, type MoveTarget, type ProjectNode, type SessionTree } from './sessionTree';
 import { clearFilters, filterCount, groupSessions, passes, readView, sortSessions, VIEW_KEY, type FlatGroup, type ListView, type TimeBucket } from './sessionView';
 import { ViewMenu } from './ViewMenu';
+import { CONNECTION_STATE_NAME, useConnections, useFolderHost } from '../remote/api';
+import { RemoteFolderIcon } from '../remote/RemoteFolderIcon';
 
 // A running session shows a spinning ring (the one place a spinner is allowed: a list has no verb to shimmer); the other states are plain dots.
 // Unread (a turn that finished unwatched) is a slightly larger dot in the strongest foreground with a halo rippling out of it;
@@ -207,6 +209,9 @@ export interface SessionListProps {
   onNewIn?: (cwd?: string) => void;
   // Desktop: the Projects label's folder button, the system folder dialog (the folder picked joins the list's end)
   onAddProject?: () => void;
+  // Desktop, once the engine answered for SSH hosts: the same menu's "remote folder" entries, a folder on that host
+  // (the remote folder picker), or a new host (no alias: Settings → Connections)
+  onAddRemote?: (alias?: string) => void;
   // A project header's menu: show the folder in the OS file manager, copy its path
   onRevealPath?: (path: string) => void;
   onCopyPath?: (path: string) => void;
@@ -276,9 +281,12 @@ function perKey<T>(compute: (key: string) => T): (key: string) => T {
 // (FlipRows). The desktop app (DesktopContext) lists its registered projects in their own order without categories, each
 // open project its latest sessions with the rest behind one row.
 // Deletion applies immediately, undo lives on the Toast at the shell's bottom
-export const SessionList = memo(function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onMove, onExport, onCopy, onSearch, categories: categoryState, onFile, onCategoryOp, onNewInCategory, nav, onNew, onNewIn, onAddProject, onRevealPath, onCopyPath, fresh, onMarkAllRead }: SessionListProps) {
+export const SessionList = memo(function SessionList({ sessions, agents, activeId, workspace, scope = 'all', autoFocus, fill, activeAgent, nativeSessions, onListNative, onImportNative, onSelect, onRename, onDelete, onPin, onMove, onExport, onCopy, onSearch, categories: categoryState, onFile, onCategoryOp, onNewInCategory, nav, onNew, onNewIn, onAddProject, onAddRemote, onRevealPath, onCopyPath, fresh, onMarkAllRead }: SessionListProps) {
   const locale = useLocale();
   const desktop = useDesktop();
+  // The SSH hosts the add menu offers folders on; undefined until the engine answered for them
+  const connections = useConnections();
+  const remoteHosts = onAddRemote ? connections : undefined;
   const [query, setQuery] = useState('');
   // The view menu's choices (grouping, ordering, what rows show, filters), kept per window across reloads
   const [view, setViewState] = useState<ListView>(() => readView(webviewState(VIEW_KEY)));
@@ -615,6 +623,7 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
           project
           name={projectName(p.cwd)}
           title={p.cwd}
+          folder={p.cwd}
           // Desktop: the sheet's header names the current project, and a project row carries no count
           badge={p.current && !desktop ? t('session.project.current') : undefined}
           count={desktop ? undefined : p.count}
@@ -773,13 +782,23 @@ export const SessionList = memo(function SessionList({ sessions, agents, activeI
                     <CategoryAddIcon />
                   </button>
                 )}
-                {/* Desktop: "+" adds a project folder or a section; without sections to edit, the folder button alone */}
-                {desktop && onAddProject && (filing
+                {/* Desktop: "+" adds a project folder (here or on an SSH host) or a section; with neither sections to edit nor
+                    hosts, the folder button alone */}
+                {desktop && onAddProject && (filing || remoteHosts
                   ? <DropdownMenu.Root>
                     <DropdownMenu.Trigger render={<button type="button" title={t('session.add')} aria-label={t('session.add')} className={SECTION_ACT}><Plus className="size-icon" strokeWidth={1.5} /></button>} />
                     <DropdownMenu.Portal><DropdownMenu.Positioner side="inline-end" align="start" width="sm"><DropdownMenu.Popup>
                       <DropdownMenu.Item onClick={onAddProject}><OptionContent icon={<FolderPlus strokeWidth={1.5} />}>{t('session.project.add')}</OptionContent></DropdownMenu.Item>
-                      <DropdownMenu.Item onClick={() => createSection()}><OptionContent icon={<Layers strokeWidth={1.5} />}>{t('session.section.new')}</OptionContent></DropdownMenu.Item>
+                      {remoteHosts && onAddRemote && <Submenu side="inline-end" icon={<RemoteFolderIcon />} label={t('session.project.remote')}>{[
+                        ...remoteHosts.map(c => (
+                          <DropdownMenu.Item key={c.alias} title={c.address} onClick={() => onAddRemote(c.alias)}>
+                            <OptionContent icon={<Server strokeWidth={1.5} />}>{c.alias}</OptionContent>
+                          </DropdownMenu.Item>
+                        )),
+                        ...(remoteHosts.length ? [<DropdownMenu.Separator key="sep" className="my-1 h-px bg-line" />] : []),
+                        <DropdownMenu.Item key="host" onClick={() => onAddRemote()}><OptionContent icon={<Plus strokeWidth={1.5} />}>{t('session.project.addHost')}</OptionContent></DropdownMenu.Item>,
+                      ]}</Submenu>}
+                      {filing && <DropdownMenu.Item onClick={() => createSection()}><OptionContent icon={<Layers strokeWidth={1.5} />}>{t('session.section.new')}</OptionContent></DropdownMenu.Item>}
                     </DropdownMenu.Popup></DropdownMenu.Positioner></DropdownMenu.Portal>
                   </DropdownMenu.Root>
                   : <button type="button" title={t('session.project.add')} aria-label={t('session.project.add')} onClick={onAddProject} className={SECTION_ACT}>
@@ -984,12 +1003,16 @@ function MoreRow({ open, rest, nameOf, onToggle }: { open: boolean; rest: Sessio
 // Header of a project or a category. A project: the folder glyph (open or shut with the fold; hovered, it cross-fades into
 // the chevron), the heavier name, the "current" badge, then its actions. A category (`sub`): a quiet label with no glyph,
 // its chevron after the name. Hovered, the count / state cross-fade into the actions — "new category", "new session here"
-// and the "…" menu, which right-click opens too. Collapsed, both still show the most urgent state inside
-function GroupHeader({ project, sub, name, title, badge, count, open, state, fresh, dragging, editing, onDragStart, onDragEnd, onToggle, onRename, onNewSession, newSessionLabel = t('session.category.newSession'), onNewCategory, menu }: {
+// and the "…" menu, which right-click opens too. Collapsed, both still show the most urgent state inside. A project on an
+// SSH host (`folder` is `ssh://…`) has the globe-badged folder and the host's name after its own; its connection shows
+// only when it is off the usual: the glyph breathes while connecting and turns amber when the connection failed
+function GroupHeader({ project, sub, name, title, folder, badge, count, open, state, fresh, dragging, editing, onDragStart, onDragEnd, onToggle, onRename, onNewSession, newSessionLabel = t('session.category.newSession'), onNewCategory, menu }: {
   project?: boolean;
   sub?: boolean;
   name: string;
   title?: string;
+  // A project's folder, for the SSH host it may be on
+  folder?: string;
   badge?: string;
   // Absent: no count (the desktop's project rows)
   count?: number;
@@ -1021,6 +1044,14 @@ function GroupHeader({ project, sub, name, title, badge, count, open, state, fre
   }, [fresh]);
   const act = 'inline-flex size-lead items-center justify-center rounded-sm text-fg-3 transition-colors hover:bg-active hover:text-fg-1 focus-visible:bg-active focus-visible:text-fg-1';
   const actions = !editing && (onNewSession || onNewCategory || menu);
+  const host = useFolderHost(project ? folder : undefined);
+  const hostState = host?.view?.state;
+  // The glyph's tooltip names the host, and the connection when it is under way or failed (with the engine's words)
+  const hostTitle = host && [
+    t('connections.folderOn', { host: host.alias }),
+    (hostState === 'connecting' || hostState === 'error') && t(CONNECTION_STATE_NAME[hostState]),
+    hostState === 'error' && host.view?.error?.message,
+  ].filter(Boolean).join(t('common.metaSep'));
   // The glyph a hover or an open menu hides in favour of the chevron. A pixel low: centred on the line box, the folder sat
   // high beside the bold name's lowercase letters (the chevron stays centred)
   const glyph = cn('translate-y-px', open ? 'opacity-100' : 'opacity-0', onToggle && 'group-hover:opacity-0 group-focus-visible:opacity-0 group-data-[menu-open]:opacity-0');
@@ -1050,15 +1081,22 @@ function GroupHeader({ project, sub, name, title, badge, count, open, state, fre
     >
       {project && (
         // The folder shuts and opens in place with the fold; hovered, it cross-fades into the chevron, which turns with it
-        <span className="relative -mr-gap-half flex size-lead shrink-0 items-center justify-center text-fg-3 *:absolute *:size-icon *:transition-[opacity,rotate] *:duration-200">
-          <Folder strokeWidth={1.5} className={cn(glyph, open ? 'opacity-0' : 'opacity-100')} />
-          <FolderOpen strokeWidth={1.5} className={glyph} />
+        <span title={hostTitle || undefined} className={cn('relative -mr-gap-half flex size-lead shrink-0 items-center justify-center text-fg-3 *:absolute *:size-icon *:transition-[opacity,rotate] *:duration-200', hostState === 'error' && 'text-warn')}>
+          {host ? <>
+            <RemoteFolderIcon pulse={hostState === 'connecting'} className={cn(glyph, open ? 'opacity-0' : 'opacity-100')} />
+            <RemoteFolderIcon open pulse={hostState === 'connecting'} className={glyph} />
+          </> : <>
+            <Folder strokeWidth={1.5} className={cn(glyph, open ? 'opacity-0' : 'opacity-100')} />
+            <FolderOpen strokeWidth={1.5} className={glyph} />
+          </>}
           {onToggle && <ChevronRight strokeWidth={1.5} className={cn('opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 group-data-[menu-open]:opacity-100', open && 'rotate-90')} />}
         </span>
       )}
       {editing && onRename
         ? <RenameInput initial={name} label={t('session.category.rename')} onDone={onRename} />
         : <span className="min-w-0 truncate">{name}</span>}
+      {/* The host gives way first: it shrinks a thousand times faster than the name */}
+      {host && !editing && <span title={host.alias} className="min-w-0 shrink-1000 truncate text-3 font-normal text-fg-3/70">{host.alias}</span>}
       {/* Like a section label's: shown only on hover or focus in either state */}
       {sub && !editing && (
         <ChevronRight strokeWidth={1.5} className={cn('-ml-1 size-3 shrink-0 opacity-0 transition-[rotate,opacity] duration-(--dur-open) group-hover:opacity-100 group-focus-visible:opacity-100 group-data-[menu-open]:opacity-100',

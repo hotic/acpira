@@ -170,6 +170,14 @@
 @keyframes acp-mark-flash { 0%, 64%, 76%, 88%, 100% { opacity: 1; } 70%, 82% { opacity: 0.2; } }
 .bg-orbit { animation: acp-orbit 3.6s linear infinite; }
 @keyframes acp-orbit { to { transform: rotate(1turn); } }
+/* A folder on an SSH host (remote/RemoteFolderIcon): the folder glyph is cut away under the globe badge's disc, whose
+   centre sits half a disc in from the badge's corner, 4px past the icon's own; a mask rather than a backing fill, so the
+   badge reads on any row fill. A project whose host is connecting breathes (the kill switches stop it at full opacity) */
+.remote-folder-cut {
+  mask-image: radial-gradient(circle at calc(100% + 4px - var(--remote-badge) / 2) calc(100% + 4px - var(--remote-badge) / 2),
+    transparent calc(var(--remote-badge) / 2), #000 calc(var(--remote-badge) / 2 + 0.5px));
+}
+.remote-breathe { animation: acp-pulse 1.6s ease-in-out infinite; }
 
 /* A session row's agent mark whose session runs another vendor's model (SessionList Item): hovered, it turns over to that
    vendor's mark after a short hold, so a pointer sweeping down the list flips nothing, and turns back at once */

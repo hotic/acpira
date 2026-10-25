@@ -27,6 +27,8 @@ import { AgentPage } from './AgentPage';
 import { SharedPage, type SharedState } from './SharedPage';
 import { SubagentsPage } from './SubagentsPage';
 import { StoragePage, type StorageState } from './StoragePage';
+import { ConnectionsPage } from './ConnectionsPage';
+import { useConnections } from '../remote/api';
 import type { StorageAction, StorageDetail } from '@acpira/shared/storage';
 import type { SharedAction } from '@acpira/shared/sharedConfig';
 import type { ProviderAction, ProviderProbe } from '@acpira/shared/providers';
@@ -103,6 +105,8 @@ export interface SettingsShellProps {
   providers?: ProvidersState;
   // The Storage tab's last measurement; undefined until the page asked for it
   storage?: StorageState;
+  // The project list (SessionCategories.projects): a host's page lists its folders from it
+  projects?: string[];
   // Per agent, the configOptions of its latest session (the hide lists are built from these)
   controls: Partial<Record<AgentId, ConfigControl[]>>;
   modelShapes?: Partial<Record<AgentId, ModelShapes>>;
@@ -129,7 +133,8 @@ export function SettingsShell(p: SettingsShellProps) {
   const unlisted = (id: AgentId) => !p.agents.some(a => a.id === id);
   const title = page.kind === 'chatgpt' ? 'ChatGPT' : agent ? t('settings.agent.title', { agent: agent.name }) : page.kind === 'appearance' ? t('settings.appearance.title')
     : page.kind === 'shared' ? t('settings.shared.title') : page.kind === 'subagents' ? t('settings.nav.subagents')
-    : page.kind === 'storage' ? t('storage.title') : t('settings.general.title');
+    : page.kind === 'storage' ? t('storage.title') : page.kind === 'connections' ? t('settings.nav.connections')
+    : t('settings.general.title');
   const busy = !!agent && !!p.refreshing?.has(agent.id);
   // Header refresh clicks on the Storage tab: the only thing that replays its bar's fill
   const [storageRefresh, setStorageRefresh] = useState(0);
@@ -142,6 +147,8 @@ export function SettingsShell(p: SettingsShellProps) {
     </IconButton>
   );
   const desktop = !!p.desktop;
+  // SSH hosts are offered once the engine answered for them (remote/api.ts)
+  const remote = useConnections() !== undefined;
   // Desktop: the rail takes the chat column's width (the same stored value, clamped as Shell clamps it), so the sheet does not
   // jump sideways when the page switches
   const [columnWidth] = usePreferredPaneWidth('sessionPaneW');
@@ -181,7 +188,7 @@ export function SettingsShell(p: SettingsShellProps) {
             data-column={desktop || undefined}
           >
             <div className="flex min-h-0 flex-1">
-              <PageRail agents={p.agents} page={p.page} onPage={p.onPage} onBack={p.onBack} desktop={desktop} width={desktop ? railWidth : undefined} opening={opening}
+              <PageRail agents={p.agents} page={p.page} onPage={p.onPage} onBack={p.onBack} desktop={desktop} width={desktop ? railWidth : undefined} opening={opening} remote={remote}
                 onReorder={ids => p.on.setSetting('agentOrder', [...ids, ...p.settings.agentOrder.filter(unlisted)])}
                 onDisabled={ids => p.on.setSetting('disabledAgents', [...ids, ...p.settings.disabledAgents.filter(unlisted)])} />
               <div data-sheet={desktop || undefined} className="relative flex min-w-0 flex-1 flex-col">
@@ -193,6 +200,7 @@ export function SettingsShell(p: SettingsShellProps) {
                   {page.kind === 'appearance' && <AppearancePage settings={p.settings} appearance={p.appearance} on={p.on} />}
                   {page.kind === 'shared' && <SharedPage state={p.shared} agents={p.agents} on={p.on} />}
                   {page.kind === 'storage' && <StoragePage state={p.storage} agents={p.agents} env={p.env} on={p.on} refresh={storageRefresh} />}
+                  {page.kind === 'connections' && <ConnectionsPage env={p.env} projects={p.projects} on={p.on} />}
                   {page.kind === 'subagents' && <SubagentsPage settings={p.settings} agents={p.agents} controls={p.controls} shapes={p.modelShapes} on={p.on} />}
                   {agent && (
                     <AgentPage
