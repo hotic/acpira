@@ -22,7 +22,10 @@
     "catalog:update": "cargo run --quiet --manifest-path rust/Cargo.toml --bin acpira -- model-catalog --out rust/crates/acpira-shared/assets/model-catalog.json",
     "build:sidecar": "node scripts/release/build-sidecar.mjs",
     "version:set": "node scripts/release/set-version.mjs",
-    "package": "pnpm build && pnpm build:sidecar && node scripts/release/package-vsix.mjs"
+    "package": "node scripts/release/package-local.mjs",
+    "package:vsix": "node scripts/release/package-local.mjs --vsix",
+    "package:desktop": "node scripts/release/package-local.mjs --desktop",
+    "install:local": "node scripts/release/install-local.mjs"
   },
   "devDependencies": {
     "@acpira/engine-client": "workspace:*",
