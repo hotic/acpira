@@ -236,6 +236,145 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # The macOS desktop app (docs/releasing.md "Desktop app"): Developer ID signed, notarized and stapled, then packed for its
+  # own updater (full package, deltas from the last three releases' full packages, a manifest signed with DESKTOP_UPDATE_KEY).
+  # Without the signing secrets every step after the check is skipped, so the VSIX and plugin releases never wait on it.
+  desktop:
+    needs: [sidecar, build]
+    runs-on: macos-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      version: ${{ needs.build.outputs.version }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.ref }}
+      PUBLISH: ${{ github.event_name == 'release' || inputs.publish }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Check signing credentials
+        id: creds
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          DESKTOP_UPDATE_KEY: ${{ secrets.DESKTOP_UPDATE_KEY }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ] || [ -z "$APPLE_API_KEY_P8" ] || [ -z "$DESKTOP_UPDATE_KEY" ]; then
+            echo '::notice::No Developer ID / notarization / update key secrets: the desktop app is not built.'
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v7
+        if: steps.creds.outputs.ready == 'true'
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.ref }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        if: steps.creds.outputs.ready == 'true'
+      - uses: actions/setup-node@v7
+        if: steps.creds.outputs.ready == 'true'
+        with:
+          node-version: '22'
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@master
+        if: steps.creds.outputs.ready == 'true'
+        with:
+          toolchain: '1.99.1'
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        if: steps.creds.outputs.ready == 'true'
+        with:
+          workspaces: |
+            rust
+            apps/desktop
+          key: desktop
+      - name: Import the Developer ID certificate into a temporary keychain
+        if: steps.creds.outputs.ready == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/acpira.keychain-db"
+          pass=$(openssl rand -hex 16)
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$pass" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$pass" "$keychain"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$pass" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+          identity=$(security find-identity -v -p codesigning "$keychain" | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"')
+          test -n "$identity"
+          echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+      - run: pnpm install --frozen-lockfile
+        if: steps.creds.outputs.ready == 'true'
+      - uses: actions/download-artifact@v8
+        if: steps.creds.outputs.ready == 'true'
+        with:
+          name: sidecar-mac-arm64
+          path: dist/sidecar
+      - name: Build, sign and notarize the app
+        if: steps.creds.outputs.ready == 'true'
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          chmod +x dist/sidecar/*/acpira
+          pnpm build
+          export APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$APPLE_API_KEY_P8" > "$APPLE_API_KEY_PATH"
+          (cd apps/desktop && node scripts/package.mjs)
+          rm "$APPLE_API_KEY_PATH"
+          app=apps/desktop/target/aarch64-apple-darwin/release/bundle/macos/Acpira.app
+          codesign --verify --deep --strict "$app"
+          spctl -a -t exec "$app"
+          xcrun stapler validate "$app"
+      - name: Pack the update
+        if: steps.creds.outputs.ready == 'true'
+        env:
+          DESKTOP_UPDATE_KEY: ${{ secrets.DESKTOP_UPDATE_KEY }}
+        run: |
+          (cd rust && cargo build --release --locked -p acpira-desktop --bin acpira-update-pack)
+          mkdir -p prev out
+          # Deltas from the full packages of the last three stable releases that shipped one
+          prev=()
+          for tag in $(gh release list --exclude-drafts --exclude-pre-releases --limit 10 --json tagName --jq '.[].tagName' | grep -vFx "v$version" | head -3); do
+            from="${tag#v}"
+            if gh release download "$tag" --dir prev --pattern "Acpira-$from-darwin-aarch64.app.tar.zst" 2>/dev/null; then
+              prev+=(--prev "$from=prev/Acpira-$from-darwin-aarch64.app.tar.zst")
+            fi
+          done
+          gh release view "$RELEASE_TAG" --json body --jq .body > notes.md 2>/dev/null || : > notes.md
+          rust/target/release/acpira-update-pack pack --app apps/desktop/target/aarch64-apple-darwin/release/bundle/macos/Acpira.app \
+            --version "$version" --base-url "https://github.com/$GH_REPO/releases/download/v$version" --out out \
+            --notes-file notes.md "${prev[@]}"
+          cp apps/desktop/target/aarch64-apple-darwin/release/bundle/dmg/Acpira_"$version"_aarch64.dmg out/
+          (cd out && shasum -a 256 Acpira* > desktop.sha256)
+          cat out/desktop.sha256 >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: steps.creds.outputs.ready == 'true'
+        with:
+          name: desktop-app
+          path: out/
+          if-no-files-found: error
+          retention-days: 30
+      # The manifest goes up last: until then the latest release offers no update that points at missing files
+      - name: Attach the app to the GitHub Release
+        if: steps.creds.outputs.ready == 'true' && env.PUBLISH == 'true'
+        run: |
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' > assets.txt
+          for file in out/*; do
+            name=$(basename "$file")
+            case "$name" in desktop-update.json*) continue ;; esac
+            grep -Fxq "$name" assets.txt || gh release upload "$RELEASE_TAG" "$file"
+          done
+          for name in desktop-update.json desktop-update.json.sig; do
+            grep -Fxq "$name" assets.txt || gh release upload "$RELEASE_TAG" "out/$name"
+          done
+
   release-asset:
     needs: [build, build-idea]
     if: github.event_name == 'release' || inputs.publish

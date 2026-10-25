@@ -26,10 +26,29 @@ Creating the Open VSX namespace does not verify ownership. Follow [Namespace Acc
 
 1. Run `pnpm version:set X.Y.Z`, which writes the version into `package.json`, the extension manifest `apps/vscode/package.json`, `rust/Cargo.toml` (`[workspace.package]`) and the desktop app's `apps/desktop/Cargo.toml` and `tauri.conf.json`, and runs `cargo update --workspace` in both Cargo workspaces so their `Cargo.lock` files follow (CI builds with `--locked`; `test/rustWorkspace.test.ts` checks them all), update `CHANGELOG.md`, then commit and push the release changes.
 2. Create a GitHub Release whose tag exactly matches the manifest version, for example `v1.0.1` for version `1.0.1`. Select the commit containing the release changes. Publish it as a stable release.
-3. Check the six jobs in [Publish extension](https://github.com/hotic/acpira/actions/workflows/release.yml). Green build status alone does not confirm marketplace publication.
+3. Check the jobs in [Publish extension](https://github.com/hotic/acpira/actions/workflows/release.yml). Green build status alone does not confirm marketplace publication.
 4. Confirm the version on [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=hotic.acpira), [Open VSX](https://open-vsx.org/extension/hotic/acpira) and the [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/com.github.hotic.acpira) (the unsuffixed `<version>` update). Cursor discovery can lag Open VSX publication because its marketplace proxy performs additional checks. Installed copies update according to each editor's automatic-update settings.
 
 Drafts, standalone tag pushes, and prereleases do not publish to the marketplaces. Create the Release in the GitHub UI or using a personal `gh` login; a Release created by another workflow's default `GITHUB_TOKEN` does not trigger this workflow.
+
+## Desktop app
+
+The `desktop` job (macOS runner) builds the Tauri app with the release's `mac-arm64` sidecar, signs it with a Developer ID Application identity, notarizes and staples it (`apps/desktop/scripts/package.mjs`), checks it with `codesign --verify --deep --strict`, `spctl` and `stapler validate`, then packs it for the app's own updater with `acpira-update-pack` (`docs/dev/desktop.md` "Updates"): the full package `Acpira-<version>-darwin-aarch64.app.tar.zst`, a delta from each of the last three stable releases that carry a full package, `desktop-update.json` with the release body as its notes, and the Ed25519 signature `desktop-update.json.sig`. With publishing on it attaches the dmg, the packages and `desktop.sha256` to the Release, and the manifest last, so installed apps (which read `releases/latest/download/desktop-update.json`) never see an update whose files are missing. Without the secrets below every step after the check is skipped and the extension and plugin releases go on as before; a latest Release without a manifest only makes installed apps' checks fail until the next one has it.
+
+One-time setup, besides the secrets:
+
+1. `cd rust && cargo run -p acpira-desktop --bin acpira-update-pack -- keygen`: the line on stdout is the secret seed (the `DESKTOP_UPDATE_KEY` secret, never in the repository or a log), the public key on stderr goes into `update::PUBLIC_KEYS` in `rust/crates/acpira-desktop/src/update/mod.rs`. A rotation lists the new key beside the old one for at least one release before the old one is dropped.
+2. Put the Developer ID team (the certificate's OU) into `update::TEAM_ID`. Until both constants are set a build never checks for updates (its About page says so).
+
+| Secret | Source |
+| --- | --- |
+| `APPLE_CERTIFICATE` | The Developer ID Application certificate with its private key, exported from Keychain Access as `.p12`, base64-encoded. |
+| `APPLE_CERTIFICATE_PASSWORD` | The `.p12` export password. |
+| `APPLE_API_KEY` / `APPLE_API_ISSUER` | Key ID and Issuer ID of an App Store Connect API key (Users and Access → Integrations) for notarization. |
+| `APPLE_API_KEY_P8` | The contents of that key's `AuthKey_<id>.p8`. |
+| `DESKTOP_UPDATE_KEY` | The hex seed from `acpira-update-pack keygen`. |
+
+A retry keeps the assets already attached, like the other jobs; a changed app needs a new version.
 
 ## Validate or retry
 
