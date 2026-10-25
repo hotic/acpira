@@ -352,7 +352,17 @@ fn dimensions(b: &[u8], mime: &str) -> Option<(u32, u32)> {
 fn picture(path: &Path, bytes: &[u8], mime: &str, images: bool, left: &mut usize) -> Output {
   let size = dimensions(bytes, mime);
   let pixels = size.map_or_else(String::new, |(w, h)| format!(", {w}x{h} pixels"));
-  let about = format!("{}: {} image{pixels}, {} KB", path.display(), mime.trim_start_matches("image/").to_uppercase(), bytes.len().div_ceil(1024));
+  let mut about = format!("{}: {} image{pixels}, {} KB", path.display(), mime.trim_start_matches("image/").to_uppercase(), bytes.len().div_ceil(1024));
+  // An animated GIF the model would see only the first frame of goes as a sheet of its frames (`crate::frames`), on
+  // the card as well; with no model to send it to, the card keeps the GIF itself
+  let sheet = if images && mime == "image/gif" { crate::frames::sheet(bytes) } else { None };
+  let (bytes, mime, size) = match &sheet {
+    Some(s) => {
+      about = format!("{about}. {}", s.note("file", Some(&path.display().to_string())).trim_end_matches('.'));
+      (&s.png[..], "image/png", dimensions(&s.png, "image/png"))
+    }
+    None => (bytes, mime, size),
+  };
   let data = base64::engine::general_purpose::STANDARD.encode(bytes);
   let encoded = data.len();
   let fits = encoded <= super::mcp::MAX_IMAGE_BYTES;
@@ -622,5 +632,23 @@ mod tests {
     std::fs::write(&tiff, b"II*\0\x08\0\0\0").unwrap();
     let out = run(&file(&tiff), true, &ctx(dir.path()));
     assert!(out.is_error && out.model.contains("convert it to PNG or JPEG"), "{}", out.model);
+  }
+
+  #[test]
+  fn an_animated_gif_is_read_as_a_sheet_of_its_frames() {
+    let dir = tempfile::tempdir().unwrap();
+    let clip = dir.path().join("clip.gif");
+    std::fs::write(&clip, crate::frames::solid_gif(40, 20, &[[255, 0, 0], [0, 0, 255]], 50)).unwrap();
+    let file = vec![Slice { path: clip.clone(), offset: 1, limit: DEFAULT_LIMIT }];
+    let out = run(&file, true, &ctx(dir.path()));
+    assert!(out.model.contains("GIF image, 40x20 pixels") && out.model.contains("2 frames over 1.0 s"), "{}", out.model);
+    assert!(out.model.contains("if you need them. The image is attached"), "{}", out.model);
+    let sent = super::super::mcp::model_images(&out.content);
+    assert_eq!(sent.len(), 1);
+    assert_eq!(out.content[0]["content"]["mimeType"], "image/png");
+    // A model that takes no images is told about the GIF, and the card keeps the animation
+    let text_only = run(&file, false, &ctx(dir.path()));
+    assert!(text_only.model.contains("does not accept images") && !text_only.model.contains("frames over"), "{}", text_only.model);
+    assert_eq!(text_only.content[0]["content"]["mimeType"], "image/gif");
   }
 }

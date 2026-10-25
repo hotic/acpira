@@ -15,6 +15,10 @@ acpira-agent = { path = "crates/acpira-agent" }
 anyhow = "1.0.100"
 base64 = "0.22"
 flate2 = "1.1"
+# Animated GIFs sent to models as a sheet of frames (acpira-agent frames.rs): `gif` reads frame timing without decoding
+# pixels, `image` composites the frames, scales them and writes the PNG
+gif = "0.14"
+image = { version = "0.25", default-features = false, features = ["gif", "png"] }
 libc = "0.2"
 parking_lot = "0.12"
 # The built-in agent's `read` on a PDF: the text of each page (CID fonts through their ToUnicode maps)
