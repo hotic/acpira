@@ -169,6 +169,8 @@ mod tests {
     assert_eq!(Target::Typed { user: Some("u".into()), host: "h".into(), port: Some(2) }.args(), vec!["-p", "2", "--", "u@h"]);
   }
 
+  // The quoting is for the SSH host's shell; Windows has no /bin/sh to check it with
+  #[cfg(unix)]
   #[test]
   fn quoting_survives_any_shell_text() {
     assert_eq!(sh_quote("/home/u/x"), "/home/u/x");
