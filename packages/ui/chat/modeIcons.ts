@@ -1,4 +1,4 @@
-import { Bug, CircleDashed, Code, Eye, Infinity as InfinityIcon, ListTodo, MessageCircleQuestionMark, ShieldOff, Sparkles, Unplug, type LucideIcon } from 'lucide-react';
+import { Bug, CircleDashed, Code, Eye, FolderPen, Infinity as InfinityIcon, ListTodo, MessageCircleQuestionMark, ShieldOff, Sparkles, Unplug, type LucideIcon } from 'lucide-react';
 import type { MsgKey } from '@acpira/shared/i18n';
 import type { SessionOption } from '@acpira/shared/transcript';
 import { t } from '../i18n';
@@ -12,6 +12,8 @@ const RULES: [RegExp, LucideIcon][] = [
   [/debug/, Bug],
   [/plan/, ListTodo],
   [/read[\s-]?only/, Eye],
+  // Codex `workspace-write`: edits allowed inside the workspace only
+  [/workspace/, FolderPen],
   [/\bask\b|chat|question/, MessageCircleQuestionMark],
   [/smart|\bauto\b/, Sparkles],
   [/code|edit|build/, Code],
@@ -42,6 +44,7 @@ const SHORT: Record<string, MsgKey> = {
   yolo: 'composer.modeShort.full',
   'agent-full-access': 'composer.modeShort.full',
   'read-only': 'composer.modeShort.readOnly',
+  'workspace-write': 'composer.modeShort.workspace',
   ask: 'composer.modeShort.ask',
   code: 'composer.modeShort.code',
 };

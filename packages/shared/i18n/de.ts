@@ -353,6 +353,7 @@ export const de = {
   'composer.modeShort.ask': 'Fragen',
   'composer.modeShort.code': 'Code',
   'composer.modeShort.build': 'Build',
+  'composer.modeShort.workspace': 'Arbeitsbereich',
   'composer.effort': 'Denkaufwand',
   'composer.lead': 'Hauptmodell',
   'composer.sidekick': 'Helfer',

@@ -351,6 +351,7 @@ export const fr = {
   'composer.modeShort.ask': 'Questions',
   'composer.modeShort.code': 'Code',
   'composer.modeShort.build': 'Build',
+  'composer.modeShort.workspace': 'Espace de travail',
   'composer.effort': 'Effort de raisonnement',
   'composer.lead': 'Principal',
   'composer.sidekick': 'Assistant',

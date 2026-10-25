@@ -354,6 +354,7 @@ export const ko = {
   'composer.modeShort.ask': '질문',
   'composer.modeShort.code': '코드',
   'composer.modeShort.build': '빌드',
+  'composer.modeShort.workspace': '워크스페이스',
   'composer.effort': '추론 강도',
   'composer.standard': '표준',
   'composer.lead': '주 모델',
