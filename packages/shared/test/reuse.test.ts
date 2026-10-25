@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionView } from '../transcript';
-import { applySession, reuse } from '../reuse';
+import { applySession, reuse, reuseById } from '../reuse';
 
 const clone = <T>(value: T): T => structuredClone(value);
 
@@ -66,6 +66,33 @@ describe('reuse', () => {
     expect(reuse(previous, { list: [1, 2], value: { x: 1 } }).list).toEqual([1, 2]);
     expect(reuse(previous, { list: [1, 2, 3], value: 'text' }).value).toBe('text');
     expect(reuse(previous, { list: [1, 2, 3], value: null }).value).toBeNull();
+  });
+});
+
+describe('reuseById', () => {
+  const entry = (id: string, title = id) => ({ id, title, updatedAt: '2026-10-25' });
+
+  // The session list's memoized rows rely on this: a session added or removed at the top shifts every index
+  it('keeps unchanged entries by id when the list shifts', () => {
+    const previous = [entry('a'), entry('b'), entry('c')];
+    const added = reuseById(previous, clone([entry('n'), ...previous]));
+    expect(added.slice(1)).toEqual(previous);
+    added.slice(1).forEach((item, i) => expect(item).toBe(previous[i]));
+    const removed = reuseById(previous, clone(previous.slice(1)));
+    expect(removed[0]).toBe(previous[1]);
+    expect(removed[1]).toBe(previous[2]);
+  });
+
+  it('takes the new object for a changed entry and the previous array when nothing changed', () => {
+    const previous = [entry('a'), entry('b')];
+    const renamed = reuseById(previous, [entry('a', 'renamed'), entry('b')]);
+    expect(renamed[0]).toEqual(entry('a', 'renamed'));
+    expect(renamed[1]).toBe(previous[1]);
+    expect(reuseById(previous, clone(previous))).toBe(previous);
+    // Same entries in another order: a new array of the old objects
+    const swapped = reuseById(previous, clone([previous[1]!, previous[0]!]));
+    expect(swapped).not.toBe(previous);
+    expect(swapped[0]).toBe(previous[1]);
   });
 });
 

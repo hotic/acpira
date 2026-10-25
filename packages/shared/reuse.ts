@@ -28,6 +28,22 @@ export function reuse<T>(previous: T, next: T): T {
   return (same ? previous : out) as T;
 }
 
+// `reuse` for a list whose entries carry an id (the session list): entries are matched by id instead of position, so a
+// session added or removed at the top leaves every other entry its previous reference. The previous array comes back
+// when nothing in it changed
+export function reuseById<T extends { id: string }>(previous: readonly T[], next: T[]): T[] {
+  if (previous === next) return next;
+  const byId = new Map(previous.map(item => [item.id, item]));
+  let same = previous.length === next.length;
+  const out = next.map((item, index) => {
+    const old = byId.get(item.id);
+    const kept = old === undefined ? item : reuse(old, item);
+    if (kept !== previous[index]) same = false;
+    return kept;
+  });
+  return same ? (previous as T[]) : out;
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null) return false;
   const proto = Object.getPrototypeOf(value);

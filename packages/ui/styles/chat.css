@@ -95,6 +95,10 @@
 }
 
 @layer components {
+  /* Session list rows (SessionList's Item): a store lists hundreds of them, and the ones out of sight skip style, layout and
+     paint (a mark's 3D flip card is a compositor layer each) until they near the viewport. One row tall until laid out once */
+  [data-session] { content-visibility: auto; contain-intrinsic-block-size: auto var(--row); }
+
   /* Command / summon pill: margin and padding cancel, so glyphs stay where the composer's textarea has them */
   .prompt-mark {
     --mark-reach: max(0px, var(--mark-room, var(--mark-overhang)));
