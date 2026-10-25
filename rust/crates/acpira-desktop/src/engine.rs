@@ -246,6 +246,8 @@ mod tests {
     assert!(long.log.starts_with(&deep));
   }
 
+  // The key hashes a Unix path (the TypeScript client runs on macOS and Linux); Windows joins with backslashes
+  #[cfg(unix)]
   #[test]
   fn the_key_matches_the_typescript_client() {
     // engineEndpoint({ binary: '/nonexistent/acpira', home: '/h', shell: 'desktop' }) in packages/engine-client/engine.ts
