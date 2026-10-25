@@ -8,38 +8,48 @@ import { Disclosure } from '../ui/Disclosure';
 import { Row, RowLabel } from '../ui/Row';
 import { cn } from '../ui/cn';
 import { useScrollFade } from '../ui/useScrollFade';
+import { GoalHead, type GoalHeadProps } from './Goal';
 
 // Dock entries use balanced text padding; the header retains its full hit area.
 const dockEntryClass = 'min-h-[calc(var(--text-2-lh)+var(--plan-entry-pad-y)*2)] py-(--plan-entry-pad-y)';
 
 // Keep the current entry mounted while the surrounding rows expand. Sharing
 // the same row avoids a disappearing summary and a shrinking first frame.
-export function PlanCard({ entries, live }: { entries: PlanEntry[]; live?: boolean }) {
+// A session goal takes the head row (GoalHead: objective, time, controls, then the count and caret), so goal and to-dos
+// share one card; with a goal and no list the card is the goal line alone.
+export function PlanCard({ entries, live, goal }: { entries?: PlanEntry[]; live?: boolean; goal?: GoalHeadProps }) {
   const [open, setOpen] = useState(false);
   const fade = useScrollFade<HTMLDivElement>();
-  const done = entries.filter(e => e.status === 'completed').length;
-  const current = entries.find(e => e.status === 'in_progress') ?? entries.find(e => e.status === 'pending');
-  const lead = <ListTodo className="size-icon" strokeWidth={1.5} />;
+  const done = entries?.filter(e => e.status === 'completed').length ?? 0;
+  const current = entries?.find(e => e.status === 'in_progress') ?? entries?.find(e => e.status === 'pending');
+  const toggle = () => setOpen(o => !o);
+  const count = entries && <>
+    <span>{done}/{entries.length}</span>
+    <PlanCaret open={open} />
+  </>;
   return (
     <Card className="flex min-w-0 flex-col gap-(--plan-section-gap) px-pad py-(--plan-pad-y)" data-open={open || undefined}>
-      <Row
-        as="button" interactive dense aria-expanded={open} onClick={() => setOpen(o => !o)}
-        lead={lead}
-        trailing={<>
-          <span>{done}/{entries.length}</span>
-          <PlanCaret open={open} />
-        </>}
-      >
-        <RowLabel shimmer={live && !!current}>{t('plan.todoTitle')}</RowLabel>
-      </Row>
-      <div ref={fade} className="scroll-fade scroll-thin scroll-stable max-h-plan overflow-y-auto [--scroll-fade-size:var(--gap)] [overflow-anchor:none]">
-        <Collapsible.Root open={!open && !current}><Collapsible.Panel>
-          <Row className={cn('items-start lead-top', dockEntryClass)} dense lead={<PlanDot status="completed" />}>
-            <span className="text-fg-2">{t('plan.completed', { n: entries.length })}</span>
+      {goal
+        ? <GoalHead {...goal} toggle={entries && { open, onToggle: toggle, trailing: count }} />
+        : (
+          <Row
+            as="button" interactive dense aria-expanded={open} onClick={toggle}
+            lead={<ListTodo className="size-icon" strokeWidth={1.5} />}
+            trailing={count}
+          >
+            <RowLabel shimmer={live && !!current}>{t('plan.todoTitle')}</RowLabel>
           </Row>
-        </Collapsible.Panel></Collapsible.Root>
-        <PlanEntries entries={entries} expanded={open} current={current} entryClass={dockEntryClass} />
-      </div>
+        )}
+      {entries && (
+        <div ref={fade} className="scroll-fade scroll-thin scroll-stable max-h-plan overflow-y-auto [--scroll-fade-size:var(--gap)] [overflow-anchor:none]">
+          <Collapsible.Root open={!open && !current}><Collapsible.Panel>
+            <Row className={cn('items-start lead-top', dockEntryClass)} dense lead={<PlanDot status="completed" />}>
+              <span className="text-fg-2">{t('plan.completed', { n: entries.length })}</span>
+            </Row>
+          </Collapsible.Panel></Collapsible.Root>
+          <PlanEntries entries={entries} expanded={open} current={current} entryClass={dockEntryClass} />
+        </div>
+      )}
     </Card>
   );
 }
