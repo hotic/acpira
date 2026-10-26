@@ -31,10 +31,21 @@ impl Skill {
 pub const COMPACT: &str = "compact";
 const COMPACT_DESCRIPTION: &str = "Summarize the conversation so far to free context";
 
-/// Every skill, by name, the project's over the user's. Dot-names and folders without a SKILL.md are skipped
+/// Every skill, by name, the project's over the plugins' over the user's. Dot-names and folders without a SKILL.md are
+/// skipped
 pub fn scan(places: &Places) -> Vec<Skill> {
+  scan_roots(places, roots(places))
+}
+
+/// The skills of these folders alone, read from this disk (the plugins' `skills` folders, offered to agents that do not
+/// read them themselves)
+pub fn scan_dirs(dirs: &[PathBuf]) -> Vec<Skill> {
+  scan_roots(&Places::new(Path::new("/"), None), dirs.to_vec())
+}
+
+fn scan_roots(places: &Places, roots: Vec<PathBuf>) -> Vec<Skill> {
   let mut out: Vec<Skill> = vec![];
-  for root in roots(places) {
+  for root in roots {
     for dir in places.entries(&root, true) {
       let Some(folder) = dir.file_name().map(|n| n.to_string_lossy().into_owned()).filter(|n| !n.starts_with('.')) else { continue };
       let path = dir.join("SKILL.md");
@@ -56,12 +67,13 @@ pub fn scan(places: &Places) -> Vec<Skill> {
   out
 }
 
-/// The skill folders, the later winning: the user's, then the project's
+/// The skill folders, the later winning: the user's, the plugins', then the project's
 pub(crate) fn roots(places: &Places) -> Vec<PathBuf> {
   let mut roots = vec![];
   if let Some(h) = &places.home {
     roots.push(h.join(".agents").join("skills"));
   }
+  roots.extend(places.skill_layers.iter().cloned());
   if let Some(r) = places.root.as_ref().or(Some(&places.cwd)) {
     roots.push(r.join(".agents").join("skills"));
   }
@@ -145,6 +157,28 @@ pub fn expansion(mentions: &[(&Skill, String)]) -> String {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn a_plugins_skills_sit_between_the_users_and_the_projects() {
+    let dir = tempfile::tempdir().unwrap();
+    let (home, work, plugin) = (dir.path().join("home"), dir.path().join("work"), dir.path().join("plugin/skills"));
+    std::fs::create_dir_all(work.join(".git")).unwrap();
+    for (root, folder, text) in [
+      (home.join(".agents/skills"), "dig", "---\ndescription: user copy\n---\n"),
+      (plugin.clone(), "dig", "---\ndescription: plugin copy\n---\n"),
+      (plugin.clone(), "ship", "---\ndescription: plugin ship\n---\n"),
+      (work.join(".agents/skills"), "ship", "---\ndescription: project ship\n---\n"),
+    ] {
+      std::fs::create_dir_all(root.join(folder)).unwrap();
+      std::fs::write(root.join(folder).join("SKILL.md"), text).unwrap();
+    }
+    let skills = scan(&Places::new(&work, Some(&home)).with_skill_layers(vec![plugin.clone()]));
+    let seen: Vec<(&str, &str)> = skills.iter().map(|s| (s.name.as_str(), s.description.as_str())).collect();
+    assert_eq!(seen, [("dig", "plugin copy"), ("ship", "project ship")]);
+    // The plugin's folder alone, as agents that do not load skills are told of them
+    let only: Vec<String> = scan_dirs(&[plugin]).into_iter().map(|s| s.description).collect();
+    assert_eq!(only, ["plugin copy", "plugin ship"]);
+  }
 
   #[test]
   fn skills_are_scanned_mentioned_and_expanded() {

@@ -23,7 +23,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 
 use crate::plugins::host::Active;
-use crate::plugins::manifest::RuntimeDef;
+use crate::plugins::manifest::{CommandDef, RuntimeDef};
 use crate::store::transcript_store::LogFn;
 
 /// The protocol a process and the engine speak; `initialize` refuses any other
@@ -139,6 +139,39 @@ impl Worker {
   }
 }
 
+/// What the plugins in effect offer every session besides their processes: slash commands and skill folders. Kept on
+/// `Runtimes`, which sessions already hold, and replaced on every load (`PluginHost::reload`)
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Contributed {
+  /// In plugin id order; a name taken by an earlier plugin is skipped
+  pub commands: Vec<PluginCommand>,
+  /// The plugins' `skills` folders, in plugin id order
+  pub skills: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PluginCommand {
+  pub plugin: String,
+  pub def: CommandDef,
+}
+
+impl Contributed {
+  pub fn of(active: &[Arc<Active>]) -> Contributed {
+    let mut out = Contributed::default();
+    for a in active {
+      for c in &a.manifest.contributes.commands {
+        if !out.commands.iter().any(|x| x.def.name == c.name) {
+          out.commands.push(PluginCommand { plugin: a.id.clone(), def: c.clone() });
+        }
+      }
+      if let Some(dir) = a.manifest.contributes.skills.as_deref().and_then(|p| crate::plugins::manifest::inside(&a.dir, p)).filter(|d| d.is_dir()) {
+        out.skills.push(dir);
+      }
+    }
+    out
+  }
+}
+
 /// One answer of a hook call
 #[derive(Debug, Clone)]
 pub struct HookReply {
@@ -155,6 +188,9 @@ pub struct Runtimes {
   errors: parking_lot::RwLock<BTreeMap<String, String>>,
   restarts: parking_lot::Mutex<HashMap<String, (u32, Instant)>>,
   host_call: parking_lot::RwLock<Option<HostCall>>,
+  contributed: parking_lot::RwLock<Arc<Contributed>>,
+  /// Told when `contributed` changed (the session manager republishes the open sessions, whose menus list the commands)
+  on_contributed: parking_lot::RwLock<Option<Arc<dyn Fn() + Send + Sync>>>,
   /// Where a `prompt` hook's redirect starts its session (the session manager registers itself)
   redirect: parking_lot::RwLock<Option<crate::acp::session::plugin_hooks::RedirectFn>>,
   /// Off until the composition root turns it on: `acpira plugin list` and the tests of other parts start no process
@@ -174,6 +210,8 @@ impl Runtimes {
       restarts: Default::default(),
       host_call: Default::default(),
       redirect: Default::default(),
+      contributed: Default::default(),
+      on_contributed: Default::default(),
       enabled: AtomicBool::new(false),
       sync: Default::default(),
       data_root,
@@ -185,6 +223,34 @@ impl Runtimes {
   pub fn enable(&self, host_call: Option<HostCall>) {
     *self.host_call.write() = host_call;
     self.enabled.store(true, Ordering::Relaxed);
+  }
+
+  pub fn contributed(&self) -> Arc<Contributed> {
+    self.contributed.read().clone()
+  }
+
+  pub fn set_contributed(&self, next: Contributed) {
+    if **self.contributed.read() == next {
+      return;
+    }
+    *self.contributed.write() = Arc::new(next);
+    if let Some(f) = self.on_contributed.read().clone() {
+      f();
+    }
+  }
+
+  pub fn on_contributed(&self, f: Arc<dyn Fn() + Send + Sync>) {
+    *self.on_contributed.write() = Some(f);
+  }
+
+  /// Ask `plugin`'s process alone (a command it contributed); None when it does not answer `hook`
+  pub async fn hook_of(&self, plugin: &str, hook: &str, payload: Value) -> Option<Result<Value, String>> {
+    let w = self.workers.read().get(plugin).filter(|w| w.answers(hook)).cloned()?;
+    let r = w.call(&format!("hook/{hook}"), payload).await;
+    if let Err(e) = &r {
+      (self.log)(&format!("plugin {plugin}: hook {hook}: {e}"));
+    }
+    Some(r)
   }
 
   pub fn set_redirect(&self, f: crate::acp::session::plugin_hooks::RedirectFn) {

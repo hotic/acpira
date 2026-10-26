@@ -180,6 +180,10 @@ impl AcpSession {
         return;
       }
     };
+    if context.plugins.dropped {
+      self.plugin_dropped();
+      return;
+    }
     if let Some((plugin, agent)) = context.plugins.redirect {
       self.plugin_redirect(text, drafts, plugin, agent);
       return;

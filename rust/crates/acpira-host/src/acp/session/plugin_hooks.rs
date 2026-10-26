@@ -13,7 +13,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use acpira_shared::slash_commands::command_name;
-use acpira_shared::transcript::{Attachment, Draft, StrMap, Turn, TurnStop};
+use acpira_shared::transcript::{Attachment, CommandInput, Draft, SlashCommand, StrMap, Turn, TurnStop};
 
 use super::AcpSession;
 use super::attachments::encode_uri_component;
@@ -56,6 +56,8 @@ pub(crate) struct PromptOutcome {
   pub text: Option<String>,
   /// (plugin, agent): send the prompt there instead
   pub redirect: Option<(String, String)>,
+  /// A plugin's command its process answered without a prompt: nothing goes out
+  pub dropped: bool,
 }
 
 /// How the `permission` hooks judged a request
@@ -79,6 +81,31 @@ fn clipped(s: &str) -> String {
   s.get(..end).unwrap_or_default().to_owned()
 }
 
+/// A command's template with `$ARGUMENTS` replaced, or the arguments after it when the template has no placeholder
+fn expand(template: &str, args: &str) -> String {
+  if template.contains("$ARGUMENTS") {
+    template.replace("$ARGUMENTS", args)
+  } else if args.is_empty() {
+    template.to_owned()
+  } else {
+    format!("{template}\n\n{args}")
+  }
+}
+
+/// The plugins' skills for an agent that does not load them itself: what each is for and where its instructions are
+fn skills_block(dirs: &[std::path::PathBuf]) -> Option<Value> {
+  let skills = acpira_agent::skills::scan_dirs(dirs);
+  if skills.is_empty() {
+    return None;
+  }
+  let mut text = String::from("<plugin-skills>\nSkills from Acpira's plugins. When a task matches one, read its SKILL.md first and follow it.\n");
+  for s in &skills {
+    text.push_str(&format!("- {}: {} ({})\n", s.name, s.description, s.path.display()));
+  }
+  text.push_str("</plugin-skills>");
+  Some(json!({ "type": "text", "text": text }))
+}
+
 fn text_of<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
   v.get(key).and_then(Value::as_str).filter(|s| !s.trim().is_empty())
 }
@@ -97,14 +124,33 @@ impl AcpSession {
   /// `{ text?, context?, attachments?, block?, redirect? }`: `text` replaces what the agent reads, `context` and
   /// `attachments` (`[{ name, text }]`) ride behind it, `block` keeps the prompt back with that reason, `redirect`
   /// (an agent id) sends it to a new session of that agent. Err(reason): blocked
-  pub(crate) async fn plugin_prompt(&self, origin: Origin, text: &str, attachments: &[Attachment], first: bool, tail: &mut Vec<Value>) -> Result<PromptOutcome, String> {
+  pub(crate) async fn plugin_prompt(&self, origin: Origin, user_text: &str, attachments: &[Attachment], first: bool, tail: &mut Vec<Value>) -> Result<PromptOutcome, String> {
     let redirected = std::mem::take(&mut self.core.lock().plugin_state.redirected);
     if !matches!(origin, Origin::User | Origin::Goal) {
       return Ok(PromptOutcome::default());
     }
-    let Some(rt) = self.deps.plugin_runtime.clone().filter(|rt| rt.has_hook("prompt")) else { return Ok(PromptOutcome::default()) };
-    let embedded = self.caps(&self.core.lock()).embedded_context;
+    let Some(rt) = self.deps.plugin_runtime.clone() else { return Ok(PromptOutcome::default()) };
+    // A plugin's slash command: its prompt goes out in the command's place (the bubble keeps `/name …`)
+    let expanded = match self.plugin_command(user_text).await {
+      Some(Ok(Some(t))) => Some(t),
+      Some(Ok(None)) => return Ok(PromptOutcome { dropped: true, ..Default::default() }),
+      Some(Err(reason)) => return Err(reason),
+      None => None,
+    };
+    let text = expanded.as_deref().unwrap_or(user_text);
     let command = command_name(text).is_some();
+    // The plugins' skills, offered once to an agent that does not load them itself
+    if first
+      && !command
+      && self.agent != crate::acp::agents::registry::SELF_AGENT_ID
+      && let Some(block) = skills_block(&rt.contributed().skills)
+    {
+      tail.push(block);
+    }
+    if !rt.has_hook("prompt") {
+      return Ok(PromptOutcome { text: expanded, ..Default::default() });
+    }
+    let embedded = self.caps(&self.core.lock()).embedded_context;
     let payload = self.plugin_payload(json!({
       "origin": if origin == Origin::Goal { "goal" } else { "user" },
       "text": text,
@@ -158,11 +204,62 @@ impl AcpSession {
     if let Some(reason) = blocked {
       return Err(reason);
     }
-    let rewritten = out.get("text").and_then(Value::as_str).filter(|t| *t != text).map(str::to_owned);
+    let rewritten = out.get("text").and_then(Value::as_str).filter(|t| *t != user_text).map(str::to_owned);
     if let Some(t) = &rewritten {
-      self.log(&format!("plugins: prompt rewritten ({} → {} bytes)", text.len(), t.len()));
+      self.log(&format!("plugins: prompt rewritten ({} → {} bytes)", user_text.len(), t.len()));
     }
-    Ok(PromptOutcome { text: rewritten, redirect })
+    Ok(PromptOutcome { text: rewritten, redirect, dropped: false })
+  }
+
+  /// The menu's commands with the plugins' after the agent's own (an agent's command of the same name wins); None when
+  /// no plugin adds one
+  pub(crate) fn plugin_commands(&self, own: &[SlashCommand]) -> Option<Vec<SlashCommand>> {
+    let contributed = self.deps.plugin_runtime.as_ref()?.contributed();
+    let extra: Vec<SlashCommand> = contributed
+      .commands
+      .iter()
+      .filter(|c| !own.iter().any(|o| o.name == c.def.name))
+      .map(|c| SlashCommand { name: c.def.name.clone(), description: c.def.description.clone(), input: c.def.hint.clone().map(|hint| CommandInput { hint }) })
+      .collect();
+    if extra.is_empty() {
+      return None;
+    }
+    let mut all = own.to_vec();
+    all.extend(extra);
+    Some(all)
+  }
+
+  /// `/name …` naming a plugin's command (and none of the agent's): Some(Ok(Some(text))) is the prompt to send in its
+  /// place, Some(Ok(None)) its process answered without one, Some(Err) the reason nothing was sent
+  async fn plugin_command(&self, text: &str) -> Option<Result<Option<String>, String>> {
+    let rt = self.deps.plugin_runtime.clone()?;
+    let name = command_name(text)?.to_owned();
+    if self.core.lock().state.commands.iter().any(|c| c.name == name) {
+      return None;
+    }
+    let contributed = rt.contributed();
+    let cmd = contributed.commands.iter().find(|c| c.def.name == name)?;
+    let args = text.get(name.len() + 1..).unwrap_or_default().trim();
+    if let Some(template) = cmd.def.prompt.as_deref().filter(|p| !p.trim().is_empty()) {
+      return Some(Ok(Some(expand(template, args))));
+    }
+    let payload = self.plugin_payload(json!({ "name": name, "arguments": args }));
+    Some(match rt.hook_of(&cmd.plugin, "command", payload).await {
+      None => Err(format!("{}: /{name} needs its process, which is not running", cmd.plugin)),
+      Some(Err(e)) => Err(format!("{}: {e}", cmd.plugin)),
+      Some(Ok(answer)) => Ok(answer.get("text").and_then(Value::as_str).filter(|t| !t.trim().is_empty()).map(clipped)),
+    })
+  }
+
+  /// A plugin's command its process answered without a prompt: the claim is undone and the queue moves on
+  pub(crate) fn plugin_dropped(self: &Arc<Self>) {
+    let mut c = self.core.lock();
+    c.phase.staging = false;
+    c.phase.running = false;
+    self.touch(&mut c);
+    drop(c);
+    self.log("plugins: command answered without a prompt");
+    self.flush_queue();
   }
 
   /// This session's next prompt came from another session's plugin and is not sent on again

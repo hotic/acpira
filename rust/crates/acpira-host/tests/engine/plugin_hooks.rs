@@ -43,6 +43,7 @@ const answer = (method, p) => {
     case 'hook/tool.before':
       if (p.arguments.cwd === '/blocked') return { block: 'not this one' };
       return { arguments: { ...p.arguments, cwd: '/from-plugin' } };
+    case 'hook/command': return p.name === 'ping' ? { text: 'echo-text pong ' + p.arguments } : {};
     case 'hook/tool.after': return { result: { content: [{ type: 'text', text: 'AFTER:' + p.result.content[0].text }], isError: false } };
   }
   return null;
@@ -188,5 +189,64 @@ async fn a_plugin_changes_and_refuses_calls_to_acpiras_own_tools() {
   assert_eq!(reply["result"]["isError"], true, "{reply}");
   assert!(reply["result"]["content"][0]["text"].as_str().is_some_and(|t| t.contains("hooker: not this one")), "{reply}");
   assert_eq!(calls(plugins.path(), "hook/tool.after").len(), 1);
+  rt.stop_all().await;
+}
+
+fn command(plugin: &str, name: &str, prompt: Option<&str>) -> acpira_host::plugins::runtime::PluginCommand {
+  let def = serde_json::from_value(json!({ "name": name, "description": format!("{name} it"), "prompt": prompt })).unwrap();
+  acpira_host::plugins::runtime::PluginCommand { plugin: plugin.into(), def }
+}
+
+fn menu(view: &Value) -> Vec<String> {
+  view["commands"].as_array().into_iter().flatten().filter_map(|c| c["name"].as_str().map(str::to_owned)).collect()
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugins_commands_join_every_menu_and_its_skills_reach_an_agent_that_does_not_load_them() {
+  use acpira_host::plugins::runtime::Contributed;
+  let fake = fake_or_skip!();
+  if !acpira_host::plugins::host::on_path("node") {
+    return;
+  }
+  let dir = tempfile::tempdir().unwrap();
+  let plugins = tempfile::tempdir().unwrap();
+  let rt = crate::acp_session::plugin_runtime::plugin(plugins.path(), "hooker", HOOKER, &[], &["command"]).await;
+  let skills = plugins.path().join("hooker/skills");
+  std::fs::create_dir_all(skills.join("demo")).unwrap();
+  std::fs::write(skills.join("demo/SKILL.md"), "---\nname: demo\ndescription: Do demo things\n---\nSteps.\n").unwrap();
+  let commands = vec![command("hooker", "review", Some("echo-text Please review $ARGUMENTS")), command("hooker", "ping", None), command("hooker", "quiet", None)];
+  rt.set_contributed(Contributed { commands: commands.clone(), skills: vec![skills.clone()] });
+  let mut opts = Opts::fake(&fake);
+  opts.plugin_runtime = Some(rt.clone());
+  let m = Mgr::new(dir.path(), opts);
+  m.init().await;
+  m.new_session(None).await;
+  let id = m.active_id().unwrap();
+  until(|| m.view_of(&id).is_some_and(|v| menu(&v).contains(&"review".to_owned())), 5000).await;
+  assert!(["ping", "quiet"].iter().all(|c| menu(&m.view_of(&id).unwrap()).contains(&c.to_string())));
+
+  // The template goes out in the command's place; the first prompt also tells of the plugin's skills
+  m.handle(json!({ "type": "send", "text": "/review src/x.rs" })).await;
+  let view = m.view_of(&id).unwrap();
+  let reply = last_agent_text(&view);
+  assert!(reply.starts_with("echo-text Please review src/x.rs"), "{reply}");
+  assert!(reply.contains("<plugin-skills>") && reply.contains("- demo: Do demo things") && reply.contains("demo/SKILL.md"), "{reply}");
+  assert_eq!(view["turns"][0]["text"], "/review src/x.rs");
+  // The process answers a command without a template; an answer without a prompt sends nothing
+  m.handle(json!({ "type": "send", "text": "/ping now" })).await;
+  let reply = last_agent_text(&m.view_of(&id).unwrap());
+  assert_eq!(reply, "echo-text pong now");
+  let before = turns(&m.view_of(&id).unwrap());
+  m.handle(json!({ "type": "send", "text": "/quiet" })).await;
+  assert_eq!(turns(&m.view_of(&id).unwrap()), before);
+  assert_eq!(calls(plugins.path(), "hook/command").len(), 2);
+
+  // A command added while the session is open shows in its menu at once
+  let mut more = commands;
+  more.push(command("hooker", "later", Some("echo-text later")));
+  rt.set_contributed(Contributed { commands: more, skills: vec![skills] });
+  until(|| m.view_of(&id).is_some_and(|v| menu(&v).contains(&"later".to_owned())), 5000).await;
+  m.dispose().await;
   rt.stop_all().await;
 }

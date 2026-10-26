@@ -520,8 +520,17 @@ impl SessionManager {
         }
       }));
     }
-    // A plugin's `prompt` hook sends a prompt to another agent: a new session for it, here
+    // A plugin's `prompt` hook sends a prompt to another agent: a new session for it, here. The plugins' commands
+    // changed: every open session's menu shows them
     if let Some(rt) = &mgr.deps.plugin_runtime {
+      let menus = mgr.me.clone();
+      rt.on_contributed(Arc::new(move || {
+        if let Some(m) = menus.upgrade() {
+          for s in m.live_sessions() {
+            s.republish();
+          }
+        }
+      }));
       let me = mgr.me.clone();
       rt.set_redirect(Arc::new(move |r| {
         let me = me.clone();

@@ -106,19 +106,33 @@ pub struct Session {
   pub mcp: Arc<crate::mcp::Hub>,
   /// The SSH host the session's folder is on (`remote.rs`); its project tools run there
   pub remote: Option<Arc<crate::remote::Remote>>,
-  /// The plugins' prompt folders as the engine sent them when the session opened (`LAYERS_META`)
-  pub layers: Vec<PathBuf>,
+  /// The plugins' prompt and skill folders as the engine sent them when the session opened (`LAYERS_META`, `SKILLS_META`)
+  pub layers: Layers,
+}
+
+/// The plugins' folders a session reads besides the user's and the project's
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Layers {
+  /// Prompt sections, one more override layer of the system prompt
+  pub prompts: Vec<PathBuf>,
+  /// Skill folders (`<name>/SKILL.md`), between the user's skills and the project's
+  pub skills: Vec<PathBuf>,
 }
 
 /// `_meta` key of session/new, load and resume: the prompt folders of the engine's plugins in effect, one more override
 /// layer of the system prompt (`prompt::Places::layers`). Taken when the session opens, so a plugin enabled during the
 /// session changes nothing before the next one
 pub const LAYERS_META: &str = "acpira/promptLayers";
+/// `_meta` key of the same requests: the skill folders of the engine's plugins in effect, taken the same way
+pub const SKILLS_META: &str = "acpira/skillLayers";
 
-/// The prompt folders a session request carries
-fn layers_of(params: &Value) -> Vec<PathBuf> {
-  let key = format!("/_meta/{}", LAYERS_META.replace('/', "~1"));
-  params.pointer(&key).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(PathBuf::from).collect()).unwrap_or_default()
+/// The plugin folders a session request carries
+fn layers_of(params: &Value) -> Layers {
+  let list = |meta: &str| {
+    let key = format!("/_meta/{}", meta.replace('/', "~1"));
+    params.pointer(&key).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(PathBuf::from).collect()).unwrap_or_default()
+  };
+  Layers { prompts: list(LAYERS_META), skills: list(SKILLS_META) }
 }
 
 impl Session {
@@ -195,11 +209,11 @@ impl Server {
   /// machine's: the same path here may hold another project, so nothing of it is read from this disk, only what the
   /// host sent when the session opened
   pub fn places(&self, cwd: &std::path::Path, remote: Option<&crate::remote::Remote>) -> crate::prompt::Places {
-    self.places_of(cwd, remote, vec![])
+    self.places_of(cwd, remote, Layers::default())
   }
 
   /// `places` with the session's plugin prompt folders (`LAYERS_META`)
-  pub fn places_of(&self, cwd: &std::path::Path, remote: Option<&crate::remote::Remote>, layers: Vec<PathBuf>) -> crate::prompt::Places {
+  pub fn places_of(&self, cwd: &std::path::Path, remote: Option<&crate::remote::Remote>, layers: Layers) -> crate::prompt::Places {
     let places = match remote {
       Some(r) => match &r.files {
         Some(files) => crate::prompt::Places::on_host(cwd, files.clone()),
@@ -207,7 +221,7 @@ impl Server {
       },
       None => crate::prompt::Places::new(cwd, crate::turn::user_home().as_deref()),
     };
-    places.with_layers(layers)
+    places.with_layers(layers.prompts).with_skill_layers(layers.skills)
   }
 
   /// The folder processes of the session start in here (MCP servers): the session folder, or for a folder on an SSH
@@ -496,7 +510,7 @@ impl Server {
       .max()
       .unwrap_or(0);
     let mcp = crate::mcp::Hub::start(mcp_servers, &self.process_dir(&cwd, remote.is_some()));
-    Session { id: id.to_owned(), cwd, state: parking_lot::Mutex::new(st), store, tool_seq: AtomicU64::new(seq), jobs: Default::default(), mcp, remote, layers: vec![] }
+    Session { id: id.to_owned(), cwd, state: parking_lot::Mutex::new(st), store, tool_seq: AtomicU64::new(seq), jobs: Default::default(), mcp, remote, layers: Layers::default() }
   }
 
   /// `session/list`: this data root's sessions with at least one message, newest first, filtered by `cwd` when given

@@ -234,6 +234,7 @@ impl PluginHost {
     };
     *self.loaded.write() = Arc::new(next);
     if !same {
+      self.runtimes.set_contributed(crate::plugins::runtime::Contributed::of(&self.loaded.read().active));
       self.sync_runtimes();
       self.notify();
     }

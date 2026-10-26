@@ -21,6 +21,23 @@ A plugin is a folder `{root}/<id>/` holding a `plugin.json` and its files. It ex
   - `theme`: `{ "tokens": { "--bg-0": "#1b1a18" }, "css": "theme.css" }`. Tokens a theme may set: {tokens}. Applied at once.
   - `prompts`: a folder of prompt sections for Acpira's own agent, the shape of `~/.agents/acpira/prompts/`; new sessions.
   - `agent`: `{ "name", "command", "args", "env" }`, one more ACP agent under the plugin's id (an `agents.json` entry of that id wins); `command` and the placeholders as in `mcp`; new sessions.
+  - `skills`: a folder of `<name>/SKILL.md` (frontmatter `name`, `description`). Acpira's own agent lists and loads them like the user's; every other agent is told of them on a session's first prompt. New sessions.
+  - `commands`: `[{ "name", "description", "hint", "prompt" }]`, slash commands in every session's menu at once. `/name args` sends `prompt` with `$ARGUMENTS` replaced (appended without one); a command without `prompt` is answered by the runtime's `command` hook. An agent's own command of the same name wins.
+  - `runtime`: `{ "command" (argv), "hooks": [...], "events": [...], "timeout" (s, at most 10) }`, a process Acpira keeps running while the plugin is on. See below.
+
+## Resident process (`runtime`)
+
+- ndjson JSON-RPC 2.0 on stdin / stdout, one message per line; stderr goes to Acpira's log. Exit when stdin closes.
+- First `initialize` `{ protocolVersion: 1, plugin: { id, version, dir, data }, hooks, events }`: answer `{ "protocolVersion": 1 }` within 10 s. `plugin.data` is a writable folder of the plugin's own.
+- Hooks are requests `hook/<name>`; answer an object, or null for no opinion, within `timeout`. Every payload has `session`, `agent`, `cwd`. Only the hooks you list are called:
+  - `prompt` `{ text, attachments, origin, first, command }` → `{ text }` (what the agent reads), `{ context }`, `{ attachments: [{ name, text }] }`, `{ block: reason }`, `{ redirect: "<agent id>" }`.
+  - `permission` `{ toolCall, options, row, autoApprove }` → `{ decision: "deny", reason }` or `{ decision: "ask" }` (a card even under yolo). Approving is not possible.
+  - `retry` `{ error, attempt, max }` → `{ retry: true, delayMs }`. `title` `{ title, source, prompt }` → `{ title }`.
+  - `session.mcp` `{ servers }` → `{ servers }`. `agent.launch` `{ command, args, env }` → `{ args, env }` (a null value drops a variable).
+  - `tool.before` `{ tool, arguments }` → `{ arguments }` or `{ block }`; `tool.after` `{ tool, arguments, result }` → `{ result }`: Acpira's own MCP tools.
+  - `command` `{ name, arguments }` → `{ text }` to send, or `{}` to send nothing.
+- Events are notifications `event` `{ type, at, data }` for what `events` lists (`turn.*`, `tool.*`, `session.*`, `permission.*`, `files.changed`, `usage.updated`, `model.*`, `plugin.changed`, `*`; `text.delta` / `thought.delta` only by name).
+- Requests to Acpira: `storage/get|set|delete|list` (`{ key, value }`, 1 MB per plugin), `session/list`, `session/get` `{ session, turns }`, `session/act` `{ message }` (a page message such as `{ "type": "send", "sessionId", "text" }`, `renameSession`, `newSession`, `setMode`; never answering a permission or question card), `ui/toast` `{ text, level }`, `ui/ask` `{ session, questions, message }` (a question card naming the plugin), `model/generate` `{ prompt, system, model, maxTokens }` (one call through Acpira's own agent's models).
 
 ## Script tools
 
@@ -65,6 +82,28 @@ A hook that keeps lock files from being edited, `{root}/no-lockfiles/plugin.json
 ```sh
 grep -q '\.lock"' && { echo "lock files are generated, not edited" >&2; exit 2; }
 exit 0
+```
+
+A resident process that refuses `rm -rf` for every agent and counts finished turns, `{root}/guard/plugin.json` and `guard.mjs` (node, no dependencies):
+
+```json
+{ "schema": 1, "id": "guard", "version": "0.1.0", "description": "No rm -rf, and a turn count", "requires": ["node"],
+  "contributes": { "runtime": { "command": ["node", "guard.mjs"], "hooks": ["permission"], "events": ["turn.ended"] } } }
+```
+
+```js
+import { createInterface } from 'node:readline';
+const send = m => process.stdout.write(JSON.stringify(m) + '\n');
+let next = 1, turns = 0;
+createInterface({ input: process.stdin }).on('line', line => {
+  const m = JSON.parse(line);
+  if (m.method === 'initialize') return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: 1 } });
+  if (m.method === 'hook/permission') {
+    const cmd = JSON.stringify(m.params.toolCall?.rawInput ?? {});
+    return send({ jsonrpc: '2.0', id: m.id, result: /rm\s+-rf/.test(cmd) ? { decision: 'deny', reason: 'rm -rf is off' } : null });
+  }
+  if (m.method === 'event' && m.params.type === 'turn.ended') send({ jsonrpc: '2.0', id: next++, method: 'storage/set', params: { key: 'turns', value: ++turns } });
+}).on('close', () => process.exit(0));
 ```
 "##;
 
