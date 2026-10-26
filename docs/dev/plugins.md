@@ -74,6 +74,7 @@ What each kind does and when it takes effect:
 - `skills`: a folder of `<name>/SKILL.md` folders inside the plugin. The built-in agent gets the folders of the plugins in effect in `_meta["acpira/skillLayers"]` (`acpira_agent::acp::SKILLS_META`) and lists and loads them like the user's, between the user's skills and the project's (`skills::roots`). Every other agent gets a `<plugin-skills>` block behind its session's first prompt naming each skill, what it is for and its `SKILL.md` in the frozen copy, which the agent reads itself (nothing is linked into a CLI's own skills folder). New sessions. The static check wants the folder.
 - `commands`: `[{ "name", "description", "hint", "prompt" }]`, slash commands every session's menu lists after the agent's own (`AcpSession::plugin_commands`; an agent's command of the same name wins, and between plugins the first in id order). At once: a change republishes the open sessions (`Runtimes::set_contributed`). `/name args` keeps its bubble and sends `prompt` with `$ARGUMENTS` replaced (the arguments appended when the template has none); without `prompt` the plugin's runtime answers the `command` hook with `{ text }` to send or `{}` to send nothing. Expanded before the `prompt` hook sees it. `name` is `[a-z][a-z0-9_-]*`, at most 24 characters; the static check wants a `prompt` or a runtime declaring `command`.
 - `providers`: model sources for Acpira's built-in agent, each in the shape of a `providers.json` source (`id`, `name`, `format`, `baseUrl`, `fullUrl`, `headers`, `models`) plus `keyEnv`, the environment variable holding its key. A key in the file is refused (`apiKey` / `key`); a key stored in the vault under the source's id comes first, and a `model.request` hook can add per-call headers (an OAuth token). The engine writes the sources of the plugins in effect, then those processes set with `providers/set`, to `plugins/providers.json` under the data root on every load (`Runtimes::write_providers`, only when the content changes, tmp + rename under one lock); the agent re-reads it with `providers.json` and `secrets.json` (`config.rs` `merge_plugin_sources`) and lists the models after the user's, so they reach the model picker of the next session and `model/generate`. An id the user's file has, or an earlier plugin took, is skipped. The settings page does not list them yet (unverified there, and the fast-model pick reads only the user's file). `id` follows the plugin id rules (no `/`, picks are `<source>/<model>`); the static check wants a known `format`, a `baseUrl` and at least one model with an `id`.
+- `ui`: `[{ "id", "slot", "title", "html" }]`, interface pieces (Interface below). At once, on every page; dropped in safe mode. The static check wants a known slot, a unique id and an HTML file of the plugin of at most 256 KB.
 - `agent`: `{ "name", "command", "args", "env" }`, one more ACP agent in the registry under the plugin's id, merged as `agents.json` is (`runtime.rs` `registry_of`): an `agents.json` entry of the same id wins, and a built-in agent's id is never taken. A `command` naming a plugin file runs from the frozen copy, with the placeholders and environment of `mcp`. The registry is rebuilt within a second of a change (the config poll). New sessions. The static check wants a `command` that is a plugin file or on PATH.
 
 ## Script tools
@@ -106,7 +107,7 @@ What each kind does and when it takes effect:
 
 - `plugin()` answers `initialize` with the hooks it registered (narrowing the manifest's, never widening), routes `hook/<name>`, `rpc/<name>` and `event` to `hook()`, `method()` and `on()` (exact names, `family.*`, `*`; deltas only by name), aborts a handler's `signal` on `$/cancel_request` without answering, runs `onClose()` handlers on `shutdown` or a closed stdin and exits.
 - `console.log` / `info` / `debug` go to stderr, the engine log, since stdout is the wire (`keepConsole` leaves them).
-- Engine calls: `storage`, `session` (`send` is `session/act` with a send message), `ui`, `model.generate`, `providers.set`, `call` (`plugin/call`), `log`, `request` for anything else; an error answer rejects with the engine's message.
+- Engine calls: `storage`, `session` (`send` is `session/act` with a send message), `ui` (`toast`, `ask`, `post`, `composer`), `model.generate`, `providers.set`, `call` (`plugin/call`), `log`, `request` for anything else; an error answer rejects with the engine's message.
 - Tested by running a scaffolded folder unchanged (`runtime.rs` `a_scaffolded_runtime_answers_hooks_events_and_methods_through_the_sdk`). No Python SDK yet.
 
 ## Events
@@ -141,6 +142,8 @@ What a runtime may ask of the engine beyond its store (`plugins/host_api.rs`), r
 | `session/act` | `message`: a page message | `active`: the session the plugin's viewer has open |
 | `ui/toast` | `text` (cut at 500 characters), `level?` (`info`, `warning`, `error`) | `{}` |
 | `ui/ask` | `session`, `questions` (the question card's `Question`s), `message?`, `waitSecs?` (300, at most 25 minutes) | the card's answer (`answers`, `skipped`, `cancelled`), or `timedOut` when the wait passed and the card was withdrawn |
+| `ui/post` | `message`: any JSON | `pages`: how many pages of this engine took it. The page hands it to this plugin's frames only (`HostMsg pluginPost`) |
+| `ui/composer` | `text` (cut at 100 000 characters), `replace?` (false) | `pages`. Text into the composer of the session on screen, at the cursor or in place of the draft (`HostMsg pluginComposer`); never sent by itself |
 | `plugin/call` | `plugin`, `method`, `params?` | what that plugin's `rpc/<method>` answered (Runtime, Methods) |
 | `providers/set` | `providers`: sources in the shape of `contributes.providers` | `providers`: how many were taken. Replaces what this plugin's process contributed before (a gateway's model list fetched at start); every source is checked as a manifest's, one bad source refuses the call. Dropped when the plugin leaves |
 | `model/generate` | `prompt`, `system?`, `model?`, `maxTokens?` (2048) | `text`, `model`, `usage` (`input`, `output`): one call through the built-in agent's model sources (its `providers.json` and keys), the named model, else its fast model, else its default; 120 s at most |
@@ -183,6 +186,18 @@ Hooks into Acpira's own agent loop (`acpira-agent/src/plugin_hooks.rs`), declare
 
 The Acpira MCP server's `tool.before` / `tool.after` are not asked for a built-in agent session: its own hooks see those calls too. A restarted agent process picks a session up again with session/load, so a plugin swaps the loop's code by `session/act` `{ "type": "reconnect" }` once a new binary is in place.
 
+## Interface
+
+`contributes.ui` puts a plugin's HTML into one of the page's slots (`acpira_shared::plugins::UI_SLOTS`): `composer.above`, `composer.toolbar`, `session.panel`, `sidebar`, `statusbar`, `start`, `message.actions`, `panel.tab`, `page`. The engine reads each document from the frozen copy (`PluginHost::ui_slots`) and sends `HostMsg pluginUi { slots: [{ plugin, id, slot, title, html }] }` after every init and whenever the pieces change, like the theme layer (`bridge_core.rs` `push_ui`); an empty list takes them away, and safe mode sends one. Plugin code never runs in the page itself.
+
+The page side is not built yet; the contract it is to keep:
+
+- Each piece renders in an `<iframe sandbox="allow-scripts">` (no `allow-same-origin`, so it reaches neither the page's storage nor its DOM) with `srcdoc` set to `html`, the page's theme tokens set on the frame's root, and a CSP without network access beyond what the plugin's runtime fetches for it.
+- Frame to page, `postMessage({ acpira: 1, type: "call", id, method, params })`: the page sends `pluginCall` for the frame's own plugin only and answers `{ acpira: 1, type: "result", id, result }` or `{ …, error }` from `pluginCalled`. A frame cannot name another plugin; its runtime can (`plugin/call`).
+- Page to frame: `{ acpira: 1, type: "message", message }` for each `pluginPost` of its plugin, and `{ acpira: 1, type: "context", session, theme }` when the session on screen or the appearance changes (read-only state).
+- `pluginComposer` goes to the composer of the session on screen; a `message.actions` piece is also told which message it sits on.
+- Toasts come from the runtime's `ui/toast`, questions from `ui/ask`; a key binding or palette entry is a `commands` entry until the page grows its own.
+
 ## Parity with OpenCode
 
 Checked against OpenCode's V2 plugin interface (`@opencode/plugin` 2.1.4 on its `dev` branch, commit `ed74ec82`, read 2026-10-26; its published docs and the 1.18.15 CLI are still V1). "All agents" means every ACP agent Acpira drives; an external CLI's own loop is not Acpira's, so what happens inside it is reachable only through the ACP wire, Acpira's MCP tools and the agent's launch. Engine tests are under `rust/crates/acpira-host/tests/engine/` unless named otherwise.
@@ -212,7 +227,8 @@ Checked against OpenCode's V2 plugin interface (`@opencode/plugin` 2.1.4 on its 
 | `websearch` | `websearch` | built-in | `a_plugin_reshapes_every_request…` |
 | `rpc.register` | `methods`, `plugin/call`, `pluginCall` | all | `runtime.rs` `a_runtime_offers_its_declared_methods…`, `test/pluginRpc.test.ts` |
 | theme (read only) | `theme` registers tokens and a style sheet | interface | `host.rs` `a_theme_becomes_one_style_layer…` |
-| TUI slots, panels, routes, dialogs, key bindings, code block renderers, toasts and sounds | `ui/toast` only; the slots run in sandboxed frames that call `pluginCall` | interface | not built (the interface track) |
+| TUI slots, panels, routes | `ui` pieces in nine slots, a tool panel tab and a page among them; `ui/post`, `ui/composer`, `pluginCall` | interface | engine and wire: `test/pluginRpc.test.ts`; the page's frames not built |
+| dialogs, key bindings, palette, code block renderers, toasts and sounds | `ui/ask` for dialogs, `ui/toast`, `commands` for the palette | interface | renderers, key bindings and sounds not built |
 | `vcs` / `worktree` backends | none | none | not planned |
 | `http.*` / `ws.*` raw transport | none: headers through `model.request`, the request itself never | none | by design |
 

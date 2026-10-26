@@ -326,6 +326,25 @@ impl PluginHost {
     out
   }
 
+  /// The interface pieces of the plugins in effect, in id order, each document read from the frozen copy (none in
+  /// safe mode); a piece whose file is gone or too large is left out
+  pub fn ui_slots(&self) -> Vec<acpira_shared::plugins::PluginSlot> {
+    self.reload();
+    let mut out = vec![];
+    for a in &self.loaded().active {
+      for u in &a.manifest.contributes.ui {
+        let Some(path) = manifest::inside(&a.dir, &u.html) else { continue };
+        if std::fs::metadata(&path).map(|m| m.len()).unwrap_or(u64::MAX) > manifest::UI_HTML_MAX_BYTES {
+          continue;
+        }
+        let Ok(html) = std::fs::read_to_string(&path) else { continue };
+        let title = if u.title.trim().is_empty() { a.manifest.display_name().to_owned() } else { u.title.clone() };
+        out.push(acpira_shared::plugins::PluginSlot { plugin: a.id.clone(), id: u.id.clone(), slot: u.slot.clone(), title, html });
+      }
+    }
+    out
+  }
+
   /// The prompt folders of the plugins in effect, in id order: one more override layer of the built-in agent's system
   /// prompt, sent when a session opens (`acpira_agent::acp::LAYERS_META`)
   pub fn prompt_layers(&self) -> Vec<PathBuf> {

@@ -15,7 +15,7 @@ pub const NAME_MAX: usize = 24;
 pub const TOOL_TIMEOUT_SECS: f64 = 45.0;
 
 const KEYS: &[&str] = &["schema", "id", "version", "name", "description", "requires", "layer", "check", "contributes"];
-const CONTRIBUTION_KEYS: &[&str] = &["tools", "mcp", "hooks", "theme", "prompts", "agent", "runtime", "skills", "commands", "providers"];
+const CONTRIBUTION_KEYS: &[&str] = &["tools", "mcp", "hooks", "theme", "prompts", "agent", "runtime", "skills", "commands", "providers", "ui"];
 
 /// The hooks a plugin's resident process may declare (`contributes.runtime.hooks`, docs/dev/plugins.md, Runtime). The
 /// engine calls only those it implements; a name it does not know yet is a note, so a plugin written for a newer
@@ -98,7 +98,25 @@ pub struct Contributes {
   /// raw so the check can name what is wrong with each
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub providers: Vec<Value>,
+  /// Interface pieces: an HTML file shown in a sandboxed frame in one of the page's slots
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub ui: Vec<UiDef>,
 }
+
+/// `contributes.ui[]`: `html` is a file of the plugin, at most `UI_HTML_MAX_BYTES`, for the slot `slot`
+/// (`acpira_shared::plugins::UI_SLOTS`)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiDef {
+  pub id: String,
+  pub slot: String,
+  #[serde(default)]
+  pub title: String,
+  pub html: String,
+}
+
+/// Largest interface document; it travels to every page
+pub const UI_HTML_MAX_BYTES: u64 = 256 * 1024;
 
 /// `contributes.commands[]`: `/name` in the composer of every session. `prompt` is sent in its place with `$ARGUMENTS`
 /// replaced by what follows the name (appended when the template has no `$ARGUMENTS`); without one the runtime's
@@ -183,6 +201,9 @@ impl Contributes {
     if !self.providers.is_empty() {
       out.push("providers");
     }
+    if !self.ui.is_empty() {
+      out.push("ui");
+    }
     out
   }
 }
@@ -237,7 +258,7 @@ impl Manifest {
     }
     match self.contributes.kinds().first().copied() {
       Some("agent" | "providers") => "agents",
-      Some("theme") => "interface",
+      Some("theme" | "ui") => "interface",
       Some("hooks" | "runtime") => "automation",
       _ => "tools",
     }
@@ -451,6 +472,24 @@ pub fn check(m: &Manifest, folder_id: &str, dir: &Path, which: &dyn Fn(&str) -> 
     }
     if c.prompt.as_deref().is_none_or(|p| p.trim().is_empty()) && !hooked {
       err(findings, format!("{at}: needs a `prompt`, or a runtime that answers the `command` hook"));
+    }
+  }
+  let mut pieces = std::collections::HashSet::new();
+  for u in &m.contributes.ui {
+    let at = format!("ui `{}`", u.id);
+    if !valid_command_name(&u.id) {
+      err(findings, format!("{at}: the id must be lowercase letters, digits, `-` and `_`, starting with a letter, at most {NAME_MAX} characters"));
+    }
+    if !pieces.insert(u.id.as_str()) {
+      err(findings, format!("{at} is declared twice"));
+    }
+    if !acpira_shared::plugins::UI_SLOTS.contains(&u.slot.as_str()) {
+      err(findings, format!("{at}: slot `{}` is not one of {}", u.slot, acpira_shared::plugins::UI_SLOTS.join(", ")));
+    }
+    match inside(dir, &u.html).and_then(|p| std::fs::metadata(p).ok()).filter(std::fs::Metadata::is_file) {
+      None => err(findings, format!("{at}: html file `{}` not found in the plugin", u.html)),
+      Some(meta) if meta.len() > UI_HTML_MAX_BYTES => err(findings, format!("{at}: `{}` is over {} KB", u.html, UI_HTML_MAX_BYTES / 1024)),
+      Some(_) => {}
     }
   }
   let mut sources = std::collections::HashSet::new();
@@ -684,6 +723,29 @@ mod tests {
     check(&m, "gw", dir.path(), &|_| false, &mut f);
     let text = f.text();
     for needle in ["`gw-claude` is declared twice", "`a/b`: the id", "`apiKey` is not allowed", "format `gemini`", "`baseUrl` is needed", "at least one model", "environment variable name"] {
+      assert!(text.contains(needle), "{needle} missing in\n{text}");
+    }
+  }
+
+  #[test]
+  fn interface_pieces_need_a_known_slot_and_a_small_html_file() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("panel.html"), "<p>hi</p>").unwrap();
+    std::fs::write(dir.path().join("big.html"), "x".repeat(UI_HTML_MAX_BYTES as usize + 1)).unwrap();
+    let base = |ui: Value| json!({ "schema": 1, "id": "look", "version": "0.1.0", "description": "x", "contributes": { "ui": ui } });
+    let (m, mut f) = manifest(base(json!([{ "id": "rates", "slot": "panel.tab", "title": "Rates", "html": "panel.html" }])));
+    check(&m, "look", dir.path(), &|_| false, &mut f);
+    assert!(f.ok(), "{f:?}");
+    assert_eq!((m.contributes.kinds(), m.layer()), (vec!["ui"], "interface"));
+    let (m, mut f) = manifest(base(json!([
+      { "id": "a", "slot": "toolbar", "html": "panel.html" },
+      { "id": "a", "slot": "page", "html": "panel.html" },
+      { "id": "b", "slot": "page", "html": "../escape.html" },
+      { "id": "c", "slot": "page", "html": "big.html" },
+    ])));
+    check(&m, "look", dir.path(), &|_| false, &mut f);
+    let text = f.text();
+    for needle in ["slot `toolbar` is not one of", "ui `a` is declared twice", "`../escape.html` not found", "`big.html` is over 256 KB"] {
       assert!(text.contains(needle), "{needle} missing in\n{text}");
     }
   }

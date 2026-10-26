@@ -4,15 +4,22 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Shell } from './sidecarShell';
 
-// A page calling a method a plugin's resident process offers (`runtime.methods`) through the Rust sidecar: enabled
-// from the plugin page, answered by id, and an undeclared method refused with the reason
+// A plugin's interface against the Rust sidecar: enabled from the plugin page, its piece reaches the page, a page
+// calls a method its process offers (`runtime.methods`) and gets the answer by id (an undeclared method is refused
+// with the reason), and the process posts to its frames and writes into the composer
 
 const RATES = `
 import { createInterface } from 'node:readline';
 const send = m => process.stdout.write(JSON.stringify(m) + '\\n');
+let next = 1;
 createInterface({ input: process.stdin }).on('close', () => process.exit(0)).on('line', line => {
   const m = JSON.parse(line);
   if (m.method === 'initialize') return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: 1 } });
+  if (m.method === 'rpc/rates.push') {
+    send({ jsonrpc: '2.0', id: 'p' + next++, method: 'ui/post', params: { message: { eur: 0.93 } } });
+    send({ jsonrpc: '2.0', id: 'p' + next++, method: 'ui/composer', params: { text: 'EUR 0.93' } });
+    return send({ jsonrpc: '2.0', id: m.id, result: {} });
+  }
   if (m.method === 'rpc/rates.get') return send({ jsonrpc: '2.0', id: m.id, result: { eur: 0.92, from: m.params.from, asked: m.params.params } });
   if (m.id !== undefined) send({ jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'no ' + m.method } });
 });
@@ -45,9 +52,13 @@ describe('plugin rpc contract', () => {
     const dir = join(data, 'plugins', 'rates');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'rpc.mjs'), RATES);
+    writeFileSync(join(dir, 'panel.html'), '<p>Rates</p>');
     writeFileSync(join(dir, 'plugin.json'), JSON.stringify({
       schema: 1, id: 'rates', version: '1.0.0', description: 'Exchange rates',
-      contributes: { runtime: { command: ['node', 'rpc.mjs'], methods: ['rates.get'] } },
+      contributes: {
+        runtime: { command: ['node', 'rpc.mjs'], methods: ['rates.get', 'rates.push'] },
+        ui: [{ id: 'board', slot: 'panel.tab', title: 'Rates', html: 'panel.html' }],
+      },
     }));
     const s = new Shell(data, temp('acpira-plugin-rpc-ws-'));
     shells.push(s);
@@ -57,6 +68,9 @@ describe('plugin rpc contract', () => {
     s.view('V', { type: 'pluginAction', action: { op: 'enable', id: 'rates' } });
     const enabled = await s.hostMsg('V', 'plugins', m => m.view.plugins.some(p => p.id === 'rates' && p.enabled));
     expect(enabled.error).toBeUndefined();
+    // The page was ready before: the piece follows the change
+    const ui = await s.hostMsg('V', 'pluginUi', m => m.slots.length > 0);
+    expect(ui.slots).toEqual([{ plugin: 'rates', id: 'board', slot: 'panel.tab', title: 'Rates', html: '<p>Rates</p>' }]);
 
     // The process starts right after the commit; until it answered initialize a call says it is not running
     let answer: { result?: unknown; error?: string } = {};
@@ -70,5 +84,9 @@ describe('plugin rpc contract', () => {
 
     s.view('V', { type: 'pluginCall', id: 'x', plugin: 'rates', method: 'secret' });
     expect((await s.hostMsg('V', 'pluginCalled', m => m.id === 'x')).error).toContain('no method `secret`');
+
+    s.view('V', { type: 'pluginCall', id: 'push', plugin: 'rates', method: 'rates.push' });
+    expect(await s.hostMsg('V', 'pluginPost')).toEqual({ type: 'pluginPost', plugin: 'rates', message: { eur: 0.93 } });
+    expect(await s.hostMsg('V', 'pluginComposer')).toEqual({ type: 'pluginComposer', plugin: 'rates', text: 'EUR 0.93', replace: false });
   });
 });

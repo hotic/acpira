@@ -134,3 +134,24 @@ pub enum PluginAction {
   SafeMode { on: bool },
   ToolGroup { id: String, on: bool },
 }
+
+/// The places of the page a plugin's interface may take (`contributes.ui`, docs/dev/plugins.md, Interface): above
+/// the composer, in its toolbar, the session's side panel, the session list's side, the status bar, the start page,
+/// the actions of a message, a tool panel tab and a page of its own
+pub const UI_SLOTS: &[&str] = &["composer.above", "composer.toolbar", "session.panel", "sidebar", "statusbar", "start", "message.actions", "panel.tab", "page"];
+
+/// One interface piece of a plugin in effect, as the page renders it: the HTML runs in a sandboxed frame of its own,
+/// never in the page, and talks to its plugin through the page (`pluginCall`, `pluginPost`)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginSlot {
+  pub plugin: String,
+  /// Unique within the plugin
+  pub id: String,
+  /// One of `UI_SLOTS`
+  pub slot: String,
+  pub title: String,
+  /// The document, read from the frozen copy
+  pub html: String,
+}
+

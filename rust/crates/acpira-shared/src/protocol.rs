@@ -11,7 +11,7 @@ use crate::model_shapes::ModelShapes;
 use crate::providers::{ProbeOutcome, ProviderAction, ProviderProbe, ProvidersView};
 use crate::remote::{ConnectionOp, ConnectionView, RemoteDirEntry, SshHost};
 use crate::shared_config::{SharedAction, SharedView};
-use crate::plugins::{PluginAction, PluginsView};
+use crate::plugins::{PluginAction, PluginSlot, PluginsView};
 use crate::storage::{StorageAction, StorageDetail, StorageOutcome, StorageView};
 use crate::settings::{HiddenMap, SettingsView};
 use crate::transcript::{
@@ -320,6 +320,14 @@ pub enum HostMsg {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
   },
+  /// The plugins' interface pieces (docs/dev/plugins.md, Interface): after every init and whenever they change; empty
+  /// takes them away
+  PluginUi { slots: Vec<PluginSlot> },
+  /// A message a plugin's process sends its frames (`ui/post`), for the page to hand to that plugin's frames only
+  PluginPost { plugin: String, message: Value },
+  /// Text a plugin's process puts into the composer of the session on screen (`ui/composer`): at the cursor, or in
+  /// place of the draft
+  PluginComposer { plugin: String, text: String, replace: bool },
   /// The answer to `PluginCall` with the same id: the method's result, or why there is none
   PluginCalled {
     id: String,
@@ -493,6 +501,9 @@ impl HostMsg {
       HostMsg::PluginTheme { .. } => "pluginTheme",
       HostMsg::Plugins { .. } => "plugins",
       HostMsg::PluginCalled { .. } => "pluginCalled",
+      HostMsg::PluginUi { .. } => "pluginUi",
+      HostMsg::PluginPost { .. } => "pluginPost",
+      HostMsg::PluginComposer { .. } => "pluginComposer",
       HostMsg::Providers { .. } => "providers",
       HostMsg::ProviderProbed { .. } => "providerProbed",
       HostMsg::Controls { .. } => "controls",
