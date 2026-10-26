@@ -23,6 +23,8 @@ pub enum Reply {
   /// These chunks as SSE events, then `[DONE]`; chunks with a `type` (Anthropic events) go with their `event:` line and
   /// no `[DONE]`
   Sse(Vec<Value>),
+  /// As `Sse`, with this pause before each chunk (a model streaming slowly)
+  Paced(Duration, Vec<Value>),
   /// These chunks, then the connection closes without a finish or `[DONE]`
   Cut(Vec<Value>),
   /// The status line and headers, then nothing until the client hangs up or the server is dropped
@@ -172,10 +174,19 @@ fn serve(conn: TcpStream, st: &State) {
     Reply::Status(code, text) => {
       let _ = write!(out, "HTTP/1.1 {code} Mock\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{text}", text.len());
     }
-    Reply::Sse(chunks) => {
+    reply @ (Reply::Sse(_) | Reply::Paced(..)) => {
+      let (pause, chunks) = match reply {
+        Reply::Paced(pause, chunks) => (pause, chunks),
+        Reply::Sse(chunks) => (Duration::ZERO, chunks),
+        _ => unreachable!(),
+      };
       let _ = out.write_all(sse_head.as_bytes());
+      let _ = out.flush();
       let typed = chunks.first().is_some_and(|c| c.get("type").is_some_and(Value::is_string));
       for c in chunks {
+        if !pause.is_zero() {
+          std::thread::sleep(pause);
+        }
         match c.get("type").and_then(Value::as_str) {
           Some(t) => {
             let _ = write!(out, "event: {t}\ndata: {c}\n\n");

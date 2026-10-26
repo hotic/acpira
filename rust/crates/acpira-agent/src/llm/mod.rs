@@ -159,6 +159,31 @@ pub enum Event {
   /// A tool call's name is known (arguments still streaming)
   ToolCallStart { id: String, name: String },
   Done { reply: Reply, stop: StopReason, usage: Option<Usage> },
+  /// The stream is still delivering, though nothing above came of it yet (tool call arguments, hidden reasoning,
+  /// stream bookkeeping): it only feeds the turn's idle watchdog
+  Alive,
+}
+
+/// Turns a stream's events into `Event::Alive` for the idle watchdog, at most once a second. Tool call arguments
+/// produce no other event until the call is complete, so a long `write` streamed for minutes and was cut as a
+/// silent stream, then cut again on every retry (GPT on the Responses gateway, 2026-10-27). Keep-alives (SSE
+/// comments, `ping` / `keepalive` events) do not count: a gateway pinging for an upstream that hangs is still silent
+pub(crate) struct Pulse {
+  last: std::time::Instant,
+}
+
+impl Pulse {
+  pub(crate) fn new() -> Pulse {
+    Pulse { last: std::time::Instant::now() }
+  }
+
+  pub(crate) fn beat(&mut self, event: &Value, tx: &mpsc::UnboundedSender<Result<Event, LlmError>>) {
+    if matches!(event.get("type").and_then(Value::as_str), Some("ping" | "keepalive")) || self.last.elapsed() < Duration::from_secs(1) {
+      return;
+    }
+    self.last = std::time::Instant::now();
+    let _ = tx.send(Ok(Event::Alive));
+  }
 }
 
 #[derive(Debug, Clone, PartialEq)]

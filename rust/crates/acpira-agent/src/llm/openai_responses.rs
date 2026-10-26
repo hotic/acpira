@@ -336,6 +336,7 @@ pub fn stream(http: &ureq::Agent, endpoint: &Endpoint, req: &Request, tx: &mpsc:
   }
   let mut events = SseReader::new(BufReader::new(res.into_body().into_reader()));
   let mut asm = Assembler::new(origin);
+  let mut pulse = super::Pulse::new();
   let mut emit = |e: Event| {
     let _ = tx.send(Ok(e));
   };
@@ -350,6 +351,7 @@ pub fn stream(http: &ureq::Agent, endpoint: &Endpoint, req: &Request, tx: &mpsc:
       continue;
     }
     let v: Value = serde_json::from_str(data).map_err(|e| LlmError::Protocol(format!("{e}: {}", data.chars().take(200).collect::<String>())))?;
+    pulse.beat(&v, tx);
     asm.event(&v, &mut emit)?;
     // A closed receiver means the turn is gone: stop reading, which drops the connection
     if tx.is_closed() {

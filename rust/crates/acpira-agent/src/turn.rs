@@ -714,6 +714,8 @@ async fn body(server: &Arc<Server>, session: &Arc<Session>, params: &Value, stat
             server.update(&session.id, call);
             ids.insert(id, acp);
           }
+          // Already counted: receiving it restarted the idle timeout
+          Ok(Event::Alive) => {}
           Ok(Event::Done { reply, stop, usage }) => {
             outcome = Ok((reply, stop, usage));
             break;

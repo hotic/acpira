@@ -1,5 +1,6 @@
-//! A stream that goes silent is given up after the idle limit and retried. Its own test binary, since the limit is
-//! read once per process from `ACPIRA_AGENT_STREAM_IDLE_SECS`
+//! A stream that goes silent is given up after the idle limit and retried, and one that keeps streaming tool call
+//! arguments is not. Its own test binary, since the limit is read once per process from `ACPIRA_AGENT_STREAM_IDLE_SECS`
+//! (both tests set the same value)
 #![allow(clippy::unwrap_used, reason = "test code")]
 
 mod support;
@@ -9,10 +10,13 @@ use serde_json::json;
 use acpira_agent::mock::{self, MockModel, Reply};
 use support::Harness;
 
+/// Long enough that the paced stream below outlasts it several times over, short enough for a test
+const IDLE: &str = "2";
+
 #[tokio::test]
 async fn a_silent_stream_is_dropped_after_the_idle_limit_and_retried() {
-  // SAFETY: the only test in this binary, and no other thread reads the environment yet
-  unsafe { std::env::set_var("ACPIRA_AGENT_STREAM_IDLE_SECS", "1") };
+  // SAFETY: every test in this binary sets the same value before the agent first reads it
+  unsafe { std::env::set_var("ACPIRA_AGENT_STREAM_IDLE_SECS", IDLE) };
   let h = Harness::start().await;
   let server = MockModel::start();
   h.providers(&server.base_url(), json!([{ "id": "m1" }]));
@@ -27,5 +31,29 @@ async fn a_silent_stream_is_dropped_after_the_idle_limit_and_retried() {
   let notice = h.updates().into_iter().find(|u| u["sessionUpdate"] == "session_info_update").expect("a retry notice");
   let failure = &notice["_meta"]["jetbrains"]["air"]["sessionFailure"];
   assert_eq!(failure["category"], "connection");
-  assert!(failure["details"].as_str().unwrap().contains("no data from the provider for 1 s"), "{failure}");
+  assert!(failure["details"].as_str().unwrap().contains("no data from the provider for 2 s"), "{failure}");
+}
+
+#[tokio::test]
+async fn a_tool_call_whose_arguments_stream_longer_than_the_idle_limit_is_not_cut() {
+  // SAFETY: as above
+  unsafe { std::env::set_var("ACPIRA_AGENT_STREAM_IDLE_SECS", IDLE) };
+  let h = Harness::start().await;
+  let server = MockModel::start();
+  h.providers(&server.base_url(), json!([{ "id": "m1" }]));
+  let sid = h.new_session().await["sessionId"].as_str().unwrap().to_owned();
+  // A long `list` call: after its name only argument pieces arrive, 4 s of them against the 2 s limit, the way a
+  // model writes a big file in one call
+  let args = json!({ "path": "." }).to_string();
+  let mut chunks = vec![mock::delta(json!({ "tool_calls": [{ "index": 0, "id": "c1", "type": "function", "function": { "name": "list", "arguments": "" } }] }))];
+  chunks.extend(args.chars().map(|c| mock::delta(json!({ "tool_calls": [{ "index": 0, "function": { "arguments": c.to_string() } }] }))));
+  chunks.extend([mock::finish("tool_calls"), mock::usage(100, 10, 0)]);
+  let pause = std::time::Duration::from_millis(4000 / chunks.len() as u64);
+  server.push(Reply::Paced(pause, chunks));
+  server.push(mock::text("listed"));
+  let r = h.conn.request("session/prompt", json!({ "sessionId": sid, "prompt": [{ "type": "text", "text": "hi" }] })).await.unwrap();
+  assert_eq!(r["stopReason"], "end_turn");
+  // One streamed call and the follow-up after the tool result, no retry
+  assert_eq!(server.requests().len(), 2);
+  assert!(h.updates().iter().all(|u| u["sessionUpdate"] != "session_info_update"), "retried: {:?}", h.updates());
 }
