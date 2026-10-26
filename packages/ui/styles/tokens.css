@@ -160,6 +160,9 @@
   --thumb: 56px;
   /* Agent image height cap in the transcript; also the side of the image generation placeholder */
   --agent-image: 240px;
+  /* Image lightbox: default cap inside the shell (wheel-zoomed from there) */
+  --lightbox-max-h: min(74%, 560px);
+  --lightbox-max-w: min(88%, var(--content-w));
   /* An HTML widget (show_widget): the space held before its first height report, and its cap. The cap also ends the loop
      of a page sized to its own viewport (h-screen plus padding), which would otherwise grow with every report */
   --widget-placeholder: 120px;
