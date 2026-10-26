@@ -10,6 +10,7 @@ pub mod chunk;
 pub mod compact;
 pub mod config;
 pub mod frames;
+pub mod generate;
 pub mod goal;
 pub mod llm;
 pub mod mcp;

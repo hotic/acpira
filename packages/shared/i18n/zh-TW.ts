@@ -663,6 +663,7 @@ export const zhTW = {
   'host.plugin.enable': "啟用",
   'host.plugin.skip': "不啟用",
   'host.plugin.by': "{agent} 寫了這個外掛，請求啟用。",
+  'host.plugin.asks': '外掛 {name} 在問：',
   'host.needApprovalFor': '需要批准：{what}',
   'host.noPermissionOptions': '權限請求沒有選項',
   'host.planOptionsStale': '計畫審批選項已失效',

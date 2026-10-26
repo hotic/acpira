@@ -650,6 +650,7 @@ export const en = {
   'host.plugin.enable': 'Enable',
   'host.plugin.skip': 'Don\'t enable',
   'host.plugin.by': '{agent} wrote this plugin and asks to enable it.',
+  'host.plugin.asks': 'Plugin {name} asks:',
   'host.needApprovalFor': 'Approval needed: {what}',
   'host.noPermissionOptions': 'Permission request has no options',
   'host.planOptionsStale': 'Plan approval options are no longer valid',

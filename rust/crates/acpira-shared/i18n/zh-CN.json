@@ -637,6 +637,7 @@
   "host.plugin.enable": "启用",
   "host.plugin.skip": "不启用",
   "host.plugin.by": "{agent} 写了这个插件，请求启用。",
+  "host.plugin.asks": "插件 {name} 在问：",
   "host.needApprovalFor": "需要批准：{what}",
   "host.noPermissionOptions": "权限请求没有选项",
   "host.planOptionsStale": "计划审批选项已失效",

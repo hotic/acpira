@@ -644,6 +644,7 @@ export const fr = {
   'host.plugin.enable': "Activer",
   'host.plugin.skip': "Ne pas activer",
   'host.plugin.by': "{agent} a écrit ce plugin et demande à l'activer.",
+  'host.plugin.asks': 'Le plugin {name} demande :',
   'host.needApprovalFor': 'Approbation requise : {what}',
   'host.noPermissionOptions': 'La demande d’autorisation n’a aucune option',
   'host.planOptionsStale': 'Les options d’approbation du plan ne sont plus valides',

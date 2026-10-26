@@ -6,6 +6,7 @@
 pub mod cli;
 pub mod guide;
 pub mod host;
+pub mod host_api;
 pub mod manifest;
 pub mod mcp;
 pub mod run;
