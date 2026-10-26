@@ -106,6 +106,9 @@ pub fn run_child(args: &[String]) -> i32 {
     eprintln!("usage: acpira {CHILD_COMMAND} FIRST LIMIT MAX_BYTES < file.pdf");
     return 2;
   };
+  // A parser panic ends the child with a plain failure: an abort would leave a crash report (macOS ReportCrash, Windows
+  // WER) for every malformed PDF; in_child reads the empty answer as a file the parser failed on
+  std::panic::set_hook(Box::new(|_| std::process::exit(1)));
   let mut bytes = vec![];
   if std::io::stdin().read_to_end(&mut bytes).is_err() {
     return 1;
