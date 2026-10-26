@@ -440,9 +440,9 @@ pub fn load(path: &Path, only_summary: bool) -> std::io::Result<Loaded> {
         let tail = ev.get("tail").and_then(Value::as_u64).unwrap_or(0) as usize;
         let budget = ev.get("budget").cloned().and_then(|b| serde_json::from_value(b).ok()).unwrap_or_default();
         crate::chunk::merge(&mut out.chunks, chunk_list(&ev));
+        // The summary item comes off first, so a `tail` from the file that reaches past it keeps it in front
+        let summary = (out.summarized && !out.items.is_empty()).then(|| out.items.remove(0));
         let rest = out.items.split_off(out.items.len().saturating_sub(tail));
-        // A `tail` from the file can reach past the summary item; the view then goes without it
-        let summary = out.items.first().filter(|_| out.summarized).cloned();
         let projection = crate::chunk::render(&out.chunks, budget);
         out.folded = projection.len();
         out.items = summary.into_iter().chain(projection).chain(rest).collect();
@@ -570,6 +570,22 @@ mod tests {
     assert_eq!(back.items[4], Item::User(vec![Part::Text("three".into())]));
     // The prune cleared the first result before the compaction dropped it; a later one would show in the tail
     assert_eq!(back.title.as_deref(), Some("one"));
+  }
+
+  #[test]
+  fn a_chunk_tail_reaching_past_the_summary_keeps_it_in_front() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("s.jsonl");
+    let store = Store::new(path.clone(), "s", Path::new("/w"));
+    store.item(&Item::User(vec![Part::Text("one".into())]));
+    store.append(json!({ "type": "compaction", "reason": "manual", "summary": "S", "tail": 0 }));
+    store.item(&Item::User(vec![Part::Text("two".into())]));
+    store.append(json!({ "type": "compaction", "strategy": crate::chunk::STRATEGY, "chunks": [], "tail": 99 }));
+    store.flush();
+    let back = load(&path, false).unwrap();
+    let text = |i: &Item| match i { Item::User(p) => match &p[0] { Part::Text(t) => t.clone(), _ => String::new() }, _ => String::new() };
+    assert!(text(&back.items[0]).starts_with("<conversation-summary>"), "{:?}", back.items);
+    assert_eq!(back.items.last(), Some(&Item::User(vec![Part::Text("two".into())])));
   }
 
   #[test]

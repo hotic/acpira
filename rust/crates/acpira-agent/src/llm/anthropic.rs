@@ -258,6 +258,10 @@ impl Assembler {
       "message_start" => self.merge_usage(v.pointer("/message/usage")),
       "content_block_start" => {
         let block = v.get("content_block").cloned().unwrap_or_else(|| json!({}));
+        // The deltas below write into the block by key, which panics on anything but an object
+        if !block.is_object() {
+          return Err(LlmError::Protocol(format!("content block {index} is not an object")));
+        }
         match block["type"].as_str() {
           Some("tool_use") => {
             let (id, name) = (block["id"].as_str().unwrap_or("").to_owned(), block["name"].as_str().unwrap_or("").to_owned());
@@ -299,7 +303,7 @@ impl Assembler {
       }
       "content_block_stop" => {
         if let Some(raw) = self.inputs.get(&index)
-          && let Some(block) = self.blocks.get_mut(index)
+          && let Some(block) = self.blocks.get_mut(index).filter(|b| b.is_object())
           && !raw.trim().is_empty()
         {
           block["input"] = input_of(raw);
@@ -621,6 +625,15 @@ mod tests {
     }
     let r = asm.finish(&mut |x| out.push(x));
     (out, r)
+  }
+
+  #[test]
+  fn a_content_block_that_is_not_an_object_is_a_protocol_error() {
+    let (_, r) = run(&[
+      json!({ "type": "content_block_start", "index": 0, "content_block": [] }),
+      json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "text_delta", "text": "x" } }),
+    ]);
+    assert!(matches!(r, Err(LlmError::Protocol(_))), "{r:?}");
   }
 
   #[test]
