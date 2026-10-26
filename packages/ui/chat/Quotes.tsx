@@ -5,6 +5,7 @@ import { t } from '../i18n';
 import { cn } from '../ui/cn';
 import { IconButton } from '../ui/Button';
 import { Popover } from '../ui/Popover';
+import { imeKey } from '../ui/ime';
 import { Removable } from './Attachments';
 import { collectDrafts, collectImageSources, hiddenText, imageSources, pastedText, typeInto } from './drafts';
 
@@ -101,7 +102,7 @@ export function CommentEditor({ initial = '', autoFocus = true, acceptImages = f
   const [value, setValue] = useState(initial);
   const [images, setImages] = useState<ImageDraft[]>([]);
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.nativeEvent.isComposing) return;
+    if (imeKey(e.nativeEvent)) return;
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSave(value.trim(), images); }
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onCancel(); }
   };

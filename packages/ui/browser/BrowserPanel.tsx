@@ -13,6 +13,7 @@ import { Button, IconButton } from '../ui/Button';
 import { cn } from '../ui/cn';
 import { Popover, ShellLayerContext } from '../ui/Popover';
 import { useMorph } from '../ui/useMorph';
+import { imeKey } from '../ui/ime';
 import { CommentEditor } from '../chat/Quotes';
 import { desktopShell } from '../desktop';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
@@ -262,7 +263,7 @@ export function BrowserPanel() {
   const suggestions = history.filter(p => !query || p.url.toLowerCase().includes(query) || p.title.toLowerCase().includes(query)).slice(0, MAX_SUGGESTIONS);
   const suggesting = addressFocused && suggestions.length > 0 && (typed !== undefined || !frame);
   const onAddressKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (e.nativeEvent.isComposing) return;
+    if (imeKey(e.nativeEvent)) return;
     if (e.key === 'ArrowDown' && suggesting) { e.preventDefault(); setHl(i => Math.min(i + 1, suggestions.length - 1)); }
     if (e.key === 'ArrowUp' && suggesting) { e.preventDefault(); setHl(i => Math.max(i - 1, -1)); }
     if (e.key === 'Enter') { e.preventDefault(); open(suggesting && hl >= 0 ? suggestions[hl]!.url : typed ?? shown); }

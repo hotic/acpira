@@ -8,6 +8,7 @@ import { ShellLayerContext, overlayWidth, popupClass } from '../ui/Overlay';
 import { optionClass } from '../ui/DropdownMenu';
 import { OptionContent } from '../ui/Panel';
 import { StableText } from '../ui/StableText';
+import { imeKey } from '../ui/ime';
 import { macOS } from '../desktop';
 import { mountTerminal, restartTerminal, settleFresh, terminalView, useTerminalInfo, type TerminalTab } from './terminals';
 
@@ -100,6 +101,7 @@ function FindBar({ id, onClose }: { id: string; onClose: () => void }) {
           terminalView(id)?.find(e.target.value, { incremental: true });
         }}
         onKeyDown={e => {
+          if (imeKey(e.nativeEvent)) return;
           if (e.key === 'Enter') { e.preventDefault(); go(e.shiftKey); }
           else if (e.key === 'Escape') { e.preventDefault(); onClose(); }
         }}
