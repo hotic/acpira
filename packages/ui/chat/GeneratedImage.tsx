@@ -6,7 +6,7 @@ import { useTheme } from '../look';
 import { t, useLocale } from '../i18n';
 import { IMAGE_GEN } from '../effects/presets';
 import { dissolveIn, readImageGenColors } from '../effects/imageGen';
-import { hasWebGL } from '../effects/webgl';
+import { hasWebGL2 } from '../effects/webgl';
 import { cn } from '../ui/cn';
 import { AgentImage } from './AgentImage';
 import { BlobUrlContext } from './fileLinks';
@@ -58,7 +58,7 @@ type Phase = 'loading' | 'shaping' | 'revealing' | 'done';
 function GenerationCard({ image }: { image?: ImageRef }) {
   const blobUrl = useContext(BlobUrlContext);
   const { motion } = useAppearance();
-  const [animate] = useState(() => motion !== 'none' && hasWebGL() && !reducedMotion());
+  const [animate] = useState(() => motion !== 'none' && hasWebGL2() && !reducedMotion());
   const src = image?.blob && blobUrl ? blobUrl(image.blob) : undefined;
   const [img, setImg] = useState<HTMLImageElement>();
   const [phase, setPhase] = useState<Phase>('loading');
