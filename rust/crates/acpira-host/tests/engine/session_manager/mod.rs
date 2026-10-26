@@ -50,6 +50,8 @@ pub struct Opts {
   pub accounts: Option<Arc<acpira_host::accounts::account_manager::AccountManager>>,
   /// SSH hosts for `ssh://` folders (`remote_connections::Lab`)
   pub remote: Option<Arc<acpira_host::remote::connections::Connections>>,
+  /// The plugins' resident processes the manager's sessions report to
+  pub plugin_runtime: Option<Arc<acpira_host::plugins::runtime::Runtimes>>,
 }
 
 impl Opts {
@@ -70,6 +72,7 @@ impl Opts {
       local_accounts: None,
       accounts: None,
       remote: None,
+      plugin_runtime: None,
     }
   }
 
@@ -141,6 +144,7 @@ impl Mgr {
         shared_mcp: None,
         plugin_hooks: None,
         plugin_prompts: None,
+        plugin_runtime: opts.plugin_runtime.clone(),
         host_mcp: None,
         // Inside the test's own directory (record scans only look at `<id>.json`), shared by managers on one directory
         lease_root: dir.join("lease-home"),
@@ -254,6 +258,7 @@ async fn foreign_native_session(fake: &FakeAgent, native: &Path, store: &Arc<Tra
     shared_mcp: None,
     plugin_hooks: None,
     plugin_prompts: None,
+    plugin_runtime: None,
     host_mcp: None,
     claim: None,
     remote: None,

@@ -96,6 +96,27 @@ What each kind does and when it takes effect:
 - Dynamic check: before a plugin with a runtime is enabled, its process is started from the frozen copy, must answer `initialize`, and is stopped again.
 - Each engine runs its own processes, for the sessions it owns (on macOS and Linux every VS Code window shares one engine, `acpira serve`); `acpira plugin …` starts none.
 
+## Events
+
+What a runtime hears (`acp/session/plugin_events.rs`, `session_manager.rs`, `plugins/host.rs`). Every event of a session carries `session`, `agent` and `cwd` in `data`; replayed history is never sent, only what happens live in the engine that owns the session. `data` is built only when a process subscribed.
+
+| Event | `data` |
+|---|---|
+| `session.created` | `how`: `new`, `import` or `fork` (with `forkedFrom`) |
+| `session.opened` | an existing session came live in this engine |
+| `session.renamed` | `title` |
+| `session.deleted` | `session` |
+| `turn.started` | `origin` (`user`, `compact`, `continue`, `retry`, `gate`, `goal`, `goalcontinue`, `subagents`), `text` |
+| `turn.ended` | `stop` (`end_turn`, `max_tokens`, `cancelled`, …), `error` (`message`, `code`, `kind`) or null, `usage` |
+| `tool.started` / `tool.completed` / `tool.failed` | the row: `toolCallId`, `kind`, `verb`, `target`, `mcpServer`, `status`, `locations`; each phase once per row, and a row first seen settled starts first |
+| `files.changed` | `paths`, `toolCallId`: a completed edit, delete or move row naming files |
+| `permission.asked` | `toolCall`, `options` as the agent sent them, before any gate, yolo or card decides |
+| `permission.replied` | `toolCallId`, `outcome` (`selected` with `optionId`, `cancelled`, or `error`) |
+| `usage.updated` | `usage` as the agent reported it |
+| `model.mode` / `model.config` | `mode` / `configOptions` the agent pushed |
+| `text.delta` / `thought.delta` | `text`: each streamed chunk (by name only, never through `*`) |
+| `plugin.changed` | `id`, `action` (`enable`, `disable`, `rollback`, …) of a change committed here |
+
 ## Activation
 
 ```
