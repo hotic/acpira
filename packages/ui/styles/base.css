@@ -95,7 +95,12 @@
   outline-offset: -1px;
 }
 
-@utility scroll-stable { scrollbar-gutter: stable; }
+/* WebKit only mounts its custom ::-webkit-scrollbar on an overflow-y: auto box while it overflows; until then,
+   scrollbar-gutter: stable reserves the 15–17px native macOS gutter instead of --scrollbar (10px) or --scrollbar-thin (6px),
+   shifting the column horizontally as a fold crosses the viewport height. overflow-y: scroll keeps the custom gutter at its
+   token width while the thumb stays transparent until the content actually overflows and moves. */
+@utility scroll-stable { scrollbar-gutter: stable; overflow-y: scroll; }
+.acp-shell .scroll-stable { scrollbar-gutter: stable; overflow-y: scroll; }
 /* Lists inside overlays and text inside cards: a 2px thumb in a 6px gutter, revealed the same way, so the bar never crowds the text.
    Plain unlayered class, not @utility: the host's unlayered ::-webkit-scrollbar { width: 10px } would beat a layered one. */
 .acp-shell .scroll-thin::-webkit-scrollbar { width: var(--scrollbar-thin); height: var(--scrollbar-thin); }

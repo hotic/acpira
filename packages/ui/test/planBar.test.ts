@@ -113,10 +113,16 @@ describe('PlanBar dock visibility', () => {
   it('renders the live plan over the thread without shrinking its scroll viewport', () => {
     const thread = shellSource.indexOf('<Thread key=');
     const dock = shellSource.indexOf('data-plan-dock');
+    const connecting = shellSource.indexOf('<ConnectingNotice ', dock);
+    const measured = shellSource.indexOf('<div ref={planDock}>', dock);
     const composer = shellSource.indexOf('<DockStack className=', dock);
     expect(thread).toBeGreaterThan(-1);
     expect(dock).toBeGreaterThan(thread);
-    expect(composer).toBeGreaterThan(dock);
+    // The connecting row floats over the thread tail outside both DockStack and the measured planDock box, so starting a
+    // stored session neither shrinks the thread viewport nor grows threadClearance
+    expect(connecting).toBeGreaterThan(dock);
+    expect(measured).toBeGreaterThan(connecting);
+    expect(composer).toBeGreaterThan(measured);
     expect(shellSource).toContain("'pointer-events-none absolute inset-x-0 bottom-0 z-10'");
     // Dock height reaches the transcript as a direct padding write on the content element. An
     // inherited custom property on the shared ancestor would restyle the whole transcript on
