@@ -4,7 +4,7 @@ import { useAppearance } from '../appearance';
 import { cn } from '../ui/cn';
 import { t } from '../i18n';
 import { METAL_PRESET, METAL_VARIANT } from './presets';
-import { hasWebGL } from './webgl';
+import { hasMetalWebGL } from './webgl';
 
 export interface SendButtonProps {
   running: boolean;
@@ -24,7 +24,7 @@ export interface SendButtonProps {
 export function SendButton({ running, filled, theme = 'dark', onClick }: SendButtonProps) {
   const { send, motion } = useAppearance();
   const on = filled || running;
-  const metal = send === 'metal' && on && hasWebGL();
+  const metal = send === 'metal' && on && hasMetalWebGL();
   const button = (
     <button
       type="button"
