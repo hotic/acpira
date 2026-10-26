@@ -24,18 +24,23 @@ rl.on('line', line => {
 });
 "#;
 
-/// The recorder running for `events`, with its folder
-pub async fn recorder(root: &Path, events: &[&str]) -> Arc<Runtimes> {
-  let dir = root.join("rec");
+/// A resident plugin `id` running `script` (node) with what it declared
+pub async fn plugin(root: &Path, id: &str, script: &str, events: &[&str], hooks: &[&str]) -> Arc<Runtimes> {
+  let dir = root.join(id);
   std::fs::create_dir_all(&dir).unwrap();
-  std::fs::write(dir.join("plugin.mjs"), RECORDER).unwrap();
-  let m = json!({ "schema": 1, "id": "rec", "version": "1.0.0", "description": "d", "contributes": { "runtime": { "command": ["node", "plugin.mjs"], "events": events } } });
+  std::fs::write(dir.join("plugin.mjs"), script).unwrap();
+  let m = json!({ "schema": 1, "id": id, "version": "1.0.0", "description": "d", "contributes": { "runtime": { "command": ["node", "plugin.mjs"], "events": events, "hooks": hooks } } });
   let (manifest, _) = manifest::parse(m.to_string().as_bytes()).unwrap();
   let rt = Runtimes::new(root.join(".data"), Arc::new(|_: &str| {}));
   rt.enable(None);
-  rt.sync(&[Arc::new(Active { id: "rec".into(), hash: "h".into(), dir, manifest })]).await;
-  assert_eq!(rt.running(), ["rec"]);
+  rt.sync(&[Arc::new(Active { id: id.into(), hash: "h".into(), dir, manifest })]).await;
+  assert_eq!(rt.running(), [id]);
   rt
+}
+
+/// The recorder running for `events`
+pub async fn recorder(root: &Path, events: &[&str]) -> Arc<Runtimes> {
+  plugin(root, "rec", RECORDER, events, &[]).await
 }
 
 pub fn heard(root: &Path) -> Vec<Value> {

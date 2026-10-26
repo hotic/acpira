@@ -258,6 +258,9 @@ impl HostRuntime {
       },
     );
     *mgr_slot.lock() = Some(Arc::downgrade(&manager));
+    // What a plugin's process may ask: sessions, page actions, toasts and one-off model calls (`plugins/host_api.rs`)
+    let toast_p = platform.clone();
+    plugins.runtimes().enable(Some(crate::plugins::host_api::host_call(&manager, Arc::new(move |level: &str, text: &str| toast_p.toast(level, text)), root.clone())));
     // A commit here tells the other engines at once; theirs reach this one the same way (the poll below otherwise)
     let bus = Arc::downgrade(&manager);
     plugins.set_touch(Arc::new(move || {

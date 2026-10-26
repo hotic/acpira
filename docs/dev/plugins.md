@@ -91,7 +91,7 @@ What each kind does and when it takes effect:
 - Handshake: the engine sends `initialize` `{ protocolVersion: 1, plugin: { id, version, snapshot, dir, data }, engine: { name, version }, hooks, events }` and waits 10 s for `{ protocolVersion: 1, hooks? }`. Another protocol version is refused. The answer's `hooks` may narrow the declared list, never widen it: only hooks the manifest names, which the user saw on the card, are ever called.
 - Calls: `hook/<name>` requests, one process after another in id order, each within the plugin's `timeout` (10 s at most); a call given up on is cancelled with `$/cancel_request`. Three failed calls in a row pause the plugin's calls for a minute, and the plugin page shows it. A call site checks `Runtimes::has_hook` first, so a hook nobody declared costs one read of a lock.
 - Events: `event` notifications `{ type, at, data, dropped? }` for what `events` subscribed to (`session.*`, `*`, or one name; the streamed `text.delta` / `thought.delta` only by name). Each process has a queue of 1024; a full queue drops and the next event delivered carries the count. The engine never waits on a plugin.
-- The process asks the engine: `storage/get` / `set` / `delete` / `list` (a JSON object of at most 1 MB per plugin at `.data/<id>.kv.json`, kept across versions) and a `log` notification; the session and interface calls of the following sections go through the same connection.
+- The process asks the engine: `storage/get` / `set` / `delete` / `list` (a JSON object of at most 1 MB per plugin at `.data/<id>.kv.json`, kept across versions) and a `log` notification; the session and interface calls of the Session API go through the same connection.
 - Lifecycle: started when the plugin comes into effect; on a new version the new process is started and initialized before the old one gets `shutdown` and is killed 2 s later; stopped when the plugin is switched off, in safe mode and when the engine closes. A process that exits while the plugin is in effect is started again after 1 s, doubling to at most 60 s (back to 1 s after ten quiet minutes).
 - Dynamic check: before a plugin with a runtime is enabled, its process is started from the frozen copy, must answer `initialize`, and is stopped again.
 - Each engine runs its own processes, for the sessions it owns (on macOS and Linux every VS Code window shares one engine, `acpira serve`); `acpira plugin …` starts none.
@@ -116,6 +116,23 @@ What a runtime hears (`acp/session/plugin_events.rs`, `session_manager.rs`, `plu
 | `model.mode` / `model.config` | `mode` / `configOptions` the agent pushed |
 | `text.delta` / `thought.delta` | `text`: each streamed chunk (by name only, never through `*`) |
 | `plugin.changed` | `id`, `action` (`enable`, `disable`, `rollback`, …) of a change committed here |
+
+## Session API
+
+What a runtime may ask of the engine beyond its store (`plugins/host_api.rs`), requests on the same connection. Each request is handled on its own task, so a pending `ui/ask` does not hold the others.
+
+| Method | Params | Answer |
+|---|---|---|
+| `session/list` | `cwd?` | `sessions`: the session list as the page sees it, filtered to one folder |
+| `session/get` | `session`, `turns?` (20) | `session`: the live view with only the newest `turns`, and `turnsLeftOut`; null when the session is not open in this engine |
+| `session/act` | `message`: a page message | `active`: the session the plugin's viewer has open |
+| `ui/toast` | `text` (cut at 500 characters), `level?` (`info`, `warning`, `error`) | `{}` |
+| `ui/ask` | `session`, `questions` (the question card's `Question`s), `message?`, `waitSecs?` (300, at most 25 minutes) | the card's answer (`answers`, `skipped`, `cancelled`), or `timedOut` when the wait passed and the card was withdrawn |
+| `model/generate` | `prompt`, `system?`, `model?`, `maxTokens?` (2048) | `text`, `model`, `usage` (`input`, `output`): one call through the built-in agent's model sources (its `providers.json` and keys), the named model, else its fast model, else its default; 120 s at most |
+
+- `session/act` takes the path a click takes: each plugin gets a viewer of its own on its first action (`SessionManager::attach`), so its selection never moves a window's. The allowed messages are `host_api::ACTIONS` (sending, stopping, modes and options, session create / select / rename / delete / pin / category / fork, compaction, retries, goals, the queue, cancelling subagents and async tasks). Answering a permission or question card, plugin, account and settings messages are refused, so a plugin can watch a card through events but never approve on the user's behalf.
+- `ui/ask` puts a question card into the session headed with the plugin's name (`host.plugin.asks`), so the user always sees who is asking; it is not a turn and the agent never sees it.
+- `model/generate` spends the user's own keys and is open to any runtime the user enabled; the card lists the runtime, not each call.
 
 ## Activation
 

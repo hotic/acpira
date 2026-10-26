@@ -148,3 +148,34 @@ impl AcpSession {
     Provenance { by: "session".into(), session: Some(self.id.clone()), agent: Some(self.agent.clone()), model }
   }
 }
+
+/// The longest a plugin's question may wait for the user
+pub const ASK_MAX_WAIT: Duration = Duration::from_secs(25 * 60);
+
+impl AcpSession {
+  /// A plugin's own question (`ui/ask`): a card in this session naming the plugin, answered by the user. The answer as
+  /// a question card gives it (`answers`, `skipped`, `cancelled`), or None when `wait` passed first (the card is withdrawn)
+  pub async fn plugin_ask(self: &Arc<Self>, plugin: &str, questions: Vec<acpira_shared::transcript::Question>, message: Option<String>, wait: Duration) -> Option<Value> {
+    let head = tp("host.plugin.asks", &[("name", plugin)]);
+    let message = Some(match message.filter(|m| !m.trim().is_empty()) {
+      Some(m) => format!("{head}\n\n{m}"),
+      None => head,
+    });
+    let (rx, block_id) = {
+      let mut c = self.core.lock();
+      let block_id = self.open_question(&mut c, &Target::Root, questions.clone(), None, message);
+      Self::bump_target_pub(&mut c, &Target::Root);
+      let (tx, rx) = oneshot::channel();
+      c.questions.pending.push(PendingQuestion { tx, block_id: block_id.clone(), questions, node_id: None, reply: QuestionReply::Caller });
+      self.touch(&mut c);
+      (rx, block_id)
+    };
+    match tokio::time::timeout(wait.min(ASK_MAX_WAIT), rx).await {
+      Ok(r) => r.ok(),
+      Err(_) => {
+        self.close_question(&block_id, acpira_shared::transcript::QuestionOutcome::Cancelled);
+        None
+      }
+    }
+  }
+}

@@ -225,3 +225,73 @@ async fn a_plugin_hears_sessions_made_renamed_and_deleted() {
   m.dispose().await;
   rt.stop_all().await;
 }
+
+/// A plugin that, when the first turn ends, reads the sessions, renames this one, tries to answer a permission card
+/// (refused), shows a toast and asks the user a question, writing every answer to results.json
+const ACTOR: &str = r#"
+import { createInterface } from 'node:readline';
+import { writeFileSync, mkdirSync } from 'node:fs';
+const send = m => process.stdout.write(JSON.stringify(m) + '\n');
+let data = '', next = 1, done = false;
+const waits = new Map();
+const ask = (method, params) => new Promise(r => { const id = next++; waits.set(id, r); send({ jsonrpc: '2.0', id, method, params }); });
+const rl = createInterface({ input: process.stdin });
+rl.on('close', () => process.exit(0));
+rl.on('line', async line => {
+  const m = JSON.parse(line);
+  if (m.id !== undefined && !m.method) { waits.get(m.id)?.(m.error ? { error: m.error.message } : m.result); return; }
+  if (m.method === 'initialize') { data = m.params.plugin.data; mkdirSync(data, { recursive: true }); return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: 1 } }); }
+  if (m.method !== 'event' || m.params.type !== 'turn.ended' || done) return;
+  done = true;
+  const session = m.params.data.session;
+  const out = {};
+  out.list = await ask('session/list', {});
+  out.get = await ask('session/get', { session, turns: 1 });
+  out.rename = await ask('session/act', { message: { type: 'renameSession', id: session, title: 'From a plugin' } });
+  out.approve = await ask('session/act', { message: { type: 'permission', sessionId: session, blockId: 'perm-1', optionId: 'allow' } });
+  out.toast = await ask('ui/toast', { text: 'hello from a plugin', level: 'warning' });
+  out.ask = await ask('ui/ask', { session, message: 'Release now?', questions: [{ id: 'ship', text: 'Ship it?', kind: 'single', options: [{ id: 'yes', label: 'Yes' }, { id: 'no', label: 'No' }] }] });
+  writeFileSync(data + '/results.json', JSON.stringify(out));
+});
+"#;
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_reads_and_acts_on_sessions_through_the_engine_but_cannot_approve() {
+  let fake = fake_or_skip!();
+  if !acpira_host::plugins::host::on_path("node") {
+    return;
+  }
+  let dir = tempfile::tempdir().unwrap();
+  let plugins = tempfile::tempdir().unwrap();
+  let rt = crate::acp_session::plugin_runtime::plugin(plugins.path(), "actor", ACTOR, &["turn.*"], &[]).await;
+  let mut opts = Opts::fake(&fake);
+  opts.plugin_runtime = Some(rt.clone());
+  let m = Mgr::new(dir.path(), opts);
+  let toasts = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+  let seen = toasts.clone();
+  rt.enable(Some(acpira_host::plugins::host_api::host_call(&m.m, Arc::new(move |level: &str, text: &str| seen.lock().unwrap().push(format!("{level}: {text}"))), dir.path().to_path_buf())));
+  m.init().await;
+  m.new_session(None).await;
+  m.handle(json!({ "type": "send", "text": "hello" })).await;
+  m.handle(json!({ "type": "send", "text": "again" })).await;
+  let id = m.active_id().unwrap();
+  // The plugin's question: a card in the session naming the plugin, answered by the user
+  until(|| m.view_of(&id).and_then(|v| card(&v)).is_some(), 10_000).await;
+  let shown = card(&m.view_of(&id).unwrap()).unwrap();
+  assert!(shown.to_string().contains("Plugin actor asks:") && shown.to_string().contains("Release now?"), "{shown}");
+  m.handle(json!({ "type": "answer", "sessionId": id, "blockId": shown["id"], "answers": { "ship": "yes" } })).await;
+  let results = plugins.path().join(".data/actor/results.json");
+  until(|| results.exists(), 10_000).await;
+  let r: Value = serde_json::from_str(&std::fs::read_to_string(&results).unwrap()).unwrap();
+  assert!(r["list"]["sessions"].as_array().unwrap().iter().any(|s| s["id"] == id.as_str()), "{r}");
+  // Only the newest turn, and how many were left out
+  assert_eq!((r["get"]["session"]["turns"].as_array().unwrap().len(), r["get"]["session"]["turnsLeftOut"].as_u64()), (1, Some(3)), "{r}");
+  assert!(r["rename"]["error"].is_null(), "{r}");
+  assert!(r["approve"]["error"].as_str().unwrap().contains("`permission` is not an action a plugin may take"), "{r}");
+  assert_eq!(toasts.lock().unwrap().as_slice(), ["warning: hello from a plugin"]);
+  assert_eq!(r["ask"]["answers"]["ship"], "yes", "{r}");
+  until(|| m.m.sessions().iter().any(|s| s.id == id && s.title == "From a plugin"), 5000).await;
+  m.dispose().await;
+  rt.stop_all().await;
+}
