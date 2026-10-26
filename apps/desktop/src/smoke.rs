@@ -1,6 +1,6 @@
 //! The smoke run's hook (scripts/smoke.mjs), only in a build with the `smoke` feature: a Unix socket (a named pipe on
 //! Windows) at ACPIRA_DESKTOP_HOOK takes one JSON command per line and answers each with `{ id, ok, value }`. Commands: `eval` (a
-//! page expression, awaited, its JSON back), `windows`, `resize`, `close`, `menuBar`, `menu`, `link`, `screenshot`, `update`, `quit`. WKWebView has no
+//! page expression, awaited, its JSON back), `windows`, `resize`, `wheel`, `close`, `menuBar`, `menu`, `link`, `screenshot`, `update`, `quit`. WKWebView has no
 //! DevTools protocol, so this is how a script drives the real app
 
 use std::collections::HashMap;
@@ -199,6 +199,22 @@ async fn run(cmd: Value) -> (bool, Value) {
       let (wd, ht) = (cmd["width"].as_f64().unwrap_or(1180.0), cmd["height"].as_f64().unwrap_or(820.0));
       let ok = w.window.set_size(tauri::LogicalSize::new(wd, ht)).is_ok();
       (ok, Value::Null)
+    }
+    "wheel" => {
+      // Classic wheel notches at a point of the window's content, through the app's own event queue (mac.rs post_wheel_notch)
+      let Some(w) = window(&cmd) else { return (false, json!("no such window")) };
+      let (x, y) = (cmd["x"].as_f64().unwrap_or(400.0), cmd["y"].as_f64().unwrap_or(400.0));
+      let lines = cmd["lines"].as_i64().unwrap_or(-3) as i32;
+      #[cfg(target_os = "macos")]
+      {
+        let ok = on_main(move || crate::mac::post_wheel_notch(&w.window, x, y, lines)).await.unwrap_or(false);
+        (ok, Value::Null)
+      }
+      #[cfg(not(target_os = "macos"))]
+      {
+        let _ = (w, x, y, lines);
+        (false, json!("macOS only"))
+      }
     }
     "close" => {
       // The window's close button: the same CloseRequested path a click takes

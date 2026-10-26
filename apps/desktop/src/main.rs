@@ -127,6 +127,8 @@ fn main() {
         tauri_app.manage(std::sync::Mutex::new(Some(p)));
       }
       menu::install(&handle);
+      // Mouse-wheel notches eased like Chromium's (mac.rs smooth_wheel); a no-op elsewhere
+      os::smooth_wheel(std::sync::Arc::new(app::log));
       a.restore();
       a.start_engine();
       smoke::start();

@@ -32,6 +32,9 @@ pub fn attach_console(command: Option<&str>) {
   }
 }
 
+/// Wheel notches: WebView2 is Chromium, which eases them itself
+pub fn smooth_wheel(_log: Log) {}
+
 /// WebView2 renders at the display's rate already
 pub fn unlock_frame_rate(_window: &tauri::WebviewWindow, _log: Log) {}
 

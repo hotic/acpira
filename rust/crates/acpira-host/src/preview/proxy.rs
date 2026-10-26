@@ -43,7 +43,11 @@ const REMOTE_CONNECT: std::time::Duration = std::time::Duration::from_secs(15);
 impl Dial {
   async fn connect(&self, host: &str, port: u16) -> io::Result<Box<dyn Upstream>> {
     match self {
-      Dial::Local => Ok(Box::new(TcpStream::connect((host, port)).await?)),
+      Dial::Local => {
+        let s = TcpStream::connect((host, port)).await?;
+        let _ = s.set_nodelay(true);
+        Ok(Box::new(s))
+      }
       Dial::Remote { connections, alias } => {
         use crate::remote::client::Event;
         let client = connections.ensure(alias, REMOTE_CONNECT).await.map_err(|e| io::Error::other(format!("{alias}: {e:#}")))?;
@@ -115,6 +119,7 @@ pub(super) async fn accept(listener: TcpListener, ctx: Arc<Ctx>, mut stop: watch
       _ = stop.changed() => return,
       conn = listener.accept() => {
         let Ok((client, _)) = conn else { continue };
+        let _ = client.set_nodelay(true);
         let (ctx, mut stop) = (ctx.clone(), stop.clone());
         tokio::spawn(async move {
           tokio::select! {
