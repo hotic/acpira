@@ -38,6 +38,8 @@ windows-sys.workspace = true
 [dev-dependencies]
 # The scripted model server for the built-in agent's engine tests
 acpira-agent = { workspace = true, features = ["mock"] }
+# tests/pdf_child.rs builds its PDFs with the lopdf that pdf-extract re-exports
+pdf-extract.workspace = true
 tempfile.workspace = true
 
 [lints]
