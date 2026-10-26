@@ -18,4 +18,24 @@ describe('rust workspace', () => {
     expect(read('apps/desktop/Cargo.toml').match(/\[package\]\n(?:.*\n)*?version = "([^"]+)"/)?.[1]).toBe(version);
     expect((JSON.parse(read('apps/desktop/tauri.conf.json')) as { version: string }).version).toBe(version);
   });
+
+  // The Windows desktop exe compiles the engine crates inside apps/desktop's own workspace, so its Cargo.lock must hold
+  // every registry crate at the version rust/Cargo.lock (what the engine's suites ran against) locks; Tauri's own extra
+  // versions may sit beside them. A lock that drifted: seed apps/desktop/Cargo.lock with rust/Cargo.lock's entries
+  it('locks the engine crates of the desktop app at the versions the engine tests', () => {
+    const versions = (lock: string) => {
+      const out = new Map<string, Set<string>>();
+      for (const block of lock.split('\n[[package]]\n').slice(1)) {
+        if (!block.includes('\nsource = ')) continue;
+        const name = block.match(/^name = "(.*)"$/m)![1]!;
+        if (!out.has(name)) out.set(name, new Set());
+        out.get(name)!.add(block.match(/^version = "(.*)"$/m)![1]!);
+      }
+      return out;
+    };
+    const engine = versions(read('rust/Cargo.lock'));
+    const desktop = versions(read('apps/desktop/Cargo.lock'));
+    const drifted = [...engine].filter(([name, vs]) => desktop.has(name) && [...vs].some(v => !desktop.get(name)!.has(v)));
+    expect(drifted.map(([name, vs]) => `${name} ${[...vs].join(',')} vs ${[...desktop.get(name)!].join(',')}`)).toEqual([]);
+  });
 });

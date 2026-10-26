@@ -35,10 +35,33 @@ pub fn spawn_spec(binary: &str, args: &[String], os: Os, comspec: Option<&str>) 
   SpawnSpec { command: binary.to_owned(), args: args.to_vec(), verbatim: false }
 }
 
-/// Build a command for this OS without changing its environment.
+/// CreateProcess flag: a console program runs without a console window. The engine may have no console of its own (the
+/// Windows desktop exe is a GUI program), and then every console program it starts would open a window
+pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// No console window for `cmd` on Windows (tokio's Command; `no_window_std` for std's)
+pub fn no_window(cmd: &mut tokio::process::Command) {
+  #[cfg(windows)]
+  cmd.creation_flags(CREATE_NO_WINDOW);
+  #[cfg(not(windows))]
+  let _ = cmd;
+}
+
+pub fn no_window_std(cmd: &mut std::process::Command) {
+  #[cfg(windows)]
+  {
+    use std::os::windows::process::CommandExt;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+  }
+  #[cfg(not(windows))]
+  let _ = cmd;
+}
+
+/// Build a command for this OS without changing its environment, never with a console window of its own.
 pub fn command(binary: &str, args: &[String]) -> tokio::process::Command {
   let spec = spawn_spec(binary, args, Os::current(), std::env::var("ComSpec").ok().as_deref());
   let mut cmd = tokio::process::Command::new(&spec.command);
+  no_window(&mut cmd);
   #[cfg(windows)]
   if spec.verbatim {
     for arg in &spec.args {

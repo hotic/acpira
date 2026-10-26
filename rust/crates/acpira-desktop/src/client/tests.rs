@@ -336,7 +336,7 @@ async fn an_engine_shutting_down_is_left_for_the_next_one() {
 #[tokio::test]
 async fn falls_through_the_candidates_gives_up_after_repeated_exits_and_starts_over_on_retry() {
   let dies =
-    SidecarCommand { command: "/bin/sh".into(), args: vec!["-c".into(), "exit 3".into()], env: Default::default(), label: "dies".into() };
+    SidecarCommand { command: "/bin/sh".into(), attached_args: vec![], args: vec!["-c".into(), "exit 3".into()], env: Default::default(), label: "dies".into() };
   let (c, _, logs) = client(None, vec![SidecarCommand::binary("/nonexistent/acpira"), dies]);
   c.start();
   until("failed", || c.current().0 == SidecarState::Failed).await;
@@ -360,7 +360,7 @@ async fn speaks_over_stdio_and_shuts_the_child_down_on_dispose() {
     "read line; echo '{{\"type\":\"helloOk\",\"requestId\":\"h1\",\"protocolVersion\":1,\"sidecar\":{{\"version\":\"sh\",\"pid\":0}},\"sessionsDir\":\"/s\"}}'; cat > '{}'",
     marker.display()
   );
-  let sh = SidecarCommand { command: "/bin/sh".into(), args: vec!["-c".into(), script], env: Default::default(), label: "sh".into() };
+  let sh = SidecarCommand { command: "/bin/sh".into(), attached_args: vec![], args: vec!["-c".into(), script], env: Default::default(), label: "sh".into() };
   let (c, _, _) = client(None, vec![sh]);
   c.start();
   until("ready", || c.current().0 == SidecarState::Ready).await;

@@ -1,5 +1,5 @@
-//! The smoke run's hook (scripts/smoke.mjs), only in a build with the `smoke` feature: a Unix socket at
-//! ACPIRA_DESKTOP_HOOK takes one JSON command per line and answers each with `{ id, ok, value }`. Commands: `eval` (a
+//! The smoke run's hook (scripts/smoke.mjs), only in a build with the `smoke` feature: a Unix socket (a named pipe on
+//! Windows) at ACPIRA_DESKTOP_HOOK takes one JSON command per line and answers each with `{ id, ok, value }`. Commands: `eval` (a
 //! page expression, awaited, its JSON back), `windows`, `resize`, `close`, `menuBar`, `menu`, `link`, `screenshot`, `update`, `quit`. WKWebView has no
 //! DevTools protocol, so this is how a script drives the real app
 
@@ -16,6 +16,7 @@ pub const RELAUNCH_DIRECT: bool = cfg!(feature = "smoke");
 
 /// The smoke run's updater: its local release server (`ACPIRA_DESKTOP_UPDATE_URL`, plain http on the loopback) signed with
 /// a throwaway key (`ACPIRA_DESKTOP_UPDATE_KEY`, hex), and the ad hoc package's signature checked by identifier only.
+/// The run's copy lives under the temp folder, so the Windows exe's temp-folder check (`install_blocker`) is left out.
 /// None in a release build, or when the run does not test updates (so a smoke never asks GitHub)
 #[cfg(feature = "smoke")]
 pub fn update_config(
@@ -28,7 +29,8 @@ pub fn update_config(
     manifest_url: url.unwrap_or_default(),
     keys: keys.into_iter().collect(),
     policy: update::fetch::Policy { hosts: vec![], loopback_http: true },
-    requirement: Some(format!("identifier \"{}\"", update::stage::IDENTIFIER)),
+    // An ad hoc bundle's identifier on macOS; a Windows exe is checked by its file list only (stage.rs)
+    requirement: cfg!(target_os = "macos").then(|| format!("identifier \"{}\"", update::stage::IDENTIFIER)),
     notarized: false,
     release_url: update::RELEASE_URL.into(),
   };
@@ -61,36 +63,71 @@ pub fn acpira_smoke_result(id: u64, ok: bool, value: String) {
 
 #[cfg(feature = "smoke")]
 pub fn start() {
-  use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
   let Some(path) = std::env::var_os("ACPIRA_DESKTOP_HOOK") else { return };
-  let path = std::path::PathBuf::from(path);
+  tauri::async_runtime::spawn(listen(std::path::PathBuf::from(path)));
+}
+
+/// A Unix socket at the hook's path
+#[cfg(all(feature = "smoke", unix))]
+async fn listen(path: std::path::PathBuf) {
   let _ = std::fs::remove_file(&path);
-  tauri::async_runtime::spawn(async move {
-    let listener = match tokio::net::UnixListener::bind(&path) {
-      Ok(l) => l,
+  let listener = match tokio::net::UnixListener::bind(&path) {
+    Ok(l) => l,
+    Err(e) => {
+      crate::app::log(&format!("smoke hook: {e}"));
+      return;
+    }
+  };
+  crate::app::log(&format!("smoke hook listening on {}", path.display()));
+  while let Ok((stream, _)) = listener.accept().await {
+    tauri::async_runtime::spawn(serve_hook(stream));
+  }
+}
+
+/// A named pipe (`\\.\pipe\…`) on Windows, local clients only; a new instance waits while one serves
+#[cfg(all(feature = "smoke", windows))]
+async fn listen(path: std::path::PathBuf) {
+  use tokio::net::windows::named_pipe::ServerOptions;
+  let create = |first: bool| ServerOptions::new().first_pipe_instance(first).reject_remote_clients(true).create(&path);
+  let mut server = match create(true) {
+    Ok(s) => s,
+    Err(e) => {
+      crate::app::log(&format!("smoke hook: {e}"));
+      return;
+    }
+  };
+  crate::app::log(&format!("smoke hook listening on {}", path.display()));
+  loop {
+    if server.connect().await.is_err() {
+      return;
+    }
+    let next = match create(false) {
+      Ok(s) => s,
       Err(e) => {
         crate::app::log(&format!("smoke hook: {e}"));
         return;
       }
     };
-    crate::app::log(&format!("smoke hook listening on {}", path.display()));
-    while let Ok((stream, _)) = listener.accept().await {
-      tauri::async_runtime::spawn(async move {
-        let (read, mut write) = stream.into_split();
-        let mut lines = BufReader::new(read).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-          let cmd: Value = serde_json::from_str(&line).unwrap_or(Value::Null);
-          let id = cmd["id"].clone();
-          let (ok, value) = run(cmd).await;
-          let mut out = json!({ "id": id, "ok": ok, "value": value }).to_string();
-          out.push('\n');
-          if write.write_all(out.as_bytes()).await.is_err() {
-            break;
-          }
-        }
-      });
+    tauri::async_runtime::spawn(serve_hook(std::mem::replace(&mut server, next)));
+  }
+}
+
+/// One connection: a JSON command per line, each answered with `{ id, ok, value }`
+#[cfg(feature = "smoke")]
+async fn serve_hook(stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + 'static) {
+  use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+  let (read, mut write) = tokio::io::split(stream);
+  let mut lines = BufReader::new(read).lines();
+  while let Ok(Some(line)) = lines.next_line().await {
+    let cmd: Value = serde_json::from_str(&line).unwrap_or(Value::Null);
+    let id = cmd["id"].clone();
+    let (ok, value) = run(cmd).await;
+    let mut out = json!({ "id": id, "ok": ok, "value": value }).to_string();
+    out.push('\n');
+    if write.write_all(out.as_bytes()).await.is_err() {
+      break;
     }
-  });
+  }
 }
 
 #[cfg(not(feature = "smoke"))]
@@ -169,13 +206,17 @@ async fn run(cmd: Value) -> (bool, Value) {
       (ok, Value::Null)
     }
     "menuBar" => {
-      // The installed menu bar's top-level titles, as macOS shows them
-      let titles = on_main(|| {
-        let menu = crate::app::app().handle.menu()?;
-        Some(menu.items().ok()?.iter().filter_map(|i| i.as_submenu().and_then(|s| s.text().ok())).collect::<Vec<_>>())
-      })
-      .await
-      .flatten();
+      // The installed menu bar's top-level titles, as macOS shows them; elsewhere the menus the page draws (desktopMenu)
+      let titles = if cfg!(target_os = "macos") {
+        on_main(|| {
+          let menu = crate::app::app().handle.menu()?;
+          Some(menu.items().ok()?.iter().filter_map(|i| i.as_submenu().and_then(|s| s.text().ok())).collect::<Vec<_>>())
+        })
+        .await
+        .flatten()
+      } else {
+        crate::app::app().page_menu_titles()
+      };
       (titles.is_some(), json!(titles.unwrap_or_default()))
     }
     "menu" => {
@@ -188,14 +229,42 @@ async fn run(cmd: Value) -> (bool, Value) {
       on_main(move || crate::app::app().take_link(&url)).await;
       (true, Value::Null)
     }
+    "platform" => {
+      // A platform request as the engine sends one (reveal, open, a terminal, …), run where the engine's run
+      let request = match serde_json::from_value::<acpira_shared::sidecar::PlatformRequest>(cmd["request"].clone()) {
+        Ok(r) => r,
+        Err(e) => return (false, json!(e.to_string())),
+      };
+      let answer = on_main(move || acpira_desktop::platform::handle_request(request, &**crate::app::app())).await;
+      match answer {
+        Some(Ok(v)) => (true, v),
+        Some(Err(e)) => (false, json!(e)),
+        None => (false, json!("the app is quitting")),
+      }
+    }
+    "notify" => {
+      // A system notification as the app would show one (none in a background run)
+      let (title, body) = (cmd["title"].as_str().unwrap_or("Acpira").to_owned(), cmd["body"].as_str().unwrap_or_default().to_owned());
+      let session = cmd["session"].as_str().map(str::to_owned);
+      on_main(move || crate::app::app().system_notification(&title, &body, session.as_deref())).await;
+      (true, Value::Null)
+    }
     "screenshot" => {
       let Some(w) = window(&cmd) else { return (false, json!("no such window")) };
       let path = cmd["path"].as_str().unwrap_or("/tmp/acpira-shot.png").to_owned();
-      let number = on_main(move || crate::mac::window_number(&w.window)).await.flatten();
-      let Some(n) = number else { return (false, json!("no window number")) };
-      let ok =
-        std::process::Command::new("screencapture").args(["-x", "-o", "-l", &n.to_string(), &path]).status().is_ok_and(|s| s.success());
-      (ok, json!(path))
+      #[cfg(target_os = "macos")]
+      {
+        let number = on_main(move || crate::mac::window_number(&w.window)).await.flatten();
+        let Some(n) = number else { return (false, json!("no window number")) };
+        let ok =
+          std::process::Command::new("screencapture").args(["-x", "-o", "-l", &n.to_string(), &path]).status().is_ok_and(|s| s.success());
+        (ok, json!(path))
+      }
+      #[cfg(not(target_os = "macos"))]
+      {
+        let _ = w;
+        (false, json!(format!("no screenshots on this platform yet: {path}")))
+      }
     }
     "update" => {
       // The updater's state as the page sees it

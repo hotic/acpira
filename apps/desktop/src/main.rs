@@ -1,28 +1,46 @@
-//! The Acpira desktop app in a Tauri shell (docs/dev/desktop.md): WKWebView windows running the webview bundle on
-//! acpira-app://localhost, the persistent engine behind them, and the system side of the IDE actions. The logic outside
-//! the windows lives in rust/crates/acpira-desktop, which the rust/ workspace's gates test
+//! The Acpira desktop app in a Tauri shell (docs/dev/desktop.md): WKWebView (macOS) or WebView2 (Windows) windows running
+//! the webview bundle on the app protocol (acpira_desktop::page::APP_ORIGIN), the persistent engine behind them, and the
+//! system side of the IDE actions. The logic outside the windows lives in rust/crates/acpira-desktop, which the rust/
+//! workspace's gates test
+// A GUI program on Windows: no console window comes up with it
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
 mod browser;
 mod chat_window;
 mod commands;
+mod embedded;
 #[cfg(target_os = "macos")]
 mod mac;
 mod menu;
+mod os;
 mod page;
 mod serve;
 mod smoke;
+#[cfg(windows)]
+mod win;
 
 use acpira_desktop::single_instance::{Instance, claim, links_in};
 use tauri::{Manager, RunEvent, WindowEvent};
 
-/// The page transport (src/init.js), injected before the page's own scripts
-pub const INIT_SCRIPT: &str = include_str!("init.js");
+/// The page transport (src/init.js), injected before the page's own scripts, with the app protocol's origin filled in
+pub static INIT_SCRIPT: std::sync::LazyLock<String> =
+  std::sync::LazyLock::new(|| include_str!("init.js").replace("__ACPIRA_APP_ORIGIN__", acpira_desktop::page::APP_ORIGIN));
 
 fn main() {
+  let args: Vec<String> = std::env::args().collect();
+  // Windows ships one exe: its first argument picks the engine's roles (`serve`, `agent`, `stdio`, …), anything else (no
+  // argument, a session link) is the app's window
+  #[cfg(windows)]
+  if acpira_host::cli::is_engine_command(args.get(1).map(String::as_str)) {
+    win::attach_console(args.get(1).map(String::as_str));
+    std::process::exit(acpira_host::cli::run(args[1..].to_vec()));
+  }
+  // An exe the updater restarted (Windows) waits for the one it replaces to exit, which still holds the single instance
+  // SAFETY: no other thread exists yet
+  unsafe { acpira_desktop::update::swap::wait_for_predecessor() };
   let context = tauri::generate_context!();
   let paths = app::Paths::resolve(&context.config().identifier);
-  let args: Vec<String> = std::env::args().collect();
   // A second launch hands its arguments (a session link) to the running app and exits
   let primary = match claim(&paths.user_data, &args) {
     Ok(Instance::Primary(p)) => Some(p),
@@ -33,6 +51,13 @@ fn main() {
     }
   };
   let links = links_in(&args);
+  // Without a WebView2 Runtime no window can open: say so instead of failing silently
+  #[cfg(windows)]
+  if !win::webview2_available() {
+    win::webview2_missing();
+    return;
+  }
+  #[cfg(target_os = "macos")]
   let background = std::env::var("ACPIRA_DESKTOP_BACKGROUND").as_deref() == Ok("1");
 
   let built = tauri::Builder::default()
@@ -56,7 +81,11 @@ fn main() {
         }
         WindowEvent::CloseRequested { .. } => a.window_closing(label),
         WindowEvent::Destroyed => a.window_closed(label),
-        WindowEvent::Moved(_) | WindowEvent::Resized(_) => a.schedule_save(),
+        WindowEvent::Moved(_) => a.schedule_save(),
+        WindowEvent::Resized(_) => {
+          a.schedule_save();
+          a.window_resized(label);
+        }
         WindowEvent::ThemeChanged(_) => a.theme_changed(),
         _ => {}
       }

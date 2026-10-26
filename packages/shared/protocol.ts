@@ -26,7 +26,7 @@ export type ShellCommand = 'newSession' | 'search' | 'openFolder' | 'settings' |
 // The desktop app updating itself (rust/crates/acpira-desktop/src/update/state.rs UpdateState, docs/dev/desktop.md
 // "Updates"): made by the shell, never by the sidecar. `manual` says why this install only links to the release page
 export type UpdatePhase = 'idle' | 'checking' | 'upToDate' | 'available' | 'downloading' | 'staging' | 'ready' | 'applying' | 'failed';
-export type UpdateManualReason = 'notBundled' | 'translocated' | 'readOnly' | 'notWritable' | 'unsigned' | 'unconfigured' | 'system';
+export type UpdateManualReason = 'notBundled' | 'translocated' | 'extracted' | 'readOnly' | 'notWritable' | 'unsigned' | 'unconfigured' | 'system';
 export interface UpdateState {
   phase: UpdatePhase;
   // This build's version, and the newer one found (available and after)
@@ -44,6 +44,17 @@ export interface UpdateState {
   auto: boolean;
   releaseUrl: string;
 }
+
+// The desktop app's menu bar as data (rust/crates/acpira-desktop/src/menu.rs page_menu), for a window without a global
+// menu bar (Windows): the page draws it in its title row. `id` goes back in menuCommand; `page` items are the page's own
+// shortcuts, which it already runs on their keys; `key` is the shortcut as shown (`Ctrl+Shift+N`)
+export type DesktopMenuEntry =
+  | { kind: 'item'; id: string; label: string; key?: string; page?: boolean; checked?: boolean }
+  | { kind: 'submenu'; label: string; items: DesktopMenuEntry[] }
+  | { kind: 'separator' };
+export interface DesktopMenu { label: string; items: DesktopMenuEntry[] }
+// The window controls the page draws when the window has no system title bar (Windows)
+export type WindowControl = 'minimize' | 'maximize' | 'close';
 
 // What a shell toast's button posts back (HostMsg toast `action`)
 export type ToastCommand = 'updateInstall';
@@ -213,6 +224,10 @@ export type HostMsg =
   | { type: 'updateState'; state: UpdateState }
   // The desktop shell's menu bar: the page runs the command as its own shortcut would. Never sent by the sidecar
   | { type: 'shellCommand'; command: ShellCommand }
+  // The desktop shell's menu bar for the page to draw (Windows), on init and whenever it changes (language, layout, the
+  // updater's item), and whether the window is maximized (the restore glyph). Never sent by the sidecar
+  | { type: 'desktopMenu'; menus: DesktopMenu[] }
+  | { type: 'windowState'; maximized: boolean }
   // The desktop tool panel's browser tabs, never sent by the sidecar: a message for the page in tab `tab`, the address bar's
   // history for the new-tab page (`running`: the ones whose server answered just now), and open_browser (`tab` names a tab
   // of this window the shell navigated; absent, the page opens a tab on `url`)
@@ -355,6 +370,9 @@ export type WebviewMsg =
   | { type: 'updateCheck'; download?: boolean }
   | { type: 'updateInstall' }
   | { type: 'updateAuto'; on: boolean }
+  // Desktop shell only: an item of the menu the page draws (desktopMenu), and the window's own controls
+  | { type: 'menuCommand'; id: string }
+  | { type: 'windowControl'; op: WindowControl }
   // Desktop shell only: the tool panel's browser tabs. A tab opens (on `url`, or empty), its page's messages go up, it
   // closes; the new-tab page asks for the address bar's history (answered with panelHistory)
   // folder: the session folder when it is on an SSH host, whose dev servers the tab shows

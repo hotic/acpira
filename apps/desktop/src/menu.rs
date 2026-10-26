@@ -5,7 +5,9 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use acpira_desktop::menu::{Command, Entry, Stock, SubmenuRole, UpdateItem, build_menu, shell_command};
+#[cfg(target_os = "macos")]
+use acpira_desktop::menu::SubmenuRole;
+use acpira_desktop::menu::{Command, Entry, Stock, UpdateItem, build_menu, shell_command};
 use acpira_desktop::wire::Initial;
 use tauri::menu::{AboutMetadata, CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Manager, Wry};
@@ -24,6 +26,12 @@ pub fn install(handle: &AppHandle) {
   let update = a.updater().map(|_| staged.as_deref().map_or(UpdateItem::Check, UpdateItem::Restart));
   let tree = build_menu(&t, "Acpira", layout.as_str().unwrap_or("chat"), cfg!(target_os = "macos"), update);
   log(&format!("menu language {}", a.locale().tag()));
+  // No global menu bar outside macOS, and a window's own Win32 bar would hang under a title bar the window does not have:
+  // the page draws the menu in its title row and sends the picks back (chat_window.rs menuCommand)
+  if !cfg!(target_os = "macos") {
+    a.set_page_menu(acpira_desktop::menu::page_menu(&tree));
+    return;
+  }
   match build(handle, &tree) {
     Ok(menu) => {
       if let Err(e) = handle.set_menu(menu) {
@@ -122,6 +130,40 @@ fn focused_webview(h: &AppHandle) -> Option<tauri::WebviewWindow> {
   h.webview_windows().into_values().find(|w| w.is_focused().unwrap_or(false))
 }
 
+/// An item of the menu the page draws (Windows): the window ones act on that page's window, the rest as the menu bar's.
+/// Main thread
+pub fn on_page_command(window: &tauri::WebviewWindow, id: &str) {
+  match id {
+    "window.close" => window_control(window, "close"),
+    "window.minimize" => window_control(window, "minimize"),
+    "window.fullScreen" => {
+      let _ = window.set_fullscreen(!window.is_fullscreen().unwrap_or(false));
+    }
+    _ => on_event(window.app_handle(), id),
+  }
+}
+
+/// The page's caption buttons (Windows). Main thread
+pub fn window_control(window: &tauri::WebviewWindow, op: &str) {
+  #[cfg(windows)]
+  if op == "minimize" || op == "maximize" {
+    crate::win::caption_command(window, op);
+    return;
+  }
+  let _ = match op {
+    "minimize" => window.minimize(),
+    "maximize" => {
+      if window.is_maximized().unwrap_or(false) {
+        window.unmaximize()
+      } else {
+        window.maximize()
+      }
+    }
+    "close" => window.close(),
+    _ => Ok(()),
+  };
+}
+
 /// A menu item was chosen. Main thread
 pub fn on_event(h: &AppHandle, id: &str) {
   let a = app();
@@ -162,9 +204,14 @@ pub fn on_event(h: &AppHandle, id: &str) {
     Command::ActualSize => zoom(h, 0),
     Command::ZoomIn => zoom(h, 1),
     Command::ZoomOut => zoom(h, -1),
+    // The responder chain's actions: macOS only (the menu offers them nowhere else)
+    #[cfg(target_os = "macos")]
     Command::PasteAndMatchStyle => crate::mac::send_action(c"pasteAsPlainText:"),
+    #[cfg(target_os = "macos")]
     Command::Delete => crate::mac::send_action(c"delete:"),
+    #[cfg(target_os = "macos")]
     Command::StartSpeaking => crate::mac::send_action(c"startSpeaking:"),
+    #[cfg(target_os = "macos")]
     Command::StopSpeaking => crate::mac::send_action(c"stopSpeaking:"),
     _ => {}
   }

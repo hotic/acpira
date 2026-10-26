@@ -258,6 +258,91 @@ pub fn shell_command(c: Command) -> Option<&'static str> {
   })
 }
 
+/// The menu as the page draws it where there is no global menu bar (Windows; HostMsg desktopMenu in
+/// packages/shared/protocol.ts): the same tree less the Window menu (the page's caption has its buttons), shortcuts in the
+/// platform's spelling. `page` marks what the page runs on its own keys (its shortcuts, the system's editing keys); the
+/// rest it hands back by id (menuCommand), the shell's items as `Command::id`, the stock ones as `edit.*`, `window.*` and
+/// `app.quit` (`stock_id`)
+pub fn page_menu(bar: &[Entry]) -> serde_json::Value {
+  use serde_json::json;
+  fn entries(items: &[Entry]) -> Vec<serde_json::Value> {
+    items
+      .iter()
+      .filter_map(|e| match e {
+        Entry::Item { command, label, accelerator } => {
+          let mut v = json!({ "kind": "item", "id": command.id(), "label": label });
+          if let Some(a) = accelerator {
+            v["key"] = json!(key_label(a));
+          }
+          if shell_command(*command).is_some() {
+            v["page"] = json!(true);
+          }
+          Some(v)
+        }
+        Entry::Radio { command, label, checked } => Some(json!({ "kind": "item", "id": command.id(), "label": label, "checked": checked })),
+        Entry::Stock { stock, label } => {
+          let (id, key, page) = stock_id(*stock)?;
+          let mut v = json!({ "kind": "item", "id": id, "label": label });
+          if let Some(k) = key {
+            v["key"] = json!(k);
+          }
+          if page {
+            v["page"] = json!(true);
+          }
+          Some(v)
+        }
+        Entry::Separator => Some(json!({ "kind": "separator" })),
+        Entry::Submenu { label, items, .. } => Some(json!({ "kind": "submenu", "label": label, "items": entries(items) })),
+      })
+      .collect()
+  }
+  bar
+    .iter()
+    .filter_map(|e| match e {
+      Entry::Submenu { role: Some(SubmenuRole::Window), .. } => None,
+      Entry::Submenu { label, items, .. } => Some(json!({ "label": label, "items": entries(items) })),
+      _ => None,
+    })
+    .collect()
+}
+
+/// A stock item's id in the page's menu, its shortcut as shown, and whether the page (or the system) runs that key itself;
+/// None for the ones a page menu leaves out (macOS's own)
+pub fn stock_id(stock: Stock) -> Option<(&'static str, Option<&'static str>, bool)> {
+  Some(match stock {
+    Stock::Undo => ("edit.undo", Some("Ctrl+Z"), true),
+    Stock::Redo => ("edit.redo", Some("Ctrl+Y"), true),
+    Stock::Cut => ("edit.cut", Some("Ctrl+X"), true),
+    Stock::Copy => ("edit.copy", Some("Ctrl+C"), true),
+    Stock::Paste => ("edit.paste", Some("Ctrl+V"), true),
+    Stock::SelectAll => ("edit.selectAll", Some("Ctrl+A"), true),
+    Stock::CloseWindow => ("window.close", Some("Alt+F4"), true),
+    Stock::Minimize => ("window.minimize", None, false),
+    Stock::FullScreen => ("window.fullScreen", Some("F11"), false),
+    Stock::Quit => ("app.quit", None, false),
+    Stock::About | Stock::Services | Stock::Hide | Stock::HideOthers | Stock::ShowAll | Stock::Zoom | Stock::Front => return None,
+  })
+}
+
+/// A menu accelerator as Windows spells it: `CmdOrCtrl+Shift+N` → `Ctrl+Shift+N`, modifiers in Ctrl, Alt, Shift order
+pub fn key_label(accelerator: &str) -> String {
+  let mut parts: Vec<&str> = accelerator.split('+').collect();
+  let key = parts.pop().unwrap_or_default();
+  let has = |m: &str| parts.iter().any(|p| p.eq_ignore_ascii_case(m));
+  let mut out = vec![];
+  if has("CmdOrCtrl") || has("Ctrl") || has("Control") || has("Cmd") {
+    out.push("Ctrl");
+  }
+  if has("Alt") || has("Option") {
+    out.push("Alt");
+  }
+  if has("Shift") {
+    out.push("Shift");
+  }
+  out.push(key);
+  out.join("+")
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -349,5 +434,38 @@ mod tests {
     let Entry::Submenu { label, items, .. } = &bar[0] else { panic!() };
     assert_eq!(label, "desktop.menu.file");
     assert!(items.iter().any(|e| matches!(e, Entry::Stock { stock: Stock::Quit, .. })));
+  }
+
+  #[test]
+  fn the_page_menu_drops_the_window_menu_and_spells_shortcuts_for_windows() {
+    let t = |k: &str, _: &[(&str, &str)]| k.to_owned();
+    let menu = page_menu(&build_menu(&t, "Acpira", "chat", false, Some(UpdateItem::Check)));
+    let labels: Vec<&str> = menu.as_array().unwrap().iter().map(|m| m["label"].as_str().unwrap()).collect();
+    assert_eq!(labels, ["desktop.menu.file", "desktop.menu.edit", "desktop.menu.view", "desktop.menu.help"]);
+    let all = |m: &serde_json::Value| -> Vec<serde_json::Value> {
+      fn walk(items: &[serde_json::Value], out: &mut Vec<serde_json::Value>) {
+        for i in items {
+          if i["kind"] == "submenu" { walk(i["items"].as_array().unwrap(), out) } else { out.push(i.clone()) }
+        }
+      }
+      let mut out = vec![];
+      for menu in m.as_array().unwrap() {
+        walk(menu["items"].as_array().unwrap(), &mut out);
+      }
+      out
+    };
+    let items = all(&menu);
+    let find = |id: &str| items.iter().find(|i| i["id"] == id).cloned().unwrap_or_else(|| panic!("{id}"));
+    // The page's own shortcut: shown, run by the page's keys
+    assert_eq!(find("NewSession")["key"], "Ctrl+N");
+    assert_eq!(find("NewSession")["page"], true);
+    // The shell's: handed back on its key
+    assert_eq!(find("NewWindow")["key"], "Ctrl+Shift+N");
+    assert!(find("NewWindow").get("page").is_none());
+    assert_eq!(find("DevTools")["key"], "Ctrl+Alt+I");
+    assert_eq!(find("edit.paste")["page"], true);
+    assert_eq!(find("layout.chat")["checked"], true);
+    assert!(items.iter().any(|i| i["id"] == "CheckUpdates"));
+    assert!(items.iter().all(|i| i["id"] != "window.minimize"));
   }
 }

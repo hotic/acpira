@@ -16,17 +16,23 @@ smoke = []
 
 [build-dependencies]
 tauri-build = { version = "2.7", features = [] }
+# build.rs packs the page bundle into the Windows exe; the version acpira-desktop links
+zstd = "0.13"
 
 [dependencies]
 acpira-desktop = { path = "../../rust/crates/acpira-desktop" }
 acpira-shared = { path = "../../rust/crates/acpira-shared" }
 # devtools: View › Developer Tools in a release build too (a private WebKit API on macOS; the app is not on the App Store)
-tauri = { version = "2.12", features = ["devtools"] }
+# No default features: on macOS they only add `compression` (the frontend is a stub; the page is served from resources) and
+# `dynamic-acl` (capabilities never change at run time), ~0.36 MB of the shell (2026-10-25)
+tauri = { version = "2.12", default-features = false, features = ["wry", "devtools"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order", "raw_value"] }
 tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "io-util", "net", "process", "sync", "time", "fs"] }
 uuid = { version = "1.24", features = ["v4"] }
 rfd = { version = "0.15", default-features = false, features = ["tokio"] }
+# The page bundle's packed files (the Windows exe's embedded ones, src/serve.rs)
+zstd = "0.13"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
@@ -34,7 +40,17 @@ objc2-foundation = { version = "0.3", features = ["NSString", "NSUserDefaults", 
 objc2-user-notifications = { version = "0.3", features = ["UNUserNotificationCenter", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSound", "UNNotificationTrigger", "UNNotificationSettings", "block2"] }
 block2 = "0.6"
 
+# Windows ships one exe: the engine's command line runs inside it (main.rs dispatches by the first argument), with the
+# engine crates at the versions rust/Cargo.lock locks (test/desktopLock.test.ts). Win32 for src/win.rs: the version tauri
+# and wry already link
+[target.'cfg(windows)'.dependencies]
+acpira-host = { path = "../../rust/crates/acpira-host" }
+# WebView2 events Tauri does not expose (the clipboard permission), at the version wry links
+webview2-com = "0.39"
+windows = { version = "0.62", features = ["Data_Xml_Dom", "UI_Notifications", "Win32_Foundation", "Win32_Globalization", "Win32_System_Com", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+# Fat LTO: ~0.9 MB (6%) smaller than thin for ~15 s more on a clean build (zig cross-build, 2026-10-25)
 [profile.release]
-lto = "thin"
+lto = "fat"
 strip = "symbols"
 codegen-units = 1

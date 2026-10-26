@@ -8,6 +8,8 @@
 .acp-shell[data-desktop] {
   --hdr: 44px;
   --sheet-inset: 8px;
+  /* The header line's distance from the window's top: the sheet's inset, none on Windows, where the line is the title bar */
+  --title-top: var(--sheet-inset);
   --lights-w: 0px;
   /* A notch under the sheet, not black: at 55% the column read as a hole beside the page (reported 2026-10-23) */
   --canvas: color-mix(in srgb, var(--bg-0) 78%, #000);
@@ -32,6 +34,23 @@
 /* The lights span x 17-77 (14 pt each, 9 pt apart on macOS 27); the first button after them leaves a breath of about 15 px
    to its icon */
 .acp-shell[data-desktop][data-os="mac"] { --lights-w: 84px; }
+/* Windows (data-os="win"): no lights; the title row also holds the menu button (chat/DesktopFrame.tsx AppMenus). The
+   header line is the window's title bar (as Codex draws it there): it sits at the window's top on the canvas, the raised
+   card begins under it (below), and the caption's three buttons (WindowCaption, 46 px each as Windows 11 draws them) take
+   its top-right corner, so whatever ends the line there (the tool panel's toggle, its tabs, a bare header) moves left by
+   --caps-w */
+.acp-shell[data-desktop] { --caps-w: 0px; --caption-w: 46px; }
+.acp-shell[data-desktop][data-os="win"] {
+  --title-top: 0px;
+  --caps-w: calc(3 * var(--caption-w) + var(--gap) - var(--sheet-inset) - var(--start-x));
+  --title-w: calc(var(--gap) + 4 * var(--ctl) + 6px + var(--gap));
+}
+.acp-shell[data-desktop][data-os="win"][data-narrow] :is([data-sheet-header], [data-stage-tabs], [data-settings-rail]) { --title-w: calc(var(--gap) + 2 * var(--ctl) + 2px + var(--gap)); }
+/* A sheet header that ends at the window's edge leaves the caption its room; beside a shown tool panel it does not */
+.acp-shell[data-desktop][data-os="win"]:not([data-layout="files"]) [data-sheet-header] { --sheet-trail: calc(var(--start-x) + var(--caps-w)); }
+.acp-shell[data-desktop][data-os="win"]:not([data-layout="files"]):has(> [data-tool-panel-wrap][data-shown]) [data-sheet-header] { --sheet-trail: var(--start-x); }
+/* Windows: the stage's rule under its tabs gives way to its card's edge (the card under the title bar, below) */
+.acp-shell[data-desktop][data-os="win"] [data-stage-body] { --stage-rule: transparent; }
 /* No column beside the sheet (hidden, or a drawer over a narrow window): its header starts after the pinned title row */
 .acp-shell[data-desktop]:not([data-column]) [data-sheet-header] { --sheet-lead: calc(var(--title-w) - var(--sheet-inset)); }
 /* The files layout (acpira.desktopLayout = files, panel/FilesLayout.tsx): the chat lies on the canvas between the stage and
@@ -39,13 +58,13 @@
    session column folds. Its palette counts from the canvas (palette.css), so cards and the composer keep their contrast
    and what paints the page's colour (sticky prompts, fades) paints the canvas */
 .acp-shell[data-desktop][data-layout="files"] [data-sheet-header] { --sheet-lead: var(--start-x); }
-.acp-shell[data-desktop][data-layout="files"]:not([data-column]) [data-sheet-header] { --sheet-trail: calc(var(--start-x) + var(--ctl) + var(--gap)); }
+.acp-shell[data-desktop][data-layout="files"]:not([data-column]) [data-sheet-header] { --sheet-trail: calc(var(--start-x) + var(--ctl) + var(--gap) + var(--caps-w)); }
 .acp-shell[data-desktop][data-layout="files"] > [data-sheet] { --bg-0: var(--canvas); }
 
 @layer components {
   .acp-shell[data-desktop] { background: var(--canvas); }
   .acp-shell[data-desktop] [data-sheet] {
-    margin: var(--sheet-inset) var(--sheet-inset) var(--sheet-inset) 0;
+    margin: var(--title-top) var(--sheet-inset) var(--sheet-inset) 0;
     border-radius: var(--r-lg);
     background: var(--bg-0);
     box-shadow: 0 0 0 1px var(--line-strong), 0 2px 10px rgb(0 0 0 / 0.18);
@@ -55,7 +74,7 @@
   .acp-shell[data-desktop]:not([data-column]) [data-sheet] { margin-left: var(--sheet-inset); }
   /* The files layout's chat: flat on the canvas, the stage the one raised sheet; not clipped, so its resize edge reaches over
      the stage's rim */
-  .acp-shell[data-desktop][data-layout="files"] > [data-sheet] { margin: var(--sheet-inset) 0; border-radius: 0; background: transparent; box-shadow: none; overflow: visible; }
+  .acp-shell[data-desktop][data-layout="files"] > [data-sheet] { margin: var(--title-top) 0 var(--sheet-inset); border-radius: 0; background: transparent; box-shadow: none; overflow: visible; }
   /* Its session column at the window's right edge gives the stage room down to its narrowest */
   .acp-shell[data-desktop][data-layout="files"] > [data-session-panel]:not([data-column-hidden], [data-moving]) { min-width: var(--session-pane-min); }
   /* A narrow window's drawer (the column, undocked) lies over the sheet: it takes the canvas the docked column lies on,
@@ -81,7 +100,7 @@
   /* The column's title row: the lights, then its buttons */
   /* The title row is pinned at the window's top-left (absolute, over the column or the sheet's header) and never moves
      with the column; the column and the settings rail leave a strip of its height under it */
-  .acp-shell[data-desktop] :is([data-title-row], [data-title-space]) { margin-top: var(--sheet-inset); }
+  .acp-shell[data-desktop] :is([data-title-row], [data-title-space]) { margin-top: var(--title-top); }
   .acp-shell[data-desktop] [data-title-row] { padding-left: max(var(--gap), var(--lights-w)); }
   /* The column folds away (its title row's first button) and back. Only while it moves (data-column-moving, never under the
      drag that resizes it) its width eases, and the sheet's left inset and its header's room for the lights with it. The
@@ -140,6 +159,34 @@
   [data-start-top][data-closed] { grid-template-rows: 0fr; opacity: 0; translate: 0 6px; margin-bottom: calc(-1 * var(--dock-gap)); }
   [data-start-top] > div { min-height: 0; overflow: hidden; }
   [data-start-top] [data-picker] { margin: 0 var(--start-x) var(--gap); }
+  /* Windows: the raised card (the chat's sheet, the files layout's stage) begins under the title bar, its header line on
+     the canvas above it, so the caption in the corner never cuts into the card. The card is drawn by ::before; the element
+     stays unclipped, as the card's rim is a shadow outside it. What paints to the stage's edges (a file, a terminal) is
+     clipped to the card's corners instead */
+  .acp-shell[data-desktop][data-os="win"]:not([data-layout="files"]) [data-sheet],
+  .acp-shell[data-desktop][data-os="win"] [data-stage] { background: transparent; box-shadow: none; overflow: visible; isolation: isolate; }
+  .acp-shell[data-desktop][data-os="win"]:not([data-layout="files"]) [data-sheet]::before,
+  .acp-shell[data-desktop][data-os="win"] [data-stage]::before {
+    content: ""; position: absolute; inset: var(--hdr) 0 0; z-index: -1; pointer-events: none;
+    border-radius: var(--r-lg); background: var(--bg-0);
+    box-shadow: 0 0 0 1px var(--line-strong), 0 2px 10px rgb(0 0 0 / 0.18);
+  }
+  .acp-shell[data-desktop][data-os="win"] [data-stage-body] { clip-path: inset(0 round var(--r-lg)); }
+  /* A sheet without a header (the settings page) starts its content under the title bar, on the card */
+  .acp-shell[data-desktop][data-os="win"] [data-sheet]:not(:has([data-sheet-header])) { padding-top: var(--hdr); }
+  /* The window's caption on Windows (chat/DesktopFrame.tsx WindowCaption): Windows 11's buttons in its glyph font, the
+     title bar's full height, a faint fill under the pointer and Close red, flush with the window's top-right corner (the
+     system rounds that corner, so the red does too) */
+  .acp-shell[data-desktop] .win-caption { position: absolute; top: 0; right: 0; z-index: 50; display: flex; height: var(--hdr); }
+  .acp-shell[data-desktop] .win-caption > button {
+    display: flex; justify-content: center; align-items: center; width: var(--caption-w);
+    font: 10px/10px "Segoe Fluent Icons", "Segoe MDL2 Assets"; color: var(--fg-1);
+    transition: background-color 100ms linear, color 100ms linear;
+  }
+  .acp-shell[data-desktop] .win-caption > button:hover { background: color-mix(in srgb, var(--fg-1) 9%, transparent); }
+  .acp-shell[data-desktop] .win-caption > button:active { background: color-mix(in srgb, var(--fg-1) 6%, transparent); }
+  .acp-shell[data-desktop] .win-caption > button[data-op="close"]:hover { background: #c42b1c; color: #fff; }
+  .acp-shell[data-desktop] .win-caption > button[data-op="close"]:active { background: color-mix(in srgb, #c42b1c 90%, transparent); color: #fff; }
   /* A name that changed in place (the header's project) fades in */
   .swap-in { animation: acp-fade-in 200ms ease-out; }
 }

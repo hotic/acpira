@@ -20,6 +20,9 @@ flate2 = "1.1"
 gif = "0.14"
 image = { version = "0.25", default-features = false, features = ["gif", "png"] }
 libc = "0.2"
+# acpira-shared's i18n dictionaries, stored DEFLATE-compressed (build.rs packs, i18n.rs inflates); the version flate2 and png
+# already link
+miniz_oxide = "0.8"
 parking_lot = "0.12"
 # The built-in agent's `read` on a PDF: the text of each page (CID fonts through their ToUnicode maps)
 pdf-extract = "0.12"
@@ -47,8 +50,16 @@ uuid = { version = "1.24", features = ["v4"] }
 # The desktop app's update packages: compression, and binary deltas with the installed file as reference prefix
 zstd = { version = "0.13", default-features = false }
 junction = "1.2"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_System_Registry", "Win32_System_Environment", "Win32_System_Com", "Win32_UI_Shell", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_Registry", "Win32_System_Environment", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_Storage_FileSystem"] }
 
 [profile.release]
 lto = "thin"
 strip = "symbols"
+
+# Shipped engines (scripts/release/build-sidecar.mjs in CI, with --all or --dist): whole-program LTO in one codegen unit
+# is ~35% smaller (33 → 22 MB on darwin-arm64, 2026-10-25) for ~4x the build time, which day-to-day `--release` builds
+# (pnpm harness, probes) do not pay. panic = "abort" would save 5 MB more but is out: tools/pdf.rs catches pdf-extract panics
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1

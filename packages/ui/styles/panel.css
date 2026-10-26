@@ -41,7 +41,7 @@
    chat header's line, which leaves it the room. Unlayered like desktop.css's --sheet-lead rules so it beats the default.
    The files layout's toggle folds the session column instead (desktop.css) */
 .acp-shell[data-desktop]:not([data-layout="files"]):has(> [data-panel-toggle]):not(:has(> [data-tool-panel-wrap][data-shown])) [data-sheet-header] {
-  --sheet-trail: calc(var(--start-x) + var(--ctl) + var(--gap));
+  --sheet-trail: calc(var(--start-x) + var(--ctl) + var(--gap) + var(--caps-w, 0px));
 }
 /* The Files tab's tree sits at the panel's (and the window's) right edge, under the pinned toggle: its filter box ends where
    the toggle's button does (reported 2026-10-24). The files layout's explorer has no toggle above it and keeps the gap */
@@ -102,7 +102,7 @@
      once that folds) and the chat on the canvas */
   [data-stage] {
     --panel-bg: var(--bg-0);
-    margin: var(--sheet-inset) 0;
+    margin: var(--title-top) 0 var(--sheet-inset);
     border-radius: var(--r-lg);
     background: var(--bg-0);
     box-shadow: 0 0 0 1px var(--line-strong), 0 2px 10px rgb(0 0 0 / 0.18);

@@ -63,6 +63,7 @@ impl Host {
   /// pty). `verbose` adds `-v` so a locked key can be told from a refused one. Dropping the command's child kills ssh
   pub fn command(&self, script: &str, verbose: bool) -> Command {
     let mut cmd = Command::new(&self.program);
+    crate::platform::command::no_window(&mut cmd);
     cmd.args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"]);
     cmd.args(["-o", "ForwardAgent=no", "-o", "ForwardX11=no", "-o", "ClearAllForwardings=yes", "-o", "PermitLocalCommand=no"]);
     if verbose {
@@ -75,6 +76,7 @@ impl Host {
   /// `ssh -G` for the target: the resolved configuration, without connecting
   pub fn resolve_command(&self) -> Command {
     let mut cmd = Command::new(&self.program);
+    crate::platform::command::no_window(&mut cmd);
     cmd.arg("-G").args(self.target.args()).kill_on_drop(true);
     cmd
   }

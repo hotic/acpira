@@ -90,23 +90,30 @@ pub const LANGUAGE_TAGS: [&str; 10] = ["auto", "zh-CN", "zh-TW", "en", "ja", "ko
 
 type Dict = HashMap<String, String>;
 
-fn parse_dict(locale: Locale, json: &str) -> Dict {
-  serde_json::from_str(json).unwrap_or_else(|e| panic!("{}.json: {e}", locale.tag()))
+/// The dictionary build.rs packed for a locale: DEFLATE-compressed JSON (~3.7x smaller in every binary linking this crate)
+macro_rules! packed {
+  ($tag:literal) => {
+    include_bytes!(concat!(env!("OUT_DIR"), "/", $tag, ".json.deflate"))
+  };
 }
 
-static DICTS: LazyLock<[Dict; 9]> = LazyLock::new(|| {
-  [
-    parse_dict(Locale::ZhCn, include_str!("../i18n/zh-CN.json")),
-    parse_dict(Locale::ZhTw, include_str!("../i18n/zh-TW.json")),
-    parse_dict(Locale::En, include_str!("../i18n/en.json")),
-    parse_dict(Locale::Ja, include_str!("../i18n/ja.json")),
-    parse_dict(Locale::Ko, include_str!("../i18n/ko.json")),
-    parse_dict(Locale::Es, include_str!("../i18n/es.json")),
-    parse_dict(Locale::De, include_str!("../i18n/de.json")),
-    parse_dict(Locale::Fr, include_str!("../i18n/fr.json")),
-    parse_dict(Locale::Ru, include_str!("../i18n/ru.json")),
-  ]
-});
+fn unpack(locale: Locale, packed: &[u8]) -> Dict {
+  let json = miniz_oxide::inflate::decompress_to_vec(packed).unwrap_or_else(|e| panic!("{}.json: {e:?}", locale.tag()));
+  serde_json::from_slice(&json).unwrap_or_else(|e| panic!("{}.json: {e}", locale.tag()))
+}
+
+// One lazy slot per locale (indexed by `Locale as usize`): only the source and the shown language are ever inflated
+static DICTS: [LazyLock<Dict>; 9] = [
+  LazyLock::new(|| unpack(Locale::ZhCn, packed!("zh-CN"))),
+  LazyLock::new(|| unpack(Locale::ZhTw, packed!("zh-TW"))),
+  LazyLock::new(|| unpack(Locale::En, packed!("en"))),
+  LazyLock::new(|| unpack(Locale::Ja, packed!("ja"))),
+  LazyLock::new(|| unpack(Locale::Ko, packed!("ko"))),
+  LazyLock::new(|| unpack(Locale::Es, packed!("es"))),
+  LazyLock::new(|| unpack(Locale::De, packed!("de"))),
+  LazyLock::new(|| unpack(Locale::Fr, packed!("fr"))),
+  LazyLock::new(|| unpack(Locale::Ru, packed!("ru"))),
+];
 
 fn dict(locale: Locale) -> &'static Dict {
   &DICTS[locale as usize]

@@ -20,6 +20,9 @@ url.workspace = true
 uuid.workspace = true
 zstd.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
 [dev-dependencies]
 # The real engine in-process for the client's end-to-end test (tests/engine.rs)
 acpira-host = { path = "../acpira-host" }

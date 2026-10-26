@@ -8,15 +8,25 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SidecarCommand {
   pub command: PathBuf,
+  /// Before `args` when the engine runs attached over stdio (not for `serve`)
+  pub attached_args: Vec<String>,
   pub args: Vec<String>,
   pub env: BTreeMap<String, String>,
   pub label: String,
 }
 
 impl SidecarCommand {
+  /// An engine binary. Attached, it runs as `<binary> stdio`: the Windows desktop exe opens a window when it gets no
+  /// arguments, and an older engine binary ignores the word and serves stdio all the same
   pub fn binary(path: impl Into<PathBuf>) -> SidecarCommand {
     let command = path.into();
-    SidecarCommand { label: format!("binary {}", command.display()), command, args: vec![], env: BTreeMap::new() }
+    SidecarCommand {
+      label: format!("binary {}", command.display()),
+      command,
+      attached_args: vec!["stdio".into()],
+      args: vec![],
+      env: BTreeMap::new(),
+    }
   }
 }
 
