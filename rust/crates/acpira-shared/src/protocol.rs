@@ -11,6 +11,7 @@ use crate::model_shapes::ModelShapes;
 use crate::providers::{ProbeOutcome, ProviderAction, ProviderProbe, ProvidersView};
 use crate::remote::{ConnectionOp, ConnectionView, RemoteDirEntry, SshHost};
 use crate::shared_config::{SharedAction, SharedView};
+use crate::plugins::{PluginAction, PluginsView};
 use crate::storage::{StorageAction, StorageDetail, StorageOutcome, StorageView};
 use crate::settings::{HiddenMap, SettingsView};
 use crate::transcript::{
@@ -310,6 +311,13 @@ pub enum HostMsg {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
   },
+  /// The plugin page, on request and on every change of the plugins (another engine's included); `error` when the
+  /// action that triggered this reply failed
+  Plugins {
+    view: PluginsView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+  },
   /// The built-in agent's model sources; `error` when the action that triggered this reply failed
   Providers {
     view: ProvidersView,
@@ -472,6 +480,7 @@ impl HostMsg {
       HostMsg::Inventory { .. } => "inventory",
       HostMsg::Shared { .. } => "shared",
       HostMsg::Storage { .. } => "storage",
+      HostMsg::Plugins { .. } => "plugins",
       HostMsg::Providers { .. } => "providers",
       HostMsg::ProviderProbed { .. } => "providerProbed",
       HostMsg::Controls { .. } => "controls",
@@ -892,6 +901,11 @@ pub enum WebviewMsg {
     action: StorageAction,
     #[serde(default)]
     detail: Vec<StorageDetail>,
+  },
+  /// The plugin page: read the view (and follow its changes from then on), or apply an action and get the view back
+  Plugins,
+  PluginAction {
+    action: PluginAction,
   },
   /// The built-in agent's model sources: read them, or apply an edit and get the view back
   Providers,

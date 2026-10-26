@@ -39,6 +39,23 @@ pub enum HubOp {
   /// (`AcpSession::host_mcp_servers`): answered `Done` once it runs there (or `Error`), then the socket carries its stdin
   /// one way and `hub::Frame`s the other
   HostStdio { name: String },
+  /// The plugin tools in effect and the built-in tool groups switched off (`HubReply::Plugins`)
+  Plugins,
+  /// A plugin's script tool, by the name it is served under; answered `Done` (its output) / `Error`
+  PluginCall {
+    name: String,
+    #[serde(default)]
+    arguments: serde_json::Value,
+  },
+  /// `plugin_guide`: the contract and the state of every plugin; answered `Done`
+  PluginGuide,
+  /// `plugin_activate`: freeze and check the plugin, then ask the user on a card in the calling session; progress
+  /// lines while the card waits, then `Done` / `Error`
+  PluginActivate {
+    id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wait_secs: Option<u64>,
+  },
 }
 
 /// `search_sessions`' arguments (`session_library.rs`)
@@ -149,6 +166,12 @@ pub enum HubReply {
   Error(String),
   /// The answer to `Features`
   Features(HostFeatures),
+  /// The answer to `Plugins`: the MCP definitions of the plugin tools in effect, the tool groups switched off
+  Plugins {
+    tools: Vec<serde_json::Value>,
+    #[serde(default)]
+    off: Vec<String>,
+  },
 }
 
 /// Host tools the MCP server offers only when the serving shell can carry them out

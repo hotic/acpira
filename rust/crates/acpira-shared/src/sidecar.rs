@@ -287,6 +287,9 @@ pub enum SidecarMsg {
     /// Additions a shell may use without a protocol bump (older shells, the IDEA plugin and the phone ignore the field):
     /// `preview` = previewOpen / previewClose
     features: Vec<String>,
+    /// The engine has every user plugin unloaded (`docs/dev/plugins.md`, Safe mode); older shells ignore it
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    safe_mode: bool,
   },
   HelloReject {
     request_id: String,

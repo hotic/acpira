@@ -70,6 +70,8 @@ pub fn is_engine_command(first: Option<&str>) -> bool {
         | "handoff-pack"
         | "quota"
         | "pdf-pages"
+        | "plugin"
+        | "safe-mode"
     )
   )
 }
@@ -120,6 +122,16 @@ pub fn run(args: Vec<String>) -> i32 {
       return crate::accounts::quota_cli::cli(&args[1..]).await;
     }
     let explicit_home = flag(&args, "--home").filter(|h| !h.is_empty()).map(|h| absolute(&PathBuf::from(h)));
+    if args.first().map(String::as_str) == Some("plugin") {
+      return crate::plugins::cli::plugin(&args[1..], &explicit_home.unwrap_or_else(acpira_home)).await;
+    }
+    if args.first().map(String::as_str) == Some("safe-mode") {
+      return crate::plugins::cli::safe_mode(&args[1..], &explicit_home.unwrap_or_else(acpira_home)).await;
+    }
+    // An engine whose plugins keep it from working starts with all of them unloaded (docs/dev/plugins.md, Safe mode)
+    if args.iter().any(|a| a == "--safe-mode") {
+      crate::plugins::host::force_safe_mode();
+    }
     let exe = std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned());
     if args.first().map(String::as_str) == Some("agent") {
       return acpira_agent::run_until(tokio::io::stdin(), tokio::io::stdout(), explicit_home.unwrap_or_else(acpira_home), VERSION, shutdown_signal()).await;

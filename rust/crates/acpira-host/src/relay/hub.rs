@@ -72,6 +72,8 @@ pub struct RelayHub {
   browser: parking_lot::RwLock<Option<Arc<dyn HostBrowser>>>,
   /// The session manager, for `search_sessions` / `read_session`; weak, since the manager's sessions hold grants here
   library: parking_lot::RwLock<Option<Weak<dyn SessionLibrary>>>,
+  /// The user's plugins: their script tools, the tool groups switched off, activation
+  plugins: parking_lot::RwLock<Option<Weak<crate::plugins::host::PluginHost>>>,
 }
 
 /// Leaves the pending count when the request line is in (or the connection gave up)
@@ -87,7 +89,7 @@ impl RelayHub {
   pub async fn start(roster: Arc<Roster>, log: LogFn) -> Result<Arc<RelayHub>> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?.to_string();
-    let hub = Arc::new(RelayHub { addr, grants: Default::default(), pending: AtomicUsize::new(0), roster, log, browser: Default::default(), library: Default::default() });
+    let hub = Arc::new(RelayHub { addr, grants: Default::default(), pending: AtomicUsize::new(0), roster, log, browser: Default::default(), library: Default::default(), plugins: Default::default() });
     let weak = Arc::downgrade(&hub);
     tokio::spawn(async move {
       while let Ok((sock, _)) = listener.accept().await {
@@ -106,6 +108,15 @@ impl RelayHub {
   /// Where `search_sessions` / `read_session` calls go (the runtime's session manager)
   pub fn set_library(&self, library: Weak<dyn SessionLibrary>) {
     *self.library.write() = Some(library);
+  }
+
+  /// Where the plugin tools come from (the runtime's plugin host)
+  pub fn set_plugins(&self, plugins: Weak<crate::plugins::host::PluginHost>) {
+    *self.plugins.write() = Some(plugins);
+  }
+
+  fn plugin_host(&self) -> Option<Arc<crate::plugins::host::PluginHost>> {
+    self.plugins.read().as_ref().and_then(Weak::upgrade)
   }
 
   /// The listener's address, for a test client
@@ -219,6 +230,53 @@ impl RelayHub {
           _ => HubReply::Error("This editor cannot show web pages inside it; give the user the URL instead.".into()),
         };
         let _ = write.write_all(reply(r).as_bytes()).await;
+      }
+      HubOp::Plugins => {
+        let r = match self.plugin_host() {
+          Some(p) => {
+            p.reload();
+            let loaded = p.loaded();
+            HubReply::Plugins { tools: loaded.tool_defs(), off: loaded.groups_off() }
+          }
+          None => HubReply::Plugins { tools: vec![], off: vec![] },
+        };
+        let _ = write.write_all(reply(r).as_bytes()).await;
+      }
+      HubOp::PluginCall { name, arguments } => {
+        let r = match (self.plugin_host(), session.upgrade()) {
+          (Some(p), Some(s)) => {
+            let ctx = crate::plugins::run::CallContext { workspace: s.cwd.clone(), session: s.id.clone() };
+            drop(s);
+            match p.call(&name, &arguments, &ctx).await {
+              Ok(text) => HubReply::Done(text),
+              Err(e) => HubReply::Error(e),
+            }
+          }
+          (None, _) => HubReply::Error("Plugins are not available in this host.".into()),
+          (_, None) => HubReply::Error("The Acpira session that started this agent is gone.".into()),
+        };
+        let _ = write.write_all(reply(r).as_bytes()).await;
+      }
+      HubOp::PluginGuide => {
+        let r = match self.plugin_host() {
+          Some(p) => HubReply::Done(crate::plugins::guide::text(&p)),
+          None => HubReply::Error("Plugins are not available in this host.".into()),
+        };
+        let _ = write.write_all(reply(r).as_bytes()).await;
+      }
+      HubOp::PluginActivate { id, wait_secs } => {
+        let (Some(p), Some(s)) = (self.plugin_host(), session.upgrade()) else {
+          let _ = write.write_all(reply(HubReply::Error("Plugins are not available in this host.".into())).as_bytes()).await;
+          return;
+        };
+        let (tx, mut rx) = mpsc::unbounded_channel::<HubReply>();
+        tokio::spawn(s.plugin_activate(p, id, wait_secs, tx));
+        while let Some(r) = rx.recv().await {
+          let last = !matches!(r, HubReply::Progress(_));
+          if write.write_all(reply(r).as_bytes()).await.is_err() || last {
+            break;
+          }
+        }
       }
       HubOp::SearchSessions(_) | HubOp::ReadSession(_) => {
         let r = self.library_op(&session, caller.is_some(), req.op).await;

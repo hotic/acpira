@@ -47,6 +47,8 @@ pub struct HostRuntime {
   terminals: Arc<crate::terminal::TerminalHub>,
   /// SSH hosts and their helper channels (docs/dev/remote.md)
   pub connections: Arc<crate::remote::connections::Connections>,
+  /// The user's plugins (docs/dev/plugins.md)
+  pub plugins: Arc<crate::plugins::host::PluginHost>,
 }
 
 impl HostRuntime {
@@ -141,6 +143,16 @@ impl HostRuntime {
         None
       }
     };
+    // Plugins: what state.json enables, loaded before any session lists Acpira's MCP tools
+    let plugins = crate::plugins::host::PluginHost::new(
+      root.join(crate::plugins::DIR),
+      crate::plugins::host::PluginHost::safe_mode_from_env(),
+      log.clone(),
+    );
+    plugins.start().await;
+    if let Some(h) = &hub {
+      h.set_plugins(Arc::downgrade(&plugins));
+    }
     let host_mcp = bridge_exe.as_deref().map(|exe| {
       let m = crate::host_mcp::HostMcp::new(exe);
       match &hub {
@@ -224,6 +236,22 @@ impl HostRuntime {
       },
     );
     *mgr_slot.lock() = Some(Arc::downgrade(&manager));
+    // A commit here tells the other engines at once; theirs reach this one the same way (the poll below otherwise)
+    let bus = Arc::downgrade(&manager);
+    plugins.set_touch(Arc::new(move || {
+      if let Some(m) = bus.upgrade() {
+        m.touch_others("plugins");
+      }
+    }));
+    let reload = Arc::downgrade(&plugins);
+    manager.on_bus_touch(
+      "plugins",
+      Arc::new(move || {
+        if let Some(p) = reload.upgrade() {
+          p.reload();
+        }
+      }),
+    );
     // `search_sessions` / `read_session` read through the manager; weak like the slot above, since its sessions hold grants
     if let Some(h) = &hub {
       let library: std::sync::Weak<dyn crate::session_library::SessionLibrary> = Arc::downgrade(&manager) as _;
@@ -261,6 +289,7 @@ impl HostRuntime {
       bridges: Default::default(),
       terminals: crate::terminal::TerminalHub::new(),
       connections,
+      plugins,
     });
     runtime.terminals.set_remote(runtime.connections.clone());
     // A host's folders are the `ssh://` entries of the project list
@@ -309,6 +338,8 @@ impl HostRuntime {
         let Some(rt) = weak.upgrade() else { break };
         // Another engine (another window, the desktop app) or a hand edit changed the shared settings
         rt.platform.reload_shared();
+        // Or the plugin state (an engine off the bus, a hand edit): one metadata call when nothing changed
+        rt.plugins.reload();
         match rt.reload_agent_config().await {
           Ok(()) => last_error = None,
           Err(e) => {
@@ -389,6 +420,7 @@ impl HostRuntime {
       initial,
       self.terminals.clone(),
       self.connections.clone(),
+      self.plugins.clone(),
     );
     self.bridges.lock().push(core.clone());
     core

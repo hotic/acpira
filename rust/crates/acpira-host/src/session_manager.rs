@@ -359,6 +359,8 @@ pub struct SessionManager {
   hosts: hosts::Hosts,
   // Unread marks waiting to reach the shared store, written one batch at a time (`persist_unread`)
   unread_ops: parking_lot::Mutex<UnreadQueue>,
+  // What other parts of the engine re-read on another engine's `touch` (`plugins` → the plugin host)
+  touch_hooks: parking_lot::Mutex<Vec<(&'static str, Arc<dyn Fn() + Send + Sync>)>>,
   me: Weak<SessionManager>,
 }
 
@@ -369,6 +371,16 @@ struct UnreadQueue {
 }
 
 impl SessionManager {
+  /// Run `f` whenever another engine touches `what` on the bus (a shared file it changed)
+  pub fn on_bus_touch(&self, what: &'static str, f: Arc<dyn Fn() + Send + Sync>) {
+    self.touch_hooks.lock().push((what, f));
+  }
+
+  /// Tell the other engines that `what` changed in the shared store
+  pub fn touch_others(&self, what: &str) {
+    self.bus.touch(what);
+  }
+
   pub fn new(registry: Arc<AgentRegistry>, deps: ManagerDeps) -> Arc<Self> {
     let mgr = Arc::new_cyclic(|me: &Weak<SessionManager>| {
       let leases = SessionLeases::new(&deps.lease_root, deps.log.clone());
@@ -448,6 +460,7 @@ impl SessionManager {
         first_probe: tokio::sync::watch::Sender::new(false),
         hosts: Default::default(),
         unread_ops: Default::default(),
+        touch_hooks: Default::default(),
         me: me.clone(),
       }
     });
@@ -4033,7 +4046,12 @@ impl BusPeer for SessionManager {
         "unread" => me.reload_unread().await,
         "categories" => me.sync_categories().await,
         "index" => me.sync_index().await,
-        _ => {}
+        other => {
+          let hooks: Vec<_> = me.touch_hooks.lock().iter().filter(|(w, _)| *w == other).map(|(_, f)| f.clone()).collect();
+          for f in hooks {
+            f();
+          }
+        }
       }
     });
   }

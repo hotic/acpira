@@ -12,9 +12,22 @@ pub const SEARCH_SESSIONS: &str = "search_sessions";
 pub const READ_SESSION: &str = "read_session";
 pub const ASK_AGENT: &str = "ask_agent";
 pub const ASK_CALLER: &str = "ask_caller";
+/// The plugin tools of the server itself (`docs/dev/plugins.md`): the contract, and an activation the user confirms
+pub const PLUGIN_GUIDE: &str = "plugin_guide";
+pub const PLUGIN_ACTIVATE: &str = "plugin_activate";
 
 /// Every tool the engine itself serves; a name outside it on the same server belongs to a plugin
-pub const ALL: &[&str] = &[SHOW_IMAGE, SHOW_WIDGET, WORKSPACE_HOOKS, OPEN_BROWSER, SEARCH_SESSIONS, READ_SESSION, ASK_AGENT, ASK_CALLER];
+pub const ALL: &[&str] = &[SHOW_IMAGE, SHOW_WIDGET, WORKSPACE_HOOKS, OPEN_BROWSER, SEARCH_SESSIONS, READ_SESSION, ASK_AGENT, ASK_CALLER, PLUGIN_GUIDE, PLUGIN_ACTIVATE];
+
+/// The tool groups the plugin page can switch off for every agent (a built-in plugin each). The rest has no switch:
+/// `workspace_hooks` belongs to the hooks, `ask_caller` to a round already summoned, the plugin tools to the kernel
+pub const GROUPS: &[(&str, &[&str])] =
+  &[("summon", &[ASK_AGENT]), ("sessions", &[SEARCH_SESSIONS, READ_SESSION]), ("display", &[SHOW_IMAGE, SHOW_WIDGET]), ("browser", &[OPEN_BROWSER])];
+
+/// The group `tool` belongs to, if it has one
+pub fn group_of(tool: &str) -> Option<&'static str> {
+  GROUPS.iter().find(|(_, tools)| tools.contains(&tool)).map(|(g, _)| *g)
+}
 
 /// Whether `tool` is one the engine serves itself
 pub fn is_engine_tool(tool: &str) -> bool {

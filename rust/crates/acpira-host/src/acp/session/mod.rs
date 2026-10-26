@@ -21,6 +21,7 @@ pub mod hooks;
 pub mod images;
 pub mod lifecycle;
 pub mod plan_build;
+pub mod plugin_card;
 pub mod prompt;
 pub mod queue;
 pub mod relay;
