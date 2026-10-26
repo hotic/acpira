@@ -27,6 +27,12 @@ describe('commandAt', () => {
     expect(commandAt('line\n/rev', 9)).toEqual({ start: 5, query: 'rev' });
   });
 
+  it('opens right after CJK text, which is written without spaces', () => {
+    expect(commandAt('然后/rev', 6)).toEqual({ start: 2, query: 'rev' });
+    expect(commandAt('好的，/', 4)).toEqual({ start: 3, query: '' });
+    expect(commandAt('次に/', 3)).toEqual({ start: 2, query: '' });
+  });
+
   it('is plain text once the caret leaves the token and for slashes inside words', () => {
     expect(commandAt('/review ', 8)).toBeUndefined();
     expect(commandAt('/review files', 13)).toBeUndefined();
@@ -94,6 +100,7 @@ describe('commandMarks', () => {
     expect(commandMarks(COMMANDS, '拆分一下提交 /review 按规范')).toEqual([{ start: 7, name: 'review' }]);
     expect(commandMarks(COMMANDS, '/compact 然后 /review')).toEqual([{ start: 0, name: 'compact' }, { start: 12, name: 'review' }]);
     expect(commandMarks(COMMANDS, 'line\n/review')).toEqual([{ start: 5, name: 'review' }]);
+    expect(commandMarks(COMMANDS, '然后/review 一下')).toEqual([{ start: 2, name: 'review' }]);
   });
 
   it('marks every agent\'s skill naming: Kimi / Pi `skill:`, Devin scopes, Codex `$`', () => {
@@ -190,6 +197,7 @@ describe('summonMarks', () => {
     expect(summonMarks(['审查'], '让 @审查 看看')).toEqual([{ start: 2, name: '审查', sigil: '@' }]);
     expect(summonMarks(['审查'], '叫 @审查，看看')).toEqual([{ start: 2, name: '审查', sigil: '@' }]);
     expect(summonMarks(['审查'], '@审查')).toEqual([{ start: 0, name: '审查', sigil: '@' }]);
+    expect(summonMarks(['GPT'], '问问@GPT 的意思')).toEqual([{ start: 2, name: 'GPT', sigil: '@' }]);
   });
   it('leaves other names, glued @ and unknown personas plain', () => {
     expect(summonMarks(['审查'], '@审查员 看看')).toEqual([]);
