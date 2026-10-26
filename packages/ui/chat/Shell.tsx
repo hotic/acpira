@@ -51,7 +51,7 @@ import { parseRemoteFolder } from '@acpira/shared/remote';
 import { connectionOf, useFolderHost } from '../remote/api';
 import { RemoteFolderDialog } from '../remote/RemoteFolderDialog';
 import { COLUMN_HIDDEN_KEY, DesktopContext, desktopOS, macOS, pageCaption, useShellCommands, useShellToasts } from '../desktop';
-import { droppedPathResolver, setWebviewState, webviewState } from '../vscodeApi';
+import { droppedPathResolver, hostDragPaths, setWebviewState, webviewState } from '../vscodeApi';
 import { moveDraft } from './useComposerDraft';
 import { ProjectPick, StartPicker, usePresence } from './StartPage';
 import { AppMenu, NoProject, ShellToastItems, ShellToasts, TitleRow, TitleSpace, useSessionHistory, type QuickSettings } from './DesktopFrame';
@@ -635,20 +635,24 @@ export function Shell(p: ShellProps) {
   // entries, so the frame shows for any file dragged over
   const [folderOver, setFolderOver] = useState(false);
   const pathForFile = desktop ? droppedPathResolver() : undefined;
+  // Linux: the drag's files exist only as the shell's paths (VsCodeApi.dragPaths)
+  const dragPaths = desktop ? hostDragPaths() : undefined;
+  const carriesFiles = (dt: DataTransfer) => dt.types.includes('Files') || !!dragPaths?.().length;
   const folderDrop = pathForFile && {
     onDragOver: (e: DragEvent) => {
-      if (!e.dataTransfer.types.includes('Files')) return;
+      if (!carriesFiles(e.dataTransfer)) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
       if (!folderOver) setFolderOver(true);
     },
     onDragLeave: (e: DragEvent) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFolderOver(false); },
     onDrop: (e: DragEvent) => {
-      if (!e.dataTransfer.types.includes('Files')) return;
+      if (!carriesFiles(e.dataTransfer)) return;
       e.preventDefault();
       setFolderOver(false);
       // The entries are only readable during the drop; their paths may come later (the Windows shell answers async)
-      const asked = [...e.dataTransfer.items].flatMap(item => {
+      const listed = dragPaths?.() ?? [];
+      const asked = listed.length ? listed.filter(d => d.endsWith('/')).map(d => d.slice(0, -1)) : [...e.dataTransfer.items].flatMap(item => {
         const file = item.kind === 'file' && item.webkitGetAsEntry()?.isDirectory ? item.getAsFile() : null;
         return file ? [pathForFile(file)] : [];
       });

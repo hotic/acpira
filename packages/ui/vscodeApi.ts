@@ -1,13 +1,16 @@
 // acquireVsCodeApi() may be called only once per webview; both roots (chat App, settings) go through this memo so a single bundle can host either.
 // getState / setState are the webview's own persisted state (survives a reload of the same webview); LAB stubs may omit them
-// pathForFile and readClipboard: the desktop app only (apps/desktop/src/init.js), the real path of a file or folder dropped
-// from the OS and the clipboard's text without WebKit's paste bubble
+// pathForFile, dragPaths and readClipboard: the desktop app only (apps/desktop/src/init.js), the real paths of files and
+// folders dropped from the OS and the clipboard's text without WebKit's paste bubble
 export interface VsCodeApi {
   postMessage(msg: unknown): void;
   getState?(): unknown;
   setState?(state: unknown): void;
   // The desktop app answers at once on macOS and through its shell on Windows (a promise)
   pathForFile?(file: File): string | undefined | Promise<string | undefined>;
+  // The desktop app on Linux, whose webview shows the page no file of a drag: the paths of the drag over the page, a
+  // folder's ending in '/', empty for a drag without files
+  dragPaths?(): string[];
   readClipboard?(): Promise<string>;
 }
 
@@ -45,6 +48,12 @@ export function setWebviewState(key: string, value: unknown): void {
 export function droppedPathResolver(): ((file: File) => string | undefined | Promise<string | undefined>) | undefined {
   const api = host();
   return api?.pathForFile && (file => api.pathForFile!(file));
+}
+
+// The paths of the OS drag over the page where only the host can tell them (VsCodeApi.dragPaths); undefined elsewhere
+export function hostDragPaths(): (() => string[]) | undefined {
+  const api = host();
+  return api?.dragPaths && (() => api.dragPaths!());
 }
 
 // The clipboard's text: through the host where it reads it without asking (the desktop app), else the browser's API

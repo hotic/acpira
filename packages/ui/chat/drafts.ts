@@ -38,10 +38,12 @@ export function pathlessWorkbenchDrag(dt: DataTransfer | null): string[] | undef
 }
 
 // Everything a paste or drop can carry, turned into drafts. Workbench drags arrive as file: URIs and take precedence: those are handed to the host as
-// file drafts (it reads images itself). OS files only exist as blobs here (no path in a webview): accepted images go inline, small text files are embedded, anything else up to MAX_FILE_BYTES is carried as bytes
-export async function collectDrafts(dt: DataTransfer, cwd: string): Promise<Collected> {
+// file drafts (it reads images itself). OS files only exist as blobs here (no path in a webview): accepted images go inline, small text files are embedded, anything else up to MAX_FILE_BYTES is carried as bytes.
+// `hostPaths`: a drop's paths from a host whose webview shows the page none of its files (VsCodeApi.dragPaths), taken like a workbench drag's
+export async function collectDrafts(dt: DataTransfer, cwd: string, hostPaths: readonly string[] = []): Promise<Collected> {
   const out: Collected = { drafts: [], refused: [] };
   const uris = workbenchUris(dt);
+  if (!uris.length && !dt.files.length) uris.push(...hostPaths.flatMap(p => fileUriOf(p.replace(/\/$/, '')) ?? []));
   if (uris.length) {
     for (const uri of uris) out.drafts.push({ kind: 'file', uri, name: nameOf(uri, cwd) });
     return out;

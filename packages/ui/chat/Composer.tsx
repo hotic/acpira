@@ -16,6 +16,7 @@ import { WorkingBeam } from '../effects/WorkingBeam';
 import { SendButton } from '../effects/SendButton';
 import { DraftChips } from './Attachments';
 import { collectDrafts, collectImageSources, hasPayload, hiddenText, imageSources, pastedText, pathlessWorkbenchDrag, typeInto, type Collected } from './drafts';
+import { hostDragPaths } from '../vscodeApi';
 import { MentionList, mentionAt, personaHits, personaOfHit, useMentionHits, type MentionPersona } from './Mention';
 import { SummonMenu } from './SummonMenu';
 import { SlashList, commandAt, commandHint, completeCommand, promptMarks, useSlashHits } from './Slash';
@@ -183,7 +184,7 @@ export const Composer = memo(function Composer(p: ComposerProps) {
     }
     if (!takes(e.dataTransfer)) return;
     e.preventDefault();
-    void addFrom(collectDrafts(e.dataTransfer, p.cwd));
+    void addFrom(collectDrafts(e.dataTransfer, p.cwd, hostDragPaths()?.()));
   };
   // A paste can carry attachments and text together (a chat message copied with its screenshot, a web selection with images): both are kept.
   // Real files win over the <img> copies in the HTML flavour. Large text bypasses textarea layout entirely.
